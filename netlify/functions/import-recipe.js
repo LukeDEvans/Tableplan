@@ -1,80 +1,55 @@
-const http = require("node:http");
-const fs = require("node:fs/promises");
-const path = require("node:path");
-
-const PORT = Number(process.env.PORT || 4174);
-const ROOT = __dirname;
-const DATA_DIR = path.join(ROOT, "data");
-const STATE_FILE = path.join(DATA_DIR, "tableplan-state.json");
-const MIME_TYPES = {
-  ".html": "text/html; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml"
-};
-
-const server = http.createServer(async (request, response) => {
-  try {
-    const url = new URL(request.url, `http://${request.headers.host}`);
-    if (url.pathname === "/api/import-recipe") {
-      await handleRecipeImport(url, response);
-      return;
-    }
-    if (url.pathname === "/api/state") {
-      await handleState(request, response);
-      return;
-    }
-
-    await serveStatic(url.pathname, request, response);
-  } catch (error) {
-    sendJson(response, 500, { error: error.message || "Server error" });
+exports.handler = async (event) => {
+  if (event.httpMethod !== "GET") {
+    return jsonResponse(405, { error: "Method not allowed." });
   }
-});
 
-server.listen(PORT, () => {
-  console.log(`Tableplan server running at http://localhost:${PORT}/`);
-});
-
-async function handleRecipeImport(url, response) {
-  const sourceUrl = normalizeRecipeUrlInput(url.searchParams.get("url"));
-  if (!sourceUrl) {
-    sendJson(response, 400, { error: "Missing recipe URL." });
-    return;
-  }
+  const sourceUrl = normalizeRecipeUrlInput(event.queryStringParameters?.url);
+  if (!sourceUrl) return jsonResponse(400, { error: "Missing recipe URL." });
 
   let parsedUrl;
   try {
     parsedUrl = new URL(sourceUrl);
   } catch {
-    sendJson(response, 400, { error: "Invalid recipe URL." });
-    return;
+    return jsonResponse(400, { error: "Invalid recipe URL." });
   }
 
   if (!["http:", "https:"].includes(parsedUrl.protocol)) {
-    sendJson(response, 400, { error: "Recipe URL must start with http or https." });
-    return;
+    return jsonResponse(400, { error: "Recipe URL must start with http or https." });
   }
 
-  const fetched = await fetch(sourceUrl, {
-    headers: {
-      "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "user-agent": "Mozilla/5.0 TableplanRecipeImporter/1.0"
+  try {
+    const fetched = await fetch(sourceUrl, {
+      headers: {
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "user-agent": "Mozilla/5.0 TableplanRecipeImporter/1.0"
+      }
+    });
+
+    if (!fetched.ok) {
+      return jsonResponse(fetched.status, { error: `Recipe page returned ${fetched.status}.` });
     }
-  });
-  if (!fetched.ok) {
-    sendJson(response, fetched.status, { error: `Recipe page returned ${fetched.status}.` });
-    return;
-  }
 
-  const html = await fetched.text();
-  const recipe = parseRecipeHtml(html, sourceUrl);
-  if (!recipe.name && !recipe.ingredients.length) {
-    sendJson(response, 422, { error: "No recipe data found on that page." });
-    return;
-  }
+    const html = await fetched.text();
+    const recipe = parseRecipeHtml(html, sourceUrl);
+    if (!recipe.name && !recipe.ingredients.length) {
+      return jsonResponse(422, { error: "No recipe data found on that page." });
+    }
 
-  sendJson(response, 200, { recipe });
+    return jsonResponse(200, { recipe });
+  } catch (error) {
+    return jsonResponse(500, { error: error.message || "Recipe import failed." });
+  }
+};
+
+function jsonResponse(statusCode, body) {
+  return {
+    statusCode,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store"
+    },
+    body: JSON.stringify(body)
+  };
 }
 
 function normalizeRecipeUrlInput(value) {
@@ -83,92 +58,6 @@ function normalizeRecipeUrlInput(value) {
   if (!firstUrl) return "";
   const duplicateStart = firstUrl.slice(8).search(/https?:\/\//i);
   return duplicateStart >= 0 ? firstUrl.slice(0, duplicateStart + 8) : firstUrl;
-}
-
-async function handleState(request, response) {
-  if (request.method === "GET") {
-    const state = await readStoredState();
-    sendJson(response, 200, { state });
-    return;
-  }
-
-  if (request.method === "PUT") {
-    const body = await readRequestBody(request);
-    let parsed;
-    try {
-      parsed = JSON.parse(body);
-    } catch {
-      sendJson(response, 400, { error: "Invalid JSON body." });
-      return;
-    }
-
-    await writeStoredState(parsed.state || parsed);
-    sendJson(response, 200, { ok: true });
-    return;
-  }
-
-  sendJson(response, 405, { error: "Method not allowed." });
-}
-
-async function readStoredState() {
-  try {
-    const data = await fs.readFile(STATE_FILE, "utf8");
-    return JSON.parse(data);
-  } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  }
-}
-
-async function writeStoredState(state) {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  const tempFile = `${STATE_FILE}.tmp`;
-  await fs.writeFile(tempFile, `${JSON.stringify(state, null, 2)}\n`);
-  await fs.rename(tempFile, STATE_FILE);
-}
-
-function readRequestBody(request) {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    request.on("data", (chunk) => {
-      body += chunk;
-      if (body.length > 5_000_000) {
-        request.destroy();
-        reject(new Error("Request body too large."));
-      }
-    });
-    request.on("end", () => resolve(body));
-    request.on("error", reject);
-  });
-}
-
-async function serveStatic(pathname, request, response) {
-  const cleanPath = decodeURIComponent(pathname === "/" ? "/index.html" : pathname);
-  const filePath = path.normalize(path.join(ROOT, cleanPath));
-  if (!filePath.startsWith(ROOT)) {
-    response.writeHead(403);
-    response.end("Forbidden");
-    return;
-  }
-
-  const file = await fs.readFile(filePath);
-  const stat = await fs.stat(filePath);
-  response.writeHead(200, {
-    "content-type": MIME_TYPES[path.extname(filePath)] || "application/octet-stream",
-    "content-length": stat.size,
-    "last-modified": stat.mtime.toUTCString(),
-    "cache-control": "no-store"
-  });
-  if (request.method !== "HEAD") response.end(file);
-  else response.end();
-}
-
-function sendJson(response, status, body) {
-  response.writeHead(status, {
-    "content-type": "application/json; charset=utf-8",
-    "cache-control": "no-store"
-  });
-  response.end(JSON.stringify(body));
 }
 
 function parseRecipeHtml(html, sourceUrl) {

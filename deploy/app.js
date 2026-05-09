@@ -1159,11 +1159,12 @@ function openImportDialog() {
 }
 
 async function importRecipeFromUrl() {
-  const url = elements.importUrl.value.trim();
+  const url = normalizeRecipeUrlInput(elements.importUrl.value);
   if (!url) {
     setImportStatus("Paste a recipe URL first.");
     return;
   }
+  elements.importUrl.value = url;
 
   setImportStatus("Trying to read recipe data from the page...");
   elements.fetchRecipeBtn.disabled = true;
@@ -1181,8 +1182,9 @@ async function importRecipeFromUrl() {
 }
 
 async function fetchRecipeWithBestAvailableMethod(url) {
-  if (canUseLocalImportHelper()) {
-    const response = await fetch(`/api/import-recipe?url=${encodeURIComponent(url)}`);
+  const helperUrl = recipeImportHelperUrl(url);
+  if (helperUrl) {
+    const response = await fetch(helperUrl);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || `Import helper failed with status ${response.status}`);
     return {
@@ -1197,8 +1199,18 @@ async function fetchRecipeWithBestAvailableMethod(url) {
   return parseRecipeHtml(html, url);
 }
 
-function canUseLocalImportHelper() {
-  return canUseLocalBackend();
+function recipeImportHelperUrl(url) {
+  if (canUseLocalBackend()) return `/api/import-recipe?url=${encodeURIComponent(url)}`;
+  if (window.location.protocol.startsWith("http")) return `/.netlify/functions/import-recipe?url=${encodeURIComponent(url)}`;
+  return "";
+}
+
+function normalizeRecipeUrlInput(value) {
+  const trimmed = String(value || "").trim();
+  const firstUrl = trimmed.match(/https?:\/\/[^\s]+/i)?.[0] || "";
+  if (!firstUrl) return "";
+  const duplicateStart = firstUrl.slice(8).search(/https?:\/\//i);
+  return duplicateStart >= 0 ? firstUrl.slice(0, duplicateStart + 8) : firstUrl;
 }
 
 function importRecipeFromText() {
