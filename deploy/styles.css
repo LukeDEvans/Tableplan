@@ -532,10 +532,9 @@ select:focus {
 
 .folder-recipes {
   display: grid;
-  gap: 8px;
-  margin: 2px 0 8px 14px;
-  padding-left: 10px;
-  border-left: 2px solid var(--accent-soft);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 10px 0 12px;
 }
 
 .folder-context-menu {
@@ -579,9 +578,10 @@ select:focus {
 
 .recipe-card {
   display: grid;
-  gap: 10px;
+  align-content: start;
+  gap: 8px;
   width: 100%;
-  padding: 13px;
+  padding: 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-strong);
@@ -605,9 +605,9 @@ select:focus {
   display: grid;
   place-items: center;
   width: 100%;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 1;
   overflow: hidden;
-  border-radius: var(--radius);
+  border-radius: 14px;
   background: #eef4ef;
   color: var(--muted);
   font-size: 0.78rem;
@@ -625,8 +625,17 @@ select:focus {
 }
 
 .recipe-card-head {
-  justify-content: space-between;
-  gap: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.recipe-card-head h3 {
+  font-size: 0.9rem;
+  line-height: 1.2;
+}
+
+.recipe-card-head .pill {
+  justify-self: start;
 }
 
 .pill {
@@ -1125,6 +1134,10 @@ textarea {
     padding: 14px;
   }
 
+  .folder-recipes {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .recipe-list {
     max-height: none;
   }
@@ -1168,6 +1181,10 @@ textarea {
     grid-template-columns: 1fr;
   }
 
+  .folder-recipes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .folder-add-btn {
     width: 100%;
   }
@@ -1186,5 +1203,11 @@ textarea {
 
   .ingredient-row .icon-btn {
     width: 100%;
+  }
+}
+
+@media (max-width: 380px) {
+  .folder-recipes {
+    grid-template-columns: 1fr;
   }
 }
