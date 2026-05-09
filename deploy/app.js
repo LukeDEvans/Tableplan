@@ -715,7 +715,13 @@ function toggleSection(sectionId) {
 
 function setSectionCollapsed(sectionId, isCollapsed) {
   if (!state.collapsedSections) state.collapsedSections = {};
-  state.collapsedSections[sectionId] = isCollapsed;
+  if (isCollapsed) {
+    state.collapsedSections[sectionId] = true;
+  } else {
+    Object.keys(defaultCollapsedSections()).forEach((id) => {
+      state.collapsedSections[id] = id !== sectionId;
+    });
+  }
   persist();
   renderCollapsedSections();
 }
@@ -1464,17 +1470,9 @@ function addRecipeFolder(event) {
   }
 
   elements.folderInput.value = "";
-  if (!state.collapsedSections) state.collapsedSections = {};
-  state.collapsedSections.recipes = false;
-  persist();
+  setSectionCollapsed("recipes", false);
   renderFolders();
   renderRecipes();
-  renderCollapsedSections();
-  window.setTimeout(() => {
-    state.collapsedSections.recipes = false;
-    persist();
-    renderCollapsedSections();
-  }, 0);
 }
 
 function deleteRecipeFromForm() {
