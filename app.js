@@ -718,12 +718,21 @@ function setSectionCollapsed(sectionId, isCollapsed) {
   if (isCollapsed) {
     state.collapsedSections[sectionId] = true;
   } else {
+    if (sectionId === "mealPrep") collapseAllPlannerDays();
     Object.keys(defaultCollapsedSections()).forEach((id) => {
       state.collapsedSections[id] = id !== sectionId;
     });
   }
   persist();
   renderCollapsedSections();
+  if (sectionId === "mealPrep" && !isCollapsed) renderPlanner();
+}
+
+function collapseAllPlannerDays() {
+  if (!state.collapsedDays) state.collapsedDays = {};
+  prepDays.forEach((day) => {
+    state.collapsedDays[day.id] = true;
+  });
 }
 
 function sectionLabel(sectionId) {
