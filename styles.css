@@ -67,6 +67,7 @@ svg {
 .panel-head,
 .week-tools,
 .toolbar-actions,
+.header-main,
 .brand,
 .recipe-card-head,
 .inline-form,
@@ -79,8 +80,15 @@ svg {
 .topbar {
   align-items: stretch;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   margin-bottom: 18px;
+}
+
+.header-main {
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
 }
 
 .brand,
@@ -1086,6 +1094,16 @@ textarea {
 }
 
 @media (max-width: 560px) {
+  .header-main {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .account-tools {
+    justify-content: space-between;
+    width: 100%;
+  }
+
   .panel,
   .planner-column {
     padding: 12px;

@@ -9,21 +9,23 @@
   <body>
     <div class="app-shell">
       <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 32 32" role="img">
-              <path d="M7 9c0-2.2 1.8-4 4-4h10c2.2 0 4 1.8 4 4v14c0 2.2-1.8 4-4 4H11c-2.2 0-4-1.8-4-4V9Z" />
-              <path d="M11 10h10M11 16h10M11 22h6" />
-            </svg>
+        <div class="header-main">
+          <div class="brand">
+            <div class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 32 32" role="img">
+                <path d="M7 9c0-2.2 1.8-4 4-4h10c2.2 0 4 1.8 4 4v14c0 2.2-1.8 4-4 4H11c-2.2 0-4-1.8-4-4V9Z" />
+                <path d="M11 10h10M11 16h10M11 22h6" />
+              </svg>
+            </div>
+            <div>
+              <p class="eyebrow">Tableplan</p>
+              <h1>Recipes & Weekly Meals</h1>
+            </div>
           </div>
-          <div>
-            <p class="eyebrow">Tableplan</p>
-            <h1>Recipes & Weekly Meals</h1>
+          <div class="account-tools">
+            <span id="authStatus">Local storage</span>
+            <button class="secondary-btn" id="authButton" type="button">Sign in</button>
           </div>
-        </div>
-        <div class="account-tools">
-          <span id="authStatus">Local storage</span>
-          <button class="secondary-btn" id="authButton" type="button">Sign in</button>
         </div>
         <div class="week-tools">
           <button class="icon-btn" id="previousWeek" title="Previous week" aria-label="Previous week">
