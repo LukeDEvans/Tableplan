@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tableplan Recipe & Meal Planner</title>
+    <link rel="stylesheet" href="./styles.css?v=auth-deploy-1" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" role="img">
+              <path d="M7 9c0-2.2 1.8-4 4-4h10c2.2 0 4 1.8 4 4v14c0 2.2-1.8 4-4 4H11c-2.2 0-4-1.8-4-4V9Z" />
+              <path d="M11 10h10M11 16h10M11 22h6" />
+            </svg>
+          </div>
+          <div>
+            <p class="eyebrow">Tableplan</p>
+            <h1>Recipes & Weekly Meals</h1>
+          </div>
+        </div>
+        <div class="account-tools">
+          <span id="authStatus">Local storage</span>
+          <button class="secondary-btn" id="authButton" type="button">Sign in</button>
+        </div>
+        <div class="week-tools">
+          <button class="icon-btn" id="previousWeek" title="Previous week" aria-label="Previous week">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+          </button>
+          <div class="prep-window-copy">
+            <p class="prep-date-range" id="weekLabel" aria-live="polite">May 8 - May 15, 2026</p>
+          </div>
+          <button class="icon-btn" id="nextWeek" title="Next week" aria-label="Next week">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="panel recipe-panel collapsible-section" data-section="recipes" aria-label="Recipe library">
+          <div class="panel-head">
+            <div class="section-heading">
+              <button class="icon-btn collapse-btn section-toggle" data-collapse="recipes" title="Collapse recipes" aria-label="Collapse recipes" aria-expanded="true">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+              </button>
+              <div>
+                <h2>Recipe Box</h2>
+              </div>
+            </div>
+            <div class="library-actions">
+              <button class="secondary-btn" id="importRecipeBtn">Import</button>
+              <button class="primary-btn" id="newRecipeBtn">
+                <span aria-hidden="true">+</span>
+                New
+              </button>
+            </div>
+          </div>
+          <div class="collapsible-body" id="section-recipes">
+            <label class="search">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.3-4.3M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" /></svg>
+              <input id="recipeSearch" type="search" placeholder="Search recipes, folders, ingredients" />
+            </label>
+            <div class="folder-list" id="folderList" aria-label="Recipe folders"></div>
+            <form class="folder-form" id="folderForm">
+              <input id="folderInput" placeholder="Add recipe folder" />
+              <button class="secondary-btn folder-add-btn" id="addFolderBtn" type="button">Add</button>
+            </form>
+            <div class="recipe-list" id="recipeList" hidden></div>
+          </div>
+        </aside>
+
+        <section class="planner-column collapsible-section" data-section="mealPrep" aria-label="Weekly meal prep planner">
+          <div class="planner-toolbar">
+            <div class="section-heading">
+              <button class="icon-btn collapse-btn section-toggle" data-collapse="mealPrep" title="Collapse meal prep" aria-label="Collapse meal prep" aria-expanded="true">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+              </button>
+              <div>
+                <h2>Meal Plan</h2>
+              </div>
+            </div>
+          </div>
+          <div class="collapsible-body" id="section-mealPrep">
+            <div class="planner-grid" id="plannerGrid"></div>
+          </div>
+        </section>
+
+        <aside class="side-stack" aria-label="Shopping and pantry tools">
+          <section class="panel collapsible-section" data-section="groceries">
+            <div class="panel-head">
+              <div class="section-heading">
+                <button class="icon-btn collapse-btn section-toggle" data-collapse="groceries" title="Collapse prep groceries" aria-label="Collapse prep groceries" aria-expanded="true">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+                </button>
+                <div>
+                  <h2>Groceries</h2>
+                </div>
+              </div>
+              <button class="icon-btn" id="copyGroceriesBtn" title="Copy grocery list" aria-label="Copy grocery list">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h10v12H8z" /><path d="M6 16H4V4h12v2" /></svg>
+              </button>
+            </div>
+            <div class="collapsible-body" id="section-groceries">
+              <div class="grocery-list" id="groceryList"></div>
+            </div>
+          </section>
+
+          <section class="panel collapsible-section" data-section="pantry">
+            <div class="panel-head">
+              <div class="section-heading">
+                <button class="icon-btn collapse-btn section-toggle" data-collapse="pantry" title="Collapse pantry" aria-label="Collapse pantry" aria-expanded="true">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+                </button>
+                <div>
+                  <h2>Pantry</h2>
+                </div>
+              </div>
+            </div>
+            <div class="collapsible-body" id="section-pantry">
+              <form class="inline-form" id="pantryForm">
+                <input id="pantryInput" placeholder="Add pantry item" />
+                <button class="icon-btn" title="Add pantry item" aria-label="Add pantry item">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+                </button>
+              </form>
+              <div class="chips" id="pantryList"></div>
+            </div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <dialog class="recipe-dialog" id="recipeDialog">
+      <form method="dialog" class="recipe-form" id="recipeForm">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Recipe details</p>
+            <h2 id="dialogTitle">Add recipe</h2>
+          </div>
+          <button class="icon-btn" type="button" id="closeRecipeBtn" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+
+        <input type="hidden" id="recipeId" />
+        <label>
+          Recipe name
+          <input id="recipeName" required placeholder="Lemon chicken bowls" />
+        </label>
+        <div class="form-grid">
+          <label>
+            Prep time
+            <input id="recipeTime" placeholder="35 min" />
+          </label>
+          <label>
+            Servings
+            <input id="recipeServings" inputmode="numeric" pattern="[0-9]*" placeholder="4" />
+          </label>
+        </div>
+        <label>
+          Folder
+          <select id="recipeFolder"></select>
+        </label>
+        <label>
+          Source URL
+          <input id="recipeSourceUrl" placeholder="https://cooking.nytimes.com/..." />
+        </label>
+        <section class="ingredient-editor" aria-label="Ingredients">
+          <div class="ingredient-editor-head">
+            <label>Ingredients</label>
+            <button class="secondary-btn" type="button" id="addIngredientBtn">Add item</button>
+          </div>
+          <div class="ingredient-grid ingredient-grid-head" aria-hidden="true">
+            <span>Number</span>
+            <span>Qty</span>
+            <span>Item</span>
+            <span>Prep</span>
+            <span></span>
+          </div>
+          <div class="ingredient-list" id="ingredientList"></div>
+        </section>
+        <label>
+          Instructions
+          <textarea id="recipeSteps" placeholder="Cook rice. Sear chicken. Toss with lemon dressing."></textarea>
+        </label>
+        <div class="dialog-actions">
+          <button class="danger-btn" type="button" id="deleteRecipeBtn">Delete</button>
+          <div>
+            <button class="secondary-btn" type="button" id="cancelRecipeBtn">Cancel</button>
+            <button class="primary-btn" id="saveRecipeBtn" value="default">Save recipe</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="recipe-dialog" id="recipeViewDialog">
+      <div class="recipe-form recipe-view">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Recipe</p>
+            <h2 id="recipeViewTitle">Recipe</h2>
+          </div>
+          <button class="icon-btn" type="button" id="closeRecipeViewBtn" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div id="recipeViewContent"></div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog" id="importDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Import</p>
+            <h2>Recipe from URL</h2>
+          </div>
+          <button class="icon-btn" id="closeImportBtn" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <label>
+          Recipe URL
+          <input id="importUrl" placeholder="Paste a NYT, Bon Appetit, or Google Drive URL" />
+        </label>
+        <div class="import-actions">
+          <button class="primary-btn" type="button" id="fetchRecipeBtn">Fetch from URL</button>
+        </div>
+        <label>
+          Paste recipe text
+          <textarea id="importText" placeholder="If the site blocks import, paste the recipe title, ingredients, and instructions here."></textarea>
+        </label>
+        <p class="import-status" id="importStatus"></p>
+        <div class="dialog-actions">
+          <span></span>
+          <div>
+            <button class="secondary-btn" type="button" id="cancelImportBtn">Cancel</button>
+            <button class="primary-btn" type="button" id="usePastedRecipeBtn">Use pasted recipe</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog auth-dialog" id="authDialog">
+      <form method="dialog" class="recipe-form" id="authForm">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Cloud sync</p>
+            <h2>Sign in to Tableplan</h2>
+          </div>
+          <button class="icon-btn" type="button" id="closeAuthBtn" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <label>
+          Email
+          <input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com" required />
+        </label>
+        <p class="import-status" id="authMessage"></p>
+        <div class="dialog-actions">
+          <span></span>
+          <div>
+            <button class="secondary-btn" type="button" id="cancelAuthBtn">Cancel</button>
+            <button class="primary-btn" id="sendLoginBtn" value="default">Send sign-in link</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <script>
+      (() => {
+        const isLocalPreview = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+        if (!isLocalPreview) return;
+
+        const watchedFiles = ["./index.html", "./styles.css", "./app.js", "./supabase-config.js"];
+        const signatures = new Map();
+
+        async function fileSignature(path) {
+          const response = await fetch(`${path}?watch=${Date.now()}`, { method: "HEAD", cache: "no-store" });
+          return [
+            response.headers.get("last-modified") || "",
+            response.headers.get("content-length") || ""
+          ].join(":");
+        }
+
+        async function checkForUpdates() {
+          for (const file of watchedFiles) {
+            const nextSignature = await fileSignature(file);
+            const previousSignature = signatures.get(file);
+            if (previousSignature && previousSignature !== nextSignature) {
+              window.location.reload();
+              return;
+            }
+            signatures.set(file, nextSignature);
+          }
+        }
+
+        window.addEventListener("load", async () => {
+          await checkForUpdates();
+          window.setInterval(checkForUpdates, 1500);
+        });
+      })();
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="./supabase-config.js?v=auth-deploy-1"></script>
+    <script src="./app.js?v=auth-deploy-1"></script>
+  </body>
+</html>

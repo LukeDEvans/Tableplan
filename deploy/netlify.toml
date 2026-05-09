@@ -1,0 +1,17 @@
+[build]
+  publish = "."
+
+[[redirects]]
+  from = "/data/*"
+  to = "/index.html"
+  status = 404
+
+[[redirects]]
+  from = "/server.js"
+  to = "/index.html"
+  status = 404
+
+[[redirects]]
+  from = "/*.sql"
+  to = "/index.html"
+  status = 404
