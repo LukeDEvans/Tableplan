@@ -601,6 +601,29 @@ select:focus {
   border-color: #b8ccbe;
 }
 
+.recipe-photo {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: #eef4ef;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.recipe-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.recipe-photo.empty {
+  border: 1px dashed #cbd8cf;
+}
+
 .recipe-card-head {
   justify-content: space-between;
   gap: 8px;
@@ -957,6 +980,24 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+}
+
+.recipe-view-photo {
+  width: 100%;
+  max-height: 340px;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius);
+  object-fit: cover;
+  background: #eef4ef;
+}
+
+.recipe-view-photo.empty {
+  display: grid;
+  place-items: center;
+  border: 1px dashed #cbd8cf;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 800;
 }
 
 .recipe-source-link {
