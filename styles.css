@@ -601,29 +601,6 @@ select:focus {
   border-color: #b8ccbe;
 }
 
-.recipe-photo {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  aspect-ratio: 1;
-  overflow: hidden;
-  border-radius: 14px;
-  background: #eef4ef;
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 800;
-}
-
-.recipe-photo img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.recipe-photo.empty {
-  border: 1px dashed #cbd8cf;
-}
-
 .recipe-card-head {
   display: grid;
   gap: 6px;
@@ -991,24 +968,6 @@ textarea {
   gap: 7px;
 }
 
-.recipe-view-photo {
-  width: 100%;
-  max-height: 340px;
-  aspect-ratio: 16 / 9;
-  border-radius: var(--radius);
-  object-fit: cover;
-  background: #eef4ef;
-}
-
-.recipe-view-photo.empty {
-  display: grid;
-  place-items: center;
-  border: 1px dashed #cbd8cf;
-  color: var(--muted);
-  font-size: 0.9rem;
-  font-weight: 800;
-}
-
 .recipe-source-link {
   color: var(--accent-dark);
   font-size: 0.9rem;
@@ -1095,6 +1054,61 @@ textarea {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+.oauth-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-strong);
+  color: var(--ink);
+  font-weight: 850;
+}
+
+.oauth-btn:hover {
+  border-color: #b8ccbe;
+}
+
+.oauth-btn .google-mark,
+.oauth-btn .apple-mark {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+}
+
+.google-mark svg,
+.apple-mark svg {
+  width: 20px;
+  height: 20px;
+  stroke: none;
+}
+
+.apple-mark svg {
+  fill: currentColor;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: var(--line);
 }
 
 .dialog-actions {

@@ -78,6 +78,8 @@ const elements = {
   authForm: document.querySelector("#authForm"),
   authEmail: document.querySelector("#authEmail"),
   authMessage: document.querySelector("#authMessage"),
+  googleSignInBtn: document.querySelector("#googleSignInBtn"),
+  appleSignInBtn: document.querySelector("#appleSignInBtn"),
   closeAuthBtn: document.querySelector("#closeAuthBtn"),
   cancelAuthBtn: document.querySelector("#cancelAuthBtn"),
   recipeSearch: document.querySelector("#recipeSearch"),
@@ -105,7 +107,6 @@ const elements = {
   recipeServings: document.querySelector("#recipeServings"),
   recipeFolder: document.querySelector("#recipeFolder"),
   recipeSourceUrl: document.querySelector("#recipeSourceUrl"),
-  recipePhotoUrl: document.querySelector("#recipePhotoUrl"),
   ingredientList: document.querySelector("#ingredientList"),
   addIngredientBtn: document.querySelector("#addIngredientBtn"),
   recipeSteps: document.querySelector("#recipeSteps"),
@@ -134,6 +135,8 @@ function bindEvents() {
   elements.nextWeek.addEventListener("click", () => moveWeek(7));
   elements.authButton.addEventListener("click", toggleAuth);
   elements.authForm.addEventListener("submit", sendSignInLink);
+  elements.googleSignInBtn.addEventListener("click", signInWithGoogle);
+  elements.appleSignInBtn.addEventListener("click", signInWithApple);
   elements.closeAuthBtn.addEventListener("click", () => elements.authDialog.close());
   elements.cancelAuthBtn.addEventListener("click", () => elements.authDialog.close());
   elements.recipeSearch.addEventListener("input", renderRecipes);
@@ -268,6 +271,28 @@ async function sendSignInLink(event) {
   }
 
   elements.authMessage.textContent = "Check your email for the sign-in link.";
+}
+
+async function signInWithGoogle() {
+  await signInWithOAuthProvider("google", "Google");
+}
+
+async function signInWithApple() {
+  await signInWithOAuthProvider("apple", "Apple");
+}
+
+async function signInWithOAuthProvider(provider, label) {
+  if (!supabaseClient) {
+    elements.authMessage.textContent = "Cloud sync is not available right now.";
+    return;
+  }
+
+  elements.authMessage.textContent = `Opening ${label} sign-in...`;
+  const { error } = await supabaseClient.auth.signInWithOAuth({
+    provider,
+    options: { redirectTo: window.location.href.split("#")[0] }
+  });
+  if (error) elements.authMessage.textContent = error.message;
 }
 
 function loadState() {
@@ -765,12 +790,8 @@ function recipeMatchesSearch(recipe, query) {
 }
 
 function recipeCardTemplate(recipe) {
-  const photo = recipe.photoUrl?.trim();
   return `
     <button class="recipe-card" data-id="${recipe.id}" draggable="true">
-      <span class="recipe-photo ${photo ? "" : "empty"}" aria-hidden="true">
-        ${photo ? `<img src="${escapeHtml(photo)}" alt="" loading="lazy" />` : `<span>Photo</span>`}
-      </span>
       <span class="recipe-card-head">
         <h3>${escapeHtml(recipe.name)}</h3>
         <span class="pill gold">${escapeHtml(recipe.time || "Anytime")}</span>
@@ -1120,9 +1141,7 @@ function openRecipeView(id) {
 function recipeViewTemplate(recipe) {
   const ingredients = normalizeIngredients(recipe.ingredients).map(ingredientToText).filter(Boolean);
   const steps = recipe.steps?.trim();
-  const photo = recipe.photoUrl?.trim();
   return `
-    ${photo ? `<img class="recipe-view-photo" src="${escapeHtml(photo)}" alt="${escapeHtml(recipe.name)}" />` : `<div class="recipe-view-photo empty">Photo</div>`}
     <div class="recipe-view-meta">
       <span class="pill gold">${escapeHtml(recipe.time || "Flexible")}</span>
       <span class="pill">${Number(recipe.servings || 1)} servings</span>
@@ -1148,7 +1167,6 @@ function populateRecipeForm(recipe) {
   elements.recipeServings.value = recipe?.servings || "";
   elements.recipeFolder.value = recipe?.folderId || "";
   elements.recipeSourceUrl.value = recipe?.sourceUrl || "";
-  elements.recipePhotoUrl.value = recipe?.photoUrl || "";
   renderIngredientRows(recipe ? normalizeIngredients(recipe.ingredients) : [blankIngredient()]);
   elements.recipeSteps.value = recipe?.steps || "";
   elements.deleteRecipeBtn.hidden = !recipe;
@@ -1164,7 +1182,7 @@ function saveRecipeFromForm(event) {
     servings: Number(elements.recipeServings.value) || 1,
     folderId: elements.recipeFolder.value,
     sourceUrl: elements.recipeSourceUrl.value.trim(),
-    photoUrl: elements.recipePhotoUrl.value.trim(),
+    photoUrl: state.recipes.find((item) => item.id === id)?.photoUrl || "",
     ingredients: collectIngredientRows(),
     steps: elements.recipeSteps.value.trim()
   };

@@ -166,10 +166,6 @@
           Source URL
           <input id="recipeSourceUrl" placeholder="https://cooking.nytimes.com/..." />
         </label>
-        <label>
-          Dish photo URL
-          <input id="recipePhotoUrl" type="url" placeholder="https://..." />
-        </label>
         <section class="ingredient-editor" aria-label="Ingredients">
           <div class="ingredient-editor-head">
             <label>Ingredients</label>
@@ -257,6 +253,26 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
           </button>
         </div>
+        <button class="oauth-btn" type="button" id="googleSignInBtn">
+          <span class="google-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path fill="#4285f4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.4h6.5c-.3 1.4-1.1 2.6-2.3 3.4v2.8h3.7c2.2-2 3.6-5 3.6-8.3Z" />
+              <path fill="#34a853" d="M12 24c3.1 0 5.8-1 7.7-2.8L16 18.4c-1 .7-2.3 1.1-4 1.1-3 0-5.5-2-6.4-4.7H1.8v2.9C3.7 21.4 7.5 24 12 24Z" />
+              <path fill="#fbbc05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.3s.1-1.6.4-2.3V7.3H1.8C1 8.9.5 10.7.5 12.5s.5 3.6 1.3 5.2l3.8-2.9Z" />
+              <path fill="#ea4335" d="M12 5.5c1.7 0 3.2.6 4.4 1.7l3.3-3.3C17.8 2.1 15.1 1 12 1 7.5 1 3.7 3.6 1.8 7.3l3.8 2.9C6.5 7.5 9 5.5 12 5.5Z" />
+            </svg>
+          </span>
+          Continue with Google
+        </button>
+        <button class="oauth-btn" type="button" id="appleSignInBtn">
+          <span class="apple-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M16.4 1.8c.1 1.1-.4 2.1-1 2.9-.7.9-1.8 1.5-2.8 1.4-.1-1.1.4-2.1 1-2.8.7-.8 1.9-1.4 2.8-1.5ZM20 17.4c-.5 1.2-.8 1.7-1.5 2.8-1 1.5-2.4 3.4-4.1 3.4-1.5 0-1.9-1-4-1s-2.5 1-4 1c-1.8 0-3.1-1.8-4.1-3.3C-.5 16 .1 10 4.4 9.8c1.7 0 2.9 1.1 4 1.1s2.2-1.3 4.2-1.1c.8 0 3 .3 4.4 2.4-3.9 2.2-3.3 7.4 3 5.2Z" />
+            </svg>
+          </span>
+          Continue with Apple
+        </button>
+        <div class="auth-divider"><span>Email sign-in</span></div>
         <label>
           Email
           <input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com" required />
