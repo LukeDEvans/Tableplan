@@ -1,0 +1,103 @@
+body {
+  width: 260px;
+  margin: 0;
+  background: #fffdf8;
+  color: #21201d;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+main {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+h1,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 1.1rem;
+}
+
+p {
+  color: #6f6a60;
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+
+button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 8px;
+  background: #2f7f68;
+  color: white;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+}
+
+fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+legend {
+  margin-bottom: 6px;
+  color: #6f6a60;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.target-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  background: #f6f1e8;
+}
+
+.target-option {
+  min-height: 32px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #504a42;
+}
+
+.target-option.is-selected,
+.target-option.is-selected:hover {
+  background: #2f7f68;
+  color: white;
+}
+
+button:hover {
+  background: #205c4c;
+}
+
+.target-option:hover {
+  background: #ebe3d7;
+}
+
+.target-option.is-selected:hover {
+  background: #2f7f68;
+}
+
+button.secondary {
+  border: 1px solid #ded7cb;
+  background: #fffdf8;
+  color: #504a42;
+}
+
+button.secondary:hover {
+  background: #f1eee6;
+}
+
+button[hidden] {
+  display: none;
+}

@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Eat Recipe Importer",
+  "version": "0.1.0",
+  "description": "Import web recipes directly into Eat.",
+  "action": {
+    "default_title": "Import to Eat",
+    "default_popup": "popup.html"
+  },
+  "permissions": ["activeTab", "identity", "storage", "tabs"],
+  "host_permissions": [
+    "https://effervescent-malabi-e0af55.netlify.app/*",
+    "http://localhost:4174/*",
+    "https://noyocjcltrenwdovqrql.supabase.co/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

@@ -37,6 +37,13 @@
         </div>
       </header>
 
+      <section class="active-cooking" id="activeCookingSection" aria-label="Recipes being cooked" hidden>
+        <div class="active-cooking-head">
+          <h2>Cooking Now</h2>
+        </div>
+        <div class="active-cooking-list" id="activeCookingList"></div>
+      </section>
+
       <main class="workspace">
         <aside class="panel recipe-panel collapsible-section" data-section="recipes" aria-label="Recipe library">
           <div class="panel-head">
@@ -49,10 +56,8 @@
               </div>
             </div>
             <div class="library-actions">
-              <button class="secondary-btn" id="importRecipeBtn">Import</button>
-              <button class="primary-btn" id="newRecipeBtn">
+              <button class="primary-btn icon-primary-btn" id="newRecipeBtn" type="button" title="New recipe" aria-label="New recipe">
                 <span aria-hidden="true">+</span>
-                New
               </button>
             </div>
           </div>
@@ -80,6 +85,12 @@
                 <h2>Meal Plan</h2>
               </div>
             </div>
+            <button class="icon-btn" id="autoGenerateMealPlanBtn" title="Auto-generate meal plan" aria-label="Auto-generate meal plan">
+              <svg class="fast-forward-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 6.5 12.5 12 5 17.5Z" />
+                <path d="M12 6.5 19.5 12 12 17.5Z" />
+              </svg>
+            </button>
           </div>
           <div class="collapsible-body" id="section-mealPrep">
             <div class="planner-grid" id="plannerGrid"></div>
@@ -102,6 +113,13 @@
               </button>
             </div>
             <div class="collapsible-body" id="section-groceries">
+              <form class="inline-form grocery-form" id="groceryForm">
+                <input id="groceryInput" list="grocerySuggestions" placeholder="Add grocery item" />
+                <datalist id="grocerySuggestions"></datalist>
+                <button class="icon-btn" title="Add grocery item" aria-label="Add grocery item">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+                </button>
+              </form>
               <div class="grocery-list" id="groceryList"></div>
             </div>
           </section>
@@ -129,6 +147,23 @@
           </section>
         </aside>
       </main>
+
+      <div class="settings-dock">
+        <button class="icon-btn settings-btn" id="settingsBtn" type="button" title="Settings" aria-label="Settings" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z" />
+            <path d="M3 12h3M18 12h3M12 3v3M12 18v3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" />
+          </svg>
+        </button>
+        <div class="settings-menu" id="settingsMenu" hidden>
+          <button type="button" id="openAutoRulesBtn">Auto Rules</button>
+          <button type="button" id="openTagsBtn">Tags</button>
+          <button type="button" id="openGroceryLibraryBtn">Grocery Items</button>
+          <button type="button" id="openBackupHealthBtn">Backup Health</button>
+          <button type="button" id="openRestoreBackupBtn">Restore Backup</button>
+          <button type="button" id="openTrashBtn">Trash</button>
+        </div>
+      </div>
     </div>
 
     <dialog class="recipe-dialog" id="recipeDialog">
@@ -138,9 +173,12 @@
             <p class="muted-label">Recipe details</p>
             <h2 id="dialogTitle">Add recipe</h2>
           </div>
-          <button class="icon-btn" type="button" id="closeRecipeBtn" title="Close" aria-label="Close">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-          </button>
+          <div class="dialog-head-actions">
+            <button class="secondary-btn quiet-btn" id="importRecipeBtn" type="button">Import</button>
+            <button class="icon-btn" type="button" id="closeRecipeBtn" title="Close" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
         </div>
 
         <input type="hidden" id="recipeId" />
@@ -151,7 +189,11 @@
         <div class="form-grid">
           <label>
             Prep time
-            <input id="recipeTime" placeholder="35 min" />
+            <input id="recipePrepTime" placeholder="15 min" />
+          </label>
+          <label>
+            Cook time
+            <input id="recipeCookTime" placeholder="35 min" />
           </label>
           <label>
             Servings
@@ -162,6 +204,12 @@
           Folder
           <select id="recipeFolder"></select>
         </label>
+        <section class="tag-editor" aria-label="Recipe tags">
+          <div class="ingredient-editor-head">
+            <label>Tags</label>
+          </div>
+          <div class="tag-choice-list" id="recipeTagList"></div>
+        </section>
         <label>
           Source URL
           <input id="recipeSourceUrl" placeholder="https://cooking.nytimes.com/..." />
@@ -171,6 +219,7 @@
             <label>Ingredients</label>
             <button class="secondary-btn" type="button" id="addIngredientBtn">Add item</button>
           </div>
+          <datalist id="ingredientSuggestions"></datalist>
           <div class="ingredient-grid ingredient-grid-head" aria-hidden="true">
             <span>Number</span>
             <span>Qty</span>
@@ -180,10 +229,32 @@
           </div>
           <div class="ingredient-list" id="ingredientList"></div>
         </section>
-        <label>
-          Instructions
-          <textarea id="recipeSteps" placeholder="Cook rice. Sear chicken. Toss with lemon dressing."></textarea>
-        </label>
+        <section class="step-editor" aria-label="Instructions">
+          <div class="ingredient-editor-head">
+            <label>Instructions</label>
+            <button class="secondary-btn" type="button" id="addStepBtn">Add step</button>
+          </div>
+          <div class="step-list" id="stepList"></div>
+        </section>
+        <section class="nutrition-editor" aria-label="Nutrition facts">
+          <div class="ingredient-editor-head">
+            <label>Nutrition Facts</label>
+            <button class="secondary-btn" type="button" id="addNutritionBtn">Add nutrient</button>
+          </div>
+          <div class="nutrition-grid nutrition-grid-head" aria-hidden="true">
+            <span>Nutrient</span>
+            <span>Amount</span>
+            <span></span>
+          </div>
+          <div class="nutrition-list" id="nutritionList"></div>
+        </section>
+        <section class="cook-log-editor" aria-label="Log and notes">
+          <div class="ingredient-editor-head">
+            <label>Log & Notes</label>
+            <button class="secondary-btn" type="button" id="addCookLogBtn">Add log</button>
+          </div>
+          <div class="cook-log-editor-list" id="recipeCookLogList"></div>
+        </section>
         <div class="dialog-actions">
           <button class="danger-btn" type="button" id="deleteRecipeBtn">Delete</button>
           <div>
@@ -195,15 +266,24 @@
     </dialog>
 
     <dialog class="recipe-dialog" id="recipeViewDialog">
+      <button class="icon-btn active-recipe-side-nav active-recipe-side-prev" type="button" id="activeRecipePrevBtn" title="Previous active recipe" aria-label="Previous active recipe">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+      </button>
+      <button class="icon-btn active-recipe-side-nav active-recipe-side-next" type="button" id="activeRecipeNextBtn" title="Next active recipe" aria-label="Next active recipe">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+      </button>
       <div class="recipe-form recipe-view">
         <div class="dialog-head">
           <div>
             <p class="muted-label">Recipe</p>
             <h2 id="recipeViewTitle">Recipe</h2>
           </div>
-          <button class="icon-btn" type="button" id="closeRecipeViewBtn" title="Close" aria-label="Close">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-          </button>
+          <div class="dialog-head-actions">
+            <div id="recipeViewHeaderActions"></div>
+            <button class="icon-btn" type="button" id="closeRecipeViewBtn" title="Close" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
         </div>
         <div id="recipeViewContent"></div>
       </div>
@@ -237,6 +317,225 @@
           <div>
             <button class="secondary-btn" type="button" id="cancelImportBtn">Cancel</button>
             <button class="primary-btn" type="button" id="usePastedRecipeBtn">Use pasted recipe</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog auto-rules-dialog" id="autoRulesDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Settings</p>
+            <h2>Auto Rules</h2>
+          </div>
+          <div class="dialog-head-actions">
+            <button class="icon-btn" id="closeAutoRulesBtn" type="button" title="Close" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+        </div>
+        <datalist id="autoRuleOptions"></datalist>
+        <div class="auto-rule-list auto-rule-planner" id="autoRuleList"></div>
+        <div class="dialog-actions">
+          <span></span>
+          <div>
+            <button class="primary-btn" id="saveAutoRulesBtn" type="button">Save and close</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog auth-dialog" id="tagsDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Settings</p>
+            <h2>Tags</h2>
+          </div>
+          <button class="icon-btn" id="closeTagsBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <form class="inline-form tag-library-form" id="tagForm">
+          <input id="tagInput" placeholder="Add recipe tag" />
+          <button class="icon-btn" title="Add tag" aria-label="Add tag">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          </button>
+        </form>
+        <div class="tag-library-list" id="tagList"></div>
+        <div class="dialog-actions">
+          <span></span>
+          <div>
+            <button class="primary-btn" type="button" id="doneTagsBtn">Done</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog auth-dialog" id="groceryLibraryDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Settings</p>
+            <h2>Grocery Items</h2>
+          </div>
+          <button class="icon-btn" id="closeGroceryLibraryBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <form class="inline-form grocery-library-form" id="groceryLibraryForm">
+          <input id="groceryLibraryInput" placeholder="Add grocery item" />
+          <button class="icon-btn" title="Add grocery item" aria-label="Add grocery item">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          </button>
+        </form>
+        <div class="grocery-library-list" id="groceryLibraryList"></div>
+        <div class="dialog-actions">
+          <button class="secondary-btn" type="button" id="resetGroceryLibraryBtn">Reset defaults</button>
+          <div>
+            <button class="secondary-btn" type="button" id="cancelGroceryLibraryBtn">Cancel</button>
+            <button class="primary-btn" type="button" id="saveGroceryLibraryBtn">Done</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog auth-dialog" id="groceryReviewDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Groceries</p>
+            <h2>Review grocery item</h2>
+          </div>
+          <button class="icon-btn" id="closeGroceryReviewBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div class="restore-preview grocery-review-card">
+          <strong id="groceryReviewItem">Ingredient</strong>
+          <span id="groceryReviewContext"></span>
+        </div>
+        <div class="dialog-actions">
+          <button class="secondary-btn" type="button" id="dismissGroceryReviewBtn">Not now</button>
+          <div>
+            <button class="secondary-btn" type="button" id="goToGroceryReviewRecipeBtn">Go to recipe</button>
+            <button class="primary-btn" type="button" id="addGroceryReviewItemBtn">Add ingredient</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog auth-dialog" id="logCookDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Cooking Now</p>
+            <h2>Would you like to log this cook?</h2>
+          </div>
+          <button class="icon-btn" id="closeLogCookBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div class="dialog-actions">
+          <button class="secondary-btn" type="button" id="skipLogCookBtn">No</button>
+          <div>
+            <button class="primary-btn" type="button" id="confirmLogCookBtn">OK</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog auth-dialog" id="cookSessionNotesDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Cooking Notes</p>
+            <h2>Add notes before logging</h2>
+          </div>
+          <button class="icon-btn" id="closeCookSessionNotesBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <label>
+          Notes
+          <textarea id="cookSessionNotes" placeholder="What changed, what worked, what to remember next time"></textarea>
+        </label>
+        <div class="dialog-actions">
+          <button class="secondary-btn" type="button" id="cancelCookSessionNotesBtn">Cancel</button>
+          <div>
+            <button class="primary-btn" type="button" id="saveCookSessionNotesBtn">Log cook</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog auth-dialog" id="backupHealthDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Safety</p>
+            <h2>Backup Health</h2>
+          </div>
+          <button class="icon-btn" id="closeBackupHealthBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div class="restore-preview" id="backupHealthContent">Checking backups...</div>
+        <div class="dialog-actions">
+          <span></span>
+          <div>
+            <button class="secondary-btn" type="button" id="refreshBackupHealthBtn">Check again</button>
+            <button class="primary-btn" type="button" id="doneBackupHealthBtn">Done</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog restore-dialog" id="trashDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Safety</p>
+            <h2>Trash</h2>
+          </div>
+          <button class="icon-btn" id="closeTrashBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div class="trash-list" id="trashList"></div>
+        <div class="dialog-actions">
+          <span></span>
+          <div>
+            <button class="primary-btn" type="button" id="doneTrashBtn">Done</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog restore-dialog" id="restoreDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Backup</p>
+            <h2>Restore missing recipes</h2>
+          </div>
+          <button class="icon-btn" id="closeRestoreBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <label>
+          Backup JSON
+          <input id="restoreFileInput" type="file" accept="application/json,.json" />
+        </label>
+        <div class="restore-preview" id="restorePreview">
+          Choose an Eat backup JSON file to preview missing recipes before merging.
+        </div>
+        <div class="dialog-actions">
+          <span></span>
+          <div>
+            <button class="secondary-btn" type="button" id="cancelRestoreBtn">Cancel</button>
+            <button class="primary-btn" type="button" id="mergeRestoreBtn" disabled>Merge missing recipes</button>
           </div>
         </div>
       </div>

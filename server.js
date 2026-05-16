@@ -1,11 +1,16 @@
 const http = require("node:http");
+const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
+const os = require("node:os");
 const path = require("node:path");
 
 const PORT = Number(process.env.PORT || 4174);
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, "data");
 const STATE_FILE = path.join(DATA_DIR, "tableplan-state.json");
+const BACKUP_DIR = process.env.EAT_BACKUP_DIR || path.join(os.homedir(), "Desktop", "Eat");
+const MAX_BACKUPS = Number(process.env.EAT_MAX_BACKUPS || 5);
+const US_HOLIDAYS_ICS_URL = "https://calendar.google.com/calendar/ical/en.usa%23holiday%40group.v.calendar.google.com/public/basic.ics";
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -21,8 +26,16 @@ const server = http.createServer(async (request, response) => {
       await handleRecipeImport(url, response);
       return;
     }
+    if (url.pathname === "/api/holidays") {
+      await handleHolidays(response);
+      return;
+    }
     if (url.pathname === "/api/state") {
       await handleState(request, response);
+      return;
+    }
+    if (url.pathname === "/api/backup") {
+      await handleBackup(request, response);
       return;
     }
 
@@ -56,6 +69,17 @@ async function handleRecipeImport(url, response) {
     return;
   }
 
+  if (isGoogleDocUrl(sourceUrl)) {
+    const googleDocResult = await importGoogleDocRecipe(sourceUrl);
+    if (googleDocResult.error) {
+      sendJson(response, googleDocResult.status, { error: googleDocResult.error });
+      return;
+    }
+
+    sendJson(response, 200, { recipe: googleDocResult.recipe });
+    return;
+  }
+
   const fetched = await fetch(sourceUrl, {
     headers: {
       "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -68,6 +92,11 @@ async function handleRecipeImport(url, response) {
   }
 
   const html = await fetched.text();
+  if (looksLikeBlockedGoogleDoc(html)) {
+    sendJson(response, 422, { error: googleDocAccessMessage() });
+    return;
+  }
+
   const recipe = parseRecipeHtml(html, sourceUrl);
   if (!recipe.name && !recipe.ingredients.length) {
     sendJson(response, 422, { error: "No recipe data found on that page." });
@@ -77,12 +106,122 @@ async function handleRecipeImport(url, response) {
   sendJson(response, 200, { recipe });
 }
 
+async function handleHolidays(response) {
+  const fetched = await fetch(US_HOLIDAYS_ICS_URL, {
+    headers: {
+      accept: "text/calendar,text/plain,*/*;q=0.8",
+      "user-agent": "Mozilla/5.0 EatHolidaySync/1.0"
+    }
+  });
+  if (!fetched.ok) {
+    sendJson(response, fetched.status, { error: `Holiday calendar returned ${fetched.status}.` });
+    return;
+  }
+
+  sendJson(response, 200, { events: parseHolidayIcs(await fetched.text()) });
+}
+
+function parseHolidayIcs(text) {
+  return unfoldIcsLines(text)
+    .join("\n")
+    .split("BEGIN:VEVENT")
+    .slice(1)
+    .map((block) => ({
+      date: formatIcsDate(readIcsProperty(block, "DTSTART")),
+      summary: cleanHolidaySummary(readIcsProperty(block, "SUMMARY"))
+    }))
+    .filter((event) => event.date && event.summary);
+}
+
+function unfoldIcsLines(text) {
+  return String(text || "").replace(/\r?\n[ \t]/g, "").split(/\r?\n/);
+}
+
+function readIcsProperty(block, propertyName) {
+  const line = block.split(/\n/).find((item) => item.startsWith(`${propertyName};`) || item.startsWith(`${propertyName}:`));
+  return line ? line.slice(line.indexOf(":") + 1).trim() : "";
+}
+
+function formatIcsDate(value) {
+  const match = String(value || "").match(/^(\d{4})(\d{2})(\d{2})/);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : "";
+}
+
+function cleanHolidaySummary(value) {
+  return String(value || "").replace(/\\,/g, ",").replace(/\\;/g, ";").trim();
+}
+
 function normalizeRecipeUrlInput(value) {
   const trimmed = String(value || "").trim();
   const firstUrl = trimmed.match(/https?:\/\/[^\s]+/i)?.[0] || "";
   if (!firstUrl) return "";
   const duplicateStart = firstUrl.slice(8).search(/https?:\/\//i);
   return duplicateStart >= 0 ? firstUrl.slice(0, duplicateStart + 8) : firstUrl;
+}
+
+async function importGoogleDocRecipe(sourceUrl) {
+  const exportUrl = googleDocTextExportUrl(sourceUrl);
+  if (!exportUrl) return { status: 400, error: "Invalid Google Docs recipe URL." };
+
+  const fetched = await fetch(exportUrl, {
+    headers: {
+      "accept": "text/plain,*/*;q=0.8",
+      "user-agent": "Mozilla/5.0 TableplanRecipeImporter/1.0"
+    }
+  });
+
+  if (!fetched.ok) {
+    return { status: 422, error: googleDocAccessMessage() };
+  }
+
+  const text = await fetched.text();
+  if (looksLikeBlockedGoogleDoc(text)) {
+    return { status: 422, error: googleDocAccessMessage() };
+  }
+
+  const recipe = parseRecipeText(text, sourceUrl, await readGoogleDocTitle(sourceUrl));
+  if (!recipe.name || !recipe.ingredients.length) {
+    return { status: 422, error: googleDocAccessMessage() };
+  }
+
+  return { status: 200, recipe };
+}
+
+function isGoogleDocUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.hostname === "docs.google.com" && /\/document\/d\/[^/]+/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function googleDocTextExportUrl(value) {
+  const id = String(value || "").match(/\/document\/d\/([^/]+)/)?.[1];
+  return id ? `https://docs.google.com/document/d/${id}/export?format=txt` : "";
+}
+
+async function readGoogleDocTitle(sourceUrl) {
+  try {
+    const fetched = await fetch(sourceUrl, {
+      headers: {
+        "accept": "text/html,*/*;q=0.8",
+        "user-agent": "Mozilla/5.0 TableplanRecipeImporter/1.0"
+      }
+    });
+    if (!fetched.ok) return "";
+    return findTitle(await fetched.text()).replace(/\s*-\s*Google Docs\s*$/i, "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function looksLikeBlockedGoogleDoc(text) {
+  return /Google Docs/i.test(text) && /JavaScript isn't enabled in your browser|Enable and reload/i.test(text);
+}
+
+function googleDocAccessMessage() {
+  return "Google Docs could not be read directly. Share the doc as Anyone with the link can view, or copy the recipe text and paste it into Eat.";
 }
 
 async function handleState(request, response) {
@@ -110,6 +249,30 @@ async function handleState(request, response) {
   sendJson(response, 405, { error: "Method not allowed." });
 }
 
+async function handleBackup(request, response) {
+  if (request.method === "GET") {
+    sendJson(response, 200, await backupStatus());
+    return;
+  }
+
+  if (request.method !== "POST") {
+    sendJson(response, 405, { error: "Method not allowed." });
+    return;
+  }
+
+  const body = await readRequestBody(request);
+  let parsed;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    sendJson(response, 400, { error: "Invalid JSON body." });
+    return;
+  }
+
+  const backup = await writeRotatingBackup(parsed.state || parsed);
+  sendJson(response, 200, { ok: true, backup });
+}
+
 async function readStoredState() {
   try {
     const data = await fs.readFile(STATE_FILE, "utf8");
@@ -125,6 +288,91 @@ async function writeStoredState(state) {
   const tempFile = `${STATE_FILE}.tmp`;
   await fs.writeFile(tempFile, `${JSON.stringify(state, null, 2)}\n`);
   await fs.rename(tempFile, STATE_FILE);
+}
+
+async function writeRotatingBackup(state) {
+  await fs.mkdir(BACKUP_DIR, { recursive: true });
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const fileName = `eat-backup-${timestamp}.json`;
+  const filePath = path.join(BACKUP_DIR, fileName);
+  const backupPayload = {
+    app: "Eat",
+    version: 1,
+    createdAt: new Date().toISOString(),
+    state,
+    checksum: stateChecksum(state)
+  };
+  await fs.writeFile(filePath, `${JSON.stringify(backupPayload, null, 2)}\n`);
+  await pruneOldBackups();
+  return { fileName, folder: BACKUP_DIR };
+}
+
+async function backupStatus() {
+  await fs.mkdir(BACKUP_DIR, { recursive: true });
+  const backups = await backupFiles();
+  const latest = backups[0] || null;
+  return {
+    ok: true,
+    folder: BACKUP_DIR,
+    maxBackups: MAX_BACKUPS,
+    backupCount: backups.length,
+    latestBackup: latest,
+    latestValidation: latest ? await validateBackupFile(latest.filePath) : null,
+    backups: backups.map(({ filePath, ...backup }) => backup)
+  };
+}
+
+async function backupFiles() {
+  const entries = await fs.readdir(BACKUP_DIR, { withFileTypes: true });
+  const backups = await Promise.all(entries
+    .filter((entry) => entry.isFile() && /^eat-backup-.+\.json$/.test(entry.name))
+    .map(async (entry) => {
+      const filePath = path.join(BACKUP_DIR, entry.name);
+      const stat = await fs.stat(filePath);
+      return {
+        fileName: entry.name,
+        filePath,
+        size: stat.size,
+        createdAt: stat.birthtime.toISOString(),
+        modifiedAt: stat.mtime.toISOString(),
+        mtimeMs: stat.mtimeMs
+      };
+    }));
+  return backups.sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+async function validateBackupFile(filePath) {
+  try {
+    const parsed = JSON.parse(await fs.readFile(filePath, "utf8"));
+    const state = parsed.state || parsed;
+    const recipeCount = Array.isArray(state?.recipes) ? state.recipes.length : 0;
+    const folderCount = Array.isArray(state?.folders) ? state.folders.length : 0;
+    const checksumMatches = parsed.checksum ? parsed.checksum === stateChecksum(state) : null;
+    return {
+      ok: Boolean(state && Array.isArray(state.recipes)),
+      recipeCount,
+      folderCount,
+      checksumMatches
+    };
+  } catch (error) {
+    return { ok: false, error: error.message || "Backup could not be read." };
+  }
+}
+
+function stateChecksum(state) {
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(state))
+    .digest("hex");
+}
+
+async function pruneOldBackups() {
+  const backups = await backupFiles();
+  backups
+    .slice(MAX_BACKUPS)
+    .forEach((backup) => {
+      fs.unlink(backup.filePath).catch(() => {});
+    });
 }
 
 function readRequestBody(request) {
@@ -181,6 +429,8 @@ function parseRecipeHtml(html, sourceUrl) {
 
   return {
     name: textValue(recipe.name) || findTitle(html),
+    prepTime: readableDuration(textValue(recipe.prepTime)),
+    cookTime: readableDuration(textValue(recipe.cookTime)),
     time: readableDuration(textValue(recipe.totalTime || recipe.cookTime || recipe.prepTime)),
     servings: parseServings(recipe.recipeYield),
     folderId: "",
@@ -215,11 +465,15 @@ function findRecipeNode(node) {
   return null;
 }
 
-function parseRecipeText(text, sourceUrl = "") {
-  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const name = lines[0] || "";
+function parseRecipeText(text, sourceUrl = "", fallbackName = "") {
+  const lines = text.split(/\r?\n/).map((line) => line.replace(/^\uFEFF/, "").trim()).filter(Boolean);
   const ingredientsStart = lines.findIndex((line) => /^ingredients:?$/i.test(line));
-  const instructionsStart = lines.findIndex((line) => /^(instructions|directions|preparation|method):?$/i.test(line));
+  const explicitInstructionsStart = lines.findIndex((line) => /^(instructions|directions|preparation|method):?$/i.test(line));
+  const repeatedIngredientsStart = ingredientsStart >= 0
+    ? lines.findIndex((line, index) => index > ingredientsStart && /^ingredients:?$/i.test(line))
+    : -1;
+  const instructionsStart = explicitInstructionsStart >= 0 ? explicitInstructionsStart : repeatedIngredientsStart;
+  const name = fallbackName || findPlainTextRecipeName(lines, ingredientsStart) || "";
   let ingredientLines = [];
   let instructionLines = [];
 
@@ -235,6 +489,8 @@ function parseRecipeText(text, sourceUrl = "") {
   return {
     name,
     time: "",
+    prepTime: "",
+    cookTime: "",
     servings: 1,
     folderId: "",
     sourceUrl,
@@ -248,6 +504,11 @@ function instructionsToText(instructions) {
     if (typeof step === "string") return step;
     return step.text || step.name || "";
   }).filter(Boolean).join("\n");
+}
+
+function findPlainTextRecipeName(lines, ingredientsStart) {
+  const nameCandidates = ingredientsStart >= 0 ? lines.slice(0, ingredientsStart) : lines;
+  return nameCandidates.find((line) => !/^(prep|cook|total) time:/i.test(line) && !/^servings?:/i.test(line)) || lines[0] || "";
 }
 
 function parseIngredientLine(line) {
@@ -266,11 +527,17 @@ function parseIngredientLine(line) {
   const amountOptions = ["pinch", "1/8", "1/4", "1/3", "1/2", "2/3", "3/4", "1", "1 1/4", "1 1/2", "1 3/4", "2", "2 1/4", "2 1/2", "2 3/4", "3", "3 1/4", "3 1/2", "3 3/4", "4", "4 1/4", "4 1/2", "4 3/4", "5", "5 1/4", "5 1/2", "5 3/4", "6", "6 1/4", "6 1/2", "6 3/4", "7", "7 1/4", "7 1/2", "7 3/4", "8", "8 1/4", "8 1/2", "8 3/4", "9", "9 1/4", "9 1/2", "9 3/4", "10", "10 1/4", "10 1/2", "10 3/4", "11", "11 1/4", "11 1/2", "11 3/4", "12", "12 1/4", "12 1/2", "12 3/4", "13", "13 1/4", "13 1/2", "13 3/4", "14", "14 1/4", "14 1/2", "14 3/4", "15", "15 1/4", "15 1/2", "15 3/4", "16"];
   const amount = takeIngredientAmount(parts, amountOptions);
   let quantity = "";
-  const unit = parts[0]?.toLowerCase();
-  const unitMap = { cup: "C", cups: "C", tablespoon: "Tbsp", tablespoons: "Tbsp", tbsp: "Tbsp", teaspoon: "tsp", teaspoons: "tsp", tsp: "tsp", pound: "lb", pounds: "lb", lb: "lb", ounce: "oz", ounces: "oz", oz: "oz", cans: "can", can: "can", cloves: "clove", clove: "clove", slices: "slice", slice: "slice" };
-  if (unitMap[unit]) quantity = unitMap[parts.shift().toLowerCase()];
+  const rawUnit = parts[0] || "";
+  const unit = rawUnit.toLowerCase();
+  const unitMap = { c: "C", cup: "C", cups: "C", t: "tsp", tablespoon: "Tbsp", tablespoons: "Tbsp", tbsp: "Tbsp", teaspoon: "tsp", teaspoons: "tsp", tsp: "tsp", pound: "lb", pounds: "lb", lb: "lb", ounce: "oz", ounces: "oz", oz: "oz", cans: "can", can: "can", cloves: "clove", clove: "clove", slices: "slice", slice: "slice" };
+  const mappedUnit = rawUnit === "T" ? "Tbsp" : rawUnit === "t" ? "tsp" : unitMap[unit];
+  if (mappedUnit) {
+    quantity = mappedUnit;
+    parts.shift();
+  }
   const prepOptions = ["chopped", "diced", "minced", "sliced", "grated", "zested", "juiced", "peeled", "crushed", "rinsed", "drained", "cooked", "uncooked", "melted", "softened"];
-  const prep = prepOptions.includes(prepText) ? prepText : "";
+  const trailingPrep = prepOptions.includes(parts.at(-1)?.toLowerCase()) ? parts.pop().toLowerCase() : "";
+  const prep = prepOptions.includes(prepText) ? prepText : trailingPrep;
   const item = prep && prepMatch ? parts.join(" ") : [parts.join(" "), prepText && !prep ? `(${prepText})` : ""].filter(Boolean).join(" ");
   return { amount, quantity, item, prep };
 }

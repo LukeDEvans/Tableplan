@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Import to Eat</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Eat</h1>
+      <p id="accountStatus">Checking connection...</p>
+      <fieldset class="target-control" aria-label="Import target">
+        <legend>Import target</legend>
+        <div class="target-options">
+          <button class="target-option" id="targetLive" type="button" data-target="live">Live</button>
+          <button class="target-option" id="targetLocal" type="button" data-target="local">Local</button>
+        </div>
+      </fieldset>
+      <p id="status">Import recipes without opening Eat.</p>
+      <button id="connectGoogle">Connect with Google</button>
+      <button id="importCurrentPage">Import current page</button>
+      <button class="secondary" id="signOut">Sign out</button>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

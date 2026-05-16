@@ -18,6 +18,12 @@ exports.handler = async (event) => {
   }
 
   try {
+    if (isGoogleDocUrl(sourceUrl)) {
+      const googleDocResult = await importGoogleDocRecipe(sourceUrl);
+      if (googleDocResult.error) return jsonResponse(googleDocResult.status, { error: googleDocResult.error });
+      return jsonResponse(200, { recipe: googleDocResult.recipe });
+    }
+
     const fetched = await fetch(sourceUrl, {
       headers: {
         accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -30,6 +36,10 @@ exports.handler = async (event) => {
     }
 
     const html = await fetched.text();
+    if (looksLikeBlockedGoogleDoc(html)) {
+      return jsonResponse(422, { error: googleDocAccessMessage() });
+    }
+
     const recipe = parseRecipeHtml(html, sourceUrl);
     if (!recipe.name && !recipe.ingredients.length) {
       return jsonResponse(422, { error: "No recipe data found on that page." });
@@ -60,6 +70,71 @@ function normalizeRecipeUrlInput(value) {
   return duplicateStart >= 0 ? firstUrl.slice(0, duplicateStart + 8) : firstUrl;
 }
 
+async function importGoogleDocRecipe(sourceUrl) {
+  const exportUrl = googleDocTextExportUrl(sourceUrl);
+  if (!exportUrl) return { status: 400, error: "Invalid Google Docs recipe URL." };
+
+  const fetched = await fetch(exportUrl, {
+    headers: {
+      accept: "text/plain,*/*;q=0.8",
+      "user-agent": "Mozilla/5.0 TableplanRecipeImporter/1.0"
+    }
+  });
+
+  if (!fetched.ok) {
+    return { status: 422, error: googleDocAccessMessage() };
+  }
+
+  const text = await fetched.text();
+  if (looksLikeBlockedGoogleDoc(text)) {
+    return { status: 422, error: googleDocAccessMessage() };
+  }
+
+  const recipe = parseRecipeText(text, sourceUrl, await readGoogleDocTitle(sourceUrl));
+  if (!recipe.name || !recipe.ingredients.length) {
+    return { status: 422, error: googleDocAccessMessage() };
+  }
+
+  return { status: 200, recipe };
+}
+
+function isGoogleDocUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.hostname === "docs.google.com" && /\/document\/d\/[^/]+/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function googleDocTextExportUrl(value) {
+  const id = String(value || "").match(/\/document\/d\/([^/]+)/)?.[1];
+  return id ? `https://docs.google.com/document/d/${id}/export?format=txt` : "";
+}
+
+async function readGoogleDocTitle(sourceUrl) {
+  try {
+    const fetched = await fetch(sourceUrl, {
+      headers: {
+        accept: "text/html,*/*;q=0.8",
+        "user-agent": "Mozilla/5.0 TableplanRecipeImporter/1.0"
+      }
+    });
+    if (!fetched.ok) return "";
+    return findTitle(await fetched.text()).replace(/\s*-\s*Google Docs\s*$/i, "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function looksLikeBlockedGoogleDoc(text) {
+  return /Google Docs/i.test(text) && /JavaScript isn't enabled in your browser|Enable and reload/i.test(text);
+}
+
+function googleDocAccessMessage() {
+  return "Google Docs could not be read directly. Share the doc as Anyone with the link can view, or copy the recipe text and paste it into Eat.";
+}
+
 function parseRecipeHtml(html, sourceUrl) {
   const jsonRecipes = findJsonLdBlocks(html)
     .flatMap(parseJsonLd)
@@ -70,6 +145,8 @@ function parseRecipeHtml(html, sourceUrl) {
 
   return {
     name: textValue(recipe.name) || findTitle(html),
+    prepTime: readableDuration(textValue(recipe.prepTime)),
+    cookTime: readableDuration(textValue(recipe.cookTime)),
     time: readableDuration(textValue(recipe.totalTime || recipe.cookTime || recipe.prepTime)),
     servings: parseServings(recipe.recipeYield),
     folderId: "",
@@ -104,11 +181,15 @@ function findRecipeNode(node) {
   return null;
 }
 
-function parseRecipeText(text, sourceUrl = "") {
-  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const name = lines[0] || "";
+function parseRecipeText(text, sourceUrl = "", fallbackName = "") {
+  const lines = text.split(/\r?\n/).map((line) => line.replace(/^\uFEFF/, "").trim()).filter(Boolean);
   const ingredientsStart = lines.findIndex((line) => /^ingredients:?$/i.test(line));
-  const instructionsStart = lines.findIndex((line) => /^(instructions|directions|preparation|method):?$/i.test(line));
+  const explicitInstructionsStart = lines.findIndex((line) => /^(instructions|directions|preparation|method):?$/i.test(line));
+  const repeatedIngredientsStart = ingredientsStart >= 0
+    ? lines.findIndex((line, index) => index > ingredientsStart && /^ingredients:?$/i.test(line))
+    : -1;
+  const instructionsStart = explicitInstructionsStart >= 0 ? explicitInstructionsStart : repeatedIngredientsStart;
+  const name = fallbackName || findPlainTextRecipeName(lines, ingredientsStart) || "";
   let ingredientLines = [];
   let instructionLines = [];
 
@@ -124,6 +205,8 @@ function parseRecipeText(text, sourceUrl = "") {
   return {
     name,
     time: "",
+    prepTime: "",
+    cookTime: "",
     servings: 1,
     folderId: "",
     sourceUrl,
@@ -137,6 +220,11 @@ function instructionsToText(instructions) {
     if (typeof step === "string") return step;
     return step.text || step.name || "";
   }).filter(Boolean).join("\n");
+}
+
+function findPlainTextRecipeName(lines, ingredientsStart) {
+  const nameCandidates = ingredientsStart >= 0 ? lines.slice(0, ingredientsStart) : lines;
+  return nameCandidates.find((line) => !/^(prep|cook|total) time:/i.test(line) && !/^servings?:/i.test(line)) || lines[0] || "";
 }
 
 function parseIngredientLine(line) {
@@ -155,11 +243,17 @@ function parseIngredientLine(line) {
   const amountOptions = ["pinch", "1/8", "1/4", "1/3", "1/2", "2/3", "3/4", "1", "1 1/4", "1 1/2", "1 3/4", "2", "2 1/4", "2 1/2", "2 3/4", "3", "3 1/4", "3 1/2", "3 3/4", "4", "4 1/4", "4 1/2", "4 3/4", "5", "5 1/4", "5 1/2", "5 3/4", "6", "6 1/4", "6 1/2", "6 3/4", "7", "7 1/4", "7 1/2", "7 3/4", "8", "8 1/4", "8 1/2", "8 3/4", "9", "9 1/4", "9 1/2", "9 3/4", "10", "10 1/4", "10 1/2", "10 3/4", "11", "11 1/4", "11 1/2", "11 3/4", "12", "12 1/4", "12 1/2", "12 3/4", "13", "13 1/4", "13 1/2", "13 3/4", "14", "14 1/4", "14 1/2", "14 3/4", "15", "15 1/4", "15 1/2", "15 3/4", "16"];
   const amount = takeIngredientAmount(parts, amountOptions);
   let quantity = "";
-  const unit = parts[0]?.toLowerCase();
-  const unitMap = { cup: "C", cups: "C", tablespoon: "Tbsp", tablespoons: "Tbsp", tbsp: "Tbsp", teaspoon: "tsp", teaspoons: "tsp", tsp: "tsp", pound: "lb", pounds: "lb", lb: "lb", ounce: "oz", ounces: "oz", oz: "oz", cans: "can", can: "can", cloves: "clove", clove: "clove", slices: "slice", slice: "slice" };
-  if (unitMap[unit]) quantity = unitMap[parts.shift().toLowerCase()];
+  const rawUnit = parts[0] || "";
+  const unit = rawUnit.toLowerCase();
+  const unitMap = { c: "C", cup: "C", cups: "C", t: "tsp", tablespoon: "Tbsp", tablespoons: "Tbsp", tbsp: "Tbsp", teaspoon: "tsp", teaspoons: "tsp", tsp: "tsp", pound: "lb", pounds: "lb", lb: "lb", ounce: "oz", ounces: "oz", oz: "oz", cans: "can", can: "can", cloves: "clove", clove: "clove", slices: "slice", slice: "slice" };
+  const mappedUnit = rawUnit === "T" ? "Tbsp" : rawUnit === "t" ? "tsp" : unitMap[unit];
+  if (mappedUnit) {
+    quantity = mappedUnit;
+    parts.shift();
+  }
   const prepOptions = ["chopped", "diced", "minced", "sliced", "grated", "zested", "juiced", "peeled", "crushed", "rinsed", "drained", "cooked", "uncooked", "melted", "softened"];
-  const prep = prepOptions.includes(prepText) ? prepText : "";
+  const trailingPrep = prepOptions.includes(parts.at(-1)?.toLowerCase()) ? parts.pop().toLowerCase() : "";
+  const prep = prepOptions.includes(prepText) ? prepText : trailingPrep;
   const item = prep && prepMatch ? parts.join(" ") : [parts.join(" "), prepText && !prep ? `(${prepText})` : ""].filter(Boolean).join(" ");
   return { amount, quantity, item, prep };
 }

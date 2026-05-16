@@ -9,17 +9,17 @@ create policy "Signed-in users can read tableplan state"
 on public.tableplan_states
 for select
 to authenticated
-using (true);
+using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com');
 
 create policy "Signed-in users can create tableplan state"
 on public.tableplan_states
 for insert
 to authenticated
-with check (true);
+with check (lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com');
 
 create policy "Signed-in users can update tableplan state"
 on public.tableplan_states
 for update
 to authenticated
-using (true)
-with check (true);
+using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com')
+with check (lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com');

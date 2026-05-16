@@ -1,0 +1,144 @@
+# Eat Change Log
+
+This log summarizes the project history and recent safety work so the app can be continued without relying on conversation history.
+
+## 2026-05-15
+
+- Added system-aware light/dark styling using `prefers-color-scheme`.
+- Added pre-change local backups before risky actions:
+  - recipe delete
+  - folder delete
+  - permanent Trash delete
+  - restore-from-backup merge
+- Added recipe Trash:
+  - recipe delete now soft-deletes
+  - Settings -> Trash shows deleted recipes
+  - recipes can be restored
+  - recipes can be permanently deleted
+  - trashed recipes are excluded from active app behavior
+- Added Backup Health:
+  - Settings -> Backup Health checks local backup folder
+  - reports latest backup, recipe count, folder count, and checksum status
+- Added backup checksums for new JSON backups.
+- Added Restore Backup:
+  - Settings -> Restore Backup
+  - preview selected backup JSON
+  - merge missing recipes only
+- Moved local backup folder to `/Users/luke/Desktop/Eat`.
+- Created Desktop `Eat` folder and moved existing backup JSON files there.
+- Removed checkboxes from the clean recipe instruction view.
+- Added `Let's cook` in clean recipe view.
+- Added a `Cooking Now` area below the date range:
+  - adds an active cooking thumbnail for a recipe
+  - closes the recipe window after starting
+  - starts a timer from the recipe time
+  - opens a separate active recipe view when the thumbnail is clicked
+  - pins the serving count selected from clean recipe view
+  - labels active recipe instructions as Step 1, Step 2, and so on
+  - marks active recipe steps complete when the step text is clicked or tapped
+  - adds collapse/expand controls for Ingredients and Instructions
+  - allows marking a cooking recipe done
+- Added recipe Log & Notes:
+  - clean recipe view shows prior cooking dates and notes
+  - edit recipe view can add, remove, and adjust log entries
+  - active recipe view has a notes box for the current cook
+  - active cooking timers now count up from `Let's cook` until `Done cooking`
+  - finishing a cook now asks whether to add that session to Log & Notes
+  - logging a cook now shows a reminder to take a photo of the dish
+  - marking a recipe done appends a dated log entry with servings, elapsed time, and notes
+- Split recipe time into separate prep time and cook time fields in the recipe editor, recipe views, imports, and Supabase migration.
+- Added `supabase-privacy-rls-hardening.sql` to remove anonymous table grants and restrict Eat's Supabase tables to `mrlukedevans@gmail.com`.
+
+## 2026-05-10 to 2026-05-14
+
+- Added rotating local Mac backups through `server.js`.
+- Added local backup folder, initially `/Users/luke/Documents/Eat Backups`.
+- Added Supabase-backed cloud sync for recipes and folders.
+- Added Supabase migrations for recipes and folders.
+- Added Google sign-in.
+- Added Apple sign-in UI placeholder, not functional until Apple Developer account is available.
+- Added Chrome toolbar extension import flow.
+- Removed web-page injected Eat buttons from the extension.
+- Added Live/Local target toggle to the Chrome extension.
+- Improved Google Docs import through the local helper.
+- Improved recipe parsing:
+  - structured ingredients
+  - common unit cleanup
+  - quarter-step amount options
+  - `pinch`
+  - `lb` handling
+- Added Recipe Box folders.
+- Added nested folders.
+- Added drag-and-drop recipes between folders.
+- Added drag-and-drop folders into parent folders.
+- Added child-folder visibility rules:
+  - child folders hidden unless parent is selected
+  - selected child collapses back to parent
+  - child folders appear above parent recipes
+- Added folder right-click menu actions:
+  - delete folder
+  - move to top level
+- Changed Recipe Box folder sort order:
+  - Breakfast - Weekday
+  - Breakfast - Weekend
+  - Morning Snack
+  - Lunch - Weekday
+  - Lunch - Weekend
+  - Afternoon Snack
+  - Dinner - Main
+  - Dinner - Side
+  - all other folders alphabetically
+  - Unfiled last
+- Changed app title to `Eat`.
+- Added settings menu in the bottom-right corner.
+- Moved Auto Rules out of the main interface and into Settings.
+- Redesigned Auto Rules as a meal-plan-like grid.
+- Added hover-clear buttons to Auto Rules slots.
+- Added Meal Plan day-level collapse controls.
+- Added day-level clear and auto-generate buttons.
+- Added main Meal Plan auto-generate button.
+- Added Meal Plan slots:
+  - Breakfast
+  - Morning Snack
+  - Lunch
+  - Afternoon Snack
+  - Dinner
+  - Extras
+- Added named meal slots:
+  - Marijane Breakfast
+  - Luke Breakfast
+  - Sophia Breakfast
+  - Marijane Lunch
+  - Luke Lunch
+  - Sophia Lunch
+  - Main dish
+  - Side dish
+  - Sophia Dinner
+  - Marijane/Luke snack slots
+- Added custom meal entries such as `n/a` and `leftovers`.
+- Added clickable recipe links in Meal Plan.
+- Added drag-and-drop ordering for multiple recipes in one meal.
+- Removed repeat/clear buttons inside individual meals.
+- Removed visible selected-recipe `x` buttons, then added hover-reveal delete buttons.
+- Added Groceries manual add item bar.
+- Added grocery and ingredient suggestions.
+- Added editable Grocery Items under Settings.
+- Reintroduced recipe tags under Settings and in the recipe editor.
+- Added built-in `protected` recipe tag.
+- Removed folder protection; recipes tagged `protected` are excluded from auto-generate.
+- Added U.S. Holidays calendar badges in Meal Plan.
+- Changed recipe instructions into separated step rows.
+- Added structured Nutrition Facts rows to recipes.
+- Added Pantry section.
+- Removed Recipe photo storage from UI for now, while keeping the code flexible for future image support.
+- Added responsive stacked sections.
+- Added section collapse/expand behavior where opening one section closes the others.
+
+## Notes For Future Work
+
+- Review Supabase RLS policies before treating the live app as fully private.
+- Add soft delete for folders if folder deletion becomes risky.
+- Consider a full replace restore mode only after merge restore has been tested several times.
+- If images return later, decide on Supabase Storage, external URLs, or iCloud migration before adding large photo uploads.
+- If moving toward iCloud later, preserve plain object structures for recipes/folders/rules to make migration easier.
+- Consider a settings screen for choosing which holiday calendars appear in Meal Plan.

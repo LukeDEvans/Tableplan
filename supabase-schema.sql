@@ -6,21 +6,33 @@ create table if not exists public.tableplan_states (
 
 alter table public.tableplan_states enable row level security;
 
-create policy "Allow anon read tableplan state"
+create policy "Only Luke can read tableplan state"
 on public.tableplan_states
 for select
-to anon
-using (true);
+to authenticated
+using (
+  id = 'personal'
+  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com'
+);
 
-create policy "Allow anon create tableplan state"
+create policy "Only Luke can create tableplan state"
 on public.tableplan_states
 for insert
-to anon
-with check (true);
+to authenticated
+with check (
+  id = 'personal'
+  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com'
+);
 
-create policy "Allow anon update tableplan state"
+create policy "Only Luke can update tableplan state"
 on public.tableplan_states
 for update
-to anon
-using (true)
-with check (true);
+to authenticated
+using (
+  id = 'personal'
+  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com'
+)
+with check (
+  id = 'personal'
+  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com'
+);
