@@ -3,12 +3,13 @@ const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
+const { scanRecipeFromImages } = require("./recipe-scan");
 
 const PORT = Number(process.env.PORT || 4174);
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, "data");
 const STATE_FILE = path.join(DATA_DIR, "tableplan-state.json");
-const BACKUP_DIR = process.env.EAT_BACKUP_DIR || path.join(os.homedir(), "Desktop", "Eat");
+const BACKUP_DIR = process.env.EAT_BACKUP_DIR || path.join(os.homedir(), "Desktop", "Eat", "Backups");
 const MAX_BACKUPS = Number(process.env.EAT_MAX_BACKUPS || 5);
 const US_HOLIDAYS_ICS_URL = "https://calendar.google.com/calendar/ical/en.usa%23holiday%40group.v.calendar.google.com/public/basic.ics";
 const MIME_TYPES = {
@@ -24,6 +25,10 @@ const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, `http://${request.headers.host}`);
     if (url.pathname === "/api/import-recipe") {
       await handleRecipeImport(url, response);
+      return;
+    }
+    if (url.pathname === "/api/scan-recipe") {
+      await handleRecipeScan(request, response);
       return;
     }
     if (url.pathname === "/api/holidays") {
@@ -104,6 +109,27 @@ async function handleRecipeImport(url, response) {
   }
 
   sendJson(response, 200, { recipe });
+}
+
+async function handleRecipeScan(request, response) {
+  if (request.method !== "POST") {
+    sendJson(response, 405, { error: "Method not allowed." });
+    return;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(await readRequestBody(request));
+  } catch {
+    sendJson(response, 400, { error: "Invalid JSON body." });
+    return;
+  }
+
+  try {
+    const recipe = await scanRecipeFromImages(parsed.images || []);
+    sendJson(response, 200, { recipe });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "Recipe scan failed." });
+  }
 }
 
 async function handleHolidays(response) {

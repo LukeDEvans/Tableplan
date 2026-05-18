@@ -1,18 +1,33 @@
 const STORAGE_KEY = "tableplan-state-v1";
 const HOLIDAY_CACHE_KEY = "eat-us-holidays-v1";
 const HOLIDAY_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
-const meals = ["Breakfast", "Lunch", "Dinner", "Morning Snack", "Afternoon Snack", "Extras"];
+const breakfastMeals = ["MJ Breakfast", "Luke Breakfast", "Sophia Breakfast"];
+const lunchMeals = ["MJ Lunch", "Luke Lunch", "Sophia Lunch"];
+const dinnerMeals = ["MJ Dinner", "Luke Dinner", "Sophia Dinner"];
+const combinedMealSections = {
+  "Combined Breakfast": { label: "Breakfast", members: ["MJ Breakfast", "Luke Breakfast"] },
+  "Combined Lunch": { label: "Lunch", members: ["MJ Lunch", "Luke Lunch"] },
+  "Combined Dinner": { label: "Dinner", members: ["MJ Dinner", "Luke Dinner"] }
+};
+const mealColumnConfigs = [
+  { label: "Breakfast", meals: breakfastMeals, combinedMeal: "Combined Breakfast" },
+  { label: "Lunch", meals: lunchMeals, combinedMeal: "Combined Lunch" },
+  { label: "Dinner", meals: dinnerMeals, combinedMeal: "Combined Dinner" },
+  { label: "Extras", meals: ["Extras"], combinedMeal: "" }
+];
+const meals = [...breakfastMeals, ...lunchMeals, ...dinnerMeals, "Extras"];
+const autoRuleMealKeys = [...meals, ...Object.keys(combinedMealSections)];
 const fullDayMeals = meals;
-const snackMeals = ["Morning Snack", "Afternoon Snack", "Extras"];
 const amountOptions = ["", "pinch", "1/8", "1/4", "1/3", "1/2", "2/3", "3/4", "1", "1 1/4", "1 1/2", "1 3/4", "2", "2 1/4", "2 1/2", "2 3/4", "3", "3 1/4", "3 1/2", "3 3/4", "4", "4 1/4", "4 1/2", "4 3/4", "5", "5 1/4", "5 1/2", "5 3/4", "6", "6 1/4", "6 1/2", "6 3/4", "7", "7 1/4", "7 1/2", "7 3/4", "8", "8 1/4", "8 1/2", "8 3/4", "9", "9 1/4", "9 1/2", "9 3/4", "10", "10 1/4", "10 1/2", "10 3/4", "11", "11 1/4", "11 1/2", "11 3/4", "12", "12 1/4", "12 1/2", "12 3/4", "13", "13 1/4", "13 1/2", "13 3/4", "14", "14 1/4", "14 1/2", "14 3/4", "15", "15 1/4", "15 1/2", "15 3/4", "16"];
 const quantityOptions = ["", "to taste", "tsp", "Tbsp", "C", "pt", "qt", "gal", "oz", "lb", "g", "kg", "ml", "L", "can", "jar", "clove", "slice", "bunch", "package"];
 const prepOptions = ["", "chopped", "diced", "minced", "sliced", "grated", "zested", "juiced", "peeled", "crushed", "rinsed", "drained", "cooked", "uncooked", "melted", "softened"];
-const mealPlanCustomOptions = ["n/a", "leftovers"];
+const mealPlanCustomOptions = ["n/a", "out", "leftovers"];
+const groceryMealPrefix = "grocery-item::";
+const specialMealPrefix = "special-meal::";
+const autoRuleBlankSlotValue = "__blank_auto_rule_slot__";
 const defaultMealEntries = [
-  { meal: "Breakfast", index: 1, value: "Tofu Scramble" },
-  { meal: "Morning Snack", index: 1, value: "Luke Smoothie" },
-  { meal: "Lunch", index: 1, value: "Peanut Butter & Jelly with Veggies & Hummus" },
-  { meal: "Afternoon Snack", index: 1, value: "Trail Mix" }
+  { meal: "Luke Breakfast", index: 0, value: "Tofu Scramble" },
+  { meal: "Luke Lunch", index: 0, value: "Peanut Butter & Jelly with Veggies & Hummus" }
 ];
 const preferredFolderOrder = [
   "Breakfast - Weekday",
@@ -25,8 +40,8 @@ const preferredFolderOrder = [
   "Dinner - Side"
 ];
 const daySpecificDefaultMealEntries = [
-  { dayId: "wednesday", meal: "Dinner", index: 0, value: "leftovers" },
-  { dayId: "wednesday", meal: "Dinner", index: 1, value: "leftovers" }
+  { dayId: "wednesday", meal: "MJ Dinner", index: 0, value: "leftovers" },
+  { dayId: "wednesday", meal: "Luke Dinner", index: 0, value: "leftovers" }
 ];
 const weekdayDefaultDayIds = new Set(["monday", "tuesday", "wednesday", "thursday"]);
 const protectedTagName = "protected";
@@ -39,14 +54,14 @@ const commonGroceryItems = [
   "sweet potatoes", "tomatoes", "tortillas", "turkey", "yellow onions", "yogurt", "zucchini"
 ];
 const prepDays = [
-  { id: "friday-start", name: "Friday", offset: 0, meals: [...snackMeals, "Dinner"] },
+  { id: "friday-start", name: "Friday", offset: 0, meals: [...dinnerMeals, "Extras"] },
   { id: "saturday", name: "Saturday", offset: 1, meals: fullDayMeals },
   { id: "sunday", name: "Sunday", offset: 2, meals: fullDayMeals },
   { id: "monday", name: "Monday", offset: 3, meals: fullDayMeals },
   { id: "tuesday", name: "Tuesday", offset: 4, meals: fullDayMeals },
   { id: "wednesday", name: "Wednesday", offset: 5, meals: fullDayMeals },
   { id: "thursday", name: "Thursday", offset: 6, meals: fullDayMeals },
-  { id: "friday-finish", name: "Friday", offset: 7, meals: ["Breakfast", "Morning Snack", "Lunch", "Afternoon Snack", "Extras"] }
+  { id: "friday-finish", name: "Friday", offset: 7, meals: [...breakfastMeals, ...lunchMeals, "Extras"] }
 ];
 const weekdayBreakfastDayIds = new Set(["monday", "tuesday", "wednesday", "thursday", "friday-finish"]);
 
@@ -99,6 +114,8 @@ let supabaseClient = null;
 let authSession = null;
 let activeFolder = "";
 let currentWeek = startOfPrepWindow(new Date());
+let activePlannerDayId = plannerDayIdForDate(new Date());
+let activeAutoRuleDayId = activePlannerDayId;
 let folderClickTimer = null;
 let mealEntryClickTimer = null;
 let editingMealEntry = null;
@@ -106,17 +123,31 @@ let suppressMealEntryClick = false;
 let editingFolderId = "";
 let folderMenuId = "";
 let draggedMealEntry = null;
+let mealSwipeGesture = null;
+let autoRuleSwipeGesture = null;
+let mealPointerDeleteGesture = null;
+let lastMealDragPoint = null;
+let pendingMealRecipeSelection = null;
+let pendingMealIngredientSelection = null;
+let pendingAutoRuleRecipeSelection = null;
+let pendingAutoRuleIngredientSelection = null;
+let draggedAutoRuleEntry = null;
+let autoRulePointerDrag = null;
+let suppressAutoRuleClick = false;
+let draggedMealSection = null;
 let draggedRecipeId = "";
 let draggedFolderId = "";
 let folderDragOpenTimer = null;
 let folderDragOpenTarget = "";
 let dragOpenFolderId = "";
 let pendingGroceryReview = null;
+let pendingGroceryReviewItems = [];
 let holidayEvents = loadCachedHolidayEvents();
 let activeCookingInterval = null;
 
 const elements = {
   weekLabel: document.querySelector("#weekLabel"),
+  weekJumpMenu: document.querySelector("#weekJumpMenu"),
   previousWeek: document.querySelector("#previousWeek"),
   nextWeek: document.querySelector("#nextWeek"),
   authStatus: document.querySelector("#authStatus"),
@@ -129,6 +160,9 @@ const elements = {
   appleSignInBtn: document.querySelector("#appleSignInBtn"),
   closeAuthBtn: document.querySelector("#closeAuthBtn"),
   cancelAuthBtn: document.querySelector("#cancelAuthBtn"),
+  pageTitle: document.querySelector("#pageTitle"),
+  appMenuBtn: document.querySelector("#appMenuBtn"),
+  appMenu: document.querySelector("#appMenu"),
   recipeSearch: document.querySelector("#recipeSearch"),
   folderForm: document.querySelector("#folderForm"),
   folderInput: document.querySelector("#folderInput"),
@@ -138,7 +172,14 @@ const elements = {
   activeCookingSection: document.querySelector("#activeCookingSection"),
   activeCookingList: document.querySelector("#activeCookingList"),
   plannerGrid: document.querySelector("#plannerGrid"),
-  autoGenerateMealPlanBtn: document.querySelector("#autoGenerateMealPlanBtn"),
+  mealTrashOverlay: document.querySelector("#mealTrashOverlay"),
+  mealTrashTarget: document.querySelector("#mealTrashTarget"),
+  openRecipeBoxPageBtn: document.querySelector("#openRecipeBoxPageBtn"),
+  openGroceriesPageBtn: document.querySelector("#openGroceriesPageBtn"),
+  recipeBoxPageDialog: document.querySelector("#recipeBoxPageDialog"),
+  groceriesPageDialog: document.querySelector("#groceriesPageDialog"),
+  closeRecipeBoxPageBtn: document.querySelector("#closeRecipeBoxPageBtn"),
+  closeGroceriesPageBtn: document.querySelector("#closeGroceriesPageBtn"),
   settingsBtn: document.querySelector("#settingsBtn"),
   settingsMenu: document.querySelector("#settingsMenu"),
   openAutoRulesBtn: document.querySelector("#openAutoRulesBtn"),
@@ -148,6 +189,7 @@ const elements = {
   openRestoreBackupBtn: document.querySelector("#openRestoreBackupBtn"),
   openTrashBtn: document.querySelector("#openTrashBtn"),
   autoRulesDialog: document.querySelector("#autoRulesDialog"),
+  autoRuleTrashTarget: document.querySelector("#autoRuleTrashTarget"),
   autoRuleList: document.querySelector("#autoRuleList"),
   autoRuleOptions: document.querySelector("#autoRuleOptions"),
   groceryLibraryDialog: document.querySelector("#groceryLibraryDialog"),
@@ -161,6 +203,7 @@ const elements = {
   groceryReviewDialog: document.querySelector("#groceryReviewDialog"),
   groceryReviewItem: document.querySelector("#groceryReviewItem"),
   groceryReviewContext: document.querySelector("#groceryReviewContext"),
+  groceryReviewList: document.querySelector("#groceryReviewList"),
   closeGroceryReviewBtn: document.querySelector("#closeGroceryReviewBtn"),
   dismissGroceryReviewBtn: document.querySelector("#dismissGroceryReviewBtn"),
   goToGroceryReviewRecipeBtn: document.querySelector("#goToGroceryReviewRecipeBtn"),
@@ -210,6 +253,7 @@ const elements = {
   recipeCookLogList: document.querySelector("#recipeCookLogList"),
   addCookLogBtn: document.querySelector("#addCookLogBtn"),
   importRecipeBtn: document.querySelector("#importRecipeBtn"),
+  scanRecipeBtn: document.querySelector("#scanRecipeBtn"),
   importDialog: document.querySelector("#importDialog"),
   closeImportBtn: document.querySelector("#closeImportBtn"),
   cancelImportBtn: document.querySelector("#cancelImportBtn"),
@@ -218,6 +262,12 @@ const elements = {
   importStatus: document.querySelector("#importStatus"),
   fetchRecipeBtn: document.querySelector("#fetchRecipeBtn"),
   usePastedRecipeBtn: document.querySelector("#usePastedRecipeBtn"),
+  scanDialog: document.querySelector("#scanDialog"),
+  scanImages: document.querySelector("#scanImages"),
+  scanStatus: document.querySelector("#scanStatus"),
+  closeScanBtn: document.querySelector("#closeScanBtn"),
+  cancelScanBtn: document.querySelector("#cancelScanBtn"),
+  scanImagesBtn: document.querySelector("#scanImagesBtn"),
   deleteRecipeBtn: document.querySelector("#deleteRecipeBtn"),
   closeRecipeViewBtn: document.querySelector("#closeRecipeViewBtn"),
   closeRecipeBtn: document.querySelector("#closeRecipeBtn"),
@@ -244,8 +294,7 @@ const elements = {
   trashDialog: document.querySelector("#trashDialog"),
   trashList: document.querySelector("#trashList"),
   closeTrashBtn: document.querySelector("#closeTrashBtn"),
-  doneTrashBtn: document.querySelector("#doneTrashBtn"),
-  collapseButtons: document.querySelectorAll("[data-collapse]")
+  doneTrashBtn: document.querySelector("#doneTrashBtn")
 };
 
 let pendingRestore = null;
@@ -259,20 +308,39 @@ initializeApp();
 function bindEvents() {
   elements.previousWeek.addEventListener("click", () => moveWeek(-7));
   elements.nextWeek.addEventListener("click", () => moveWeek(7));
+  elements.weekLabel.addEventListener("click", toggleWeekJumpMenu);
+  elements.weekJumpMenu.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const button = event.target.closest("[data-week-jump]");
+    if (button) jumpToWeek(button.dataset.weekJump);
+  });
+  elements.weekJumpMenu.addEventListener("wheel", (event) => event.stopPropagation(), { passive: true });
   elements.authButton.addEventListener("click", toggleAuth);
   elements.authForm.addEventListener("submit", sendSignInLink);
   elements.googleSignInBtn.addEventListener("click", signInWithGoogle);
   elements.appleSignInBtn.addEventListener("click", signInWithApple);
   elements.closeAuthBtn.addEventListener("click", () => elements.authDialog.close());
   elements.cancelAuthBtn.addEventListener("click", () => elements.authDialog.close());
+  elements.appMenuBtn.addEventListener("click", toggleAppMenu);
+  elements.appMenu.addEventListener("click", (event) => event.stopPropagation());
   elements.recipeSearch.addEventListener("input", renderRecipes);
   elements.folderForm.addEventListener("submit", addRecipeFolder);
   elements.addFolderBtn.addEventListener("click", addRecipeFolder);
   elements.folderInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") addRecipeFolder(event);
   });
+  elements.openRecipeBoxPageBtn.addEventListener("click", openRecipeBoxPage);
+  elements.openGroceriesPageBtn.addEventListener("click", openGroceriesPage);
+  elements.closeRecipeBoxPageBtn.addEventListener("click", () => closeRecipeBoxPage());
+  elements.closeGroceriesPageBtn.addEventListener("click", () => elements.groceriesPageDialog.close());
+  elements.recipeBoxPageDialog.addEventListener("close", () => {
+    pendingMealRecipeSelection = null;
+    pendingAutoRuleRecipeSelection = null;
+    setPageTitle("Meal Plan");
+  });
+  elements.groceriesPageDialog.addEventListener("close", () => setPageTitle("Meal Plan"));
   elements.newRecipeBtn.addEventListener("click", () => {
-    setSectionCollapsed("recipes", false);
+    openRecipeBoxPage();
     openRecipeDialog();
   });
   elements.recipeForm.addEventListener("submit", saveRecipeFromForm);
@@ -284,7 +352,22 @@ function bindEvents() {
     elements.recipeDialog.close();
     openImportDialog();
   });
-  elements.autoGenerateMealPlanBtn.addEventListener("click", autoGenerateMealPlan);
+  elements.scanRecipeBtn.addEventListener("click", () => {
+    elements.recipeDialog.close();
+    openScanDialog();
+  });
+  elements.mealTrashOverlay.addEventListener("dragover", handleMealTrashOverlayDragOver);
+  elements.mealTrashOverlay.addEventListener("drop", handleMealTrashOverlayDrop);
+  elements.mealTrashTarget.addEventListener("dragover", handleMealTrashDragOver);
+  elements.mealTrashTarget.addEventListener("dragleave", handleMealTrashDragLeave);
+  elements.mealTrashTarget.addEventListener("drop", handleMealTrashDrop);
+  elements.autoRuleTrashTarget.addEventListener("dragover", handleMealTrashDragOver);
+  elements.autoRuleTrashTarget.addEventListener("dragleave", handleMealTrashDragLeave);
+  elements.autoRuleTrashTarget.addEventListener("drop", handleMealTrashDrop);
+  document.addEventListener("dragover", handleDocumentMealDragOver, true);
+  document.addEventListener("drop", handleDocumentMealDrop, true);
+  document.addEventListener("mousemove", handleDocumentAutoRuleMouseMove);
+  document.addEventListener("mouseup", handleDocumentAutoRuleMouseUp);
   elements.settingsBtn.addEventListener("click", toggleSettingsMenu);
   elements.openAutoRulesBtn.addEventListener("click", openAutoRulesDialog);
   elements.openTagsBtn.addEventListener("click", openTagsDialog);
@@ -300,6 +383,10 @@ function bindEvents() {
   elements.closeGroceryLibraryBtn.addEventListener("click", () => elements.groceryLibraryDialog.close());
   elements.cancelGroceryLibraryBtn.addEventListener("click", () => elements.groceryLibraryDialog.close());
   elements.saveGroceryLibraryBtn.addEventListener("click", () => elements.groceryLibraryDialog.close());
+  elements.groceryLibraryDialog.addEventListener("close", () => {
+    pendingMealIngredientSelection = null;
+    pendingAutoRuleIngredientSelection = null;
+  });
   elements.resetGroceryLibraryBtn.addEventListener("click", resetGroceryLibrary);
   elements.groceryLibraryForm.addEventListener("submit", addGroceryLibraryItem);
   elements.closeGroceryReviewBtn.addEventListener("click", dismissCurrentGroceryReview);
@@ -325,16 +412,16 @@ function bindEvents() {
   elements.cancelImportBtn.addEventListener("click", () => elements.importDialog.close());
   elements.fetchRecipeBtn.addEventListener("click", importRecipeFromUrl);
   elements.usePastedRecipeBtn.addEventListener("click", importRecipeFromText);
+  elements.closeScanBtn.addEventListener("click", () => elements.scanDialog.close());
+  elements.cancelScanBtn.addEventListener("click", () => elements.scanDialog.close());
+  elements.scanImagesBtn.addEventListener("click", scanRecipeFromImages);
   elements.deleteRecipeBtn.addEventListener("click", deleteRecipeFromForm);
   elements.closeRecipeViewBtn.addEventListener("click", () => elements.recipeViewDialog.close());
   elements.copyGroceriesBtn.addEventListener("click", () => copyText(buildGroceryText(), elements.copyGroceriesBtn, "Copied"));
   elements.groceryForm.addEventListener("submit", addManualGroceryItem);
   elements.closeRecipeBtn.addEventListener("click", () => elements.recipeDialog.close());
   elements.cancelRecipeBtn.addEventListener("click", () => elements.recipeDialog.close());
-  elements.pantryForm.addEventListener("submit", addPantryItem);
-  elements.collapseButtons.forEach((button) => {
-    button.addEventListener("click", () => toggleSection(button.dataset.collapse));
-  });
+  elements.pantryForm?.addEventListener("submit", addPantryItem);
   document.querySelectorAll("dialog").forEach((dialog) => {
     dialog.addEventListener("click", closeDialogOnBackdropClick);
   });
@@ -343,7 +430,7 @@ function bindEvents() {
     if (event.key === "Escape") closeFloatingMenus();
   });
   window.addEventListener("resize", closeFloatingMenus);
-  window.addEventListener("scroll", closeFloatingMenus, true);
+  window.addEventListener("scroll", closeFloatingMenusOnPageScroll, true);
 }
 
 function closeDialogOnBackdropClick(event) {
@@ -354,6 +441,7 @@ async function initializeApp() {
   await initializeSupabaseAuth();
   await hydrateStateFromSharedStorage();
   await hydrateRecipeRowsFromSupabase();
+  applyInitialMealPlanFocus();
   handleImportUrlParameter();
   loadHolidayEvents();
 }
@@ -515,6 +603,7 @@ function defaultState() {
     trashedRecipes: [],
     folders: seedFolders(),
     plans: {},
+    publishedWeeks: {},
     pantry: ["olive oil", "salt", "pepper"],
     checkedGroceries: {},
     recipeTags: defaultRecipeTags(),
@@ -528,11 +617,12 @@ function defaultState() {
 }
 
 function normalizeState(parsed) {
-  return {
+  const normalized = {
     recipes: Array.isArray(parsed?.recipes) ? parsed.recipes.map(normalizeRecipe) : seedRecipes.map(normalizeRecipe),
     trashedRecipes: Array.isArray(parsed?.trashedRecipes) ? parsed.trashedRecipes.map(normalizeTrashedRecipe) : [],
     folders: Array.isArray(parsed?.folders) ? parsed.folders : seedFolders(),
     plans: parsed?.plans || {},
+    publishedWeeks: normalizePublishedWeeks(parsed?.publishedWeeks),
     pantry: Array.isArray(parsed?.pantry) ? parsed.pantry : [],
     checkedGroceries: parsed?.checkedGroceries || {},
     recipeTags: normalizeRecipeTags(parsed?.recipeTags),
@@ -543,6 +633,51 @@ function normalizeState(parsed) {
     collapsedSections: parsed?.collapsedSections || defaultCollapsedSections(),
     collapsedDays: parsed?.collapsedDays || {}
   };
+  syncPublishedWeekArchiveFromPlans(normalized);
+  return normalized;
+}
+
+function normalizePublishedWeeks(value) {
+  const entries = Array.isArray(value)
+    ? value.map((entry) => [entry?.weekKey || entry?.startDate, entry])
+    : Object.entries(value || {});
+  return Object.fromEntries(entries
+    .filter(([key, entry]) => key && entry)
+    .map(([key, entry]) => {
+      const weekKeyValue = entry.weekKey || key;
+      return [weekKeyValue, {
+        weekKey: weekKeyValue,
+        startDate: entry.startDate || weekKeyValue,
+        endDate: entry.endDate || dateKeyFromDate(addDays(dateFromWeekKey(weekKeyValue), 7)),
+        rangeLabel: entry.rangeLabel || formatWeekRange(dateFromWeekKey(weekKeyValue)),
+        publishedAt: entry.publishedAt || "",
+        slots: entry.slots || entry.publishedSlots || {},
+        combinedMealSections: entry.combinedMealSections || entry.publishedCombinedMealSections || {},
+        manualGroceries: Array.isArray(entry.manualGroceries) ? entry.manualGroceries : [],
+        notes: entry.notes || ""
+      }];
+    }));
+}
+
+function syncPublishedWeekArchiveFromPlans(targetState = state) {
+  if (!targetState.publishedWeeks || Array.isArray(targetState.publishedWeeks)) {
+    targetState.publishedWeeks = normalizePublishedWeeks(targetState.publishedWeeks);
+  }
+  Object.entries(targetState.plans || {}).forEach(([key, week]) => {
+    if (!week?.publishedSlots || targetState.publishedWeeks[key]) return;
+    const start = dateFromWeekKey(key);
+    targetState.publishedWeeks[key] = {
+      weekKey: key,
+      startDate: key,
+      endDate: dateKeyFromDate(addDays(start, 7)),
+      rangeLabel: formatWeekRange(start),
+      publishedAt: "",
+      slots: cloneMealSlots(week.publishedSlots),
+      combinedMealSections: cloneCombinedMealSections(week.publishedCombinedMealSections || week.combinedMealSections),
+      manualGroceries: Array.isArray(week.manualGroceries) ? [...week.manualGroceries] : [],
+      notes: week.notes || ""
+    };
+  });
 }
 
 function normalizeActiveCooking(items) {
@@ -1072,7 +1207,7 @@ function createId(prefix = "id") {
 function defaultCollapsedSections() {
   return {
     recipes: true,
-    mealPrep: true,
+    mealPrep: false,
     groceries: true,
     pantry: true,
   };
@@ -1080,16 +1215,14 @@ function defaultCollapsedSections() {
 
 function defaultAutoGenerateRules() {
   return [
-    autoRule("mj-weekday-breakfast", ["monday", "tuesday", "wednesday", "thursday", "friday-finish"], "Breakfast", 0, "folderSame", "Breakfast - Weekday"),
-    autoRule("luke-breakfast", ["monday", "tuesday", "wednesday", "thursday"], "Breakfast", 1, "custom", "", "Tofu Scramble"),
-    autoRule("luke-morning-snack", ["monday", "tuesday", "wednesday", "thursday"], "Morning Snack", 1, "custom", "", "Luke Smoothie"),
-    autoRule("luke-lunch", ["monday", "tuesday", "wednesday", "thursday"], "Lunch", 1, "custom", "", "Peanut Butter & Jelly with Veggies & Hummus"),
-    autoRule("luke-afternoon-snack", ["monday", "tuesday", "wednesday", "thursday"], "Afternoon Snack", 1, "custom", "", "Trail Mix"),
-    autoRule("wednesday-dinner-main", ["wednesday"], "Dinner", 0, "custom", "", "leftovers"),
-    autoRule("wednesday-dinner-side", ["wednesday"], "Dinner", 1, "custom", "", "leftovers"),
-    autoRule("sophia-breakfast", prepDays.map((day) => day.id), "Breakfast", 2, "skip"),
-    autoRule("sophia-lunch", prepDays.map((day) => day.id), "Lunch", 2, "skip"),
-    autoRule("sophia-dinner", prepDays.map((day) => day.id), "Dinner", 2, "skip"),
+    autoRule("mj-weekday-breakfast", ["monday", "tuesday", "wednesday", "thursday", "friday-finish"], "MJ Breakfast", 0, "folderSame", "Breakfast - Weekday"),
+    autoRule("luke-breakfast", ["monday", "tuesday", "wednesday", "thursday"], "Luke Breakfast", 0, "custom", "", "Tofu Scramble"),
+    autoRule("luke-lunch", ["monday", "tuesday", "wednesday", "thursday"], "Luke Lunch", 0, "custom", "", "Peanut Butter & Jelly with Veggies & Hummus"),
+    autoRule("wednesday-dinner-main", ["wednesday"], "MJ Dinner", 0, "custom", "", "leftovers"),
+    autoRule("wednesday-dinner-side", ["wednesday"], "Luke Dinner", 0, "custom", "", "leftovers"),
+    autoRule("sophia-breakfast", prepDays.map((day) => day.id), "Sophia Breakfast", 0, "skip"),
+    autoRule("sophia-lunch", prepDays.map((day) => day.id), "Sophia Lunch", 0, "skip"),
+    autoRule("sophia-dinner", prepDays.map((day) => day.id), "Sophia Dinner", 0, "skip"),
     autoRule("extras", prepDays.map((day) => day.id), "Extras", 0, "skip")
   ];
 }
@@ -1108,15 +1241,36 @@ function autoRule(id, dayIds, meal, index, action = "any", folderName = "", valu
 
 function normalizeAutoGenerateRules(rules) {
   const source = Array.isArray(rules) && rules.length ? rules : defaultAutoGenerateRules();
-  return source.map((rule) => ({
+  return source
+    .map((rule) => normalizeAutoGenerateRule(rule))
+    .filter(Boolean);
+}
+
+function normalizeAutoGenerateRule(rule) {
+  const migrated = migrateLegacyAutoRuleTarget(rule);
+  if (!migrated) return null;
+  return {
     id: rule.id || createId("rule"),
     dayIds: Array.isArray(rule.dayIds) && rule.dayIds.length ? rule.dayIds.filter((dayId) => prepDays.some((day) => day.id === dayId)) : prepDays.map((day) => day.id),
-    meal: meals.includes(rule.meal) ? rule.meal : "Breakfast",
-    index: Number.isInteger(rule.index) ? rule.index : 0,
+    meal: autoRuleMealKeys.includes(migrated.meal) ? migrated.meal : "MJ Breakfast",
+    index: Number.isInteger(migrated.index) ? migrated.index : 0,
     action: ["any", "folder", "folderSame", "custom", "skip"].includes(rule.action) ? rule.action : "any",
     folderName: rule.folderName || "",
     value: rule.value || ""
-  }));
+  };
+}
+
+function migrateLegacyAutoRuleTarget(rule) {
+  if (autoRuleMealKeys.includes(rule.meal)) return { meal: rule.meal, index: Number.isInteger(rule.index) ? rule.index : 0 };
+  const index = Number.isInteger(rule.index) ? rule.index : 0;
+  const legacyTargets = {
+    Breakfast: breakfastMeals,
+    Lunch: lunchMeals,
+    Dinner: dinnerMeals
+  };
+  if (legacyTargets[rule.meal]?.[index]) return { meal: legacyTargets[rule.meal][index], index: 0 };
+  if (rule.meal === "Extras") return { meal: "Extras", index: 0 };
+  return null;
 }
 
 function seedFolders() {
@@ -1155,6 +1309,8 @@ function folderName(folderId) {
 function render() {
   const week = weekState();
   elements.weekLabel.textContent = formatWeekRange(currentWeek);
+  elements.weekLabel.setAttribute("aria-label", `Choose week. Current week is ${formatWeekRange(currentWeek)}`);
+  renderWeekJumpMenu();
   renderActiveCooking();
   renderFolders();
   renderRecipes();
@@ -1163,6 +1319,145 @@ function render() {
   renderGroceries();
   renderPantry();
   renderCollapsedSections();
+}
+
+function openRecipeBoxPage() {
+  closeFloatingMenus();
+  setPageTitle(pendingMealRecipeSelection
+    ? `Choose ${pendingMealRecipeSelection.meal}`
+    : pendingAutoRuleRecipeSelection
+      ? `Choose ${displayMealName(pendingAutoRuleRecipeSelection.meal)} rule`
+      : "Recipe Box");
+  if (!elements.recipeBoxPageDialog.open) elements.recipeBoxPageDialog.showModal();
+}
+
+function closeRecipeBoxPage() {
+  pendingMealRecipeSelection = null;
+  pendingAutoRuleRecipeSelection = null;
+  elements.recipeBoxPageDialog.close();
+}
+
+function openGroceriesPage() {
+  closeFloatingMenus();
+  setPageTitle("Groceries");
+  renderGroceries();
+  if (!elements.groceriesPageDialog.open) elements.groceriesPageDialog.showModal();
+}
+
+function renderWeekJumpMenu() {
+  if (!elements.weekJumpMenu) return;
+  const weeks = weekTimelineOptions();
+  elements.weekJumpMenu.innerHTML = `
+    <div class="week-jump-panel">
+      <div class="week-jump-list">
+        ${weeks.map(weekJumpButtonTemplate).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function weekJumpButtonTemplate(week) {
+  const key = week.weekKey || week.startDate;
+  const isCurrent = key === weekKey();
+  const holidayLabel = holidaysForWeek(dateFromWeekKey(key));
+  const subtext = [isCurrent ? "Current" : "", holidayLabel].filter(Boolean).join(" · ");
+  return `
+    <button class="week-jump-option ${isCurrent ? "is-current" : ""}" type="button" data-week-jump="${escapeHtml(key)}" ${isCurrent ? "data-current-week" : ""}>
+      <span>${escapeHtml(week.rangeLabel || formatWeekRange(dateFromWeekKey(key)))}</span>
+      ${subtext ? `<small>${escapeHtml(subtext)}</small>` : ""}
+    </button>
+  `;
+}
+
+function weekTimelineOptions() {
+  const currentKey = weekKey();
+  const currentDate = dateFromWeekKey(currentKey);
+  const pastPublished = publishedWeekArchiveEntries()
+    .filter((week) => String(week.weekKey) < currentKey)
+    .sort((a, b) => String(a.weekKey).localeCompare(String(b.weekKey)))
+    .map((week) => ({ ...week }));
+  const current = {
+    weekKey: currentKey,
+    startDate: currentKey,
+    endDate: dateKeyFromDate(addDays(currentDate, 7)),
+    rangeLabel: formatWeekRange(currentDate)
+  };
+  const future = Array.from({ length: 52 }, (_item, index) => {
+    const date = addDays(currentDate, (index + 1) * 7);
+    const key = dateKeyFromDate(date);
+    return {
+      weekKey: key,
+      startDate: key,
+      endDate: dateKeyFromDate(addDays(date, 7)),
+      rangeLabel: formatWeekRange(date)
+    };
+  });
+  return [...pastPublished, current, ...future];
+}
+
+function futureWeekOptions() {
+  const start = startOfPrepWindow(new Date());
+  return Array.from({ length: 53 }, (_item, index) => {
+    const date = addDays(start, index * 7);
+    const key = dateKeyFromDate(date);
+    return {
+      weekKey: key,
+      startDate: key,
+      endDate: dateKeyFromDate(addDays(date, 7)),
+      rangeLabel: formatWeekRange(date)
+    };
+  });
+}
+
+function publishedWeekArchiveEntries() {
+  return Object.values(state.publishedWeeks || {})
+    .filter((week) => week?.weekKey)
+    .sort((a, b) => String(b.weekKey).localeCompare(String(a.weekKey)));
+}
+
+function toggleWeekJumpMenu(event) {
+  event.stopPropagation();
+  const willOpen = elements.weekJumpMenu.hidden;
+  closeFloatingMenus();
+  elements.weekJumpMenu.hidden = !willOpen;
+  elements.weekLabel.setAttribute("aria-expanded", String(willOpen));
+  if (willOpen) {
+    renderWeekJumpMenu();
+    window.requestAnimationFrame(scrollCurrentWeekIntoView);
+  }
+}
+
+function scrollCurrentWeekIntoView() {
+  const currentButton = elements.weekJumpMenu.querySelector("[data-current-week]");
+  if (!currentButton) return;
+  currentButton.scrollIntoView({ block: "center" });
+}
+
+function closeWeekJumpMenu() {
+  if (!elements.weekJumpMenu) return;
+  elements.weekJumpMenu.hidden = true;
+  elements.weekLabel.setAttribute("aria-expanded", "false");
+}
+
+function jumpToWeek(key) {
+  if (!key) return;
+  const nextWeek = dateFromWeekKey(key);
+  if (Number.isNaN(nextWeek.getTime())) return;
+  currentWeek = startOfPrepWindow(nextWeek);
+  activePlannerDayId = plannerDayIdForDate(new Date());
+  closeWeekJumpMenu();
+  render();
+}
+
+function applyInitialMealPlanFocus() {
+  if (!state.collapsedSections) state.collapsedSections = defaultCollapsedSections();
+  Object.keys(defaultCollapsedSections()).forEach((sectionId) => {
+    state.collapsedSections[sectionId] = sectionId !== "mealPrep";
+  });
+  activePlannerDayId = plannerDayIdForDate(new Date());
+  persist();
+  renderCollapsedSections();
+  renderPlanner();
 }
 
 function renderActiveCooking() {
@@ -1396,6 +1691,13 @@ function renderFolders() {
     button.addEventListener("drop", (event) => handleFolderDrop(event, button));
   });
 
+  elements.folderList.querySelectorAll("[data-folder-row]").forEach((row) => {
+    row.addEventListener("contextmenu", (event) => openFolderMenu(event, row.dataset.folderRow));
+    row.addEventListener("mousedown", (event) => {
+      if (event.button === 2) openFolderMenu(event, row.dataset.folderRow);
+    });
+  });
+
   elements.folderList.querySelectorAll("[data-folder-drag]").forEach((button) => {
     button.addEventListener("dragstart", handleFolderDragStart);
     button.addEventListener("dragend", clearFolderDragState);
@@ -1419,7 +1721,17 @@ function renderFolders() {
   }
 
   elements.folderList.querySelectorAll(".recipe-card").forEach((card) => {
-    card.addEventListener("click", () => openRecipeView(card.dataset.id));
+    card.addEventListener("click", () => {
+      if (pendingMealRecipeSelection) {
+        chooseRecipeForPendingMeal(card.dataset.id);
+        return;
+      }
+      if (pendingAutoRuleRecipeSelection) {
+        chooseRecipeForPendingAutoRule(card.dataset.id);
+        return;
+      }
+      openRecipeView(card.dataset.id);
+    });
     card.addEventListener("contextmenu", (event) => openRecipeMenu(event, card.dataset.id));
     card.addEventListener("mousedown", (event) => {
       if (event.button === 2) openRecipeMenu(event, card.dataset.id);
@@ -1526,7 +1838,7 @@ function folderButtonTemplate(id, name, count, recipes = [], depth = 0, includeR
     `;
   }
   return `
-    <div class="folder-row" style="--folder-depth: ${depth}">
+    <div class="folder-row" style="--folder-depth: ${depth}" data-folder-row="${escapeHtml(id)}">
       <button class="folder-btn ${isActive ? "active" : ""}" data-folder="${escapeHtml(id)}" ${id === "unfiled" ? "" : "data-folder-drag draggable=\"true\""} aria-pressed="${isActive}">
         <span>${escapeHtml(name)}</span>
         <strong>${count}</strong>
@@ -1585,16 +1897,19 @@ function openFolderMenu(event, folderId) {
   menu.style.top = `${Math.max(10, y)}px`;
 
   menu.querySelector("[data-rename-folder]").addEventListener("click", (clickEvent) => {
+    clickEvent.preventDefault();
     clickEvent.stopPropagation();
     startFolderRename(folder.id);
   });
   menu.querySelector("[data-move-folder-top]")?.addEventListener("click", (clickEvent) => {
+    clickEvent.preventDefault();
     clickEvent.stopPropagation();
     moveFolderToParent(folder.id, "");
   });
   menu.querySelector("[data-delete-folder]").addEventListener("click", (clickEvent) => {
+    clickEvent.preventDefault();
     clickEvent.stopPropagation();
-    deleteFolder(folder.id, folder.name);
+    void deleteFolder(folder.id, folder.name);
   });
 }
 
@@ -1637,9 +1952,122 @@ function openRecipeMenu(event, recipeId) {
   });
 }
 
+function openMealEntryMenu(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeFolderMenu();
+
+  const entry = event.currentTarget;
+  const day = entry.dataset.day;
+  const meal = entry.dataset.meal;
+  const index = Number(entry.dataset.index);
+  if (!day || !meal || Number.isNaN(index)) return;
+
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu meal-entry-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-remove-meal-entry-menu data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
+      Remove entry
+    </button>
+  `;
+
+  document.body.append(menu);
+  const sourceRect = event.currentTarget?.getBoundingClientRect?.();
+  const rawX = event.clientX || sourceRect?.right || 10;
+  const rawY = event.clientY || sourceRect?.bottom || 10;
+  const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+
+  const removeButton = menu.querySelector("[data-remove-meal-entry-menu]");
+  let didRemove = false;
+  const removeFromMenu = (removeEvent) => {
+    removeEvent.preventDefault();
+    removeEvent.stopPropagation();
+    if (didRemove) return;
+    didRemove = true;
+    suppressMealEntryClick = true;
+    const target = removeEvent.currentTarget;
+    closeFolderMenu();
+    removeMealEntry(target.dataset.day, target.dataset.meal, Number(target.dataset.index));
+    window.setTimeout(() => {
+      suppressMealEntryClick = false;
+    }, 120);
+  };
+  removeButton.addEventListener("pointerdown", removeFromMenu);
+  removeButton.addEventListener("mousedown", removeFromMenu);
+  removeButton.addEventListener("click", removeFromMenu);
+}
+
+function openAutoRuleEntryMenu(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeFolderMenu();
+
+  const entry = event.currentTarget;
+  const day = entry.dataset.day;
+  const meal = entry.dataset.meal;
+  const index = Number(entry.dataset.index);
+  if (!day || !meal || Number.isNaN(index)) return;
+  const rule = autoGenerateRuleForSlot({ id: day }, meal, index);
+  if (!autoRuleInputValue(rule)) return;
+
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu meal-entry-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-remove-auto-rule-menu data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
+      Remove
+    </button>
+  `;
+
+  elements.autoRulesDialog.append(menu);
+  const sourceRect = event.currentTarget?.getBoundingClientRect?.();
+  const rawX = event.clientX || sourceRect?.right || 10;
+  const rawY = event.clientY || sourceRect?.bottom || 10;
+  const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+
+  const removeButton = menu.querySelector("[data-remove-auto-rule-menu]");
+  let didRemove = false;
+  const removeFromMenu = (removeEvent) => {
+    removeEvent.preventDefault();
+    removeEvent.stopPropagation();
+    if (didRemove) return;
+    didRemove = true;
+    closeFolderMenu();
+    removeAutoRuleSlot(removeButton.dataset.day, removeButton.dataset.meal, Number(removeButton.dataset.index));
+  };
+  removeButton.addEventListener("pointerdown", removeFromMenu);
+  removeButton.addEventListener("mousedown", removeFromMenu);
+  removeButton.addEventListener("click", removeFromMenu);
+}
+
 function closeFolderMenu() {
   document.querySelector(".folder-context-menu")?.remove();
   folderMenuId = "";
+}
+
+function setPageTitle(title) {
+  elements.pageTitle.textContent = title;
+}
+
+function toggleAppMenu(event) {
+  event.stopPropagation();
+  const willOpen = elements.appMenu.hidden;
+  closeFolderMenu();
+  closeSettingsMenu();
+  elements.appMenu.hidden = !willOpen;
+  elements.appMenuBtn.setAttribute("aria-expanded", String(willOpen));
+}
+
+function closeAppMenu() {
+  elements.appMenu.hidden = true;
+  elements.appMenuBtn.setAttribute("aria-expanded", "false");
 }
 
 function toggleSettingsMenu(event) {
@@ -1658,11 +2086,19 @@ function closeSettingsMenu() {
 function closeFloatingMenus() {
   closeFolderMenu();
   closeSettingsMenu();
+  closeAppMenu();
+  closeWeekJumpMenu();
+}
+
+function closeFloatingMenusOnPageScroll(event) {
+  if (elements.weekJumpMenu?.contains(event.target)) return;
+  closeFloatingMenus();
 }
 
 function openAutoRulesDialog(event) {
   event?.stopPropagation();
   closeSettingsMenu();
+  activeAutoRuleDayId = activePlannerDayId;
   renderAutoRules();
   elements.autoRulesDialog.showModal();
 }
@@ -1722,6 +2158,8 @@ function removeRecipeTag(tag) {
 
 function openGroceryLibraryDialog(event) {
   event?.stopPropagation();
+  pendingMealIngredientSelection = null;
+  pendingAutoRuleIngredientSelection = null;
   closeSettingsMenu();
   renderGroceryLibrary();
   elements.groceryLibraryInput.value = "";
@@ -1735,8 +2173,13 @@ function renderGroceryLibrary() {
     return;
   }
 
+  const isPickingGrocery = pendingMealIngredientSelection || pendingAutoRuleIngredientSelection;
   elements.groceryLibraryList.innerHTML = items
-    .map((item) => `
+    .map((item) => isPickingGrocery ? `
+      <button class="grocery-library-item grocery-library-pick" type="button" data-pick-grocery-library="${escapeHtml(item)}">
+        ${escapeHtml(item)}
+      </button>
+    ` : `
       <span class="grocery-library-item">
         ${escapeHtml(item)}
         <button type="button" data-remove-grocery-library="${escapeHtml(item)}" aria-label="Remove ${escapeHtml(item)}">×</button>
@@ -1744,6 +2187,15 @@ function renderGroceryLibrary() {
     `)
     .join("");
 
+  elements.groceryLibraryList.querySelectorAll("[data-pick-grocery-library]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (pendingAutoRuleIngredientSelection) {
+        chooseIngredientForPendingAutoRule(button.dataset.pickGroceryLibrary);
+        return;
+      }
+      chooseIngredientForPendingMeal(button.dataset.pickGroceryLibrary);
+    });
+  });
   elements.groceryLibraryList.querySelectorAll("[data-remove-grocery-library]").forEach((button) => {
     button.addEventListener("click", () => removeGroceryLibraryItem(button.dataset.removeGroceryLibrary));
   });
@@ -1758,6 +2210,11 @@ function addGroceryLibraryItem(event) {
   elements.groceryLibraryInput.value = "";
   persist();
   refreshGroceryLibraryViews();
+  if (pendingAutoRuleIngredientSelection) {
+    chooseIngredientForPendingAutoRule(item);
+    return;
+  }
+  if (pendingMealIngredientSelection) chooseIngredientForPendingMeal(item);
 }
 
 function removeGroceryLibraryItem(item) {
@@ -2052,18 +2509,7 @@ function clearFolderDragState() {
 }
 
 function renderCollapsedSections() {
-  document.querySelectorAll(".collapsible-section").forEach((section) => {
-    const sectionId = section.dataset.section;
-    const isCollapsed = Boolean(state.collapsedSections?.[sectionId]);
-    const button = section.querySelector(`[data-collapse="${sectionId}"]`);
-    section.classList.toggle("is-collapsed", isCollapsed);
-    if (button) {
-      const label = `${isCollapsed ? "Expand" : "Collapse"} ${sectionLabel(sectionId)}`;
-      button.setAttribute("aria-expanded", String(!isCollapsed));
-      button.setAttribute("aria-label", label);
-      button.setAttribute("title", label);
-    }
-  });
+  // Sections no longer collapse in the main UI; retained for older saved state calls.
 }
 
 function toggleSection(sectionId) {
@@ -2075,7 +2521,7 @@ function setSectionCollapsed(sectionId, isCollapsed) {
   if (isCollapsed) {
     state.collapsedSections[sectionId] = true;
   } else {
-    if (sectionId === "mealPrep") collapseAllPlannerDays();
+    if (sectionId === "mealPrep") ensureActivePlannerDay();
     Object.keys(defaultCollapsedSections()).forEach((id) => {
       state.collapsedSections[id] = id !== sectionId;
     });
@@ -2086,10 +2532,7 @@ function setSectionCollapsed(sectionId, isCollapsed) {
 }
 
 function collapseAllPlannerDays() {
-  if (!state.collapsedDays) state.collapsedDays = {};
-  prepDays.forEach((day) => {
-    state.collapsedDays[day.id] = true;
-  });
+  activePlannerDayId = prepDays[0].id;
 }
 
 function sectionLabel(sectionId) {
@@ -2229,53 +2672,59 @@ function isAncestorFolder(folderId, descendantId) {
 
 function renderPlanner() {
   const week = weekState();
-  elements.plannerGrid.innerHTML = prepDays
-    .map((day) => {
-      const date = addDays(currentWeek, day.offset);
-      const isCollapsed = Boolean(state.collapsedDays?.[day.id]);
-      const holidays = holidaysForDate(date);
-      return `
-        <section class="day-column ${isCollapsed ? "day-collapsed" : ""}">
-          <div class="day-head">
-            <button class="day-toggle" type="button" data-day-toggle="${day.id}" title="${isCollapsed ? "Expand" : "Collapse"} ${day.name}" aria-label="${isCollapsed ? "Expand" : "Collapse"} ${day.name}" aria-expanded="${!isCollapsed}">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-            </button>
-            <div class="day-title">
-              <strong>${day.name.slice(0, 3)}</strong>
-              <span>${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
-              ${holidays.map((holiday) => `<em class="holiday-badge">${escapeHtml(holiday.summary)}</em>`).join("")}
-              ${day.marker ? `<em>${day.marker}</em>` : ""}
-            </div>
-            <button class="day-generate-btn" type="button" data-day-generate="${day.id}" title="Auto-generate ${day.name}" aria-label="Auto-generate ${day.name}">
-              <svg class="fast-forward-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M5 6.5 12.5 12 5 17.5Z" />
-                <path d="M12 6.5 19.5 12 12 17.5Z" />
-              </svg>
-            </button>
-            <button class="day-clear-btn" type="button" data-day-clear="${day.id}" title="Clear ${day.name}" aria-label="Clear ${day.name}">
-              Clear
-            </button>
+  const activeDay = ensureActivePlannerDay();
+  const isPublished = isPublishedMealPlanView(week);
+  const visibleSlots = mealSlotsForWeek(week);
+  const combinedState = combinedMealSectionsForWeek(week);
+
+  elements.plannerGrid.innerHTML = `
+    <div class="day-tabs" role="tablist" aria-label="Meal plan days">
+      ${prepDays.map((day) => {
+        const date = addDays(currentWeek, day.offset);
+        const isActive = day.id === activeDay.id;
+        const holidays = holidaysForDate(date);
+        const tabLabel = `${day.name} ${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+        const longDateLabel = date.toLocaleDateString(undefined, { month: "long", day: "numeric" });
+        const shortDateLabel = date.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
+        return `
+          <button class="day-tab ${isActive ? "is-active" : ""}" type="button" role="tab" id="tab-${day.id}" data-day-tab="${day.id}" aria-selected="${isActive ? "true" : "false"}" aria-controls="panel-${day.id}" title="${escapeHtml(tabLabel)}">
+            <span class="day-tab-day day-tab-full">${escapeHtml(day.name)}</span>
+            <span class="day-tab-day day-tab-short">${escapeHtml(day.name.slice(0, 3))}</span>
+            <span class="day-tab-day day-tab-compact">${escapeHtml(compactDayLabel(day))}</span>
+            <strong class="day-tab-date day-tab-date-long">${escapeHtml(longDateLabel)}</strong>
+            <strong class="day-tab-date day-tab-date-short">${escapeHtml(shortDateLabel)}</strong>
+            ${holidays.length ? `<em>${holidays.length}</em>` : ""}
+          </button>
+        `;
+      }).join("")}
+    </div>
+    <section class="day-column planner-day-panel" role="tabpanel" id="panel-${activeDay.id}" aria-labelledby="tab-${activeDay.id}">
+      <div class="day-slots-carousel" aria-label="${escapeHtml(activeDay.name)} meals">
+        ${mealColumnConfigs.map((column) => `
+          <div class="meal-plan-column">
+            ${columnMealsForDay(activeDay, column, combinedState).map((meal) => (
+              meal
+                ? slotTemplate(activeDay, meal, visibleSlots?.[activeDay.id]?.[meal] || "", {
+                  readOnly: isPublished,
+                  displayMeal: displayMealName(meal),
+                  combined: isCombinedMealKey(meal)
+                })
+                : emptyMealSlotTemplate()
+            )).join("")}
           </div>
-          ${meals.map((meal) => (
-            day.meals.includes(meal)
-              ? slotTemplate(day, meal, week.slots?.[day.id]?.[meal] || "")
-              : emptyMealSlotTemplate()
-          )).join("")}
-        </section>
-      `;
-    })
-    .join("");
+        `).join("")}
+      </div>
+      <div class="meal-plan-publish-row">
+        <span class="meal-plan-view-label">${isPublished ? "Published view" : "Edit view"}</span>
+        <button class="${isPublished ? "secondary-btn" : "primary-btn"}" type="button" data-toggle-meal-plan-view>
+          ${isPublished ? "Edit" : "Publish"}
+        </button>
+      </div>
+    </section>
+  `;
 
-  elements.plannerGrid.querySelectorAll("[data-day-toggle]").forEach((button) => {
-    button.addEventListener("click", () => toggleDay(button.dataset.dayToggle));
-  });
-
-  elements.plannerGrid.querySelectorAll("[data-day-clear]").forEach((button) => {
-    button.addEventListener("click", () => clearPlannerDay(button.dataset.dayClear));
-  });
-
-  elements.plannerGrid.querySelectorAll("[data-day-generate]").forEach((button) => {
-    button.addEventListener("click", () => autoGeneratePlannerDay(button.dataset.dayGenerate));
+  elements.plannerGrid.querySelectorAll("[data-day-tab]").forEach((button) => {
+    button.addEventListener("click", () => selectPlannerDay(button.dataset.dayTab));
   });
 
   elements.plannerGrid.querySelectorAll("[data-meal-input]").forEach((input) => {
@@ -2302,8 +2751,37 @@ function renderPlanner() {
     button.addEventListener("click", () => addMealEntry(button.dataset.day, button.dataset.meal));
   });
 
+  elements.plannerGrid.querySelectorAll("[data-pick-meal-entry]").forEach((button) => {
+    button.addEventListener("click", () => openMealRecipePicker(button.dataset.day, button.dataset.meal, Number(button.dataset.index)));
+  });
+
+  elements.plannerGrid.querySelectorAll("[data-pick-ingredient-entry]").forEach((button) => {
+    button.addEventListener("click", () => openMealIngredientPicker(button.dataset.day, button.dataset.meal, Number(button.dataset.index)));
+  });
+
+  elements.plannerGrid.querySelectorAll("[data-special-meal-choice]").forEach((button) => {
+    button.addEventListener("click", () => setSpecialMealEntry(button.dataset.day, button.dataset.meal, Number(button.dataset.index), button.dataset.specialMealChoice));
+  });
+
+  elements.plannerGrid.querySelectorAll("[data-special-meal-note]").forEach((input) => {
+    input.addEventListener("change", () => updateSpecialMealNote(input));
+    input.addEventListener("blur", () => updateSpecialMealNote(input));
+  });
+
+  elements.plannerGrid.querySelectorAll("[data-generate-meal-section]").forEach((button) => {
+    button.addEventListener("click", () => autoGenerateMealSection(button.dataset.day, button.dataset.meal));
+  });
+
+  elements.plannerGrid.querySelectorAll("[data-clear-meal-section]").forEach((button) => {
+    button.addEventListener("click", () => clearMealSection(button.dataset.day, button.dataset.meal));
+  });
+
   elements.plannerGrid.querySelectorAll("[data-remove-meal-entry]").forEach((button) => {
-    button.addEventListener("click", () => removeMealEntry(button.dataset.day, button.dataset.meal, Number(button.dataset.index)));
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      removeMealEntry(button.dataset.day, button.dataset.meal, Number(button.dataset.index));
+    });
   });
 
   elements.plannerGrid.querySelectorAll("[data-view-recipe]").forEach((button) => {
@@ -2312,23 +2790,50 @@ function renderPlanner() {
       if (event.detail > 1) return;
       window.clearTimeout(mealEntryClickTimer);
       mealEntryClickTimer = window.setTimeout(() => {
-        if (!suppressMealEntryClick) openRecipeView(button.dataset.viewRecipe);
+        if (!suppressMealEntryClick) {
+          const mealContext = button.dataset.day
+            ? { day: button.dataset.day, meal: button.dataset.meal, index: Number(button.dataset.index) }
+            : null;
+          openRecipeView(button.dataset.viewRecipe, mealContext);
+        }
       }, 300);
     });
   });
 
+  elements.plannerGrid.querySelectorAll("[data-toggle-meal-plan-view]").forEach((button) => {
+    button.addEventListener("click", toggleMealPlanView);
+  });
+
   elements.plannerGrid.querySelectorAll("[data-meal-entry][draggable='true']").forEach((entry) => {
     entry.addEventListener("dragstart", handleMealEntryDragStart);
+    entry.addEventListener("drag", handleMealEntryDrag);
     entry.addEventListener("dragover", handleMealEntryDragOver);
     entry.addEventListener("dragleave", () => entry.classList.remove("drag-over"));
     entry.addEventListener("drop", handleMealEntryDrop);
-    entry.addEventListener("dragend", clearMealEntryDragState);
+    entry.addEventListener("dragend", handleMealEntryDragEnd);
+    entry.addEventListener("contextmenu", openMealEntryMenu);
+    entry.addEventListener("mousedown", handleMealEntryMouseDown);
+    entry.addEventListener("pointerdown", handleMealEntryPointerDown);
+    entry.addEventListener("pointermove", handleMealEntryPointerMove);
+    entry.addEventListener("pointerup", handleMealEntryPointerEnd);
+    entry.addEventListener("pointercancel", handleMealEntryPointerEnd);
   });
 
   elements.plannerGrid.querySelectorAll("[data-meal-slot]").forEach((slot) => {
     slot.addEventListener("dragover", handleMealSlotDragOver);
     slot.addEventListener("dragleave", () => slot.classList.remove("drag-over"));
     slot.addEventListener("drop", handleMealSlotDrop);
+  });
+
+  elements.plannerGrid.querySelectorAll("[data-meal-section-drag]").forEach((handle) => {
+    handle.addEventListener("dragstart", handleMealSectionDragStart);
+    handle.addEventListener("dragend", clearMealSectionDragState);
+  });
+
+  elements.plannerGrid.querySelectorAll("[data-meal-section-target]").forEach((slot) => {
+    slot.addEventListener("dragover", handleMealSectionDragOver);
+    slot.addEventListener("dragleave", () => slot.classList.remove("section-drag-over"));
+    slot.addEventListener("drop", handleMealSectionDrop);
   });
 
 }
@@ -2371,6 +2876,18 @@ function holidaysForDate(date) {
   return holidayEvents.filter((event) => event.date === key);
 }
 
+function holidaysForWeek(start) {
+  if (Number.isNaN(start.getTime())) return "";
+  const holidayNames = [];
+  prepDays.forEach((day) => {
+    holidaysForDate(addDays(start, day.offset)).forEach((event) => {
+      const summary = event.summary || "";
+      if (summary && !holidayNames.includes(summary)) holidayNames.push(summary);
+    });
+  });
+  return holidayNames.join(", ");
+}
+
 function localDateKey(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -2382,9 +2899,30 @@ function renderAutoRules() {
   state.autoGenerateRules = normalizeAutoGenerateRules(state.autoGenerateRules);
   if (!elements.autoRuleList) return;
   renderAutoRuleOptions();
-  elements.autoRuleList.innerHTML = prepDays
-    .map((day) => autoRuleDayTemplate(day))
-    .join("");
+  const activeDay = ensureActiveAutoRuleDay();
+  const combinedState = combinedMealSectionsForWeek(weekState());
+  elements.autoRuleList.innerHTML = `
+    <div class="day-tabs auto-rule-tabs" role="tablist" aria-label="Auto rule days">
+      ${prepDays.map((day) => autoRuleDayTabTemplate(day, activeDay)).join("")}
+    </div>
+    <section class="day-column planner-day-panel auto-rule-day-panel" role="tabpanel" id="auto-rule-panel-${activeDay.id}" aria-labelledby="auto-rule-tab-${activeDay.id}">
+      <div class="day-slots-carousel" aria-label="${escapeHtml(activeDay.name)} auto rules">
+        ${mealColumnConfigs.map((column) => `
+          <div class="meal-plan-column">
+            ${autoRuleColumnMealsForDay(activeDay, column, combinedState).map((meal) => (
+              meal
+                ? autoRuleSlotTemplate(activeDay, meal, displayMealName(meal))
+                : emptyMealSlotTemplate()
+            )).join("")}
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `;
+
+  elements.autoRuleList.querySelectorAll("[data-auto-rule-day-tab]").forEach((button) => {
+    button.addEventListener("click", () => selectAutoRuleDay(button.dataset.autoRuleDayTab));
+  });
 
   elements.autoRuleList.querySelectorAll("[data-auto-rule-input]").forEach((input) => {
     input.addEventListener("change", () => commitAutoRuleInput(input));
@@ -2399,6 +2937,54 @@ function renderAutoRules() {
 
   elements.autoRuleList.querySelectorAll("[data-clear-auto-rule]").forEach((button) => {
     button.addEventListener("click", () => clearAutoRule(button.dataset.day, button.dataset.meal, Number(button.dataset.index)));
+  });
+
+  elements.autoRuleList.querySelectorAll("[data-pick-auto-rule-recipe]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (suppressAutoRuleClick) return;
+      openAutoRuleRecipePicker(button.dataset.day, button.dataset.meal, Number(button.dataset.index));
+    });
+  });
+
+  elements.autoRuleList.querySelectorAll("[data-pick-auto-rule-ingredient]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (suppressAutoRuleClick) return;
+      openAutoRuleIngredientPicker(button.dataset.day, button.dataset.meal, Number(button.dataset.index));
+    });
+  });
+
+  elements.autoRuleList.querySelectorAll("[data-skip-auto-rule]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (suppressAutoRuleClick) return;
+      setAutoRuleFromValue(button.dataset.day, button.dataset.meal, Number(button.dataset.index), "Do not fill");
+    });
+  });
+
+  elements.autoRuleList.querySelectorAll("[data-add-auto-rule]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (suppressAutoRuleClick) return;
+      addAutoRuleSlot(button.dataset.day, button.dataset.meal);
+    });
+  });
+
+  elements.autoRuleList.querySelectorAll("[data-auto-rule-entry][draggable='true']").forEach((entry) => {
+    entry.addEventListener("dragstart", handleAutoRuleDragStart);
+    entry.addEventListener("drag", handleAutoRuleDrag);
+    entry.addEventListener("dragend", handleAutoRuleDragEnd);
+    entry.addEventListener("pointerdown", handleAutoRulePointerDown);
+    entry.addEventListener("pointermove", handleAutoRulePointerMove);
+    entry.addEventListener("pointerup", handleAutoRulePointerEnd);
+    entry.addEventListener("pointercancel", handleAutoRulePointerEnd);
+    entry.addEventListener("mousedown", handleAutoRuleMouseDown);
+    entry.addEventListener("contextmenu", openAutoRuleEntryMenu);
+  });
+
+  elements.autoRuleList.querySelectorAll("[data-remove-auto-rule]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      removeAutoRuleSlot(button.dataset.day, button.dataset.meal, Number(button.dataset.index));
+    });
   });
 }
 
@@ -2415,50 +3001,98 @@ function renderAutoRuleOptions() {
   ].join("");
 }
 
-function autoRuleDayTemplate(day) {
-  const date = addDays(currentWeek, day.offset);
+function autoRuleDayTabTemplate(day, activeDay) {
+  const isActive = day.id === activeDay.id;
   return `
-    <section class="day-column auto-rule-day">
-      <div class="day-head">
-        <div class="day-title">
-          <strong>${day.name.slice(0, 3)}</strong>
-          <span>${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
-        </div>
-      </div>
-      ${meals.map((meal) => (
-        day.meals.includes(meal)
-          ? autoRuleSlotTemplate(day, meal)
-          : emptyMealSlotTemplate()
-      )).join("")}
-    </section>
+    <button class="day-tab auto-rule-day-tab ${isActive ? "is-active" : ""}" type="button" role="tab" id="auto-rule-tab-${day.id}" data-auto-rule-day-tab="${day.id}" aria-selected="${isActive ? "true" : "false"}" aria-controls="auto-rule-panel-${day.id}" title="${escapeHtml(day.name)}">
+      <span class="day-tab-day day-tab-full">${escapeHtml(day.name)}</span>
+      <span class="day-tab-day day-tab-short">${escapeHtml(day.name.slice(0, 3))}</span>
+      <span class="day-tab-day day-tab-compact">${escapeHtml(compactDayLabel(day))}</span>
+    </button>
   `;
 }
 
-function autoRuleSlotTemplate(day, meal) {
-  const entries = Array.from({ length: minimumMealEntryCount(meal) }, (_item, index) => index);
+function autoRuleColumnMealsForDay(day, column, combinedState) {
+  const visibleMeals = columnMealsForDay(day, column, combinedState);
+  if (!column.combinedMeal) return visibleMeals;
+  const group = combinedMealSections[column.combinedMeal];
+  const hasMembers = group.members.some((meal) => day.meals.includes(meal));
+  if (!hasMembers || visibleMeals.includes(column.combinedMeal)) return visibleMeals;
+  return [column.combinedMeal, ...visibleMeals];
+}
+
+function autoRuleSlotTemplate(day, meal, displayMeal = meal) {
+  const entries = Array.from({ length: autoRuleEntryCount(day.id, meal) }, (_item, index) => index);
+  const hasOpenEntry = entries.some((index) => !autoRuleInputValue(autoGenerateRuleForSlot(day, meal, index)));
   return `
     <div class="slot-card auto-rule-slot meal-${mealToken(meal)}">
       <div class="slot-topline">
-        <div class="slot-label">${meal}</div>
+        <div class="slot-label">${escapeHtml(displayMeal)}</div>
+        <div class="slot-actions">
+          <button class="slot-generate-btn auto-rule-skip-btn" type="button" data-skip-auto-rule data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="0" title="Do not fill" aria-label="Do not fill ${escapeHtml(displayMeal)}">–</button>
+          <button class="slot-add-btn auto-rule-add-btn" type="button" data-add-auto-rule data-day="${day.id}" data-meal="${escapeHtml(meal)}" title="${hasOpenEntry ? "Fill the open slot before adding another rule" : "Add another rule slot"}" aria-label="Add another ${escapeHtml(displayMeal)} rule slot" ${hasOpenEntry ? "disabled" : ""}>+</button>
+        </div>
       </div>
       <div class="meal-entry-list">
-        ${entries.map((index) => autoRuleInputTemplate(day, meal, index)).join("")}
+        ${entries.map((index) => autoRuleInputTemplate(day, meal, index, displayMeal)).join("")}
       </div>
     </div>
   `;
 }
 
-function autoRuleInputTemplate(day, meal, index) {
+function ensureActiveAutoRuleDay() {
+  const activeDay = prepDays.find((day) => day.id === activeAutoRuleDayId) || prepDays[0];
+  activeAutoRuleDayId = activeDay.id;
+  return activeDay;
+}
+
+function selectAutoRuleDay(dayId) {
+  if (!prepDays.some((day) => day.id === dayId)) return;
+  activeAutoRuleDayId = dayId;
+  renderAutoRules();
+}
+
+function autoRuleInputTemplate(day, meal, index, displayMeal = meal) {
   const rule = autoGenerateRuleForSlot(day, meal, index);
-  const hasRule = Boolean(rule);
+  const placeholder = index === 0 ? displayMeal : mealEntryPlaceholder(meal, index);
+  const value = autoRuleInputValue(rule);
+  const hasRule = Boolean(value);
+  const label = value || "recipe box";
+  const isEmpty = !value;
+  const entryLabel = escapeHtml(label);
+  if (hasRule) {
+    return `
+      <div class="meal-entry auto-rule-entry has-rule" data-auto-rule-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" draggable="true">
+        <button class="recipe-meal-link custom-meal-link auto-rule-selected" type="button" data-pick-auto-rule-recipe data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Click to change. Right-click to remove.">
+          ${entryLabel}
+        </button>
+        <button class="meal-swipe-delete" type="button" data-remove-auto-rule data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" aria-label="Delete ${entryLabel}">Delete</button>
+      </div>
+    `;
+  }
   return `
-    <div class="meal-entry auto-rule-entry ${hasRule ? "has-rule" : ""}">
-      ${hasRule ? `
-        <button class="meal-entry-remove auto-rule-clear" type="button" data-clear-auto-rule data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Clear auto rule" aria-label="Clear ${escapeHtml(mealEntryPlaceholder(meal, index))} auto rule">×</button>
-      ` : ""}
-      <input class="meal-search auto-rule-input" list="autoRuleOptions" data-auto-rule-input data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" value="${escapeHtml(autoRuleInputValue(rule))}" placeholder="${escapeHtml(mealEntryPlaceholder(meal, index))}" />
+    <div class="meal-entry auto-rule-entry ${isEmpty ? "auto-rule-entry-empty" : ""}" data-auto-rule-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" draggable="true">
+      <div class="meal-pick-group auto-rule-pick-group auto-rule-empty-group">
+        <button class="meal-pick-slot auto-rule-pick-slot" type="button" data-pick-auto-rule-recipe data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Choose ${escapeHtml(placeholder)} rule">
+          ${entryLabel}
+        </button>
+        <button class="meal-special-choice meal-ingredient-choice" type="button" data-pick-auto-rule-ingredient data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Choose ingredient" aria-label="Choose ingredient for ${escapeHtml(placeholder)} rule">
+          ${broccoliIconTemplate()}
+        </button>
+      </div>
     </div>
   `;
+}
+
+function autoRuleEntryCount(dayId, meal) {
+  const exactIndexes = state.autoGenerateRules
+    .filter((rule) => rule.meal === meal
+      && rule.dayIds.includes(dayId)
+      && (rule.index === 0 || rule.action !== "any" || rule.value === autoRuleBlankSlotValue))
+    .map((rule) => rule.index)
+    .filter(Number.isInteger);
+  const highestIndex = exactIndexes.length ? Math.max(...exactIndexes) : 0;
+  return Math.max(minimumMealEntryCount(meal), highestIndex + 1);
 }
 
 function autoRuleInputValue(rule) {
@@ -2478,6 +3112,10 @@ function commitAutoRuleInput(input) {
   const meal = input.dataset.meal;
   const index = Number(input.dataset.index);
   const value = input.value.trim();
+  setAutoRuleFromValue(dayId, meal, index, value);
+}
+
+function setAutoRuleFromValue(dayId, meal, index, value) {
   const previousRule = autoGenerateRuleForSlot({ id: dayId }, meal, index);
   state.autoGenerateRules = state.autoGenerateRules.filter((rule) => !isExactAutoRuleForSlot(rule, dayId, meal, index));
   const rule = autoGenerateRuleFromInput(dayId, meal, index, value, previousRule);
@@ -2487,11 +3125,62 @@ function commitAutoRuleInput(input) {
 }
 
 function clearAutoRule(dayId, meal, index) {
-  state.autoGenerateRules = state.autoGenerateRules.filter((rule) => !isExactAutoRuleForSlot(rule, dayId, meal, index));
   const previousRule = autoGenerateRuleForSlot({ id: dayId }, meal, index);
+  state.autoGenerateRules = state.autoGenerateRules.filter((rule) => !isExactAutoRuleForSlot(rule, dayId, meal, index));
   if (previousRule) state.autoGenerateRules.unshift(autoRule(createId("rule"), [dayId], meal, index, "any"));
   persist();
   renderAutoRules();
+}
+
+function removeAutoRuleSlot(dayId, meal, index) {
+  state.autoGenerateRules = state.autoGenerateRules.filter((rule) => !isExactAutoRuleForSlot(rule, dayId, meal, index));
+  state.autoGenerateRules.unshift(autoRule(createId("rule"), [dayId], meal, index, "any", "", autoRuleBlankSlotValue));
+  persist();
+  renderAutoRules();
+}
+
+function addAutoRuleSlot(dayId, meal) {
+  if (!dayId || !meal) return;
+  const nextIndex = autoRuleEntryCount(dayId, meal);
+  state.autoGenerateRules.unshift(autoRule(createId("rule"), [dayId], meal, nextIndex, "any", "", autoRuleBlankSlotValue));
+  persist();
+  renderAutoRules();
+}
+
+function openAutoRuleRecipePicker(day, meal, index) {
+  if (!day || !meal || Number.isNaN(index)) return;
+  pendingAutoRuleRecipeSelection = { day, meal, index };
+  openRecipeBoxPage();
+  renderFolders();
+}
+
+function chooseRecipeForPendingAutoRule(recipeId) {
+  if (!pendingAutoRuleRecipeSelection || !recipeId) return;
+  const recipe = activeRecipes().find((item) => item.id === recipeId);
+  if (!recipe) return;
+  const { day, meal, index } = pendingAutoRuleRecipeSelection;
+  pendingAutoRuleRecipeSelection = null;
+  setAutoRuleFromValue(day, meal, index, recipe.name);
+  elements.recipeBoxPageDialog.close();
+  if (elements.autoRulesDialog.open) renderAutoRules();
+}
+
+function openAutoRuleIngredientPicker(day, meal, index) {
+  if (!day || !meal || Number.isNaN(index)) return;
+  pendingAutoRuleIngredientSelection = { day, meal, index };
+  closeFloatingMenus();
+  renderGroceryLibrary();
+  elements.groceryLibraryInput.value = "";
+  elements.groceryLibraryDialog.showModal();
+}
+
+function chooseIngredientForPendingAutoRule(item) {
+  if (!pendingAutoRuleIngredientSelection || !item) return;
+  const { day, meal, index } = pendingAutoRuleIngredientSelection;
+  pendingAutoRuleIngredientSelection = null;
+  setAutoRuleFromValue(day, meal, index, item);
+  elements.groceryLibraryDialog.close();
+  if (elements.autoRulesDialog.open) renderAutoRules();
 }
 
 function isExactAutoRuleForSlot(rule, dayId, meal, index) {
@@ -2516,36 +3205,128 @@ function autoGenerateRuleFromInput(dayId, meal, index, value, previousRule = nul
   return autoRule(createId("rule"), [dayId], meal, index, "custom", "", value);
 }
 
-function slotTemplate(day, meal, slotValue) {
+function columnMealsForDay(day, column, combinedState) {
+  if (!column.combinedMeal) return column.meals.map((meal) => (day.meals.includes(meal) ? meal : ""));
+  const combinedMeal = column.combinedMeal;
+  const group = combinedMealSections[combinedMeal];
+  const isCombined = Boolean(combinedState?.[day.id]?.[combinedMeal]);
+  const hasMembers = group.members.some((meal) => day.meals.includes(meal));
+  if (!isCombined || !hasMembers) {
+    return column.meals.map((meal) => (day.meals.includes(meal) ? meal : ""));
+  }
+  return [
+    combinedMeal,
+    ...column.meals
+      .filter((meal) => !group.members.includes(meal))
+      .map((meal) => (day.meals.includes(meal) ? meal : ""))
+  ];
+}
+
+function mealKeysForDay(day, combinedState) {
+  return mealColumnConfigs.flatMap((column) => columnMealsForDay(day, column, combinedState)).filter(Boolean);
+}
+
+function displayMealName(meal) {
+  return combinedMealSections[meal]?.label || meal;
+}
+
+function slotTemplate(day, meal, slotValue, options = {}) {
+  const readOnly = Boolean(options.readOnly);
+  const displayMeal = options.displayMeal || meal;
+  const isCombined = Boolean(options.combined);
+  const canCombine = !readOnly && isCombinableMeal(meal);
   const entries = slotEntries(slotValue);
   const visibleEntries = mealEntryList(entries, meal);
   const filledEntries = entries.filter(Boolean);
+  const hasOpenEntry = visibleEntries.some((entry) => !entry);
 
   return `
-    <div class="slot-card meal-${mealToken(meal)} ${filledEntries.length ? "filled" : ""}" data-meal-slot data-day="${day.id}" data-meal="${meal}">
+    <div class="slot-card meal-${mealToken(meal)} ${filledEntries.length ? "filled" : ""} ${readOnly ? "published-slot" : ""}" ${readOnly ? "" : `data-meal-slot data-meal-section-target data-day="${day.id}" data-meal="${meal}"`}>
       <div class="slot-topline">
-        <button class="slot-add-btn" type="button" data-add-meal-entry data-day="${day.id}" data-meal="${meal}" title="Add another recipe" aria-label="Add another recipe to ${meal}">+</button>
-        <div class="slot-label">${meal}</div>
+        <div class="slot-label" ${canCombine ? `draggable="true" data-meal-section-drag data-day="${day.id}" data-meal="${meal}" title="Drag onto another ${escapeHtml(displayMealName(combineGroupKeyForMeal(meal) || meal).toLowerCase())} section to combine"` : ""}>${escapeHtml(displayMeal)}</div>
+        ${readOnly ? "" : `<div class="slot-actions">
+          <button class="slot-delete-btn" type="button" data-clear-meal-section data-day="${day.id}" data-meal="${meal}" title="${isCombined ? `Clear and split ${displayMeal}` : `Clear ${displayMeal}`}" aria-label="${isCombined ? `Clear and split ${displayMeal}` : `Clear ${displayMeal}`}">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h16" />
+              <path d="M10 11v6M14 11v6" />
+              <path d="M6 7l1 14h10l1-14" />
+              <path d="M9 7V4h6v3" />
+            </svg>
+          </button>
+          <button class="slot-generate-btn" type="button" data-generate-meal-section data-day="${day.id}" data-meal="${meal}" title="Auto-generate ${displayMeal}" aria-label="Auto-generate ${displayMeal}">
+            <svg class="fast-forward-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 6.5 12.5 12 5 17.5Z" />
+              <path d="M12 6.5 19.5 12 12 17.5Z" />
+            </svg>
+          </button>
+          <button class="slot-add-btn" type="button" data-add-meal-entry data-day="${day.id}" data-meal="${meal}" title="${hasOpenEntry ? `Fill the open slot before adding another recipe` : `Add another recipe`}" aria-label="Add another recipe to ${displayMeal}" ${hasOpenEntry ? "disabled" : ""}>+</button>
+        </div>`}
       </div>
       <div class="meal-entry-list">
-        ${visibleEntries.map((entry, index) => mealEntryTemplate(day, meal, entry, index, visibleEntries.length, entries)).join("")}
+        ${visibleEntries.map((entry, index) => mealEntryTemplate(day, meal, entry, index, visibleEntries.length, entries, { readOnly })).join("")}
       </div>
     </div>
   `;
 }
 
-function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries) {
+function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, options = {}) {
+  const readOnly = Boolean(options.readOnly);
   const recipe = recipeForSlot(entry);
-  const canRemove = entryCount > 1 || Boolean(entry);
+  const specialMeal = specialMealForSlot(entry);
   const listId = `recipe-options-${day.id}-${mealToken(meal)}-${index}`;
   const isEditing = isEditingMealEntry(day.id, meal, index);
   const draggable = entry && !isEditing ? `data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true"` : "";
+
+  if (readOnly) {
+    if (!entry) {
+      return `<div class="meal-entry meal-entry-empty" aria-hidden="true"></div>`;
+    }
+    if (recipe) {
+      return `
+        <div class="meal-entry published-meal-entry">
+          <button class="recipe-meal-link" type="button" data-view-recipe="${escapeHtml(recipe.id)}">
+            ${escapeHtml(recipe.name)}
+          </button>
+        </div>
+      `;
+    }
+    if (specialMeal) {
+      return `
+        <div class="meal-entry published-meal-entry">
+          <span class="recipe-meal-link custom-meal-link meal-entry-static">
+            ${escapeHtml(specialMealDisplayText(specialMeal))}
+          </span>
+        </div>
+      `;
+    }
+    return `
+      <div class="meal-entry published-meal-entry">
+        <span class="recipe-meal-link custom-meal-link meal-entry-static">${escapeHtml(mealInputValue(entry))}</span>
+      </div>
+    `;
+  }
+
   if (isEditing || !entry) {
+    if (!entry && !isEditing) {
+      return `
+        <div class="meal-entry">
+          <div class="meal-pick-group">
+            <button class="meal-pick-slot" type="button" data-pick-meal-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}">recipe box</button>
+            <button class="meal-special-choice meal-ingredient-choice" type="button" data-pick-ingredient-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Choose ingredient" aria-label="Choose ingredient">
+              ${broccoliIconTemplate()}
+            </button>
+            <button class="meal-special-choice" type="button" data-special-meal-choice="out" data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Out" aria-label="Out">
+              ${outMealIconTemplate()}
+            </button>
+            <button class="meal-special-choice" type="button" data-special-meal-choice="leftovers" data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Leftovers" aria-label="Leftovers">
+              ${leftoversIconTemplate()}
+            </button>
+          </div>
+        </div>
+      `;
+    }
     return `
       <div class="meal-entry ${entry ? "editing-meal-entry" : ""}" ${draggable}>
-        ${canRemove ? `
-          <button class="meal-entry-remove" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Remove meal entry" aria-label="Remove meal entry">×</button>
-        ` : ""}
         <input class="meal-search" list="${escapeHtml(listId)}" data-meal-input data-day="${day.id}" data-meal="${meal}" data-index="${index}" value="${escapeHtml(mealInputValue(entry))}" placeholder="${escapeHtml(mealEntryPlaceholder(meal, index))}" />
         <datalist id="${escapeHtml(listId)}">
           ${recipeOptionsTemplate(slotEntries, entry)}
@@ -2557,20 +3338,32 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries) {
   if (recipe) {
     return `
       <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true">
-        <button class="meal-entry-remove recipe-remove-btn" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Remove recipe" aria-label="Remove ${escapeHtml(recipe.name)}">×</button>
         <button class="recipe-meal-link" type="button" data-view-recipe="${escapeHtml(recipe.id)}" data-edit-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Double-click to edit">
           ${escapeHtml(recipe.name)}
         </button>
+        <button class="meal-swipe-delete" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" aria-label="Delete ${escapeHtml(recipe.name)}">Delete</button>
+      </div>
+    `;
+  }
+
+  if (specialMeal) {
+    return `
+      <div class="meal-entry draggable-meal-entry special-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true">
+        <div class="special-meal-card">
+          <strong>${escapeHtml(specialMealLabel(specialMeal.type))}${specialMeal.note ? " -" : ""}</strong>
+          <input data-special-meal-note data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" value="${escapeHtml(specialMeal.note)}" placeholder="${escapeHtml(specialMealPlaceholder(specialMeal.type))}" />
+        </div>
+        <button class="meal-swipe-delete" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" aria-label="Delete ${escapeHtml(specialMealLabel(specialMeal.type))}">Delete</button>
       </div>
     `;
   }
 
   return `
     <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true">
-      <button class="meal-entry-remove" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Remove meal entry" aria-label="Remove meal entry">×</button>
       <button class="recipe-meal-link custom-meal-link" type="button" data-edit-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Double-click to edit">
         ${escapeHtml(mealInputValue(entry))}
       </button>
+      <button class="meal-swipe-delete" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" aria-label="Delete meal entry">Delete</button>
     </div>
   `;
 }
@@ -2599,12 +3392,15 @@ function recipeOptionsTemplate(entries, currentEntry) {
       .map((entry) => recipeForSlot(entry)?.id)
       .filter(Boolean)
   );
-  return [...activeRecipes()]
+  const recipeOptions = [...activeRecipes()]
     .filter((recipe) => !selectedRecipeIds.has(recipe.id))
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map((recipe) => `<option value="${escapeHtml(recipe.name)}"></option>`)
-    .concat(mealPlanCustomOptions.map((option) => `<option value="${escapeHtml(option)}"></option>`))
-    .join("");
+    .map((recipe) => `<option value="${escapeHtml(recipe.name)}"></option>`);
+  const groceryOptions = grocerySuggestionItems()
+    .filter((item) => !selectedRecipeIds.has(groceryMealSlotId(item)))
+    .map((item) => `<option value="${escapeHtml(item)}"></option>`);
+  const customOptions = mealPlanCustomOptions.map((option) => `<option value="${escapeHtml(option)}"></option>`);
+  return [...recipeOptions, ...groceryOptions, ...customOptions].join("");
 }
 
 function mealToken(meal) {
@@ -2619,31 +3415,50 @@ function mealEntryList(entries, meal) {
 }
 
 function mealEntryPlaceholder(meal, index) {
-  if (meal === "Dinner" && index === 0) return "Main dish";
-  if (meal === "Dinner" && index === 1) return "Side dish";
-  if (meal === "Dinner" && index === 2) return "Sophia Dinner";
-  if (meal === "Breakfast" && index === 0) return "Marijane Breakfast";
-  if (meal === "Breakfast" && index === 1) return "Luke Breakfast";
-  if (meal === "Breakfast" && index === 2) return "Sophia Breakfast";
-  if (meal === "Lunch" && index === 0) return "Marijane Lunch";
-  if (meal === "Lunch" && index === 1) return "Luke Lunch";
-  if (meal === "Lunch" && index === 2) return "Sophia Lunch";
-  if (meal === "Morning Snack" && index === 0) return "Marijane Morning Snack";
-  if (meal === "Morning Snack" && index === 1) return "Luke Morning Snack";
-  if (meal === "Afternoon Snack" && index === 0) return "Marijane Afternoon Snack";
-  if (meal === "Afternoon Snack" && index === 1) return "Luke Afternoon Snack";
-  if (meal === "Extras" && index === 0) return "Extras";
+  if (index === 0) return meal;
   return "Search or type meal";
 }
 
+function broccoliIconTemplate() {
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 21v-6" />
+      <path d="M9 21h6" />
+      <path d="M9.2 15.2c-2.6.2-4.6-1.4-4.6-3.7 0-1.9 1.4-3.4 3.2-3.6.4-2.2 2.2-3.9 4.4-3.9s4 1.7 4.4 3.9c1.8.2 3.2 1.7 3.2 3.6 0 2.3-2 3.9-4.6 3.7" />
+      <path d="M8.8 12.2c1 .2 1.8.9 2.2 1.8M15.2 12.2c-1 .2-1.8.9-2.2 1.8" />
+    </svg>
+  `;
+}
+
+function outMealIconTemplate() {
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7 9V4h10v5" />
+      <path d="M5 9h14l2 4H3Z" />
+      <path d="M6 13v6h3v-4h6v4h3v-6" />
+      <path d="M10 6v3M14 6v3" />
+      <path d="M10 6c0-1 1-1.8 2-1.8S14 5 14 6" />
+    </svg>
+  `;
+}
+
+function leftoversIconTemplate() {
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6 9h12l-1 5H7Z" />
+      <path d="M8 14h8v5H8Z" />
+      <path d="M7 5h10l1 4H6Z" />
+      <path d="M9 3h6v2H9Z" />
+    </svg>
+  `;
+}
+
 function minimumMealEntryCount(meal) {
-  if (["Breakfast", "Lunch", "Dinner"].includes(meal)) return 3;
-  if (["Morning Snack", "Afternoon Snack"].includes(meal)) return 2;
   return 1;
 }
 
 function handleMealEntryDragStart(event) {
-  if (event.currentTarget.querySelector("[data-meal-input]")) {
+  if (event.currentTarget.querySelector("[data-meal-input]") || event.target.closest("[data-special-meal-note]")) {
     event.preventDefault();
     return;
   }
@@ -2654,13 +3469,22 @@ function handleMealEntryDragStart(event) {
     meal: event.currentTarget.dataset.meal,
     index: Number(event.currentTarget.dataset.index)
   };
+  lastMealDragPoint = { x: event.clientX, y: event.clientY };
   event.currentTarget.classList.add("is-dragging");
+  document.body.classList.add("meal-entry-drag-active");
   event.dataTransfer.effectAllowed = "move";
   event.dataTransfer.setData("text/plain", JSON.stringify(draggedMealEntry));
 }
 
+function handleMealEntryDrag(event) {
+  if (!draggedMealEntry) return;
+  updateMealDragPoint(event);
+  elements.mealTrashTarget.classList.toggle("drag-over", isMealDragEndingInTrash());
+}
+
 function handleMealEntryDragOver(event) {
   if (!draggedMealEntry) return;
+  updateMealDragPoint(event);
   const target = event.currentTarget;
   event.preventDefault();
   target.classList.add("drag-over");
@@ -2669,6 +3493,7 @@ function handleMealEntryDragOver(event) {
 
 function handleMealEntryDrop(event) {
   event.preventDefault();
+  updateMealDragPoint(event);
   const target = event.currentTarget;
   target.classList.remove("drag-over");
   if (!draggedMealEntry) return;
@@ -2682,6 +3507,7 @@ function handleMealEntryDrop(event) {
 
 function handleMealSlotDragOver(event) {
   if (!draggedMealEntry) return;
+  updateMealDragPoint(event);
   event.preventDefault();
   event.currentTarget.classList.add("drag-over");
   event.dataTransfer.dropEffect = "move";
@@ -2689,17 +3515,492 @@ function handleMealSlotDragOver(event) {
 
 function handleMealSlotDrop(event) {
   event.preventDefault();
+  updateMealDragPoint(event);
   event.currentTarget.classList.remove("drag-over");
   if (!draggedMealEntry) return;
   moveMealEntryToSlot(draggedMealEntry, event.currentTarget.dataset.day, event.currentTarget.dataset.meal);
   clearMealEntryDragState();
 }
 
+function handleMealSectionDragStart(event) {
+  draggedMealSection = {
+    day: event.currentTarget.dataset.day,
+    meal: event.currentTarget.dataset.meal
+  };
+  event.stopPropagation();
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", JSON.stringify(draggedMealSection));
+}
+
+function handleMealSectionDragOver(event) {
+  if (!draggedMealSection) return;
+  const target = event.currentTarget;
+  if (!canCombineMealSections(draggedMealSection.day, draggedMealSection.meal, target.dataset.day, target.dataset.meal)) return;
+  event.preventDefault();
+  target.classList.add("section-drag-over");
+  event.dataTransfer.dropEffect = "move";
+}
+
+function handleMealSectionDrop(event) {
+  if (!draggedMealSection) return;
+  const target = event.currentTarget;
+  target.classList.remove("section-drag-over");
+  if (!canCombineMealSections(draggedMealSection.day, draggedMealSection.meal, target.dataset.day, target.dataset.meal)) return;
+  event.preventDefault();
+  combineMealSections(draggedMealSection.day, draggedMealSection.meal, target.dataset.meal);
+  clearMealSectionDragState();
+}
+
+function clearMealSectionDragState() {
+  draggedMealSection = null;
+  elements.plannerGrid.querySelectorAll(".section-drag-over").forEach((slot) => slot.classList.remove("section-drag-over"));
+}
+
+function handleMealTrashDragOver(event) {
+  if (draggedAutoRuleEntry) {
+    handleAutoRuleTrashDragOver(event);
+    return;
+  }
+  if (!draggedMealEntry) return;
+  updateMealDragPoint(event);
+  event.preventDefault();
+  elements.mealTrashTarget.classList.add("drag-over");
+  event.dataTransfer.dropEffect = "move";
+}
+
+function handleMealTrashDragLeave() {
+  activeTrashTarget().classList.remove("drag-over");
+}
+
+function handleAutoRuleTrashDragOver(event) {
+  updateMealDragPoint(event);
+  event.preventDefault();
+  activeTrashTarget().classList.add("drag-over");
+  event.dataTransfer.dropEffect = "move";
+}
+
+function handleMealTrashDrop(event) {
+  event.preventDefault();
+  updateMealDragPoint(event);
+  activeTrashTarget().classList.remove("drag-over");
+  if (draggedAutoRuleEntry) {
+    deleteDraggedAutoRuleEntry();
+    return;
+  }
+  if (!draggedMealEntry) return;
+  deleteDraggedMealEntry();
+}
+
+function handleMealTrashOverlayDragOver(event) {
+  if (draggedAutoRuleEntry) {
+    updateMealDragPoint(event);
+    event.preventDefault();
+    activeTrashTarget().classList.toggle("drag-over", isPointInMealTrash(event.clientX, event.clientY));
+    event.dataTransfer.dropEffect = isPointInMealTrash(event.clientX, event.clientY) ? "move" : "none";
+    return;
+  }
+  if (!draggedMealEntry) return;
+  updateMealDragPoint(event);
+  event.preventDefault();
+  elements.mealTrashTarget.classList.toggle("drag-over", isPointInMealTrash(event.clientX, event.clientY));
+  event.dataTransfer.dropEffect = isPointInMealTrash(event.clientX, event.clientY) ? "move" : "none";
+}
+
+function handleMealTrashOverlayDrop(event) {
+  if (draggedAutoRuleEntry) {
+    updateMealDragPoint(event);
+    event.preventDefault();
+    if (isMealDragEndingInTrash()) {
+      deleteDraggedAutoRuleEntry();
+    } else {
+      clearAutoRuleDragState();
+    }
+    return;
+  }
+  if (!draggedMealEntry) return;
+  updateMealDragPoint(event);
+  event.preventDefault();
+  if (isMealDragEndingInTrash()) {
+    deleteDraggedMealEntry();
+  } else {
+    clearMealEntryDragState();
+  }
+}
+
+function handleDocumentMealDragOver(event) {
+  if (draggedAutoRuleEntry) {
+    updateMealDragPoint(event);
+    if (!isPointInMealTrash(event.clientX, event.clientY)) {
+      activeTrashTarget().classList.remove("drag-over");
+      return;
+    }
+    event.preventDefault();
+    activeTrashTarget().classList.add("drag-over");
+    event.dataTransfer.dropEffect = "move";
+    return;
+  }
+  if (!draggedMealEntry) return;
+  updateMealDragPoint(event);
+  if (!isPointInMealTrash(event.clientX, event.clientY)) {
+    elements.mealTrashTarget.classList.remove("drag-over");
+    return;
+  }
+  event.preventDefault();
+  elements.mealTrashTarget.classList.add("drag-over");
+  event.dataTransfer.dropEffect = "move";
+}
+
+function handleDocumentMealDrop(event) {
+  if (draggedAutoRuleEntry) {
+    updateMealDragPoint(event);
+    if (!isPointInMealTrash(event.clientX, event.clientY)) return;
+    event.preventDefault();
+    deleteDraggedAutoRuleEntry();
+    return;
+  }
+  if (!draggedMealEntry) return;
+  updateMealDragPoint(event);
+  if (!isPointInMealTrash(event.clientX, event.clientY)) return;
+  event.preventDefault();
+  deleteDraggedMealEntry();
+}
+
+function handleMealEntryDragEnd(event) {
+  updateMealDragPoint(event);
+  if (isMealDragEndingInTrash() || elements.mealTrashTarget.classList.contains("drag-over")) {
+    deleteDraggedMealEntry();
+    return;
+  }
+  clearMealEntryDragState();
+}
+
+function handleAutoRuleDragStart(event) {
+  draggedAutoRuleEntry = {
+    day: event.currentTarget.dataset.day,
+    meal: event.currentTarget.dataset.meal,
+    index: Number(event.currentTarget.dataset.index)
+  };
+  lastMealDragPoint = { x: event.clientX, y: event.clientY };
+  event.currentTarget.classList.add("is-dragging");
+  document.body.classList.add("meal-entry-drag-active");
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", JSON.stringify(draggedAutoRuleEntry));
+}
+
+function handleAutoRuleDrag(event) {
+  if (!draggedAutoRuleEntry) return;
+  updateMealDragPoint(event);
+  activeTrashTarget().classList.toggle("drag-over", isMealDragEndingInTrash());
+}
+
+function handleAutoRuleDragEnd(event) {
+  updateMealDragPoint(event);
+  if (isMealDragEndingInTrash() || activeTrashTarget().classList.contains("drag-over")) {
+    deleteDraggedAutoRuleEntry();
+    return;
+  }
+  clearAutoRuleDragState();
+}
+
+function deleteDraggedAutoRuleEntry() {
+  if (!draggedAutoRuleEntry) return;
+  const entry = { ...draggedAutoRuleEntry };
+  removeAutoRuleSlot(entry.day, entry.meal, entry.index);
+  clearAutoRuleDragState();
+  window.requestAnimationFrame(clearAutoRuleDragState);
+}
+
+function clearAutoRuleDragState() {
+  draggedAutoRuleEntry = null;
+  autoRulePointerDrag = null;
+  lastMealDragPoint = null;
+  document.body.classList.remove("meal-entry-drag-active");
+  elements.mealTrashTarget.classList.remove("drag-over");
+  elements.autoRuleTrashTarget?.classList.remove("drag-over");
+  elements.autoRuleList?.querySelectorAll(".is-dragging, .drag-over").forEach((entry) => {
+    entry.classList.remove("is-dragging", "drag-over");
+  });
+  window.setTimeout(() => {
+    suppressAutoRuleClick = false;
+  }, 120);
+}
+
+function handleAutoRulePointerDown(event) {
+  if (event.pointerType === "touch") {
+    const entry = event.currentTarget;
+    elements.autoRuleList.querySelectorAll(".auto-rule-entry.is-swiped").forEach((item) => {
+      if (item !== entry) item.classList.remove("is-swiped");
+    });
+    autoRuleSwipeGesture = {
+      entry,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false
+    };
+    return;
+  }
+  if (event.button !== 0) return;
+  autoRulePointerDrag = {
+    entry: event.currentTarget,
+    day: event.currentTarget.dataset.day,
+    meal: event.currentTarget.dataset.meal,
+    index: Number(event.currentTarget.dataset.index),
+    startX: event.clientX,
+    startY: event.clientY,
+    active: false
+  };
+}
+
+function handleAutoRulePointerMove(event) {
+  if (event.pointerType === "touch" && autoRuleSwipeGesture?.entry === event.currentTarget) {
+    handleAutoRuleSwipeMove(event);
+    return;
+  }
+  if (!autoRulePointerDrag || autoRulePointerDrag.entry !== event.currentTarget) return;
+  const distance = Math.hypot(event.clientX - autoRulePointerDrag.startX, event.clientY - autoRulePointerDrag.startY);
+  if (!autoRulePointerDrag.active && distance < 10) return;
+  autoRulePointerDrag.active = true;
+  draggedAutoRuleEntry = {
+    day: autoRulePointerDrag.day,
+    meal: autoRulePointerDrag.meal,
+    index: autoRulePointerDrag.index
+  };
+  lastMealDragPoint = { x: event.clientX, y: event.clientY };
+  autoRulePointerDrag.entry.classList.add("is-dragging");
+  document.body.classList.add("meal-entry-drag-active");
+  activeTrashTarget().classList.toggle("drag-over", isPointInMealTrash(event.clientX, event.clientY));
+}
+
+function handleAutoRulePointerEnd(event) {
+  if (event.pointerType === "touch" && autoRuleSwipeGesture?.entry === event.currentTarget) {
+    handleAutoRuleSwipeEnd();
+    return;
+  }
+  if (!autoRulePointerDrag) return;
+  const wasActive = autoRulePointerDrag.active;
+  if (wasActive) {
+    event.preventDefault();
+    event.stopPropagation();
+    suppressAutoRuleClick = true;
+    lastMealDragPoint = { x: event.clientX, y: event.clientY };
+    if (isMealDragEndingInTrash()) {
+      deleteDraggedAutoRuleEntry();
+      return;
+    }
+  }
+  clearAutoRuleDragState();
+}
+
+function handleAutoRuleSwipeMove(event) {
+  const deltaX = event.clientX - autoRuleSwipeGesture.startX;
+  const deltaY = event.clientY - autoRuleSwipeGesture.startY;
+  if (Math.abs(deltaY) > 28 && Math.abs(deltaY) > Math.abs(deltaX)) {
+    autoRuleSwipeGesture = null;
+    return;
+  }
+  if (deltaX < -28) {
+    autoRuleSwipeGesture.active = true;
+    autoRuleSwipeGesture.entry.classList.add("is-swiped");
+    suppressAutoRuleClick = true;
+  } else if (deltaX > 18) {
+    autoRuleSwipeGesture.entry.classList.remove("is-swiped");
+  }
+}
+
+function handleAutoRuleSwipeEnd() {
+  if (!autoRuleSwipeGesture.active) {
+    autoRuleSwipeGesture.entry.classList.remove("is-swiped");
+  }
+  autoRuleSwipeGesture = null;
+  window.setTimeout(() => {
+    suppressAutoRuleClick = false;
+  }, 120);
+}
+
+function handleAutoRuleMouseDown(event) {
+  if (event.button !== 0 || autoRulePointerDrag) return;
+  autoRulePointerDrag = {
+    entry: event.currentTarget,
+    day: event.currentTarget.dataset.day,
+    meal: event.currentTarget.dataset.meal,
+    index: Number(event.currentTarget.dataset.index),
+    startX: event.clientX,
+    startY: event.clientY,
+    active: false
+  };
+}
+
+function handleDocumentAutoRuleMouseMove(event) {
+  if (!autoRulePointerDrag) return;
+  const distance = Math.hypot(event.clientX - autoRulePointerDrag.startX, event.clientY - autoRulePointerDrag.startY);
+  if (!autoRulePointerDrag.active && distance < 10) return;
+  autoRulePointerDrag.active = true;
+  draggedAutoRuleEntry = {
+    day: autoRulePointerDrag.day,
+    meal: autoRulePointerDrag.meal,
+    index: autoRulePointerDrag.index
+  };
+  lastMealDragPoint = { x: event.clientX, y: event.clientY };
+  autoRulePointerDrag.entry.classList.add("is-dragging");
+  document.body.classList.add("meal-entry-drag-active");
+  activeTrashTarget().classList.toggle("drag-over", isPointInMealTrash(event.clientX, event.clientY));
+}
+
+function handleDocumentAutoRuleMouseUp(event) {
+  if (!autoRulePointerDrag) return;
+  const wasActive = autoRulePointerDrag.active;
+  if (wasActive) {
+    event.preventDefault();
+    suppressAutoRuleClick = true;
+    lastMealDragPoint = { x: event.clientX, y: event.clientY };
+    if (isMealDragEndingInTrash()) {
+      deleteDraggedAutoRuleEntry();
+      return;
+    }
+  }
+  clearAutoRuleDragState();
+}
+
+function updateMealDragPoint(event) {
+  if (Number.isFinite(event.clientX) && Number.isFinite(event.clientY) && (event.clientX || event.clientY)) {
+    lastMealDragPoint = { x: event.clientX, y: event.clientY };
+  }
+}
+
+function isMealDragEndingInTrash() {
+  return Boolean(lastMealDragPoint && isPointInMealTrash(lastMealDragPoint.x, lastMealDragPoint.y));
+}
+
+function isPointInMealTrash(x, y) {
+  const rect = activeTrashTarget().getBoundingClientRect();
+  const padding = 180;
+  return x >= rect.left - padding
+    && x <= rect.right + padding
+    && y >= rect.top - padding
+    && y <= rect.bottom + padding;
+}
+
+function deleteDraggedMealEntry() {
+  if (!draggedMealEntry) return;
+  const entry = { ...draggedMealEntry };
+  removeMealEntry(entry.day, entry.meal, entry.index);
+  clearMealEntryDragState();
+  window.requestAnimationFrame(clearMealEntryDragState);
+}
+
 function clearMealEntryDragState() {
   draggedMealEntry = null;
+  lastMealDragPoint = null;
+  document.body.classList.remove("meal-entry-drag-active");
+  elements.mealTrashTarget.classList.remove("drag-over");
+  elements.autoRuleTrashTarget?.classList.remove("drag-over");
   elements.plannerGrid.querySelectorAll(".is-dragging, .drag-over").forEach((entry) => {
     entry.classList.remove("is-dragging", "drag-over");
   });
+  window.setTimeout(() => {
+    suppressMealEntryClick = false;
+  }, 120);
+}
+
+function activeTrashTarget() {
+  return draggedAutoRuleEntry && elements.autoRuleTrashTarget ? elements.autoRuleTrashTarget : elements.mealTrashTarget;
+}
+
+function handleMealEntryPointerDown(event) {
+  if (event.pointerType === "mouse") {
+    if (event.button !== 0 || event.currentTarget.querySelector("[data-meal-input]") || event.target.closest("[data-special-meal-note]")) return;
+    startMealPointerDeleteGesture(event.currentTarget, event.clientX, event.clientY);
+    return;
+  }
+  if (event.pointerType !== "touch") return;
+  const entry = event.currentTarget;
+  elements.plannerGrid.querySelectorAll(".meal-entry.is-swiped").forEach((item) => {
+    if (item !== entry) item.classList.remove("is-swiped");
+  });
+  mealSwipeGesture = {
+    entry,
+    startX: event.clientX,
+    startY: event.clientY,
+    active: false
+  };
+}
+
+function handleMealEntryMouseDown(event) {
+  if (event.button !== 0 || event.currentTarget.querySelector("[data-meal-input]") || event.target.closest("[data-special-meal-note]") || mealPointerDeleteGesture) return;
+  startMealPointerDeleteGesture(event.currentTarget, event.clientX, event.clientY);
+}
+
+function startMealPointerDeleteGesture(entry, startX, startY) {
+  document.body.classList.add("meal-entry-drag-active");
+  lastMealDragPoint = { x: startX, y: startY };
+  mealPointerDeleteGesture = {
+    day: entry.dataset.day,
+    meal: entry.dataset.meal,
+    index: Number(entry.dataset.index),
+    startX,
+    startY,
+    active: false
+  };
+  window.addEventListener("pointermove", handleMealPointerDeleteMove);
+  window.addEventListener("pointerup", handleMealPointerDeleteEnd, { once: true });
+  window.addEventListener("mousemove", handleMealPointerDeleteMove);
+  window.addEventListener("mouseup", handleMealPointerDeleteEnd, { once: true });
+}
+
+function handleMealEntryPointerMove(event) {
+  if (!mealSwipeGesture || mealSwipeGesture.entry !== event.currentTarget) return;
+  const deltaX = event.clientX - mealSwipeGesture.startX;
+  const deltaY = event.clientY - mealSwipeGesture.startY;
+  if (Math.abs(deltaY) > 28 && Math.abs(deltaY) > Math.abs(deltaX)) {
+    mealSwipeGesture = null;
+    return;
+  }
+  if (deltaX < -28) {
+    mealSwipeGesture.active = true;
+    event.currentTarget.classList.add("is-swiped");
+    suppressMealEntryClick = true;
+  } else if (deltaX > 18) {
+    event.currentTarget.classList.remove("is-swiped");
+  }
+}
+
+function handleMealEntryPointerEnd(event) {
+  if (!mealSwipeGesture || mealSwipeGesture.entry !== event.currentTarget) return;
+  if (!mealSwipeGesture.active) {
+    event.currentTarget.classList.remove("is-swiped");
+  }
+  mealSwipeGesture = null;
+  window.setTimeout(() => {
+    suppressMealEntryClick = false;
+  }, 120);
+}
+
+function handleMealPointerDeleteMove(event) {
+  if (!mealPointerDeleteGesture) return;
+  const deltaX = event.clientX - mealPointerDeleteGesture.startX;
+  const deltaY = event.clientY - mealPointerDeleteGesture.startY;
+  const distance = Math.hypot(deltaX, deltaY);
+  if (distance < 8 && !mealPointerDeleteGesture.active) return;
+  mealPointerDeleteGesture.active = true;
+  suppressMealEntryClick = true;
+  lastMealDragPoint = { x: event.clientX, y: event.clientY };
+  document.body.classList.add("meal-entry-drag-active");
+  elements.mealTrashTarget.classList.toggle("drag-over", isPointInMealTrash(event.clientX, event.clientY));
+}
+
+function handleMealPointerDeleteEnd(event) {
+  window.removeEventListener("pointermove", handleMealPointerDeleteMove);
+  window.removeEventListener("mousemove", handleMealPointerDeleteMove);
+  if (!mealPointerDeleteGesture) return;
+  const gesture = { ...mealPointerDeleteGesture };
+  mealPointerDeleteGesture = null;
+  elements.mealTrashTarget.classList.remove("drag-over");
+  document.body.classList.remove("meal-entry-drag-active");
+  updateMealDragPoint(event);
+  if ((gesture.active || isMealDragEndingInTrash()) && isMealDragEndingInTrash()) {
+    removeMealEntry(gesture.day, gesture.meal, gesture.index);
+  }
+  lastMealDragPoint = null;
   window.setTimeout(() => {
     suppressMealEntryClick = false;
   }, 120);
@@ -2757,10 +4058,55 @@ function firstAvailableMealEntryIndex(entries) {
   return index >= 0 ? index : entries.length;
 }
 
+function isCombinedMealKey(meal) {
+  return Boolean(combinedMealSections[meal]);
+}
+
+function combineGroupKeyForMeal(meal) {
+  if (isCombinedMealKey(meal)) return meal;
+  return Object.keys(combinedMealSections).find((key) => combinedMealSections[key].members.includes(meal)) || "";
+}
+
+function isCombinableMeal(meal) {
+  const key = combineGroupKeyForMeal(meal);
+  return Boolean(key && combinedMealSections[key].members.includes(meal));
+}
+
+function canCombineMealSections(sourceDay, sourceMeal, targetDay, targetMeal) {
+  if (!sourceDay || sourceDay !== targetDay || sourceMeal === targetMeal) return false;
+  const sourceGroup = combineGroupKeyForMeal(sourceMeal);
+  const targetGroup = combineGroupKeyForMeal(targetMeal);
+  if (!sourceGroup || sourceGroup !== targetGroup) return false;
+  const members = combinedMealSections[sourceGroup].members;
+  return members.includes(sourceMeal) && members.includes(targetMeal);
+}
+
+function combineMealSections(dayId, sourceMeal, targetMeal) {
+  const combinedMeal = combineGroupKeyForMeal(sourceMeal);
+  if (!canCombineMealSections(dayId, sourceMeal, dayId, targetMeal) || !combinedMeal) return;
+  const week = weekState();
+  const slots = week.slots;
+  if (!slots[dayId]) slots[dayId] = {};
+  const combinedEntries = [
+    ...slotEntries(slots[dayId][combinedMeal]),
+    ...slotEntries(slots[dayId][sourceMeal]),
+    ...slotEntries(slots[dayId][targetMeal])
+  ];
+  slots[dayId][combinedMeal] = compactMealSlotEntries(combinedEntries, combinedMeal);
+  slots[dayId][sourceMeal] = "";
+  slots[dayId][targetMeal] = "";
+  setCombinedMealSection(week, dayId, combinedMeal, true);
+  state.checkedGroceries = {};
+  persist();
+  renderPlanner();
+  renderGroceries();
+}
+
 function commitMealInput(input) {
   const rawValue = input.value.trim();
   const recipe = activeRecipes().find((item) => normalize(item.name) === normalize(rawValue));
-  const nextValue = recipe ? recipe.id : rawValue;
+  const groceryItem = recipe ? "" : grocerySuggestionItems().find((item) => normalize(item) === normalize(rawValue));
+  const nextValue = recipe ? recipe.id : groceryItem ? groceryMealSlotId(groceryItem) : rawValue;
   const week = weekState();
   const currentEntries = slotEntries(week.slots?.[input.dataset.day]?.[input.dataset.meal]);
   const index = Number(input.dataset.index || 0);
@@ -2772,12 +4118,88 @@ function commitMealInput(input) {
 
 function recipeForSlot(slotValue) {
   if (!slotValue) return null;
-  return activeRecipes().find((item) => item.id === slotValue) || null;
+  return groceryRecipeForSlot(slotValue) || activeRecipes().find((item) => item.id === slotValue) || null;
 }
 
 function mealInputValue(slotValue) {
   if (!slotValue) return "";
+  const specialMeal = specialMealForSlot(slotValue);
+  if (specialMeal) return specialMealDisplayText(specialMeal);
   return recipeForSlot(slotValue)?.name || slotValue;
+}
+
+function isSpecialMealSlot(slotValue) {
+  return String(slotValue || "").startsWith(specialMealPrefix);
+}
+
+function specialMealSlotId(type, note = "") {
+  return `${specialMealPrefix}${encodeURIComponent(String(type || "").trim())}::${encodeURIComponent(String(note || "").trim())}`;
+}
+
+function specialMealForSlot(slotValue) {
+  if (!isSpecialMealSlot(slotValue)) return null;
+  const parts = String(slotValue).slice(specialMealPrefix.length).split("::");
+  const type = decodeURIComponent(parts[0] || "").trim();
+  if (!["out", "leftovers"].includes(type)) return null;
+  return {
+    type,
+    note: decodeURIComponent(parts[1] || "").trim()
+  };
+}
+
+function specialMealLabel(type) {
+  return type === "out" ? "Out" : "Leftovers";
+}
+
+function specialMealDisplayText(specialMeal) {
+  return [specialMealLabel(specialMeal.type), specialMeal.note].filter(Boolean).join(" - ");
+}
+
+function specialMealPlaceholder(type) {
+  return type === "out" ? "Where are you eating?" : "What leftovers?";
+}
+
+function isGroceryMealSlot(slotValue) {
+  return String(slotValue || "").startsWith(groceryMealPrefix);
+}
+
+function groceryMealSlotId(item, servings = 1) {
+  return `${groceryMealPrefix}${encodeURIComponent(String(item || "").trim())}::${Math.max(1, Number(servings) || 1)}`;
+}
+
+function parseGroceryMealSlot(slotValue) {
+  if (!isGroceryMealSlot(slotValue)) return null;
+  const parts = String(slotValue).slice(groceryMealPrefix.length).split("::");
+  const item = decodeURIComponent(parts[0] || "").trim();
+  if (!item) return null;
+  return {
+    item,
+    servings: Math.max(1, Number(parts[1]) || 1)
+  };
+}
+
+function groceryRecipeForSlot(slotValue) {
+  const parsed = parseGroceryMealSlot(slotValue);
+  if (!parsed) return null;
+  return {
+    id: groceryMealSlotId(parsed.item, parsed.servings),
+    name: parsed.item,
+    time: "",
+    prepTime: "",
+    cookTime: "",
+    servings: 1,
+    folderId: "",
+    sourceUrl: "",
+    photoUrl: "",
+    ingredients: [{ amount: "1", quantity: "", item: parsed.item, prep: "" }],
+    steps: "",
+    tags: [],
+    nutrition: [],
+    cookLog: [],
+    groceryMealItem: parsed.item,
+    groceryMealServings: parsed.servings,
+    virtualGroceryRecipe: true
+  };
 }
 
 function slotEntries(slotValue) {
@@ -2803,7 +4225,70 @@ function compactMealSlotEntries(entries, meal) {
 function addMealEntry(day, meal) {
   const week = weekState();
   const entries = slotEntries(week.slots?.[day]?.[meal]);
+  if (mealEntryList(entries, meal).some((entry) => !entry)) return;
   setMeal(day, meal, [...entries, ""]);
+}
+
+function openMealRecipePicker(day, meal, index) {
+  if (!day || !meal || Number.isNaN(index)) return;
+  pendingMealRecipeSelection = { day, meal, index };
+  openRecipeBoxPage();
+  renderFolders();
+}
+
+function openMealIngredientPicker(day, meal, index) {
+  if (!day || !meal || Number.isNaN(index)) return;
+  pendingMealIngredientSelection = { day, meal, index };
+  closeFloatingMenus();
+  renderGroceryLibrary();
+  elements.groceryLibraryInput.value = "";
+  elements.groceryLibraryDialog.showModal();
+}
+
+function chooseRecipeForPendingMeal(recipeId) {
+  if (!pendingMealRecipeSelection || !recipeId) return;
+  const { day, meal, index } = pendingMealRecipeSelection;
+  const week = weekState();
+  const entries = mealEntryList(slotEntries(week.slots?.[day]?.[meal]), meal);
+  entries[index] = recipeId;
+  pendingMealRecipeSelection = null;
+  setMeal(day, meal, compactMealSlotEntries(entries, meal));
+  elements.recipeBoxPageDialog.close();
+}
+
+function chooseIngredientForPendingMeal(item) {
+  if (!pendingMealIngredientSelection || !item) return;
+  const { day, meal, index } = pendingMealIngredientSelection;
+  const week = weekState();
+  const entries = mealEntryList(slotEntries(week.slots?.[day]?.[meal]), meal);
+  entries[index] = groceryMealSlotId(item);
+  pendingMealIngredientSelection = null;
+  setMeal(day, meal, compactMealSlotEntries(entries, meal));
+  elements.groceryLibraryDialog.close();
+}
+
+function setSpecialMealEntry(day, meal, index, type) {
+  if (!["out", "leftovers"].includes(type)) return;
+  const week = weekState();
+  const entries = mealEntryList(slotEntries(week.slots?.[day]?.[meal]), meal);
+  entries[index] = specialMealSlotId(type);
+  setMeal(day, meal, compactMealSlotEntries(entries, meal));
+  window.requestAnimationFrame(() => {
+    const input = elements.plannerGrid.querySelector(`[data-special-meal-note][data-day="${CSS.escape(day)}"][data-meal="${CSS.escape(meal)}"][data-index="${index}"]`);
+    input?.focus();
+  });
+}
+
+function updateSpecialMealNote(input) {
+  const day = input.dataset.day;
+  const meal = input.dataset.meal;
+  const index = Number(input.dataset.index);
+  const week = weekState();
+  const entries = mealEntryList(slotEntries(week.slots?.[day]?.[meal]), meal);
+  const specialMeal = specialMealForSlot(entries[index]);
+  if (!specialMeal) return;
+  entries[index] = specialMealSlotId(specialMeal.type, input.value);
+  setMeal(day, meal, compactMealSlotEntries(entries, meal));
 }
 
 function removeMealEntry(day, meal, index) {
@@ -2821,6 +4306,40 @@ function emptyMealSlotTemplate() {
   return `<div class="slot-card placeholder-slot" aria-hidden="true"></div>`;
 }
 
+function ensureActivePlannerDay() {
+  const activeDay = prepDays.find((day) => day.id === activePlannerDayId) || prepDays[0];
+  activePlannerDayId = activeDay.id;
+  return activeDay;
+}
+
+function plannerDayIdForDate(date) {
+  const target = new Date(date);
+  target.setHours(0, 0, 0, 0);
+  const matchingDay = prepDays.find((day) => sameCalendarDate(addDays(currentWeek, day.offset), target));
+  return matchingDay?.id || prepDays[0].id;
+}
+
+function compactDayLabel(day) {
+  if (day.id === "saturday") return "Sa";
+  if (day.id === "sunday") return "Su";
+  if (day.id === "tuesday") return "Tu";
+  if (day.id === "thursday") return "Th";
+  return day.name.slice(0, 1);
+}
+
+function sameCalendarDate(left, right) {
+  return left.getFullYear() === right.getFullYear()
+    && left.getMonth() === right.getMonth()
+    && left.getDate() === right.getDate();
+}
+
+function selectPlannerDay(dayId) {
+  if (!prepDays.some((day) => day.id === dayId)) return;
+  activePlannerDayId = dayId;
+  editingMealEntry = null;
+  renderPlanner();
+}
+
 function toggleDay(dayId) {
   if (!state.collapsedDays) state.collapsedDays = {};
   state.collapsedDays[dayId] = !state.collapsedDays[dayId];
@@ -2832,9 +4351,60 @@ function clearPlannerDay(dayId) {
   const day = prepDays.find((item) => item.id === dayId);
   if (!day) return;
   const week = weekState();
-  day.meals.forEach((meal) => {
+  [...day.meals, ...Object.keys(combinedMealSections)].forEach((meal) => {
     week.slots[day.id][meal] = "";
   });
+  if (week.combinedMealSections?.[day.id]) {
+    Object.keys(combinedMealSections).forEach((meal) => {
+      week.combinedMealSections[day.id][meal] = false;
+    });
+  }
+  state.checkedGroceries = {};
+  persist();
+  renderPlanner();
+  renderGroceries();
+}
+
+function clearMealSection(dayId, meal) {
+  const day = prepDays.find((item) => item.id === dayId);
+  if (!day || (!day.meals.includes(meal) && !isCombinedMealKey(meal))) return;
+  const displayMeal = displayMealName(meal);
+  if (!window.confirm(isCombinedMealKey(meal) ? `Clear "${displayMeal}" and restore separate sections?` : `Clear all entries in ${displayMeal}?`)) return;
+  const week = weekState();
+  week.slots[day.id][meal] = "";
+  if (isCombinedMealKey(meal)) setCombinedMealSection(week, day.id, meal, false);
+  state.checkedGroceries = {};
+  persist();
+  renderPlanner();
+  renderGroceries();
+}
+
+function autoGenerateMealSection(dayId, meal) {
+  const day = prepDays.find((item) => item.id === dayId);
+  if (!day || (!day.meals.includes(meal) && !isCombinedMealKey(meal))) return;
+  const recipes = autoGenerateCandidateRecipes();
+  if (!recipes.length) {
+    window.alert("Add recipes to the Recipe Box before auto-generating a meal.");
+    return;
+  }
+
+  const week = weekState();
+  const previousSlots = JSON.stringify(week.slots);
+  const recipeQueue = shuffled(recipes);
+  const context = createAutoGenerateContext(recipes);
+  const result = autoGenerateMealEntries(week, day, meal, recipeQueue, 0, context);
+
+  if (context.missingFolders.size) {
+    week.slots = JSON.parse(previousSlots);
+    window.alert(missingFolderMessage(context.missingFolders));
+    return;
+  }
+
+  if (!result.filledCount) {
+    window.alert(`${displayMealName(meal)} already has an entry. Clear it first to auto-fill it.`);
+    return;
+  }
+
   state.checkedGroceries = {};
   persist();
   renderPlanner();
@@ -2854,10 +4424,11 @@ function autoGeneratePlannerDay(dayId) {
   const previousSlots = JSON.stringify(week.slots);
   const recipeQueue = shuffled(recipes);
   const context = createAutoGenerateContext(recipes);
+  const combinedState = combinedMealSectionsForWeek(week);
 
   let queueIndex = 0;
   let filledCount = 0;
-  day.meals.forEach((meal) => {
+  mealKeysForDay(day, combinedState).forEach((meal) => {
     const result = autoGenerateMealEntries(week, day, meal, recipeQueue, queueIndex, context);
     queueIndex = result.nextIndex;
     filledCount += result.filledCount;
@@ -2882,6 +4453,11 @@ function autoGeneratePlannerDay(dayId) {
 
 function renderGroceries() {
   renderGrocerySuggestions();
+  const week = weekState();
+  if (!isPublishedMealPlanView(week)) {
+    elements.groceryList.innerHTML = `<div class="empty-state">Publish the active week to generate groceries.</div>`;
+    return;
+  }
   const groceries = buildGroceryRowsWithManual();
   const pantrySet = new Set(state.pantry.map((item) => normalize(item)));
   const needed = groceries.filter((row) => !pantrySet.has(normalize(row.item)));
@@ -2917,7 +4493,6 @@ function renderGroceries() {
   elements.groceryList.querySelectorAll("[data-remove-grocery]").forEach((button) => {
     button.addEventListener("click", () => removeManualGroceryItem(button.dataset.removeGrocery));
   });
-  scheduleGroceryItemReview(needed);
 }
 
 function renderGrocerySuggestions() {
@@ -2959,6 +4534,41 @@ function scheduleGroceryItemReview(rows) {
   window.setTimeout(() => openGroceryItemReview(reviewRow), 100);
 }
 
+function openPublishedGroceryReview() {
+  const reviewItems = unlistedPublishedGroceryItems();
+  if (!reviewItems.length || document.querySelector("dialog[open]")) return;
+  pendingGroceryReview = null;
+  pendingGroceryReviewItems = reviewItems;
+  elements.groceryReviewItem.textContent = `${reviewItems.length} unlisted ingredient${reviewItems.length === 1 ? "" : "s"}`;
+  elements.groceryReviewContext.textContent = "Add these to Grocery Items so future grocery lists can recognize them.";
+  elements.groceryReviewList.innerHTML = reviewItems
+    .map((item, index) => `
+      <label class="grocery-review-row">
+        <input type="checkbox" data-grocery-review-index="${index}" checked />
+        <span>
+          <strong>${escapeHtml(item.item)}</strong>
+          ${item.sources.length ? `<small>${escapeHtml(item.sources.join(", "))}</small>` : ""}
+        </span>
+      </label>
+    `)
+    .join("");
+  elements.groceryReviewDialog.showModal();
+}
+
+function unlistedPublishedGroceryItems() {
+  if (!isPublishedMealPlanView(weekState())) return [];
+  const items = new Map();
+  buildRawGroceryRows().forEach((row) => {
+    if (!row.item || groceryBaseHasItem(row.item)) return;
+    const key = normalize(row.item);
+    if (!items.has(key)) items.set(key, { item: row.item, sources: new Set() });
+    if (row.sourceRecipeName) items.get(key).sources.add(row.sourceRecipeName);
+  });
+  return [...items.values()]
+    .map((item) => ({ item: item.item, sources: [...item.sources].sort((a, b) => a.localeCompare(b)) }))
+    .sort((a, b) => normalize(a.item).localeCompare(normalize(b.item)));
+}
+
 function shouldReviewGroceryRow(row) {
   return Boolean(
     row.sourceRecipeId
@@ -2978,15 +4588,22 @@ function groceryReviewKey(row) {
 
 function openGroceryItemReview(row) {
   if (!shouldReviewGroceryRow(row) || document.querySelector("dialog[open]")) return;
+  pendingGroceryReviewItems = [];
   pendingGroceryReview = row;
   elements.groceryReviewItem.textContent = row.item;
   elements.groceryReviewContext.textContent = row.sourceRecipeName
     ? `"${row.item}" is not in Grocery Items. It came from ${row.sourceRecipeName}.`
     : `"${row.item}" is not in Grocery Items.`;
+  elements.groceryReviewList.innerHTML = "";
   elements.groceryReviewDialog.showModal();
 }
 
 function dismissCurrentGroceryReview() {
+  if (pendingGroceryReviewItems.length) {
+    pendingGroceryReviewItems = [];
+    elements.groceryReviewDialog.close();
+    return;
+  }
   if (pendingGroceryReview) {
     if (!state.groceryReviewDismissed) state.groceryReviewDismissed = {};
     state.groceryReviewDismissed[groceryReviewKey(pendingGroceryReview)] = true;
@@ -3003,6 +4620,23 @@ function goToGroceryReviewRecipe() {
 }
 
 function addCurrentGroceryReviewItem() {
+  if (pendingGroceryReviewItems.length) {
+    const selected = [...elements.groceryReviewList.querySelectorAll("[data-grocery-review-index]:checked")]
+      .map((checkbox) => pendingGroceryReviewItems[Number(checkbox.dataset.groceryReviewIndex)]?.item)
+      .filter(Boolean);
+    if (!selected.length) {
+      dismissCurrentGroceryReview();
+      return;
+    }
+    state.groceryBaseItems = normalizeGroceryBaseItems([...groceryBaseItems(), ...selected]);
+    selected.forEach(clearDismissedGroceryReviewsForItem);
+    pendingGroceryReviewItems = [];
+    persist();
+    refreshGroceryLibraryViews();
+    renderGroceries();
+    elements.groceryReviewDialog.close();
+    return;
+  }
   if (!pendingGroceryReview?.item) return;
   state.groceryBaseItems = normalizeGroceryBaseItems([...groceryBaseItems(), pendingGroceryReview.item]);
   clearDismissedGroceryReviewsForItem(pendingGroceryReview.item);
@@ -3020,6 +4654,7 @@ function clearDismissedGroceryReviewsForItem(item) {
 }
 
 function renderPantry() {
+  if (!elements.pantryList) return;
   if (!state.pantry.length) {
     elements.pantryList.innerHTML = `<div class="empty-state">Add staple ingredients to keep them off your grocery list.</div>`;
     return;
@@ -3045,24 +4680,25 @@ function openRecipeDialog(id) {
   elements.recipeDialog.showModal();
 }
 
-function openRecipeView(id) {
-  const recipe = activeRecipes().find((item) => item.id === id);
+function openRecipeView(id, mealContext = null) {
+  const recipe = recipeForSlot(id);
   if (!recipe) return;
   const baseServings = Number(recipe.servings || 1) || 1;
+  const currentServings = recipe.virtualGroceryRecipe ? Number(recipe.groceryMealServings || 1) || 1 : baseServings;
   elements.recipeViewTitle.textContent = recipe.name;
-  elements.recipeViewDialog.querySelector(".muted-label").textContent = "Recipe";
+  elements.recipeViewDialog.querySelector(".muted-label").textContent = recipe.virtualGroceryRecipe ? "Ingredient" : "Recipe";
   elements.recipeViewHeaderActions.innerHTML = `
     <label class="header-serving-editor">
       <span>Servings</span>
-      <input type="number" min="1" step="1" value="${baseServings}" data-serving-adjuster data-base-servings="${baseServings}" />
+      <input type="number" min="1" step="1" value="${currentServings}" data-serving-adjuster data-base-servings="${baseServings}" />
     </label>
-    <button class="primary-btn header-cook-btn" type="button" data-start-cooking="${escapeHtml(recipe.id)}">Let's cook!</button>
+    ${recipe.virtualGroceryRecipe ? "" : `<button class="primary-btn header-cook-btn" type="button" data-start-cooking="${escapeHtml(recipe.id)}">Let's cook!</button>`}
   `;
   setActiveRecipeSideNavigation("");
   elements.recipeViewContent.innerHTML = recipeViewTemplate(recipe);
   elements.recipeViewContent.ontouchstart = null;
   elements.recipeViewContent.ontouchend = null;
-  bindRecipeViewServingControls(recipe);
+  bindRecipeViewServingControls(recipe, mealContext);
   elements.recipeViewContent.querySelector("[data-edit-recipe-view]")?.addEventListener("click", () => {
     elements.recipeViewDialog.close();
     openRecipeDialog(recipe.id);
@@ -3136,6 +4772,7 @@ function recipeViewTemplate(recipe) {
   const nutrition = normalizeNutritionFacts(recipe.nutrition);
   const cookLog = normalizeCookLog(recipe.cookLog);
   const baseServings = Number(recipe.servings || 1) || 1;
+  const ingredientScale = recipe.virtualGroceryRecipe ? (Number(recipe.groceryMealServings || 1) || 1) / baseServings : 1;
   return `
     <div class="recipe-view-meta">
       ${recipeTimePillsTemplate(recipe, "Flexible")}
@@ -3143,7 +4780,7 @@ function recipeViewTemplate(recipe) {
     </div>
     <section class="recipe-view-section">
       <h3>Ingredients</h3>
-      ${ingredients.length ? `<ul data-scaled-ingredients>${scaledIngredientListTemplate(ingredients, 1)}</ul>` : `<p class="empty-state">No ingredients added yet.</p>`}
+      ${ingredients.length ? `<ul data-scaled-ingredients>${scaledIngredientListTemplate(ingredients, ingredientScale)}</ul>` : `<p class="empty-state">No ingredients added yet.</p>`}
     </section>
     <section class="recipe-view-section">
       <h3>Instructions</h3>
@@ -3163,7 +4800,7 @@ function recipeViewTemplate(recipe) {
       ${cookLogTemplate(cookLog)}
     </section>
     <div class="recipe-view-actions recipe-view-footer-actions">
-      <button class="recipe-edit-link" type="button" data-edit-recipe-view="${escapeHtml(recipe.id)}">Edit recipe</button>
+      ${recipe.virtualGroceryRecipe ? "" : `<button class="recipe-edit-link" type="button" data-edit-recipe-view="${escapeHtml(recipe.id)}">Edit recipe</button>`}
       ${recipe.sourceUrl ? `<a class="recipe-source-link" href="${escapeHtml(recipe.sourceUrl)}" target="_blank" rel="noreferrer">Source recipe</a>` : ""}
     </div>
   `;
@@ -3291,7 +4928,7 @@ function updateActiveCookingItem(cookingId, updater) {
   renderActiveCooking();
 }
 
-function bindRecipeViewServingControls(recipe) {
+function bindRecipeViewServingControls(recipe, mealContext = null) {
   const input = elements.recipeViewHeaderActions.querySelector("[data-serving-adjuster]");
   const ingredientList = elements.recipeViewContent.querySelector("[data-scaled-ingredients]");
   if (!input || !ingredientList) return;
@@ -3301,7 +4938,19 @@ function bindRecipeViewServingControls(recipe) {
     const nextServings = Math.max(1, Number(input.value) || baseServings);
     const scale = nextServings / baseServings;
     ingredientList.innerHTML = scaledIngredientListTemplate(normalizeIngredients(recipe.ingredients), scale);
+    if (recipe.virtualGroceryRecipe) updateGroceryMealServing(recipe.groceryMealItem, nextServings, mealContext);
   });
+}
+
+function updateGroceryMealServing(item, servings, mealContext) {
+  if (!item || !mealContext?.day || !mealContext?.meal || Number.isNaN(mealContext.index)) return;
+  const week = weekState();
+  const entries = mealEntryList(slotEntries(week.slots?.[mealContext.day]?.[mealContext.meal]), mealContext.meal);
+  entries[mealContext.index] = groceryMealSlotId(item, servings);
+  week.slots[mealContext.day][mealContext.meal] = compactMealSlotEntries(entries, mealContext.meal);
+  state.checkedGroceries = {};
+  persist();
+  renderGroceries();
 }
 
 function scaledIngredientListTemplate(ingredients, scale) {
@@ -3641,7 +5290,7 @@ function normalizeNutritionFacts(facts) {
 }
 
 function openImportDialog(prefilledUrl = "", shouldAutoFetch = false) {
-  setSectionCollapsed("recipes", false);
+  openRecipeBoxPage();
   elements.importUrl.value = normalizeRecipeUrlInput(prefilledUrl);
   elements.importText.value = "";
   elements.importStatus.textContent = "";
@@ -3736,6 +5385,71 @@ function openImportedRecipe(recipe) {
 
 function setImportStatus(message) {
   elements.importStatus.textContent = message;
+}
+
+function openScanDialog() {
+  openRecipeBoxPage();
+  elements.scanImages.value = "";
+  setScanStatus("Upload one or more clear photos, then review the extracted recipe before saving.");
+  elements.scanDialog.showModal();
+}
+
+async function scanRecipeFromImages() {
+  const files = [...elements.scanImages.files || []];
+  if (!files.length) {
+    setScanStatus("Choose at least one cookbook photo first.");
+    return;
+  }
+  if (files.length > 6) {
+    setScanStatus("Use up to 6 photos for one recipe scan.");
+    return;
+  }
+
+  setScanStatus("Reading cookbook photo...");
+  elements.scanImagesBtn.disabled = true;
+  try {
+    const images = await Promise.all(files.map(fileToDataUrl));
+    const helperUrl = recipeScanHelperUrl();
+    if (!helperUrl) throw new Error("Recipe scanning needs the local helper or the live app.");
+    const response = await fetch(helperUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ images })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `Scan failed with status ${response.status}`);
+    const recipe = normalizeRecipe({
+      ...payload.recipe,
+      folderId: activeFolder && activeFolder !== "unfiled" ? activeFolder : ""
+    });
+    if (!recipe.name && !normalizeIngredients(recipe.ingredients).length) throw new Error("No recipe could be read from those images.");
+    elements.scanDialog.close();
+    populateRecipeForm(recipe);
+    elements.recipeDialog.showModal();
+  } catch (error) {
+    setScanStatus(error.message || "The recipe scan failed.");
+  } finally {
+    elements.scanImagesBtn.disabled = false;
+  }
+}
+
+function recipeScanHelperUrl() {
+  if (canUseLocalBackend()) return "/api/scan-recipe";
+  if (window.location.protocol.startsWith("http")) return "/.netlify/functions/scan-recipe";
+  return "";
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(reader.result));
+    reader.addEventListener("error", () => reject(reader.error || new Error("Could not read image.")));
+    reader.readAsDataURL(file);
+  });
+}
+
+function setScanStatus(message) {
+  elements.scanStatus.textContent = message;
 }
 
 function parseRecipeHtml(html, sourceUrl) {
@@ -3987,7 +5701,7 @@ function addRecipeFolder(event) {
   }
 
   elements.folderInput.value = "";
-  setSectionCollapsed("recipes", false);
+  openRecipeBoxPage();
   renderFolders();
   renderRecipes();
 }
@@ -4010,16 +5724,8 @@ async function deleteRecipeById(id) {
     recipe
   });
   Object.values(state.plans).forEach((week) => {
-    prepDays.forEach((day) => {
-      day.meals.forEach((meal) => {
-        const slotValue = week.slots?.[day.id]?.[meal];
-        if (Array.isArray(slotValue)) {
-          week.slots[day.id][meal] = compactSlotEntries(slotValue.filter((entry) => entry !== id));
-        } else if (slotValue === id) {
-          week.slots[day.id][meal] = "";
-        }
-      });
-    });
+    removeRecipeFromMealSlots(week.slots, id);
+    removeRecipeFromMealSlots(week.publishedSlots, id);
   });
   persist();
   deleteRecipeRow(id);
@@ -4049,6 +5755,20 @@ function setMeal(day, meal, recipeId) {
   persist();
   renderPlanner();
   renderGroceries();
+}
+
+function removeRecipeFromMealSlots(slots, recipeId) {
+  if (!slots) return;
+  prepDays.forEach((day) => {
+    [...day.meals, ...Object.keys(combinedMealSections)].forEach((meal) => {
+      const slotValue = slots?.[day.id]?.[meal];
+      if (Array.isArray(slotValue)) {
+        slots[day.id][meal] = compactSlotEntries(slotValue.filter((entry) => entry !== recipeId));
+      } else if (slotValue === recipeId) {
+        slots[day.id][meal] = "";
+      }
+    });
+  });
 }
 
 function autoGenerateMealPlan() {
@@ -4200,7 +5920,7 @@ function folderIdByName(name) {
 }
 
 function isWeekdayBreakfastSlot(day, meal) {
-  return meal === "Breakfast" && weekdayBreakfastDayIds.has(day.id);
+  return meal === "MJ Breakfast" && weekdayBreakfastDayIds.has(day.id);
 }
 
 function slotHasMealSelection(slotValue) {
@@ -4233,6 +5953,7 @@ function repeatMeal(day, meal) {
 
 function addPantryItem(event) {
   event.preventDefault();
+  if (!elements.pantryInput) return;
   const item = elements.pantryInput.value.trim();
   if (!item) return;
   if (!state.pantry.some((existing) => normalize(existing) === normalize(item))) {
@@ -4258,26 +5979,144 @@ function createBlankWeek() {
   return {
     notes: "",
     manualGroceries: [],
+    mealPlanView: "edit",
+    publishedSlots: null,
+    combinedMealSections: {},
+    publishedCombinedMealSections: {},
     slots: Object.fromEntries(prepDays.map((day) => [day.id, Object.fromEntries(day.meals.map((meal) => [meal, ""]))]))
   };
 }
 
 function ensurePrepWindowShape(week) {
   if (!Array.isArray(week.manualGroceries)) week.manualGroceries = [];
+  if (week.mealPlanView !== "published") week.mealPlanView = "edit";
   if (!week.slots) week.slots = {};
+  if (!week.combinedMealSections || typeof week.combinedMealSections !== "object") week.combinedMealSections = {};
+  if (!week.publishedCombinedMealSections || typeof week.publishedCombinedMealSections !== "object") week.publishedCombinedMealSections = {};
+  ensureCombinedMealSectionShape(week.combinedMealSections);
+  ensureCombinedMealSectionShape(week.publishedCombinedMealSections);
+  ensureMealSlotShape(week.slots);
+  if (week.publishedSlots) ensureMealSlotShape(week.publishedSlots);
+  applyDefaultMealEntries(week);
+}
+
+function ensureMealSlotShape(slots) {
   prepDays.forEach((day) => {
-    if (!week.slots[day.id]) week.slots[day.id] = {};
-    if (typeof week.slots[day.id].Extras === "undefined" && typeof week.slots[day.id].Sophia !== "undefined") {
-      week.slots[day.id].Extras = week.slots[day.id].Sophia;
-      delete week.slots[day.id].Sophia;
+    if (!slots[day.id]) slots[day.id] = {};
+    migrateLegacyMealSlots(slots, day);
+    if (typeof slots[day.id].Extras === "undefined" && typeof slots[day.id].Sophia !== "undefined") {
+      slots[day.id].Extras = slots[day.id].Sophia;
+      delete slots[day.id].Sophia;
     }
     day.meals.forEach((meal) => {
-      if (typeof week.slots[day.id][meal] === "undefined") {
-        week.slots[day.id][meal] = "";
+      if (typeof slots[day.id][meal] === "undefined") {
+        slots[day.id][meal] = "";
       }
     });
+    Object.keys(combinedMealSections).forEach((meal) => {
+      if (typeof slots[day.id][meal] === "undefined") slots[day.id][meal] = "";
+    });
   });
-  applyDefaultMealEntries(week);
+}
+
+function ensureCombinedMealSectionShape(combinedState) {
+  if (!combinedState || typeof combinedState !== "object") return;
+  prepDays.forEach((day) => {
+    if (!combinedState[day.id]) combinedState[day.id] = {};
+    Object.keys(combinedMealSections).forEach((meal) => {
+      combinedState[day.id][meal] = Boolean(combinedState[day.id][meal]);
+    });
+  });
+}
+
+function migrateLegacyMealSlots(slots, day) {
+  const legacyMappings = [
+    { from: "Breakfast", to: breakfastMeals },
+    { from: "Lunch", to: lunchMeals },
+    { from: "Dinner", to: dinnerMeals }
+  ];
+  legacyMappings.forEach((mapping) => {
+    const legacyEntries = slotEntries(slots[day.id][mapping.from]);
+    if (legacyEntries.length) {
+      mapping.to.forEach((meal, index) => {
+        if (!day.meals.includes(meal)) return;
+        if (slotHasMealSelection(slots[day.id][meal])) return;
+        if (legacyEntries[index]) slots[day.id][meal] = legacyEntries[index];
+      });
+    }
+    delete slots[day.id][mapping.from];
+  });
+}
+
+function mealPlanViewMode(week) {
+  return week?.mealPlanView === "published" ? "published" : "edit";
+}
+
+function isPublishedMealPlanView(week) {
+  return mealPlanViewMode(week) === "published";
+}
+
+function mealSlotsForWeek(week) {
+  return isPublishedMealPlanView(week) && week.publishedSlots ? week.publishedSlots : week.slots;
+}
+
+function combinedMealSectionsForWeek(week) {
+  return isPublishedMealPlanView(week) && week.publishedCombinedMealSections
+    ? week.publishedCombinedMealSections
+    : week.combinedMealSections;
+}
+
+function cloneMealSlots(slots) {
+  return JSON.parse(JSON.stringify(slots || {}));
+}
+
+function cloneCombinedMealSections(combinedState) {
+  return JSON.parse(JSON.stringify(combinedState || {}));
+}
+
+function setCombinedMealSection(week, dayId, meal, value) {
+  if (!week.combinedMealSections) week.combinedMealSections = {};
+  if (!week.combinedMealSections[dayId]) week.combinedMealSections[dayId] = {};
+  week.combinedMealSections[dayId][meal] = Boolean(value);
+}
+
+function toggleMealPlanView() {
+  const week = weekState();
+  editingMealEntry = null;
+  if (isPublishedMealPlanView(week)) {
+    week.mealPlanView = "edit";
+  } else {
+    week.publishedSlots = cloneMealSlots(week.slots);
+    week.publishedCombinedMealSections = cloneCombinedMealSections(week.combinedMealSections);
+    ensureMealSlotShape(week.publishedSlots);
+    ensureCombinedMealSectionShape(week.publishedCombinedMealSections);
+    week.mealPlanView = "published";
+    archivePublishedWeek(week);
+  }
+  state.checkedGroceries = {};
+  persist();
+  renderPlanner();
+  renderGroceries();
+  if (isPublishedMealPlanView(week)) openPublishedGroceryReview();
+}
+
+function archivePublishedWeek(week) {
+  if (!state.publishedWeeks || Array.isArray(state.publishedWeeks)) {
+    state.publishedWeeks = normalizePublishedWeeks(state.publishedWeeks);
+  }
+  const key = weekKey();
+  const start = dateFromWeekKey(key);
+  state.publishedWeeks[key] = {
+    weekKey: key,
+    startDate: key,
+    endDate: dateKeyFromDate(addDays(start, 7)),
+    rangeLabel: formatWeekRange(start),
+    publishedAt: new Date().toISOString(),
+    slots: cloneMealSlots(week.publishedSlots || week.slots),
+    combinedMealSections: cloneCombinedMealSections(week.publishedCombinedMealSections || week.combinedMealSections),
+    manualGroceries: Array.isArray(week.manualGroceries) ? [...week.manualGroceries] : [],
+    notes: week.notes || ""
+  };
 }
 
 function applyDefaultMealEntries(week) {
@@ -4305,24 +6144,37 @@ function applyDefaultMealEntry(week, day, defaultEntry) {
 
 function recipeOrCustomMealValue(value, options = {}) {
   const recipe = activeRecipes().find((item) => normalize(item.name) === normalize(value));
-  if (!recipe) return value;
+  if (!recipe) {
+    const groceryItem = grocerySuggestionItems().find((item) => normalize(item) === normalize(value));
+    return groceryItem ? groceryMealSlotId(groceryItem) : value;
+  }
   if (options.allowProtected === false && isProtectedRecipe(recipe)) return "";
   return recipe.id;
 }
 
 function buildGroceryItems() {
-  const ids = new Set();
+  const recipeIds = new Set();
+  const groceryRows = [];
   const week = weekState();
-  prepDays.forEach((day) => day.meals.forEach((meal) => {
-    slotEntries(week.slots[day.id][meal]).forEach((id) => {
-      if (recipeForSlot(id)) ids.add(id);
+  const slots = mealSlotsForWeek(week);
+  const combinedState = combinedMealSectionsForWeek(week);
+  prepDays.forEach((day) => mealKeysForDay(day, combinedState).forEach((meal) => {
+    slotEntries(slots?.[day.id]?.[meal]).forEach((entry) => {
+      const groceryRecipe = groceryRecipeForSlot(entry);
+      if (groceryRecipe) {
+        groceryRows.push(...normalizeIngredients(groceryRecipe.ingredients).map((ingredient) => scaledIngredientToText(ingredient, groceryRecipe.groceryMealServings)));
+        return;
+      }
+      if (recipeForSlot(entry)) recipeIds.add(entry);
     });
   }));
 
-  return [...ids]
+  return [
+    ...[...recipeIds]
     .flatMap((id) => normalizeIngredients(activeRecipes().find((recipe) => recipe.id === id)?.ingredients || []).map(ingredientToText))
-    .filter(Boolean)
-    .sort((a, b) => normalize(a).localeCompare(normalize(b)));
+      .filter(Boolean),
+    ...groceryRows.filter(Boolean)
+  ].sort((a, b) => normalize(a).localeCompare(normalize(b)));
 }
 
 function buildGroceryRows() {
@@ -4330,16 +6182,29 @@ function buildGroceryRows() {
 }
 
 function buildRawGroceryRows() {
-  const ids = new Set();
+  const recipeIds = new Set();
   const rows = [];
   const week = weekState();
-  prepDays.forEach((day) => day.meals.forEach((meal) => {
-    slotEntries(week.slots[day.id][meal]).forEach((id) => {
-      if (recipeForSlot(id)) ids.add(id);
+  const slots = mealSlotsForWeek(week);
+  const combinedState = combinedMealSectionsForWeek(week);
+  prepDays.forEach((day) => mealKeysForDay(day, combinedState).forEach((meal) => {
+    slotEntries(slots?.[day.id]?.[meal]).forEach((entry) => {
+      const groceryRecipe = groceryRecipeForSlot(entry);
+      if (groceryRecipe) {
+        normalizeIngredients(groceryRecipe.ingredients)
+          .map((ingredient) => ingredientToGroceryRow({
+            ...ingredient,
+            amount: scaleIngredientAmount(ingredient.amount, groceryRecipe.groceryMealServings)
+          }, groceryRecipe))
+          .filter((row) => row.item)
+          .forEach((row) => rows.push(row));
+        return;
+      }
+      if (recipeForSlot(entry)) recipeIds.add(entry);
     });
   }));
 
-  [...ids].forEach((id) => {
+  [...recipeIds].forEach((id) => {
     const recipe = activeRecipes().find((item) => item.id === id);
     normalizeIngredients(recipe?.ingredients || [])
       .map((ingredient) => ingredientToGroceryRow(ingredient, recipe))
@@ -4539,6 +6404,7 @@ function isManualGroceryItem(item) {
 }
 
 function buildGroceryText() {
+  if (!isPublishedMealPlanView(weekState())) return "Publish the active week to generate groceries.";
   const pantrySet = new Set(state.pantry.map((item) => normalize(item)));
   const items = buildGroceryRowsWithManual().filter((row) => !pantrySet.has(normalize(row.item)));
   return items.length
@@ -4552,7 +6418,22 @@ function moveWeek(offset) {
 }
 
 function weekKey() {
-  return currentWeek.toISOString().slice(0, 10);
+  return dateKeyFromDate(currentWeek);
+}
+
+function dateKeyFromDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function dateFromWeekKey(key) {
+  const [year, month, day] = String(key || "").split("-").map(Number);
+  if (!year || !month || !day) return new Date("invalid");
+  const date = new Date(year, month - 1, day);
+  date.setHours(0, 0, 0, 0);
+  return date;
 }
 
 function startOfPrepWindow(date) {

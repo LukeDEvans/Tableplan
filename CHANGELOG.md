@@ -48,6 +48,13 @@ This log summarizes the project history and recent safety work so the app can be
   - marking a recipe done appends a dated log entry with servings, elapsed time, and notes
 - Split recipe time into separate prep time and cook time fields in the recipe editor, recipe views, imports, and Supabase migration.
 - Added `supabase-privacy-rls-hardening.sql` to remove anonymous table grants and restrict Eat's Supabase tables to `mrlukedevans@gmail.com`.
+- Reorganized local files under `/Users/luke/Desktop/Eat`:
+  - app project shortcut in `Project Files`
+  - rotating JSON backups in `Backups`
+  - older Desktop copies preserved in `Previous Project Copies`
+- Changed the app shell so Meal Plan is the always-open main view.
+- Moved Recipe Box and Groceries into separate app-page dialogs opened from top-level buttons.
+- Removed the visible Pantry section and all main section expand/collapse buttons.
 
 ## 2026-05-10 to 2026-05-14
 

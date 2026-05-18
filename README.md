@@ -1,6 +1,6 @@
 # Eat
 
-Eat is a personal recipe box, weekly meal plan, grocery list, pantry tracker, and recipe import tool.
+Eat is a personal recipe box, weekly meal plan, grocery list, and recipe import tool.
 
 The app is intentionally lightweight: it is mostly static HTML/CSS/JavaScript, with a small local Node helper for imports and Mac backups, Supabase for cloud sync, Netlify for the live app, and a Chrome extension for toolbar imports.
 
@@ -9,6 +9,24 @@ The app is intentionally lightweight: it is mostly static HTML/CSS/JavaScript, w
 - Live app: https://effervescent-malabi-e0af55.netlify.app/
 - Local app: http://localhost:4174/index.html
 - GitHub repo: https://github.com/LukeDEvans/Tableplan
+
+## Local Folder Layout
+
+The convenient local home for Eat is:
+
+```text
+/Users/luke/Desktop/Eat
+```
+
+It is organized as:
+
+```text
+/Users/luke/Desktop/Eat/Project Files
+/Users/luke/Desktop/Eat/Backups
+/Users/luke/Desktop/Eat/Previous Project Copies
+```
+
+Use `Project Files` for the app code, Git repo, SQL files, Chrome extension, and docs. It is a shortcut to the active Codex project folder, so there is still one true project. Use `Backups` for rotating local JSON backups. `Previous Project Copies` holds older Desktop copies kept only as a rollback cushion.
 
 ## Main Files
 
@@ -29,6 +47,7 @@ The app is intentionally lightweight: it is mostly static HTML/CSS/JavaScript, w
 From this project folder:
 
 ```sh
+cd "/Users/luke/Desktop/Eat/Project Files"
 node server.js
 ```
 
@@ -49,7 +68,7 @@ The local helper must be running for:
 Localhost writes rotating JSON backups to:
 
 ```text
-/Users/luke/Desktop/Eat
+/Users/luke/Desktop/Eat/Backups
 ```
 
 The helper keeps the 5 newest `eat-backup-*.json` files. New backups include a checksum. In the app, use:
@@ -68,7 +87,7 @@ Use:
 Settings -> Restore Backup
 ```
 
-Choose a backup JSON from `/Users/luke/Desktop/Eat`. The current restore mode is intentionally conservative: it previews the backup and merges missing recipes only. It does not replace current data.
+Choose a backup JSON from `/Users/luke/Desktop/Eat/Backups`. The current restore mode is intentionally conservative: it previews the backup and merges missing recipes only. It does not replace current data.
 
 ## Trash
 
@@ -187,4 +206,4 @@ Do not treat Eat as the only archive until these are true:
 - Backup Health shows the latest backup is readable.
 - Restore Backup has been tested with a backup file.
 - Recipes added from live app, localhost, iPhone, and Chrome extension all appear in the same Recipe Box.
-- Several days of backups exist in `/Users/luke/Desktop/Eat`.
+- Several days of backups exist in `/Users/luke/Desktop/Eat/Backups`.
