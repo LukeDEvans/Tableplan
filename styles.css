@@ -1,5 +1,5 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   --bg: #f7f5ef;
   --surface: #fffdf8;
   --surface-strong: #ffffff;
@@ -18,8 +18,30 @@
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+body[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #171816;
+  --surface: #20221f;
+  --surface-strong: #272a26;
+  --ink: #f2eee5;
+  --muted: #b7afa2;
+  --line: #44483f;
+  --accent: #75bda4;
+  --accent-dark: #a7dec9;
+  --accent-soft: #18392f;
+  --tomato: #f08a71;
+  --tomato-soft: #4a241d;
+  --sun: #d7a84b;
+  --blue: #8eb3dd;
+  --shadow: 0 18px 40px rgba(0, 0, 0, 0.36);
+}
+
+body[data-theme="auto"] {
+  color-scheme: light dark;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  body[data-theme="auto"] {
     --bg: #171816;
     --surface: #20221f;
     --surface-strong: #272a26;
@@ -52,12 +74,19 @@ body {
 }
 
 @media (prefers-color-scheme: dark) {
-  body {
+  body[data-theme="auto"] {
     background:
       linear-gradient(135deg, rgba(117, 189, 164, 0.12), transparent 32%),
       linear-gradient(315deg, rgba(240, 138, 113, 0.1), transparent 28%),
       var(--bg);
   }
+}
+
+body[data-theme="dark"] {
+  background:
+    linear-gradient(135deg, rgba(117, 189, 164, 0.12), transparent 32%),
+    linear-gradient(315deg, rgba(240, 138, 113, 0.1), transparent 28%),
+    var(--bg);
 }
 
 button,
@@ -79,6 +108,18 @@ svg {
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 2;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .app-shell {
@@ -190,6 +231,13 @@ svg {
   text-align: left;
 }
 
+.active-cooking-photo {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 7px;
+}
+
 .active-cooking-thumb:hover,
 .active-cooking-thumb:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
@@ -255,6 +303,16 @@ svg {
   gap: 14px;
 }
 
+#recipeViewDialog .dialog-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+#recipeViewDialog .dialog-head > div:first-child {
+  min-width: 0;
+}
+
 .dialog-head-actions {
   display: flex;
   align-items: flex-start;
@@ -308,6 +366,16 @@ svg {
 
 .brand-mark svg path:first-child {
   fill: rgba(255, 255, 255, 0.18);
+}
+
+.brand h1 {
+  margin: 0;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: clamp(1.6rem, 4vw, 2.4rem);
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0;
 }
 
 .app-menu {
@@ -544,10 +612,12 @@ h3 {
 }
 
 .page-dialog {
-  width: min(980px, calc(100vw - 24px));
-  max-height: calc(100dvh - 24px);
+  width: 100vw;
+  max-width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
   border: 0;
-  border-radius: 12px;
+  border-radius: 0;
   padding: 0;
   background: transparent;
   overflow: visible;
@@ -559,8 +629,10 @@ h3 {
 
 .app-page-panel {
   width: 100%;
-  max-height: calc(100dvh - 24px);
+  min-height: 100dvh;
+  max-height: 100dvh;
   overflow: auto;
+  border-radius: 0;
 }
 
 .planner-column {
@@ -637,6 +709,10 @@ textarea {
   background: var(--accent);
   color: white;
   font-weight: 800;
+  border: 0;
+  box-shadow: none;
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 .compact-btn {
@@ -702,6 +778,7 @@ textarea {
 
 .primary-btn:hover {
   background: var(--accent-dark);
+  color: white;
 }
 
 .secondary-btn,
@@ -744,6 +821,18 @@ textarea {
   width: 38px;
   height: 38px;
   flex: 0 0 auto;
+}
+
+.secondary-btn:hover,
+.secondary-btn:focus-visible,
+.icon-btn:hover,
+.icon-btn:focus-visible,
+.folder-btn:hover,
+.folder-btn:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+  outline: none;
 }
 
 .icon-btn svg {
@@ -831,11 +920,43 @@ select:focus {
   box-shadow: none;
 }
 
+.search-clear-btn {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  border-radius: 999px;
+  background: #e9e3d8;
+  color: var(--muted);
+  font-size: 1rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.search-clear-btn:hover,
+.search-clear-btn:focus-visible {
+  background: var(--tomato-soft);
+  color: var(--tomato);
+  outline: 0;
+}
+
+.search-clear-btn[hidden] {
+  display: none;
+}
+
 .folder-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.folder-form[hidden] {
+  display: none;
 }
 
 .folder-form input {
@@ -944,7 +1065,7 @@ select:focus {
 .folder-recipes {
   display: grid;
   grid-column: 1 / -1;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(142px, 1fr));
   gap: 12px;
   margin: 10px 0 12px;
 }
@@ -1007,6 +1128,40 @@ select:focus {
   box-shadow: 0 18px 42px rgba(45, 40, 34, 0.18);
 }
 
+.theme-setting {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 6px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--blue) 48%, var(--line));
+  border-radius: 0;
+  background: var(--surface-strong);
+}
+
+.theme-setting legend {
+  padding: 0 4px;
+  color: var(--blue);
+  font-size: 0.72rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.theme-setting label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.theme-setting input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+}
+
 .app-settings-menu {
   margin-top: 4px;
   min-width: 100%;
@@ -1031,22 +1186,31 @@ select:focus {
 
 .recipe-list {
   display: grid;
-  gap: 10px;
-  max-height: calc(100vh - 272px);
+  gap: 18px;
+  max-height: none;
   overflow: auto;
   padding-right: 4px;
 }
 
 .recipe-card {
   display: grid;
-  align-content: start;
+  align-content: space-between;
   gap: 8px;
   width: 100%;
+  aspect-ratio: 1 / 1;
   padding: 8px;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface-strong);
-  text-align: left;
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent-soft) 54%, var(--surface-strong)), var(--surface-strong));
+  text-align: center;
+}
+
+.recipe-card-photo {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 7px;
 }
 
 .recipe-card[draggable="true"] {
@@ -1064,12 +1228,19 @@ select:focus {
 
 .recipe-card-head {
   display: grid;
+  align-content: center;
+  justify-items: center;
   gap: 6px;
+  min-height: 0;
 }
 
 .recipe-card-head h3 {
-  font-size: 0.9rem;
-  line-height: 1.2;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  font-size: clamp(0.82rem, 1.6vw, 1rem);
+  line-height: 1.18;
 }
 
 .recipe-card-head .pill {
@@ -1082,6 +1253,27 @@ select:focus {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.recipe-tag-filter-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.recipe-tag-filter {
+  width: auto;
+}
+
+.recipe-tag-group {
+  display: grid;
+  gap: 8px;
+}
+
+.recipe-tag-group h3 {
+  margin: 0;
+  font-size: 0.98rem;
 }
 
 .recipe-card-tags span,
@@ -1173,6 +1365,8 @@ select:focus {
   gap: 6px;
   overflow-x: auto;
   padding-bottom: 2px;
+  border: 0;
+  background: transparent;
 }
 
 .day-tab {
@@ -1250,7 +1444,7 @@ select:focus {
 
 .day-slots-carousel {
   display: grid;
-  grid-template-columns: repeat(4, minmax(240px, 1fr));
+  grid-template-columns: repeat(var(--meal-column-count, 4), minmax(240px, 1fr));
   gap: 8px;
   align-items: start;
   min-width: 0;
@@ -1258,6 +1452,10 @@ select:focus {
   overscroll-behavior-x: contain;
   scrollbar-width: thin;
   padding-bottom: 4px;
+}
+
+.day-slots-carousel.is-published {
+  grid-template-columns: repeat(var(--meal-column-count, 4), minmax(240px, 1fr));
 }
 
 .meal-plan-column {
@@ -1359,15 +1557,15 @@ select:focus {
 }
 
 .auto-rule-pick-group {
-  grid-template-columns: 1fr 28px;
+  grid-template-columns: 1fr repeat(2, 28px);
 }
 
 .auto-rule-empty-group {
-  grid-template-columns: 1fr 28px;
+  grid-template-columns: 1fr repeat(2, 28px);
 }
 
 .auto-rule-entry .auto-rule-empty-group {
-  grid-template-columns: 1fr 28px;
+  grid-template-columns: 1fr repeat(2, 28px);
 }
 
 .auto-rule-pick-slot {
@@ -1408,6 +1606,49 @@ select:focus {
 
 .auto-rule-selected {
   width: 100%;
+}
+
+.auto-rule-tag-controls {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-strong) 86%, transparent);
+}
+
+.auto-rule-tag-control-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.auto-rule-tag-control-row label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.auto-rule-tag-controls select {
+  min-height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.auto-rule-tag-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.auto-rule-tag-chip {
+  min-height: 26px;
 }
 
 .auto-rule-trash-target {
@@ -1502,10 +1743,67 @@ select:focus {
 .slot-card.filled {
   border-style: solid;
   background: var(--surface-strong);
+  box-shadow: none;
 }
 
 .published-slot {
-  background: var(--surface);
+  gap: 5px;
+  padding: 4px 0 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.published-slot .slot-label {
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
+.published-slot .meal-entry-list {
+  gap: 2px;
+}
+
+.published-meal-entry {
+  position: relative;
+  min-height: 0;
+  padding-left: 14px;
+}
+
+.published-meal-entry::before {
+  content: "";
+  position: absolute;
+  top: 0.78em;
+  left: 2px;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.published-meal-entry .recipe-meal-link,
+.published-meal-entry .meal-entry-static {
+  min-height: 0;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.92rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.published-meal-entry .recipe-meal-link {
+  cursor: pointer;
+}
+
+.published-meal-entry .recipe-meal-link:hover,
+.published-meal-entry .recipe-meal-link:focus-visible {
+  background: transparent;
+  color: var(--accent-dark);
+  text-decoration: underline;
+  outline: none;
 }
 
 .placeholder-slot {
@@ -1867,8 +2165,23 @@ select:focus {
 .grocery-list {
   display: grid;
   gap: 8px;
-  max-height: 320px;
+  max-height: none;
   overflow: auto;
+}
+
+#groceriesPageDialog .app-page-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+#section-groceries {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+#groceriesPageDialog .grocery-list {
+  min-height: 0;
 }
 
 .grocery-form {
@@ -2094,6 +2407,25 @@ textarea {
   outline: 0;
 }
 
+.grocery-week-picker {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.grocery-week-picker select {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-strong);
+  color: var(--ink);
+  font-weight: 800;
+}
+
 .grocery-review-card {
   display: grid;
   gap: 6px;
@@ -2114,13 +2446,18 @@ textarea {
 
 .grocery-review-row {
   display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: start;
   gap: 8px;
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
+}
+
+.grocery-review-row label {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 8px;
 }
 
 .grocery-review-row input {
@@ -2137,6 +2474,13 @@ textarea {
   color: var(--muted);
   font-size: 0.74rem;
   font-weight: 750;
+}
+
+.grocery-review-source-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-left: 24px;
 }
 
 .recipe-dialog::backdrop {
@@ -2290,6 +2634,36 @@ textarea {
   list-style: none;
   color: #4f493f;
   line-height: 1.5;
+}
+
+.active-ingredient-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+.active-ingredient-check {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  color: var(--ink);
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.active-ingredient-check input {
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
+  accent-color: var(--accent);
+}
+
+.active-ingredient-check.is-checked span {
+  color: var(--muted);
+  text-decoration: line-through;
 }
 
 .active-cooking-step {
@@ -2660,6 +3034,128 @@ textarea {
   color: var(--ink);
 }
 
+.weekly-email-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.ingredient-options-editor {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ingredient-options-editor label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.ingredient-options-editor textarea {
+  min-height: 150px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.weekly-email-editor .restore-preview-card {
+  gap: 5px;
+}
+
+.weekly-email-options {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.weekly-email-options label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.photo-editor,
+.scan-picker {
+  display: grid;
+  gap: 10px;
+}
+
+.recipe-photo-preview {
+  display: grid;
+  place-items: center;
+  min-height: 96px;
+  padding: 10px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.45);
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.photo-picker-button {
+  width: 100%;
+  cursor: pointer;
+}
+
+.photo-picker-button:hover,
+.photo-picker-button:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  color: var(--ink);
+  outline: 2px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  outline-offset: 2px;
+}
+
+.cook-session-photo-picker {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.recipe-photo-preview img,
+.recipe-view-photo,
+.cook-log-photo {
+  width: 100%;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.recipe-photo-preview img {
+  max-height: 220px;
+}
+
+.recipe-view-photo {
+  max-height: 420px;
+}
+
+.cook-log-photo {
+  max-height: 220px;
+}
+
+.cook-log-photo-wrap {
+  display: grid;
+  gap: 8px;
+}
+
+.cook-log-photo-wrap .secondary-btn {
+  justify-self: start;
+}
+
+.scan-picker-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .restore-preview-card ul {
   margin: 4px 0 0;
   padding-left: 18px;
@@ -2711,84 +3207,164 @@ textarea {
   line-height: 1.4;
 }
 
+body[data-theme="dark"] .panel,
+body[data-theme="dark"] .planner-column,
+body[data-theme="dark"] .day-head,
+body[data-theme="dark"] .day-tab,
+body[data-theme="dark"] .folder-context-menu,
+body[data-theme="dark"] .app-menu,
+body[data-theme="dark"] .week-jump-menu,
+body[data-theme="dark"] .settings-menu,
+body[data-theme="dark"] .recipe-card,
+body[data-theme="dark"] .slot-card,
+body[data-theme="dark"] .auto-rule-day,
+body[data-theme="dark"] .tag-library-list,
+body[data-theme="dark"] .grocery-library-list,
+body[data-theme="dark"] .restore-preview,
+body[data-theme="dark"] .empty-state {
+  background: color-mix(in srgb, var(--surface-strong) 86%, transparent);
+}
+
+body[data-theme="dark"] .folder-btn {
+  color: var(--ink);
+}
+
+body[data-theme="dark"] .quiet-btn:hover,
+body[data-theme="dark"] .app-menu button:hover,
+body[data-theme="dark"] .app-menu button:focus-visible,
+body[data-theme="dark"] .week-jump-option:hover,
+body[data-theme="dark"] .week-jump-option:focus-visible,
+body[data-theme="dark"] .week-jump-option.is-current,
+body[data-theme="dark"] .settings-menu button:hover,
+body[data-theme="dark"] .settings-menu button:focus-visible {
+  background: #20246a;
+}
+
+body[data-theme="dark"] .folder-btn strong,
+body[data-theme="dark"] .pill,
+body[data-theme="dark"] .serving-adjuster,
+body[data-theme="dark"] .active-cooking-timer {
+  background: #20246a;
+  color: var(--muted);
+}
+
+body[data-theme="dark"] .pill.gold {
+  background: #4b4510;
+  color: #fff16a;
+}
+
+body[data-theme="dark"] .holiday-badge {
+  background: #263d1b;
+  color: #b7ff8d;
+}
+
+body[data-theme="dark"] .folder-btn.active,
+body[data-theme="dark"] .recipe-meal-link,
+body[data-theme="dark"] .chip,
+body[data-theme="dark"] .active-cooking-servings {
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+}
+
+body[data-theme="dark"] .folder-btn.folder-drop-target,
+body[data-theme="dark"] .recipe-meal-link:hover,
+body[data-theme="dark"] .recipe-meal-link:focus-visible {
+  background: #083f25;
+}
+
+body[data-theme="dark"] .recipe-view-section h3,
+body[data-theme="dark"] .recipe-view-section li,
+body[data-theme="dark"] .recipe-steps-view,
+body[data-theme="dark"] .active-recipe-steps,
+body[data-theme="dark"] .recipe-view-meta,
+body[data-theme="dark"] .active-cooking-notes label,
+body[data-theme="dark"] .cook-log-list p,
+body[data-theme="dark"] .restore-preview-card ul {
+  color: var(--ink);
+}
+
+body[data-theme="dark"] .recipe-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.62);
+}
+
 @media (prefers-color-scheme: dark) {
-  .panel,
-  .planner-column,
-  .day-head,
-  .day-tab,
-  .folder-context-menu,
-  .app-menu,
-  .week-jump-menu,
-  .settings-menu,
-  .recipe-card,
-  .slot-card,
-  .auto-rule-day,
-  .tag-library-list,
-  .grocery-library-list,
-  .restore-preview,
-  .empty-state {
+  body[data-theme="auto"] .panel,
+  body[data-theme="auto"] .planner-column,
+  body[data-theme="auto"] .day-head,
+  body[data-theme="auto"] .day-tab,
+  body[data-theme="auto"] .folder-context-menu,
+  body[data-theme="auto"] .app-menu,
+  body[data-theme="auto"] .week-jump-menu,
+  body[data-theme="auto"] .settings-menu,
+  body[data-theme="auto"] .recipe-card,
+  body[data-theme="auto"] .slot-card,
+  body[data-theme="auto"] .auto-rule-day,
+  body[data-theme="auto"] .tag-library-list,
+  body[data-theme="auto"] .grocery-library-list,
+  body[data-theme="auto"] .restore-preview,
+  body[data-theme="auto"] .empty-state {
     background: color-mix(in srgb, var(--surface-strong) 86%, transparent);
   }
 
-  .folder-btn {
+  body[data-theme="auto"] .folder-btn {
     color: var(--ink);
   }
 
-  .quiet-btn:hover,
-  .app-menu button:hover,
-  .app-menu button:focus-visible,
-  .week-jump-option:hover,
-  .week-jump-option:focus-visible,
-  .week-jump-option.is-current,
-  .settings-menu button:hover,
-  .settings-menu button:focus-visible {
-    background: #30342f;
+  body[data-theme="auto"] .quiet-btn:hover,
+  body[data-theme="auto"] .app-menu button:hover,
+  body[data-theme="auto"] .app-menu button:focus-visible,
+  body[data-theme="auto"] .week-jump-option:hover,
+  body[data-theme="auto"] .week-jump-option:focus-visible,
+  body[data-theme="auto"] .week-jump-option.is-current,
+  body[data-theme="auto"] .settings-menu button:hover,
+  body[data-theme="auto"] .settings-menu button:focus-visible {
+    background: #20246a;
   }
 
-  .folder-btn strong,
-  .pill,
-  .serving-adjuster,
-  .active-cooking-timer {
-    background: #34372f;
+  body[data-theme="auto"] .folder-btn strong,
+  body[data-theme="auto"] .pill,
+  body[data-theme="auto"] .serving-adjuster,
+  body[data-theme="auto"] .active-cooking-timer {
+    background: #20246a;
     color: var(--muted);
   }
 
-  .pill.gold {
-    background: #463821;
-    color: #f0c778;
+  body[data-theme="auto"] .pill.gold {
+    background: #4b4510;
+    color: #fff16a;
   }
 
-  .holiday-badge {
-    background: #34411e;
-    color: #dbe9a7;
+  body[data-theme="auto"] .holiday-badge {
+    background: #263d1b;
+    color: #b7ff8d;
   }
 
-  .folder-btn.active,
-  .recipe-meal-link,
-  .chip,
-  .active-cooking-servings {
+  body[data-theme="auto"] .folder-btn.active,
+  body[data-theme="auto"] .recipe-meal-link,
+  body[data-theme="auto"] .chip,
+  body[data-theme="auto"] .active-cooking-servings {
     background: var(--accent-soft);
     color: var(--accent-dark);
   }
 
-  .folder-btn.folder-drop-target,
-  .recipe-meal-link:hover,
-  .recipe-meal-link:focus-visible {
-    background: #224f42;
+  body[data-theme="auto"] .folder-btn.folder-drop-target,
+  body[data-theme="auto"] .recipe-meal-link:hover,
+  body[data-theme="auto"] .recipe-meal-link:focus-visible {
+    background: #083f25;
   }
 
-  .recipe-view-section h3,
-  .recipe-view-section li,
-  .recipe-steps-view,
-  .active-recipe-steps,
-  .recipe-view-meta,
-  .active-cooking-notes label,
-  .cook-log-list p,
-  .restore-preview-card ul {
+  body[data-theme="auto"] .recipe-view-section h3,
+  body[data-theme="auto"] .recipe-view-section li,
+  body[data-theme="auto"] .recipe-steps-view,
+  body[data-theme="auto"] .active-recipe-steps,
+  body[data-theme="auto"] .recipe-view-meta,
+  body[data-theme="auto"] .active-cooking-notes label,
+  body[data-theme="auto"] .cook-log-list p,
+  body[data-theme="auto"] .restore-preview-card ul {
     color: var(--ink);
   }
 
-  .recipe-dialog::backdrop {
+  body[data-theme="auto"] .recipe-dialog::backdrop {
     background: rgba(0, 0, 0, 0.62);
   }
 }
@@ -2857,12 +3433,19 @@ textarea {
   }
 
   #recipeDialog .dialog-head,
-  #recipeViewDialog .dialog-head,
   #recipeDialog .dialog-head-actions,
-  #recipeViewDialog .dialog-head-actions,
   #recipeDialog .ingredient-editor-head,
   #recipeViewDialog .ingredient-editor-head {
     flex-wrap: wrap;
+  }
+
+  #recipeViewDialog .dialog-head {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  #recipeViewDialog .dialog-head-actions {
+    flex-wrap: nowrap;
+    justify-self: end;
   }
 
   #recipeDialog h2,
@@ -3029,7 +3612,7 @@ textarea {
   }
 
   .day-slots-carousel {
-    grid-template-columns: repeat(4, 100%);
+    grid-template-columns: repeat(var(--meal-column-count, 4), 100%);
     overflow-x: auto;
     overscroll-behavior-x: contain;
     scroll-snap-type: x mandatory;

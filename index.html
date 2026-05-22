@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Eat</title>
-    <link rel="stylesheet" href="./styles.css?v=auth-deploy-1" />
+    <link rel="stylesheet" href="./styles.css?v=ingredient-options-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -23,9 +23,26 @@
                 <button type="button" id="openGroceriesPageBtn">Groceries</button>
                 <button type="button" id="settingsBtn" aria-expanded="false" aria-controls="settingsMenu">Settings</button>
                 <div class="settings-menu app-settings-menu" id="settingsMenu" hidden>
+                  <fieldset class="theme-setting" aria-label="Display mode">
+                    <legend>Display</legend>
+                    <label>
+                      <input type="radio" name="themeMode" value="light" />
+                      Light
+                    </label>
+                    <label>
+                      <input type="radio" name="themeMode" value="dark" />
+                      Dark
+                    </label>
+                    <label>
+                      <input type="radio" name="themeMode" value="auto" />
+                      Auto
+                    </label>
+                  </fieldset>
                   <button type="button" id="openAutoRulesBtn">Auto Rules</button>
                   <button type="button" id="openTagsBtn">Tags</button>
                   <button type="button" id="openGroceryLibraryBtn">Grocery Items</button>
+                  <button type="button" id="openIngredientOptionsBtn">Ingredient Options</button>
+                  <button type="button" id="openWeeklyEmailBtn">Weekly Email</button>
                   <button type="button" id="openBackupHealthBtn">Backup Health</button>
                   <button type="button" id="openRestoreBackupBtn">Restore Backup</button>
                   <button type="button" id="openTrashBtn">Trash</button>
@@ -100,14 +117,15 @@
           <div id="section-recipes">
             <label class="search">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.3-4.3M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" /></svg>
-              <input id="recipeSearch" type="search" placeholder="Search recipes, folders, ingredients" />
+              <input id="recipeSearch" type="search" placeholder="Search recipes, tags, ingredients" />
+              <button class="search-clear-btn" id="clearRecipeSearchBtn" type="button" title="Clear search" aria-label="Clear recipe search" hidden>×</button>
             </label>
-            <div class="folder-list" id="folderList" aria-label="Recipe folders"></div>
-            <form class="folder-form" id="folderForm">
+            <div class="folder-list recipe-tag-filter-list" id="folderList" aria-label="Recipe tags"></div>
+            <form class="folder-form" id="folderForm" hidden>
               <input id="folderInput" placeholder="Add recipe folder" />
               <button class="secondary-btn folder-add-btn" id="addFolderBtn" type="button">Add</button>
             </form>
-            <div class="recipe-list" id="recipeList" hidden></div>
+            <div class="recipe-list recipe-tile-list" id="recipeList"></div>
           </div>
         </aside>
       </dialog>
@@ -130,6 +148,10 @@
             </div>
           </div>
           <div id="section-groceries">
+            <label class="grocery-week-picker">
+              Published week
+              <select id="groceryWeekSelect"></select>
+            </label>
             <form class="inline-form grocery-form" id="groceryForm">
               <input id="groceryInput" list="grocerySuggestions" placeholder="Add grocery item" />
               <datalist id="grocerySuggestions"></datalist>
@@ -179,7 +201,7 @@
             <input id="recipeServings" inputmode="numeric" pattern="[0-9]*" placeholder="4" />
           </label>
         </div>
-        <label>
+        <label hidden>
           Folder
           <select id="recipeFolder"></select>
         </label>
@@ -193,6 +215,15 @@
           Source URL
           <input id="recipeSourceUrl" placeholder="https://cooking.nytimes.com/..." />
         </label>
+        <section class="photo-editor" aria-label="Recipe photo">
+          <div class="ingredient-editor-head">
+            <label>Dish Photo</label>
+            <button class="secondary-btn" type="button" id="removeRecipePhotoBtn">Remove photo</button>
+          </div>
+          <input id="recipePhotoUrl" type="hidden" />
+          <input id="recipePhotoInput" type="file" accept="image/*" />
+          <div class="recipe-photo-preview" id="recipePhotoPreview">No photo selected.</div>
+        </section>
         <section class="ingredient-editor" aria-label="Ingredients">
           <div class="ingredient-editor-head">
             <label>Ingredients</label>
@@ -312,10 +343,17 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
           </button>
         </div>
-        <label>
-          Cookbook page photos
-          <input id="scanImages" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple />
-        </label>
+        <div class="scan-picker">
+          <label>
+            Cookbook page photos
+            <input id="scanImages" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/*" multiple />
+          </label>
+          <input class="visually-hidden" id="scanCameraImage" type="file" accept="image/*" capture="environment" />
+          <div class="scan-picker-actions">
+            <button class="secondary-btn" type="button" id="scanCameraBtn">Take photo</button>
+            <button class="secondary-btn" type="button" id="clearScanImagesBtn">Clear photos</button>
+          </div>
+        </div>
         <p class="import-status" id="scanStatus">Upload one or more clear photos, then review the extracted recipe before saving.</p>
         <div class="dialog-actions">
           <span></span>
@@ -415,6 +453,44 @@
       </div>
     </dialog>
 
+    <dialog class="recipe-dialog auth-dialog" id="ingredientOptionsDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Settings</p>
+            <h2>Ingredient Options</h2>
+          </div>
+          <button class="icon-btn" id="closeIngredientOptionsBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div class="ingredient-options-editor">
+          <label>
+            <span>Number</span>
+            <textarea id="ingredientNumberOptions" rows="8" spellcheck="false"></textarea>
+          </label>
+          <label>
+            <span>QTY</span>
+            <textarea id="ingredientQtyOptions" rows="8" spellcheck="false"></textarea>
+          </label>
+          <label>
+            <span>Item</span>
+            <textarea id="ingredientItemOptions" rows="8" spellcheck="false"></textarea>
+          </label>
+          <label>
+            <span>Prep</span>
+            <textarea id="ingredientPrepOptions" rows="8" spellcheck="false"></textarea>
+          </label>
+        </div>
+        <div class="dialog-actions">
+          <button class="secondary-btn" type="button" id="resetIngredientOptionsBtn">Reset defaults</button>
+          <div>
+            <button class="primary-btn" type="button" id="saveIngredientOptionsBtn">Save and close</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
     <dialog class="recipe-dialog auth-dialog" id="groceryReviewDialog">
       <div class="recipe-form">
         <div class="dialog-head">
@@ -476,6 +552,11 @@
           Notes
           <textarea id="cookSessionNotes" placeholder="What changed, what worked, what to remember next time"></textarea>
         </label>
+        <div class="cook-session-photo-picker">
+          <span>Dish photo</span>
+          <input class="visually-hidden" id="cookSessionPhoto" type="file" accept="image/*" capture="environment" />
+          <button class="recipe-photo-preview photo-picker-button" id="cookSessionPhotoPreview" type="button">Optional photo from this cook.</button>
+        </div>
         <div class="dialog-actions">
           <button class="secondary-btn" type="button" id="cancelCookSessionNotesBtn">Cancel</button>
           <div>
@@ -502,6 +583,57 @@
           <div>
             <button class="secondary-btn" type="button" id="refreshBackupHealthBtn">Check again</button>
             <button class="primary-btn" type="button" id="doneBackupHealthBtn">Done</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog auth-dialog" id="weeklyEmailDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Settings</p>
+            <h2>Weekly Email</h2>
+          </div>
+          <button class="icon-btn" id="closeWeeklyEmailBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div class="weekly-email-editor">
+          <div class="restore-preview-card">
+            <strong>Schedule</strong>
+            <span>Thursdays at 14:00 UTC, which is Thursday morning Central time.</span>
+          </div>
+          <label>
+            Subject prefix
+            <input id="weeklyEmailSubjectPrefix" placeholder="Eat weekly review" />
+          </label>
+          <label>
+            Intro line
+            <textarea id="weeklyEmailIntro" rows="3" placeholder="{reviewRange} review and {upcomingRange} planning check."></textarea>
+          </label>
+          <div class="weekly-email-options" aria-label="Weekly email sections">
+            <label><input type="checkbox" id="weeklyEmailIncludeWeekInReview" /> Recipes cooked this week</label>
+            <label><input type="checkbox" id="weeklyEmailIncludeActiveCooks" /> Active cooks still open</label>
+            <label><input type="checkbox" id="weeklyEmailIncludeMissingNotes" /> Cook logs missing notes</label>
+            <label><input type="checkbox" id="weeklyEmailIncludeUpcomingStatus" /> Upcoming week published status</label>
+            <label><input type="checkbox" id="weeklyEmailIncludePlannedCount" /> Count of planned meal sections</label>
+            <label><input type="checkbox" id="weeklyEmailIncludeEmptyMeals" /> Empty meal sections to check</label>
+          </div>
+          <label>
+            Closing note
+            <textarea id="weeklyEmailClosing" rows="3" placeholder="Optional note at the bottom of the email"></textarea>
+          </label>
+          <div class="restore-preview-card">
+            <strong>Netlify setup</strong>
+            <span>Requires SUPABASE_SERVICE_ROLE_KEY and RESEND_API_KEY.</span>
+            <span>Optional: WEEKLY_REVIEW_TO, WEEKLY_REVIEW_FROM, EAT_APP_URL, WEEKLY_REVIEW_TRIGGER_SECRET.</span>
+          </div>
+        </div>
+        <div class="dialog-actions">
+          <button class="secondary-btn" type="button" id="resetWeeklyEmailBtn">Reset defaults</button>
+          <div>
+            <button class="primary-btn" type="button" id="doneWeeklyEmailBtn">Save and close</button>
           </div>
         </div>
       </div>
@@ -638,6 +770,6 @@
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./supabase-config.js?v=auth-deploy-1"></script>
-    <script src="./app.js?v=auth-deploy-1"></script>
+    <script src="./app.js?v=ingredient-options-2"></script>
   </body>
 </html>

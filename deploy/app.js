@@ -5,9 +5,9 @@ const breakfastMeals = ["MJ Breakfast", "Luke Breakfast", "Sophia Breakfast"];
 const lunchMeals = ["MJ Lunch", "Luke Lunch", "Sophia Lunch"];
 const dinnerMeals = ["MJ Dinner", "Luke Dinner", "Sophia Dinner"];
 const combinedMealSections = {
-  "Combined Breakfast": { label: "Breakfast", members: ["MJ Breakfast", "Luke Breakfast"] },
-  "Combined Lunch": { label: "Lunch", members: ["MJ Lunch", "Luke Lunch"] },
-  "Combined Dinner": { label: "Dinner", members: ["MJ Dinner", "Luke Dinner"] }
+  "Combined Breakfast": { label: "Breakfast", members: ["MJ Breakfast", "Luke Breakfast", "Sophia Breakfast"] },
+  "Combined Lunch": { label: "Lunch", members: ["MJ Lunch", "Luke Lunch", "Sophia Lunch"] },
+  "Combined Dinner": { label: "Dinner", members: ["MJ Dinner", "Luke Dinner", "Sophia Dinner"] }
 };
 const mealColumnConfigs = [
   { label: "Breakfast", meals: breakfastMeals, combinedMeal: "Combined Breakfast" },
@@ -18,12 +18,16 @@ const mealColumnConfigs = [
 const meals = [...breakfastMeals, ...lunchMeals, ...dinnerMeals, "Extras"];
 const autoRuleMealKeys = [...meals, ...Object.keys(combinedMealSections)];
 const fullDayMeals = meals;
-const amountOptions = ["", "pinch", "1/8", "1/4", "1/3", "1/2", "2/3", "3/4", "1", "1 1/4", "1 1/2", "1 3/4", "2", "2 1/4", "2 1/2", "2 3/4", "3", "3 1/4", "3 1/2", "3 3/4", "4", "4 1/4", "4 1/2", "4 3/4", "5", "5 1/4", "5 1/2", "5 3/4", "6", "6 1/4", "6 1/2", "6 3/4", "7", "7 1/4", "7 1/2", "7 3/4", "8", "8 1/4", "8 1/2", "8 3/4", "9", "9 1/4", "9 1/2", "9 3/4", "10", "10 1/4", "10 1/2", "10 3/4", "11", "11 1/4", "11 1/2", "11 3/4", "12", "12 1/4", "12 1/2", "12 3/4", "13", "13 1/4", "13 1/2", "13 3/4", "14", "14 1/4", "14 1/2", "14 3/4", "15", "15 1/4", "15 1/2", "15 3/4", "16"];
-const quantityOptions = ["", "to taste", "tsp", "Tbsp", "C", "pt", "qt", "gal", "oz", "lb", "g", "kg", "ml", "L", "can", "jar", "clove", "slice", "bunch", "package"];
-const prepOptions = ["", "chopped", "diced", "minced", "sliced", "grated", "zested", "juiced", "peeled", "crushed", "rinsed", "drained", "cooked", "uncooked", "melted", "softened"];
+const defaultAmountOptions = ["", "pinch", "1/8", "1/4", "1/3", "1/2", "2/3", "3/4", "1", "1 1/4", "1 1/2", "1 3/4", "2", "2 1/4", "2 1/2", "2 3/4", "3", "3 1/4", "3 1/2", "3 3/4", "4", "4 1/4", "4 1/2", "4 3/4", "5", "5 1/4", "5 1/2", "5 3/4", "6", "6 1/4", "6 1/2", "6 3/4", "7", "7 1/4", "7 1/2", "7 3/4", "8", "8 1/4", "8 1/2", "8 3/4", "9", "9 1/4", "9 1/2", "9 3/4", "10", "10 1/4", "10 1/2", "10 3/4", "11", "11 1/4", "11 1/2", "11 3/4", "12", "12 1/4", "12 1/2", "12 3/4", "13", "13 1/4", "13 1/2", "13 3/4", "14", "14 1/4", "14 1/2", "14 3/4", "15", "15 1/4", "15 1/2", "15 3/4", "16"];
+const defaultQuantityOptions = ["", "to taste", "tsp", "Tbsp", "C", "pt", "qt", "gal", "oz", "lb", "g", "kg", "ml", "L", "can", "jar", "clove", "slice", "bunch", "package"];
+const defaultPrepOptions = ["", "chopped", "diced", "minced", "sliced", "grated", "zested", "juiced", "peeled", "crushed", "rinsed", "drained", "cooked", "uncooked", "melted", "softened"];
+let amountOptions = [...defaultAmountOptions];
+let quantityOptions = [...defaultQuantityOptions];
+let prepOptions = [...defaultPrepOptions];
 const mealPlanCustomOptions = ["n/a", "out", "leftovers"];
 const groceryMealPrefix = "grocery-item::";
 const specialMealPrefix = "special-meal::";
+const recipePhotoBucket = "recipe-photos";
 const autoRuleBlankSlotValue = "__blank_auto_rule_slot__";
 const defaultMealEntries = [
   { meal: "Luke Breakfast", index: 0, value: "Tofu Scramble" },
@@ -44,7 +48,6 @@ const daySpecificDefaultMealEntries = [
   { dayId: "wednesday", meal: "Luke Dinner", index: 0, value: "leftovers" }
 ];
 const weekdayDefaultDayIds = new Set(["monday", "tuesday", "wednesday", "thursday"]);
-const protectedTagName = "protected";
 const commonGroceryItems = [
   "apples", "arugula", "avocados", "baby spinach", "bagels", "bananas", "basil", "bell peppers", "black beans", "blueberries",
   "bread", "broccoli", "butter", "carrots", "cauliflower", "celery", "cheddar cheese", "chicken breasts", "chicken thighs",
@@ -113,6 +116,7 @@ let rowStorageReady = false;
 let supabaseClient = null;
 let authSession = null;
 let activeFolder = "";
+let activeRecipeTag = "";
 let currentWeek = startOfPrepWindow(new Date());
 let activePlannerDayId = plannerDayIdForDate(new Date());
 let activeAutoRuleDayId = activePlannerDayId;
@@ -144,6 +148,12 @@ let pendingGroceryReview = null;
 let pendingGroceryReviewItems = [];
 let holidayEvents = loadCachedHolidayEvents();
 let activeCookingInterval = null;
+let selectedGroceryWeekKey = "";
+let currentActiveRecipeViewId = "";
+const activeRecipeScrollPositions = new Map();
+let scanRecipeFiles = [];
+let pendingRecipePhotoFile = null;
+let pendingCookSessionPhotoFile = null;
 
 const elements = {
   weekLabel: document.querySelector("#weekLabel"),
@@ -164,6 +174,7 @@ const elements = {
   appMenuBtn: document.querySelector("#appMenuBtn"),
   appMenu: document.querySelector("#appMenu"),
   recipeSearch: document.querySelector("#recipeSearch"),
+  clearRecipeSearchBtn: document.querySelector("#clearRecipeSearchBtn"),
   folderForm: document.querySelector("#folderForm"),
   folderInput: document.querySelector("#folderInput"),
   addFolderBtn: document.querySelector("#addFolderBtn"),
@@ -182,9 +193,12 @@ const elements = {
   closeGroceriesPageBtn: document.querySelector("#closeGroceriesPageBtn"),
   settingsBtn: document.querySelector("#settingsBtn"),
   settingsMenu: document.querySelector("#settingsMenu"),
+  themeModeInputs: document.querySelectorAll("input[name='themeMode']"),
   openAutoRulesBtn: document.querySelector("#openAutoRulesBtn"),
   openTagsBtn: document.querySelector("#openTagsBtn"),
   openGroceryLibraryBtn: document.querySelector("#openGroceryLibraryBtn"),
+  openIngredientOptionsBtn: document.querySelector("#openIngredientOptionsBtn"),
+  openWeeklyEmailBtn: document.querySelector("#openWeeklyEmailBtn"),
   openBackupHealthBtn: document.querySelector("#openBackupHealthBtn"),
   openRestoreBackupBtn: document.querySelector("#openRestoreBackupBtn"),
   openTrashBtn: document.querySelector("#openTrashBtn"),
@@ -200,6 +214,27 @@ const elements = {
   cancelGroceryLibraryBtn: document.querySelector("#cancelGroceryLibraryBtn"),
   saveGroceryLibraryBtn: document.querySelector("#saveGroceryLibraryBtn"),
   resetGroceryLibraryBtn: document.querySelector("#resetGroceryLibraryBtn"),
+  ingredientOptionsDialog: document.querySelector("#ingredientOptionsDialog"),
+  closeIngredientOptionsBtn: document.querySelector("#closeIngredientOptionsBtn"),
+  saveIngredientOptionsBtn: document.querySelector("#saveIngredientOptionsBtn"),
+  resetIngredientOptionsBtn: document.querySelector("#resetIngredientOptionsBtn"),
+  ingredientNumberOptions: document.querySelector("#ingredientNumberOptions"),
+  ingredientQtyOptions: document.querySelector("#ingredientQtyOptions"),
+  ingredientItemOptions: document.querySelector("#ingredientItemOptions"),
+  ingredientPrepOptions: document.querySelector("#ingredientPrepOptions"),
+  weeklyEmailDialog: document.querySelector("#weeklyEmailDialog"),
+  closeWeeklyEmailBtn: document.querySelector("#closeWeeklyEmailBtn"),
+  doneWeeklyEmailBtn: document.querySelector("#doneWeeklyEmailBtn"),
+  resetWeeklyEmailBtn: document.querySelector("#resetWeeklyEmailBtn"),
+  weeklyEmailSubjectPrefix: document.querySelector("#weeklyEmailSubjectPrefix"),
+  weeklyEmailIntro: document.querySelector("#weeklyEmailIntro"),
+  weeklyEmailClosing: document.querySelector("#weeklyEmailClosing"),
+  weeklyEmailIncludeWeekInReview: document.querySelector("#weeklyEmailIncludeWeekInReview"),
+  weeklyEmailIncludeActiveCooks: document.querySelector("#weeklyEmailIncludeActiveCooks"),
+  weeklyEmailIncludeMissingNotes: document.querySelector("#weeklyEmailIncludeMissingNotes"),
+  weeklyEmailIncludeUpcomingStatus: document.querySelector("#weeklyEmailIncludeUpcomingStatus"),
+  weeklyEmailIncludePlannedCount: document.querySelector("#weeklyEmailIncludePlannedCount"),
+  weeklyEmailIncludeEmptyMeals: document.querySelector("#weeklyEmailIncludeEmptyMeals"),
   groceryReviewDialog: document.querySelector("#groceryReviewDialog"),
   groceryReviewItem: document.querySelector("#groceryReviewItem"),
   groceryReviewContext: document.querySelector("#groceryReviewContext"),
@@ -217,7 +252,10 @@ const elements = {
   cancelCookSessionNotesBtn: document.querySelector("#cancelCookSessionNotesBtn"),
   saveCookSessionNotesBtn: document.querySelector("#saveCookSessionNotesBtn"),
   cookSessionNotes: document.querySelector("#cookSessionNotes"),
+  cookSessionPhoto: document.querySelector("#cookSessionPhoto"),
+  cookSessionPhotoPreview: document.querySelector("#cookSessionPhotoPreview"),
   groceryList: document.querySelector("#groceryList"),
+  groceryWeekSelect: document.querySelector("#groceryWeekSelect"),
   groceryForm: document.querySelector("#groceryForm"),
   groceryInput: document.querySelector("#groceryInput"),
   grocerySuggestions: document.querySelector("#grocerySuggestions"),
@@ -243,6 +281,10 @@ const elements = {
   recipeFolder: document.querySelector("#recipeFolder"),
   recipeTagList: document.querySelector("#recipeTagList"),
   recipeSourceUrl: document.querySelector("#recipeSourceUrl"),
+  recipePhotoUrl: document.querySelector("#recipePhotoUrl"),
+  recipePhotoInput: document.querySelector("#recipePhotoInput"),
+  recipePhotoPreview: document.querySelector("#recipePhotoPreview"),
+  removeRecipePhotoBtn: document.querySelector("#removeRecipePhotoBtn"),
   ingredientList: document.querySelector("#ingredientList"),
   ingredientSuggestions: document.querySelector("#ingredientSuggestions"),
   addIngredientBtn: document.querySelector("#addIngredientBtn"),
@@ -264,6 +306,9 @@ const elements = {
   usePastedRecipeBtn: document.querySelector("#usePastedRecipeBtn"),
   scanDialog: document.querySelector("#scanDialog"),
   scanImages: document.querySelector("#scanImages"),
+  scanCameraImage: document.querySelector("#scanCameraImage"),
+  scanCameraBtn: document.querySelector("#scanCameraBtn"),
+  clearScanImagesBtn: document.querySelector("#clearScanImagesBtn"),
   scanStatus: document.querySelector("#scanStatus"),
   closeScanBtn: document.querySelector("#closeScanBtn"),
   cancelScanBtn: document.querySelector("#cancelScanBtn"),
@@ -300,7 +345,8 @@ const elements = {
 let pendingRestore = null;
 let pendingCookLogId = "";
 
-migrateProtectedFoldersToTags();
+applyThemeMode();
+migrateLegacyRecipeOrganization();
 render();
 bindEvents();
 initializeApp();
@@ -323,10 +369,14 @@ function bindEvents() {
   elements.cancelAuthBtn.addEventListener("click", () => elements.authDialog.close());
   elements.appMenuBtn.addEventListener("click", toggleAppMenu);
   elements.appMenu.addEventListener("click", (event) => event.stopPropagation());
-  elements.recipeSearch.addEventListener("input", renderRecipes);
-  elements.folderForm.addEventListener("submit", addRecipeFolder);
-  elements.addFolderBtn.addEventListener("click", addRecipeFolder);
-  elements.folderInput.addEventListener("keydown", (event) => {
+  elements.recipeSearch.addEventListener("input", () => {
+    updateRecipeSearchClearButton();
+    renderRecipes();
+  });
+  elements.clearRecipeSearchBtn.addEventListener("click", clearRecipeSearch);
+  elements.folderForm?.addEventListener("submit", addRecipeFolder);
+  elements.addFolderBtn?.addEventListener("click", addRecipeFolder);
+  elements.folderInput?.addEventListener("keydown", (event) => {
     if (event.key === "Enter") addRecipeFolder(event);
   });
   elements.openRecipeBoxPageBtn.addEventListener("click", openRecipeBoxPage);
@@ -344,6 +394,8 @@ function bindEvents() {
     openRecipeDialog();
   });
   elements.recipeForm.addEventListener("submit", saveRecipeFromForm);
+  elements.recipePhotoInput.addEventListener("change", handleRecipePhotoSelection);
+  elements.removeRecipePhotoBtn.addEventListener("click", removeRecipePhotoSelection);
   elements.addIngredientBtn.addEventListener("click", () => addIngredientRow());
   elements.addStepBtn.addEventListener("click", () => addStepRow());
   elements.addNutritionBtn.addEventListener("click", () => addNutritionRow());
@@ -369,9 +421,14 @@ function bindEvents() {
   document.addEventListener("mousemove", handleDocumentAutoRuleMouseMove);
   document.addEventListener("mouseup", handleDocumentAutoRuleMouseUp);
   elements.settingsBtn.addEventListener("click", toggleSettingsMenu);
+  elements.themeModeInputs.forEach((input) => {
+    input.addEventListener("change", () => setThemeMode(input.value));
+  });
   elements.openAutoRulesBtn.addEventListener("click", openAutoRulesDialog);
   elements.openTagsBtn.addEventListener("click", openTagsDialog);
   elements.openGroceryLibraryBtn.addEventListener("click", openGroceryLibraryDialog);
+  elements.openIngredientOptionsBtn.addEventListener("click", openIngredientOptionsDialog);
+  elements.openWeeklyEmailBtn.addEventListener("click", openWeeklyEmailDialog);
   elements.openBackupHealthBtn.addEventListener("click", openBackupHealthDialog);
   elements.openRestoreBackupBtn.addEventListener("click", openRestoreDialog);
   elements.openTrashBtn.addEventListener("click", openTrashDialog);
@@ -389,6 +446,12 @@ function bindEvents() {
   });
   elements.resetGroceryLibraryBtn.addEventListener("click", resetGroceryLibrary);
   elements.groceryLibraryForm.addEventListener("submit", addGroceryLibraryItem);
+  elements.closeIngredientOptionsBtn.addEventListener("click", () => elements.ingredientOptionsDialog.close());
+  elements.saveIngredientOptionsBtn.addEventListener("click", saveIngredientOptions);
+  elements.resetIngredientOptionsBtn.addEventListener("click", resetIngredientOptions);
+  elements.closeWeeklyEmailBtn.addEventListener("click", () => elements.weeklyEmailDialog.close());
+  elements.doneWeeklyEmailBtn.addEventListener("click", saveWeeklyEmailSettings);
+  elements.resetWeeklyEmailBtn.addEventListener("click", resetWeeklyEmailSettings);
   elements.closeGroceryReviewBtn.addEventListener("click", dismissCurrentGroceryReview);
   elements.dismissGroceryReviewBtn.addEventListener("click", dismissCurrentGroceryReview);
   elements.goToGroceryReviewRecipeBtn.addEventListener("click", goToGroceryReviewRecipe);
@@ -399,6 +462,8 @@ function bindEvents() {
   elements.closeCookSessionNotesBtn.addEventListener("click", closeCookSessionNotesDialog);
   elements.cancelCookSessionNotesBtn.addEventListener("click", closeCookSessionNotesDialog);
   elements.saveCookSessionNotesBtn.addEventListener("click", completeCookingWithLog);
+  elements.cookSessionPhoto.addEventListener("change", handleCookSessionPhotoSelection);
+  elements.cookSessionPhotoPreview.addEventListener("click", () => elements.cookSessionPhoto.click());
   elements.closeBackupHealthBtn.addEventListener("click", () => elements.backupHealthDialog.close());
   elements.doneBackupHealthBtn.addEventListener("click", () => elements.backupHealthDialog.close());
   elements.refreshBackupHealthBtn.addEventListener("click", loadBackupHealth);
@@ -414,10 +479,22 @@ function bindEvents() {
   elements.usePastedRecipeBtn.addEventListener("click", importRecipeFromText);
   elements.closeScanBtn.addEventListener("click", () => elements.scanDialog.close());
   elements.cancelScanBtn.addEventListener("click", () => elements.scanDialog.close());
+  elements.scanImages.addEventListener("change", replaceScanRecipeFiles);
+  elements.scanCameraImage.addEventListener("change", appendCameraScanRecipeFile);
+  elements.scanCameraBtn.addEventListener("click", () => elements.scanCameraImage.click());
+  elements.clearScanImagesBtn.addEventListener("click", clearScanRecipeFiles);
   elements.scanImagesBtn.addEventListener("click", scanRecipeFromImages);
   elements.deleteRecipeBtn.addEventListener("click", deleteRecipeFromForm);
   elements.closeRecipeViewBtn.addEventListener("click", () => elements.recipeViewDialog.close());
+  elements.recipeViewDialog.addEventListener("close", () => {
+    rememberActiveRecipeScroll();
+    currentActiveRecipeViewId = "";
+  });
   elements.copyGroceriesBtn.addEventListener("click", () => copyText(buildGroceryText(), elements.copyGroceriesBtn, "Copied"));
+  elements.groceryWeekSelect.addEventListener("change", () => {
+    selectedGroceryWeekKey = elements.groceryWeekSelect.value;
+    renderGroceries();
+  });
   elements.groceryForm.addEventListener("submit", addManualGroceryItem);
   elements.closeRecipeBtn.addEventListener("click", () => elements.recipeDialog.close());
   elements.cancelRecipeBtn.addEventListener("click", () => elements.recipeDialog.close());
@@ -608,8 +685,11 @@ function defaultState() {
     checkedGroceries: {},
     recipeTags: defaultRecipeTags(),
     groceryBaseItems: defaultGroceryBaseItems(),
+    ingredientOptions: defaultIngredientOptions(),
     groceryReviewDismissed: {},
     activeCooking: [],
+    weeklyEmailSettings: defaultWeeklyEmailSettings(),
+    themeMode: "light",
     autoGenerateRules: defaultAutoGenerateRules(),
     collapsedSections: defaultCollapsedSections(),
     collapsedDays: {}
@@ -627,14 +707,110 @@ function normalizeState(parsed) {
     checkedGroceries: parsed?.checkedGroceries || {},
     recipeTags: normalizeRecipeTags(parsed?.recipeTags),
     groceryBaseItems: Array.isArray(parsed?.groceryBaseItems) ? normalizeGroceryBaseItems(parsed.groceryBaseItems) : defaultGroceryBaseItems(),
+    ingredientOptions: normalizeIngredientOptions(parsed?.ingredientOptions),
     groceryReviewDismissed: parsed?.groceryReviewDismissed || {},
     activeCooking: normalizeActiveCooking(parsed?.activeCooking),
+    weeklyEmailSettings: normalizeWeeklyEmailSettings(parsed?.weeklyEmailSettings),
+    themeMode: normalizeThemeMode(parsed?.themeMode),
     autoGenerateRules: normalizeAutoGenerateRules(parsed?.autoGenerateRules),
     collapsedSections: parsed?.collapsedSections || defaultCollapsedSections(),
     collapsedDays: parsed?.collapsedDays || {}
   };
+  syncIngredientOptionGlobals(normalized);
+  migrateRecipeFoldersToTags(normalized);
   syncPublishedWeekArchiveFromPlans(normalized);
   return normalized;
+}
+
+function defaultWeeklyEmailSettings() {
+  return {
+    subjectPrefix: "Eat weekly review",
+    introText: "{reviewRange} review and {upcomingRange} planning check.",
+    closingNote: "",
+    includeWeekInReview: true,
+    includeActiveCooks: true,
+    includeMissingNotes: true,
+    includeUpcomingStatus: true,
+    includePlannedCount: true,
+    includeEmptyMeals: true
+  };
+}
+
+function normalizeWeeklyEmailSettings(settings) {
+  const defaults = defaultWeeklyEmailSettings();
+  return {
+    subjectPrefix: String(settings?.subjectPrefix || defaults.subjectPrefix).trim() || defaults.subjectPrefix,
+    introText: String(settings?.introText || defaults.introText).trim() || defaults.introText,
+    closingNote: String(settings?.closingNote || "").trim(),
+    includeWeekInReview: settings?.includeWeekInReview !== false,
+    includeActiveCooks: settings?.includeActiveCooks !== false,
+    includeMissingNotes: settings?.includeMissingNotes !== false,
+    includeUpcomingStatus: settings?.includeUpcomingStatus !== false,
+    includePlannedCount: settings?.includePlannedCount !== false,
+    includeEmptyMeals: settings?.includeEmptyMeals !== false
+  };
+}
+
+function normalizeThemeMode(mode) {
+  return ["light", "dark", "auto"].includes(mode) ? mode : "light";
+}
+
+function defaultIngredientOptions() {
+  return {
+    numbers: [...defaultAmountOptions],
+    quantities: [...defaultQuantityOptions],
+    items: [],
+    prep: [...defaultPrepOptions]
+  };
+}
+
+function normalizeIngredientOptions(options) {
+  const defaults = defaultIngredientOptions();
+  let numbers = normalizeOptionValues(options?.numbers, defaults.numbers, true);
+  if (numbers.length <= 2 && numbers.some((option) => option === "pinch")) numbers = [...defaults.numbers];
+  return {
+    numbers,
+    quantities: normalizeOptionValues(options?.quantities, defaults.quantities, true),
+    items: normalizeOptionValues(options?.items, defaults.items, false),
+    prep: normalizeOptionValues(options?.prep, defaults.prep, true)
+  };
+}
+
+function normalizeOptionValues(values, fallback, keepBlank) {
+  const source = Array.isArray(values) ? values : fallback;
+  const normalized = [];
+  source.forEach((value) => {
+    const option = String(value || "").trim();
+    if (!option && !keepBlank) return;
+    const optionKey = option.toLowerCase();
+    if (!normalized.some((existing) => existing.toLowerCase() === optionKey)) normalized.push(option);
+  });
+  if (keepBlank && normalized[0] !== "") normalized.unshift("");
+  return normalized;
+}
+
+function syncIngredientOptionGlobals(targetState = state) {
+  const options = normalizeIngredientOptions(targetState.ingredientOptions);
+  targetState.ingredientOptions = options;
+  amountOptions = [...options.numbers];
+  quantityOptions = [...options.quantities];
+  prepOptions = [...options.prep];
+}
+
+function applyThemeMode() {
+  const mode = normalizeThemeMode(state.themeMode);
+  state.themeMode = mode;
+  document.body.dataset.theme = mode;
+  document.documentElement.style.colorScheme = mode === "dark" ? "dark" : mode === "light" ? "light" : "light dark";
+  elements.themeModeInputs?.forEach((input) => {
+    input.checked = input.value === mode;
+  });
+}
+
+function setThemeMode(mode) {
+  state.themeMode = normalizeThemeMode(mode);
+  applyThemeMode();
+  persist();
 }
 
 function normalizePublishedWeeks(value) {
@@ -691,6 +867,7 @@ function normalizeActiveCooking(items) {
       servings: Math.max(1, Number(item?.servings) || 1),
       notes: item?.notes || "",
       completedSteps: Array.isArray(item?.completedSteps) ? item.completedSteps.map(Boolean) : [],
+      checkedIngredients: Array.isArray(item?.checkedIngredients) ? item.checkedIngredients.map(Boolean) : [],
       collapsedSections: {
         ingredients: Boolean(item?.collapsedSections?.ingredients),
         instructions: Boolean(item?.collapsedSections?.instructions),
@@ -701,7 +878,7 @@ function normalizeActiveCooking(items) {
 }
 
 function defaultRecipeTags() {
-  return [protectedTagName];
+  return [];
 }
 
 function normalizeRecipeTags(tags) {
@@ -711,7 +888,7 @@ function normalizeRecipeTags(tags) {
     .filter(Boolean)
     .forEach((tag) => {
       const key = normalize(tag);
-      if (!normalizedTags.has(key)) normalizedTags.set(key, key === normalize(protectedTagName) ? protectedTagName : tag);
+      if (key !== "protected" && !normalizedTags.has(key)) normalizedTags.set(key, tag);
     });
   return [...normalizedTags.values()].sort((a, b) => normalize(a).localeCompare(normalize(b)));
 }
@@ -723,7 +900,7 @@ function normalizeRecipeTagSelection(tags) {
     .filter(Boolean)
     .forEach((tag) => {
       const key = normalize(tag);
-      if (!normalizedTags.has(key)) normalizedTags.set(key, key === normalize(protectedTagName) ? protectedTagName : tag);
+      if (key !== "protected" && !normalizedTags.has(key)) normalizedTags.set(key, tag);
     });
   return [...normalizedTags.values()].sort((a, b) => normalize(a).localeCompare(normalize(b)));
 }
@@ -734,20 +911,24 @@ function recipeTags() {
   return state.recipeTags;
 }
 
-function migrateProtectedFoldersToTags() {
-  const protectedFolderIds = (state.folders || [])
-    .filter((folder) => folder.protected)
-    .map((folder) => folder.id);
-  if (!protectedFolderIds.length) return;
-  state.recipeTags = normalizeRecipeTags(state.recipeTags);
-  activeRecipes().forEach((recipe) => {
-    if (protectedFolderIds.includes(recipe.folderId)) {
-      recipe.tags = normalizeRecipeTagSelection([...(recipe.tags || []), protectedTagName]);
-    }
+function migrateRecipeFoldersToTags(targetState = state) {
+  const foldersById = new Map((targetState.folders || []).map((folder) => [folder.id, folder]));
+  const tagValues = [...(targetState.recipeTags || [])];
+  (targetState.recipes || []).forEach((recipe) => {
+    const folder = foldersById.get(recipe.folderId);
+    const nextTags = folder?.name ? [...(recipe.tags || []), folder.name] : recipe.tags;
+    recipe.tags = normalizeRecipeTagSelection(nextTags);
+    tagValues.push(...recipe.tags);
+    recipe.folderId = "";
   });
-  state.folders.forEach((folder) => {
+  targetState.recipeTags = normalizeRecipeTags(tagValues);
+  (targetState.folders || []).forEach((folder) => {
     delete folder.protected;
   });
+}
+
+function migrateLegacyRecipeOrganization() {
+  migrateRecipeFoldersToTags(state);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
@@ -780,7 +961,10 @@ function normalizeRecipe(recipe) {
     prepTime,
     cookTime,
     time: recipe?.time || combinedRecipeTime({ prepTime, cookTime }),
+    folderId: recipe?.folderId || "",
     photoUrl: recipe?.photoUrl || "",
+    createdAt: recipe?.createdAt || recipe?.created_at || "",
+    updatedAt: recipe?.updatedAt || recipe?.updated_at || "",
     tags: normalizeRecipeTagSelection(recipe?.tags || []),
     nutrition: normalizeNutritionFacts(recipe?.nutrition),
     cookLog: normalizeCookLog(recipe?.cookLog),
@@ -796,7 +980,8 @@ function normalizeCookLog(log) {
       cookedAt: entry?.cookedAt || entry?.date || new Date().toISOString(),
       notes: String(entry?.notes || "").trim(),
       servings: Math.max(1, Number(entry?.servings) || 1),
-      durationSeconds: Math.max(0, Number(entry?.durationSeconds) || 0)
+      durationSeconds: Math.max(0, Number(entry?.durationSeconds) || 0),
+      photoUrl: entry?.photoUrl || entry?.photo_url || ""
     }))
     .filter((entry) => entry.cookedAt)
     .sort((a, b) => Date.parse(b.cookedAt) - Date.parse(a.cookedAt));
@@ -893,6 +1078,7 @@ function applyStoredState(storedState) {
   Object.keys(state).forEach((key) => delete state[key]);
   Object.assign(state, normalizeState(storedState));
   state.collapsedSections = currentCollapsedSections || state.collapsedSections || defaultCollapsedSections();
+  applyThemeMode();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   render();
 }
@@ -951,19 +1137,12 @@ async function hydrateRecipeRowsFromSupabase() {
     ]);
 
     if (folders.length || recipes.length) {
-      const protectedFolderIds = (state.folders || []).filter((folder) => folder.protected).map((folder) => folder.id);
-      if (protectedFolderIds.length) {
-        recipes.forEach((recipe) => {
-          if (protectedFolderIds.includes(recipe.folderId)) {
-            recipe.tags = normalizeRecipeTagSelection([...(recipe.tags || []), protectedTagName]);
-          }
-        });
-      }
       state.folders = folders;
       state.recipes = recipes;
+      migrateRecipeFoldersToTags(state);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       rowStorageReady = true;
-      if (protectedFolderIds.length) await writeAllRecipeRowsToSupabase();
+      await writeAllRecipeRowsToSupabase();
       render();
       scheduleLocalBackup();
       return;
@@ -989,7 +1168,7 @@ async function loadFolderRowsFromSupabase() {
 }
 
 async function loadRecipeRowsFromSupabase() {
-  let response = await fetch(`${supabaseBaseUrl()}/rest/v1/eat_recipes?select=id,name,time,prep_time,cook_time,servings,folder_id,source_url,photo_url,ingredients,steps,tags,nutrition,cook_log&order=name.asc`, {
+  let response = await fetch(`${supabaseBaseUrl()}/rest/v1/eat_recipes?select=id,name,time,prep_time,cook_time,servings,folder_id,source_url,photo_url,created_at,updated_at,ingredients,steps,tags,nutrition,cook_log&order=name.asc`, {
     headers: supabaseHeaders(),
     cache: "no-store"
   });
@@ -1027,6 +1206,8 @@ function recipeFromRow(row) {
     folderId: row.folder_id || "",
     sourceUrl: row.source_url || "",
     photoUrl: row.photo_url || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || "",
     ingredients: Array.isArray(row.ingredients) ? row.ingredients : [],
     tags: Array.isArray(row.tags) ? row.tags : normalizeRecipeTagSelection(state.recipes?.find((recipe) => recipe.id === row.id)?.tags || []),
     nutrition: Array.isArray(row.nutrition) ? row.nutrition : normalizeNutritionFacts(state.recipes?.find((recipe) => recipe.id === row.id)?.nutrition || []),
@@ -1215,7 +1396,7 @@ function defaultCollapsedSections() {
 
 function defaultAutoGenerateRules() {
   return [
-    autoRule("mj-weekday-breakfast", ["monday", "tuesday", "wednesday", "thursday", "friday-finish"], "MJ Breakfast", 0, "folderSame", "Breakfast - Weekday"),
+    tagAutoRule("mj-weekday-breakfast", ["monday", "tuesday", "wednesday", "thursday", "friday-finish"], "MJ Breakfast", 0, ["Breakfast - Weekday"]),
     autoRule("luke-breakfast", ["monday", "tuesday", "wednesday", "thursday"], "Luke Breakfast", 0, "custom", "", "Tofu Scramble"),
     autoRule("luke-lunch", ["monday", "tuesday", "wednesday", "thursday"], "Luke Lunch", 0, "custom", "", "Peanut Butter & Jelly with Veggies & Hummus"),
     autoRule("wednesday-dinner-main", ["wednesday"], "MJ Dinner", 0, "custom", "", "leftovers"),
@@ -1235,8 +1416,19 @@ function autoRule(id, dayIds, meal, index, action = "any", folderName = "", valu
     index,
     action,
     folderName,
-    value
+    value,
+    tags: [],
+    tagMatchMode: "any",
+    selectionMode: "random"
   };
+}
+
+function tagAutoRule(id, dayIds, meal, index, tags = [], tagMatchMode = "any", selectionMode = "random") {
+  const rule = autoRule(id, dayIds, meal, index, "tags");
+  rule.tags = normalizeRecipeTagSelection(tags);
+  rule.tagMatchMode = tagMatchMode === "all" ? "all" : "any";
+  rule.selectionMode = selectionMode === "leastRecent" ? "leastRecent" : "random";
+  return rule;
 }
 
 function normalizeAutoGenerateRules(rules) {
@@ -1249,14 +1441,19 @@ function normalizeAutoGenerateRules(rules) {
 function normalizeAutoGenerateRule(rule) {
   const migrated = migrateLegacyAutoRuleTarget(rule);
   if (!migrated) return null;
+  const legacyFolderTag = rule.folderName ? [rule.folderName] : [];
+  const action = ["folder", "folderSame"].includes(rule.action) ? "tags" : rule.action;
   return {
     id: rule.id || createId("rule"),
     dayIds: Array.isArray(rule.dayIds) && rule.dayIds.length ? rule.dayIds.filter((dayId) => prepDays.some((day) => day.id === dayId)) : prepDays.map((day) => day.id),
     meal: autoRuleMealKeys.includes(migrated.meal) ? migrated.meal : "MJ Breakfast",
     index: Number.isInteger(migrated.index) ? migrated.index : 0,
-    action: ["any", "folder", "folderSame", "custom", "skip"].includes(rule.action) ? rule.action : "any",
+    action: ["any", "custom", "skip", "tags"].includes(action) ? action : "any",
     folderName: rule.folderName || "",
-    value: rule.value || ""
+    value: rule.value || "",
+    tags: normalizeRecipeTagSelection([...(Array.isArray(rule.tags) ? rule.tags : []), ...legacyFolderTag]),
+    tagMatchMode: rule.tagMatchMode === "all" ? "all" : "any",
+    selectionMode: rule.selectionMode === "leastRecent" ? "leastRecent" : "random"
   };
 }
 
@@ -1323,12 +1520,35 @@ function render() {
 
 function openRecipeBoxPage() {
   closeFloatingMenus();
+  resetRecipeBoxSearch();
   setPageTitle(pendingMealRecipeSelection
     ? `Choose ${pendingMealRecipeSelection.meal}`
     : pendingAutoRuleRecipeSelection
       ? `Choose ${displayMealName(pendingAutoRuleRecipeSelection.meal)} rule`
       : "Recipe Box");
   if (!elements.recipeBoxPageDialog.open) elements.recipeBoxPageDialog.showModal();
+  requestAnimationFrame(() => elements.recipeSearch.focus());
+}
+
+function resetRecipeBoxSearch() {
+  if (!elements.recipeSearch.value) {
+    updateRecipeSearchClearButton();
+    return;
+  }
+  elements.recipeSearch.value = "";
+  updateRecipeSearchClearButton();
+  renderRecipes();
+}
+
+function clearRecipeSearch() {
+  elements.recipeSearch.value = "";
+  updateRecipeSearchClearButton();
+  renderRecipes();
+  elements.recipeSearch.focus();
+}
+
+function updateRecipeSearchClearButton() {
+  elements.clearRecipeSearchBtn.hidden = !elements.recipeSearch.value.trim();
 }
 
 function closeRecipeBoxPage() {
@@ -1358,11 +1578,12 @@ function renderWeekJumpMenu() {
 
 function weekJumpButtonTemplate(week) {
   const key = week.weekKey || week.startDate;
-  const isCurrent = key === weekKey();
+  const isCurrentWeek = key === currentCalendarWeekKey();
+  const isViewedWeek = key === weekKey();
   const holidayLabel = holidaysForWeek(dateFromWeekKey(key));
-  const subtext = [isCurrent ? "Current" : "", holidayLabel].filter(Boolean).join(" · ");
+  const subtext = [isCurrentWeek ? "Current week" : "", holidayLabel].filter(Boolean).join(" · ");
   return `
-    <button class="week-jump-option ${isCurrent ? "is-current" : ""}" type="button" data-week-jump="${escapeHtml(key)}" ${isCurrent ? "data-current-week" : ""}>
+    <button class="week-jump-option ${isViewedWeek ? "is-current" : ""}" type="button" data-week-jump="${escapeHtml(key)}" ${isViewedWeek ? "data-viewed-week" : ""} ${isCurrentWeek ? "data-current-week" : ""}>
       <span>${escapeHtml(week.rangeLabel || formatWeekRange(dateFromWeekKey(key)))}</span>
       ${subtext ? `<small>${escapeHtml(subtext)}</small>` : ""}
     </button>
@@ -1370,8 +1591,8 @@ function weekJumpButtonTemplate(week) {
 }
 
 function weekTimelineOptions() {
-  const currentKey = weekKey();
-  const currentDate = dateFromWeekKey(currentKey);
+  const currentDate = startOfPrepWindow(new Date());
+  const currentKey = dateKeyFromDate(currentDate);
   const pastPublished = publishedWeekArchiveEntries()
     .filter((week) => String(week.weekKey) < currentKey)
     .sort((a, b) => String(a.weekKey).localeCompare(String(b.weekKey)))
@@ -1393,6 +1614,10 @@ function weekTimelineOptions() {
     };
   });
   return [...pastPublished, current, ...future];
+}
+
+function currentCalendarWeekKey() {
+  return dateKeyFromDate(startOfPrepWindow(new Date()));
 }
 
 function futureWeekOptions() {
@@ -1428,7 +1653,7 @@ function toggleWeekJumpMenu(event) {
 }
 
 function scrollCurrentWeekIntoView() {
-  const currentButton = elements.weekJumpMenu.querySelector("[data-current-week]");
+  const currentButton = elements.weekJumpMenu.querySelector("[data-viewed-week]") || elements.weekJumpMenu.querySelector("[data-current-week]");
   if (!currentButton) return;
   currentButton.scrollIntoView({ block: "center" });
 }
@@ -1483,6 +1708,7 @@ function activeCookingTemplate(item) {
   return `
     <article class="active-cooking-card">
       <button class="active-cooking-thumb" type="button" data-view-active-recipe="${escapeHtml(item.id)}">
+        ${recipe.photoUrl ? `<img class="active-cooking-photo" src="${escapeHtml(recipe.photoUrl)}" alt="" />` : ""}
         <span class="active-cooking-title">${escapeHtml(recipe.name)}</span>
         <div class="active-cooking-status">
           <span class="active-cooking-servings">${escapeHtml(formatServingsLabel(item.servings))}</span>
@@ -1496,19 +1722,21 @@ function activeCookingTemplate(item) {
 
 function startCookingRecipe(recipeId, servings) {
   const recipe = activeRecipes().find((item) => item.id === recipeId);
-  if (!recipe) return;
+  if (!recipe) return "";
   const baseServings = Number(recipe.servings || 1) || 1;
   const nextServings = Math.max(1, Number(servings) || baseServings);
+  const cookingId = createId("cook");
   state.activeCooking = [
     ...normalizeActiveCooking(state.activeCooking).filter((item) => item.recipeId !== recipeId),
     {
-      id: createId("cook"),
+      id: cookingId,
       recipeId,
       startedAt: new Date().toISOString(),
       durationMinutes: recipeDurationMinutes(recipe.cookTime || recipe.time),
       servings: nextServings,
       notes: "",
       completedSteps: [],
+      checkedIngredients: [],
       collapsedSections: {
         ingredients: false,
         instructions: false,
@@ -1518,6 +1746,7 @@ function startCookingRecipe(recipeId, servings) {
   ];
   persist();
   renderActiveCooking();
+  return cookingId;
 }
 
 function requestFinishCooking(id) {
@@ -1532,8 +1761,8 @@ function finishCookingRecipe(id, options = {}) {
   const cookingItem = normalizeActiveCooking(state.activeCooking).find((item) => item.id === id);
   if (cookingItem && options.log) {
     if (typeof options.notes === "string") cookingItem.notes = options.notes;
+    if (typeof options.photoUrl === "string") cookingItem.photoUrl = options.photoUrl;
     addCookingLogEntry(cookingItem);
-    remindDishPhoto();
   }
   state.activeCooking = normalizeActiveCooking(state.activeCooking).filter((item) => item.id !== id);
   persist();
@@ -1552,25 +1781,53 @@ function openCookSessionNotesDialog() {
   if (!cookingItem) return;
   elements.logCookDialog.close();
   elements.cookSessionNotes.value = cookingItem.notes || "";
+  pendingCookSessionPhotoFile = null;
+  elements.cookSessionPhoto.value = "";
+  updateCookSessionPhotoPreview("");
   elements.cookSessionNotesDialog.showModal();
   elements.cookSessionNotes.focus();
 }
 
-function completeCookingWithLog() {
+async function completeCookingWithLog() {
   const cookingId = pendingCookLogId;
-  pendingCookLogId = "";
   const notes = elements.cookSessionNotes.value.trim();
-  elements.cookSessionNotesDialog.close();
-  finishCookingRecipe(cookingId, { log: true, notes });
+  const cookingItem = normalizeActiveCooking(state.activeCooking).find((item) => item.id === cookingId);
+  if (!cookingItem) return;
+  elements.saveCookSessionNotesBtn.disabled = true;
+  try {
+    const photoUrl = pendingCookSessionPhotoFile
+      ? await uploadRecipePhoto(pendingCookSessionPhotoFile, cookingItem.recipeId, "cook")
+      : "";
+    pendingCookLogId = "";
+    pendingCookSessionPhotoFile = null;
+    elements.cookSessionNotesDialog.close();
+    finishCookingRecipe(cookingId, { log: true, notes, photoUrl });
+  } catch (error) {
+    updateCookSessionPhotoPreview(error.message || "Photo upload failed.");
+  } finally {
+    elements.saveCookSessionNotesBtn.disabled = false;
+  }
 }
 
 function closeCookSessionNotesDialog() {
   pendingCookLogId = "";
+  pendingCookSessionPhotoFile = null;
+  elements.cookSessionPhoto.value = "";
   elements.cookSessionNotesDialog.close();
 }
 
-function remindDishPhoto() {
-  window.alert("Reminder: take a photo of the dish.");
+function handleCookSessionPhotoSelection() {
+  pendingCookSessionPhotoFile = elements.cookSessionPhoto.files?.[0] || null;
+  updateCookSessionPhotoPreview(pendingCookSessionPhotoFile
+    ? `Ready to upload: ${pendingCookSessionPhotoFile.name}`
+    : "Optional photo from this cook.");
+}
+
+function updateCookSessionPhotoPreview(message) {
+  if (!elements.cookSessionPhotoPreview) return;
+  elements.cookSessionPhotoPreview.innerHTML = pendingCookSessionPhotoFile
+    ? `<span>${escapeHtml(message)}</span>`
+    : escapeHtml(message || "Optional photo from this cook.");
 }
 
 function addCookingLogEntry(cookingItem) {
@@ -1583,10 +1840,12 @@ function addCookingLogEntry(cookingItem) {
       cookedAt: new Date().toISOString(),
       notes: cookingItem.notes || "",
       servings: cookingItem.servings,
-      durationSeconds: elapsedCookingSeconds(cookingItem)
+      durationSeconds: elapsedCookingSeconds(cookingItem),
+      photoUrl: cookingItem.photoUrl || ""
     },
     ...(recipe.cookLog || [])
   ]);
+  if (cookingItem.photoUrl && !recipe.photoUrl) recipe.photoUrl = cookingItem.photoUrl;
   activeRecipes()[recipeIndex] = recipe;
   saveRecipeRow(recipe);
 }
@@ -1641,86 +1900,101 @@ function formatServingsLabel(servings) {
 }
 
 function renderFolders() {
-  const folders = normalizedFolders();
   const query = recipeSearchQuery();
-  const recipeGroups = recipesByFolder();
-  const countRecipes = query ? Object.values(recipeGroups).flat() : activeRecipes();
-  const folderCounts = countRecipes.reduce((counts, recipe) => {
-    const folderId = recipe.folderId || "unfiled";
-    counts[folderId] = (counts[folderId] || 0) + 1;
-    return counts;
-  }, {});
-  const unfiledCount = folderCounts.unfiled || 0;
-  const folderButtons = [
-    ...folderTreeTemplates(folders, folderCounts, recipeGroups, query),
-    folderButtonTemplate("unfiled", "Unfiled", unfiledCount, recipeGroups.unfiled || [], 0, !query),
-    query && (recipeGroups.unfiled || []).length ? folderRecipeListTemplate(recipeGroups.unfiled) : ""
-  ];
+  activeRecipeTag = "";
+  elements.folderList.innerHTML = "";
+  elements.folderList.hidden = true;
+  elements.recipeList.hidden = false;
+  const visibleRecipes = activeRecipes()
+    .filter((recipe) => recipeMatchesSearch(recipe, query))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  elements.recipeList.innerHTML = recipeTileGridTemplate(visibleRecipes);
+  bindRecipeCards(elements.recipeList);
+  renderRecipeFolderOptions();
+}
 
-  elements.folderList.innerHTML = folderButtons.join("");
-  elements.recipeList.replaceChildren();
-  elements.folderList.querySelectorAll(".folder-btn").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      if (event.ctrlKey) {
-        openFolderMenu(event, button.dataset.folder);
-        return;
-      }
-      window.clearTimeout(folderClickTimer);
-      closeFolderMenu();
-      folderClickTimer = window.setTimeout(() => {
-        activeFolder = nextActiveFolder(button.dataset.folder);
-        renderFolders();
-      }, 180);
+function recipeBoxTags() {
+  const tagMap = new Map();
+  [...recipeTags(), ...activeRecipes().flatMap((recipe) => normalizeRecipeTagSelection(recipe.tags))]
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .forEach((tag) => {
+      const key = normalize(tag);
+      if (!tagMap.has(key)) tagMap.set(key, tag);
     });
-    button.addEventListener("dblclick", () => {
-      window.clearTimeout(folderClickTimer);
-      closeFolderMenu();
-      startFolderRename(button.dataset.folder);
-    });
-    button.addEventListener("contextmenu", (event) => openFolderMenu(event, button.dataset.folder));
-    button.addEventListener("mousedown", (event) => {
-      if (event.button === 2) openFolderMenu(event, button.dataset.folder);
-    });
-    button.addEventListener("dragover", (event) => handleFolderDragOver(event, button));
-    button.addEventListener("dragleave", () => {
-      button.classList.remove("folder-drop-target");
-      window.clearTimeout(folderDragOpenTimer);
-      folderDragOpenTimer = null;
-      folderDragOpenTarget = "";
-    });
-    button.addEventListener("drop", (event) => handleFolderDrop(event, button));
-  });
+  return [...tagMap.values()].sort((a, b) => a.localeCompare(b));
+}
 
-  elements.folderList.querySelectorAll("[data-folder-row]").forEach((row) => {
-    row.addEventListener("contextmenu", (event) => openFolderMenu(event, row.dataset.folderRow));
-    row.addEventListener("mousedown", (event) => {
-      if (event.button === 2) openFolderMenu(event, row.dataset.folderRow);
+function recipeTagFilterTemplate(tags) {
+  const allActive = activeRecipeTag ? "" : "active";
+  return `
+    <button class="folder-btn recipe-tag-filter ${allActive}" type="button" data-recipe-tag-filter="" aria-pressed="${activeRecipeTag ? "false" : "true"}">
+      <span><strong>All</strong><small>${activeRecipes().length}</small></span>
+    </button>
+    ${tags.map((tag) => {
+      const count = activeRecipes().filter((recipe) => recipeHasTag(recipe, tag)).length;
+      const isActive = normalize(activeRecipeTag) === normalize(tag);
+      return `
+        <button class="folder-btn recipe-tag-filter ${isActive ? "active" : ""}" type="button" data-recipe-tag-filter="${escapeHtml(tag)}" aria-pressed="${isActive ? "true" : "false"}">
+          <span><strong>${escapeHtml(tag)}</strong><small>${count}</small></span>
+        </button>
+      `;
+    }).join("")}
+  `;
+}
+
+function bindRecipeTagFilters() {
+  elements.folderList.querySelectorAll("[data-recipe-tag-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const tag = button.dataset.recipeTagFilter || "";
+      activeRecipeTag = normalize(activeRecipeTag) === normalize(tag) ? "" : tag;
+      renderFolders();
     });
   });
+}
 
-  elements.folderList.querySelectorAll("[data-folder-drag]").forEach((button) => {
-    button.addEventListener("dragstart", handleFolderDragStart);
-    button.addEventListener("dragend", clearFolderDragState);
-  });
+function recipeTagGroupsTemplate(query) {
+  const visibleRecipes = activeRecipes()
+    .filter((recipe) => recipeMatchesSearch(recipe, query))
+    .filter((recipe) => !activeRecipeTag || recipeHasTag(recipe, activeRecipeTag))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  if (!visibleRecipes.length) return "";
+  if (query || activeRecipeTag) return recipeTileGridTemplate(visibleRecipes);
 
-  const renameInput = elements.folderList.querySelector("[data-folder-rename]");
-  if (renameInput) {
-    renameInput.focus();
-    renameInput.select();
-    renameInput.addEventListener("blur", () => saveFolderRename(renameInput));
-    renameInput.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        saveFolderRename(renameInput);
-      }
-      if (event.key === "Escape") {
-        editingFolderId = "";
-        renderFolders();
-      }
-    });
-  }
+  const tags = recipeBoxTags();
+  const grouped = tags
+    .map((tag) => ({
+      tag,
+      recipes: visibleRecipes.filter((recipe) => recipeHasTag(recipe, tag))
+    }))
+    .filter((group) => group.recipes.length);
+  const taggedRecipeIds = new Set(grouped.flatMap((group) => group.recipes.map((recipe) => recipe.id)));
+  const untagged = visibleRecipes.filter((recipe) => !taggedRecipeIds.has(recipe.id));
+  return [
+    ...grouped.map((group) => recipeTagGroupTemplate(group.tag, group.recipes)),
+    untagged.length ? recipeTagGroupTemplate("Untagged", untagged) : ""
+  ].join("");
+}
 
-  elements.folderList.querySelectorAll(".recipe-card").forEach((card) => {
+function recipeTagGroupTemplate(tag, recipes) {
+  return `
+    <section class="recipe-tag-group">
+      <h3>${escapeHtml(tag)}</h3>
+      ${recipeTileGridTemplate(recipes)}
+    </section>
+  `;
+}
+
+function recipeTileGridTemplate(recipes) {
+  return `<div class="folder-recipes recipe-tile-grid">${recipes.map(recipeCardTemplate).join("")}</div>`;
+}
+
+function recipeHasTag(recipe, tag) {
+  return normalizeRecipeTagSelection(recipe.tags).some((recipeTag) => normalize(recipeTag) === normalize(tag));
+}
+
+function bindRecipeCards(root) {
+  root.querySelectorAll(".recipe-card").forEach((card) => {
     card.addEventListener("click", () => {
       if (pendingMealRecipeSelection) {
         chooseRecipeForPendingMeal(card.dataset.id);
@@ -1739,8 +2013,6 @@ function renderFolders() {
     card.addEventListener("dragstart", handleRecipeDragStart);
     card.addEventListener("dragend", clearRecipeDragState);
   });
-
-  renderRecipeFolderOptions();
 }
 
 function recipesByFolder() {
@@ -1760,10 +2032,7 @@ function recipeSearchQuery() {
 }
 
 function renderRecipeFolderOptions() {
-  elements.recipeFolder.innerHTML = [
-    `<option value="">Unfiled</option>`,
-    ...folderTreeList(normalizedFolders()).map(({ folder, depth }) => `<option value="${folder.id}">${escapeHtml(`${"-- ".repeat(depth)}${folder.name}`)}</option>`)
-  ].join("");
+  elements.recipeFolder.innerHTML = `<option value="">No folder</option>`;
 }
 
 function folderTreeTemplates(folders, folderCounts, recipeGroups, query = "") {
@@ -2122,7 +2391,7 @@ function renderTagLibrary() {
     .map((tag) => `
       <span class="tag-library-item">
         ${escapeHtml(tag)}
-        ${normalize(tag) === normalize(protectedTagName) ? "" : `<button type="button" data-remove-tag="${escapeHtml(tag)}" aria-label="Remove ${escapeHtml(tag)}">×</button>`}
+        <button type="button" data-remove-tag="${escapeHtml(tag)}" aria-label="Remove ${escapeHtml(tag)}">×</button>
       </span>
     `)
     .join("");
@@ -2144,7 +2413,6 @@ function addRecipeTag(event) {
 }
 
 function removeRecipeTag(tag) {
-  if (normalize(tag) === normalize(protectedTagName)) return;
   state.recipeTags = recipeTags().filter((item) => normalize(item) !== normalize(tag));
   activeRecipes().forEach((recipe) => {
     recipe.tags = normalizeRecipeTagSelection(recipe.tags).filter((item) => normalize(item) !== normalize(tag));
@@ -2234,6 +2502,96 @@ function refreshGroceryLibraryViews() {
   renderGrocerySuggestions();
   renderIngredientSuggestions();
   renderGroceries();
+}
+
+function openIngredientOptionsDialog(event) {
+  event?.stopPropagation();
+  closeSettingsMenu();
+  populateIngredientOptionsEditor();
+  elements.ingredientOptionsDialog.showModal();
+}
+
+function populateIngredientOptionsEditor() {
+  const options = normalizeIngredientOptions(state.ingredientOptions);
+  elements.ingredientNumberOptions.value = options.numbers.join("\n").trimStart();
+  elements.ingredientQtyOptions.value = options.quantities.join("\n").trimStart();
+  elements.ingredientItemOptions.value = options.items.join("\n");
+  elements.ingredientPrepOptions.value = options.prep.join("\n").trimStart();
+}
+
+function collectTextareaOptions(text, keepBlank = false) {
+  const values = String(text || "")
+    .split(/\n/)
+    .map((line) => line.trim())
+    .filter((line) => keepBlank || line);
+  return normalizeOptionValues(values, [], keepBlank);
+}
+
+function saveIngredientOptions() {
+  state.ingredientOptions = normalizeIngredientOptions({
+    numbers: collectTextareaOptions(elements.ingredientNumberOptions.value, true),
+    quantities: collectTextareaOptions(elements.ingredientQtyOptions.value, true),
+    items: collectTextareaOptions(elements.ingredientItemOptions.value, false),
+    prep: collectTextareaOptions(elements.ingredientPrepOptions.value, true)
+  });
+  syncIngredientOptionGlobals();
+  persist();
+  renderIngredientSuggestions();
+  renderGroceries();
+  elements.ingredientOptionsDialog.close();
+}
+
+function resetIngredientOptions() {
+  state.ingredientOptions = defaultIngredientOptions();
+  syncIngredientOptionGlobals();
+  populateIngredientOptionsEditor();
+  persist();
+  renderIngredientSuggestions();
+}
+
+function openWeeklyEmailDialog(event) {
+  event?.stopPropagation();
+  closeSettingsMenu();
+  populateWeeklyEmailEditor();
+  elements.weeklyEmailDialog.showModal();
+}
+
+function populateWeeklyEmailEditor() {
+  const settings = normalizeWeeklyEmailSettings(state.weeklyEmailSettings);
+  elements.weeklyEmailSubjectPrefix.value = settings.subjectPrefix;
+  elements.weeklyEmailIntro.value = settings.introText;
+  elements.weeklyEmailClosing.value = settings.closingNote;
+  elements.weeklyEmailIncludeWeekInReview.checked = settings.includeWeekInReview;
+  elements.weeklyEmailIncludeActiveCooks.checked = settings.includeActiveCooks;
+  elements.weeklyEmailIncludeMissingNotes.checked = settings.includeMissingNotes;
+  elements.weeklyEmailIncludeUpcomingStatus.checked = settings.includeUpcomingStatus;
+  elements.weeklyEmailIncludePlannedCount.checked = settings.includePlannedCount;
+  elements.weeklyEmailIncludeEmptyMeals.checked = settings.includeEmptyMeals;
+}
+
+function collectWeeklyEmailEditor() {
+  return normalizeWeeklyEmailSettings({
+    subjectPrefix: elements.weeklyEmailSubjectPrefix.value,
+    introText: elements.weeklyEmailIntro.value,
+    closingNote: elements.weeklyEmailClosing.value,
+    includeWeekInReview: elements.weeklyEmailIncludeWeekInReview.checked,
+    includeActiveCooks: elements.weeklyEmailIncludeActiveCooks.checked,
+    includeMissingNotes: elements.weeklyEmailIncludeMissingNotes.checked,
+    includeUpcomingStatus: elements.weeklyEmailIncludeUpcomingStatus.checked,
+    includePlannedCount: elements.weeklyEmailIncludePlannedCount.checked,
+    includeEmptyMeals: elements.weeklyEmailIncludeEmptyMeals.checked
+  });
+}
+
+function saveWeeklyEmailSettings() {
+  state.weeklyEmailSettings = collectWeeklyEmailEditor();
+  persist();
+  elements.weeklyEmailDialog.close();
+}
+
+function resetWeeklyEmailSettings() {
+  state.weeklyEmailSettings = defaultWeeklyEmailSettings();
+  populateWeeklyEmailEditor();
 }
 
 function openBackupHealthDialog(event) {
@@ -2552,7 +2910,7 @@ function renderRecipes() {
 function recipeMatchesSearch(recipe, query) {
   if (!query) return true;
   const ingredients = normalizeIngredients(recipe.ingredients).map(ingredientToText).join(" ");
-  const haystack = [recipe.name, recipe.prepTime, recipe.cookTime, recipe.time, recipe.sourceUrl, folderName(recipe.folderId), normalizeRecipeTagSelection(recipe.tags).join(" "), ingredients].join(" ").toLowerCase();
+  const haystack = [recipe.name, recipe.prepTime, recipe.cookTime, recipe.time, recipe.sourceUrl, normalizeRecipeTagSelection(recipe.tags).join(" "), ingredients].join(" ").toLowerCase();
   return haystack.includes(query);
 }
 
@@ -2671,11 +3029,27 @@ function isAncestorFolder(folderId, descendantId) {
 }
 
 function renderPlanner() {
+  const previousCarouselState = currentPlannerCarouselState();
   const week = weekState();
   const activeDay = ensureActivePlannerDay();
   const isPublished = isPublishedMealPlanView(week);
   const visibleSlots = mealSlotsForWeek(week);
   const combinedState = combinedMealSectionsForWeek(week);
+  const mealPlanColumns = mealColumnConfigs
+    .map((column) => {
+      const columnHtml = columnMealsForDay(activeDay, column, combinedState).map((meal) => (
+        meal
+          ? slotTemplate(activeDay, meal, visibleSlots?.[activeDay.id]?.[meal] || "", {
+            readOnly: isPublished,
+            displayMeal: displayMealName(meal),
+            combined: isCombinedMealKey(meal)
+          })
+          : emptyMealSlotTemplate()
+      )).join("");
+      return { column, html: columnHtml };
+    })
+    .filter((column) => !isPublished || column.html.trim());
+  const mealPlanColumnCount = Math.max(1, mealPlanColumns.length);
 
   elements.plannerGrid.innerHTML = `
     <div class="day-tabs" role="tablist" aria-label="Meal plan days">
@@ -2699,18 +3073,10 @@ function renderPlanner() {
       }).join("")}
     </div>
     <section class="day-column planner-day-panel" role="tabpanel" id="panel-${activeDay.id}" aria-labelledby="tab-${activeDay.id}">
-      <div class="day-slots-carousel" aria-label="${escapeHtml(activeDay.name)} meals">
-        ${mealColumnConfigs.map((column) => `
+      <div class="day-slots-carousel ${isPublished ? "is-published" : ""}" style="--meal-column-count: ${mealPlanColumnCount};" aria-label="${escapeHtml(activeDay.name)} meals">
+        ${mealPlanColumns.map(({ html }) => `
           <div class="meal-plan-column">
-            ${columnMealsForDay(activeDay, column, combinedState).map((meal) => (
-              meal
-                ? slotTemplate(activeDay, meal, visibleSlots?.[activeDay.id]?.[meal] || "", {
-                  readOnly: isPublished,
-                  displayMeal: displayMealName(meal),
-                  combined: isCombinedMealKey(meal)
-                })
-                : emptyMealSlotTemplate()
-            )).join("")}
+            ${html}
           </div>
         `).join("")}
       </div>
@@ -2836,6 +3202,25 @@ function renderPlanner() {
     slot.addEventListener("drop", handleMealSectionDrop);
   });
 
+  restorePlannerCarouselState(previousCarouselState, activeDay.id);
+}
+
+function currentPlannerCarouselState() {
+  const panel = elements.plannerGrid.querySelector(".planner-day-panel");
+  const carousel = elements.plannerGrid.querySelector(".day-slots-carousel");
+  return {
+    dayId: panel?.id?.replace(/^panel-/, "") || "",
+    scrollLeft: carousel?.scrollLeft || 0
+  };
+}
+
+function restorePlannerCarouselState(previousState, activeDayId) {
+  if (!previousState?.dayId || previousState.dayId !== activeDayId) return;
+  const carousel = elements.plannerGrid.querySelector(".day-slots-carousel");
+  if (!carousel) return;
+  window.requestAnimationFrame(() => {
+    carousel.scrollLeft = previousState.scrollLeft;
+  });
 }
 
 function loadCachedHolidayEvents() {
@@ -2953,6 +3338,38 @@ function renderAutoRules() {
     });
   });
 
+  elements.autoRuleList.querySelectorAll("[data-create-tag-auto-rule]").forEach((button) => {
+    button.addEventListener("click", () => createTagAutoRule(button.dataset.day, button.dataset.meal, Number(button.dataset.index)));
+  });
+
+  elements.autoRuleList.querySelectorAll("[data-auto-rule-match-mode]").forEach((select) => {
+    select.addEventListener("change", () => updateTagAutoRule(select.dataset.day, select.dataset.meal, Number(select.dataset.index), (rule) => {
+      rule.tagMatchMode = select.value === "all" ? "all" : "any";
+    }));
+  });
+
+  elements.autoRuleList.querySelectorAll("[data-auto-rule-selection-mode]").forEach((select) => {
+    select.addEventListener("change", () => updateTagAutoRule(select.dataset.day, select.dataset.meal, Number(select.dataset.index), (rule) => {
+      rule.selectionMode = select.value === "leastRecent" ? "leastRecent" : "random";
+    }));
+  });
+
+  elements.autoRuleList.querySelectorAll("[data-add-auto-rule-tag]").forEach((select) => {
+    select.addEventListener("change", () => {
+      const tag = select.value;
+      if (!tag) return;
+      updateTagAutoRule(select.dataset.day, select.dataset.meal, Number(select.dataset.index), (rule) => {
+        rule.tags = normalizeRecipeTagSelection([...(rule.tags || []), tag]);
+      });
+    });
+  });
+
+  elements.autoRuleList.querySelectorAll("[data-remove-auto-rule-tag]").forEach((button) => {
+    button.addEventListener("click", () => updateTagAutoRule(button.dataset.day, button.dataset.meal, Number(button.dataset.index), (rule) => {
+      rule.tags = normalizeRecipeTagSelection(rule.tags).filter((tag) => normalize(tag) !== normalize(button.dataset.removeAutoRuleTag));
+    }));
+  });
+
   elements.autoRuleList.querySelectorAll("[data-skip-auto-rule]").forEach((button) => {
     button.addEventListener("click", () => {
       if (suppressAutoRuleClick) return;
@@ -2992,9 +3409,9 @@ function renderAutoRuleOptions() {
   if (!elements.autoRuleOptions) return;
   elements.autoRuleOptions.innerHTML = [
     `<option value="Do not fill"></option>`,
-    ...normalizedFolders().map((folder) => `<option value="${escapeHtml(autoRuleFolderValue(folder.name))}"></option>`),
+    ...recipeTags().map((tag) => `<option value="Tag: ${escapeHtml(tag)}"></option>`),
     ...activeRecipes()
-      .filter((recipe) => recipe.name && !isProtectedRecipe(recipe))
+      .filter((recipe) => recipe.name)
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((recipe) => `<option value="${escapeHtml(recipe.name)}"></option>`),
     ...mealPlanCustomOptions.map((option) => `<option value="${escapeHtml(option)}"></option>`)
@@ -3066,6 +3483,7 @@ function autoRuleInputTemplate(day, meal, index, displayMeal = meal) {
         <button class="recipe-meal-link custom-meal-link auto-rule-selected" type="button" data-pick-auto-rule-recipe data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Click to change. Right-click to remove.">
           ${entryLabel}
         </button>
+        ${rule.action === "tags" ? autoRuleTagControlsTemplate(day.id, meal, index, rule) : ""}
         <button class="meal-swipe-delete" type="button" data-remove-auto-rule data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" aria-label="Delete ${entryLabel}">Delete</button>
       </div>
     `;
@@ -3076,10 +3494,48 @@ function autoRuleInputTemplate(day, meal, index, displayMeal = meal) {
         <button class="meal-pick-slot auto-rule-pick-slot" type="button" data-pick-auto-rule-recipe data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Choose ${escapeHtml(placeholder)} rule">
           ${entryLabel}
         </button>
+        <button class="meal-special-choice meal-tag-choice" type="button" data-create-tag-auto-rule data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Choose tags" aria-label="Choose tags for ${escapeHtml(placeholder)} rule">#</button>
         <button class="meal-special-choice meal-ingredient-choice" type="button" data-pick-auto-rule-ingredient data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Choose ingredient" aria-label="Choose ingredient for ${escapeHtml(placeholder)} rule">
           ${broccoliIconTemplate()}
         </button>
       </div>
+    </div>
+  `;
+}
+
+function autoRuleTagControlsTemplate(dayId, meal, index, rule) {
+  const tags = normalizeRecipeTagSelection(rule.tags);
+  const availableTags = recipeTags().filter((tag) => !tags.some((selected) => normalize(selected) === normalize(tag)));
+  return `
+    <div class="auto-rule-tag-controls">
+      <div class="auto-rule-tag-control-row">
+        <label>
+          Match
+          <select data-auto-rule-match-mode data-day="${dayId}" data-meal="${escapeHtml(meal)}" data-index="${index}">
+            <option value="any" ${rule.tagMatchMode === "all" ? "" : "selected"}>Any tag</option>
+            <option value="all" ${rule.tagMatchMode === "all" ? "selected" : ""}>All tags</option>
+          </select>
+        </label>
+        <label>
+          Pick
+          <select data-auto-rule-selection-mode data-day="${dayId}" data-meal="${escapeHtml(meal)}" data-index="${index}">
+            <option value="random" ${rule.selectionMode === "leastRecent" ? "" : "selected"}>Random</option>
+            <option value="leastRecent" ${rule.selectionMode === "leastRecent" ? "selected" : ""}>Least recent</option>
+          </select>
+        </label>
+      </div>
+      <div class="auto-rule-tag-chip-list">
+        ${tags.map((tag) => `
+          <span class="tag-library-item auto-rule-tag-chip">
+            ${escapeHtml(tag)}
+            <button type="button" data-remove-auto-rule-tag="${escapeHtml(tag)}" data-day="${dayId}" data-meal="${escapeHtml(meal)}" data-index="${index}" aria-label="Remove ${escapeHtml(tag)}">×</button>
+          </span>
+        `).join("")}
+      </div>
+      <select data-add-auto-rule-tag data-day="${dayId}" data-meal="${escapeHtml(meal)}" data-index="${index}">
+        <option value="">Add tag</option>
+        ${availableTags.map((tag) => `<option value="${escapeHtml(tag)}">${escapeHtml(tag)}</option>`).join("")}
+      </select>
     </div>
   `;
 }
@@ -3099,8 +3555,16 @@ function autoRuleInputValue(rule) {
   if (!rule) return "";
   if (rule.action === "skip") return "Do not fill";
   if (["folder", "folderSame"].includes(rule.action)) return autoRuleFolderValue(rule.folderName);
+  if (rule.action === "tags") return autoRuleTagValue(rule);
   if (rule.action === "custom") return rule.value || "";
   return "";
+}
+
+function autoRuleTagValue(rule) {
+  const tags = normalizeRecipeTagSelection(rule.tags);
+  if (!tags.length) return "Tags";
+  const mode = rule.tagMatchMode === "all" ? "all" : "any";
+  return `Tags (${mode}): ${tags.join(", ")}`;
 }
 
 function autoRuleFolderValue(folderName) {
@@ -3128,6 +3592,33 @@ function clearAutoRule(dayId, meal, index) {
   const previousRule = autoGenerateRuleForSlot({ id: dayId }, meal, index);
   state.autoGenerateRules = state.autoGenerateRules.filter((rule) => !isExactAutoRuleForSlot(rule, dayId, meal, index));
   if (previousRule) state.autoGenerateRules.unshift(autoRule(createId("rule"), [dayId], meal, index, "any"));
+  persist();
+  renderAutoRules();
+}
+
+function createTagAutoRule(dayId, meal, index) {
+  const tags = recipeTags();
+  state.autoGenerateRules = state.autoGenerateRules.filter((rule) => !isExactAutoRuleForSlot(rule, dayId, meal, index));
+  const rule = autoRule(createId("rule"), [dayId], meal, index, "tags");
+  rule.tags = tags[0] ? [tags[0]] : [];
+  state.autoGenerateRules.unshift(rule);
+  persist();
+  renderAutoRules();
+}
+
+function updateTagAutoRule(dayId, meal, index, updater) {
+  const rule = autoGenerateRuleForSlot({ id: dayId }, meal, index);
+  if (!rule || rule.action !== "tags") return;
+  state.autoGenerateRules = state.autoGenerateRules.filter((item) => !isExactAutoRuleForSlot(item, dayId, meal, index));
+  const nextRule = normalizeAutoGenerateRule({
+    ...rule,
+    id: isExactAutoRuleForSlot(rule, dayId, meal, index) ? rule.id : createId("rule"),
+    dayIds: [dayId],
+    meal,
+    index
+  });
+  updater(nextRule);
+  state.autoGenerateRules.unshift(normalizeAutoGenerateRule(nextRule));
   persist();
   renderAutoRules();
 }
@@ -3195,12 +3686,19 @@ function autoGenerateRuleFromInput(dayId, meal, index, value, previousRule = nul
   }
   if (normalize(value) === "do not fill") return autoRule(createId("rule"), [dayId], meal, index, "skip");
 
+  const tagPrefix = "tag:";
+  const tagName = normalize(value).startsWith(tagPrefix)
+    ? value.slice(tagPrefix.length).trim()
+    : value;
+  const tag = recipeTags().find((item) => normalize(item) === normalize(tagName));
+  if (tag) return tagAutoRule(createId("rule"), [dayId], meal, index, [tag]);
+
   const folderPrefix = "folder:";
   const folderName = normalize(value).startsWith(folderPrefix)
     ? value.slice(folderPrefix.length).trim()
     : value;
   const folder = normalizedFolders().find((item) => normalize(item.name) === normalize(folderName));
-  if (folder) return autoRule(createId("rule"), [dayId], meal, index, "folder", folder.name);
+  if (folder) return tagAutoRule(createId("rule"), [dayId], meal, index, [folder.name]);
 
   return autoRule(createId("rule"), [dayId], meal, index, "custom", "", value);
 }
@@ -3239,6 +3737,7 @@ function slotTemplate(day, meal, slotValue, options = {}) {
   const visibleEntries = mealEntryList(entries, meal);
   const filledEntries = entries.filter(Boolean);
   const hasOpenEntry = visibleEntries.some((entry) => !entry);
+  if (readOnly && !filledEntries.length) return "";
 
   return `
     <div class="slot-card meal-${mealToken(meal)} ${filledEntries.length ? "filled" : ""} ${readOnly ? "published-slot" : ""}" ${readOnly ? "" : `data-meal-slot data-meal-section-target data-day="${day.id}" data-meal="${meal}"`}>
@@ -4047,7 +4546,6 @@ function moveMealEntryToSlot(source, targetDay, targetMeal, targetIndex = null) 
   }
   week.slots[targetDay][targetMeal] = compactMealSlotEntries(targetEntries, targetMeal);
 
-  state.checkedGroceries = {};
   persist();
   renderPlanner();
   renderGroceries();
@@ -4069,7 +4567,7 @@ function combineGroupKeyForMeal(meal) {
 
 function isCombinableMeal(meal) {
   const key = combineGroupKeyForMeal(meal);
-  return Boolean(key && combinedMealSections[key].members.includes(meal));
+  return Boolean(key && (meal === key || combinedMealSections[key].members.includes(meal)));
 }
 
 function canCombineMealSections(sourceDay, sourceMeal, targetDay, targetMeal) {
@@ -4078,7 +4576,8 @@ function canCombineMealSections(sourceDay, sourceMeal, targetDay, targetMeal) {
   const targetGroup = combineGroupKeyForMeal(targetMeal);
   if (!sourceGroup || sourceGroup !== targetGroup) return false;
   const members = combinedMealSections[sourceGroup].members;
-  return members.includes(sourceMeal) && members.includes(targetMeal);
+  return (sourceMeal === sourceGroup || members.includes(sourceMeal))
+    && (targetMeal === targetGroup || members.includes(targetMeal));
 }
 
 function combineMealSections(dayId, sourceMeal, targetMeal) {
@@ -4087,16 +4586,16 @@ function combineMealSections(dayId, sourceMeal, targetMeal) {
   const week = weekState();
   const slots = week.slots;
   if (!slots[dayId]) slots[dayId] = {};
+  const members = combinedMealSections[combinedMeal].members;
   const combinedEntries = [
     ...slotEntries(slots[dayId][combinedMeal]),
-    ...slotEntries(slots[dayId][sourceMeal]),
-    ...slotEntries(slots[dayId][targetMeal])
+    ...(members.includes(sourceMeal) ? slotEntries(slots[dayId][sourceMeal]) : []),
+    ...(members.includes(targetMeal) ? slotEntries(slots[dayId][targetMeal]) : [])
   ];
   slots[dayId][combinedMeal] = compactMealSlotEntries(combinedEntries, combinedMeal);
-  slots[dayId][sourceMeal] = "";
-  slots[dayId][targetMeal] = "";
+  if (members.includes(sourceMeal)) slots[dayId][sourceMeal] = "";
+  if (members.includes(targetMeal)) slots[dayId][targetMeal] = "";
   setCombinedMealSection(week, dayId, combinedMeal, true);
-  state.checkedGroceries = {};
   persist();
   renderPlanner();
   renderGroceries();
@@ -4359,7 +4858,6 @@ function clearPlannerDay(dayId) {
       week.combinedMealSections[day.id][meal] = false;
     });
   }
-  state.checkedGroceries = {};
   persist();
   renderPlanner();
   renderGroceries();
@@ -4373,7 +4871,6 @@ function clearMealSection(dayId, meal) {
   const week = weekState();
   week.slots[day.id][meal] = "";
   if (isCombinedMealKey(meal)) setCombinedMealSection(week, day.id, meal, false);
-  state.checkedGroceries = {};
   persist();
   renderPlanner();
   renderGroceries();
@@ -4405,7 +4902,6 @@ function autoGenerateMealSection(dayId, meal) {
     return;
   }
 
-  state.checkedGroceries = {};
   persist();
   renderPlanner();
   renderGroceries();
@@ -4445,7 +4941,6 @@ function autoGeneratePlannerDay(dayId) {
     return;
   }
 
-  state.checkedGroceries = {};
   persist();
   renderPlanner();
   renderGroceries();
@@ -4453,14 +4948,22 @@ function autoGeneratePlannerDay(dayId) {
 
 function renderGroceries() {
   renderGrocerySuggestions();
-  const week = weekState();
-  if (!isPublishedMealPlanView(week)) {
-    elements.groceryList.innerHTML = `<div class="empty-state">Publish the active week to generate groceries.</div>`;
+  renderGroceryWeekOptions();
+  const groceryWeek = selectedGroceryWeek();
+  if (!groceryWeek) {
+    elements.groceryList.innerHTML = `<div class="empty-state">Publish a week to generate groceries.</div>`;
     return;
   }
-  const groceries = buildGroceryRowsWithManual();
+  const groceries = buildGroceryRowsWithManual(groceryWeek.week);
   const pantrySet = new Set(state.pantry.map((item) => normalize(item)));
-  const needed = groceries.filter((row) => !pantrySet.has(normalize(row.item)));
+  const needed = groceries
+    .filter((row) => !pantrySet.has(normalize(row.item)))
+    .map((row) => ({
+      ...row,
+      checkedKey: groceryCheckedKey(groceryWeek.key, row.key),
+      checked: Boolean(state.checkedGroceries[groceryCheckedKey(groceryWeek.key, row.key)])
+    }))
+    .sort((a, b) => Number(a.checked) - Number(b.checked) || normalize(a.item).localeCompare(normalize(b.item)));
 
   if (!needed.length) {
     elements.groceryList.innerHTML = `<div class="empty-state">Choose meals for the prep window and groceries will appear here. Pantry items are skipped automatically.</div>`;
@@ -4469,10 +4972,9 @@ function renderGroceries() {
 
   elements.groceryList.innerHTML = needed
     .map((row) => {
-      const checked = Boolean(state.checkedGroceries[row.key]);
       return `
-        <label class="grocery-item ${checked ? "checked" : ""}">
-          <input type="checkbox" data-grocery="${escapeHtml(row.key)}" ${checked ? "checked" : ""} />
+        <label class="grocery-item ${row.checked ? "checked" : ""}">
+          <input type="checkbox" data-grocery="${escapeHtml(row.checkedKey)}" ${row.checked ? "checked" : ""} />
           <span class="grocery-name">
             ${escapeHtml(row.item)}
           </span>
@@ -4495,6 +4997,56 @@ function renderGroceries() {
   });
 }
 
+function renderGroceryWeekOptions() {
+  if (!elements.groceryWeekSelect) return;
+  const weeks = publishedGroceryWeekOptions();
+  if (!weeks.length) {
+    elements.groceryWeekSelect.innerHTML = `<option value="">No published weeks</option>`;
+    elements.groceryWeekSelect.disabled = true;
+    selectedGroceryWeekKey = "";
+    return;
+  }
+  elements.groceryWeekSelect.disabled = false;
+  if (!weeks.some((week) => week.key === selectedGroceryWeekKey)) {
+    const activeKey = weekKey();
+    selectedGroceryWeekKey = weeks.find((week) => week.key === activeKey)?.key || weeks[0].key;
+  }
+  elements.groceryWeekSelect.innerHTML = weeks
+    .map((week) => `<option value="${escapeHtml(week.key)}" ${week.key === selectedGroceryWeekKey ? "selected" : ""}>${escapeHtml(week.label)}</option>`)
+    .join("");
+}
+
+function publishedGroceryWeekOptions() {
+  return Object.values(state.publishedWeeks || {})
+    .filter((week) => week?.weekKey && week?.slots)
+    .sort((a, b) => String(b.weekKey).localeCompare(String(a.weekKey)))
+    .map((week) => ({
+      key: week.weekKey,
+      label: week.rangeLabel || formatWeekRange(dateFromWeekKey(week.weekKey)),
+      week: publishedGroceryWeekState(week)
+    }));
+}
+
+function publishedGroceryWeekState(archiveWeek) {
+  return {
+    slots: cloneMealSlots(archiveWeek.slots || {}),
+    publishedSlots: cloneMealSlots(archiveWeek.slots || {}),
+    combinedMealSections: cloneCombinedMealSections(archiveWeek.combinedMealSections || {}),
+    publishedCombinedMealSections: cloneCombinedMealSections(archiveWeek.combinedMealSections || {}),
+    mealPlanView: "published",
+    manualGroceries: Array.isArray(archiveWeek.manualGroceries) ? [...archiveWeek.manualGroceries] : []
+  };
+}
+
+function selectedGroceryWeek() {
+  const weeks = publishedGroceryWeekOptions();
+  return weeks.find((week) => week.key === selectedGroceryWeekKey) || weeks[0] || null;
+}
+
+function groceryCheckedKey(weekKeyValue, rowKey) {
+  return `${weekKeyValue || "week"}|${rowKey}`;
+}
+
 function renderGrocerySuggestions() {
   const suggestions = grocerySuggestionItems();
   elements.grocerySuggestions.innerHTML = suggestions
@@ -4506,11 +5058,19 @@ function addManualGroceryItem(event) {
   event.preventDefault();
   const item = elements.groceryInput.value.trim();
   if (!item) return;
-  const week = weekState();
+  const selectedWeek = selectedGroceryWeek();
+  const week = selectedWeek && state.plans[selectedWeek.key]
+    ? state.plans[selectedWeek.key]
+    : selectedWeek && state.publishedWeeks?.[selectedWeek.key]
+      ? state.publishedWeeks[selectedWeek.key]
+      : weekState();
   if (!Array.isArray(week.manualGroceries)) week.manualGroceries = [];
   if (!week.manualGroceries.some((existing) => normalize(existing) === normalize(item))) {
     week.manualGroceries.push(item);
     week.manualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
+  }
+  if (selectedWeek?.key && state.publishedWeeks?.[selectedWeek.key]) {
+    state.publishedWeeks[selectedWeek.key].manualGroceries = [...week.manualGroceries];
   }
   elements.groceryInput.value = "";
   persist();
@@ -4518,10 +5078,18 @@ function addManualGroceryItem(event) {
 }
 
 function removeManualGroceryItem(item) {
-  const week = weekState();
-  week.manualGroceries = manualGroceryItems().filter((existing) => existing !== item);
+  const selectedWeek = selectedGroceryWeek();
+  const week = selectedWeek && state.plans[selectedWeek.key]
+    ? state.plans[selectedWeek.key]
+    : selectedWeek && state.publishedWeeks?.[selectedWeek.key]
+      ? state.publishedWeeks[selectedWeek.key]
+      : weekState();
+  week.manualGroceries = manualGroceryItems(week).filter((existing) => existing !== item);
+  if (selectedWeek?.key && state.publishedWeeks?.[selectedWeek.key]) {
+    state.publishedWeeks[selectedWeek.key].manualGroceries = [...week.manualGroceries];
+  }
   Object.keys(state.checkedGroceries).forEach((key) => {
-    if (key === manualGroceryRow(item).key) delete state.checkedGroceries[key];
+    if (key === groceryCheckedKey(selectedWeek?.key || weekKey(), manualGroceryRow(item).key)) delete state.checkedGroceries[key];
   });
   persist();
   renderGroceries();
@@ -4536,36 +5104,65 @@ function scheduleGroceryItemReview(rows) {
 
 function openPublishedGroceryReview() {
   const reviewItems = unlistedPublishedGroceryItems();
+  openGroceryReviewItems(reviewItems, "Add these to Grocery Items so future grocery lists can recognize them.");
+}
+
+function openGroceryReviewItems(reviewItems, contextText) {
   if (!reviewItems.length || document.querySelector("dialog[open]")) return;
   pendingGroceryReview = null;
   pendingGroceryReviewItems = reviewItems;
   elements.groceryReviewItem.textContent = `${reviewItems.length} unlisted ingredient${reviewItems.length === 1 ? "" : "s"}`;
-  elements.groceryReviewContext.textContent = "Add these to Grocery Items so future grocery lists can recognize them.";
+  elements.groceryReviewContext.textContent = contextText || "Add these to Grocery Items so future grocery lists can recognize them.";
+  elements.goToGroceryReviewRecipeBtn.hidden = true;
   elements.groceryReviewList.innerHTML = reviewItems
     .map((item, index) => `
-      <label class="grocery-review-row">
-        <input type="checkbox" data-grocery-review-index="${index}" checked />
-        <span>
-          <strong>${escapeHtml(item.item)}</strong>
-          ${item.sources.length ? `<small>${escapeHtml(item.sources.join(", "))}</small>` : ""}
-        </span>
-      </label>
+      <div class="grocery-review-row">
+        <label>
+          <input type="checkbox" data-grocery-review-index="${index}" checked />
+          <span>
+            <strong>${escapeHtml(item.item)}</strong>
+            ${item.sources.length ? `<small>${escapeHtml(item.sources.map((source) => source.name).join(", "))}</small>` : ""}
+          </span>
+        </label>
+        ${item.sources.some((source) => source.id) ? `
+          <div class="grocery-review-source-actions">
+            ${item.sources
+              .filter((source) => source.id)
+              .map((source) => `<button class="secondary-btn compact-btn" type="button" data-grocery-review-recipe="${escapeHtml(source.id)}">Edit ${escapeHtml(source.name)}</button>`)
+              .join("")}
+          </div>
+        ` : ""}
+      </div>
     `)
     .join("");
+  bindGroceryReviewRecipeButtons();
   elements.groceryReviewDialog.showModal();
 }
 
 function unlistedPublishedGroceryItems() {
   if (!isPublishedMealPlanView(weekState())) return [];
+  return unlistedGroceryItemsForWeek(weekState());
+}
+
+function unlistedGroceryItemsForWeek(week) {
   const items = new Map();
-  buildRawGroceryRows().forEach((row) => {
+  buildRawGroceryRows(week).forEach((row) => {
     if (!row.item || groceryBaseHasItem(row.item)) return;
     const key = normalize(row.item);
-    if (!items.has(key)) items.set(key, { item: row.item, sources: new Set() });
-    if (row.sourceRecipeName) items.get(key).sources.add(row.sourceRecipeName);
+    if (!items.has(key)) items.set(key, { item: row.item, sources: new Map() });
+    if (row.sourceRecipeName) {
+      const sourceKey = row.sourceRecipeId || row.sourceRecipeName;
+      items.get(key).sources.set(sourceKey, {
+        id: row.sourceRecipeId || "",
+        name: row.sourceRecipeName
+      });
+    }
   });
   return [...items.values()]
-    .map((item) => ({ item: item.item, sources: [...item.sources].sort((a, b) => a.localeCompare(b)) }))
+    .map((item) => ({
+      item: item.item,
+      sources: [...item.sources.values()].sort((a, b) => a.name.localeCompare(b.name))
+    }))
     .sort((a, b) => normalize(a.item).localeCompare(normalize(b.item)));
 }
 
@@ -4595,6 +5192,8 @@ function openGroceryItemReview(row) {
     ? `"${row.item}" is not in Grocery Items. It came from ${row.sourceRecipeName}.`
     : `"${row.item}" is not in Grocery Items.`;
   elements.groceryReviewList.innerHTML = "";
+  elements.goToGroceryReviewRecipeBtn.hidden = !row.sourceRecipeId;
+  elements.goToGroceryReviewRecipeBtn.textContent = "Edit recipe";
   elements.groceryReviewDialog.showModal();
 }
 
@@ -4615,8 +5214,24 @@ function dismissCurrentGroceryReview() {
 
 function goToGroceryReviewRecipe() {
   const recipeId = pendingGroceryReview?.sourceRecipeId;
-  dismissCurrentGroceryReview();
-  if (recipeId) openRecipeView(recipeId);
+  if (recipeId) openGroceryReviewRecipeEditor(recipeId);
+}
+
+function bindGroceryReviewRecipeButtons() {
+  elements.groceryReviewList.querySelectorAll("[data-grocery-review-recipe]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openGroceryReviewRecipeEditor(button.dataset.groceryReviewRecipe);
+    });
+  });
+}
+
+function openGroceryReviewRecipeEditor(recipeId) {
+  pendingGroceryReview = null;
+  pendingGroceryReviewItems = [];
+  elements.groceryReviewDialog.close();
+  if (recipeId) openRecipeDialog(recipeId);
 }
 
 function addCurrentGroceryReviewItem() {
@@ -4680,9 +5295,30 @@ function openRecipeDialog(id) {
   elements.recipeDialog.showModal();
 }
 
+function recipeViewScroller() {
+  return elements.recipeViewDialog.querySelector(".recipe-form");
+}
+
+function rememberActiveRecipeScroll() {
+  if (!currentActiveRecipeViewId) return;
+  const scroller = recipeViewScroller();
+  if (scroller) activeRecipeScrollPositions.set(currentActiveRecipeViewId, scroller.scrollTop);
+}
+
+function restoreActiveRecipeScroll(cookingId) {
+  const scroller = recipeViewScroller();
+  if (!scroller) return;
+  const scrollTop = activeRecipeScrollPositions.get(cookingId) || 0;
+  requestAnimationFrame(() => {
+    scroller.scrollTop = scrollTop;
+  });
+}
+
 function openRecipeView(id, mealContext = null) {
   const recipe = recipeForSlot(id);
   if (!recipe) return;
+  rememberActiveRecipeScroll();
+  currentActiveRecipeViewId = "";
   const baseServings = Number(recipe.servings || 1) || 1;
   const currentServings = recipe.virtualGroceryRecipe ? Number(recipe.groceryMealServings || 1) || 1 : baseServings;
   elements.recipeViewTitle.textContent = recipe.name;
@@ -4703,12 +5339,20 @@ function openRecipeView(id, mealContext = null) {
     elements.recipeViewDialog.close();
     openRecipeDialog(recipe.id);
   });
+  elements.recipeViewContent.querySelectorAll("[data-use-log-photo]").forEach((button) => {
+    button.addEventListener("click", () => useCookLogPhotoAsRecipePhoto(recipe.id, button.dataset.useLogPhoto));
+  });
   elements.recipeViewHeaderActions.querySelector("[data-start-cooking]")?.addEventListener("click", () => {
     const input = elements.recipeViewHeaderActions.querySelector("[data-serving-adjuster]");
-    startCookingRecipe(recipe.id, input?.value);
+    const cookingId = startCookingRecipe(recipe.id, input?.value);
     elements.recipeViewDialog.close();
+    if (cookingId) openActiveRecipeView(cookingId);
   });
   if (!elements.recipeViewDialog.open) elements.recipeViewDialog.showModal();
+  requestAnimationFrame(() => {
+    const scroller = recipeViewScroller();
+    if (scroller) scroller.scrollTop = 0;
+  });
   elements.closeRecipeViewBtn.focus();
 }
 
@@ -4717,6 +5361,7 @@ function openActiveRecipeView(cookingId) {
   if (!cookingItem) return;
   const recipe = activeRecipes().find((item) => item.id === cookingItem.recipeId);
   if (!recipe) return;
+  rememberActiveRecipeScroll();
   elements.recipeViewTitle.textContent = recipe.name;
   elements.recipeViewDialog.querySelector(".muted-label").textContent = "Active Recipe";
   elements.recipeViewHeaderActions.innerHTML = "";
@@ -4725,6 +5370,8 @@ function openActiveRecipeView(cookingId) {
   bindActiveRecipeViewControls(cookingItem.id);
   bindActiveRecipeSwipe(cookingItem.id);
   if (!elements.recipeViewDialog.open) elements.recipeViewDialog.showModal();
+  currentActiveRecipeViewId = cookingItem.id;
+  restoreActiveRecipeScroll(cookingItem.id);
 }
 
 function setActiveRecipeSideNavigation(cookingId) {
@@ -4774,6 +5421,7 @@ function recipeViewTemplate(recipe) {
   const baseServings = Number(recipe.servings || 1) || 1;
   const ingredientScale = recipe.virtualGroceryRecipe ? (Number(recipe.groceryMealServings || 1) || 1) / baseServings : 1;
   return `
+    ${recipe.photoUrl ? `<img class="recipe-view-photo" src="${escapeHtml(recipe.photoUrl)}" alt="${escapeHtml(recipe.name)}" />` : ""}
     <div class="recipe-view-meta">
       ${recipeTimePillsTemplate(recipe, "Flexible")}
       ${tags.map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join("")}
@@ -4816,14 +5464,16 @@ function activeRecipeViewTemplate(recipe, cookingItem) {
   const servings = Math.max(1, Number(cookingItem.servings) || baseServings);
   const scale = servings / baseServings;
   const completedSteps = Array.isArray(cookingItem.completedSteps) ? cookingItem.completedSteps : [];
+  const checkedIngredients = Array.isArray(cookingItem.checkedIngredients) ? cookingItem.checkedIngredients : [];
   return `
+    ${recipe.photoUrl ? `<img class="recipe-view-photo" src="${escapeHtml(recipe.photoUrl)}" alt="${escapeHtml(recipe.name)}" />` : ""}
     <div class="recipe-view-meta">
       ${recipeTimePillsTemplate(recipe, "Flexible")}
       <span class="serving-adjuster serving-static"><span>Servings</span><strong>${escapeHtml(String(servings))}</strong></span>
       ${tags.map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join("")}
     </div>
     ${recipe.sourceUrl ? `<a class="recipe-source-link" href="${escapeHtml(recipe.sourceUrl)}" target="_blank" rel="noreferrer">Source recipe</a>` : ""}
-    ${activeRecipeSectionTemplate("ingredients", "Ingredients", cookingItem.collapsedSections?.ingredients, ingredients.length ? `<ul>${scaledIngredientListTemplate(ingredients, scale)}</ul>` : `<p class="empty-state">No ingredients added yet.</p>`)}
+    ${activeRecipeSectionTemplate("ingredients", "Ingredients", cookingItem.collapsedSections?.ingredients, ingredients.length ? activeIngredientChecklistTemplate(ingredients, scale, checkedIngredients) : `<p class="empty-state">No ingredients added yet.</p>`)}
     ${activeRecipeSectionTemplate("instructions", "Instructions", cookingItem.collapsedSections?.instructions, steps.length ? `<ol class="active-recipe-steps">${steps.map((step, index) => `
       <li>
         <button class="active-cooking-step ${completedSteps[index] ? "is-complete" : ""}" type="button" data-active-step="${index}" aria-pressed="${completedSteps[index] ? "true" : "false"}">
@@ -4844,6 +5494,24 @@ function activeRecipeViewTemplate(recipe, cookingItem) {
   `;
 }
 
+function activeIngredientChecklistTemplate(ingredients, scale, checkedIngredients) {
+  return `
+    <ul class="active-ingredient-list">
+      ${ingredients
+        .map((ingredient) => scaledIngredientToText(ingredient, scale))
+        .filter(Boolean)
+        .map((ingredient, index) => `
+          <li>
+            <label class="active-ingredient-check ${checkedIngredients[index] ? "is-checked" : ""}">
+              <input type="checkbox" data-active-ingredient="${index}" ${checkedIngredients[index] ? "checked" : ""} />
+              <span>${escapeHtml(ingredient)}</span>
+            </label>
+          </li>
+        `).join("")}
+    </ul>
+  `;
+}
+
 function cookLogTemplate(cookLog) {
   const entries = normalizeCookLog(cookLog);
   if (!entries.length) return `<p class="empty-state">No cooking notes yet.</p>`;
@@ -4855,11 +5523,35 @@ function cookLogTemplate(cookLog) {
             <strong>${escapeHtml(formatCookLogDate(entry.cookedAt))}</strong>
             <span>${escapeHtml([formatServingsLabel(entry.servings), entry.durationSeconds ? formatCookingDuration(entry.durationSeconds) : ""].filter(Boolean).join(" · "))}</span>
           </div>
+          ${entry.photoUrl ? cookLogPhotoTemplate(entry.photoUrl) : ""}
           ${entry.notes ? `<p>${escapeHtml(entry.notes)}</p>` : `<p class="muted-note">No notes added.</p>`}
         </li>
       `).join("")}
     </ol>
   `;
+}
+
+function cookLogPhotoTemplate(photoUrl) {
+  return `
+    <div class="cook-log-photo-wrap">
+      <img class="cook-log-photo" src="${escapeHtml(photoUrl)}" alt="Cooked dish" />
+      <button class="secondary-btn compact-btn" type="button" data-use-log-photo="${escapeHtml(photoUrl)}">Use as recipe photo</button>
+    </div>
+  `;
+}
+
+function useCookLogPhotoAsRecipePhoto(recipeId, photoUrl, activeCookingId = "") {
+  if (!recipeId || !photoUrl) return;
+  const recipeIndex = activeRecipes().findIndex((recipe) => recipe.id === recipeId);
+  if (recipeIndex < 0) return;
+  const recipe = normalizeRecipe({ ...activeRecipes()[recipeIndex], photoUrl });
+  activeRecipes()[recipeIndex] = recipe;
+  persist();
+  saveRecipeRow(recipe);
+  renderRecipes();
+  renderActiveCooking();
+  if (activeCookingId) openActiveRecipeView(activeCookingId);
+  else openRecipeView(recipeId);
 }
 
 function formatCookLogDate(value) {
@@ -4885,6 +5577,11 @@ function activeRecipeSectionTemplate(sectionId, title, isCollapsed, content) {
 }
 
 function bindActiveRecipeViewControls(cookingId) {
+  const cookingItem = normalizeActiveCooking(state.activeCooking).find((item) => item.id === cookingId);
+  const recipeId = cookingItem?.recipeId || "";
+  elements.recipeViewContent.querySelectorAll("[data-use-log-photo]").forEach((button) => {
+    button.addEventListener("click", () => useCookLogPhotoAsRecipePhoto(recipeId, button.dataset.useLogPhoto, cookingId));
+  });
   elements.recipeViewContent.querySelector("[data-active-cooking-notes]")?.addEventListener("input", (event) => {
     updateActiveCookingItem(cookingId, (item) => {
       item.notes = event.target.value;
@@ -4892,6 +5589,15 @@ function bindActiveRecipeViewControls(cookingId) {
   });
   elements.recipeViewContent.querySelector("[data-finish-active-cooking]")?.addEventListener("click", () => {
     requestFinishCooking(cookingId);
+  });
+  elements.recipeViewContent.querySelectorAll("[data-active-ingredient]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      checkbox.closest(".active-ingredient-check")?.classList.toggle("is-checked", checkbox.checked);
+      updateActiveCookingItem(cookingId, (item) => {
+        const index = Number(checkbox.dataset.activeIngredient);
+        item.checkedIngredients[index] = checkbox.checked;
+      });
+    });
   });
   elements.recipeViewContent.querySelectorAll("[data-active-step]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -4919,6 +5625,7 @@ function updateActiveCookingItem(cookingId, updater) {
     const nextItem = {
       ...item,
       completedSteps: [...item.completedSteps],
+      checkedIngredients: [...item.checkedIngredients],
       collapsedSections: { ...item.collapsedSections }
     };
     updater(nextItem);
@@ -4948,7 +5655,6 @@ function updateGroceryMealServing(item, servings, mealContext) {
   const entries = mealEntryList(slotEntries(week.slots?.[mealContext.day]?.[mealContext.meal]), mealContext.meal);
   entries[mealContext.index] = groceryMealSlotId(item, servings);
   week.slots[mealContext.day][mealContext.meal] = compactMealSlotEntries(entries, mealContext.meal);
-  state.checkedGroceries = {};
   persist();
   renderGroceries();
 }
@@ -5000,14 +5706,38 @@ function populateRecipeForm(recipe) {
   elements.recipePrepTime.value = recipe?.prepTime || recipe?.time || "";
   elements.recipeCookTime.value = recipe?.cookTime || "";
   elements.recipeServings.value = recipe?.servings || "";
-  elements.recipeFolder.value = recipe?.folderId || "";
+  elements.recipeFolder.value = "";
   renderRecipeTagChoices(recipe?.tags || []);
   elements.recipeSourceUrl.value = recipe?.sourceUrl || "";
+  pendingRecipePhotoFile = null;
+  elements.recipePhotoInput.value = "";
+  elements.recipePhotoUrl.value = recipe?.photoUrl || "";
+  updateRecipePhotoPreview(recipe?.photoUrl || "");
   renderIngredientRows(recipe ? normalizeIngredients(recipe.ingredients) : [blankIngredient()]);
   renderStepRows(recipe ? normalizeInstructionSteps(recipe.steps) : [""]);
   renderNutritionRows(recipe ? normalizeNutritionFacts(recipe.nutrition) : [blankNutritionFact()]);
   renderCookLogRows(recipe ? normalizeCookLog(recipe.cookLog) : []);
   elements.deleteRecipeBtn.hidden = !recipe;
+}
+
+function handleRecipePhotoSelection() {
+  pendingRecipePhotoFile = elements.recipePhotoInput.files?.[0] || null;
+  updateRecipePhotoPreview(elements.recipePhotoUrl.value, pendingRecipePhotoFile);
+}
+
+function removeRecipePhotoSelection() {
+  pendingRecipePhotoFile = null;
+  elements.recipePhotoInput.value = "";
+  elements.recipePhotoUrl.value = "";
+  updateRecipePhotoPreview("");
+}
+
+function updateRecipePhotoPreview(photoUrl, file = null) {
+  if (!elements.recipePhotoPreview) return;
+  const previewUrl = file ? URL.createObjectURL(file) : photoUrl;
+  elements.recipePhotoPreview.innerHTML = previewUrl
+    ? `<img src="${escapeHtml(previewUrl)}" alt="Dish photo preview" />`
+    : "No photo selected.";
 }
 
 function renderRecipeTagChoices(selectedTags = []) {
@@ -5025,9 +5755,20 @@ function renderRecipeTagChoices(selectedTags = []) {
     .join("");
 }
 
-function saveRecipeFromForm(event) {
+async function saveRecipeFromForm(event) {
   event.preventDefault();
   const id = elements.recipeId.value || createId("recipe");
+  const currentRecipe = activeRecipes().find((item) => item.id === id);
+  let photoUrl = elements.recipePhotoUrl.value || currentRecipe?.photoUrl || "";
+  if (pendingRecipePhotoFile) {
+    try {
+      photoUrl = await uploadRecipePhoto(pendingRecipePhotoFile, id, "recipe");
+    } catch (error) {
+      updateRecipePhotoPreview(photoUrl);
+      window.alert(error.message || "Photo upload failed.");
+      return;
+    }
+  }
   const recipe = {
     id,
     name: elements.recipeName.value.trim(),
@@ -5038,9 +5779,11 @@ function saveRecipeFromForm(event) {
       cookTime: elements.recipeCookTime.value.trim()
     }),
     servings: Number(elements.recipeServings.value) || 1,
-    folderId: elements.recipeFolder.value,
+    folderId: "",
     sourceUrl: elements.recipeSourceUrl.value.trim(),
-    photoUrl: activeRecipes().find((item) => item.id === id)?.photoUrl || "",
+    photoUrl,
+    createdAt: currentRecipe?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     cookLog: collectCookLogRows(),
     tags: collectRecipeTags(),
     ingredients: collectIngredientRows(),
@@ -5057,6 +5800,7 @@ function saveRecipeFromForm(event) {
 
   persist();
   saveRecipeRow(recipe);
+  pendingRecipePhotoFile = null;
   elements.recipeDialog.close();
   render();
 }
@@ -5076,6 +5820,14 @@ function renderCookLogRows(entries) {
       if (!elements.recipeCookLogList.querySelector(".cook-log-row")) {
         elements.recipeCookLogList.innerHTML = `<p class="empty-state">No cooking notes yet.</p>`;
       }
+    });
+  });
+  elements.recipeCookLogList.querySelectorAll("[data-use-log-photo]").forEach((button) => {
+    button.addEventListener("click", () => {
+      elements.recipePhotoUrl.value = button.dataset.useLogPhoto || "";
+      pendingRecipePhotoFile = null;
+      elements.recipePhotoInput.value = "";
+      updateRecipePhotoPreview(elements.recipePhotoUrl.value);
     });
   });
 }
@@ -5101,7 +5853,9 @@ function addCookLogRow() {
 
 function cookLogRowTemplate(entry) {
   return `
-    <div class="cook-log-row" data-cook-log-id="${escapeHtml(entry.id)}">
+      <div class="cook-log-row" data-cook-log-id="${escapeHtml(entry.id)}">
+      <input type="hidden" data-cook-log-photo-url value="${escapeHtml(entry.photoUrl || "")}" />
+      ${entry.photoUrl ? cookLogPhotoTemplate(entry.photoUrl) : ""}
       <div class="cook-log-row-grid">
         <label>
           Date
@@ -5134,7 +5888,8 @@ function collectCookLogRows() {
       cookedAt: dateInputToIso(row.querySelector("[data-cook-log-date]").value),
       servings: Number(row.querySelector("[data-cook-log-servings]").value) || 1,
       durationSeconds: parseCookingDuration(row.querySelector("[data-cook-log-duration]").value),
-      notes: row.querySelector("[data-cook-log-notes]").value.trim()
+      notes: row.querySelector("[data-cook-log-notes]").value.trim(),
+      photoUrl: row.querySelector("[data-cook-log-photo-url]")?.value || ""
     })));
 }
 
@@ -5176,22 +5931,27 @@ function parseCookingDuration(value) {
 function renderStepRows(steps) {
   const rows = steps.length ? steps : [""];
   elements.stepList.innerHTML = rows.map(stepRowTemplate).join("");
-  elements.stepList.querySelectorAll("[data-remove-step]").forEach((button) => {
-    button.addEventListener("click", () => {
-      button.closest(".step-row").remove();
-      if (!elements.stepList.querySelector(".step-row")) addStepRow();
-    });
-  });
+  elements.stepList.querySelectorAll(".step-row").forEach(bindStepRowControls);
 }
 
-function addStepRow(step = "") {
-  elements.stepList.insertAdjacentHTML("beforeend", stepRowTemplate(step));
-  const row = elements.stepList.querySelector(".step-row:last-child");
+function addStepRow(step = "", afterRow = null) {
+  if (afterRow) afterRow.insertAdjacentHTML("afterend", stepRowTemplate(step));
+  else elements.stepList.insertAdjacentHTML("beforeend", stepRowTemplate(step));
+  const row = afterRow ? afterRow.nextElementSibling : elements.stepList.querySelector(".step-row:last-child");
+  bindStepRowControls(row);
+  row.querySelector("[data-step-text]").focus();
+}
+
+function bindStepRowControls(row) {
   row.querySelector("[data-remove-step]").addEventListener("click", () => {
     row.remove();
     if (!elements.stepList.querySelector(".step-row")) addStepRow();
   });
-  row.querySelector("[data-step-text]").focus();
+  row.querySelector("[data-step-text]").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey) return;
+    event.preventDefault();
+    addStepRow("", row);
+  });
 }
 
 function stepRowTemplate(step) {
@@ -5331,7 +6091,7 @@ async function fetchRecipeWithBestAvailableMethod(url) {
     if (!response.ok) throw new Error(payload.error || `Import helper failed with status ${response.status}`);
     return {
       ...payload.recipe,
-      folderId: activeFolder && activeFolder !== "unfiled" ? activeFolder : ""
+      folderId: ""
     };
   }
 
@@ -5389,13 +6149,41 @@ function setImportStatus(message) {
 
 function openScanDialog() {
   openRecipeBoxPage();
-  elements.scanImages.value = "";
-  setScanStatus("Upload one or more clear photos, then review the extracted recipe before saving.");
+  clearScanRecipeFiles();
   elements.scanDialog.showModal();
 }
 
+function replaceScanRecipeFiles() {
+  scanRecipeFiles = [...elements.scanImages.files || []];
+  updateScanSelectionStatus();
+}
+
+function appendCameraScanRecipeFile() {
+  const files = [...elements.scanCameraImage.files || []];
+  if (files.length) scanRecipeFiles = [...scanRecipeFiles, ...files].slice(0, 6);
+  elements.scanCameraImage.value = "";
+  updateScanSelectionStatus();
+}
+
+function clearScanRecipeFiles() {
+  scanRecipeFiles = [];
+  elements.scanImages.value = "";
+  elements.scanCameraImage.value = "";
+  setScanStatus("Upload one or more clear photos, then review the extracted recipe before saving.");
+}
+
+function updateScanSelectionStatus() {
+  if (!scanRecipeFiles.length) {
+    setScanStatus("Upload one or more clear photos, then review the extracted recipe before saving.");
+    return;
+  }
+  const pageText = scanRecipeFiles.length === 1 ? "photo" : "photos";
+  const extraText = scanRecipeFiles.length > 6 ? " Use up to 6 photos for one recipe scan." : "";
+  setScanStatus(`${scanRecipeFiles.length} ${pageText} selected.${extraText}`);
+}
+
 async function scanRecipeFromImages() {
-  const files = [...elements.scanImages.files || []];
+  const files = [...scanRecipeFiles];
   if (!files.length) {
     setScanStatus("Choose at least one cookbook photo first.");
     return;
@@ -5420,7 +6208,7 @@ async function scanRecipeFromImages() {
     if (!response.ok) throw new Error(payload.error || `Scan failed with status ${response.status}`);
     const recipe = normalizeRecipe({
       ...payload.recipe,
-      folderId: activeFolder && activeFolder !== "unfiled" ? activeFolder : ""
+      folderId: ""
     });
     if (!recipe.name && !normalizeIngredients(recipe.ingredients).length) throw new Error("No recipe could be read from those images.");
     elements.scanDialog.close();
@@ -5448,6 +6236,53 @@ function fileToDataUrl(file) {
   });
 }
 
+async function uploadRecipePhoto(file, recipeId, kind = "recipe") {
+  if (!file) return "";
+  if (!supabaseClient || !authSession?.access_token) {
+    throw new Error("Sign in before uploading recipe photos.");
+  }
+  const imageBlob = await resizeRecipePhoto(file);
+  const userId = authSession.user?.id || "personal";
+  const safeRecipeId = String(recipeId || createId("recipe")).replace(/[^a-z0-9-]/gi, "-");
+  const path = `${userId}/${safeRecipeId}/${kind}-${Date.now()}.jpg`;
+  const { error } = await supabaseClient.storage
+    .from(recipePhotoBucket)
+    .upload(path, imageBlob, {
+      contentType: imageBlob.type,
+      cacheControl: "31536000",
+      upsert: false
+    });
+  if (error) throw new Error(`${error.message}. Run supabase-photo-storage.sql if the photo bucket is not set up yet.`);
+  const { data } = supabaseClient.storage.from(recipePhotoBucket).getPublicUrl(path);
+  return data?.publicUrl || "";
+}
+
+async function resizeRecipePhoto(file) {
+  const image = await imageElementFromFile(file);
+  const maxWidth = 1200;
+  const scale = Math.min(1, maxWidth / image.naturalWidth);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+  URL.revokeObjectURL(image.src);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) reject(new Error("Could not prepare photo for upload."));
+      else resolve(blob);
+    }, "image/jpeg", 0.82);
+  });
+}
+
+function imageElementFromFile(file) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Could not read that photo."));
+    image.src = URL.createObjectURL(file);
+  });
+}
+
 function setScanStatus(message) {
   elements.scanStatus.textContent = message;
 }
@@ -5469,7 +6304,7 @@ function parseRecipeHtml(html, sourceUrl) {
     cookTime: textValue(recipe.cookTime),
     time: readableDuration(textValue(recipe.totalTime || recipe.cookTime || recipe.prepTime)),
     servings: parseServings(recipe.recipeYield),
-    folderId: activeFolder && activeFolder !== "unfiled" ? activeFolder : "",
+    folderId: "",
     sourceUrl,
     ingredients: arrayValue(recipe.recipeIngredient).map((line) => parseIngredientLine(String(line))),
     steps: instructionsToText(recipe.recipeInstructions)
@@ -5518,7 +6353,7 @@ function parseRecipeText(text, sourceUrl = "") {
     prepTime: "",
     cookTime: "",
     servings: 1,
-    folderId: activeFolder && activeFolder !== "unfiled" ? activeFolder : "",
+    folderId: "",
     sourceUrl,
     ingredients: ingredientLines.map(parseIngredientLine),
     steps: instructionLines.join("\n")
@@ -5560,25 +6395,30 @@ function renderIngredientRows(ingredients) {
   renderIngredientSuggestions();
   const rows = ingredients.length ? ingredients : [blankIngredient()];
   elements.ingredientList.innerHTML = rows.map(ingredientRowTemplate).join("");
-  elements.ingredientList.querySelectorAll("[data-remove-ingredient]").forEach((button) => {
-    button.addEventListener("click", () => {
-      button.closest(".ingredient-row").remove();
-      if (!elements.ingredientList.querySelector(".ingredient-row")) {
-        addIngredientRow();
-      }
-    });
-  });
+  elements.ingredientList.querySelectorAll(".ingredient-row").forEach(bindIngredientRowControls);
 }
 
-function addIngredientRow(ingredient = blankIngredient()) {
+function addIngredientRow(ingredient = blankIngredient(), afterRow = null) {
   renderIngredientSuggestions();
-  elements.ingredientList.insertAdjacentHTML("beforeend", ingredientRowTemplate(ingredient));
-  const row = elements.ingredientList.querySelector(".ingredient-row:last-child");
+  if (afterRow) afterRow.insertAdjacentHTML("afterend", ingredientRowTemplate(ingredient));
+  else elements.ingredientList.insertAdjacentHTML("beforeend", ingredientRowTemplate(ingredient));
+  const row = afterRow ? afterRow.nextElementSibling : elements.ingredientList.querySelector(".ingredient-row:last-child");
+  bindIngredientRowControls(row);
+  row.querySelector("[data-ingredient-item]").focus();
+}
+
+function bindIngredientRowControls(row) {
   row.querySelector("[data-remove-ingredient]").addEventListener("click", () => {
     row.remove();
     if (!elements.ingredientList.querySelector(".ingredient-row")) addIngredientRow();
   });
-  row.querySelector("[data-ingredient-item]").focus();
+  row.querySelectorAll("select, input").forEach((field) => {
+    field.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      addIngredientRow(blankIngredient(), row);
+    });
+  });
 }
 
 function ingredientRowTemplate(ingredient) {
@@ -5602,7 +6442,9 @@ function ingredientRowTemplate(ingredient) {
 }
 
 function renderIngredientSuggestions() {
-  elements.ingredientSuggestions.innerHTML = grocerySuggestionItems()
+  const itemOptions = normalizeIngredientOptions(state.ingredientOptions).items;
+  elements.ingredientSuggestions.innerHTML = [...new Set([...itemOptions, ...grocerySuggestionItems()])]
+    .sort((a, b) => normalize(a).localeCompare(normalize(b)))
     .map((item) => `<option value="${escapeHtml(item)}"></option>`)
     .join("");
 }
@@ -5751,7 +6593,6 @@ function setMeal(day, meal, recipeId) {
   const week = weekState();
   if (!week.slots[day]) week.slots[day] = {};
   week.slots[day][meal] = recipeId;
-  state.checkedGroceries = {};
   persist();
   renderPlanner();
   renderGroceries();
@@ -5805,7 +6646,6 @@ function autoGenerateMealPlan() {
     return;
   }
 
-  state.checkedGroceries = {};
   persist();
   renderPlanner();
   renderGroceries();
@@ -5817,13 +6657,18 @@ function nextGeneratedRecipe(recipeQueue, startIndex, meal, rule, context) {
     context.missingFolders.add(rule.folderName || "selected folder");
     return { id: "", nextIndex: startIndex };
   }
+  if (!eligibleRecipes.length && rule?.action === "tags") {
+    return { id: "", nextIndex: startIndex };
+  }
   if (!eligibleRecipes.length) return { id: recipeQueue[startIndex % recipeQueue.length].id, nextIndex: startIndex + 1 };
-  const recipe = eligibleRecipes[startIndex % eligibleRecipes.length];
+  const recipe = pickAutoGeneratedRecipe(eligibleRecipes, startIndex, rule);
   return { id: recipe.id, nextIndex: startIndex + 1 };
 }
 
 function autoGenerateMealEntries(week, day, meal, recipeQueue, startIndex, context) {
   const entries = mealEntryList(slotEntries(week.slots[day.id][meal]), meal);
+  const targetEntryCount = Math.max(entries.length, autoRuleEntryCount(day.id, meal));
+  while (entries.length < targetEntryCount) entries.push("");
   let nextIndex = startIndex;
   let filledCount = 0;
 
@@ -5832,13 +6677,18 @@ function autoGenerateMealEntries(week, day, meal, recipeQueue, startIndex, conte
     if (entry || rule?.action === "skip") return;
     if (rule?.action === "custom") {
       if (!rule.value) return;
-      const value = recipeOrCustomMealValue(rule.value, { allowProtected: false });
+      const value = recipeOrCustomMealValue(rule.value);
       if (!value) return;
       entries[index] = value;
     } else if (rule?.action === "folderSame") {
       const recipe = sharedAutoGenerateRecipe(rule, recipeQueue, context);
       if (!recipe) return;
       entries[index] = recipe.id;
+    } else if (rule?.action === "tags") {
+      const recipe = nextGeneratedRecipe(recipeQueue, nextIndex, meal, rule, context);
+      if (!recipe.id) return;
+      entries[index] = recipe.id;
+      nextIndex = recipe.nextIndex;
     } else {
       const recipe = nextGeneratedRecipe(recipeQueue, nextIndex, meal, rule, context);
       if (!recipe.id) return;
@@ -5872,7 +6722,8 @@ function autoGenerateRuleForSlot(day, meal, index) {
 
 function sharedAutoGenerateRecipe(rule, recipeQueue, context) {
   if (context.sharedSelections.has(rule.id)) return context.sharedSelections.get(rule.id);
-  const recipe = eligibleRecipesForMeal(recipeQueue, rule.meal, rule)[0] || null;
+  const eligibleRecipes = eligibleRecipesForMeal(recipeQueue, rule.meal, rule);
+  const recipe = pickAutoGeneratedRecipe(eligibleRecipes, 0, rule) || null;
   if (!recipe) {
     context.missingFolders.add(rule.folderName || "selected folder");
     return null;
@@ -5882,7 +6733,8 @@ function sharedAutoGenerateRecipe(rule, recipeQueue, context) {
 }
 
 function eligibleRecipesForMeal(recipes, meal, rule = null) {
-  const candidateRecipes = recipes.filter((recipe) => !isProtectedRecipe(recipe));
+  const candidateRecipes = recipes;
+  if (rule?.action === "tags") return eligibleRecipesForTags(candidateRecipes, rule);
   if (!rule || !["folder", "folderSame"].includes(rule.action)) return candidateRecipes;
   const folderId = folderIdByName(rule.folderName);
   if (!folderId) return [];
@@ -5891,11 +6743,36 @@ function eligibleRecipesForMeal(recipes, meal, rule = null) {
 }
 
 function autoGenerateCandidateRecipes() {
-  return activeRecipes().filter((recipe) => recipe.name && !isProtectedRecipe(recipe));
+  return activeRecipes().filter((recipe) => recipe.name);
 }
 
-function isProtectedRecipe(recipe) {
-  return normalizeRecipeTagSelection(recipe.tags).some((tag) => normalize(tag) === normalize(protectedTagName));
+function eligibleRecipesForTags(recipes, rule) {
+  const tags = normalizeRecipeTagSelection(rule.tags);
+  if (!tags.length) return [];
+  return recipes.filter((recipe) => {
+    const recipeTags = normalizeRecipeTagSelection(recipe.tags).map(normalize);
+    const ruleTags = tags.map(normalize);
+    return rule.tagMatchMode === "all"
+      ? ruleTags.every((tag) => recipeTags.includes(tag))
+      : ruleTags.some((tag) => recipeTags.includes(tag));
+  });
+}
+
+function pickAutoGeneratedRecipe(recipes, startIndex, rule = null) {
+  if (!recipes.length) return null;
+  if (rule?.selectionMode === "leastRecent") {
+    const oldestTime = Math.min(...recipes.map(recipeLastCookedTime));
+    const leastRecent = recipes.filter((recipe) => recipeLastCookedTime(recipe) === oldestTime);
+    return shuffled(leastRecent)[0] || null;
+  }
+  return recipes[startIndex % recipes.length];
+}
+
+function recipeLastCookedTime(recipe) {
+  const logs = normalizeCookLog(recipe.cookLog);
+  if (!logs.length) return 0;
+  const latest = Math.max(...logs.map((entry) => Date.parse(entry.cookedAt)).filter((time) => !Number.isNaN(time)));
+  return Number.isFinite(latest) ? latest : 0;
 }
 
 function autoEligibleFolderIds(folderId) {
@@ -6086,6 +6963,11 @@ function toggleMealPlanView() {
   if (isPublishedMealPlanView(week)) {
     week.mealPlanView = "edit";
   } else {
+    const reviewItems = unlistedGroceryItemsForWeek(week);
+    if (reviewItems.length) {
+      openGroceryReviewItems(reviewItems, "Add these to Grocery Items, or edit the source recipe if there is a typo. Then press Publish again.");
+      return;
+    }
     week.publishedSlots = cloneMealSlots(week.slots);
     week.publishedCombinedMealSections = cloneCombinedMealSections(week.combinedMealSections);
     ensureMealSlotShape(week.publishedSlots);
@@ -6093,7 +6975,6 @@ function toggleMealPlanView() {
     week.mealPlanView = "published";
     archivePublishedWeek(week);
   }
-  state.checkedGroceries = {};
   persist();
   renderPlanner();
   renderGroceries();
@@ -6142,20 +7023,18 @@ function applyDefaultMealEntry(week, day, defaultEntry) {
   week.slots[day.id][defaultEntry.meal] = compactMealSlotEntries(entries, defaultEntry.meal);
 }
 
-function recipeOrCustomMealValue(value, options = {}) {
+function recipeOrCustomMealValue(value) {
   const recipe = activeRecipes().find((item) => normalize(item.name) === normalize(value));
   if (!recipe) {
-    const groceryItem = grocerySuggestionItems().find((item) => normalize(item) === normalize(value));
+    const groceryItem = grocerySuggestionItems({ includeCurrentGroceries: false }).find((item) => normalize(item) === normalize(value));
     return groceryItem ? groceryMealSlotId(groceryItem) : value;
   }
-  if (options.allowProtected === false && isProtectedRecipe(recipe)) return "";
   return recipe.id;
 }
 
-function buildGroceryItems() {
+function buildGroceryItems(week = weekState()) {
   const recipeIds = new Set();
   const groceryRows = [];
-  const week = weekState();
   const slots = mealSlotsForWeek(week);
   const combinedState = combinedMealSectionsForWeek(week);
   prepDays.forEach((day) => mealKeysForDay(day, combinedState).forEach((meal) => {
@@ -6177,14 +7056,13 @@ function buildGroceryItems() {
   ].sort((a, b) => normalize(a).localeCompare(normalize(b)));
 }
 
-function buildGroceryRows() {
-  return aggregateGroceryRows(buildRawGroceryRows());
+function buildGroceryRows(week = weekState()) {
+  return aggregateGroceryRows(buildRawGroceryRows(week));
 }
 
-function buildRawGroceryRows() {
+function buildRawGroceryRows(week = weekState()) {
   const recipeIds = new Set();
   const rows = [];
-  const week = weekState();
   const slots = mealSlotsForWeek(week);
   const combinedState = combinedMealSectionsForWeek(week);
   prepDays.forEach((day) => mealKeysForDay(day, combinedState).forEach((meal) => {
@@ -6235,11 +7113,11 @@ function ingredientToGroceryRow(ingredient, recipe = null) {
   };
 }
 
-function grocerySuggestionItems() {
+function grocerySuggestionItems({ includeCurrentGroceries = true } = {}) {
   const suggestions = new Map();
   [
     ...groceryBaseItems(),
-    ...buildGroceryItemsWithManual(),
+    ...(includeCurrentGroceries ? buildGroceryItemsWithManual() : []),
     ...activeRecipes().flatMap((recipe) => normalizeIngredients(recipe.ingredients).map((ingredient) => ingredient.item)),
     ...state.pantry
   ]
@@ -6252,17 +7130,17 @@ function grocerySuggestionItems() {
   return [...suggestions.values()].sort((a, b) => normalize(a).localeCompare(normalize(b)));
 }
 
-function manualGroceryItems() {
-  return Array.isArray(weekState().manualGroceries) ? weekState().manualGroceries : [];
+function manualGroceryItems(week = weekState()) {
+  return Array.isArray(week.manualGroceries) ? week.manualGroceries : [];
 }
 
-function buildGroceryItemsWithManual() {
-  return [...new Set([...buildGroceryItems(), ...manualGroceryItems()])]
+function buildGroceryItemsWithManual(week = weekState()) {
+  return [...new Set([...buildGroceryItems(week), ...manualGroceryItems(week)])]
     .sort((a, b) => normalize(a).localeCompare(normalize(b)));
 }
 
-function buildGroceryRowsWithManual() {
-  return aggregateGroceryRows([...buildRawGroceryRows(), ...manualGroceryItems().map(manualGroceryRow)]);
+function buildGroceryRowsWithManual(week = weekState()) {
+  return aggregateGroceryRows([...buildRawGroceryRows(week), ...manualGroceryItems(week).map(manualGroceryRow)]);
 }
 
 function manualGroceryRow(value) {
@@ -6404,9 +7282,10 @@ function isManualGroceryItem(item) {
 }
 
 function buildGroceryText() {
-  if (!isPublishedMealPlanView(weekState())) return "Publish the active week to generate groceries.";
+  const groceryWeek = selectedGroceryWeek();
+  if (!groceryWeek) return "Publish a week to generate groceries.";
   const pantrySet = new Set(state.pantry.map((item) => normalize(item)));
-  const items = buildGroceryRowsWithManual().filter((row) => !pantrySet.has(normalize(row.item)));
+  const items = buildGroceryRowsWithManual(groceryWeek.week).filter((row) => !pantrySet.has(normalize(row.item)));
   return items.length
     ? items.map((row) => `- ${[row.quantity, row.item].filter(Boolean).join(" ")}`).join("\n")
     : "No groceries needed yet.";

@@ -135,6 +135,14 @@ alter table public.eat_recipes
 add column if not exists cook_time text not null default '';
 ```
 
+Recipe photos use Supabase Storage. Run this SQL once before uploading photos:
+
+```text
+supabase-photo-storage.sql
+```
+
+Photos are resized in the browser before upload and stored in the `recipe-photos` bucket. Recipe rows keep only the resulting photo URL.
+
 The app uses Google sign-in. Apple sign-in UI exists, but Apple auth is not functional until an Apple Developer subscription is available.
 
 ## Recipe Import
@@ -179,6 +187,43 @@ When an active recipe is marked done, Eat asks whether to log that cook. Choosin
 The edit recipe window also includes Log & Notes, where entries can be added, removed, or adjusted after cooking.
 
 Recipes now track prep time and cook time separately. Older recipes with only a single time value keep that value as the prep time until edited.
+
+## Weekly Email Review
+
+Netlify includes a scheduled function at:
+
+```text
+netlify/functions/weekly-review.js
+```
+
+It is scheduled for Thursdays at 14:00 UTC, which is Thursday morning in Central time. The email summarizes the week in review, active cooks or cook logs that may need notes, and whether the upcoming Friday-to-Friday meal plan is published.
+
+Required Netlify environment variables:
+
+```text
+SUPABASE_SERVICE_ROLE_KEY
+RESEND_API_KEY
+```
+
+Optional Netlify environment variables:
+
+```text
+SUPABASE_URL
+WEEKLY_REVIEW_TO
+WEEKLY_REVIEW_FROM
+EAT_APP_URL
+WEEKLY_REVIEW_TRIGGER_SECRET
+```
+
+The function will skip sending if required keys are missing. Manual URL testing requires `WEEKLY_REVIEW_TRIGGER_SECRET`; scheduled Netlify runs do not.
+
+The email layout can be adjusted in the app:
+
+```text
+Settings -> Weekly Email
+```
+
+That editor saves the subject prefix, intro line, closing note, and which weekly sections are included. The text supports `{reviewRange}`, `{upcomingRange}`, and `{appUrl}` placeholders.
 
 ## Holidays
 

@@ -23,3 +23,29 @@ Netlify will serve `index.html`, `styles.css`, `app.js`, and `supabase-config.js
 Open the deployed app, click Sign in, enter your email, and use the magic link from your email. Use the same sign-in flow on your iPhone.
 
 After your first successful sign-in, disable public signups in Supabase Auth settings if you want only your existing account to use the app.
+
+## 5. Optional weekly review email
+
+The app includes a Netlify Scheduled Function for a weekly Eat email. It will not send until the required environment variables are configured in Netlify.
+
+In Netlify, go to Site configuration > Environment variables and add:
+
+```text
+SUPABASE_SERVICE_ROLE_KEY
+RESEND_API_KEY
+```
+
+Optional:
+
+```text
+WEEKLY_REVIEW_TO=mrlukedevans@gmail.com
+WEEKLY_REVIEW_FROM=Eat <onboarding@resend.dev>
+EAT_APP_URL=https://effervescent-malabi-e0af55.netlify.app/
+WEEKLY_REVIEW_TRIGGER_SECRET=choose-a-private-test-secret
+```
+
+The function is scheduled for Thursdays at 14:00 UTC. One weekly function run is tiny compared with ordinary deploy/build usage.
+
+## 6. Optional recipe photos
+
+Run `supabase-photo-storage.sql` in the Supabase SQL Editor before using recipe photo uploads. This creates the `recipe-photos` Storage bucket and allows only `mrlukedevans@gmail.com` to upload, update, or delete photo objects.
