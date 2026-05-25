@@ -1,6 +1,7 @@
 const STORAGE_KEY = "tableplan-state-v1";
-const HOLIDAY_CACHE_KEY = "eat-us-holidays-v1";
+const CALENDAR_CACHE_KEY = "eat-calendars-v1";
 const HOLIDAY_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
+const defaultCalendarColors = ["#e5e9ff", "#e8f6d0", "#ffe2ef", "#fff6b8", "#d9f4f0", "#eee4ff"];
 const breakfastMeals = ["MJ Breakfast", "Luke Breakfast", "Sophia Breakfast"];
 const lunchMeals = ["MJ Lunch", "Luke Lunch", "Sophia Lunch"];
 const dinnerMeals = ["MJ Dinner", "Luke Dinner", "Sophia Dinner"];
@@ -12,10 +13,9 @@ const combinedMealSections = {
 const mealColumnConfigs = [
   { label: "Breakfast", meals: breakfastMeals, combinedMeal: "Combined Breakfast" },
   { label: "Lunch", meals: lunchMeals, combinedMeal: "Combined Lunch" },
-  { label: "Dinner", meals: dinnerMeals, combinedMeal: "Combined Dinner" },
-  { label: "Extras", meals: ["Extras"], combinedMeal: "" }
+  { label: "Dinner", meals: dinnerMeals, combinedMeal: "Combined Dinner" }
 ];
-const meals = [...breakfastMeals, ...lunchMeals, ...dinnerMeals, "Extras"];
+const meals = [...breakfastMeals, ...lunchMeals, ...dinnerMeals];
 const autoRuleMealKeys = [...meals, ...Object.keys(combinedMealSections)];
 const fullDayMeals = meals;
 const defaultAmountOptions = ["", "pinch", "1/8", "1/4", "1/3", "1/2", "2/3", "3/4", "1", "1 1/4", "1 1/2", "1 3/4", "2", "2 1/4", "2 1/2", "2 3/4", "3", "3 1/4", "3 1/2", "3 3/4", "4", "4 1/4", "4 1/2", "4 3/4", "5", "5 1/4", "5 1/2", "5 3/4", "6", "6 1/4", "6 1/2", "6 3/4", "7", "7 1/4", "7 1/2", "7 3/4", "8", "8 1/4", "8 1/2", "8 3/4", "9", "9 1/4", "9 1/2", "9 3/4", "10", "10 1/4", "10 1/2", "10 3/4", "11", "11 1/4", "11 1/2", "11 3/4", "12", "12 1/4", "12 1/2", "12 3/4", "13", "13 1/4", "13 1/2", "13 3/4", "14", "14 1/4", "14 1/2", "14 3/4", "15", "15 1/4", "15 1/2", "15 3/4", "16"];
@@ -57,14 +57,14 @@ const commonGroceryItems = [
   "sweet potatoes", "tomatoes", "tortillas", "turkey", "yellow onions", "yogurt", "zucchini"
 ];
 const prepDays = [
-  { id: "friday-start", name: "Friday", offset: 0, meals: [...dinnerMeals, "Extras"] },
+  { id: "friday-start", name: "Friday", offset: 0, meals: [...dinnerMeals] },
   { id: "saturday", name: "Saturday", offset: 1, meals: fullDayMeals },
   { id: "sunday", name: "Sunday", offset: 2, meals: fullDayMeals },
   { id: "monday", name: "Monday", offset: 3, meals: fullDayMeals },
   { id: "tuesday", name: "Tuesday", offset: 4, meals: fullDayMeals },
   { id: "wednesday", name: "Wednesday", offset: 5, meals: fullDayMeals },
   { id: "thursday", name: "Thursday", offset: 6, meals: fullDayMeals },
-  { id: "friday-finish", name: "Friday", offset: 7, meals: [...breakfastMeals, ...lunchMeals, "Extras"] }
+  { id: "friday-finish", name: "Friday", offset: 7, meals: [...breakfastMeals, ...lunchMeals] }
 ];
 const weekdayBreakfastDayIds = new Set(["monday", "tuesday", "wednesday", "thursday", "friday-finish"]);
 
@@ -127,6 +127,7 @@ let suppressMealEntryClick = false;
 let editingFolderId = "";
 let folderMenuId = "";
 let draggedMealEntry = null;
+let draggedPlayTask = null;
 let mealSwipeGesture = null;
 let autoRuleSwipeGesture = null;
 let mealPointerDeleteGesture = null;
@@ -146,7 +147,7 @@ let folderDragOpenTarget = "";
 let dragOpenFolderId = "";
 let pendingGroceryReview = null;
 let pendingGroceryReviewItems = [];
-let holidayEvents = loadCachedHolidayEvents();
+let calendarEvents = loadCachedCalendarEvents();
 let activeCookingInterval = null;
 let selectedGroceryWeekKey = "";
 let currentActiveRecipeViewId = "";
@@ -154,6 +155,11 @@ const activeRecipeScrollPositions = new Map();
 let scanRecipeFiles = [];
 let pendingRecipePhotoFile = null;
 let pendingCookSessionPhotoFile = null;
+let activeAppArea = "home";
+let activeRecurringTaskDayId = "";
+let activePlayAutoRuleDayId = "";
+let activeWorkoutDetail = null;
+let pendingStartExercise = null;
 
 const elements = {
   weekLabel: document.querySelector("#weekLabel"),
@@ -171,8 +177,16 @@ const elements = {
   closeAuthBtn: document.querySelector("#closeAuthBtn"),
   cancelAuthBtn: document.querySelector("#cancelAuthBtn"),
   pageTitle: document.querySelector("#pageTitle"),
+  homeMainPage: document.querySelector("#homeMainPage"),
+  homeEatBtn: document.querySelector("#homeEatBtn"),
+  homePlayBtn: document.querySelector("#homePlayBtn"),
+  homeDoBtn: document.querySelector("#homeDoBtn"),
   appMenuBtn: document.querySelector("#appMenuBtn"),
   appMenu: document.querySelector("#appMenu"),
+  eatMenuBtn: document.querySelector("#eatMenuBtn"),
+  playMenuBtn: document.querySelector("#playMenuBtn"),
+  doMenuBtn: document.querySelector("#doMenuBtn"),
+  openMealPlanBtn: document.querySelector("#openMealPlanBtn"),
   recipeSearch: document.querySelector("#recipeSearch"),
   clearRecipeSearchBtn: document.querySelector("#clearRecipeSearchBtn"),
   folderForm: document.querySelector("#folderForm"),
@@ -192,12 +206,83 @@ const elements = {
   closeRecipeBoxPageBtn: document.querySelector("#closeRecipeBoxPageBtn"),
   closeGroceriesPageBtn: document.querySelector("#closeGroceriesPageBtn"),
   settingsBtn: document.querySelector("#settingsBtn"),
-  settingsMenu: document.querySelector("#settingsMenu"),
+  settingsMainPage: document.querySelector("#settingsMainPage"),
+  playMainPage: document.querySelector("#playMainPage"),
+  playPlannerGrid: document.querySelector("#playPlannerGrid"),
+  generalSettingsBtn: document.querySelector("#generalSettingsBtn"),
+  generalSettingsMenu: document.querySelector("#generalSettingsMenu"),
+  eatSettingsBtn: document.querySelector("#eatSettingsBtn"),
+  eatSettingsMenu: document.querySelector("#eatSettingsMenu"),
+  doSettingsBtn: document.querySelector("#doSettingsBtn"),
+  doSettingsMenu: document.querySelector("#doSettingsMenu"),
+  playSettingsBtn: document.querySelector("#playSettingsBtn"),
+  playSettingsMenu: document.querySelector("#playSettingsMenu"),
+  openRecurringTasksBtn: document.querySelector("#openRecurringTasksBtn"),
+  openWorkoutLibraryBtn: document.querySelector("#openWorkoutLibraryBtn"),
+  openPlayAutoRulesBtn: document.querySelector("#openPlayAutoRulesBtn"),
+  openDoListBtn: document.querySelector("#openDoListBtn"),
+  openTasksPageBtn: document.querySelector("#openTasksPageBtn"),
+  openDoSettingsBtn: document.querySelector("#openDoSettingsBtn"),
+  doMainPage: document.querySelector("#doMainPage"),
+  doPlannerGrid: document.querySelector("#doPlannerGrid"),
+  tasksPageDialog: document.querySelector("#tasksPageDialog"),
+  closeTasksPageBtn: document.querySelector("#closeTasksPageBtn"),
+  tasksPageTaskForm: document.querySelector("#tasksPageTaskForm"),
+  tasksPageTaskInput: document.querySelector("#tasksPageTaskInput"),
+  tasksPageTaskList: document.querySelector("#tasksPageTaskList"),
+  doSettingsDialog: document.querySelector("#doSettingsDialog"),
+  closeDoSettingsBtn: document.querySelector("#closeDoSettingsBtn"),
+  doneDoSettingsBtn: document.querySelector("#doneDoSettingsBtn"),
+  recurringTasksDialog: document.querySelector("#recurringTasksDialog"),
+  closeRecurringTasksBtn: document.querySelector("#closeRecurringTasksBtn"),
+  doneRecurringTasksBtn: document.querySelector("#doneRecurringTasksBtn"),
+  recurringTaskList: document.querySelector("#recurringTaskList"),
+  workoutLibraryDialog: document.querySelector("#workoutLibraryDialog"),
+  closeWorkoutLibraryBtn: document.querySelector("#closeWorkoutLibraryBtn"),
+  doneWorkoutLibraryBtn: document.querySelector("#doneWorkoutLibraryBtn"),
+  workoutLibraryForm: document.querySelector("#workoutLibraryForm"),
+  workoutLibraryInput: document.querySelector("#workoutLibraryInput"),
+  workoutLibraryList: document.querySelector("#workoutLibraryList"),
+  playAutoRulesDialog: document.querySelector("#playAutoRulesDialog"),
+  closePlayAutoRulesBtn: document.querySelector("#closePlayAutoRulesBtn"),
+  donePlayAutoRulesBtn: document.querySelector("#donePlayAutoRulesBtn"),
+  playAutoRuleList: document.querySelector("#playAutoRuleList"),
+  workoutDetailDialog: document.querySelector("#workoutDetailDialog"),
+  closeWorkoutDetailBtn: document.querySelector("#closeWorkoutDetailBtn"),
+  workoutDetailLabel: document.querySelector("#workoutDetailLabel"),
+  workoutDetailTitle: document.querySelector("#workoutDetailTitle"),
+  workoutDetailName: document.querySelector("#workoutDetailName"),
+  workoutTypeButtons: document.querySelectorAll("[data-workout-type]"),
+  workoutTypePanels: document.querySelectorAll("[data-workout-panel]"),
+  workoutTimedDuration: document.querySelector("#workoutTimedDuration"),
+  workoutTimedUnit: document.querySelector("#workoutTimedUnit"),
+  workoutTimedDistance: document.querySelector("#workoutTimedDistance"),
+  workoutTimedDistanceUnit: document.querySelector("#workoutTimedDistanceUnit"),
+  workoutRepList: document.querySelector("#workoutRepList"),
+  addWorkoutRepBtn: document.querySelector("#addWorkoutRepBtn"),
+  workoutGameNotes: document.querySelector("#workoutGameNotes"),
+  workoutExecutionFields: document.querySelector("#workoutExecutionFields"),
+  workoutDetailTime: document.querySelector("#workoutDetailTime"),
+  workoutDetailWeight: document.querySelector("#workoutDetailWeight"),
+  workoutLogSection: document.querySelector("#workoutLogSection"),
+  workoutDetailLogs: document.querySelector("#workoutDetailLogs"),
+  keepWorkoutDetailBtn: document.querySelector("#keepWorkoutDetailBtn"),
+  saveWorkoutDetailBtn: document.querySelector("#saveWorkoutDetailBtn"),
+  startExerciseDialog: document.querySelector("#startExerciseDialog"),
+  startExerciseMessage: document.querySelector("#startExerciseMessage"),
+  cancelStartExerciseBtn: document.querySelector("#cancelStartExerciseBtn"),
+  declineStartExerciseBtn: document.querySelector("#declineStartExerciseBtn"),
+  confirmStartExerciseBtn: document.querySelector("#confirmStartExerciseBtn"),
+  activeExerciseDialog: document.querySelector("#activeExerciseDialog"),
+  closeActiveExerciseBtn: document.querySelector("#closeActiveExerciseBtn"),
+  activeExerciseTitle: document.querySelector("#activeExerciseTitle"),
+  activeExerciseContent: document.querySelector("#activeExerciseContent"),
   themeModeInputs: document.querySelectorAll("input[name='themeMode']"),
   openAutoRulesBtn: document.querySelector("#openAutoRulesBtn"),
   openTagsBtn: document.querySelector("#openTagsBtn"),
   openGroceryLibraryBtn: document.querySelector("#openGroceryLibraryBtn"),
   openIngredientOptionsBtn: document.querySelector("#openIngredientOptionsBtn"),
+  openCalendarsBtn: document.querySelector("#openCalendarsBtn"),
   openWeeklyEmailBtn: document.querySelector("#openWeeklyEmailBtn"),
   openBackupHealthBtn: document.querySelector("#openBackupHealthBtn"),
   openRestoreBackupBtn: document.querySelector("#openRestoreBackupBtn"),
@@ -222,6 +307,15 @@ const elements = {
   ingredientQtyOptions: document.querySelector("#ingredientQtyOptions"),
   ingredientItemOptions: document.querySelector("#ingredientItemOptions"),
   ingredientPrepOptions: document.querySelector("#ingredientPrepOptions"),
+  calendarsDialog: document.querySelector("#calendarsDialog"),
+  closeCalendarsBtn: document.querySelector("#closeCalendarsBtn"),
+  saveCalendarsBtn: document.querySelector("#saveCalendarsBtn"),
+  syncCalendarsBtn: document.querySelector("#syncCalendarsBtn"),
+  calendarNameInput: document.querySelector("#calendarNameInput"),
+  calendarUrlInput: document.querySelector("#calendarUrlInput"),
+  calendarColorInput: document.querySelector("#calendarColorInput"),
+  calendarList: document.querySelector("#calendarList"),
+  calendarStatus: document.querySelector("#calendarStatus"),
   weeklyEmailDialog: document.querySelector("#weeklyEmailDialog"),
   closeWeeklyEmailBtn: document.querySelector("#closeWeeklyEmailBtn"),
   doneWeeklyEmailBtn: document.querySelector("#doneWeeklyEmailBtn"),
@@ -367,8 +461,26 @@ function bindEvents() {
   elements.appleSignInBtn.addEventListener("click", signInWithApple);
   elements.closeAuthBtn.addEventListener("click", () => elements.authDialog.close());
   elements.cancelAuthBtn.addEventListener("click", () => elements.authDialog.close());
-  elements.appMenuBtn.addEventListener("click", toggleAppMenu);
+  elements.appMenuBtn.addEventListener("click", handleAppMenuButtonClick);
   elements.appMenu.addEventListener("click", (event) => event.stopPropagation());
+  elements.homeEatBtn.addEventListener("click", showEatApp);
+  elements.homePlayBtn.addEventListener("click", showPlayApp);
+  elements.homeDoBtn.addEventListener("click", showDoApp);
+  elements.eatMenuBtn.addEventListener("click", showEatApp);
+  elements.playMenuBtn.addEventListener("click", showPlayApp);
+  elements.doMenuBtn.addEventListener("click", showDoApp);
+  elements.settingsBtn.addEventListener("click", showSettingsApp);
+  elements.openMealPlanBtn?.addEventListener("click", showEatApp);
+  elements.openDoListBtn?.addEventListener("click", showDoApp);
+  elements.openTasksPageBtn?.addEventListener("click", openTasksPage);
+  elements.openDoSettingsBtn?.addEventListener("click", openDoSettingsDialog);
+  elements.closeTasksPageBtn.addEventListener("click", () => elements.tasksPageDialog.close());
+  elements.tasksPageDialog.addEventListener("close", () => setPageTitle(currentMainPageTitle()));
+  elements.closeDoSettingsBtn.addEventListener("click", () => elements.doSettingsDialog.close());
+  elements.doneDoSettingsBtn.addEventListener("click", () => elements.doSettingsDialog.close());
+  elements.closeRecurringTasksBtn.addEventListener("click", () => elements.recurringTasksDialog.close());
+  elements.doneRecurringTasksBtn.addEventListener("click", () => elements.recurringTasksDialog.close());
+  elements.tasksPageTaskForm.addEventListener("submit", addDoTaskFromTasksPage);
   elements.recipeSearch.addEventListener("input", () => {
     updateRecipeSearchClearButton();
     renderRecipes();
@@ -379,16 +491,16 @@ function bindEvents() {
   elements.folderInput?.addEventListener("keydown", (event) => {
     if (event.key === "Enter") addRecipeFolder(event);
   });
-  elements.openRecipeBoxPageBtn.addEventListener("click", openRecipeBoxPage);
-  elements.openGroceriesPageBtn.addEventListener("click", openGroceriesPage);
+  elements.openRecipeBoxPageBtn?.addEventListener("click", openRecipeBoxPage);
+  elements.openGroceriesPageBtn?.addEventListener("click", openGroceriesPage);
   elements.closeRecipeBoxPageBtn.addEventListener("click", () => closeRecipeBoxPage());
   elements.closeGroceriesPageBtn.addEventListener("click", () => elements.groceriesPageDialog.close());
   elements.recipeBoxPageDialog.addEventListener("close", () => {
     pendingMealRecipeSelection = null;
     pendingAutoRuleRecipeSelection = null;
-    setPageTitle("Meal Plan");
+    setPageTitle(currentMainPageTitle());
   });
-  elements.groceriesPageDialog.addEventListener("close", () => setPageTitle("Meal Plan"));
+  elements.groceriesPageDialog.addEventListener("close", () => setPageTitle(currentMainPageTitle()));
   elements.newRecipeBtn.addEventListener("click", () => {
     openRecipeBoxPage();
     openRecipeDialog();
@@ -420,7 +532,29 @@ function bindEvents() {
   document.addEventListener("drop", handleDocumentMealDrop, true);
   document.addEventListener("mousemove", handleDocumentAutoRuleMouseMove);
   document.addEventListener("mouseup", handleDocumentAutoRuleMouseUp);
-  elements.settingsBtn.addEventListener("click", toggleSettingsMenu);
+  elements.generalSettingsBtn.addEventListener("click", toggleGeneralSettingsMenu);
+  elements.eatSettingsBtn.addEventListener("click", toggleEatSettingsMenu);
+  elements.doSettingsBtn.addEventListener("click", toggleDoSettingsMenu);
+  elements.playSettingsBtn.addEventListener("click", togglePlaySettingsMenu);
+  elements.openRecurringTasksBtn.addEventListener("click", openRecurringTasksDialog);
+  elements.openWorkoutLibraryBtn.addEventListener("click", openWorkoutLibraryDialog);
+  elements.openPlayAutoRulesBtn.addEventListener("click", openPlayAutoRulesDialog);
+  elements.closeWorkoutLibraryBtn.addEventListener("click", () => elements.workoutLibraryDialog.close());
+  elements.doneWorkoutLibraryBtn.addEventListener("click", () => elements.workoutLibraryDialog.close());
+  elements.workoutLibraryForm.addEventListener("submit", addWorkout);
+  elements.closePlayAutoRulesBtn.addEventListener("click", () => elements.playAutoRulesDialog.close());
+  elements.donePlayAutoRulesBtn.addEventListener("click", () => elements.playAutoRulesDialog.close());
+  elements.closeWorkoutDetailBtn.addEventListener("click", () => elements.workoutDetailDialog.close());
+  elements.saveWorkoutDetailBtn.addEventListener("click", saveWorkoutDetail);
+  elements.keepWorkoutDetailBtn.addEventListener("click", keepWorkoutFromDetail);
+  elements.workoutTypeButtons.forEach((button) => {
+    button.addEventListener("click", () => setWorkoutDetailType(button.dataset.workoutType));
+  });
+  elements.addWorkoutRepBtn.addEventListener("click", () => addWorkoutRepRow());
+  elements.cancelStartExerciseBtn.addEventListener("click", closeStartExerciseDialog);
+  elements.declineStartExerciseBtn.addEventListener("click", closeStartExerciseDialog);
+  elements.confirmStartExerciseBtn.addEventListener("click", confirmStartExercise);
+  elements.closeActiveExerciseBtn.addEventListener("click", () => elements.activeExerciseDialog.close());
   elements.themeModeInputs.forEach((input) => {
     input.addEventListener("change", () => setThemeMode(input.value));
   });
@@ -428,6 +562,7 @@ function bindEvents() {
   elements.openTagsBtn.addEventListener("click", openTagsDialog);
   elements.openGroceryLibraryBtn.addEventListener("click", openGroceryLibraryDialog);
   elements.openIngredientOptionsBtn.addEventListener("click", openIngredientOptionsDialog);
+  elements.openCalendarsBtn.addEventListener("click", openCalendarsDialog);
   elements.openWeeklyEmailBtn.addEventListener("click", openWeeklyEmailDialog);
   elements.openBackupHealthBtn.addEventListener("click", openBackupHealthDialog);
   elements.openRestoreBackupBtn.addEventListener("click", openRestoreDialog);
@@ -449,6 +584,9 @@ function bindEvents() {
   elements.closeIngredientOptionsBtn.addEventListener("click", () => elements.ingredientOptionsDialog.close());
   elements.saveIngredientOptionsBtn.addEventListener("click", saveIngredientOptions);
   elements.resetIngredientOptionsBtn.addEventListener("click", resetIngredientOptions);
+  elements.closeCalendarsBtn.addEventListener("click", () => elements.calendarsDialog.close());
+  elements.saveCalendarsBtn.addEventListener("click", saveCalendarSettings);
+  elements.syncCalendarsBtn.addEventListener("click", syncCalendarsNow);
   elements.closeWeeklyEmailBtn.addEventListener("click", () => elements.weeklyEmailDialog.close());
   elements.doneWeeklyEmailBtn.addEventListener("click", saveWeeklyEmailSettings);
   elements.resetWeeklyEmailBtn.addEventListener("click", resetWeeklyEmailSettings);
@@ -520,7 +658,7 @@ async function initializeApp() {
   await hydrateRecipeRowsFromSupabase();
   applyInitialMealPlanFocus();
   handleImportUrlParameter();
-  loadHolidayEvents();
+  loadCalendarEvents();
 }
 
 async function initializeSupabaseAuth() {
@@ -674,6 +812,23 @@ function persist() {
   scheduleLocalBackup();
 }
 
+async function persistImmediately(label = "saving") {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  window.clearTimeout(sharedStorageSaveTimer);
+  window.clearTimeout(localBackupTimer);
+  const writes = [];
+  if (sharedStorageReady && activeSharedStorageProvider) {
+    writes.push(writeStateToSharedStorage());
+  }
+  if (canUseLocalBackend()) {
+    writes.push(writeLocalBackup());
+  }
+  if (!writes.length) return;
+  const results = await Promise.allSettled(writes);
+  const failed = results.find((result) => result.status === "rejected");
+  if (failed) console.warn(`Immediate ${label} save did not complete.`, failed.reason);
+}
+
 function defaultState() {
   return {
     recipes: seedRecipes,
@@ -681,14 +836,23 @@ function defaultState() {
     folders: seedFolders(),
     plans: {},
     publishedWeeks: {},
+    doPlans: {},
+    doBacklog: [],
+    recurringTasks: [],
+    playPlans: {},
+    playBacklog: [],
+    workouts: [],
+    playAutoRules: [],
     pantry: ["olive oil", "salt", "pepper"],
     checkedGroceries: {},
     recipeTags: defaultRecipeTags(),
     groceryBaseItems: defaultGroceryBaseItems(),
     ingredientOptions: defaultIngredientOptions(),
+    calendars: [],
     groceryReviewDismissed: {},
     activeCooking: [],
     weeklyEmailSettings: defaultWeeklyEmailSettings(),
+    doTasks: [],
     themeMode: "light",
     autoGenerateRules: defaultAutoGenerateRules(),
     collapsedSections: defaultCollapsedSections(),
@@ -703,14 +867,23 @@ function normalizeState(parsed) {
     folders: Array.isArray(parsed?.folders) ? parsed.folders : seedFolders(),
     plans: parsed?.plans || {},
     publishedWeeks: normalizePublishedWeeks(parsed?.publishedWeeks),
+    doPlans: normalizeDoPlans(parsed?.doPlans, parsed?.doTasks),
+    doBacklog: normalizeDoTasks(parsed?.doBacklog),
+    recurringTasks: normalizeRecurringTasks(parsed?.recurringTasks),
+    playPlans: normalizeDoPlans(parsed?.playPlans),
+    playBacklog: normalizeDoTasks(parsed?.playBacklog),
+    workouts: normalizeWorkouts(parsed?.workouts),
+    playAutoRules: normalizePlayAutoRules(parsed?.playAutoRules),
     pantry: Array.isArray(parsed?.pantry) ? parsed.pantry : [],
     checkedGroceries: parsed?.checkedGroceries || {},
     recipeTags: normalizeRecipeTags(parsed?.recipeTags),
     groceryBaseItems: Array.isArray(parsed?.groceryBaseItems) ? normalizeGroceryBaseItems(parsed.groceryBaseItems) : defaultGroceryBaseItems(),
     ingredientOptions: normalizeIngredientOptions(parsed?.ingredientOptions),
+    calendars: normalizeLinkedCalendars(parsed?.calendars, parsed?.birthdayCalendar),
     groceryReviewDismissed: parsed?.groceryReviewDismissed || {},
     activeCooking: normalizeActiveCooking(parsed?.activeCooking),
     weeklyEmailSettings: normalizeWeeklyEmailSettings(parsed?.weeklyEmailSettings),
+    doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
     autoGenerateRules: normalizeAutoGenerateRules(parsed?.autoGenerateRules),
     collapsedSections: parsed?.collapsedSections || defaultCollapsedSections(),
@@ -736,6 +909,36 @@ function defaultWeeklyEmailSettings() {
   };
 }
 
+function normalizeBirthdayCalendarSettings(settings) {
+  return {
+    url: String(settings?.url || "").trim()
+  };
+}
+
+function normalizeLinkedCalendars(calendars, legacyBirthdayCalendar = null) {
+  const source = Array.isArray(calendars) ? calendars : [];
+  const normalized = source
+    .map((calendar, index) => ({
+      id: calendar?.id || createId("cal"),
+      name: String(calendar?.name || "Calendar").trim() || "Calendar",
+      url: String(calendar?.url || "").trim(),
+      color: normalizeCalendarColor(calendar?.color, index),
+      enabled: calendar?.enabled !== false
+    }))
+    .filter((calendar) => calendar.url);
+  const legacyUrl = normalizeBirthdayCalendarSettings(legacyBirthdayCalendar).url;
+  if (legacyUrl && !normalized.some((calendar) => calendar.url === legacyUrl)) {
+    normalized.push({ id: createId("cal"), name: "Birthdays", url: legacyUrl, color: normalizeCalendarColor("", normalized.length), enabled: true });
+  }
+  return normalized;
+}
+
+function normalizeCalendarColor(value, index = 0) {
+  const text = String(value || "").trim();
+  if (/^#[0-9a-f]{6}$/i.test(text)) return text.toLowerCase();
+  return defaultCalendarColors[index % defaultCalendarColors.length];
+}
+
 function normalizeWeeklyEmailSettings(settings) {
   const defaults = defaultWeeklyEmailSettings();
   return {
@@ -749,6 +952,175 @@ function normalizeWeeklyEmailSettings(settings) {
     includePlannedCount: settings?.includePlannedCount !== false,
     includeEmptyMeals: settings?.includeEmptyMeals !== false
   };
+}
+
+function normalizeDoTasks(tasks) {
+  return (Array.isArray(tasks) ? tasks : [])
+    .map((task) => {
+      const exerciseDetails = normalizeExerciseDetails(task?.exerciseDetails, task?.exerciseNotes);
+      return {
+        id: task?.id || createId("task"),
+        title: String(task?.title || task?.name || task?.text || task?.label || "").trim(),
+        done: Boolean(task?.done),
+        recurringTaskId: task?.recurringTaskId || "",
+        weekKey: task?.weekKey || "",
+        sourceRecipeId: task?.sourceRecipeId || "",
+        sourceWorkoutId: task?.sourceWorkoutId || "",
+        exerciseData: normalizeExerciseData(task?.exerciseData),
+        exerciseDetails,
+        exerciseNotes: String(task?.exerciseNotes || exerciseDetailsToNotes(exerciseDetails) || "").trim(),
+        sourceMealDay: task?.sourceMealDay || "",
+        sourceMealName: task?.sourceMealName || "",
+        createdAt: task?.createdAt || new Date().toISOString()
+      };
+    })
+    .filter((task) => task.title);
+}
+
+function normalizeRecurringTasks(tasks) {
+  return (Array.isArray(tasks) ? tasks : [])
+    .map((task) => {
+      const dayIds = Array.isArray(task?.dayIds)
+        ? task.dayIds.filter((dayId) => prepDays.some((day) => day.id === dayId))
+        : [];
+      return {
+        id: task?.id || createId("recurring-task"),
+        title: String(task?.title || "").trim(),
+        dayIds: [...new Set(dayIds)],
+        createdAt: task?.createdAt || new Date().toISOString()
+      };
+    })
+    .filter((task) => task.title && task.dayIds.length);
+}
+
+function normalizeWorkouts(workouts) {
+  return (Array.isArray(workouts) ? workouts : [])
+    .map((workout) => {
+      const details = normalizeExerciseDetails(workout?.exerciseDetails, workout?.notes, workout?.type || workout?.exerciseType);
+      return {
+        id: workout?.id || createId("workout"),
+        title: String(workout?.title || workout?.name || workout?.text || "").trim(),
+        type: details.type,
+        exerciseDetails: details,
+        notes: exerciseDetailsToNotes(details),
+        logs: normalizeWorkoutLogs(workout?.logs),
+        createdAt: workout?.createdAt || new Date().toISOString()
+      };
+    })
+    .filter((workout) => workout.title);
+}
+
+function defaultExerciseDetails(type = "timed") {
+  return {
+    type: ["timed", "reps", "game"].includes(type) ? type : "timed",
+    timed: { duration: "30", unit: "min", distance: "16", distanceUnit: "km" },
+    reps: [],
+    gameNotes: ""
+  };
+}
+
+function normalizeExerciseDetails(details, fallbackNotes = "", fallbackType = "") {
+  const type = ["timed", "reps", "game"].includes(details?.type)
+    ? details.type
+    : ["timed", "reps", "game"].includes(fallbackType)
+      ? fallbackType
+      : String(fallbackNotes || "").trim()
+        ? "game"
+        : "timed";
+  const defaults = defaultExerciseDetails(type);
+  const timed = details?.timed || {};
+  const reps = Array.isArray(details?.reps) ? details.reps : [];
+  return {
+    type,
+    timed: {
+      duration: String(timed.duration || defaults.timed.duration).trim(),
+      unit: ["min", "hr"].includes(timed.unit) ? timed.unit : defaults.timed.unit,
+      distance: String(timed.distance || defaults.timed.distance).trim(),
+      distanceUnit: ["km", "mi", "m", "yd"].includes(timed.distanceUnit) ? timed.distanceUnit : defaults.timed.distanceUnit
+    },
+    reps: reps
+      .map((rep) => ({
+        lift: String(rep?.lift || "").trim(),
+        sets: String(rep?.sets || "").trim(),
+        reps: String(rep?.reps || "").trim(),
+        weight: String(rep?.weight || "").trim()
+      }))
+      .filter((rep) => rep.lift || rep.sets || rep.reps || rep.weight),
+    gameNotes: String(details?.gameNotes || fallbackNotes || "").trim()
+  };
+}
+
+function exerciseDetailsToNotes(details) {
+  const normalized = normalizeExerciseDetails(details);
+  if (normalized.type === "timed") {
+    const time = [normalized.timed.duration, normalized.timed.unit].filter(Boolean).join(" ");
+    const distance = [normalized.timed.distance, normalized.timed.distanceUnit].filter(Boolean).join(" ");
+    return [time, distance].filter(Boolean).join(" · ");
+  }
+  if (normalized.type === "reps") {
+    return normalized.reps
+      .map((rep) => [rep.lift, rep.sets ? `${rep.sets} sets` : "", rep.reps ? `${rep.reps} reps` : "", rep.weight].filter(Boolean).join(" · "))
+      .join("\n");
+  }
+  return normalized.gameNotes;
+}
+
+function normalizeExerciseData(data) {
+  return {
+    time: String(data?.time || "").trim(),
+    weight: String(data?.weight || "").trim()
+  };
+}
+
+function normalizeWorkoutLogs(logs) {
+  return (Array.isArray(logs) ? logs : [])
+    .map((log) => ({
+      id: log?.id || createId("workout-log"),
+      date: String(log?.date || "").trim(),
+      time: String(log?.time || "").trim(),
+      weight: String(log?.weight || "").trim(),
+      taskId: String(log?.taskId || "").trim(),
+      createdAt: log?.createdAt || new Date().toISOString()
+    }))
+    .filter((log) => log.date || log.time || log.weight);
+}
+
+function normalizePlayAutoRules(rules) {
+  return (Array.isArray(rules) ? rules : [])
+    .map((rule) => {
+      const dayIds = Array.isArray(rule?.dayIds)
+        ? rule.dayIds.filter((dayId) => prepDays.some((day) => day.id === dayId))
+        : [];
+      return {
+        id: rule?.id || createId("play-rule"),
+        workoutId: String(rule?.workoutId || "").trim(),
+        dayIds: [...new Set(dayIds)],
+        createdAt: rule?.createdAt || new Date().toISOString()
+      };
+    })
+    .filter((rule) => rule.workoutId && rule.dayIds.length);
+}
+
+function normalizeDoPlans(plans, legacyTasks = []) {
+  const normalized = {};
+  if (plans && typeof plans === "object") {
+    Object.entries(plans).forEach(([week, days]) => {
+      if (!days || typeof days !== "object") return;
+      normalized[week] = {};
+      if (days.__active) normalized[week].__active = true;
+      prepDays.forEach((day) => {
+        normalized[week][day.id] = normalizeDoTasks(days[day.id]);
+      });
+    });
+  }
+  const legacy = normalizeDoTasks(legacyTasks);
+  if (legacy.length) {
+    const key = weekKey();
+    if (!normalized[key]) normalized[key] = {};
+    const dayId = plannerDayIdForDate(new Date());
+    normalized[key][dayId] = [...(normalized[key][dayId] || []), ...legacy];
+  }
+  return normalized;
 }
 
 function normalizeThemeMode(mode) {
@@ -1403,8 +1775,7 @@ function defaultAutoGenerateRules() {
     autoRule("wednesday-dinner-side", ["wednesday"], "Luke Dinner", 0, "custom", "", "leftovers"),
     autoRule("sophia-breakfast", prepDays.map((day) => day.id), "Sophia Breakfast", 0, "skip"),
     autoRule("sophia-lunch", prepDays.map((day) => day.id), "Sophia Lunch", 0, "skip"),
-    autoRule("sophia-dinner", prepDays.map((day) => day.id), "Sophia Dinner", 0, "skip"),
-    autoRule("extras", prepDays.map((day) => day.id), "Extras", 0, "skip")
+    autoRule("sophia-dinner", prepDays.map((day) => day.id), "Sophia Dinner", 0, "skip")
   ];
 }
 
@@ -1513,13 +1884,1572 @@ function render() {
   renderRecipes();
   renderPlanner();
   renderAutoRules();
+  renderRecurringTasks();
   renderGroceries();
   renderPantry();
+  renderDoPlanner();
+  renderPlayPlanner();
   renderCollapsedSections();
+}
+
+function showEatApp(event) {
+  event?.stopPropagation();
+  activateEatShell();
+  setPageTitle("Meal Plan");
+  closeAppMenu();
+}
+
+function activateEatShell() {
+  activeAppArea = "eat";
+  elements.homeMainPage.hidden = true;
+  document.querySelector("[data-section='mealPrep']").hidden = false;
+  elements.doMainPage.hidden = true;
+  elements.playMainPage.hidden = true;
+  elements.settingsMainPage.hidden = true;
+  elements.weekLabel.closest(".week-tools").hidden = false;
+  renderActiveCooking();
+  renderPlanner();
+}
+
+function showDoApp(event) {
+  event?.stopPropagation();
+  activeAppArea = "do";
+  elements.homeMainPage.hidden = true;
+  document.querySelector("[data-section='mealPrep']").hidden = true;
+  elements.doMainPage.hidden = false;
+  elements.playMainPage.hidden = true;
+  elements.settingsMainPage.hidden = true;
+  elements.weekLabel.closest(".week-tools").hidden = false;
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("To-Do List");
+  renderDoPlanner();
+  closeAppMenu();
+}
+
+function showPlayApp(event) {
+  event?.stopPropagation();
+  activeAppArea = "play";
+  elements.homeMainPage.hidden = true;
+  document.querySelector("[data-section='mealPrep']").hidden = true;
+  elements.doMainPage.hidden = true;
+  elements.playMainPage.hidden = false;
+  elements.settingsMainPage.hidden = true;
+  elements.weekLabel.closest(".week-tools").hidden = false;
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("Exercise Plan");
+  renderPlayPlanner();
+  closeAppMenu();
+}
+
+function showSettingsApp(event) {
+  event?.stopPropagation();
+  activeAppArea = "settings";
+  elements.homeMainPage.hidden = true;
+  document.querySelector("[data-section='mealPrep']").hidden = true;
+  elements.doMainPage.hidden = true;
+  elements.playMainPage.hidden = true;
+  elements.settingsMainPage.hidden = false;
+  elements.weekLabel.closest(".week-tools").hidden = true;
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("Settings");
+  closeAppMenu();
+}
+
+function showHomeApp(event) {
+  event?.stopPropagation();
+  activeAppArea = "home";
+  elements.homeMainPage.hidden = false;
+  document.querySelector("[data-section='mealPrep']").hidden = true;
+  elements.doMainPage.hidden = true;
+  elements.playMainPage.hidden = true;
+  elements.settingsMainPage.hidden = true;
+  elements.weekLabel.closest(".week-tools").hidden = true;
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("Live");
+  closeAppMenu();
+}
+
+function currentMainPageTitle() {
+  if (activeAppArea === "home") return "Live";
+  if (activeAppArea === "do") return "To-Do List";
+  if (activeAppArea === "play") return "Exercise Plan";
+  if (activeAppArea === "settings") return "Settings";
+  return "Meal Plan";
+}
+
+function openTasksPage(event) {
+  event?.stopPropagation();
+  closeFloatingMenus();
+  setPageTitle("Tasks");
+  renderDoPlanner();
+  renderTasksPage();
+  if (!elements.tasksPageDialog.open) elements.tasksPageDialog.showModal();
+  requestAnimationFrame(() => elements.tasksPageTaskInput.focus());
+}
+
+function openDoSettingsDialog(event) {
+  event?.stopPropagation();
+  closeFloatingMenus();
+  elements.doSettingsDialog.showModal();
+}
+
+function openRecurringTasksDialog(event) {
+  event?.stopPropagation();
+  closeFloatingMenus();
+  activeRecurringTaskDayId = activePlannerDayId || plannerDayIdForDate(new Date());
+  renderRecurringTasks();
+  elements.recurringTasksDialog.showModal();
+}
+
+function addDoTaskFromTasksPage(event) {
+  addDoTask(event, elements.tasksPageTaskInput, activePlannerDayId);
+}
+
+function addDoTask(event, input, dayId = activePlannerDayId) {
+  event.preventDefault();
+  const title = input.value.trim();
+  if (!title) return;
+  doTasksForDay(dayId).push({ id: createId("task"), title, done: false, createdAt: new Date().toISOString() });
+  input.value = "";
+  persist();
+  renderDoPlanner();
+  renderTasksPage();
+}
+
+function addBacklogTask(event) {
+  event.preventDefault();
+  const input = event.currentTarget.querySelector("[data-backlog-task-input]");
+  const title = input.value.trim();
+  if (!title) return;
+  doBacklogTasks().push({ id: createId("task"), title, done: false, weekKey: weekKey(), createdAt: new Date().toISOString() });
+  input.value = "";
+  persist();
+  renderDoPlanner();
+}
+
+function renderDoPlanner() {
+  if (!elements.doPlannerGrid) return;
+  const activeDay = ensureActivePlannerDay();
+  const isInactiveFutureWeek = isFutureDoWeekInactive();
+  elements.doPlannerGrid.innerHTML = `
+    <div class="day-tabs" role="tablist" aria-label="To-do days">
+      ${prepDays.map((day) => doDayTabTemplate(day, day.id === activeDay.id)).join("")}
+    </div>
+    <div class="do-week-shell ${isInactiveFutureWeek ? "is-inactive" : ""}">
+      <section class="day-column planner-day-panel do-day-panel" role="tabpanel" id="do-panel-${activeDay.id}" aria-labelledby="do-tab-${activeDay.id}">
+        <div class="do-board">
+          <div class="do-task-list" data-do-task-drop-day="${activeDay.id}">
+            ${isInactiveFutureWeek ? `<div class="empty-state">Create this list when you are ready to plan the week.</div>` : doTaskListTemplate(activeDay.id)}
+          </div>
+        </div>
+      </section>
+      <section class="day-column planner-day-panel do-backlog-panel" aria-label="To Be Done">
+        <div class="slot-topline">
+          <div class="slot-label">To Be Done</div>
+        </div>
+        <div class="do-board">
+          ${isInactiveFutureWeek ? "" : `
+            <form class="inline-form do-task-form" data-backlog-task-form>
+              <input data-backlog-task-input placeholder="Add a task" autocomplete="off" />
+              <button class="primary-btn icon-primary-btn" type="submit" title="Add task" aria-label="Add task">
+                <span aria-hidden="true">+</span>
+              </button>
+            </form>
+          `}
+          <div class="do-task-list" data-do-backlog-drop>
+            ${isInactiveFutureWeek ? `<div class="empty-state">To Be Done will appear after this list is created.</div>` : doBacklogListTemplate()}
+          </div>
+        </div>
+      </section>
+      ${isInactiveFutureWeek ? `
+        <div class="do-create-overlay">
+          <button class="primary-btn" type="button" data-create-do-week>Create List</button>
+        </div>
+      ` : ""}
+    </div>
+  `;
+  elements.doPlannerGrid.querySelectorAll("[data-do-day-tab]").forEach((button) => {
+    button.addEventListener("click", () => selectPlannerDay(button.dataset.doDayTab));
+    button.addEventListener("dragover", handleDoTaskDragOver);
+    button.addEventListener("drop", handleDoTaskDropOnDay);
+    button.addEventListener("dragleave", clearDoTaskDropOver);
+  });
+  elements.doPlannerGrid.querySelector("[data-backlog-task-form]")?.addEventListener("submit", addBacklogTask);
+  elements.doPlannerGrid.querySelector("[data-create-do-week]")?.addEventListener("click", createDoWeekList);
+  elements.doPlannerGrid.querySelectorAll("[data-do-task-drop-day]").forEach((list) => {
+    list.addEventListener("dragover", handleDoTaskDragOver);
+    list.addEventListener("drop", handleDoTaskDropOnDay);
+    list.addEventListener("dragleave", clearDoTaskDropOver);
+  });
+  elements.doPlannerGrid.querySelectorAll("[data-do-backlog-drop]").forEach((list) => {
+    list.addEventListener("dragover", handleDoTaskDragOver);
+    list.addEventListener("drop", handleDoTaskDropOnBacklog);
+    list.addEventListener("dragleave", clearDoTaskDropOver);
+  });
+  bindDoTaskControls(elements.doPlannerGrid);
+}
+
+function doDayTabTemplate(day, isActive) {
+  const date = addDays(currentWeek, day.offset);
+  const tabLabel = `${day.name} ${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+  const longDateLabel = date.toLocaleDateString(undefined, { month: "long", day: "numeric" });
+  const shortDateLabel = date.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
+  return `
+    <button class="day-tab ${isActive ? "is-active" : ""}" type="button" role="tab" id="do-tab-${day.id}" data-do-day-tab="${day.id}" data-do-task-drop-day="${day.id}" aria-selected="${isActive ? "true" : "false"}" aria-controls="do-panel-${day.id}" title="${escapeHtml(tabLabel)}">
+      <span class="day-tab-day day-tab-full">${escapeHtml(day.name)}</span>
+      <span class="day-tab-day day-tab-short">${escapeHtml(day.name.slice(0, 3))}</span>
+      <span class="day-tab-day day-tab-compact">${escapeHtml(compactDayLabel(day))}</span>
+      <strong class="day-tab-date day-tab-date-long">${escapeHtml(longDateLabel)}</strong>
+      <strong class="day-tab-date day-tab-date-short">${escapeHtml(shortDateLabel)}</strong>
+    </button>
+  `;
+}
+
+function renderTasksPage() {
+  if (!elements.tasksPageTaskList) return;
+  elements.tasksPageTaskList.innerHTML = doTaskListTemplate(activePlannerDayId);
+  bindDoTaskControls(elements.tasksPageDialog);
+}
+
+function doTaskListTemplate(dayId) {
+  const tasks = doTasksForDay(dayId);
+  return tasks.length
+    ? tasks.map((task) => doTaskTemplate(task, dayId)).join("")
+    : `<div class="empty-state">No tasks scheduled for this day.</div>`;
+}
+
+function doBacklogListTemplate() {
+  const tasks = visibleDoBacklogTasks();
+  return tasks.length
+    ? tasks.map((task) => doTaskTemplate(task, "backlog")).join("")
+    : "";
+}
+
+function bindDoTaskControls(root = document) {
+  root.querySelectorAll("[data-do-task]").forEach((item) => {
+    item.addEventListener("dragstart", handleDoTaskDragStart);
+    item.addEventListener("dragend", handleDoTaskDragEnd);
+  });
+  root.querySelectorAll("[data-do-task-toggle]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => toggleDoTask(checkbox.dataset.doDay, checkbox.dataset.doTaskToggle, checkbox.checked));
+  });
+  root.querySelectorAll("[data-do-task-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteDoTask(button.dataset.doDay, button.dataset.doTaskDelete));
+  });
+}
+
+function doTasksForDay(dayId) {
+  const key = weekKey();
+  if (!state.doPlans || typeof state.doPlans !== "object") state.doPlans = {};
+  if (!state.doPlans[key]) state.doPlans[key] = {};
+  state.doPlans[key][dayId] = normalizeDoTasks(state.doPlans[key][dayId]);
+  if (isDoWeekActive(key)) ensureRecurringTasksForDay(key, dayId);
+  return state.doPlans[key][dayId];
+}
+
+function doBacklogTasks() {
+  state.doBacklog = normalizeDoTasks(state.doBacklog);
+  return state.doBacklog;
+}
+
+function visibleDoBacklogTasks(key = weekKey()) {
+  return doBacklogTasks().filter((task) => !task.weekKey || task.weekKey === key);
+}
+
+function isFutureDoWeekInactive(key = weekKey()) {
+  return key > currentCalendarWeekKey() && !isDoWeekActive(key);
+}
+
+function isDoWeekActive(key = weekKey()) {
+  if (key <= currentCalendarWeekKey()) return true;
+  const week = state.doPlans?.[key];
+  return Boolean(week?.__active || doWeekHasTasks(key));
+}
+
+function doWeekHasTasks(key = weekKey()) {
+  const week = state.doPlans?.[key];
+  if (!week || typeof week !== "object") return false;
+  return prepDays.some((day) => normalizeDoTasks(week[day.id]).length);
+}
+
+function createDoWeekList() {
+  const key = weekKey();
+  if (!state.doPlans || typeof state.doPlans !== "object") state.doPlans = {};
+  if (!state.doPlans[key] || typeof state.doPlans[key] !== "object") state.doPlans[key] = {};
+  state.doPlans[key].__active = true;
+  prepDays.forEach((day) => {
+    state.doPlans[key][day.id] = normalizeDoTasks(state.doPlans[key][day.id]);
+    ensureRecurringTasksForDay(key, day.id);
+  });
+  persist();
+  renderDoPlanner();
+  renderTasksPage();
+}
+
+function ensureRecurringTasksForDay(key, dayId) {
+  state.recurringTasks = normalizeRecurringTasks(state.recurringTasks);
+  const tasks = state.doPlans[key][dayId];
+  state.recurringTasks
+    .filter((task) => task.dayIds.includes(dayId))
+    .forEach((task) => {
+      const existing = doWeekTasks(key).find((item) => item.recurringTaskId === task.id);
+      if (existing) {
+        existing.title = task.title;
+        return;
+      }
+      tasks.push({
+        id: createId("task"),
+        title: task.title,
+        done: false,
+        recurringTaskId: task.id,
+        createdAt: new Date().toISOString()
+      });
+    });
+}
+
+function doWeekTasks(key) {
+  const week = state.doPlans?.[key];
+  if (!week || typeof week !== "object") return [];
+  return prepDays.flatMap((day) => normalizeDoTasks(week[day.id]));
+}
+
+function renderDoTasks() {
+  renderDoPlanner();
+  renderTasksPage();
+}
+
+function renderRecurringTasks() {
+  if (!elements.recurringTaskList) return;
+  state.recurringTasks = normalizeRecurringTasks(state.recurringTasks);
+  const activeDay = ensureActiveRecurringTaskDay();
+  const tasks = state.recurringTasks.filter((task) => task.dayIds.includes(activeDay.id));
+  elements.recurringTaskList.innerHTML = `
+    <div class="day-tabs auto-rule-tabs" role="tablist" aria-label="Recurring task days">
+      ${prepDays.map((day) => recurringTaskDayTabTemplate(day, activeDay)).join("")}
+    </div>
+    <section class="day-column planner-day-panel recurring-task-day-panel" role="tabpanel" id="recurring-task-panel-${activeDay.id}" aria-labelledby="recurring-task-tab-${activeDay.id}">
+      <div class="do-board">
+        <form class="inline-form do-task-form" data-recurring-task-form data-day="${activeDay.id}">
+          <input data-recurring-task-input placeholder="Add recurring task for ${escapeHtml(activeDay.name)}" autocomplete="off" />
+          <button class="primary-btn icon-primary-btn" type="submit" title="Add recurring task" aria-label="Add recurring task">
+            <span aria-hidden="true">+</span>
+          </button>
+        </form>
+        <div class="recurring-task-list">
+          ${tasks.length ? tasks.map((task) => recurringTaskTemplate(task)).join("") : `<div class="empty-state">Add recurring tasks for this day.</div>`}
+        </div>
+      </div>
+    </section>
+  `;
+  elements.recurringTaskList.querySelectorAll("[data-recurring-task-day-tab]").forEach((button) => {
+    button.addEventListener("click", () => selectRecurringTaskDay(button.dataset.recurringTaskDayTab));
+  });
+  elements.recurringTaskList.querySelector("[data-recurring-task-form]")?.addEventListener("submit", addRecurringTask);
+  elements.recurringTaskList.querySelectorAll("[data-recurring-task-title]").forEach((input) => {
+    input.addEventListener("change", () => updateRecurringTaskTitle(input.dataset.recurringTaskTitle, input.value));
+    input.addEventListener("blur", () => updateRecurringTaskTitle(input.dataset.recurringTaskTitle, input.value));
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        input.blur();
+      }
+    });
+  });
+  elements.recurringTaskList.querySelectorAll("[data-recurring-task-day]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => toggleRecurringTaskDay(checkbox.dataset.recurringTaskId, checkbox.dataset.recurringTaskDay, checkbox.checked));
+  });
+  elements.recurringTaskList.querySelectorAll("[data-delete-recurring-task]").forEach((button) => {
+    button.addEventListener("click", () => deleteRecurringTask(button.dataset.deleteRecurringTask));
+  });
+}
+
+function ensureActiveRecurringTaskDay() {
+  const activeDay = prepDays.find((day) => day.id === activeRecurringTaskDayId) || prepDays.find((day) => day.id === activePlannerDayId) || prepDays[0];
+  activeRecurringTaskDayId = activeDay.id;
+  return activeDay;
+}
+
+function selectRecurringTaskDay(dayId) {
+  if (!prepDays.some((day) => day.id === dayId)) return;
+  activeRecurringTaskDayId = dayId;
+  renderRecurringTasks();
+}
+
+function recurringTaskDayTabTemplate(day, activeDay) {
+  const isActive = day.id === activeDay.id;
+  return `
+    <button class="day-tab auto-rule-day-tab ${isActive ? "is-active" : ""}" type="button" role="tab" id="recurring-task-tab-${day.id}" data-recurring-task-day-tab="${day.id}" aria-selected="${isActive ? "true" : "false"}" aria-controls="recurring-task-panel-${day.id}" title="${escapeHtml(day.name)}">
+      <span class="day-tab-day day-tab-full">${escapeHtml(day.name)}</span>
+      <span class="day-tab-day day-tab-short">${escapeHtml(day.name.slice(0, 3))}</span>
+      <span class="day-tab-day day-tab-compact">${escapeHtml(compactDayLabel(day))}</span>
+    </button>
+  `;
+}
+
+function recurringTaskTemplate(task) {
+  return `
+    <article class="recurring-task-card">
+      <div class="recurring-task-main">
+        <input data-recurring-task-title="${escapeHtml(task.id)}" value="${escapeHtml(task.title)}" aria-label="Recurring task title" />
+        <button class="icon-btn" type="button" data-delete-recurring-task="${escapeHtml(task.id)}" title="Delete recurring task" aria-label="Delete ${escapeHtml(task.title)}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+        </button>
+      </div>
+      <div class="recurring-task-days" aria-label="Days for ${escapeHtml(task.title)}">
+        ${prepDays.map((day) => `
+          <label>
+            <input type="checkbox" data-recurring-task-id="${escapeHtml(task.id)}" data-recurring-task-day="${day.id}" ${task.dayIds.includes(day.id) ? "checked" : ""} />
+            <span>${escapeHtml(compactDayLabel(day))}</span>
+          </label>
+        `).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function addRecurringTask(event) {
+  event.preventDefault();
+  const input = event.currentTarget.querySelector("[data-recurring-task-input]");
+  const title = input.value.trim();
+  if (!title) return;
+  const activeDay = ensureActiveRecurringTaskDay();
+  state.recurringTasks = normalizeRecurringTasks(state.recurringTasks);
+  state.recurringTasks.push({
+    id: createId("recurring-task"),
+    title,
+    dayIds: [activeDay.id],
+    createdAt: new Date().toISOString()
+  });
+  input.value = "";
+  syncRecurringTaskInstances();
+  persist();
+  renderRecurringTasks();
+  renderDoTasks();
+}
+
+function updateRecurringTaskTitle(taskId, title) {
+  const task = state.recurringTasks.find((item) => item.id === taskId);
+  if (!task) return;
+  const nextTitle = title.trim();
+  if (!nextTitle) {
+    deleteRecurringTask(taskId);
+    return;
+  }
+  if (task.title === nextTitle) return;
+  task.title = nextTitle;
+  syncRecurringTaskInstances(taskId);
+  persist();
+  renderDoTasks();
+}
+
+function toggleRecurringTaskDay(taskId, dayId, checked) {
+  const task = state.recurringTasks.find((item) => item.id === taskId);
+  if (!task) return;
+  task.dayIds = checked
+    ? [...new Set([...task.dayIds, dayId])]
+    : task.dayIds.filter((item) => item !== dayId);
+  if (!task.dayIds.length) {
+    deleteRecurringTask(taskId);
+    return;
+  }
+  syncRecurringTaskInstances(taskId);
+  persist();
+  renderRecurringTasks();
+  renderDoTasks();
+}
+
+function deleteRecurringTask(taskId) {
+  state.recurringTasks = state.recurringTasks.filter((task) => task.id !== taskId);
+  removeRecurringTaskInstances(taskId);
+  persist();
+  renderRecurringTasks();
+  renderDoTasks();
+}
+
+function openWorkoutLibraryDialog(event) {
+  event?.stopPropagation();
+  closeFloatingMenus();
+  renderWorkoutLibrary();
+  elements.workoutLibraryDialog.showModal();
+  requestAnimationFrame(() => elements.workoutLibraryInput.focus());
+}
+
+function renderWorkoutLibrary() {
+  state.workouts = normalizeWorkouts(state.workouts);
+  elements.workoutLibraryList.innerHTML = state.workouts.length
+    ? state.workouts
+      .sort((a, b) => a.title.localeCompare(b.title))
+      .map((workout) => `
+        <article class="do-task-item">
+          <label>
+            <button class="do-task-title workout-title-button" type="button" data-open-workout-detail data-workout-id="${escapeHtml(workout.id)}">${escapeHtml(workout.title)}</button>
+            ${workout.logs.length ? `<small class="muted-label">${escapeHtml(workout.logs.length)} saved log${workout.logs.length === 1 ? "" : "s"}</small>` : ""}
+          </label>
+          <button class="icon-btn" type="button" data-delete-workout="${escapeHtml(workout.id)}" title="Delete workout" aria-label="Delete ${escapeHtml(workout.title)}">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </article>
+      `).join("")
+    : `<div class="empty-state">Add pre-arranged workouts here.</div>`;
+  elements.workoutLibraryList.querySelectorAll("[data-delete-workout]").forEach((button) => {
+    button.addEventListener("click", () => deleteWorkout(button.dataset.deleteWorkout));
+  });
+  elements.workoutLibraryList.querySelectorAll("[data-open-workout-detail]").forEach((button) => {
+    button.addEventListener("click", () => openWorkoutDetail({ workoutId: button.dataset.workoutId }));
+  });
+}
+
+function addWorkout(event) {
+  event.preventDefault();
+  const title = elements.workoutLibraryInput.value.trim();
+  if (!title) return;
+  state.workouts = normalizeWorkouts(state.workouts);
+  const exerciseDetails = defaultExerciseDetails("timed");
+  state.workouts.push({ id: createId("workout"), title, type: exerciseDetails.type, exerciseDetails, notes: exerciseDetailsToNotes(exerciseDetails), logs: [], createdAt: new Date().toISOString() });
+  elements.workoutLibraryInput.value = "";
+  persist();
+  renderWorkoutLibrary();
+  renderPlayAutoRules();
+}
+
+function openWorkoutDetail(context = {}) {
+  activeWorkoutDetail = { ...context };
+  const task = context.taskId ? playTaskForContext(context.dayId, context.taskId) : null;
+  const workoutId = context.workoutId || task?.sourceWorkoutId || "";
+  const workout = workoutId ? normalizeWorkouts(state.workouts).find((item) => item.id === workoutId) : null;
+  const title = workout?.title || task?.title || "Workout";
+  const data = normalizeExerciseData(task?.exerciseData);
+  const details = workout?.exerciseDetails || task?.exerciseDetails || normalizeExerciseDetails(null, task?.exerciseNotes);
+  elements.workoutDetailLabel.textContent = workout ? "Pre-Arranged Workout" : "Exercise";
+  elements.workoutDetailTitle.textContent = title;
+  elements.workoutDetailName.value = title;
+  renderWorkoutDetailFields(details);
+  elements.workoutExecutionFields.hidden = !task || !workout;
+  elements.workoutDetailTime.value = data.time;
+  elements.workoutDetailWeight.value = data.weight;
+  elements.keepWorkoutDetailBtn.hidden = Boolean(workout);
+  const logs = normalizeWorkoutLogs(workout?.logs);
+  elements.workoutLogSection.hidden = !workout;
+  elements.workoutDetailLogs.innerHTML = logs.length
+    ? logs
+      .slice()
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      .map((log) => `<p class="workout-log-row"><strong>${escapeHtml(log.date || "Undated")}</strong>${log.time ? ` · ${escapeHtml(log.time)}` : ""}${log.weight ? ` · ${escapeHtml(log.weight)}` : ""}</p>`)
+      .join("")
+    : `<p class="empty-state">No workout data logged yet.</p>`;
+  if (!elements.workoutDetailDialog.open) elements.workoutDetailDialog.showModal();
+  requestAnimationFrame(() => elements.workoutDetailName.focus());
+}
+
+function renderWorkoutDetailFields(details) {
+  const normalized = normalizeExerciseDetails(details);
+  setWorkoutDetailType(normalized.type);
+  elements.workoutTimedDuration.value = normalized.timed.duration;
+  elements.workoutTimedUnit.value = normalized.timed.unit;
+  elements.workoutTimedDistance.value = normalized.timed.distance;
+  elements.workoutTimedDistanceUnit.value = normalized.timed.distanceUnit;
+  elements.workoutRepList.innerHTML = "";
+  (normalized.reps.length ? normalized.reps : [{ lift: "", sets: "", reps: "", weight: "" }]).forEach((rep) => addWorkoutRepRow(rep));
+  elements.workoutGameNotes.value = normalized.gameNotes;
+}
+
+function setWorkoutDetailType(type) {
+  const nextType = ["timed", "reps", "game"].includes(type) ? type : "timed";
+  elements.workoutTypeButtons.forEach((button) => {
+    const isActive = button.dataset.workoutType === nextType;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  });
+  elements.workoutTypePanels.forEach((panel) => {
+    panel.hidden = panel.dataset.workoutPanel !== nextType;
+  });
+}
+
+function addWorkoutRepRow(rep = {}) {
+  const row = document.createElement("div");
+  row.className = "workout-rep-row";
+  row.innerHTML = `
+    <input data-workout-rep-field="lift" value="${escapeHtml(rep.lift || "")}" placeholder="Lift" aria-label="Lift" />
+    <input data-workout-rep-field="sets" value="${escapeHtml(rep.sets || "")}" placeholder="Sets" aria-label="Sets" />
+    <input data-workout-rep-field="reps" value="${escapeHtml(rep.reps || "")}" placeholder="Reps" aria-label="Reps" />
+    <input data-workout-rep-field="weight" value="${escapeHtml(rep.weight || "")}" placeholder="Weight" aria-label="Weight" />
+    <button class="icon-btn" type="button" title="Remove lift" aria-label="Remove lift">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+    </button>
+  `;
+  row.querySelector("button").addEventListener("click", () => row.remove());
+  elements.workoutRepList.appendChild(row);
+}
+
+function collectWorkoutDetails() {
+  const activeType = Array.from(elements.workoutTypeButtons).find((button) => button.classList.contains("active"))?.dataset.workoutType || "timed";
+  const reps = Array.from(elements.workoutRepList.querySelectorAll(".workout-rep-row")).map((row) => ({
+    lift: row.querySelector('[data-workout-rep-field="lift"]').value.trim(),
+    sets: row.querySelector('[data-workout-rep-field="sets"]').value.trim(),
+    reps: row.querySelector('[data-workout-rep-field="reps"]').value.trim(),
+    weight: row.querySelector('[data-workout-rep-field="weight"]').value.trim()
+  }));
+  return normalizeExerciseDetails({
+    type: activeType,
+    timed: {
+      duration: elements.workoutTimedDuration.value,
+      unit: elements.workoutTimedUnit.value,
+      distance: elements.workoutTimedDistance.value,
+      distanceUnit: elements.workoutTimedDistanceUnit.value
+    },
+    reps,
+    gameNotes: elements.workoutGameNotes.value
+  });
+}
+
+function saveWorkoutDetail() {
+  if (!activeWorkoutDetail) return;
+  const name = elements.workoutDetailName.value.trim();
+  if (!name) return;
+  const details = collectWorkoutDetails();
+  const notes = exerciseDetailsToNotes(details);
+  const task = activeWorkoutDetail.taskId ? playTaskForContext(activeWorkoutDetail.dayId, activeWorkoutDetail.taskId) : null;
+  const workoutId = activeWorkoutDetail.workoutId || task?.sourceWorkoutId || "";
+  const workout = workoutId ? state.workouts.find((item) => item.id === workoutId) : null;
+  if (workout) {
+    workout.title = name;
+    workout.type = details.type;
+    workout.exerciseDetails = details;
+    workout.notes = notes;
+    if (task) {
+      task.title = name;
+      task.exerciseDetails = details;
+      task.exerciseNotes = notes;
+      task.exerciseData = {
+        time: elements.workoutDetailTime.value.trim(),
+        weight: elements.workoutDetailWeight.value.trim()
+      };
+      upsertWorkoutExecutionLog(workout.id, task, activeWorkoutDetail.dayId);
+    }
+    syncPlayWorkoutTitles(workout.id, name, details, notes);
+  } else if (task) {
+    task.title = name;
+    task.exerciseDetails = details;
+    task.exerciseNotes = notes;
+  }
+  persist();
+  renderWorkoutLibrary();
+  renderPlayAutoRules();
+  renderPlayPlanner();
+  elements.workoutDetailDialog.close();
+}
+
+function keepWorkoutFromDetail() {
+  if (!activeWorkoutDetail?.taskId) return;
+  const task = playTaskForContext(activeWorkoutDetail.dayId, activeWorkoutDetail.taskId);
+  if (!task) return;
+  const details = collectWorkoutDetails();
+  task.title = elements.workoutDetailName.value.trim() || task.title;
+  task.exerciseDetails = details;
+  task.exerciseNotes = exerciseDetailsToNotes(details);
+  keepWorkoutFromExercise(activeWorkoutDetail.dayId, activeWorkoutDetail.taskId);
+  elements.workoutDetailDialog.close();
+}
+
+function requestStartExercise(dayId, taskId) {
+  const task = playTaskForContext(dayId, taskId);
+  if (!task || dayId === "backlog") return;
+  pendingStartExercise = { dayId, taskId };
+  elements.startExerciseMessage.textContent = `Would you like to start ${task.title}?`;
+  elements.startExerciseDialog.showModal();
+}
+
+function closeStartExerciseDialog() {
+  pendingStartExercise = null;
+  elements.startExerciseDialog.close();
+}
+
+function confirmStartExercise() {
+  const context = pendingStartExercise;
+  pendingStartExercise = null;
+  elements.startExerciseDialog.close();
+  if (!context) return;
+  openActiveExerciseView(context.dayId, context.taskId);
+}
+
+function openActiveExerciseView(dayId, taskId) {
+  const task = playTaskForContext(dayId, taskId);
+  if (!task) return;
+  const workout = task.sourceWorkoutId
+    ? normalizeWorkouts(state.workouts).find((item) => item.id === task.sourceWorkoutId)
+    : null;
+  const details = workout?.exerciseDetails || task.exerciseDetails || normalizeExerciseDetails(null, task.exerciseNotes);
+  const data = normalizeExerciseData(task.exerciseData);
+  elements.activeExerciseTitle.textContent = task.title;
+  elements.activeExerciseContent.innerHTML = activeExerciseViewTemplate(task, details, data, Boolean(workout));
+  elements.activeExerciseContent.querySelectorAll("[data-active-exercise-field]").forEach((input) => {
+    input.addEventListener("change", () => updatePlayExerciseData(dayId, taskId, input.dataset.activeExerciseField, input.value));
+    input.addEventListener("blur", () => updatePlayExerciseData(dayId, taskId, input.dataset.activeExerciseField, input.value));
+  });
+  if (!elements.activeExerciseDialog.open) elements.activeExerciseDialog.showModal();
+}
+
+function activeExerciseViewTemplate(task, details, data, isSavedWorkout) {
+  const normalized = normalizeExerciseDetails(details);
+  return `
+    <section class="recipe-view-section">
+      <h3>${escapeHtml(exerciseTypeLabel(normalized.type))}</h3>
+      ${activeExerciseDetailsTemplate(normalized)}
+    </section>
+    ${isSavedWorkout ? `
+      <section class="recipe-view-section">
+        <h3>Data</h3>
+        <div class="exercise-data-fields active-exercise-fields">
+          <label>
+            Time
+            <input data-active-exercise-field="time" value="${escapeHtml(data.time)}" placeholder="Time" aria-label="Time for ${escapeHtml(task.title)}" />
+          </label>
+          <label>
+            Weight
+            <input data-active-exercise-field="weight" value="${escapeHtml(data.weight)}" placeholder="Weight" aria-label="Weight for ${escapeHtml(task.title)}" />
+          </label>
+        </div>
+      </section>
+    ` : ""}
+  `;
+}
+
+function exerciseTypeLabel(type) {
+  if (type === "reps") return "Reps";
+  if (type === "game") return "Game";
+  return "Timed";
+}
+
+function activeExerciseDetailsTemplate(details) {
+  if (details.type === "timed") {
+    return `
+      <div class="active-exercise-notes">
+        <p><strong>Time:</strong> ${escapeHtml(details.timed.duration)} ${escapeHtml(details.timed.unit)}</p>
+        <p><strong>Distance:</strong> ${escapeHtml(details.timed.distance)} ${escapeHtml(details.timed.distanceUnit)}</p>
+      </div>
+    `;
+  }
+  if (details.type === "reps") {
+    return details.reps.length
+      ? `<div class="active-exercise-rep-list">${details.reps.map((rep) => `
+          <p><strong>${escapeHtml(rep.lift || "Lift")}</strong>${rep.sets ? ` · ${escapeHtml(rep.sets)} sets` : ""}${rep.reps ? ` · ${escapeHtml(rep.reps)} reps` : ""}${rep.weight ? ` · ${escapeHtml(rep.weight)}` : ""}</p>
+        `).join("")}</div>`
+      : `<p class="empty-state">No lifts yet.</p>`;
+  }
+  return details.gameNotes
+    ? `<div class="active-exercise-notes">${escapeHtml(details.gameNotes).replace(/\n/g, "<br>")}</div>`
+    : `<p class="empty-state">No game notes yet.</p>`;
+}
+
+function playTaskForContext(dayId, taskId) {
+  const tasks = dayId === "backlog" ? playBacklogTasks() : playTasksForDay(dayId);
+  return tasks.find((item) => item.id === taskId) || null;
+}
+
+function syncPlayWorkoutTitles(workoutId, title, details = null, notes = "") {
+  Object.values(state.playPlans || {}).forEach((days) => {
+    Object.entries(days || {}).forEach(([dayId, tasks]) => {
+      if (dayId === "__active") return;
+      days[dayId] = normalizeDoTasks(tasks).map((task) => (
+        task.sourceWorkoutId === workoutId
+          ? { ...task, title, ...(details ? { exerciseDetails: details, exerciseNotes: notes } : {}) }
+          : task
+      ));
+    });
+  });
+  state.playAutoRules = normalizePlayAutoRules(state.playAutoRules);
+}
+
+function deleteWorkout(workoutId) {
+  state.workouts = normalizeWorkouts(state.workouts).filter((workout) => workout.id !== workoutId);
+  state.playAutoRules = normalizePlayAutoRules(state.playAutoRules).filter((rule) => rule.workoutId !== workoutId);
+  persist();
+  renderWorkoutLibrary();
+  renderPlayAutoRules();
+  renderPlayPlanner();
+}
+
+function openPlayAutoRulesDialog(event) {
+  event?.stopPropagation();
+  closeFloatingMenus();
+  activePlayAutoRuleDayId = activePlannerDayId || plannerDayIdForDate(new Date());
+  renderPlayAutoRules();
+  elements.playAutoRulesDialog.showModal();
+}
+
+function renderPlayAutoRules() {
+  if (!elements.playAutoRuleList) return;
+  state.playAutoRules = normalizePlayAutoRules(state.playAutoRules);
+  state.workouts = normalizeWorkouts(state.workouts);
+  const activeDay = ensureActivePlayAutoRuleDay();
+  const rules = state.playAutoRules.filter((rule) => rule.dayIds.includes(activeDay.id));
+  elements.playAutoRuleList.innerHTML = `
+    <div class="day-tabs auto-rule-tabs" role="tablist" aria-label="Exercise auto rule days">
+      ${prepDays.map((day) => playAutoRuleDayTabTemplate(day, activeDay)).join("")}
+    </div>
+    <section class="day-column planner-day-panel recurring-task-day-panel" role="tabpanel" id="play-auto-rule-panel-${activeDay.id}" aria-labelledby="play-auto-rule-tab-${activeDay.id}">
+      <div class="do-board">
+        <form class="inline-form do-task-form" data-play-auto-rule-form data-day="${activeDay.id}">
+          <select data-play-auto-rule-workout>
+            <option value="">Choose workout</option>
+            ${state.workouts.sort((a, b) => a.title.localeCompare(b.title)).map((workout) => `<option value="${escapeHtml(workout.id)}">${escapeHtml(workout.title)}</option>`).join("")}
+          </select>
+          <button class="primary-btn icon-primary-btn" type="submit" title="Add auto rule" aria-label="Add auto rule">
+            <span aria-hidden="true">+</span>
+          </button>
+        </form>
+        <div class="recurring-task-list">
+          ${rules.length ? rules.map((rule) => playAutoRuleTemplate(rule)).join("") : `<div class="empty-state">Add workouts that should auto-fill this day.</div>`}
+        </div>
+      </div>
+    </section>
+  `;
+  elements.playAutoRuleList.querySelectorAll("[data-play-auto-rule-day-tab]").forEach((button) => {
+    button.addEventListener("click", () => selectPlayAutoRuleDay(button.dataset.playAutoRuleDayTab));
+  });
+  elements.playAutoRuleList.querySelector("[data-play-auto-rule-form]")?.addEventListener("submit", addPlayAutoRule);
+  elements.playAutoRuleList.querySelectorAll("[data-play-auto-rule-day]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => togglePlayAutoRuleDay(checkbox.dataset.playAutoRuleId, checkbox.dataset.playAutoRuleDay, checkbox.checked));
+  });
+  elements.playAutoRuleList.querySelectorAll("[data-delete-play-auto-rule]").forEach((button) => {
+    button.addEventListener("click", () => deletePlayAutoRule(button.dataset.deletePlayAutoRule));
+  });
+}
+
+function ensureActivePlayAutoRuleDay() {
+  const activeDay = prepDays.find((day) => day.id === activePlayAutoRuleDayId) || prepDays.find((day) => day.id === activePlannerDayId) || prepDays[0];
+  activePlayAutoRuleDayId = activeDay.id;
+  return activeDay;
+}
+
+function selectPlayAutoRuleDay(dayId) {
+  if (!prepDays.some((day) => day.id === dayId)) return;
+  activePlayAutoRuleDayId = dayId;
+  renderPlayAutoRules();
+}
+
+function playAutoRuleDayTabTemplate(day, activeDay) {
+  const isActive = day.id === activeDay.id;
+  return `
+    <button class="day-tab auto-rule-day-tab ${isActive ? "is-active" : ""}" type="button" role="tab" id="play-auto-rule-tab-${day.id}" data-play-auto-rule-day-tab="${day.id}" aria-selected="${isActive ? "true" : "false"}" aria-controls="play-auto-rule-panel-${day.id}" title="${escapeHtml(day.name)}">
+      <span class="day-tab-day day-tab-full">${escapeHtml(day.name)}</span>
+      <span class="day-tab-day day-tab-short">${escapeHtml(day.name.slice(0, 3))}</span>
+      <span class="day-tab-day day-tab-compact">${escapeHtml(compactDayLabel(day))}</span>
+    </button>
+  `;
+}
+
+function playAutoRuleTemplate(rule) {
+  const workout = normalizeWorkouts(state.workouts).find((item) => item.id === rule.workoutId);
+  const title = workout?.title || "Missing workout";
+  return `
+    <article class="recurring-task-card">
+      <div class="recurring-task-main">
+        <strong>${escapeHtml(title)}</strong>
+        <button class="icon-btn" type="button" data-delete-play-auto-rule="${escapeHtml(rule.id)}" title="Delete auto rule" aria-label="Delete ${escapeHtml(title)}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+        </button>
+      </div>
+      <div class="recurring-task-days" aria-label="Days for ${escapeHtml(title)}">
+        ${prepDays.map((day) => `
+          <label>
+            <input type="checkbox" data-play-auto-rule-id="${escapeHtml(rule.id)}" data-play-auto-rule-day="${day.id}" ${rule.dayIds.includes(day.id) ? "checked" : ""} />
+            <span>${escapeHtml(compactDayLabel(day))}</span>
+          </label>
+        `).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function addPlayAutoRule(event) {
+  event.preventDefault();
+  const select = event.currentTarget.querySelector("[data-play-auto-rule-workout]");
+  if (!select.value) return;
+  const activeDay = ensureActivePlayAutoRuleDay();
+  state.playAutoRules = normalizePlayAutoRules(state.playAutoRules);
+  state.playAutoRules.push({
+    id: createId("play-rule"),
+    workoutId: select.value,
+    dayIds: [activeDay.id],
+    createdAt: new Date().toISOString()
+  });
+  syncPlayAutoRuleInstances();
+  persist();
+  renderPlayAutoRules();
+  renderPlayPlanner();
+}
+
+function togglePlayAutoRuleDay(ruleId, dayId, checked) {
+  const rule = state.playAutoRules.find((item) => item.id === ruleId);
+  if (!rule) return;
+  rule.dayIds = checked
+    ? [...new Set([...rule.dayIds, dayId])]
+    : rule.dayIds.filter((item) => item !== dayId);
+  if (!rule.dayIds.length) {
+    deletePlayAutoRule(ruleId);
+    return;
+  }
+  syncPlayAutoRuleInstances(ruleId);
+  persist();
+  renderPlayAutoRules();
+  renderPlayPlanner();
+}
+
+function deletePlayAutoRule(ruleId) {
+  state.playAutoRules = normalizePlayAutoRules(state.playAutoRules).filter((rule) => rule.id !== ruleId);
+  removePlayAutoRuleInstances(ruleId);
+  persist();
+  renderPlayAutoRules();
+  renderPlayPlanner();
+}
+
+function syncPlayAutoRuleInstances(ruleId = "") {
+  const rulesById = new Map(normalizePlayAutoRules(state.playAutoRules).map((rule) => [rule.id, rule]));
+  const workoutsById = new Map(normalizeWorkouts(state.workouts).map((workout) => [workout.id, workout]));
+  Object.values(state.playPlans || {}).forEach((days) => {
+    Object.entries(days || {}).forEach(([dayId, tasks]) => {
+      if (dayId === "__active") return;
+      days[dayId] = normalizeDoTasks(tasks).filter((task) => {
+        if (!task.recurringTaskId || (ruleId && task.recurringTaskId !== ruleId)) return true;
+        const rule = rulesById.get(task.recurringTaskId);
+        const workout = rule ? workoutsById.get(rule.workoutId) : null;
+        if (!rule || !workout || !rule.dayIds.includes(dayId)) return false;
+        task.title = workout.title;
+        return true;
+      });
+    });
+  });
+}
+
+function removePlayAutoRuleInstances(ruleId) {
+  Object.values(state.playPlans || {}).forEach((days) => {
+    Object.entries(days || {}).forEach(([dayId, tasks]) => {
+      if (dayId === "__active") return;
+      days[dayId] = normalizeDoTasks(tasks).filter((task) => task.recurringTaskId !== ruleId);
+    });
+  });
+}
+
+function syncRecurringTaskInstances(taskId = "") {
+  const rulesById = new Map(normalizeRecurringTasks(state.recurringTasks).map((task) => [task.id, task]));
+  Object.values(state.doPlans || {}).forEach((days) => {
+    Object.entries(days || {}).forEach(([dayId, tasks]) => {
+      days[dayId] = normalizeDoTasks(tasks).filter((task) => {
+        if (!task.recurringTaskId || (taskId && task.recurringTaskId !== taskId)) return true;
+        const rule = rulesById.get(task.recurringTaskId);
+        if (!rule || !rule.dayIds.includes(dayId)) return false;
+        task.title = rule.title;
+        return true;
+      });
+    });
+  });
+}
+
+function removeRecurringTaskInstances(taskId) {
+  Object.values(state.doPlans || {}).forEach((days) => {
+    Object.entries(days || {}).forEach(([dayId, tasks]) => {
+      days[dayId] = normalizeDoTasks(tasks).filter((task) => task.recurringTaskId !== taskId);
+    });
+  });
+}
+
+function doTaskTemplate(task, dayId) {
+  return `
+    <article class="do-task-item ${task.done ? "is-done" : ""} ${task.recurringTaskId ? "is-recurring" : ""}" data-do-task="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" draggable="true">
+      <label>
+        <input type="checkbox" data-do-task-toggle="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" ${task.done ? "checked" : ""} />
+        <span class="do-task-title">${escapeHtml(task.title)}</span>
+      </label>
+      <button class="icon-btn" type="button" data-do-task-delete="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" title="Delete task" aria-label="Delete ${escapeHtml(task.title)}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+      </button>
+    </article>
+  `;
+}
+
+function toggleDoTask(dayId, taskId, done) {
+  if (dayId === "backlog") {
+    state.doBacklog = doBacklogTasks().map((task) => task.id === taskId ? { ...task, done } : task);
+  } else {
+    const tasks = doTasksForDay(dayId);
+    state.doPlans[weekKey()][dayId] = tasks.map((task) => task.id === taskId ? { ...task, done } : task);
+  }
+  persist();
+  renderDoPlanner();
+  renderTasksPage();
+}
+
+function deleteDoTask(dayId, taskId) {
+  if (dayId === "backlog") {
+    state.doBacklog = doBacklogTasks().filter((task) => task.id !== taskId);
+  } else {
+    doTasksForDay(dayId);
+    state.doPlans[weekKey()][dayId] = state.doPlans[weekKey()][dayId].filter((task) => task.id !== taskId);
+  }
+  persist();
+  renderDoPlanner();
+  renderTasksPage();
+}
+
+function handleDoTaskDragStart(event) {
+  const item = event.currentTarget;
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("application/json", JSON.stringify({
+    taskId: item.dataset.doTask,
+    sourceDay: item.dataset.doDay
+  }));
+  item.classList.add("is-dragging");
+}
+
+function handleDoTaskDragEnd(event) {
+  event.currentTarget.classList.remove("is-dragging");
+  document.querySelectorAll(".do-task-drop-over").forEach((item) => item.classList.remove("do-task-drop-over"));
+}
+
+function clearDoTaskDropOver(event) {
+  event.currentTarget.classList.remove("do-task-drop-over");
+}
+
+function handleDoTaskDragOver(event) {
+  if (!Array.from(event.dataTransfer.types || []).includes("application/json")) return;
+  event.preventDefault();
+  event.currentTarget.classList.add("do-task-drop-over");
+}
+
+function handleDoTaskDropOnDay(event) {
+  event.preventDefault();
+  event.currentTarget.classList.remove("do-task-drop-over");
+  const payload = doTaskDragPayload(event);
+  const targetDay = event.currentTarget.dataset.doTaskDropDay || event.currentTarget.dataset.doDayTab;
+  if (!payload || !targetDay) return;
+  moveDoTask(payload.sourceDay, targetDay, payload.taskId);
+}
+
+function handleDoTaskDropOnBacklog(event) {
+  event.preventDefault();
+  event.currentTarget.classList.remove("do-task-drop-over");
+  const payload = doTaskDragPayload(event);
+  if (!payload) return;
+  moveDoTask(payload.sourceDay, "backlog", payload.taskId);
+}
+
+function doTaskDragPayload(event) {
+  try {
+    const payload = JSON.parse(event.dataTransfer.getData("application/json") || "{}");
+    if (!payload.taskId || !payload.sourceDay) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function moveDoTask(sourceDay, targetDay, taskId) {
+  if (sourceDay === targetDay) return;
+  const sourceTasks = sourceDay === "backlog" ? doBacklogTasks() : doTasksForDay(sourceDay);
+  const task = sourceTasks.find((item) => item.id === taskId);
+  if (!task) return;
+  const nextTask = { ...task };
+  if (sourceDay === "backlog") state.doBacklog = sourceTasks.filter((item) => item.id !== taskId);
+  else state.doPlans[weekKey()][sourceDay] = sourceTasks.filter((item) => item.id !== taskId);
+
+  if (targetDay === "backlog") {
+    nextTask.weekKey = weekKey();
+    doBacklogTasks().push(nextTask);
+  } else {
+    doTasksForDay(targetDay).push(nextTask);
+    activePlannerDayId = targetDay;
+  }
+  persist();
+  renderDoPlanner();
+  renderTasksPage();
+}
+
+function renderPlayPlanner() {
+  if (!elements.playPlannerGrid) return;
+  const activeDay = ensureActivePlannerDay();
+  const isInactiveFutureWeek = isFuturePlayWeekInactive();
+  elements.playPlannerGrid.innerHTML = `
+    <div class="day-tabs" role="tablist" aria-label="Exercise plan days">
+      ${prepDays.map((day) => playDayTabTemplate(day, day.id === activeDay.id)).join("")}
+    </div>
+    <div class="do-week-shell ${isInactiveFutureWeek ? "is-inactive" : ""}">
+      <section class="day-column planner-day-panel do-day-panel" role="tabpanel" id="play-panel-${activeDay.id}" aria-labelledby="play-tab-${activeDay.id}">
+        <div class="do-board">
+          <div class="do-task-list" data-play-task-drop-day="${activeDay.id}">
+            ${isInactiveFutureWeek ? `<div class="empty-state">Create this exercise plan when you are ready to plan the week.</div>` : playTaskListTemplate(activeDay.id)}
+          </div>
+        </div>
+      </section>
+      <section class="day-column planner-day-panel do-backlog-panel" aria-label="Exercise To Be Done">
+        <div class="slot-topline">
+          <div class="slot-label">Exercises</div>
+        </div>
+        <div class="do-board">
+          ${isInactiveFutureWeek ? "" : `
+            <form class="inline-form do-task-form" data-play-backlog-task-form>
+              <input data-play-backlog-task-input placeholder="Add exercise" autocomplete="off" />
+              <button class="primary-btn icon-primary-btn" type="submit" title="Add exercise" aria-label="Add exercise">
+                <span aria-hidden="true">+</span>
+              </button>
+            </form>
+          `}
+          <div class="do-task-list" data-play-backlog-drop>
+            ${isInactiveFutureWeek ? `<div class="empty-state">Exercises will appear after this plan is created.</div>` : playExerciseLibraryTemplate()}
+          </div>
+        </div>
+      </section>
+      ${isInactiveFutureWeek ? `
+        <div class="do-create-overlay">
+          <button class="primary-btn" type="button" data-create-play-week>Create Plan</button>
+        </div>
+      ` : ""}
+    </div>
+  `;
+  elements.playPlannerGrid.querySelectorAll("[data-play-day-tab]").forEach((button) => {
+    button.addEventListener("click", () => selectPlannerDay(button.dataset.playDayTab));
+    button.addEventListener("dragover", handlePlayTaskDragOver);
+    button.addEventListener("drop", handlePlayTaskDropOnDay);
+    button.addEventListener("dragleave", clearDoTaskDropOver);
+  });
+  elements.playPlannerGrid.querySelector("[data-play-backlog-task-form]")?.addEventListener("submit", addPlayBacklogTask);
+  elements.playPlannerGrid.querySelector("[data-create-play-week]")?.addEventListener("click", createPlayWeekList);
+  elements.playPlannerGrid.querySelectorAll("[data-play-task-drop-day]").forEach((list) => {
+    list.addEventListener("dragover", handlePlayTaskDragOver);
+    list.addEventListener("drop", handlePlayTaskDropOnDay);
+    list.addEventListener("dragleave", clearDoTaskDropOver);
+  });
+  elements.playPlannerGrid.querySelectorAll("[data-play-backlog-drop]").forEach((list) => {
+    list.addEventListener("dragover", handlePlayTaskDragOver);
+    list.addEventListener("drop", handlePlayTaskDropOnBacklog);
+    list.addEventListener("dragleave", clearDoTaskDropOver);
+  });
+  elements.playPlannerGrid.querySelectorAll("[data-play-workout]").forEach((item) => {
+    item.addEventListener("dragstart", handlePlayWorkoutDragStart);
+    item.addEventListener("dragend", handleDoTaskDragEnd);
+  });
+  bindPlayTaskControls(elements.playPlannerGrid);
+}
+
+function playDayTabTemplate(day, isActive) {
+  return doDayTabTemplate(day, isActive)
+    .replaceAll("do-tab-", "play-tab-")
+    .replaceAll("data-do-day-tab", "data-play-day-tab")
+    .replaceAll("data-do-task-drop-day", "data-play-task-drop-day")
+    .replaceAll("do-panel-", "play-panel-");
+}
+
+function playTaskListTemplate(dayId) {
+  const tasks = playTasksForDay(dayId);
+  return tasks.length
+    ? tasks.map((task) => playTaskTemplate(task, dayId)).join("")
+    : `<div class="empty-state">No exercise scheduled for this day.</div>`;
+}
+
+function playBacklogListTemplate() {
+  const tasks = visiblePlayBacklogTasks();
+  return tasks.length ? tasks.map(playBacklogExerciseTemplate).join("") : "";
+}
+
+function playBacklogExerciseTemplate(task) {
+  return `
+    <article class="do-task-item play-workout-item" data-play-task="${escapeHtml(task.id)}" data-play-day="backlog" draggable="true">
+      <label>
+        <button class="do-task-title workout-title-button" type="button" data-open-play-exercise-detail data-play-day="backlog" data-play-task="${escapeHtml(task.id)}">${escapeHtml(task.title)}</button>
+      </label>
+    </article>
+  `;
+}
+
+function playExerciseLibraryTemplate() {
+  const scheduledWorkoutIds = playWorkoutIdsForDay(activePlannerDayId);
+  const workouts = normalizeWorkouts(state.workouts)
+    .filter((workout) => !scheduledWorkoutIds.has(workout.id))
+    .sort((a, b) => a.title.localeCompare(b.title));
+  const workoutHtml = workouts.map((workout) => `
+    <article class="do-task-item play-workout-item" data-play-workout="${escapeHtml(workout.id)}" draggable="true">
+      <label>
+        <button class="do-task-title workout-title-button" type="button" data-open-workout-detail data-workout-id="${escapeHtml(workout.id)}">${escapeHtml(workout.title)}</button>
+      </label>
+    </article>
+  `).join("");
+  const temporaryHtml = playBacklogListTemplate();
+  return [workoutHtml, temporaryHtml].filter(Boolean).join("") || `<div class="empty-state">Add exercises or saved workouts here.</div>`;
+}
+
+function playWorkoutIdsForDay(dayId) {
+  return new Set(playTasksForDay(dayId).map((task) => task.sourceWorkoutId).filter(Boolean));
+}
+
+function playTaskTemplate(task, dayId) {
+  const isScheduled = dayId !== "backlog";
+  const buttonAttribute = isScheduled ? "data-start-play-exercise" : "data-open-play-exercise-detail";
+  return `
+    <article class="do-task-item play-workout-item ${task.done ? "is-done" : ""} ${task.recurringTaskId ? "is-recurring" : ""}" data-play-task="${escapeHtml(task.id)}" data-play-day="${escapeHtml(dayId)}" draggable="true">
+      <label>
+        <button class="do-task-title workout-title-button" type="button" ${buttonAttribute} data-play-day="${escapeHtml(dayId)}" data-play-task="${escapeHtml(task.id)}">${escapeHtml(task.title)}</button>
+      </label>
+    </article>
+  `;
+}
+
+function bindPlayTaskControls(root = document) {
+  root.querySelectorAll("[data-play-task]").forEach((item) => {
+    item.addEventListener("dragstart", handlePlayTaskDragStart);
+    item.addEventListener("drag", handlePlayTaskDrag);
+    item.addEventListener("dragend", handlePlayTaskDragEnd);
+    item.addEventListener("contextmenu", openPlayTaskMenu);
+  });
+  root.querySelectorAll("[data-play-task-toggle]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => togglePlayTask(checkbox.dataset.playDay, checkbox.dataset.playTaskToggle, checkbox.checked));
+  });
+  root.querySelectorAll("[data-play-task-delete]").forEach((button) => {
+    button.addEventListener("click", () => deletePlayTask(button.dataset.playDay, button.dataset.playTaskDelete));
+  });
+  root.querySelectorAll("[data-play-exercise-data-field]").forEach((input) => {
+    input.addEventListener("change", () => updatePlayExerciseData(input.dataset.playDay, input.dataset.playTask, input.dataset.playExerciseDataField, input.value));
+    input.addEventListener("blur", () => updatePlayExerciseData(input.dataset.playDay, input.dataset.playTask, input.dataset.playExerciseDataField, input.value));
+  });
+  root.querySelectorAll("[data-open-workout-detail]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openWorkoutDetail({ workoutId: button.dataset.workoutId });
+    });
+  });
+  root.querySelectorAll("[data-open-play-exercise-detail]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openWorkoutDetail({ dayId: button.dataset.playDay, taskId: button.dataset.playTask });
+    });
+  });
+  root.querySelectorAll("[data-start-play-exercise]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      requestStartExercise(button.dataset.playDay, button.dataset.playTask);
+    });
+  });
+}
+
+function playTasksForDay(dayId) {
+  const key = weekKey();
+  if (!state.playPlans || typeof state.playPlans !== "object") state.playPlans = {};
+  if (!state.playPlans[key]) state.playPlans[key] = {};
+  state.playPlans[key][dayId] = normalizeDoTasks(state.playPlans[key][dayId]);
+  if (isPlayWeekActive(key)) ensurePlayAutoRulesForDay(key, dayId);
+  return state.playPlans[key][dayId];
+}
+
+function playBacklogTasks() {
+  state.playBacklog = normalizeDoTasks(state.playBacklog);
+  return state.playBacklog;
+}
+
+function visiblePlayBacklogTasks(key = weekKey()) {
+  return playBacklogTasks().filter((task) => !task.weekKey || task.weekKey === key);
+}
+
+function isFuturePlayWeekInactive(key = weekKey()) {
+  return key > currentCalendarWeekKey() && !isPlayWeekActive(key);
+}
+
+function isPlayWeekActive(key = weekKey()) {
+  if (key <= currentCalendarWeekKey()) return true;
+  const week = state.playPlans?.[key];
+  return Boolean(week?.__active || playWeekHasTasks(key));
+}
+
+function playWeekHasTasks(key = weekKey()) {
+  const week = state.playPlans?.[key];
+  if (!week || typeof week !== "object") return false;
+  return prepDays.some((day) => normalizeDoTasks(week[day.id]).length);
+}
+
+function createPlayWeekList() {
+  const key = weekKey();
+  if (!state.playPlans || typeof state.playPlans !== "object") state.playPlans = {};
+  if (!state.playPlans[key] || typeof state.playPlans[key] !== "object") state.playPlans[key] = {};
+  state.playPlans[key].__active = true;
+  prepDays.forEach((day) => {
+    state.playPlans[key][day.id] = normalizeDoTasks(state.playPlans[key][day.id]);
+    ensurePlayAutoRulesForDay(key, day.id);
+  });
+  persist();
+  renderPlayPlanner();
+}
+
+function ensurePlayAutoRulesForDay(key, dayId) {
+  state.playAutoRules = normalizePlayAutoRules(state.playAutoRules);
+  state.workouts = normalizeWorkouts(state.workouts);
+  const workoutsById = new Map(state.workouts.map((workout) => [workout.id, workout]));
+  const tasks = state.playPlans[key][dayId];
+  state.playAutoRules
+    .filter((rule) => rule.dayIds.includes(dayId))
+    .forEach((rule) => {
+      const workout = workoutsById.get(rule.workoutId);
+      if (!workout) return;
+      const existing = playWeekTasks(key).find((item) => item.recurringTaskId === rule.id);
+      if (existing) {
+        existing.title = workout.title;
+        existing.exerciseDetails = workout.exerciseDetails;
+        existing.exerciseNotes = workout.notes;
+        return;
+      }
+      tasks.push({
+        id: createId("exercise"),
+        title: workout.title,
+        done: false,
+        recurringTaskId: rule.id,
+        sourceWorkoutId: workout.id,
+        exerciseDetails: workout.exerciseDetails,
+        exerciseNotes: workout.notes,
+        createdAt: new Date().toISOString()
+      });
+    });
+}
+
+function playWeekTasks(key) {
+  const week = state.playPlans?.[key];
+  if (!week || typeof week !== "object") return [];
+  return prepDays.flatMap((day) => normalizeDoTasks(week[day.id]));
+}
+
+function addPlayBacklogTask(event) {
+  event.preventDefault();
+  const input = event.currentTarget.querySelector("[data-play-backlog-task-input]");
+  const title = input.value.trim();
+  if (!title) return;
+  const exerciseDetails = defaultExerciseDetails("timed");
+  playBacklogTasks().push({ id: createId("exercise"), title, done: false, weekKey: weekKey(), sourceWorkoutId: "", exerciseDetails, exerciseNotes: exerciseDetailsToNotes(exerciseDetails), createdAt: new Date().toISOString() });
+  input.value = "";
+  persist();
+  renderPlayPlanner();
+}
+
+function keepWorkoutFromExercise(dayId, taskId) {
+  const collection = dayId === "backlog" ? playBacklogTasks() : playTasksForDay(dayId);
+  const task = collection.find((item) => item.id === taskId);
+  if (!task) return;
+  const exerciseDetails = normalizeExerciseDetails(task.exerciseDetails, task.exerciseNotes);
+  const workout = { id: createId("workout"), title: task.title, type: exerciseDetails.type, exerciseDetails, notes: exerciseDetailsToNotes(exerciseDetails), logs: [], createdAt: new Date().toISOString() };
+  state.workouts = normalizeWorkouts([...state.workouts, workout]);
+  task.sourceWorkoutId = workout.id;
+  if (dayId === "backlog") {
+    state.playBacklog = playBacklogTasks().filter((item) => item.id !== taskId);
+  } else {
+    upsertWorkoutExecutionLog(workout.id, task, dayId);
+  }
+  persist();
+  renderWorkoutLibrary();
+  renderPlayAutoRules();
+  renderPlayPlanner();
+}
+
+function togglePlayTask(dayId, taskId, done) {
+  if (dayId === "backlog") {
+    state.playBacklog = playBacklogTasks().map((task) => task.id === taskId ? { ...task, done } : task);
+  } else {
+    const tasks = playTasksForDay(dayId);
+    state.playPlans[weekKey()][dayId] = tasks.map((task) => task.id === taskId ? { ...task, done } : task);
+  }
+  persist();
+  renderPlayPlanner();
+}
+
+function deletePlayTask(dayId, taskId) {
+  if (dayId === "backlog") {
+    state.playBacklog = playBacklogTasks().filter((task) => task.id !== taskId);
+  } else {
+    playTasksForDay(dayId);
+    state.playPlans[weekKey()][dayId] = state.playPlans[weekKey()][dayId].filter((task) => task.id !== taskId);
+  }
+  persist();
+  renderPlayPlanner();
+}
+
+function handlePlayTaskDragStart(event) {
+  const item = event.currentTarget;
+  draggedPlayTask = {
+    taskId: item.dataset.playTask,
+    sourceDay: item.dataset.playDay
+  };
+  lastMealDragPoint = { x: event.clientX, y: event.clientY };
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("application/json", JSON.stringify({
+    taskId: item.dataset.playTask,
+    sourceDay: item.dataset.playDay,
+    area: "play"
+  }));
+  item.classList.add("is-dragging");
+  document.body.classList.add("meal-entry-drag-active");
+}
+
+function handlePlayTaskDrag(event) {
+  if (!draggedPlayTask) return;
+  updateMealDragPoint(event);
+  elements.mealTrashTarget.classList.toggle("drag-over", isMealDragEndingInTrash());
+}
+
+function handlePlayTaskDragEnd(event) {
+  updateMealDragPoint(event);
+  if (isMealDragEndingInTrash() || elements.mealTrashTarget.classList.contains("drag-over")) {
+    deleteDraggedPlayTask();
+    return;
+  }
+  clearPlayTaskDragState();
+}
+
+function handlePlayWorkoutDragStart(event) {
+  const item = event.currentTarget;
+  event.dataTransfer.effectAllowed = "copy";
+  event.dataTransfer.setData("application/json", JSON.stringify({
+    workoutId: item.dataset.playWorkout,
+    area: "play"
+  }));
+  item.classList.add("is-dragging");
+}
+
+function handlePlayTaskDragOver(event) {
+  if (!Array.from(event.dataTransfer.types || []).includes("application/json")) return;
+  event.preventDefault();
+  event.currentTarget.classList.add("do-task-drop-over");
+}
+
+function handlePlayTaskDropOnDay(event) {
+  event.preventDefault();
+  event.currentTarget.classList.remove("do-task-drop-over");
+  const payload = playTaskDragPayload(event);
+  const targetDay = event.currentTarget.dataset.playTaskDropDay || event.currentTarget.dataset.playDayTab;
+  if (!payload || !targetDay) return;
+  if (payload.workoutId) {
+    addWorkoutToPlayDay(payload.workoutId, targetDay);
+    return;
+  }
+  movePlayTask(payload.sourceDay, targetDay, payload.taskId);
+}
+
+function handlePlayTaskDropOnBacklog(event) {
+  event.preventDefault();
+  event.currentTarget.classList.remove("do-task-drop-over");
+  const payload = playTaskDragPayload(event);
+  if (!payload) return;
+  if (payload.workoutId) return;
+  movePlayTask(payload.sourceDay, "backlog", payload.taskId);
+}
+
+function playTaskDragPayload(event) {
+  try {
+    const payload = JSON.parse(event.dataTransfer.getData("application/json") || "{}");
+    if (payload.area !== "play") return null;
+    if (payload.workoutId) return payload;
+    if (!payload.taskId || !payload.sourceDay) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function addWorkoutToPlayDay(workoutId, dayId) {
+  const workout = normalizeWorkouts(state.workouts).find((item) => item.id === workoutId);
+  if (!workout) return;
+  if (playWorkoutIdsForDay(dayId).has(workout.id)) {
+    activePlannerDayId = dayId;
+    renderPlayPlanner();
+    return;
+  }
+  playTasksForDay(dayId).push({
+    id: createId("exercise"),
+    title: workout.title,
+    done: false,
+    sourceWorkoutId: workout.id,
+    exerciseDetails: workout.exerciseDetails,
+    exerciseNotes: workout.notes,
+    exerciseData: normalizeExerciseData({}),
+    createdAt: new Date().toISOString()
+  });
+  activePlannerDayId = dayId;
+  persist();
+  renderPlayPlanner();
+}
+
+function updatePlayExerciseData(dayId, taskId, field, value) {
+  if (!["time", "weight"].includes(field)) return;
+  const tasks = playTasksForDay(dayId);
+  const task = tasks.find((item) => item.id === taskId);
+  if (!task || !task.sourceWorkoutId) return;
+  task.exerciseData = { ...normalizeExerciseData(task.exerciseData), [field]: String(value || "").trim() };
+  upsertWorkoutExecutionLog(task.sourceWorkoutId, task, dayId);
+  persist();
+}
+
+function upsertWorkoutExecutionLog(workoutId, task, dayId) {
+  const workout = state.workouts.find((item) => item.id === workoutId);
+  if (!workout) return;
+  workout.logs = normalizeWorkoutLogs(workout.logs);
+  const date = playTaskDateKey(dayId);
+  const existing = workout.logs.find((log) => log.taskId === task.id || (!log.taskId && log.date === date));
+  const data = normalizeExerciseData(task.exerciseData);
+  if (existing) {
+    existing.date = date;
+    existing.taskId = task.id;
+    existing.time = data.time;
+    existing.weight = data.weight;
+  } else {
+    workout.logs.push({
+      id: createId("workout-log"),
+      date,
+      taskId: task.id,
+      time: data.time,
+      weight: data.weight,
+      createdAt: new Date().toISOString()
+    });
+  }
+}
+
+function playTaskDateKey(dayId) {
+  const day = prepDays.find((item) => item.id === dayId) || prepDays[0];
+  return dateKeyFromDate(addDays(currentWeek, day.offset));
+}
+
+function movePlayTask(sourceDay, targetDay, taskId) {
+  if (sourceDay === targetDay) return;
+  const sourceTasks = sourceDay === "backlog" ? playBacklogTasks() : playTasksForDay(sourceDay);
+  const task = sourceTasks.find((item) => item.id === taskId);
+  if (!task) return;
+  const nextTask = { ...task };
+  if (sourceDay === "backlog") state.playBacklog = sourceTasks.filter((item) => item.id !== taskId);
+  else state.playPlans[weekKey()][sourceDay] = sourceTasks.filter((item) => item.id !== taskId);
+  if (targetDay === "backlog") {
+    nextTask.weekKey = weekKey();
+    playBacklogTasks().push(nextTask);
+  } else {
+    playTasksForDay(targetDay).push(nextTask);
+    activePlannerDayId = targetDay;
+  }
+  persist();
+  renderPlayPlanner();
+}
+
+function deleteDraggedPlayTask() {
+  if (!draggedPlayTask) return;
+  const entry = { ...draggedPlayTask };
+  deletePlayTask(entry.sourceDay, entry.taskId);
+  clearPlayTaskDragState();
+  window.requestAnimationFrame(clearPlayTaskDragState);
+}
+
+function clearPlayTaskDragState() {
+  draggedPlayTask = null;
+  lastMealDragPoint = null;
+  document.body.classList.remove("meal-entry-drag-active");
+  elements.mealTrashTarget.classList.remove("drag-over");
+  elements.playPlannerGrid?.querySelectorAll(".is-dragging, .drag-over").forEach((entry) => {
+    entry.classList.remove("is-dragging", "drag-over");
+  });
 }
 
 function openRecipeBoxPage() {
   closeFloatingMenus();
+  activateEatShell();
   resetRecipeBoxSearch();
   setPageTitle(pendingMealRecipeSelection
     ? `Choose ${pendingMealRecipeSelection.meal}`
@@ -1559,6 +3489,7 @@ function closeRecipeBoxPage() {
 
 function openGroceriesPage() {
   closeFloatingMenus();
+  activateEatShell();
   setPageTitle("Groceries");
   renderGroceries();
   if (!elements.groceriesPageDialog.open) elements.groceriesPageDialog.showModal();
@@ -1580,8 +3511,8 @@ function weekJumpButtonTemplate(week) {
   const key = week.weekKey || week.startDate;
   const isCurrentWeek = key === currentCalendarWeekKey();
   const isViewedWeek = key === weekKey();
-  const holidayLabel = holidaysForWeek(dateFromWeekKey(key));
-  const subtext = [isCurrentWeek ? "Current week" : "", holidayLabel].filter(Boolean).join(" · ");
+  const calendarLabel = calendarEventsForWeek(dateFromWeekKey(key)).map((event) => event.summary).filter(Boolean).join(", ");
+  const subtext = [isCurrentWeek ? "Current week" : "", calendarLabel].filter(Boolean).join(" · ");
   return `
     <button class="week-jump-option ${isViewedWeek ? "is-current" : ""}" type="button" data-week-jump="${escapeHtml(key)}" ${isViewedWeek ? "data-viewed-week" : ""} ${isCurrentWeek ? "data-current-week" : ""}>
       <span>${escapeHtml(week.rangeLabel || formatWeekRange(dateFromWeekKey(key)))}</span>
@@ -1690,6 +3621,10 @@ function renderActiveCooking() {
   const cooking = normalizeActiveCooking(state.activeCooking).filter((item) => recipeIds.has(item.recipeId));
   state.activeCooking = cooking;
   if (!elements.activeCookingSection || !elements.activeCookingList) return;
+  if (activeAppArea !== "eat") {
+    elements.activeCookingSection.hidden = true;
+    return;
+  }
   elements.activeCookingSection.hidden = cooking.length === 0;
   elements.activeCookingList.innerHTML = cooking.map(activeCookingTemplate).join("");
 
@@ -2231,13 +4166,20 @@ function openMealEntryMenu(event) {
   const meal = entry.dataset.meal;
   const index = Number(entry.dataset.index);
   if (!day || !meal || Number.isNaN(index)) return;
+  const recipe = recipeForMealEntry(day, meal, index);
+  const canMakeAhead = recipe && !recipe.virtualGroceryRecipe;
 
   const menu = document.createElement("div");
   menu.className = "folder-context-menu meal-entry-context-menu";
   menu.setAttribute("role", "menu");
   menu.innerHTML = `
+    ${canMakeAhead ? `
+      <button type="button" role="menuitem" data-make-ahead-meal-entry-menu data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
+        Make ahead
+      </button>
+    ` : ""}
     <button type="button" role="menuitem" data-remove-meal-entry-menu data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
-      Remove entry
+      Delete
     </button>
   `;
 
@@ -2249,6 +4191,25 @@ function openMealEntryMenu(event) {
   const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
+
+  const makeAheadButton = menu.querySelector("[data-make-ahead-meal-entry-menu]");
+  let didMakeAhead = false;
+  const makeAheadFromMenu = (makeAheadEvent) => {
+    makeAheadEvent.preventDefault();
+    makeAheadEvent.stopPropagation();
+    if (didMakeAhead) return;
+    didMakeAhead = true;
+    suppressMealEntryClick = true;
+    const target = makeAheadEvent.currentTarget;
+    closeFolderMenu();
+    addMakeAheadTaskForMealEntry(target.dataset.day, target.dataset.meal, Number(target.dataset.index));
+    window.setTimeout(() => {
+      suppressMealEntryClick = false;
+    }, 120);
+  };
+  makeAheadButton?.addEventListener("pointerdown", makeAheadFromMenu);
+  makeAheadButton?.addEventListener("mousedown", makeAheadFromMenu);
+  makeAheadButton?.addEventListener("click", makeAheadFromMenu);
 
   const removeButton = menu.querySelector("[data-remove-meal-entry-menu]");
   let didRemove = false;
@@ -2268,6 +4229,39 @@ function openMealEntryMenu(event) {
   removeButton.addEventListener("pointerdown", removeFromMenu);
   removeButton.addEventListener("mousedown", removeFromMenu);
   removeButton.addEventListener("click", removeFromMenu);
+}
+
+function recipeForMealEntry(day, meal, index) {
+  const week = weekState();
+  const entries = mealEntryList(slotEntries(week.slots?.[day]?.[meal]), meal);
+  return recipeForSlot(entries[index]);
+}
+
+function addMakeAheadTaskForMealEntry(day, meal, index) {
+  const recipe = recipeForMealEntry(day, meal, index);
+  if (!recipe || recipe.virtualGroceryRecipe) return;
+  const key = weekKey();
+  const title = `Make Ahead: ${recipe.name}`;
+  const tasks = doBacklogTasks();
+  const alreadyExists = tasks.some((task) => (
+    normalize(task.title) === normalize(title)
+    && (!task.weekKey || task.weekKey === key)
+  ));
+  if (!alreadyExists) {
+    tasks.push({
+      id: createId("task"),
+      title,
+      done: false,
+      weekKey: key,
+      sourceRecipeId: recipe.id,
+      sourceMealDay: day,
+      sourceMealName: meal,
+      createdAt: new Date().toISOString()
+    });
+  }
+  persist();
+  renderDoPlanner();
+  renderTasksPage();
 }
 
 function openAutoRuleEntryMenu(event) {
@@ -2316,6 +4310,44 @@ function openAutoRuleEntryMenu(event) {
   removeButton.addEventListener("click", removeFromMenu);
 }
 
+function openPlayTaskMenu(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeFolderMenu();
+
+  const entry = event.currentTarget;
+  const day = entry.dataset.playDay;
+  const taskId = entry.dataset.playTask;
+  if (!day || !taskId) return;
+
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu meal-entry-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-delete-play-task-menu data-day="${escapeHtml(day)}" data-task="${escapeHtml(taskId)}">
+      Delete
+    </button>
+  `;
+
+  document.body.append(menu);
+  const sourceRect = event.currentTarget?.getBoundingClientRect?.();
+  const rawX = event.clientX || sourceRect?.right || 10;
+  const rawY = event.clientY || sourceRect?.bottom || 10;
+  const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+
+  const deleteButton = menu.querySelector("[data-delete-play-task-menu]");
+  deleteButton.addEventListener("click", (deleteEvent) => {
+    deleteEvent.preventDefault();
+    deleteEvent.stopPropagation();
+    const target = deleteEvent.currentTarget;
+    closeFolderMenu();
+    deletePlayTask(target.dataset.day, target.dataset.task);
+  });
+}
+
 function closeFolderMenu() {
   document.querySelector(".folder-context-menu")?.remove();
   folderMenuId = "";
@@ -2323,13 +4355,31 @@ function closeFolderMenu() {
 
 function setPageTitle(title) {
   elements.pageTitle.textContent = title;
+  elements.pageTitle.hidden = activeAppArea === "home";
+  updateTopLeftNavigation();
+}
+
+function updateTopLeftNavigation() {
+  const isHome = activeAppArea === "home";
+  elements.appMenuBtn.classList.toggle("is-directory", !isHome);
+  elements.appMenuBtn.title = isHome ? "Settings" : "Open directory";
+  elements.appMenuBtn.setAttribute("aria-label", isHome ? "Settings" : "Open directory");
+  elements.appMenuBtn.setAttribute("aria-expanded", isHome ? "false" : String(!elements.appMenu.hidden));
+}
+
+function handleAppMenuButtonClick(event) {
+  if (activeAppArea === "home") {
+    showSettingsApp(event);
+    return;
+  }
+  toggleAppMenu(event);
 }
 
 function toggleAppMenu(event) {
   event.stopPropagation();
   const willOpen = elements.appMenu.hidden;
   closeFolderMenu();
-  closeSettingsMenu();
+  closeDirectorySubmenus();
   elements.appMenu.hidden = !willOpen;
   elements.appMenuBtn.setAttribute("aria-expanded", String(willOpen));
 }
@@ -2337,19 +4387,47 @@ function toggleAppMenu(event) {
 function closeAppMenu() {
   elements.appMenu.hidden = true;
   elements.appMenuBtn.setAttribute("aria-expanded", "false");
+  closeDirectorySubmenus();
 }
 
-function toggleSettingsMenu(event) {
+function toggleDoMenu(event) {
   event.stopPropagation();
-  const willOpen = elements.settingsMenu.hidden;
-  closeFolderMenu();
-  elements.settingsMenu.hidden = !willOpen;
-  elements.settingsBtn.setAttribute("aria-expanded", String(willOpen));
+  showDoApp(event);
+}
+
+function toggleGeneralSettingsMenu(event) {
+  event.stopPropagation();
+  const willOpen = elements.generalSettingsMenu.hidden;
+  elements.generalSettingsMenu.hidden = !willOpen;
+  elements.generalSettingsBtn.setAttribute("aria-expanded", String(willOpen));
+}
+
+function toggleEatSettingsMenu(event) {
+  event.stopPropagation();
+  const willOpen = elements.eatSettingsMenu.hidden;
+  elements.eatSettingsMenu.hidden = !willOpen;
+  elements.eatSettingsBtn.setAttribute("aria-expanded", String(willOpen));
+}
+
+function toggleDoSettingsMenu(event) {
+  event.stopPropagation();
+  const willOpen = elements.doSettingsMenu.hidden;
+  elements.doSettingsMenu.hidden = !willOpen;
+  elements.doSettingsBtn.setAttribute("aria-expanded", String(willOpen));
+}
+
+function togglePlaySettingsMenu(event) {
+  event.stopPropagation();
+  const willOpen = elements.playSettingsMenu.hidden;
+  elements.playSettingsMenu.hidden = !willOpen;
+  elements.playSettingsBtn.setAttribute("aria-expanded", String(willOpen));
+}
+
+function closeDirectorySubmenus() {
 }
 
 function closeSettingsMenu() {
-  elements.settingsMenu.hidden = true;
-  elements.settingsBtn.setAttribute("aria-expanded", "false");
+  closeDirectorySubmenus();
 }
 
 function closeFloatingMenus() {
@@ -2549,6 +4627,106 @@ function resetIngredientOptions() {
   renderIngredientSuggestions();
 }
 
+function openCalendarsDialog(event) {
+  event?.stopPropagation();
+  closeSettingsMenu();
+  elements.calendarNameInput.value = "";
+  elements.calendarUrlInput.value = "";
+  elements.calendarColorInput.value = normalizeCalendarColor("", state.calendars.length);
+  renderCalendarList();
+  elements.calendarStatus.textContent = calendarEvents.length
+    ? `${calendarEvents.length} event${calendarEvents.length === 1 ? "" : "s"} synced.`
+    : "No calendars synced yet.";
+  elements.calendarsDialog.showModal();
+}
+
+function saveCalendarSettings() {
+  addCalendarFromEditor();
+  persist();
+  elements.calendarsDialog.close();
+  loadCalendarEvents();
+}
+
+async function syncCalendarsNow() {
+  addCalendarFromEditor();
+  persist();
+  elements.calendarStatus.textContent = "Syncing calendars...";
+  renderCalendarList();
+  await loadCalendarEvents({ force: true, statusElement: elements.calendarStatus });
+}
+
+function addCalendarFromEditor() {
+  const url = elements.calendarUrlInput.value.trim();
+  if (!url) return;
+  const name = elements.calendarNameInput.value.trim() || "Calendar";
+  const color = normalizeCalendarColor(elements.calendarColorInput.value, state.calendars.length);
+  state.calendars = normalizeLinkedCalendars([
+    ...state.calendars,
+    { id: createId("cal"), name, url, color, enabled: true }
+  ]);
+  elements.calendarNameInput.value = "";
+  elements.calendarUrlInput.value = "";
+  elements.calendarColorInput.value = normalizeCalendarColor("", state.calendars.length);
+  renderCalendarList();
+}
+
+function renderCalendarList() {
+  state.calendars = normalizeLinkedCalendars(state.calendars);
+  if (!state.calendars.length) {
+    elements.calendarList.innerHTML = `<div class="empty-state">No linked calendars yet.</div>`;
+    return;
+  }
+  elements.calendarList.innerHTML = state.calendars.map((calendar) => `
+    <article class="calendar-list-item">
+      <div class="calendar-list-main">
+        <strong>${escapeHtml(calendar.name)}</strong>
+        <small>${escapeHtml(calendar.url)}</small>
+      </div>
+      <div class="calendar-list-controls">
+        <label>
+          <input type="checkbox" data-calendar-enabled="${escapeHtml(calendar.id)}" ${calendar.enabled ? "checked" : ""} />
+          <span>Display</span>
+        </label>
+        <label>
+          <span>Color</span>
+          <input class="calendar-color-input" type="color" value="${escapeHtml(calendar.color)}" data-calendar-color="${escapeHtml(calendar.id)}" aria-label="Color for ${escapeHtml(calendar.name)}" />
+        </label>
+        <button type="button" data-remove-calendar="${escapeHtml(calendar.id)}" aria-label="Remove ${escapeHtml(calendar.name)}">×</button>
+      </div>
+    </article>
+  `).join("");
+  elements.calendarList.querySelectorAll("[data-calendar-enabled]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      state.calendars = state.calendars.map((calendar) => (
+        calendar.id === checkbox.dataset.calendarEnabled ? { ...calendar, enabled: checkbox.checked } : calendar
+      ));
+      persist();
+      renderPlanner();
+    });
+  });
+  elements.calendarList.querySelectorAll("[data-calendar-color]").forEach((input) => {
+    input.addEventListener("change", () => {
+      state.calendars = state.calendars.map((calendar) => (
+        calendar.id === input.dataset.calendarColor ? { ...calendar, color: normalizeCalendarColor(input.value) } : calendar
+      ));
+      calendarEvents = calendarEvents.map((event) => (
+        event.calendarId === input.dataset.calendarColor ? { ...event, calendarColor: normalizeCalendarColor(input.value) } : event
+      ));
+      persist();
+      localStorage.setItem(CALENDAR_CACHE_KEY, JSON.stringify({ fetchedAt: new Date().toISOString(), events: calendarEvents }));
+      renderPlanner();
+    });
+  });
+  elements.calendarList.querySelectorAll("[data-remove-calendar]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.calendars = state.calendars.filter((calendar) => calendar.id !== button.dataset.removeCalendar);
+      persist();
+      renderCalendarList();
+      loadCalendarEvents();
+    });
+  });
+}
+
 function openWeeklyEmailDialog(event) {
   event?.stopPropagation();
   closeSettingsMenu();
@@ -2703,7 +4881,7 @@ function openRestoreDialog(event) {
   pendingRestore = null;
   elements.restoreFileInput.value = "";
   elements.mergeRestoreBtn.disabled = true;
-  elements.restorePreview.textContent = "Choose an Eat backup JSON file to preview missing recipes before merging.";
+  elements.restorePreview.textContent = "Choose an Eat backup JSON file to preview missing items before merging.";
   elements.restoreDialog.showModal();
 }
 
@@ -2717,7 +4895,7 @@ async function previewRestoreFile() {
   elements.mergeRestoreBtn.disabled = true;
   const file = elements.restoreFileInput.files?.[0];
   if (!file) {
-    elements.restorePreview.textContent = "Choose an Eat backup JSON file to preview missing recipes before merging.";
+    elements.restorePreview.textContent = "Choose an Eat backup JSON file to preview missing items before merging.";
     return;
   }
 
@@ -2726,8 +4904,13 @@ async function previewRestoreFile() {
     const backupState = normalizeRestoreState(parsed);
     const recipes = Array.isArray(backupState?.recipes) ? backupState.recipes.map(normalizeRecipe).filter((recipe) => recipe.name) : [];
     const missingRecipes = recipes.filter((recipe) => isMissingRestoreRecipe(recipe));
-    pendingRestore = { fileName: file.name, state: backupState, recipes, missingRecipes };
-    elements.mergeRestoreBtn.disabled = !missingRecipes.length;
+    const publishedWeeks = restorePublishedWeeks(backupState);
+    const missingPublishedWeeks = publishedWeeks.filter((week) => isMissingRestorePublishedWeek(week));
+    const calendars = restoreCalendars(backupState);
+    const missingCalendars = calendars.filter((calendar) => isMissingRestoreCalendar(calendar));
+    const userData = restoreUserDataPreview(backupState);
+    pendingRestore = { fileName: file.name, state: backupState, recipes, missingRecipes, publishedWeeks, missingPublishedWeeks, calendars, missingCalendars, userData };
+    elements.mergeRestoreBtn.disabled = !missingRecipes.length && !missingPublishedWeeks.length && !missingCalendars.length && !restoreUserDataChangeCount(userData);
     elements.restorePreview.innerHTML = restorePreviewTemplate(pendingRestore);
   } catch (error) {
     elements.restorePreview.textContent = `This backup could not be read: ${error.message || "Invalid JSON file."}`;
@@ -2744,26 +4927,263 @@ function isMissingRestoreRecipe(recipe) {
   ));
 }
 
+function restorePublishedWeeks(backupState) {
+  const archive = normalizePublishedWeeks(backupState?.publishedWeeks);
+  syncPublishedWeekArchiveFromPlans({ plans: backupState?.plans || {}, publishedWeeks: archive });
+  return Object.values(archive).filter((week) => week.weekKey && week.slots);
+}
+
+function isMissingRestorePublishedWeek(week) {
+  const existingArchive = state.publishedWeeks?.[week.weekKey];
+  const existingPlan = state.plans?.[week.weekKey];
+  return !existingArchive?.slots && !existingPlan?.publishedSlots;
+}
+
+function restoreCalendars(backupState) {
+  return normalizeLinkedCalendars(backupState?.calendars, backupState?.birthdayCalendar);
+}
+
+function isMissingRestoreCalendar(calendar) {
+  const currentCalendars = normalizeLinkedCalendars(state.calendars);
+  return !currentCalendars.some((existing) => normalizeCalendarUrl(existing.url) === normalizeCalendarUrl(calendar.url));
+}
+
+function normalizeCalendarUrl(url) {
+  return String(url || "").trim().replace(/\/$/, "");
+}
+
+function restoreUserDataPreview(backupState) {
+  return {
+    autoRules: missingRestoreAutoRules(backupState),
+    recurringTasks: missingRestoreRecurringTasks(backupState),
+    taskLists: missingRestoreDoPlanTasks(backupState),
+    backlogTasks: missingRestoreBacklogTasks(backupState),
+    workouts: missingRestoreWorkouts(backupState),
+    playAutoRules: missingRestorePlayAutoRules(backupState),
+    playPlans: missingRestorePlayPlanTasks(backupState),
+    playBacklog: missingRestorePlayBacklogTasks(backupState),
+    recipeTags: missingNormalizedStrings(normalizeRecipeTags(backupState?.recipeTags), recipeTags()),
+    groceryItems: missingNormalizedStrings(
+      Array.isArray(backupState?.groceryBaseItems) ? normalizeGroceryBaseItems(backupState.groceryBaseItems) : [],
+      groceryBaseItems()
+    ),
+    ingredientOptions: missingRestoreIngredientOptions(backupState),
+    checkedGroceries: missingRestoreCheckedGroceries(backupState),
+    pantryItems: missingNormalizedStrings(Array.isArray(backupState?.pantry) ? backupState.pantry : [], state.pantry || []),
+    weeklyEmailSettings: shouldRestoreWeeklyEmailSettings(backupState),
+    themeMode: shouldRestoreThemeMode(backupState)
+  };
+}
+
+function restoreUserDataChangeCount(userData) {
+  if (!userData) return 0;
+  const ingredientCount = Object.values(userData.ingredientOptions || {}).reduce((sum, items) => sum + items.length, 0);
+  return userData.autoRules.length
+    + userData.recurringTasks.length
+    + userData.taskLists.length
+    + userData.backlogTasks.length
+    + userData.workouts.length
+    + userData.playAutoRules.length
+    + userData.playPlans.length
+    + userData.playBacklog.length
+    + userData.recipeTags.length
+    + userData.groceryItems.length
+    + ingredientCount
+    + userData.checkedGroceries.length
+    + userData.pantryItems.length
+    + (userData.weeklyEmailSettings ? 1 : 0)
+    + (userData.themeMode ? 1 : 0);
+}
+
+function missingRestoreAutoRules(backupState) {
+  if (!Array.isArray(backupState?.autoGenerateRules) || !backupState.autoGenerateRules.length) return [];
+  const current = new Set(normalizeAutoGenerateRules(state.autoGenerateRules).map(autoRuleSignature));
+  return normalizeAutoGenerateRules(backupState?.autoGenerateRules).filter((rule) => !current.has(autoRuleSignature(rule)));
+}
+
+function autoRuleSignature(rule) {
+  return [
+    [...(rule.dayIds || [])].sort().join(","),
+    rule.meal,
+    rule.index,
+    rule.action,
+    normalize(rule.value || ""),
+    normalizeRecipeTagSelection(rule.tags).map(normalize).join(","),
+    rule.tagMatchMode || "any",
+    rule.selectionMode || "random"
+  ].join("|");
+}
+
+function missingRestoreRecurringTasks(backupState) {
+  const current = new Set(normalizeRecurringTasks(state.recurringTasks).map(recurringTaskSignature));
+  return normalizeRecurringTasks(backupState?.recurringTasks).filter((task) => !current.has(recurringTaskSignature(task)));
+}
+
+function recurringTaskSignature(task) {
+  return `${normalize(task.title)}|${[...(task.dayIds || [])].sort().join(",")}`;
+}
+
+function missingRestoreDoPlanTasks(backupState) {
+  const backupPlans = normalizeDoPlans(backupState?.doPlans, backupState?.doTasks);
+  const missing = [];
+  Object.entries(backupPlans).forEach(([week, days]) => {
+    prepDays.forEach((day) => {
+      const currentTasks = normalizeDoTasks(state.doPlans?.[week]?.[day.id]);
+      const currentSignatures = new Set(currentTasks.map(doTaskSignature));
+      normalizeDoTasks(days[day.id]).forEach((task) => {
+        if (!currentSignatures.has(doTaskSignature(task))) missing.push({ week, dayId: day.id, task });
+      });
+    });
+  });
+  return missing;
+}
+
+function doTaskSignature(task) {
+  return `${normalize(task.title)}|${task.recurringTaskId || ""}`;
+}
+
+function missingRestoreBacklogTasks(backupState) {
+  const current = new Set(normalizeDoTasks(state.doBacklog).map(doTaskSignature));
+  return normalizeDoTasks(backupState?.doBacklog).filter((task) => !current.has(doTaskSignature(task)));
+}
+
+function missingRestoreWorkouts(backupState) {
+  const current = new Set(normalizeWorkouts(state.workouts).map(workoutSignature));
+  return normalizeWorkouts(backupState?.workouts).filter((workout) => !current.has(workoutSignature(workout)));
+}
+
+function workoutSignature(workout) {
+  return `${normalize(workout.title)}|${workout.type || ""}`;
+}
+
+function missingRestorePlayAutoRules(backupState) {
+  const current = new Set(normalizePlayAutoRules(state.playAutoRules).map(playAutoRuleSignature));
+  return normalizePlayAutoRules(backupState?.playAutoRules).filter((rule) => !current.has(playAutoRuleSignature(rule)));
+}
+
+function playAutoRuleSignature(rule) {
+  return `${rule.workoutId}|${[...(rule.dayIds || [])].sort().join(",")}`;
+}
+
+function missingRestorePlayPlanTasks(backupState) {
+  const backupPlans = normalizeDoPlans(backupState?.playPlans);
+  const missing = [];
+  Object.entries(backupPlans).forEach(([week, days]) => {
+    prepDays.forEach((day) => {
+      const currentTasks = normalizeDoTasks(state.playPlans?.[week]?.[day.id]);
+      const currentSignatures = new Set(currentTasks.map(playTaskSignature));
+      normalizeDoTasks(days[day.id]).forEach((task) => {
+        if (!currentSignatures.has(playTaskSignature(task))) missing.push({ week, dayId: day.id, task });
+      });
+    });
+  });
+  return missing;
+}
+
+function missingRestorePlayBacklogTasks(backupState) {
+  const current = new Set(normalizeDoTasks(state.playBacklog).map(playTaskSignature));
+  return normalizeDoTasks(backupState?.playBacklog).filter((task) => !current.has(playTaskSignature(task)));
+}
+
+function playTaskSignature(task) {
+  return `${normalize(task.title)}|${task.sourceWorkoutId || ""}|${task.recurringTaskId || ""}`;
+}
+
+function missingNormalizedStrings(backupItems, currentItems) {
+  const current = new Set((Array.isArray(currentItems) ? currentItems : []).map(normalize));
+  return (Array.isArray(backupItems) ? backupItems : [])
+    .map((item) => String(item || "").trim())
+    .filter((item) => item && !current.has(normalize(item)));
+}
+
+function missingRestoreIngredientOptions(backupState) {
+  if (!backupState?.ingredientOptions) {
+    return { numbers: [], quantities: [], items: [], prep: [] };
+  }
+  const backup = normalizeIngredientOptions(backupState?.ingredientOptions);
+  const current = normalizeIngredientOptions(state.ingredientOptions);
+  return {
+    numbers: missingNormalizedStrings(backup.numbers, current.numbers),
+    quantities: missingNormalizedStrings(backup.quantities, current.quantities),
+    items: missingNormalizedStrings(backup.items, current.items),
+    prep: missingNormalizedStrings(backup.prep, current.prep)
+  };
+}
+
+function missingRestoreCheckedGroceries(backupState) {
+  const current = state.checkedGroceries || {};
+  return Object.entries(backupState?.checkedGroceries || {})
+    .filter(([key]) => typeof current[key] === "undefined")
+    .map(([key, value]) => ({ key, value }));
+}
+
+function shouldRestoreWeeklyEmailSettings(backupState) {
+  if (!backupState?.weeklyEmailSettings) return false;
+  return JSON.stringify(normalizeWeeklyEmailSettings(backupState.weeklyEmailSettings)) !== JSON.stringify(normalizeWeeklyEmailSettings(state.weeklyEmailSettings));
+}
+
+function shouldRestoreThemeMode(backupState) {
+  if (!backupState?.themeMode) return false;
+  return normalizeThemeMode(backupState.themeMode) !== normalizeThemeMode(state.themeMode);
+}
+
 function restorePreviewTemplate(restore) {
   const backupDate = restore.state?.createdAt || restore.state?.updatedAt || "";
   const sampleRecipes = restore.missingRecipes.slice(0, 6).map((recipe) => `<li>${escapeHtml(recipe.name)}</li>`).join("");
+  const sampleWeeks = restore.missingPublishedWeeks.slice(0, 4).map((week) => `<li>${escapeHtml(week.rangeLabel || formatWeekRange(dateFromWeekKey(week.weekKey)))}</li>`).join("");
+  const sampleCalendars = restore.missingCalendars.slice(0, 4).map((calendar) => `<li>${escapeHtml(calendar.name)}</li>`).join("");
+  const userDataCount = restoreUserDataChangeCount(restore.userData);
+  const userDataSummary = restoreUserDataSummary(restore.userData);
   return `
     <div class="restore-preview-card">
       <strong>${escapeHtml(restore.fileName)}</strong>
       ${backupDate ? `<span>Backup date: ${escapeHtml(new Date(backupDate).toLocaleString())}</span>` : ""}
       <span>${restore.recipes.length} recipe${restore.recipes.length === 1 ? "" : "s"} in backup</span>
       <span>${restore.missingRecipes.length} missing recipe${restore.missingRecipes.length === 1 ? "" : "s"} ready to merge</span>
+      <span>${restore.publishedWeeks.length} published week${restore.publishedWeeks.length === 1 ? "" : "s"} in backup</span>
+      <span>${restore.missingPublishedWeeks.length} missing published week${restore.missingPublishedWeeks.length === 1 ? "" : "s"} ready to merge</span>
+      <span>${restore.calendars.length} synced calendar${restore.calendars.length === 1 ? "" : "s"} in backup</span>
+      <span>${restore.missingCalendars.length} missing calendar${restore.missingCalendars.length === 1 ? "" : "s"} ready to merge</span>
+      <span>${userDataCount} user setting/task item${userDataCount === 1 ? "" : "s"} ready to merge</span>
       ${sampleRecipes ? `<ul>${sampleRecipes}</ul>` : `<p>No missing recipes found in this backup.</p>`}
+      ${sampleWeeks ? `<ul>${sampleWeeks}</ul>` : `<p>No missing published weeks found in this backup.</p>`}
+      ${sampleCalendars ? `<ul>${sampleCalendars}</ul>` : `<p>No missing calendars found in this backup.</p>`}
+      ${userDataSummary ? `<ul>${userDataSummary}</ul>` : `<p>No missing user settings or tasks found in this backup.</p>`}
     </div>
   `;
 }
 
+function restoreUserDataSummary(userData) {
+  if (!userData) return "";
+  const ingredientCount = Object.values(userData.ingredientOptions || {}).reduce((sum, items) => sum + items.length, 0);
+  return [
+    ["Auto Rules", userData.autoRules.length],
+    ["Recurring Tasks", userData.recurringTasks.length],
+    ["Scheduled Tasks", userData.taskLists.length],
+    ["To Be Done Tasks", userData.backlogTasks.length],
+    ["Workouts", userData.workouts.length],
+    ["Exercise Auto Rules", userData.playAutoRules.length],
+    ["Scheduled Exercises", userData.playPlans.length],
+    ["Exercise Backlog Items", userData.playBacklog.length],
+    ["Tags", userData.recipeTags.length],
+    ["Grocery Items", userData.groceryItems.length],
+    ["Ingredient Options", ingredientCount],
+    ["Checked Grocery States", userData.checkedGroceries.length],
+    ["Pantry Items", userData.pantryItems.length],
+    ["Weekly Email Draft", userData.weeklyEmailSettings ? 1 : 0],
+    ["Display Setting", userData.themeMode ? 1 : 0]
+  ]
+    .filter(([, count]) => count)
+    .map(([label, count]) => `<li>${count} ${escapeHtml(label)}</li>`)
+    .join("");
+}
+
 async function mergeMissingRecipesFromBackup() {
-  if (!pendingRestore?.missingRecipes?.length) return;
-  if (!(await tryPreChangeBackup("restoring recipes from backup"))) return;
+  if (!pendingRestore?.missingRecipes?.length && !pendingRestore?.missingPublishedWeeks?.length && !pendingRestore?.missingCalendars?.length && !restoreUserDataChangeCount(pendingRestore?.userData)) return;
+  if (!(await tryPreChangeBackup("restoring recipes, published weeks, calendars, settings, and tasks from backup"))) return;
   const folderIdByBackupId = new Map();
   const pendingFolders = [];
-  if (Array.isArray(pendingRestore.state?.folders)) {
+  if (pendingRestore.missingRecipes.length && Array.isArray(pendingRestore.state?.folders)) {
     pendingRestore.state.folders.forEach((folder) => {
       const normalizedFolder = normalizeRestoreFolder(folder);
       if (!normalizedFolder) return;
@@ -2788,13 +5208,184 @@ async function mergeMissingRecipesFromBackup() {
     folderId: recipe.folderId ? folderIdByBackupId.get(recipe.folderId) || recipe.folderId : ""
   }));
   activeRecipes().push(...restoredRecipes);
+  const restoredWeeks = mergeMissingPublishedWeeksFromRestore(pendingRestore);
+  const restoredCalendars = mergeMissingCalendarsFromRestore(pendingRestore);
+  const restoredUserDataCount = mergeUserDataFromRestore(pendingRestore);
   persist();
+  await persistImmediately("backup restore");
   pendingFolders.forEach(saveFolderRow);
   restoredRecipes.forEach(saveRecipeRow);
+  if (restoredCalendars.length) await loadCalendarEvents({ force: true });
   render();
-  elements.restorePreview.innerHTML = `<div class="restore-preview-card"><strong>Merged ${restoredRecipes.length} missing recipe${restoredRecipes.length === 1 ? "" : "s"}.</strong></div>`;
+  elements.restorePreview.innerHTML = `<div class="restore-preview-card"><strong>Merged ${restoredRecipes.length} missing recipe${restoredRecipes.length === 1 ? "" : "s"}, ${restoredWeeks.length} published week${restoredWeeks.length === 1 ? "" : "s"}, ${restoredCalendars.length} calendar${restoredCalendars.length === 1 ? "" : "s"}, and ${restoredUserDataCount} user setting/task item${restoredUserDataCount === 1 ? "" : "s"}.</strong></div>`;
   elements.mergeRestoreBtn.disabled = true;
   pendingRestore = null;
+}
+
+function mergeMissingPublishedWeeksFromRestore(restore) {
+  if (!state.publishedWeeks || Array.isArray(state.publishedWeeks)) {
+    state.publishedWeeks = normalizePublishedWeeks(state.publishedWeeks);
+  }
+  const restoredWeeks = [];
+  restore.missingPublishedWeeks.forEach((week) => {
+    state.publishedWeeks[week.weekKey] = week;
+    restoredWeeks.push(week);
+    const backupPlan = restore.state?.plans?.[week.weekKey];
+    if (!state.plans[week.weekKey]) {
+      state.plans[week.weekKey] = backupPlan ? cloneRestoreWeekPlan(backupPlan) : createWeekFromPublishedArchive(week);
+      ensurePrepWindowShape(state.plans[week.weekKey]);
+      state.plans[week.weekKey].mealPlanView = "published";
+      return;
+    }
+    if (!state.plans[week.weekKey].publishedSlots) {
+      state.plans[week.weekKey].publishedSlots = cloneMealSlots(week.slots);
+      state.plans[week.weekKey].publishedCombinedMealSections = cloneCombinedMealSections(week.combinedMealSections);
+      state.plans[week.weekKey].mealPlanView = "published";
+      ensurePrepWindowShape(state.plans[week.weekKey]);
+    }
+  });
+  return restoredWeeks;
+}
+
+function mergeMissingCalendarsFromRestore(restore) {
+  const currentCalendars = normalizeLinkedCalendars(state.calendars);
+  const currentUrls = new Set(currentCalendars.map((calendar) => normalizeCalendarUrl(calendar.url)));
+  const restoredCalendars = [];
+  restore.missingCalendars.forEach((calendar) => {
+    const url = normalizeCalendarUrl(calendar.url);
+    if (!url || currentUrls.has(url)) return;
+    const nextCalendar = {
+      ...calendar,
+      id: currentCalendars.some((existing) => existing.id === calendar.id) ? createId("cal") : calendar.id
+    };
+    currentCalendars.push(nextCalendar);
+    currentUrls.add(url);
+    restoredCalendars.push(nextCalendar);
+  });
+  state.calendars = normalizeLinkedCalendars(currentCalendars);
+  return restoredCalendars;
+}
+
+function mergeUserDataFromRestore(restore) {
+  const data = restore.userData || restoreUserDataPreview(restore.state);
+  let merged = 0;
+
+  if (data.autoRules.length) {
+    state.autoGenerateRules = normalizeAutoGenerateRules([...state.autoGenerateRules, ...data.autoRules]);
+    merged += data.autoRules.length;
+  }
+
+  if (data.recurringTasks.length) {
+    const current = normalizeRecurringTasks(state.recurringTasks);
+    state.recurringTasks = normalizeRecurringTasks([...current, ...data.recurringTasks]);
+    merged += data.recurringTasks.length;
+  }
+
+  if (data.taskLists.length) {
+    if (!state.doPlans || typeof state.doPlans !== "object") state.doPlans = {};
+    data.taskLists.forEach(({ week, dayId, task }) => {
+      if (!state.doPlans[week]) state.doPlans[week] = {};
+      if (restore.state?.doPlans?.[week]?.__active) state.doPlans[week].__active = true;
+      state.doPlans[week][dayId] = normalizeDoTasks([...(state.doPlans[week][dayId] || []), task]);
+    });
+    merged += data.taskLists.length;
+  }
+
+  if (data.backlogTasks.length) {
+    state.doBacklog = normalizeDoTasks([...state.doBacklog, ...data.backlogTasks]);
+    merged += data.backlogTasks.length;
+  }
+
+  if (data.workouts.length) {
+    const current = normalizeWorkouts(state.workouts);
+    state.workouts = normalizeWorkouts([...current, ...data.workouts]);
+    merged += data.workouts.length;
+  }
+
+  if (data.playAutoRules.length) {
+    state.playAutoRules = normalizePlayAutoRules([...state.playAutoRules, ...data.playAutoRules]);
+    merged += data.playAutoRules.length;
+  }
+
+  if (data.playPlans.length) {
+    if (!state.playPlans || typeof state.playPlans !== "object") state.playPlans = {};
+    data.playPlans.forEach(({ week, dayId, task }) => {
+      if (!state.playPlans[week]) state.playPlans[week] = {};
+      if (restore.state?.playPlans?.[week]?.__active) state.playPlans[week].__active = true;
+      state.playPlans[week][dayId] = normalizeDoTasks([...(state.playPlans[week][dayId] || []), task]);
+    });
+    merged += data.playPlans.length;
+  }
+
+  if (data.playBacklog.length) {
+    state.playBacklog = normalizeDoTasks([...state.playBacklog, ...data.playBacklog]);
+    merged += data.playBacklog.length;
+  }
+
+  if (data.recipeTags.length) {
+    state.recipeTags = normalizeRecipeTags([...state.recipeTags, ...data.recipeTags]);
+    merged += data.recipeTags.length;
+  }
+
+  if (data.groceryItems.length) {
+    state.groceryBaseItems = normalizeGroceryBaseItems([...groceryBaseItems(), ...data.groceryItems]);
+    merged += data.groceryItems.length;
+  }
+
+  const currentOptions = normalizeIngredientOptions(state.ingredientOptions);
+  const optionCounts = Object.values(data.ingredientOptions || {}).reduce((sum, items) => sum + items.length, 0);
+  if (optionCounts) {
+    state.ingredientOptions = normalizeIngredientOptions({
+      numbers: [...currentOptions.numbers, ...data.ingredientOptions.numbers],
+      quantities: [...currentOptions.quantities, ...data.ingredientOptions.quantities],
+      items: [...currentOptions.items, ...data.ingredientOptions.items],
+      prep: [...currentOptions.prep, ...data.ingredientOptions.prep]
+    });
+    syncIngredientOptionGlobals(state);
+    merged += optionCounts;
+  }
+
+  if (data.checkedGroceries.length) {
+    if (!state.checkedGroceries || typeof state.checkedGroceries !== "object") state.checkedGroceries = {};
+    data.checkedGroceries.forEach(({ key, value }) => {
+      if (typeof state.checkedGroceries[key] === "undefined") state.checkedGroceries[key] = value;
+    });
+    merged += data.checkedGroceries.length;
+  }
+
+  if (data.pantryItems.length) {
+    state.pantry = [...new Set([...(state.pantry || []), ...data.pantryItems])].sort((a, b) => normalize(a).localeCompare(normalize(b)));
+    merged += data.pantryItems.length;
+  }
+
+  if (data.weeklyEmailSettings) {
+    state.weeklyEmailSettings = normalizeWeeklyEmailSettings(restore.state.weeklyEmailSettings);
+    merged += 1;
+  }
+
+  if (data.themeMode) {
+    state.themeMode = normalizeThemeMode(restore.state.themeMode);
+    applyThemeMode();
+    merged += 1;
+  }
+
+  return merged;
+}
+
+function cloneRestoreWeekPlan(plan) {
+  return JSON.parse(JSON.stringify(plan || createBlankWeek()));
+}
+
+function createWeekFromPublishedArchive(week) {
+  return {
+    notes: week.notes || "",
+    manualGroceries: Array.isArray(week.manualGroceries) ? [...week.manualGroceries] : [],
+    mealPlanView: "published",
+    publishedSlots: cloneMealSlots(week.slots),
+    combinedMealSections: cloneCombinedMealSections(week.combinedMealSections),
+    publishedCombinedMealSections: cloneCombinedMealSections(week.combinedMealSections),
+    slots: cloneMealSlots(week.slots)
+  };
 }
 
 function normalizeRestoreFolder(folder) {
@@ -3037,18 +5628,16 @@ function renderPlanner() {
   const combinedState = combinedMealSectionsForWeek(week);
   const mealPlanColumns = mealColumnConfigs
     .map((column) => {
-      const columnHtml = columnMealsForDay(activeDay, column, combinedState).map((meal) => (
-        meal
-          ? slotTemplate(activeDay, meal, visibleSlots?.[activeDay.id]?.[meal] || "", {
-            readOnly: isPublished,
-            displayMeal: displayMealName(meal),
-            combined: isCombinedMealKey(meal)
-          })
-          : emptyMealSlotTemplate()
+      const columnHtml = columnMealsForDay(activeDay, column, combinedState).filter(Boolean).map((meal) => (
+        slotTemplate(activeDay, meal, visibleSlots?.[activeDay.id]?.[meal] || "", {
+          readOnly: isPublished,
+          displayMeal: displayMealName(meal),
+          combined: isCombinedMealKey(meal)
+        })
       )).join("");
       return { column, html: columnHtml };
     })
-    .filter((column) => !isPublished || column.html.trim());
+    .filter((column) => column.html.trim());
   const mealPlanColumnCount = Math.max(1, mealPlanColumns.length);
 
   elements.plannerGrid.innerHTML = `
@@ -3056,23 +5645,25 @@ function renderPlanner() {
       ${prepDays.map((day) => {
         const date = addDays(currentWeek, day.offset);
         const isActive = day.id === activeDay.id;
-        const holidays = holidaysForDate(date);
+        const calendarEventsForDay = syncedCalendarEventsForDate(date);
+        const eventClass = calendarEventsForDay.length ? "has-synced-calendar" : "";
+        const eventStyle = calendarEventsForDay.length ? ` style="${escapeHtml(calendarTabStyle(calendarEventsForDay))}"` : "";
         const tabLabel = `${day.name} ${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
         const longDateLabel = date.toLocaleDateString(undefined, { month: "long", day: "numeric" });
         const shortDateLabel = date.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
         return `
-          <button class="day-tab ${isActive ? "is-active" : ""}" type="button" role="tab" id="tab-${day.id}" data-day-tab="${day.id}" aria-selected="${isActive ? "true" : "false"}" aria-controls="panel-${day.id}" title="${escapeHtml(tabLabel)}">
+          <button class="day-tab ${eventClass} ${isActive ? "is-active" : ""}" type="button" role="tab" id="tab-${day.id}" data-day-tab="${day.id}" aria-selected="${isActive ? "true" : "false"}" aria-controls="panel-${day.id}" title="${escapeHtml(tabLabel)}"${eventStyle}>
             <span class="day-tab-day day-tab-full">${escapeHtml(day.name)}</span>
             <span class="day-tab-day day-tab-short">${escapeHtml(day.name.slice(0, 3))}</span>
             <span class="day-tab-day day-tab-compact">${escapeHtml(compactDayLabel(day))}</span>
             <strong class="day-tab-date day-tab-date-long">${escapeHtml(longDateLabel)}</strong>
             <strong class="day-tab-date day-tab-date-short">${escapeHtml(shortDateLabel)}</strong>
-            ${holidays.length ? `<em>${holidays.length}</em>` : ""}
           </button>
         `;
       }).join("")}
     </div>
     <section class="day-column planner-day-panel" role="tabpanel" id="panel-${activeDay.id}" aria-labelledby="tab-${activeDay.id}">
+      ${activeDayEventsTemplate(activeDay)}
       <div class="day-slots-carousel ${isPublished ? "is-published" : ""}" style="--meal-column-count: ${mealPlanColumnCount};" aria-label="${escapeHtml(activeDay.name)} meals">
         ${mealPlanColumns.map(({ html }) => `
           <div class="meal-plan-column">
@@ -3081,10 +5672,16 @@ function renderPlanner() {
         `).join("")}
       </div>
       <div class="meal-plan-publish-row">
-        <span class="meal-plan-view-label">${isPublished ? "Published view" : "Edit view"}</span>
-        <button class="${isPublished ? "secondary-btn" : "primary-btn"}" type="button" data-toggle-meal-plan-view>
-          ${isPublished ? "Edit" : "Publish"}
-        </button>
+        <div class="meal-plan-page-actions">
+          <button class="secondary-btn" type="button" data-open-recipe-box-page>Recipe Box</button>
+          <button class="secondary-btn" type="button" data-open-groceries-page>Groceries</button>
+        </div>
+        <div class="meal-plan-publish-actions">
+          <span class="meal-plan-view-label">${isPublished ? "Published view" : "Edit view"}</span>
+          <button class="${isPublished ? "secondary-btn" : "primary-btn"}" type="button" data-toggle-meal-plan-view>
+            ${isPublished ? "Edit" : "Publish"}
+          </button>
+        </div>
       </div>
     </section>
   `;
@@ -3170,6 +5767,14 @@ function renderPlanner() {
     button.addEventListener("click", toggleMealPlanView);
   });
 
+  elements.plannerGrid.querySelectorAll("[data-open-recipe-box-page]").forEach((button) => {
+    button.addEventListener("click", openRecipeBoxPage);
+  });
+
+  elements.plannerGrid.querySelectorAll("[data-open-groceries-page]").forEach((button) => {
+    button.addEventListener("click", openGroceriesPage);
+  });
+
   elements.plannerGrid.querySelectorAll("[data-meal-entry][draggable='true']").forEach((entry) => {
     entry.addEventListener("dragstart", handleMealEntryDragStart);
     entry.addEventListener("drag", handleMealEntryDrag);
@@ -3223,9 +5828,71 @@ function restorePlannerCarouselState(previousState, activeDayId) {
   });
 }
 
-function loadCachedHolidayEvents() {
+function activeDayEventsTemplate(day) {
+  const date = addDays(currentWeek, day.offset);
+  const events = syncedCalendarEventsForDate(date);
+  if (!events.length) return "";
+  return `
+    <div class="day-event-list" aria-label="Events for ${escapeHtml(day.name)}">
+      ${events.map((event) => `
+        <span class="day-event-pill">
+          <span class="calendar-event-dot" style="background: ${escapeHtml(event.calendarColor || normalizeCalendarColor(""))};"></span>
+          <strong>${escapeHtml(event.summary)}</strong>
+        </span>
+      `).join("")}
+    </div>
+  `;
+}
+
+function calendarTabStyle(events) {
+  const colors = uniqueCalendarColors(events);
+  if (!colors.length) return "";
+  const background = colors.length === 1 ? colors[0] : calendarStripeBackground(colors);
+  return [
+    `--calendar-tab-background: ${background}`,
+    `--calendar-tab-border: ${calendarColorBorder(colors[0])}`,
+    `--calendar-tab-ink: ${calendarColorInk(colors[0])}`
+  ].join("; ");
+}
+
+function uniqueCalendarColors(events) {
+  return [...new Set(events.map((event) => normalizeCalendarColor(event.calendarColor)).filter(Boolean))];
+}
+
+function calendarStripeBackground(colors) {
+  const step = 100 / colors.length;
+  const stops = colors.map((color, index) => {
+    const start = Math.round(index * step * 100) / 100;
+    const end = Math.round((index + 1) * step * 100) / 100;
+    return `${color} ${start}% ${end}%`;
+  });
+  return `linear-gradient(135deg, ${stops.join(", ")})`;
+}
+
+function calendarColorBorder(color) {
+  return mixHexColors(normalizeCalendarColor(color), "#111111", 0.18);
+}
+
+function calendarColorInk(color) {
+  return mixHexColors(normalizeCalendarColor(color), "#000000", 0.68);
+}
+
+function mixHexColors(hex, target, amount) {
+  const sourceRgb = hexToRgb(hex);
+  const targetRgb = hexToRgb(target);
+  if (!sourceRgb || !targetRgb) return hex;
+  const mixed = sourceRgb.map((channel, index) => Math.round(channel + (targetRgb[index] - channel) * amount));
+  return `#${mixed.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function hexToRgb(hex) {
+  const match = String(hex || "").match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+  return match ? [parseInt(match[1], 16), parseInt(match[2], 16), parseInt(match[3], 16)] : null;
+}
+
+function loadCachedCalendarEvents() {
   try {
-    const cached = JSON.parse(localStorage.getItem(HOLIDAY_CACHE_KEY) || "null");
+    const cached = JSON.parse(localStorage.getItem(CALENDAR_CACHE_KEY) || "null");
     if (!cached?.fetchedAt || !Array.isArray(cached.events)) return [];
     if (Date.now() - Date.parse(cached.fetchedAt) > HOLIDAY_CACHE_TTL) return [];
     return cached.events;
@@ -3234,43 +5901,90 @@ function loadCachedHolidayEvents() {
   }
 }
 
-async function loadHolidayEvents() {
-  const helperUrl = holidayHelperUrl();
-  if (!helperUrl) return;
-
+async function loadCalendarEvents(options = {}) {
+  const calendars = normalizeLinkedCalendars(state.calendars).filter((calendar) => calendar.enabled);
+  if (!calendars.length) {
+    calendarEvents = [];
+    localStorage.removeItem(CALENDAR_CACHE_KEY);
+    if (options.statusElement) options.statusElement.textContent = "No enabled calendars to sync.";
+    renderPlanner();
+    return;
+  }
   try {
-    const response = await fetch(helperUrl, { cache: "no-store" });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || `Holiday sync failed with status ${response.status}`);
-    holidayEvents = Array.isArray(payload.events) ? payload.events : [];
-    localStorage.setItem(HOLIDAY_CACHE_KEY, JSON.stringify({ fetchedAt: new Date().toISOString(), events: holidayEvents }));
+    const eventGroups = await Promise.all(calendars.map(async (calendar) => {
+      const response = await fetch(calendarHelperUrl(calendar.url), { cache: "no-store" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `${calendar.name} sync failed with status ${response.status}`);
+      return (Array.isArray(payload.events) ? payload.events : []).map((event) => ({
+        ...event,
+        calendarId: calendar.id,
+        calendarName: calendar.name,
+        calendarColor: calendar.color
+      }));
+    }));
+    calendarEvents = eventGroups.flat();
+    localStorage.setItem(CALENDAR_CACHE_KEY, JSON.stringify({ fetchedAt: new Date().toISOString(), events: calendarEvents }));
+    if (options.statusElement) {
+      options.statusElement.textContent = `${calendarEvents.length} event${calendarEvents.length === 1 ? "" : "s"} synced from ${calendars.length} calendar${calendars.length === 1 ? "" : "s"}.`;
+    }
     renderPlanner();
   } catch (error) {
-    console.warn("U.S. holiday sync failed.", error);
+    console.warn("Calendar sync failed.", error);
+    if (options.statusElement) options.statusElement.textContent = error.message || "Calendar sync failed.";
   }
 }
 
-function holidayHelperUrl() {
-  if (canUseLocalBackend()) return "/api/holidays";
-  if (window.location.protocol.startsWith("http")) return "/.netlify/functions/us-holidays";
+function calendarHelperUrl(calendarUrl) {
+  const trimmedUrl = String(calendarUrl || "").trim();
+  if (!trimmedUrl) return "";
+  const encodedUrl = encodeURIComponent(trimmedUrl);
+  if (canUseLocalBackend()) return `/api/calendars?url=${encodedUrl}`;
+  if (window.location.protocol.startsWith("http")) return `/.netlify/functions/google-calendar?url=${encodedUrl}`;
   return "";
 }
 
-function holidaysForDate(date) {
-  const key = localDateKey(date);
-  return holidayEvents.filter((event) => event.date === key);
+function syncedCalendarEventsForDate(date) {
+  const dateKey = localDateKey(date);
+  const monthDayKey = calendarMonthDayKey(date);
+  const enabledCalendars = normalizeLinkedCalendars(state.calendars).filter((calendar) => calendar.enabled);
+  const calendarById = new Map(enabledCalendars.map((calendar) => [calendar.id, calendar]));
+  const enabledIds = new Set(enabledCalendars.map((calendar) => calendar.id));
+  return dedupeCalendarEvents(calendarEvents
+    .filter((event) => enabledIds.has(event.calendarId))
+    .filter((event) => event.date === dateKey || shouldMatchCalendarMonthDay(event, monthDayKey))
+    .map((event) => ({
+      ...event,
+      calendarColor: calendarById.get(event.calendarId)?.color || event.calendarColor || normalizeCalendarColor("")
+    }))
+  ).sort((a, b) => String(a.summary || "").localeCompare(String(b.summary || "")));
 }
 
-function holidaysForWeek(start) {
-  if (Number.isNaN(start.getTime())) return "";
-  const holidayNames = [];
-  prepDays.forEach((day) => {
-    holidaysForDate(addDays(start, day.offset)).forEach((event) => {
-      const summary = event.summary || "";
-      if (summary && !holidayNames.includes(summary)) holidayNames.push(summary);
-    });
+function shouldMatchCalendarMonthDay(event, monthDayKey) {
+  return event.monthDay === monthDayKey && (event.recursYearly || !event.date);
+}
+
+function dedupeCalendarEvents(events) {
+  const seen = new Set();
+  return events.filter((event) => {
+    const key = [
+      event.calendarId || "",
+      normalize(event.summary || ""),
+      event.recursYearly ? "" : event.date || "",
+      event.recursYearly ? event.monthDay || "" : ""
+    ].join("|");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
-  return holidayNames.join(", ");
+}
+
+function calendarEventsForWeek(start) {
+  if (Number.isNaN(start.getTime())) return [];
+  return prepDays.flatMap((day) => syncedCalendarEventsForDate(addDays(start, day.offset)));
+}
+
+function calendarMonthDayKey(date) {
+  return `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function localDateKey(date) {
@@ -3707,7 +6421,8 @@ function columnMealsForDay(day, column, combinedState) {
   if (!column.combinedMeal) return column.meals.map((meal) => (day.meals.includes(meal) ? meal : ""));
   const combinedMeal = column.combinedMeal;
   const group = combinedMealSections[combinedMeal];
-  const isCombined = Boolean(combinedState?.[day.id]?.[combinedMeal]);
+  const combinedMembers = combinedMealMembersForDay(day, combinedState, combinedMeal);
+  const isCombined = combinedMembers.length >= 2;
   const hasMembers = group.members.some((meal) => day.meals.includes(meal));
   if (!isCombined || !hasMembers) {
     return column.meals.map((meal) => (day.meals.includes(meal) ? meal : ""));
@@ -3715,9 +6430,22 @@ function columnMealsForDay(day, column, combinedState) {
   return [
     combinedMeal,
     ...column.meals
-      .filter((meal) => !group.members.includes(meal))
+      .filter((meal) => !combinedMembers.includes(meal))
       .map((meal) => (day.meals.includes(meal) ? meal : ""))
   ];
+}
+
+function combinedMealMembersForDay(day, combinedState, combinedMeal) {
+  const group = combinedMealSections[combinedMeal];
+  if (!group || !day) return [];
+  const rawValue = combinedState?.[day.id]?.[combinedMeal];
+  if (Array.isArray(rawValue)) {
+    return rawValue.filter((meal) => group.members.includes(meal) && day.meals.includes(meal));
+  }
+  if (rawValue) {
+    return group.members.filter((meal) => day.meals.includes(meal));
+  }
+  return [];
 }
 
 function mealKeysForDay(day, combinedState) {
@@ -3725,7 +6453,7 @@ function mealKeysForDay(day, combinedState) {
 }
 
 function displayMealName(meal) {
-  return combinedMealSections[meal]?.label || meal;
+  return (combinedMealSections[meal]?.label || meal).replace(/^MJ\b/, "Marijane");
 }
 
 function slotTemplate(day, meal, slotValue, options = {}) {
@@ -3914,7 +6642,7 @@ function mealEntryList(entries, meal) {
 }
 
 function mealEntryPlaceholder(meal, index) {
-  if (index === 0) return meal;
+  if (index === 0) return displayMealName(meal);
   return "Search or type meal";
 }
 
@@ -4060,7 +6788,7 @@ function handleMealTrashDragOver(event) {
     handleAutoRuleTrashDragOver(event);
     return;
   }
-  if (!draggedMealEntry) return;
+  if (!draggedMealEntry && !draggedPlayTask) return;
   updateMealDragPoint(event);
   event.preventDefault();
   elements.mealTrashTarget.classList.add("drag-over");
@@ -4086,8 +6814,9 @@ function handleMealTrashDrop(event) {
     deleteDraggedAutoRuleEntry();
     return;
   }
-  if (!draggedMealEntry) return;
+  if (!draggedMealEntry && !draggedPlayTask) return;
   deleteDraggedMealEntry();
+  deleteDraggedPlayTask();
 }
 
 function handleMealTrashOverlayDragOver(event) {
@@ -4098,7 +6827,7 @@ function handleMealTrashOverlayDragOver(event) {
     event.dataTransfer.dropEffect = isPointInMealTrash(event.clientX, event.clientY) ? "move" : "none";
     return;
   }
-  if (!draggedMealEntry) return;
+  if (!draggedMealEntry && !draggedPlayTask) return;
   updateMealDragPoint(event);
   event.preventDefault();
   elements.mealTrashTarget.classList.toggle("drag-over", isPointInMealTrash(event.clientX, event.clientY));
@@ -4116,13 +6845,15 @@ function handleMealTrashOverlayDrop(event) {
     }
     return;
   }
-  if (!draggedMealEntry) return;
+  if (!draggedMealEntry && !draggedPlayTask) return;
   updateMealDragPoint(event);
   event.preventDefault();
   if (isMealDragEndingInTrash()) {
     deleteDraggedMealEntry();
+    deleteDraggedPlayTask();
   } else {
     clearMealEntryDragState();
+    clearPlayTaskDragState();
   }
 }
 
@@ -4138,7 +6869,7 @@ function handleDocumentMealDragOver(event) {
     event.dataTransfer.dropEffect = "move";
     return;
   }
-  if (!draggedMealEntry) return;
+  if (!draggedMealEntry && !draggedPlayTask) return;
   updateMealDragPoint(event);
   if (!isPointInMealTrash(event.clientX, event.clientY)) {
     elements.mealTrashTarget.classList.remove("drag-over");
@@ -4157,11 +6888,12 @@ function handleDocumentMealDrop(event) {
     deleteDraggedAutoRuleEntry();
     return;
   }
-  if (!draggedMealEntry) return;
+  if (!draggedMealEntry && !draggedPlayTask) return;
   updateMealDragPoint(event);
   if (!isPointInMealTrash(event.clientX, event.clientY)) return;
   event.preventDefault();
   deleteDraggedMealEntry();
+  deleteDraggedPlayTask();
 }
 
 function handleMealEntryDragEnd(event) {
@@ -4546,6 +7278,7 @@ function moveMealEntryToSlot(source, targetDay, targetMeal, targetIndex = null) 
   }
   week.slots[targetDay][targetMeal] = compactMealSlotEntries(targetEntries, targetMeal);
 
+  syncMakeAheadTasksForWeek(weekKey(), week);
   persist();
   renderPlanner();
   renderGroceries();
@@ -4587,15 +7320,25 @@ function combineMealSections(dayId, sourceMeal, targetMeal) {
   const slots = week.slots;
   if (!slots[dayId]) slots[dayId] = {};
   const members = combinedMealSections[combinedMeal].members;
+  const day = prepDays.find((item) => item.id === dayId);
+  const currentMembers = combinedMealMembersForDay(day, week.combinedMealSections, combinedMeal);
+  const sourceMembers = sourceMeal === combinedMeal ? currentMembers : members.includes(sourceMeal) ? [sourceMeal] : [];
+  const targetMembers = targetMeal === combinedMeal ? currentMembers : members.includes(targetMeal) ? [targetMeal] : [];
+  const nextMembers = [...new Set([...currentMembers, ...sourceMembers, ...targetMembers])]
+    .filter((meal) => members.includes(meal) && day?.meals.includes(meal));
+  if (nextMembers.length < 2) return;
   const combinedEntries = [
     ...slotEntries(slots[dayId][combinedMeal]),
-    ...(members.includes(sourceMeal) ? slotEntries(slots[dayId][sourceMeal]) : []),
-    ...(members.includes(targetMeal) ? slotEntries(slots[dayId][targetMeal]) : [])
+    ...nextMembers
+      .filter((meal) => meal === sourceMeal || meal === targetMeal || !currentMembers.includes(meal))
+      .flatMap((meal) => slotEntries(slots[dayId][meal]))
   ];
   slots[dayId][combinedMeal] = compactMealSlotEntries(combinedEntries, combinedMeal);
-  if (members.includes(sourceMeal)) slots[dayId][sourceMeal] = "";
-  if (members.includes(targetMeal)) slots[dayId][targetMeal] = "";
-  setCombinedMealSection(week, dayId, combinedMeal, true);
+  nextMembers.forEach((meal) => {
+    slots[dayId][meal] = "";
+  });
+  setCombinedMealSection(week, dayId, combinedMeal, nextMembers);
+  syncMakeAheadTasksForWeek(weekKey(), week);
   persist();
   renderPlanner();
   renderGroceries();
@@ -4801,6 +7544,37 @@ function removeMealEntry(day, meal, index) {
   setMeal(day, meal, compactMealSlotEntries(entries, meal));
 }
 
+function syncMakeAheadTasksForWeek(key = weekKey(), week = weekState()) {
+  const plannedRecipeIds = mealPlanRecipeIdsForWeek(week);
+  const shouldKeepTask = (task) => {
+    if (!isMakeAheadTask(task) || !task.sourceRecipeId) return true;
+    return task.weekKey !== key || plannedRecipeIds.has(task.sourceRecipeId);
+  };
+  state.doBacklog = normalizeDoTasks(state.doBacklog).filter(shouldKeepTask);
+  if (state.doPlans?.[key]) {
+    prepDays.forEach((day) => {
+      state.doPlans[key][day.id] = normalizeDoTasks(state.doPlans[key][day.id]).filter(shouldKeepTask);
+    });
+  }
+}
+
+function mealPlanRecipeIdsForWeek(week) {
+  const ids = new Set();
+  prepDays.forEach((day) => {
+    [...day.meals, ...Object.keys(combinedMealSections)].forEach((meal) => {
+      slotEntries(week.slots?.[day.id]?.[meal]).forEach((entry) => {
+        const recipe = recipeForSlot(entry);
+        if (recipe && !recipe.virtualGroceryRecipe) ids.add(recipe.id);
+      });
+    });
+  });
+  return ids;
+}
+
+function isMakeAheadTask(task) {
+  return normalize(task?.title || "").startsWith("make ahead:");
+}
+
 function emptyMealSlotTemplate() {
   return `<div class="slot-card placeholder-slot" aria-hidden="true"></div>`;
 }
@@ -4836,7 +7610,14 @@ function selectPlannerDay(dayId) {
   if (!prepDays.some((day) => day.id === dayId)) return;
   activePlannerDayId = dayId;
   editingMealEntry = null;
-  renderPlanner();
+  if (activeAppArea === "do") {
+    renderDoPlanner();
+    renderTasksPage();
+  } else if (activeAppArea === "play") {
+    renderPlayPlanner();
+  } else {
+    renderPlanner();
+  }
 }
 
 function toggleDay(dayId) {
@@ -4858,6 +7639,7 @@ function clearPlannerDay(dayId) {
       week.combinedMealSections[day.id][meal] = false;
     });
   }
+  syncMakeAheadTasksForWeek(weekKey(), week);
   persist();
   renderPlanner();
   renderGroceries();
@@ -4871,6 +7653,7 @@ function clearMealSection(dayId, meal) {
   const week = weekState();
   week.slots[day.id][meal] = "";
   if (isCombinedMealKey(meal)) setCombinedMealSection(week, day.id, meal, false);
+  syncMakeAheadTasksForWeek(weekKey(), week);
   persist();
   renderPlanner();
   renderGroceries();
@@ -6593,6 +9376,7 @@ function setMeal(day, meal, recipeId) {
   const week = weekState();
   if (!week.slots[day]) week.slots[day] = {};
   week.slots[day][meal] = recipeId;
+  syncMakeAheadTasksForWeek(weekKey(), week);
   persist();
   renderPlanner();
   renderGroceries();
@@ -6881,10 +9665,6 @@ function ensureMealSlotShape(slots) {
   prepDays.forEach((day) => {
     if (!slots[day.id]) slots[day.id] = {};
     migrateLegacyMealSlots(slots, day);
-    if (typeof slots[day.id].Extras === "undefined" && typeof slots[day.id].Sophia !== "undefined") {
-      slots[day.id].Extras = slots[day.id].Sophia;
-      delete slots[day.id].Sophia;
-    }
     day.meals.forEach((meal) => {
       if (typeof slots[day.id][meal] === "undefined") {
         slots[day.id][meal] = "";
@@ -6901,7 +9681,8 @@ function ensureCombinedMealSectionShape(combinedState) {
   prepDays.forEach((day) => {
     if (!combinedState[day.id]) combinedState[day.id] = {};
     Object.keys(combinedMealSections).forEach((meal) => {
-      combinedState[day.id][meal] = Boolean(combinedState[day.id][meal]);
+      const members = combinedMealMembersForDay(day, combinedState, meal);
+      combinedState[day.id][meal] = members.length >= 2 ? members : false;
     });
   });
 }
@@ -6954,12 +9735,19 @@ function cloneCombinedMealSections(combinedState) {
 function setCombinedMealSection(week, dayId, meal, value) {
   if (!week.combinedMealSections) week.combinedMealSections = {};
   if (!week.combinedMealSections[dayId]) week.combinedMealSections[dayId] = {};
+  if (Array.isArray(value)) {
+    const day = prepDays.find((item) => item.id === dayId);
+    const members = combinedMealMembersForDay(day, { [dayId]: { [meal]: value } }, meal);
+    week.combinedMealSections[dayId][meal] = members.length >= 2 ? members : false;
+    return;
+  }
   week.combinedMealSections[dayId][meal] = Boolean(value);
 }
 
-function toggleMealPlanView() {
+async function toggleMealPlanView() {
   const week = weekState();
   editingMealEntry = null;
+  let justPublished = false;
   if (isPublishedMealPlanView(week)) {
     week.mealPlanView = "edit";
   } else {
@@ -6974,8 +9762,12 @@ function toggleMealPlanView() {
     ensureCombinedMealSectionShape(week.publishedCombinedMealSections);
     week.mealPlanView = "published";
     archivePublishedWeek(week);
+    justPublished = true;
   }
   persist();
+  if (justPublished) {
+    await persistImmediately("published week");
+  }
   renderPlanner();
   renderGroceries();
   if (isPublishedMealPlanView(week)) openPublishedGroceryReview();

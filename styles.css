@@ -6,15 +6,17 @@
   --ink: #21201d;
   --muted: #6f6a60;
   --line: #ded7cb;
-  --accent: #2f7f68;
-  --accent-dark: #205c4c;
-  --accent-soft: #dff1e9;
+  --accent: #32b496;
+  --accent-dark: #237f69;
+  --accent-soft: #d9f4ed;
   --tomato: #c94d32;
   --tomato-soft: #f6ded7;
-  --sun: #f0b64d;
-  --blue: #3f6c9c;
-  --shadow: 0 18px 40px rgba(50, 45, 35, 0.12);
-  --radius: 8px;
+  --sun: #f1cc54;
+  --sun-soft: #f9e49b;
+  --sun-pale: #fff3c8;
+  --blue: #f1cc54;
+  --shadow: 0 18px 40px rgba(73, 54, 16, 0.14);
+  --radius: 14px;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -26,13 +28,15 @@ body[data-theme="dark"] {
   --ink: #f2eee5;
   --muted: #b7afa2;
   --line: #44483f;
-  --accent: #75bda4;
-  --accent-dark: #a7dec9;
-  --accent-soft: #18392f;
+  --accent: #32b496;
+  --accent-dark: #8fe0cd;
+  --accent-soft: #123b33;
   --tomato: #f08a71;
   --tomato-soft: #4a241d;
-  --sun: #d7a84b;
-  --blue: #8eb3dd;
+  --sun: #f1cc54;
+  --sun-soft: #f9e49b;
+  --sun-pale: #6f5b22;
+  --blue: #f1cc54;
   --shadow: 0 18px 40px rgba(0, 0, 0, 0.36);
 }
 
@@ -48,13 +52,15 @@ body[data-theme="auto"] {
     --ink: #f2eee5;
     --muted: #b7afa2;
     --line: #44483f;
-    --accent: #75bda4;
-    --accent-dark: #a7dec9;
-    --accent-soft: #18392f;
+    --accent: #32b496;
+    --accent-dark: #8fe0cd;
+    --accent-soft: #123b33;
     --tomato: #f08a71;
     --tomato-soft: #4a241d;
-    --sun: #d7a84b;
-    --blue: #8eb3dd;
+    --sun: #f1cc54;
+    --sun-soft: #f9e49b;
+    --sun-pale: #6f5b22;
+    --blue: #f1cc54;
     --shadow: 0 18px 40px rgba(0, 0, 0, 0.36);
   }
 }
@@ -66,27 +72,18 @@ body[data-theme="auto"] {
 body {
   margin: 0;
   min-height: 100vh;
-  background:
-    linear-gradient(135deg, rgba(47, 127, 104, 0.1), transparent 32%),
-    linear-gradient(315deg, rgba(201, 77, 50, 0.09), transparent 28%),
-    var(--bg);
+  background: var(--sun-soft);
   color: var(--ink);
 }
 
 @media (prefers-color-scheme: dark) {
   body[data-theme="auto"] {
-    background:
-      linear-gradient(135deg, rgba(117, 189, 164, 0.12), transparent 32%),
-      linear-gradient(315deg, rgba(240, 138, 113, 0.1), transparent 28%),
-      var(--bg);
+    background: var(--sun-pale);
   }
 }
 
 body[data-theme="dark"] {
-  background:
-    linear-gradient(135deg, rgba(117, 189, 164, 0.12), transparent 32%),
-    linear-gradient(315deg, rgba(240, 138, 113, 0.1), transparent 28%),
-    var(--bg);
+  background: var(--sun-pale);
 }
 
 button,
@@ -108,6 +105,10 @@ svg {
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 2;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 .visually-hidden {
@@ -344,10 +345,12 @@ svg {
   width: 50px;
   height: 50px;
   padding: 0;
-  border: 0;
-  border-radius: 12px;
-  background: var(--accent);
-  color: white;
+  border: 2px solid color-mix(in srgb, var(--accent-dark) 24%, #ffffff);
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 35% 25%, rgba(255, 255, 255, 0.26), transparent 42%),
+    var(--accent);
+  color: #fffaf0;
   box-shadow: var(--shadow);
   flex: 0 0 auto;
   cursor: pointer;
@@ -364,16 +367,24 @@ svg {
   height: 29px;
 }
 
-.brand-mark svg path:first-child {
-  fill: rgba(255, 255, 255, 0.18);
+.brand-mark .directory-mark-icon {
+  display: none;
+}
+
+.brand-mark.is-directory .settings-mark-icon {
+  display: none;
+}
+
+.brand-mark.is-directory .directory-mark-icon {
+  display: block;
 }
 
 .brand h1 {
   margin: 0;
   color: var(--ink);
-  font-family: inherit;
+  font-family: "Great Vibes", cursive;
   font-size: clamp(1.6rem, 4vw, 2.4rem);
-  font-weight: 900;
+  font-weight: 700;
   line-height: 1;
   letter-spacing: 0;
 }
@@ -386,9 +397,9 @@ svg {
   display: grid;
   min-width: 188px;
   padding: 6px;
-  border: 1px solid var(--line);
+  border: 1px solid color-mix(in srgb, var(--sun) 55%, var(--accent));
   border-radius: var(--radius);
-  background: var(--surface-strong);
+  background: color-mix(in srgb, var(--sun-pale) 82%, #ffffff);
   box-shadow: 0 18px 42px rgba(45, 40, 34, 0.18);
 }
 
@@ -463,9 +474,9 @@ h3 {
 
 .account-tools span {
   min-width: 0;
-  color: var(--muted);
+  color: #000000;
   font-size: 0.85rem;
-  font-weight: 750;
+  font-weight: 850;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -591,6 +602,58 @@ h3 {
   gap: 16px;
 }
 
+.home-page {
+  display: grid;
+  min-height: calc(100dvh - 150px);
+  place-items: center;
+  padding: 24px;
+}
+
+.home-center {
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  text-align: center;
+}
+
+.home-center h2 {
+  margin: 0;
+  color: var(--ink);
+  font-family: "Great Vibes", cursive;
+  font-size: clamp(5rem, 18vw, 13rem);
+  font-weight: 700;
+  line-height: 0.9;
+}
+
+.home-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+.home-links button {
+  min-height: 0;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 1.05rem;
+  font-weight: 850;
+  text-decoration: none;
+}
+
+.home-links button:hover,
+.home-links button:focus-visible {
+  background: transparent;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  outline: none;
+}
+
 .panel,
 .planner-column {
   position: relative;
@@ -639,6 +702,9 @@ h3 {
   width: 100%;
   padding: 16px;
   min-width: 0;
+  background: var(--sun-pale);
+  border: 1px solid color-mix(in srgb, var(--sun) 56%, #ffffff);
+  box-shadow: 0 22px 54px rgba(116, 85, 18, 0.18);
 }
 
 .side-stack {
@@ -707,7 +773,7 @@ textarea {
   gap: 7px;
   padding: 0 13px;
   background: var(--accent);
-  color: white;
+  color: #fffaf0;
   font-weight: 800;
   border: 0;
   box-shadow: none;
@@ -778,15 +844,15 @@ textarea {
 
 .primary-btn:hover {
   background: var(--accent-dark);
-  color: white;
+  color: #fffaf0;
 }
 
 .secondary-btn,
 .danger-btn,
 .folder-btn,
 .icon-btn {
-  background: var(--surface-strong);
-  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--sun-pale) 74%, #ffffff);
+  border: 1px solid color-mix(in srgb, var(--sun) 55%, var(--line));
   color: var(--ink);
 }
 
@@ -830,7 +896,7 @@ textarea {
 .folder-btn:hover,
 .folder-btn:focus-visible {
   border-color: var(--accent);
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--accent-soft) 82%, #ffffff);
   color: var(--accent-dark);
   outline: none;
 }
@@ -1101,6 +1167,15 @@ select:focus {
   outline: none;
 }
 
+.meal-entry-context-menu [data-make-ahead-meal-entry-menu] {
+  color: #000000;
+}
+
+.meal-entry-context-menu [data-make-ahead-meal-entry-menu]:hover,
+.meal-entry-context-menu [data-make-ahead-meal-entry-menu]:focus-visible {
+  background: color-mix(in srgb, var(--accent-soft) 72%, #ffffff);
+}
+
 .settings-dock {
   position: fixed;
   right: 18px;
@@ -1168,6 +1243,12 @@ select:focus {
   box-shadow: none;
 }
 
+.nested-settings-menu {
+  margin-left: 10px;
+  padding-left: 8px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 42%, var(--sun));
+}
+
 .settings-menu button {
   width: 100%;
   min-height: 38px;
@@ -1181,6 +1262,85 @@ select:focus {
 .settings-menu button:hover,
 .settings-menu button:focus-visible {
   background: #f8f5ee;
+  outline: none;
+}
+
+.settings-page {
+  min-height: min(70vh, 760px);
+}
+
+.settings-page-list {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-page-section {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--sun) 48%, var(--line));
+  border-radius: 18px;
+  background: rgba(255, 253, 246, 0.86);
+}
+
+.settings-section-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 54px;
+  padding: 0 14px;
+  color: #3b2e12;
+  font-family: "Great Vibes", cursive;
+  font-size: 1.5rem;
+  font-weight: 700;
+  text-align: left;
+}
+
+.settings-section-toggle svg {
+  width: 22px;
+  height: 22px;
+  justify-self: end;
+  transition: transform 160ms ease;
+}
+
+.settings-section-toggle[aria-expanded="false"] svg {
+  transform: rotate(-90deg);
+}
+
+.settings-page-body {
+  display: grid;
+  gap: 12px;
+  padding: 0 14px 14px;
+}
+
+.settings-page-body[hidden] {
+  display: none;
+}
+
+.settings-action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.settings-action-grid button {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--sun) 55%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sun-pale) 74%, #ffffff);
+  color: var(--ink);
+  font-weight: 850;
+  text-align: left;
+}
+
+.settings-action-grid button:hover,
+.settings-action-grid button:focus-visible {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 82%, #ffffff);
+  color: var(--accent-dark);
   outline: none;
 }
 
@@ -1376,9 +1536,9 @@ select:focus {
   min-width: 0;
   min-height: 58px;
   padding: 6px 5px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface-strong);
+  border: 1px solid color-mix(in srgb, var(--sun) 48%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sun-pale) 76%, #ffffff);
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 850;
@@ -1405,29 +1565,57 @@ select:focus {
   display: none;
 }
 
-.day-tab em {
-  display: grid;
-  place-items: center;
-  min-width: 17px;
-  height: 17px;
-  margin-top: 3px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: #eef2d6;
-  color: #5b6a20;
-  font-size: 0.62rem;
-  font-style: normal;
-}
-
 .day-tab.is-active {
   border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--accent-soft) 82%, #ffffff);
   color: var(--accent-dark);
   box-shadow: inset 0 3px 0 var(--accent);
 }
 
+.day-tab.has-synced-calendar:not(.is-active) {
+  background: var(--calendar-tab-background, #e5e9ff);
+  border-color: var(--calendar-tab-border, #c2ccff);
+  color: var(--calendar-tab-ink, #243178);
+}
+
+.day-tab.has-synced-calendar:not(.is-active) .day-tab-date {
+  color: var(--calendar-tab-ink, #243178);
+}
+
 .day-tab.is-active .day-tab-date {
   color: var(--accent-dark);
+}
+
+.day-event-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0 0 8px;
+}
+
+.day-event-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.day-event-pill strong {
+  font: inherit;
+}
+
+.calendar-event-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 999px;
 }
 
 .day-column {
@@ -1444,7 +1632,7 @@ select:focus {
 
 .day-slots-carousel {
   display: grid;
-  grid-template-columns: repeat(var(--meal-column-count, 4), minmax(240px, 1fr));
+  grid-template-columns: repeat(var(--meal-column-count, 4), minmax(280px, 1fr));
   gap: 8px;
   align-items: start;
   min-width: 0;
@@ -1455,7 +1643,7 @@ select:focus {
 }
 
 .day-slots-carousel.is-published {
-  grid-template-columns: repeat(var(--meal-column-count, 4), minmax(240px, 1fr));
+  grid-template-columns: repeat(var(--meal-column-count, 4), minmax(280px, 1fr));
 }
 
 .meal-plan-column {
@@ -1491,16 +1679,6 @@ select:focus {
   gap: 6px;
   min-width: 0;
   margin-right: auto;
-}
-
-.holiday-badge {
-  padding: 2px 6px;
-  border-radius: 999px;
-  background: #eef2d6;
-  color: #5b6a20;
-  font-size: 0.68rem;
-  font-style: normal;
-  font-weight: 850;
 }
 
 .auto-rule-list {
@@ -1735,18 +1913,18 @@ select:focus {
   gap: 8px;
   min-height: 0;
   padding: 10px;
-  border: 1px dashed #cfc6b8;
-  border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid color-mix(in srgb, var(--sun) 48%, #ffffff);
+  border-radius: 18px;
+  background: rgba(255, 250, 235, 0.74);
 }
 
 .slot-card.filled {
   border-style: solid;
-  background: var(--surface-strong);
-  box-shadow: none;
+  background: rgba(255, 253, 246, 0.9);
+  box-shadow: 0 10px 28px rgba(116, 85, 18, 0.08);
 }
 
-.published-slot {
+.slot-card.published-slot {
   gap: 5px;
   padding: 4px 0 8px;
   border: 0;
@@ -1756,8 +1934,8 @@ select:focus {
 
 .published-slot .slot-label {
   color: var(--ink);
-  font-size: 0.8rem;
-  font-weight: 900;
+  font-size: 1.08rem;
+  font-weight: 700;
 }
 
 .published-slot .meal-entry-list {
@@ -1794,6 +1972,11 @@ select:focus {
   line-height: 1.35;
 }
 
+.published-meal-entry .custom-meal-link {
+  border: 0;
+  background: transparent;
+}
+
 .published-meal-entry .recipe-meal-link {
   cursor: pointer;
 }
@@ -1811,22 +1994,26 @@ select:focus {
 }
 
 .slot-label {
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 850;
-  text-transform: uppercase;
+  color: #3b2e12;
+  font-family: "Great Vibes", cursive;
+  font-size: 1.32rem;
+  font-weight: 700;
+  text-transform: none;
   letter-spacing: 0;
 }
 
 .slot-topline {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
-  justify-content: space-between;
+  min-width: 0;
 }
 
 .slot-actions {
@@ -1846,9 +2033,9 @@ select:focus {
   width: 28px;
   height: 28px;
   min-height: 28px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface-strong);
+  border: 1px solid color-mix(in srgb, var(--sun) 48%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sun-pale) 72%, #ffffff);
   color: var(--ink);
   font-weight: 850;
 }
@@ -1898,8 +2085,20 @@ select:focus {
   display: flex;
   align-items: center;
   gap: 10px;
-  justify-content: flex-end;
+  justify-content: space-between;
   padding-top: 12px;
+}
+
+.meal-plan-page-actions,
+.meal-plan-publish-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.meal-plan-publish-actions {
+  justify-content: flex-end;
 }
 
 .meal-plan-view-label {
@@ -1980,8 +2179,8 @@ select:focus {
 .meal-pick-slot {
   display: flex;
   align-items: center;
-  border: 1px solid #acd9cb;
-  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--accent) 44%, #ffffff);
+  border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent-dark);
   font-weight: 850;
@@ -1991,8 +2190,8 @@ select:focus {
 
 .meal-pick-slot {
   justify-content: flex-start;
-  border-color: var(--line);
-  background: var(--surface-strong);
+  border-color: color-mix(in srgb, var(--sun) 48%, var(--line));
+  background: color-mix(in srgb, var(--sun-pale) 74%, #ffffff);
   color: var(--ink);
 }
 
@@ -2009,9 +2208,9 @@ select:focus {
   min-width: 28px;
   height: 36px;
   padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface-strong);
+  border: 1px solid color-mix(in srgb, var(--sun) 48%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sun-pale) 74%, #ffffff);
   color: var(--ink);
   font-size: 0.74rem;
   font-weight: 850;
@@ -2176,12 +2375,313 @@ select:focus {
 
 #section-groceries {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   min-height: 0;
 }
 
 #groceriesPageDialog .grocery-list {
   min-height: 0;
+}
+
+.do-board {
+  display: grid;
+  gap: 12px;
+}
+
+.do-week-shell {
+  position: relative;
+  display: grid;
+  gap: 14px;
+}
+
+.do-week-shell.is-inactive .planner-day-panel {
+  filter: grayscale(0.35);
+  opacity: 0.48;
+  pointer-events: none;
+}
+
+.do-create-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  border-radius: 24px;
+  background: rgba(255, 243, 200, 0.28);
+  backdrop-filter: blur(1px);
+}
+
+.do-create-overlay .primary-btn {
+  min-height: 46px;
+  padding-inline: 24px;
+  box-shadow: 0 18px 38px rgba(45, 40, 34, 0.18);
+}
+
+.do-task-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.do-task-list {
+  display: grid;
+  gap: 8px;
+  min-height: 52px;
+  padding: 3px;
+  border-radius: 18px;
+}
+
+.do-task-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--sun) 48%, #ffffff);
+  border-radius: 18px;
+  background: rgba(255, 253, 246, 0.9);
+  box-shadow: 0 10px 28px rgba(116, 85, 18, 0.08);
+}
+
+.do-task-item[draggable="true"] {
+  cursor: grab;
+}
+
+.do-task-item.is-dragging {
+  opacity: 0.55;
+}
+
+.do-task-item.is-recurring {
+  cursor: grab;
+}
+
+.do-backlog-panel {
+  margin-top: 14px;
+}
+
+.do-task-drop-over {
+  outline: 3px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  outline-offset: 2px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.do-task-item label {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+  color: var(--ink, #1e1a14);
+  font-weight: 850;
+}
+
+.do-task-item input {
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
+.do-task-title {
+  display: block;
+  min-width: 0;
+  width: 100%;
+  color: var(--ink, #1e1a14) !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workout-title-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.workout-title-button:hover,
+.workout-title-button:focus-visible {
+  color: var(--accent-dark) !important;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  outline: none;
+}
+
+.do-task-item.is-done .do-task-title {
+  color: var(--muted, #6f695f) !important;
+  text-decoration: line-through;
+}
+
+.do-task-item .icon-btn {
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+}
+
+.play-workout-item label {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.exercise-data-fields {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.exercise-data-fields input {
+  min-height: 34px;
+  width: 100%;
+}
+
+.keep-workout-btn {
+  grid-column: 1 / -1;
+  justify-self: start;
+  min-height: 30px;
+}
+
+.workout-detail-body {
+  display: grid;
+  gap: 12px;
+}
+
+.workout-type-control {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workout-type-control button {
+  min-height: 36px;
+  padding-inline: 14px;
+}
+
+.workout-type-control button.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fffaf0;
+}
+
+.workout-type-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.workout-type-panel[hidden] {
+  display: none;
+}
+
+.workout-detail-body label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.workout-detail-body .exercise-data-fields label {
+  color: var(--muted);
+}
+
+.workout-rep-list {
+  display: grid;
+  gap: 8px;
+}
+
+.workout-rep-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.6fr) repeat(3, minmax(74px, 0.8fr)) auto;
+  gap: 7px;
+  align-items: center;
+}
+
+.workout-rep-row input {
+  min-height: 34px;
+}
+
+.workout-rep-row .icon-btn {
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+}
+
+.workout-log-row {
+  margin: 0;
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--sun) 34%, transparent);
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 750;
+}
+
+.active-exercise-content {
+  display: grid;
+  gap: 14px;
+}
+
+.active-exercise-notes {
+  color: var(--ink);
+  line-height: 1.55;
+  white-space: normal;
+}
+
+.active-exercise-fields label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.recurring-task-planner,
+.recurring-task-list {
+  display: grid;
+  gap: 10px;
+}
+
+.recurring-task-day-panel {
+  margin-top: 10px;
+}
+
+.recurring-task-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--sun) 48%, #ffffff);
+  border-radius: 18px;
+  background: rgba(255, 253, 246, 0.9);
+  box-shadow: 0 10px 28px rgba(116, 85, 18, 0.08);
+}
+
+.recurring-task-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 8px;
+  align-items: center;
+}
+
+.recurring-task-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.recurring-task-days label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line));
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.recurring-task-days input {
+  accent-color: var(--accent);
 }
 
 .grocery-form {
@@ -3059,6 +3559,102 @@ textarea {
   font-family: inherit;
 }
 
+.calendar-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.calendar-editor label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.calendar-color-field {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.calendar-color-field span {
+  grid-column: 1 / -1;
+}
+
+.calendar-color-field input,
+.calendar-color-input {
+  width: 38px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.calendar-list {
+  display: grid;
+  gap: 8px;
+}
+
+.calendar-list-item {
+  display: grid;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.calendar-list-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.calendar-list-main small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendar-list-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.calendar-list-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.calendar-list-item button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1rem;
+}
+
+.calendar-list-item button:hover {
+  border-color: #f0a7a7;
+  color: #a33a3a;
+}
+
 .weekly-email-editor .restore-preview-card {
   gap: 5px;
 }
@@ -3208,7 +3804,6 @@ textarea {
 }
 
 body[data-theme="dark"] .panel,
-body[data-theme="dark"] .planner-column,
 body[data-theme="dark"] .day-head,
 body[data-theme="dark"] .day-tab,
 body[data-theme="dark"] .folder-context-menu,
@@ -3223,6 +3818,11 @@ body[data-theme="dark"] .grocery-library-list,
 body[data-theme="dark"] .restore-preview,
 body[data-theme="dark"] .empty-state {
   background: color-mix(in srgb, var(--surface-strong) 86%, transparent);
+}
+
+body[data-theme="dark"] .planner-column {
+  background: #6f5b22;
+  border-color: color-mix(in srgb, var(--sun) 42%, var(--line));
 }
 
 body[data-theme="dark"] .folder-btn {
@@ -3251,11 +3851,6 @@ body[data-theme="dark"] .active-cooking-timer {
 body[data-theme="dark"] .pill.gold {
   background: #4b4510;
   color: #fff16a;
-}
-
-body[data-theme="dark"] .holiday-badge {
-  background: #263d1b;
-  color: #b7ff8d;
 }
 
 body[data-theme="dark"] .folder-btn.active,
@@ -3287,9 +3882,15 @@ body[data-theme="dark"] .recipe-dialog::backdrop {
   background: rgba(0, 0, 0, 0.62);
 }
 
+body[data-theme="dark"] .slot-card.published-slot,
+body[data-theme="dark"] .published-meal-entry .recipe-meal-link,
+body[data-theme="dark"] .published-meal-entry .meal-entry-static,
+body[data-theme="dark"] .published-meal-entry .custom-meal-link {
+  background: transparent;
+}
+
 @media (prefers-color-scheme: dark) {
   body[data-theme="auto"] .panel,
-  body[data-theme="auto"] .planner-column,
   body[data-theme="auto"] .day-head,
   body[data-theme="auto"] .day-tab,
   body[data-theme="auto"] .folder-context-menu,
@@ -3304,6 +3905,11 @@ body[data-theme="dark"] .recipe-dialog::backdrop {
   body[data-theme="auto"] .restore-preview,
   body[data-theme="auto"] .empty-state {
     background: color-mix(in srgb, var(--surface-strong) 86%, transparent);
+  }
+
+  body[data-theme="auto"] .planner-column {
+    background: #6f5b22;
+    border-color: color-mix(in srgb, var(--sun) 42%, var(--line));
   }
 
   body[data-theme="auto"] .folder-btn {
@@ -3334,11 +3940,6 @@ body[data-theme="dark"] .recipe-dialog::backdrop {
     color: #fff16a;
   }
 
-  body[data-theme="auto"] .holiday-badge {
-    background: #263d1b;
-    color: #b7ff8d;
-  }
-
   body[data-theme="auto"] .folder-btn.active,
   body[data-theme="auto"] .recipe-meal-link,
   body[data-theme="auto"] .chip,
@@ -3366,6 +3967,13 @@ body[data-theme="dark"] .recipe-dialog::backdrop {
 
   body[data-theme="auto"] .recipe-dialog::backdrop {
     background: rgba(0, 0, 0, 0.62);
+  }
+
+  body[data-theme="auto"] .slot-card.published-slot,
+  body[data-theme="auto"] .published-meal-entry .recipe-meal-link,
+  body[data-theme="auto"] .published-meal-entry .meal-entry-static,
+  body[data-theme="auto"] .published-meal-entry .custom-meal-link {
+    background: transparent;
   }
 }
 
@@ -3603,14 +4211,6 @@ body[data-theme="dark"] .recipe-dialog::backdrop {
     font-weight: 900;
   }
 
-  .day-tab em {
-    min-width: 13px;
-    height: 13px;
-    margin-top: 2px;
-    padding: 0 3px;
-    font-size: 0.55rem;
-  }
-
   .day-slots-carousel {
     grid-template-columns: repeat(var(--meal-column-count, 4), 100%);
     overflow-x: auto;
@@ -3704,6 +4304,15 @@ body[data-theme="dark"] .recipe-dialog::backdrop {
 
   .cook-log-row-grid {
     grid-template-columns: 1fr;
+  }
+
+  .workout-rep-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .workout-rep-row [data-workout-rep-field="lift"],
+  .workout-rep-row .icon-btn {
+    grid-column: 1 / -1;
   }
 
   .ingredient-grid-head,
