@@ -4,10 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Live</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=exercise-types-1" />
+    <link rel="stylesheet" href="./styles.css?v=settings-menu-panel-1" />
   </head>
   <body>
     <div class="app-shell">
@@ -26,17 +27,40 @@
                 </svg>
               </button>
               <div class="app-menu" id="appMenu" hidden>
-                <button type="button" id="eatMenuBtn">Eat</button>
-                <button type="button" id="playMenuBtn">Play</button>
-                <button type="button" id="doMenuBtn">Do</button>
-                <button type="button" id="settingsBtn">Settings</button>
+                <button type="button" id="generalSettingsMenuBtn">Settings</button>
+                <button type="button" id="menuAutoRulesBtn">Auto Rules</button>
+                <button type="button" id="menuTagsBtn">Tags</button>
+                <button type="button" id="menuGroceryItemsBtn">Grocery Items</button>
+                <button type="button" id="menuIngredientOptionsBtn">Ingredient Options</button>
+                <button type="button" id="menuRecurringTasksBtn">Recurring Tasks</button>
+                <button type="button" id="menuWorkoutLibraryBtn">Pre-Arranged Workouts</button>
+                <button type="button" id="menuPlayAutoRulesBtn">Auto Rules</button>
               </div>
             </div>
-            <h1 id="pageTitle" hidden>Live</h1>
+            <div class="page-title-wrap" id="pageTitleWrap" hidden>
+              <h1 id="pageTitle">
+                <button class="page-title-button" id="pageTitleBtn" type="button" aria-expanded="false" aria-controls="pageTitleMenu">
+                  <span id="pageTitleText">Live</span>
+                </button>
+              </h1>
+              <div class="page-title-menu" id="pageTitleMenu" hidden>
+                <button type="button" id="titleMealPlanBtn">Meal Plan</button>
+                <button type="button" id="titleExercisePlanBtn">Exercise Plan</button>
+                <button type="button" id="titleToDoListBtn">To Do List</button>
+              </div>
+            </div>
           </div>
           <div class="account-tools">
-            <span id="authStatus">Local storage</span>
-            <button class="secondary-btn" id="authButton" type="button">Sign in</button>
+            <button class="auth-profile-btn" id="authButton" type="button" title="Account" aria-label="Account" aria-expanded="false" aria-controls="authMenu">
+              <svg viewBox="0 0 32 32" aria-hidden="true">
+                <path d="M16 15.4c3.1 0 5.6-2.5 5.6-5.6S19.1 4.2 16 4.2s-5.6 2.5-5.6 5.6 2.5 5.6 5.6 5.6Z" />
+                <path d="M6.2 27.8c.8-5 4.9-8.7 9.8-8.7s9 3.7 9.8 8.7" />
+              </svg>
+            </button>
+            <div class="auth-menu" id="authMenu" hidden>
+              <span id="authStatus">Local storage</span>
+              <button class="secondary-btn" id="authMenuAction" type="button">Sign in</button>
+            </div>
           </div>
         </div>
         <div class="week-tools" hidden>
@@ -157,6 +181,26 @@
           </div>
         </section>
       </main>
+
+      <dialog class="recipe-dialog auth-dialog context-settings-dialog" id="contextSettingsDialog">
+        <div class="recipe-form">
+          <div class="dialog-head">
+            <div>
+              <h2 id="contextSettingsTitle">Settings</h2>
+            </div>
+            <button class="icon-btn" id="closeContextSettingsBtn" type="button" title="Close" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div class="context-settings-body" id="contextSettingsBody"></div>
+          <div class="dialog-actions">
+            <span></span>
+            <div>
+              <button class="primary-btn" type="button" id="doneContextSettingsBtn">Done</button>
+            </div>
+          </div>
+        </div>
+      </dialog>
 
       <div class="meal-trash-overlay" id="mealTrashOverlay" aria-hidden="true">
         <div class="meal-trash-target" id="mealTrashTarget">
@@ -321,7 +365,7 @@
         <div class="recipe-form">
           <div class="dialog-head">
             <div>
-              <p class="muted-label" id="workoutDetailLabel">Workout</p>
+              <p class="muted-label" id="workoutDetailLabel">Exercise</p>
               <h2 id="workoutDetailTitle">Workout</h2>
             </div>
             <button class="icon-btn" id="closeWorkoutDetailBtn" type="button" title="Close" aria-label="Close">
@@ -339,31 +383,25 @@
               <button class="secondary-btn" type="button" data-workout-type="game">Game</button>
             </div>
             <div class="workout-type-panel" data-workout-panel="timed">
-              <div class="exercise-data-fields">
-                <label>
-                  Time
-                  <input id="workoutTimedDuration" type="number" min="0" step="5" value="30" />
-                </label>
-                <label>
-                  Unit
-                  <select id="workoutTimedUnit">
-                    <option value="min">min</option>
-                    <option value="hr">hr</option>
-                  </select>
-                </label>
-                <label>
-                  Distance
-                  <input id="workoutTimedDistance" type="number" min="0" step="0.1" value="16" />
-                </label>
-                <label>
-                  Unit
-                  <select id="workoutTimedDistanceUnit">
-                    <option value="km">km</option>
-                    <option value="mi">mi</option>
-                    <option value="m">m</option>
-                    <option value="yd">yd</option>
-                  </select>
-                </label>
+              <div class="workout-wheel-grid" aria-label="Timed exercise picker">
+                <div class="workout-wheel-group">
+                  <span>Time</span>
+                  <div class="workout-wheel-row">
+                    <div class="workout-wheel-picker" id="workoutTimedHours" data-workout-wheel="hours" role="spinbutton" aria-label="Hours" tabindex="0"></div>
+                    <div class="workout-wheel-picker" id="workoutTimedMinutes" data-workout-wheel="minutes" role="spinbutton" aria-label="Minutes" tabindex="0"></div>
+                    <div class="workout-wheel-picker" id="workoutTimedSeconds" data-workout-wheel="seconds" role="spinbutton" aria-label="Seconds" tabindex="0"></div>
+                  </div>
+                  <div class="workout-wheel-caption" aria-hidden="true"><span>hr</span><span>min</span><span>sec</span></div>
+                </div>
+                <div class="workout-wheel-group">
+                  <span>Distance</span>
+                  <div class="workout-wheel-row">
+                    <div class="workout-wheel-picker" id="workoutTimedDistanceWhole" data-workout-wheel="distanceWhole" role="spinbutton" aria-label="Distance whole number" tabindex="0"></div>
+                    <div class="workout-wheel-picker" id="workoutTimedDistanceDecimal" data-workout-wheel="distanceDecimal" role="spinbutton" aria-label="Distance decimal" tabindex="0"></div>
+                    <div class="workout-wheel-picker" id="workoutTimedDistanceUnit" data-workout-wheel="distanceUnit" role="spinbutton" aria-label="Distance unit" tabindex="0"></div>
+                  </div>
+                  <div class="workout-wheel-caption" aria-hidden="true"><span>whole</span><span>.00</span><span>unit</span></div>
+                </div>
               </div>
             </div>
             <div class="workout-type-panel" data-workout-panel="reps" hidden>
@@ -392,30 +430,9 @@
             </section>
           </div>
           <div class="dialog-actions">
-            <button class="secondary-btn" type="button" id="keepWorkoutDetailBtn" hidden>Keep workout</button>
+            <button class="secondary-btn" type="button" id="keepWorkoutDetailBtn">Pin</button>
             <div>
               <button class="primary-btn" type="button" id="saveWorkoutDetailBtn">Save</button>
-            </div>
-          </div>
-        </div>
-      </dialog>
-
-      <dialog class="recipe-dialog auth-dialog compact-dialog" id="startExerciseDialog">
-        <div class="recipe-form">
-          <div class="dialog-head">
-            <div>
-              <p class="muted-label">Play</p>
-              <h2>Start exercise?</h2>
-            </div>
-            <button class="icon-btn" id="cancelStartExerciseBtn" type="button" title="Close" aria-label="Close">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-            </button>
-          </div>
-          <p class="dialog-copy" id="startExerciseMessage">Would you like to start this exercise?</p>
-          <div class="dialog-actions">
-            <button class="secondary-btn" type="button" id="declineStartExerciseBtn">No</button>
-            <div>
-              <button class="primary-btn" type="button" id="confirmStartExerciseBtn">Yes</button>
             </div>
           </div>
         </div>
@@ -433,6 +450,30 @@
             </button>
           </div>
           <div class="active-exercise-content" id="activeExerciseContent"></div>
+          <div class="active-exercise-actions">
+            <button class="primary-btn" type="button" id="logActiveExerciseBtn">Log</button>
+          </div>
+        </div>
+      </dialog>
+
+      <dialog class="recipe-dialog auth-dialog compact-dialog" id="repWeightDialog">
+        <div class="recipe-form">
+          <div class="dialog-head">
+            <div>
+              <p class="muted-label">Weight</p>
+              <h2 id="repWeightTitle">Select weight</h2>
+            </div>
+            <div class="rep-weight-head-actions">
+              <div class="rep-weight-unit-toggle" role="group" aria-label="Weight unit">
+                <button class="active" type="button" data-rep-weight-unit="lb" aria-pressed="true">lb</button>
+                <button type="button" data-rep-weight-unit="kg" aria-pressed="false">kg</button>
+              </div>
+            </div>
+            <button class="icon-btn" id="closeRepWeightBtn" type="button" title="Close" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div class="rep-weight-grid" id="repWeightGrid"></div>
         </div>
       </dialog>
 
@@ -675,7 +716,6 @@
       <div class="recipe-form">
         <div class="dialog-head">
           <div>
-            <p class="muted-label">Settings</p>
             <h2>Auto Rules</h2>
           </div>
           <div class="dialog-head-actions">
@@ -708,7 +748,6 @@
       <div class="recipe-form">
         <div class="dialog-head">
           <div>
-            <p class="muted-label">Settings</p>
             <h2>Tags</h2>
           </div>
           <button class="icon-btn" id="closeTagsBtn" type="button" title="Close" aria-label="Close">
@@ -735,7 +774,6 @@
       <div class="recipe-form">
         <div class="dialog-head">
           <div>
-            <p class="muted-label">Settings</p>
             <h2>Grocery Items</h2>
           </div>
           <button class="icon-btn" id="closeGroceryLibraryBtn" type="button" title="Close" aria-label="Close">
@@ -763,7 +801,6 @@
       <div class="recipe-form">
         <div class="dialog-head">
           <div>
-            <p class="muted-label">Settings</p>
             <h2>Ingredient Options</h2>
           </div>
           <button class="icon-btn" id="closeIngredientOptionsBtn" type="button" title="Close" aria-label="Close">
@@ -801,7 +838,6 @@
       <div class="recipe-form">
         <div class="dialog-head">
           <div>
-            <p class="muted-label">Settings</p>
             <h2>Calendars</h2>
           </div>
           <button class="icon-btn" id="closeCalendarsBtn" type="button" title="Close" aria-label="Close">
@@ -935,7 +971,6 @@
       <div class="recipe-form">
         <div class="dialog-head">
           <div>
-            <p class="muted-label">Settings</p>
             <h2>Weekly Email</h2>
           </div>
           <button class="icon-btn" id="closeWeeklyEmailBtn" type="button" title="Close" aria-label="Close">
@@ -1036,7 +1071,7 @@
         <div class="dialog-head">
           <div>
             <p class="muted-label">Cloud sync</p>
-            <h2>Sign in to Eat</h2>
+            <h2>Sign in to Live</h2>
           </div>
           <button class="icon-btn" type="button" id="closeAuthBtn" title="Close" aria-label="Close">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
@@ -1113,6 +1148,6 @@
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./supabase-config.js?v=auth-deploy-1"></script>
-    <script src="./app.js?v=exercise-types-1"></script>
+    <script src="./app.js?v=rep-weight-units-1"></script>
   </body>
 </html>

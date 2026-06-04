@@ -56,6 +56,16 @@ const commonGroceryItems = [
   "pasta", "peanut butter", "potatoes", "rice", "salmon", "salsa", "salt", "shallots", "sour cream", "strawberries",
   "sweet potatoes", "tomatoes", "tortillas", "turkey", "yellow onions", "yogurt", "zucchini"
 ];
+const workoutHourOptions = Array.from({ length: 25 }, (_, index) => String(index));
+const workoutMinuteSecondOptions = Array.from({ length: 60 }, (_, index) => String(index).padStart(2, "0"));
+const workoutDistanceWholeOptions = Array.from({ length: 201 }, (_, index) => String(index));
+const workoutDistanceDecimalOptions = Array.from({ length: 100 }, (_, index) => String(index).padStart(2, "0"));
+const workoutDistanceUnitOptions = ["km", "mi", "m", "yd"];
+const pageVisibilityDefaults = {
+  eat: true,
+  play: true,
+  do: true
+};
 const prepDays = [
   { id: "friday-start", name: "Friday", offset: 0, meals: [...dinnerMeals] },
   { id: "saturday", name: "Saturday", offset: 1, meals: fullDayMeals },
@@ -124,11 +134,14 @@ let folderClickTimer = null;
 let mealEntryClickTimer = null;
 let editingMealEntry = null;
 let suppressMealEntryClick = false;
+let copiedMealEntry = "";
 let editingFolderId = "";
 let folderMenuId = "";
 let draggedMealEntry = null;
+let draggedDoTask = null;
 let draggedPlayTask = null;
 let mealSwipeGesture = null;
+let doTaskSwipeGesture = null;
 let autoRuleSwipeGesture = null;
 let mealPointerDeleteGesture = null;
 let lastMealDragPoint = null;
@@ -139,6 +152,7 @@ let pendingAutoRuleIngredientSelection = null;
 let draggedAutoRuleEntry = null;
 let autoRulePointerDrag = null;
 let suppressAutoRuleClick = false;
+let pendingAutoRuleCompaction = null;
 let draggedMealSection = null;
 let draggedRecipeId = "";
 let draggedFolderId = "";
@@ -159,7 +173,8 @@ let activeAppArea = "home";
 let activeRecurringTaskDayId = "";
 let activePlayAutoRuleDayId = "";
 let activeWorkoutDetail = null;
-let pendingStartExercise = null;
+let activeExerciseContext = null;
+let pendingRepWeightSelection = null;
 
 const elements = {
   weekLabel: document.querySelector("#weekLabel"),
@@ -168,6 +183,8 @@ const elements = {
   nextWeek: document.querySelector("#nextWeek"),
   authStatus: document.querySelector("#authStatus"),
   authButton: document.querySelector("#authButton"),
+  authMenu: document.querySelector("#authMenu"),
+  authMenuAction: document.querySelector("#authMenuAction"),
   authDialog: document.querySelector("#authDialog"),
   authForm: document.querySelector("#authForm"),
   authEmail: document.querySelector("#authEmail"),
@@ -177,15 +194,32 @@ const elements = {
   closeAuthBtn: document.querySelector("#closeAuthBtn"),
   cancelAuthBtn: document.querySelector("#cancelAuthBtn"),
   pageTitle: document.querySelector("#pageTitle"),
+  pageTitleWrap: document.querySelector("#pageTitleWrap"),
+  pageTitleText: document.querySelector("#pageTitleText"),
+  pageTitleBtn: document.querySelector("#pageTitleBtn"),
+  pageTitleMenu: document.querySelector("#pageTitleMenu"),
+  titleMealPlanBtn: document.querySelector("#titleMealPlanBtn"),
+  titleExercisePlanBtn: document.querySelector("#titleExercisePlanBtn"),
+  titleToDoListBtn: document.querySelector("#titleToDoListBtn"),
+  generalSettingsMenuBtn: document.querySelector("#generalSettingsMenuBtn"),
+  menuAutoRulesBtn: document.querySelector("#menuAutoRulesBtn"),
+  menuTagsBtn: document.querySelector("#menuTagsBtn"),
+  menuGroceryItemsBtn: document.querySelector("#menuGroceryItemsBtn"),
+  menuIngredientOptionsBtn: document.querySelector("#menuIngredientOptionsBtn"),
+  menuRecurringTasksBtn: document.querySelector("#menuRecurringTasksBtn"),
+  menuWorkoutLibraryBtn: document.querySelector("#menuWorkoutLibraryBtn"),
+  menuPlayAutoRulesBtn: document.querySelector("#menuPlayAutoRulesBtn"),
+  contextSettingsDialog: document.querySelector("#contextSettingsDialog"),
+  contextSettingsTitle: document.querySelector("#contextSettingsTitle"),
+  contextSettingsBody: document.querySelector("#contextSettingsBody"),
+  closeContextSettingsBtn: document.querySelector("#closeContextSettingsBtn"),
+  doneContextSettingsBtn: document.querySelector("#doneContextSettingsBtn"),
   homeMainPage: document.querySelector("#homeMainPage"),
   homeEatBtn: document.querySelector("#homeEatBtn"),
   homePlayBtn: document.querySelector("#homePlayBtn"),
   homeDoBtn: document.querySelector("#homeDoBtn"),
   appMenuBtn: document.querySelector("#appMenuBtn"),
   appMenu: document.querySelector("#appMenu"),
-  eatMenuBtn: document.querySelector("#eatMenuBtn"),
-  playMenuBtn: document.querySelector("#playMenuBtn"),
-  doMenuBtn: document.querySelector("#doMenuBtn"),
   openMealPlanBtn: document.querySelector("#openMealPlanBtn"),
   recipeSearch: document.querySelector("#recipeSearch"),
   clearRecipeSearchBtn: document.querySelector("#clearRecipeSearchBtn"),
@@ -205,7 +239,6 @@ const elements = {
   groceriesPageDialog: document.querySelector("#groceriesPageDialog"),
   closeRecipeBoxPageBtn: document.querySelector("#closeRecipeBoxPageBtn"),
   closeGroceriesPageBtn: document.querySelector("#closeGroceriesPageBtn"),
-  settingsBtn: document.querySelector("#settingsBtn"),
   settingsMainPage: document.querySelector("#settingsMainPage"),
   playMainPage: document.querySelector("#playMainPage"),
   playPlannerGrid: document.querySelector("#playPlannerGrid"),
@@ -254,9 +287,11 @@ const elements = {
   workoutDetailName: document.querySelector("#workoutDetailName"),
   workoutTypeButtons: document.querySelectorAll("[data-workout-type]"),
   workoutTypePanels: document.querySelectorAll("[data-workout-panel]"),
-  workoutTimedDuration: document.querySelector("#workoutTimedDuration"),
-  workoutTimedUnit: document.querySelector("#workoutTimedUnit"),
-  workoutTimedDistance: document.querySelector("#workoutTimedDistance"),
+  workoutTimedHours: document.querySelector("#workoutTimedHours"),
+  workoutTimedMinutes: document.querySelector("#workoutTimedMinutes"),
+  workoutTimedSeconds: document.querySelector("#workoutTimedSeconds"),
+  workoutTimedDistanceWhole: document.querySelector("#workoutTimedDistanceWhole"),
+  workoutTimedDistanceDecimal: document.querySelector("#workoutTimedDistanceDecimal"),
   workoutTimedDistanceUnit: document.querySelector("#workoutTimedDistanceUnit"),
   workoutRepList: document.querySelector("#workoutRepList"),
   addWorkoutRepBtn: document.querySelector("#addWorkoutRepBtn"),
@@ -268,15 +303,16 @@ const elements = {
   workoutDetailLogs: document.querySelector("#workoutDetailLogs"),
   keepWorkoutDetailBtn: document.querySelector("#keepWorkoutDetailBtn"),
   saveWorkoutDetailBtn: document.querySelector("#saveWorkoutDetailBtn"),
-  startExerciseDialog: document.querySelector("#startExerciseDialog"),
-  startExerciseMessage: document.querySelector("#startExerciseMessage"),
-  cancelStartExerciseBtn: document.querySelector("#cancelStartExerciseBtn"),
-  declineStartExerciseBtn: document.querySelector("#declineStartExerciseBtn"),
-  confirmStartExerciseBtn: document.querySelector("#confirmStartExerciseBtn"),
   activeExerciseDialog: document.querySelector("#activeExerciseDialog"),
   closeActiveExerciseBtn: document.querySelector("#closeActiveExerciseBtn"),
+  logActiveExerciseBtn: document.querySelector("#logActiveExerciseBtn"),
   activeExerciseTitle: document.querySelector("#activeExerciseTitle"),
   activeExerciseContent: document.querySelector("#activeExerciseContent"),
+  repWeightDialog: document.querySelector("#repWeightDialog"),
+  closeRepWeightBtn: document.querySelector("#closeRepWeightBtn"),
+  repWeightTitle: document.querySelector("#repWeightTitle"),
+  repWeightUnitButtons: document.querySelectorAll("[data-rep-weight-unit]"),
+  repWeightGrid: document.querySelector("#repWeightGrid"),
   themeModeInputs: document.querySelectorAll("input[name='themeMode']"),
   openAutoRulesBtn: document.querySelector("#openAutoRulesBtn"),
   openTagsBtn: document.querySelector("#openTagsBtn"),
@@ -455,7 +491,9 @@ function bindEvents() {
     if (button) jumpToWeek(button.dataset.weekJump);
   });
   elements.weekJumpMenu.addEventListener("wheel", (event) => event.stopPropagation(), { passive: true });
-  elements.authButton.addEventListener("click", toggleAuth);
+  elements.authButton.addEventListener("click", toggleAuthMenu);
+  elements.authMenu.addEventListener("click", (event) => event.stopPropagation());
+  elements.authMenuAction.addEventListener("click", toggleAuth);
   elements.authForm.addEventListener("submit", sendSignInLink);
   elements.googleSignInBtn.addEventListener("click", signInWithGoogle);
   elements.appleSignInBtn.addEventListener("click", signInWithApple);
@@ -463,13 +501,26 @@ function bindEvents() {
   elements.cancelAuthBtn.addEventListener("click", () => elements.authDialog.close());
   elements.appMenuBtn.addEventListener("click", handleAppMenuButtonClick);
   elements.appMenu.addEventListener("click", (event) => event.stopPropagation());
+  elements.pageTitleBtn.addEventListener("click", togglePageTitleMenu);
+  elements.pageTitleMenu.addEventListener("click", (event) => event.stopPropagation());
+  elements.titleMealPlanBtn.addEventListener("click", showEatApp);
+  elements.titleExercisePlanBtn.addEventListener("click", showPlayApp);
+  elements.titleToDoListBtn.addEventListener("click", showDoApp);
   elements.homeEatBtn.addEventListener("click", showEatApp);
   elements.homePlayBtn.addEventListener("click", showPlayApp);
   elements.homeDoBtn.addEventListener("click", showDoApp);
-  elements.eatMenuBtn.addEventListener("click", showEatApp);
-  elements.playMenuBtn.addEventListener("click", showPlayApp);
-  elements.doMenuBtn.addEventListener("click", showDoApp);
-  elements.settingsBtn.addEventListener("click", showSettingsApp);
+  elements.generalSettingsMenuBtn.addEventListener("click", () => openContextSettingsDialog("general"));
+  elements.menuAutoRulesBtn.addEventListener("click", () => openSettingsMenuDialog(openAutoRulesDialog));
+  elements.menuTagsBtn.addEventListener("click", () => openSettingsMenuDialog(openTagsDialog));
+  elements.menuGroceryItemsBtn.addEventListener("click", () => openSettingsMenuDialog(openGroceryLibraryDialog));
+  elements.menuIngredientOptionsBtn.addEventListener("click", () => openSettingsMenuDialog(openIngredientOptionsDialog));
+  elements.menuRecurringTasksBtn.addEventListener("click", () => openSettingsMenuDialog(openRecurringTasksDialog));
+  elements.menuWorkoutLibraryBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLibraryDialog));
+  elements.menuPlayAutoRulesBtn.addEventListener("click", () => openSettingsMenuDialog(openPlayAutoRulesDialog));
+  elements.closeContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
+  elements.doneContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
+  elements.contextSettingsBody.addEventListener("click", handleContextSettingsAction);
+  elements.contextSettingsBody.addEventListener("change", handleContextSettingsChange);
   elements.openMealPlanBtn?.addEventListener("click", showEatApp);
   elements.openDoListBtn?.addEventListener("click", showDoApp);
   elements.openTasksPageBtn?.addEventListener("click", openTasksPage);
@@ -551,10 +602,13 @@ function bindEvents() {
     button.addEventListener("click", () => setWorkoutDetailType(button.dataset.workoutType));
   });
   elements.addWorkoutRepBtn.addEventListener("click", () => addWorkoutRepRow());
-  elements.cancelStartExerciseBtn.addEventListener("click", closeStartExerciseDialog);
-  elements.declineStartExerciseBtn.addEventListener("click", closeStartExerciseDialog);
-  elements.confirmStartExerciseBtn.addEventListener("click", confirmStartExercise);
+  document.querySelectorAll("[data-workout-wheel]").forEach(bindWorkoutWheel);
   elements.closeActiveExerciseBtn.addEventListener("click", () => elements.activeExerciseDialog.close());
+  elements.logActiveExerciseBtn.addEventListener("click", logActiveExercise);
+  elements.closeRepWeightBtn.addEventListener("click", closeRepWeightDialog);
+  elements.repWeightUnitButtons.forEach((button) => {
+    button.addEventListener("click", () => setRepWeightUnit(button.dataset.repWeightUnit));
+  });
   elements.themeModeInputs.forEach((input) => {
     input.addEventListener("change", () => setThemeMode(input.value));
   });
@@ -694,42 +748,43 @@ async function initializeSupabaseAuth() {
 }
 
 function updateAuthUi(message = "") {
-  if (!elements.authStatus || !elements.authButton) return;
+  if (!elements.authStatus || !elements.authButton || !elements.authMenuAction) return;
 
   if (!canUseCloudStorage()) {
     elements.authStatus.textContent = "Local storage";
-    elements.authButton.hidden = true;
+    elements.authMenuAction.hidden = true;
     return;
   }
 
   elements.authButton.hidden = false;
+  elements.authMenuAction.hidden = false;
   if (authSession?.user?.email) {
     elements.authStatus.textContent = authSession.user.email;
-    elements.authButton.classList.add("auth-icon-btn");
-    elements.authButton.title = "Sign out";
-    elements.authButton.setAttribute("aria-label", "Sign out");
-    elements.authButton.innerHTML = signOutIconSvg();
+    elements.authMenuAction.textContent = "Log out";
+    elements.authMenuAction.setAttribute("aria-label", "Log out");
     return;
   }
 
   elements.authStatus.textContent = message || "Sign in to sync";
-  elements.authButton.classList.remove("auth-icon-btn");
-  elements.authButton.removeAttribute("title");
-  elements.authButton.setAttribute("aria-label", "Sign in");
-  elements.authButton.textContent = "Sign in";
+  elements.authMenuAction.textContent = "Log in";
+  elements.authMenuAction.setAttribute("aria-label", "Log in");
 }
 
-function signOutIconSvg() {
-  return `
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" />
-      <path d="M10 17l5-5-5-5" />
-      <path d="M15 12H3" />
-    </svg>
-  `;
+function toggleAuthMenu(event) {
+  event.stopPropagation();
+  const willOpen = elements.authMenu.hidden;
+  closeFloatingMenus();
+  elements.authMenu.hidden = !willOpen;
+  elements.authButton.setAttribute("aria-expanded", String(willOpen));
+}
+
+function closeAuthMenu() {
+  elements.authMenu.hidden = true;
+  elements.authButton.setAttribute("aria-expanded", "false");
 }
 
 async function toggleAuth() {
+  closeAuthMenu();
   if (!supabaseClient && canUseCloudStorage() && window.supabase?.createClient) {
     supabaseClient = window.supabase.createClient(supabaseBaseUrl(), supabaseConfig().anonKey);
   }
@@ -854,6 +909,7 @@ function defaultState() {
     weeklyEmailSettings: defaultWeeklyEmailSettings(),
     doTasks: [],
     themeMode: "light",
+    pageVisibility: { ...pageVisibilityDefaults },
     autoGenerateRules: defaultAutoGenerateRules(),
     collapsedSections: defaultCollapsedSections(),
     collapsedDays: {}
@@ -885,6 +941,7 @@ function normalizeState(parsed) {
     weeklyEmailSettings: normalizeWeeklyEmailSettings(parsed?.weeklyEmailSettings),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
+    pageVisibility: normalizePageVisibility(parsed?.pageVisibility),
     autoGenerateRules: normalizeAutoGenerateRules(parsed?.autoGenerateRules),
     collapsedSections: parsed?.collapsedSections || defaultCollapsedSections(),
     collapsedDays: parsed?.collapsedDays || {}
@@ -967,6 +1024,7 @@ function normalizeDoTasks(tasks) {
         sourceRecipeId: task?.sourceRecipeId || "",
         sourceWorkoutId: task?.sourceWorkoutId || "",
         exerciseData: normalizeExerciseData(task?.exerciseData),
+        exerciseHistory: normalizeWorkoutLogs(task?.exerciseHistory),
         exerciseDetails,
         exerciseNotes: String(task?.exerciseNotes || exerciseDetailsToNotes(exerciseDetails) || "").trim(),
         sourceMealDay: task?.sourceMealDay || "",
@@ -1013,10 +1071,52 @@ function normalizeWorkouts(workouts) {
 function defaultExerciseDetails(type = "timed") {
   return {
     type: ["timed", "reps", "game"].includes(type) ? type : "timed",
-    timed: { duration: "30", unit: "min", distance: "16", distanceUnit: "km" },
+    timed: { hours: "0", minutes: "30", seconds: "00", distanceWhole: "16", distanceDecimal: "00", distanceUnit: "km" },
     reps: [],
     gameNotes: ""
   };
+}
+
+function normalizeTimedDuration(timed, defaults) {
+  const hasParts = ["hours", "minutes", "seconds"].some((key) => typeof timed?.[key] !== "undefined");
+  if (hasParts) {
+    return {
+      hours: clampIntegerString(timed.hours, 0, 24, defaults.hours),
+      minutes: padTwo(clampIntegerString(timed.minutes, 0, 59, defaults.minutes)),
+      seconds: padTwo(clampIntegerString(timed.seconds, 0, 59, defaults.seconds))
+    };
+  }
+  const amount = Number(timed?.duration || defaults.minutes || 0);
+  const unit = timed?.unit === "hr" ? "hr" : "min";
+  const totalSeconds = Math.max(0, Math.round(amount * (unit === "hr" ? 3600 : 60)));
+  return {
+    hours: String(Math.min(24, Math.floor(totalSeconds / 3600))),
+    minutes: padTwo(Math.floor((totalSeconds % 3600) / 60)),
+    seconds: padTwo(totalSeconds % 60)
+  };
+}
+
+function normalizeTimedDistance(timed, defaults) {
+  const hasParts = ["distanceWhole", "distanceDecimal"].some((key) => typeof timed?.[key] !== "undefined");
+  const source = hasParts ? `${timed.distanceWhole || 0}.${timed.distanceDecimal || 0}` : timed?.distance || `${defaults.distanceWhole}.${defaults.distanceDecimal}`;
+  const number = Math.max(0, Number(source) || 0);
+  const whole = Math.min(200, Math.floor(number));
+  const decimal = Math.round((number - whole) * 100);
+  return {
+    distanceWhole: String(whole),
+    distanceDecimal: padTwo(Math.min(99, decimal)),
+    distanceUnit: workoutDistanceUnitOptions.includes(timed?.distanceUnit) ? timed.distanceUnit : defaults.distanceUnit
+  };
+}
+
+function clampIntegerString(value, min, max, fallback) {
+  const number = Number.parseInt(value, 10);
+  if (Number.isNaN(number)) return String(fallback);
+  return String(Math.min(max, Math.max(min, number)));
+}
+
+function padTwo(value) {
+  return String(value).padStart(2, "0");
 }
 
 function normalizeExerciseDetails(details, fallbackNotes = "", fallbackType = "") {
@@ -1029,14 +1129,14 @@ function normalizeExerciseDetails(details, fallbackNotes = "", fallbackType = ""
         : "timed";
   const defaults = defaultExerciseDetails(type);
   const timed = details?.timed || {};
+  const duration = normalizeTimedDuration(timed, defaults.timed);
+  const distance = normalizeTimedDistance(timed, defaults.timed);
   const reps = Array.isArray(details?.reps) ? details.reps : [];
   return {
     type,
     timed: {
-      duration: String(timed.duration || defaults.timed.duration).trim(),
-      unit: ["min", "hr"].includes(timed.unit) ? timed.unit : defaults.timed.unit,
-      distance: String(timed.distance || defaults.timed.distance).trim(),
-      distanceUnit: ["km", "mi", "m", "yd"].includes(timed.distanceUnit) ? timed.distanceUnit : defaults.timed.distanceUnit
+      ...duration,
+      ...distance
     },
     reps: reps
       .map((rep) => ({
@@ -1053,8 +1153,8 @@ function normalizeExerciseDetails(details, fallbackNotes = "", fallbackType = ""
 function exerciseDetailsToNotes(details) {
   const normalized = normalizeExerciseDetails(details);
   if (normalized.type === "timed") {
-    const time = [normalized.timed.duration, normalized.timed.unit].filter(Boolean).join(" ");
-    const distance = [normalized.timed.distance, normalized.timed.distanceUnit].filter(Boolean).join(" ");
+    const time = formatTimedDuration(normalized.timed);
+    const distance = `${formatTimedDistance(normalized.timed)} ${normalized.timed.distanceUnit}`;
     return [time, distance].filter(Boolean).join(" · ");
   }
   if (normalized.type === "reps") {
@@ -1065,11 +1165,36 @@ function exerciseDetailsToNotes(details) {
   return normalized.gameNotes;
 }
 
+function formatTimedDuration(timed) {
+  const hours = Number(timed.hours) || 0;
+  const minutes = Number(timed.minutes) || 0;
+  const seconds = Number(timed.seconds) || 0;
+  const parts = [];
+  if (hours) parts.push(`${hours} hr`);
+  if (minutes) parts.push(`${minutes} min`);
+  if (seconds || !parts.length) parts.push(`${seconds} sec`);
+  return parts.join(" ");
+}
+
+function formatTimedDistance(timed) {
+  const whole = String(timed.distanceWhole || "0");
+  const decimal = padTwo(timed.distanceDecimal || "00");
+  return decimal === "00" ? whole : `${whole}.${decimal}`;
+}
+
 function normalizeExerciseData(data) {
   return {
     time: String(data?.time || "").trim(),
-    weight: String(data?.weight || "").trim()
+    weight: String(data?.weight || "").trim(),
+    repWeights: normalizeRepWeights(data?.repWeights)
   };
+}
+
+function normalizeRepWeights(repWeights) {
+  if (!repWeights || typeof repWeights !== "object" || Array.isArray(repWeights)) return {};
+  return Object.fromEntries(Object.entries(repWeights)
+    .map(([key, value]) => [String(key), String(value || "").trim()])
+    .filter(([, value]) => value));
 }
 
 function normalizeWorkoutLogs(logs) {
@@ -1079,10 +1204,11 @@ function normalizeWorkoutLogs(logs) {
       date: String(log?.date || "").trim(),
       time: String(log?.time || "").trim(),
       weight: String(log?.weight || "").trim(),
+      repWeights: normalizeRepWeights(log?.repWeights),
       taskId: String(log?.taskId || "").trim(),
       createdAt: log?.createdAt || new Date().toISOString()
     }))
-    .filter((log) => log.date || log.time || log.weight);
+    .filter((log) => log.date || log.time || log.weight || Object.keys(log.repWeights).length);
 }
 
 function normalizePlayAutoRules(rules) {
@@ -1108,6 +1234,7 @@ function normalizeDoPlans(plans, legacyTasks = []) {
       if (!days || typeof days !== "object") return;
       normalized[week] = {};
       if (days.__active) normalized[week].__active = true;
+      normalized[week].__skippedRecurring = normalizeSkippedRecurringTasks(days.__skippedRecurring);
       prepDays.forEach((day) => {
         normalized[week][day.id] = normalizeDoTasks(days[day.id]);
       });
@@ -1123,8 +1250,30 @@ function normalizeDoPlans(plans, legacyTasks = []) {
   return normalized;
 }
 
+function normalizeSkippedRecurringTasks(skipped) {
+  const normalized = {};
+  if (!skipped || typeof skipped !== "object") return normalized;
+  prepDays.forEach((day) => {
+    const ids = Array.isArray(skipped[day.id]) ? skipped[day.id] : [];
+    normalized[day.id] = [...new Set(ids.map((id) => String(id || "").trim()).filter(Boolean))];
+  });
+  return normalized;
+}
+
 function normalizeThemeMode(mode) {
   return ["light", "dark", "auto"].includes(mode) ? mode : "light";
+}
+
+function normalizePageVisibility(visibility) {
+  return {
+    eat: visibility?.eat !== false,
+    play: visibility?.play !== false,
+    do: visibility?.do !== false
+  };
+}
+
+function isPageEnabled(page) {
+  return normalizePageVisibility(state.pageVisibility)[page] !== false;
 }
 
 function defaultIngredientOptions() {
@@ -1182,6 +1331,17 @@ function applyThemeMode() {
 function setThemeMode(mode) {
   state.themeMode = normalizeThemeMode(mode);
   applyThemeMode();
+  persist();
+}
+
+function setPageVisibility(page, enabled) {
+  if (!Object.hasOwn(pageVisibilityDefaults, page)) return;
+  state.pageVisibility = normalizePageVisibility(state.pageVisibility);
+  state.pageVisibility[page] = Boolean(enabled);
+  updatePageVisibilityControls();
+  updatePageVisibility();
+  updatePageTitleMenu();
+  updateSettingsMenuOptions();
   persist();
 }
 
@@ -1875,6 +2035,7 @@ function folderName(folderId) {
 }
 
 function render() {
+  updatePageVisibility();
   const week = weekState();
   elements.weekLabel.textContent = formatWeekRange(currentWeek);
   elements.weekLabel.setAttribute("aria-label", `Choose week. Current week is ${formatWeekRange(currentWeek)}`);
@@ -1894,8 +2055,13 @@ function render() {
 
 function showEatApp(event) {
   event?.stopPropagation();
+  if (!isPageEnabled("eat")) {
+    showHomeApp();
+    return;
+  }
   activateEatShell();
   setPageTitle("Meal Plan");
+  closePageTitleMenu();
   closeAppMenu();
 }
 
@@ -1913,6 +2079,10 @@ function activateEatShell() {
 
 function showDoApp(event) {
   event?.stopPropagation();
+  if (!isPageEnabled("do")) {
+    showHomeApp();
+    return;
+  }
   activeAppArea = "do";
   elements.homeMainPage.hidden = true;
   document.querySelector("[data-section='mealPrep']").hidden = true;
@@ -1921,13 +2091,18 @@ function showDoApp(event) {
   elements.settingsMainPage.hidden = true;
   elements.weekLabel.closest(".week-tools").hidden = false;
   elements.activeCookingSection.hidden = true;
-  setPageTitle("To-Do List");
+  setPageTitle("To Do List");
   renderDoPlanner();
+  closePageTitleMenu();
   closeAppMenu();
 }
 
 function showPlayApp(event) {
   event?.stopPropagation();
+  if (!isPageEnabled("play")) {
+    showHomeApp();
+    return;
+  }
   activeAppArea = "play";
   elements.homeMainPage.hidden = true;
   document.querySelector("[data-section='mealPrep']").hidden = true;
@@ -1938,6 +2113,7 @@ function showPlayApp(event) {
   elements.activeCookingSection.hidden = true;
   setPageTitle("Exercise Plan");
   renderPlayPlanner();
+  closePageTitleMenu();
   closeAppMenu();
 }
 
@@ -1952,6 +2128,7 @@ function showSettingsApp(event) {
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
   setPageTitle("Settings");
+  closePageTitleMenu();
   closeAppMenu();
 }
 
@@ -1966,12 +2143,13 @@ function showHomeApp(event) {
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
   setPageTitle("Live");
+  closePageTitleMenu();
   closeAppMenu();
 }
 
 function currentMainPageTitle() {
   if (activeAppArea === "home") return "Live";
-  if (activeAppArea === "do") return "To-Do List";
+  if (activeAppArea === "do") return "To Do List";
   if (activeAppArea === "play") return "Exercise Plan";
   if (activeAppArea === "settings") return "Settings";
   return "Meal Plan";
@@ -2128,7 +2306,13 @@ function doBacklogListTemplate() {
 function bindDoTaskControls(root = document) {
   root.querySelectorAll("[data-do-task]").forEach((item) => {
     item.addEventListener("dragstart", handleDoTaskDragStart);
+    item.addEventListener("drag", handleDoTaskDrag);
     item.addEventListener("dragend", handleDoTaskDragEnd);
+    item.addEventListener("contextmenu", openDoTaskMenu);
+    item.addEventListener("pointerdown", handleDoTaskPointerDown);
+    item.addEventListener("pointermove", handleDoTaskPointerMove);
+    item.addEventListener("pointerup", handleDoTaskPointerEnd);
+    item.addEventListener("pointercancel", handleDoTaskPointerEnd);
   });
   root.querySelectorAll("[data-do-task-toggle]").forEach((checkbox) => {
     checkbox.addEventListener("change", () => toggleDoTask(checkbox.dataset.doDay, checkbox.dataset.doTaskToggle, checkbox.checked));
@@ -2140,11 +2324,48 @@ function bindDoTaskControls(root = document) {
 
 function doTasksForDay(dayId) {
   const key = weekKey();
+  const tasks = rawDoTasksForDay(dayId, key);
+  if (isDoWeekActive(key)) ensureRecurringTasksForDay(key, dayId);
+  return state.doPlans[key][dayId] || tasks;
+}
+
+function rawDoTasksForDay(dayId, key = weekKey()) {
   if (!state.doPlans || typeof state.doPlans !== "object") state.doPlans = {};
   if (!state.doPlans[key]) state.doPlans[key] = {};
+  if (!state.doPlans[key].__skippedRecurring) state.doPlans[key].__skippedRecurring = {};
   state.doPlans[key][dayId] = normalizeDoTasks(state.doPlans[key][dayId]);
-  if (isDoWeekActive(key)) ensureRecurringTasksForDay(key, dayId);
   return state.doPlans[key][dayId];
+}
+
+function skippedRecurringTasksForDay(key, dayId) {
+  if (!state.doPlans || typeof state.doPlans !== "object") state.doPlans = {};
+  if (!state.doPlans[key]) state.doPlans[key] = {};
+  state.doPlans[key].__skippedRecurring = normalizeSkippedRecurringTasks(state.doPlans[key].__skippedRecurring);
+  return state.doPlans[key].__skippedRecurring[dayId] || [];
+}
+
+function isRecurringTaskSkipped(key, dayId, taskId) {
+  return skippedRecurringTasksForDay(key, dayId).includes(taskId);
+}
+
+function skipRecurringTaskForDay(key, dayId, taskId) {
+  if (!taskId || dayId === "backlog") return;
+  const skipped = skippedRecurringTasksForDay(key, dayId);
+  if (!skipped.includes(taskId)) skipped.push(taskId);
+  state.doPlans[key].__skippedRecurring[dayId] = skipped;
+}
+
+function skipRecurringTaskForWeek(key, taskId) {
+  if (!taskId) return;
+  const rule = normalizeRecurringTasks(state.recurringTasks).find((task) => task.id === taskId);
+  const dayIds = rule?.dayIds?.length ? rule.dayIds : prepDays.map((day) => day.id);
+  dayIds.forEach((dayId) => skipRecurringTaskForDay(key, dayId, taskId));
+}
+
+function clearRecurringTaskSkipForDay(key, dayId, taskId) {
+  if (!taskId || dayId === "backlog") return;
+  const skipped = skippedRecurringTasksForDay(key, dayId).filter((id) => id !== taskId);
+  state.doPlans[key].__skippedRecurring[dayId] = skipped;
 }
 
 function doBacklogTasks() {
@@ -2188,13 +2409,19 @@ function createDoWeekList() {
 
 function ensureRecurringTasksForDay(key, dayId) {
   state.recurringTasks = normalizeRecurringTasks(state.recurringTasks);
-  const tasks = state.doPlans[key][dayId];
+  const tasks = dedupeRecurringTasksForDay(key, dayId);
   state.recurringTasks
     .filter((task) => task.dayIds.includes(dayId))
+    .filter((task) => !isRecurringTaskSkipped(key, dayId, task.id))
     .forEach((task) => {
-      const existing = doWeekTasks(key).find((item) => item.recurringTaskId === task.id);
-      if (existing) {
-        existing.title = task.title;
+      const existingOnDay = tasks.find((item) => item.recurringTaskId === task.id);
+      if (existingOnDay) {
+        existingOnDay.title = task.title;
+        return;
+      }
+      const existingInWeek = doWeekTasks(key).find((item) => item.recurringTaskId === task.id);
+      if (existingInWeek) {
+        existingInWeek.title = task.title;
         return;
       }
       tasks.push({
@@ -2205,6 +2432,18 @@ function ensureRecurringTasksForDay(key, dayId) {
         createdAt: new Date().toISOString()
       });
     });
+}
+
+function dedupeRecurringTasksForDay(key, dayId) {
+  const seenRecurringIds = new Set();
+  const tasks = rawDoTasksForDay(dayId, key).filter((task) => {
+    if (!task.recurringTaskId) return true;
+    if (seenRecurringIds.has(task.recurringTaskId)) return false;
+    seenRecurringIds.add(task.recurringTaskId);
+    return true;
+  });
+  state.doPlans[key][dayId] = tasks;
+  return tasks;
 }
 
 function doWeekTasks(key) {
@@ -2420,23 +2659,25 @@ function openWorkoutDetail(context = {}) {
   const title = workout?.title || task?.title || "Workout";
   const data = normalizeExerciseData(task?.exerciseData);
   const details = workout?.exerciseDetails || task?.exerciseDetails || normalizeExerciseDetails(null, task?.exerciseNotes);
-  elements.workoutDetailLabel.textContent = workout ? "Pre-Arranged Workout" : "Exercise";
+  elements.workoutDetailLabel.textContent = "Exercise";
   elements.workoutDetailTitle.textContent = title;
   elements.workoutDetailName.value = title;
   renderWorkoutDetailFields(details);
-  elements.workoutExecutionFields.hidden = !task || !workout;
+  updateWorkoutExecutionFieldsVisibility();
   elements.workoutDetailTime.value = data.time;
   elements.workoutDetailWeight.value = data.weight;
-  elements.keepWorkoutDetailBtn.hidden = Boolean(workout);
+  elements.keepWorkoutDetailBtn.hidden = false;
+  elements.keepWorkoutDetailBtn.disabled = Boolean(workout);
+  elements.keepWorkoutDetailBtn.textContent = workout ? "Pinned" : "Pin";
   const logs = normalizeWorkoutLogs(workout?.logs);
-  elements.workoutLogSection.hidden = !workout;
+  elements.workoutLogSection.hidden = false;
   elements.workoutDetailLogs.innerHTML = logs.length
     ? logs
       .slice()
       .sort((a, b) => String(b.date).localeCompare(String(a.date)))
       .map((log) => `<p class="workout-log-row"><strong>${escapeHtml(log.date || "Undated")}</strong>${log.time ? ` · ${escapeHtml(log.time)}` : ""}${log.weight ? ` · ${escapeHtml(log.weight)}` : ""}</p>`)
       .join("")
-    : `<p class="empty-state">No workout data logged yet.</p>`;
+    : `<p class="empty-state">${workout ? "No workout data logged yet." : "Pin this exercise to keep a workout log."}</p>`;
   if (!elements.workoutDetailDialog.open) elements.workoutDetailDialog.showModal();
   requestAnimationFrame(() => elements.workoutDetailName.focus());
 }
@@ -2444,13 +2685,69 @@ function openWorkoutDetail(context = {}) {
 function renderWorkoutDetailFields(details) {
   const normalized = normalizeExerciseDetails(details);
   setWorkoutDetailType(normalized.type);
-  elements.workoutTimedDuration.value = normalized.timed.duration;
-  elements.workoutTimedUnit.value = normalized.timed.unit;
-  elements.workoutTimedDistance.value = normalized.timed.distance;
-  elements.workoutTimedDistanceUnit.value = normalized.timed.distanceUnit;
+  renderWorkoutWheel(elements.workoutTimedHours, workoutHourOptions, normalized.timed.hours);
+  renderWorkoutWheel(elements.workoutTimedMinutes, workoutMinuteSecondOptions, normalized.timed.minutes);
+  renderWorkoutWheel(elements.workoutTimedSeconds, workoutMinuteSecondOptions, normalized.timed.seconds);
+  renderWorkoutWheel(elements.workoutTimedDistanceWhole, workoutDistanceWholeOptions, normalized.timed.distanceWhole);
+  renderWorkoutWheel(elements.workoutTimedDistanceDecimal, workoutDistanceDecimalOptions, normalized.timed.distanceDecimal);
+  renderWorkoutWheel(elements.workoutTimedDistanceUnit, workoutDistanceUnitOptions, normalized.timed.distanceUnit);
   elements.workoutRepList.innerHTML = "";
   (normalized.reps.length ? normalized.reps : [{ lift: "", sets: "", reps: "", weight: "" }]).forEach((rep) => addWorkoutRepRow(rep));
   elements.workoutGameNotes.value = normalized.gameNotes;
+}
+
+function renderWorkoutWheel(wheel, options, selectedValue) {
+  const value = options.includes(String(selectedValue)) ? String(selectedValue) : options[0];
+  wheel.innerHTML = options.map((option) => `<button type="button" data-wheel-value="${escapeHtml(option)}">${escapeHtml(option)}</button>`).join("");
+  wheel.dataset.selectedValue = value;
+  wheel.setAttribute("aria-valuetext", value);
+  requestAnimationFrame(() => scrollWorkoutWheelToValue(wheel, value, false));
+}
+
+function bindWorkoutWheel(wheel) {
+  wheel.addEventListener("scroll", () => {
+    window.clearTimeout(wheel._snapTimer);
+    wheel._snapTimer = window.setTimeout(() => snapWorkoutWheel(wheel), 90);
+  });
+  wheel.addEventListener("keydown", (event) => {
+    if (!["ArrowUp", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault();
+    moveWorkoutWheel(wheel, event.key === "ArrowDown" ? 1 : -1);
+  });
+  wheel.addEventListener("click", (event) => {
+    const option = event.target.closest("[data-wheel-value]");
+    if (!option) return;
+    scrollWorkoutWheelToValue(wheel, option.dataset.wheelValue, true);
+  });
+}
+
+function moveWorkoutWheel(wheel, offset) {
+  const buttons = Array.from(wheel.querySelectorAll("[data-wheel-value]"));
+  const currentIndex = Math.max(0, buttons.findIndex((button) => button.dataset.wheelValue === wheel.dataset.selectedValue));
+  const next = buttons[Math.min(buttons.length - 1, Math.max(0, currentIndex + offset))];
+  if (next) scrollWorkoutWheelToValue(wheel, next.dataset.wheelValue, true);
+}
+
+function scrollWorkoutWheelToValue(wheel, value, smooth = true) {
+  const buttons = Array.from(wheel.querySelectorAll("[data-wheel-value]"));
+  const index = buttons.findIndex((button) => button.dataset.wheelValue === value);
+  if (index < 0) return;
+  const itemHeight = workoutWheelItemHeight(wheel);
+  wheel.dataset.selectedValue = value;
+  wheel.setAttribute("aria-valuetext", value);
+  wheel.scrollTo({ top: index * itemHeight, behavior: smooth ? "smooth" : "auto" });
+}
+
+function snapWorkoutWheel(wheel) {
+  const buttons = Array.from(wheel.querySelectorAll("[data-wheel-value]"));
+  if (!buttons.length) return;
+  const itemHeight = workoutWheelItemHeight(wheel);
+  const index = Math.min(buttons.length - 1, Math.max(0, Math.round(wheel.scrollTop / itemHeight)));
+  scrollWorkoutWheelToValue(wheel, buttons[index].dataset.wheelValue, true);
+}
+
+function workoutWheelItemHeight(wheel) {
+  return wheel.querySelector("[data-wheel-value]")?.offsetHeight || 42;
 }
 
 function setWorkoutDetailType(type) {
@@ -2463,6 +2760,13 @@ function setWorkoutDetailType(type) {
   elements.workoutTypePanels.forEach((panel) => {
     panel.hidden = panel.dataset.workoutPanel !== nextType;
   });
+  updateWorkoutExecutionFieldsVisibility();
+}
+
+function updateWorkoutExecutionFieldsVisibility() {
+  const activeType = Array.from(elements.workoutTypeButtons).find((button) => button.classList.contains("active"))?.dataset.workoutType || "timed";
+  const hasScheduledTask = Boolean(activeWorkoutDetail?.taskId);
+  elements.workoutExecutionFields.hidden = !hasScheduledTask || activeType === "reps";
 }
 
 function addWorkoutRepRow(rep = {}) {
@@ -2492,10 +2796,12 @@ function collectWorkoutDetails() {
   return normalizeExerciseDetails({
     type: activeType,
     timed: {
-      duration: elements.workoutTimedDuration.value,
-      unit: elements.workoutTimedUnit.value,
-      distance: elements.workoutTimedDistance.value,
-      distanceUnit: elements.workoutTimedDistanceUnit.value
+      hours: elements.workoutTimedHours.dataset.selectedValue || "0",
+      minutes: elements.workoutTimedMinutes.dataset.selectedValue || "00",
+      seconds: elements.workoutTimedSeconds.dataset.selectedValue || "00",
+      distanceWhole: elements.workoutTimedDistanceWhole.dataset.selectedValue || "0",
+      distanceDecimal: elements.workoutTimedDistanceDecimal.dataset.selectedValue || "00",
+      distanceUnit: elements.workoutTimedDistanceUnit.dataset.selectedValue || "km"
     },
     reps,
     gameNotes: elements.workoutGameNotes.value
@@ -2531,6 +2837,10 @@ function saveWorkoutDetail() {
     task.title = name;
     task.exerciseDetails = details;
     task.exerciseNotes = notes;
+    task.exerciseData = {
+      time: elements.workoutDetailTime.value.trim(),
+      weight: elements.workoutDetailWeight.value.trim()
+    };
   }
   persist();
   renderWorkoutLibrary();
@@ -2551,66 +2861,49 @@ function keepWorkoutFromDetail() {
   elements.workoutDetailDialog.close();
 }
 
-function requestStartExercise(dayId, taskId) {
-  const task = playTaskForContext(dayId, taskId);
-  if (!task || dayId === "backlog") return;
-  pendingStartExercise = { dayId, taskId };
-  elements.startExerciseMessage.textContent = `Would you like to start ${task.title}?`;
-  elements.startExerciseDialog.showModal();
-}
-
-function closeStartExerciseDialog() {
-  pendingStartExercise = null;
-  elements.startExerciseDialog.close();
-}
-
-function confirmStartExercise() {
-  const context = pendingStartExercise;
-  pendingStartExercise = null;
-  elements.startExerciseDialog.close();
-  if (!context) return;
-  openActiveExerciseView(context.dayId, context.taskId);
-}
-
 function openActiveExerciseView(dayId, taskId) {
   const task = playTaskForContext(dayId, taskId);
   if (!task) return;
+  activeExerciseContext = { dayId, taskId };
   const workout = task.sourceWorkoutId
     ? normalizeWorkouts(state.workouts).find((item) => item.id === task.sourceWorkoutId)
     : null;
   const details = workout?.exerciseDetails || task.exerciseDetails || normalizeExerciseDetails(null, task.exerciseNotes);
   const data = normalizeExerciseData(task.exerciseData);
   elements.activeExerciseTitle.textContent = task.title;
-  elements.activeExerciseContent.innerHTML = activeExerciseViewTemplate(task, details, data, Boolean(workout));
+  elements.logActiveExerciseBtn.textContent = "Log";
+  elements.logActiveExerciseBtn.disabled = false;
+  elements.activeExerciseContent.innerHTML = activeExerciseViewTemplate(task, details, data);
   elements.activeExerciseContent.querySelectorAll("[data-active-exercise-field]").forEach((input) => {
     input.addEventListener("change", () => updatePlayExerciseData(dayId, taskId, input.dataset.activeExerciseField, input.value));
     input.addEventListener("blur", () => updatePlayExerciseData(dayId, taskId, input.dataset.activeExerciseField, input.value));
   });
+  elements.activeExerciseContent.querySelectorAll("[data-active-rep-weight]").forEach((button) => {
+    button.addEventListener("click", () => openRepWeightPicker(dayId, taskId, button.dataset.activeRepWeight, button.dataset.liftName, button.dataset.setNumber));
+  });
   if (!elements.activeExerciseDialog.open) elements.activeExerciseDialog.showModal();
 }
 
-function activeExerciseViewTemplate(task, details, data, isSavedWorkout) {
+function activeExerciseViewTemplate(task, details, data) {
   const normalized = normalizeExerciseDetails(details);
   return `
-    <section class="recipe-view-section">
-      <h3>${escapeHtml(exerciseTypeLabel(normalized.type))}</h3>
-      ${activeExerciseDetailsTemplate(normalized)}
+    <section class="recipe-view-section ${normalized.type === "reps" ? "active-reps-section" : ""}">
+      ${normalized.type === "reps" ? "" : `<h3>${escapeHtml(exerciseTypeLabel(normalized.type))}</h3>`}
+      ${activeExerciseDetailsTemplate(normalized, data)}
     </section>
-    ${isSavedWorkout ? `
-      <section class="recipe-view-section">
-        <h3>Data</h3>
-        <div class="exercise-data-fields active-exercise-fields">
-          <label>
-            Time
-            <input data-active-exercise-field="time" value="${escapeHtml(data.time)}" placeholder="Time" aria-label="Time for ${escapeHtml(task.title)}" />
-          </label>
-          <label>
-            Weight
-            <input data-active-exercise-field="weight" value="${escapeHtml(data.weight)}" placeholder="Weight" aria-label="Weight for ${escapeHtml(task.title)}" />
-          </label>
-        </div>
-      </section>
-    ` : ""}
+    ${normalized.type === "reps" ? "" : `<section class="recipe-view-section">
+      <h3>Data</h3>
+      <div class="exercise-data-fields active-exercise-fields">
+        <label>
+          Time
+          <input data-active-exercise-field="time" value="${escapeHtml(data.time)}" placeholder="Time" aria-label="Time for ${escapeHtml(task.title)}" />
+        </label>
+        <label>
+          Weight
+          <input data-active-exercise-field="weight" value="${escapeHtml(data.weight)}" placeholder="Weight" aria-label="Weight for ${escapeHtml(task.title)}" />
+        </label>
+      </div>
+    </section>`}
   `;
 }
 
@@ -2620,25 +2913,137 @@ function exerciseTypeLabel(type) {
   return "Timed";
 }
 
-function activeExerciseDetailsTemplate(details) {
+function activeExerciseDetailsTemplate(details, data = normalizeExerciseData({})) {
   if (details.type === "timed") {
     return `
       <div class="active-exercise-notes">
-        <p><strong>Time:</strong> ${escapeHtml(details.timed.duration)} ${escapeHtml(details.timed.unit)}</p>
-        <p><strong>Distance:</strong> ${escapeHtml(details.timed.distance)} ${escapeHtml(details.timed.distanceUnit)}</p>
+        <p><strong>Time:</strong> ${escapeHtml(formatTimedDuration(details.timed))}</p>
+        <p><strong>Distance:</strong> ${escapeHtml(formatTimedDistance(details.timed))} ${escapeHtml(details.timed.distanceUnit)}</p>
       </div>
     `;
   }
   if (details.type === "reps") {
-    return details.reps.length
-      ? `<div class="active-exercise-rep-list">${details.reps.map((rep) => `
-          <p><strong>${escapeHtml(rep.lift || "Lift")}</strong>${rep.sets ? ` · ${escapeHtml(rep.sets)} sets` : ""}${rep.reps ? ` · ${escapeHtml(rep.reps)} reps` : ""}${rep.weight ? ` · ${escapeHtml(rep.weight)}` : ""}</p>
-        `).join("")}</div>`
-      : `<p class="empty-state">No lifts yet.</p>`;
+    return activeRepGridTemplate(details.reps, data.repWeights);
   }
   return details.gameNotes
     ? `<div class="active-exercise-notes">${escapeHtml(details.gameNotes).replace(/\n/g, "<br>")}</div>`
     : `<p class="empty-state">No game notes yet.</p>`;
+}
+
+function activeRepGridTemplate(reps, repWeights = {}) {
+  if (!reps.length) return `<p class="empty-state">No lifts yet.</p>`;
+  return `
+    <div class="active-rep-grid" style="--rep-column-count: ${reps.length}">
+      ${reps.map((rep, liftIndex) => {
+        const setCount = Math.max(1, Number.parseInt(rep.sets, 10) || 1);
+        return `
+          <div class="active-rep-column">
+            <div class="active-rep-heading">
+              <strong>${escapeHtml(rep.lift || "Lift")}</strong>
+              <sub>${escapeHtml(rep.reps || "")}</sub>
+            </div>
+            <div class="active-rep-cells">
+              ${Array.from({ length: setCount }, (_, setIndex) => {
+                const key = repWeightKey(liftIndex, setIndex);
+                const value = repWeights[key] || rep.weight || "";
+                return `<button class="active-rep-weight-cell" type="button" data-active-rep-weight="${escapeHtml(key)}" data-lift-name="${escapeHtml(rep.lift || "Lift")}" data-set-number="${setIndex + 1}" aria-label="${escapeHtml(rep.lift || "Lift")} set ${setIndex + 1} weight">${escapeHtml(value || "wt")}</button>`;
+              }).join("")}
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function repWeightKey(liftIndex, setIndex) {
+  return `${liftIndex}-${setIndex}`;
+}
+
+function openRepWeightPicker(dayId, taskId, key, liftName = "Lift", setNumber = "") {
+  const task = playTaskForContext(dayId, taskId);
+  const currentValue = normalizeExerciseData(task?.exerciseData).repWeights[key] || "";
+  const unit = currentValue.toLowerCase().includes("kg") ? "kg" : "lb";
+  pendingRepWeightSelection = { dayId, taskId, key, unit };
+  elements.repWeightTitle.textContent = `${liftName}${setNumber ? ` Set ${setNumber}` : ""}`;
+  setRepWeightUnit(unit);
+  elements.repWeightGrid.innerHTML = repWeightOptions().map((weight) => `
+    <button type="button" data-rep-weight-option="${escapeHtml(weight)}">${escapeHtml(weight)}</button>
+  `).join("");
+  elements.repWeightGrid.querySelectorAll("[data-rep-weight-option]").forEach((button) => {
+    button.addEventListener("click", () => selectRepWeight(button.dataset.repWeightOption));
+  });
+  elements.repWeightDialog.showModal();
+}
+
+function repWeightOptions() {
+  return Array.from({ length: 81 }, (_, index) => String(index * 5));
+}
+
+function selectRepWeight(weight) {
+  if (!pendingRepWeightSelection) return;
+  const selection = { ...pendingRepWeightSelection };
+  updateActiveRepWeight(selection.dayId, selection.taskId, selection.key, `${weight} ${selection.unit || "lb"}`);
+  closeRepWeightDialog();
+  openActiveExerciseView(selection.dayId, selection.taskId);
+}
+
+function setRepWeightUnit(unit) {
+  const nextUnit = unit === "kg" ? "kg" : "lb";
+  if (pendingRepWeightSelection) pendingRepWeightSelection.unit = nextUnit;
+  elements.repWeightUnitButtons.forEach((button) => {
+    const isActive = button.dataset.repWeightUnit === nextUnit;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  });
+}
+
+function closeRepWeightDialog() {
+  pendingRepWeightSelection = null;
+  elements.repWeightDialog.close();
+}
+
+function logActiveExercise() {
+  if (!activeExerciseContext) return;
+  const task = playTaskForContext(activeExerciseContext.dayId, activeExerciseContext.taskId);
+  if (!task) return;
+  persistActiveExerciseFields(task);
+  const log = exerciseLogEntry(task, activeExerciseContext.dayId);
+  if (task.sourceWorkoutId) {
+    appendWorkoutExecutionLog(task.sourceWorkoutId, log);
+  } else {
+    task.exerciseHistory = normalizeWorkoutLogs([...(task.exerciseHistory || []), log]);
+  }
+  persist();
+  elements.logActiveExerciseBtn.textContent = "Logged";
+  elements.logActiveExerciseBtn.disabled = true;
+  window.setTimeout(() => {
+    elements.logActiveExerciseBtn.textContent = "Log";
+    elements.logActiveExerciseBtn.disabled = false;
+  }, 1200);
+}
+
+function persistActiveExerciseFields(task) {
+  const data = normalizeExerciseData(task.exerciseData);
+  elements.activeExerciseContent.querySelectorAll("[data-active-exercise-field]").forEach((input) => {
+    if (["time", "weight"].includes(input.dataset.activeExerciseField)) {
+      data[input.dataset.activeExerciseField] = input.value.trim();
+    }
+  });
+  task.exerciseData = data;
+}
+
+function exerciseLogEntry(task, dayId) {
+  const data = normalizeExerciseData(task.exerciseData);
+  return {
+    id: createId("workout-log"),
+    date: playTaskDateKey(dayId),
+    taskId: task.id,
+    time: data.time,
+    weight: data.weight,
+    repWeights: normalizeRepWeights(data.repWeights),
+    createdAt: new Date().toISOString()
+  };
 }
 
 function playTaskForContext(dayId, taskId) {
@@ -2649,7 +3054,7 @@ function playTaskForContext(dayId, taskId) {
 function syncPlayWorkoutTitles(workoutId, title, details = null, notes = "") {
   Object.values(state.playPlans || {}).forEach((days) => {
     Object.entries(days || {}).forEach(([dayId, tasks]) => {
-      if (dayId === "__active") return;
+      if (dayId === "__active" || dayId === "__skippedRecurring") return;
       days[dayId] = normalizeDoTasks(tasks).map((task) => (
         task.sourceWorkoutId === workoutId
           ? { ...task, title, ...(details ? { exerciseDetails: details, exerciseNotes: notes } : {}) }
@@ -2809,7 +3214,7 @@ function syncPlayAutoRuleInstances(ruleId = "") {
   const workoutsById = new Map(normalizeWorkouts(state.workouts).map((workout) => [workout.id, workout]));
   Object.values(state.playPlans || {}).forEach((days) => {
     Object.entries(days || {}).forEach(([dayId, tasks]) => {
-      if (dayId === "__active") return;
+      if (dayId === "__active" || dayId === "__skippedRecurring") return;
       days[dayId] = normalizeDoTasks(tasks).filter((task) => {
         if (!task.recurringTaskId || (ruleId && task.recurringTaskId !== ruleId)) return true;
         const rule = rulesById.get(task.recurringTaskId);
@@ -2825,7 +3230,7 @@ function syncPlayAutoRuleInstances(ruleId = "") {
 function removePlayAutoRuleInstances(ruleId) {
   Object.values(state.playPlans || {}).forEach((days) => {
     Object.entries(days || {}).forEach(([dayId, tasks]) => {
-      if (dayId === "__active") return;
+      if (dayId === "__active" || dayId === "__skippedRecurring") return;
       days[dayId] = normalizeDoTasks(tasks).filter((task) => task.recurringTaskId !== ruleId);
     });
   });
@@ -2835,6 +3240,7 @@ function syncRecurringTaskInstances(taskId = "") {
   const rulesById = new Map(normalizeRecurringTasks(state.recurringTasks).map((task) => [task.id, task]));
   Object.values(state.doPlans || {}).forEach((days) => {
     Object.entries(days || {}).forEach(([dayId, tasks]) => {
+      if (dayId === "__active" || dayId === "__skippedRecurring") return;
       days[dayId] = normalizeDoTasks(tasks).filter((task) => {
         if (!task.recurringTaskId || (taskId && task.recurringTaskId !== taskId)) return true;
         const rule = rulesById.get(task.recurringTaskId);
@@ -2849,9 +3255,20 @@ function syncRecurringTaskInstances(taskId = "") {
 function removeRecurringTaskInstances(taskId) {
   Object.values(state.doPlans || {}).forEach((days) => {
     Object.entries(days || {}).forEach(([dayId, tasks]) => {
+      if (dayId === "__active" || dayId === "__skippedRecurring") return;
       days[dayId] = normalizeDoTasks(tasks).filter((task) => task.recurringTaskId !== taskId);
     });
+    if (days.__skippedRecurring) {
+      prepDays.forEach((day) => {
+        days.__skippedRecurring[day.id] = skippedRecurringTasksForPlan(days, day.id).filter((id) => id !== taskId);
+      });
+    }
   });
+}
+
+function skippedRecurringTasksForPlan(plan, dayId) {
+  const skipped = normalizeSkippedRecurringTasks(plan?.__skippedRecurring);
+  return skipped[dayId] || [];
 }
 
 function doTaskTemplate(task, dayId) {
@@ -2861,9 +3278,7 @@ function doTaskTemplate(task, dayId) {
         <input type="checkbox" data-do-task-toggle="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" ${task.done ? "checked" : ""} />
         <span class="do-task-title">${escapeHtml(task.title)}</span>
       </label>
-      <button class="icon-btn" type="button" data-do-task-delete="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" title="Delete task" aria-label="Delete ${escapeHtml(task.title)}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-      </button>
+      <button class="meal-swipe-delete do-task-swipe-delete" type="button" data-do-task-delete="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" aria-label="Delete ${escapeHtml(task.title)}">Delete</button>
     </article>
   `;
 }
@@ -2884,27 +3299,88 @@ function deleteDoTask(dayId, taskId) {
   if (dayId === "backlog") {
     state.doBacklog = doBacklogTasks().filter((task) => task.id !== taskId);
   } else {
-    doTasksForDay(dayId);
-    state.doPlans[weekKey()][dayId] = state.doPlans[weekKey()][dayId].filter((task) => task.id !== taskId);
+    const key = weekKey();
+    const tasks = doTasksForDay(dayId);
+    const task = tasks.find((item) => item.id === taskId);
+    if (task?.recurringTaskId) skipRecurringTaskForWeek(key, task.recurringTaskId);
+    state.doPlans[key][dayId] = state.doPlans[key][dayId].filter((item) => item.id !== taskId);
   }
   persist();
   renderDoPlanner();
   renderTasksPage();
 }
 
+function openDoTaskMenu(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeFolderMenu();
+
+  const item = event.currentTarget;
+  const day = item.dataset.doDay;
+  const taskId = item.dataset.doTask;
+  if (!day || !taskId) return;
+
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu do-task-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-delete-do-task-menu data-day="${escapeHtml(day)}" data-task="${escapeHtml(taskId)}">
+      Delete
+    </button>
+  `;
+
+  document.body.append(menu);
+  const sourceRect = event.currentTarget?.getBoundingClientRect?.();
+  const rawX = event.clientX || sourceRect?.right || 10;
+  const rawY = event.clientY || sourceRect?.bottom || 10;
+  const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+
+  const deleteButton = menu.querySelector("[data-delete-do-task-menu]");
+  let didDelete = false;
+  const deleteFromMenu = (deleteEvent) => {
+    deleteEvent.preventDefault();
+    deleteEvent.stopPropagation();
+    if (didDelete) return;
+    didDelete = true;
+    const target = deleteEvent.currentTarget;
+    closeFolderMenu();
+    deleteDoTask(target.dataset.day, target.dataset.task);
+  };
+  deleteButton.addEventListener("pointerdown", deleteFromMenu);
+  deleteButton.addEventListener("mousedown", deleteFromMenu);
+  deleteButton.addEventListener("click", deleteFromMenu);
+}
+
 function handleDoTaskDragStart(event) {
   const item = event.currentTarget;
-  event.dataTransfer.effectAllowed = "move";
-  event.dataTransfer.setData("application/json", JSON.stringify({
+  draggedDoTask = {
     taskId: item.dataset.doTask,
     sourceDay: item.dataset.doDay
-  }));
+  };
+  lastMealDragPoint = { x: event.clientX, y: event.clientY };
+  document.body.classList.add("meal-entry-drag-active");
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("application/json", JSON.stringify(draggedDoTask));
   item.classList.add("is-dragging");
 }
 
+function handleDoTaskDrag(event) {
+  if (!draggedDoTask) return;
+  updateMealDragPoint(event);
+  elements.mealTrashTarget.classList.toggle("drag-over", isMealDragEndingInTrash());
+}
+
 function handleDoTaskDragEnd(event) {
+  updateMealDragPoint(event);
+  if (draggedDoTask && (isMealDragEndingInTrash() || elements.mealTrashTarget.classList.contains("drag-over"))) {
+    deleteDraggedDoTask();
+    return;
+  }
   event.currentTarget.classList.remove("is-dragging");
-  document.querySelectorAll(".do-task-drop-over").forEach((item) => item.classList.remove("do-task-drop-over"));
+  clearDoTaskDragState();
 }
 
 function clearDoTaskDropOver(event) {
@@ -2924,6 +3400,7 @@ function handleDoTaskDropOnDay(event) {
   const targetDay = event.currentTarget.dataset.doTaskDropDay || event.currentTarget.dataset.doDayTab;
   if (!payload || !targetDay) return;
   moveDoTask(payload.sourceDay, targetDay, payload.taskId);
+  clearDoTaskDragState();
 }
 
 function handleDoTaskDropOnBacklog(event) {
@@ -2932,6 +3409,7 @@ function handleDoTaskDropOnBacklog(event) {
   const payload = doTaskDragPayload(event);
   if (!payload) return;
   moveDoTask(payload.sourceDay, "backlog", payload.taskId);
+  clearDoTaskDragState();
 }
 
 function doTaskDragPayload(event) {
@@ -2942,6 +3420,63 @@ function doTaskDragPayload(event) {
   } catch {
     return null;
   }
+}
+
+function deleteDraggedDoTask() {
+  if (!draggedDoTask) return;
+  const task = { ...draggedDoTask };
+  deleteDoTask(task.sourceDay, task.taskId);
+  clearDoTaskDragState();
+  window.requestAnimationFrame(clearDoTaskDragState);
+}
+
+function clearDoTaskDragState() {
+  draggedDoTask = null;
+  doTaskSwipeGesture = null;
+  lastMealDragPoint = null;
+  document.body.classList.remove("meal-entry-drag-active");
+  elements.mealTrashTarget.classList.remove("drag-over");
+  document.querySelectorAll(".do-task-drop-over").forEach((item) => item.classList.remove("do-task-drop-over"));
+  document.querySelectorAll(".do-task-item.is-dragging").forEach((item) => item.classList.remove("is-dragging"));
+}
+
+function handleDoTaskPointerDown(event) {
+  if (event.pointerType !== "touch") return;
+  if (event.target.closest("button, input")) return;
+  const entry = event.currentTarget;
+  document.querySelectorAll(".do-task-item.is-swiped").forEach((item) => {
+    if (item !== entry) item.classList.remove("is-swiped");
+  });
+  doTaskSwipeGesture = {
+    entry,
+    startX: event.clientX,
+    startY: event.clientY,
+    active: false
+  };
+}
+
+function handleDoTaskPointerMove(event) {
+  if (!doTaskSwipeGesture || doTaskSwipeGesture.entry !== event.currentTarget) return;
+  const deltaX = event.clientX - doTaskSwipeGesture.startX;
+  const deltaY = event.clientY - doTaskSwipeGesture.startY;
+  if (Math.abs(deltaY) > 28 && Math.abs(deltaY) > Math.abs(deltaX)) {
+    doTaskSwipeGesture = null;
+    return;
+  }
+  if (deltaX < -28) {
+    doTaskSwipeGesture.active = true;
+    event.currentTarget.classList.add("is-swiped");
+  } else if (deltaX > 18) {
+    event.currentTarget.classList.remove("is-swiped");
+  }
+}
+
+function handleDoTaskPointerEnd(event) {
+  if (!doTaskSwipeGesture || doTaskSwipeGesture.entry !== event.currentTarget) return;
+  if (!doTaskSwipeGesture.active) {
+    event.currentTarget.classList.remove("is-swiped");
+  }
+  doTaskSwipeGesture = null;
 }
 
 function moveDoTask(sourceDay, targetDay, taskId) {
@@ -2957,7 +3492,13 @@ function moveDoTask(sourceDay, targetDay, taskId) {
     nextTask.weekKey = weekKey();
     doBacklogTasks().push(nextTask);
   } else {
-    doTasksForDay(targetDay).push(nextTask);
+    const key = weekKey();
+    const targetTasks = rawDoTasksForDay(targetDay, key);
+    if (nextTask.recurringTaskId) clearRecurringTaskSkipForDay(key, targetDay, nextTask.recurringTaskId);
+    state.doPlans[key][targetDay] = nextTask.recurringTaskId
+      ? targetTasks.filter((item) => item.recurringTaskId !== nextTask.recurringTaskId)
+      : targetTasks;
+    state.doPlans[key][targetDay].push(nextTask);
     activePlannerDayId = targetDay;
   }
   persist();
@@ -3125,7 +3666,7 @@ function bindPlayTaskControls(root = document) {
   root.querySelectorAll("[data-start-play-exercise]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      requestStartExercise(button.dataset.playDay, button.dataset.playTask);
+      openActiveExerciseView(button.dataset.playDay, button.dataset.playTask);
     });
   });
 }
@@ -3375,9 +3916,23 @@ function updatePlayExerciseData(dayId, taskId, field, value) {
   if (!["time", "weight"].includes(field)) return;
   const tasks = playTasksForDay(dayId);
   const task = tasks.find((item) => item.id === taskId);
-  if (!task || !task.sourceWorkoutId) return;
+  if (!task) return;
   task.exerciseData = { ...normalizeExerciseData(task.exerciseData), [field]: String(value || "").trim() };
-  upsertWorkoutExecutionLog(task.sourceWorkoutId, task, dayId);
+  if (task.sourceWorkoutId) upsertWorkoutExecutionLog(task.sourceWorkoutId, task, dayId);
+  persist();
+}
+
+function updateActiveRepWeight(dayId, taskId, key, value) {
+  const tasks = playTasksForDay(dayId);
+  const task = tasks.find((item) => item.id === taskId);
+  if (!task) return;
+  const data = normalizeExerciseData(task.exerciseData);
+  const repWeights = { ...data.repWeights };
+  const nextValue = String(value || "").trim();
+  if (nextValue) repWeights[key] = nextValue;
+  else delete repWeights[key];
+  task.exerciseData = { ...data, repWeights };
+  if (task.sourceWorkoutId) upsertWorkoutExecutionLog(task.sourceWorkoutId, task, dayId);
   persist();
 }
 
@@ -3393,6 +3948,7 @@ function upsertWorkoutExecutionLog(workoutId, task, dayId) {
     existing.taskId = task.id;
     existing.time = data.time;
     existing.weight = data.weight;
+    existing.repWeights = normalizeRepWeights(data.repWeights);
   } else {
     workout.logs.push({
       id: createId("workout-log"),
@@ -3400,9 +3956,16 @@ function upsertWorkoutExecutionLog(workoutId, task, dayId) {
       taskId: task.id,
       time: data.time,
       weight: data.weight,
+      repWeights: normalizeRepWeights(data.repWeights),
       createdAt: new Date().toISOString()
     });
   }
+}
+
+function appendWorkoutExecutionLog(workoutId, log) {
+  const workout = state.workouts.find((item) => item.id === workoutId);
+  if (!workout) return;
+  workout.logs = normalizeWorkoutLogs([...(workout.logs || []), log]);
 }
 
 function playTaskDateKey(dayId) {
@@ -4178,6 +4741,14 @@ function openMealEntryMenu(event) {
         Make ahead
       </button>
     ` : ""}
+    <button type="button" role="menuitem" data-copy-meal-entry-menu data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
+      Copy meal
+    </button>
+    ${recipe ? `
+      <button type="button" role="menuitem" data-copy-leftovers-meal-entry-menu data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
+        Copy as leftovers
+      </button>
+    ` : ""}
     <button type="button" role="menuitem" data-remove-meal-entry-menu data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
       Delete
     </button>
@@ -4229,12 +4800,120 @@ function openMealEntryMenu(event) {
   removeButton.addEventListener("pointerdown", removeFromMenu);
   removeButton.addEventListener("mousedown", removeFromMenu);
   removeButton.addEventListener("click", removeFromMenu);
+
+  const copyButton = menu.querySelector("[data-copy-meal-entry-menu]");
+  let didCopy = false;
+  const copyFromMenu = (copyEvent) => {
+    copyEvent.preventDefault();
+    copyEvent.stopPropagation();
+    if (didCopy) return;
+    didCopy = true;
+    suppressMealEntryClick = true;
+    const target = copyEvent.currentTarget;
+    closeFolderMenu();
+    copyMealEntry(target.dataset.day, target.dataset.meal, Number(target.dataset.index));
+    window.setTimeout(() => {
+      suppressMealEntryClick = false;
+    }, 120);
+  };
+  copyButton.addEventListener("pointerdown", copyFromMenu);
+  copyButton.addEventListener("mousedown", copyFromMenu);
+  copyButton.addEventListener("click", copyFromMenu);
+
+  const copyLeftoversButton = menu.querySelector("[data-copy-leftovers-meal-entry-menu]");
+  let didCopyLeftovers = false;
+  const copyLeftoversFromMenu = (copyEvent) => {
+    copyEvent.preventDefault();
+    copyEvent.stopPropagation();
+    if (didCopyLeftovers) return;
+    didCopyLeftovers = true;
+    suppressMealEntryClick = true;
+    const target = copyEvent.currentTarget;
+    closeFolderMenu();
+    copyMealEntryAsLeftovers(target.dataset.day, target.dataset.meal, Number(target.dataset.index));
+    window.setTimeout(() => {
+      suppressMealEntryClick = false;
+    }, 120);
+  };
+  copyLeftoversButton?.addEventListener("pointerdown", copyLeftoversFromMenu);
+  copyLeftoversButton?.addEventListener("mousedown", copyLeftoversFromMenu);
+  copyLeftoversButton?.addEventListener("click", copyLeftoversFromMenu);
+}
+
+function openEmptyMealEntryMenu(event) {
+  if (!copiedMealEntry) return;
+  event.preventDefault();
+  event.stopPropagation();
+  closeFolderMenu();
+
+  const entry = event.currentTarget;
+  const day = entry.dataset.day;
+  const meal = entry.dataset.meal;
+  const index = Number(entry.dataset.index);
+  if (!day || !meal || Number.isNaN(index)) return;
+
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu meal-entry-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-paste-meal-entry-menu data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
+      Paste meal
+    </button>
+  `;
+
+  document.body.append(menu);
+  const sourceRect = event.currentTarget?.getBoundingClientRect?.();
+  const rawX = event.clientX || sourceRect?.right || 10;
+  const rawY = event.clientY || sourceRect?.bottom || 10;
+  const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+
+  const pasteButton = menu.querySelector("[data-paste-meal-entry-menu]");
+  let didPaste = false;
+  const pasteFromMenu = (pasteEvent) => {
+    pasteEvent.preventDefault();
+    pasteEvent.stopPropagation();
+    if (didPaste) return;
+    didPaste = true;
+    const target = pasteEvent.currentTarget;
+    closeFolderMenu();
+    pasteMealEntry(target.dataset.day, target.dataset.meal, Number(target.dataset.index));
+  };
+  pasteButton.addEventListener("pointerdown", pasteFromMenu);
+  pasteButton.addEventListener("mousedown", pasteFromMenu);
+  pasteButton.addEventListener("click", pasteFromMenu);
 }
 
 function recipeForMealEntry(day, meal, index) {
   const week = weekState();
   const entries = mealEntryList(slotEntries(week.slots?.[day]?.[meal]), meal);
   return recipeForSlot(entries[index]);
+}
+
+function mealEntryValue(day, meal, index) {
+  const week = weekState();
+  const entries = mealEntryList(slotEntries(week.slots?.[day]?.[meal]), meal);
+  return entries[index] || "";
+}
+
+function copyMealEntry(day, meal, index) {
+  copiedMealEntry = mealEntryValue(day, meal, index);
+}
+
+function copyMealEntryAsLeftovers(day, meal, index) {
+  const recipe = recipeForMealEntry(day, meal, index);
+  if (!recipe) return;
+  copiedMealEntry = specialMealSlotId("leftovers", recipe.name);
+}
+
+function pasteMealEntry(day, meal, index) {
+  if (!copiedMealEntry) return;
+  const week = weekState();
+  const entries = mealEntryList(slotEntries(week.slots?.[day]?.[meal]), meal);
+  entries[index] = copiedMealEntry;
+  setMeal(day, meal, compactMealSlotEntries(entries, meal));
 }
 
 function addMakeAheadTaskForMealEntry(day, meal, index) {
@@ -4354,22 +5033,46 @@ function closeFolderMenu() {
 }
 
 function setPageTitle(title) {
-  elements.pageTitle.textContent = title;
-  elements.pageTitle.hidden = activeAppArea === "home";
+  elements.pageTitleText.textContent = title;
+  elements.pageTitleBtn.setAttribute("aria-label", `Open page directory from ${title}`);
+  elements.pageTitleWrap.hidden = activeAppArea === "home";
+  updatePageVisibility();
+  updatePageTitleMenu();
   updateTopLeftNavigation();
 }
 
+function updatePageTitleMenu() {
+  elements.titleMealPlanBtn.hidden = activeAppArea === "eat" || !isPageEnabled("eat");
+  elements.titleExercisePlanBtn.hidden = activeAppArea === "play" || !isPageEnabled("play");
+  elements.titleToDoListBtn.hidden = activeAppArea === "do" || !isPageEnabled("do");
+}
+
+function updatePageVisibility() {
+  state.pageVisibility = normalizePageVisibility(state.pageVisibility);
+  elements.homeEatBtn.hidden = !state.pageVisibility.eat;
+  elements.homePlayBtn.hidden = !state.pageVisibility.play;
+  elements.homeDoBtn.hidden = !state.pageVisibility.do;
+  updatePageVisibilityControls();
+}
+
+function updatePageVisibilityControls() {
+  document.querySelectorAll("[data-page-visibility]").forEach((input) => {
+    input.checked = isPageEnabled(input.dataset.pageVisibility);
+  });
+}
+
 function updateTopLeftNavigation() {
-  const isHome = activeAppArea === "home";
-  elements.appMenuBtn.classList.toggle("is-directory", !isHome);
-  elements.appMenuBtn.title = isHome ? "Settings" : "Open directory";
-  elements.appMenuBtn.setAttribute("aria-label", isHome ? "Settings" : "Open directory");
-  elements.appMenuBtn.setAttribute("aria-expanded", isHome ? "false" : String(!elements.appMenu.hidden));
+  elements.appMenuBtn.classList.remove("is-directory");
+  elements.appMenuBtn.title = "Settings";
+  elements.appMenuBtn.setAttribute("aria-label", "Settings");
+  elements.appMenuBtn.setAttribute("aria-expanded", String(!elements.appMenu.hidden));
+  updateSettingsMenuOptions();
 }
 
 function handleAppMenuButtonClick(event) {
-  if (activeAppArea === "home") {
-    showSettingsApp(event);
+  if (!hasPageSpecificSettings()) {
+    event?.stopPropagation();
+    openContextSettingsDialog("general");
     return;
   }
   toggleAppMenu(event);
@@ -4380,6 +5083,10 @@ function toggleAppMenu(event) {
   const willOpen = elements.appMenu.hidden;
   closeFolderMenu();
   closeDirectorySubmenus();
+  closePageTitleMenu();
+  closeAuthMenu();
+  closeWeekJumpMenu();
+  updateSettingsMenuOptions();
   elements.appMenu.hidden = !willOpen;
   elements.appMenuBtn.setAttribute("aria-expanded", String(willOpen));
 }
@@ -4388,6 +5095,179 @@ function closeAppMenu() {
   elements.appMenu.hidden = true;
   elements.appMenuBtn.setAttribute("aria-expanded", "false");
   closeDirectorySubmenus();
+}
+
+function updateSettingsMenuOptions() {
+  elements.generalSettingsMenuBtn.hidden = false;
+  const isEat = activeAppArea === "eat";
+  const isPlay = activeAppArea === "play";
+  const isDo = activeAppArea === "do";
+  elements.menuAutoRulesBtn.hidden = !isEat;
+  elements.menuTagsBtn.hidden = !isEat;
+  elements.menuGroceryItemsBtn.hidden = !isEat;
+  elements.menuIngredientOptionsBtn.hidden = !isEat;
+  elements.menuRecurringTasksBtn.hidden = !isDo;
+  elements.menuWorkoutLibraryBtn.hidden = !isPlay;
+  elements.menuPlayAutoRulesBtn.hidden = !isPlay;
+}
+
+function hasPageSpecificSettings() {
+  return ["eat", "play", "do"].includes(activeAppArea);
+}
+
+function openSettingsMenuDialog(openDialog) {
+  closeAppMenu();
+  openDialog();
+}
+
+function openContextSettingsDialog(kind) {
+  const normalizedKind = ["general", "eat", "do", "play"].includes(kind) ? kind : "general";
+  closeAppMenu();
+  closeFloatingMenus();
+  renderContextSettingsDialog(normalizedKind);
+  elements.contextSettingsDialog.showModal();
+}
+
+function renderContextSettingsDialog(kind) {
+  const titles = {
+    general: "Settings",
+    eat: "Eat",
+    do: "Do",
+    play: "Play"
+  };
+  elements.contextSettingsTitle.textContent = titles[kind] || "Settings";
+  if (kind === "general") {
+    elements.contextSettingsBody.innerHTML = `
+      <div class="theme-setting" role="group" aria-label="Display mode">
+        <span class="theme-setting-title">Display</span>
+        <label>
+          <input type="radio" name="contextThemeMode" value="light" ${state.themeMode === "light" ? "checked" : ""} />
+          Light
+        </label>
+        <label>
+          <input type="radio" name="contextThemeMode" value="dark" ${state.themeMode === "dark" ? "checked" : ""} />
+          Dark
+        </label>
+        <label>
+          <input type="radio" name="contextThemeMode" value="auto" ${state.themeMode === "auto" ? "checked" : ""} />
+          Auto
+        </label>
+      </div>
+      <div class="page-visibility-setting" role="group" aria-label="Enabled pages">
+        <span class="theme-setting-title">Pages</span>
+        <label>
+          <input type="checkbox" data-page-visibility="eat" ${isPageEnabled("eat") ? "checked" : ""} />
+          Eat
+        </label>
+        <label>
+          <input type="checkbox" data-page-visibility="play" ${isPageEnabled("play") ? "checked" : ""} />
+          Play
+        </label>
+        <label>
+          <input type="checkbox" data-page-visibility="do" ${isPageEnabled("do") ? "checked" : ""} />
+          Do
+        </label>
+      </div>
+      <div class="settings-action-grid">
+        <button type="button" data-context-settings-action="calendars">Calendars</button>
+        <button type="button" data-context-settings-action="weekly-email">Weekly Email</button>
+        <button type="button" data-context-settings-action="backup-health">Backup Health</button>
+        <button type="button" data-context-settings-action="restore-backup">Restore Backup</button>
+        <button type="button" data-context-settings-action="trash">Trash</button>
+      </div>
+    `;
+    return;
+  }
+
+  if (kind === "eat") {
+    elements.contextSettingsBody.innerHTML = `
+      <div class="settings-action-grid">
+        <button type="button" data-context-settings-action="auto-rules">Auto Rules</button>
+        <button type="button" data-context-settings-action="tags">Tags</button>
+        <button type="button" data-context-settings-action="grocery-items">Grocery Items</button>
+        <button type="button" data-context-settings-action="ingredient-options">Ingredient Options</button>
+      </div>
+    `;
+    return;
+  }
+
+  if (kind === "do") {
+    elements.contextSettingsBody.innerHTML = `
+      <div class="settings-action-grid">
+        <button type="button" data-context-settings-action="recurring-tasks">Recurring Tasks</button>
+      </div>
+    `;
+    return;
+  }
+
+  elements.contextSettingsBody.innerHTML = `
+    <div class="settings-action-grid">
+      <button type="button" data-context-settings-action="workout-library">Pre-Arranged Workouts</button>
+      <button type="button" data-context-settings-action="play-auto-rules">Auto Rules</button>
+    </div>
+  `;
+}
+
+function handleContextSettingsChange(event) {
+  const themeInput = event.target.closest?.("input[name='contextThemeMode']");
+  if (themeInput) setThemeMode(themeInput.value);
+  const pageVisibilityInput = event.target.closest?.("[data-page-visibility]");
+  if (pageVisibilityInput) setPageVisibility(pageVisibilityInput.dataset.pageVisibility, pageVisibilityInput.checked);
+}
+
+function handleContextSettingsAction(event) {
+  const button = event.target.closest?.("[data-context-settings-action]");
+  if (!button) return;
+  const action = button.dataset.contextSettingsAction;
+  const closeAndRun = (callback) => {
+    elements.contextSettingsDialog.close();
+    callback();
+  };
+  const actions = {
+    "calendars": () => closeAndRun(openCalendarsDialog),
+    "weekly-email": () => closeAndRun(openWeeklyEmailDialog),
+    "backup-health": () => closeAndRun(openBackupHealthDialog),
+    "restore-backup": () => closeAndRun(openRestoreDialog),
+    "trash": () => closeAndRun(openTrashDialog),
+    "auto-rules": () => closeAndRun(openAutoRulesDialog),
+    "tags": () => closeAndRun(openTagsDialog),
+    "grocery-items": () => closeAndRun(openGroceryLibraryDialog),
+    "ingredient-options": () => closeAndRun(openIngredientOptionsDialog),
+    "recurring-tasks": () => closeAndRun(openRecurringTasksDialog),
+    "workout-library": () => closeAndRun(openWorkoutLibraryDialog),
+    "play-auto-rules": () => closeAndRun(openPlayAutoRulesDialog)
+  };
+  actions[action]?.();
+}
+
+function togglePageTitleMenu(event) {
+  event.stopPropagation();
+  const willOpen = elements.pageTitleMenu.hidden || !elements.pageTitleMenu.classList.contains("is-open");
+  closeFolderMenu();
+  closeSettingsMenu();
+  closeAppMenu();
+  closeAuthMenu();
+  closeWeekJumpMenu();
+  if (willOpen) {
+    openPageTitleMenu();
+  } else {
+    closePageTitleMenu();
+  }
+}
+
+function openPageTitleMenu() {
+  elements.pageTitleMenu.hidden = false;
+  elements.pageTitleBtn.setAttribute("aria-expanded", "true");
+  window.requestAnimationFrame(() => elements.pageTitleMenu.classList.add("is-open"));
+}
+
+function closePageTitleMenu() {
+  if (elements.pageTitleMenu.hidden) return;
+  elements.pageTitleMenu.classList.remove("is-open");
+  elements.pageTitleBtn.setAttribute("aria-expanded", "false");
+  window.setTimeout(() => {
+    if (!elements.pageTitleMenu.classList.contains("is-open")) elements.pageTitleMenu.hidden = true;
+  }, 190);
 }
 
 function toggleDoMenu(event) {
@@ -4434,6 +5314,8 @@ function closeFloatingMenus() {
   closeFolderMenu();
   closeSettingsMenu();
   closeAppMenu();
+  closePageTitleMenu();
+  closeAuthMenu();
   closeWeekJumpMenu();
 }
 
@@ -4510,6 +5392,14 @@ function openGroceryLibraryDialog(event) {
   renderGroceryLibrary();
   elements.groceryLibraryInput.value = "";
   elements.groceryLibraryDialog.showModal();
+  focusGroceryLibraryInput();
+}
+
+function focusGroceryLibraryInput() {
+  window.requestAnimationFrame(() => {
+    elements.groceryLibraryInput.focus();
+    elements.groceryLibraryInput.select();
+  });
 }
 
 function renderGroceryLibrary() {
@@ -4971,7 +5861,8 @@ function restoreUserDataPreview(backupState) {
     checkedGroceries: missingRestoreCheckedGroceries(backupState),
     pantryItems: missingNormalizedStrings(Array.isArray(backupState?.pantry) ? backupState.pantry : [], state.pantry || []),
     weeklyEmailSettings: shouldRestoreWeeklyEmailSettings(backupState),
-    themeMode: shouldRestoreThemeMode(backupState)
+    themeMode: shouldRestoreThemeMode(backupState),
+    pageVisibility: shouldRestorePageVisibility(backupState)
   };
 }
 
@@ -4992,7 +5883,8 @@ function restoreUserDataChangeCount(userData) {
     + userData.checkedGroceries.length
     + userData.pantryItems.length
     + (userData.weeklyEmailSettings ? 1 : 0)
-    + (userData.themeMode ? 1 : 0);
+    + (userData.themeMode ? 1 : 0)
+    + (userData.pageVisibility ? 1 : 0);
 }
 
 function missingRestoreAutoRules(backupState) {
@@ -5127,6 +6019,11 @@ function shouldRestoreThemeMode(backupState) {
   return normalizeThemeMode(backupState.themeMode) !== normalizeThemeMode(state.themeMode);
 }
 
+function shouldRestorePageVisibility(backupState) {
+  if (!backupState?.pageVisibility) return false;
+  return JSON.stringify(normalizePageVisibility(backupState.pageVisibility)) !== JSON.stringify(normalizePageVisibility(state.pageVisibility));
+}
+
 function restorePreviewTemplate(restore) {
   const backupDate = restore.state?.createdAt || restore.state?.updatedAt || "";
   const sampleRecipes = restore.missingRecipes.slice(0, 6).map((recipe) => `<li>${escapeHtml(recipe.name)}</li>`).join("");
@@ -5171,7 +6068,8 @@ function restoreUserDataSummary(userData) {
     ["Checked Grocery States", userData.checkedGroceries.length],
     ["Pantry Items", userData.pantryItems.length],
     ["Weekly Email Draft", userData.weeklyEmailSettings ? 1 : 0],
-    ["Display Setting", userData.themeMode ? 1 : 0]
+    ["Display Setting", userData.themeMode ? 1 : 0],
+    ["Page Visibility", userData.pageVisibility ? 1 : 0]
   ]
     .filter(([, count]) => count)
     .map(([label, count]) => `<li>${count} ${escapeHtml(label)}</li>`)
@@ -5366,6 +6264,12 @@ function mergeUserDataFromRestore(restore) {
   if (data.themeMode) {
     state.themeMode = normalizeThemeMode(restore.state.themeMode);
     applyThemeMode();
+    merged += 1;
+  }
+
+  if (data.pageVisibility) {
+    state.pageVisibility = normalizePageVisibility(restore.state.pageVisibility);
+    updatePageVisibility();
     merged += 1;
   }
 
@@ -5688,6 +6592,9 @@ function renderPlanner() {
 
   elements.plannerGrid.querySelectorAll("[data-day-tab]").forEach((button) => {
     button.addEventListener("click", () => selectPlannerDay(button.dataset.dayTab));
+    button.addEventListener("dragover", handleMealDayTabDragOver);
+    button.addEventListener("dragleave", () => button.classList.remove("meal-day-drop-over"));
+    button.addEventListener("drop", handleMealDayTabDrop);
   });
 
   elements.plannerGrid.querySelectorAll("[data-meal-input]").forEach((input) => {
@@ -5724,6 +6631,10 @@ function renderPlanner() {
 
   elements.plannerGrid.querySelectorAll("[data-special-meal-choice]").forEach((button) => {
     button.addEventListener("click", () => setSpecialMealEntry(button.dataset.day, button.dataset.meal, Number(button.dataset.index), button.dataset.specialMealChoice));
+  });
+
+  elements.plannerGrid.querySelectorAll("[data-empty-meal-entry]").forEach((entry) => {
+    entry.addEventListener("contextmenu", openEmptyMealEntryMenu);
   });
 
   elements.plannerGrid.querySelectorAll("[data-special-meal-note]").forEach((input) => {
@@ -5999,20 +6910,24 @@ function renderAutoRules() {
   if (!elements.autoRuleList) return;
   renderAutoRuleOptions();
   const activeDay = ensureActiveAutoRuleDay();
-  const combinedState = combinedMealSectionsForWeek(weekState());
+  const autoRuleColumns = mealColumnConfigs
+    .map((column) => {
+      const columnHtml = autoRuleColumnMealsForDay(activeDay, column).filter(Boolean).map((meal) => (
+        autoRuleSlotTemplate(activeDay, meal, displayMealName(meal))
+      )).join("");
+      return { column, html: columnHtml };
+    })
+    .filter((column) => column.html.trim());
+  const autoRuleColumnCount = Math.max(1, autoRuleColumns.length);
   elements.autoRuleList.innerHTML = `
     <div class="day-tabs auto-rule-tabs" role="tablist" aria-label="Auto rule days">
       ${prepDays.map((day) => autoRuleDayTabTemplate(day, activeDay)).join("")}
     </div>
     <section class="day-column planner-day-panel auto-rule-day-panel" role="tabpanel" id="auto-rule-panel-${activeDay.id}" aria-labelledby="auto-rule-tab-${activeDay.id}">
-      <div class="day-slots-carousel" aria-label="${escapeHtml(activeDay.name)} auto rules">
-        ${mealColumnConfigs.map((column) => `
+      <div class="day-slots-carousel" style="--meal-column-count: ${autoRuleColumnCount};" aria-label="${escapeHtml(activeDay.name)} auto rules">
+        ${autoRuleColumns.map(({ html }) => `
           <div class="meal-plan-column">
-            ${autoRuleColumnMealsForDay(activeDay, column, combinedState).map((meal) => (
-              meal
-                ? autoRuleSlotTemplate(activeDay, meal, displayMealName(meal))
-                : emptyMealSlotTemplate()
-            )).join("")}
+            ${html}
           </div>
         `).join("")}
       </div>
@@ -6143,25 +7058,31 @@ function autoRuleDayTabTemplate(day, activeDay) {
   `;
 }
 
-function autoRuleColumnMealsForDay(day, column, combinedState) {
-  const visibleMeals = columnMealsForDay(day, column, combinedState);
+function autoRuleColumnMealsForDay(day, column) {
+  const visibleMeals = column.meals.filter((meal) => day.meals.includes(meal));
   if (!column.combinedMeal) return visibleMeals;
   const group = combinedMealSections[column.combinedMeal];
   const hasMembers = group.members.some((meal) => day.meals.includes(meal));
-  if (!hasMembers || visibleMeals.includes(column.combinedMeal)) return visibleMeals;
-  return [column.combinedMeal, ...visibleMeals];
+  return hasMembers ? [column.combinedMeal, ...visibleMeals] : visibleMeals;
 }
 
 function autoRuleSlotTemplate(day, meal, displayMeal = meal) {
   const entries = Array.from({ length: autoRuleEntryCount(day.id, meal) }, (_item, index) => index);
   const hasOpenEntry = entries.some((index) => !autoRuleInputValue(autoGenerateRuleForSlot(day, meal, index)));
+  const hasSkipRule = entries.some((index) => autoGenerateRuleForSlot(day, meal, index)?.action === "skip");
+  const addDisabled = hasOpenEntry || hasSkipRule;
+  const addTitle = hasSkipRule
+    ? "Remove Do not fill before adding another rule"
+    : hasOpenEntry
+      ? "Fill the open slot before adding another rule"
+      : "Add another rule slot";
   return `
     <div class="slot-card auto-rule-slot meal-${mealToken(meal)}">
       <div class="slot-topline">
         <div class="slot-label">${escapeHtml(displayMeal)}</div>
         <div class="slot-actions">
           <button class="slot-generate-btn auto-rule-skip-btn" type="button" data-skip-auto-rule data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="0" title="Do not fill" aria-label="Do not fill ${escapeHtml(displayMeal)}">–</button>
-          <button class="slot-add-btn auto-rule-add-btn" type="button" data-add-auto-rule data-day="${day.id}" data-meal="${escapeHtml(meal)}" title="${hasOpenEntry ? "Fill the open slot before adding another rule" : "Add another rule slot"}" aria-label="Add another ${escapeHtml(displayMeal)} rule slot" ${hasOpenEntry ? "disabled" : ""}>+</button>
+          <button class="slot-add-btn auto-rule-add-btn" type="button" data-add-auto-rule data-day="${day.id}" data-meal="${escapeHtml(meal)}" title="${addTitle}" aria-label="Add another ${escapeHtml(displayMeal)} rule slot" ${addDisabled ? "disabled" : ""}>+</button>
         </div>
       </div>
       <div class="meal-entry-list">
@@ -6188,10 +7109,9 @@ function autoRuleInputTemplate(day, meal, index, displayMeal = meal) {
   const placeholder = index === 0 ? displayMeal : mealEntryPlaceholder(meal, index);
   const value = autoRuleInputValue(rule);
   const hasRule = Boolean(value);
-  const label = value || "recipe box";
   const isEmpty = !value;
-  const entryLabel = escapeHtml(label);
   if (hasRule) {
+    const entryLabel = escapeHtml(value);
     return `
       <div class="meal-entry auto-rule-entry has-rule" data-auto-rule-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" draggable="true">
         <button class="recipe-meal-link custom-meal-link auto-rule-selected" type="button" data-pick-auto-rule-recipe data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Click to change. Right-click to remove.">
@@ -6205,8 +7125,8 @@ function autoRuleInputTemplate(day, meal, index, displayMeal = meal) {
   return `
     <div class="meal-entry auto-rule-entry ${isEmpty ? "auto-rule-entry-empty" : ""}" data-auto-rule-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" draggable="true">
       <div class="meal-pick-group auto-rule-pick-group auto-rule-empty-group">
-        <button class="meal-pick-slot auto-rule-pick-slot" type="button" data-pick-auto-rule-recipe data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Choose ${escapeHtml(placeholder)} rule">
-          ${entryLabel}
+        <button class="meal-pick-slot auto-rule-pick-slot" type="button" data-pick-auto-rule-recipe data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Choose ${escapeHtml(placeholder)} rule" aria-label="Choose ${escapeHtml(placeholder)} rule">
+          ${stackedDishesIconTemplate()}
         </button>
         <button class="meal-special-choice meal-tag-choice" type="button" data-create-tag-auto-rule data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Choose tags" aria-label="Choose tags for ${escapeHtml(placeholder)} rule">#</button>
         <button class="meal-special-choice meal-ingredient-choice" type="button" data-pick-auto-rule-ingredient data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Choose ingredient" aria-label="Choose ingredient for ${escapeHtml(placeholder)} rule">
@@ -6295,16 +7215,20 @@ function commitAutoRuleInput(input) {
 
 function setAutoRuleFromValue(dayId, meal, index, value) {
   const previousRule = autoGenerateRuleForSlot({ id: dayId }, meal, index);
-  state.autoGenerateRules = state.autoGenerateRules.filter((rule) => !isExactAutoRuleForSlot(rule, dayId, meal, index));
+  removeAutoRulesForDaySlot(dayId, meal, index);
   const rule = autoGenerateRuleFromInput(dayId, meal, index, value, previousRule);
   if (rule) state.autoGenerateRules.unshift(rule);
+  if (!value && pendingAutoRuleCompaction?.dayId === dayId && pendingAutoRuleCompaction?.meal === meal && pendingAutoRuleCompaction?.index === index) {
+    compactAutoRuleEmptySlots(dayId, meal);
+  }
+  pendingAutoRuleCompaction = null;
   persist();
   renderAutoRules();
 }
 
 function clearAutoRule(dayId, meal, index) {
   const previousRule = autoGenerateRuleForSlot({ id: dayId }, meal, index);
-  state.autoGenerateRules = state.autoGenerateRules.filter((rule) => !isExactAutoRuleForSlot(rule, dayId, meal, index));
+  removeAutoRulesForDaySlot(dayId, meal, index);
   if (previousRule) state.autoGenerateRules.unshift(autoRule(createId("rule"), [dayId], meal, index, "any"));
   persist();
   renderAutoRules();
@@ -6312,7 +7236,7 @@ function clearAutoRule(dayId, meal, index) {
 
 function createTagAutoRule(dayId, meal, index) {
   const tags = recipeTags();
-  state.autoGenerateRules = state.autoGenerateRules.filter((rule) => !isExactAutoRuleForSlot(rule, dayId, meal, index));
+  removeAutoRulesForDaySlot(dayId, meal, index);
   const rule = autoRule(createId("rule"), [dayId], meal, index, "tags");
   rule.tags = tags[0] ? [tags[0]] : [];
   state.autoGenerateRules.unshift(rule);
@@ -6338,14 +7262,65 @@ function updateTagAutoRule(dayId, meal, index, updater) {
 }
 
 function removeAutoRuleSlot(dayId, meal, index) {
-  state.autoGenerateRules = state.autoGenerateRules.filter((rule) => !isExactAutoRuleForSlot(rule, dayId, meal, index));
+  removeAutoRulesForDaySlot(dayId, meal, index);
   state.autoGenerateRules.unshift(autoRule(createId("rule"), [dayId], meal, index, "any", "", autoRuleBlankSlotValue));
+  compactAutoRuleEmptySlots(dayId, meal);
   persist();
   renderAutoRules();
 }
 
+function removeAutoRulesForDaySlot(dayId, meal, index) {
+  state.autoGenerateRules = state.autoGenerateRules.flatMap((rule) => {
+    if (rule.meal !== meal || rule.index !== index || !rule.dayIds.includes(dayId)) return [rule];
+    if (rule.dayIds.length <= 1) return [];
+    const remainingRule = normalizeAutoGenerateRule({
+      ...rule,
+      dayIds: rule.dayIds.filter((id) => id !== dayId)
+    });
+    return remainingRule ? [remainingRule] : [];
+  });
+}
+
+function compactAutoRuleEmptySlots(dayId, meal) {
+  const minimumCount = minimumMealEntryCount(meal);
+  const exactRules = state.autoGenerateRules
+    .filter((rule) => rule.meal === meal && rule.dayIds.includes(dayId))
+    .sort((a, b) => a.index - b.index);
+  const visibleRules = exactRules.filter((rule) => rule.index === 0 || rule.action !== "any" || rule.value === autoRuleBlankSlotValue);
+  const filledRules = visibleRules.filter((rule) => autoRuleInputValue(rule));
+  const explicitBlankRules = visibleRules.filter((rule) => rule.action === "any" && rule.value === autoRuleBlankSlotValue);
+  let keepBlankIndexes = [];
+
+  if (filledRules.length < minimumCount) {
+    const needed = minimumCount - filledRules.length;
+    keepBlankIndexes = explicitBlankRules.slice(0, needed).map((rule) => rule.index);
+  }
+
+  state.autoGenerateRules = state.autoGenerateRules.filter((rule) => {
+    if (rule.meal !== meal || !rule.dayIds.includes(dayId)) return true;
+    if (rule.action !== "any" || rule.value !== autoRuleBlankSlotValue) return true;
+    return keepBlankIndexes.includes(rule.index);
+  });
+
+  normalizeAutoRuleSlotIndexes(dayId, meal);
+}
+
+function normalizeAutoRuleSlotIndexes(dayId, meal) {
+  const exactRules = state.autoGenerateRules
+    .filter((rule) => rule.meal === meal && rule.dayIds.includes(dayId))
+    .sort((a, b) => a.index - b.index);
+  const visibleRules = exactRules.filter((rule) => rule.index === 0 || rule.action !== "any" || rule.value === autoRuleBlankSlotValue);
+  const nextIndexes = new Map(visibleRules.map((rule, nextIndex) => [rule.id, nextIndex]));
+  state.autoGenerateRules = state.autoGenerateRules.map((rule) => (
+    nextIndexes.has(rule.id) ? { ...rule, index: nextIndexes.get(rule.id) } : rule
+  ));
+}
+
 function addAutoRuleSlot(dayId, meal) {
   if (!dayId || !meal) return;
+  const day = prepDays.find((item) => item.id === dayId) || { id: dayId };
+  const indexes = Array.from({ length: autoRuleEntryCount(dayId, meal) }, (_item, index) => index);
+  if (indexes.some((index) => autoGenerateRuleForSlot(day, meal, index)?.action === "skip")) return;
   const nextIndex = autoRuleEntryCount(dayId, meal);
   state.autoGenerateRules.unshift(autoRule(createId("rule"), [dayId], meal, nextIndex, "any", "", autoRuleBlankSlotValue));
   persist();
@@ -6354,6 +7329,7 @@ function addAutoRuleSlot(dayId, meal) {
 
 function openAutoRuleRecipePicker(day, meal, index) {
   if (!day || !meal || Number.isNaN(index)) return;
+  pendingAutoRuleCompaction = { dayId: day, meal, index };
   pendingAutoRuleRecipeSelection = { day, meal, index };
   openRecipeBoxPage();
   renderFolders();
@@ -6377,6 +7353,7 @@ function openAutoRuleIngredientPicker(day, meal, index) {
   renderGroceryLibrary();
   elements.groceryLibraryInput.value = "";
   elements.groceryLibraryDialog.showModal();
+  focusGroceryLibraryInput();
 }
 
 function chooseIngredientForPendingAutoRule(item) {
@@ -6536,9 +7513,11 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
   if (isEditing || !entry) {
     if (!entry && !isEditing) {
       return `
-        <div class="meal-entry">
+        <div class="meal-entry" data-empty-meal-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}">
           <div class="meal-pick-group">
-            <button class="meal-pick-slot" type="button" data-pick-meal-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}">recipe box</button>
+            <button class="meal-pick-slot" type="button" data-pick-meal-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Choose recipe" aria-label="Choose recipe">
+              ${stackedDishesIconTemplate()}
+            </button>
             <button class="meal-special-choice meal-ingredient-choice" type="button" data-pick-ingredient-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Choose ingredient" aria-label="Choose ingredient">
               ${broccoliIconTemplate()}
             </button>
@@ -6646,6 +7625,18 @@ function mealEntryPlaceholder(meal, index) {
   return "Search or type meal";
 }
 
+function stackedDishesIconTemplate() {
+  return `
+    <svg class="stacked-dishes-icon" viewBox="0 0 48 32" aria-hidden="true">
+      <path d="M6 9.5c0-4.1 8-7.1 18-7.1s18 3 18 7.1-8 7.1-18 7.1S6 13.6 6 9.5Z" />
+      <path d="M13.5 9.3c2.4-1.6 6-2.4 10.5-2.4s8.1.8 10.5 2.4" />
+      <path d="M7.8 14.2c2.7 3.3 8.8 5.2 16.2 5.2s13.5-1.9 16.2-5.2" />
+      <path d="M7.8 20.2c2.7 3.3 8.8 5.2 16.2 5.2s13.5-1.9 16.2-5.2" />
+      <path d="M7.8 26.2c2.7 3.3 8.8 5.2 16.2 5.2s13.5-1.9 16.2-5.2" />
+    </svg>
+  `;
+}
+
 function broccoliIconTemplate() {
   return `
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -6732,6 +7723,26 @@ function handleMealEntryDrop(event) {
   clearMealEntryDragState();
 }
 
+function handleMealDayTabDragOver(event) {
+  if (!draggedMealEntry) return;
+  const targetDay = event.currentTarget.dataset.dayTab;
+  if (!mealForDayTabDrop(draggedMealEntry.meal, targetDay)) return;
+  updateMealDragPoint(event);
+  event.preventDefault();
+  event.currentTarget.classList.add("meal-day-drop-over");
+  event.dataTransfer.dropEffect = "move";
+}
+
+function handleMealDayTabDrop(event) {
+  if (!draggedMealEntry) return;
+  event.preventDefault();
+  event.stopPropagation();
+  updateMealDragPoint(event);
+  event.currentTarget.classList.remove("meal-day-drop-over");
+  moveMealEntryToDay(draggedMealEntry, event.currentTarget.dataset.dayTab);
+  clearMealEntryDragState();
+}
+
 function handleMealSlotDragOver(event) {
   if (!draggedMealEntry) return;
   updateMealDragPoint(event);
@@ -6788,7 +7799,7 @@ function handleMealTrashDragOver(event) {
     handleAutoRuleTrashDragOver(event);
     return;
   }
-  if (!draggedMealEntry && !draggedPlayTask) return;
+  if (!draggedMealEntry && !draggedPlayTask && !draggedDoTask) return;
   updateMealDragPoint(event);
   event.preventDefault();
   elements.mealTrashTarget.classList.add("drag-over");
@@ -6814,9 +7825,10 @@ function handleMealTrashDrop(event) {
     deleteDraggedAutoRuleEntry();
     return;
   }
-  if (!draggedMealEntry && !draggedPlayTask) return;
+  if (!draggedMealEntry && !draggedPlayTask && !draggedDoTask) return;
   deleteDraggedMealEntry();
   deleteDraggedPlayTask();
+  deleteDraggedDoTask();
 }
 
 function handleMealTrashOverlayDragOver(event) {
@@ -6827,7 +7839,7 @@ function handleMealTrashOverlayDragOver(event) {
     event.dataTransfer.dropEffect = isPointInMealTrash(event.clientX, event.clientY) ? "move" : "none";
     return;
   }
-  if (!draggedMealEntry && !draggedPlayTask) return;
+  if (!draggedMealEntry && !draggedPlayTask && !draggedDoTask) return;
   updateMealDragPoint(event);
   event.preventDefault();
   elements.mealTrashTarget.classList.toggle("drag-over", isPointInMealTrash(event.clientX, event.clientY));
@@ -6845,15 +7857,17 @@ function handleMealTrashOverlayDrop(event) {
     }
     return;
   }
-  if (!draggedMealEntry && !draggedPlayTask) return;
+  if (!draggedMealEntry && !draggedPlayTask && !draggedDoTask) return;
   updateMealDragPoint(event);
   event.preventDefault();
   if (isMealDragEndingInTrash()) {
     deleteDraggedMealEntry();
     deleteDraggedPlayTask();
+    deleteDraggedDoTask();
   } else {
     clearMealEntryDragState();
     clearPlayTaskDragState();
+    clearDoTaskDragState();
   }
 }
 
@@ -6869,7 +7883,7 @@ function handleDocumentMealDragOver(event) {
     event.dataTransfer.dropEffect = "move";
     return;
   }
-  if (!draggedMealEntry && !draggedPlayTask) return;
+  if (!draggedMealEntry && !draggedPlayTask && !draggedDoTask) return;
   updateMealDragPoint(event);
   if (!isPointInMealTrash(event.clientX, event.clientY)) {
     elements.mealTrashTarget.classList.remove("drag-over");
@@ -6888,12 +7902,13 @@ function handleDocumentMealDrop(event) {
     deleteDraggedAutoRuleEntry();
     return;
   }
-  if (!draggedMealEntry && !draggedPlayTask) return;
+  if (!draggedMealEntry && !draggedPlayTask && !draggedDoTask) return;
   updateMealDragPoint(event);
   if (!isPointInMealTrash(event.clientX, event.clientY)) return;
   event.preventDefault();
   deleteDraggedMealEntry();
   deleteDraggedPlayTask();
+  deleteDraggedDoTask();
 }
 
 function handleMealEntryDragEnd(event) {
@@ -7128,6 +8143,9 @@ function clearMealEntryDragState() {
   elements.plannerGrid.querySelectorAll(".is-dragging, .drag-over").forEach((entry) => {
     entry.classList.remove("is-dragging", "drag-over");
   });
+  elements.plannerGrid.querySelectorAll(".meal-day-drop-over").forEach((tab) => {
+    tab.classList.remove("meal-day-drop-over");
+  });
   window.setTimeout(() => {
     suppressMealEntryClick = false;
   }, 120);
@@ -7282,6 +8300,83 @@ function moveMealEntryToSlot(source, targetDay, targetMeal, targetIndex = null) 
   persist();
   renderPlanner();
   renderGroceries();
+}
+
+function moveMealEntryToDay(source, targetDay) {
+  const targetMeal = mealForDayTabDrop(source.meal, targetDay);
+  if (!targetMeal) return;
+  if (source.day === targetDay && source.meal === targetMeal) return;
+
+  const week = weekState();
+  const sourceEntries = mealEntryList(slotEntries(week.slots?.[source.day]?.[source.meal]), source.meal);
+  const movedEntry = sourceEntries[source.index];
+  if (!movedEntry) return;
+
+  const targetEntriesBeforeMove = mealEntriesForDayDropTarget(week, targetDay, targetMeal);
+  const targetHasEntries = targetEntriesBeforeMove.some(Boolean);
+  if (targetHasEntries && !window.confirm(`${displayMealName(targetMeal)} already has an entry on ${displayMealDayName(targetDay)}. Replace it?`)) {
+    return;
+  }
+
+  if (source.index < minimumMealEntryCount(source.meal)) {
+    sourceEntries[source.index] = "";
+  } else {
+    sourceEntries.splice(source.index, 1);
+  }
+  week.slots[source.day][source.meal] = compactMealSlotEntries(sourceEntries, source.meal);
+
+  if (isCombinedMealKey(targetMeal)) {
+    activateCombinedMealForDayDrop(week, targetDay, targetMeal);
+  }
+
+  const targetEntries = targetHasEntries
+    ? [movedEntry]
+    : mealEntryList(slotEntries(week.slots?.[targetDay]?.[targetMeal]), targetMeal);
+  if (!targetHasEntries) {
+    const targetIndex = firstAvailableMealEntryIndex(targetEntries);
+    targetEntries[targetIndex] = movedEntry;
+  }
+  week.slots[targetDay][targetMeal] = compactMealSlotEntries(targetEntries, targetMeal);
+
+  activePlannerDayId = targetDay;
+  syncMakeAheadTasksForWeek(weekKey(), week);
+  persist();
+  renderPlanner();
+  renderGroceries();
+}
+
+function mealForDayTabDrop(sourceMeal, targetDayId) {
+  const targetDay = prepDays.find((day) => day.id === targetDayId);
+  if (!targetDay) return "";
+  if (isCombinedMealKey(sourceMeal)) {
+    return combinedMealSections[sourceMeal].members.some((meal) => targetDay.meals.includes(meal)) ? sourceMeal : "";
+  }
+  return targetDay.meals.includes(sourceMeal) ? sourceMeal : "";
+}
+
+function mealEntriesForDayDropTarget(week, targetDay, targetMeal) {
+  if (!isCombinedMealKey(targetMeal)) return slotEntries(week.slots?.[targetDay]?.[targetMeal]);
+  const day = prepDays.find((item) => item.id === targetDay);
+  const members = combinedMealSections[targetMeal].members.filter((meal) => day?.meals.includes(meal));
+  return [
+    ...slotEntries(week.slots?.[targetDay]?.[targetMeal]),
+    ...members.flatMap((meal) => slotEntries(week.slots?.[targetDay]?.[meal]))
+  ];
+}
+
+function activateCombinedMealForDayDrop(week, targetDay, targetMeal) {
+  const day = prepDays.find((item) => item.id === targetDay);
+  const members = combinedMealSections[targetMeal].members.filter((meal) => day?.meals.includes(meal));
+  if (members.length < 2) return;
+  if (!week.slots[targetDay]) week.slots[targetDay] = {};
+  members.forEach((meal) => {
+    week.slots[targetDay][meal] = "";
+  });
+  setCombinedMealSection(week, targetDay, targetMeal, members);
+}
+
+function displayMealDayName(dayId) {
+  return prepDays.find((day) => day.id === dayId)?.name || "that day";
 }
 
 function firstAvailableMealEntryIndex(entries) {
@@ -7485,6 +8580,7 @@ function openMealIngredientPicker(day, meal, index) {
   renderGroceryLibrary();
   elements.groceryLibraryInput.value = "";
   elements.groceryLibraryDialog.showModal();
+  focusGroceryLibraryInput();
 }
 
 function chooseRecipeForPendingMeal(recipeId) {
