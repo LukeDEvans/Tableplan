@@ -1337,6 +1337,24 @@ select:focus {
   background: color-mix(in srgb, var(--accent-soft) 72%, #ffffff);
 }
 
+.meal-plan-context-menu button {
+  color: var(--ink);
+}
+
+.meal-plan-context-menu button:hover,
+.meal-plan-context-menu button:focus-visible {
+  background: color-mix(in srgb, var(--accent-soft) 72%, #ffffff);
+}
+
+.grocery-library-context-menu button {
+  color: var(--ink);
+}
+
+.grocery-library-context-menu button:hover,
+.grocery-library-context-menu button:focus-visible {
+  background: color-mix(in srgb, var(--accent-soft) 72%, #ffffff);
+}
+
 .settings-dock {
   position: fixed;
   right: 18px;
@@ -2669,6 +2687,33 @@ select:focus {
   margin-top: 14px;
 }
 
+.play-add-exercise-row {
+  display: flex;
+  justify-content: center;
+  padding-top: 8px;
+}
+
+.exercise-picker-group {
+  display: grid;
+  gap: 8px;
+}
+
+.exercise-picker-option {
+  width: 100%;
+  border-color: color-mix(in srgb, var(--accent) 20%, var(--sun));
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.exercise-picker-option:hover,
+.exercise-picker-option:focus-visible {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 44%, #ffffff);
+  outline: none;
+}
+
 .do-task-drop-over {
   outline: 3px solid color-mix(in srgb, var(--accent) 42%, transparent);
   outline-offset: 2px;
@@ -2754,6 +2799,25 @@ select:focus {
 .workout-detail-body {
   display: grid;
   gap: 12px;
+}
+
+.workout-title-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(108px, 140px);
+  gap: 10px;
+  align-items: end;
+}
+
+.workout-title-row select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 253, 246, 0.92);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 850;
+  padding: 0 32px 0 10px;
 }
 
 .workout-type-control {
@@ -2898,6 +2962,69 @@ select:focus {
   font-weight: 750;
 }
 
+.workout-log-editor-list {
+  display: grid;
+  gap: 12px;
+  max-height: min(62vh, 640px);
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.workout-log-tabs {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.workout-log-tab {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--sun) 52%, #ffffff);
+  border-radius: 999px;
+  background: rgba(255, 253, 246, 0.82);
+  color: var(--ink);
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.workout-log-tab.is-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 62%, #ffffff);
+  color: var(--accent-dark);
+}
+
+.workout-log-tab-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.workout-log-editor-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--sun) 48%, #ffffff);
+  border-radius: 16px;
+  background: rgba(255, 253, 246, 0.92);
+}
+
+.workout-log-editor-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.workout-log-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.workout-log-editor-grid label:last-child {
+  grid-column: 1 / -1;
+}
+
 .active-exercise-content {
   display: grid;
   gap: 14px;
@@ -2905,12 +3032,14 @@ select:focus {
 
 .active-exercise-actions {
   display: flex;
-  justify-content: flex-start;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
   padding-top: 10px;
 }
 
 .active-exercise-actions .primary-btn {
-  min-width: 92px;
+  min-width: 132px;
 }
 
 .active-exercise-notes {
@@ -2929,8 +3058,8 @@ select:focus {
 
 .active-rep-grid {
   display: grid;
-  grid-template-columns: repeat(var(--rep-column-count, 1), minmax(68px, 1fr));
-  gap: 7px;
+  grid-template-columns: repeat(var(--rep-column-count, 1), minmax(76px, 1fr));
+  gap: 8px;
   overflow-x: auto;
   padding-bottom: 4px;
 }
@@ -2938,7 +3067,7 @@ select:focus {
 .active-rep-column {
   display: grid;
   gap: 6px;
-  min-width: 68px;
+  min-width: 76px;
 }
 
 .active-rep-heading {
@@ -2971,7 +3100,7 @@ select:focus {
 .active-rep-weight-cell {
   display: grid;
   width: 100%;
-  height: clamp(52px, 14.5dvh, 76px);
+  height: clamp(56px, 14.5dvh, 78px);
   min-height: 48px;
   place-items: center;
   padding: 4px;
@@ -2985,6 +3114,17 @@ select:focus {
   line-height: 1;
   text-align: center;
   box-shadow: 0 8px 20px rgba(116, 85, 18, 0.08);
+}
+
+@media (max-width: 520px) {
+  .workout-title-row {
+    grid-template-columns: minmax(0, 1fr) minmax(92px, 112px);
+  }
+
+  .workout-title-row select {
+    min-height: 40px;
+    padding-inline: 9px 26px;
+  }
 }
 
 .active-rep-weight-cell:focus {
@@ -3921,6 +4061,8 @@ textarea {
 
 .apple-mark svg {
   fill: currentColor;
+  width: 18px;
+  height: 22px;
 }
 
 .auth-divider {
