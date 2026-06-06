@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=settings-menu-panel-1" />
+    <link rel="stylesheet" href="./styles.css?v=google-store-locations-1" />
   </head>
   <body>
     <div class="app-shell">
@@ -30,6 +30,7 @@
                 <button type="button" id="generalSettingsMenuBtn">Settings</button>
                 <button type="button" id="menuAutoRulesBtn">Auto-Fill Rules</button>
                 <button type="button" id="menuTagsBtn">Tags</button>
+                <button type="button" id="menuGroceryListBtn">Grocery List</button>
                 <button type="button" id="menuGroceryItemsBtn">Grocery Items</button>
                 <button type="button" id="menuIngredientOptionsBtn">Ingredient Options</button>
                 <button type="button" id="menuRecurringTasksBtn">Recurring Tasks</button>
@@ -853,6 +854,34 @@
       </div>
     </dialog>
 
+    <dialog class="recipe-dialog auth-dialog" id="groceryStoresDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div>
+            <h2>Grocery List</h2>
+          </div>
+          <button class="icon-btn" id="closeGroceryStoresBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <form class="inline-form grocery-library-form" id="groceryStoresForm">
+          <input id="groceryStoreInput" placeholder="Search for a store location" autocomplete="off" aria-controls="groceryStoreSuggestions" aria-expanded="false" />
+          <button class="icon-btn" title="Add manually" aria-label="Add store manually">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          </button>
+        </form>
+        <div class="grocery-store-suggestions" id="groceryStoreSuggestions" role="listbox" hidden></div>
+        <p class="grocery-store-search-status" id="groceryStoreSearchStatus" aria-live="polite"></p>
+        <div class="grocery-store-settings-list" id="groceryStoresList"></div>
+        <div class="dialog-actions">
+          <span></span>
+          <div>
+            <button class="primary-btn" type="button" id="doneGroceryStoresBtn">Done</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
     <dialog class="recipe-dialog auth-dialog" id="ingredientOptionsDialog">
       <div class="recipe-form">
         <div class="dialog-head">
@@ -1204,6 +1233,6 @@
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./supabase-config.js?v=auth-deploy-1"></script>
-    <script src="./app.js?v=grocery-aliases-1"></script>
+    <script src="./app.js?v=google-store-locations-1"></script>
   </body>
 </html>

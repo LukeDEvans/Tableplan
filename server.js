@@ -12,6 +12,8 @@ const STATE_FILE = path.join(DATA_DIR, "tableplan-state.json");
 const BACKUP_DIR = process.env.EAT_BACKUP_DIR || path.join(os.homedir(), "Desktop", "Eat", "Backups");
 const MAX_BACKUPS = Number(process.env.EAT_MAX_BACKUPS || 5);
 const US_HOLIDAYS_ICS_URL = "https://calendar.google.com/calendar/ical/en.usa%23holiday%40group.v.calendar.google.com/public/basic.ics";
+const GOOGLE_PLACES_BASE_URL = "https://places.googleapis.com/v1";
+const GOOGLE_STORE_TYPES = ["grocery_store", "supermarket", "warehouse_store", "food_store", "market"];
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -37,6 +39,10 @@ const server = http.createServer(async (request, response) => {
     }
     if (url.pathname === "/api/calendars" || url.pathname === "/api/birthdays") {
       await handleCalendarSync(url, response);
+      return;
+    }
+    if (url.pathname === "/api/google-places") {
+      await handleGooglePlaces(url, response);
       return;
     }
     if (url.pathname === "/api/state") {
@@ -173,6 +179,104 @@ async function handleCalendarSync(url, response) {
   }
 
   sendJson(response, 200, { events: parseCalendarIcs(await fetched.text()) });
+}
+
+async function handleGooglePlaces(url, response) {
+  const apiKey = String(process.env.GOOGLE_MAPS_API_KEY || process.env.Google_Maps || "").trim();
+  if (!apiKey) {
+    sendJson(response, 503, { error: "Google Maps is not configured yet." });
+    return;
+  }
+  const action = String(url.searchParams.get("action") || "autocomplete");
+  try {
+    if (action === "details") {
+      const store = await fetchGooglePlaceDetails({
+        apiKey,
+        placeId: url.searchParams.get("placeId"),
+        sessionToken: url.searchParams.get("sessionToken"),
+        name: url.searchParams.get("name")
+      });
+      sendJson(response, 200, { store });
+      return;
+    }
+    const suggestions = await fetchGooglePlaceSuggestions({
+      apiKey,
+      input: url.searchParams.get("input"),
+      sessionToken: url.searchParams.get("sessionToken")
+    });
+    sendJson(response, 200, { suggestions });
+  } catch (error) {
+    sendJson(response, error.statusCode || 500, { error: error.message || "Google Places request failed." });
+  }
+}
+
+async function fetchGooglePlaceSuggestions({ apiKey, input, sessionToken }) {
+  const query = String(input || "").trim();
+  if (query.length < 2) return [];
+  const fetched = await fetch(`${GOOGLE_PLACES_BASE_URL}/places:autocomplete`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": "suggestions.placePrediction.placeId,suggestions.placePrediction.structuredFormat,suggestions.placePrediction.text"
+    },
+    body: JSON.stringify({
+      input: query,
+      sessionToken: cleanGooglePlacesSessionToken(sessionToken),
+      includedPrimaryTypes: GOOGLE_STORE_TYPES,
+      includedRegionCodes: ["us"],
+      languageCode: "en",
+      regionCode: "us"
+    })
+  });
+  const body = await readGooglePlacesResponse(fetched);
+  return (body.suggestions || [])
+    .map((suggestion) => suggestion.placePrediction)
+    .filter((prediction) => prediction?.placeId)
+    .map((prediction) => ({
+      placeId: prediction.placeId,
+      name: prediction.structuredFormat?.mainText?.text || prediction.text?.text || "Store",
+      address: prediction.structuredFormat?.secondaryText?.text || ""
+    }));
+}
+
+async function fetchGooglePlaceDetails({ apiKey, placeId, sessionToken, name }) {
+  const id = String(placeId || "").trim();
+  if (!id) throw googlePlacesRequestError(400, "Missing Google Place ID.");
+  const params = new URLSearchParams({ languageCode: "en", regionCode: "US" });
+  const token = cleanGooglePlacesSessionToken(sessionToken);
+  if (token) params.set("sessionToken", token);
+  const fetched = await fetch(`${GOOGLE_PLACES_BASE_URL}/places/${encodeURIComponent(id)}?${params}`, {
+    headers: {
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": "id,formattedAddress,location,types"
+    }
+  });
+  const place = await readGooglePlacesResponse(fetched);
+  return {
+    placeId: place.id || id,
+    name: String(name || "").trim() || "Store",
+    address: place.formattedAddress || "",
+    latitude: Number(place.location?.latitude) || null,
+    longitude: Number(place.location?.longitude) || null,
+    types: Array.isArray(place.types) ? place.types : []
+  };
+}
+
+async function readGooglePlacesResponse(response) {
+  const body = await response.json().catch(() => ({}));
+  if (response.ok) return body;
+  throw googlePlacesRequestError(response.status, body.error?.message || `Google Places returned ${response.status}.`);
+}
+
+function cleanGooglePlacesSessionToken(value) {
+  return String(value || "").trim().slice(0, 128);
+}
+
+function googlePlacesRequestError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
 }
 
 function parseHolidayIcs(text) {

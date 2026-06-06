@@ -2589,9 +2589,172 @@ select:focus {
 
 .grocery-list {
   display: grid;
-  gap: 8px;
+  gap: 20px;
   max-height: none;
   overflow: auto;
+}
+
+.grocery-store-section {
+  display: grid;
+  gap: 8px;
+}
+
+.grocery-store-heading {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px 6px;
+  border-bottom: 2px solid color-mix(in srgb, var(--accent) 54%, var(--line));
+}
+
+.grocery-store-section h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.grocery-store-directions {
+  flex: 0 0 auto;
+  color: var(--accent-dark);
+}
+
+.grocery-store-list {
+  display: grid;
+  gap: 8px;
+  min-height: 48px;
+  padding: 2px;
+  border-radius: var(--radius);
+  transition: background-color 140ms ease, outline-color 140ms ease;
+}
+
+.grocery-store-list.drag-over {
+  background: color-mix(in srgb, var(--accent-soft) 62%, transparent);
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+}
+
+.grocery-store-empty {
+  display: grid;
+  min-height: 44px;
+  place-items: center;
+  border: 1px dashed color-mix(in srgb, var(--muted) 42%, transparent);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.grocery-store-settings-list {
+  display: grid;
+  gap: 8px;
+  min-height: 80px;
+}
+
+.grocery-store-setting {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 42px;
+  padding: 4px 4px 4px 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  font-weight: 850;
+}
+
+.grocery-store-setting-details {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.grocery-store-setting-details small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.grocery-store-setting-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.grocery-store-setting-actions .icon-btn {
+  color: var(--accent-dark);
+}
+
+.grocery-store-setting-actions [data-remove-grocery-store] {
+  color: var(--tomato);
+}
+
+.grocery-store-suggestions {
+  display: grid;
+  max-height: 240px;
+  margin: -6px 0 10px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-strong);
+  box-shadow: var(--shadow);
+}
+
+.grocery-store-suggestions[hidden] {
+  display: none;
+}
+
+.grocery-store-suggestions button {
+  display: grid;
+  gap: 2px;
+  min-height: 52px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.grocery-store-suggestions button:last-child {
+  border-bottom: 0;
+}
+
+.grocery-store-suggestions button:hover,
+.grocery-store-suggestions button:focus-visible {
+  background: var(--accent-soft);
+  outline: 0;
+}
+
+.grocery-store-suggestions small {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.grocery-store-google-attribution {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 5px 10px;
+  background: #ffffff;
+}
+
+.grocery-store-google-attribution img {
+  width: 120px;
+  height: auto;
+}
+
+.grocery-store-search-status {
+  min-height: 18px;
+  margin: -2px 2px 10px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
 }
 
 #groceriesPageDialog .app-page-panel {
@@ -3248,6 +3411,7 @@ select:focus {
 }
 
 .grocery-item {
+  position: relative;
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr) minmax(56px, auto) auto;
   gap: 8px;
@@ -3256,6 +3420,34 @@ select:focus {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-strong);
+  cursor: grab;
+}
+
+.grocery-item:active {
+  cursor: grabbing;
+}
+
+.grocery-item.is-dragging {
+  opacity: 0.42;
+}
+
+.grocery-item.drop-before::before,
+.grocery-item.drop-after::after {
+  position: absolute;
+  right: 2px;
+  left: 2px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  content: "";
+}
+
+.grocery-item.drop-before::before {
+  top: -6px;
+}
+
+.grocery-item.drop-after::after {
+  bottom: -6px;
 }
 
 .grocery-item input {

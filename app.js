@@ -180,6 +180,10 @@ let mealPlanContextPressTimer = null;
 let mealPlanContextPressStart = null;
 let suppressNextWeekLabelClick = false;
 let suppressNextDayTabClickId = "";
+let draggedGroceryItem = null;
+let groceryStoreSearchTimer = null;
+let groceryStoreSearchSessionToken = "";
+let groceryStoreSearchSuggestions = [];
 
 const elements = {
   weekLabel: document.querySelector("#weekLabel"),
@@ -209,6 +213,7 @@ const elements = {
   generalSettingsMenuBtn: document.querySelector("#generalSettingsMenuBtn"),
   menuAutoRulesBtn: document.querySelector("#menuAutoRulesBtn"),
   menuTagsBtn: document.querySelector("#menuTagsBtn"),
+  menuGroceryListBtn: document.querySelector("#menuGroceryListBtn"),
   menuGroceryItemsBtn: document.querySelector("#menuGroceryItemsBtn"),
   menuIngredientOptionsBtn: document.querySelector("#menuIngredientOptionsBtn"),
   menuRecurringTasksBtn: document.querySelector("#menuRecurringTasksBtn"),
@@ -354,6 +359,14 @@ const elements = {
   cancelGroceryLibraryBtn: document.querySelector("#cancelGroceryLibraryBtn"),
   saveGroceryLibraryBtn: document.querySelector("#saveGroceryLibraryBtn"),
   resetGroceryLibraryBtn: document.querySelector("#resetGroceryLibraryBtn"),
+  groceryStoresDialog: document.querySelector("#groceryStoresDialog"),
+  groceryStoresForm: document.querySelector("#groceryStoresForm"),
+  groceryStoreInput: document.querySelector("#groceryStoreInput"),
+  groceryStoreSuggestions: document.querySelector("#groceryStoreSuggestions"),
+  groceryStoreSearchStatus: document.querySelector("#groceryStoreSearchStatus"),
+  groceryStoresList: document.querySelector("#groceryStoresList"),
+  closeGroceryStoresBtn: document.querySelector("#closeGroceryStoresBtn"),
+  doneGroceryStoresBtn: document.querySelector("#doneGroceryStoresBtn"),
   ingredientOptionsDialog: document.querySelector("#ingredientOptionsDialog"),
   closeIngredientOptionsBtn: document.querySelector("#closeIngredientOptionsBtn"),
   saveIngredientOptionsBtn: document.querySelector("#saveIngredientOptionsBtn"),
@@ -542,6 +555,7 @@ function bindEvents() {
   elements.generalSettingsMenuBtn.addEventListener("click", () => openContextSettingsDialog("general"));
   elements.menuAutoRulesBtn.addEventListener("click", () => openSettingsMenuDialog(openAutoRulesDialog));
   elements.menuTagsBtn.addEventListener("click", () => openSettingsMenuDialog(openTagsDialog));
+  elements.menuGroceryListBtn.addEventListener("click", () => openSettingsMenuDialog(openGroceryStoresDialog));
   elements.menuGroceryItemsBtn.addEventListener("click", () => openSettingsMenuDialog(openGroceryLibraryDialog));
   elements.menuIngredientOptionsBtn.addEventListener("click", () => openSettingsMenuDialog(openIngredientOptionsDialog));
   elements.menuRecurringTasksBtn.addEventListener("click", () => openSettingsMenuDialog(openRecurringTasksDialog));
@@ -673,6 +687,11 @@ function bindEvents() {
     pendingAutoRuleIngredientSelection = null;
   });
   elements.resetGroceryLibraryBtn.addEventListener("click", resetGroceryLibrary);
+  elements.closeGroceryStoresBtn.addEventListener("click", () => elements.groceryStoresDialog.close());
+  elements.doneGroceryStoresBtn.addEventListener("click", () => elements.groceryStoresDialog.close());
+  elements.groceryStoresForm.addEventListener("submit", addGroceryStore);
+  elements.groceryStoreInput.addEventListener("input", scheduleGroceryStoreSearch);
+  elements.groceryStoreInput.addEventListener("keydown", handleGroceryStoreSearchKeydown);
   elements.groceryLibraryForm.addEventListener("submit", addGroceryLibraryItem);
   elements.closeIngredientOptionsBtn.addEventListener("click", () => elements.ingredientOptionsDialog.close());
   elements.saveIngredientOptionsBtn.addEventListener("click", saveIngredientOptions);
@@ -942,6 +961,8 @@ function defaultState() {
     recipeTags: defaultRecipeTags(),
     groceryBaseItems: defaultGroceryBaseItems(),
     groceryAliases: {},
+    groceryStores: [],
+    groceryItemLocations: {},
     ingredientOptions: defaultIngredientOptions(),
     calendars: [],
     groceryReviewDismissed: {},
@@ -975,6 +996,8 @@ function normalizeState(parsed) {
     recipeTags: normalizeRecipeTags(parsed?.recipeTags),
     groceryBaseItems: Array.isArray(parsed?.groceryBaseItems) ? normalizeGroceryBaseItems(parsed.groceryBaseItems) : defaultGroceryBaseItems(),
     groceryAliases: normalizeGroceryAliases(parsed?.groceryAliases),
+    groceryStores: normalizeGroceryStores(parsed?.groceryStores),
+    groceryItemLocations: normalizeGroceryItemLocations(parsed?.groceryItemLocations, parsed?.groceryStores),
     ingredientOptions: normalizeIngredientOptions(parsed?.ingredientOptions),
     calendars: normalizeLinkedCalendars(parsed?.calendars, parsed?.birthdayCalendar),
     groceryReviewDismissed: parsed?.groceryReviewDismissed || {},
@@ -1644,6 +1667,65 @@ function normalizeGroceryAliases(aliases) {
 function groceryAliases() {
   state.groceryAliases = normalizeGroceryAliases(state.groceryAliases);
   return state.groceryAliases;
+}
+
+function normalizeGroceryStores(stores) {
+  const seenNames = new Set();
+  const seenIds = new Set();
+  const seenPlaceIds = new Set();
+  return (Array.isArray(stores) ? stores : [])
+    .map((store) => ({
+      id: String(store?.id || createId("store")),
+      name: String(store?.name || "").trim(),
+      chainName: String(store?.chainName || store?.name || "").trim(),
+      address: String(store?.address || "").trim(),
+      placeId: String(store?.placeId || "").trim(),
+      latitude: normalizeStoreCoordinate(store?.latitude),
+      longitude: normalizeStoreCoordinate(store?.longitude),
+      types: Array.isArray(store?.types) ? store.types.map((type) => String(type || "").trim()).filter(Boolean) : []
+    }))
+    .filter((store) => {
+      const nameKey = normalize(store.name);
+      const duplicateName = !store.placeId && seenNames.has(nameKey);
+      const duplicatePlace = store.placeId && seenPlaceIds.has(store.placeId);
+      if (!nameKey || duplicateName || duplicatePlace || seenIds.has(store.id)) return false;
+      seenNames.add(nameKey);
+      seenIds.add(store.id);
+      if (store.placeId) seenPlaceIds.add(store.placeId);
+      return true;
+    });
+}
+
+function normalizeStoreCoordinate(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function groceryStores() {
+  state.groceryStores = normalizeGroceryStores(state.groceryStores);
+  return state.groceryStores;
+}
+
+function normalizeGroceryItemLocations(locations, stores = []) {
+  const validStoreIds = new Set(normalizeGroceryStores(stores).map((store) => store.id));
+  const normalizedLocations = {};
+  Object.entries(locations && typeof locations === "object" && !Array.isArray(locations) ? locations : {}).forEach(([itemKey, location]) => {
+    const key = baseGroceryItemKey(itemKey);
+    if (!key || !location || typeof location !== "object") return;
+    const storeId = validStoreIds.has(String(location.storeId || "")) ? String(location.storeId) : "";
+    const order = Number(location.order);
+    normalizedLocations[key] = {
+      storeId,
+      order: Number.isFinite(order) ? order : 0
+    };
+  });
+  return normalizedLocations;
+}
+
+function groceryItemLocations() {
+  state.groceryItemLocations = normalizeGroceryItemLocations(state.groceryItemLocations, groceryStores());
+  return state.groceryItemLocations;
 }
 
 function normalizeRecipe(recipe) {
@@ -5649,6 +5731,7 @@ function updateSettingsMenuOptions() {
   const isDo = activeAppArea === "do";
   elements.menuAutoRulesBtn.hidden = !isEat;
   elements.menuTagsBtn.hidden = !isEat;
+  elements.menuGroceryListBtn.hidden = !isEat;
   elements.menuGroceryItemsBtn.hidden = !isEat;
   elements.menuIngredientOptionsBtn.hidden = !isEat;
   elements.menuRecurringTasksBtn.hidden = !isDo;
@@ -5730,6 +5813,7 @@ function renderContextSettingsDialog(kind) {
       <div class="settings-action-grid">
         <button type="button" data-context-settings-action="auto-rules">Auto-Fill Rules</button>
         <button type="button" data-context-settings-action="tags">Tags</button>
+        <button type="button" data-context-settings-action="grocery-list">Grocery List</button>
         <button type="button" data-context-settings-action="grocery-items">Grocery Items</button>
         <button type="button" data-context-settings-action="ingredient-options">Ingredient Options</button>
       </div>
@@ -5778,6 +5862,7 @@ function handleContextSettingsAction(event) {
     "trash": () => closeAndRun(openTrashDialog),
     "auto-rules": () => closeAndRun(openAutoRulesDialog),
     "tags": () => closeAndRun(openTagsDialog),
+    "grocery-list": () => closeAndRun(openGroceryStoresDialog),
     "grocery-items": () => closeAndRun(openGroceryLibraryDialog),
     "ingredient-options": () => closeAndRun(openIngredientOptionsDialog),
     "recurring-tasks": () => closeAndRun(openRecurringTasksDialog),
@@ -5932,6 +6017,213 @@ function removeRecipeTag(tag) {
   renderRecipes();
 }
 
+function openGroceryStoresDialog(event) {
+  event?.stopPropagation();
+  closeSettingsMenu();
+  elements.groceryStoreInput.value = "";
+  groceryStoreSearchSuggestions = [];
+  groceryStoreSearchSessionToken = createGroceryStoreSearchSessionToken();
+  renderGroceryStoreSuggestions();
+  setGroceryStoreSearchStatus("");
+  renderGroceryStoresSettings();
+  elements.groceryStoresDialog.showModal();
+  window.requestAnimationFrame(() => elements.groceryStoreInput.focus());
+}
+
+function renderGroceryStoresSettings() {
+  const stores = groceryStores();
+  elements.groceryStoresList.innerHTML = stores.length
+    ? stores.map((store) => `
+      <div class="grocery-store-setting">
+        <span class="grocery-store-setting-details">
+          <strong>${escapeHtml(store.name)}</strong>
+          <small>${escapeHtml(store.address || "Manually added store")}</small>
+        </span>
+        <span class="grocery-store-setting-actions">
+          ${storeDirectionsUrl(store) ? `
+            <a class="icon-btn" href="${escapeHtml(storeDirectionsUrl(store))}" target="_blank" rel="noopener" title="Directions to ${escapeHtml(store.name)}" aria-label="Directions to ${escapeHtml(store.name)}">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 5 6 6-6 6v-4H8a4 4 0 0 0-4 4V9a4 4 0 0 1 4-4h5Z" /></svg>
+            </a>
+          ` : ""}
+          <button class="icon-btn" type="button" data-remove-grocery-store="${escapeHtml(store.id)}" title="Remove ${escapeHtml(store.name)}" aria-label="Remove ${escapeHtml(store.name)}">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" /></svg>
+          </button>
+        </span>
+      </div>
+    `).join("")
+    : `<div class="empty-state">Search for a store location or add one manually.</div>`;
+
+  elements.groceryStoresList.querySelectorAll("[data-remove-grocery-store]").forEach((button) => {
+    button.addEventListener("click", () => removeGroceryStore(button.dataset.removeGroceryStore));
+  });
+}
+
+function addGroceryStore(event) {
+  event.preventDefault();
+  const name = elements.groceryStoreInput.value.trim();
+  if (!name) return;
+  if (groceryStores().some((store) => !store.placeId && normalize(store.name) === normalize(name))) {
+    window.alert("That store already exists.");
+    return;
+  }
+  state.groceryStores = [...groceryStores(), { id: createId("store"), name }];
+  elements.groceryStoreInput.value = "";
+  groceryStoreSearchSuggestions = [];
+  groceryStoreSearchSessionToken = createGroceryStoreSearchSessionToken();
+  renderGroceryStoreSuggestions();
+  setGroceryStoreSearchStatus("Store added manually.");
+  persist();
+  renderGroceryStoresSettings();
+  renderGroceries();
+  elements.groceryStoreInput.focus();
+}
+
+function scheduleGroceryStoreSearch() {
+  window.clearTimeout(groceryStoreSearchTimer);
+  const query = elements.groceryStoreInput.value.trim();
+  if (query.length < 2) {
+    groceryStoreSearchSuggestions = [];
+    renderGroceryStoreSuggestions();
+    setGroceryStoreSearchStatus("");
+    return;
+  }
+  setGroceryStoreSearchStatus("Searching store locations...");
+  groceryStoreSearchTimer = window.setTimeout(() => searchGroceryStoreLocations(query), 280);
+}
+
+async function searchGroceryStoreLocations(query) {
+  try {
+    const response = await fetch(groceryPlacesApiUrl({
+      action: "autocomplete",
+      input: query,
+      sessionToken: groceryStoreSearchSessionToken
+    }), groceryPlacesRequestOptions());
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || "Store search is unavailable.");
+    if (elements.groceryStoreInput.value.trim() !== query) return;
+    groceryStoreSearchSuggestions = Array.isArray(body.suggestions) ? body.suggestions : [];
+    renderGroceryStoreSuggestions();
+    setGroceryStoreSearchStatus(groceryStoreSearchSuggestions.length
+      ? "Choose the exact store location below."
+      : "No matching locations found. You can add the typed name manually.");
+  } catch (error) {
+    groceryStoreSearchSuggestions = [];
+    renderGroceryStoreSuggestions();
+    setGroceryStoreSearchStatus(error.message || "Store search is unavailable. You can still add manually.");
+  }
+}
+
+function renderGroceryStoreSuggestions() {
+  const suggestions = groceryStoreSearchSuggestions;
+  elements.groceryStoreSuggestions.hidden = !suggestions.length;
+  elements.groceryStoreInput.setAttribute("aria-expanded", String(Boolean(suggestions.length)));
+  elements.groceryStoreSuggestions.innerHTML = suggestions.length ? `
+    ${suggestions.map((suggestion) => `
+      <button type="button" role="option" data-grocery-store-place="${escapeHtml(suggestion.placeId)}">
+        <strong>${escapeHtml(suggestion.name)}</strong>
+        <small>${escapeHtml(suggestion.address || "")}</small>
+      </button>
+    `).join("")}
+    <div class="grocery-store-google-attribution">
+      <img src="https://storage.googleapis.com/geo-devrel-public-buckets/powered_by_google_on_white.png" alt="Powered by Google" />
+    </div>
+  ` : "";
+  elements.groceryStoreSuggestions.querySelectorAll("[data-grocery-store-place]").forEach((button) => {
+    button.addEventListener("click", () => selectGroceryStoreLocation(button.dataset.groceryStorePlace));
+  });
+}
+
+async function selectGroceryStoreLocation(placeId) {
+  const suggestion = groceryStoreSearchSuggestions.find((item) => item.placeId === placeId);
+  if (!suggestion) return;
+  setGroceryStoreSearchStatus("Saving store location...");
+  elements.groceryStoreInput.disabled = true;
+  try {
+    const response = await fetch(groceryPlacesApiUrl({
+      action: "details",
+      placeId,
+      name: suggestion.name,
+      sessionToken: groceryStoreSearchSessionToken
+    }), groceryPlacesRequestOptions());
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || "The store location could not be saved.");
+    const store = normalizeGroceryStores([{
+      id: createId("store"),
+      ...body.store,
+      chainName: suggestion.name
+    }])[0];
+    if (!store) throw new Error("The store location did not include usable details.");
+    if (groceryStores().some((item) => item.placeId && item.placeId === store.placeId)) {
+      throw new Error("That store location is already on your list.");
+    }
+    state.groceryStores = [...groceryStores(), store];
+    elements.groceryStoreInput.value = "";
+    groceryStoreSearchSuggestions = [];
+    groceryStoreSearchSessionToken = createGroceryStoreSearchSessionToken();
+    renderGroceryStoreSuggestions();
+    setGroceryStoreSearchStatus("Store location linked.");
+    persist();
+    renderGroceryStoresSettings();
+    renderGroceries();
+  } catch (error) {
+    setGroceryStoreSearchStatus(error.message || "The store location could not be saved.");
+  } finally {
+    elements.groceryStoreInput.disabled = false;
+    elements.groceryStoreInput.focus();
+  }
+}
+
+function handleGroceryStoreSearchKeydown(event) {
+  if (event.key !== "Escape") return;
+  groceryStoreSearchSuggestions = [];
+  renderGroceryStoreSuggestions();
+  setGroceryStoreSearchStatus("");
+}
+
+function setGroceryStoreSearchStatus(message) {
+  elements.groceryStoreSearchStatus.textContent = message;
+}
+
+function createGroceryStoreSearchSessionToken() {
+  return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function groceryPlacesApiUrl(params) {
+  const query = new URLSearchParams(params);
+  if (canUseLocalBackend()) return `/api/google-places?${query}`;
+  if (window.location.protocol.startsWith("http")) return `/.netlify/functions/google-places?${query}`;
+  return `/api/google-places?${query}`;
+}
+
+function groceryPlacesRequestOptions() {
+  const headers = {};
+  if (authSession?.access_token) headers.Authorization = `Bearer ${authSession.access_token}`;
+  return { cache: "no-store", headers };
+}
+
+function storeDirectionsUrl(store) {
+  const hasCoordinates = Number.isFinite(store?.latitude) && Number.isFinite(store?.longitude);
+  if (!store?.placeId && !store?.address && !hasCoordinates) return "";
+  const destination = store.address || (hasCoordinates ? `${store.latitude},${store.longitude}` : store.name);
+  const params = new URLSearchParams({ api: "1", destination });
+  if (store.placeId) params.set("destination_place_id", store.placeId);
+  return `https://www.google.com/maps/dir/?${params}`;
+}
+
+function removeGroceryStore(storeId) {
+  const store = groceryStores().find((item) => item.id === storeId);
+  if (!store || !window.confirm(`Remove ${store.name}? Its grocery items will move to Unassigned.`)) return;
+  state.groceryStores = groceryStores().filter((item) => item.id !== storeId);
+  const locations = groceryItemLocations();
+  Object.values(locations).forEach((location) => {
+    if (location.storeId === storeId) location.storeId = "";
+  });
+  state.groceryItemLocations = normalizeGroceryItemLocations(locations, state.groceryStores);
+  persist();
+  renderGroceryStoresSettings();
+  renderGroceries();
+}
+
 function openGroceryLibraryDialog(event) {
   event?.stopPropagation();
   pendingMealIngredientSelection = null;
@@ -6008,6 +6300,7 @@ function addGroceryLibraryItem(event) {
 function removeGroceryLibraryItem(item) {
   state.groceryBaseItems = groceryBaseItems().filter((existing) => normalize(existing) !== normalize(item));
   removeGroceryAliasesForItem(item);
+  removeGroceryItemLocation(item);
   persist();
   refreshGroceryLibraryViews();
 }
@@ -6066,6 +6359,7 @@ function renameGroceryLibraryItem(item) {
     normalize(existing) === normalize(item) ? trimmed : existing
   )));
   renameGroceryAliasKey(item, trimmed);
+  renameGroceryItemLocation(item, trimmed);
   persist();
   refreshGroceryLibraryViews();
 }
@@ -6127,9 +6421,29 @@ function removeGroceryAliasesForItem(item) {
   state.groceryAliases = normalizeGroceryAliases(aliases);
 }
 
+function renameGroceryItemLocation(oldItem, newItem) {
+  const oldKey = baseGroceryItemKey(oldItem);
+  const newKey = baseGroceryItemKey(newItem);
+  if (!oldKey || !newKey || oldKey === newKey) return;
+  const locations = groceryItemLocations();
+  if (!locations[oldKey]) return;
+  locations[newKey] = locations[newKey] || locations[oldKey];
+  delete locations[oldKey];
+  state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
+}
+
+function removeGroceryItemLocation(item) {
+  const key = baseGroceryItemKey(item);
+  if (!key) return;
+  const locations = groceryItemLocations();
+  delete locations[key];
+  state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
+}
+
 function resetGroceryLibrary() {
   state.groceryBaseItems = defaultGroceryBaseItems();
   state.groceryAliases = {};
+  state.groceryItemLocations = {};
   persist();
   refreshGroceryLibraryViews();
 }
@@ -6527,6 +6841,8 @@ function restoreUserDataPreview(backupState) {
       groceryBaseItems()
     ),
     groceryAliases: missingRestoreGroceryAliases(backupState),
+    groceryStores: missingRestoreGroceryStores(backupState),
+    groceryItemLocations: missingRestoreGroceryItemLocations(backupState),
     ingredientOptions: missingRestoreIngredientOptions(backupState),
     checkedGroceries: missingRestoreCheckedGroceries(backupState),
     pantryItems: missingNormalizedStrings(Array.isArray(backupState?.pantry) ? backupState.pantry : [], state.pantry || []),
@@ -6550,6 +6866,8 @@ function restoreUserDataChangeCount(userData) {
     + (userData.recipeTags || []).length
     + (userData.groceryItems || []).length
     + (userData.groceryAliases || []).length
+    + (userData.groceryStores || []).length
+    + (userData.groceryItemLocations || []).length
     + ingredientCount
     + userData.checkedGroceries.length
     + userData.pantryItems.length
@@ -6685,6 +7003,21 @@ function missingRestoreGroceryAliases(backupState) {
   return missing;
 }
 
+function missingRestoreGroceryStores(backupState) {
+  const currentNames = new Set(groceryStores().map((store) => normalize(store.name)));
+  return normalizeGroceryStores(backupState?.groceryStores)
+    .filter((store) => !currentNames.has(normalize(store.name)));
+}
+
+function missingRestoreGroceryItemLocations(backupState) {
+  const backupStores = normalizeGroceryStores(backupState?.groceryStores);
+  const backupLocations = normalizeGroceryItemLocations(backupState?.groceryItemLocations, backupStores);
+  const currentLocations = groceryItemLocations();
+  return Object.entries(backupLocations)
+    .filter(([itemKey]) => !currentLocations[itemKey])
+    .map(([itemKey, location]) => ({ itemKey, ...location }));
+}
+
 function missingRestoreCheckedGroceries(backupState) {
   const current = state.checkedGroceries || {};
   return Object.entries(backupState?.checkedGroceries || {})
@@ -6748,6 +7081,8 @@ function restoreUserDataSummary(userData) {
     ["Tags", userData.recipeTags.length],
     ["Grocery Items", userData.groceryItems.length],
     ["Grocery Aliases", (userData.groceryAliases || []).length],
+    ["Grocery Stores", (userData.groceryStores || []).length],
+    ["Grocery Item Locations", (userData.groceryItemLocations || []).length],
     ["Ingredient Options", ingredientCount],
     ["Checked Grocery States", userData.checkedGroceries.length],
     ["Pantry Items", userData.pantryItems.length],
@@ -6921,6 +7256,29 @@ function mergeUserDataFromRestore(restore) {
     });
     state.groceryAliases = normalizeGroceryAliases(currentAliases);
     merged += data.groceryAliases.length;
+  }
+
+  if ((data.groceryStores || []).length) {
+    state.groceryStores = normalizeGroceryStores([...groceryStores(), ...data.groceryStores]);
+    merged += data.groceryStores.length;
+  }
+
+  if ((data.groceryItemLocations || []).length) {
+    const storeIdMap = new Map([["", ""]]);
+    normalizeGroceryStores(restore.state?.groceryStores).forEach((backupStore) => {
+      const currentStore = groceryStores().find((store) => normalize(store.name) === normalize(backupStore.name));
+      if (currentStore) storeIdMap.set(backupStore.id, currentStore.id);
+    });
+    const locations = groceryItemLocations();
+    data.groceryItemLocations.forEach(({ itemKey, storeId, order }) => {
+      if (locations[itemKey]) return;
+      locations[itemKey] = {
+        storeId: storeIdMap.get(storeId) || "",
+        order: Number.isFinite(Number(order)) ? Number(order) : 0
+      };
+    });
+    state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
+    merged += data.groceryItemLocations.length;
   }
 
   const currentOptions = normalizeIngredientOptions(state.ingredientOptions);
@@ -9577,30 +9935,32 @@ function renderGroceries() {
       ...row,
       checkedKey: groceryCheckedKey(groceryWeek.key, row.key),
       checked: Boolean(state.checkedGroceries[groceryCheckedKey(groceryWeek.key, row.key)])
-    }))
-    .sort((a, b) => Number(a.checked) - Number(b.checked) || normalize(a.item).localeCompare(normalize(b.item)));
+    }));
 
   if (!needed.length) {
     elements.groceryList.innerHTML = `<div class="empty-state">Choose meals for the prep window and groceries will appear here. Pantry items are skipped automatically.</div>`;
     return;
   }
 
-  elements.groceryList.innerHTML = needed
-    .map((row) => {
-      return `
-        <label class="grocery-item ${row.checked ? "checked" : ""}">
-          <input type="checkbox" data-grocery="${escapeHtml(row.checkedKey)}" ${row.checked ? "checked" : ""} />
-          <span class="grocery-name">
-            ${escapeHtml(row.item)}
-          </span>
-          <span class="grocery-quantity">${escapeHtml(row.quantity || "")}</span>
-          ${row.manual ? `<button class="grocery-remove-btn" type="button" data-remove-grocery="${escapeHtml(row.manualValue)}" title="Remove grocery item" aria-label="Remove ${escapeHtml(row.item)}">×</button>` : ""}
-        </label>
-      `;
-    })
+  elements.groceryList.innerHTML = groceryStoreSections(needed)
+    .map(({ storeId, name, store, rows }) => `
+      <section class="grocery-store-section" data-grocery-store-section="${escapeHtml(storeId)}">
+        <div class="grocery-store-heading">
+          <h3>${escapeHtml(name)}</h3>
+          ${storeDirectionsUrl(store) ? `
+            <a class="icon-btn grocery-store-directions" href="${escapeHtml(storeDirectionsUrl(store))}" target="_blank" rel="noopener" title="Directions to ${escapeHtml(name)}" aria-label="Directions to ${escapeHtml(name)}">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 5 6 6-6 6v-4H8a4 4 0 0 0-4 4V9a4 4 0 0 1 4-4h5Z" /></svg>
+            </a>
+          ` : ""}
+        </div>
+        <div class="grocery-store-list ${rows.length ? "" : "is-empty"}" data-grocery-store-list="${escapeHtml(storeId)}">
+          ${rows.length ? rows.map(groceryItemTemplate).join("") : `<div class="grocery-store-empty">Drop items here</div>`}
+        </div>
+      </section>
+    `)
     .join("");
 
-  elements.groceryList.querySelectorAll("input").forEach((checkbox) => {
+  elements.groceryList.querySelectorAll("[data-grocery]").forEach((checkbox) => {
     checkbox.addEventListener("change", () => {
       state.checkedGroceries[checkbox.dataset.grocery] = checkbox.checked;
       persist();
@@ -9609,6 +9969,175 @@ function renderGroceries() {
   });
   elements.groceryList.querySelectorAll("[data-remove-grocery]").forEach((button) => {
     button.addEventListener("click", () => removeManualGroceryItem(button.dataset.removeGrocery));
+  });
+  elements.groceryList.querySelectorAll("[data-grocery-row-key]").forEach((item) => {
+    item.addEventListener("dragstart", handleGroceryItemDragStart);
+    item.addEventListener("dragend", clearGroceryItemDragState);
+    item.addEventListener("dragover", handleGroceryItemDragOver);
+    item.addEventListener("dragleave", clearGroceryItemDropTarget);
+    item.addEventListener("drop", handleGroceryItemDrop);
+  });
+  elements.groceryList.querySelectorAll("[data-grocery-store-list]").forEach((list) => {
+    list.addEventListener("dragover", handleGroceryStoreDragOver);
+    list.addEventListener("dragleave", clearGroceryStoreDropTarget);
+    list.addEventListener("drop", handleGroceryStoreDrop);
+  });
+}
+
+function groceryStoreSections(rows) {
+  const locations = groceryItemLocations();
+  const stores = groceryStores().map((store) => ({ storeId: store.id, name: store.name, store }));
+  const sections = [...stores, { storeId: "", name: "Unassigned", store: null }];
+  return sections
+    .map((section) => ({
+      ...section,
+      rows: rows
+        .filter((row) => (locations[row.key]?.storeId || "") === section.storeId)
+        .sort((a, b) => Number(a.checked) - Number(b.checked)
+          || groceryRowStoreOrder(a, locations) - groceryRowStoreOrder(b, locations)
+          || normalize(a.item).localeCompare(normalize(b.item)))
+    }))
+    .filter((section) => section.storeId || section.rows.length || !stores.length);
+}
+
+function groceryRowStoreOrder(row, locations) {
+  const order = Number(locations[row.key]?.order);
+  return Number.isFinite(order) ? order : Number.MAX_SAFE_INTEGER;
+}
+
+function groceryItemTemplate(row) {
+  return `
+    <label class="grocery-item ${row.checked ? "checked" : ""}" draggable="true" data-grocery-row-key="${escapeHtml(row.key)}" title="Drag to organize">
+      <input type="checkbox" data-grocery="${escapeHtml(row.checkedKey)}" ${row.checked ? "checked" : ""} />
+      <span class="grocery-name">
+        ${escapeHtml(row.item)}
+      </span>
+      <span class="grocery-quantity">${escapeHtml(row.quantity || "")}</span>
+      ${row.manual ? `<button class="grocery-remove-btn" type="button" data-remove-grocery="${escapeHtml(row.manualValue)}" title="Remove grocery item" aria-label="Remove ${escapeHtml(row.item)}">×</button>` : ""}
+    </label>
+  `;
+}
+
+function handleGroceryItemDragStart(event) {
+  const itemKey = event.currentTarget.dataset.groceryRowKey;
+  const storeId = event.currentTarget.closest("[data-grocery-store-list]")?.dataset.groceryStoreList || "";
+  if (!itemKey) return;
+  draggedGroceryItem = { itemKey, sourceStoreId: storeId };
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("application/x-live-grocery", JSON.stringify(draggedGroceryItem));
+  event.dataTransfer.setData("text/plain", itemKey);
+  event.currentTarget.classList.add("is-dragging");
+}
+
+function handleGroceryItemDragOver(event) {
+  if (!groceryDragPayload(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const target = event.currentTarget;
+  if (target.dataset.groceryRowKey === draggedGroceryItem?.itemKey) return;
+  const rect = target.getBoundingClientRect();
+  const position = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+  elements.groceryList.querySelectorAll(".grocery-item.drop-before, .grocery-item.drop-after").forEach((item) => {
+    if (item !== target) item.classList.remove("drop-before", "drop-after");
+  });
+  target.classList.toggle("drop-before", position === "before");
+  target.classList.toggle("drop-after", position === "after");
+  event.dataTransfer.dropEffect = "move";
+}
+
+function handleGroceryItemDrop(event) {
+  const payload = groceryDragPayload(event);
+  if (!payload) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const target = event.currentTarget;
+  const targetKey = target.dataset.groceryRowKey;
+  const targetStoreId = target.closest("[data-grocery-store-list]")?.dataset.groceryStoreList || "";
+  const position = target.classList.contains("drop-before") ? "before" : "after";
+  moveGroceryItem(payload.itemKey, targetStoreId, targetKey, position);
+}
+
+function clearGroceryItemDropTarget(event) {
+  event.currentTarget.classList.remove("drop-before", "drop-after");
+}
+
+function handleGroceryStoreDragOver(event) {
+  if (!groceryDragPayload(event) || event.target.closest("[data-grocery-row-key]")) return;
+  event.preventDefault();
+  event.currentTarget.classList.add("drag-over");
+  event.dataTransfer.dropEffect = "move";
+}
+
+function handleGroceryStoreDrop(event) {
+  if (event.target.closest("[data-grocery-row-key]")) return;
+  const payload = groceryDragPayload(event);
+  if (!payload) return;
+  event.preventDefault();
+  const storeId = event.currentTarget.dataset.groceryStoreList || "";
+  moveGroceryItem(payload.itemKey, storeId);
+}
+
+function clearGroceryStoreDropTarget(event) {
+  if (event.currentTarget.contains(event.relatedTarget)) return;
+  event.currentTarget.classList.remove("drag-over");
+}
+
+function groceryDragPayload(event) {
+  if (draggedGroceryItem?.itemKey) return draggedGroceryItem;
+  try {
+    const payload = JSON.parse(event.dataTransfer.getData("application/x-live-grocery") || "{}");
+    return payload.itemKey ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function moveGroceryItem(itemKey, targetStoreId, targetKey = "", position = "after") {
+  if (!itemKey || (targetKey && itemKey === targetKey)) {
+    clearGroceryItemDragState();
+    return;
+  }
+  const validStoreId = groceryStores().some((store) => store.id === targetStoreId) ? targetStoreId : "";
+  const locations = groceryItemLocations();
+  const sourceStoreId = locations[itemKey]?.storeId || draggedGroceryItem?.sourceStoreId || "";
+  const sourceKeys = orderedGroceryKeysForStore(sourceStoreId, locations).filter((key) => key !== itemKey);
+  const targetKeys = (sourceStoreId === validStoreId
+    ? sourceKeys
+    : orderedGroceryKeysForStore(validStoreId, locations).filter((key) => key !== itemKey));
+  const targetIndex = targetKey ? targetKeys.indexOf(targetKey) : -1;
+  const insertAt = targetIndex < 0 ? targetKeys.length : targetIndex + (position === "after" ? 1 : 0);
+  targetKeys.splice(insertAt, 0, itemKey);
+  reindexGroceryStore(sourceStoreId, sourceKeys, locations);
+  reindexGroceryStore(validStoreId, targetKeys, locations);
+  state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
+  persist();
+  clearGroceryItemDragState();
+  renderGroceries();
+}
+
+function orderedGroceryKeysForStore(storeId, locations) {
+  const storedKeys = Object.entries(locations)
+    .filter(([, location]) => (location.storeId || "") === storeId)
+    .sort((a, b) => Number(a[1].order || 0) - Number(b[1].order || 0) || a[0].localeCompare(b[0]))
+    .map(([key]) => key);
+  const visibleList = [...elements.groceryList.querySelectorAll("[data-grocery-store-list]")]
+    .find((list) => (list.dataset.groceryStoreList || "") === storeId);
+  (visibleList ? [...visibleList.querySelectorAll("[data-grocery-row-key]")] : []).forEach((item) => {
+    if (!storedKeys.includes(item.dataset.groceryRowKey)) storedKeys.push(item.dataset.groceryRowKey);
+  });
+  return storedKeys;
+}
+
+function reindexGroceryStore(storeId, keys, locations) {
+  keys.forEach((key, index) => {
+    locations[key] = { storeId, order: (index + 1) * 100 };
+  });
+}
+
+function clearGroceryItemDragState() {
+  draggedGroceryItem = null;
+  elements.groceryList.querySelectorAll(".is-dragging, .drop-before, .drop-after, .drag-over").forEach((item) => {
+    item.classList.remove("is-dragging", "drop-before", "drop-after", "drag-over");
   });
 }
 
@@ -11973,10 +12502,23 @@ function buildGroceryText() {
   const groceryWeek = selectedGroceryWeek();
   if (!groceryWeek) return "Publish a week to generate groceries.";
   const pantrySet = new Set(state.pantry.map(groceryRowKey));
-  const items = buildGroceryRowsWithManual(groceryWeek.week).filter((row) => !pantrySet.has(groceryRowKey(row.item)));
-  return items.length
-    ? items.map((row) => `- ${[row.quantity, row.item].filter(Boolean).join(" ")}`).join("\n")
-    : "No groceries needed yet.";
+  const items = buildGroceryRowsWithManual(groceryWeek.week)
+    .filter((row) => !pantrySet.has(groceryRowKey(row.item)))
+    .map((row) => ({
+      ...row,
+      checked: Boolean(state.checkedGroceries[groceryCheckedKey(groceryWeek.key, row.key)])
+    }));
+  if (!items.length) return "No groceries needed yet.";
+  const sections = groceryStoreSections(items).filter((section) => section.rows.length);
+  if (sections.length === 1 && sections[0].storeId === "") {
+    return sections[0].rows.map((row) => `- ${[row.quantity, row.item].filter(Boolean).join(" ")}`).join("\n");
+  }
+  return sections
+    .map((section) => [
+      section.name,
+      ...section.rows.map((row) => `- ${[row.quantity, row.item].filter(Boolean).join(" ")}`)
+    ].join("\n"))
+    .join("\n\n");
 }
 
 function moveWeek(offset) {

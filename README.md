@@ -156,6 +156,42 @@ Imports can happen through:
 
 The extension can target Live or Local. Local import is useful for testing without deploying to Netlify.
 
+## Google Store Locations
+
+Grocery List settings can search Google Places for a specific grocery store location. Linked stores save their Google Place ID, address, and location details and include a Directions button that opens Google Maps.
+
+Enable `Places API (New)` in the Google Cloud project, then add this Netlify environment variable:
+
+```text
+GOOGLE_MAPS_API_KEY
+```
+
+For compatibility, the app also accepts the Netlify variable name:
+
+```text
+Google_Maps
+```
+
+The existing `SUPABASE_SERVICE_ROLE_KEY` is also used by the Netlify function to verify the signed-in user before making Google Places requests. Store search is restricted to:
+
+```text
+mrlukedevans@gmail.com
+```
+
+That can be overridden with:
+
+```text
+GOOGLE_PLACES_ALLOWED_EMAIL
+```
+
+For localhost, start the helper with the same key:
+
+```sh
+GOOGLE_MAPS_API_KEY="your-key" node server.js
+```
+
+Restrict the Google key to `Places API (New)` and set a conservative daily quota in Google Cloud. The key stays in the local helper or Netlify environment and is never written into browser code.
+
 ## Meal Plan Auto Rules
 
 Auto Rules live under:
