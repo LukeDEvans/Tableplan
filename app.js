@@ -6190,7 +6190,7 @@ function createGroceryStoreSearchSessionToken() {
 
 function groceryPlacesApiUrl(params) {
   const query = new URLSearchParams(params);
-  if (canUseLocalBackend()) return `/api/google-places?${query}`;
+  if (canUseLocalBackend()) return `https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/google-places?${query}`;
   if (window.location.protocol.startsWith("http")) return `/.netlify/functions/google-places?${query}`;
   return `/api/google-places?${query}`;
 }

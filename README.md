@@ -184,11 +184,7 @@ That can be overridden with:
 GOOGLE_PLACES_ALLOWED_EMAIL
 ```
 
-For localhost, start the helper with the same key:
-
-```sh
-GOOGLE_MAPS_API_KEY="your-key" node server.js
-```
+Localhost uses the protected Netlify function with the current Supabase sign-in, so the Google key does not need to be stored on the Mac. The local helper also accepts `GOOGLE_MAPS_API_KEY` or `Google_Maps` if a fully local Places request is needed later.
 
 Restrict the Google key to `Places API (New)` and set a conservative daily quota in Google Cloud. The key stays in the local helper or Netlify environment and is never written into browser code.
 

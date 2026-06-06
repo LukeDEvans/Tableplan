@@ -2,18 +2,26 @@ const GOOGLE_PLACES_BASE_URL = "https://places.googleapis.com/v1";
 const STORE_TYPES = ["grocery_store", "supermarket", "warehouse_store", "food_store", "market"];
 const DEFAULT_SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const DEFAULT_ALLOWED_EMAIL = "mrlukedevans@gmail.com";
+const ALLOWED_ORIGINS = new Set([
+  "https://effervescent-malabi-e0af55.netlify.app",
+  "http://localhost:4174",
+  "http://127.0.0.1:4174"
+]);
 
 exports.handler = async (event) => {
-  if (event.httpMethod !== "GET") return jsonResponse(405, { error: "Method not allowed." });
+  const responseHeaders = corsHeaders(event.headers?.origin || event.headers?.Origin);
+  const respond = (statusCode, body) => jsonResponse(statusCode, body, responseHeaders);
+  if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: responseHeaders, body: "" };
+  if (event.httpMethod !== "GET") return respond(405, { error: "Method not allowed." });
   const authResult = await authorizeRequest(event);
-  if (!authResult.ok) return jsonResponse(authResult.statusCode, { error: authResult.error });
+  if (!authResult.ok) return respond(authResult.statusCode, { error: authResult.error });
   const apiKey = String(process.env.GOOGLE_MAPS_API_KEY || process.env.Google_Maps || "").trim();
-  if (!apiKey) return jsonResponse(503, { error: "Google Maps is not configured yet." });
+  if (!apiKey) return respond(503, { error: "Google Maps is not configured yet." });
 
   const action = String(event.queryStringParameters?.action || "autocomplete");
   try {
     if (action === "details") {
-      return jsonResponse(200, {
+      return respond(200, {
         store: await fetchPlaceDetails({
           apiKey,
           placeId: event.queryStringParameters?.placeId,
@@ -22,7 +30,7 @@ exports.handler = async (event) => {
         })
       });
     }
-    return jsonResponse(200, {
+    return respond(200, {
       suggestions: await fetchPlaceSuggestions({
         apiKey,
         input: event.queryStringParameters?.input,
@@ -30,9 +38,19 @@ exports.handler = async (event) => {
       })
     });
   } catch (error) {
-    return jsonResponse(error.statusCode || 500, { error: error.message || "Google Places request failed." });
+    return respond(error.statusCode || 500, { error: error.message || "Google Places request failed." });
   }
 };
+
+function corsHeaders(origin) {
+  const allowedOrigin = ALLOWED_ORIGINS.has(String(origin || "")) ? String(origin) : "";
+  return {
+    ...(allowedOrigin ? { "access-control-allow-origin": allowedOrigin } : {}),
+    "access-control-allow-methods": "GET, OPTIONS",
+    "access-control-allow-headers": "authorization, content-type",
+    vary: "Origin"
+  };
+}
 
 async function authorizeRequest(event) {
   const token = String(event.headers?.authorization || event.headers?.Authorization || "").replace(/^Bearer\s+/i, "").trim();
@@ -128,12 +146,13 @@ function requestError(statusCode, message) {
   return error;
 }
 
-function jsonResponse(statusCode, body) {
+function jsonResponse(statusCode, body, extraHeaders = {}) {
   return {
     statusCode,
     headers: {
       "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store"
+      "cache-control": "no-store",
+      ...extraHeaders
     },
     body: JSON.stringify(body)
   };
