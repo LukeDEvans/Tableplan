@@ -184,6 +184,7 @@ let draggedGroceryItem = null;
 let groceryStoreSearchTimer = null;
 let groceryStoreSearchSessionToken = "";
 let groceryStoreSearchSuggestions = [];
+let groceryStoreSearchLocation = null;
 
 const elements = {
   weekLabel: document.querySelector("#weekLabel"),
@@ -970,6 +971,7 @@ function defaultState() {
     weeklyEmailSettings: defaultWeeklyEmailSettings(),
     doTasks: [],
     themeMode: "light",
+    locationSharingEnabled: false,
     pageVisibility: { ...pageVisibilityDefaults },
     autoGenerateRules: defaultAutoGenerateRules(),
     collapsedSections: defaultCollapsedSections(),
@@ -1005,6 +1007,7 @@ function normalizeState(parsed) {
     weeklyEmailSettings: normalizeWeeklyEmailSettings(parsed?.weeklyEmailSettings),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
+    locationSharingEnabled: Boolean(parsed?.locationSharingEnabled),
     pageVisibility: normalizePageVisibility(parsed?.pageVisibility),
     autoGenerateRules: normalizeAutoGenerateRules(parsed?.autoGenerateRules),
     collapsedSections: parsed?.collapsedSections || defaultCollapsedSections(),
@@ -5797,6 +5800,16 @@ function renderContextSettingsDialog(kind) {
           Do
         </label>
       </div>
+      <div class="location-sharing-setting">
+        <span>
+          <strong>Location</strong>
+          <small>Favor nearby stores when searching the Grocery List.</small>
+        </span>
+        <label>
+          <input type="checkbox" data-location-sharing ${state.locationSharingEnabled ? "checked" : ""} />
+          Use location
+        </label>
+      </div>
       <div class="settings-action-grid">
         <button type="button" data-context-settings-action="calendars">Calendars</button>
         <button type="button" data-context-settings-action="weekly-email">Weekly Email</button>
@@ -5844,6 +5857,8 @@ function handleContextSettingsChange(event) {
   if (themeInput) setThemeMode(themeInput.value);
   const pageVisibilityInput = event.target.closest?.("[data-page-visibility]");
   if (pageVisibilityInput) setPageVisibility(pageVisibilityInput.dataset.pageVisibility, pageVisibilityInput.checked);
+  const locationSharingInput = event.target.closest?.("[data-location-sharing]");
+  if (locationSharingInput) setLocationSharingEnabled(locationSharingInput.checked, locationSharingInput);
 }
 
 function handleContextSettingsAction(event) {
@@ -6024,9 +6039,10 @@ function openGroceryStoresDialog(event) {
   groceryStoreSearchSuggestions = [];
   groceryStoreSearchSessionToken = createGroceryStoreSearchSessionToken();
   renderGroceryStoreSuggestions();
-  setGroceryStoreSearchStatus("");
+  setGroceryStoreSearchStatus(state.locationSharingEnabled ? "Preparing nearby store suggestions..." : "");
   renderGroceryStoresSettings();
   elements.groceryStoresDialog.showModal();
+  if (state.locationSharingEnabled && !groceryStoreSearchLocation) acquireGroceryStoreSearchLocation();
   window.requestAnimationFrame(() => elements.groceryStoreInput.focus());
 }
 
@@ -6091,12 +6107,69 @@ function scheduleGroceryStoreSearch() {
   groceryStoreSearchTimer = window.setTimeout(() => searchGroceryStoreLocations(query), 280);
 }
 
+function setLocationSharingEnabled(enabled, input) {
+  if (!enabled) {
+    state.locationSharingEnabled = false;
+    groceryStoreSearchLocation = null;
+    persist();
+    return;
+  }
+  state.locationSharingEnabled = true;
+  persist();
+  acquireGroceryStoreSearchLocation({ settingsInput: input });
+}
+
+function acquireGroceryStoreSearchLocation({ settingsInput = null } = {}) {
+  if (!navigator.geolocation) {
+    state.locationSharingEnabled = false;
+    if (settingsInput) settingsInput.checked = false;
+    persist();
+    window.alert("Location sharing is not available in this browser.");
+    return;
+  }
+  if (elements.groceryStoresDialog.open) setGroceryStoreSearchStatus("Finding stores near your current location...");
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      groceryStoreSearchLocation = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude
+      };
+      if (elements.groceryStoresDialog.open) {
+        setGroceryStoreSearchStatus("Suggestions will favor stores near your current location.");
+      }
+      if (elements.groceryStoreInput.value.trim().length >= 2) scheduleGroceryStoreSearch();
+    },
+    (error) => {
+      groceryStoreSearchLocation = null;
+      if (error.code === 1) {
+        state.locationSharingEnabled = false;
+        if (settingsInput) settingsInput.checked = false;
+        persist();
+      }
+      const messages = {
+        1: "Location permission was not granted. The setting has been turned off.",
+        2: "Your current location could not be determined.",
+        3: "Location lookup timed out. You can try again."
+      };
+      const message = messages[error.code] || "Your current location could not be determined.";
+      if (elements.groceryStoresDialog.open) setGroceryStoreSearchStatus(message);
+      else window.alert(message);
+    },
+    {
+      enableHighAccuracy: false,
+      timeout: 10000,
+      maximumAge: 5 * 60 * 1000
+    }
+  );
+}
+
 async function searchGroceryStoreLocations(query) {
   try {
     const response = await fetch(groceryPlacesApiUrl({
       action: "autocomplete",
       input: query,
-      sessionToken: groceryStoreSearchSessionToken
+      sessionToken: groceryStoreSearchSessionToken,
+      ...(groceryStoreSearchLocation || {})
     }), groceryPlacesRequestOptions());
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error || "Store search is unavailable.");
@@ -6848,6 +6921,7 @@ function restoreUserDataPreview(backupState) {
     pantryItems: missingNormalizedStrings(Array.isArray(backupState?.pantry) ? backupState.pantry : [], state.pantry || []),
     weeklyEmailSettings: shouldRestoreWeeklyEmailSettings(backupState),
     themeMode: shouldRestoreThemeMode(backupState),
+    locationSharingEnabled: shouldRestoreLocationSharing(backupState),
     pageVisibility: shouldRestorePageVisibility(backupState)
   };
 }
@@ -6873,6 +6947,7 @@ function restoreUserDataChangeCount(userData) {
     + userData.pantryItems.length
     + (userData.weeklyEmailSettings ? 1 : 0)
     + (userData.themeMode ? 1 : 0)
+    + (typeof userData.locationSharingEnabled === "boolean" ? 1 : 0)
     + (userData.pageVisibility ? 1 : 0);
 }
 
@@ -7035,6 +7110,11 @@ function shouldRestoreThemeMode(backupState) {
   return normalizeThemeMode(backupState.themeMode) !== normalizeThemeMode(state.themeMode);
 }
 
+function shouldRestoreLocationSharing(backupState) {
+  if (typeof backupState?.locationSharingEnabled !== "boolean") return null;
+  return backupState.locationSharingEnabled === state.locationSharingEnabled ? null : backupState.locationSharingEnabled;
+}
+
 function shouldRestorePageVisibility(backupState) {
   if (!backupState?.pageVisibility) return false;
   return JSON.stringify(normalizePageVisibility(backupState.pageVisibility)) !== JSON.stringify(normalizePageVisibility(state.pageVisibility));
@@ -7088,6 +7168,7 @@ function restoreUserDataSummary(userData) {
     ["Pantry Items", userData.pantryItems.length],
     ["Weekly Email Draft", userData.weeklyEmailSettings ? 1 : 0],
     ["Display Setting", userData.themeMode ? 1 : 0],
+    ["Location Setting", typeof userData.locationSharingEnabled === "boolean" ? 1 : 0],
     ["Page Visibility", userData.pageVisibility ? 1 : 0]
   ]
     .filter(([, count]) => count)
@@ -7315,6 +7396,12 @@ function mergeUserDataFromRestore(restore) {
   if (data.themeMode) {
     state.themeMode = normalizeThemeMode(restore.state.themeMode);
     applyThemeMode();
+    merged += 1;
+  }
+
+  if (typeof data.locationSharingEnabled === "boolean") {
+    state.locationSharingEnabled = Boolean(data.locationSharingEnabled);
+    groceryStoreSearchLocation = null;
     merged += 1;
   }
 

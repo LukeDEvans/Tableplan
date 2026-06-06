@@ -34,7 +34,9 @@ exports.handler = async (event) => {
       suggestions: await fetchPlaceSuggestions({
         apiKey,
         input: event.queryStringParameters?.input,
-        sessionToken: event.queryStringParameters?.sessionToken
+        sessionToken: event.queryStringParameters?.sessionToken,
+        latitude: event.queryStringParameters?.latitude,
+        longitude: event.queryStringParameters?.longitude
       })
     });
   } catch (error) {
@@ -73,9 +75,10 @@ async function authorizeRequest(event) {
   return { ok: true, user };
 }
 
-async function fetchPlaceSuggestions({ apiKey, input, sessionToken }) {
+async function fetchPlaceSuggestions({ apiKey, input, sessionToken, latitude, longitude }) {
   const query = String(input || "").trim();
   if (query.length < 2) return [];
+  const locationBias = googleLocationBias(latitude, longitude);
   const response = await fetch(`${GOOGLE_PLACES_BASE_URL}/places:autocomplete`, {
     method: "POST",
     headers: {
@@ -89,7 +92,8 @@ async function fetchPlaceSuggestions({ apiKey, input, sessionToken }) {
       includedPrimaryTypes: STORE_TYPES,
       includedRegionCodes: ["us"],
       languageCode: "en",
-      regionCode: "us"
+      regionCode: "us",
+      ...(locationBias ? { locationBias } : {})
     })
   });
   const body = await readGoogleResponse(response);
@@ -101,6 +105,18 @@ async function fetchPlaceSuggestions({ apiKey, input, sessionToken }) {
       name: prediction.structuredFormat?.mainText?.text || prediction.text?.text || "Store",
       address: prediction.structuredFormat?.secondaryText?.text || ""
     }));
+}
+
+function googleLocationBias(latitude, longitude) {
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return {
+    circle: {
+      center: { latitude: lat, longitude: lng },
+      radius: 50000
+    }
+  };
 }
 
 async function fetchPlaceDetails({ apiKey, placeId, sessionToken, name }) {

@@ -202,7 +202,9 @@ async function handleGooglePlaces(url, response) {
     const suggestions = await fetchGooglePlaceSuggestions({
       apiKey,
       input: url.searchParams.get("input"),
-      sessionToken: url.searchParams.get("sessionToken")
+      sessionToken: url.searchParams.get("sessionToken"),
+      latitude: url.searchParams.get("latitude"),
+      longitude: url.searchParams.get("longitude")
     });
     sendJson(response, 200, { suggestions });
   } catch (error) {
@@ -210,9 +212,10 @@ async function handleGooglePlaces(url, response) {
   }
 }
 
-async function fetchGooglePlaceSuggestions({ apiKey, input, sessionToken }) {
+async function fetchGooglePlaceSuggestions({ apiKey, input, sessionToken, latitude, longitude }) {
   const query = String(input || "").trim();
   if (query.length < 2) return [];
+  const locationBias = googlePlacesLocationBias(latitude, longitude);
   const fetched = await fetch(`${GOOGLE_PLACES_BASE_URL}/places:autocomplete`, {
     method: "POST",
     headers: {
@@ -226,7 +229,8 @@ async function fetchGooglePlaceSuggestions({ apiKey, input, sessionToken }) {
       includedPrimaryTypes: GOOGLE_STORE_TYPES,
       includedRegionCodes: ["us"],
       languageCode: "en",
-      regionCode: "us"
+      regionCode: "us",
+      ...(locationBias ? { locationBias } : {})
     })
   });
   const body = await readGooglePlacesResponse(fetched);
@@ -238,6 +242,18 @@ async function fetchGooglePlaceSuggestions({ apiKey, input, sessionToken }) {
       name: prediction.structuredFormat?.mainText?.text || prediction.text?.text || "Store",
       address: prediction.structuredFormat?.secondaryText?.text || ""
     }));
+}
+
+function googlePlacesLocationBias(latitude, longitude) {
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return {
+    circle: {
+      center: { latitude: lat, longitude: lng },
+      radius: 50000
+    }
+  };
 }
 
 async function fetchGooglePlaceDetails({ apiKey, placeId, sessionToken, name }) {
