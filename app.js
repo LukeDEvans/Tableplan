@@ -185,6 +185,7 @@ let groceryStoreSearchTimer = null;
 let groceryStoreSearchSessionToken = "";
 let groceryStoreSearchSuggestions = [];
 let groceryStoreSearchLocation = null;
+let groceryStoreLocationPromise = null;
 
 const elements = {
   weekLabel: document.querySelector("#weekLabel"),
@@ -6111,6 +6112,7 @@ function setLocationSharingEnabled(enabled, input) {
   if (!enabled) {
     state.locationSharingEnabled = false;
     groceryStoreSearchLocation = null;
+    groceryStoreLocationPromise = null;
     persist();
     return;
   }
@@ -6120,51 +6122,65 @@ function setLocationSharingEnabled(enabled, input) {
 }
 
 function acquireGroceryStoreSearchLocation({ settingsInput = null } = {}) {
+  if (groceryStoreSearchLocation) return Promise.resolve(groceryStoreSearchLocation);
+  if (groceryStoreLocationPromise) return groceryStoreLocationPromise;
   if (!navigator.geolocation) {
     state.locationSharingEnabled = false;
     if (settingsInput) settingsInput.checked = false;
     persist();
     window.alert("Location sharing is not available in this browser.");
-    return;
+    return Promise.resolve(null);
   }
   if (elements.groceryStoresDialog.open) setGroceryStoreSearchStatus("Finding stores near your current location...");
-  navigator.geolocation.getCurrentPosition(
-    (position) => {
-      groceryStoreSearchLocation = {
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude
-      };
-      if (elements.groceryStoresDialog.open) {
-        setGroceryStoreSearchStatus("Suggestions will favor stores near your current location.");
+  groceryStoreLocationPromise = new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        groceryStoreSearchLocation = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude
+        };
+        if (elements.groceryStoresDialog.open) {
+          setGroceryStoreSearchStatus("Suggestions will use stores near your current location.");
+        }
+        resolve(groceryStoreSearchLocation);
+      },
+      (error) => {
+        groceryStoreSearchLocation = null;
+        if (error.code === 1) {
+          state.locationSharingEnabled = false;
+          if (settingsInput) settingsInput.checked = false;
+          persist();
+        }
+        const messages = {
+          1: "Location permission was not granted. The setting has been turned off.",
+          2: "Your current location could not be determined. Store search was not run.",
+          3: "Location lookup timed out. Store search was not run; please try again."
+        };
+        const message = messages[error.code] || "Your current location could not be determined. Store search was not run.";
+        if (elements.groceryStoresDialog.open) setGroceryStoreSearchStatus(message);
+        else window.alert(message);
+        resolve(null);
+      },
+      {
+        enableHighAccuracy: false,
+        timeout: 10000,
+        maximumAge: 5 * 60 * 1000
       }
-      if (elements.groceryStoreInput.value.trim().length >= 2) scheduleGroceryStoreSearch();
-    },
-    (error) => {
-      groceryStoreSearchLocation = null;
-      if (error.code === 1) {
-        state.locationSharingEnabled = false;
-        if (settingsInput) settingsInput.checked = false;
-        persist();
-      }
-      const messages = {
-        1: "Location permission was not granted. The setting has been turned off.",
-        2: "Your current location could not be determined.",
-        3: "Location lookup timed out. You can try again."
-      };
-      const message = messages[error.code] || "Your current location could not be determined.";
-      if (elements.groceryStoresDialog.open) setGroceryStoreSearchStatus(message);
-      else window.alert(message);
-    },
-    {
-      enableHighAccuracy: false,
-      timeout: 10000,
-      maximumAge: 5 * 60 * 1000
-    }
-  );
+    );
+  }).finally(() => {
+    groceryStoreLocationPromise = null;
+  });
+  return groceryStoreLocationPromise;
 }
 
 async function searchGroceryStoreLocations(query) {
   try {
+    if (state.locationSharingEnabled && !groceryStoreSearchLocation) {
+      setGroceryStoreSearchStatus("Finding stores near your current location...");
+      const location = await acquireGroceryStoreSearchLocation();
+      if (elements.groceryStoreInput.value.trim() !== query) return;
+      if (!location) return;
+    }
     const response = await fetch(groceryPlacesApiUrl({
       action: "autocomplete",
       input: query,

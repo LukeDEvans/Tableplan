@@ -160,7 +160,7 @@ The extension can target Live or Local. Local import is useful for testing witho
 
 Grocery List settings can search Google Places for a specific grocery store location. Linked stores save their Google Place ID, address, and location details and include a Directions button that opens Google Maps.
 
-General Settings includes a `Use location` preference. Enabling it requests browser location permission once and then biases store searches toward nearby locations. The coordinates are held only in the current browser session and are not saved in Supabase or backups; only the on/off preference is saved.
+General Settings includes a `Use location` preference. Enabling it requests browser location permission once and limits store searches to 50 km around the device location. The coordinates are held only in the current browser session and are not saved in Supabase or backups; only the on/off preference is saved.
 
 Enable `Places API (New)` in the Google Cloud project, then add this Netlify environment variable:
 

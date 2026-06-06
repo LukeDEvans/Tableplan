@@ -215,7 +215,7 @@ async function handleGooglePlaces(url, response) {
 async function fetchGooglePlaceSuggestions({ apiKey, input, sessionToken, latitude, longitude }) {
   const query = String(input || "").trim();
   if (query.length < 2) return [];
-  const locationBias = googlePlacesLocationBias(latitude, longitude);
+  const locationRestriction = googlePlacesLocationRestriction(latitude, longitude);
   const fetched = await fetch(`${GOOGLE_PLACES_BASE_URL}/places:autocomplete`, {
     method: "POST",
     headers: {
@@ -230,7 +230,7 @@ async function fetchGooglePlaceSuggestions({ apiKey, input, sessionToken, latitu
       includedRegionCodes: ["us"],
       languageCode: "en",
       regionCode: "us",
-      ...(locationBias ? { locationBias } : {})
+      ...(locationRestriction ? { locationRestriction } : {})
     })
   });
   const body = await readGooglePlacesResponse(fetched);
@@ -244,7 +244,7 @@ async function fetchGooglePlaceSuggestions({ apiKey, input, sessionToken, latitu
     }));
 }
 
-function googlePlacesLocationBias(latitude, longitude) {
+function googlePlacesLocationRestriction(latitude, longitude) {
   const lat = Number(latitude);
   const lng = Number(longitude);
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
