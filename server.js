@@ -612,7 +612,7 @@ async function handleWeeklyEmail(request, response) {
   const appState = await readStoredState();
   if (!appState) { sendJson(response, 503, { error: "No app state found on disk." }); return; }
 
-  const prefs = await readEmailPrefs();
+  const prefs = String(appState.emailPrefs || await readEmailPrefs()).trim();
   const notes = String(body.notes || "").trim();
   const context = buildWeeklyContext(appState, notes);
   const html = await generateEmailWithClaude(context, apiKey, prefs);

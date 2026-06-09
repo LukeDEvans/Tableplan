@@ -5,6 +5,16 @@
   directory = "netlify/functions"
 
 [[redirects]]
+  from = "/api/weekly-email"
+  to = "/.netlify/functions/weekly-email"
+  status = 200
+
+[[redirects]]
+  from = "/api/email-interview"
+  to = "/.netlify/functions/email-interview"
+  status = 200
+
+[[redirects]]
   from = "/data/*"
   to = "/index.html"
   status = 404

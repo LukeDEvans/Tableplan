@@ -1413,7 +1413,8 @@ function normalizeState(parsed) {
     collapsedSections: parsed?.collapsedSections || defaultCollapsedSections(),
     collapsedDays: parsed?.collapsedDays || {},
     planEvents: normalizePlanEvents(parsed?.planEvents),
-    planCalendars: normalizePlanCalendars(parsed?.planCalendars)
+    planCalendars: normalizePlanCalendars(parsed?.planCalendars),
+    emailPrefs: String(parsed?.emailPrefs || "")
   };
   ensureGroceryCatalog(normalized);
   ensureDailyDozenSeedTags(normalized);
@@ -9779,24 +9780,18 @@ async function openWeeklyEmailDialog(event) {
   elements.weeklyEmailNotes.value = "";
   elements.sendWeeklyEmailBtn.disabled = true;
   elements.weeklyEmailDialog.showModal();
-  if (!canUseLocalBackend()) {
-    elements.weeklyEmailSetup.querySelector(".weekly-email-setup-msg").textContent = "Weekly email requires the local server (localhost:4174).";
-    elements.weeklyEmailSetup.hidden = false;
-    elements.weeklyEmailPlaceholder.hidden = true;
-    elements.previewWeeklyEmailBtn.disabled = true;
-    return;
-  }
   try {
     const res = await fetch("/api/weekly-email");
     const cfg = await res.json();
     const missing = [];
     if (!cfg.hasAnthropicKey) missing.push("ANTHROPIC_API_KEY");
-    if (!cfg.hasEmailUser) missing.push("EMAIL_USER");
-    if (!cfg.hasEmailPassword) missing.push("EMAIL_APP_PASSWORD");
-    if (!cfg.hasEmailTo) missing.push("EMAIL_TO");
+    if (cfg.hasResendKey === false) missing.push("RESEND_API_KEY");
+    if (cfg.hasEmailUser === false) missing.push("EMAIL_USER");
+    if (cfg.hasEmailPassword === false) missing.push("EMAIL_APP_PASSWORD");
     if (missing.length) {
+      const location = canUseLocalBackend() ? ".env file" : "Netlify environment variables";
       elements.weeklyEmailSetup.querySelector(".weekly-email-setup-msg").textContent =
-        `Add to your .env file: ${missing.join(", ")}`;
+        `Add to your ${location}: ${missing.join(", ")}`;
       elements.weeklyEmailSetup.hidden = false;
       elements.previewWeeklyEmailBtn.disabled = true;
     } else {
@@ -9919,16 +9914,10 @@ function emailInterviewGoBack() {
 async function emailInterviewSave() {
   elements.emailInterviewNextBtn.disabled = true;
   elements.emailInterviewNextBtn.textContent = "Saving…";
-  try {
-    const res = await fetch("/api/email-interview", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ step: "save", prefs: elements.emailInterviewResult.value }) });
-    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Server error ${res.status}`); }
-    elements.emailInterviewNextBtn.textContent = "Saved!";
-    setTimeout(() => elements.emailInterviewDialog.close(), 1200);
-  } catch (err) {
-    alert(`Failed to save: ${err.message}`);
-    elements.emailInterviewNextBtn.textContent = "Save preferences";
-    elements.emailInterviewNextBtn.disabled = false;
-  }
+  state.emailPrefs = elements.emailInterviewResult.value.trim();
+  persist();
+  elements.emailInterviewNextBtn.textContent = "Saved!";
+  setTimeout(() => elements.emailInterviewDialog.close(), 1200);
 }
 
 function openBackupHealthDialog(event) {
