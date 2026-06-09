@@ -66,7 +66,8 @@ const pageVisibilityDefaults = {
   play: true,
   do: true,
   watch: true,
-  recreate: true
+  recreate: true,
+  plan: true
 };
 const prepDays = [
   { id: "friday-start", name: "Friday", offset: 0, meals: [...dinnerMeals] },
@@ -7883,6 +7884,14 @@ function renderContextSettingsDialog(kind) {
         <label>
           <input type="checkbox" data-page-visibility="watch" ${isPageEnabled("watch") ? "checked" : ""} />
           Watch
+        </label>
+        <label>
+          <input type="checkbox" data-page-visibility="recreate" ${isPageEnabled("recreate") ? "checked" : ""} />
+          Recreate
+        </label>
+        <label>
+          <input type="checkbox" data-page-visibility="plan" ${isPageEnabled("plan") ? "checked" : ""} />
+          Plan
         </label>
       </div>
       <div class="location-sharing-setting">
