@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=google-store-locations-3" />
+    <link rel="stylesheet" href="./styles.css?v=daily-dozen-1" />
   </head>
   <body>
     <div class="app-shell">
@@ -31,8 +31,11 @@
                 <button type="button" id="menuAutoRulesBtn">Auto-Fill Rules</button>
                 <button type="button" id="menuTagsBtn">Tags</button>
                 <button type="button" id="menuGroceryListBtn">Grocery List</button>
+                <button type="button" id="menuGroceryPricingBtn">Receipts & Price History</button>
                 <button type="button" id="menuGroceryItemsBtn">Grocery Items</button>
                 <button type="button" id="menuIngredientOptionsBtn">Ingredient Options</button>
+                <button type="button" id="menuFoodHealthSettingsBtn">Food Health Settings</button>
+                <button type="button" id="menuWatchTheatersBtn">Movie Theaters</button>
                 <button type="button" id="menuRecurringTasksBtn">Recurring Tasks</button>
                 <button type="button" id="menuWorkoutLibraryBtn">Workouts</button>
                 <button type="button" id="menuWorkoutLogsBtn">Workout Logs</button>
@@ -46,9 +49,12 @@
                 </button>
               </h1>
               <div class="page-title-menu" id="pageTitleMenu" hidden>
+                <button type="button" id="titleExercisePlanBtn">Exercise</button>
                 <button type="button" id="titleMealPlanBtn">Meal Plan</button>
-                <button type="button" id="titleExercisePlanBtn">Exercise Plan</button>
+                <button type="button" id="titlePlanBtn">Calendar</button>
+                <button type="button" id="titleRecreateBtn">Recreate</button>
                 <button type="button" id="titleToDoListBtn">To Do List</button>
+                <button type="button" id="titleWatchBtn">Watch List</button>
               </div>
             </div>
           </div>
@@ -94,6 +100,9 @@
               <button type="button" id="homeEatBtn">Eat</button>
               <button type="button" id="homePlayBtn">Play</button>
               <button type="button" id="homeDoBtn">Do</button>
+              <button type="button" id="homeWatchBtn">Watch</button>
+              <button type="button" id="homeRecreateBtn">Recreate</button>
+              <button type="button" id="homePlanBtn">Plan</button>
             </nav>
           </div>
         </section>
@@ -107,6 +116,15 @@
         </section>
         <section class="planner-column do-column" id="playMainPage" aria-label="Exercise plan" hidden>
           <div class="planner-grid" id="playPlannerGrid"></div>
+        </section>
+        <section class="planner-column do-column" id="watchMainPage" aria-label="Watch list" hidden>
+          <div class="planner-grid" id="watchPlannerGrid"></div>
+        </section>
+        <section class="planner-column do-column" id="recreateMainPage" aria-label="Recreate" hidden>
+          <div class="planner-grid" id="recreatePlannerGrid"></div>
+        </section>
+        <section class="planner-column do-column" id="planMainPage" aria-label="Plan" hidden>
+          <div class="plan-calendar" id="planCalendar"></div>
         </section>
         <section class="planner-column settings-page" id="settingsMainPage" aria-label="Settings" hidden>
           <div class="settings-page-list">
@@ -152,6 +170,7 @@
                   <button type="button" id="openTagsBtn">Tags</button>
                   <button type="button" id="openGroceryLibraryBtn">Grocery Items</button>
                   <button type="button" id="openIngredientOptionsBtn">Ingredient Options</button>
+                  <button type="button" id="openFoodHealthSettingsBtn">Food Health Settings</button>
                 </div>
               </div>
             </section>
@@ -177,9 +196,17 @@
                 <div class="settings-action-grid">
                   <button type="button" id="openWorkoutLibraryBtn">Workouts</button>
                   <button type="button" id="openWorkoutLogsBtn">Workout Logs</button>
-                  <button type="button" id="openPlayAutoRulesBtn">Auto-Fill Rules</button>
+                  <button type="button" id="openPastWorkoutBtn">Log Past Date</button>
                 </div>
               </div>
+            </section>
+
+            <section class="settings-page-section">
+              <button class="settings-section-toggle" type="button" id="watchSettingsBtn" aria-expanded="true" aria-controls="watchSettingsMenu">
+                <span>Watch</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+              </button>
+              <div class="settings-page-body" id="watchSettingsMenu"></div>
             </section>
           </div>
         </section>
@@ -248,6 +275,83 @@
             <div class="recipe-list recipe-tile-list" id="recipeList"></div>
           </div>
         </aside>
+      </dialog>
+
+      <dialog class="recipe-dialog watch-search-dialog" id="watchSearchDialog">
+        <div class="recipe-form watch-search-form">
+          <div class="dialog-head">
+            <h2>Add to Watch List</h2>
+            <button class="icon-btn" id="closeWatchSearchBtn" type="button" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div class="watch-search-body">
+            <input class="watch-search-dialog-input" id="watchSearchDialogInput" placeholder="Movie or TV show title…" autocomplete="off" />
+            <div class="watch-tmdb-results" id="watchSearchDialogResults"></div>
+          </div>
+        </div>
+      </dialog>
+
+      <dialog class="recipe-dialog auth-dialog" id="watchLogDialog">
+        <div class="recipe-form watch-log-form">
+          <div class="dialog-head">
+            <div>
+              <p class="muted-label" id="watchLogLabel">Watched</p>
+              <h2 id="watchLogTitle"></h2>
+            </div>
+            <button class="icon-btn" id="closeWatchLogBtn" type="button" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div class="watch-log-body">
+            <label class="watch-log-field">
+              <span class="watch-log-field-label">When did you watch it?</span>
+              <input type="date" id="watchLogDate" />
+            </label>
+            <div class="watch-log-field">
+              <span class="watch-log-field-label">Rating</span>
+              <div class="watch-log-stars" id="watchLogStars" role="radiogroup" aria-label="Rating"></div>
+            </div>
+            <label class="watch-log-field">
+              <span class="watch-log-field-label">Notes</span>
+              <textarea id="watchLogNotes" rows="3" placeholder="Thoughts, quotes, who you watched it with…"></textarea>
+            </label>
+          </div>
+          <div class="dialog-actions watch-log-actions">
+            <button class="secondary-btn" type="button" id="watchLogSkipBtn">Skip</button>
+            <button class="primary-btn" type="button" id="watchLogSaveBtn">Save &amp; Archive</button>
+          </div>
+        </div>
+      </dialog>
+
+      <dialog class="page-dialog" id="sailLogDialog">
+        <section class="panel app-page-panel sail-log-dialog-panel" aria-label="Sailing Log Entry">
+          <div class="panel-head">
+            <div class="section-heading">
+              <div><h2 id="sailLogDialogTitle">Sailing Log</h2></div>
+            </div>
+            <button class="icon-btn" type="button" id="closeSailLogBtn" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div id="sailLogForm" class="sail-log-form-outer"></div>
+        </section>
+      </dialog>
+
+      <dialog class="page-dialog" id="watchArchiveDialog">
+        <section class="panel app-page-panel" aria-label="Watch Archive">
+          <div class="panel-head">
+            <div class="section-heading">
+              <div>
+                <h2>Archive</h2>
+              </div>
+            </div>
+            <button class="icon-btn" type="button" id="closeWatchArchiveBtn" aria-label="Close Archive">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div class="do-board" id="watchArchiveBody"></div>
+        </section>
       </dialog>
 
       <dialog class="page-dialog" id="tasksPageDialog">
@@ -486,7 +590,7 @@
             </section>
           </div>
           <div class="dialog-actions">
-            <button class="secondary-btn" type="button" id="keepWorkoutDetailBtn">Pin</button>
+            <span></span>
             <div>
               <button class="primary-btn" type="button" id="saveWorkoutDetailBtn">Save</button>
             </div>
@@ -498,7 +602,7 @@
         <div class="recipe-form recipe-view">
           <div class="dialog-head">
             <div>
-              <p class="muted-label">Active Exercise</p>
+              <p class="muted-label">Record</p>
               <h2 id="activeExerciseTitle">Exercise</h2>
             </div>
             <button class="icon-btn" id="closeActiveExerciseBtn" type="button" title="Close" aria-label="Close">
@@ -534,6 +638,58 @@
         </div>
       </dialog>
 
+      <dialog class="recipe-dialog auth-dialog compact-dialog" id="repMoodDialog">
+        <div class="recipe-form">
+          <div class="dialog-head">
+            <div>
+              <p class="muted-label">Feeling</p>
+              <h2 id="repMoodTitle">How did that feel?</h2>
+            </div>
+            <button class="icon-btn" id="closeRepMoodBtn" type="button" title="Close" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div class="rep-mood-row">
+            <button class="rep-mood-btn" type="button" data-rep-mood="hard" aria-label="Too hard">😞</button>
+            <button class="rep-mood-btn" type="button" data-rep-mood="ok" aria-label="Just right">😐</button>
+            <button class="rep-mood-btn" type="button" data-rep-mood="easy" aria-label="Too easy">😊</button>
+          </div>
+          <div class="rep-mood-labels" aria-hidden="true">
+            <span>Too hard</span><span>Just right</span><span>Too easy</span>
+          </div>
+        </div>
+      </dialog>
+
+      <dialog class="recipe-dialog auth-dialog" id="pastWorkoutDialog">
+        <div class="recipe-form">
+          <div class="dialog-head">
+            <div>
+              <p class="muted-label">Play</p>
+              <h2>Log Past Workout</h2>
+            </div>
+            <button class="icon-btn" id="closePastWorkoutBtn" type="button" title="Close" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div class="past-workout-form">
+            <label class="past-workout-label">
+              Exercise
+              <select id="pastWorkoutSelect" aria-label="Select exercise"></select>
+            </label>
+            <label class="past-workout-label">
+              Date
+              <input type="date" id="pastWorkoutDate" aria-label="Workout date" />
+            </label>
+          </div>
+          <div class="dialog-actions">
+            <span></span>
+            <div>
+              <button class="primary-btn" type="button" id="startPastWorkoutBtn">Record</button>
+            </div>
+          </div>
+        </div>
+      </dialog>
+
       <dialog class="page-dialog" id="groceriesPageDialog">
         <section class="panel app-page-panel" data-section="groceries" aria-label="Groceries">
           <div class="panel-head">
@@ -565,6 +721,57 @@
             </form>
             <div class="grocery-list" id="groceryList"></div>
           </div>
+        </section>
+      </dialog>
+
+      <dialog class="page-dialog" id="dailyDozenPageDialog">
+        <section class="panel app-page-panel daily-dozen-page food-health-page" aria-label="Food Health">
+          <div class="panel-head">
+            <div class="section-heading">
+              <div>
+                <h2>Food Health</h2>
+                <p>Nutrition and checklist values are estimates for personal tracking, not medical advice.</p>
+              </div>
+            </div>
+            <button class="icon-btn" type="button" id="closeDailyDozenPageBtn" title="Close Food Health" aria-label="Close Food Health">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div class="daily-dozen-toolbar">
+            <button class="secondary-btn" type="button" id="dailyDozenTodayBtn">Today</button>
+            <label>
+              Date
+              <input id="dailyDozenDate" type="date" />
+            </label>
+          </div>
+          <div class="daily-dozen-members" id="dailyDozenMembers" role="tablist" aria-label="Family member"></div>
+          <div class="daily-dozen-suggestion" id="dailyDozenSuggestion" hidden></div>
+          <div class="food-health-actions">
+            <button class="primary-btn" type="button" id="addFoodLogBtn">Add food</button>
+            <button class="secondary-btn" type="button" id="ateRecipeBtn">Ate recipe</button>
+          </div>
+          <section class="food-health-section">
+            <div class="food-health-section-head">
+              <div>
+                <h3 id="foodHealthChecklistTitle">Daily Dozen</h3>
+                <small id="foodHealthChecklistNote">Inspired by Dr. Greger's Daily Dozen / NutritionFacts.org.</small>
+              </div>
+            </div>
+            <div class="daily-dozen-grid" id="dailyDozenGrid"></div>
+          </section>
+          <section class="food-health-section">
+            <div class="food-health-section-head">
+              <div>
+                <h3>Estimated nutrition</h3>
+                <small id="foodHealthTargetNote">Estimated from logged foods; actual values vary.</small>
+              </div>
+            </div>
+            <div class="food-health-nutrition" id="foodHealthNutrition"></div>
+          </section>
+          <section class="food-health-section">
+            <div class="food-health-section-head"><h3>Food log</h3></div>
+            <div class="food-health-meals" id="foodHealthMeals"></div>
+          </section>
         </section>
       </dialog>
 
@@ -703,6 +910,32 @@
       </div>
     </dialog>
 
+    <dialog class="recipe-dialog nutrition-estimate-dialog" id="nutritionEstimateDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Estimate</p>
+            <h2>Review nutrition matches</h2>
+          </div>
+          <button class="icon-btn" type="button" id="closeNutritionEstimateBtn" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <p class="nutrition-estimate-warning">Estimated from ingredient data; actual values vary.</p>
+        <label class="nutrition-estimate-servings">
+          Servings
+          <input id="nutritionEstimateServings" type="number" min="1" step="1" />
+        </label>
+        <p class="import-status" id="nutritionEstimateStatus"></p>
+        <div class="nutrition-match-list" id="nutritionMatchList"></div>
+        <section class="recipe-view-section nutrition-estimate-summary" id="nutritionEstimateSummary"></section>
+        <div class="dialog-actions">
+          <button class="secondary-btn" type="button" id="cancelNutritionEstimateBtn">Cancel</button>
+          <button class="primary-btn" type="button" id="saveNutritionEstimateBtn">Save estimate</button>
+        </div>
+      </div>
+    </dialog>
+
     <dialog class="recipe-dialog" id="importDialog">
       <div class="recipe-form">
         <div class="dialog-head">
@@ -757,6 +990,7 @@
             <button class="secondary-btn" type="button" id="scanCameraBtn">Take photo</button>
             <button class="secondary-btn" type="button" id="clearScanImagesBtn">Clear photos</button>
           </div>
+          <div class="scan-image-preview-list" id="scanImagePreviewList" aria-label="Cookbook photo previews"></div>
         </div>
         <p class="import-status" id="scanStatus">Upload one or more clear photos, then review the extracted recipe before saving.</p>
         <div class="dialog-actions">
@@ -854,6 +1088,135 @@
       </div>
     </dialog>
 
+    <dialog class="recipe-dialog auth-dialog" id="dailyDozenTagDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Grocery item</p>
+            <h2 id="dailyDozenTagTitle">Daily Dozen tags</h2>
+          </div>
+          <button class="icon-btn" id="closeDailyDozenTagBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <p class="muted-note">An item may contribute to more than one category. Confidence and notes help recipe suggestions stay appropriately cautious.</p>
+        <div class="daily-dozen-tag-list" id="dailyDozenTagList"></div>
+        <div class="dialog-actions">
+          <span></span>
+          <div>
+            <button class="secondary-btn" type="button" id="cancelDailyDozenTagBtn">Cancel</button>
+            <button class="primary-btn" type="button" id="saveDailyDozenTagBtn">Save</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog food-log-dialog" id="foodLogDialog">
+      <form class="recipe-form" id="foodLogForm">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label" id="foodLogPersonLabel">Food log</p>
+            <h2 id="foodLogTitle">Add food</h2>
+          </div>
+          <button class="icon-btn" id="closeFoodLogBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div class="form-grid">
+          <label>
+            Source
+            <select id="foodLogSourceType">
+              <option value="manual">Manual entry</option>
+              <option value="recipe">Recipe</option>
+              <option value="grocery_item">Grocery item</option>
+              <option value="leftovers">Leftovers</option>
+            </select>
+          </label>
+          <label>
+            Meal
+            <select id="foodLogMealType">
+              <option value="breakfast">Breakfast</option>
+              <option value="lunch">Lunch</option>
+              <option value="dinner">Dinner</option>
+              <option value="snack">Snack</option>
+            </select>
+          </label>
+        </div>
+        <label>
+          Food
+          <select id="foodLogSourceSelect"></select>
+          <input id="foodLogManualName" placeholder="Food name" />
+        </label>
+        <div class="form-grid">
+          <label>
+            Serving amount
+            <select id="foodLogServingPreset">
+              <option value="1">1 serving</option>
+              <option value="0.5">1/2 serving</option>
+              <option value="custom">Custom</option>
+            </select>
+          </label>
+          <label id="foodLogCustomServingWrap" hidden>
+            Custom serving
+            <input id="foodLogCustomServing" type="number" min="0.01" step="0.25" value="1" />
+          </label>
+        </div>
+        <label>
+          Notes
+          <textarea id="foodLogNotes" rows="2"></textarea>
+        </label>
+        <fieldset class="food-log-nutrition-fields" id="foodLogNutritionFields">
+          <legend>Estimated nutrition per serving</legend>
+          <div id="foodLogNutritionInputs"></div>
+        </fieldset>
+        <fieldset class="food-log-checklist-review">
+          <legend>Suggested checklist contributions</legend>
+          <p class="muted-note">Confirm only the servings you want counted.</p>
+          <div id="foodLogChecklistSuggestions"></div>
+        </fieldset>
+        <div class="dialog-actions">
+          <button class="danger-btn" type="button" id="deleteFoodLogBtn" hidden>Delete</button>
+          <div>
+            <button class="secondary-btn" type="button" id="cancelFoodLogBtn">Cancel</button>
+            <button class="primary-btn" type="button" id="saveFoodLogBtn">Save</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="recipe-dialog food-health-settings-dialog" id="foodHealthSettingsDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div><h2>Food Health Settings</h2></div>
+          <button class="icon-btn" id="closeFoodHealthSettingsBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div class="daily-dozen-members" id="foodHealthSettingsMembers" role="tablist" aria-label="Family member"></div>
+        <label>
+          Health checklist template
+          <select id="foodHealthTemplateSelect"></select>
+        </label>
+        <p class="muted-note" id="foodHealthTemplateDescription"></p>
+        <section class="food-health-settings-section">
+          <h3>Checklist items</h3>
+          <div id="foodHealthChecklistSettings"></div>
+        </section>
+        <section class="food-health-settings-section">
+          <h3>Optional estimated nutrition targets</h3>
+          <p class="muted-note" id="foodHealthNutritionTargetNote"></p>
+          <div class="food-health-target-grid" id="foodHealthNutritionTargets"></div>
+        </section>
+        <div class="dialog-actions">
+          <span></span>
+          <div>
+            <button class="secondary-btn" type="button" id="cancelFoodHealthSettingsBtn">Cancel</button>
+            <button class="primary-btn" type="button" id="saveFoodHealthSettingsBtn">Save</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
     <dialog class="recipe-dialog auth-dialog" id="groceryStoresDialog">
       <div class="recipe-form">
         <div class="dialog-head">
@@ -879,6 +1242,146 @@
             <button class="primary-btn" type="button" id="doneGroceryStoresBtn">Done</button>
           </div>
         </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog auth-dialog" id="groceryStoreLayoutDialog">
+      <form class="recipe-form" id="groceryStoreLayoutForm">
+        <div class="dialog-head">
+          <div>
+            <h2>Store Layout</h2>
+          </div>
+          <button class="icon-btn" id="closeGroceryStoreLayoutBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <label>
+          Store name
+          <input id="groceryStoreLayoutName" required />
+        </label>
+        <label>
+          Address
+          <input id="groceryStoreLayoutAddress" />
+        </label>
+        <div class="grocery-store-layout-heading">
+          <strong>Sections</strong>
+          <small>Drag sections into the order you walk through the store.</small>
+        </div>
+        <div class="grocery-store-layout-list" id="groceryStoreLayoutList"></div>
+        <div class="inline-form grocery-store-section-form">
+          <input id="groceryStoreSectionInput" placeholder="Add section" autocomplete="off" />
+          <button class="icon-btn" id="addGroceryStoreSectionBtn" type="button" title="Add section" aria-label="Add section">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          </button>
+        </div>
+        <div class="dialog-actions">
+          <span></span>
+          <div>
+            <button class="primary-btn" type="submit">Save</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="recipe-dialog auth-dialog" id="groceryPricingDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div><h2>Price History</h2></div>
+          <button class="icon-btn" id="closeGroceryPricingBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <button class="primary-btn receipt-scan-launch" id="openReceiptScanBtn" type="button">Scan receipt</button>
+        <div class="grocery-pricing-settings">
+          <label>
+            Extra-store cost
+            <span class="grocery-price-input-prefix"><span>$</span><input id="groceryStopPenalty" type="number" min="0" step="0.25" /></span>
+          </label>
+          <label class="grocery-pricing-toggle">
+            <input id="groceryPriceRoutingEnabled" type="checkbox" />
+            Estimate grocery stores from past receipts
+          </label>
+        </div>
+        <form class="grocery-price-form" id="groceryPriceForm">
+          <select id="groceryPriceStore" aria-label="Store" required></select>
+          <input id="groceryPriceItem" placeholder="Grocery item" autocomplete="off" required />
+          <input id="groceryPriceProduct" placeholder="Matched product name" />
+          <label>Price <input id="groceryPriceAmount" type="number" min="0.01" step="0.01" required /></label>
+          <label>Package quantity <input id="groceryPricePackageQuantity" type="number" min="0.01" step="0.01" value="1" required /></label>
+          <select id="groceryPricePackageUnit" aria-label="Package unit">
+            <option value="each">each</option>
+            <option value="oz">oz</option>
+            <option value="lb">lb</option>
+            <option value="fl oz">fl oz</option>
+            <option value="pt">pt</option>
+            <option value="qt">qt</option>
+            <option value="gal">gal</option>
+            <option value="g">g</option>
+            <option value="kg">kg</option>
+            <option value="ml">ml</option>
+            <option value="l">l</option>
+            <option value="count">count</option>
+          </select>
+          <select id="groceryPriceConfidence" aria-label="Match confidence">
+            <option value="1">Exact match</option>
+            <option value="0.8">Close match</option>
+            <option value="0.55">Estimated match</option>
+          </select>
+          <button class="primary-btn" type="submit">Save price</button>
+        </form>
+        <p class="grocery-price-help">Estimates use your saved receipts and manual corrections. They are not live prices.</p>
+        <div class="receipt-price-trends" id="receiptPriceTrends"></div>
+        <div class="grocery-price-observations" id="groceryPriceObservations"></div>
+        <div class="dialog-actions">
+          <span></span>
+          <button class="primary-btn" id="doneGroceryPricingBtn" type="button">Done</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog receipt-dialog" id="receiptScanDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div><h2>Scan receipt</h2></div>
+          <button class="icon-btn" id="closeReceiptScanBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div class="scan-picker">
+          <label>
+            Receipt photos
+            <input id="receiptImages" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/*" multiple />
+          </label>
+          <input class="visually-hidden" id="receiptCameraImage" type="file" accept="image/*" capture="environment" />
+          <div class="scan-picker-actions">
+            <button class="secondary-btn" type="button" id="receiptCameraBtn">Take photo</button>
+            <button class="secondary-btn" type="button" id="clearReceiptImagesBtn">Clear photos</button>
+          </div>
+          <div class="scan-image-preview-list" id="receiptImagePreviewList" aria-label="Receipt photo previews"></div>
+        </div>
+        <p class="import-status" id="receiptScanStatus">Upload a clear receipt photo, then review every line before saving.</p>
+        <button class="primary-btn" id="scanReceiptImagesBtn" type="button">Read receipt</button>
+        <form class="receipt-review" id="receiptReviewForm" hidden>
+          <div class="receipt-review-meta">
+            <label>Store <input id="receiptStoreName" required /></label>
+            <label>Linked store <select id="receiptStoreId"></select></label>
+            <label>Date <input id="receiptPurchaseDate" type="date" required /></label>
+            <label>Subtotal <input id="receiptSubtotal" type="number" min="0" step="0.01" /></label>
+            <label>Discounts <input id="receiptDiscounts" type="number" min="0" step="0.01" /></label>
+            <label>Tax <input id="receiptTax" type="number" min="0" step="0.01" /></label>
+            <label>Fees <input id="receiptFees" type="number" min="0" step="0.01" /></label>
+            <label>Total <input id="receiptTotal" type="number" min="0" step="0.01" /></label>
+          </div>
+          <div class="receipt-line-heading">
+            <strong>Receipt items</strong>
+            <button class="secondary-btn compact-btn" id="addReceiptLineBtn" type="button">Add line</button>
+          </div>
+          <div class="receipt-line-list" id="receiptLineList"></div>
+          <div class="dialog-actions">
+            <button class="secondary-btn" id="cancelReceiptReviewBtn" type="button">Cancel</button>
+            <button class="primary-btn" type="submit">Save receipt</button>
+          </div>
+        </form>
       </div>
     </dialog>
 
@@ -1052,7 +1555,7 @@
       </div>
     </dialog>
 
-    <dialog class="recipe-dialog auth-dialog" id="weeklyEmailDialog">
+    <dialog class="recipe-dialog weekly-email-dialog" id="weeklyEmailDialog">
       <div class="recipe-form">
         <div class="dialog-head">
           <div>
@@ -1062,41 +1565,60 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
           </button>
         </div>
-        <div class="weekly-email-editor">
-          <div class="restore-preview-card">
-            <strong>Schedule</strong>
-            <span>Thursdays at 14:00 UTC, which is Thursday morning Central time.</span>
+        <div class="weekly-email-body">
+          <div id="weeklyEmailSetup" class="weekly-email-setup" hidden>
+            <p class="weekly-email-setup-msg"></p>
           </div>
-          <label>
-            Subject prefix
-            <input id="weeklyEmailSubjectPrefix" placeholder="Eat weekly review" />
-          </label>
-          <label>
-            Intro line
-            <textarea id="weeklyEmailIntro" rows="3" placeholder="{reviewRange} review and {upcomingRange} planning check."></textarea>
-          </label>
-          <div class="weekly-email-options" aria-label="Weekly email sections">
-            <label><input type="checkbox" id="weeklyEmailIncludeWeekInReview" /> Recipes cooked this week</label>
-            <label><input type="checkbox" id="weeklyEmailIncludeActiveCooks" /> Active cooks still open</label>
-            <label><input type="checkbox" id="weeklyEmailIncludeMissingNotes" /> Cook logs missing notes</label>
-            <label><input type="checkbox" id="weeklyEmailIncludeUpcomingStatus" /> Upcoming week published status</label>
-            <label><input type="checkbox" id="weeklyEmailIncludePlannedCount" /> Count of planned meal sections</label>
-            <label><input type="checkbox" id="weeklyEmailIncludeEmptyMeals" /> Empty meal sections to check</label>
+          <div class="weekly-email-notes-row">
+            <label class="weekly-email-notes-label" for="weeklyEmailNotes">Notes for this email <span class="muted-label">(one-time context, not saved)</span></label>
+            <textarea id="weeklyEmailNotes" class="weekly-email-notes" rows="2" placeholder="e.g. I was travelling Mon–Wed, skip exercise judgement. The recipe imported Tuesday looks broken."></textarea>
           </div>
-          <label>
-            Closing note
-            <textarea id="weeklyEmailClosing" rows="3" placeholder="Optional note at the bottom of the email"></textarea>
-          </label>
-          <div class="restore-preview-card">
-            <strong>Netlify setup</strong>
-            <span>Requires SUPABASE_SERVICE_ROLE_KEY and RESEND_API_KEY.</span>
-            <span>Optional: WEEKLY_REVIEW_TO, WEEKLY_REVIEW_FROM, EAT_APP_URL, WEEKLY_REVIEW_TRIGGER_SECRET.</span>
+          <div id="weeklyEmailPreviewArea" class="weekly-email-preview-area" hidden>
+            <iframe id="weeklyEmailPreviewFrame" title="Email preview" sandbox="allow-same-origin"></iframe>
+          </div>
+          <div id="weeklyEmailPlaceholder" class="weekly-email-placeholder">
+            <p>Claude will read your app data and write a personal weekly review email for you.</p>
+            <p class="muted-label weekly-email-prefs-hint">Standing preferences: <button class="inline-link-btn" type="button" id="tuneEmailPrefsBtn">Tune with AI</button> or edit <code>email-prefs.md</code> directly.</p>
           </div>
         </div>
         <div class="dialog-actions">
-          <button class="secondary-btn" type="button" id="resetWeeklyEmailBtn">Reset defaults</button>
+          <button class="secondary-btn" id="closeWeeklyEmailBtn2" type="button">Cancel</button>
+          <div class="weekly-email-actions-right">
+            <button class="secondary-btn" type="button" id="previewWeeklyEmailBtn">Generate preview</button>
+            <button class="primary-btn" type="button" id="sendWeeklyEmailBtn" disabled>Send email</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog email-interview-dialog" id="emailInterviewDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
           <div>
-            <button class="primary-btn" type="button" id="doneWeeklyEmailBtn">Save and close</button>
+            <p class="muted-label">Weekly email</p>
+            <h2>Tune preferences</h2>
+          </div>
+          <button class="icon-btn" id="closeEmailInterviewBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div class="email-interview-body">
+          <div id="emailInterviewStep1" class="email-interview-step">
+            <div id="emailInterviewLoading" class="email-interview-loading">
+              <span>Generating questions…</span>
+            </div>
+            <form id="emailInterviewForm" class="email-interview-form" hidden></form>
+          </div>
+          <div id="emailInterviewStep2" class="email-interview-step" hidden>
+            <p class="muted-label" style="margin:0 0 8px">Review and edit before saving — this will replace your <code>email-prefs.md</code></p>
+            <textarea id="emailInterviewResult" class="email-interview-result" spellcheck="false"></textarea>
+          </div>
+        </div>
+        <div class="dialog-actions" id="emailInterviewActions">
+          <button class="secondary-btn" type="button" id="emailInterviewBackBtn" hidden>Back</button>
+          <div style="margin-left:auto;display:flex;gap:8px">
+            <button class="secondary-btn" type="button" id="emailInterviewCancelBtn">Cancel</button>
+            <button class="primary-btn" type="button" id="emailInterviewNextBtn" disabled>Submit answers</button>
           </div>
         </div>
       </div>
@@ -1202,7 +1724,19 @@
         const isLocalPreview = ["localhost", "127.0.0.1"].includes(window.location.hostname);
         if (!isLocalPreview) return;
 
-        const watchedFiles = ["./index.html", "./styles.css", "./app.js", "./supabase-config.js"];
+        const watchedFiles = [
+          "./index.html",
+          "./styles.css",
+          "./app.js",
+          "./grocery-catalog.js",
+          "./daily-dozen.js",
+          "./food-health-checklists.js",
+          "./food-health.js",
+          "./meal-plan-servings.js",
+          "./receipt-domain.js",
+          "./nutrition-domain.js",
+          "./supabase-config.js"
+        ];
         const signatures = new Map();
 
         async function fileSignature(path) {
@@ -1214,14 +1748,18 @@
         }
 
         async function checkForUpdates() {
-          for (const file of watchedFiles) {
-            const nextSignature = await fileSignature(file);
-            const previousSignature = signatures.get(file);
-            if (previousSignature && previousSignature !== nextSignature) {
-              window.location.reload();
-              return;
+          try {
+            for (const file of watchedFiles) {
+              const nextSignature = await fileSignature(file);
+              const previousSignature = signatures.get(file);
+              if (previousSignature && previousSignature !== nextSignature) {
+                window.location.reload();
+                return;
+              }
+              signatures.set(file, nextSignature);
             }
-            signatures.set(file, nextSignature);
+          } catch {
+            // The local helper may be restarting; the next interval will retry.
           }
         }
 
@@ -1231,8 +1769,93 @@
         });
       })();
     </script>
+    <!-- Plan: event creation/edit dialog -->
+    <dialog class="recipe-dialog plan-event-dialog" id="planEventDialog">
+      <form class="recipe-form" id="planEventForm" method="dialog">
+        <div class="recipe-form-head">
+          <h2 id="planEventDialogTitle">New Event</h2>
+          <button class="icon-btn" type="button" id="closePlanEventBtn" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="recipe-form-body">
+          <label class="form-field">
+            <span>Title</span>
+            <input type="text" id="planEventTitle" placeholder="Event title" autocomplete="off" />
+          </label>
+          <label class="form-field">
+            <span>Date</span>
+            <input type="date" id="planEventDate" />
+          </label>
+          <label class="form-field plan-allday-field">
+            <input type="checkbox" id="planEventAllDay" checked />
+            <span>All day</span>
+          </label>
+          <div class="plan-time-fields" id="planTimeFields" hidden>
+            <label class="form-field">
+              <span>Start</span>
+              <input type="time" id="planEventStart" value="09:00" />
+            </label>
+            <label class="form-field">
+              <span>End</span>
+              <input type="time" id="planEventEnd" value="10:00" />
+            </label>
+          </div>
+          <label class="form-field">
+            <span>Notes</span>
+            <textarea id="planEventNotes" rows="2" placeholder="Optional notes"></textarea>
+          </label>
+          <label class="form-field">
+            <span>Color</span>
+            <div class="plan-color-picker" id="planEventColorPicker"></div>
+          </label>
+        </div>
+        <div class="recipe-form-actions">
+          <button class="secondary-btn" type="button" id="deletePlanEventBtn" hidden>Delete</button>
+          <span></span>
+          <button class="primary-btn" type="button" id="savePlanEventBtn">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Plan: calendar management dialog -->
+    <dialog class="recipe-dialog plan-cal-dialog" id="planCalDialog">
+      <form class="recipe-form" method="dialog">
+        <div class="recipe-form-head">
+          <h2>Calendars</h2>
+          <button class="icon-btn" type="button" id="closePlanCalBtn" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="recipe-form-body">
+          <div id="planCalList"></div>
+          <div class="plan-add-cal">
+            <h3>Add Google Calendar</h3>
+            <p class="muted-label">Paste the public ICS URL from Google Calendar's settings → "Secret address in iCal format"</p>
+            <label class="form-field">
+              <span>Name</span>
+              <input type="text" id="planNewCalName" placeholder="My Calendar" autocomplete="off" />
+            </label>
+            <label class="form-field">
+              <span>URL</span>
+              <input type="url" id="planNewCalUrl" placeholder="https://calendar.google.com/calendar/ical/…" autocomplete="off" />
+            </label>
+            <div class="plan-cal-colors" id="planNewCalColorPicker"></div>
+            <button class="primary-btn" type="button" id="addPlanCalBtn">Add Calendar</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="./receipt-domain.js?v=nutrition-estimate-1"></script>
+    <script src="./nutrition-domain.js?v=nutrition-estimate-1"></script>
+    <script src="./grocery-catalog.js?v=grocery-catalog-1"></script>
+    <script src="./daily-dozen.js?v=daily-dozen-1"></script>
+    <script src="./food-health-checklists.js?v=food-health-1"></script>
+    <script src="./food-health.js?v=food-health-1"></script>
+    <script src="./meal-plan-servings.js?v=meal-plan-servings-1"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./supabase-config.js?v=auth-deploy-1"></script>
-    <script src="./app.js?v=google-store-locations-4"></script>
+    <script src="./app.js?v=food-health-1"></script>
   </body>
 </html>

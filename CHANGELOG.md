@@ -1,6 +1,52 @@
-# Eat Change Log
+s# Eat Change Log
 
 This log summarizes the project history and recent safety work so the app can be continued without relying on conversation history.
+
+## 2026-06-07
+
+- Separated recipe yield, planned meal servings, and each person's actual eaten servings.
+- Added editable, persistent planned servings to every recipe occurrence in Meal Plan.
+- Scaled generated groceries and estimated meal-plan nutrition from planned servings without changing the recipe's saved default yield.
+- Kept legacy meal-plan recipe IDs compatible by treating them as the recipe's default serving count until edited.
+- Expanded Daily Dozen into a Family Food Health tracker for Luke, Marijane, and Sophia.
+- Added daily food logs for recipes, grocery items, manual foods, and leftovers, with serving multipliers and meal grouping.
+- Added immutable estimated-nutrition snapshots, optional recipe recalculation, and meal copying between family members.
+- Connected each food log entry to both estimated nutrition totals and user-confirmed checklist contributions.
+- Added generic checklist templates, per-person checklist selection, hidden items, target overrides, and optional nutrition targets.
+- Migrated existing Daily Dozen progress into the generic checklist ledger without deleting the legacy data.
+- Added intentionally empty, reviewable placeholders for 21 Tweaks and Maximally LDL-Lowering checklist items.
+- Added editable custom checklist items.
+- Kept Sophia free of adult nutrition targets and adult-focused checklist defaults.
+- Included Food Health logs, checklist progress, and settings in shared state and backup restore.
+- Added Food Health domain tests for serving math, immutable snapshots, copying, migration, child-safe defaults, and checklist customization.
+
+## 2026-06-06
+
+- Added ordered grocery stores and right-click store actions for Edit and Remove.
+- Added store-specific grocery layouts with ordered sections.
+- Added broad category placement for unfamiliar grocery items.
+- Added correction learning when an item is dragged into a store section.
+- Included store layouts and learned item placements in synced state and backup restore.
+- Added provider-neutral grocery price observations with package size, unit price, source, freshness, and match confidence.
+- Added manual price entry and full-basket store optimization with a configurable extra-store cost.
+- Included grocery prices and pricing preferences in synced state and backup restore.
+- Added protected pre-sync snapshots before shared state can replace meaningful local user data.
+- Separated signed-in Supabase sync from the local helper fallback.
+- Deduplicated rotating backups and retained protected safety snapshots separately.
+- Added a Supabase state-history migration that preserves the previous 100 account states.
+- Grocery items without a learned store or current price now default to the first configured store instead of remaining Unassigned.
+- Replaced the live-price direction with editable receipt scanning and personal historical prices.
+- Added receipt records, line items, correction mappings, price history, common-item trends, and receipt-derived grocery estimates.
+- Added automated coverage for image validation, OCR result parsing, correction learning, history creation, lookup, and grocery estimation.
+- Improved cookbook and receipt scanning for phones with separate camera and upload choices, multi-image previews, rotation, edge trimming, removal, and client-side compression.
+- Added USDA FoodData Central nutrition estimates with unit conversion confidence, per-serving totals, ingredient match review, reusable corrections, backup support, and explicit estimate warnings.
+- Added canonical grocery names so capitalization, punctuation, simple plurals, comma ordering, preparation wording, and common synonyms merge into one shopping item.
+- Preserved recipe-specific notes and incompatible quantities while summing compatible quantities under the canonical grocery item.
+- Added learned grocery merge and split preferences, including migration of checked state and remembered store placement.
+- Expanded Grocery Items into a categorized catalog of several hundred common ingredients.
+- Added an Eat Daily Dozen tracker inspired by Dr. Greger's Daily Dozen / NutritionFacts.org, with date-based progress for Luke, Marijane, and Sophia.
+- Added manual serving adjustments, category guidance, recipe contribution suggestions that require confirmation, and multi-category grocery item tags.
+- Included Daily Dozen entries and grocery tag corrections in shared state and backup restore.
 
 ## 2026-05-15
 
@@ -143,6 +189,7 @@ This log summarizes the project history and recent safety work so the app can be
 
 ## Notes For Future Work
 
+- If Live becomes a native iOS app, use VisionKit `VNDocumentCameraViewController` for automatic document edges, perspective correction, and multi-page scanning.
 - Review Supabase RLS policies before treating the live app as fully private.
 - Add soft delete for folders if folder deletion becomes risky.
 - Consider a full replace restore mode only after merge restore has been tested several times.

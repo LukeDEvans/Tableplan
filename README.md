@@ -160,6 +160,58 @@ The extension can target Live or Local. Local import is useful for testing witho
 
 Grocery List settings can search Google Places for a specific grocery store location. Linked stores save their Google Place ID, address, and location details and include a Directions button that opens Google Maps.
 
+Each store also has an ordered layout under `Settings -> Grocery List -> right-click store -> Edit`. New stores begin with Produce, Bakery, Deli, Dairy, Dry Goods, Frozen, Household, and Other. Grocery items use broad category matching until they are manually dragged into a store section. That correction is then remembered for the normalized item at that specific store. Store layouts and learned placements are included in synced state and JSON backups.
+
+Grocery generation matches with a canonical item name while displaying a friendly catalog name. It merges capitalization, punctuation, simple singular/plural differences, comma ordering, preparation wording, and common synonyms such as chickpeas/garbanzo beans and scallions/green onions. Compatible quantities are added; incompatible units remain together as a readable sum. Right-click a generated grocery item to teach a merge or preserve a distinct product, and right-click a Grocery Items catalog entry to manage aliases or its matching preference. These learned choices are synced and included in backups.
+
+## Family Food Health
+
+Eat includes a date-based Food Health dashboard for Luke, Marijane, and Sophia. One food-log entry feeds both estimated daily nutrition totals and the selected health checklist. Foods can come from recipes, grocery items, manual entries, or leftovers and can be logged as a full, half, or custom serving. Recipe nutrition is copied into an immutable snapshot when logged, so editing a recipe later does not silently rewrite prior days; a logged recipe can be recalculated manually when desired.
+
+The built-in Daily Dozen template is inspired by Dr. Greger's Daily Dozen / NutritionFacts.org and is presented as a personal tracker, not medical advice. Recipe pages can suggest possible categories from tagged ingredients, but uncertain servings are never finalized without confirmation. Right-click a Grocery Items catalog entry or generated grocery item and choose `Daily Dozen tags` to attach one or more categories with confidence and notes.
+
+`Settings -> Food Health Settings` selects a checklist per family member, enables or hides items, changes targets, and optionally adds personal estimated-nutrition targets. Sophia has no adult nutrition targets by default. The 21 Tweaks and Maximally LDL-Lowering templates are deliberately empty placeholders until their exact items are reviewed; the app does not invent or auto-fill those checklists. Custom checklist items can be added directly in settings.
+
+Food logs, nutrition snapshots, generic checklist entries, per-person settings, legacy Daily Dozen progress, and grocery tag corrections are stored in shared state and included in JSON backup restore.
+
+## Meal Plan Servings
+
+Serving counts have three separate meanings:
+
+- A recipe's `defaultServings` is its saved yield and is not changed by planning or food logging.
+- A meal-plan recipe entry stores `plannedServings`, which defaults to the recipe yield and describes how much will be cooked for that occurrence.
+- A Food Health log stores the serving multiplier actually eaten by each person.
+
+Changing planned servings scales that meal-plan entry's ingredients by `plannedServings / defaultServings`. Grocery generation and estimated meal-plan nutrition use the scaled amount. Older meal plans that stored only a recipe ID remain compatible and use the recipe's default yield until a planned serving count is saved.
+
+## Receipts And Price History
+
+`Settings -> Receipts & Price History` scans grocery receipt photos through the existing server-side OpenAI image flow. OCR results always open as an editable draft before saving. The review includes store, purchase date, subtotal, discounts, tax, fees, total, raw receipt text, corrected item name, category, quantity, unit, line price, discount, and OCR confidence.
+
+Corrected item names and categories become mappings for similar raw receipt text in future scans. Saving creates receipt-derived price history records per item, store, and date. Grocery estimates use only those historical records and explicit manual estimates; the interface labels them as past-receipt estimates rather than live prices.
+
+Receipt scanning uses `OPENAI_API_KEY`, the same server-side secret used by cookbook scanning. For localhost, start the helper from a shell where that variable is available. For Netlify, keep it in the site environment variables; never place it in browser code or `supabase-config.js`.
+
+Nutrition estimation uses USDA FoodData Central. Add this server-side environment variable to the shell running localhost and to Netlify:
+
+```text
+USDA_FDC_API_KEY
+```
+
+Get a FoodData Central API key from the USDA and keep it out of browser code and `supabase-config.js`. Run `supabase-nutrition-estimates.sql` in Supabase so structured estimates and ingredient matches are retained in recipe rows. Saved ingredient corrections are also kept in shared state and backups. The estimates are informational recipe calculations, not medical guidance, and the app labels them as estimates.
+
+The provider boundary is intentionally separate so an optional Edamam Nutrition Analysis adapter can be added later without changing the recipe UI or stored estimate model.
+
+When price routing is enabled, the grocery list compares complete store combinations. It minimizes the estimated merchandise total plus a configurable cost for each additional store, rather than sending every item to its individually cheapest store. Explicit store assignments still take priority. Receipt records, learned mappings, history, and pricing settings are included in synced state and JSON backup restore.
+
+Until a current price or remembered store exists, an item is assigned to the first store in Grocery List settings. Reorder stores to change that default. Dragging an item to another store remembers the correction for future lists.
+
+## State History
+
+Run `supabase-state-history.sql` once in the Supabase SQL editor. It creates an append-only history table and stores the previous account state before every cloud update, retaining the 100 newest versions. This protects meal plans, Auto-Fill Rules, tasks, calendars, grocery settings, and other account-wide data from an accidental whole-state overwrite.
+
+Localhost also writes a protected safety snapshot before replacing meaningful browser data with a different shared state. Protected snapshots use the `eat-safety-*.json` filename and are retained separately from the five rotating everyday backups. Identical snapshots are deduplicated.
+
 General Settings includes a `Use location` preference. Enabling it requests browser location permission once and limits store searches to 50 km around the device location. The coordinates are held only in the current browser session and are not saved in Supabase or backups; only the on/off preference is saved.
 
 Enable `Places API (New)` in the Google Cloud project, then add this Netlify environment variable:
@@ -266,6 +318,12 @@ Meal Plan can show U.S. holidays beside the date. Localhost uses `/api/holidays`
 ## Deployment Notes
 
 Netlify is connected to GitHub. To avoid using Netlify build/deploy credits unnecessarily, test locally first and push only when ready.
+
+## Mobile Scanning
+
+Cookbook recipes and receipts can use either the phone's rear camera or normal image upload. Both flows accept multiple images and provide previews with rotate, edge-trim, remove, and client-side compression controls before OCR.
+
+The web app intentionally stops short of recreating a full document scanner. If Live later becomes a native iOS app, use Apple VisionKit `VNDocumentCameraViewController` for automatic edge detection, perspective correction, and multi-page document scanning.
 
 Before pushing, sync deploy files if needed:
 
