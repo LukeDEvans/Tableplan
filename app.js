@@ -66,9 +66,22 @@ const pageVisibilityDefaults = {
   play: true,
   do: true,
   watch: true,
+  read: true,
+  shop: true,
+  inventory: true,
   recreate: true,
   plan: true
 };
+const DEFAULT_INVENTORY_ROOMS = [
+  { id: "ibox-default-pantry",      name: "Pantry" },
+  { id: "ibox-default-fridge",      name: "Refrigerator" },
+  { id: "ibox-default-freezer",     name: "Freezer" },
+  { id: "ibox-default-kitchen",     name: "Kitchen" },
+  { id: "ibox-default-bathroom",    name: "Bathroom" },
+  { id: "ibox-default-bedroom",     name: "Bedroom" },
+  { id: "ibox-default-living-room", name: "Living Room" },
+  { id: "ibox-default-garage",      name: "Garage" },
+];
 const prepDays = [
   { id: "friday-start", name: "Friday", offset: 0, meals: [...dinnerMeals] },
   { id: "saturday", name: "Saturday", offset: 1, meals: fullDayMeals },
@@ -79,6 +92,7 @@ const prepDays = [
   { id: "thursday", name: "Thursday", offset: 6, meals: fullDayMeals },
   { id: "friday-finish", name: "Friday", offset: 7, meals: [...breakfastMeals, ...lunchMeals] }
 ];
+const doPrepDays = prepDays.filter((d) => d.id !== "friday-finish");
 const weekdayBreakfastDayIds = new Set(["monday", "tuesday", "wednesday", "thursday", "friday-finish"]);
 
 const seedRecipes = [
@@ -133,6 +147,7 @@ let activeRecipeTag = "";
 let currentWeek = startOfPrepWindow(new Date());
 let activePlannerDayId = plannerDayIdForDate(new Date());
 let activeAutoRuleDayId = activePlannerDayId;
+let editingDoTaskContext = null;
 let folderClickTimer = null;
 let mealEntryClickTimer = null;
 let editingMealEntry = null;
@@ -157,18 +172,31 @@ const NON_RECOVERABLE_STATE_KEYS = new Set([
   "checkedGroceries",
   "groceryReviewDismissed",
   "activeCooking",
+  "stateUpdatedAt",
 ]);
 
 const watchCollapsedSections = new Set();
+const collapsedShowtimes = new Set();
 const showtimesCache = Object.assign({}, state.watchShowtimesData || {});  // itemId → { data, fetchedAt }
 let activeWatchCategory = "all";
 let watchCategoryInputActive = false;
 let watchLogPendingId = null;
 let watchLogRating = null;
 let watchLogEditMode = false;
+let activeReadingCategory = "all";
+let readingCategoryInputActive = false;
+const readingCollapsedSections = new Set();
+let readingLogPendingId = null;
+let readingLogRating = null;
+const inventoryCollapsedBoxes = new Set();
+let inventoryBoxPendingId = null;
+let inventoryBoxPendingParentId = null;
+let inventoryItemPendingId = null;
+let inventoryDragItemId = null;
 let mealSwipeGesture = null;
 let doTaskSwipeGesture = null;
 let autoRuleSwipeGesture = null;
+let workoutPoolSwipeGesture = null;
 let mealPointerDeleteGesture = null;
 let lastMealDragPoint = null;
 let pendingMealRecipeSelection = null;
@@ -191,6 +219,7 @@ let calendarEvents = loadCachedCalendarEvents();
 let activeCookingInterval = null;
 let selectedGroceryWeekKey = "";
 let currentActiveRecipeViewId = "";
+let recipeViewMealContext = null;
 const activeRecipeScrollPositions = new Map();
 let scanRecipeFiles = [];
 let receiptScanFiles = [];
@@ -233,6 +262,10 @@ let groceryStoreSearchSessionToken = "";
 let groceryStoreSearchSuggestions = [];
 let groceryStoreSearchLocation = null;
 let groceryStoreLocationPromise = null;
+let restaurantSearchTimer = null;
+let restaurantSearchSessionToken = "";
+let restaurantSearchSuggestions = [];
+let restaurantSearchPending = null;
 let draggedGroceryStoreId = "";
 let activeGroceryStoreLayoutId = "";
 let draggedGroceryStoreSectionId = "";
@@ -246,6 +279,7 @@ const elements = {
   authButton: document.querySelector("#authButton"),
   authMenu: document.querySelector("#authMenu"),
   authMenuAction: document.querySelector("#authMenuAction"),
+  syncStatus: document.querySelector("#syncStatus"),
   authDialog: document.querySelector("#authDialog"),
   authForm: document.querySelector("#authForm"),
   authEmail: document.querySelector("#authEmail"),
@@ -269,13 +303,19 @@ const elements = {
   menuGroceryListBtn: document.querySelector("#menuGroceryListBtn"),
   menuGroceryPricingBtn: document.querySelector("#menuGroceryPricingBtn"),
   menuGroceryItemsBtn: document.querySelector("#menuGroceryItemsBtn"),
+  menuInventoryRoomsBtn: document.querySelector("#menuInventoryRoomsBtn"),
+  inventoryRoomsDialog: document.querySelector("#inventoryRoomsDialog"),
+  inventoryRoomsSettingsList: document.querySelector("#inventoryRoomsSettingsList"),
+  restaurantSearchDialog: document.querySelector("#restaurantSearchDialog"),
+  restaurantSearchInput: document.querySelector("#restaurantSearchInput"),
+  restaurantSearchStatus: document.querySelector("#restaurantSearchStatus"),
+  restaurantSearchSuggestionsEl: document.querySelector("#restaurantSearchSuggestions"),
   menuIngredientOptionsBtn: document.querySelector("#menuIngredientOptionsBtn"),
   menuFoodHealthSettingsBtn: document.querySelector("#menuFoodHealthSettingsBtn"),
   menuWatchTheatersBtn: document.querySelector("#menuWatchTheatersBtn"),
   menuRecurringTasksBtn: document.querySelector("#menuRecurringTasksBtn"),
   menuWorkoutLibraryBtn: document.querySelector("#menuWorkoutLibraryBtn"),
   menuWorkoutLogsBtn: document.querySelector("#menuWorkoutLogsBtn"),
-  menuPlayAutoRulesBtn: document.querySelector("#menuPlayAutoRulesBtn"),
   contextSettingsDialog: document.querySelector("#contextSettingsDialog"),
   contextSettingsTitle: document.querySelector("#contextSettingsTitle"),
   contextSettingsBody: document.querySelector("#contextSettingsBody"),
@@ -313,9 +353,6 @@ const elements = {
   dailyDozenDate: document.querySelector("#dailyDozenDate"),
   dailyDozenMembers: document.querySelector("#dailyDozenMembers"),
   dailyDozenSuggestion: document.querySelector("#dailyDozenSuggestion"),
-  dailyDozenGrid: document.querySelector("#dailyDozenGrid"),
-  foodHealthChecklistTitle: document.querySelector("#foodHealthChecklistTitle"),
-  foodHealthChecklistNote: document.querySelector("#foodHealthChecklistNote"),
   foodHealthNutrition: document.querySelector("#foodHealthNutrition"),
   foodHealthTargetNote: document.querySelector("#foodHealthTargetNote"),
   foodHealthMeals: document.querySelector("#foodHealthMeals"),
@@ -326,6 +363,24 @@ const elements = {
   playPlannerGrid: document.querySelector("#playPlannerGrid"),
   watchMainPage: document.querySelector("#watchMainPage"),
   watchPlannerGrid: document.querySelector("#watchPlannerGrid"),
+  shopMainPage: document.querySelector("#shopMainPage"),
+  shopReceiptsList: document.querySelector("#shopReceiptsList"),
+  homeShopBtn: document.querySelector("#homeShopBtn"),
+  titleShopBtn: document.querySelector("#titleShopBtn"),
+  shopScanReceiptBtn: document.querySelector("#shopScanReceiptBtn"),
+  inventoryMainPage: document.querySelector("#inventoryMainPage"),
+  inventoryPlannerGrid: document.querySelector("#inventoryPlannerGrid"),
+  homeInventoryBtn: document.querySelector("#homeInventoryBtn"),
+  titleInventoryBtn: document.querySelector("#titleInventoryBtn"),
+  inventoryBoxDialog: document.querySelector("#inventoryBoxDialog"),
+  inventoryBoxDialogTitle: document.querySelector("#inventoryBoxDialogTitle"),
+  inventoryBoxNameInput: document.querySelector("#inventoryBoxNameInput"),
+  inventoryItemDialog: document.querySelector("#inventoryItemDialog"),
+  inventoryItemDialogTitle: document.querySelector("#inventoryItemDialogTitle"),
+  inventoryItemNameInput: document.querySelector("#inventoryItemNameInput"),
+  inventoryItemBoxSelect: document.querySelector("#inventoryItemBoxSelect"),
+  inventoryItemQuantityInput: document.querySelector("#inventoryItemQuantityInput"),
+  inventoryItemNotesInput: document.querySelector("#inventoryItemNotesInput"),
   recreateMainPage: document.querySelector("#recreateMainPage"),
   recreatePlannerGrid: document.querySelector("#recreatePlannerGrid"),
   homeRecreateBtn: document.querySelector("#homeRecreateBtn"),
@@ -371,6 +426,25 @@ const elements = {
   watchArchiveDialog: document.querySelector("#watchArchiveDialog"),
   watchArchiveBody: document.querySelector("#watchArchiveBody"),
   closeWatchArchiveBtn: document.querySelector("#closeWatchArchiveBtn"),
+  homeReadBtn: document.querySelector("#homeReadBtn"),
+  titleReadBtn: document.querySelector("#titleReadBtn"),
+  readingMainPage: document.querySelector("#readingMainPage"),
+  readingPlannerGrid: document.querySelector("#readingPlannerGrid"),
+  readingSearchDialog: document.querySelector("#readingSearchDialog"),
+  readingSearchDialogInput: document.querySelector("#readingSearchDialogInput"),
+  readingSearchDialogResults: document.querySelector("#readingSearchDialogResults"),
+  closeReadingSearchBtn: document.querySelector("#closeReadingSearchBtn"),
+  readingLogDialog: document.querySelector("#readingLogDialog"),
+  readingLogTitle: document.querySelector("#readingLogTitle"),
+  readingLogDate: document.querySelector("#readingLogDate"),
+  readingLogStars: document.querySelector("#readingLogStars"),
+  readingLogNotes: document.querySelector("#readingLogNotes"),
+  readingLogSaveBtn: document.querySelector("#readingLogSaveBtn"),
+  readingLogSkipBtn: document.querySelector("#readingLogSkipBtn"),
+  closeReadingLogBtn: document.querySelector("#closeReadingLogBtn"),
+  readingArchiveDialog: document.querySelector("#readingArchiveDialog"),
+  readingArchiveBody: document.querySelector("#readingArchiveBody"),
+  closeReadingArchiveBtn: document.querySelector("#closeReadingArchiveBtn"),
   generalSettingsBtn: document.querySelector("#generalSettingsBtn"),
   generalSettingsMenu: document.querySelector("#generalSettingsMenu"),
   eatSettingsBtn: document.querySelector("#eatSettingsBtn"),
@@ -390,6 +464,24 @@ const elements = {
   openDoSettingsBtn: document.querySelector("#openDoSettingsBtn"),
   doMainPage: document.querySelector("#doMainPage"),
   doPlannerGrid: document.querySelector("#doPlannerGrid"),
+  addTaskDialog: document.querySelector("#addTaskDialog"),
+  addTaskDialogForm: document.querySelector("#addTaskDialogForm"),
+  addTaskDialogInput: document.querySelector("#addTaskDialogInput"),
+  addTaskDialogNotes: document.querySelector("#addTaskDialogNotes"),
+  addTaskRecurringDays: document.querySelector("#addTaskRecurringDays"),
+  closeAddTaskDialogBtn: document.querySelector("#closeAddTaskDialogBtn"),
+  cancelAddTaskBtn: document.querySelector("#cancelAddTaskBtn"),
+  taskLogDialog: document.querySelector("#taskLogDialog"),
+  taskLogForm: document.querySelector("#taskLogForm"),
+  taskLogTaskTitle: document.querySelector("#taskLogTaskTitle"),
+  taskLogDuration: document.querySelector("#taskLogDuration"),
+  taskLogNotes: document.querySelector("#taskLogNotes"),
+  closeTaskLogBtn: document.querySelector("#closeTaskLogBtn"),
+  skipTaskLogBtn: document.querySelector("#skipTaskLogBtn"),
+  taskLogViewDialog: document.querySelector("#taskLogViewDialog"),
+  taskLogViewTitle: document.querySelector("#taskLogViewTitle"),
+  taskLogViewBody: document.querySelector("#taskLogViewBody"),
+  closeTaskLogViewBtn: document.querySelector("#closeTaskLogViewBtn"),
   tasksPageDialog: document.querySelector("#tasksPageDialog"),
   closeTasksPageBtn: document.querySelector("#closeTasksPageBtn"),
   tasksPageTaskForm: document.querySelector("#tasksPageTaskForm"),
@@ -444,6 +536,7 @@ const elements = {
   workoutDetailWeight: document.querySelector("#workoutDetailWeight"),
   workoutLogSection: document.querySelector("#workoutLogSection"),
   workoutDetailLogs: document.querySelector("#workoutDetailLogs"),
+  logPastDateFromDetailBtn: document.querySelector("#logPastDateFromDetailBtn"),
   saveWorkoutDetailBtn: document.querySelector("#saveWorkoutDetailBtn"),
   activeExerciseDialog: document.querySelector("#activeExerciseDialog"),
   closeActiveExerciseBtn: document.querySelector("#closeActiveExerciseBtn"),
@@ -471,6 +564,7 @@ const elements = {
   openGroceryLibraryBtn: document.querySelector("#openGroceryLibraryBtn"),
   openIngredientOptionsBtn: document.querySelector("#openIngredientOptionsBtn"),
   openFoodHealthSettingsBtn: document.querySelector("#openFoodHealthSettingsBtn"),
+  menuMealPlanSettingsBtn: document.querySelector("#menuMealPlanSettingsBtn"),
   openCalendarsBtn: document.querySelector("#openCalendarsBtn"),
   openWeeklyEmailBtn: document.querySelector("#openWeeklyEmailBtn"),
   openBackupHealthBtn: document.querySelector("#openBackupHealthBtn"),
@@ -513,7 +607,8 @@ const elements = {
   foodHealthSettingsMembers: document.querySelector("#foodHealthSettingsMembers"),
   foodHealthTemplateSelect: document.querySelector("#foodHealthTemplateSelect"),
   foodHealthTemplateDescription: document.querySelector("#foodHealthTemplateDescription"),
-  foodHealthChecklistSettings: document.querySelector("#foodHealthChecklistSettings"),
+  foodHealthGoalsSettings: document.querySelector("#foodHealthGoalsSettings"),
+  dailyDozenGoals: document.querySelector("#dailyDozenGoals"),
   foodHealthNutritionTargetNote: document.querySelector("#foodHealthNutritionTargetNote"),
   foodHealthNutritionTargets: document.querySelector("#foodHealthNutritionTargets"),
   groceryLibraryForm: document.querySelector("#groceryLibraryForm"),
@@ -523,6 +618,7 @@ const elements = {
   cancelGroceryLibraryBtn: document.querySelector("#cancelGroceryLibraryBtn"),
   saveGroceryLibraryBtn: document.querySelector("#saveGroceryLibraryBtn"),
   resetGroceryLibraryBtn: document.querySelector("#resetGroceryLibraryBtn"),
+  autoTagGroceryBtn: document.querySelector("#autoTagGroceryBtn"),
   groceryStoresDialog: document.querySelector("#groceryStoresDialog"),
   groceryStoresForm: document.querySelector("#groceryStoresForm"),
   groceryStoreInput: document.querySelector("#groceryStoreInput"),
@@ -719,6 +815,8 @@ const elements = {
   refreshBackupHealthBtn: document.querySelector("#refreshBackupHealthBtn"),
   doneBackupHealthBtn: document.querySelector("#doneBackupHealthBtn"),
   restoreDialog: document.querySelector("#restoreDialog"),
+  restoreBackupList: document.querySelector("#restoreBackupList"),
+  restoreFileLabel: document.querySelector("#restoreFileLabel"),
   restoreFileInput: document.querySelector("#restoreFileInput"),
   restorePreview: document.querySelector("#restorePreview"),
   mergeRestoreBtn: document.querySelector("#mergeRestoreBtn"),
@@ -727,7 +825,11 @@ const elements = {
   trashDialog: document.querySelector("#trashDialog"),
   trashList: document.querySelector("#trashList"),
   closeTrashBtn: document.querySelector("#closeTrashBtn"),
-  doneTrashBtn: document.querySelector("#doneTrashBtn")
+  doneTrashBtn: document.querySelector("#doneTrashBtn"),
+  openFamilyMembersBtn: document.querySelector("#openFamilyMembersBtn"),
+  familyMembersDialog: document.querySelector("#familyMembersDialog"),
+  openMealPlanSettingsBtn: document.querySelector("#openMealPlanSettingsBtn"),
+  mealPlanSettingsDialog: document.querySelector("#mealPlanSettingsDialog")
 };
 
 let pendingRestore = null;
@@ -807,13 +909,14 @@ function bindEvents() {
   elements.menuGroceryListBtn.addEventListener("click", () => openSettingsMenuDialog(openGroceryStoresDialog));
   elements.menuGroceryPricingBtn.addEventListener("click", () => openSettingsMenuDialog(openGroceryPricingDialog));
   elements.menuGroceryItemsBtn.addEventListener("click", () => openSettingsMenuDialog(openGroceryLibraryDialog));
+  elements.menuInventoryRoomsBtn.addEventListener("click", () => openSettingsMenuDialog(openInventoryRoomsDialog));
   elements.menuIngredientOptionsBtn.addEventListener("click", () => openSettingsMenuDialog(openIngredientOptionsDialog));
   elements.menuFoodHealthSettingsBtn.addEventListener("click", () => openSettingsMenuDialog(openFoodHealthSettingsDialog));
+  elements.menuMealPlanSettingsBtn.addEventListener("click", () => openSettingsMenuDialog(openMealPlanSettingsDialog));
   elements.menuWatchTheatersBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("watch")));
   elements.menuRecurringTasksBtn.addEventListener("click", () => openSettingsMenuDialog(openRecurringTasksDialog));
   elements.menuWorkoutLibraryBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLibraryDialog));
   elements.menuWorkoutLogsBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLogsDialog));
-  elements.menuPlayAutoRulesBtn.addEventListener("click", () => openSettingsMenuDialog(openPlayAutoRulesDialog));
   elements.closeContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
   elements.doneContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
   elements.contextSettingsBody.addEventListener("click", handleContextSettingsAction);
@@ -833,6 +936,16 @@ function bindEvents() {
   elements.watchLogSkipBtn.addEventListener("click", skipWatchLog);
   elements.closeWatchArchiveBtn.addEventListener("click", () => elements.watchArchiveDialog.close());
   elements.watchArchiveDialog.addEventListener("click", closeDialogOnBackdropClick);
+  elements.closeAddTaskDialogBtn.addEventListener("click", () => { editingDoTaskContext = null; elements.addTaskDialog.close(); });
+  elements.cancelAddTaskBtn.addEventListener("click", () => { editingDoTaskContext = null; elements.addTaskDialog.close(); });
+  elements.addTaskDialog.querySelectorAll("[data-task-type]").forEach((btn) => {
+    btn.addEventListener("click", () => setAddTaskType(btn.dataset.taskType));
+  });
+  elements.addTaskDialogForm.addEventListener("submit", submitAddTaskDialog);
+  elements.closeTaskLogBtn.addEventListener("click", () => skipTaskLogDialog());
+  elements.skipTaskLogBtn.addEventListener("click", () => skipTaskLogDialog());
+  elements.taskLogForm.addEventListener("submit", (e) => { e.preventDefault(); submitTaskLogDialog(); });
+  elements.closeTaskLogViewBtn.addEventListener("click", () => elements.taskLogViewDialog.close());
   elements.closeTasksPageBtn.addEventListener("click", () => elements.tasksPageDialog.close());
   elements.tasksPageDialog.addEventListener("close", () => setPageTitle(currentMainPageTitle()));
   elements.closeDoSettingsBtn.addEventListener("click", () => elements.doSettingsDialog.close());
@@ -853,7 +966,7 @@ function bindEvents() {
   elements.openRecipeBoxPageBtn?.addEventListener("click", openRecipeBoxPage);
   elements.openGroceriesPageBtn?.addEventListener("click", openGroceriesPage);
   elements.closeRecipeBoxPageBtn.addEventListener("click", () => closeRecipeBoxPage());
-  elements.closeGroceriesPageBtn.addEventListener("click", () => elements.groceriesPageDialog.close());
+  elements.closeGroceriesPageBtn?.addEventListener("click", () => elements.groceriesPageDialog.close());
   elements.closeDailyDozenPageBtn.addEventListener("click", closeDailyDozenPage);
   elements.dailyDozenTodayBtn.addEventListener("click", () => {
     activeDailyDozenDate = dailyDozenDomain().localDateKey();
@@ -876,10 +989,6 @@ function bindEvents() {
   elements.closeFoodHealthSettingsBtn.addEventListener("click", () => elements.foodHealthSettingsDialog.close());
   elements.cancelFoodHealthSettingsBtn.addEventListener("click", () => elements.foodHealthSettingsDialog.close());
   elements.saveFoodHealthSettingsBtn.addEventListener("click", saveFoodHealthSettings);
-  elements.foodHealthTemplateSelect.addEventListener("change", () => {
-    editingFoodHealthTemplateId = elements.foodHealthTemplateSelect.value;
-    renderFoodHealthSettings();
-  });
   elements.recipeBoxPageDialog.addEventListener("close", () => {
     pendingMealRecipeSelection = null;
     pendingAutoRuleRecipeSelection = null;
@@ -938,6 +1047,11 @@ function bindEvents() {
   elements.donePlayAutoRulesBtn.addEventListener("click", () => elements.playAutoRulesDialog.close());
   elements.closeWorkoutDetailBtn.addEventListener("click", () => elements.workoutDetailDialog.close());
   elements.saveWorkoutDetailBtn.addEventListener("click", saveWorkoutDetail);
+  elements.logPastDateFromDetailBtn.addEventListener("click", () => {
+    const workoutId = activeWorkoutDetail?.workoutId || null;
+    elements.workoutDetailDialog.close();
+    openPastWorkoutDialog(workoutId);
+  });
   elements.workoutTypeButtons.forEach((button) => {
     button.addEventListener("click", () => setWorkoutDetailType(button.dataset.workoutType));
   });
@@ -975,6 +1089,16 @@ function bindEvents() {
   elements.openBackupHealthBtn.addEventListener("click", openBackupHealthDialog);
   elements.openRestoreBackupBtn.addEventListener("click", openRestoreDialog);
   elements.openTrashBtn.addEventListener("click", openTrashDialog);
+  elements.openFamilyMembersBtn.addEventListener("click", openFamilyMembersDialog);
+  elements.openMealPlanSettingsBtn.addEventListener("click", openMealPlanSettingsDialog);
+  document.querySelector("#closeFamilyMembersBtn").addEventListener("click", () => elements.familyMembersDialog.close());
+  document.querySelector("#cancelFamilyMembersBtn").addEventListener("click", () => elements.familyMembersDialog.close());
+  document.querySelector("#saveFamilyMembersBtn").addEventListener("click", saveMealPlanMembers);
+  document.querySelector("#addFamilyMemberBtn").addEventListener("click", addFamilyMember);
+  document.querySelector("#closeMealPlanSettingsBtn").addEventListener("click", () => elements.mealPlanSettingsDialog.close());
+  document.querySelector("#cancelMealPlanSettingsBtn").addEventListener("click", () => elements.mealPlanSettingsDialog.close());
+  document.querySelector("#saveMealTypesBtn").addEventListener("click", saveMealPlanMealTypes);
+  document.querySelector("#addMealTypeBtn").addEventListener("click", addMealType);
   elements.closeAutoRulesBtn.addEventListener("click", closeAutoRulesDialog);
   elements.saveAutoRulesBtn.addEventListener("click", closeAutoRulesDialog);
   elements.tagForm.addEventListener("submit", addRecipeTag);
@@ -991,6 +1115,7 @@ function bindEvents() {
     pendingAutoRuleIngredientSelection = null;
   });
   elements.resetGroceryLibraryBtn.addEventListener("click", resetGroceryLibrary);
+  elements.autoTagGroceryBtn.addEventListener("click", autoTagGroceryWithAI);
   elements.closeGroceryStoresBtn.addEventListener("click", () => elements.groceryStoresDialog.close());
   elements.doneGroceryStoresBtn.addEventListener("click", () => elements.groceryStoresDialog.close());
   elements.groceryStoresForm.addEventListener("submit", addGroceryStore);
@@ -1077,6 +1202,15 @@ function bindEvents() {
   elements.recipeViewDialog.addEventListener("close", () => {
     rememberActiveRecipeScroll();
     currentActiveRecipeViewId = "";
+    if (recipeViewMealContext) {
+      const adjuster = elements.recipeViewHeaderActions.querySelector("[data-serving-adjuster]");
+      if (adjuster) {
+        const baseServings = Number(adjuster.dataset.baseServings || 1) || 1;
+        const servings = Math.max(0.25, Number(adjuster.value) || baseServings);
+        updateMealPlannedServingsFromContext(servings, recipeViewMealContext);
+      }
+      recipeViewMealContext = null;
+    }
   });
   elements.copyGroceriesBtn.addEventListener("click", () => copyText(buildGroceryText(), elements.copyGroceriesBtn, "Copied"));
   elements.groceryWeekSelect.addEventListener("change", () => {
@@ -1096,6 +1230,71 @@ function bindEvents() {
   });
   window.addEventListener("resize", closeFloatingMenus);
   window.addEventListener("scroll", closeFloatingMenusOnPageScroll, true);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "hidden") return;
+    window.clearTimeout(sharedStorageSaveTimer);
+    window.clearTimeout(localBackupTimer);
+    if (sharedStorageReady && activeSharedStorageProvider) {
+      writeStateToSharedStorage().catch(() => {});
+    }
+    if (canUseLocalBackend()) {
+      writeLocalBackup().catch(() => {});
+    }
+  });
+  elements.homeReadBtn.addEventListener("click", showReadingApp);
+  elements.titleReadBtn.addEventListener("click", showReadingApp);
+  elements.homeShopBtn.addEventListener("click", showShopApp);
+  elements.titleShopBtn.addEventListener("click", showShopApp);
+  elements.shopScanReceiptBtn.addEventListener("click", openReceiptScanDialog);
+  elements.homeInventoryBtn.addEventListener("click", showInventoryApp);
+  elements.titleInventoryBtn.addEventListener("click", showInventoryApp);
+  elements.inventoryBoxDialog.addEventListener("click", closeDialogOnBackdropClick);
+  document.querySelector("#closeInventoryBoxDialogBtn").addEventListener("click", () => elements.inventoryBoxDialog.close());
+  document.querySelector("#cancelInventoryBoxBtn").addEventListener("click", () => elements.inventoryBoxDialog.close());
+  document.querySelector("#saveInventoryBoxBtn").addEventListener("click", saveInventoryBox);
+  elements.inventoryBoxNameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveInventoryBox(); } });
+  elements.inventoryItemDialog.addEventListener("click", closeDialogOnBackdropClick);
+  document.querySelector("#closeInventoryItemDialogBtn").addEventListener("click", () => elements.inventoryItemDialog.close());
+  document.querySelector("#cancelInventoryItemBtn").addEventListener("click", () => elements.inventoryItemDialog.close());
+  document.querySelector("#saveInventoryItemBtn").addEventListener("click", saveInventoryItem);
+  elements.inventoryItemNameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveInventoryItem(); } });
+  elements.closeReadingSearchBtn.addEventListener("click", () => elements.readingSearchDialog.close());
+  elements.readingSearchDialog.addEventListener("click", closeDialogOnBackdropClick);
+  elements.readingSearchDialog.addEventListener("close", () => {
+    elements.readingSearchDialogInput.value = "";
+    elements.readingSearchDialogResults.innerHTML = "";
+  });
+  elements.closeReadingLogBtn.addEventListener("click", () => elements.readingLogDialog.close());
+  elements.readingLogSaveBtn.addEventListener("click", saveReadingLog);
+  elements.readingLogSkipBtn.addEventListener("click", skipReadingLog);
+  elements.closeReadingArchiveBtn.addEventListener("click", () => elements.readingArchiveDialog.close());
+  elements.readingArchiveDialog.addEventListener("click", closeDialogOnBackdropClick);
+  elements.inventoryRoomsDialog.addEventListener("click", closeDialogOnBackdropClick);
+  document.querySelector("#closeInventoryRoomsDialogBtn").addEventListener("click", () => elements.inventoryRoomsDialog.close());
+  document.querySelector("#doneInventoryRoomsBtn").addEventListener("click", () => elements.inventoryRoomsDialog.close());
+  elements.restaurantSearchDialog.addEventListener("click", closeDialogOnBackdropClick);
+  document.querySelector("#closeRestaurantSearchBtn").addEventListener("click", () => elements.restaurantSearchDialog.close());
+  document.querySelector("#cancelRestaurantSearchBtn").addEventListener("click", () => elements.restaurantSearchDialog.close());
+  elements.restaurantSearchDialog.addEventListener("close", () => {
+    elements.restaurantSearchInput.value = "";
+    elements.restaurantSearchStatus.textContent = "";
+    elements.restaurantSearchSuggestionsEl.hidden = true;
+    elements.restaurantSearchSuggestionsEl.innerHTML = "";
+    restaurantSearchSuggestions = [];
+    restaurantSearchPending = null;
+  });
+  elements.restaurantSearchInput.addEventListener("input", () => {
+    const query = elements.restaurantSearchInput.value.trim();
+    window.clearTimeout(restaurantSearchTimer);
+    if (query.length < 2) {
+      restaurantSearchSuggestions = [];
+      renderRestaurantSuggestions();
+      elements.restaurantSearchStatus.textContent = "";
+      return;
+    }
+    elements.restaurantSearchStatus.textContent = "Searching…";
+    restaurantSearchTimer = window.setTimeout(() => searchRestaurantLocations(query), 300);
+  });
 }
 
 function closeDialogOnBackdropClick(event) {
@@ -1112,7 +1311,7 @@ async function initializeApp() {
 }
 
 async function initializeSupabaseAuth() {
-  if (!canUseCloudStorage() || canUseLocalBackend()) {
+  if (!canUseCloudStorage()) {
     updateAuthUi();
     return;
   }
@@ -1134,6 +1333,12 @@ async function initializeSupabaseAuth() {
     authSession = session;
     updateAuthUi();
     if (session?.access_token) {
+      // Flush any in-flight debounced write BEFORE resetting — otherwise the 250ms
+      // timer fires after sharedStorageReady=false and the write is silently dropped.
+      if (sharedStorageReady && activeSharedStorageProvider) {
+        window.clearTimeout(sharedStorageSaveTimer);
+        await writeStateToSharedStorage().catch(() => {});
+      }
       sharedStorageReady = false;
       activeSharedStorageProvider = null;
       await hydrateStateFromSharedStorage();
@@ -1146,7 +1351,7 @@ async function initializeSupabaseAuth() {
 function updateAuthUi(message = "") {
   if (!elements.authStatus || !elements.authButton || !elements.authMenuAction) return;
 
-  if (!canUseCloudStorage() || canUseLocalBackend()) {
+  if (!canUseCloudStorage()) {
     elements.authStatus.textContent = "Local storage";
     elements.authMenuAction.hidden = true;
     return;
@@ -1258,12 +1463,14 @@ function loadState() {
 }
 
 function persist() {
+  state.stateUpdatedAt = new Date().toISOString();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   saveStateToSharedStorage();
   scheduleLocalBackup();
 }
 
 async function persistImmediately(label = "saving") {
+  state.stateUpdatedAt = new Date().toISOString();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   window.clearTimeout(sharedStorageSaveTimer);
   window.clearTimeout(localBackupTimer);
@@ -1295,6 +1502,11 @@ function defaultState() {
     watchItems: [],
     watchPlans: {},
     watchSettings: { theaters: [], categories: [] },
+    readingItems: [],
+    readingSettings: { categories: [] },
+    inventoryBoxes: [],
+    inventoryItems: [],
+    inventoryRoomVisibility: {},
     watchShowtimesData: {},
     sailingLog: [],
     workouts: [],
@@ -1319,9 +1531,10 @@ function defaultState() {
     familyMembers: dailyDozenDomain().familyMembers,
     dailyDozenEntries: [],
     groceryDailyDozenTags: defaultGroceryDailyDozenTags(),
-    dailyDozenTagSeedVersion: 1,
+    dailyDozenTagSeedVersion: 2,
     checklistTemplates: defaultChecklistTemplates(),
     personChecklistSettings: defaultPersonChecklistSettings(),
+    personGoals: {},
     dailyChecklistEntries: [],
     foodLogEntries: [],
     foodHealthVersion: 1,
@@ -1335,12 +1548,17 @@ function defaultState() {
     locationSharingEnabled: false,
     pageVisibility: { ...pageVisibilityDefaults },
     autoGenerateRules: defaultAutoGenerateRules(),
+    mealPlanConfig: defaultMealPlanConfig(),
     collapsedSections: defaultCollapsedSections(),
-    collapsedDays: {}
+    collapsedDays: {},
+    emailPrefs: "",
+    stateUpdatedAt: ""
   };
 }
 
 function normalizeState(parsed) {
+  const mealPlanConfig = normalizeMealPlanConfig(parsed?.mealPlanConfig);
+  recomputeMealPlanLayout(mealPlanConfig);
   const normalized = {
     ...(typeof parsed === "object" && parsed !== null ? parsed : {}),
     recipes: Array.isArray(parsed?.recipes) ? parsed.recipes.map(normalizeRecipe) : seedRecipes.map(normalizeRecipe),
@@ -1356,6 +1574,11 @@ function normalizeState(parsed) {
     watchItems: normalizeWatchItems(parsed?.watchItems),
     watchPlans: normalizeWatchPlans(parsed?.watchPlans),
     watchSettings: normalizeWatchSettings(parsed?.watchSettings),
+    readingItems: normalizeReadingItems(parsed?.readingItems),
+    readingSettings: normalizeReadingSettings(parsed?.readingSettings),
+    inventoryBoxes: ensureDefaultInventoryRooms(normalizeInventoryBoxes(parsed?.inventoryBoxes)),
+    inventoryItems: normalizeInventoryItems(parsed?.inventoryItems),
+    inventoryRoomVisibility: normalizeInventoryRoomVisibility(parsed?.inventoryRoomVisibility),
     watchShowtimesData: normalizeShowtimesData(parsed?.watchShowtimesData),
     sailingLog: normalizeSailingLog(parsed?.sailingLog),
     workouts: normalizeWorkouts(parsed?.workouts),
@@ -1392,6 +1615,7 @@ function normalizeState(parsed) {
       dailyDozenDomain().normalizeCategories(parsed?.dailyDozenCategories)
     ),
     personChecklistSettings: {},
+    personGoals: normalizePersonGoals(parsed?.personGoals),
     dailyChecklistEntries: foodHealthDomain().normalizeDailyChecklistEntries(
       parsed?.dailyChecklistEntries,
       dailyDozenDomain().normalizeFamilyMembers(parsed?.familyMembers).map((member) => member.id)
@@ -1415,7 +1639,9 @@ function normalizeState(parsed) {
     collapsedDays: parsed?.collapsedDays || {},
     planEvents: normalizePlanEvents(parsed?.planEvents),
     planCalendars: normalizePlanCalendars(parsed?.planCalendars),
-    emailPrefs: String(parsed?.emailPrefs || "")
+    mealPlanConfig,
+    emailPrefs: String(parsed?.emailPrefs || ""),
+    stateUpdatedAt: typeof parsed?.stateUpdatedAt === "string" ? parsed.stateUpdatedAt : ""
   };
   ensureGroceryCatalog(normalized);
   ensureDailyDozenSeedTags(normalized);
@@ -1492,6 +1718,15 @@ function normalizeWeeklyEmailSettings(settings) {
   };
 }
 
+function normalizeTaskLogEntries(entries) {
+  return (Array.isArray(entries) ? entries : []).map((e) => ({
+    id: e?.id || createId("task-log"),
+    completedAt: e?.completedAt || new Date().toISOString(),
+    notes: String(e?.notes || "").trim(),
+    duration: (typeof e?.duration === "number" && e.duration > 0) ? e.duration : null
+  }));
+}
+
 function normalizeDoTasks(tasks) {
   return (Array.isArray(tasks) ? tasks : [])
     .map((task) => {
@@ -1499,6 +1734,10 @@ function normalizeDoTasks(tasks) {
       return {
         id: task?.id || createId("task"),
         title: String(task?.title || task?.name || task?.text || task?.label || "").trim(),
+        notes: String(task?.notes || "").trim(),
+        taskType: ["regular", "one-off"].includes(task?.taskType) ? task.taskType : "one-off",
+        log: normalizeTaskLogEntries(task?.log),
+        backlogTaskId: task?.backlogTaskId || "",
         done: Boolean(task?.done),
         recurringTaskId: task?.recurringTaskId || "",
         weekKey: task?.weekKey || "",
@@ -1520,11 +1759,13 @@ function normalizeRecurringTasks(tasks) {
   return (Array.isArray(tasks) ? tasks : [])
     .map((task) => {
       const dayIds = Array.isArray(task?.dayIds)
-        ? task.dayIds.filter((dayId) => prepDays.some((day) => day.id === dayId))
+        ? task.dayIds.filter((dayId) => doPrepDays.some((day) => day.id === dayId))
         : [];
       return {
         id: task?.id || createId("recurring-task"),
         title: String(task?.title || "").trim(),
+        notes: String(task?.notes || "").trim(),
+        log: normalizeTaskLogEntries(task?.log),
         dayIds: [...new Set(dayIds)],
         createdAt: task?.createdAt || new Date().toISOString()
       };
@@ -1858,6 +2099,69 @@ function normalizeWatchSettings(raw) {
   };
 }
 
+function normalizeReadingItems(items) {
+  return (Array.isArray(items) ? items : []).map((item) => ({
+    id: item?.id || createId("read"),
+    title: String(item?.title || "").trim(),
+    authors: Array.isArray(item?.authors) ? item.authors.map(String).filter(Boolean) : [],
+    status: ["want", "reading", "read"].includes(item?.status) ? item.status : "want",
+    googleBooksId: item?.googleBooksId || null,
+    coverUrl: item?.coverUrl || null,
+    year: item?.year ? String(item.year) : null,
+    pageCount: item?.pageCount ? Number(item.pageCount) : null,
+    overview: item?.overview || null,
+    format: ["physical", "ebook", "audiobook"].includes(item?.format) ? item.format : null,
+    readDate: item?.readDate || null,
+    rating: item?.rating != null ? Number(item.rating) : null,
+    readNotes: item?.readNotes || null,
+    categories: Array.isArray(item?.categories) ? item.categories.filter((id) => typeof id === "string") : [],
+    createdAt: item?.createdAt || new Date().toISOString()
+  })).filter((item) => item.title);
+}
+
+function normalizeReadingSettings(raw) {
+  return {
+    categories: (Array.isArray(raw?.categories) ? raw.categories : []).map((c) => ({
+      id: c?.id || createId("rcat"),
+      name: String(c?.name || "").trim()
+    })).filter((c) => c.name)
+  };
+}
+
+function normalizeInventoryBoxes(raw) {
+  return (Array.isArray(raw) ? raw : []).map((b) => ({
+    id: b?.id || createId("ibox"),
+    name: String(b?.name || "").trim(),
+    parentId: typeof b?.parentId === "string" ? b.parentId : null,
+    createdAt: b?.createdAt || new Date().toISOString()
+  })).filter((b) => b.name);
+}
+
+function normalizeInventoryItems(raw) {
+  return (Array.isArray(raw) ? raw : []).map((item) => ({
+    id: item?.id || createId("iitem"),
+    name: String(item?.name || "").trim(),
+    boxId: typeof item?.boxId === "string" ? item.boxId : null,
+    quantity: item?.quantity ? String(item.quantity).trim() : null,
+    notes: item?.notes ? String(item.notes).trim() : null,
+    createdAt: item?.createdAt || new Date().toISOString()
+  })).filter((item) => item.name);
+}
+
+function ensureDefaultInventoryRooms(boxes) {
+  const byId = new Map(boxes.map((b) => [b.id, b]));
+  DEFAULT_INVENTORY_ROOMS.forEach(({ id, name }) => {
+    if (!byId.has(id)) boxes.push({ id, name, parentId: null, createdAt: new Date().toISOString() });
+  });
+  return boxes;
+}
+
+function normalizeInventoryRoomVisibility(raw) {
+  const result = {};
+  DEFAULT_INVENTORY_ROOMS.forEach(({ id }) => { result[id] = raw?.[id] !== false; });
+  return result;
+}
+
 function normalizeShowtimesData(raw) {
   if (!raw || typeof raw !== "object") return {};
   const TWELVE_HOURS = 12 * 60 * 60 * 1000;
@@ -1962,6 +2266,9 @@ function normalizePageVisibility(visibility) {
     play: visibility?.play !== false,
     do: visibility?.do !== false,
     watch: visibility?.watch !== false,
+    read: visibility?.read !== false,
+    shop: visibility?.shop !== false,
+    inventory: visibility?.inventory !== false,
     recreate: visibility?.recreate !== false,
     plan: visibility?.plan !== false
   };
@@ -2205,7 +2512,7 @@ function dailyDozenDomain() {
 }
 
 function foodHealthDomain() {
-  if (!window.LiveFoodHealth) throw new Error("Food Health tools are unavailable.");
+  if (!window.LiveFoodHealth) throw new Error("Nutrition tools are unavailable.");
   return window.LiveFoodHealth;
 }
 
@@ -2312,10 +2619,23 @@ function foodLogEntries() {
   return state.foodLogEntries;
 }
 
-function activeChecklistTemplate(personId = activeDailyDozenMemberId) {
-  const settings = personChecklistSettings()[personId];
-  return checklistTemplates().find((template) => template.id === settings?.templateId)
-    || checklistTemplates().find((template) => template.id === "daily-dozen");
+function activeChecklistTemplate() {
+  return checklistTemplates().find((template) => template.id === "daily-dozen");
+}
+
+function normalizePersonGoals(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const validGoals = new Set(["daily-dozen", "twenty-one-tweaks", "maximally-ldl-lowering"]);
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([personId, goals]) => [String(personId), Array.isArray(goals) ? goals.map(String).filter(g => validGoals.has(g)) : ["daily-dozen"]])
+      .filter(([personId]) => personId)
+  );
+}
+
+function activePersonGoals(personId = activeDailyDozenMemberId) {
+  const goals = (state.personGoals || {})[personId];
+  return Array.isArray(goals) ? goals : ["daily-dozen"];
 }
 
 function dailyDozenItemKey(item) {
@@ -2336,11 +2656,11 @@ function groceryDailyDozenTags() {
 }
 
 function ensureDailyDozenSeedTags(targetState) {
-  if (targetState.dailyDozenTagSeedVersion >= 1) return;
+  if (targetState.dailyDozenTagSeedVersion >= 2) return;
   const existing = normalizeGroceryDailyDozenTags(targetState.groceryDailyDozenTags);
   const seeded = defaultGroceryDailyDozenTags();
   targetState.groceryDailyDozenTags = normalizeGroceryDailyDozenTags({ ...seeded, ...existing });
-  targetState.dailyDozenTagSeedVersion = 1;
+  targetState.dailyDozenTagSeedVersion = 2;
 }
 
 function dailyDozenCategories() {
@@ -2764,8 +3084,19 @@ async function hydrateStateFromSharedStorage() {
       const sharedState = await provider.load();
       activeSharedStorageProvider = provider;
       if (sharedState) {
-        await snapshotBeforeSharedStateReplacement(sharedState, provider.label);
-        applyStoredState(sharedState);
+        const localTs = state.stateUpdatedAt || "";
+        const remoteTs = sharedState.stateUpdatedAt || "";
+        // Local wins when: it has a timestamp AND (remote has no timestamp OR local is same-age-or-newer).
+        // Without this, a Supabase record that was never given a stateUpdatedAt would silently overwrite
+        // valid local state because the old condition required BOTH timestamps to be non-empty.
+        const localWins = localTs && (!remoteTs || localTs >= remoteTs);
+        if (localWins) {
+          console.info(`Local state (${localTs}) is same-or-newer than ${provider.label} (${remoteTs || "no timestamp"}); pushing local state upstream.`);
+          await provider.write();
+        } else {
+          await snapshotBeforeSharedStateReplacement(sharedState, provider.label);
+          applyStoredState(sharedState);
+        }
       }
       else await provider.write();
       sharedStorageReady = true;
@@ -2792,7 +3123,29 @@ function saveStateToSharedStorage() {
 
 async function writeStateToSharedStorage() {
   if (!activeSharedStorageProvider) return;
-  await activeSharedStorageProvider.write();
+  updateSyncStatus("saving");
+  try {
+    await activeSharedStorageProvider.write();
+    updateSyncStatus("saved");
+  } catch (error) {
+    updateSyncStatus("failed");
+    throw error;
+  }
+}
+
+let syncHideTimer = null;
+function updateSyncStatus(status) {
+  const el = elements.syncStatus;
+  if (!el) return;
+  window.clearTimeout(syncHideTimer);
+  el.removeAttribute("hidden");
+  el.dataset.status = status;
+  el.textContent = status === "saving" ? "Saving…" : status === "saved" ? "Saved" : "⚠ Data not saved to cloud";
+  if (status === "saved") {
+    syncHideTimer = window.setTimeout(() => { el.setAttribute("hidden", ""); delete el.dataset.status; }, 2000);
+  }
+  // "failed" intentionally has no hide timer — stays visible until the next successful save,
+  // so the user knows to keep the tab open until the warning clears.
 }
 
 function scheduleLocalBackup() {
@@ -2815,6 +3168,9 @@ async function writeLocalBackup(options = {}) {
     })
   });
   if (!response.ok) throw new Error(`Local backup failed with status ${response.status}`);
+  // Also keep the canonical state file current so there's a server-side recovery path
+  // independent of both localStorage and Supabase (e.g. after a browser storage clear).
+  await writeStateToLocalBackend();
 }
 
 async function snapshotBeforeSharedStateReplacement(sharedState, providerLabel) {
@@ -3211,6 +3567,92 @@ function createId(prefix = "id") {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function defaultMealPlanConfig() {
+  return {
+    members: [
+      { id: "member-mj", label: "MJ" },
+      { id: "member-luke", label: "Luke" },
+      { id: "member-sophia", label: "Sophia" }
+    ],
+    mealTypes: [
+      { id: "mealtype-breakfast", label: "Breakfast" },
+      { id: "mealtype-lunch", label: "Lunch" },
+      { id: "mealtype-dinner", label: "Dinner" }
+    ]
+  };
+}
+
+function normalizeMealPlanConfig(config) {
+  const defaults = defaultMealPlanConfig();
+  const rawMembers = Array.isArray(config?.members) ? config.members : [];
+  const rawTypes = Array.isArray(config?.mealTypes) ? config.mealTypes : [];
+  const members = rawMembers.length
+    ? rawMembers.map(m => ({ id: String(m?.id || createId("member")), label: String(m?.label || "").trim(), dob: String(m?.dob || "").trim() })).filter(m => m.label)
+    : defaults.members;
+  const mealTypes = rawTypes.length
+    ? rawTypes.map(t => ({ id: String(t?.id || createId("mealtype")), label: String(t?.label || "").trim() })).filter(t => t.label)
+    : defaults.mealTypes;
+  return {
+    members: members.length ? members : defaults.members,
+    mealTypes: mealTypes.length ? mealTypes : defaults.mealTypes
+  };
+}
+
+function recomputeMealPlanLayout(config) {
+  const cfg = config || normalizeMealPlanConfig(state.mealPlanConfig);
+  const memberLabels = cfg.members.map(m => m.label);
+  const keysByType = {};
+  cfg.mealTypes.forEach(type => {
+    keysByType[type.id] = memberLabels.map(m => `${m} ${type.label}`);
+  });
+  const firstType = cfg.mealTypes[0];
+  const lastType = cfg.mealTypes[cfg.mealTypes.length - 1];
+  const secondType = cfg.mealTypes[1];
+  const allKeys = cfg.mealTypes.flatMap(t => keysByType[t.id]);
+  const lastKeys = lastType ? keysByType[lastType.id] : [];
+  const allButLastKeys = cfg.mealTypes.slice(0, -1).flatMap(t => keysByType[t.id]);
+
+  breakfastMeals.length = 0;
+  (firstType ? keysByType[firstType.id] : []).forEach(k => breakfastMeals.push(k));
+  lunchMeals.length = 0;
+  (secondType ? keysByType[secondType.id] : []).forEach(k => lunchMeals.push(k));
+  dinnerMeals.length = 0;
+  lastKeys.forEach(k => dinnerMeals.push(k));
+
+  meals.length = 0;
+  allKeys.forEach(k => meals.push(k));
+
+  Object.keys(combinedMealSections).forEach(k => delete combinedMealSections[k]);
+  cfg.mealTypes.forEach(type => {
+    combinedMealSections[`Combined ${type.label}`] = {
+      label: type.label,
+      members: keysByType[type.id]
+    };
+  });
+
+  mealColumnConfigs.length = 0;
+  cfg.mealTypes.forEach(type => {
+    mealColumnConfigs.push({
+      label: type.label,
+      meals: keysByType[type.id],
+      combinedMeal: `Combined ${type.label}`
+    });
+  });
+
+  autoRuleMealKeys.length = 0;
+  [...meals, ...Object.keys(combinedMealSections)].forEach(k => autoRuleMealKeys.push(k));
+
+  prepDays.forEach(day => {
+    if (day.id === "friday-start") {
+      day.meals.length = 0;
+      lastKeys.forEach(k => day.meals.push(k));
+    } else if (day.id === "friday-finish") {
+      day.meals.length = 0;
+      allButLastKeys.forEach(k => day.meals.push(k));
+    }
+  });
+}
+
 function defaultCollapsedSections() {
   return {
     recipes: true,
@@ -3221,16 +3663,9 @@ function defaultCollapsedSections() {
 }
 
 function defaultAutoGenerateRules() {
-  return [
-    tagAutoRule("mj-weekday-breakfast", ["monday", "tuesday", "wednesday", "thursday", "friday-finish"], "MJ Breakfast", 0, ["Breakfast - Weekday"]),
-    autoRule("luke-breakfast", ["monday", "tuesday", "wednesday", "thursday"], "Luke Breakfast", 0, "custom", "", "Tofu Scramble"),
-    autoRule("luke-lunch", ["monday", "tuesday", "wednesday", "thursday"], "Luke Lunch", 0, "custom", "", "Peanut Butter & Jelly with Veggies & Hummus"),
-    autoRule("wednesday-dinner-main", ["wednesday"], "MJ Dinner", 0, "custom", "", "leftovers"),
-    autoRule("wednesday-dinner-side", ["wednesday"], "Luke Dinner", 0, "custom", "", "leftovers"),
-    autoRule("sophia-breakfast", prepDays.map((day) => day.id), "Sophia Breakfast", 0, "skip"),
-    autoRule("sophia-lunch", prepDays.map((day) => day.id), "Sophia Lunch", 0, "skip"),
-    autoRule("sophia-dinner", prepDays.map((day) => day.id), "Sophia Dinner", 0, "skip")
-  ];
+  return meals.map(slotKey =>
+    autoRule(createId("rule"), prepDays.map(d => d.id), slotKey, 0, "skip")
+  );
 }
 
 function autoRule(id, dayIds, meal, index, action = "any", folderName = "", value = "") {
@@ -3271,7 +3706,7 @@ function normalizeAutoGenerateRule(rule) {
   return {
     id: rule.id || createId("rule"),
     dayIds: Array.isArray(rule.dayIds) && rule.dayIds.length ? rule.dayIds.filter((dayId) => prepDays.some((day) => day.id === dayId)) : prepDays.map((day) => day.id),
-    meal: autoRuleMealKeys.includes(migrated.meal) ? migrated.meal : "MJ Breakfast",
+    meal: autoRuleMealKeys.includes(migrated.meal) ? migrated.meal : (autoRuleMealKeys[0] || ""),
     index: Number.isInteger(migrated.index) ? migrated.index : 0,
     action: ["any", "custom", "ingredient", "skip", "tags"].includes(action) ? action : "any",
     folderName: rule.folderName || "",
@@ -3331,8 +3766,9 @@ function folderName(folderId) {
 function render() {
   updatePageVisibility();
   const week = weekState();
-  elements.weekLabel.textContent = formatWeekRange(currentWeek);
-  elements.weekLabel.setAttribute("aria-label", `Choose week. Current week is ${formatWeekRange(currentWeek)}`);
+  const weekRangeLabel = formatWeekRange(currentWeek, activeAppArea === "do" ? 6 : 7);
+  elements.weekLabel.textContent = weekRangeLabel;
+  elements.weekLabel.setAttribute("aria-label", `Choose week. Current week is ${weekRangeLabel}`);
   renderWeekJumpMenu();
   renderActiveCooking();
   renderFolders();
@@ -3370,7 +3806,8 @@ function setWeekToolsMode(mode) {
   } else if (mode === "plan") {
     elements.weekLabel.textContent = planViewLabel();
   } else {
-    elements.weekLabel.textContent = formatWeekRange(currentWeek);
+    const endOffset = activeAppArea === "do" ? 6 : 7;
+    elements.weekLabel.textContent = formatWeekRange(currentWeek, endOffset);
   }
 }
 
@@ -3402,6 +3839,9 @@ function activateEatShell() {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
+  elements.readingMainPage.hidden = true;
+  elements.shopMainPage.hidden = true;
+  elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
@@ -3422,6 +3862,9 @@ function showDoApp(event) {
   elements.doMainPage.hidden = false;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
+  elements.readingMainPage.hidden = true;
+  elements.shopMainPage.hidden = true;
+  elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
@@ -3445,6 +3888,9 @@ function showPlayApp(event) {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = false;
   elements.watchMainPage.hidden = true;
+  elements.readingMainPage.hidden = true;
+  elements.shopMainPage.hidden = true;
+  elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
@@ -3468,6 +3914,9 @@ function showWatchApp(event) {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = false;
+  elements.readingMainPage.hidden = true;
+  elements.shopMainPage.hidden = true;
+  elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
@@ -3488,12 +3937,14 @@ function showRecreateApp(event) {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
+  elements.readingMainPage.hidden = true;
+  elements.shopMainPage.hidden = true;
   elements.recreateMainPage.hidden = false;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Recreate");
+  setPageTitle("Sail");
   renderRecreatePage();
   closePageTitleMenu();
   closeAppMenu();
@@ -3508,6 +3959,9 @@ function showPlanApp(event) {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
+  elements.readingMainPage.hidden = true;
+  elements.shopMainPage.hidden = true;
+  elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = false;
   elements.settingsMainPage.hidden = true;
@@ -3528,6 +3982,9 @@ function showSettingsApp(event) {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
+  elements.readingMainPage.hidden = true;
+  elements.shopMainPage.hidden = true;
+  elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = false;
@@ -3547,6 +4004,9 @@ function showHomeApp(event) {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
+  elements.readingMainPage.hidden = true;
+  elements.shopMainPage.hidden = true;
+  elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
@@ -3557,12 +4017,87 @@ function showHomeApp(event) {
   closeAppMenu();
 }
 
+function showReadingApp(event) {
+  event?.stopPropagation();
+  if (!isPageEnabled("read")) {
+    showHomeApp();
+    return;
+  }
+  activeAppArea = "read";
+  elements.homeMainPage.hidden = true;
+  document.querySelector("[data-section='mealPrep']").hidden = true;
+  elements.doMainPage.hidden = true;
+  elements.playMainPage.hidden = true;
+  elements.watchMainPage.hidden = true;
+  elements.readingMainPage.hidden = false;
+  elements.recreateMainPage.hidden = true;
+  elements.planMainPage.hidden = true;
+  elements.settingsMainPage.hidden = true;
+  setWeekToolsMode("today");
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("Reading List");
+  renderReadingPlanner();
+  closePageTitleMenu();
+  closeAppMenu();
+}
+
+function showInventoryApp(event) {
+  event?.stopPropagation();
+  if (!isPageEnabled("inventory")) { showHomeApp(); return; }
+  activeAppArea = "inventory";
+  elements.homeMainPage.hidden = true;
+  document.querySelector("[data-section='mealPrep']").hidden = true;
+  elements.doMainPage.hidden = true;
+  elements.playMainPage.hidden = true;
+  elements.watchMainPage.hidden = true;
+  elements.readingMainPage.hidden = true;
+  elements.shopMainPage.hidden = true;
+  elements.inventoryMainPage.hidden = false;
+  elements.recreateMainPage.hidden = true;
+  elements.planMainPage.hidden = true;
+  elements.settingsMainPage.hidden = true;
+  setWeekToolsMode("today");
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("Inventory");
+  renderInventoryPage();
+  closePageTitleMenu();
+  closeAppMenu();
+}
+
+function showShopApp(event) {
+  event?.stopPropagation();
+  if (!isPageEnabled("shop")) {
+    showHomeApp();
+    return;
+  }
+  activeAppArea = "shop";
+  elements.homeMainPage.hidden = true;
+  document.querySelector("[data-section='mealPrep']").hidden = true;
+  elements.doMainPage.hidden = true;
+  elements.playMainPage.hidden = true;
+  elements.watchMainPage.hidden = true;
+  elements.readingMainPage.hidden = true;
+  elements.shopMainPage.hidden = false;
+  elements.recreateMainPage.hidden = true;
+  elements.planMainPage.hidden = true;
+  elements.settingsMainPage.hidden = true;
+  setWeekToolsMode("today");
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("Shop");
+  renderShopPage();
+  closePageTitleMenu();
+  closeAppMenu();
+}
+
 function currentMainPageTitle() {
   if (activeAppArea === "home") return "Live";
   if (activeAppArea === "do") return "To Do List";
   if (activeAppArea === "play") return "Exercise Plan";
   if (activeAppArea === "watch") return "Watch List";
-  if (activeAppArea === "recreate") return "Recreate";
+  if (activeAppArea === "read") return "Reading List";
+  if (activeAppArea === "shop") return "Shop";
+  if (activeAppArea === "inventory") return "Inventory";
+  if (activeAppArea === "recreate") return "Sail";
   if (activeAppArea === "settings") return "Settings";
   return "Meal Plan";
 }
@@ -3617,45 +4152,225 @@ function addBacklogTask(event) {
   renderDoPlanner();
 }
 
+function openAddTaskDialog() {
+  editingDoTaskContext = null;
+  elements.addTaskDialogInput.value = "";
+  elements.addTaskDialogNotes.value = "";
+  elements.addTaskRecurringDays.classList.remove("is-error");
+  setAddTaskType("one-off");
+  elements.addTaskDialog.querySelector("h2").textContent = "Add task";
+  elements.addTaskDialog.querySelector("[type='submit']").textContent = "Add task";
+  elements.addTaskDialog.showModal();
+  requestAnimationFrame(() => elements.addTaskDialogInput.focus());
+}
+
+function openEditTaskDialog(dayId, taskId) {
+  const pool = dayId === "backlog" ? doBacklogTasks() : doTasksForDay(dayId);
+  const task = pool.find((t) => t.id === taskId);
+  if (!task) return;
+  const recurringSource = task.recurringTaskId
+    ? normalizeRecurringTasks(state.recurringTasks).find((r) => r.id === task.recurringTaskId)
+    : null;
+  editingDoTaskContext = { dayId, taskId, task, recurringSource };
+  elements.addTaskDialogInput.value = task.title;
+  elements.addTaskDialogNotes.value = task.notes || "";
+  elements.addTaskRecurringDays.classList.remove("is-error");
+  if (recurringSource) {
+    setAddTaskType("recurring");
+    if (!elements.addTaskRecurringDays.children.length) {
+      elements.addTaskRecurringDays.innerHTML = doPrepDays.map((day) => `
+        <label class="add-task-day-label" title="${escapeHtml(day.name)}">
+          <input type="checkbox" name="recurring-day" value="${escapeHtml(day.id)}" aria-label="${escapeHtml(day.name)}" />
+          <span aria-hidden="true">${escapeHtml(day.name[0])}</span>
+        </label>
+      `).join("");
+    }
+    elements.addTaskRecurringDays.querySelectorAll("[name='recurring-day']").forEach((cb) => {
+      cb.checked = recurringSource.dayIds?.includes(cb.value);
+    });
+  } else {
+    setAddTaskType(task.taskType || "one-off");
+  }
+  elements.addTaskDialog.querySelector("h2").textContent = "Edit task";
+  elements.addTaskDialog.querySelector("[type='submit']").textContent = "Save";
+  elements.addTaskDialog.showModal();
+  requestAnimationFrame(() => elements.addTaskDialogInput.focus());
+}
+
+function setAddTaskType(type) {
+  elements.addTaskDialog.querySelectorAll("[data-task-type]").forEach((btn) => {
+    btn.classList.toggle("is-active", btn.dataset.taskType === type);
+  });
+  elements.addTaskRecurringDays.hidden = type !== "recurring";
+  if (type === "recurring" && !elements.addTaskRecurringDays.children.length) {
+    elements.addTaskRecurringDays.innerHTML = doPrepDays.map((day) => `
+      <label class="add-task-day-label" title="${escapeHtml(day.name)}">
+        <input type="checkbox" name="recurring-day" value="${escapeHtml(day.id)}" aria-label="${escapeHtml(day.name)}" />
+        <span aria-hidden="true">${escapeHtml(day.name[0])}</span>
+      </label>
+    `).join("");
+  }
+}
+
+function submitAddTaskDialog(event) {
+  event.preventDefault();
+  const title = elements.addTaskDialogInput.value.trim();
+  if (!title) return;
+  const notes = elements.addTaskDialogNotes.value.trim();
+  const taskType = elements.addTaskDialog.querySelector("[data-task-type].is-active")?.dataset.taskType || "one-off";
+
+  if (editingDoTaskContext) {
+    const { task, recurringSource, dayId } = editingDoTaskContext;
+    if (recurringSource) {
+      const dayIds = [...elements.addTaskRecurringDays.querySelectorAll("[name='recurring-day']:checked")].map((cb) => cb.value);
+      if (!dayIds.length) { elements.addTaskRecurringDays.classList.add("is-error"); return; }
+      elements.addTaskRecurringDays.classList.remove("is-error");
+      recurringSource.title = title;
+      recurringSource.notes = notes;
+      recurringSource.dayIds = dayIds;
+    } else {
+      const pool = dayId === "backlog" ? doBacklogTasks() : doTasksForDay(dayId);
+      const live = pool.find((t) => t.id === task.id);
+      if (live) { live.title = title; live.notes = notes; live.taskType = taskType; }
+    }
+    editingDoTaskContext = null;
+  } else if (taskType === "recurring") {
+    const dayIds = [...elements.addTaskRecurringDays.querySelectorAll("[name='recurring-day']:checked")].map((cb) => cb.value);
+    if (!dayIds.length) {
+      elements.addTaskRecurringDays.classList.add("is-error");
+      return;
+    }
+    elements.addTaskRecurringDays.classList.remove("is-error");
+    state.recurringTasks = normalizeRecurringTasks(state.recurringTasks);
+    state.recurringTasks.push({ id: createId("recurring-task"), title, notes, dayIds, createdAt: new Date().toISOString() });
+  } else {
+    doBacklogTasks().push({ id: createId("task"), title, notes, taskType, done: false, weekKey: weekKey(), createdAt: new Date().toISOString() });
+  }
+
+  elements.addTaskDialog.close();
+  persist();
+  renderDoPlanner();
+}
+
+let pendingTaskLog = null;
+
+function openTaskLogDialog(dayId, taskId, title) {
+  pendingTaskLog = { dayId, taskId };
+  elements.taskLogTaskTitle.textContent = title || "";
+  elements.taskLogDuration.value = "";
+  elements.taskLogNotes.value = "";
+  elements.taskLogDialog.showModal();
+  requestAnimationFrame(() => elements.taskLogDuration.focus());
+}
+
+function submitTaskLogDialog() {
+  if (!pendingTaskLog) return;
+  const { dayId, taskId } = pendingTaskLog;
+  const durationRaw = parseInt(elements.taskLogDuration.value, 10);
+  const entry = {
+    id: createId("task-log"),
+    completedAt: new Date().toISOString(),
+    notes: elements.taskLogNotes.value.trim(),
+    duration: isNaN(durationRaw) || durationRaw <= 0 ? null : durationRaw
+  };
+  addDoTaskLogEntry(dayId, taskId, entry);
+  pendingTaskLog = null;
+  elements.taskLogDialog.close();
+  applyDoTaskToggle(dayId, taskId, true);
+}
+
+function skipTaskLogDialog() {
+  if (!pendingTaskLog) { elements.taskLogDialog.close(); return; }
+  const { dayId, taskId } = pendingTaskLog;
+  pendingTaskLog = null;
+  elements.taskLogDialog.close();
+  applyDoTaskToggle(dayId, taskId, true);
+}
+
+function addDoTaskLogEntry(dayId, taskId, entry) {
+  const pool = dayId === "backlog" ? doBacklogTasks() : doTasksForDay(dayId);
+  const task = pool.find((t) => t.id === taskId);
+  if (!task) return;
+  if (task.recurringTaskId) {
+    const recTask = (state.recurringTasks || []).find((r) => r.id === task.recurringTaskId);
+    if (recTask) {
+      if (!Array.isArray(recTask.log)) recTask.log = [];
+      recTask.log.push(entry);
+    }
+  } else {
+    const backlogId = task.backlogTaskId || task.id;
+    const backlogTask = doBacklogTasks().find((t) => t.id === backlogId);
+    if (backlogTask) {
+      if (!Array.isArray(backlogTask.log)) backlogTask.log = [];
+      backlogTask.log.push(entry);
+    }
+  }
+}
+
+function getTaskLogEntries(task) {
+  if (task.recurringTaskId) {
+    return (state.recurringTasks || []).find((r) => r.id === task.recurringTaskId)?.log || [];
+  }
+  const backlogId = task.backlogTaskId || task.id;
+  return doBacklogTasks().find((t) => t.id === backlogId)?.log || task.log || [];
+}
+
+function openDoTaskLogView(dayId, taskId) {
+  const pool = dayId === "backlog" ? doBacklogTasks() : doTasksForDay(dayId);
+  const task = pool.find((t) => t.id === taskId);
+  if (!task) return;
+  const log = getTaskLogEntries(task);
+  elements.taskLogViewTitle.textContent = task.title;
+  if (!log.length) {
+    elements.taskLogViewBody.innerHTML = `<p class="empty-state">No entries yet.</p>`;
+  } else {
+    elements.taskLogViewBody.innerHTML = [...log].reverse().map((e) => {
+      const d = new Date(e.completedAt);
+      const dateStr = isNaN(d) ? e.completedAt : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+      return `
+        <div class="task-log-entry">
+          <div class="task-log-entry-meta">
+            <span class="task-log-entry-date">${escapeHtml(dateStr)}</span>
+            ${e.duration ? `<span class="task-log-entry-duration">${e.duration} min</span>` : ""}
+          </div>
+          ${e.notes ? `<p class="task-log-entry-notes">${escapeHtml(e.notes)}</p>` : ""}
+        </div>
+      `;
+    }).join("");
+  }
+  elements.taskLogViewDialog.showModal();
+}
+
+
 function renderDoPlanner() {
   if (!elements.doPlannerGrid) return;
-  const activeDay = ensureActivePlannerDay();
-  const isInactiveFutureWeek = isFutureDoWeekInactive();
+  if (!doPrepDays.some((day) => day.id === activePlannerDayId)) activePlannerDayId = doPrepDays[0].id;
+  const activeDay = doPrepDays.find((day) => day.id === activePlannerDayId);
   elements.doPlannerGrid.innerHTML = `
     <div class="day-tabs" role="tablist" aria-label="To-do days">
-      ${prepDays.map((day) => doDayTabTemplate(day, day.id === activeDay.id)).join("")}
+      ${doPrepDays.map((day) => doDayTabTemplate(day, day.id === activeDay.id)).join("")}
     </div>
-    <div class="do-week-shell ${isInactiveFutureWeek ? "is-inactive" : ""}">
+    <div class="do-week-shell">
       <section class="day-column planner-day-panel do-day-panel" role="tabpanel" id="do-panel-${activeDay.id}" aria-labelledby="do-tab-${activeDay.id}">
         <div class="do-board">
           <div class="do-task-list" data-do-task-drop-day="${activeDay.id}">
-            ${isInactiveFutureWeek ? `<div class="empty-state">Create this list when you are ready to plan the week.</div>` : doTaskListTemplate(activeDay.id)}
+            ${doTaskListTemplate(activeDay.id)}
           </div>
         </div>
       </section>
-      <section class="day-column planner-day-panel do-backlog-panel" aria-label="To Be Done">
+      <section class="day-column planner-day-panel do-backlog-panel" aria-label="Chores">
         <div class="slot-topline">
-          <div class="slot-label">To Be Done</div>
+          <div class="slot-label">Chores</div>
+          <button class="primary-btn icon-primary-btn" type="button" data-open-add-task title="Add task" aria-label="Add task" style="margin-left:auto">
+            <span aria-hidden="true">+</span>
+          </button>
         </div>
         <div class="do-board">
-          ${isInactiveFutureWeek ? "" : `
-            <form class="inline-form do-task-form" data-backlog-task-form>
-              <input data-backlog-task-input placeholder="Add a task" autocomplete="off" />
-              <button class="primary-btn icon-primary-btn" type="submit" title="Add task" aria-label="Add task">
-                <span aria-hidden="true">+</span>
-              </button>
-            </form>
-          `}
           <div class="do-task-list" data-do-backlog-drop>
-            ${isInactiveFutureWeek ? `<div class="empty-state">To Be Done will appear after this list is created.</div>` : doBacklogListTemplate()}
+            ${doBacklogListTemplate()}
           </div>
         </div>
       </section>
-      ${isInactiveFutureWeek ? `
-        <div class="do-create-overlay">
-          <button class="primary-btn" type="button" data-create-do-week>Create List</button>
-        </div>
-      ` : ""}
     </div>
   `;
   elements.doPlannerGrid.querySelectorAll("[data-do-day-tab]").forEach((button) => {
@@ -3664,8 +4379,7 @@ function renderDoPlanner() {
     button.addEventListener("drop", handleDoTaskDropOnDay);
     button.addEventListener("dragleave", clearDoTaskDropOver);
   });
-  elements.doPlannerGrid.querySelector("[data-backlog-task-form]")?.addEventListener("submit", addBacklogTask);
-  elements.doPlannerGrid.querySelector("[data-create-do-week]")?.addEventListener("click", createDoWeekList);
+  elements.doPlannerGrid.querySelector("[data-open-add-task]")?.addEventListener("click", openAddTaskDialog);
   elements.doPlannerGrid.querySelectorAll("[data-do-task-drop-day]").forEach((list) => {
     list.addEventListener("dragover", handleDoTaskDragOver);
     list.addEventListener("drop", handleDoTaskDropOnDay);
@@ -3732,12 +4446,15 @@ function bindDoTaskControls(root = document) {
   root.querySelectorAll("[data-do-task-delete]").forEach((button) => {
     button.addEventListener("click", () => deleteDoTask(button.dataset.doDay, button.dataset.doTaskDelete));
   });
+  root.querySelectorAll("[data-do-task-swipe-edit]").forEach((button) => {
+    button.addEventListener("click", () => openEditTaskDialog(button.dataset.doDay, button.dataset.doTaskSwipeEdit));
+  });
 }
 
 function doTasksForDay(dayId) {
   const key = weekKey();
   const tasks = rawDoTasksForDay(dayId, key);
-  if (isDoWeekActive(key)) ensureRecurringTasksForDay(key, dayId);
+  ensureRecurringTasksForDay(key, dayId);
   return state.doPlans[key][dayId] || tasks;
 }
 
@@ -3770,7 +4487,7 @@ function skipRecurringTaskForDay(key, dayId, taskId) {
 function skipRecurringTaskForWeek(key, taskId) {
   if (!taskId) return;
   const rule = normalizeRecurringTasks(state.recurringTasks).find((task) => task.id === taskId);
-  const dayIds = rule?.dayIds?.length ? rule.dayIds : prepDays.map((day) => day.id);
+  const dayIds = rule?.dayIds?.length ? rule.dayIds : doPrepDays.map((day) => day.id);
   dayIds.forEach((dayId) => skipRecurringTaskForDay(key, dayId, taskId));
 }
 
@@ -3787,36 +4504,6 @@ function doBacklogTasks() {
 
 function visibleDoBacklogTasks(key = weekKey()) {
   return doBacklogTasks().filter((task) => !task.weekKey || task.weekKey === key);
-}
-
-function isFutureDoWeekInactive(key = weekKey()) {
-  return key > currentCalendarWeekKey() && !isDoWeekActive(key);
-}
-
-function isDoWeekActive(key = weekKey()) {
-  if (key <= currentCalendarWeekKey()) return true;
-  const week = state.doPlans?.[key];
-  return Boolean(week?.__active || doWeekHasTasks(key));
-}
-
-function doWeekHasTasks(key = weekKey()) {
-  const week = state.doPlans?.[key];
-  if (!week || typeof week !== "object") return false;
-  return prepDays.some((day) => normalizeDoTasks(week[day.id]).length);
-}
-
-function createDoWeekList() {
-  const key = weekKey();
-  if (!state.doPlans || typeof state.doPlans !== "object") state.doPlans = {};
-  if (!state.doPlans[key] || typeof state.doPlans[key] !== "object") state.doPlans[key] = {};
-  state.doPlans[key].__active = true;
-  prepDays.forEach((day) => {
-    state.doPlans[key][day.id] = normalizeDoTasks(state.doPlans[key][day.id]);
-    ensureRecurringTasksForDay(key, day.id);
-  });
-  persist();
-  renderDoPlanner();
-  renderTasksPage();
 }
 
 function ensureRecurringTasksForDay(key, dayId) {
@@ -3861,7 +4548,7 @@ function dedupeRecurringTasksForDay(key, dayId) {
 function doWeekTasks(key) {
   const week = state.doPlans?.[key];
   if (!week || typeof week !== "object") return [];
-  return prepDays.flatMap((day) => normalizeDoTasks(week[day.id]));
+  return doPrepDays.flatMap((day) => normalizeDoTasks(week[day.id]));
 }
 
 function renderDoTasks() {
@@ -3876,7 +4563,7 @@ function renderRecurringTasks() {
   const tasks = state.recurringTasks.filter((task) => task.dayIds.includes(activeDay.id));
   elements.recurringTaskList.innerHTML = `
     <div class="day-tabs auto-rule-tabs" role="tablist" aria-label="Recurring task days">
-      ${prepDays.map((day) => recurringTaskDayTabTemplate(day, activeDay)).join("")}
+      ${doPrepDays.map((day) => recurringTaskDayTabTemplate(day, activeDay)).join("")}
     </div>
     <section class="day-column planner-day-panel recurring-task-day-panel" role="tabpanel" id="recurring-task-panel-${activeDay.id}" aria-labelledby="recurring-task-tab-${activeDay.id}">
       <div class="do-board">
@@ -3915,13 +4602,13 @@ function renderRecurringTasks() {
 }
 
 function ensureActiveRecurringTaskDay() {
-  const activeDay = prepDays.find((day) => day.id === activeRecurringTaskDayId) || prepDays.find((day) => day.id === activePlannerDayId) || prepDays[0];
+  const activeDay = doPrepDays.find((day) => day.id === activeRecurringTaskDayId) || doPrepDays.find((day) => day.id === activePlannerDayId) || doPrepDays[0];
   activeRecurringTaskDayId = activeDay.id;
   return activeDay;
 }
 
 function selectRecurringTaskDay(dayId) {
-  if (!prepDays.some((day) => day.id === dayId)) return;
+  if (!doPrepDays.some((day) => day.id === dayId)) return;
   activeRecurringTaskDayId = dayId;
   renderRecurringTasks();
 }
@@ -3947,7 +4634,7 @@ function recurringTaskTemplate(task) {
         </button>
       </div>
       <div class="recurring-task-days" aria-label="Days for ${escapeHtml(task.title)}">
-        ${prepDays.map((day) => `
+        ${doPrepDays.map((day) => `
           <label>
             <input type="checkbox" data-recurring-task-id="${escapeHtml(task.id)}" data-recurring-task-day="${day.id}" ${task.dayIds.includes(day.id) ? "checked" : ""} />
             <span>${escapeHtml(compactDayLabel(day))}</span>
@@ -4083,6 +4770,9 @@ function renderWorkoutLogs() {
     </div>
     <div class="workout-log-tab-panel">
       ${entries.length ? entries.map(workoutLogEditorTemplate).join("") : `<div class="empty-state">No logs for ${escapeHtml(activeWorkout.title)} yet.</div>`}
+      <div class="workout-log-panel-footer">
+        <button class="secondary-btn compact-btn" type="button" data-log-past-from-logs="${escapeHtml(activeWorkout.id)}">Log Past Date</button>
+      </div>
     </div>
   `;
   elements.workoutLogsList.querySelectorAll("[data-workout-log-tab]").forEach((button) => {
@@ -4094,6 +4784,11 @@ function renderWorkoutLogs() {
   elements.workoutLogsList.querySelectorAll("[data-workout-log-field]").forEach((field) => {
     field.addEventListener("change", () => updateWorkoutLogField(field));
     field.addEventListener("blur", () => updateWorkoutLogField(field));
+  });
+  elements.workoutLogsList.querySelector("[data-log-past-from-logs]")?.addEventListener("click", (e) => {
+    const workoutId = e.currentTarget.dataset.logPastFromLogs;
+    elements.workoutLogsDialog.close();
+    openPastWorkoutDialog(workoutId);
   });
 }
 
@@ -4254,6 +4949,7 @@ function addWorkout(event) {
   elements.workoutLibraryInput.value = "";
   persist();
   renderWorkoutLibrary();
+  renderPlayPlanner();
   renderPlayAutoRules();
 }
 
@@ -4274,6 +4970,7 @@ function openWorkoutDetail(context = {}) {
   elements.workoutDetailWeight.value = data.weight;
   const logs = normalizeWorkoutLogs(workout?.logs);
   elements.workoutLogSection.hidden = false;
+  elements.logPastDateFromDetailBtn.hidden = false;
   elements.workoutDetailLogs.innerHTML = logs.length
     ? logs
       .slice()
@@ -4281,6 +4978,22 @@ function openWorkoutDetail(context = {}) {
       .map((log) => `<p class="workout-log-row"><strong>${escapeHtml(log.date || "Undated")}</strong>${log.time ? ` · ${escapeHtml(log.time)}` : ""}${log.weight ? ` · ${escapeHtml(log.weight)}` : ""}</p>`)
       .join("")
     : `<p class="empty-state">No workout data logged yet.</p>`;
+  if (!elements.workoutDetailDialog.open) elements.workoutDetailDialog.showModal();
+  requestAnimationFrame(() => elements.workoutDetailName.focus());
+}
+
+function openNewWorkoutDialog() {
+  activeWorkoutDetail = { isNew: true };
+  const details = defaultExerciseDetails("timed");
+  elements.workoutDetailLabel.textContent = "Exercise";
+  elements.workoutDetailTitle.textContent = "New Exercise";
+  elements.workoutDetailName.value = "";
+  renderWorkoutDetailFields(details);
+  updateWorkoutExecutionFieldsVisibility();
+  elements.workoutDetailTime.value = "";
+  elements.workoutDetailWeight.value = "";
+  elements.workoutLogSection.hidden = true;
+  elements.logPastDateFromDetailBtn.hidden = true;
   if (!elements.workoutDetailDialog.open) elements.workoutDetailDialog.showModal();
   requestAnimationFrame(() => elements.workoutDetailName.focus());
 }
@@ -4433,7 +5146,10 @@ function saveWorkoutDetail() {
   const task = activeWorkoutDetail.taskId ? playTaskForContext(activeWorkoutDetail.dayId, activeWorkoutDetail.taskId) : null;
   const workoutId = activeWorkoutDetail.workoutId || task?.sourceWorkoutId || "";
   const workout = workoutId ? state.workouts.find((item) => item.id === workoutId) : null;
-  if (workout) {
+  if (activeWorkoutDetail.isNew) {
+    state.workouts = normalizeWorkouts(state.workouts);
+    state.workouts.push({ id: createId("workout"), title: name, type: details.type, exerciseDetails: details, notes, logs: [], createdAt: new Date().toISOString() });
+  } else if (workout) {
     workout.title = name;
     workout.type = details.type;
     workout.exerciseDetails = details;
@@ -4742,11 +5458,12 @@ function logWorkoutFromRecording() {
   }, 700);
 }
 
-function openPastWorkoutDialog() {
+function openPastWorkoutDialog(workoutId = null) {
   const workouts = normalizeWorkouts(state.workouts).sort((a, b) => a.title.localeCompare(b.title));
   elements.pastWorkoutSelect.innerHTML = workouts.map((w) =>
     `<option value="${escapeHtml(w.id)}">${escapeHtml(w.title)}</option>`
   ).join("") || `<option value="">No exercises added yet</option>`;
+  if (workoutId) elements.pastWorkoutSelect.value = workoutId;
   elements.pastWorkoutDate.value = dateKeyFromDate(addDays(new Date(), -1));
   elements.pastWorkoutDialog.showModal();
 }
@@ -4781,6 +5498,15 @@ function toggleRecordingHistory() {
         return `<p class="workout-log-row">${escapeHtml(summary)}</p>`;
       }).join("")
     : `<p class="empty-state">No history yet.</p>`;
+  const logPastBtn = document.createElement("button");
+  logPastBtn.type = "button";
+  logPastBtn.className = "secondary-btn compact-btn recording-log-past-btn";
+  logPastBtn.textContent = "Log Past Date";
+  logPastBtn.addEventListener("click", () => {
+    elements.activeExerciseDialog.close();
+    openPastWorkoutDialog(activeRecordingWorkoutId);
+  });
+  historyEl.appendChild(logPastBtn);
   elements.activeExerciseContent.appendChild(historyEl);
 }
 
@@ -5081,18 +5807,35 @@ function skippedRecurringTasksForPlan(plan, dayId) {
 }
 
 function doTaskTemplate(task, dayId) {
+  const isLoggable = task.taskType === "regular" || !!task.recurringTaskId;
+  const logCount = isLoggable ? getTaskLogEntries(task).length : 0;
   return `
     <article class="do-task-item ${task.done ? "is-done" : ""} ${task.recurringTaskId ? "is-recurring" : ""}" data-do-task="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" draggable="true">
       <label>
         <input type="checkbox" data-do-task-toggle="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" ${task.done ? "checked" : ""} />
         <span class="do-task-title">${escapeHtml(task.title)}</span>
       </label>
-      <button class="meal-swipe-delete do-task-swipe-delete" type="button" data-do-task-delete="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" aria-label="Delete ${escapeHtml(task.title)}">Delete</button>
+      <div class="do-task-swipe-actions">
+        <button class="do-task-swipe-btn do-task-swipe-edit" type="button" data-do-task-swipe-edit="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}">Edit</button>
+        <button class="do-task-swipe-btn do-task-swipe-delete" type="button" data-do-task-delete="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" aria-label="Delete ${escapeHtml(task.title)}">Delete</button>
+      </div>
     </article>
   `;
 }
 
 function toggleDoTask(dayId, taskId, done) {
+  if (done) {
+    const pool = dayId === "backlog" ? doBacklogTasks() : doTasksForDay(dayId);
+    const task = pool.find((t) => t.id === taskId);
+    if (task && (task.taskType === "regular" || task.recurringTaskId)) {
+      openTaskLogDialog(dayId, taskId, task.title);
+      return;
+    }
+  }
+  applyDoTaskToggle(dayId, taskId, done);
+}
+
+function applyDoTaskToggle(dayId, taskId, done) {
   if (dayId === "backlog") {
     state.doBacklog = doBacklogTasks().map((task) => task.id === taskId ? { ...task, done } : task);
   } else {
@@ -5129,13 +5872,17 @@ function openDoTaskMenu(event) {
   const taskId = item.dataset.doTask;
   if (!day || !taskId) return;
 
+  const pool = day === "backlog" ? doBacklogTasks() : doTasksForDay(day);
+  const menuTask = pool.find((t) => t.id === taskId);
+  const isLoggable = menuTask && (menuTask.taskType === "regular" || !!menuTask.recurringTaskId);
+  const logCount = isLoggable ? getTaskLogEntries(menuTask).length : 0;
+
   const menu = document.createElement("div");
   menu.className = "folder-context-menu do-task-context-menu";
   menu.setAttribute("role", "menu");
   menu.innerHTML = `
-    <button type="button" role="menuitem" data-delete-do-task-menu data-day="${escapeHtml(day)}" data-task="${escapeHtml(taskId)}">
-      Delete
-    </button>
+    ${isLoggable ? `<button type="button" role="menuitem" data-view-task-log data-day="${escapeHtml(day)}" data-task="${escapeHtml(taskId)}">Log${logCount > 0 ? ` (${logCount})` : ""}</button>` : ""}
+    <button type="button" role="menuitem" data-delete-do-task-menu data-day="${escapeHtml(day)}" data-task="${escapeHtml(taskId)}">Delete</button>
   `;
 
   document.body.append(menu);
@@ -5146,6 +5893,20 @@ function openDoTaskMenu(event) {
   const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
+
+  const logMenuBtn = menu.querySelector("[data-view-task-log]");
+  if (logMenuBtn) {
+    let didOpen = false;
+    const openLog = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (didOpen) return; didOpen = true;
+      closeFolderMenu();
+      openDoTaskLogView(logMenuBtn.dataset.day, logMenuBtn.dataset.task);
+    };
+    logMenuBtn.addEventListener("pointerdown", openLog);
+    logMenuBtn.addEventListener("mousedown", openLog);
+    logMenuBtn.addEventListener("click", openLog);
+  }
 
   const deleteButton = menu.querySelector("[data-delete-do-task-menu]");
   let didDelete = false;
@@ -5294,8 +6055,17 @@ function moveDoTask(sourceDay, targetDay, taskId) {
   const task = sourceTasks.find((item) => item.id === taskId);
   if (!task) return;
   const nextTask = { ...task };
-  if (sourceDay === "backlog") state.doBacklog = sourceTasks.filter((item) => item.id !== taskId);
-  else state.doPlans[weekKey()][sourceDay] = sourceTasks.filter((item) => item.id !== taskId);
+  if (sourceDay === "backlog") {
+    if (task.taskType !== "regular") {
+      state.doBacklog = sourceTasks.filter((item) => item.id !== taskId);
+    } else {
+      nextTask.id = createId("task");
+      nextTask.backlogTaskId = task.id;
+      nextTask.log = [];
+    }
+  } else {
+    state.doPlans[weekKey()][sourceDay] = sourceTasks.filter((item) => item.id !== taskId);
+  }
 
   if (targetDay === "backlog") {
     nextTask.weekKey = weekKey();
@@ -5332,13 +6102,114 @@ function renderPlayPlanner() {
         : `<div class="empty-state">Add exercises in Settings → Play → Workouts to get started.</div>`}
     </div>
     <div class="workout-pool-footer">
-      <button class="secondary-btn quiet-btn" type="button" id="openPoolWorkoutLibraryBtn">Manage Exercises</button>
+      <button class="primary-btn icon-primary-btn" type="button" id="openNewWorkoutBtn" title="Add exercise" aria-label="Add exercise">
+        <span aria-hidden="true">+</span>
+      </button>
     </div>
   `;
   elements.playPlannerGrid.querySelectorAll("[data-record-workout]").forEach((btn) => {
-    btn.addEventListener("click", () => openWorkoutRecordingDialog(btn.dataset.recordWorkout));
+    btn.addEventListener("click", () => {
+      const wrap = btn.closest(".workout-pool-card-wrap");
+      if (wrap?.classList.contains("is-swiped")) { wrap.classList.remove("is-swiped"); return; }
+      openWorkoutRecordingDialog(btn.dataset.recordWorkout);
+    });
+    btn.addEventListener("contextmenu", (event) => openWorkoutPoolContextMenu(event, btn.dataset.recordWorkout));
+    const wrap = btn.closest(".workout-pool-card-wrap");
+    if (wrap) {
+      wrap.addEventListener("pointerdown", handleWorkoutPoolPointerDown);
+      wrap.addEventListener("pointermove", handleWorkoutPoolPointerMove);
+      wrap.addEventListener("pointerup", handleWorkoutPoolPointerEnd);
+      wrap.addEventListener("pointercancel", handleWorkoutPoolPointerEnd);
+    }
   });
-  elements.playPlannerGrid.querySelector("#openPoolWorkoutLibraryBtn")?.addEventListener("click", openWorkoutLibraryDialog);
+  elements.playPlannerGrid.querySelectorAll("[data-swipe-edit-workout]").forEach((btn) => {
+    btn.addEventListener("click", () => openWorkoutDetail({ workoutId: btn.dataset.swipeEditWorkout }));
+  });
+  elements.playPlannerGrid.querySelectorAll("[data-swipe-delete-workout]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const workout = normalizeWorkouts(state.workouts).find((w) => w.id === btn.dataset.swipeDeleteWorkout);
+      if (workout && window.confirm(`Delete "${workout.title}"? All logs will be removed.`)) deleteWorkout(btn.dataset.swipeDeleteWorkout);
+    });
+  });
+  elements.playPlannerGrid.querySelector("#openNewWorkoutBtn")?.addEventListener("click", openNewWorkoutDialog);
+}
+
+function openWorkoutPoolContextMenu(event, workoutId) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeFolderMenu();
+
+  const workout = normalizeWorkouts(state.workouts).find((w) => w.id === workoutId);
+  if (!workout) return;
+
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-ctx-edit-workout class="safe-item">Edit</button>
+    <button type="button" role="menuitem" data-ctx-delete-workout>Delete</button>
+  `;
+  document.body.append(menu);
+
+  const rawX = event.clientX || 10;
+  const rawY = event.clientY || 10;
+  const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+
+  const editBtn = menu.querySelector("[data-ctx-edit-workout]");
+  let didEdit = false;
+  const doEdit = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    if (didEdit) return; didEdit = true;
+    closeFolderMenu();
+    openWorkoutDetail({ workoutId });
+  };
+  editBtn.addEventListener("pointerdown", doEdit);
+  editBtn.addEventListener("mousedown", doEdit);
+  editBtn.addEventListener("click", doEdit);
+
+  const deleteBtn = menu.querySelector("[data-ctx-delete-workout]");
+  let didDelete = false;
+  const doDelete = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    if (didDelete) return; didDelete = true;
+    closeFolderMenu();
+    if (window.confirm(`Delete "${workout.title}"? All logs will be removed.`)) deleteWorkout(workoutId);
+  };
+  deleteBtn.addEventListener("pointerdown", doDelete);
+  deleteBtn.addEventListener("mousedown", doDelete);
+  deleteBtn.addEventListener("click", doDelete);
+}
+
+function handleWorkoutPoolPointerDown(event) {
+  if (event.pointerType !== "touch") return;
+  if (event.target.closest(".workout-pool-swipe-actions")) return;
+  const wrap = event.currentTarget;
+  document.querySelectorAll(".workout-pool-card-wrap.is-swiped").forEach((w) => {
+    if (w !== wrap) w.classList.remove("is-swiped");
+  });
+  workoutPoolSwipeGesture = { wrap, startX: event.clientX, startY: event.clientY, active: false };
+}
+
+function handleWorkoutPoolPointerMove(event) {
+  if (!workoutPoolSwipeGesture || workoutPoolSwipeGesture.wrap !== event.currentTarget) return;
+  const dx = event.clientX - workoutPoolSwipeGesture.startX;
+  const dy = event.clientY - workoutPoolSwipeGesture.startY;
+  if (Math.abs(dy) > 20 && Math.abs(dy) > Math.abs(dx)) { workoutPoolSwipeGesture = null; return; }
+  if (dx < -28) {
+    workoutPoolSwipeGesture.active = true;
+    event.currentTarget.classList.add("is-swiped");
+  } else if (dx > 18) {
+    event.currentTarget.classList.remove("is-swiped");
+  }
+}
+
+function handleWorkoutPoolPointerEnd(event) {
+  if (!workoutPoolSwipeGesture || workoutPoolSwipeGesture.wrap !== event.currentTarget) return;
+  if (!workoutPoolSwipeGesture.active) event.currentTarget.classList.remove("is-swiped");
+  workoutPoolSwipeGesture = null;
 }
 
 function lastWorkoutLog(workoutId) {
@@ -5384,11 +6255,17 @@ function workoutPoolCardTemplate(workout) {
   const lastLog = lastWorkoutLog(workout.id);
   const summary = workoutLogSummary(workout, lastLog);
   return `
-    <button class="workout-pool-card" type="button" data-record-workout="${escapeHtml(workout.id)}">
-      <span class="workout-pool-icon" aria-hidden="true">${workoutTypeIcon(workout.type)}</span>
-      <span class="workout-pool-title">${escapeHtml(workout.title)}</span>
-      <span class="workout-pool-last">${escapeHtml(summary)}</span>
-    </button>
+    <div class="workout-pool-card-wrap">
+      <button class="workout-pool-card" type="button" data-record-workout="${escapeHtml(workout.id)}">
+        <span class="workout-pool-icon" aria-hidden="true">${workoutTypeIcon(workout.type)}</span>
+        <span class="workout-pool-title">${escapeHtml(workout.title)}</span>
+        <span class="workout-pool-last">${escapeHtml(summary)}</span>
+      </button>
+      <div class="workout-pool-swipe-actions" aria-hidden="true">
+        <button class="workout-pool-swipe-btn workout-pool-swipe-edit" type="button" data-swipe-edit-workout="${escapeHtml(workout.id)}">Edit</button>
+        <button class="workout-pool-swipe-btn workout-pool-swipe-delete" type="button" data-swipe-delete-workout="${escapeHtml(workout.id)}">Delete</button>
+      </div>
+    </div>
   `;
 }
 
@@ -6134,10 +7011,7 @@ function closeRecipeBoxPage() {
 
 function openGroceriesPage() {
   closeFloatingMenus();
-  activateEatShell();
-  setPageTitle("Groceries");
-  renderGroceries();
-  if (!elements.groceriesPageDialog.open) elements.groceriesPageDialog.showModal();
+  showShopApp();
 }
 
 function openDailyDozenPage(recipeId = "") {
@@ -6150,7 +7024,7 @@ function openDailyDozenPage(recipeId = "") {
   if (!familyMembers().some((member) => member.id === activeDailyDozenMemberId)) {
     activeDailyDozenMemberId = familyMembers()[0]?.id || "";
   }
-  setPageTitle("Food Health");
+  setPageTitle("Nutrition");
   renderDailyDozen();
   if (!elements.dailyDozenPageDialog.open) elements.dailyDozenPageDialog.showModal();
 }
@@ -6181,38 +7055,49 @@ function renderDailyDozen() {
     });
   });
 
-  const settings = personChecklistSettings()[activeDailyDozenMemberId] || {};
-  const template = activeChecklistTemplate();
-  const progress = foodHealthDomain().checklistProgress({
-    template,
-    settings,
-    manualEntries: dailyChecklistEntries(),
-    foodLogEntries: foodLogEntries(),
-    personId: activeDailyDozenMemberId,
-    date
-  });
-  elements.foodHealthChecklistTitle.textContent = template?.name || "Health checklist";
-  elements.foodHealthChecklistNote.textContent = template?.description || "A personal checklist configured in settings.";
-  elements.dailyDozenGrid.innerHTML = progress.length ? progress.map((category) => `
-    <article class="daily-dozen-card ${category.completedAmount >= category.targetFrequency ? "is-complete" : ""}">
-      <div class="daily-dozen-card-copy">
-        <strong>${escapeHtml(category.name)}</strong>
-        <span>${formatDailyDozenServings(category.completedAmount)} / ${formatDailyDozenServings(category.targetFrequency)}</span>
-        <small>${escapeHtml(category.description)}</small>
-      </div>
-      <div class="daily-dozen-progress" aria-label="${escapeHtml(category.name)} progress">
-        <span style="width:${Math.max(0, category.percent)}%"></span>
-      </div>
-      <div class="daily-dozen-stepper">
-        <button type="button" data-daily-dozen-adjust="-1" data-category="${escapeHtml(category.id)}"
-          aria-label="Remove one serving of ${escapeHtml(category.name)}" ${category.completedAmount <= 0 ? "disabled" : ""}>−</button>
-        <strong>${formatDailyDozenServings(category.completedAmount)}</strong>
-        <button type="button" data-daily-dozen-adjust="1" data-category="${escapeHtml(category.id)}"
-          aria-label="Add one serving of ${escapeHtml(category.name)}">+</button>
-      </div>
-    </article>
-  `).join("") : `<p class="empty-state">This template has no reviewed checklist items yet. Choose Daily Dozen or configure a custom template in Food Health Settings.</p>`;
-  elements.dailyDozenGrid.querySelectorAll("[data-daily-dozen-adjust]").forEach((button) => {
+  const enabledGoals = activePersonGoals();
+  const personSettings = personChecklistSettings()[activeDailyDozenMemberId] || {};
+  elements.dailyDozenGoals.innerHTML = enabledGoals.length ? enabledGoals.map(goalId => {
+    const tmpl = checklistTemplates().find(t => t.id === goalId);
+    if (!tmpl?.items?.length) return "";
+    const goalProgress = foodHealthDomain().checklistProgress({
+      template: tmpl,
+      settings: goalId === "daily-dozen" ? personSettings : {},
+      manualEntries: dailyChecklistEntries(),
+      foodLogEntries: foodLogEntries(),
+      personId: activeDailyDozenMemberId,
+      date
+    });
+    return `
+      <section class="food-health-section">
+        <div class="food-health-section-head">
+          <h3>${escapeHtml(tmpl.name)}</h3>
+        </div>
+        <div class="daily-dozen-grid">
+          ${goalProgress.map(item => `
+            <article class="daily-dozen-card ${item.completedAmount >= item.targetFrequency ? "is-complete" : ""}">
+              <div class="daily-dozen-card-copy">
+                <strong>${escapeHtml(item.name)}</strong>
+                <span>${formatDailyDozenServings(item.completedAmount)} / ${formatDailyDozenServings(item.targetFrequency)}</span>
+                <small>${escapeHtml(item.description || "")}</small>
+              </div>
+              <div class="daily-dozen-progress" aria-label="${escapeHtml(item.name)} progress">
+                <span style="width:${Math.max(0, item.percent)}%"></span>
+              </div>
+              <div class="daily-dozen-stepper">
+                <button type="button" data-daily-dozen-adjust="-1" data-category="${escapeHtml(item.id)}"
+                  aria-label="Remove one ${escapeHtml(item.name)}" ${item.completedAmount <= 0 ? "disabled" : ""}>−</button>
+                <strong>${formatDailyDozenServings(item.completedAmount)}</strong>
+                <button type="button" data-daily-dozen-adjust="1" data-category="${escapeHtml(item.id)}"
+                  aria-label="Add one ${escapeHtml(item.name)}">+</button>
+              </div>
+            </article>
+          `).join("")}
+        </div>
+      </section>
+    `;
+  }).join("") : `<p class="empty-state" style="padding:12px 0">No goals selected. Enable goals in Nutrition Settings.</p>`;
+  elements.dailyDozenGoals.querySelectorAll("[data-daily-dozen-adjust]").forEach((button) => {
     button.addEventListener("click", () => adjustDailyDozenServing(
       button.dataset.category,
       Number(button.dataset.dailyDozenAdjust)
@@ -6552,7 +7437,6 @@ function openFoodHealthSettingsDialog() {
   activeFoodHealthSettingsMemberId = familyMembers().some((member) => member.id === activeDailyDozenMemberId)
     ? activeDailyDozenMemberId
     : familyMembers()[0]?.id;
-  editingFoodHealthTemplateId = personChecklistSettings()[activeFoodHealthSettingsMemberId]?.templateId || "daily-dozen";
   renderFoodHealthSettings();
   elements.foodHealthSettingsDialog.showModal();
 }
@@ -6568,41 +7452,17 @@ function renderFoodHealthSettings() {
   elements.foodHealthSettingsMembers.querySelectorAll("[data-food-health-settings-member]").forEach((button) => {
     button.addEventListener("click", () => {
       activeFoodHealthSettingsMemberId = button.dataset.foodHealthSettingsMember;
-      editingFoodHealthTemplateId = personChecklistSettings()[activeFoodHealthSettingsMemberId]?.templateId || "daily-dozen";
       renderFoodHealthSettings();
     });
   });
-  elements.foodHealthTemplateSelect.innerHTML = checklistTemplates()
-    .filter((template) => template.id !== "twenty-one-tweaks")
-    .map((template) => `<option value="${escapeHtml(template.id)}">${escapeHtml(template.name)}</option>`).join("");
-  elements.foodHealthTemplateSelect.value = editingFoodHealthTemplateId || settings.templateId || "daily-dozen";
-  const template = checklistTemplates().find((item) => item.id === elements.foodHealthTemplateSelect.value) || activeChecklistTemplate(activeFoodHealthSettingsMemberId);
-  elements.foodHealthTemplateDescription.textContent = template?.description || "";
-  if (template?.id === "custom") {
-    elements.foodHealthChecklistSettings.innerHTML = `
-      <div data-custom-health-items>
-        ${(template.items || []).map((item) => customHealthItemRowTemplate(item, settings)).join("")}
-      </div>
-      <button class="secondary-btn" type="button" data-add-custom-health-item>Add checklist item</button>
-    `;
-    elements.foodHealthChecklistSettings.querySelector("[data-add-custom-health-item]").addEventListener("click", () => {
-      elements.foodHealthChecklistSettings.querySelector("[data-custom-health-items]")
-        .insertAdjacentHTML("beforeend", customHealthItemRowTemplate({
-          id: createId("custom-checklist"),
-          name: "",
-          description: "",
-          targetFrequency: 1,
-          categoryType: "other"
-        }, settings));
-    });
-  } else {
-    elements.foodHealthChecklistSettings.innerHTML = template?.items?.length ? template.items.map((item) => `
-      <div class="food-health-setting-row">
-        <label><input type="checkbox" data-health-item-enabled="${escapeHtml(item.id)}" ${settings.hiddenItems?.includes(item.id) ? "" : "checked"} /> ${escapeHtml(item.name)}</label>
-        <label>Target <input type="number" min="0.25" step="0.25" data-health-item-target="${escapeHtml(item.id)}" value="${Number(settings.customTargets?.[item.id]) || item.targetFrequency}" /></label>
-      </div>
-    `).join("") : `<p class="empty-state">This placeholder has no reviewed items yet. It will not auto-fill anything.</p>`;
-  }
+  const enabledGoals = activePersonGoals(activeFoodHealthSettingsMemberId);
+  const goalTemplates = checklistTemplates().filter(t => ["daily-dozen", "twenty-one-tweaks", "maximally-ldl-lowering"].includes(t.id));
+  elements.foodHealthGoalsSettings.innerHTML = goalTemplates.map(template => `
+    <label class="goal-toggle">
+      <input type="checkbox" data-goal-id="${escapeHtml(template.id)}" ${enabledGoals.includes(template.id) ? "checked" : ""} />
+      <span>${escapeHtml(template.name)}</span>
+    </label>
+  `).join("");
   const labels = { calories: "Calories", protein: "Protein (g)", carbs: "Carbs (g)", fat: "Fat (g)", fiber: "Fiber (g)", sugar: "Sugar (g)", sodium: "Sodium (mg)", saturatedFat: "Saturated fat (g)" };
   elements.foodHealthNutritionTargetNote.textContent = activeFoodHealthSettingsMemberId === "sophia"
     ? "No adult targets are applied by default. Enter only targets you have chosen for Sophia."
@@ -6631,35 +7491,19 @@ function customHealthItemRowTemplate(item, settings) {
 function saveFoodHealthSettings() {
   const personId = activeFoodHealthSettingsMemberId;
   const settings = personChecklistSettings()[personId] || {};
-  const hiddenItems = [...elements.foodHealthChecklistSettings.querySelectorAll("[data-health-item-enabled]")]
-    .filter((input) => !input.checked).map((input) => input.dataset.healthItemEnabled);
-  const customTargets = Object.fromEntries([...elements.foodHealthChecklistSettings.querySelectorAll("[data-health-item-target]")]
-    .map((input) => [input.dataset.healthItemTarget, Number(input.value)])
-    .filter(([, value]) => Number.isFinite(value) && value > 0));
+  const enabledGoals = [...elements.foodHealthGoalsSettings.querySelectorAll("[data-goal-id]")]
+    .filter(input => input.checked).map(input => input.dataset.goalId);
+  if (!state.personGoals) state.personGoals = {};
+  state.personGoals[personId] = enabledGoals;
   const nutritionTargets = Object.fromEntries([...elements.foodHealthNutritionTargets.querySelectorAll("[data-health-nutrition-target]")]
     .map((input) => [input.dataset.healthNutritionTarget, Number(input.value)])
     .filter(([, value]) => Number.isFinite(value) && value > 0));
-  if ((editingFoodHealthTemplateId || elements.foodHealthTemplateSelect.value) === "custom") {
-    const customTemplate = checklistTemplates().find((template) => template.id === "custom");
-    customTemplate.items = [...elements.foodHealthChecklistSettings.querySelectorAll("[data-custom-health-item]")]
-      .map((row, index) => ({
-        id: row.dataset.customHealthItem,
-        templateId: "custom",
-        name: row.querySelector("[data-custom-health-name]").value.trim(),
-        description: row.querySelector("[data-custom-health-description]").value.trim(),
-        targetFrequency: Number(row.querySelector("[data-health-item-target]").value) || 1,
-        sortOrder: (index + 1) * 10,
-        categoryType: row.querySelector("[data-custom-health-type]").value
-      }))
-      .filter((item) => item.name);
-    state.checklistTemplates = foodHealthDomain().normalizeTemplates(state.checklistTemplates, dailyDozenCategories());
-  }
   state.personChecklistSettings[personId] = {
     ...settings,
     personId,
-    templateId: editingFoodHealthTemplateId || elements.foodHealthTemplateSelect.value,
-    hiddenItems,
-    customTargets,
+    templateId: "daily-dozen",
+    hiddenItems: [],
+    customTargets: {},
     nutritionTargets,
     useAdultNutritionTargets: personId !== "sophia" && Object.keys(nutritionTargets).length > 0
   };
@@ -7355,6 +8199,9 @@ function openMealEntryMenu(event) {
       <button type="button" role="menuitem" data-make-ahead-meal-entry-menu data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
         Make ahead
       </button>
+      <button type="button" role="menuitem" data-prep-ahead-meal-entry-menu data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
+        Prep ahead
+      </button>
     ` : ""}
     <button type="button" role="menuitem" data-copy-meal-entry-menu data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
       Copy meal
@@ -7396,6 +8243,21 @@ function openMealEntryMenu(event) {
   makeAheadButton?.addEventListener("pointerdown", makeAheadFromMenu);
   makeAheadButton?.addEventListener("mousedown", makeAheadFromMenu);
   makeAheadButton?.addEventListener("click", makeAheadFromMenu);
+
+  const prepAheadButton = menu.querySelector("[data-prep-ahead-meal-entry-menu]");
+  let didPrepAhead = false;
+  const prepAheadFromMenu = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    if (didPrepAhead) return; didPrepAhead = true;
+    suppressMealEntryClick = true;
+    const target = e.currentTarget;
+    closeFolderMenu();
+    addPrepAheadTaskForMealEntry(target.dataset.day, target.dataset.meal, Number(target.dataset.index));
+    window.setTimeout(() => { suppressMealEntryClick = false; }, 120);
+  };
+  prepAheadButton?.addEventListener("pointerdown", prepAheadFromMenu);
+  prepAheadButton?.addEventListener("mousedown", prepAheadFromMenu);
+  prepAheadButton?.addEventListener("click", prepAheadFromMenu);
 
   const removeButton = menu.querySelector("[data-remove-meal-entry-menu]");
   let didRemove = false;
@@ -7552,6 +8414,35 @@ function addMakeAheadTaskForMealEntry(day, meal, index) {
     tasks.push({
       id: createId("task"),
       title,
+      done: false,
+      weekKey: key,
+      sourceRecipeId: recipe.id,
+      sourceMealDay: day,
+      sourceMealName: meal,
+      createdAt: new Date().toISOString()
+    });
+  }
+  persist();
+  renderDoPlanner();
+  renderTasksPage();
+}
+
+function addPrepAheadTaskForMealEntry(day, meal, index) {
+  const recipe = recipeForMealEntry(day, meal, index);
+  if (!recipe || recipe.virtualGroceryRecipe) return;
+  const key = weekKey();
+  const title = `Prep: ${recipe.name}`;
+  const tasks = doBacklogTasks();
+  const alreadyExists = tasks.some((task) => (
+    normalize(task.title) === normalize(title)
+    && (!task.weekKey || task.weekKey === key)
+  ));
+  if (!alreadyExists) {
+    tasks.push({
+      id: createId("task"),
+      title,
+      notes: "",
+      taskType: "one-off",
       done: false,
       weekKey: key,
       sourceRecipeId: recipe.id,
@@ -7745,6 +8636,9 @@ function updatePageTitleMenu() {
   elements.titleExercisePlanBtn.hidden = activeAppArea === "play" || !isPageEnabled("play");
   elements.titleToDoListBtn.hidden = activeAppArea === "do" || !isPageEnabled("do");
   elements.titleWatchBtn.hidden = activeAppArea === "watch" || !isPageEnabled("watch");
+  elements.titleReadBtn.hidden = activeAppArea === "read" || !isPageEnabled("read");
+  elements.titleShopBtn.hidden = activeAppArea === "shop" || !isPageEnabled("shop");
+  elements.titleInventoryBtn.hidden = activeAppArea === "inventory" || !isPageEnabled("inventory");
   elements.titleRecreateBtn.hidden = activeAppArea === "recreate" || !isPageEnabled("recreate");
   elements.titlePlanBtn.hidden = activeAppArea === "plan" || !isPageEnabled("plan");
   const menu = elements.pageTitleMenu;
@@ -7759,6 +8653,9 @@ function updatePageVisibility() {
   elements.homePlayBtn.hidden = !state.pageVisibility.play;
   elements.homeDoBtn.hidden = !state.pageVisibility.do;
   elements.homeWatchBtn.hidden = !state.pageVisibility.watch;
+  elements.homeReadBtn.hidden = !state.pageVisibility.read;
+  elements.homeShopBtn.hidden = !state.pageVisibility.shop;
+  elements.homeInventoryBtn.hidden = !state.pageVisibility.inventory;
   elements.homeRecreateBtn.hidden = !state.pageVisibility.recreate;
   elements.homePlanBtn.hidden = !state.pageVisibility.plan;
   updatePageVisibilityControls();
@@ -7809,24 +8706,26 @@ function closeAppMenu() {
 function updateSettingsMenuOptions() {
   elements.generalSettingsMenuBtn.hidden = false;
   const isEat = activeAppArea === "eat";
+  const isShop = activeAppArea === "shop";
   const isPlay = activeAppArea === "play";
   const isDo = activeAppArea === "do";
   elements.menuAutoRulesBtn.hidden = !isEat;
   elements.menuTagsBtn.hidden = !isEat;
-  elements.menuGroceryListBtn.hidden = !isEat;
-  elements.menuGroceryPricingBtn.hidden = !isEat;
+  elements.menuGroceryListBtn.hidden = !isShop;
+  elements.menuGroceryPricingBtn.hidden = !isShop;
   elements.menuGroceryItemsBtn.hidden = !isEat;
   elements.menuIngredientOptionsBtn.hidden = !isEat;
   elements.menuFoodHealthSettingsBtn.hidden = !isEat;
+  elements.menuMealPlanSettingsBtn.hidden = !isEat;
   elements.menuWatchTheatersBtn.hidden = activeAppArea !== "watch";
   elements.menuRecurringTasksBtn.hidden = !isDo;
   elements.menuWorkoutLibraryBtn.hidden = !isPlay;
   elements.menuWorkoutLogsBtn.hidden = !isPlay;
-  elements.menuPlayAutoRulesBtn.hidden = !isPlay;
+  elements.menuInventoryRoomsBtn.hidden = activeAppArea !== "inventory";
 }
 
 function hasPageSpecificSettings() {
-  return ["eat", "play", "do", "watch"].includes(activeAppArea);
+  return ["eat", "play", "do", "watch", "shop", "inventory"].includes(activeAppArea);
 }
 
 function openSettingsMenuDialog(openDialog) {
@@ -7886,8 +8785,20 @@ function renderContextSettingsDialog(kind) {
           Watch
         </label>
         <label>
+          <input type="checkbox" data-page-visibility="read" ${isPageEnabled("read") ? "checked" : ""} />
+          Read
+        </label>
+        <label>
+          <input type="checkbox" data-page-visibility="shop" ${isPageEnabled("shop") ? "checked" : ""} />
+          Shop
+        </label>
+        <label>
+          <input type="checkbox" data-page-visibility="inventory" ${isPageEnabled("inventory") ? "checked" : ""} />
+          Inventory
+        </label>
+        <label>
           <input type="checkbox" data-page-visibility="recreate" ${isPageEnabled("recreate") ? "checked" : ""} />
-          Recreate
+          Sail
         </label>
         <label>
           <input type="checkbox" data-page-visibility="plan" ${isPageEnabled("plan") ? "checked" : ""} />
@@ -7897,12 +8808,22 @@ function renderContextSettingsDialog(kind) {
       <div class="location-sharing-setting">
         <span>
           <strong>Location</strong>
-          <small>Favor nearby stores when searching the Grocery List.</small>
+          <small>Show nearby results when searching for stores and restaurants.</small>
         </span>
         <label>
           <input type="checkbox" data-location-sharing ${state.locationSharingEnabled ? "checked" : ""} />
           Use location
         </label>
+        ${state.locationSharingEnabled ? `
+          <div class="location-status-row">
+            <span class="location-status-text" id="locationStatusText">${
+              groceryStoreSearchLocation
+                ? `<span class="location-status-ok">&#10003; Active — ${groceryStoreSearchLocation.latitude.toFixed(3)}°, ${groceryStoreSearchLocation.longitude.toFixed(3)}°</span>`
+                : `<span class="location-status-pending">Tap Test to verify</span>`
+            }</span>
+            <button class="secondary-btn compact-btn" type="button" data-context-settings-action="test-location">Test</button>
+          </div>
+        ` : ""}
       </div>
       <div class="settings-action-grid">
         <button type="button" data-context-settings-action="calendars">Calendars</button>
@@ -7910,6 +8831,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="backup-health">Backup Health</button>
         <button type="button" data-context-settings-action="restore-backup">Restore Backup</button>
         <button type="button" data-context-settings-action="trash">Trash</button>
+        <button type="button" data-context-settings-action="family-members">Family Members</button>
       </div>
     `;
     return;
@@ -7924,7 +8846,8 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="grocery-pricing">Receipts & Price History</button>
         <button type="button" data-context-settings-action="grocery-items">Grocery Items</button>
         <button type="button" data-context-settings-action="ingredient-options">Ingredient Options</button>
-        <button type="button" data-context-settings-action="food-health-settings">Food Health Settings</button>
+        <button type="button" data-context-settings-action="food-health-settings">Nutrition Settings</button>
+        <button type="button" data-context-settings-action="meal-plan-settings">Meal Plan Settings</button>
       </div>
     `;
     return;
@@ -8071,7 +8994,10 @@ function handleContextSettingsAction(event) {
     "recurring-tasks": () => closeAndRun(openRecurringTasksDialog),
     "workout-library": () => closeAndRun(openWorkoutLibraryDialog),
     "workout-logs": () => closeAndRun(openWorkoutLogsDialog),
-    "play-auto-rules": () => closeAndRun(openPlayAutoRulesDialog)
+    "play-auto-rules": () => closeAndRun(openPlayAutoRulesDialog),
+    "family-members": () => closeAndRun(openFamilyMembersDialog),
+    "meal-plan-settings": () => closeAndRun(openMealPlanSettingsDialog),
+    "test-location": () => testLocationAccess()
   };
   actions[action]?.();
 }
@@ -8456,6 +9382,40 @@ function scheduleGroceryStoreSearch() {
   groceryStoreSearchTimer = window.setTimeout(() => searchGroceryStoreLocations(query), 280);
 }
 
+function testLocationAccess() {
+  const statusEl = document.querySelector("#locationStatusText");
+  if (statusEl) statusEl.innerHTML = `<span class="location-status-pending">&#8987; Requesting…</span>`;
+  if (!navigator.geolocation) {
+    if (statusEl) statusEl.innerHTML = `<span class="location-status-error">&#10007; Geolocation not supported in this browser.</span>`;
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      const { latitude, longitude } = position.coords;
+      groceryStoreSearchLocation = { latitude, longitude };
+      groceryStoreLocationPromise = null;
+      if (statusEl) statusEl.innerHTML = `<span class="location-status-ok">&#10003; ${latitude.toFixed(4)}&deg;, ${longitude.toFixed(4)}&deg;</span>`;
+    },
+    (error) => {
+      groceryStoreSearchLocation = null;
+      groceryStoreLocationPromise = null;
+      const msgs = {
+        1: "&#10007; Permission denied. Check browser settings and System Settings &#8594; Privacy &amp; Security &#8594; Location Services.",
+        2: "&#10007; Position unavailable. Make sure Location Services is enabled for this browser.",
+        3: "&#10007; Request timed out. Try again."
+      };
+      if (statusEl) statusEl.innerHTML = `<span class="location-status-error">${msgs[error.code] || "&#10007; Could not get location."}</span>`;
+      if (error.code === 1) {
+        state.locationSharingEnabled = false;
+        const cb = document.querySelector("[data-location-sharing]");
+        if (cb) cb.checked = false;
+        persist();
+      }
+    },
+    { enableHighAccuracy: false, timeout: 10000, maximumAge: 0 }
+  );
+}
+
 function setLocationSharingEnabled(enabled, input) {
   if (!enabled) {
     state.locationSharingEnabled = false;
@@ -8501,11 +9461,12 @@ function acquireGroceryStoreSearchLocation({ settingsInput = null } = {}) {
         }
         const messages = {
           1: "Location permission was not granted. The setting has been turned off.",
-          2: "Your current location could not be determined. Store search was not run.",
-          3: "Location lookup timed out. Store search was not run; please try again."
+          2: "Your current location could not be determined.",
+          3: "Location lookup timed out. Please try again."
         };
-        const message = messages[error.code] || "Your current location could not be determined. Store search was not run.";
+        const message = messages[error.code] || "Your current location could not be determined.";
         if (elements.groceryStoresDialog.open) setGroceryStoreSearchStatus(message);
+        else if (elements.restaurantSearchDialog?.open) elements.restaurantSearchStatus.textContent = message;
         else window.alert(message);
         resolve(null);
       },
@@ -8623,6 +9584,147 @@ function setGroceryStoreSearchStatus(message) {
 
 function createGroceryStoreSearchSessionToken() {
   return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function createRestaurantSearchSessionToken() {
+  return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function openRestaurantSearchDialog(day, meal, index) {
+  restaurantSearchPending = { day, meal, index };
+  restaurantSearchSessionToken = createRestaurantSearchSessionToken();
+  restaurantSearchSuggestions = [];
+  renderRestaurantSuggestions();
+  elements.restaurantSearchInput.value = "";
+  if (!elements.restaurantSearchDialog.open) elements.restaurantSearchDialog.showModal();
+  requestAnimationFrame(() => elements.restaurantSearchInput.focus());
+
+  if (!state.locationSharingEnabled) {
+    elements.restaurantSearchStatus.textContent = "Enable location sharing in Settings for local results.";
+  } else if (!groceryStoreSearchLocation) {
+    elements.restaurantSearchStatus.textContent = "Getting your location…";
+    acquireGroceryStoreSearchLocation().then((loc) => {
+      if (!elements.restaurantSearchDialog.open) return;
+      if (!elements.restaurantSearchInput.value.trim()) {
+        elements.restaurantSearchStatus.textContent = loc ? "" : "Location unavailable. Results may not be local.";
+      }
+    });
+  } else {
+    elements.restaurantSearchStatus.textContent = "";
+  }
+}
+
+async function searchRestaurantLocations(query) {
+  try {
+    if (state.locationSharingEnabled && !groceryStoreSearchLocation) {
+      await acquireGroceryStoreSearchLocation();
+    }
+    const response = await fetch(groceryPlacesApiUrl({
+      action: "restaurant-autocomplete",
+      input: query,
+      sessionToken: restaurantSearchSessionToken,
+      ...(groceryStoreSearchLocation || {})
+    }), groceryPlacesRequestOptions());
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || "Restaurant search is unavailable.");
+    if (elements.restaurantSearchInput.value.trim() !== query) return;
+    restaurantSearchSuggestions = Array.isArray(body.suggestions) ? body.suggestions : [];
+    renderRestaurantSuggestions();
+    const locationNote = !groceryStoreSearchLocation ? " (Enable location sharing for local results.)" : "";
+    elements.restaurantSearchStatus.textContent = restaurantSearchSuggestions.length
+      ? `Choose a restaurant below.${locationNote}`
+      : "No matching restaurants found. Try a different name.";
+  } catch (error) {
+    restaurantSearchSuggestions = [];
+    renderRestaurantSuggestions();
+    elements.restaurantSearchStatus.textContent = error.message || "Search unavailable.";
+  }
+}
+
+function renderRestaurantSuggestions() {
+  const el = elements.restaurantSearchSuggestionsEl;
+  el.hidden = !restaurantSearchSuggestions.length;
+  el.innerHTML = restaurantSearchSuggestions.length ? `
+    ${restaurantSearchSuggestions.map((s) => `
+      <button type="button" role="option" data-restaurant-place="${escapeHtml(s.placeId)}">
+        <strong>${escapeHtml(s.name)}</strong>
+        <small>${escapeHtml(s.address || "")}</small>
+      </button>
+    `).join("")}
+    <div class="grocery-store-google-attribution">
+      <img src="https://storage.googleapis.com/geo-devrel-public-buckets/powered_by_google_on_white.png" alt="Powered by Google" />
+    </div>
+  ` : "";
+  el.querySelectorAll("[data-restaurant-place]").forEach((btn) => {
+    btn.addEventListener("click", () => selectRestaurantForMeal(btn.dataset.restaurantPlace));
+  });
+}
+
+async function selectRestaurantForMeal(placeId) {
+  const suggestion = restaurantSearchSuggestions.find((s) => s.placeId === placeId);
+  if (!suggestion || !restaurantSearchPending) return;
+  elements.restaurantSearchStatus.textContent = "Linking restaurant…";
+  elements.restaurantSearchInput.disabled = true;
+  try {
+    const response = await fetch(groceryPlacesApiUrl({
+      action: "restaurant-details",
+      placeId,
+      name: suggestion.name,
+      sessionToken: restaurantSearchSessionToken
+    }), groceryPlacesRequestOptions());
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || "Restaurant details could not be fetched.");
+    const r = body.restaurant;
+    const { day, meal, index } = restaurantSearchPending;
+    const week = weekState();
+    const entries = mealEntryList(slotEntries(week.slots?.[day]?.[meal]), meal);
+    const specialMeal = specialMealForSlot(entries[index]);
+    if (specialMeal) {
+      entries[index] = specialMealSlotId(specialMeal.type, r.name, {
+        name: r.name,
+        placeId: r.placeId,
+        address: r.address,
+        websiteUri: r.websiteUri || "",
+        googleMapsUri: r.googleMapsUri || ""
+      });
+      setMeal(day, meal, compactMealSlotEntries(entries, meal));
+    }
+    elements.restaurantSearchDialog.close();
+  } catch (error) {
+    elements.restaurantSearchStatus.textContent = error.message || "Could not link restaurant.";
+  } finally {
+    elements.restaurantSearchInput.disabled = false;
+  }
+}
+
+function clearMealRestaurant(day, meal, index) {
+  const week = weekState();
+  const entries = mealEntryList(slotEntries(week.slots?.[day]?.[meal]), meal);
+  const specialMeal = specialMealForSlot(entries[index]);
+  if (!specialMeal) return;
+  entries[index] = specialMealSlotId(specialMeal.type, specialMeal.note);
+  setMeal(day, meal, compactMealSlotEntries(entries, meal));
+}
+
+function renderMealRestaurantArea(restaurant, day, meal, index) {
+  if (restaurant?.placeId) {
+    const mapsUrl = restaurant.googleMapsUri || storeDirectionsUrl(restaurant);
+    return `
+      <div class="meal-restaurant-bar">
+        <svg class="meal-restaurant-pin-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+        <span class="meal-restaurant-bar-name">${escapeHtml(restaurant.name)}</span>
+        ${mapsUrl ? `<a class="meal-restaurant-bar-link" href="${escapeHtml(mapsUrl)}" target="_blank" rel="noopener noreferrer" title="Get directions">Directions</a>` : ""}
+        ${restaurant.websiteUri ? `<a class="meal-restaurant-bar-link" href="${escapeHtml(restaurant.websiteUri)}" target="_blank" rel="noopener noreferrer" title="Restaurant website / menu">Menu</a>` : ""}
+        <button class="meal-restaurant-unlink-btn" type="button" data-unlink-restaurant data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Unlink restaurant" aria-label="Unlink restaurant">×</button>
+      </div>
+    `;
+  }
+  return `
+    <button class="meal-restaurant-link-btn" type="button" data-link-restaurant data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
+      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+      Link restaurant
+    </button>
+  `;
 }
 
 function groceryPlacesApiUrl(params) {
@@ -9184,6 +10286,7 @@ function saveReviewedReceipt(event) {
   ]);
   persist();
   renderGroceries();
+  renderShopReceipts();
   elements.receiptScanDialog.close();
   openGroceryPricingDialog();
 }
@@ -9635,6 +10738,67 @@ function refreshGroceryLibraryViews() {
   renderGroceries();
 }
 
+async function autoTagGroceryWithAI() {
+  const lib = Array.isArray(state.groceryBaseItems) ? state.groceryBaseItems : [];
+  const existingTags = state.groceryDailyDozenTags || {};
+  const untagged = lib.filter(item => {
+    const key = normalizeGroceryItemName(item.name || item || "");
+    return !existingTags[key] || !existingTags[key].length;
+  });
+
+  if (!untagged.length) {
+    alert("All grocery items already have Daily Dozen tags.");
+    return;
+  }
+
+  const btn = elements.autoTagGroceryBtn;
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = "Tagging…";
+
+  try {
+    const endpoint = canUseLocalBackend()
+      ? "/api/auto-tag-grocery"
+      : "/.netlify/functions/auto-tag-grocery";
+    const names = untagged.map(item => item.name || item || "").filter(Boolean);
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ items: names })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Server error ${res.status}`);
+    }
+    const { tags } = await res.json();
+
+    let count = 0;
+    const updated = { ...existingTags };
+    for (const [itemName, itemTags] of Object.entries(tags || {})) {
+      if (!Array.isArray(itemTags) || !itemTags.length) continue;
+      const key = normalizeGroceryItemName(itemName);
+      if (!key) continue;
+      updated[key] = itemTags;
+      count++;
+    }
+
+    state.groceryDailyDozenTags = normalizeGroceryDailyDozenTags(updated);
+    persist();
+    renderGroceryLibrary();
+
+    const skipped = names.length - count;
+    alert(count === 0
+      ? "No tags found — items may not match any Daily Dozen category."
+      : `Tagged ${count} item${count !== 1 ? "s" : ""}${skipped ? ` (${skipped} didn't match any category)` : ""}.`
+    );
+  } catch (err) {
+    alert(`Auto-tag failed: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
 function openIngredientOptionsDialog(event) {
   event?.stopPropagation();
   closeSettingsMenu();
@@ -9979,6 +11143,213 @@ function openTrashDialog(event) {
   elements.trashDialog.showModal();
 }
 
+function openFamilyMembersDialog() {
+  closeSettingsMenu();
+  renderFamilyMembersList();
+  elements.familyMembersDialog.showModal();
+}
+
+function renderFamilyMembersList() {
+  const config = normalizeMealPlanConfig(state.mealPlanConfig);
+  const list = elements.familyMembersDialog.querySelector("[data-members-list]");
+  list.innerHTML = config.members.map(m => `
+    <div class="config-row" data-member-row data-member-id="${escapeHtml(m.id)}">
+      <input type="text" class="config-input" value="${escapeHtml(m.label)}" placeholder="Name" />
+      <input type="date" class="config-input config-dob-input" data-member-dob value="${escapeHtml(m.dob || "")}" title="Date of birth" />
+      <button type="button" class="icon-btn config-remove-btn" data-remove-member aria-label="Remove">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+  `).join("");
+  list.querySelectorAll("[data-remove-member]").forEach(btn => {
+    btn.addEventListener("click", () => btn.closest("[data-member-row]").remove());
+  });
+}
+
+function addFamilyMember() {
+  const list = elements.familyMembersDialog.querySelector("[data-members-list]");
+  const id = createId("member");
+  const div = document.createElement("div");
+  div.className = "config-row";
+  div.setAttribute("data-member-row", "");
+  div.setAttribute("data-member-id", id);
+  div.innerHTML = `
+    <input type="text" class="config-input" value="" placeholder="Name" />
+    <input type="date" class="config-input config-dob-input" data-member-dob value="" title="Date of birth" />
+    <button type="button" class="icon-btn config-remove-btn" data-remove-member aria-label="Remove">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  `;
+  div.querySelector("[data-remove-member]").addEventListener("click", () => div.remove());
+  list.appendChild(div);
+  div.querySelector("input").focus();
+}
+
+function saveMealPlanMembers() {
+  const rows = elements.familyMembersDialog.querySelectorAll("[data-member-row]");
+  const newMembers = [];
+  rows.forEach(row => {
+    const id = row.dataset.memberId;
+    const label = row.querySelector("input[type='text']").value.trim();
+    const dob = (row.querySelector("[data-member-dob]")?.value || "").trim();
+    if (label) newMembers.push({ id, label, dob });
+  });
+  if (!newMembers.length) { alert("At least one family member is required."); return; }
+  const oldConfig = normalizeMealPlanConfig(state.mealPlanConfig);
+  state.mealPlanConfig = normalizeMealPlanConfig({ ...state.mealPlanConfig, members: newMembers });
+  const newConfig = normalizeMealPlanConfig(state.mealPlanConfig);
+  recomputeMealPlanLayout();
+  applyMealPlanConfigChange(oldConfig, newConfig);
+  persist();
+  render();
+  elements.familyMembersDialog.close();
+}
+
+function openMealPlanSettingsDialog() {
+  closeSettingsMenu();
+  renderMealTypesList();
+  elements.mealPlanSettingsDialog.showModal();
+}
+
+function renderMealTypesList() {
+  const config = normalizeMealPlanConfig(state.mealPlanConfig);
+  const list = elements.mealPlanSettingsDialog.querySelector("[data-mealtypes-list]");
+  list.innerHTML = config.mealTypes.map(t => `
+    <div class="config-row" data-mealtype-row data-mealtype-id="${escapeHtml(t.id)}" draggable="true">
+      <span class="drag-handle" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M9 5a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-6 6a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-6 6a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg>
+      </span>
+      <input type="text" class="config-input" value="${escapeHtml(t.label)}" placeholder="Meal type" />
+      <button type="button" class="icon-btn config-remove-btn" data-remove-mealtype aria-label="Remove">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+  `).join("");
+  list.querySelectorAll("[data-remove-mealtype]").forEach(btn => {
+    btn.addEventListener("click", () => btn.closest("[data-mealtype-row]").remove());
+  });
+  bindConfigListDrag(list, "[data-mealtype-row]");
+}
+
+function addMealType() {
+  const list = elements.mealPlanSettingsDialog.querySelector("[data-mealtypes-list]");
+  const id = createId("mealtype");
+  const div = document.createElement("div");
+  div.className = "config-row";
+  div.setAttribute("data-mealtype-row", "");
+  div.setAttribute("data-mealtype-id", id);
+  div.setAttribute("draggable", "true");
+  div.innerHTML = `
+    <span class="drag-handle" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M9 5a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-6 6a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-6 6a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg>
+    </span>
+    <input type="text" class="config-input" value="" placeholder="Meal type" />
+    <button type="button" class="icon-btn config-remove-btn" data-remove-mealtype aria-label="Remove">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  `;
+  div.querySelector("[data-remove-mealtype]").addEventListener("click", () => div.remove());
+  list.appendChild(div);
+  bindConfigListDrag(list, "[data-mealtype-row]");
+  div.querySelector("input").focus();
+}
+
+function bindConfigListDrag(list, rowSelector) {
+  let dragSrc = null;
+  list.querySelectorAll(rowSelector).forEach(row => {
+    row.addEventListener("dragstart", e => {
+      dragSrc = row;
+      row.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+    });
+    row.addEventListener("dragend", () => {
+      dragSrc = null;
+      list.querySelectorAll(rowSelector).forEach(r => r.classList.remove("dragging", "drag-over"));
+    });
+    row.addEventListener("dragover", e => {
+      e.preventDefault();
+      if (!dragSrc || row === dragSrc) return;
+      e.dataTransfer.dropEffect = "move";
+      list.querySelectorAll(rowSelector).forEach(r => r.classList.remove("drag-over"));
+      row.classList.add("drag-over");
+      const rows = [...list.querySelectorAll(rowSelector)];
+      const srcIdx = rows.indexOf(dragSrc);
+      const tgtIdx = rows.indexOf(row);
+      if (srcIdx < tgtIdx) row.after(dragSrc);
+      else row.before(dragSrc);
+    });
+    row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
+    row.addEventListener("drop", e => {
+      e.preventDefault();
+      row.classList.remove("drag-over");
+    });
+  });
+}
+
+function saveMealPlanMealTypes() {
+  const rows = elements.mealPlanSettingsDialog.querySelectorAll("[data-mealtype-row]");
+  const newTypes = [];
+  rows.forEach(row => {
+    const id = row.dataset.mealtypeId;
+    const label = row.querySelector("input").value.trim();
+    if (label) newTypes.push({ id, label });
+  });
+  if (!newTypes.length) { alert("At least one meal type is required."); return; }
+  const oldConfig = normalizeMealPlanConfig(state.mealPlanConfig);
+  state.mealPlanConfig = normalizeMealPlanConfig({ ...state.mealPlanConfig, mealTypes: newTypes });
+  const newConfig = normalizeMealPlanConfig(state.mealPlanConfig);
+  recomputeMealPlanLayout();
+  applyMealPlanConfigChange(oldConfig, newConfig);
+  persist();
+  render();
+  elements.mealPlanSettingsDialog.close();
+}
+
+function applyMealPlanConfigChange(oldConfig, newConfig) {
+  const renameMap = {};
+  oldConfig.mealTypes.forEach(oldType => {
+    const newType = newConfig.mealTypes.find(t => t.id === oldType.id);
+    const newTypeLabel = newType?.label || oldType.label;
+    oldConfig.members.forEach(oldMember => {
+      const newMember = newConfig.members.find(m => m.id === oldMember.id);
+      const newMemberLabel = newMember?.label || oldMember.label;
+      const oldKey = `${oldMember.label} ${oldType.label}`;
+      const newKey = `${newMemberLabel} ${newTypeLabel}`;
+      if (oldKey !== newKey) renameMap[oldKey] = newKey;
+    });
+  });
+
+  const validNewKeys = new Set(
+    newConfig.members.flatMap(m => newConfig.mealTypes.map(t => `${m.label} ${t.label}`))
+  );
+  const oldKeys = new Set(
+    oldConfig.members.flatMap(m => oldConfig.mealTypes.map(t => `${m.label} ${t.label}`))
+  );
+
+  Object.values(state.plans || {}).forEach(week => {
+    if (!week?.slots) return;
+    Object.keys(week.slots).forEach(dayId => {
+      const daySlots = week.slots[dayId];
+      const keysToProcess = Object.keys(daySlots).filter(k => oldKeys.has(k));
+      keysToProcess.forEach(oldKey => {
+        const entries = daySlots[oldKey];
+        delete daySlots[oldKey];
+        const newKey = renameMap[oldKey] || oldKey;
+        if (validNewKeys.has(newKey) && entries) {
+          daySlots[newKey] = entries;
+        }
+      });
+    });
+    if (week.combinedMealSections) week.combinedMealSections = {};
+    if (week.publishedCombinedMealSections) week.publishedCombinedMealSections = {};
+  });
+
+  state.autoGenerateRules = (state.autoGenerateRules || []).map(rule => ({
+    ...rule,
+    meal: renameMap[rule.meal] || rule.meal
+  })).filter(rule => autoRuleMealKeys.includes(rule.meal) || Object.keys(combinedMealSections).includes(rule.meal));
+}
+
 function renderTrash() {
   const items = trashedRecipes();
   if (!items.length) {
@@ -10038,8 +11409,9 @@ function openRestoreDialog(event) {
   pendingRestore = null;
   elements.restoreFileInput.value = "";
   elements.mergeRestoreBtn.disabled = true;
-  elements.restorePreview.textContent = "Choose an Eat backup JSON file to preview missing items before merging.";
+  elements.restorePreview.textContent = "Select a backup above to preview what will be restored.";
   elements.restoreDialog.showModal();
+  loadRestoreBackupList();
 }
 
 function closeRestoreDialog() {
@@ -10047,17 +11419,76 @@ function closeRestoreDialog() {
   elements.restoreDialog.close();
 }
 
-async function previewRestoreFile() {
-  pendingRestore = null;
-  elements.mergeRestoreBtn.disabled = true;
-  const file = elements.restoreFileInput.files?.[0];
-  if (!file) {
-    elements.restorePreview.textContent = "Choose an Eat backup JSON file to preview missing items before merging.";
+async function loadRestoreBackupList() {
+  if (!canUseLocalBackend()) {
+    elements.restoreBackupList.hidden = true;
+    delete elements.restoreFileLabel.dataset.secondary;
+    elements.restorePreview.textContent = "Choose a backup JSON file above to preview what will be restored.";
     return;
   }
-
+  elements.restoreBackupList.hidden = false;
+  elements.restoreFileLabel.dataset.secondary = "";
+  elements.restoreBackupList.innerHTML = `<p class="restore-backup-list-loading">Loading backups…</p>`;
   try {
-    const parsed = JSON.parse(await file.text());
+    const response = await fetch("/api/backup", { cache: "no-store" });
+    if (!response.ok) throw new Error(`Status ${response.status}`);
+    const status = await response.json();
+    const backups = (status.backups || []);
+    if (!backups.length) {
+      elements.restoreBackupList.innerHTML = `<p class="restore-backup-list-empty">No local backups found yet.</p>`;
+      return;
+    }
+    elements.restoreBackupList.innerHTML = restoreBackupListTemplate(backups);
+    elements.restoreBackupList.querySelectorAll("[data-select-backup]").forEach((card) => {
+      card.addEventListener("click", () => selectRestoreBackup(card.dataset.selectBackup, card));
+    });
+  } catch (error) {
+    elements.restoreBackupList.innerHTML = `<p class="restore-backup-list-empty">Could not load backups: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function restoreBackupListTemplate(backups) {
+  const now = Date.now();
+  return `
+    <p class="restore-backup-list-label">Backups on this Mac</p>
+    <div class="restore-backup-list">
+      ${backups.map((backup) => {
+        const date = new Date(backup.modifiedAt);
+        const diffDays = Math.floor((now - date) / 86400000);
+        const timeStr = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        const dateStr = diffDays === 0 ? `Today at ${timeStr}` : diffDays === 1 ? `Yesterday at ${timeStr}` : `${date.toLocaleDateString([], { month: "short", day: "numeric" })} at ${timeStr}`;
+        const isSafety = backup.fileName.startsWith("eat-safety-");
+        const sizeKb = Math.round(backup.size / 1024);
+        return `
+          <button type="button" class="restore-backup-card" data-select-backup="${escapeHtml(backup.fileName)}">
+            <span class="restore-backup-card-date">${escapeHtml(dateStr)}</span>
+            <span class="restore-backup-card-meta">${sizeKb} KB${isSafety ? " · Safety" : ""}</span>
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+async function selectRestoreBackup(fileName, cardEl) {
+  elements.restoreBackupList.querySelectorAll(".restore-backup-card").forEach((c) => c.classList.remove("is-selected"));
+  cardEl?.classList.add("is-selected");
+  pendingRestore = null;
+  elements.mergeRestoreBtn.disabled = true;
+  elements.restorePreview.textContent = "Loading backup…";
+  try {
+    const response = await fetch(`/api/backup?file=${encodeURIComponent(fileName)}`, { cache: "no-store" });
+    if (!response.ok) throw new Error("Backup file could not be loaded.");
+    applyRestorePreview(await response.json(), fileName);
+  } catch (error) {
+    elements.restorePreview.textContent = `Could not load this backup: ${error.message}`;
+  }
+}
+
+function applyRestorePreview(parsed, fileName) {
+  pendingRestore = null;
+  elements.mergeRestoreBtn.disabled = true;
+  try {
     const backupState = normalizeRestoreState(parsed);
     const recipes = Array.isArray(backupState?.recipes) ? backupState.recipes.map(normalizeRecipe).filter((recipe) => recipe.name) : [];
     const missingRecipes = recipes.filter((recipe) => isMissingRestoreRecipe(recipe));
@@ -10066,9 +11497,25 @@ async function previewRestoreFile() {
     const calendars = restoreCalendars(backupState);
     const missingCalendars = calendars.filter((calendar) => isMissingRestoreCalendar(calendar));
     const userData = restoreUserDataPreview(backupState);
-    pendingRestore = { fileName: file.name, state: backupState, recipes, missingRecipes, publishedWeeks, missingPublishedWeeks, calendars, missingCalendars, userData };
+    pendingRestore = { fileName, state: backupState, recipes, missingRecipes, publishedWeeks, missingPublishedWeeks, calendars, missingCalendars, userData };
     elements.mergeRestoreBtn.disabled = !missingRecipes.length && !missingPublishedWeeks.length && !missingCalendars.length && !restoreUserDataChangeCount(userData);
     elements.restorePreview.innerHTML = restorePreviewTemplate(pendingRestore);
+  } catch (error) {
+    elements.restorePreview.textContent = `This backup could not be read: ${error.message || "Invalid file."}`;
+  }
+}
+
+async function previewRestoreFile() {
+  elements.restoreBackupList?.querySelectorAll(".restore-backup-card").forEach((c) => c.classList.remove("is-selected"));
+  pendingRestore = null;
+  elements.mergeRestoreBtn.disabled = true;
+  const file = elements.restoreFileInput.files?.[0];
+  if (!file) {
+    elements.restorePreview.textContent = "Select a backup above to preview what will be restored.";
+    return;
+  }
+  try {
+    applyRestorePreview(JSON.parse(await file.text()), file.name);
   } catch (error) {
     elements.restorePreview.textContent = `This backup could not be read: ${error.message || "Invalid JSON file."}`;
   }
@@ -10552,7 +11999,7 @@ function restoreUserDataSummary(userData) {
     ["Auto-Fill Rules", userData.autoRules.length],
     ["Recurring Tasks", userData.recurringTasks.length],
     ["Scheduled Tasks", userData.taskLists.length],
-    ["To Be Done Tasks", userData.backlogTasks.length],
+    ["Chores Tasks", userData.backlogTasks.length],
     ["Workouts", userData.workouts.length],
     ["Exercise Auto-Fill Rules", userData.playAutoRules.length],
     ["Scheduled Exercises", userData.playPlans.length],
@@ -10575,7 +12022,7 @@ function restoreUserDataSummary(userData) {
     ["Daily Dozen Grocery Tags", (userData.groceryDailyDozenTags || []).length],
     ["Food Log Entries", (userData.foodLogEntries || []).length],
     ["Health Checklist Entries", (userData.dailyChecklistEntries || []).length],
-    ["Food Health Settings", userData.personChecklistSettings ? 1 : 0],
+    ["Nutrition Settings", userData.personChecklistSettings ? 1 : 0],
     ["Ingredient Options", ingredientCount],
     ["Checked Grocery States", userData.checkedGroceries.length],
     ["Pantry Items", userData.pantryItems.length],
@@ -11267,7 +12714,7 @@ function renderPlanner() {
         <div class="meal-plan-page-actions">
           <button class="secondary-btn" type="button" data-open-recipe-box-page>Recipe Box</button>
           <button class="secondary-btn" type="button" data-open-groceries-page>Groceries</button>
-          <button class="secondary-btn" type="button" data-open-daily-dozen-page>Food Health</button>
+          <button class="secondary-btn" type="button" data-open-daily-dozen-page>Nutrition</button>
         </div>
         <div class="meal-plan-publish-actions">
           <span class="meal-plan-view-label">${isPublished ? "Published view" : "Edit view"}</span>
@@ -11340,6 +12787,14 @@ function renderPlanner() {
   elements.plannerGrid.querySelectorAll("[data-special-meal-note]").forEach((input) => {
     input.addEventListener("change", () => updateSpecialMealNote(input));
     input.addEventListener("blur", () => updateSpecialMealNote(input));
+  });
+
+  elements.plannerGrid.querySelectorAll("[data-link-restaurant]").forEach((btn) => {
+    btn.addEventListener("click", (e) => { e.stopPropagation(); openRestaurantSearchDialog(btn.dataset.day, btn.dataset.meal, Number(btn.dataset.index)); });
+  });
+
+  elements.plannerGrid.querySelectorAll("[data-unlink-restaurant]").forEach((btn) => {
+    btn.addEventListener("click", (e) => { e.stopPropagation(); clearMealRestaurant(btn.dataset.day, btn.dataset.meal, Number(btn.dataset.index)); });
   });
 
   elements.plannerGrid.querySelectorAll("[data-planned-servings]").forEach((input) => {
@@ -12144,7 +13599,7 @@ function mealKeysForDay(day, combinedState) {
 }
 
 function displayMealName(meal) {
-  return (combinedMealSections[meal]?.label || meal).replace(/^MJ\b/, "Marijane");
+  return combinedMealSections[meal]?.label || meal;
 }
 
 function slotTemplate(day, meal, slotValue, options = {}) {
@@ -12281,8 +13736,11 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
     return `
       <div class="meal-entry draggable-meal-entry special-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true">
         <div class="special-meal-card">
-          <strong>${escapeHtml(specialMealLabel(specialMeal.type))}${specialMeal.note ? " -" : ""}</strong>
-          <input data-special-meal-note data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" value="${escapeHtml(specialMeal.note)}" placeholder="${escapeHtml(specialMealPlaceholder(specialMeal.type))}" />
+          <div class="special-meal-label-row">
+            <strong>${escapeHtml(specialMealLabel(specialMeal.type))}${specialMeal.note ? " -" : ""}</strong>
+            <input data-special-meal-note data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" value="${escapeHtml(specialMeal.note)}" placeholder="${escapeHtml(specialMealPlaceholder(specialMeal.type))}" />
+          </div>
+          ${specialMeal.type === "out" ? renderMealRestaurantArea(specialMeal.restaurant, day.id, meal, index) : ""}
         </div>
         <button class="meal-swipe-delete" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" aria-label="Delete ${escapeHtml(specialMealLabel(specialMeal.type))}">Delete</button>
       </div>
@@ -12407,7 +13865,7 @@ function minimumMealEntryCount(meal) {
 
 function handleMealEntryDragStart(event) {
   if (event.currentTarget.querySelector("[data-meal-input]")
-    || event.target.closest("[data-special-meal-note], [data-planned-servings]")) {
+    || event.target.closest("[data-special-meal-note], [data-planned-servings], [data-link-restaurant], [data-unlink-restaurant], .meal-restaurant-bar-link")) {
     event.preventDefault();
     return;
   }
@@ -12888,7 +14346,7 @@ function activeTrashTarget() {
 
 function handleMealEntryPointerDown(event) {
   if (event.pointerType === "mouse") {
-    if (event.button !== 0 || event.currentTarget.querySelector("[data-meal-input]") || event.target.closest("[data-special-meal-note]")) return;
+    if (event.button !== 0 || event.currentTarget.querySelector("[data-meal-input]") || event.target.closest("[data-special-meal-note], [data-link-restaurant], [data-unlink-restaurant], .meal-restaurant-bar-link")) return;
     startMealPointerDeleteGesture(event.currentTarget, event.clientX, event.clientY);
     return;
   }
@@ -12906,7 +14364,7 @@ function handleMealEntryPointerDown(event) {
 }
 
 function handleMealEntryMouseDown(event) {
-  if (event.button !== 0 || event.currentTarget.querySelector("[data-meal-input]") || event.target.closest("[data-special-meal-note]") || mealPointerDeleteGesture) return;
+  if (event.button !== 0 || event.currentTarget.querySelector("[data-meal-input]") || event.target.closest("[data-special-meal-note], [data-link-restaurant], [data-unlink-restaurant], .meal-restaurant-bar-link") || mealPointerDeleteGesture) return;
   startMealPointerDeleteGesture(event.currentTarget, event.clientX, event.clientY);
 }
 
@@ -13227,8 +14685,10 @@ function isSpecialMealSlot(slotValue) {
   return String(slotValue || "").startsWith(specialMealPrefix);
 }
 
-function specialMealSlotId(type, note = "") {
-  return `${specialMealPrefix}${encodeURIComponent(String(type || "").trim())}::${encodeURIComponent(String(note || "").trim())}`;
+function specialMealSlotId(type, note = "", restaurant = null) {
+  const base = `${specialMealPrefix}${encodeURIComponent(String(type || "").trim())}::${encodeURIComponent(String(note || "").trim())}`;
+  if (!restaurant) return base;
+  return `${base}::${encodeURIComponent(JSON.stringify(restaurant))}`;
 }
 
 function specialMealForSlot(slotValue) {
@@ -13236,9 +14696,12 @@ function specialMealForSlot(slotValue) {
   const parts = String(slotValue).slice(specialMealPrefix.length).split("::");
   const type = decodeURIComponent(parts[0] || "").trim();
   if (!["out", "leftovers"].includes(type)) return null;
+  let restaurant = null;
+  if (parts[2]) { try { restaurant = JSON.parse(decodeURIComponent(parts[2])); } catch {} }
   return {
     type,
-    note: decodeURIComponent(parts[1] || "").trim()
+    note: decodeURIComponent(parts[1] || "").trim(),
+    restaurant
   };
 }
 
@@ -14525,6 +15988,7 @@ function openRecipeView(id, mealContext = null) {
   if (!recipe) return;
   rememberActiveRecipeScroll();
   currentActiveRecipeViewId = "";
+  recipeViewMealContext = mealContext;
   const baseServings = recipeDefaultServings(recipe);
   const mealEntry = mealContext ? mealEntryValue(mealContext.day, mealContext.meal, mealContext.index) : null;
   const currentServings = recipe.virtualGroceryRecipe
@@ -17075,8 +18539,8 @@ function addDays(date, amount) {
   return copy;
 }
 
-function formatWeekRange(start) {
-  const end = addDays(start, 7);
+function formatWeekRange(start, endOffset = 7) {
+  const end = addDays(start, endOffset);
   const startLabel = start.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   const endLabel = end.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
   return `${startLabel} - ${endLabel}`;
@@ -17219,7 +18683,7 @@ function openWatchSearchDialog() {
   const handleInput = () => {
     clearTimeout(searchDebounce);
     const q = elements.watchSearchDialogInput.value.trim();
-    if (q.length < 2) {
+    if (q.length < 1) {
       elements.watchSearchDialogResults.innerHTML = "";
       return;
     }
@@ -17471,7 +18935,7 @@ function watchProviderOrShowtimesHtml(item) {
   if (item.inTheaters) {
     const cached = showtimesCache[item.id];
     if (cached?.data) {
-      return watchShowtimesGridHtml(item, cached.data);
+      return watchShowtimesGridHtml(item, cached.data, collapsedShowtimes.has(item.id));
     }
     const isLoading = cached?.loading;
     return `<div class="watch-showtimes-row">
@@ -17504,27 +18968,57 @@ function watchProviderOrShowtimesHtml(item) {
   return `<div class="watch-providers watch-no-streaming">Not available for streaming</div>`;
 }
 
-function watchShowtimesGridHtml(item, showtimes) {
+function watchShowtimesGridHtml(item, data, isCollapsed = false) {
+  // Normalise: old cached format was flat theaters[], new format is day objects[]
+  const days = (data.length && data[0]?.day !== undefined)
+    ? data
+    : (data.length ? [{ day: "Today", theaters: data }] : []);
+
   const savedTheaters = state.watchSettings?.theaters || [];
   const savedNames = savedTheaters.map((t) => t.name.toLowerCase());
 
-  // Sort: saved theaters first, then others
-  const sorted = [...showtimes].sort((a, b) => {
-    const aMatch = savedNames.some((n) => a.name?.toLowerCase().includes(n));
-    const bMatch = savedNames.some((n) => b.name?.toLowerCase().includes(n));
-    return (bMatch ? 1 : 0) - (aMatch ? 1 : 0);
-  });
-
-  const toShow = savedTheaters.length
-    ? sorted.filter((t) => savedNames.some((n) => t.name?.toLowerCase().includes(n)))
-    : sorted.slice(0, 4);
-
-  if (!toShow.length) {
-    const fallback = sorted[0];
-    if (!fallback) return `<div class="watch-showtimes-row"><span class="watch-providers-label watch-in-theaters-label">In theaters</span><span class="watch-showtimes-none">No showtimes found nearby</span></div>`;
-    return watchTheaterRowHtml(fallback);
+  function filterDay(theaters) {
+    const sorted = [...theaters].sort((a, b) => {
+      const aM = savedNames.some((n) => a.name?.toLowerCase().includes(n));
+      const bM = savedNames.some((n) => b.name?.toLowerCase().includes(n));
+      return (bM ? 1 : 0) - (aM ? 1 : 0);
+    });
+    return savedNames.length
+      ? sorted.filter((t) => savedNames.some((n) => t.name?.toLowerCase().includes(n)))
+      : sorted.slice(0, 4);
   }
-  return toShow.map((t) => watchTheaterRowHtml(t)).join("");
+
+  const filteredDays = days.map((d) => ({ day: d.day, theaters: filterDay(d.theaters) }))
+    .filter((d) => d.theaters.length);
+
+  if (!filteredDays.length) {
+    const fallbackDay = days.find((d) => d.theaters.length);
+    if (!fallbackDay) return `<div class="watch-showtimes-row"><span class="watch-providers-label watch-in-theaters-label">In theaters</span><span class="watch-showtimes-none">No showtimes found nearby</span></div>`;
+    filteredDays.push({ day: fallbackDay.day, theaters: [fallbackDay.theaters[0]] });
+  }
+
+  const theaterCount = new Set(filteredDays.flatMap((d) => d.theaters.map((t) => (t.name || "").toLowerCase()))).size;
+  const dayRange = filteredDays.length > 1
+    ? `${filteredDays[0].day}–${filteredDays[filteredDays.length - 1].day}`
+    : filteredDays[0].day;
+  const summary = `${theaterCount} theater${theaterCount !== 1 ? "s" : ""} · ${dayRange}`;
+  const chevron = isCollapsed ? `<path d="m9 18 6-6-6-6"/>` : `<path d="m6 9 6 6 6-6"/>`;
+
+  const header = `<button class="watch-showtimes-toggle" type="button" data-toggle-showtimes="${escapeHtml(item.id)}">
+    <span class="watch-providers-label watch-in-theaters-label">In theaters</span>
+    <span class="watch-showtimes-summary">${escapeHtml(summary)}</span>
+    <svg viewBox="0 0 24 24" aria-hidden="true" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${chevron}</svg>
+  </button>`;
+
+  if (isCollapsed) return header;
+
+  const body = filteredDays.map((d) => `
+    <div class="watch-showtime-day-section">
+      ${filteredDays.length > 1 ? `<span class="watch-showtime-day-label">${escapeHtml(d.day)}</span>` : ""}
+      ${d.theaters.map((t) => watchTheaterRowHtml(t)).join("")}
+    </div>`).join("");
+
+  return `<div class="watch-showtimes-block">${header}${body}</div>`;
 }
 
 function watchTheaterRowHtml(theater) {
@@ -17552,26 +19046,36 @@ async function fetchShowtimes(itemId) {
     try { location = await getUserLocationString(); } catch { /* use no location */ }
     const res = await fetch(showtimesUrl(item.title, location));
     const data = await res.json();
-    const raw = (data.showtimes || []).flatMap((s) => s.theaters || []);
-    // Deduplicate theaters by name, merging their showings
-    const theaterMap = new Map();
-    for (const t of raw) {
-      const key = (t.name || "").toLowerCase().trim();
-      if (!key) continue;
-      if (theaterMap.has(key)) {
-        theaterMap.get(key).showing.push(...(t.showing || []));
-      } else {
-        theaterMap.set(key, { ...t, showing: [...(t.showing || [])] });
+    // Preserve day structure; deduplicate theaters by name within each day
+    const days = (data.showtimes || []).map((s) => {
+      const theaterMap = new Map();
+      for (const t of (s.theaters || [])) {
+        const key = (t.name || "").toLowerCase().trim();
+        if (!key) continue;
+        if (theaterMap.has(key)) {
+          theaterMap.get(key).showing.push(...(t.showing || []));
+        } else {
+          theaterMap.set(key, { ...t, showing: [...(t.showing || [])] });
+        }
       }
-    }
-    const theaters = [...theaterMap.values()];
-    const entry = { data: theaters, fetchedAt: Date.now() };
+      return { day: s.day || "", theaters: [...theaterMap.values()] };
+    }).filter((d) => d.theaters.length);
+    const entry = { data: days, fetchedAt: Date.now() };
     showtimesCache[itemId] = entry;
     if (!state.watchShowtimesData) state.watchShowtimesData = {};
     state.watchShowtimesData[itemId] = entry;
     persist();
   } catch {
     showtimesCache[itemId] = { data: [], fetchedAt: Date.now() };
+  }
+  renderWatchPlanner();
+}
+
+function toggleShowtimesCollapse(itemId) {
+  if (collapsedShowtimes.has(itemId)) {
+    collapsedShowtimes.delete(itemId);
+  } else {
+    collapsedShowtimes.add(itemId);
   }
   renderWatchPlanner();
 }
@@ -17717,6 +19221,9 @@ function bindWatchControls(root = document) {
   });
   root.querySelectorAll("[data-load-showtimes]").forEach((btn) => {
     btn.addEventListener("click", () => fetchShowtimes(btn.dataset.loadShowtimes));
+  });
+  root.querySelectorAll("[data-toggle-showtimes]").forEach((btn) => {
+    btn.addEventListener("click", () => toggleShowtimesCollapse(btn.dataset.toggleShowtimes));
   });
   root.querySelectorAll("[data-watch-season-toggle]").forEach((cb) => {
     cb.addEventListener("change", () => toggleWatchSeason(cb.dataset.watchSeasonToggle, Number(cb.dataset.season), cb.checked));
@@ -18456,7 +19963,7 @@ function addWatchItemFromTmdb(tmdbResult) {
     watchNotes: null,
     seasonProgress: {},
     episodeData: {},
-    categories: [],
+    categories: activeWatchCategory !== "all" ? [activeWatchCategory] : [],
     createdAt: new Date().toISOString()
   };
   watchItemsList().push(item);
@@ -19460,6 +20967,1091 @@ async function fetchOnePlanCalendar(cal) {
     persist();
     if (activeAppArea === "plan") renderPlanPage();
   } catch { }
+}
+
+// ── Inventory ───────────────────────────────────────────────────────
+
+function inventoryBoxList() {
+  if (!Array.isArray(state.inventoryBoxes)) state.inventoryBoxes = [];
+  return state.inventoryBoxes;
+}
+
+function inventoryItemList() {
+  if (!Array.isArray(state.inventoryItems)) state.inventoryItems = [];
+  return state.inventoryItems;
+}
+
+function inventoryBoxChildren(parentId) {
+  return inventoryBoxList().filter((b) => b.parentId === parentId);
+}
+
+function inventoryBoxItems(boxId) {
+  return inventoryItemList().filter((i) => i.boxId === boxId);
+}
+
+function inventoryBoxPath(boxId) {
+  const path = [];
+  let current = inventoryBoxList().find((b) => b.id === boxId) || null;
+  while (current) {
+    path.unshift(current);
+    current = current.parentId ? (inventoryBoxList().find((b) => b.id === current.parentId) || null) : null;
+  }
+  return path;
+}
+
+function inventoryBoxSelectOptions(selectedId = null, excludeId = null) {
+  const options = [`<option value="">— Unplaced —</option>`];
+  function walk(parentId, depth) {
+    inventoryBoxChildren(parentId).forEach((box) => {
+      if (box.id === excludeId) return;
+      const indent = " ".repeat(depth * 3);
+      options.push(`<option value="${escapeHtml(box.id)}" ${selectedId === box.id ? "selected" : ""}>${indent}${escapeHtml(box.name)}</option>`);
+      walk(box.id, depth + 1);
+    });
+  }
+  walk(null, 0);
+  return options.join("");
+}
+
+function renderInventoryPage() {
+  const grid = elements.inventoryPlannerGrid;
+  if (!grid) return;
+
+  const defaultIds = new Set(DEFAULT_INVENTORY_ROOMS.map((d) => d.id));
+  const visibility = state.inventoryRoomVisibility || {};
+  const allTopLevel = inventoryBoxChildren(null);
+  const defaultRooms = DEFAULT_INVENTORY_ROOMS
+    .filter(({ id }) => visibility[id] !== false)
+    .map(({ id }) => allTopLevel.find((r) => r.id === id))
+    .filter(Boolean);
+  const userRooms = allTopLevel.filter((r) => !defaultIds.has(r.id));
+  const rooms = [...defaultRooms, ...userRooms];
+  const unplaced = inventoryItemList().filter((i) => !i.boxId);
+
+  grid.innerHTML = `
+    <div class="inventory-layout">
+      <div class="inventory-rooms-grid">
+        ${rooms.map((r) => inventoryRoomCardTemplate(r)).join("")}
+        ${unplaced.length ? `
+          <div class="inventory-room-card inventory-unplaced-card">
+            <div class="inventory-room-header">
+              <span class="inventory-room-name">Unplaced</span>
+            </div>
+            <div class="inventory-room-body" data-drop-target="">
+              ${unplaced.map((i) => inventoryItemChipTemplate(i)).join("")}
+            </div>
+          </div>` : ""}
+        <button class="inventory-add-room-card" type="button" data-inventory-add-box="">+ Add Room</button>
+      </div>
+    </div>
+  `;
+
+  bindInventoryControls(grid);
+}
+
+function inventoryRoomCardTemplate(room) {
+  const containers = inventoryBoxChildren(room.id);
+  const directItems = inventoryBoxItems(room.id);
+  const totalCount = containers.length + directItems.length;
+
+  return `
+    <div class="inventory-room-card">
+      <div class="inventory-room-header" data-inventory-box="${escapeHtml(room.id)}">
+        <svg class="inventory-room-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        <span class="inventory-room-name">${escapeHtml(room.name)}</span>
+        ${totalCount ? `<span class="inventory-room-count">${totalCount}</span>` : ""}
+        <button class="inventory-room-action-btn" type="button" data-inventory-add-item="${escapeHtml(room.id)}" title="Add item">+</button>
+      </div>
+      <div class="inventory-room-body" data-drop-target="${escapeHtml(room.id)}">
+        ${containers.map((c) => inventoryContainerTemplate(c)).join("")}
+        ${directItems.map((i) => inventoryItemChipTemplate(i)).join("")}
+      </div>
+      <div class="inventory-room-footer">
+        <input class="inventory-inline-input" type="text" placeholder="Add item…" data-inventory-quick-add="${escapeHtml(room.id)}" maxlength="64" autocomplete="off" />
+      </div>
+    </div>
+  `;
+}
+
+function inventoryContainerTemplate(container) {
+  const items = inventoryBoxItems(container.id);
+  const subContainers = inventoryBoxChildren(container.id);
+  const isCollapsed = inventoryCollapsedBoxes.has(container.id);
+  const hasContent = items.length > 0 || subContainers.length > 0;
+  const totalCount = items.length + subContainers.length;
+
+  const chevron = isCollapsed
+    ? `<path d="m9 18 6-6-6-6"/>`
+    : `<path d="m6 9 6 6 6-6"/>`;
+
+  return `
+    <div class="inventory-container-wrap">
+      <div class="inventory-container-header" data-inventory-box="${escapeHtml(container.id)}">
+        <button class="inventory-toggle-btn" type="button" data-inventory-toggle="${escapeHtml(container.id)}" aria-expanded="${!isCollapsed}" ${!hasContent ? 'tabindex="-1"' : ""}>
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="${!hasContent ? "opacity:0" : ""}">
+            ${chevron}
+          </svg>
+        </button>
+        <svg class="inventory-container-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+        <span class="inventory-container-name">${escapeHtml(container.name)}</span>
+        ${totalCount ? `<span class="inventory-container-count">${totalCount}</span>` : ""}
+        <button class="inventory-room-action-btn" type="button" data-inventory-add-item="${escapeHtml(container.id)}" title="Add item">+</button>
+      </div>
+      ${!isCollapsed ? `
+        <div class="inventory-container-body" data-drop-target="${escapeHtml(container.id)}">
+          ${items.map((i) => inventoryItemChipTemplate(i)).join("")}
+          ${subContainers.map((c) => inventoryContainerTemplate(c)).join("")}
+          <input class="inventory-inline-input" type="text" placeholder="Add item…" data-inventory-quick-add="${escapeHtml(container.id)}" maxlength="64" autocomplete="off" />
+        </div>` : ""}
+    </div>
+  `;
+}
+
+function inventoryItemChipTemplate(item) {
+  return `
+    <div class="inventory-item-chip" data-inventory-item="${escapeHtml(item.id)}" draggable="true">
+      <span class="inventory-item-name">${escapeHtml(item.name)}</span>
+      ${item.quantity ? `<span class="inventory-item-qty">${escapeHtml(item.quantity)}</span>` : ""}
+      ${item.notes ? `<span class="inventory-item-notes">${escapeHtml(item.notes)}</span>` : ""}
+    </div>
+  `;
+}
+
+function bindInventoryControls(root) {
+  root.querySelectorAll("[data-inventory-toggle]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.inventoryToggle;
+      if (inventoryCollapsedBoxes.has(id)) inventoryCollapsedBoxes.delete(id);
+      else inventoryCollapsedBoxes.add(id);
+      renderInventoryPage();
+    });
+  });
+
+  root.querySelectorAll("[data-inventory-add-box]").forEach((btn) => {
+    btn.addEventListener("click", () => openInventoryBoxDialog(null, btn.dataset.inventoryAddBox || null));
+  });
+
+  root.querySelectorAll("[data-inventory-add-item]").forEach((btn) => {
+    btn.addEventListener("click", () => openInventoryItemDialog(null, btn.dataset.inventoryAddItem || null));
+  });
+
+  root.querySelectorAll("[data-inventory-box]").forEach((el) => {
+    el.addEventListener("contextmenu", openInventoryBoxMenu);
+  });
+
+  root.querySelectorAll("[data-inventory-item]").forEach((chip) => {
+    chip.addEventListener("contextmenu", openInventoryItemMenu);
+  });
+
+  // Inline quick-add: Enter creates an item in the room or container
+  root.querySelectorAll("[data-inventory-quick-add]").forEach((input) => {
+    input.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      const name = input.value.trim();
+      if (!name) return;
+      const boxId = input.dataset.inventoryQuickAdd || null;
+      inventoryItemList().push({ id: createId("iitem"), name, boxId, quantity: null, notes: null, createdAt: new Date().toISOString() });
+      if (boxId) inventoryCollapsedBoxes.delete(boxId);
+      persist();
+      renderInventoryPage();
+      const sel = boxId ? `[data-inventory-quick-add="${CSS.escape(boxId)}"]` : `[data-inventory-quick-add=""]`;
+      const next = elements.inventoryPlannerGrid.querySelector(sel);
+      if (next) next.focus();
+    });
+  });
+
+  // Drag items between rooms/containers
+  let dragOverZone = null;
+
+  root.querySelectorAll("[data-inventory-item]").forEach((chip) => {
+    chip.addEventListener("dragstart", (e) => {
+      inventoryDragItemId = chip.dataset.inventoryItem;
+      chip.classList.add("inv-dragging");
+      e.dataTransfer.effectAllowed = "move";
+    });
+    chip.addEventListener("dragend", () => {
+      chip.classList.remove("inv-dragging");
+      inventoryDragItemId = null;
+      if (dragOverZone) { dragOverZone.classList.remove("inv-drag-over"); dragOverZone = null; }
+    });
+  });
+
+  root.querySelectorAll("[data-drop-target]").forEach((zone) => {
+    zone.addEventListener("dragover", (e) => {
+      if (!inventoryDragItemId) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      if (dragOverZone !== zone) {
+        if (dragOverZone) dragOverZone.classList.remove("inv-drag-over");
+        dragOverZone = zone;
+        zone.classList.add("inv-drag-over");
+      }
+    });
+    zone.addEventListener("dragleave", (e) => {
+      if (!zone.contains(e.relatedTarget)) {
+        zone.classList.remove("inv-drag-over");
+        if (dragOverZone === zone) dragOverZone = null;
+      }
+    });
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      zone.classList.remove("inv-drag-over");
+      dragOverZone = null;
+      if (!inventoryDragItemId) return;
+      const newBoxId = zone.dataset.dropTarget || null;
+      const item = inventoryItemList().find((i) => i.id === inventoryDragItemId);
+      if (item) { item.boxId = newBoxId; persist(); renderInventoryPage(); }
+      inventoryDragItemId = null;
+    });
+  });
+}
+
+function openInventoryBoxDialog(boxId = null, parentId = null) {
+  inventoryBoxPendingId = boxId;
+  inventoryBoxPendingParentId = parentId;
+  const existing = boxId ? inventoryBoxList().find((b) => b.id === boxId) : null;
+  const isRoom = existing ? !existing.parentId : !parentId;
+  const entityLabel = isRoom ? "Room" : "Container";
+  elements.inventoryBoxDialogTitle.textContent = existing ? `Rename ${entityLabel}` : `Add ${entityLabel}`;
+  elements.inventoryBoxNameInput.placeholder = isRoom ? "e.g. Bedroom, garage, attic" : "e.g. Closet, bin A, shelf";
+  elements.inventoryBoxNameInput.value = existing ? existing.name : "";
+  if (!elements.inventoryBoxDialog.open) elements.inventoryBoxDialog.showModal();
+  requestAnimationFrame(() => elements.inventoryBoxNameInput.focus());
+}
+
+function saveInventoryBox() {
+  const name = elements.inventoryBoxNameInput.value.trim();
+  if (!name) return;
+  if (inventoryBoxPendingId) {
+    const box = inventoryBoxList().find((b) => b.id === inventoryBoxPendingId);
+    if (box) box.name = name;
+  } else {
+    inventoryBoxList().push({
+      id: createId("ibox"),
+      name,
+      parentId: inventoryBoxPendingParentId || null,
+      createdAt: new Date().toISOString()
+    });
+    if (inventoryBoxPendingParentId) inventoryCollapsedBoxes.delete(inventoryBoxPendingParentId);
+  }
+  inventoryBoxPendingId = null;
+  inventoryBoxPendingParentId = null;
+  elements.inventoryBoxDialog.close();
+  persist();
+  renderInventoryPage();
+}
+
+function openInventoryItemDialog(itemId = null, defaultBoxId = null) {
+  inventoryItemPendingId = itemId;
+  const existing = itemId ? inventoryItemList().find((i) => i.id === itemId) : null;
+  elements.inventoryItemDialogTitle.textContent = existing ? "Edit Item" : "Add Item";
+  elements.inventoryItemNameInput.value = existing ? existing.name : "";
+  elements.inventoryItemBoxSelect.innerHTML = inventoryBoxSelectOptions(existing?.boxId ?? defaultBoxId);
+  elements.inventoryItemQuantityInput.value = existing?.quantity ?? "";
+  elements.inventoryItemNotesInput.value = existing?.notes ?? "";
+  if (!elements.inventoryItemDialog.open) elements.inventoryItemDialog.showModal();
+  requestAnimationFrame(() => elements.inventoryItemNameInput.focus());
+}
+
+function saveInventoryItem() {
+  const name = elements.inventoryItemNameInput.value.trim();
+  if (!name) return;
+  const boxId = elements.inventoryItemBoxSelect.value || null;
+  const quantity = elements.inventoryItemQuantityInput.value.trim() || null;
+  const notes = elements.inventoryItemNotesInput.value.trim() || null;
+  if (inventoryItemPendingId) {
+    const item = inventoryItemList().find((i) => i.id === inventoryItemPendingId);
+    if (item) { item.name = name; item.boxId = boxId; item.quantity = quantity; item.notes = notes; }
+  } else {
+    inventoryItemList().push({ id: createId("iitem"), name, boxId, quantity, notes, createdAt: new Date().toISOString() });
+    if (boxId) inventoryCollapsedBoxes.delete(boxId);
+  }
+  inventoryItemPendingId = null;
+  elements.inventoryItemDialog.close();
+  persist();
+  renderInventoryPage();
+}
+
+function openInventoryBoxMenu(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeFolderMenu();
+  const row = event.currentTarget;
+  const boxId = row.dataset.inventoryBox;
+  if (!boxId) return;
+  const box = inventoryBoxList().find((b) => b.id === boxId);
+  if (!box) return;
+
+  const isRoomCtx = !box.parentId;
+  const isDefaultRoom = DEFAULT_INVENTORY_ROOMS.some((d) => d.id === boxId);
+  const ctxLabel = isRoomCtx ? "room" : "container";
+
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu watch-item-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-inv-ctx-add-item="${escapeHtml(boxId)}">Add item here</button>
+    <button type="button" role="menuitem" data-inv-ctx-add-sub="${escapeHtml(boxId)}">Add container</button>
+    <div class="watch-context-divider"></div>
+    <button type="button" role="menuitem" data-inv-ctx-rename="${escapeHtml(boxId)}">Rename</button>
+    <div class="watch-context-divider"></div>
+    ${isDefaultRoom
+      ? `<button type="button" role="menuitem" data-inv-ctx-hide-room="${escapeHtml(boxId)}">Hide room</button>`
+      : `<button type="button" role="menuitem" data-inv-ctx-delete-box="${escapeHtml(boxId)}" class="danger-item">Delete ${ctxLabel} &amp; contents</button>`
+    }
+  `;
+
+  document.body.append(menu);
+  const x = Math.min(event.clientX || 10, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(event.clientY || 10, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+
+  let handled = false;
+  const handle = (fn) => (e) => {
+    e.preventDefault(); e.stopPropagation();
+    if (handled) return; handled = true;
+    closeFolderMenu(); fn();
+  };
+
+  const addItemBtn = menu.querySelector("[data-inv-ctx-add-item]");
+  if (addItemBtn) { addItemBtn.addEventListener("pointerdown", handle(() => openInventoryItemDialog(null, boxId))); addItemBtn.addEventListener("click", handle(() => openInventoryItemDialog(null, boxId))); }
+
+  const addSubBtn = menu.querySelector("[data-inv-ctx-add-sub]");
+  if (addSubBtn) { addSubBtn.addEventListener("pointerdown", handle(() => openInventoryBoxDialog(null, boxId))); addSubBtn.addEventListener("click", handle(() => openInventoryBoxDialog(null, boxId))); }
+
+  const renameBtn = menu.querySelector("[data-inv-ctx-rename]");
+  if (renameBtn) { renameBtn.addEventListener("pointerdown", handle(() => openInventoryBoxDialog(boxId, null))); renameBtn.addEventListener("click", handle(() => openInventoryBoxDialog(boxId, null))); }
+
+  const delBtn = menu.querySelector("[data-inv-ctx-delete-box]");
+  if (delBtn) { delBtn.addEventListener("pointerdown", handle(() => deleteInventoryBoxDeep(boxId))); delBtn.addEventListener("click", handle(() => deleteInventoryBoxDeep(boxId))); }
+
+  const hideBtn = menu.querySelector("[data-inv-ctx-hide-room]");
+  if (hideBtn) { hideBtn.addEventListener("pointerdown", handle(() => hideDefaultInventoryRoom(boxId))); hideBtn.addEventListener("click", handle(() => hideDefaultInventoryRoom(boxId))); }
+}
+
+function hideDefaultInventoryRoom(roomId) {
+  if (!state.inventoryRoomVisibility) state.inventoryRoomVisibility = {};
+  state.inventoryRoomVisibility[roomId] = false;
+  persist();
+  renderInventoryPage();
+}
+
+function openInventoryRoomsDialog() {
+  const visibility = state.inventoryRoomVisibility || {};
+  elements.inventoryRoomsSettingsList.innerHTML = DEFAULT_INVENTORY_ROOMS.map(({ id, name }) => `
+    <label class="inv-room-toggle-row">
+      <span class="inv-room-toggle-name">${escapeHtml(name)}</span>
+      <input type="checkbox" class="inv-room-toggle-cb" data-inv-room-toggle="${escapeHtml(id)}" ${visibility[id] !== false ? "checked" : ""} />
+    </label>
+  `).join("");
+  elements.inventoryRoomsSettingsList.querySelectorAll("[data-inv-room-toggle]").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      if (!state.inventoryRoomVisibility) state.inventoryRoomVisibility = {};
+      state.inventoryRoomVisibility[cb.dataset.invRoomToggle] = cb.checked;
+      persist();
+      if (activeAppArea === "inventory") renderInventoryPage();
+    });
+  });
+  if (!elements.inventoryRoomsDialog.open) elements.inventoryRoomsDialog.showModal();
+}
+
+function deleteInventoryBoxDeep(boxId) {
+  const toDelete = new Set();
+  function collect(id) {
+    toDelete.add(id);
+    inventoryBoxChildren(id).forEach((c) => collect(c.id));
+  }
+  collect(boxId);
+  state.inventoryBoxes = inventoryBoxList().filter((b) => !toDelete.has(b.id));
+  state.inventoryItems = inventoryItemList().filter((i) => !toDelete.has(i.boxId));
+  toDelete.forEach((id) => inventoryCollapsedBoxes.delete(id));
+  persist();
+  renderInventoryPage();
+}
+
+function openInventoryItemMenu(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeFolderMenu();
+  const chip = event.currentTarget;
+  const itemId = chip.dataset.inventoryItem;
+  if (!itemId) return;
+  const item = inventoryItemList().find((i) => i.id === itemId);
+  if (!item) return;
+
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu watch-item-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-inv-ctx-edit-item="${escapeHtml(itemId)}">Edit</button>
+    <div class="watch-context-divider"></div>
+    <button type="button" role="menuitem" data-inv-ctx-delete-item="${escapeHtml(itemId)}" class="danger-item">Delete</button>
+  `;
+
+  document.body.append(menu);
+  const x = Math.min(event.clientX || 10, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(event.clientY || 10, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+
+  let handled = false;
+  const handle = (fn) => (e) => {
+    e.preventDefault(); e.stopPropagation();
+    if (handled) return; handled = true;
+    closeFolderMenu(); fn();
+  };
+
+  const editBtn = menu.querySelector("[data-inv-ctx-edit-item]");
+  if (editBtn) { editBtn.addEventListener("pointerdown", handle(() => openInventoryItemDialog(itemId))); editBtn.addEventListener("click", handle(() => openInventoryItemDialog(itemId))); }
+
+  const delBtn = menu.querySelector("[data-inv-ctx-delete-item]");
+  if (delBtn) {
+    delBtn.addEventListener("pointerdown", handle(() => { state.inventoryItems = inventoryItemList().filter((i) => i.id !== itemId); persist(); renderInventoryPage(); }));
+    delBtn.addEventListener("click", handle(() => { state.inventoryItems = inventoryItemList().filter((i) => i.id !== itemId); persist(); renderInventoryPage(); }));
+  }
+}
+
+// ── Shop ────────────────────────────────────────────────────────────
+
+function renderShopPage() {
+  renderGroceries();
+  renderShopReceipts();
+}
+
+function renderShopReceipts() {
+  const el = elements.shopReceiptsList;
+  if (!el) return;
+  const receipts = (state.receipts || [])
+    .slice()
+    .sort((a, b) => (b.purchaseDate || "").localeCompare(a.purchaseDate || ""));
+  if (!receipts.length) {
+    el.innerHTML = `<div class="empty-state">No receipts yet. Scan a receipt to start tracking prices.</div>`;
+    return;
+  }
+  el.innerHTML = receipts.map((r) => {
+    const date = r.purchaseDate
+      ? new Date(r.purchaseDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+      : "";
+    const total = r.total != null ? Number(r.total).toLocaleString("en-US", { style: "currency", currency: "USD" }) : "";
+    const itemCount = Array.isArray(r.lineItems) ? r.lineItems.length : 0;
+    return `
+      <div class="shop-receipt-card" data-receipt-id="${escapeHtml(r.id)}">
+        <div class="shop-receipt-store">${escapeHtml(r.storeName || "Unknown store")}</div>
+        <div class="shop-receipt-meta">
+          ${date ? `<span>${escapeHtml(date)}</span>` : ""}
+          ${itemCount ? `<span>${itemCount} item${itemCount !== 1 ? "s" : ""}</span>` : ""}
+          ${total ? `<span>${escapeHtml(total)}</span>` : ""}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+// ── Reading List ────────────────────────────────────────────────────
+
+function readingItemsList() {
+  if (!Array.isArray(state.readingItems)) state.readingItems = [];
+  return state.readingItems;
+}
+
+function readingItemById(id) {
+  return readingItemsList().find((item) => item.id === id) || null;
+}
+
+function renderReadingPlanner() {
+  if (!elements.readingPlannerGrid) return;
+  const categories = state.readingSettings?.categories || [];
+  elements.readingPlannerGrid.innerHTML = `
+    <div class="watch-category-bar">
+      <div class="watch-category-tabs" role="tablist" aria-label="Reading categories">
+        <button class="watch-category-tab${activeReadingCategory === "all" ? " is-active" : ""}" type="button" role="tab" aria-selected="${activeReadingCategory === "all"}" data-reading-category="all">All</button>
+        ${categories.map((c) => `
+          <button class="watch-category-tab${activeReadingCategory === c.id ? " is-active" : ""}" type="button" role="tab" aria-selected="${activeReadingCategory === c.id}" data-reading-category="${escapeHtml(c.id)}">${escapeHtml(c.name)}</button>
+        `).join("")}
+        ${readingCategoryInputActive
+          ? `<form class="watch-category-new-form" id="readingCategoryInlineForm">
+               <input class="watch-category-new-input" id="readingCategoryInlineInput" type="text" placeholder="Tab name" autocomplete="off" maxlength="32" />
+             </form>`
+          : `<button class="watch-category-tab watch-category-add-tab" type="button" data-reading-category-add title="Add tab">+</button>`
+        }
+      </div>
+    </div>
+    <section class="day-column planner-day-panel do-backlog-panel watch-list-panel" aria-label="Reading List">
+      <div class="do-board">
+        ${readingListTemplate()}
+      </div>
+      <footer class="watch-archive-footer">
+        <button class="watch-archive-open-btn" type="button" data-open-reading-archive>
+          Archive
+        </button>
+        <button class="primary-btn icon-primary-btn" type="button" data-open-reading-search title="Add book" aria-label="Add book">
+          <span aria-hidden="true">+</span>
+        </button>
+      </footer>
+    </section>
+  `;
+
+  elements.readingPlannerGrid.querySelectorAll("[data-reading-category]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      activeReadingCategory = btn.dataset.readingCategory;
+      readingCategoryInputActive = false;
+      renderReadingPlanner();
+    });
+  });
+
+  const addTabBtn = elements.readingPlannerGrid.querySelector("[data-reading-category-add]");
+  if (addTabBtn) {
+    addTabBtn.addEventListener("click", () => {
+      readingCategoryInputActive = true;
+      renderReadingPlanner();
+      elements.readingPlannerGrid.querySelector("#readingCategoryInlineInput")?.focus();
+    });
+  }
+
+  const inlineForm = elements.readingPlannerGrid.querySelector("#readingCategoryInlineForm");
+  const inlineInput = elements.readingPlannerGrid.querySelector("#readingCategoryInlineInput");
+  if (inlineForm && inlineInput) {
+    inlineInput.focus();
+    inlineForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const name = inlineInput.value.trim();
+      if (name) {
+        if (!state.readingSettings) state.readingSettings = { categories: [] };
+        if (!state.readingSettings.categories) state.readingSettings.categories = [];
+        const newCat = { id: createId("rcat"), name };
+        state.readingSettings.categories.push(newCat);
+        activeReadingCategory = newCat.id;
+        persist();
+      }
+      readingCategoryInputActive = false;
+      renderReadingPlanner();
+    });
+    inlineInput.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        readingCategoryInputActive = false;
+        renderReadingPlanner();
+      }
+    });
+    inlineInput.addEventListener("blur", () => {
+      setTimeout(() => {
+        readingCategoryInputActive = false;
+        renderReadingPlanner();
+      }, 120);
+    });
+  }
+
+  elements.readingPlannerGrid.querySelector("[data-open-reading-search]")
+    ?.addEventListener("click", openReadingSearchDialog);
+
+  elements.readingPlannerGrid.querySelectorAll("[data-reading-section-toggle]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.dataset.readingSectionToggle;
+      if (readingCollapsedSections.has(key)) {
+        readingCollapsedSections.delete(key);
+      } else {
+        readingCollapsedSections.add(key);
+      }
+      renderReadingPlanner();
+    });
+  });
+
+  bindReadingControls(elements.readingPlannerGrid);
+
+  elements.readingPlannerGrid.querySelector("[data-open-reading-archive]")
+    ?.addEventListener("click", openReadingArchive);
+}
+
+function readingListTemplate() {
+  let items = readingItemsList().filter((i) => i.status !== "read");
+  if (activeReadingCategory !== "all") {
+    items = items.filter((i) => Array.isArray(i.categories) && i.categories.includes(activeReadingCategory));
+  }
+  const reading = items.filter((i) => i.status === "reading");
+  const want = items.filter((i) => i.status === "want");
+
+  return `
+    <div class="watch-sections">
+      ${readingSectionTemplate("Reading", reading)}
+      ${readingSectionTemplate("Want to Read", want)}
+    </div>
+  `;
+}
+
+function readingSectionTemplate(label, items) {
+  const collapsed = readingCollapsedSections.has(label);
+  return `
+    <div class="watch-section${collapsed ? " is-collapsed" : ""}" data-reading-section="${escapeHtml(label)}">
+      <button class="watch-section-head" type="button" data-reading-section-toggle="${escapeHtml(label)}" aria-expanded="${!collapsed}">
+        <svg class="watch-section-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        <span>${escapeHtml(label)}</span>
+      </button>
+      ${collapsed ? "" : `<div class="watch-item-list">${items.map((item) => readingItemTemplate(item)).join("")}</div>`}
+    </div>
+  `;
+}
+
+function readingItemTemplate(item) {
+  const coverHtml = item.coverUrl
+    ? `<img class="reading-item-cover" src="${escapeHtml(item.coverUrl)}" alt="" aria-hidden="true" loading="lazy" />`
+    : `<div class="reading-item-cover reading-item-cover-placeholder"></div>`;
+
+  const authorsHtml = item.authors?.length
+    ? `<div class="reading-item-authors">${escapeHtml(item.authors.join(", "))}</div>`
+    : "";
+
+  const metaParts = [];
+  if (item.year) metaParts.push(item.year);
+  if (item.pageCount) metaParts.push(`${item.pageCount} pp`);
+  const metaHtml = metaParts.length ? `<div class="watch-item-meta">${escapeHtml(metaParts.join(" · "))}</div>` : "";
+
+  const formatLabels = { physical: "Physical", ebook: "eBook", audiobook: "Audiobook" };
+  const formatHtml = item.format
+    ? `<span class="reading-format-badge reading-format-${escapeHtml(item.format)}">${escapeHtml(formatLabels[item.format] || item.format)}</span>`
+    : "";
+
+  return `
+    <article class="do-task-item watch-item reading-item" data-reading-item="${escapeHtml(item.id)}">
+      <div class="watch-item-layout">
+        ${coverHtml}
+        <div class="watch-item-main">
+          <div class="watch-item-row">
+            <span class="watch-item-title">${escapeHtml(item.title)}</span>
+            ${formatHtml}
+          </div>
+          ${authorsHtml}
+          ${metaHtml}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function bindReadingControls(root = document) {
+  root.querySelectorAll("[data-reading-item]").forEach((article) => {
+    article.addEventListener("contextmenu", openReadingItemMenu);
+  });
+}
+
+function openReadingSearchDialog() {
+  elements.readingSearchDialogResults.innerHTML = "";
+  elements.readingSearchDialogInput.value = "";
+  if (!elements.readingSearchDialog.open) elements.readingSearchDialog.showModal();
+  requestAnimationFrame(() => elements.readingSearchDialogInput.focus());
+
+  let searchDebounce = null;
+  const handleInput = () => {
+    clearTimeout(searchDebounce);
+    const q = elements.readingSearchDialogInput.value.trim();
+    if (q.length < 1) {
+      elements.readingSearchDialogResults.innerHTML = "";
+      return;
+    }
+    searchDebounce = setTimeout(() => fetchReadingSearchResults(q), 400);
+  };
+  elements.readingSearchDialogInput.removeEventListener("input", elements.readingSearchDialogInput._handler);
+  elements.readingSearchDialogInput._handler = handleInput;
+  elements.readingSearchDialogInput.addEventListener("input", handleInput);
+}
+
+async function fetchReadingSearchResults(query) {
+  const resultsEl = elements.readingSearchDialogResults;
+  resultsEl.innerHTML = `<div class="watch-search-loading">Searching…</div>`;
+  try {
+    const url = `https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=12&fields=key,title,author_name,first_publish_year,number_of_pages_median,cover_i`;
+    const response = await fetch(url);
+    const data = await response.json();
+    if (!response.ok || !data.docs?.length) {
+      resultsEl.innerHTML = `<div class="watch-search-empty">No results found.</div>`;
+      return;
+    }
+    resultsEl.innerHTML = data.docs.map((doc) => {
+      const title = doc.title || "Unknown Title";
+      const authors = (doc.author_name || []).slice(0, 3);
+      const authorsStr = authors.join(", ");
+      const year = doc.first_publish_year ? String(doc.first_publish_year) : "";
+      const cover = doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg` : null;
+      const pageCount = doc.number_of_pages_median || null;
+      const olKey = doc.key || null;
+      const coverHtml = cover
+        ? `<img class="watch-result-poster" src="${escapeHtml(cover)}" alt="" aria-hidden="true" loading="lazy" />`
+        : `<div class="watch-result-poster watch-result-poster-placeholder"></div>`;
+      const packed = JSON.stringify({ olKey, title, authors, year, cover, pageCount, overview: null });
+      return `
+        <button class="watch-tmdb-result" type="button" data-reading-pick="${escapeHtml(packed)}">
+          ${coverHtml}
+          <span class="watch-result-title">${escapeHtml(title)}</span>
+          ${authorsStr ? `<span class="watch-result-year">${escapeHtml(authorsStr)}</span>` : ""}
+        </button>
+      `;
+    }).join("");
+    resultsEl.querySelectorAll("[data-reading-pick]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        let result;
+        try { result = JSON.parse(btn.dataset.readingPick); } catch { return; }
+        addReadingItemFromGoogle(result);
+        elements.readingSearchDialog.close();
+        renderReadingPlanner();
+      });
+    });
+  } catch {
+    resultsEl.innerHTML = `<div class="watch-search-error">Search failed. Please try again.</div>`;
+  }
+}
+
+function addReadingItemFromGoogle(result) {
+  const item = {
+    id: createId("read"),
+    title: result.title || "Unknown",
+    authors: Array.isArray(result.authors) ? result.authors : [],
+    status: "want",
+    googleBooksId: result.olKey || result.googleBooksId || null,
+    coverUrl: result.cover || null,
+    year: result.year || null,
+    pageCount: result.pageCount || null,
+    overview: result.overview || null,
+    format: null,
+    readDate: null,
+    rating: null,
+    readNotes: null,
+    categories: activeReadingCategory !== "all" ? [activeReadingCategory] : [],
+    createdAt: new Date().toISOString()
+  };
+  readingItemsList().push(item);
+  persist();
+}
+
+function openReadingItemMenu(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeFolderMenu();
+
+  const article = event.currentTarget;
+  const itemId = article.dataset.readingItem;
+  if (!itemId) return;
+
+  const item = readingItemById(itemId);
+  if (!item) return;
+
+  const statusOptions = [
+    { value: "want", label: "Want to Read" },
+    { value: "reading", label: "Currently Reading" },
+    { value: "read", label: "Finished" }
+  ];
+
+  const formatOptions = [
+    { value: "physical", label: "Physical" },
+    { value: "ebook", label: "eBook" },
+    { value: "audiobook", label: "Audiobook" }
+  ];
+
+  const allCategories = state.readingSettings?.categories || [];
+  const itemCategories = new Set(Array.isArray(item.categories) ? item.categories : []);
+
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu watch-item-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <div class="watch-context-status-group">
+      ${statusOptions.map((o) => `
+        <button type="button" role="menuitem" data-reading-ctx-status="${escapeHtml(itemId)}" data-status-value="${o.value}" class="${item.status === o.value ? "is-active" : ""}">
+          ${item.status === o.value ? "&#10003; " : ""}${o.label}
+        </button>
+      `).join("")}
+    </div>
+    <div class="watch-context-divider"></div>
+    <div class="watch-context-status-group">
+      ${formatOptions.map((o) => `
+        <button type="button" role="menuitem" data-reading-ctx-format="${escapeHtml(itemId)}" data-format-value="${o.value}" class="${item.format === o.value ? "is-active" : ""}">
+          ${item.format === o.value ? "&#10003; " : ""}${o.label}
+        </button>
+      `).join("")}
+    </div>
+    ${allCategories.length ? `
+    <div class="watch-context-divider"></div>
+    <div class="watch-context-category-group">
+      ${allCategories.map((c) => `
+        <button type="button" role="menuitem" data-reading-ctx-category="${escapeHtml(itemId)}" data-category-id="${escapeHtml(c.id)}" class="watch-ctx-category-btn${itemCategories.has(c.id) ? " is-active" : ""}">
+          ${itemCategories.has(c.id) ? "&#10003; " : ""}${escapeHtml(c.name)}
+        </button>
+      `).join("")}
+    </div>` : ""}
+    <div class="watch-context-divider"></div>
+    <button type="button" role="menuitem" data-reading-ctx-delete="${escapeHtml(itemId)}" class="danger-item">Delete</button>
+  `;
+
+  document.body.append(menu);
+  const rawX = event.clientX || 10;
+  const rawY = event.clientY || 10;
+  const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+
+  let handled = false;
+  const handle = (fn) => (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (handled) return;
+    handled = true;
+    closeFolderMenu();
+    fn(e);
+  };
+
+  menu.querySelectorAll("[data-reading-ctx-status]").forEach((btn) => {
+    const h = handle(() => {
+      if (btn.dataset.statusValue === "read") {
+        openReadingLogDialog(itemId);
+      } else {
+        const it = readingItemById(itemId);
+        if (it) { it.status = btn.dataset.statusValue; persist(); renderReadingPlanner(); }
+      }
+    });
+    btn.addEventListener("pointerdown", h);
+    btn.addEventListener("click", h);
+  });
+
+  menu.querySelectorAll("[data-reading-ctx-format]").forEach((btn) => {
+    const h = handle(() => {
+      const it = readingItemById(itemId);
+      if (!it) return;
+      it.format = it.format === btn.dataset.formatValue ? null : btn.dataset.formatValue;
+      persist();
+      renderReadingPlanner();
+    });
+    btn.addEventListener("pointerdown", h);
+    btn.addEventListener("click", h);
+  });
+
+  menu.querySelectorAll("[data-reading-ctx-category]").forEach((btn) => {
+    const h = handle(() => {
+      const it = readingItemById(itemId);
+      if (!it) return;
+      if (!Array.isArray(it.categories)) it.categories = [];
+      if (it.categories.includes(btn.dataset.categoryId)) {
+        it.categories = it.categories.filter((id) => id !== btn.dataset.categoryId);
+      } else {
+        it.categories.push(btn.dataset.categoryId);
+      }
+      persist();
+      renderReadingPlanner();
+    });
+    btn.addEventListener("pointerdown", h);
+    btn.addEventListener("click", h);
+  });
+
+  const delBtn = menu.querySelector("[data-reading-ctx-delete]");
+  if (delBtn) {
+    const h = handle(() => {
+      state.readingItems = readingItemsList().filter((i) => i.id !== itemId);
+      persist();
+      renderReadingPlanner();
+    });
+    delBtn.addEventListener("pointerdown", h);
+    delBtn.addEventListener("click", h);
+  }
+}
+
+function openReadingLogDialog(itemId) {
+  const item = readingItemById(itemId);
+  if (!item) return;
+  readingLogPendingId = itemId;
+  readingLogRating = item.rating ?? null;
+
+  elements.readingLogTitle.textContent = item.title;
+  elements.readingLogDate.value = item.readDate || new Date().toISOString().slice(0, 10);
+  elements.readingLogNotes.value = item.readNotes || "";
+  renderReadingLogStars(readingLogRating);
+
+  if (!elements.readingLogDialog.open) elements.readingLogDialog.showModal();
+}
+
+function renderReadingLogStars(rating) {
+  const container = elements.readingLogStars;
+  if (!container) return;
+  container.innerHTML = "";
+  for (let i = 1; i <= 5; i++) {
+    const star = document.createElement("button");
+    star.type = "button";
+    star.className = "watch-log-star";
+    star.dataset.value = i;
+    star.setAttribute("aria-label", `${i} star${i !== 1 ? "s" : ""}`);
+    const fill = rating >= i ? "full" : rating >= i - 0.5 ? "half" : "empty";
+    star.innerHTML = watchStarSvg(fill);
+    star.addEventListener("click", (e) => {
+      const rect = star.getBoundingClientRect();
+      const isLeftHalf = e.clientX - rect.left < rect.width / 2;
+      const newRating = isLeftHalf ? i - 0.5 : i;
+      readingLogRating = readingLogRating === newRating ? null : newRating;
+      renderReadingLogStars(readingLogRating);
+    });
+    star.addEventListener("mousemove", (e) => {
+      const rect = star.getBoundingClientRect();
+      const isLeftHalf = e.clientX - rect.left < rect.width / 2;
+      renderReadingLogStarsPreview(isLeftHalf ? i - 0.5 : i);
+    });
+    container.appendChild(star);
+  }
+  container.onmouseleave = () => renderReadingLogStars(readingLogRating);
+}
+
+function renderReadingLogStarsPreview(hoverRating) {
+  const stars = elements.readingLogStars?.querySelectorAll(".watch-log-star");
+  if (!stars) return;
+  stars.forEach((star, idx) => {
+    const i = idx + 1;
+    const fill = hoverRating >= i ? "full" : hoverRating >= i - 0.5 ? "half" : "empty";
+    star.innerHTML = watchStarSvg(fill);
+  });
+}
+
+function saveReadingLog() {
+  const item = readingItemById(readingLogPendingId);
+  if (!item) { elements.readingLogDialog.close(); return; }
+  item.readDate = elements.readingLogDate.value || new Date().toISOString().slice(0, 10);
+  item.rating = readingLogRating;
+  item.readNotes = elements.readingLogNotes.value.trim() || null;
+  item.status = "read";
+  readingLogPendingId = null;
+  readingLogRating = null;
+  elements.readingLogDialog.close();
+  persist();
+  renderReadingPlanner();
+}
+
+function skipReadingLog() {
+  const item = readingItemById(readingLogPendingId);
+  if (item) item.status = "read";
+  readingLogPendingId = null;
+  readingLogRating = null;
+  elements.readingLogDialog.close();
+  persist();
+  renderReadingPlanner();
+}
+
+function openReadingArchive() {
+  if (!elements.readingArchiveDialog || !elements.readingArchiveBody) return;
+  const read = readingItemsList()
+    .filter((i) => i.status === "read")
+    .sort((a, b) => (b.readDate || "").localeCompare(a.readDate || ""));
+
+  elements.readingArchiveBody.innerHTML = read.length
+    ? `<div class="watch-item-list">${read.map(readingArchiveItemTemplate).join("")}</div>`
+    : `<div class="empty-state">Nothing archived yet. Mark a book as Finished to send it here.</div>`;
+
+  elements.readingArchiveBody.querySelectorAll("[data-reading-archive-item]").forEach((article) => {
+    article.addEventListener("contextmenu", openReadingArchiveItemMenu);
+  });
+
+  if (!elements.readingArchiveDialog.open) elements.readingArchiveDialog.showModal();
+}
+
+function readingArchiveItemTemplate(item) {
+  const coverHtml = item.coverUrl
+    ? `<img class="reading-item-cover" src="${escapeHtml(item.coverUrl)}" alt="" aria-hidden="true" loading="lazy" />`
+    : `<div class="reading-item-cover reading-item-cover-placeholder"></div>`;
+
+  const authorsHtml = item.authors?.length
+    ? `<div class="reading-item-authors">${escapeHtml(item.authors.join(", "))}</div>`
+    : "";
+
+  const metaParts = [];
+  if (item.year) metaParts.push(item.year);
+  if (item.pageCount) metaParts.push(`${item.pageCount} pp`);
+  const metaHtml = metaParts.length ? `<div class="watch-item-meta">${escapeHtml(metaParts.join(" · "))}</div>` : "";
+
+  const readDateHtml = item.readDate
+    ? `<span class="watch-archive-date">Finished ${new Date(item.readDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>`
+    : "";
+
+  const ratingHtml = item.rating != null
+    ? `<div class="watch-archive-rating" aria-label="${item.rating} out of 5 stars">${watchArchiveStarsHtml(item.rating)}</div>`
+    : "";
+
+  const notesHtml = item.readNotes
+    ? `<p class="watch-archive-notes">${escapeHtml(item.readNotes)}</p>`
+    : "";
+
+  const formatLabels = { physical: "Physical", ebook: "eBook", audiobook: "Audiobook" };
+  const formatHtml = item.format
+    ? `<span class="reading-format-badge reading-format-${escapeHtml(item.format)}">${escapeHtml(formatLabels[item.format] || item.format)}</span>`
+    : "";
+
+  return `
+    <article class="do-task-item watch-item reading-item reading-archive-item" data-reading-archive-item="${escapeHtml(item.id)}">
+      <div class="watch-item-layout">
+        ${coverHtml}
+        <div class="watch-item-main">
+          <div class="watch-item-row">
+            <span class="watch-item-title">${escapeHtml(item.title)}</span>
+            ${formatHtml}
+          </div>
+          ${authorsHtml}
+          ${metaHtml}
+          ${ratingHtml}
+          ${readDateHtml}
+          ${notesHtml}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function openReadingArchiveItemMenu(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeFolderMenu();
+
+  const article = event.currentTarget;
+  const itemId = article.dataset.readingArchiveItem;
+  if (!itemId) return;
+
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu watch-item-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-reading-ctx-unarchive="${escapeHtml(itemId)}">Remove from Archive</button>
+    <div class="watch-context-divider"></div>
+    <button type="button" role="menuitem" data-reading-ctx-delete-archive="${escapeHtml(itemId)}" class="danger-item">Delete</button>
+  `;
+
+  document.body.append(menu);
+  const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+
+  let handled = false;
+  const handle = (fn) => (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (handled) return;
+    handled = true;
+    closeFolderMenu();
+    fn(e);
+  };
+
+  const unarchiveBtn = menu.querySelector("[data-reading-ctx-unarchive]");
+  if (unarchiveBtn) {
+    const h = handle(() => {
+      const it = readingItemById(itemId);
+      if (it) { it.status = "want"; it.readDate = null; persist(); openReadingArchive(); renderReadingPlanner(); }
+    });
+    unarchiveBtn.addEventListener("pointerdown", h);
+    unarchiveBtn.addEventListener("click", h);
+  }
+
+  const delBtn = menu.querySelector("[data-reading-ctx-delete-archive]");
+  if (delBtn) {
+    const h = handle(() => {
+      state.readingItems = readingItemsList().filter((i) => i.id !== itemId);
+      persist();
+      openReadingArchive();
+      renderReadingPlanner();
+    });
+    delBtn.addEventListener("pointerdown", h);
+    delBtn.addEventListener("click", h);
+  }
 }
 
 async function copyText(text, button, label) {

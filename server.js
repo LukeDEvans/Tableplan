@@ -31,8 +31,9 @@ const ROOT = __dirname;
 const DATA_DIR = process.env.EAT_DATA_DIR || path.join(ROOT, "data");
 const STATE_FILE = path.join(DATA_DIR, "tableplan-state.json");
 const BACKUP_DIR = process.env.EAT_BACKUP_DIR || path.join(os.homedir(), "Desktop", "Eat", "Backups");
-const MAX_BACKUPS = Number(process.env.EAT_MAX_BACKUPS || 5);
-const MAX_SAFETY_BACKUPS = Number(process.env.EAT_MAX_SAFETY_BACKUPS || 10);
+const MAX_BACKUPS = Number(process.env.EAT_MAX_BACKUPS || 20);
+const MAX_SAFETY_BACKUPS = Number(process.env.EAT_MAX_SAFETY_BACKUPS || 30);
+const BACKUP_MIN_AGE_MS = 48 * 60 * 60 * 1000; // always keep backups younger than 48 h
 const US_HOLIDAYS_ICS_URL = "https://calendar.google.com/calendar/ical/en.usa%23holiday%40group.v.calendar.google.com/public/basic.ics";
 const GOOGLE_PLACES_BASE_URL = "https://places.googleapis.com/v1";
 const GOOGLE_STORE_TYPES = ["grocery_store", "supermarket", "warehouse_store", "food_store", "market"];
@@ -97,6 +98,10 @@ const server = http.createServer(async (request, response) => {
     }
     if (url.pathname === "/api/email-interview") {
       await handleEmailInterview(request, response);
+      return;
+    }
+    if (url.pathname === "/api/auto-tag-grocery") {
+      await handleAutoTagGrocery(request, response);
       return;
     }
     if (url.pathname === "/api/ics-proxy") {
@@ -550,7 +555,8 @@ Return ONLY a valid JSON array of 6 strings — no explanation, no markdown fenc
       user: prefsContext
     });
     let questions;
-    try { questions = JSON.parse(raw.trim()); } catch { questions = raw.split("\n").filter(Boolean).slice(0, 6); }
+    const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+    try { questions = JSON.parse(cleaned); } catch { questions = cleaned.split("\n").map((s) => s.trim().replace(/^["'\d.\s-]+/, "").replace(/[",]+$/, "").trim()).filter((s) => s.length > 10).slice(0, 6); }
     sendJson(response, 200, { questions });
   } else if (body.step === "update") {
     const qa = (body.questions || []).map((q, i) => `Q: ${q}\nA: ${(body.answers || [])[i] || "(no answer)"}`).join("\n\n");
@@ -589,6 +595,34 @@ async function claudeCall(apiKey, { system, user, maxTokens = 1024 }) {
   if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b.error?.message || `Anthropic API error ${res.status}`); }
   const data = await res.json();
   return data.content?.[0]?.text || "";
+}
+
+async function handleAutoTagGrocery(request, response) {
+  if (request.method !== "POST") { sendJson(response, 405, { error: "Method not allowed." }); return; }
+  let body;
+  try { body = JSON.parse(await readRequestBody(request)); } catch { sendJson(response, 400, { error: "Invalid JSON." }); return; }
+
+  const items = Array.isArray(body.items) ? body.items.map(s => String(s).trim()).filter(Boolean) : [];
+  if (!items.length) { sendJson(response, 400, { error: "No items provided." }); return; }
+
+  const apiKey = String(process.env.ANTHROPIC_API_KEY || "").trim();
+  if (!apiKey) { sendJson(response, 503, { error: "ANTHROPIC_API_KEY not set in .env" }); return; }
+
+  const raw = await claudeCall(apiKey, {
+    system: `You are a nutrition tagger for the Daily Dozen eating plan. Given a list of grocery items, return a JSON object mapping each item name (exactly as given) to an array of Daily Dozen category IDs.
+Valid category IDs: beans, berries, other-fruits, cruciferous-vegetables, greens, other-vegetables, flaxseed, nuts-seeds, herbs-spices, whole-grains, beverages
+Rules:
+- Only include items that clearly fit a category. Omit items that don't belong to any Daily Dozen category (meat, dairy, eggs, processed food, oil, sugar, condiments, etc.).
+- An item may have multiple category IDs (e.g. kale → ["cruciferous-vegetables", "greens"]).
+- Return ONLY valid JSON — no explanation, no markdown fences.`,
+    user: `Tag these grocery items:\n${items.map((item, i) => `${i + 1}. ${item}`).join("\n")}`,
+    maxTokens: 2048
+  });
+
+  const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  let tags;
+  try { tags = JSON.parse(cleaned); } catch { sendJson(response, 500, { error: "AI returned invalid JSON." }); return; }
+  sendJson(response, 200, { tags });
 }
 
 async function handleWeeklyEmail(request, response) {
@@ -919,6 +953,21 @@ async function handleState(request, response) {
 
 async function handleBackup(request, response) {
   if (request.method === "GET") {
+    const fileName = new URL(request.url, "http://localhost").searchParams.get("file");
+    if (fileName) {
+      if (!/^eat-(backup|safety)-[\w.-]+\.json$/.test(fileName)) {
+        sendJson(response, 400, { error: "Invalid backup file name." });
+        return;
+      }
+      const filePath = path.join(BACKUP_DIR, fileName);
+      try {
+        const data = await fs.readFile(filePath, "utf8");
+        sendJson(response, 200, JSON.parse(data));
+      } catch (error) {
+        sendJson(response, error.code === "ENOENT" ? 404 : 500, { error: "Backup file not found." });
+      }
+      return;
+    }
     sendJson(response, 200, await backupStatus());
     return;
   }
@@ -1059,18 +1108,20 @@ function stateChecksum(state) {
 
 async function pruneOldBackups() {
   const backups = await backupFiles();
-  backups
-    .filter((backup) => backup.fileName.startsWith("eat-backup-"))
-    .slice(MAX_BACKUPS)
-    .forEach((backup) => {
-      fs.unlink(backup.filePath).catch(() => {});
-    });
-  backups
-    .filter((backup) => backup.fileName.startsWith("eat-safety-"))
-    .slice(MAX_SAFETY_BACKUPS)
-    .forEach((backup) => {
-      fs.unlink(backup.filePath).catch(() => {});
-    });
+  const cutoff = Date.now() - BACKUP_MIN_AGE_MS;
+  pruneBackupGroup(backups.filter((b) => b.fileName.startsWith("eat-backup-")), MAX_BACKUPS, cutoff);
+  pruneBackupGroup(backups.filter((b) => b.fileName.startsWith("eat-safety-")), MAX_SAFETY_BACKUPS, cutoff);
+}
+
+function pruneBackupGroup(backups, minKeep, cutoffMs) {
+  // Always keep the newest minKeep entries. Also keep anything younger than cutoffMs
+  // (48 h) so yesterday's data is always recoverable. Hard cap at minKeep * 10 to
+  // prevent unbounded growth if the app is used heavily every day.
+  const hardCap = minKeep * 10;
+  backups.slice(hardCap).forEach((b) => fs.unlink(b.filePath).catch(() => {}));
+  backups.slice(0, hardCap)
+    .filter((b, i) => i >= minKeep && b.mtimeMs < cutoffMs)
+    .forEach((b) => fs.unlink(b.filePath).catch(() => {}));
 }
 
 function readRequestBody(request) {

@@ -4,6 +4,8 @@ const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const { scanRecipeFromImages } = require("./recipe-scan");
+const { scanReceiptFromImages } = require("./receipt-scan");
+const { estimateRecipeNutrition } = require("./nutrition-provider");
 
 const PORT = Number(process.env.PORT || 4174);
 const ROOT = __dirname;
@@ -11,7 +13,10 @@ const DATA_DIR = path.join(ROOT, "data");
 const STATE_FILE = path.join(DATA_DIR, "tableplan-state.json");
 const BACKUP_DIR = process.env.EAT_BACKUP_DIR || path.join(os.homedir(), "Desktop", "Eat", "Backups");
 const MAX_BACKUPS = Number(process.env.EAT_MAX_BACKUPS || 5);
+const MAX_SAFETY_BACKUPS = Number(process.env.EAT_MAX_SAFETY_BACKUPS || 10);
 const US_HOLIDAYS_ICS_URL = "https://calendar.google.com/calendar/ical/en.usa%23holiday%40group.v.calendar.google.com/public/basic.ics";
+const GOOGLE_PLACES_BASE_URL = "https://places.googleapis.com/v1";
+const GOOGLE_STORE_TYPES = ["grocery_store", "supermarket", "warehouse_store", "food_store", "market"];
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -31,12 +36,24 @@ const server = http.createServer(async (request, response) => {
       await handleRecipeScan(request, response);
       return;
     }
+    if (url.pathname === "/api/scan-receipt") {
+      await handleReceiptScan(request, response);
+      return;
+    }
+    if (url.pathname === "/api/estimate-nutrition") {
+      await handleNutritionEstimate(request, response);
+      return;
+    }
     if (url.pathname === "/api/holidays") {
       await handleHolidays(response);
       return;
     }
     if (url.pathname === "/api/calendars" || url.pathname === "/api/birthdays") {
       await handleCalendarSync(url, response);
+      return;
+    }
+    if (url.pathname === "/api/google-places") {
+      await handleGooglePlaces(url, response);
       return;
     }
     if (url.pathname === "/api/state") {
@@ -136,6 +153,44 @@ async function handleRecipeScan(request, response) {
   }
 }
 
+async function handleReceiptScan(request, response) {
+  if (request.method !== "POST") {
+    sendJson(response, 405, { error: "Method not allowed." });
+    return;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(await readRequestBody(request));
+  } catch {
+    sendJson(response, 400, { error: "Invalid JSON body." });
+    return;
+  }
+  try {
+    sendJson(response, 200, { receipt: await scanReceiptFromImages(parsed.images || []) });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "Receipt scan failed." });
+  }
+}
+
+async function handleNutritionEstimate(request, response) {
+  if (request.method !== "POST") {
+    sendJson(response, 405, { error: "Method not allowed." });
+    return;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(await readRequestBody(request));
+  } catch {
+    sendJson(response, 400, { error: "Invalid JSON body." });
+    return;
+  }
+  try {
+    sendJson(response, 200, { estimate: await estimateRecipeNutrition(parsed) });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "Nutrition estimate failed." });
+  }
+}
+
 async function handleHolidays(response) {
   const fetched = await fetch(US_HOLIDAYS_ICS_URL, {
     headers: {
@@ -173,6 +228,120 @@ async function handleCalendarSync(url, response) {
   }
 
   sendJson(response, 200, { events: parseCalendarIcs(await fetched.text()) });
+}
+
+async function handleGooglePlaces(url, response) {
+  const apiKey = String(process.env.GOOGLE_MAPS_API_KEY || process.env.Google_Maps || "").trim();
+  if (!apiKey) {
+    sendJson(response, 503, { error: "Google Maps is not configured yet." });
+    return;
+  }
+  const action = String(url.searchParams.get("action") || "autocomplete");
+  try {
+    if (action === "details") {
+      const store = await fetchGooglePlaceDetails({
+        apiKey,
+        placeId: url.searchParams.get("placeId"),
+        sessionToken: url.searchParams.get("sessionToken"),
+        name: url.searchParams.get("name")
+      });
+      sendJson(response, 200, { store });
+      return;
+    }
+    const suggestions = await fetchGooglePlaceSuggestions({
+      apiKey,
+      input: url.searchParams.get("input"),
+      sessionToken: url.searchParams.get("sessionToken"),
+      latitude: url.searchParams.get("latitude"),
+      longitude: url.searchParams.get("longitude")
+    });
+    sendJson(response, 200, { suggestions });
+  } catch (error) {
+    sendJson(response, error.statusCode || 500, { error: error.message || "Google Places request failed." });
+  }
+}
+
+async function fetchGooglePlaceSuggestions({ apiKey, input, sessionToken, latitude, longitude }) {
+  const query = String(input || "").trim();
+  if (query.length < 2) return [];
+  const locationRestriction = googlePlacesLocationRestriction(latitude, longitude);
+  const fetched = await fetch(`${GOOGLE_PLACES_BASE_URL}/places:autocomplete`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": "suggestions.placePrediction.placeId,suggestions.placePrediction.structuredFormat,suggestions.placePrediction.text"
+    },
+    body: JSON.stringify({
+      input: query,
+      sessionToken: cleanGooglePlacesSessionToken(sessionToken),
+      includedPrimaryTypes: GOOGLE_STORE_TYPES,
+      includedRegionCodes: ["us"],
+      languageCode: "en",
+      regionCode: "us",
+      ...(locationRestriction ? { locationRestriction } : {})
+    })
+  });
+  const body = await readGooglePlacesResponse(fetched);
+  return (body.suggestions || [])
+    .map((suggestion) => suggestion.placePrediction)
+    .filter((prediction) => prediction?.placeId)
+    .map((prediction) => ({
+      placeId: prediction.placeId,
+      name: prediction.structuredFormat?.mainText?.text || prediction.text?.text || "Store",
+      address: prediction.structuredFormat?.secondaryText?.text || ""
+    }));
+}
+
+function googlePlacesLocationRestriction(latitude, longitude) {
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return {
+    circle: {
+      center: { latitude: lat, longitude: lng },
+      radius: 50000
+    }
+  };
+}
+
+async function fetchGooglePlaceDetails({ apiKey, placeId, sessionToken, name }) {
+  const id = String(placeId || "").trim();
+  if (!id) throw googlePlacesRequestError(400, "Missing Google Place ID.");
+  const params = new URLSearchParams({ languageCode: "en", regionCode: "US" });
+  const token = cleanGooglePlacesSessionToken(sessionToken);
+  if (token) params.set("sessionToken", token);
+  const fetched = await fetch(`${GOOGLE_PLACES_BASE_URL}/places/${encodeURIComponent(id)}?${params}`, {
+    headers: {
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": "id,formattedAddress,location,types"
+    }
+  });
+  const place = await readGooglePlacesResponse(fetched);
+  return {
+    placeId: place.id || id,
+    name: String(name || "").trim() || "Store",
+    address: place.formattedAddress || "",
+    latitude: Number(place.location?.latitude) || null,
+    longitude: Number(place.location?.longitude) || null,
+    types: Array.isArray(place.types) ? place.types : []
+  };
+}
+
+async function readGooglePlacesResponse(response) {
+  const body = await response.json().catch(() => ({}));
+  if (response.ok) return body;
+  throw googlePlacesRequestError(response.status, body.error?.message || `Google Places returned ${response.status}.`);
+}
+
+function cleanGooglePlacesSessionToken(value) {
+  return String(value || "").trim().slice(0, 128);
+}
+
+function googlePlacesRequestError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
 }
 
 function parseHolidayIcs(text) {
@@ -357,7 +526,10 @@ async function handleBackup(request, response) {
     return;
   }
 
-  const backup = await writeRotatingBackup(parsed.state || parsed);
+  const backup = await writeRotatingBackup(parsed.state || parsed, {
+    protected: Boolean(parsed.protected),
+    reason: String(parsed.reason || "")
+  });
   sendJson(response, 200, { ok: true, backup });
 }
 
@@ -378,17 +550,23 @@ async function writeStoredState(state) {
   await fs.rename(tempFile, STATE_FILE);
 }
 
-async function writeRotatingBackup(state) {
+async function writeRotatingBackup(state, options = {}) {
   await fs.mkdir(BACKUP_DIR, { recursive: true });
+  const checksum = stateChecksum(state);
+  const existing = await findBackupByChecksum(checksum, Boolean(options.protected));
+  if (existing) return { fileName: existing.fileName, folder: BACKUP_DIR, deduplicated: true };
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const fileName = `eat-backup-${timestamp}.json`;
+  const prefix = options.protected ? "eat-safety" : "eat-backup";
+  const fileName = `${prefix}-${timestamp}.json`;
   const filePath = path.join(BACKUP_DIR, fileName);
   const backupPayload = {
     app: "Live",
     version: 1,
     createdAt: new Date().toISOString(),
+    protected: Boolean(options.protected),
+    reason: String(options.reason || ""),
     state,
-    checksum: stateChecksum(state)
+    checksum
   };
   await fs.writeFile(filePath, `${JSON.stringify(backupPayload, null, 2)}\n`);
   await pruneOldBackups();
@@ -413,7 +591,7 @@ async function backupStatus() {
 async function backupFiles() {
   const entries = await fs.readdir(BACKUP_DIR, { withFileTypes: true });
   const backups = await Promise.all(entries
-    .filter((entry) => entry.isFile() && /^eat-backup-.+\.json$/.test(entry.name))
+    .filter((entry) => entry.isFile() && /^eat-(backup|safety)-.+\.json$/.test(entry.name))
     .map(async (entry) => {
       const filePath = path.join(BACKUP_DIR, entry.name);
       const stat = await fs.stat(filePath);
@@ -427,6 +605,20 @@ async function backupFiles() {
       };
     }));
   return backups.sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+async function findBackupByChecksum(checksum, protectedBackup) {
+  const prefix = protectedBackup ? "eat-safety-" : "eat-backup-";
+  const backups = (await backupFiles()).filter((backup) => backup.fileName.startsWith(prefix));
+  for (const backup of backups) {
+    try {
+      const parsed = JSON.parse(await fs.readFile(backup.filePath, "utf8"));
+      if (parsed.checksum === checksum) return backup;
+    } catch {
+      // Invalid files remain visible to backup health and are ignored for deduplication.
+    }
+  }
+  return null;
 }
 
 async function validateBackupFile(filePath) {
@@ -457,7 +649,14 @@ function stateChecksum(state) {
 async function pruneOldBackups() {
   const backups = await backupFiles();
   backups
+    .filter((backup) => backup.fileName.startsWith("eat-backup-"))
     .slice(MAX_BACKUPS)
+    .forEach((backup) => {
+      fs.unlink(backup.filePath).catch(() => {});
+    });
+  backups
+    .filter((backup) => backup.fileName.startsWith("eat-safety-"))
+    .slice(MAX_SAFETY_BACKUPS)
     .forEach((backup) => {
       fs.unlink(backup.filePath).catch(() => {});
     });
@@ -468,7 +667,7 @@ function readRequestBody(request) {
     let body = "";
     request.on("data", (chunk) => {
       body += chunk;
-      if (body.length > 5_000_000) {
+      if (body.length > 15_000_000) {
         request.destroy();
         reject(new Error("Request body too large."));
       }

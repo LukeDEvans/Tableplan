@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=google-store-locations-3" />
+    <link rel="stylesheet" href="./styles.css?v=daily-dozen-1" />
   </head>
   <body>
     <div class="app-shell">
@@ -31,8 +31,10 @@
                 <button type="button" id="menuAutoRulesBtn">Auto-Fill Rules</button>
                 <button type="button" id="menuTagsBtn">Tags</button>
                 <button type="button" id="menuGroceryListBtn">Grocery List</button>
+                <button type="button" id="menuGroceryPricingBtn">Receipts & Price History</button>
                 <button type="button" id="menuGroceryItemsBtn">Grocery Items</button>
                 <button type="button" id="menuIngredientOptionsBtn">Ingredient Options</button>
+                <button type="button" id="menuFoodHealthSettingsBtn">Food Health Settings</button>
                 <button type="button" id="menuRecurringTasksBtn">Recurring Tasks</button>
                 <button type="button" id="menuWorkoutLibraryBtn">Workouts</button>
                 <button type="button" id="menuWorkoutLogsBtn">Workout Logs</button>
@@ -152,6 +154,7 @@
                   <button type="button" id="openTagsBtn">Tags</button>
                   <button type="button" id="openGroceryLibraryBtn">Grocery Items</button>
                   <button type="button" id="openIngredientOptionsBtn">Ingredient Options</button>
+                  <button type="button" id="openFoodHealthSettingsBtn">Food Health Settings</button>
                 </div>
               </div>
             </section>
@@ -568,6 +571,57 @@
         </section>
       </dialog>
 
+      <dialog class="page-dialog" id="dailyDozenPageDialog">
+        <section class="panel app-page-panel daily-dozen-page food-health-page" aria-label="Food Health">
+          <div class="panel-head">
+            <div class="section-heading">
+              <div>
+                <h2>Food Health</h2>
+                <p>Nutrition and checklist values are estimates for personal tracking, not medical advice.</p>
+              </div>
+            </div>
+            <button class="icon-btn" type="button" id="closeDailyDozenPageBtn" title="Close Food Health" aria-label="Close Food Health">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div class="daily-dozen-toolbar">
+            <button class="secondary-btn" type="button" id="dailyDozenTodayBtn">Today</button>
+            <label>
+              Date
+              <input id="dailyDozenDate" type="date" />
+            </label>
+          </div>
+          <div class="daily-dozen-members" id="dailyDozenMembers" role="tablist" aria-label="Family member"></div>
+          <div class="daily-dozen-suggestion" id="dailyDozenSuggestion" hidden></div>
+          <div class="food-health-actions">
+            <button class="primary-btn" type="button" id="addFoodLogBtn">Add food</button>
+            <button class="secondary-btn" type="button" id="ateRecipeBtn">Ate recipe</button>
+          </div>
+          <section class="food-health-section">
+            <div class="food-health-section-head">
+              <div>
+                <h3 id="foodHealthChecklistTitle">Daily Dozen</h3>
+                <small id="foodHealthChecklistNote">Inspired by Dr. Greger's Daily Dozen / NutritionFacts.org.</small>
+              </div>
+            </div>
+            <div class="daily-dozen-grid" id="dailyDozenGrid"></div>
+          </section>
+          <section class="food-health-section">
+            <div class="food-health-section-head">
+              <div>
+                <h3>Estimated nutrition</h3>
+                <small id="foodHealthTargetNote">Estimated from logged foods; actual values vary.</small>
+              </div>
+            </div>
+            <div class="food-health-nutrition" id="foodHealthNutrition"></div>
+          </section>
+          <section class="food-health-section">
+            <div class="food-health-section-head"><h3>Food log</h3></div>
+            <div class="food-health-meals" id="foodHealthMeals"></div>
+          </section>
+        </section>
+      </dialog>
+
     </div>
 
     <dialog class="recipe-dialog" id="recipeDialog">
@@ -703,6 +757,32 @@
       </div>
     </dialog>
 
+    <dialog class="recipe-dialog nutrition-estimate-dialog" id="nutritionEstimateDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Estimate</p>
+            <h2>Review nutrition matches</h2>
+          </div>
+          <button class="icon-btn" type="button" id="closeNutritionEstimateBtn" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <p class="nutrition-estimate-warning">Estimated from ingredient data; actual values vary.</p>
+        <label class="nutrition-estimate-servings">
+          Servings
+          <input id="nutritionEstimateServings" type="number" min="1" step="1" />
+        </label>
+        <p class="import-status" id="nutritionEstimateStatus"></p>
+        <div class="nutrition-match-list" id="nutritionMatchList"></div>
+        <section class="recipe-view-section nutrition-estimate-summary" id="nutritionEstimateSummary"></section>
+        <div class="dialog-actions">
+          <button class="secondary-btn" type="button" id="cancelNutritionEstimateBtn">Cancel</button>
+          <button class="primary-btn" type="button" id="saveNutritionEstimateBtn">Save estimate</button>
+        </div>
+      </div>
+    </dialog>
+
     <dialog class="recipe-dialog" id="importDialog">
       <div class="recipe-form">
         <div class="dialog-head">
@@ -757,6 +837,7 @@
             <button class="secondary-btn" type="button" id="scanCameraBtn">Take photo</button>
             <button class="secondary-btn" type="button" id="clearScanImagesBtn">Clear photos</button>
           </div>
+          <div class="scan-image-preview-list" id="scanImagePreviewList" aria-label="Cookbook photo previews"></div>
         </div>
         <p class="import-status" id="scanStatus">Upload one or more clear photos, then review the extracted recipe before saving.</p>
         <div class="dialog-actions">
@@ -854,6 +935,135 @@
       </div>
     </dialog>
 
+    <dialog class="recipe-dialog auth-dialog" id="dailyDozenTagDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Grocery item</p>
+            <h2 id="dailyDozenTagTitle">Daily Dozen tags</h2>
+          </div>
+          <button class="icon-btn" id="closeDailyDozenTagBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <p class="muted-note">An item may contribute to more than one category. Confidence and notes help recipe suggestions stay appropriately cautious.</p>
+        <div class="daily-dozen-tag-list" id="dailyDozenTagList"></div>
+        <div class="dialog-actions">
+          <span></span>
+          <div>
+            <button class="secondary-btn" type="button" id="cancelDailyDozenTagBtn">Cancel</button>
+            <button class="primary-btn" type="button" id="saveDailyDozenTagBtn">Save</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog food-log-dialog" id="foodLogDialog">
+      <form class="recipe-form" id="foodLogForm">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label" id="foodLogPersonLabel">Food log</p>
+            <h2 id="foodLogTitle">Add food</h2>
+          </div>
+          <button class="icon-btn" id="closeFoodLogBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div class="form-grid">
+          <label>
+            Source
+            <select id="foodLogSourceType">
+              <option value="manual">Manual entry</option>
+              <option value="recipe">Recipe</option>
+              <option value="grocery_item">Grocery item</option>
+              <option value="leftovers">Leftovers</option>
+            </select>
+          </label>
+          <label>
+            Meal
+            <select id="foodLogMealType">
+              <option value="breakfast">Breakfast</option>
+              <option value="lunch">Lunch</option>
+              <option value="dinner">Dinner</option>
+              <option value="snack">Snack</option>
+            </select>
+          </label>
+        </div>
+        <label>
+          Food
+          <select id="foodLogSourceSelect"></select>
+          <input id="foodLogManualName" placeholder="Food name" />
+        </label>
+        <div class="form-grid">
+          <label>
+            Serving amount
+            <select id="foodLogServingPreset">
+              <option value="1">1 serving</option>
+              <option value="0.5">1/2 serving</option>
+              <option value="custom">Custom</option>
+            </select>
+          </label>
+          <label id="foodLogCustomServingWrap" hidden>
+            Custom serving
+            <input id="foodLogCustomServing" type="number" min="0.01" step="0.25" value="1" />
+          </label>
+        </div>
+        <label>
+          Notes
+          <textarea id="foodLogNotes" rows="2"></textarea>
+        </label>
+        <fieldset class="food-log-nutrition-fields" id="foodLogNutritionFields">
+          <legend>Estimated nutrition per serving</legend>
+          <div id="foodLogNutritionInputs"></div>
+        </fieldset>
+        <fieldset class="food-log-checklist-review">
+          <legend>Suggested checklist contributions</legend>
+          <p class="muted-note">Confirm only the servings you want counted.</p>
+          <div id="foodLogChecklistSuggestions"></div>
+        </fieldset>
+        <div class="dialog-actions">
+          <button class="danger-btn" type="button" id="deleteFoodLogBtn" hidden>Delete</button>
+          <div>
+            <button class="secondary-btn" type="button" id="cancelFoodLogBtn">Cancel</button>
+            <button class="primary-btn" type="button" id="saveFoodLogBtn">Save</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="recipe-dialog food-health-settings-dialog" id="foodHealthSettingsDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div><h2>Food Health Settings</h2></div>
+          <button class="icon-btn" id="closeFoodHealthSettingsBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div class="daily-dozen-members" id="foodHealthSettingsMembers" role="tablist" aria-label="Family member"></div>
+        <label>
+          Health checklist template
+          <select id="foodHealthTemplateSelect"></select>
+        </label>
+        <p class="muted-note" id="foodHealthTemplateDescription"></p>
+        <section class="food-health-settings-section">
+          <h3>Checklist items</h3>
+          <div id="foodHealthChecklistSettings"></div>
+        </section>
+        <section class="food-health-settings-section">
+          <h3>Optional estimated nutrition targets</h3>
+          <p class="muted-note" id="foodHealthNutritionTargetNote"></p>
+          <div class="food-health-target-grid" id="foodHealthNutritionTargets"></div>
+        </section>
+        <div class="dialog-actions">
+          <span></span>
+          <div>
+            <button class="secondary-btn" type="button" id="cancelFoodHealthSettingsBtn">Cancel</button>
+            <button class="primary-btn" type="button" id="saveFoodHealthSettingsBtn">Save</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
     <dialog class="recipe-dialog auth-dialog" id="groceryStoresDialog">
       <div class="recipe-form">
         <div class="dialog-head">
@@ -879,6 +1089,146 @@
             <button class="primary-btn" type="button" id="doneGroceryStoresBtn">Done</button>
           </div>
         </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog auth-dialog" id="groceryStoreLayoutDialog">
+      <form class="recipe-form" id="groceryStoreLayoutForm">
+        <div class="dialog-head">
+          <div>
+            <h2>Store Layout</h2>
+          </div>
+          <button class="icon-btn" id="closeGroceryStoreLayoutBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <label>
+          Store name
+          <input id="groceryStoreLayoutName" required />
+        </label>
+        <label>
+          Address
+          <input id="groceryStoreLayoutAddress" />
+        </label>
+        <div class="grocery-store-layout-heading">
+          <strong>Sections</strong>
+          <small>Drag sections into the order you walk through the store.</small>
+        </div>
+        <div class="grocery-store-layout-list" id="groceryStoreLayoutList"></div>
+        <div class="inline-form grocery-store-section-form">
+          <input id="groceryStoreSectionInput" placeholder="Add section" autocomplete="off" />
+          <button class="icon-btn" id="addGroceryStoreSectionBtn" type="button" title="Add section" aria-label="Add section">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          </button>
+        </div>
+        <div class="dialog-actions">
+          <span></span>
+          <div>
+            <button class="primary-btn" type="submit">Save</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="recipe-dialog auth-dialog" id="groceryPricingDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div><h2>Price History</h2></div>
+          <button class="icon-btn" id="closeGroceryPricingBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <button class="primary-btn receipt-scan-launch" id="openReceiptScanBtn" type="button">Scan receipt</button>
+        <div class="grocery-pricing-settings">
+          <label>
+            Extra-store cost
+            <span class="grocery-price-input-prefix"><span>$</span><input id="groceryStopPenalty" type="number" min="0" step="0.25" /></span>
+          </label>
+          <label class="grocery-pricing-toggle">
+            <input id="groceryPriceRoutingEnabled" type="checkbox" />
+            Estimate grocery stores from past receipts
+          </label>
+        </div>
+        <form class="grocery-price-form" id="groceryPriceForm">
+          <select id="groceryPriceStore" aria-label="Store" required></select>
+          <input id="groceryPriceItem" placeholder="Grocery item" autocomplete="off" required />
+          <input id="groceryPriceProduct" placeholder="Matched product name" />
+          <label>Price <input id="groceryPriceAmount" type="number" min="0.01" step="0.01" required /></label>
+          <label>Package quantity <input id="groceryPricePackageQuantity" type="number" min="0.01" step="0.01" value="1" required /></label>
+          <select id="groceryPricePackageUnit" aria-label="Package unit">
+            <option value="each">each</option>
+            <option value="oz">oz</option>
+            <option value="lb">lb</option>
+            <option value="fl oz">fl oz</option>
+            <option value="pt">pt</option>
+            <option value="qt">qt</option>
+            <option value="gal">gal</option>
+            <option value="g">g</option>
+            <option value="kg">kg</option>
+            <option value="ml">ml</option>
+            <option value="l">l</option>
+            <option value="count">count</option>
+          </select>
+          <select id="groceryPriceConfidence" aria-label="Match confidence">
+            <option value="1">Exact match</option>
+            <option value="0.8">Close match</option>
+            <option value="0.55">Estimated match</option>
+          </select>
+          <button class="primary-btn" type="submit">Save price</button>
+        </form>
+        <p class="grocery-price-help">Estimates use your saved receipts and manual corrections. They are not live prices.</p>
+        <div class="receipt-price-trends" id="receiptPriceTrends"></div>
+        <div class="grocery-price-observations" id="groceryPriceObservations"></div>
+        <div class="dialog-actions">
+          <span></span>
+          <button class="primary-btn" id="doneGroceryPricingBtn" type="button">Done</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog receipt-dialog" id="receiptScanDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div><h2>Scan receipt</h2></div>
+          <button class="icon-btn" id="closeReceiptScanBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div class="scan-picker">
+          <label>
+            Receipt photos
+            <input id="receiptImages" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/*" multiple />
+          </label>
+          <input class="visually-hidden" id="receiptCameraImage" type="file" accept="image/*" capture="environment" />
+          <div class="scan-picker-actions">
+            <button class="secondary-btn" type="button" id="receiptCameraBtn">Take photo</button>
+            <button class="secondary-btn" type="button" id="clearReceiptImagesBtn">Clear photos</button>
+          </div>
+          <div class="scan-image-preview-list" id="receiptImagePreviewList" aria-label="Receipt photo previews"></div>
+        </div>
+        <p class="import-status" id="receiptScanStatus">Upload a clear receipt photo, then review every line before saving.</p>
+        <button class="primary-btn" id="scanReceiptImagesBtn" type="button">Read receipt</button>
+        <form class="receipt-review" id="receiptReviewForm" hidden>
+          <div class="receipt-review-meta">
+            <label>Store <input id="receiptStoreName" required /></label>
+            <label>Linked store <select id="receiptStoreId"></select></label>
+            <label>Date <input id="receiptPurchaseDate" type="date" required /></label>
+            <label>Subtotal <input id="receiptSubtotal" type="number" min="0" step="0.01" /></label>
+            <label>Discounts <input id="receiptDiscounts" type="number" min="0" step="0.01" /></label>
+            <label>Tax <input id="receiptTax" type="number" min="0" step="0.01" /></label>
+            <label>Fees <input id="receiptFees" type="number" min="0" step="0.01" /></label>
+            <label>Total <input id="receiptTotal" type="number" min="0" step="0.01" /></label>
+          </div>
+          <div class="receipt-line-heading">
+            <strong>Receipt items</strong>
+            <button class="secondary-btn compact-btn" id="addReceiptLineBtn" type="button">Add line</button>
+          </div>
+          <div class="receipt-line-list" id="receiptLineList"></div>
+          <div class="dialog-actions">
+            <button class="secondary-btn" id="cancelReceiptReviewBtn" type="button">Cancel</button>
+            <button class="primary-btn" type="submit">Save receipt</button>
+          </div>
+        </form>
       </div>
     </dialog>
 
@@ -1202,7 +1552,19 @@
         const isLocalPreview = ["localhost", "127.0.0.1"].includes(window.location.hostname);
         if (!isLocalPreview) return;
 
-        const watchedFiles = ["./index.html", "./styles.css", "./app.js", "./supabase-config.js"];
+        const watchedFiles = [
+          "./index.html",
+          "./styles.css",
+          "./app.js",
+          "./grocery-catalog.js",
+          "./daily-dozen.js",
+          "./food-health-checklists.js",
+          "./food-health.js",
+          "./meal-plan-servings.js",
+          "./receipt-domain.js",
+          "./nutrition-domain.js",
+          "./supabase-config.js"
+        ];
         const signatures = new Map();
 
         async function fileSignature(path) {
@@ -1214,14 +1576,18 @@
         }
 
         async function checkForUpdates() {
-          for (const file of watchedFiles) {
-            const nextSignature = await fileSignature(file);
-            const previousSignature = signatures.get(file);
-            if (previousSignature && previousSignature !== nextSignature) {
-              window.location.reload();
-              return;
+          try {
+            for (const file of watchedFiles) {
+              const nextSignature = await fileSignature(file);
+              const previousSignature = signatures.get(file);
+              if (previousSignature && previousSignature !== nextSignature) {
+                window.location.reload();
+                return;
+              }
+              signatures.set(file, nextSignature);
             }
-            signatures.set(file, nextSignature);
+          } catch {
+            // The local helper may be restarting; the next interval will retry.
           }
         }
 
@@ -1231,8 +1597,15 @@
         });
       })();
     </script>
+    <script src="./receipt-domain.js?v=nutrition-estimate-1"></script>
+    <script src="./nutrition-domain.js?v=nutrition-estimate-1"></script>
+    <script src="./grocery-catalog.js?v=grocery-catalog-1"></script>
+    <script src="./daily-dozen.js?v=daily-dozen-1"></script>
+    <script src="./food-health-checklists.js?v=food-health-1"></script>
+    <script src="./food-health.js?v=food-health-1"></script>
+    <script src="./meal-plan-servings.js?v=meal-plan-servings-1"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./supabase-config.js?v=auth-deploy-1"></script>
-    <script src="./app.js?v=google-store-locations-4"></script>
+    <script src="./app.js?v=food-health-1"></script>
   </body>
 </html>

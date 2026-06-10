@@ -167,6 +167,19 @@ let selectedGroceryWeekKey = "";
 let currentActiveRecipeViewId = "";
 const activeRecipeScrollPositions = new Map();
 let scanRecipeFiles = [];
+let receiptScanFiles = [];
+let scanRecipeImageEdits = new Map();
+let receiptImageEdits = new Map();
+let pendingReceiptDraft = null;
+let pendingNutritionEstimate = null;
+let pendingNutritionRecipeId = "";
+let activeDailyDozenMemberId = "luke";
+let activeDailyDozenDate = "";
+let pendingDailyDozenRecipeId = "";
+let editingDailyDozenGroceryItem = "";
+let editingFoodLogEntryId = "";
+let activeFoodHealthSettingsMemberId = "luke";
+let editingFoodHealthTemplateId = "";
 let pendingRecipePhotoFile = null;
 let pendingCookSessionPhotoFile = null;
 let activeAppArea = "home";
@@ -186,6 +199,9 @@ let groceryStoreSearchSessionToken = "";
 let groceryStoreSearchSuggestions = [];
 let groceryStoreSearchLocation = null;
 let groceryStoreLocationPromise = null;
+let draggedGroceryStoreId = "";
+let activeGroceryStoreLayoutId = "";
+let draggedGroceryStoreSectionId = "";
 
 const elements = {
   weekLabel: document.querySelector("#weekLabel"),
@@ -216,8 +232,10 @@ const elements = {
   menuAutoRulesBtn: document.querySelector("#menuAutoRulesBtn"),
   menuTagsBtn: document.querySelector("#menuTagsBtn"),
   menuGroceryListBtn: document.querySelector("#menuGroceryListBtn"),
+  menuGroceryPricingBtn: document.querySelector("#menuGroceryPricingBtn"),
   menuGroceryItemsBtn: document.querySelector("#menuGroceryItemsBtn"),
   menuIngredientOptionsBtn: document.querySelector("#menuIngredientOptionsBtn"),
+  menuFoodHealthSettingsBtn: document.querySelector("#menuFoodHealthSettingsBtn"),
   menuRecurringTasksBtn: document.querySelector("#menuRecurringTasksBtn"),
   menuWorkoutLibraryBtn: document.querySelector("#menuWorkoutLibraryBtn"),
   menuWorkoutLogsBtn: document.querySelector("#menuWorkoutLogsBtn"),
@@ -252,6 +270,20 @@ const elements = {
   groceriesPageDialog: document.querySelector("#groceriesPageDialog"),
   closeRecipeBoxPageBtn: document.querySelector("#closeRecipeBoxPageBtn"),
   closeGroceriesPageBtn: document.querySelector("#closeGroceriesPageBtn"),
+  dailyDozenPageDialog: document.querySelector("#dailyDozenPageDialog"),
+  closeDailyDozenPageBtn: document.querySelector("#closeDailyDozenPageBtn"),
+  dailyDozenTodayBtn: document.querySelector("#dailyDozenTodayBtn"),
+  dailyDozenDate: document.querySelector("#dailyDozenDate"),
+  dailyDozenMembers: document.querySelector("#dailyDozenMembers"),
+  dailyDozenSuggestion: document.querySelector("#dailyDozenSuggestion"),
+  dailyDozenGrid: document.querySelector("#dailyDozenGrid"),
+  foodHealthChecklistTitle: document.querySelector("#foodHealthChecklistTitle"),
+  foodHealthChecklistNote: document.querySelector("#foodHealthChecklistNote"),
+  foodHealthNutrition: document.querySelector("#foodHealthNutrition"),
+  foodHealthTargetNote: document.querySelector("#foodHealthTargetNote"),
+  foodHealthMeals: document.querySelector("#foodHealthMeals"),
+  addFoodLogBtn: document.querySelector("#addFoodLogBtn"),
+  ateRecipeBtn: document.querySelector("#ateRecipeBtn"),
   settingsMainPage: document.querySelector("#settingsMainPage"),
   playMainPage: document.querySelector("#playMainPage"),
   playPlannerGrid: document.querySelector("#playPlannerGrid"),
@@ -344,6 +376,7 @@ const elements = {
   openTagsBtn: document.querySelector("#openTagsBtn"),
   openGroceryLibraryBtn: document.querySelector("#openGroceryLibraryBtn"),
   openIngredientOptionsBtn: document.querySelector("#openIngredientOptionsBtn"),
+  openFoodHealthSettingsBtn: document.querySelector("#openFoodHealthSettingsBtn"),
   openCalendarsBtn: document.querySelector("#openCalendarsBtn"),
   openWeeklyEmailBtn: document.querySelector("#openWeeklyEmailBtn"),
   openBackupHealthBtn: document.querySelector("#openBackupHealthBtn"),
@@ -354,6 +387,41 @@ const elements = {
   autoRuleList: document.querySelector("#autoRuleList"),
   autoRuleOptions: document.querySelector("#autoRuleOptions"),
   groceryLibraryDialog: document.querySelector("#groceryLibraryDialog"),
+  dailyDozenTagDialog: document.querySelector("#dailyDozenTagDialog"),
+  dailyDozenTagTitle: document.querySelector("#dailyDozenTagTitle"),
+  dailyDozenTagList: document.querySelector("#dailyDozenTagList"),
+  closeDailyDozenTagBtn: document.querySelector("#closeDailyDozenTagBtn"),
+  cancelDailyDozenTagBtn: document.querySelector("#cancelDailyDozenTagBtn"),
+  saveDailyDozenTagBtn: document.querySelector("#saveDailyDozenTagBtn"),
+  foodLogDialog: document.querySelector("#foodLogDialog"),
+  foodLogForm: document.querySelector("#foodLogForm"),
+  foodLogPersonLabel: document.querySelector("#foodLogPersonLabel"),
+  foodLogTitle: document.querySelector("#foodLogTitle"),
+  closeFoodLogBtn: document.querySelector("#closeFoodLogBtn"),
+  cancelFoodLogBtn: document.querySelector("#cancelFoodLogBtn"),
+  deleteFoodLogBtn: document.querySelector("#deleteFoodLogBtn"),
+  saveFoodLogBtn: document.querySelector("#saveFoodLogBtn"),
+  foodLogSourceType: document.querySelector("#foodLogSourceType"),
+  foodLogMealType: document.querySelector("#foodLogMealType"),
+  foodLogSourceSelect: document.querySelector("#foodLogSourceSelect"),
+  foodLogManualName: document.querySelector("#foodLogManualName"),
+  foodLogServingPreset: document.querySelector("#foodLogServingPreset"),
+  foodLogCustomServingWrap: document.querySelector("#foodLogCustomServingWrap"),
+  foodLogCustomServing: document.querySelector("#foodLogCustomServing"),
+  foodLogNotes: document.querySelector("#foodLogNotes"),
+  foodLogNutritionFields: document.querySelector("#foodLogNutritionFields"),
+  foodLogNutritionInputs: document.querySelector("#foodLogNutritionInputs"),
+  foodLogChecklistSuggestions: document.querySelector("#foodLogChecklistSuggestions"),
+  foodHealthSettingsDialog: document.querySelector("#foodHealthSettingsDialog"),
+  closeFoodHealthSettingsBtn: document.querySelector("#closeFoodHealthSettingsBtn"),
+  cancelFoodHealthSettingsBtn: document.querySelector("#cancelFoodHealthSettingsBtn"),
+  saveFoodHealthSettingsBtn: document.querySelector("#saveFoodHealthSettingsBtn"),
+  foodHealthSettingsMembers: document.querySelector("#foodHealthSettingsMembers"),
+  foodHealthTemplateSelect: document.querySelector("#foodHealthTemplateSelect"),
+  foodHealthTemplateDescription: document.querySelector("#foodHealthTemplateDescription"),
+  foodHealthChecklistSettings: document.querySelector("#foodHealthChecklistSettings"),
+  foodHealthNutritionTargetNote: document.querySelector("#foodHealthNutritionTargetNote"),
+  foodHealthNutritionTargets: document.querySelector("#foodHealthNutritionTargets"),
   groceryLibraryForm: document.querySelector("#groceryLibraryForm"),
   groceryLibraryInput: document.querySelector("#groceryLibraryInput"),
   groceryLibraryList: document.querySelector("#groceryLibraryList"),
@@ -369,6 +437,51 @@ const elements = {
   groceryStoresList: document.querySelector("#groceryStoresList"),
   closeGroceryStoresBtn: document.querySelector("#closeGroceryStoresBtn"),
   doneGroceryStoresBtn: document.querySelector("#doneGroceryStoresBtn"),
+  groceryStoreLayoutDialog: document.querySelector("#groceryStoreLayoutDialog"),
+  groceryStoreLayoutForm: document.querySelector("#groceryStoreLayoutForm"),
+  groceryStoreLayoutName: document.querySelector("#groceryStoreLayoutName"),
+  groceryStoreLayoutAddress: document.querySelector("#groceryStoreLayoutAddress"),
+  groceryStoreLayoutList: document.querySelector("#groceryStoreLayoutList"),
+  groceryStoreSectionInput: document.querySelector("#groceryStoreSectionInput"),
+  addGroceryStoreSectionBtn: document.querySelector("#addGroceryStoreSectionBtn"),
+  closeGroceryStoreLayoutBtn: document.querySelector("#closeGroceryStoreLayoutBtn"),
+  groceryPricingDialog: document.querySelector("#groceryPricingDialog"),
+  groceryPriceForm: document.querySelector("#groceryPriceForm"),
+  groceryPriceStore: document.querySelector("#groceryPriceStore"),
+  groceryPriceItem: document.querySelector("#groceryPriceItem"),
+  groceryPriceProduct: document.querySelector("#groceryPriceProduct"),
+  groceryPriceAmount: document.querySelector("#groceryPriceAmount"),
+  groceryPricePackageQuantity: document.querySelector("#groceryPricePackageQuantity"),
+  groceryPricePackageUnit: document.querySelector("#groceryPricePackageUnit"),
+  groceryPriceConfidence: document.querySelector("#groceryPriceConfidence"),
+  groceryStopPenalty: document.querySelector("#groceryStopPenalty"),
+  groceryPriceRoutingEnabled: document.querySelector("#groceryPriceRoutingEnabled"),
+  groceryPriceObservations: document.querySelector("#groceryPriceObservations"),
+  receiptPriceTrends: document.querySelector("#receiptPriceTrends"),
+  openReceiptScanBtn: document.querySelector("#openReceiptScanBtn"),
+  closeGroceryPricingBtn: document.querySelector("#closeGroceryPricingBtn"),
+  doneGroceryPricingBtn: document.querySelector("#doneGroceryPricingBtn"),
+  receiptScanDialog: document.querySelector("#receiptScanDialog"),
+  receiptImages: document.querySelector("#receiptImages"),
+  receiptCameraImage: document.querySelector("#receiptCameraImage"),
+  receiptCameraBtn: document.querySelector("#receiptCameraBtn"),
+  clearReceiptImagesBtn: document.querySelector("#clearReceiptImagesBtn"),
+  receiptImagePreviewList: document.querySelector("#receiptImagePreviewList"),
+  receiptScanStatus: document.querySelector("#receiptScanStatus"),
+  scanReceiptImagesBtn: document.querySelector("#scanReceiptImagesBtn"),
+  closeReceiptScanBtn: document.querySelector("#closeReceiptScanBtn"),
+  receiptReviewForm: document.querySelector("#receiptReviewForm"),
+  receiptStoreName: document.querySelector("#receiptStoreName"),
+  receiptStoreId: document.querySelector("#receiptStoreId"),
+  receiptPurchaseDate: document.querySelector("#receiptPurchaseDate"),
+  receiptSubtotal: document.querySelector("#receiptSubtotal"),
+  receiptDiscounts: document.querySelector("#receiptDiscounts"),
+  receiptTax: document.querySelector("#receiptTax"),
+  receiptFees: document.querySelector("#receiptFees"),
+  receiptTotal: document.querySelector("#receiptTotal"),
+  receiptLineList: document.querySelector("#receiptLineList"),
+  addReceiptLineBtn: document.querySelector("#addReceiptLineBtn"),
+  cancelReceiptReviewBtn: document.querySelector("#cancelReceiptReviewBtn"),
   ingredientOptionsDialog: document.querySelector("#ingredientOptionsDialog"),
   closeIngredientOptionsBtn: document.querySelector("#closeIngredientOptionsBtn"),
   saveIngredientOptionsBtn: document.querySelector("#saveIngredientOptionsBtn"),
@@ -433,6 +546,14 @@ const elements = {
   recipeViewTitle: document.querySelector("#recipeViewTitle"),
   recipeViewHeaderActions: document.querySelector("#recipeViewHeaderActions"),
   recipeViewContent: document.querySelector("#recipeViewContent"),
+  nutritionEstimateDialog: document.querySelector("#nutritionEstimateDialog"),
+  closeNutritionEstimateBtn: document.querySelector("#closeNutritionEstimateBtn"),
+  cancelNutritionEstimateBtn: document.querySelector("#cancelNutritionEstimateBtn"),
+  saveNutritionEstimateBtn: document.querySelector("#saveNutritionEstimateBtn"),
+  nutritionEstimateServings: document.querySelector("#nutritionEstimateServings"),
+  nutritionEstimateStatus: document.querySelector("#nutritionEstimateStatus"),
+  nutritionMatchList: document.querySelector("#nutritionMatchList"),
+  nutritionEstimateSummary: document.querySelector("#nutritionEstimateSummary"),
   activeRecipePrevBtn: document.querySelector("#activeRecipePrevBtn"),
   activeRecipeNextBtn: document.querySelector("#activeRecipeNextBtn"),
   recipeForm: document.querySelector("#recipeForm"),
@@ -473,6 +594,7 @@ const elements = {
   scanCameraImage: document.querySelector("#scanCameraImage"),
   scanCameraBtn: document.querySelector("#scanCameraBtn"),
   clearScanImagesBtn: document.querySelector("#clearScanImagesBtn"),
+  scanImagePreviewList: document.querySelector("#scanImagePreviewList"),
   scanStatus: document.querySelector("#scanStatus"),
   closeScanBtn: document.querySelector("#closeScanBtn"),
   cancelScanBtn: document.querySelector("#cancelScanBtn"),
@@ -558,8 +680,10 @@ function bindEvents() {
   elements.menuAutoRulesBtn.addEventListener("click", () => openSettingsMenuDialog(openAutoRulesDialog));
   elements.menuTagsBtn.addEventListener("click", () => openSettingsMenuDialog(openTagsDialog));
   elements.menuGroceryListBtn.addEventListener("click", () => openSettingsMenuDialog(openGroceryStoresDialog));
+  elements.menuGroceryPricingBtn.addEventListener("click", () => openSettingsMenuDialog(openGroceryPricingDialog));
   elements.menuGroceryItemsBtn.addEventListener("click", () => openSettingsMenuDialog(openGroceryLibraryDialog));
   elements.menuIngredientOptionsBtn.addEventListener("click", () => openSettingsMenuDialog(openIngredientOptionsDialog));
+  elements.menuFoodHealthSettingsBtn.addEventListener("click", () => openSettingsMenuDialog(openFoodHealthSettingsDialog));
   elements.menuRecurringTasksBtn.addEventListener("click", () => openSettingsMenuDialog(openRecurringTasksDialog));
   elements.menuWorkoutLibraryBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLibraryDialog));
   elements.menuWorkoutLogsBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLogsDialog));
@@ -593,6 +717,32 @@ function bindEvents() {
   elements.openGroceriesPageBtn?.addEventListener("click", openGroceriesPage);
   elements.closeRecipeBoxPageBtn.addEventListener("click", () => closeRecipeBoxPage());
   elements.closeGroceriesPageBtn.addEventListener("click", () => elements.groceriesPageDialog.close());
+  elements.closeDailyDozenPageBtn.addEventListener("click", closeDailyDozenPage);
+  elements.dailyDozenTodayBtn.addEventListener("click", () => {
+    activeDailyDozenDate = dailyDozenDomain().localDateKey();
+    renderDailyDozen();
+  });
+  elements.dailyDozenDate.addEventListener("change", () => {
+    activeDailyDozenDate = elements.dailyDozenDate.value || dailyDozenDomain().localDateKey();
+    renderDailyDozen();
+  });
+  elements.addFoodLogBtn.addEventListener("click", () => openFoodLogDialog("manual"));
+  elements.ateRecipeBtn.addEventListener("click", () => openFoodLogDialog("recipe"));
+  elements.foodLogForm.addEventListener("submit", saveFoodLogEntry);
+  elements.saveFoodLogBtn.addEventListener("click", saveFoodLogEntry);
+  elements.closeFoodLogBtn.addEventListener("click", closeFoodLogDialog);
+  elements.cancelFoodLogBtn.addEventListener("click", closeFoodLogDialog);
+  elements.deleteFoodLogBtn.addEventListener("click", deleteFoodLogEntry);
+  elements.foodLogSourceType.addEventListener("change", () => renderFoodLogSourceFields());
+  elements.foodLogSourceSelect.addEventListener("change", () => renderFoodLogChecklistSuggestions());
+  elements.foodLogServingPreset.addEventListener("change", renderFoodLogServingField);
+  elements.closeFoodHealthSettingsBtn.addEventListener("click", () => elements.foodHealthSettingsDialog.close());
+  elements.cancelFoodHealthSettingsBtn.addEventListener("click", () => elements.foodHealthSettingsDialog.close());
+  elements.saveFoodHealthSettingsBtn.addEventListener("click", saveFoodHealthSettings);
+  elements.foodHealthTemplateSelect.addEventListener("change", () => {
+    editingFoodHealthTemplateId = elements.foodHealthTemplateSelect.value;
+    renderFoodHealthSettings();
+  });
   elements.recipeBoxPageDialog.addEventListener("close", () => {
     pendingMealRecipeSelection = null;
     pendingAutoRuleRecipeSelection = null;
@@ -671,6 +821,7 @@ function bindEvents() {
   elements.openTagsBtn.addEventListener("click", openTagsDialog);
   elements.openGroceryLibraryBtn.addEventListener("click", openGroceryLibraryDialog);
   elements.openIngredientOptionsBtn.addEventListener("click", openIngredientOptionsDialog);
+  elements.openFoodHealthSettingsBtn.addEventListener("click", openFoodHealthSettingsDialog);
   elements.openCalendarsBtn.addEventListener("click", openCalendarsDialog);
   elements.openWeeklyEmailBtn.addEventListener("click", openWeeklyEmailDialog);
   elements.openBackupHealthBtn.addEventListener("click", openBackupHealthDialog);
@@ -684,6 +835,9 @@ function bindEvents() {
   elements.closeGroceryLibraryBtn.addEventListener("click", () => elements.groceryLibraryDialog.close());
   elements.cancelGroceryLibraryBtn.addEventListener("click", () => elements.groceryLibraryDialog.close());
   elements.saveGroceryLibraryBtn.addEventListener("click", () => elements.groceryLibraryDialog.close());
+  elements.closeDailyDozenTagBtn.addEventListener("click", closeDailyDozenTagEditor);
+  elements.cancelDailyDozenTagBtn.addEventListener("click", closeDailyDozenTagEditor);
+  elements.saveDailyDozenTagBtn.addEventListener("click", saveDailyDozenTagEditor);
   elements.groceryLibraryDialog.addEventListener("close", () => {
     pendingMealIngredientSelection = null;
     pendingAutoRuleIngredientSelection = null;
@@ -694,6 +848,28 @@ function bindEvents() {
   elements.groceryStoresForm.addEventListener("submit", addGroceryStore);
   elements.groceryStoreInput.addEventListener("input", scheduleGroceryStoreSearch);
   elements.groceryStoreInput.addEventListener("keydown", handleGroceryStoreSearchKeydown);
+  elements.closeGroceryStoreLayoutBtn.addEventListener("click", () => elements.groceryStoreLayoutDialog.close());
+  elements.groceryStoreLayoutForm.addEventListener("submit", saveGroceryStoreLayout);
+  elements.addGroceryStoreSectionBtn.addEventListener("click", addGroceryStoreSection);
+  elements.groceryStoreSectionInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    addGroceryStoreSection();
+  });
+  elements.closeGroceryPricingBtn.addEventListener("click", () => elements.groceryPricingDialog.close());
+  elements.doneGroceryPricingBtn.addEventListener("click", saveGroceryPricingSettings);
+  elements.groceryPriceForm.addEventListener("submit", saveManualGroceryPrice);
+  elements.openReceiptScanBtn.addEventListener("click", openReceiptScanDialog);
+  elements.closeReceiptScanBtn.addEventListener("click", () => elements.receiptScanDialog.close());
+  elements.receiptImages.addEventListener("change", replaceReceiptScanFiles);
+  elements.receiptCameraImage.addEventListener("change", appendReceiptCameraFile);
+  elements.receiptCameraBtn.addEventListener("click", () => elements.receiptCameraImage.click());
+  elements.clearReceiptImagesBtn.addEventListener("click", clearReceiptScanFiles);
+  elements.receiptImagePreviewList.addEventListener("click", handleReceiptImagePreviewAction);
+  elements.scanReceiptImagesBtn.addEventListener("click", scanReceiptImages);
+  elements.receiptReviewForm.addEventListener("submit", saveReviewedReceipt);
+  elements.addReceiptLineBtn.addEventListener("click", () => addReceiptReviewLine());
+  elements.cancelReceiptReviewBtn.addEventListener("click", () => elements.receiptScanDialog.close());
   elements.groceryLibraryForm.addEventListener("submit", addGroceryLibraryItem);
   elements.closeIngredientOptionsBtn.addEventListener("click", () => elements.ingredientOptionsDialog.close());
   elements.saveIngredientOptionsBtn.addEventListener("click", saveIngredientOptions);
@@ -735,9 +911,15 @@ function bindEvents() {
   elements.scanCameraImage.addEventListener("change", appendCameraScanRecipeFile);
   elements.scanCameraBtn.addEventListener("click", () => elements.scanCameraImage.click());
   elements.clearScanImagesBtn.addEventListener("click", clearScanRecipeFiles);
+  elements.scanImagePreviewList.addEventListener("click", handleScanRecipePreviewAction);
   elements.scanImagesBtn.addEventListener("click", scanRecipeFromImages);
   elements.deleteRecipeBtn.addEventListener("click", deleteRecipeFromForm);
   elements.closeRecipeViewBtn.addEventListener("click", () => elements.recipeViewDialog.close());
+  elements.closeNutritionEstimateBtn.addEventListener("click", closeNutritionEstimateDialog);
+  elements.cancelNutritionEstimateBtn.addEventListener("click", closeNutritionEstimateDialog);
+  elements.saveNutritionEstimateBtn.addEventListener("click", saveNutritionEstimate);
+  elements.nutritionEstimateServings.addEventListener("input", recalculatePendingNutritionEstimate);
+  elements.nutritionMatchList.addEventListener("change", handleNutritionMatchChange);
   elements.recipeViewDialog.addEventListener("close", () => {
     rememberActiveRecipeScroll();
     currentActiveRecipeViewId = "";
@@ -962,9 +1144,28 @@ function defaultState() {
     checkedGroceries: {},
     recipeTags: defaultRecipeTags(),
     groceryBaseItems: defaultGroceryBaseItems(),
+    groceryCatalogVersion: 1,
     groceryAliases: {},
+    grocerySplitPreferences: {},
     groceryStores: [],
     groceryItemLocations: {},
+    groceryStoreItemSections: {},
+    groceryPriceObservations: [],
+    groceryPricingSettings: { enabled: false, extraStoreCost: 5 },
+    receipts: [],
+    receiptItemMappings: {},
+    priceHistory: [],
+    nutritionIngredientMappings: {},
+    dailyDozenCategories: dailyDozenDomain().categories,
+    familyMembers: dailyDozenDomain().familyMembers,
+    dailyDozenEntries: [],
+    groceryDailyDozenTags: defaultGroceryDailyDozenTags(),
+    dailyDozenTagSeedVersion: 1,
+    checklistTemplates: defaultChecklistTemplates(),
+    personChecklistSettings: defaultPersonChecklistSettings(),
+    dailyChecklistEntries: [],
+    foodLogEntries: [],
+    foodHealthVersion: 1,
     ingredientOptions: defaultIngredientOptions(),
     calendars: [],
     groceryReviewDismissed: {},
@@ -998,9 +1199,43 @@ function normalizeState(parsed) {
     checkedGroceries: parsed?.checkedGroceries || {},
     recipeTags: normalizeRecipeTags(parsed?.recipeTags),
     groceryBaseItems: Array.isArray(parsed?.groceryBaseItems) ? normalizeGroceryBaseItems(parsed.groceryBaseItems) : defaultGroceryBaseItems(),
+    groceryCatalogVersion: Number(parsed?.groceryCatalogVersion) || 0,
     groceryAliases: normalizeGroceryAliases(parsed?.groceryAliases),
+    grocerySplitPreferences: normalizeGrocerySplitPreferences(parsed?.grocerySplitPreferences),
     groceryStores: normalizeGroceryStores(parsed?.groceryStores),
     groceryItemLocations: normalizeGroceryItemLocations(parsed?.groceryItemLocations, parsed?.groceryStores),
+    groceryStoreItemSections: normalizeGroceryStoreItemSections(parsed?.groceryStoreItemSections, parsed?.groceryStores),
+    groceryPriceObservations: normalizeGroceryPriceObservations(parsed?.groceryPriceObservations, parsed?.groceryStores),
+    groceryPricingSettings: normalizeGroceryPricingSettings(parsed?.groceryPricingSettings),
+    receipts: normalizeReceipts(parsed?.receipts),
+    receiptItemMappings: receiptDomain().normalizeMappings(parsed?.receiptItemMappings),
+    priceHistory: normalizePriceHistory(parsed?.priceHistory, parsed?.groceryStores),
+    nutritionIngredientMappings: normalizeNutritionIngredientMappings(parsed?.nutritionIngredientMappings),
+    dailyDozenCategories: dailyDozenDomain().normalizeCategories(parsed?.dailyDozenCategories),
+    familyMembers: dailyDozenDomain().normalizeFamilyMembers(parsed?.familyMembers),
+    dailyDozenEntries: dailyDozenDomain().normalizeEntries(
+      parsed?.dailyDozenEntries,
+      parsed?.familyMembers,
+      parsed?.dailyDozenCategories
+    ),
+    groceryDailyDozenTags: typeof parsed?.groceryDailyDozenTags === "object"
+      ? normalizeGroceryDailyDozenTags(parsed.groceryDailyDozenTags)
+      : defaultGroceryDailyDozenTags(),
+    dailyDozenTagSeedVersion: Number(parsed?.dailyDozenTagSeedVersion) || 0,
+    checklistTemplates: foodHealthDomain().normalizeTemplates(
+      parsed?.checklistTemplates,
+      dailyDozenDomain().normalizeCategories(parsed?.dailyDozenCategories)
+    ),
+    personChecklistSettings: {},
+    dailyChecklistEntries: foodHealthDomain().normalizeDailyChecklistEntries(
+      parsed?.dailyChecklistEntries,
+      dailyDozenDomain().normalizeFamilyMembers(parsed?.familyMembers).map((member) => member.id)
+    ),
+    foodLogEntries: foodHealthDomain().normalizeFoodLogEntries(
+      parsed?.foodLogEntries,
+      dailyDozenDomain().normalizeFamilyMembers(parsed?.familyMembers).map((member) => member.id)
+    ),
+    foodHealthVersion: Number(parsed?.foodHealthVersion) || 0,
     ingredientOptions: normalizeIngredientOptions(parsed?.ingredientOptions),
     calendars: normalizeLinkedCalendars(parsed?.calendars, parsed?.birthdayCalendar),
     groceryReviewDismissed: parsed?.groceryReviewDismissed || {},
@@ -1014,6 +1249,14 @@ function normalizeState(parsed) {
     collapsedSections: parsed?.collapsedSections || defaultCollapsedSections(),
     collapsedDays: parsed?.collapsedDays || {}
   };
+  ensureGroceryCatalog(normalized);
+  ensureDailyDozenSeedTags(normalized);
+  normalized.personChecklistSettings = foodHealthDomain().normalizePersonSettings(
+    parsed?.personChecklistSettings,
+    normalized.familyMembers,
+    normalized.checklistTemplates
+  );
+  ensureFoodHealthMigration(normalized);
   syncIngredientOptionGlobals(normalized);
   migrateRecipeFoldersToTags(normalized);
   migratePlayExercisesToWorkouts(normalized);
@@ -1194,7 +1437,8 @@ function removeDefaultMealEntryForState(targetState, week, day, defaultEntry) {
   if (!week.slots?.[day.id] || typeof week.slots[day.id][defaultEntry.meal] === "undefined") return;
   const entries = mealEntryList(slotEntries(week.slots[day.id][defaultEntry.meal]), defaultEntry.meal);
   const expectedValues = defaultMealEntryValuesForState(targetState, defaultEntry.value);
-  if (!expectedValues.has(entries[defaultEntry.index])) return;
+  if (!expectedValues.has(recipeIdForSlot(entries[defaultEntry.index]))
+    && !expectedValues.has(entries[defaultEntry.index])) return;
   entries[defaultEntry.index] = "";
   week.slots[day.id][defaultEntry.meal] = compactMealSlotEntries(entries, defaultEntry.meal);
 }
@@ -1628,7 +1872,19 @@ function migrateLegacyRecipeOrganization() {
 }
 
 function defaultGroceryBaseItems() {
-  return normalizeGroceryBaseItems(commonGroceryItems);
+  return normalizeGroceryBaseItems([
+    ...commonGroceryItems,
+    ...groceryCatalog().catalogEntries().map((entry) => entry.name)
+  ]);
+}
+
+function ensureGroceryCatalog(targetState) {
+  if (targetState.groceryCatalogVersion >= 1) return;
+  targetState.groceryBaseItems = normalizeGroceryBaseItems([
+    ...(targetState.groceryBaseItems || []),
+    ...groceryCatalog().catalogEntries().map((entry) => entry.name)
+  ]);
+  targetState.groceryCatalogVersion = 1;
 }
 
 function normalizeGroceryBaseItems(items) {
@@ -1637,8 +1893,10 @@ function normalizeGroceryBaseItems(items) {
     .map((item) => String(item || "").trim())
     .filter(Boolean)
     .forEach((item) => {
-      const key = normalize(item);
-      if (!normalizedItems.has(key)) normalizedItems.set(key, item);
+      const identity = groceryCatalog().normalizeGroceryItemName(item);
+      const key = identity.canonicalName || normalize(item);
+      const displayName = identity.category === "Other" ? item : identity.displayName;
+      if (!normalizedItems.has(key)) normalizedItems.set(key, displayName);
     });
   return [...normalizedItems.values()].sort((a, b) => normalize(a).localeCompare(normalize(b)));
 }
@@ -1646,6 +1904,189 @@ function normalizeGroceryBaseItems(items) {
 function groceryBaseItems() {
   if (!Array.isArray(state.groceryBaseItems)) state.groceryBaseItems = defaultGroceryBaseItems();
   return state.groceryBaseItems;
+}
+
+function groceryCatalog() {
+  if (!window.LiveGroceryCatalog) throw new Error("Grocery catalog tools are unavailable.");
+  return window.LiveGroceryCatalog;
+}
+
+function dailyDozenDomain() {
+  if (!window.LiveDailyDozen) throw new Error("Daily Dozen tools are unavailable.");
+  return window.LiveDailyDozen;
+}
+
+function foodHealthDomain() {
+  if (!window.LiveFoodHealth) throw new Error("Food Health tools are unavailable.");
+  return window.LiveFoodHealth;
+}
+
+function mealPlanServingsDomain() {
+  if (!window.LiveMealPlanServings) throw new Error("Meal plan serving tools are unavailable.");
+  return window.LiveMealPlanServings;
+}
+
+function recipeDefaultServings(recipe) {
+  return mealPlanServingsDomain().recipeDefaultServings(recipe);
+}
+
+function isPlannedRecipeEntry(entry) {
+  return mealPlanServingsDomain().isMealPlanRecipe(entry);
+}
+
+function recipeIdForSlot(entry) {
+  return isPlannedRecipeEntry(entry) ? entry.recipeId : String(entry || "");
+}
+
+function plannedServingsForEntry(entry, recipe = recipeForSlot(entry)) {
+  return mealPlanServingsDomain().plannedServings(entry, recipe);
+}
+
+function createPlannedRecipeEntry(recipe, dayId = "", meal = "", plannedServings = null) {
+  const day = prepDays.find((item) => item.id === dayId);
+  const date = day ? dateKeyFromDate(addDays(currentWeek, day.offset)) : "";
+  return mealPlanServingsDomain().createMealPlanRecipe(recipe, {
+    id: createId("meal-plan-recipe"),
+    date,
+    mealType: meal,
+    plannedServings: plannedServings ?? recipeDefaultServings(recipe)
+  });
+}
+
+function normalizePlannedRecipeEntry(entry) {
+  if (!isPlannedRecipeEntry(entry)) return entry;
+  return mealPlanServingsDomain().normalizeMealPlanRecipe(entry, activeRecipes().find((recipe) => recipe.id === entry.recipeId));
+}
+
+function plannedEntryAtLocation(entry, dayId, meal) {
+  if (!isPlannedRecipeEntry(entry)) return entry;
+  const day = prepDays.find((item) => item.id === dayId);
+  return normalizePlannedRecipeEntry({
+    ...entry,
+    date: day ? dateKeyFromDate(addDays(currentWeek, day.offset)) : entry.date,
+    mealType: meal || entry.mealType
+  });
+}
+
+function defaultChecklistTemplates() {
+  return foodHealthDomain().builtInTemplates(
+    dailyDozenDomain().categories,
+    window.LiveFoodHealthChecklists?.placeholderTemplates || []
+  );
+}
+
+function defaultPersonChecklistSettings() {
+  return foodHealthDomain().normalizePersonSettings(
+    {},
+    dailyDozenDomain().familyMembers,
+    defaultChecklistTemplates()
+  );
+}
+
+function ensureFoodHealthMigration(targetState) {
+  if (targetState.foodHealthVersion >= 1) return;
+  const migrated = foodHealthDomain().migrateDailyDozenEntries(targetState.dailyDozenEntries);
+  const existingIds = new Set((targetState.dailyChecklistEntries || []).map((entry) => entry.id));
+  targetState.dailyChecklistEntries = foodHealthDomain().normalizeDailyChecklistEntries(
+    [...(targetState.dailyChecklistEntries || []), ...migrated.filter((entry) => !existingIds.has(entry.id))],
+    targetState.familyMembers.map((member) => member.id)
+  );
+  targetState.foodHealthVersion = 1;
+}
+
+function checklistTemplates() {
+  state.checklistTemplates = foodHealthDomain().normalizeTemplates(state.checklistTemplates, dailyDozenCategories());
+  return state.checklistTemplates;
+}
+
+function personChecklistSettings() {
+  state.personChecklistSettings = foodHealthDomain().normalizePersonSettings(
+    state.personChecklistSettings,
+    familyMembers(),
+    checklistTemplates()
+  );
+  return state.personChecklistSettings;
+}
+
+function dailyChecklistEntries() {
+  state.dailyChecklistEntries = foodHealthDomain().normalizeDailyChecklistEntries(
+    state.dailyChecklistEntries,
+    familyMembers().map((member) => member.id)
+  );
+  return state.dailyChecklistEntries;
+}
+
+function foodLogEntries() {
+  state.foodLogEntries = foodHealthDomain().normalizeFoodLogEntries(
+    state.foodLogEntries,
+    familyMembers().map((member) => member.id)
+  );
+  return state.foodLogEntries;
+}
+
+function activeChecklistTemplate(personId = activeDailyDozenMemberId) {
+  const settings = personChecklistSettings()[personId];
+  return checklistTemplates().find((template) => template.id === settings?.templateId)
+    || checklistTemplates().find((template) => template.id === "daily-dozen");
+}
+
+function dailyDozenItemKey(item) {
+  return canonicalGroceryItemKey(item);
+}
+
+function defaultGroceryDailyDozenTags() {
+  return dailyDozenDomain().seededTagMap((item) => groceryCatalog().normalizeGroceryItemName(item).canonicalName);
+}
+
+function normalizeGroceryDailyDozenTags(tags) {
+  return dailyDozenDomain().normalizeTagMap(tags, dailyDozenDomain().categories);
+}
+
+function groceryDailyDozenTags() {
+  state.groceryDailyDozenTags = normalizeGroceryDailyDozenTags(state.groceryDailyDozenTags);
+  return state.groceryDailyDozenTags;
+}
+
+function ensureDailyDozenSeedTags(targetState) {
+  if (targetState.dailyDozenTagSeedVersion >= 1) return;
+  const existing = normalizeGroceryDailyDozenTags(targetState.groceryDailyDozenTags);
+  const seeded = defaultGroceryDailyDozenTags();
+  targetState.groceryDailyDozenTags = normalizeGroceryDailyDozenTags({ ...seeded, ...existing });
+  targetState.dailyDozenTagSeedVersion = 1;
+}
+
+function dailyDozenCategories() {
+  state.dailyDozenCategories = dailyDozenDomain().normalizeCategories(state.dailyDozenCategories);
+  return state.dailyDozenCategories;
+}
+
+function familyMembers() {
+  state.familyMembers = dailyDozenDomain().normalizeFamilyMembers(state.familyMembers);
+  return state.familyMembers;
+}
+
+function dailyDozenEntries() {
+  state.dailyDozenEntries = dailyDozenDomain().normalizeEntries(
+    state.dailyDozenEntries,
+    familyMembers(),
+    dailyDozenCategories()
+  );
+  return state.dailyDozenEntries;
+}
+
+function normalizeGrocerySplitPreferences(preferences) {
+  if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) return {};
+  return Object.fromEntries(Object.entries(preferences)
+    .map(([key, value]) => [
+      groceryCatalog().normalizeGroceryItemName(key).normalizedName,
+      groceryCatalog().normalizeGroceryItemName(value).normalizedName
+    ])
+    .filter(([key, value]) => key && value));
+}
+
+function grocerySplitPreferences() {
+  state.grocerySplitPreferences = normalizeGrocerySplitPreferences(state.grocerySplitPreferences);
+  return state.grocerySplitPreferences;
 }
 
 function normalizeGroceryAliases(aliases) {
@@ -1678,16 +2119,20 @@ function normalizeGroceryStores(stores) {
   const seenIds = new Set();
   const seenPlaceIds = new Set();
   return (Array.isArray(stores) ? stores : [])
-    .map((store) => ({
-      id: String(store?.id || createId("store")),
-      name: String(store?.name || "").trim(),
-      chainName: String(store?.chainName || store?.name || "").trim(),
-      address: String(store?.address || "").trim(),
-      placeId: String(store?.placeId || "").trim(),
-      latitude: normalizeStoreCoordinate(store?.latitude),
-      longitude: normalizeStoreCoordinate(store?.longitude),
-      types: Array.isArray(store?.types) ? store.types.map((type) => String(type || "").trim()).filter(Boolean) : []
-    }))
+    .map((store) => {
+      const id = String(store?.id || createId("store"));
+      return {
+        id,
+        name: String(store?.name || "").trim(),
+        chainName: String(store?.chainName || store?.name || "").trim(),
+        address: String(store?.address || "").trim(),
+        placeId: String(store?.placeId || "").trim(),
+        latitude: normalizeStoreCoordinate(store?.latitude),
+        longitude: normalizeStoreCoordinate(store?.longitude),
+        types: Array.isArray(store?.types) ? store.types.map((type) => String(type || "").trim()).filter(Boolean) : [],
+        sections: normalizeGroceryStoreSections(store?.sections, id)
+      };
+    })
     .filter((store) => {
       const nameKey = normalize(store.name);
       const duplicateName = !store.placeId && seenNames.has(nameKey);
@@ -1698,6 +2143,36 @@ function normalizeGroceryStores(stores) {
       if (store.placeId) seenPlaceIds.add(store.placeId);
       return true;
     });
+}
+
+function defaultGroceryStoreSections(storeId) {
+  return ["Produce", "Bakery", "Deli", "Dairy", "Dry Goods", "Frozen", "Household", "Other"]
+    .map((name, index) => ({
+      id: `${storeId}-section-${normalize(name).replace(/\s+/g, "-")}`,
+      name,
+      sortOrder: (index + 1) * 10
+    }));
+}
+
+function normalizeGroceryStoreSections(sections, storeId) {
+  const source = Array.isArray(sections) && sections.length ? sections : defaultGroceryStoreSections(storeId);
+  const seenIds = new Set();
+  const seenNames = new Set();
+  return source
+    .map((section, index) => ({
+      id: String(section?.id || `${storeId}-section-${index + 1}`),
+      name: String(section?.name || "").trim(),
+      sortOrder: Number.isFinite(Number(section?.sortOrder)) ? Number(section.sortOrder) : (index + 1) * 10
+    }))
+    .filter((section) => {
+      const nameKey = normalize(section.name);
+      if (!nameKey || seenIds.has(section.id) || seenNames.has(nameKey)) return false;
+      seenIds.add(section.id);
+      seenNames.add(nameKey);
+      return true;
+    })
+    .sort((a, b) => a.sortOrder - b.sortOrder || normalize(a.name).localeCompare(normalize(b.name)))
+    .map((section, index) => ({ ...section, sortOrder: (index + 1) * 10 }));
 }
 
 function normalizeStoreCoordinate(value) {
@@ -1732,11 +2207,216 @@ function groceryItemLocations() {
   return state.groceryItemLocations;
 }
 
+function normalizeGroceryStoreItemSections(mappings, stores = []) {
+  const normalized = {};
+  const normalizedStores = normalizeGroceryStores(stores);
+  const storeById = new Map(normalizedStores.map((store) => [store.id, store]));
+  Object.entries(mappings && typeof mappings === "object" && !Array.isArray(mappings) ? mappings : {}).forEach(([storeId, itemMappings]) => {
+    const store = storeById.get(storeId);
+    if (!store || !itemMappings || typeof itemMappings !== "object" || Array.isArray(itemMappings)) return;
+    const validSectionIds = new Set(store.sections.map((section) => section.id));
+    Object.entries(itemMappings).forEach(([itemName, sectionId]) => {
+      const itemKey = baseGroceryItemKey(itemName);
+      if (!itemKey || !validSectionIds.has(String(sectionId || ""))) return;
+      if (!normalized[storeId]) normalized[storeId] = {};
+      normalized[storeId][itemKey] = String(sectionId);
+    });
+  });
+  return normalized;
+}
+
+function groceryStoreItemSections() {
+  state.groceryStoreItemSections = normalizeGroceryStoreItemSections(state.groceryStoreItemSections, groceryStores());
+  return state.groceryStoreItemSections;
+}
+
+const groceryPriceProviders = {
+  manual: {
+    id: "manual",
+    label: "Manual",
+    async fetchPrices() {
+      return [];
+    }
+  },
+  receipt: {
+    id: "receipt",
+    label: "Past receipt",
+    async fetchPrices() {
+      return [];
+    }
+  }
+};
+
+function receiptDomain() {
+  if (!window.LiveReceiptDomain) throw new Error("Receipt tools are unavailable.");
+  return window.LiveReceiptDomain;
+}
+
+function nutritionDomain() {
+  if (!window.NutritionDomain) throw new Error("Nutrition estimate tools are unavailable.");
+  return window.NutritionDomain;
+}
+
+function normalizeNutritionIngredientMappings(mappings) {
+  if (!mappings || typeof mappings !== "object" || Array.isArray(mappings)) return {};
+  return Object.fromEntries(Object.entries(mappings)
+    .map(([key, value]) => [nutritionDomain().correctionKey(key), normalizeNutritionCandidate(value)])
+    .filter(([key, value]) => key && value.fdcId));
+}
+
+function normalizeReceipts(receipts) {
+  return (Array.isArray(receipts) ? receipts : []).map((receipt) => receiptDomain().normalizeReceipt(receipt, createId));
+}
+
+function normalizePriceHistory(history, stores = []) {
+  const validStoreIds = new Set(normalizeGroceryStores(stores).map((store) => store.id));
+  return (Array.isArray(history) ? history : [])
+    .map((entry) => ({
+      id: String(entry?.id || createId("price-history")),
+      storeId: validStoreIds.has(String(entry?.storeId || "")) ? String(entry.storeId) : "",
+      storeName: String(entry?.storeName || "").trim(),
+      normalizedItemName: String(entry?.normalizedItemName || "").trim(),
+      category: String(entry?.category || "").trim(),
+      unitPrice: Math.max(0, Number(entry?.unitPrice) || 0),
+      packagePrice: Math.max(0, Number(entry?.packagePrice) || 0),
+      quantity: Math.max(0.001, Number(entry?.quantity) || 1),
+      unit: normalizePriceUnit(entry?.unit),
+      observedAt: validDateIso(entry?.observedAt) || new Date().toISOString(),
+      sourceReceiptLineItemId: String(entry?.sourceReceiptLineItemId || ""),
+      source: entry?.source === "manual" ? "manual" : "receipt",
+      confidenceScore: clampNumber(entry?.confidenceScore, 0, 1, 0.7)
+    }))
+    .filter((entry) => entry.normalizedItemName);
+}
+
+function receiptPriceHistory() {
+  state.priceHistory = normalizePriceHistory(state.priceHistory, groceryStores());
+  return state.priceHistory;
+}
+
+function receiptItemMappings() {
+  state.receiptItemMappings = receiptDomain().normalizeMappings(state.receiptItemMappings);
+  return state.receiptItemMappings;
+}
+
+function normalizeGroceryPriceObservations(observations, stores = []) {
+  const validStoreIds = new Set(normalizeGroceryStores(stores).map((store) => store.id));
+  return (Array.isArray(observations) ? observations : [])
+    .map((observation) => {
+      const price = Number(observation?.price);
+      const packageQuantity = Number(observation?.packageQuantity || 1);
+      const source = String(observation?.source || "manual");
+      return {
+        id: String(observation?.id || createId("price")),
+        itemKey: baseGroceryItemKey(observation?.itemKey || observation?.normalizedName || observation?.itemName),
+        itemName: String(observation?.itemName || observation?.name || "").trim(),
+        storeId: String(observation?.storeId || ""),
+        productName: String(observation?.productName || observation?.itemName || "").trim(),
+        price,
+        unitPrice: Number.isFinite(Number(observation?.unitPrice))
+          ? Number(observation.unitPrice)
+          : price / packageQuantity,
+        packageQuantity,
+        packageUnit: normalizePriceUnit(observation?.packageUnit),
+        source: groceryPriceProviders[source] ? source : "manual",
+        observedAt: validDateIso(observation?.observedAt) || new Date().toISOString(),
+        confidenceScore: clampNumber(observation?.confidenceScore, 0, 1, 1)
+      };
+    })
+    .filter((observation) => observation.itemKey
+      && validStoreIds.has(observation.storeId)
+      && Number.isFinite(observation.price)
+      && observation.price > 0
+      && Number.isFinite(observation.packageQuantity)
+      && observation.packageQuantity > 0);
+}
+
+function normalizeGroceryPricingSettings(settings) {
+  return {
+    enabled: Boolean(settings?.enabled),
+    extraStoreCost: clampNumber(settings?.extraStoreCost, 0, 100, 5)
+  };
+}
+
+function normalizePriceUnit(value) {
+  const unit = String(value || "each").trim().toLowerCase();
+  return ["each", "oz", "lb", "fl oz", "pt", "qt", "gal", "g", "kg", "ml", "l", "count"].includes(unit) ? unit : "each";
+}
+
+function validDateIso(value) {
+  const date = new Date(value || "");
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+}
+
+function groceryPriceObservations() {
+  state.groceryPriceObservations = normalizeGroceryPriceObservations(state.groceryPriceObservations, groceryStores());
+  return state.groceryPriceObservations;
+}
+
+function groceryPricingSettings() {
+  state.groceryPricingSettings = normalizeGroceryPricingSettings(state.groceryPricingSettings);
+  return state.groceryPricingSettings;
+}
+
+function priceObservationAgeDays(observation) {
+  return Math.max(0, (Date.now() - new Date(observation.observedAt).getTime()) / 86400000);
+}
+
+function priceObservationFreshness(observation) {
+  const age = priceObservationAgeDays(observation);
+  if (age > 365) return "expired";
+  if (age > 120) return "stale";
+  return "fresh";
+}
+
+function currentGroceryPriceObservations() {
+  const latestByProduct = new Map();
+  const receiptObservations = receiptPriceHistory().map((entry) => ({
+    id: entry.id,
+    itemKey: canonicalGroceryItemKey(entry.normalizedItemName),
+    itemName: entry.normalizedItemName,
+    storeId: entry.storeId,
+    productName: entry.normalizedItemName,
+    price: entry.packagePrice,
+    unitPrice: entry.unitPrice,
+    packageQuantity: entry.quantity,
+    packageUnit: entry.unit,
+    source: "receipt",
+    observedAt: entry.observedAt,
+    confidenceScore: entry.confidenceScore
+  }));
+  [...groceryPriceObservations(), ...receiptObservations]
+    .filter((observation) => priceObservationFreshness(observation) !== "expired")
+    .forEach((observation) => {
+      const key = [
+        observation.storeId,
+        canonicalGroceryItemKey(observation.itemKey),
+        observation.source,
+        normalize(observation.productName),
+        observation.packageQuantity,
+        observation.packageUnit
+      ].join("|");
+      const existing = latestByProduct.get(key);
+      if (!existing || new Date(observation.observedAt) > new Date(existing.observedAt)) {
+        latestByProduct.set(key, observation);
+      }
+    });
+  return [...latestByProduct.values()];
+}
+
 function normalizeRecipe(recipe) {
   const prepTime = recipe?.prepTime || recipe?.time || "";
   const cookTime = recipe?.cookTime || "";
+  const defaultServings = Math.max(1, Number(recipe?.defaultServings ?? recipe?.servings) || 1);
   return {
     ...recipe,
+    servings: defaultServings,
+    defaultServings,
     prepTime,
     cookTime,
     time: recipe?.time || combinedRecipeTime({ prepTime, cookTime }),
@@ -1746,6 +2426,8 @@ function normalizeRecipe(recipe) {
     updatedAt: recipe?.updatedAt || recipe?.updated_at || "",
     tags: normalizeRecipeTagSelection(recipe?.tags || []),
     nutrition: normalizeNutritionFacts(recipe?.nutrition),
+    nutritionEstimate: normalizeNutritionEstimate(recipe?.nutritionEstimate || recipe?.nutrition_estimate),
+    ingredientNutritionMatches: normalizeIngredientNutritionMatches(recipe?.ingredientNutritionMatches || recipe?.ingredient_nutrition_matches),
     cookLog: normalizeCookLog(recipe?.cookLog),
     steps: normalizeInstructionSteps(recipe?.steps).join("\n")
   };
@@ -1793,7 +2475,10 @@ async function hydrateStateFromSharedStorage() {
     try {
       const sharedState = await provider.load();
       activeSharedStorageProvider = provider;
-      if (sharedState) applyStoredState(sharedState);
+      if (sharedState) {
+        await snapshotBeforeSharedStateReplacement(sharedState, provider.label);
+        applyStoredState(sharedState);
+      }
       else await provider.write();
       sharedStorageReady = true;
       return;
@@ -1830,14 +2515,72 @@ function scheduleLocalBackup() {
   }, 1200);
 }
 
-async function writeLocalBackup() {
+async function writeLocalBackup(options = {}) {
   if (!canUseLocalBackend()) return;
   const response = await fetch("/api/backup", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ state })
+    body: JSON.stringify({
+      state,
+      protected: Boolean(options.protected),
+      reason: String(options.reason || "")
+    })
   });
   if (!response.ok) throw new Error(`Local backup failed with status ${response.status}`);
+}
+
+async function snapshotBeforeSharedStateReplacement(sharedState, providerLabel) {
+  if (!canUseLocalBackend() || !hasRecoverableUserState(state)) return;
+  if (recoverableStateSignature(state) === recoverableStateSignature(sharedState)) return;
+  try {
+    await writeLocalBackup({
+      protected: true,
+      reason: `Before loading ${providerLabel || "shared"} state`
+    });
+  } catch (error) {
+    console.warn("Could not create a protected pre-sync snapshot.", error);
+  }
+}
+
+function hasRecoverableUserState(candidate) {
+  if (!candidate || typeof candidate !== "object") return false;
+  return (candidate.autoGenerateRules || []).length > defaultAutoGenerateRules().length
+    || Object.keys(candidate.publishedWeeks || {}).length > 0
+    || Object.values(candidate.plans || {}).some((week) => mealSlotsHaveEntries(week?.slots) || mealSlotsHaveEntries(week?.publishedSlots))
+    || (candidate.recurringTasks || []).length > 0
+    || (candidate.workouts || []).length > 0
+    || (candidate.calendars || []).length > 0
+    || (candidate.groceryStores || []).length > 0;
+}
+
+function recoverableStateSignature(candidate) {
+  return JSON.stringify({
+    plans: candidate?.plans || {},
+    publishedWeeks: candidate?.publishedWeeks || {},
+    autoGenerateRules: candidate?.autoGenerateRules || [],
+    recurringTasks: candidate?.recurringTasks || [],
+    doPlans: candidate?.doPlans || {},
+    doBacklog: candidate?.doBacklog || [],
+    workouts: candidate?.workouts || [],
+    playAutoRules: candidate?.playAutoRules || [],
+    playPlans: candidate?.playPlans || {},
+    calendars: candidate?.calendars || [],
+    groceryStores: candidate?.groceryStores || [],
+    groceryItemLocations: candidate?.groceryItemLocations || {},
+    groceryStoreItemSections: candidate?.groceryStoreItemSections || {},
+    groceryPriceObservations: candidate?.groceryPriceObservations || [],
+    receipts: candidate?.receipts || [],
+    receiptItemMappings: candidate?.receiptItemMappings || {},
+    priceHistory: candidate?.priceHistory || []
+  });
+}
+
+function mealSlotsHaveEntries(slots) {
+  return Object.values(slots || {}).some((meals) => (
+    Object.values(meals || {}).some((entry) => (
+      Array.isArray(entry) ? entry.some(Boolean) : Boolean(entry)
+    ))
+  ));
 }
 
 async function tryPreChangeBackup(actionLabel) {
@@ -1947,10 +2690,16 @@ async function loadFolderRowsFromSupabase() {
 }
 
 async function loadRecipeRowsFromSupabase() {
-  let response = await fetch(`${supabaseBaseUrl()}/rest/v1/eat_recipes?select=id,name,time,prep_time,cook_time,servings,folder_id,source_url,photo_url,created_at,updated_at,ingredients,steps,tags,nutrition,cook_log&order=name.asc`, {
+  let response = await fetch(`${supabaseBaseUrl()}/rest/v1/eat_recipes?select=id,name,time,prep_time,cook_time,servings,folder_id,source_url,photo_url,created_at,updated_at,ingredients,steps,tags,nutrition,nutrition_estimate,ingredient_nutrition_matches,cook_log&order=name.asc`, {
     headers: supabaseHeaders(),
     cache: "no-store"
   });
+  if (!response.ok) {
+    response = await fetch(`${supabaseBaseUrl()}/rest/v1/eat_recipes?select=id,name,time,prep_time,cook_time,servings,folder_id,source_url,photo_url,created_at,updated_at,ingredients,steps,tags,nutrition,cook_log&order=name.asc`, {
+      headers: supabaseHeaders(),
+      cache: "no-store"
+    });
+  }
   if (!response.ok) {
     response = await fetch(`${supabaseBaseUrl()}/rest/v1/eat_recipes?select=id,name,time,servings,folder_id,source_url,photo_url,ingredients,steps,tags,nutrition&order=name.asc`, {
       headers: supabaseHeaders(),
@@ -1990,6 +2739,10 @@ function recipeFromRow(row) {
     ingredients: Array.isArray(row.ingredients) ? row.ingredients : [],
     tags: Array.isArray(row.tags) ? row.tags : normalizeRecipeTagSelection(state.recipes?.find((recipe) => recipe.id === row.id)?.tags || []),
     nutrition: Array.isArray(row.nutrition) ? row.nutrition : normalizeNutritionFacts(state.recipes?.find((recipe) => recipe.id === row.id)?.nutrition || []),
+    nutritionEstimate: row.nutrition_estimate || state.recipes?.find((recipe) => recipe.id === row.id)?.nutritionEstimate || null,
+    ingredientNutritionMatches: Array.isArray(row.ingredient_nutrition_matches)
+      ? row.ingredient_nutrition_matches
+      : state.recipes?.find((recipe) => recipe.id === row.id)?.ingredientNutritionMatches || [],
     cookLog: Array.isArray(row.cook_log) ? row.cook_log : normalizeCookLog(state.recipes?.find((recipe) => recipe.id === row.id)?.cookLog || []),
     steps: row.steps || ""
   };
@@ -2009,6 +2762,8 @@ function recipeToRow(recipe) {
     ingredients: normalizeIngredients(recipe.ingredients),
     tags: normalizeRecipeTagSelection(recipe.tags),
     nutrition: normalizeNutritionFacts(recipe.nutrition),
+    nutrition_estimate: normalizeNutritionEstimate(recipe.nutritionEstimate),
+    ingredient_nutrition_matches: normalizeIngredientNutritionMatches(recipe.ingredientNutritionMatches),
     cook_log: normalizeCookLog(recipe.cookLog),
     steps: recipe.steps || "",
     updated_at: new Date().toISOString()
@@ -2086,7 +2841,7 @@ async function upsertRecipeRows(recipes) {
     body: JSON.stringify(rows)
   });
   if (!response.ok) {
-    const fallbackRows = rows.map(({ tags, nutrition, cook_log, prep_time, cook_time, ...row }) => row);
+    const fallbackRows = rows.map(({ nutrition_estimate, ingredient_nutrition_matches, ...row }) => row);
     response = await fetch(`${supabaseBaseUrl()}/rest/v1/eat_recipes?on_conflict=id`, {
       method: "POST",
       headers: {
@@ -2094,6 +2849,17 @@ async function upsertRecipeRows(recipes) {
         Prefer: "resolution=merge-duplicates,return=minimal"
       },
       body: JSON.stringify(fallbackRows)
+    });
+  }
+  if (!response.ok) {
+    const legacyRows = rows.map(({ tags, nutrition, nutrition_estimate, ingredient_nutrition_matches, cook_log, prep_time, cook_time, ...row }) => row);
+    response = await fetch(`${supabaseBaseUrl()}/rest/v1/eat_recipes?on_conflict=id`, {
+      method: "POST",
+      headers: {
+        ...supabaseHeaders(),
+        Prefer: "resolution=merge-duplicates,return=minimal"
+      },
+      body: JSON.stringify(legacyRows)
     });
   }
   if (!response.ok) throw new Error(`Recipe row save failed with status ${response.status}`);
@@ -2120,8 +2886,7 @@ function sharedStorageProviders() {
       load: loadStateFromSupabase,
       write: writeStateToSupabase
     });
-  }
-  if (canUseLocalBackend()) {
+  } else if (canUseLocalBackend()) {
     providers.push({
       label: "Local file",
       load: loadStateFromLocalBackend,
@@ -2294,6 +3059,7 @@ function render() {
   renderAutoRules();
   renderRecurringTasks();
   renderGroceries();
+  if (elements.dailyDozenPageDialog.open) renderDailyDozen();
   renderPantry();
   renderDoPlanner();
   renderPlayPlanner();
@@ -4612,6 +5378,539 @@ function openGroceriesPage() {
   if (!elements.groceriesPageDialog.open) elements.groceriesPageDialog.showModal();
 }
 
+function openDailyDozenPage(recipeId = "") {
+  closeFloatingMenus();
+  activateEatShell();
+  if (elements.recipeBoxPageDialog.open) elements.recipeBoxPageDialog.close();
+  if (elements.groceriesPageDialog.open) elements.groceriesPageDialog.close();
+  pendingDailyDozenRecipeId = String(recipeId || "");
+  activeDailyDozenDate = activeDailyDozenDate || dailyDozenDomain().localDateKey();
+  if (!familyMembers().some((member) => member.id === activeDailyDozenMemberId)) {
+    activeDailyDozenMemberId = familyMembers()[0]?.id || "";
+  }
+  setPageTitle("Food Health");
+  renderDailyDozen();
+  if (!elements.dailyDozenPageDialog.open) elements.dailyDozenPageDialog.showModal();
+}
+
+function closeDailyDozenPage() {
+  pendingDailyDozenRecipeId = "";
+  elements.dailyDozenPageDialog.close();
+  setPageTitle(currentMainPageTitle());
+}
+
+function renderDailyDozen() {
+  const date = activeDailyDozenDate || dailyDozenDomain().localDateKey();
+  activeDailyDozenDate = date;
+  elements.dailyDozenDate.value = date;
+  elements.dailyDozenTodayBtn.disabled = date === dailyDozenDomain().localDateKey();
+  const members = familyMembers();
+  elements.dailyDozenMembers.innerHTML = members.map((member) => `
+    <button type="button" role="tab" data-daily-dozen-member="${escapeHtml(member.id)}"
+      aria-selected="${member.id === activeDailyDozenMemberId ? "true" : "false"}"
+      class="${member.id === activeDailyDozenMemberId ? "is-active" : ""}">
+      ${escapeHtml(member.name)}
+    </button>
+  `).join("");
+  elements.dailyDozenMembers.querySelectorAll("[data-daily-dozen-member]").forEach((button) => {
+    button.addEventListener("click", () => {
+      activeDailyDozenMemberId = button.dataset.dailyDozenMember;
+      renderDailyDozen();
+    });
+  });
+
+  const settings = personChecklistSettings()[activeDailyDozenMemberId] || {};
+  const template = activeChecklistTemplate();
+  const progress = foodHealthDomain().checklistProgress({
+    template,
+    settings,
+    manualEntries: dailyChecklistEntries(),
+    foodLogEntries: foodLogEntries(),
+    personId: activeDailyDozenMemberId,
+    date
+  });
+  elements.foodHealthChecklistTitle.textContent = template?.name || "Health checklist";
+  elements.foodHealthChecklistNote.textContent = template?.description || "A personal checklist configured in settings.";
+  elements.dailyDozenGrid.innerHTML = progress.length ? progress.map((category) => `
+    <article class="daily-dozen-card ${category.completedAmount >= category.targetFrequency ? "is-complete" : ""}">
+      <div class="daily-dozen-card-copy">
+        <strong>${escapeHtml(category.name)}</strong>
+        <span>${formatDailyDozenServings(category.completedAmount)} / ${formatDailyDozenServings(category.targetFrequency)}</span>
+        <small>${escapeHtml(category.description)}</small>
+      </div>
+      <div class="daily-dozen-progress" aria-label="${escapeHtml(category.name)} progress">
+        <span style="width:${Math.max(0, category.percent)}%"></span>
+      </div>
+      <div class="daily-dozen-stepper">
+        <button type="button" data-daily-dozen-adjust="-1" data-category="${escapeHtml(category.id)}"
+          aria-label="Remove one serving of ${escapeHtml(category.name)}" ${category.completedAmount <= 0 ? "disabled" : ""}>−</button>
+        <strong>${formatDailyDozenServings(category.completedAmount)}</strong>
+        <button type="button" data-daily-dozen-adjust="1" data-category="${escapeHtml(category.id)}"
+          aria-label="Add one serving of ${escapeHtml(category.name)}">+</button>
+      </div>
+    </article>
+  `).join("") : `<p class="empty-state">This template has no reviewed checklist items yet. Choose Daily Dozen or configure a custom template in Food Health Settings.</p>`;
+  elements.dailyDozenGrid.querySelectorAll("[data-daily-dozen-adjust]").forEach((button) => {
+    button.addEventListener("click", () => adjustDailyDozenServing(
+      button.dataset.category,
+      Number(button.dataset.dailyDozenAdjust)
+    ));
+  });
+  renderFoodHealthNutrition();
+  renderFoodHealthMeals();
+  renderDailyDozenRecipeSuggestion();
+}
+
+function renderDailyDozenRecipeSuggestion() {
+  const recipe = activeRecipes().find((item) => item.id === pendingDailyDozenRecipeId);
+  if (!recipe) {
+    elements.dailyDozenSuggestion.hidden = true;
+    elements.dailyDozenSuggestion.innerHTML = "";
+    return;
+  }
+  const suggestions = dailyDozenRecipeSuggestions(recipe);
+  elements.dailyDozenSuggestion.hidden = false;
+  elements.dailyDozenSuggestion.innerHTML = `
+    <div>
+      <strong>${escapeHtml(recipe.name)}</strong>
+      <span>${suggestions.length
+    ? "This recipe may contribute the categories below. Add only servings you actually ate."
+    : "No Daily Dozen categories are currently tagged for this recipe's ingredients."}</span>
+    </div>
+    ${suggestions.length ? `<div class="daily-dozen-suggestion-actions">
+      ${suggestions.map((suggestion) => `
+        <button type="button" data-daily-dozen-suggestion="${escapeHtml(suggestion.categoryId)}">
+          + ${escapeHtml(dailyDozenCategoryName(suggestion.categoryId))}
+        </button>
+      `).join("")}
+    </div>` : ""}
+  `;
+  elements.dailyDozenSuggestion.querySelectorAll("[data-daily-dozen-suggestion]").forEach((button) => {
+    button.addEventListener("click", () => adjustDailyDozenServing(button.dataset.dailyDozenSuggestion, 1, {
+      sourceType: "recipe",
+      sourceId: recipe.id,
+      notes: recipe.name
+    }));
+  });
+}
+
+function dailyDozenRecipeSuggestions(recipe) {
+  return dailyDozenDomain().recipeSuggestions(
+    normalizeIngredients(recipe?.ingredients || []),
+    groceryDailyDozenTags(),
+    dailyDozenItemKey
+  );
+}
+
+function dailyDozenCategoryName(categoryId) {
+  return dailyDozenCategories().find((category) => category.id === categoryId)?.name || categoryId;
+}
+
+function formatDailyDozenServings(value) {
+  const number = Number(value) || 0;
+  return Number.isInteger(number) ? String(number) : number.toFixed(1).replace(/\.0$/, "");
+}
+
+function adjustDailyDozenServing(categoryId, amount, source = {}) {
+  if (!categoryId || !activeDailyDozenMemberId || !activeDailyDozenDate) return;
+  if (amount > 0) {
+    state.dailyChecklistEntries.push({
+      id: createId("checklist"),
+      personId: activeDailyDozenMemberId,
+      checklistItemId: categoryId.includes(":") ? categoryId : `daily-dozen:${categoryId}`,
+      date: activeDailyDozenDate,
+      completedAmount: amount,
+      sourceType: source.sourceType === "recipe" ? "recipe" : "manual",
+      sourceId: source.sourceId || "",
+      notes: source.notes || ""
+    });
+  } else {
+    reduceDailyDozenServing(categoryId, Math.abs(amount));
+  }
+  state.dailyChecklistEntries = foodHealthDomain().normalizeDailyChecklistEntries(
+    state.dailyChecklistEntries,
+    familyMembers().map((member) => member.id)
+  );
+  persist();
+  renderDailyDozen();
+}
+
+function reduceDailyDozenServing(categoryId, amount) {
+  const itemId = categoryId.includes(":") ? categoryId : `daily-dozen:${categoryId}`;
+  let remaining = amount;
+  for (let index = state.dailyChecklistEntries.length - 1; index >= 0 && remaining > 0; index -= 1) {
+    const entry = state.dailyChecklistEntries[index];
+    if (entry.personId !== activeDailyDozenMemberId
+      || entry.checklistItemId !== itemId
+      || entry.date !== activeDailyDozenDate) continue;
+    const reduction = Math.min(entry.completedAmount, remaining);
+    entry.completedAmount -= reduction;
+    remaining -= reduction;
+    if (entry.completedAmount <= 0) state.dailyChecklistEntries.splice(index, 1);
+  }
+}
+
+function renderFoodHealthNutrition() {
+  const totals = foodHealthDomain().nutritionTotals(foodLogEntries(), activeDailyDozenMemberId, activeDailyDozenDate);
+  const targets = personChecklistSettings()[activeDailyDozenMemberId]?.nutritionTargets || {};
+  const member = familyMembers().find((item) => item.id === activeDailyDozenMemberId);
+  elements.foodHealthTargetNote.textContent = activeDailyDozenMemberId === "sophia" && !Object.keys(targets).length
+    ? "Estimated totals only. No adult targets are applied to Sophia unless you configure targets manually."
+    : "Estimated from logged foods; actual values vary. Targets are optional and user-configured.";
+  const labels = { calories: "Calories", protein: "Protein", carbs: "Carbs", fat: "Fat", fiber: "Fiber", sugar: "Sugar", sodium: "Sodium", saturatedFat: "Saturated fat" };
+  const units = { calories: "kcal", protein: "g", carbs: "g", fat: "g", fiber: "g", sugar: "g", sodium: "mg", saturatedFat: "g" };
+  elements.foodHealthNutrition.innerHTML = foodHealthDomain().nutrientKeys.map((key) => `
+    <article>
+      <span>${escapeHtml(labels[key])}</span>
+      <strong>${formatNutritionValue(totals[key])} <small>${units[key]}</small></strong>
+      ${Number(targets[key]) > 0 ? `<small>Target ${formatNutritionValue(targets[key])} ${units[key]}</small>` : ""}
+    </article>
+  `).join("");
+  elements.foodHealthNutrition.setAttribute("aria-label", `${member?.name || "Family member"} estimated daily nutrition`);
+}
+
+function renderFoodHealthMeals() {
+  const entries = foodLogEntries().filter((entry) => entry.familyMemberId === activeDailyDozenMemberId
+    && entry.date === activeDailyDozenDate);
+  elements.foodHealthMeals.innerHTML = foodHealthDomain().mealTypes.map((mealType) => {
+    const mealEntries = entries.filter((entry) => entry.mealType === mealType);
+    return `
+      <section class="food-health-meal-group">
+        <h4>${escapeHtml(mealType[0].toUpperCase() + mealType.slice(1))}</h4>
+        ${mealEntries.length ? mealEntries.map(foodHealthEntryTemplate).join("") : `<p class="empty-state">Nothing logged.</p>`}
+      </section>
+    `;
+  }).join("");
+  elements.foodHealthMeals.querySelectorAll("[data-edit-food-log]").forEach((button) => {
+    button.addEventListener("click", () => openFoodLogDialog("", button.dataset.editFoodLog));
+  });
+  elements.foodHealthMeals.querySelectorAll("[data-recalculate-food-log]").forEach((button) => {
+    button.addEventListener("click", () => recalculateFoodLogEntry(button.dataset.recalculateFoodLog));
+  });
+  elements.foodHealthMeals.querySelectorAll("[data-copy-food-log]").forEach((button) => {
+    button.addEventListener("click", () => copyFoodLogEntryToMember(button.dataset.copyFoodLog));
+  });
+}
+
+function foodHealthEntryTemplate(entry) {
+  const otherMembers = familyMembers().filter((member) => member.id !== entry.familyMemberId);
+  return `
+    <article class="food-health-log-entry">
+      <button type="button" class="food-health-log-main" data-edit-food-log="${escapeHtml(entry.id)}">
+        <strong>${escapeHtml(entry.displayName || "Food")}</strong>
+        <span>${formatDailyDozenServings(entry.servingMultiplier)} serving${entry.servingMultiplier === 1 ? "" : "s"}${entry.leftovers ? " · leftovers" : ""}</span>
+      </button>
+      <div class="food-health-log-actions">
+        ${entry.sourceType === "recipe" ? `<button type="button" class="quiet-btn" data-recalculate-food-log="${escapeHtml(entry.id)}">Recalculate</button>` : ""}
+        <label>
+          <span class="sr-only">Copy to family member</span>
+          <select data-copy-food-target="${escapeHtml(entry.id)}">
+            ${otherMembers.map((member) => `<option value="${escapeHtml(member.id)}">${escapeHtml(member.name)}</option>`).join("")}
+          </select>
+        </label>
+        <button type="button" class="quiet-btn" data-copy-food-log="${escapeHtml(entry.id)}">Copy meal</button>
+      </div>
+    </article>
+  `;
+}
+
+function formatNutritionValue(value) {
+  const number = Number(value) || 0;
+  return number >= 100 ? Math.round(number).toLocaleString() : number.toFixed(1).replace(/\.0$/, "");
+}
+
+function openFoodLogDialog(sourceType = "manual", entryId = "") {
+  editingFoodLogEntryId = entryId;
+  const entry = foodLogEntries().find((item) => item.id === entryId);
+  const member = familyMembers().find((item) => item.id === activeDailyDozenMemberId);
+  elements.foodLogTitle.textContent = entry ? "Edit food" : sourceType === "recipe" ? "Ate recipe" : "Add food";
+  elements.foodLogPersonLabel.textContent = `${member?.name || "Family member"} · ${activeDailyDozenDate}`;
+  elements.deleteFoodLogBtn.hidden = !entry;
+  elements.foodLogSourceType.value = entry?.leftovers ? "leftovers" : entry?.sourceType || sourceType;
+  elements.foodLogMealType.value = entry?.mealType || "snack";
+  elements.foodLogServingPreset.value = [1, 0.5].includes(entry?.servingMultiplier) ? String(entry.servingMultiplier) : entry ? "custom" : "1";
+  elements.foodLogCustomServing.value = entry?.servingMultiplier || 1;
+  elements.foodLogNotes.value = entry?.notes || "";
+  renderFoodLogNutritionInputs(entry?.nutritionSnapshot);
+  renderFoodLogSourceFields(entry);
+  renderFoodLogServingField();
+  if (!elements.foodLogDialog.open) elements.foodLogDialog.showModal();
+}
+
+function closeFoodLogDialog() {
+  editingFoodLogEntryId = "";
+  elements.foodLogDialog.close();
+}
+
+function renderFoodLogSourceFields(entry = null) {
+  const requestedType = elements.foodLogSourceType.value;
+  const sourceType = requestedType === "leftovers" ? "recipe" : requestedType;
+  const isSelect = sourceType === "recipe" || sourceType === "grocery_item";
+  elements.foodLogSourceSelect.hidden = !isSelect;
+  elements.foodLogManualName.hidden = isSelect;
+  elements.foodLogNutritionFields.hidden = sourceType === "recipe";
+  if (sourceType === "recipe") {
+    elements.foodLogSourceSelect.innerHTML = `<option value="">Choose a recipe</option>${activeRecipes()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((recipe) => `<option value="${escapeHtml(recipe.id)}">${escapeHtml(recipe.name)}</option>`).join("")}`;
+  } else if (sourceType === "grocery_item") {
+    elements.foodLogSourceSelect.innerHTML = `<option value="">Choose a grocery item</option>${groceryBaseItems()
+      .map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}`;
+  }
+  if (entry) {
+    elements.foodLogSourceSelect.value = entry.sourceId || "";
+    elements.foodLogManualName.value = entry.displayName || "";
+  } else {
+    elements.foodLogSourceSelect.value = pendingDailyDozenRecipeId && sourceType === "recipe" ? pendingDailyDozenRecipeId : "";
+    elements.foodLogManualName.value = "";
+  }
+  renderFoodLogChecklistSuggestions(entry?.checklistContributions || []);
+}
+
+function renderFoodLogNutritionInputs(snapshot = {}) {
+  const labels = { calories: "Calories", protein: "Protein (g)", carbs: "Carbs (g)", fat: "Fat (g)", fiber: "Fiber (g)", sugar: "Sugar (g)", sodium: "Sodium (mg)", saturatedFat: "Saturated fat (g)" };
+  elements.foodLogNutritionInputs.innerHTML = foodHealthDomain().nutrientKeys.map((key) => `
+    <label>${escapeHtml(labels[key])}<input type="number" min="0" step="0.1" data-food-nutrient="${key}" value="${Number(snapshot?.[key]) || ""}" /></label>
+  `).join("");
+}
+
+function renderFoodLogServingField() {
+  elements.foodLogCustomServingWrap.hidden = elements.foodLogServingPreset.value !== "custom";
+}
+
+function selectedFoodLogServing() {
+  return elements.foodLogServingPreset.value === "custom"
+    ? Math.max(0.01, Number(elements.foodLogCustomServing.value) || 1)
+    : Number(elements.foodLogServingPreset.value) || 1;
+}
+
+function foodLogSuggestionSource() {
+  const type = elements.foodLogSourceType.value;
+  if (type === "recipe" || type === "leftovers") {
+    const recipe = activeRecipes().find((item) => item.id === elements.foodLogSourceSelect.value);
+    return recipe ? dailyDozenRecipeSuggestions(recipe) : [];
+  }
+  if (type === "grocery_item") {
+    const itemKey = dailyDozenItemKey(elements.foodLogSourceSelect.value);
+    return (groceryDailyDozenTags()[itemKey] || []).map((tag) => ({ categoryId: tag.categoryId, confidenceScore: tag.confidenceScore }));
+  }
+  return [];
+}
+
+function renderFoodLogChecklistSuggestions(existing = []) {
+  const template = activeChecklistTemplate();
+  const existingByItem = new Map(existing.map((item) => [item.checklistItemId, item]));
+  const suggestions = foodLogSuggestionSource().map((suggestion) => {
+    const itemId = `daily-dozen:${suggestion.categoryId}`;
+    const item = template?.items?.find((candidate) => candidate.id === itemId);
+    return item ? { item, suggestion, existing: existingByItem.get(itemId) } : null;
+  }).filter(Boolean);
+  elements.foodLogChecklistSuggestions.innerHTML = suggestions.length ? suggestions.map(({ item, suggestion, existing: contribution }) => `
+    <label class="food-log-checklist-row">
+      <input type="checkbox" data-food-checklist-item="${escapeHtml(item.id)}" ${contribution?.userConfirmed ? "checked" : ""} />
+      <span>${escapeHtml(item.name)}</span>
+      <input type="number" min="0.25" step="0.25" value="${Number(contribution?.estimatedServings) || 1}" data-food-checklist-amount="${escapeHtml(item.id)}" aria-label="${escapeHtml(item.name)} servings" />
+      <small>${Math.round((Number(suggestion.confidenceScore) || 0) * 100)}% match</small>
+    </label>
+  `).join("") : `<p class="empty-state">No checklist contributions are suggested for this food.</p>`;
+}
+
+function saveFoodLogEntry(event) {
+  event.preventDefault();
+  const requestedType = elements.foodLogSourceType.value;
+  const sourceType = requestedType === "leftovers" ? "recipe" : requestedType;
+  const sourceId = sourceType === "manual" ? "" : elements.foodLogSourceSelect.value;
+  const recipe = sourceType === "recipe" ? activeRecipes().find((item) => item.id === sourceId) : null;
+  const displayName = recipe?.name || (sourceType === "grocery_item" ? sourceId : elements.foodLogManualName.value.trim());
+  if (!displayName) return;
+  const servingMultiplier = selectedFoodLogServing();
+  const id = editingFoodLogEntryId || createId("food-log");
+  const manualValues = Object.fromEntries([...elements.foodLogNutritionInputs.querySelectorAll("[data-food-nutrient]")]
+    .map((input) => [input.dataset.foodNutrient, Number(input.value) || 0]));
+  const nutritionSnapshot = recipe
+    ? foodHealthDomain().snapshotFromRecipe(recipe, servingMultiplier, id)
+    : foodHealthDomain().snapshotFromValues(manualValues, servingMultiplier, id, sourceType === "grocery_item" ? 0.5 : 1);
+  const checklistContributions = [...elements.foodLogChecklistSuggestions.querySelectorAll("[data-food-checklist-item]")].map((checkbox) => ({
+    foodLogEntryId: id,
+    checklistItemId: checkbox.dataset.foodChecklistItem,
+    estimatedServings: Number(elements.foodLogChecklistSuggestions.querySelector(`[data-food-checklist-amount="${checkbox.dataset.foodChecklistItem}"]`)?.value) || 1,
+    userConfirmed: checkbox.checked,
+    confidenceScore: 1
+  }));
+  const next = {
+    id,
+    familyMemberId: activeDailyDozenMemberId,
+    date: activeDailyDozenDate,
+    sourceType,
+    sourceId,
+    displayName,
+    servingMultiplier,
+    mealType: elements.foodLogMealType.value,
+    notes: elements.foodLogNotes.value.trim(),
+    leftovers: requestedType === "leftovers",
+    nutritionSnapshot,
+    checklistContributions
+  };
+  const index = state.foodLogEntries.findIndex((entry) => entry.id === id);
+  if (index >= 0) state.foodLogEntries[index] = next;
+  else state.foodLogEntries.push(next);
+  state.foodLogEntries = foodHealthDomain().normalizeFoodLogEntries(state.foodLogEntries, familyMembers().map((member) => member.id));
+  persist();
+  closeFoodLogDialog();
+  renderDailyDozen();
+}
+
+function deleteFoodLogEntry() {
+  if (!editingFoodLogEntryId) return;
+  state.foodLogEntries = foodLogEntries().filter((entry) => entry.id !== editingFoodLogEntryId);
+  persist();
+  closeFoodLogDialog();
+  renderDailyDozen();
+}
+
+function recalculateFoodLogEntry(entryId) {
+  const entry = foodLogEntries().find((item) => item.id === entryId);
+  const recipe = activeRecipes().find((item) => item.id === entry?.sourceId);
+  if (!entry || !recipe) return;
+  entry.nutritionSnapshot = foodHealthDomain().snapshotFromRecipe(recipe, entry.servingMultiplier, entry.id);
+  persist();
+  renderDailyDozen();
+}
+
+function copyFoodLogEntryToMember(entryId) {
+  const entry = foodLogEntries().find((item) => item.id === entryId);
+  const select = elements.foodHealthMeals.querySelector(`[data-copy-food-target="${entryId}"]`);
+  if (!entry || !select?.value) return;
+  state.foodLogEntries.push(foodHealthDomain().copyFoodLogEntry(entry, select.value, createId("food-log")));
+  persist();
+  renderDailyDozen();
+}
+
+function openFoodHealthSettingsDialog() {
+  activeFoodHealthSettingsMemberId = familyMembers().some((member) => member.id === activeDailyDozenMemberId)
+    ? activeDailyDozenMemberId
+    : familyMembers()[0]?.id;
+  editingFoodHealthTemplateId = personChecklistSettings()[activeFoodHealthSettingsMemberId]?.templateId || "daily-dozen";
+  renderFoodHealthSettings();
+  elements.foodHealthSettingsDialog.showModal();
+}
+
+function renderFoodHealthSettings() {
+  const members = familyMembers();
+  const settings = personChecklistSettings()[activeFoodHealthSettingsMemberId] || {};
+  elements.foodHealthSettingsMembers.innerHTML = members.map((member) => `
+    <button type="button" role="tab" data-food-health-settings-member="${escapeHtml(member.id)}"
+      class="${member.id === activeFoodHealthSettingsMemberId ? "is-active" : ""}"
+      aria-selected="${member.id === activeFoodHealthSettingsMemberId ? "true" : "false"}">${escapeHtml(member.name)}</button>
+  `).join("");
+  elements.foodHealthSettingsMembers.querySelectorAll("[data-food-health-settings-member]").forEach((button) => {
+    button.addEventListener("click", () => {
+      activeFoodHealthSettingsMemberId = button.dataset.foodHealthSettingsMember;
+      editingFoodHealthTemplateId = personChecklistSettings()[activeFoodHealthSettingsMemberId]?.templateId || "daily-dozen";
+      renderFoodHealthSettings();
+    });
+  });
+  elements.foodHealthTemplateSelect.innerHTML = checklistTemplates()
+    .filter((template) => template.id !== "twenty-one-tweaks")
+    .map((template) => `<option value="${escapeHtml(template.id)}">${escapeHtml(template.name)}</option>`).join("");
+  elements.foodHealthTemplateSelect.value = editingFoodHealthTemplateId || settings.templateId || "daily-dozen";
+  const template = checklistTemplates().find((item) => item.id === elements.foodHealthTemplateSelect.value) || activeChecklistTemplate(activeFoodHealthSettingsMemberId);
+  elements.foodHealthTemplateDescription.textContent = template?.description || "";
+  if (template?.id === "custom") {
+    elements.foodHealthChecklistSettings.innerHTML = `
+      <div data-custom-health-items>
+        ${(template.items || []).map((item) => customHealthItemRowTemplate(item, settings)).join("")}
+      </div>
+      <button class="secondary-btn" type="button" data-add-custom-health-item>Add checklist item</button>
+    `;
+    elements.foodHealthChecklistSettings.querySelector("[data-add-custom-health-item]").addEventListener("click", () => {
+      elements.foodHealthChecklistSettings.querySelector("[data-custom-health-items]")
+        .insertAdjacentHTML("beforeend", customHealthItemRowTemplate({
+          id: createId("custom-checklist"),
+          name: "",
+          description: "",
+          targetFrequency: 1,
+          categoryType: "other"
+        }, settings));
+    });
+  } else {
+    elements.foodHealthChecklistSettings.innerHTML = template?.items?.length ? template.items.map((item) => `
+      <div class="food-health-setting-row">
+        <label><input type="checkbox" data-health-item-enabled="${escapeHtml(item.id)}" ${settings.hiddenItems?.includes(item.id) ? "" : "checked"} /> ${escapeHtml(item.name)}</label>
+        <label>Target <input type="number" min="0.25" step="0.25" data-health-item-target="${escapeHtml(item.id)}" value="${Number(settings.customTargets?.[item.id]) || item.targetFrequency}" /></label>
+      </div>
+    `).join("") : `<p class="empty-state">This placeholder has no reviewed items yet. It will not auto-fill anything.</p>`;
+  }
+  const labels = { calories: "Calories", protein: "Protein (g)", carbs: "Carbs (g)", fat: "Fat (g)", fiber: "Fiber (g)", sugar: "Sugar (g)", sodium: "Sodium (mg)", saturatedFat: "Saturated fat (g)" };
+  elements.foodHealthNutritionTargetNote.textContent = activeFoodHealthSettingsMemberId === "sophia"
+    ? "No adult targets are applied by default. Enter only targets you have chosen for Sophia."
+    : "Optional personal targets. Leave blank to show totals without comparison.";
+  elements.foodHealthNutritionTargets.innerHTML = foodHealthDomain().nutrientKeys.map((key) => `
+    <label>${escapeHtml(labels[key])}<input type="number" min="0" step="0.1" data-health-nutrition-target="${key}" value="${settings.nutritionTargets?.[key] ?? ""}" /></label>
+  `).join("");
+}
+
+function customHealthItemRowTemplate(item, settings) {
+  return `
+    <div class="food-health-custom-item" data-custom-health-item="${escapeHtml(item.id)}">
+      <input data-custom-health-name placeholder="Checklist item" value="${escapeHtml(item.name)}" />
+      <input data-custom-health-description placeholder="Description or guidance" value="${escapeHtml(item.description)}" />
+      <select data-custom-health-type>
+        ${["food", "beverage", "behavior", "exercise", "supplement", "other"].map((type) => `
+          <option value="${type}" ${item.categoryType === type ? "selected" : ""}>${type[0].toUpperCase() + type.slice(1)}</option>
+        `).join("")}
+      </select>
+      <label>Target <input type="number" min="0.25" step="0.25" data-health-item-target="${escapeHtml(item.id)}" value="${Number(settings.customTargets?.[item.id]) || item.targetFrequency || 1}" /></label>
+      <label><input type="checkbox" data-health-item-enabled="${escapeHtml(item.id)}" ${settings.hiddenItems?.includes(item.id) ? "" : "checked"} /> Enabled</label>
+    </div>
+  `;
+}
+
+function saveFoodHealthSettings() {
+  const personId = activeFoodHealthSettingsMemberId;
+  const settings = personChecklistSettings()[personId] || {};
+  const hiddenItems = [...elements.foodHealthChecklistSettings.querySelectorAll("[data-health-item-enabled]")]
+    .filter((input) => !input.checked).map((input) => input.dataset.healthItemEnabled);
+  const customTargets = Object.fromEntries([...elements.foodHealthChecklistSettings.querySelectorAll("[data-health-item-target]")]
+    .map((input) => [input.dataset.healthItemTarget, Number(input.value)])
+    .filter(([, value]) => Number.isFinite(value) && value > 0));
+  const nutritionTargets = Object.fromEntries([...elements.foodHealthNutritionTargets.querySelectorAll("[data-health-nutrition-target]")]
+    .map((input) => [input.dataset.healthNutritionTarget, Number(input.value)])
+    .filter(([, value]) => Number.isFinite(value) && value > 0));
+  if ((editingFoodHealthTemplateId || elements.foodHealthTemplateSelect.value) === "custom") {
+    const customTemplate = checklistTemplates().find((template) => template.id === "custom");
+    customTemplate.items = [...elements.foodHealthChecklistSettings.querySelectorAll("[data-custom-health-item]")]
+      .map((row, index) => ({
+        id: row.dataset.customHealthItem,
+        templateId: "custom",
+        name: row.querySelector("[data-custom-health-name]").value.trim(),
+        description: row.querySelector("[data-custom-health-description]").value.trim(),
+        targetFrequency: Number(row.querySelector("[data-health-item-target]").value) || 1,
+        sortOrder: (index + 1) * 10,
+        categoryType: row.querySelector("[data-custom-health-type]").value
+      }))
+      .filter((item) => item.name);
+    state.checklistTemplates = foodHealthDomain().normalizeTemplates(state.checklistTemplates, dailyDozenCategories());
+  }
+  state.personChecklistSettings[personId] = {
+    ...settings,
+    personId,
+    templateId: editingFoodHealthTemplateId || elements.foodHealthTemplateSelect.value,
+    hiddenItems,
+    customTargets,
+    nutritionTargets,
+    useAdultNutritionTargets: personId !== "sophia" && Object.keys(nutritionTargets).length > 0
+  };
+  state.personChecklistSettings = foodHealthDomain().normalizePersonSettings(
+    state.personChecklistSettings,
+    familyMembers(),
+    checklistTemplates()
+  );
+  persist();
+  elements.foodHealthSettingsDialog.close();
+  if (elements.dailyDozenPageDialog.open) renderDailyDozen();
+}
+
 function renderWeekJumpMenu() {
   if (!elements.weekJumpMenu) return;
   const weeks = weekTimelineOptions();
@@ -5453,7 +6752,10 @@ function mealEntryValue(day, meal, index) {
 }
 
 function copyMealEntry(day, meal, index) {
-  copiedMealEntry = mealEntryValue(day, meal, index);
+  const entry = mealEntryValue(day, meal, index);
+  copiedMealEntry = isPlannedRecipeEntry(entry)
+    ? { ...entry, id: createId("meal-plan-recipe") }
+    : entry;
 }
 
 function copyMealEntryAsLeftovers(day, meal, index) {
@@ -5466,7 +6768,11 @@ function pasteMealEntry(day, meal, index) {
   if (!copiedMealEntry) return;
   const week = weekState();
   const entries = mealEntryList(slotEntries(week.slots?.[day]?.[meal]), meal);
-  entries[index] = copiedMealEntry;
+  entries[index] = plannedEntryAtLocation(
+    isPlannedRecipeEntry(copiedMealEntry) ? { ...copiedMealEntry, id: createId("meal-plan-recipe") } : copiedMealEntry,
+    day,
+    meal
+  );
   setMeal(day, meal, compactMealSlotEntries(entries, meal));
 }
 
@@ -5582,7 +6888,7 @@ function openPlayTaskMenu(event) {
 }
 
 function closeFolderMenu() {
-  document.querySelector(".folder-context-menu")?.remove();
+  document.querySelectorAll(".folder-context-menu").forEach((menu) => menu.remove());
   folderMenuId = "";
 }
 
@@ -5736,8 +7042,10 @@ function updateSettingsMenuOptions() {
   elements.menuAutoRulesBtn.hidden = !isEat;
   elements.menuTagsBtn.hidden = !isEat;
   elements.menuGroceryListBtn.hidden = !isEat;
+  elements.menuGroceryPricingBtn.hidden = !isEat;
   elements.menuGroceryItemsBtn.hidden = !isEat;
   elements.menuIngredientOptionsBtn.hidden = !isEat;
+  elements.menuFoodHealthSettingsBtn.hidden = !isEat;
   elements.menuRecurringTasksBtn.hidden = !isDo;
   elements.menuWorkoutLibraryBtn.hidden = !isPlay;
   elements.menuWorkoutLogsBtn.hidden = !isPlay;
@@ -5828,8 +7136,10 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="auto-rules">Auto-Fill Rules</button>
         <button type="button" data-context-settings-action="tags">Tags</button>
         <button type="button" data-context-settings-action="grocery-list">Grocery List</button>
+        <button type="button" data-context-settings-action="grocery-pricing">Receipts & Price History</button>
         <button type="button" data-context-settings-action="grocery-items">Grocery Items</button>
         <button type="button" data-context-settings-action="ingredient-options">Ingredient Options</button>
+        <button type="button" data-context-settings-action="food-health-settings">Food Health Settings</button>
       </div>
     `;
     return;
@@ -5879,8 +7189,10 @@ function handleContextSettingsAction(event) {
     "auto-rules": () => closeAndRun(openAutoRulesDialog),
     "tags": () => closeAndRun(openTagsDialog),
     "grocery-list": () => closeAndRun(openGroceryStoresDialog),
+    "grocery-pricing": () => closeAndRun(openGroceryPricingDialog),
     "grocery-items": () => closeAndRun(openGroceryLibraryDialog),
     "ingredient-options": () => closeAndRun(openIngredientOptionsDialog),
+    "food-health-settings": () => closeAndRun(openFoodHealthSettingsDialog),
     "recurring-tasks": () => closeAndRun(openRecurringTasksDialog),
     "workout-library": () => closeAndRun(openWorkoutLibraryDialog),
     "workout-logs": () => closeAndRun(openWorkoutLogsDialog),
@@ -6051,7 +7363,7 @@ function renderGroceryStoresSettings() {
   const stores = groceryStores();
   elements.groceryStoresList.innerHTML = stores.length
     ? stores.map((store) => `
-      <div class="grocery-store-setting">
+      <div class="grocery-store-setting" data-grocery-store-setting="${escapeHtml(store.id)}" draggable="true" title="Drag to reorder">
         <span class="grocery-store-setting-details">
           <strong>${escapeHtml(store.name)}</strong>
           <small>${escapeHtml(store.address || "Manually added store")}</small>
@@ -6062,17 +7374,84 @@ function renderGroceryStoresSettings() {
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 5 6 6-6 6v-4H8a4 4 0 0 0-4 4V9a4 4 0 0 1 4-4h5Z" /></svg>
             </a>
           ` : ""}
-          <button class="icon-btn" type="button" data-remove-grocery-store="${escapeHtml(store.id)}" title="Remove ${escapeHtml(store.name)}" aria-label="Remove ${escapeHtml(store.name)}">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" /></svg>
-          </button>
         </span>
       </div>
     `).join("")
     : `<div class="empty-state">Search for a store location or add one manually.</div>`;
 
-  elements.groceryStoresList.querySelectorAll("[data-remove-grocery-store]").forEach((button) => {
-    button.addEventListener("click", () => removeGroceryStore(button.dataset.removeGroceryStore));
+  elements.groceryStoresList.querySelectorAll("[data-grocery-store-setting]").forEach((row) => {
+    row.addEventListener("contextmenu", openGroceryStoreMenu);
+    row.addEventListener("dragstart", handleGroceryStoreOrderDragStart);
+    row.addEventListener("dragover", handleGroceryStoreOrderDragOver);
+    row.addEventListener("dragleave", clearGroceryStoreOrderDropTarget);
+    row.addEventListener("drop", handleGroceryStoreOrderDrop);
+    row.addEventListener("dragend", clearGroceryStoreOrderDragState);
   });
+}
+
+function handleGroceryStoreOrderDragStart(event) {
+  if (event.target.closest("a, button")) {
+    event.preventDefault();
+    return;
+  }
+  draggedGroceryStoreId = event.currentTarget.dataset.groceryStoreSetting || "";
+  if (!draggedGroceryStoreId) return;
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("application/x-live-grocery-store", draggedGroceryStoreId);
+  event.dataTransfer.setData("text/plain", draggedGroceryStoreId);
+  event.currentTarget.classList.add("is-dragging");
+  closeFolderMenu();
+}
+
+function handleGroceryStoreOrderDragOver(event) {
+  if (!draggedGroceryStoreId) return;
+  const targetId = event.currentTarget.dataset.groceryStoreSetting;
+  if (!targetId || targetId === draggedGroceryStoreId) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+  const rect = event.currentTarget.getBoundingClientRect();
+  const position = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+  clearGroceryStoreOrderDropTarget();
+  event.currentTarget.classList.add(position === "before" ? "drop-before" : "drop-after");
+}
+
+function clearGroceryStoreOrderDropTarget() {
+  elements.groceryStoresList.querySelectorAll(".drop-before, .drop-after").forEach((row) => {
+    row.classList.remove("drop-before", "drop-after");
+  });
+}
+
+function handleGroceryStoreOrderDrop(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  const targetId = event.currentTarget.dataset.groceryStoreSetting;
+  const position = event.currentTarget.classList.contains("drop-before") ? "before" : "after";
+  reorderGroceryStore(draggedGroceryStoreId, targetId, position);
+}
+
+function clearGroceryStoreOrderDragState() {
+  draggedGroceryStoreId = "";
+  clearGroceryStoreOrderDropTarget();
+  elements.groceryStoresList.querySelectorAll(".is-dragging").forEach((row) => row.classList.remove("is-dragging"));
+}
+
+function reorderGroceryStore(sourceId, targetId, position) {
+  if (!sourceId || !targetId || sourceId === targetId) {
+    clearGroceryStoreOrderDragState();
+    return;
+  }
+  const stores = [...groceryStores()];
+  const sourceIndex = stores.findIndex((store) => store.id === sourceId);
+  if (sourceIndex < 0) return;
+  const [source] = stores.splice(sourceIndex, 1);
+  const targetIndex = stores.findIndex((store) => store.id === targetId);
+  if (targetIndex < 0) return;
+  stores.splice(targetIndex + (position === "after" ? 1 : 0), 0, source);
+  state.groceryStores = stores;
+  draggedGroceryStoreId = "";
+  persist();
+  renderGroceryStoresSettings();
+  renderGroceries();
 }
 
 function addGroceryStore(event) {
@@ -6299,6 +7678,198 @@ function storeDirectionsUrl(store) {
   return `https://www.google.com/maps/dir/?${params}`;
 }
 
+function openGroceryStoreMenu(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeFolderMenu();
+
+  const source = event.target.closest("[data-grocery-store-setting]");
+  const storeId = source?.dataset.groceryStoreSetting;
+  const store = groceryStores().find((item) => item.id === storeId);
+  if (!store) return;
+
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu grocery-store-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-edit-grocery-store="${escapeHtml(store.id)}">Edit</button>
+    <button type="button" role="menuitem" data-remove-grocery-store-menu="${escapeHtml(store.id)}">Remove</button>
+  `;
+
+  const menuHost = source.closest("dialog[open]") || document.body;
+  menuHost.append(menu);
+  const sourceRect = source.getBoundingClientRect();
+  const rawX = event.clientX || sourceRect.right;
+  const rawY = event.clientY || sourceRect.bottom;
+  const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+
+  menu.querySelector("[data-edit-grocery-store]").addEventListener("click", (clickEvent) => {
+    clickEvent.preventDefault();
+    clickEvent.stopPropagation();
+    closeFolderMenu();
+    editGroceryStore(store.id);
+  });
+  menu.querySelector("[data-remove-grocery-store-menu]").addEventListener("click", (clickEvent) => {
+    clickEvent.preventDefault();
+    clickEvent.stopPropagation();
+    closeFolderMenu();
+    removeGroceryStore(store.id);
+  });
+}
+
+function editGroceryStore(storeId) {
+  const store = groceryStores().find((item) => item.id === storeId);
+  if (!store) return;
+  activeGroceryStoreLayoutId = store.id;
+  elements.groceryStoreLayoutName.value = store.name;
+  elements.groceryStoreLayoutAddress.value = store.address || "";
+  elements.groceryStoreSectionInput.value = "";
+  renderGroceryStoreLayoutEditor(store.sections);
+  elements.groceryStoreLayoutDialog.showModal();
+  window.requestAnimationFrame(() => elements.groceryStoreLayoutName.focus());
+}
+
+function renderGroceryStoreLayoutEditor(sections) {
+  elements.groceryStoreLayoutList.innerHTML = normalizeGroceryStoreSections(sections, activeGroceryStoreLayoutId)
+    .map((section) => groceryStoreLayoutRowTemplate(section))
+    .join("");
+  bindGroceryStoreLayoutRows();
+}
+
+function groceryStoreLayoutRowTemplate(section) {
+  return `
+    <div class="grocery-store-layout-row" data-store-section-row="${escapeHtml(section.id)}" draggable="true">
+      <span class="grocery-store-section-grip" aria-hidden="true">⋮⋮</span>
+      <input value="${escapeHtml(section.name)}" aria-label="Section name" />
+      <button class="icon-btn" type="button" data-remove-store-section="${escapeHtml(section.id)}" title="Remove section" aria-label="Remove ${escapeHtml(section.name)}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" /></svg>
+      </button>
+    </div>
+  `;
+}
+
+function bindGroceryStoreLayoutRows() {
+  elements.groceryStoreLayoutList.querySelectorAll("[data-store-section-row]").forEach((row) => {
+    if (row.dataset.bound === "true") return;
+    row.dataset.bound = "true";
+    row.addEventListener("dragstart", handleStoreSectionDragStart);
+    row.addEventListener("dragover", handleStoreSectionDragOver);
+    row.addEventListener("dragleave", clearStoreSectionDropTarget);
+    row.addEventListener("drop", handleStoreSectionDrop);
+    row.addEventListener("dragend", clearStoreSectionDragState);
+  });
+  elements.groceryStoreLayoutList.querySelectorAll("[data-remove-store-section]:not([data-bound])").forEach((button) => {
+    button.dataset.bound = "true";
+    button.addEventListener("click", () => removeGroceryStoreSectionRow(button.dataset.removeStoreSection));
+  });
+}
+
+function addGroceryStoreSection() {
+  const name = elements.groceryStoreSectionInput.value.trim();
+  if (!name) return;
+  const currentNames = [...elements.groceryStoreLayoutList.querySelectorAll("[data-store-section-row] input")]
+    .map((input) => normalize(input.value));
+  if (currentNames.includes(normalize(name))) {
+    window.alert("That section already exists.");
+    return;
+  }
+  const section = { id: createId("store-section"), name };
+  elements.groceryStoreLayoutList.insertAdjacentHTML("beforeend", groceryStoreLayoutRowTemplate(section));
+  elements.groceryStoreSectionInput.value = "";
+  bindGroceryStoreLayoutRows();
+  elements.groceryStoreSectionInput.focus();
+}
+
+function removeGroceryStoreSectionRow(sectionId) {
+  const rows = elements.groceryStoreLayoutList.querySelectorAll("[data-store-section-row]");
+  if (rows.length <= 1) {
+    window.alert("A store needs at least one section.");
+    return;
+  }
+  elements.groceryStoreLayoutList.querySelector(`[data-store-section-row="${CSS.escape(sectionId)}"]`)?.remove();
+}
+
+function handleStoreSectionDragStart(event) {
+  if (event.target.closest("input, button")) {
+    event.preventDefault();
+    return;
+  }
+  draggedGroceryStoreSectionId = event.currentTarget.dataset.storeSectionRow || "";
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", draggedGroceryStoreSectionId);
+  event.currentTarget.classList.add("is-dragging");
+}
+
+function handleStoreSectionDragOver(event) {
+  if (!draggedGroceryStoreSectionId || event.currentTarget.dataset.storeSectionRow === draggedGroceryStoreSectionId) return;
+  event.preventDefault();
+  const rect = event.currentTarget.getBoundingClientRect();
+  const before = event.clientY < rect.top + rect.height / 2;
+  clearStoreSectionDropTarget();
+  event.currentTarget.classList.add(before ? "drop-before" : "drop-after");
+}
+
+function clearStoreSectionDropTarget() {
+  elements.groceryStoreLayoutList.querySelectorAll(".drop-before, .drop-after").forEach((row) => {
+    row.classList.remove("drop-before", "drop-after");
+  });
+}
+
+function handleStoreSectionDrop(event) {
+  event.preventDefault();
+  const source = elements.groceryStoreLayoutList.querySelector(`[data-store-section-row="${CSS.escape(draggedGroceryStoreSectionId)}"]`);
+  const target = event.currentTarget;
+  if (!source || source === target) return;
+  if (target.classList.contains("drop-before")) target.before(source);
+  else target.after(source);
+  clearStoreSectionDragState();
+}
+
+function clearStoreSectionDragState() {
+  draggedGroceryStoreSectionId = "";
+  clearStoreSectionDropTarget();
+  elements.groceryStoreLayoutList.querySelectorAll(".is-dragging").forEach((row) => row.classList.remove("is-dragging"));
+}
+
+function saveGroceryStoreLayout(event) {
+  event.preventDefault();
+  const stores = groceryStores();
+  const store = stores.find((item) => item.id === activeGroceryStoreLayoutId);
+  if (!store) return;
+  const name = elements.groceryStoreLayoutName.value.trim();
+  if (!name) return;
+  const sections = [...elements.groceryStoreLayoutList.querySelectorAll("[data-store-section-row]")]
+    .map((row, index) => ({
+      id: row.dataset.storeSectionRow,
+      name: row.querySelector("input").value.trim(),
+      sortOrder: (index + 1) * 10
+    }))
+    .filter((section) => section.name);
+  if (!sections.length) {
+    window.alert("Add at least one store section.");
+    return;
+  }
+  const address = elements.groceryStoreLayoutAddress.value.trim();
+  const addressChanged = address !== store.address;
+  state.groceryStores = stores.map((item) => item.id === store.id ? {
+    ...item,
+    name,
+    chainName: name,
+    address,
+    sections,
+    ...(addressChanged ? { placeId: "", latitude: null, longitude: null, types: [] } : {})
+  } : item);
+  state.groceryStoreItemSections = normalizeGroceryStoreItemSections(state.groceryStoreItemSections, state.groceryStores);
+  activeGroceryStoreLayoutId = "";
+  persist();
+  elements.groceryStoreLayoutDialog.close();
+  renderGroceryStoresSettings();
+  renderGroceries();
+}
+
 function removeGroceryStore(storeId) {
   const store = groceryStores().find((item) => item.id === storeId);
   if (!store || !window.confirm(`Remove ${store.name}? Its grocery items will move to Unassigned.`)) return;
@@ -6308,9 +7879,388 @@ function removeGroceryStore(storeId) {
     if (location.storeId === storeId) location.storeId = "";
   });
   state.groceryItemLocations = normalizeGroceryItemLocations(locations, state.groceryStores);
+  const itemSections = { ...groceryStoreItemSections() };
+  delete itemSections[storeId];
+  state.groceryStoreItemSections = normalizeGroceryStoreItemSections(itemSections, state.groceryStores);
+  state.groceryPriceObservations = groceryPriceObservations().filter((observation) => observation.storeId !== storeId);
+  state.receipts = normalizeReceipts(state.receipts).map((receipt) => (
+    receipt.storeId === storeId ? { ...receipt, storeId: "" } : receipt
+  ));
+  state.priceHistory = receiptPriceHistory().map((entry) => (
+    entry.storeId === storeId ? { ...entry, storeId: "" } : entry
+  ));
   persist();
   renderGroceryStoresSettings();
   renderGroceries();
+}
+
+function openGroceryPricingDialog(event) {
+  event?.stopPropagation();
+  closeSettingsMenu();
+  const settings = groceryPricingSettings();
+  elements.groceryStopPenalty.value = settings.extraStoreCost;
+  elements.groceryPriceRoutingEnabled.checked = settings.enabled;
+  elements.groceryPriceStore.innerHTML = groceryStores()
+    .map((store) => `<option value="${escapeHtml(store.id)}">${escapeHtml(store.name)}</option>`)
+    .join("");
+  elements.groceryPriceItem.value = "";
+  elements.groceryPriceProduct.value = "";
+  elements.groceryPriceAmount.value = "";
+  elements.groceryPricePackageQuantity.value = "1";
+  elements.groceryPricePackageUnit.value = "each";
+  elements.groceryPriceConfidence.value = "1";
+  renderGroceryPriceObservations();
+  renderReceiptPriceTrends();
+  elements.groceryPricingDialog.showModal();
+  window.requestAnimationFrame(() => elements.groceryPriceItem.focus());
+}
+
+function saveGroceryPricingSettings() {
+  state.groceryPricingSettings = normalizeGroceryPricingSettings({
+    enabled: elements.groceryPriceRoutingEnabled.checked,
+    extraStoreCost: elements.groceryStopPenalty.value
+  });
+  persist();
+  renderGroceries();
+  elements.groceryPricingDialog.close();
+}
+
+function saveManualGroceryPrice(event) {
+  event.preventDefault();
+  const storeId = elements.groceryPriceStore.value;
+  const itemName = elements.groceryPriceItem.value.trim();
+  const price = Number(elements.groceryPriceAmount.value);
+  const packageQuantity = Number(elements.groceryPricePackageQuantity.value);
+  if (!storeId || !itemName || !Number.isFinite(price) || price <= 0 || !Number.isFinite(packageQuantity) || packageQuantity <= 0) return;
+  state.groceryPriceObservations = normalizeGroceryPriceObservations([
+    ...groceryPriceObservations(),
+    {
+      id: createId("price"),
+      itemKey: groceryRowKey(itemName),
+      itemName,
+      storeId,
+      productName: elements.groceryPriceProduct.value.trim() || itemName,
+      price,
+      unitPrice: price / packageQuantity,
+      packageQuantity,
+      packageUnit: elements.groceryPricePackageUnit.value,
+      source: "manual",
+      observedAt: new Date().toISOString(),
+      confidenceScore: Number(elements.groceryPriceConfidence.value)
+    }
+  ], groceryStores());
+  elements.groceryPriceItem.value = "";
+  elements.groceryPriceProduct.value = "";
+  elements.groceryPriceAmount.value = "";
+  persist();
+  renderGroceryPriceObservations();
+  renderGroceries();
+  elements.groceryPriceItem.focus();
+}
+
+function renderGroceryPriceObservations() {
+  const stores = new Map(groceryStores().map((store) => [store.id, store.name]));
+  const observations = [...groceryPriceObservations()]
+    .sort((a, b) => new Date(b.observedAt) - new Date(a.observedAt));
+  elements.groceryPriceObservations.innerHTML = observations.length ? `<h3>Manual estimates</h3>${observations.map((observation) => {
+    const freshness = priceObservationFreshness(observation);
+    return `
+      <div class="grocery-price-observation ${freshness}">
+        <span>
+          <strong>${escapeHtml(observation.itemName || observation.itemKey)}</strong>
+          <small>${escapeHtml(stores.get(observation.storeId) || "Store")} · ${escapeHtml(observation.productName)}</small>
+        </span>
+        <span class="grocery-price-observation-value">
+          <strong>${formatCurrency(observation.price)}</strong>
+          <small>${formatCurrency(observation.unitPrice)}/${escapeHtml(observation.packageUnit)} · ${freshness}</small>
+        </span>
+        <button class="icon-btn" type="button" data-remove-price-observation="${escapeHtml(observation.id)}" title="Remove price" aria-label="Remove price">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" /></svg>
+        </button>
+      </div>
+    `;
+  }).join("")}` : `<div class="empty-state">No manual estimates saved.</div>`;
+  elements.groceryPriceObservations.querySelectorAll("[data-remove-price-observation]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.groceryPriceObservations = groceryPriceObservations().filter((item) => item.id !== button.dataset.removePriceObservation);
+      persist();
+      renderGroceryPriceObservations();
+      renderGroceries();
+    });
+  });
+}
+
+function openReceiptScanDialog() {
+  receiptScanFiles = [];
+  receiptImageEdits = new Map();
+  pendingReceiptDraft = null;
+  elements.receiptImages.value = "";
+  elements.receiptCameraImage.value = "";
+  renderReceiptImagePreviews();
+  elements.receiptReviewForm.hidden = true;
+  elements.scanReceiptImagesBtn.hidden = false;
+  setReceiptScanStatus("Upload a clear receipt photo, then review every line before saving.");
+  elements.groceryPricingDialog.close();
+  elements.receiptScanDialog.showModal();
+}
+
+function replaceReceiptScanFiles() {
+  receiptScanFiles = [...(elements.receiptImages.files || [])].slice(0, 6);
+  receiptImageEdits = retainScanImageEdits(receiptScanFiles, receiptImageEdits);
+  updateReceiptScanSelectionStatus();
+}
+
+function appendReceiptCameraFile() {
+  const files = [...(elements.receiptCameraImage.files || [])];
+  if (files.length) receiptScanFiles = [...receiptScanFiles, ...files].slice(0, 6);
+  receiptImageEdits = retainScanImageEdits(receiptScanFiles, receiptImageEdits);
+  elements.receiptCameraImage.value = "";
+  updateReceiptScanSelectionStatus();
+}
+
+function clearReceiptScanFiles() {
+  receiptScanFiles = [];
+  receiptImageEdits = new Map();
+  elements.receiptImages.value = "";
+  elements.receiptCameraImage.value = "";
+  renderReceiptImagePreviews();
+  pendingReceiptDraft = null;
+  elements.receiptReviewForm.hidden = true;
+  elements.scanReceiptImagesBtn.hidden = false;
+  setReceiptScanStatus("Upload a clear receipt photo, then review every line before saving.");
+}
+
+function updateReceiptScanSelectionStatus() {
+  renderReceiptImagePreviews();
+  if (!receiptScanFiles.length) {
+    setReceiptScanStatus("Upload a clear receipt photo, then review every line before saving.");
+    return;
+  }
+  setReceiptScanStatus(`${receiptScanFiles.length} receipt photo${receiptScanFiles.length === 1 ? "" : "s"} selected.`);
+}
+
+async function scanReceiptImages() {
+  if (!receiptScanFiles.length) {
+    setReceiptScanStatus("Choose at least one receipt photo first.");
+    return;
+  }
+  setReceiptScanStatus("Reading receipt...");
+  elements.scanReceiptImagesBtn.disabled = true;
+  try {
+    const helperUrl = receiptScanHelperUrl();
+    if (!helperUrl) throw new Error("Receipt scanning needs the local helper or live app.");
+    const images = await Promise.all(receiptScanFiles.map(async (file) => (
+      fileToDataUrl(await prepareScanImage(file, receiptImageEdits.get(file), {
+        maxDimension: 1600,
+        quality: 0.82
+      }))
+    )));
+    const response = await fetch(helperUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ images })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `Receipt scan failed with status ${response.status}`);
+    pendingReceiptDraft = receiptDomain().applyReceiptMappings(
+      receiptDomain().normalizeReceipt({
+        ...payload.receipt,
+        fileRef: receiptScanFiles.map((file) => file.name).join(", ")
+      }, createId),
+      receiptItemMappings()
+    );
+    renderReceiptReview();
+    elements.receiptReviewForm.hidden = false;
+    elements.scanReceiptImagesBtn.hidden = true;
+    setReceiptScanStatus("Review the extracted receipt. Correct any uncertain line before saving.");
+  } catch (error) {
+    setReceiptScanStatus(error.message || "The receipt scan failed.");
+  } finally {
+    elements.scanReceiptImagesBtn.disabled = false;
+  }
+}
+
+function receiptScanHelperUrl() {
+  if (canUseLocalBackend()) return "/api/scan-receipt";
+  if (window.location.protocol.startsWith("http")) return "/.netlify/functions/scan-receipt";
+  return "";
+}
+
+function renderReceiptImagePreviews() {
+  renderScanImagePreviews(receiptScanFiles, receiptImageEdits, elements.receiptImagePreviewList, "receipt");
+}
+
+function handleReceiptImagePreviewAction(event) {
+  const button = event.target.closest("[data-scan-image-action]");
+  if (!button) return;
+  const index = Number(button.dataset.scanImageIndex);
+  if (!Number.isInteger(index) || !receiptScanFiles[index]) return;
+  const result = applyScanImageAction(
+    receiptScanFiles,
+    receiptImageEdits,
+    index,
+    button.dataset.scanImageAction
+  );
+  receiptScanFiles = result.files;
+  receiptImageEdits = result.edits;
+  elements.receiptImages.value = "";
+  updateReceiptScanSelectionStatus();
+}
+
+function renderReceiptReview() {
+  if (!pendingReceiptDraft) return;
+  const receipt = pendingReceiptDraft;
+  elements.receiptStoreName.value = receipt.storeName;
+  elements.receiptStoreId.innerHTML = [
+    `<option value="">Unlinked store</option>`,
+    ...groceryStores().map((store) => `<option value="${escapeHtml(store.id)}">${escapeHtml(store.name)}</option>`)
+  ].join("");
+  elements.receiptStoreId.value = receipt.storeId || matchReceiptStoreId(receipt.storeName);
+  elements.receiptPurchaseDate.value = receipt.purchaseDate;
+  elements.receiptSubtotal.value = receipt.subtotal || "";
+  elements.receiptDiscounts.value = receipt.discounts || "";
+  elements.receiptTax.value = receipt.tax || "";
+  elements.receiptFees.value = receipt.fees || "";
+  elements.receiptTotal.value = receipt.total || "";
+  elements.receiptLineList.innerHTML = "";
+  receipt.lineItems.forEach((line) => addReceiptReviewLine(line));
+}
+
+function matchReceiptStoreId(storeName) {
+  const target = normalize(storeName);
+  if (!target) return "";
+  return groceryStores().find((store) => {
+    const storeText = normalize(store.name);
+    return storeText === target || storeText.includes(target) || target.includes(storeText);
+  })?.id || "";
+}
+
+function addReceiptReviewLine(line = {}) {
+  const normalized = receiptDomain().normalizeReceiptLineItem(line, pendingReceiptDraft?.id || "", createId);
+  const row = document.createElement("div");
+  row.className = "receipt-line-row";
+  row.dataset.receiptLineId = normalized.id;
+  row.dataset.originalName = normalized.normalizedName;
+  row.dataset.originalCategory = normalized.category;
+  row.innerHTML = `
+    <input data-receipt-raw value="${escapeHtml(normalized.rawText)}" aria-label="Raw receipt text" />
+    <input data-receipt-name value="${escapeHtml(normalized.normalizedName)}" placeholder="Corrected item name" aria-label="Corrected item name" />
+    <input data-receipt-category value="${escapeHtml(normalized.category)}" placeholder="Category" aria-label="Category" />
+    <input data-receipt-quantity type="number" min="0.001" step="0.001" value="${escapeHtml(normalized.quantity)}" aria-label="Quantity" />
+    <select data-receipt-unit aria-label="Unit">
+      ${["each", "count", "oz", "lb", "g", "kg", "ml", "l", "fl oz"].map((unit) => (
+        `<option value="${unit}" ${normalized.unit === unit ? "selected" : ""}>${unit}</option>`
+      )).join("")}
+    </select>
+    <input data-receipt-price type="number" min="0" step="0.01" value="${escapeHtml(normalized.totalPrice)}" aria-label="Total price" />
+    <input data-receipt-discount type="number" min="0" step="0.01" value="${escapeHtml(normalized.discountAmount)}" aria-label="Discount" />
+    <span class="receipt-line-confidence" title="OCR confidence">${Math.round(normalized.confidenceScore * 100)}%</span>
+    <button class="icon-btn" type="button" data-remove-receipt-line title="Remove line" aria-label="Remove receipt line">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13" /></svg>
+    </button>
+    <input type="hidden" data-receipt-confidence value="${escapeHtml(normalized.confidenceScore)}" />
+  `;
+  row.querySelector("[data-remove-receipt-line]").addEventListener("click", () => row.remove());
+  elements.receiptLineList.append(row);
+}
+
+function reviewedReceiptFromForm() {
+  const base = pendingReceiptDraft || {};
+  const lineItems = [...elements.receiptLineList.querySelectorAll("[data-receipt-line-id]")].map((row) => {
+    const normalizedName = row.querySelector("[data-receipt-name]").value.trim();
+    const category = row.querySelector("[data-receipt-category]").value.trim();
+    const quantity = Math.max(0.001, Number(row.querySelector("[data-receipt-quantity]").value) || 1);
+    const totalPrice = Math.max(0, Number(row.querySelector("[data-receipt-price]").value) || 0);
+    return {
+      id: row.dataset.receiptLineId,
+      rawText: row.querySelector("[data-receipt-raw]").value.trim(),
+      normalizedName,
+      category,
+      quantity,
+      unit: row.querySelector("[data-receipt-unit]").value,
+      totalPrice,
+      unitPrice: totalPrice / quantity,
+      discountAmount: Math.max(0, Number(row.querySelector("[data-receipt-discount]").value) || 0),
+      confidenceScore: Number(row.querySelector("[data-receipt-confidence]").value) || 0.7,
+      userCorrected: normalizedName !== row.dataset.originalName || category !== row.dataset.originalCategory
+    };
+  });
+  return receiptDomain().normalizeReceipt({
+    ...base,
+    storeName: elements.receiptStoreName.value,
+    storeId: elements.receiptStoreId.value,
+    purchaseDate: elements.receiptPurchaseDate.value,
+    subtotal: elements.receiptSubtotal.value,
+    discounts: elements.receiptDiscounts.value,
+    tax: elements.receiptTax.value,
+    fees: elements.receiptFees.value,
+    total: elements.receiptTotal.value,
+    lineItems
+  }, createId);
+}
+
+function saveReviewedReceipt(event) {
+  event.preventDefault();
+  const receipt = reviewedReceiptFromForm();
+  if (!receipt.storeName || !receipt.purchaseDate || !receipt.lineItems.length) return;
+  state.receipts = normalizeReceipts([...(state.receipts || []), receipt]);
+  state.receiptItemMappings = receiptDomain().correctedMappingsFromReceipt(receipt, receiptItemMappings());
+  state.priceHistory = normalizePriceHistory([
+    ...receiptPriceHistory(),
+    ...receiptDomain().priceHistoryFromReceipt(receipt, createId)
+  ], groceryStores());
+  state.groceryBaseItems = normalizeGroceryBaseItems([
+    ...groceryBaseItems(),
+    ...receipt.lineItems.map((line) => line.normalizedName)
+  ]);
+  persist();
+  renderGroceries();
+  elements.receiptScanDialog.close();
+  openGroceryPricingDialog();
+}
+
+function setReceiptScanStatus(message) {
+  elements.receiptScanStatus.textContent = message;
+}
+
+function renderReceiptPriceTrends() {
+  const history = receiptPriceHistory();
+  if (!history.length) {
+    elements.receiptPriceTrends.innerHTML = `<div class="empty-state">No receipt price history yet.</div>`;
+    return;
+  }
+  const grouped = new Map();
+  history.forEach((entry) => {
+    const key = receiptDomain().normalizedName(entry.normalizedItemName);
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(entry);
+  });
+  const rows = [...grouped.values()]
+    .filter((entries) => entries.length > 1)
+    .sort((a, b) => b.length - a.length || normalize(a[0].normalizedItemName).localeCompare(normalize(b[0].normalizedItemName)))
+    .slice(0, 12);
+  elements.receiptPriceTrends.innerHTML = rows.length ? `
+    <h3>Common item trends</h3>
+    <div class="receipt-trend-grid">
+      ${rows.map((entries) => {
+        const sorted = [...entries].sort((a, b) => new Date(a.observedAt) - new Date(b.observedAt));
+        const latest = sorted.at(-1);
+        const previous = sorted.at(-2);
+        const delta = latest.packagePrice - previous.packagePrice;
+        return `
+          <div class="receipt-trend-item">
+            <strong>${escapeHtml(latest.normalizedItemName)}</strong>
+            <span>${formatCurrency(latest.packagePrice)}</span>
+            <small>${delta === 0 ? "No change" : `${delta > 0 ? "+" : ""}${formatCurrency(delta)} since prior receipt`}</small>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  ` : `<div class="empty-state">Scan an item more than once to see price trends.</div>`;
+}
+
+function formatCurrency(value) {
+  return Number(value || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
 function openGroceryLibraryDialog(event) {
@@ -6339,18 +8289,40 @@ function renderGroceryLibrary() {
   }
 
   const isPickingGrocery = pendingMealIngredientSelection || pendingAutoRuleIngredientSelection;
-  elements.groceryLibraryList.innerHTML = items
-    .map((item) => isPickingGrocery ? `
-      <button class="grocery-library-item grocery-library-pick" type="button" data-pick-grocery-library="${escapeHtml(item)}">
-        ${escapeHtml(item)}
-      </button>
-    ` : `
-      <span class="grocery-library-item" data-grocery-library-item="${escapeHtml(item)}">
-        ${escapeHtml(item)}
-        <button type="button" data-remove-grocery-library="${escapeHtml(item)}" aria-label="Remove ${escapeHtml(item)}">×</button>
-      </span>
-    `)
-    .join("");
+  const categories = new Map();
+  items.forEach((item) => {
+    const identity = normalizeGroceryItemName(item);
+    if (!categories.has(identity.category)) categories.set(identity.category, new Map());
+    const subcategories = categories.get(identity.category);
+    if (!subcategories.has(identity.subcategory)) subcategories.set(identity.subcategory, []);
+    subcategories.get(identity.subcategory).push(item);
+  });
+  elements.groceryLibraryList.innerHTML = [...categories.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([category, subcategories]) => `
+      <section class="grocery-catalog-category">
+        <h3>${escapeHtml(category)}</h3>
+        ${[...subcategories.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([subcategory, groupItems]) => `
+          <section class="grocery-catalog-group">
+            <h4>${escapeHtml(subcategory)}</h4>
+            <div class="grocery-catalog-items">
+              ${groupItems.map((item) => isPickingGrocery ? `
+                <button class="grocery-library-item grocery-library-pick" type="button" data-pick-grocery-library="${escapeHtml(item)}">
+                  ${escapeHtml(item)}
+                </button>
+              ` : `
+                <span class="grocery-library-item" data-grocery-library-item="${escapeHtml(item)}">
+                  ${escapeHtml(item)}
+                  <button type="button" data-remove-grocery-library="${escapeHtml(item)}" aria-label="Remove ${escapeHtml(item)}">×</button>
+                </span>
+              `).join("")}
+            </div>
+          </section>
+        `).join("")}
+      </section>
+    `).join("");
 
   elements.groceryLibraryList.querySelectorAll("[data-pick-grocery-library]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -6408,6 +8380,10 @@ function openGroceryLibraryItemMenu(event) {
   menu.innerHTML = `
     <button type="button" role="menuitem" data-rename-grocery-library-item="${escapeHtml(item)}">Rename</button>
     <button type="button" role="menuitem" data-aliases-grocery-library-item="${escapeHtml(item)}">Aliases</button>
+    <button type="button" role="menuitem" data-daily-dozen-grocery-library-item="${escapeHtml(item)}">Daily Dozen tags</button>
+    <button type="button" role="menuitem" data-separate-grocery-library-item="${escapeHtml(item)}">
+      ${grocerySplitPreferences()[groceryCatalog().normalizeGroceryItemName(item).normalizedName] ? "Use automatic matching" : "Keep separate"}
+    </button>
   `;
 
   elements.groceryLibraryDialog.append(menu);
@@ -6433,6 +8409,85 @@ function openGroceryLibraryItemMenu(event) {
     closeFolderMenu();
     editGroceryLibraryAliases(original);
   });
+  menu.querySelector("[data-separate-grocery-library-item]").addEventListener("click", (splitEvent) => {
+    splitEvent.preventDefault();
+    splitEvent.stopPropagation();
+    const original = splitEvent.currentTarget.dataset.separateGroceryLibraryItem;
+    closeFolderMenu();
+    toggleGroceryLibrarySplitPreference(original);
+  });
+  menu.querySelector("[data-daily-dozen-grocery-library-item]").addEventListener("click", (tagEvent) => {
+    tagEvent.preventDefault();
+    tagEvent.stopPropagation();
+    const original = tagEvent.currentTarget.dataset.dailyDozenGroceryLibraryItem;
+    closeFolderMenu();
+    openDailyDozenTagEditor(original);
+  });
+}
+
+function openDailyDozenTagEditor(item) {
+  const canonicalName = dailyDozenItemKey(item);
+  if (!canonicalName) return;
+  editingDailyDozenGroceryItem = canonicalName;
+  elements.dailyDozenTagTitle.textContent = `Daily Dozen tags: ${normalizeGroceryItemName(item).displayName || item}`;
+  const selected = new Map((groceryDailyDozenTags()[canonicalName] || []).map((tag) => [tag.categoryId, tag]));
+  elements.dailyDozenTagList.innerHTML = dailyDozenCategories().map((category) => {
+    const tag = selected.get(category.id);
+    return `
+      <label class="daily-dozen-tag-row">
+        <input type="checkbox" data-daily-dozen-tag-category="${escapeHtml(category.id)}" ${tag ? "checked" : ""} />
+        <span>
+          <strong>${escapeHtml(category.name)}</strong>
+          <small>${escapeHtml(category.servingGuidance)}</small>
+        </span>
+        <select data-daily-dozen-tag-confidence="${escapeHtml(category.id)}" aria-label="${escapeHtml(category.name)} confidence">
+          <option value="1" ${!tag || tag.confidenceScore >= 0.85 ? "selected" : ""}>High</option>
+          <option value="0.7" ${tag && tag.confidenceScore < 0.85 && tag.confidenceScore >= 0.5 ? "selected" : ""}>Medium</option>
+          <option value="0.4" ${tag && tag.confidenceScore < 0.5 ? "selected" : ""}>Low</option>
+        </select>
+        <input data-daily-dozen-tag-notes="${escapeHtml(category.id)}" value="${escapeHtml(tag?.notes || "")}" placeholder="Notes" aria-label="${escapeHtml(category.name)} tag notes" />
+      </label>
+    `;
+  }).join("");
+  elements.dailyDozenTagDialog.showModal();
+}
+
+function closeDailyDozenTagEditor() {
+  editingDailyDozenGroceryItem = "";
+  elements.dailyDozenTagDialog.close();
+}
+
+function saveDailyDozenTagEditor() {
+  if (!editingDailyDozenGroceryItem) return;
+  const tags = [...elements.dailyDozenTagList.querySelectorAll("[data-daily-dozen-tag-category]")]
+    .filter((checkbox) => checkbox.checked)
+    .map((checkbox) => {
+      const categoryId = checkbox.dataset.dailyDozenTagCategory;
+      return {
+        groceryItemId: editingDailyDozenGroceryItem,
+        categoryId,
+        confidenceScore: Number(elements.dailyDozenTagList.querySelector(`[data-daily-dozen-tag-confidence="${categoryId}"]`)?.value) || 1,
+        notes: elements.dailyDozenTagList.querySelector(`[data-daily-dozen-tag-notes="${categoryId}"]`)?.value.trim() || ""
+      };
+    });
+  const tagMap = { ...groceryDailyDozenTags() };
+  if (tags.length) tagMap[editingDailyDozenGroceryItem] = tags;
+  else delete tagMap[editingDailyDozenGroceryItem];
+  state.groceryDailyDozenTags = dailyDozenDomain().normalizeTagMap(tagMap, dailyDozenCategories());
+  persist();
+  closeDailyDozenTagEditor();
+  if (elements.dailyDozenPageDialog.open) renderDailyDozen();
+}
+
+function toggleGroceryLibrarySplitPreference(item) {
+  const identity = groceryCatalog().normalizeGroceryItemName(item);
+  const preferences = grocerySplitPreferences();
+  if (preferences[identity.normalizedName]) delete preferences[identity.normalizedName];
+  else preferences[identity.normalizedName] = identity.normalizedName;
+  state.grocerySplitPreferences = normalizeGrocerySplitPreferences(preferences);
+  persist();
+  refreshGroceryLibraryViews();
+  renderGroceries();
 }
 
 function renameGroceryLibraryItem(item) {
@@ -6449,6 +8504,10 @@ function renameGroceryLibraryItem(item) {
   )));
   renameGroceryAliasKey(item, trimmed);
   renameGroceryItemLocation(item, trimmed);
+  renameGroceryStoreItemSection(item, trimmed);
+  renameGroceryDailyDozenTags(item, trimmed);
+  renameGroceryPriceObservations(item, trimmed);
+  renameReceiptPriceHistory(item, trimmed);
   persist();
   refreshGroceryLibraryViews();
 }
@@ -6521,18 +8580,81 @@ function renameGroceryItemLocation(oldItem, newItem) {
   state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
 }
 
+function renameGroceryStoreItemSection(oldItem, newItem) {
+  const oldKey = groceryRowKey(oldItem);
+  const newKey = groceryRowKey(newItem);
+  if (!oldKey || !newKey || oldKey === newKey) return;
+  const mappings = groceryStoreItemSections();
+  Object.values(mappings).forEach((storeMappings) => {
+    if (!storeMappings[oldKey]) return;
+    storeMappings[newKey] = storeMappings[newKey] || storeMappings[oldKey];
+    delete storeMappings[oldKey];
+  });
+  state.groceryStoreItemSections = normalizeGroceryStoreItemSections(mappings, groceryStores());
+}
+
+function renameGroceryPriceObservations(oldItem, newItem) {
+  const oldKey = canonicalGroceryItemKey(oldItem);
+  const newKey = canonicalGroceryItemKey(newItem);
+  if (!oldKey || !newKey || oldKey === newKey) return;
+  state.groceryPriceObservations = groceryPriceObservations().map((observation) => (
+    canonicalGroceryItemKey(observation.itemKey) === oldKey
+      ? { ...observation, itemKey: newKey, itemName: normalize(observation.itemName) === normalize(oldItem) ? newItem : observation.itemName }
+      : observation
+  ));
+}
+
+function renameGroceryDailyDozenTags(oldItem, newItem) {
+  const oldKey = dailyDozenItemKey(oldItem);
+  const newKey = dailyDozenItemKey(newItem);
+  if (!oldKey || !newKey || oldKey === newKey) return;
+  const tags = groceryDailyDozenTags();
+  if (!tags[oldKey]) return;
+  tags[newKey] = tags[newKey] || tags[oldKey];
+  delete tags[oldKey];
+  state.groceryDailyDozenTags = normalizeGroceryDailyDozenTags(tags);
+}
+
+function renameReceiptPriceHistory(oldItem, newItem) {
+  const oldKey = canonicalGroceryItemKey(oldItem);
+  const newKey = canonicalGroceryItemKey(newItem);
+  if (!oldKey || !newKey || oldKey === newKey) return;
+  state.priceHistory = receiptPriceHistory().map((entry) => (
+    canonicalGroceryItemKey(entry.normalizedItemName) === oldKey
+      ? { ...entry, normalizedItemName: newItem }
+      : entry
+  ));
+  state.receipts = normalizeReceipts(state.receipts).map((receipt) => ({
+    ...receipt,
+    lineItems: receipt.lineItems.map((line) => (
+      canonicalGroceryItemKey(line.normalizedName) === oldKey
+        ? { ...line, normalizedName: newItem, userCorrected: true }
+        : line
+    ))
+  }));
+}
+
 function removeGroceryItemLocation(item) {
   const key = baseGroceryItemKey(item);
   if (!key) return;
   const locations = groceryItemLocations();
   delete locations[key];
   state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
+  const itemKey = groceryRowKey(item);
+  const mappings = groceryStoreItemSections();
+  Object.values(mappings).forEach((storeMappings) => delete storeMappings[itemKey]);
+  state.groceryStoreItemSections = normalizeGroceryStoreItemSections(mappings, groceryStores());
+  const tags = groceryDailyDozenTags();
+  delete tags[dailyDozenItemKey(item)];
+  state.groceryDailyDozenTags = normalizeGroceryDailyDozenTags(tags);
 }
 
 function resetGroceryLibrary() {
   state.groceryBaseItems = defaultGroceryBaseItems();
   state.groceryAliases = {};
   state.groceryItemLocations = {};
+  state.groceryStoreItemSections = {};
+  state.groceryDailyDozenTags = defaultGroceryDailyDozenTags();
   persist();
   refreshGroceryLibraryViews();
 }
@@ -6930,8 +9052,22 @@ function restoreUserDataPreview(backupState) {
       groceryBaseItems()
     ),
     groceryAliases: missingRestoreGroceryAliases(backupState),
+    grocerySplitPreferences: missingRestoreGrocerySplitPreferences(backupState),
     groceryStores: missingRestoreGroceryStores(backupState),
+    groceryStoreLayouts: missingRestoreGroceryStoreLayouts(backupState),
     groceryItemLocations: missingRestoreGroceryItemLocations(backupState),
+    groceryStoreItemSections: missingRestoreGroceryStoreItemSections(backupState),
+    groceryPriceObservations: missingRestoreGroceryPriceObservations(backupState),
+    groceryPricingSettings: shouldRestoreGroceryPricingSettings(backupState),
+    receipts: missingRestoreReceipts(backupState),
+    receiptItemMappings: missingRestoreReceiptMappings(backupState),
+    priceHistory: missingRestorePriceHistory(backupState),
+    nutritionIngredientMappings: missingRestoreNutritionMappings(backupState),
+    dailyDozenEntries: missingRestoreDailyDozenEntries(backupState),
+    groceryDailyDozenTags: missingRestoreDailyDozenTags(backupState),
+    foodLogEntries: missingRestoreFoodLogEntries(backupState),
+    dailyChecklistEntries: missingRestoreDailyChecklistEntries(backupState),
+    personChecklistSettings: shouldRestorePersonChecklistSettings(backupState),
     ingredientOptions: missingRestoreIngredientOptions(backupState),
     checkedGroceries: missingRestoreCheckedGroceries(backupState),
     pantryItems: missingNormalizedStrings(Array.isArray(backupState?.pantry) ? backupState.pantry : [], state.pantry || []),
@@ -6956,8 +9092,22 @@ function restoreUserDataChangeCount(userData) {
     + (userData.recipeTags || []).length
     + (userData.groceryItems || []).length
     + (userData.groceryAliases || []).length
+    + (userData.grocerySplitPreferences || []).length
     + (userData.groceryStores || []).length
+    + (userData.groceryStoreLayouts || []).length
     + (userData.groceryItemLocations || []).length
+    + (userData.groceryStoreItemSections || []).length
+    + (userData.groceryPriceObservations || []).length
+    + (userData.groceryPricingSettings ? 1 : 0)
+    + (userData.receipts || []).length
+    + (userData.receiptItemMappings || []).length
+    + (userData.priceHistory || []).length
+    + (userData.nutritionIngredientMappings || []).length
+    + (userData.dailyDozenEntries || []).length
+    + (userData.groceryDailyDozenTags || []).length
+    + (userData.foodLogEntries || []).length
+    + (userData.dailyChecklistEntries || []).length
+    + (userData.personChecklistSettings ? 1 : 0)
     + ingredientCount
     + userData.checkedGroceries.length
     + userData.pantryItems.length
@@ -6971,6 +9121,52 @@ function missingRestoreAutoRules(backupState) {
   if (!Array.isArray(backupState?.autoGenerateRules) || !backupState.autoGenerateRules.length) return [];
   const current = new Set(normalizeAutoGenerateRules(state.autoGenerateRules).map(autoRuleSignature));
   return normalizeAutoGenerateRules(backupState?.autoGenerateRules).filter((rule) => !current.has(autoRuleSignature(rule)));
+}
+
+function missingRestoreNutritionMappings(backupState) {
+  const backup = normalizeNutritionIngredientMappings(backupState?.nutritionIngredientMappings);
+  const current = normalizeNutritionIngredientMappings(state.nutritionIngredientMappings);
+  return Object.entries(backup)
+    .filter(([key]) => !current[key])
+    .map(([key, mapping]) => ({ key, mapping }));
+}
+
+function missingRestoreDailyDozenEntries(backupState) {
+  const currentIds = new Set(dailyDozenEntries().map((entry) => entry.id));
+  return dailyDozenDomain().normalizeEntries(
+    backupState?.dailyDozenEntries,
+    backupState?.familyMembers,
+    backupState?.dailyDozenCategories
+  ).filter((entry) => !currentIds.has(entry.id));
+}
+
+function missingRestoreDailyDozenTags(backupState) {
+  const backup = normalizeGroceryDailyDozenTags(backupState?.groceryDailyDozenTags);
+  const current = groceryDailyDozenTags();
+  return Object.entries(backup)
+    .filter(([itemKey, tags]) => JSON.stringify(tags) !== JSON.stringify(current[itemKey] || []))
+    .map(([itemKey, tags]) => ({ itemKey, tags }));
+}
+
+function missingRestoreFoodLogEntries(backupState) {
+  const currentIds = new Set(foodLogEntries().map((entry) => entry.id));
+  return foodHealthDomain().normalizeFoodLogEntries(
+    backupState?.foodLogEntries,
+    familyMembers().map((member) => member.id)
+  ).filter((entry) => !currentIds.has(entry.id));
+}
+
+function missingRestoreDailyChecklistEntries(backupState) {
+  const currentIds = new Set(dailyChecklistEntries().map((entry) => entry.id));
+  return foodHealthDomain().normalizeDailyChecklistEntries(
+    backupState?.dailyChecklistEntries,
+    familyMembers().map((member) => member.id)
+  ).filter((entry) => !currentIds.has(entry.id));
+}
+
+function shouldRestorePersonChecklistSettings(backupState) {
+  if (!backupState?.personChecklistSettings) return false;
+  return JSON.stringify(backupState.personChecklistSettings) !== JSON.stringify(state.personChecklistSettings);
 }
 
 function autoRuleSignature(rule) {
@@ -7094,10 +9290,33 @@ function missingRestoreGroceryAliases(backupState) {
   return missing;
 }
 
+function missingRestoreGrocerySplitPreferences(backupState) {
+  const backup = normalizeGrocerySplitPreferences(backupState?.grocerySplitPreferences);
+  const current = grocerySplitPreferences();
+  return Object.entries(backup)
+    .filter(([key, value]) => current[key] !== value)
+    .map(([key, value]) => ({ key, value }));
+}
+
 function missingRestoreGroceryStores(backupState) {
   const currentNames = new Set(groceryStores().map((store) => normalize(store.name)));
   return normalizeGroceryStores(backupState?.groceryStores)
     .filter((store) => !currentNames.has(normalize(store.name)));
+}
+
+function missingRestoreGroceryStoreLayouts(backupState) {
+  const currentStores = groceryStores();
+  const storesWithLayouts = (Array.isArray(backupState?.groceryStores) ? backupState.groceryStores : [])
+    .filter((store) => Array.isArray(store?.sections) && store.sections.length);
+  return normalizeGroceryStores(storesWithLayouts)
+    .map((backupStore) => {
+      const currentStore = currentStores.find((store) => normalize(store.name) === normalize(backupStore.name));
+      if (!currentStore) return null;
+      const currentNames = new Set(currentStore.sections.map((section) => normalize(section.name)));
+      const sections = backupStore.sections.filter((section) => !currentNames.has(normalize(section.name)));
+      return sections.length ? { storeName: backupStore.name, sections } : null;
+    })
+    .filter(Boolean);
 }
 
 function missingRestoreGroceryItemLocations(backupState) {
@@ -7107,6 +9326,97 @@ function missingRestoreGroceryItemLocations(backupState) {
   return Object.entries(backupLocations)
     .filter(([itemKey]) => !currentLocations[itemKey])
     .map(([itemKey, location]) => ({ itemKey, ...location }));
+}
+
+function missingRestoreGroceryStoreItemSections(backupState) {
+  const backupStores = normalizeGroceryStores(backupState?.groceryStores);
+  const backupMappings = normalizeGroceryStoreItemSections(backupState?.groceryStoreItemSections, backupStores);
+  const currentMappings = groceryStoreItemSections();
+  const missing = [];
+  Object.entries(backupMappings).forEach(([backupStoreId, itemMappings]) => {
+    const backupStore = backupStores.find((store) => store.id === backupStoreId);
+    const currentStore = groceryStores().find((store) => normalize(store.name) === normalize(backupStore?.name));
+    if (!backupStore || !currentStore) return;
+    Object.entries(itemMappings).forEach(([itemKey, backupSectionId]) => {
+      if (currentMappings[currentStore.id]?.[itemKey]) return;
+      const backupSection = backupStore.sections.find((section) => section.id === backupSectionId);
+      if (backupSection) missing.push({ storeName: backupStore.name, itemKey, sectionName: backupSection.name });
+    });
+  });
+  return missing;
+}
+
+function priceObservationSignature(observation, storeName = "") {
+  return [
+    normalize(storeName),
+    canonicalGroceryItemKey(observation.itemKey || observation.itemName),
+    normalize(observation.productName),
+    Number(observation.price).toFixed(2),
+    Number(observation.packageQuantity).toFixed(3),
+    observation.packageUnit,
+    observation.source,
+    String(observation.observedAt || "").slice(0, 10)
+  ].join("|");
+}
+
+function missingRestoreGroceryPriceObservations(backupState) {
+  const backupStores = normalizeGroceryStores(backupState?.groceryStores);
+  const currentStores = groceryStores();
+  const backupStoreNames = new Map(backupStores.map((store) => [store.id, store.name]));
+  const currentStoreNames = new Map(currentStores.map((store) => [store.id, store.name]));
+  const currentSignatures = new Set(groceryPriceObservations().map((observation) => (
+    priceObservationSignature(observation, currentStoreNames.get(observation.storeId))
+  )));
+  return normalizeGroceryPriceObservations(backupState?.groceryPriceObservations, backupStores)
+    .filter((observation) => !currentSignatures.has(priceObservationSignature(observation, backupStoreNames.get(observation.storeId))))
+    .map((observation) => ({
+      observation,
+      storeName: backupStoreNames.get(observation.storeId) || ""
+    }));
+}
+
+function shouldRestoreGroceryPricingSettings(backupState) {
+  if (!backupState?.groceryPricingSettings) return false;
+  return JSON.stringify(normalizeGroceryPricingSettings(backupState.groceryPricingSettings))
+    !== JSON.stringify(groceryPricingSettings());
+}
+
+function receiptSignature(receipt) {
+  return [
+    normalize(receipt.storeName),
+    receipt.purchaseDate,
+    Number(receipt.total).toFixed(2),
+    receipt.lineItems.length
+  ].join("|");
+}
+
+function missingRestoreReceipts(backupState) {
+  const current = new Set(normalizeReceipts(state.receipts).map(receiptSignature));
+  return normalizeReceipts(backupState?.receipts).filter((receipt) => !current.has(receiptSignature(receipt)));
+}
+
+function missingRestoreReceiptMappings(backupState) {
+  const current = receiptItemMappings();
+  return Object.entries(receiptDomain().normalizeMappings(backupState?.receiptItemMappings))
+    .filter(([key]) => !current[key])
+    .map(([key, mapping]) => ({ key, mapping }));
+}
+
+function priceHistorySignature(entry) {
+  return [
+    normalize(entry.storeName),
+    normalize(entry.normalizedItemName),
+    entry.observedAt.slice(0, 10),
+    Number(entry.packagePrice).toFixed(2),
+    entry.sourceReceiptLineItemId
+  ].join("|");
+}
+
+function missingRestorePriceHistory(backupState) {
+  const backupStores = normalizeGroceryStores(backupState?.groceryStores);
+  const current = new Set(receiptPriceHistory().map(priceHistorySignature));
+  return normalizePriceHistory(backupState?.priceHistory, backupStores)
+    .filter((entry) => !current.has(priceHistorySignature(entry)));
 }
 
 function missingRestoreCheckedGroceries(backupState) {
@@ -7177,8 +9487,22 @@ function restoreUserDataSummary(userData) {
     ["Tags", userData.recipeTags.length],
     ["Grocery Items", userData.groceryItems.length],
     ["Grocery Aliases", (userData.groceryAliases || []).length],
+    ["Grocery Split Preferences", (userData.grocerySplitPreferences || []).length],
     ["Grocery Stores", (userData.groceryStores || []).length],
+    ["Grocery Store Sections", (userData.groceryStoreLayouts || []).length],
     ["Grocery Item Locations", (userData.groceryItemLocations || []).length],
+    ["Learned Store Locations", (userData.groceryStoreItemSections || []).length],
+    ["Grocery Prices", (userData.groceryPriceObservations || []).length],
+    ["Grocery Pricing Settings", userData.groceryPricingSettings ? 1 : 0],
+    ["Receipts", (userData.receipts || []).length],
+    ["Receipt Item Mappings", (userData.receiptItemMappings || []).length],
+    ["Receipt Price History", (userData.priceHistory || []).length],
+    ["Nutrition Ingredient Mappings", (userData.nutritionIngredientMappings || []).length],
+    ["Daily Dozen Entries", (userData.dailyDozenEntries || []).length],
+    ["Daily Dozen Grocery Tags", (userData.groceryDailyDozenTags || []).length],
+    ["Food Log Entries", (userData.foodLogEntries || []).length],
+    ["Health Checklist Entries", (userData.dailyChecklistEntries || []).length],
+    ["Food Health Settings", userData.personChecklistSettings ? 1 : 0],
     ["Ingredient Options", ingredientCount],
     ["Checked Grocery States", userData.checkedGroceries.length],
     ["Pantry Items", userData.pantryItems.length],
@@ -7355,9 +9679,30 @@ function mergeUserDataFromRestore(restore) {
     merged += data.groceryAliases.length;
   }
 
+  if ((data.grocerySplitPreferences || []).length) {
+    const preferences = grocerySplitPreferences();
+    data.grocerySplitPreferences.forEach(({ key, value }) => {
+      preferences[key] = value;
+    });
+    state.grocerySplitPreferences = normalizeGrocerySplitPreferences(preferences);
+    merged += data.grocerySplitPreferences.length;
+  }
+
   if ((data.groceryStores || []).length) {
     state.groceryStores = normalizeGroceryStores([...groceryStores(), ...data.groceryStores]);
     merged += data.groceryStores.length;
+  }
+
+  if ((data.groceryStoreLayouts || []).length) {
+    state.groceryStores = groceryStores().map((store) => {
+      const layout = data.groceryStoreLayouts.find((item) => normalize(item.storeName) === normalize(store.name));
+      if (!layout) return store;
+      return {
+        ...store,
+        sections: normalizeGroceryStoreSections([...store.sections, ...layout.sections], store.id)
+      };
+    });
+    merged += data.groceryStoreLayouts.length;
   }
 
   if ((data.groceryItemLocations || []).length) {
@@ -7376,6 +9721,122 @@ function mergeUserDataFromRestore(restore) {
     });
     state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
     merged += data.groceryItemLocations.length;
+  }
+
+  if ((data.groceryStoreItemSections || []).length) {
+    const mappings = groceryStoreItemSections();
+    data.groceryStoreItemSections.forEach(({ storeName, itemKey, sectionName }) => {
+      const store = groceryStores().find((item) => normalize(item.name) === normalize(storeName));
+      const section = store?.sections.find((item) => normalize(item.name) === normalize(sectionName));
+      if (!store || !section) return;
+      if (!mappings[store.id]) mappings[store.id] = {};
+      if (!mappings[store.id][itemKey]) mappings[store.id][itemKey] = section.id;
+    });
+    state.groceryStoreItemSections = normalizeGroceryStoreItemSections(mappings, groceryStores());
+    merged += data.groceryStoreItemSections.length;
+  }
+
+  if ((data.groceryPriceObservations || []).length) {
+    const restoredObservations = data.groceryPriceObservations
+      .map(({ observation, storeName }) => {
+        const store = groceryStores().find((item) => normalize(item.name) === normalize(storeName));
+        if (!store) return null;
+        return {
+          ...observation,
+          id: groceryPriceObservations().some((item) => item.id === observation.id) ? createId("price") : observation.id,
+          storeId: store.id
+        };
+      })
+      .filter(Boolean);
+    state.groceryPriceObservations = normalizeGroceryPriceObservations(
+      [...groceryPriceObservations(), ...restoredObservations],
+      groceryStores()
+    );
+    merged += restoredObservations.length;
+  }
+
+  if (data.groceryPricingSettings) {
+    state.groceryPricingSettings = normalizeGroceryPricingSettings(restore.state.groceryPricingSettings);
+    merged += 1;
+  }
+
+  if ((data.receipts || []).length) {
+    const restoredReceipts = data.receipts.map((receipt) => {
+      const store = groceryStores().find((item) => normalize(item.name) === normalize(receipt.storeName));
+      return { ...receipt, storeId: store?.id || "" };
+    });
+    state.receipts = normalizeReceipts([...(state.receipts || []), ...restoredReceipts]);
+    merged += data.receipts.length;
+  }
+
+  if ((data.receiptItemMappings || []).length) {
+    const mappings = { ...receiptItemMappings() };
+    data.receiptItemMappings.forEach(({ key, mapping }) => {
+      if (!mappings[key]) mappings[key] = mapping;
+    });
+    state.receiptItemMappings = receiptDomain().normalizeMappings(mappings);
+    merged += data.receiptItemMappings.length;
+  }
+
+  if ((data.priceHistory || []).length) {
+    const restoredHistory = data.priceHistory.map((entry) => {
+      const store = groceryStores().find((item) => normalize(item.name) === normalize(entry.storeName));
+      return { ...entry, storeId: store?.id || "" };
+    });
+    state.priceHistory = normalizePriceHistory([...receiptPriceHistory(), ...restoredHistory], groceryStores());
+    merged += data.priceHistory.length;
+  }
+
+  if ((data.nutritionIngredientMappings || []).length) {
+    const mappings = normalizeNutritionIngredientMappings(state.nutritionIngredientMappings);
+    data.nutritionIngredientMappings.forEach(({ key, mapping }) => {
+      if (!mappings[key]) mappings[key] = mapping;
+    });
+    state.nutritionIngredientMappings = normalizeNutritionIngredientMappings(mappings);
+    merged += data.nutritionIngredientMappings.length;
+  }
+
+  if ((data.dailyDozenEntries || []).length) {
+    state.dailyDozenEntries = dailyDozenDomain().normalizeEntries(
+      [...dailyDozenEntries(), ...data.dailyDozenEntries],
+      familyMembers(),
+      dailyDozenCategories()
+    );
+    merged += data.dailyDozenEntries.length;
+  }
+
+  if ((data.groceryDailyDozenTags || []).length) {
+    const tags = { ...groceryDailyDozenTags() };
+    data.groceryDailyDozenTags.forEach(({ itemKey, tags: itemTags }) => {
+      tags[itemKey] = itemTags;
+    });
+    state.groceryDailyDozenTags = normalizeGroceryDailyDozenTags(tags);
+    merged += data.groceryDailyDozenTags.length;
+  }
+
+  if ((data.foodLogEntries || []).length) {
+    state.foodLogEntries = foodHealthDomain().normalizeFoodLogEntries(
+      [...foodLogEntries(), ...data.foodLogEntries],
+      familyMembers().map((member) => member.id)
+    );
+    merged += data.foodLogEntries.length;
+  }
+
+  if ((data.dailyChecklistEntries || []).length) {
+    state.dailyChecklistEntries = foodHealthDomain().normalizeDailyChecklistEntries(
+      [...dailyChecklistEntries(), ...data.dailyChecklistEntries],
+      familyMembers().map((member) => member.id)
+    );
+    merged += data.dailyChecklistEntries.length;
+  }
+
+  if (data.personChecklistSettings) {
+    state.personChecklistSettings = foodHealthDomain().normalizePersonSettings(
+      restore.state.personChecklistSettings,
+      familyMembers(),
+      checklistTemplates()
+    );
+    merged += 1;
   }
 
   const currentOptions = normalizeIngredientOptions(state.ingredientOptions);
@@ -7733,6 +10194,7 @@ function renderPlanner() {
         <div class="meal-plan-page-actions">
           <button class="secondary-btn" type="button" data-open-recipe-box-page>Recipe Box</button>
           <button class="secondary-btn" type="button" data-open-groceries-page>Groceries</button>
+          <button class="secondary-btn" type="button" data-open-daily-dozen-page>Food Health</button>
         </div>
         <div class="meal-plan-publish-actions">
           <span class="meal-plan-view-label">${isPublished ? "Published view" : "Edit view"}</span>
@@ -7807,6 +10269,13 @@ function renderPlanner() {
     input.addEventListener("blur", () => updateSpecialMealNote(input));
   });
 
+  elements.plannerGrid.querySelectorAll("[data-planned-servings]").forEach((input) => {
+    input.addEventListener("click", (event) => event.stopPropagation());
+    input.addEventListener("pointerdown", (event) => event.stopPropagation());
+    input.addEventListener("change", () => updateMealPlannedServings(input));
+    input.addEventListener("blur", () => updateMealPlannedServings(input));
+  });
+
   elements.plannerGrid.querySelectorAll("[data-generate-meal-section]").forEach((button) => {
     button.addEventListener("click", () => autoGenerateMealSection(button.dataset.day, button.dataset.meal));
   });
@@ -7849,6 +10318,10 @@ function renderPlanner() {
 
   elements.plannerGrid.querySelectorAll("[data-open-groceries-page]").forEach((button) => {
     button.addEventListener("click", openGroceriesPage);
+  });
+
+  elements.plannerGrid.querySelectorAll("[data-open-daily-dozen-page]").forEach((button) => {
+    button.addEventListener("click", () => openDailyDozenPage());
   });
 
   elements.plannerGrid.querySelectorAll("[data-meal-entry][draggable='true']").forEach((entry) => {
@@ -8659,6 +11132,7 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
           <button class="recipe-meal-link" type="button" data-view-recipe="${escapeHtml(recipe.id)}">
             ${escapeHtml(recipe.name)}
           </button>
+          <span class="meal-planned-servings">${escapeHtml(formatPlannedServings(plannedServingsForEntry(entry, recipe)))}</span>
         </div>
       `;
     }
@@ -8712,9 +11186,19 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
   if (recipe) {
     return `
       <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true">
-        <button class="recipe-meal-link" type="button" data-view-recipe="${escapeHtml(recipe.id)}" data-edit-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Double-click to edit">
-          ${escapeHtml(recipe.name)}
-        </button>
+        <div class="meal-recipe-plan">
+          <button class="recipe-meal-link" type="button" data-view-recipe="${escapeHtml(recipe.id)}" data-edit-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Double-click to edit">
+            ${escapeHtml(recipe.name)}
+          </button>
+          <label class="meal-planned-servings-editor">
+            <span>Cook</span>
+            <input type="number" min="0.25" step="0.25" inputmode="decimal"
+              data-planned-servings data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}"
+              value="${escapeHtml(String(plannedServingsForEntry(entry, recipe)))}"
+              aria-label="Planned servings for ${escapeHtml(recipe.name)}" />
+            <span>servings</span>
+          </label>
+        </div>
         <button class="meal-swipe-delete" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" aria-label="Delete ${escapeHtml(recipe.name)}">Delete</button>
       </div>
     `;
@@ -8740,6 +11224,11 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
       <button class="meal-swipe-delete" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" aria-label="Delete meal entry">Delete</button>
     </div>
   `;
+}
+
+function formatPlannedServings(value) {
+  const servings = Number(value) || 1;
+  return `${formatDailyDozenServings(servings)} serving${servings === 1 ? "" : "s"}`;
 }
 
 function isEditingMealEntry(dayId, meal, index) {
@@ -8844,7 +11333,8 @@ function minimumMealEntryCount(meal) {
 }
 
 function handleMealEntryDragStart(event) {
-  if (event.currentTarget.querySelector("[data-meal-input]") || event.target.closest("[data-special-meal-note]")) {
+  if (event.currentTarget.querySelector("[data-meal-input]")
+    || event.target.closest("[data-special-meal-note], [data-planned-servings]")) {
     event.preventDefault();
     return;
   }
@@ -9456,11 +11946,11 @@ function moveMealEntryToSlot(source, targetDay, targetMeal, targetIndex = null) 
   const targetEntries = mealEntryList(slotEntries(week.slots?.[targetDay]?.[targetMeal]), targetMeal);
   const resolvedTargetIndex = targetIndex === null ? firstAvailableMealEntryIndex(targetEntries) : targetIndex;
   if (resolvedTargetIndex < targetEntries.length && !targetEntries[resolvedTargetIndex]) {
-    targetEntries[resolvedTargetIndex] = movedEntry;
+    targetEntries[resolvedTargetIndex] = plannedEntryAtLocation(movedEntry, targetDay, targetMeal);
   } else if (resolvedTargetIndex < targetEntries.length) {
-    targetEntries.splice(resolvedTargetIndex, 0, movedEntry);
+    targetEntries.splice(resolvedTargetIndex, 0, plannedEntryAtLocation(movedEntry, targetDay, targetMeal));
   } else {
-    targetEntries.push(movedEntry);
+    targetEntries.push(plannedEntryAtLocation(movedEntry, targetDay, targetMeal));
   }
   week.slots[targetDay][targetMeal] = compactMealSlotEntries(targetEntries, targetMeal);
 
@@ -9498,11 +11988,11 @@ function moveMealEntryToDay(source, targetDay) {
   }
 
   const targetEntries = targetHasEntries
-    ? [movedEntry]
+    ? [plannedEntryAtLocation(movedEntry, targetDay, targetMeal)]
     : mealEntryList(slotEntries(week.slots?.[targetDay]?.[targetMeal]), targetMeal);
   if (!targetHasEntries) {
     const targetIndex = firstAvailableMealEntryIndex(targetEntries);
-    targetEntries[targetIndex] = movedEntry;
+    targetEntries[targetIndex] = plannedEntryAtLocation(movedEntry, targetDay, targetMeal);
   }
   week.slots[targetDay][targetMeal] = compactMealSlotEntries(targetEntries, targetMeal);
 
@@ -9596,7 +12086,10 @@ function combineMealSections(dayId, sourceMeal, targetMeal) {
       .filter((meal) => meal === sourceMeal || meal === targetMeal || !currentMembers.includes(meal))
       .flatMap((meal) => slotEntries(slots[dayId][meal]))
   ];
-  slots[dayId][combinedMeal] = compactMealSlotEntries(combinedEntries, combinedMeal);
+  slots[dayId][combinedMeal] = compactMealSlotEntries(
+    combinedEntries.map((entry) => plannedEntryAtLocation(entry, dayId, combinedMeal)),
+    combinedMeal
+  );
   nextMembers.forEach((meal) => {
     slots[dayId][meal] = "";
   });
@@ -9611,19 +12104,43 @@ function commitMealInput(input) {
   const rawValue = input.value.trim();
   const recipe = activeRecipes().find((item) => normalize(item.name) === normalize(rawValue));
   const groceryItem = recipe ? "" : grocerySuggestionItems().find((item) => normalize(item) === normalize(rawValue));
-  const nextValue = recipe ? recipe.id : groceryItem ? groceryMealSlotId(groceryItem) : rawValue;
   const week = weekState();
   const currentEntries = slotEntries(week.slots?.[input.dataset.day]?.[input.dataset.meal]);
   const index = Number(input.dataset.index || 0);
   const nextEntries = mealEntryList(currentEntries, input.dataset.meal);
+  const currentEntry = nextEntries[index];
+  const nextValue = recipe
+    ? recipeIdForSlot(currentEntry) === recipe.id && isPlannedRecipeEntry(currentEntry)
+      ? currentEntry
+      : createPlannedRecipeEntry(recipe, input.dataset.day, input.dataset.meal)
+    : groceryItem ? groceryMealSlotId(groceryItem) : rawValue;
   nextEntries[index] = nextValue;
   editingMealEntry = null;
   setMeal(input.dataset.day, input.dataset.meal, compactMealSlotEntries(nextEntries, input.dataset.meal));
 }
 
+function updateMealPlannedServings(input) {
+  const day = input.dataset.day;
+  const meal = input.dataset.meal;
+  const index = Number(input.dataset.index);
+  const week = weekState();
+  const entries = mealEntryList(slotEntries(week.slots?.[day]?.[meal]), meal);
+  const recipe = recipeForSlot(entries[index]);
+  if (!recipe || recipe.virtualGroceryRecipe) return;
+  const currentEntry = isPlannedRecipeEntry(entries[index])
+    ? entries[index]
+    : createPlannedRecipeEntry(recipe, day, meal);
+  currentEntry.plannedServings = Math.max(0.25, Number(input.value) || recipeDefaultServings(recipe));
+  entries[index] = normalizePlannedRecipeEntry(currentEntry);
+  input.value = String(entries[index].plannedServings);
+  setMeal(day, meal, compactMealSlotEntries(entries, meal));
+}
+
 function recipeForSlot(slotValue) {
   if (!slotValue) return null;
-  return groceryRecipeForSlot(slotValue) || activeRecipes().find((item) => item.id === slotValue) || null;
+  return groceryRecipeForSlot(slotValue)
+    || activeRecipes().find((item) => item.id === recipeIdForSlot(slotValue))
+    || null;
 }
 
 function mealInputValue(slotValue) {
@@ -9713,14 +12230,18 @@ function slotEntries(slotValue) {
 }
 
 function compactSlotEntries(entries) {
-  const compacted = entries.map((entry) => String(entry || "").trim()).filter(Boolean);
+  const compacted = entries
+    .map((entry) => isPlannedRecipeEntry(entry) ? normalizePlannedRecipeEntry(entry) : String(entry || "").trim())
+    .filter(Boolean);
   if (!compacted.length) return "";
   return compacted.length === 1 ? compacted[0] : compacted;
 }
 
 function compactMealSlotEntries(entries, meal) {
   if (minimumMealEntryCount(meal) < 2) return compactSlotEntries(entries);
-  const normalizedEntries = entries.map((entry) => String(entry || "").trim());
+  const normalizedEntries = entries.map((entry) => (
+    isPlannedRecipeEntry(entry) ? normalizePlannedRecipeEntry(entry) : String(entry || "").trim()
+  ));
   while (normalizedEntries.length > minimumMealEntryCount(meal) && !normalizedEntries.at(-1)) {
     normalizedEntries.pop();
   }
@@ -9756,7 +12277,9 @@ function chooseRecipeForPendingMeal(recipeId) {
   const { day, meal, index } = pendingMealRecipeSelection;
   const week = weekState();
   const entries = mealEntryList(slotEntries(week.slots?.[day]?.[meal]), meal);
-  entries[index] = recipeId;
+  const recipe = activeRecipes().find((item) => item.id === recipeId);
+  if (!recipe) return;
+  entries[index] = createPlannedRecipeEntry(recipe, day, meal);
   pendingMealRecipeSelection = null;
   setMeal(day, meal, compactMealSlotEntries(entries, meal));
   elements.recipeBoxPageDialog.close();
@@ -10039,16 +12562,20 @@ function renderGroceries() {
       checkedKey: groceryCheckedKey(groceryWeek.key, row.key),
       checked: Boolean(state.checkedGroceries[groceryCheckedKey(groceryWeek.key, row.key)])
     }));
+  const pricePlan = optimizeGroceryBasket(needed);
 
   if (!needed.length) {
     elements.groceryList.innerHTML = `<div class="empty-state">Choose meals for the prep window and groceries will appear here. Pantry items are skipped automatically.</div>`;
     return;
   }
 
-  elements.groceryList.innerHTML = groceryStoreSections(needed)
-    .map(({ storeId, name, store, rows }) => `
+  elements.groceryList.innerHTML = `
+    ${groceryPricePlanTemplate(pricePlan)}
+    ${groceryFallbackRoutingTemplate(needed, pricePlan.assignments)}
+    ${groceryStoreSections(needed, pricePlan.assignments, pricePlan.estimates)
+    .map(({ storeId, name, store, sectionGroups }) => `
       <section class="grocery-store-section" data-grocery-store-section="${escapeHtml(storeId)}">
-        <div class="grocery-store-heading">
+        <div class="grocery-store-heading" ${storeId ? `data-grocery-store-setting="${escapeHtml(storeId)}"` : ""}>
           <h3>${escapeHtml(name)}</h3>
           ${storeDirectionsUrl(store) ? `
             <a class="icon-btn grocery-store-directions" href="${escapeHtml(storeDirectionsUrl(store))}" target="_blank" rel="noopener" title="Directions to ${escapeHtml(name)}" aria-label="Directions to ${escapeHtml(name)}">
@@ -10056,12 +12583,22 @@ function renderGroceries() {
             </a>
           ` : ""}
         </div>
-        <div class="grocery-store-list ${rows.length ? "" : "is-empty"}" data-grocery-store-list="${escapeHtml(storeId)}">
-          ${rows.length ? rows.map(groceryItemTemplate).join("") : `<div class="grocery-store-empty">Drop items here</div>`}
+        <div class="grocery-store-section-groups">
+          ${sectionGroups.map((group) => `
+            <section class="grocery-section-group">
+              ${group.name ? `<h4>${escapeHtml(group.name)}</h4>` : ""}
+              <div class="grocery-store-list ${group.rows.length ? "" : "is-empty"}"
+                data-grocery-store-list="${escapeHtml(storeId)}"
+                data-grocery-store-section-list="${escapeHtml(group.sectionId)}">
+                ${group.rows.length ? group.rows.map(groceryItemTemplate).join("") : `<div class="grocery-store-empty">Drop items here</div>`}
+              </div>
+            </section>
+          `).join("")}
         </div>
       </section>
     `)
-    .join("");
+    .join("")}
+  `;
 
   elements.groceryList.querySelectorAll("[data-grocery]").forEach((checkbox) => {
     checkbox.addEventListener("change", () => {
@@ -10074,6 +12611,7 @@ function renderGroceries() {
     button.addEventListener("click", () => removeManualGroceryItem(button.dataset.removeGrocery));
   });
   elements.groceryList.querySelectorAll("[data-grocery-row-key]").forEach((item) => {
+    item.addEventListener("contextmenu", openGroceryItemIdentityMenu);
     item.addEventListener("dragstart", handleGroceryItemDragStart);
     item.addEventListener("dragend", clearGroceryItemDragState);
     item.addEventListener("dragover", handleGroceryItemDragOver);
@@ -10085,22 +12623,230 @@ function renderGroceries() {
     list.addEventListener("dragleave", clearGroceryStoreDropTarget);
     list.addEventListener("drop", handleGroceryStoreDrop);
   });
+  elements.groceryList.querySelectorAll("[data-grocery-store-setting]").forEach((heading) => {
+    heading.addEventListener("contextmenu", openGroceryStoreMenu);
+  });
 }
 
-function groceryStoreSections(rows) {
+function groceryFallbackRoutingTemplate(rows, priceAssignments = {}) {
+  const stores = groceryStores();
+  if (!stores.length) return "";
   const locations = groceryItemLocations();
+  const fallbackCount = rows.filter((row) => (
+    !locations[row.key]?.storeId && !priceAssignments[row.key]
+  )).length;
+  if (!fallbackCount) return "";
+  return `
+    <div class="grocery-price-summary muted">
+      ${fallbackCount} item${fallbackCount === 1 ? "" : "s"} without a saved price or store defaulted to ${escapeHtml(stores[0].name)}.
+      Drag an item to another store once to remember that choice.
+    </div>
+  `;
+}
+
+function groceryPricePlanTemplate(plan) {
+  if (!groceryPricingSettings().enabled) return "";
+  if (!plan.pricedItemCount) return `<div class="grocery-price-summary muted">No past receipt prices or manual estimates match this grocery list.</div>`;
+  const stores = plan.storeIds
+    .map((storeId) => groceryStores().find((store) => store.id === storeId)?.name)
+    .filter(Boolean)
+    .join(", ");
+  return `
+    <div class="grocery-price-summary">
+      <span><strong>Estimated basket ${formatCurrency(plan.merchandiseTotal)}</strong><small>Based on past receipts${plan.manualItemCount ? ` and ${plan.manualItemCount} manual estimate${plan.manualItemCount === 1 ? "" : "s"}` : ""} · ${plan.pricedItemCount} item${plan.pricedItemCount === 1 ? "" : "s"} · ${escapeHtml(stores)}</small></span>
+      <span><strong>${formatCurrency(plan.adjustedTotal)}</strong><small>including ${formatCurrency(plan.stopCost)} stop cost</small></span>
+    </div>
+  `;
+}
+
+function optimizeGroceryBasket(rows) {
+  const settings = groceryPricingSettings();
+  const empty = { assignments: {}, estimates: {}, merchandiseTotal: 0, adjustedTotal: 0, stopCost: 0, storeIds: [], pricedItemCount: 0, manualItemCount: 0 };
+  if (!settings.enabled) return empty;
+  const locations = groceryItemLocations();
+  const observations = currentGroceryPriceObservations();
+  const availableStoreIds = [...new Set(observations.map((observation) => observation.storeId))];
+  if (!availableStoreIds.length) return empty;
+
+  let best = null;
+  const subsetCount = 2 ** availableStoreIds.length;
+  for (let mask = 1; mask < subsetCount; mask += 1) {
+    const storeIds = availableStoreIds.filter((_, index) => mask & (1 << index));
+    const assignments = {};
+    const estimates = {};
+    let merchandiseTotal = 0;
+    let pricedItemCount = 0;
+    let manualItemCount = 0;
+    rows.forEach((row) => {
+      const fixedStoreId = locations[row.key]?.storeId || "";
+      const eligibleStores = fixedStoreId ? [fixedStoreId] : storeIds;
+      const candidates = observations
+        .filter((observation) => canonicalGroceryItemKey(observation.itemKey) === row.key
+          && eligibleStores.includes(observation.storeId))
+        .map((observation) => ({
+          observation,
+          cost: estimatedObservationCost(row, observation)
+        }))
+        .sort((a, b) => a.cost - b.cost
+          || b.observation.confidenceScore - a.observation.confidenceScore
+          || new Date(b.observation.observedAt) - new Date(a.observation.observedAt));
+      if (!candidates.length) return;
+      const chosen = candidates[0];
+      assignments[row.key] = chosen.observation.storeId;
+      estimates[row.key] = {
+        cost: chosen.cost,
+        source: chosen.observation.source,
+        observedAt: chosen.observation.observedAt,
+        storeId: chosen.observation.storeId
+      };
+      merchandiseTotal += chosen.cost;
+      pricedItemCount += 1;
+      if (chosen.observation.source === "manual") manualItemCount += 1;
+    });
+    const usedStoreIds = [...new Set(Object.values(assignments))];
+    const stopCost = Math.max(0, usedStoreIds.length - 1) * settings.extraStoreCost;
+    const adjustedTotal = merchandiseTotal + stopCost;
+    const candidate = { assignments, estimates, merchandiseTotal, adjustedTotal, stopCost, storeIds: usedStoreIds, pricedItemCount, manualItemCount };
+    if (!best
+      || candidate.pricedItemCount > best.pricedItemCount
+      || (candidate.pricedItemCount === best.pricedItemCount && candidate.adjustedTotal < best.adjustedTotal)) {
+      best = candidate;
+    }
+  }
+  return best || empty;
+}
+
+function estimatedObservationCost(row, observation) {
+  const desired = groceryQuantityForPrice(row);
+  if (!desired || desired.unit !== observation.packageUnit) return observation.price;
+  return Math.max(1, Math.ceil(desired.quantity / observation.packageQuantity)) * observation.price;
+}
+
+function groceryQuantityForPrice(row) {
+  const quantity = groceryAmountToNumber(row.amount);
+  const unit = normalizeComparablePriceUnit(row.unit);
+  if (!Number.isFinite(quantity) || !unit) return null;
+  const conversions = {
+    lb: { unit: "oz", factor: 16 },
+    kg: { unit: "g", factor: 1000 },
+    gal: { unit: "fl oz", factor: 128 },
+    qt: { unit: "fl oz", factor: 32 },
+    pt: { unit: "fl oz", factor: 16 },
+    l: { unit: "ml", factor: 1000 }
+  };
+  const converted = conversions[unit];
+  return converted
+    ? { quantity: quantity * converted.factor, unit: converted.unit }
+    : { quantity, unit };
+}
+
+function normalizeComparablePriceUnit(value) {
+  const unit = normalize(value);
+  const aliases = {
+    c: "",
+    cup: "",
+    cups: "",
+    tbsp: "",
+    tsp: "",
+    package: "each",
+    packages: "each",
+    each: "each",
+    count: "count",
+    oz: "oz",
+    ounce: "oz",
+    ounces: "oz",
+    lb: "lb",
+    lbs: "lb",
+    pound: "lb",
+    pounds: "lb",
+    g: "g",
+    gram: "g",
+    grams: "g",
+    kg: "kg",
+    ml: "ml",
+    l: "l",
+    pt: "pt",
+    qt: "qt",
+    gal: "gal"
+  };
+  return aliases[unit] ?? unit;
+}
+
+function groceryStoreSections(rows, priceAssignments = {}, priceEstimates = {}) {
+  const locations = groceryItemLocations();
+  const itemSections = groceryStoreItemSections();
   const stores = groceryStores().map((store) => ({ storeId: store.id, name: store.name, store }));
+  const fallbackStoreId = stores[0]?.storeId || "";
   const sections = [...stores, { storeId: "", name: "Unassigned", store: null }];
   return sections
-    .map((section) => ({
-      ...section,
-      rows: rows
-        .filter((row) => (locations[row.key]?.storeId || "") === section.storeId)
+    .map((section) => {
+      const storeRows = rows
+        .filter((row) => (
+          locations[row.key]?.storeId
+          || priceAssignments[row.key]
+          || fallbackStoreId
+        ) === section.storeId)
+        .map((row) => ({ ...row, priceEstimate: priceEstimates[row.key] || null }))
         .sort((a, b) => Number(a.checked) - Number(b.checked)
           || groceryRowStoreOrder(a, locations) - groceryRowStoreOrder(b, locations)
-          || normalize(a.item).localeCompare(normalize(b.item)))
-    }))
+          || normalize(a.item).localeCompare(normalize(b.item)));
+      const sectionGroups = section.store && storeRows.length
+        ? section.store.sections.map((storeSection) => ({
+          sectionId: storeSection.id,
+          name: storeSection.name,
+          rows: storeRows.filter((row) => grocerySectionIdForItem(section.store, row, itemSections) === storeSection.id)
+        }))
+        : [{ sectionId: "", name: "", rows: storeRows }];
+      return { ...section, rows: storeRows, sectionGroups };
+    })
     .filter((section) => section.storeId || section.rows.length || !stores.length);
+}
+
+function grocerySectionIdForItem(store, row, mappings = groceryStoreItemSections()) {
+  const learnedSectionId = mappings[store.id]?.[row.key];
+  if (learnedSectionId && store.sections.some((section) => section.id === learnedSectionId)) return learnedSectionId;
+  return fallbackGrocerySection(store, row.item)?.id || store.sections.at(-1)?.id || "";
+}
+
+function fallbackGrocerySection(store, item) {
+  const itemText = normalize(item);
+  const category = groceryItemCategory(itemText);
+  const categoryTerms = {
+    produce: ["produce", "fruit", "vegetable"],
+    bakery: ["bakery", "bread"],
+    deli: ["deli"],
+    dairy: ["dairy", "milk", "cheese", "yogurt"],
+    frozen: ["frozen", "freezer"],
+    household: ["household", "cleaning", "paper", "soap"],
+    dry: ["dry", "pantry", "pasta", "rice", "canned", "aisle"],
+    other: ["other", "misc"]
+  };
+  const itemWords = itemText.split(/\s+/).filter((word) => word.length > 3);
+  const direct = store.sections.find((section) => {
+    const sectionName = normalize(section.name);
+    return itemWords.some((word) => sectionName.includes(word));
+  });
+  if (direct) return direct;
+  const categoryMatch = store.sections.find((section) => {
+    const sectionName = normalize(section.name);
+    return (categoryTerms[category] || []).some((term) => sectionName.includes(term));
+  });
+  if (categoryMatch) return categoryMatch;
+  return store.sections.find((section) => categoryTerms.other.some((term) => normalize(section.name).includes(term)))
+    || store.sections.at(-1)
+    || null;
+}
+
+function groceryItemCategory(item) {
+  const matches = (terms) => terms.some((term) => item.includes(term));
+  if (matches(["apple", "banana", "berry", "berries", "fruit", "vegetable", "lettuce", "spinach", "kale", "onion", "tomato", "pepper", "broccoli", "cauliflower", "carrot", "celery", "avocado", "lemon", "lime", "garlic", "herb", "greens", "potato"])) return "produce";
+  if (matches(["bread", "bagel", "bun", "roll", "pita", "croissant", "muffin"])) return "bakery";
+  if (matches(["deli", "hummus", "prepared", "rotisserie"])) return "deli";
+  if (matches(["milk", "yogurt", "cheese", "butter", "cream", "egg"])) return "dairy";
+  if (matches(["frozen", "ice cream"])) return "frozen";
+  if (matches(["toilet paper", "paper towel", "soap", "cleaner", "detergent", "trash bag", "foil", "parchment"])) return "household";
+  if (matches(["pasta", "rice", "bean", "lentil", "canned", "can ", "flour", "sugar", "oil", "vinegar", "spice", "salt", "cereal", "oat", "nut", "sauce", "broth", "stock", "tortilla"])) return "dry";
+  return "other";
 }
 
 function groceryRowStoreOrder(row, locations) {
@@ -10113,7 +12859,11 @@ function groceryItemTemplate(row) {
     <label class="grocery-item ${row.checked ? "checked" : ""}" draggable="true" data-grocery-row-key="${escapeHtml(row.key)}" title="Drag to organize">
       <input type="checkbox" data-grocery="${escapeHtml(row.checkedKey)}" ${row.checked ? "checked" : ""} />
       <span class="grocery-name">
-        ${escapeHtml(row.item)}
+        ${escapeHtml(row.displayName || row.item)}
+        ${row.notes?.length ? `<small>${escapeHtml(row.notes.join(" · "))}</small>` : ""}
+        ${row.priceEstimate ? `
+          <small>${formatCurrency(row.priceEstimate.cost)} estimated · ${row.priceEstimate.source === "receipt" ? `based on receipt ${escapeHtml(formatReceiptObservationDate(row.priceEstimate.observedAt))}` : "manual estimate"}</small>
+        ` : ""}
       </span>
       <span class="grocery-quantity">${escapeHtml(row.quantity || "")}</span>
       ${row.manual ? `<button class="grocery-remove-btn" type="button" data-remove-grocery="${escapeHtml(row.manualValue)}" title="Remove grocery item" aria-label="Remove ${escapeHtml(row.item)}">×</button>` : ""}
@@ -10121,11 +12871,137 @@ function groceryItemTemplate(row) {
   `;
 }
 
+function openGroceryItemIdentityMenu(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeFolderMenu();
+  const key = event.currentTarget.dataset.groceryRowKey;
+  const groceryWeek = selectedGroceryWeek();
+  const row = groceryWeek
+    ? buildGroceryRowsWithManual(groceryWeek.week).find((item) => item.key === key)
+    : null;
+  if (!row) return;
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu grocery-library-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-merge-grocery-item>Merge with...</button>
+    <button type="button" role="menuitem" data-split-grocery-item>Keep a name separate...</button>
+    <button type="button" role="menuitem" data-daily-dozen-grocery-item>Daily Dozen tags</button>
+  `;
+  document.body.append(menu);
+  const x = Math.min(event.clientX || 10, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(event.clientY || 10, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+  menu.querySelector("[data-merge-grocery-item]").addEventListener("click", () => {
+    closeFolderMenu();
+    learnGroceryItemMerge(row);
+  });
+  menu.querySelector("[data-split-grocery-item]").addEventListener("click", () => {
+    closeFolderMenu();
+    learnGroceryItemSplit(row);
+  });
+  menu.querySelector("[data-daily-dozen-grocery-item]").addEventListener("click", () => {
+    closeFolderMenu();
+    openDailyDozenTagEditor(row.displayName || row.item);
+  });
+}
+
+function learnGroceryItemMerge(row) {
+  const target = window.prompt("Merge this item with which grocery item?", row.displayName || row.item);
+  if (target === null) return;
+  const trimmed = target.trim();
+  if (!trimmed) return;
+  const aliases = [...new Set([...(row.rawNames || []), row.displayName || row.item])];
+  state.groceryBaseItems = normalizeGroceryBaseItems([...groceryBaseItems(), trimmed]);
+  setGroceryAliasesForItem(trimmed, [...groceryAliasesForItem(trimmed), ...aliases]);
+  aliases.forEach((name) => {
+    const normalizedName = groceryCatalog().normalizeGroceryItemName(name).normalizedName;
+    if (state.grocerySplitPreferences) delete state.grocerySplitPreferences[normalizedName];
+  });
+  rekeyGroceryIdentityState();
+  persist();
+  refreshGroceryLibraryViews();
+  renderGroceries();
+}
+
+function learnGroceryItemSplit(row) {
+  const choices = [...new Set(row.rawNames || [])];
+  if (!choices.length) return;
+  const selected = window.prompt(
+    `Which name should remain separate?\n${choices.join("\n")}`,
+    choices[0]
+  );
+  if (selected === null) return;
+  const matched = choices.find((name) => normalize(name) === normalize(selected)) || selected.trim();
+  if (!matched) return;
+  const identity = groceryCatalog().normalizeGroceryItemName(matched);
+  state.grocerySplitPreferences = {
+    ...grocerySplitPreferences(),
+    [identity.normalizedName]: identity.normalizedName
+  };
+  rekeyGroceryIdentityState();
+  persist();
+  renderGroceries();
+}
+
+function rekeyGroceryIdentityState() {
+  const nextChecked = {};
+  Object.entries(state.checkedGroceries || {}).forEach(([key, checked]) => {
+    const separator = key.indexOf("|");
+    if (separator < 0) {
+      nextChecked[key] = Boolean(nextChecked[key] || checked);
+      return;
+    }
+    const week = key.slice(0, separator);
+    const itemKey = key.slice(separator + 1);
+    const nextKey = groceryCheckedKey(week, canonicalGroceryItemKey(itemKey));
+    nextChecked[nextKey] = Boolean(nextChecked[nextKey] || checked);
+  });
+  state.checkedGroceries = nextChecked;
+
+  const nextLocations = {};
+  Object.entries(state.groceryItemLocations || {}).forEach(([itemKey, location]) => {
+    const nextKey = canonicalGroceryItemKey(itemKey);
+    if (!nextKey) return;
+    nextLocations[nextKey] = nextLocations[nextKey] || location;
+  });
+  state.groceryItemLocations = normalizeGroceryItemLocations(nextLocations, groceryStores());
+
+  const nextSections = {};
+  Object.entries(state.groceryStoreItemSections || {}).forEach(([storeId, itemMappings]) => {
+    Object.entries(itemMappings || {}).forEach(([itemKey, sectionId]) => {
+      const nextKey = canonicalGroceryItemKey(itemKey);
+      if (!nextKey) return;
+      if (!nextSections[storeId]) nextSections[storeId] = {};
+      if (!nextSections[storeId][nextKey]) nextSections[storeId][nextKey] = sectionId;
+    });
+  });
+  state.groceryStoreItemSections = normalizeGroceryStoreItemSections(nextSections, groceryStores());
+
+  const nextDailyDozenTags = {};
+  Object.entries(state.groceryDailyDozenTags || {}).forEach(([itemKey, tags]) => {
+    const nextKey = canonicalGroceryItemKey(itemKey);
+    if (!nextKey) return;
+    nextDailyDozenTags[nextKey] = nextDailyDozenTags[nextKey] || tags;
+  });
+  state.groceryDailyDozenTags = normalizeGroceryDailyDozenTags(nextDailyDozenTags);
+}
+
+function formatReceiptObservationDate(value) {
+  const dateKey = String(value || "").slice(0, 10);
+  const date = new Date(`${dateKey}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? dateKey : date.toLocaleDateString();
+}
+
 function handleGroceryItemDragStart(event) {
   const itemKey = event.currentTarget.dataset.groceryRowKey;
-  const storeId = event.currentTarget.closest("[data-grocery-store-list]")?.dataset.groceryStoreList || "";
+  const sourceList = event.currentTarget.closest("[data-grocery-store-list]");
+  const storeId = sourceList?.dataset.groceryStoreList || "";
+  const sectionId = sourceList?.dataset.groceryStoreSectionList || "";
   if (!itemKey) return;
-  draggedGroceryItem = { itemKey, sourceStoreId: storeId };
+  draggedGroceryItem = { itemKey, sourceStoreId: storeId, sourceSectionId: sectionId };
   event.dataTransfer.effectAllowed = "move";
   event.dataTransfer.setData("application/x-live-grocery", JSON.stringify(draggedGroceryItem));
   event.dataTransfer.setData("text/plain", itemKey);
@@ -10155,9 +13031,11 @@ function handleGroceryItemDrop(event) {
   event.stopPropagation();
   const target = event.currentTarget;
   const targetKey = target.dataset.groceryRowKey;
-  const targetStoreId = target.closest("[data-grocery-store-list]")?.dataset.groceryStoreList || "";
+  const targetList = target.closest("[data-grocery-store-list]");
+  const targetStoreId = targetList?.dataset.groceryStoreList || "";
+  const targetSectionId = targetList?.dataset.groceryStoreSectionList || "";
   const position = target.classList.contains("drop-before") ? "before" : "after";
-  moveGroceryItem(payload.itemKey, targetStoreId, targetKey, position);
+  moveGroceryItem(payload.itemKey, targetStoreId, targetKey, position, targetSectionId);
 }
 
 function clearGroceryItemDropTarget(event) {
@@ -10177,7 +13055,8 @@ function handleGroceryStoreDrop(event) {
   if (!payload) return;
   event.preventDefault();
   const storeId = event.currentTarget.dataset.groceryStoreList || "";
-  moveGroceryItem(payload.itemKey, storeId);
+  const sectionId = event.currentTarget.dataset.groceryStoreSectionList || "";
+  moveGroceryItem(payload.itemKey, storeId, "", "after", sectionId);
 }
 
 function clearGroceryStoreDropTarget(event) {
@@ -10195,7 +13074,7 @@ function groceryDragPayload(event) {
   }
 }
 
-function moveGroceryItem(itemKey, targetStoreId, targetKey = "", position = "after") {
+function moveGroceryItem(itemKey, targetStoreId, targetKey = "", position = "after", targetSectionId = "") {
   if (!itemKey || (targetKey && itemKey === targetKey)) {
     clearGroceryItemDragState();
     return;
@@ -10213,6 +13092,12 @@ function moveGroceryItem(itemKey, targetStoreId, targetKey = "", position = "aft
   reindexGroceryStore(sourceStoreId, sourceKeys, locations);
   reindexGroceryStore(validStoreId, targetKeys, locations);
   state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
+  if (validStoreId && targetSectionId) {
+    const mappings = groceryStoreItemSections();
+    if (!mappings[validStoreId]) mappings[validStoreId] = {};
+    mappings[validStoreId][itemKey] = targetSectionId;
+    state.groceryStoreItemSections = normalizeGroceryStoreItemSections(mappings, groceryStores());
+  }
   persist();
   clearGroceryItemDragState();
   renderGroceries();
@@ -10223,9 +13108,9 @@ function orderedGroceryKeysForStore(storeId, locations) {
     .filter(([, location]) => (location.storeId || "") === storeId)
     .sort((a, b) => Number(a[1].order || 0) - Number(b[1].order || 0) || a[0].localeCompare(b[0]))
     .map(([key]) => key);
-  const visibleList = [...elements.groceryList.querySelectorAll("[data-grocery-store-list]")]
-    .find((list) => (list.dataset.groceryStoreList || "") === storeId);
-  (visibleList ? [...visibleList.querySelectorAll("[data-grocery-row-key]")] : []).forEach((item) => {
+  const visibleLists = [...elements.groceryList.querySelectorAll("[data-grocery-store-list]")]
+    .filter((list) => (list.dataset.groceryStoreList || "") === storeId);
+  visibleLists.flatMap((list) => [...list.querySelectorAll("[data-grocery-row-key]")]).forEach((item) => {
     if (!storedKeys.includes(item.dataset.groceryRowKey)) storedKeys.push(item.dataset.groceryRowKey);
   });
   return storedKeys;
@@ -10567,25 +13452,35 @@ function openRecipeView(id, mealContext = null) {
   if (!recipe) return;
   rememberActiveRecipeScroll();
   currentActiveRecipeViewId = "";
-  const baseServings = Number(recipe.servings || 1) || 1;
-  const currentServings = recipe.virtualGroceryRecipe ? Number(recipe.groceryMealServings || 1) || 1 : baseServings;
+  const baseServings = recipeDefaultServings(recipe);
+  const mealEntry = mealContext ? mealEntryValue(mealContext.day, mealContext.meal, mealContext.index) : null;
+  const currentServings = recipe.virtualGroceryRecipe
+    ? Number(recipe.groceryMealServings || 1) || 1
+    : mealEntry ? plannedServingsForEntry(mealEntry, recipe) : baseServings;
   elements.recipeViewTitle.textContent = recipe.name;
   elements.recipeViewDialog.querySelector(".muted-label").textContent = recipe.virtualGroceryRecipe ? "Ingredient" : "Recipe";
   elements.recipeViewHeaderActions.innerHTML = `
     <label class="header-serving-editor">
       <span>Servings</span>
-      <input type="number" min="1" step="1" value="${currentServings}" data-serving-adjuster data-base-servings="${baseServings}" />
+      <input type="number" min="0.25" step="0.25" value="${currentServings}" data-serving-adjuster data-base-servings="${baseServings}" />
     </label>
     ${recipe.virtualGroceryRecipe ? "" : `<button class="primary-btn header-cook-btn" type="button" data-start-cooking="${escapeHtml(recipe.id)}">Let's cook!</button>`}
   `;
   setActiveRecipeSideNavigation("");
-  elements.recipeViewContent.innerHTML = recipeViewTemplate(recipe);
+  elements.recipeViewContent.innerHTML = recipeViewTemplate(recipe, currentServings / baseServings);
   elements.recipeViewContent.ontouchstart = null;
   elements.recipeViewContent.ontouchend = null;
   bindRecipeViewServingControls(recipe, mealContext);
   elements.recipeViewContent.querySelector("[data-edit-recipe-view]")?.addEventListener("click", () => {
     elements.recipeViewDialog.close();
     openRecipeDialog(recipe.id);
+  });
+  elements.recipeViewContent.querySelector("[data-estimate-nutrition]")?.addEventListener("click", () => {
+    openNutritionEstimateDialog(recipe.id);
+  });
+  elements.recipeViewContent.querySelector("[data-open-recipe-daily-dozen]")?.addEventListener("click", () => {
+    elements.recipeViewDialog.close();
+    openDailyDozenPage(recipe.id);
   });
   elements.recipeViewContent.querySelectorAll("[data-use-log-photo]").forEach((button) => {
     button.addEventListener("click", () => useCookLogPhotoAsRecipePhoto(recipe.id, button.dataset.useLogPhoto));
@@ -10660,14 +13555,18 @@ function navigateActiveRecipe(cookingId, direction) {
   openActiveRecipeView(items[nextIndex].id);
 }
 
-function recipeViewTemplate(recipe) {
+function recipeViewTemplate(recipe, requestedIngredientScale = 1) {
   const ingredients = normalizeIngredients(recipe.ingredients);
   const tags = normalizeRecipeTagSelection(recipe.tags);
   const steps = normalizeInstructionSteps(recipe.steps);
   const nutrition = normalizeNutritionFacts(recipe.nutrition);
+  const nutritionEstimate = normalizeNutritionEstimate(recipe.nutritionEstimate);
   const cookLog = normalizeCookLog(recipe.cookLog);
+  const dailyDozenSuggestions = recipe.virtualGroceryRecipe ? [] : dailyDozenRecipeSuggestions(recipe);
   const baseServings = Number(recipe.servings || 1) || 1;
-  const ingredientScale = recipe.virtualGroceryRecipe ? (Number(recipe.groceryMealServings || 1) || 1) / baseServings : 1;
+  const ingredientScale = recipe.virtualGroceryRecipe
+    ? (Number(recipe.groceryMealServings || 1) || 1) / baseServings
+    : requestedIngredientScale;
   return `
     ${recipe.photoUrl ? `<img class="recipe-view-photo" src="${escapeHtml(recipe.photoUrl)}" alt="${escapeHtml(recipe.name)}" />` : ""}
     <div class="recipe-view-meta">
@@ -10678,18 +13577,39 @@ function recipeViewTemplate(recipe) {
       <h3>Ingredients</h3>
       ${ingredients.length ? `<ul data-scaled-ingredients>${scaledIngredientListTemplate(ingredients, ingredientScale)}</ul>` : `<p class="empty-state">No ingredients added yet.</p>`}
     </section>
+    ${recipe.virtualGroceryRecipe ? "" : `
+      <section class="recipe-view-section recipe-daily-dozen">
+        <div class="recipe-view-section-heading">
+          <h3>Daily Dozen</h3>
+          <button class="secondary-btn compact-btn" type="button" data-open-recipe-daily-dozen="${escapeHtml(recipe.id)}">Review</button>
+        </div>
+        <p>${dailyDozenSuggestions.length
+    ? `This recipe may contribute ${escapeHtml(dailyDozenSuggestions.map((suggestion) => dailyDozenCategoryName(suggestion.categoryId)).join(", "))}. Confirm servings in the tracker.`
+    : "No Daily Dozen categories are currently tagged for this recipe's ingredients."}</p>
+        <small>Inspired by Dr. Greger's Daily Dozen / NutritionFacts.org. Estimates vary; no servings are counted automatically.</small>
+      </section>
+    `}
     <section class="recipe-view-section">
       <h3>Instructions</h3>
       ${steps.length ? `<ol class="recipe-steps-view">${steps.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ol>` : `<p class="empty-state">No instructions added yet.</p>`}
     </section>
     <section class="recipe-view-section">
-      <h3>Nutrition Facts</h3>
+      <div class="recipe-view-section-heading">
+        <h3>Nutrition Facts</h3>
+        ${recipe.virtualGroceryRecipe ? "" : `<button class="secondary-btn compact-btn" type="button" data-estimate-nutrition="${escapeHtml(recipe.id)}">Estimate nutrition</button>`}
+      </div>
       ${nutrition.length ? `<dl class="nutrition-facts-view">${nutrition.map((fact) => `
         <div>
           <dt>${escapeHtml(fact.nutrient)}</dt>
           <dd>${escapeHtml(fact.amount)}</dd>
         </div>
       `).join("")}</dl>` : `<p class="empty-state">No nutrition facts added yet.</p>`}
+      ${nutritionEstimate ? `
+        <p class="nutrition-estimate-caption">
+          Estimated per serving from ingredient data; actual values vary.${nutritionEstimate.stale ? " Ingredients or servings changed; recalculate this estimate." : ""}
+          ${nutritionEstimate.lastCalculatedAt ? ` Updated ${escapeHtml(new Date(nutritionEstimate.lastCalculatedAt).toLocaleDateString())}.` : ""}
+        </p>
+      ` : ""}
     </section>
     <section class="recipe-view-section">
       <h3>Log & Notes</h3>
@@ -10890,11 +13810,29 @@ function bindRecipeViewServingControls(recipe, mealContext = null) {
 
   input.addEventListener("input", () => {
     const baseServings = Number(input.dataset.baseServings || 1) || 1;
-    const nextServings = Math.max(1, Number(input.value) || baseServings);
+    const nextServings = Math.max(0.25, Number(input.value) || baseServings);
     const scale = nextServings / baseServings;
     ingredientList.innerHTML = scaledIngredientListTemplate(normalizeIngredients(recipe.ingredients), scale);
     if (recipe.virtualGroceryRecipe) updateGroceryMealServing(recipe.groceryMealItem, nextServings, mealContext);
+    else if (mealContext) updateMealPlannedServingsFromContext(nextServings, mealContext);
   });
+}
+
+function updateMealPlannedServingsFromContext(servings, mealContext) {
+  if (!mealContext?.day || !mealContext?.meal || Number.isNaN(mealContext.index)) return;
+  const week = weekState();
+  const entries = mealEntryList(slotEntries(week.slots?.[mealContext.day]?.[mealContext.meal]), mealContext.meal);
+  const recipe = recipeForSlot(entries[mealContext.index]);
+  if (!recipe || recipe.virtualGroceryRecipe) return;
+  const entry = isPlannedRecipeEntry(entries[mealContext.index])
+    ? entries[mealContext.index]
+    : createPlannedRecipeEntry(recipe, mealContext.day, mealContext.meal);
+  entry.plannedServings = Math.max(0.25, Number(servings) || recipeDefaultServings(recipe));
+  entries[mealContext.index] = normalizePlannedRecipeEntry(entry);
+  week.slots[mealContext.day][mealContext.meal] = compactMealSlotEntries(entries, mealContext.meal);
+  persist();
+  renderPlanner();
+  renderGroceries();
 }
 
 function updateGroceryMealServing(item, servings, mealContext) {
@@ -10953,7 +13891,7 @@ function populateRecipeForm(recipe) {
   elements.recipeName.value = recipe?.name || "";
   elements.recipePrepTime.value = recipe?.prepTime || recipe?.time || "";
   elements.recipeCookTime.value = recipe?.cookTime || "";
-  elements.recipeServings.value = recipe?.servings || "";
+  elements.recipeServings.value = recipe?.defaultServings || recipe?.servings || "";
   elements.recipeFolder.value = "";
   renderRecipeTagChoices(recipe?.tags || []);
   elements.recipeSourceUrl.value = recipe?.sourceUrl || "";
@@ -11027,6 +13965,7 @@ async function saveRecipeFromForm(event) {
       cookTime: elements.recipeCookTime.value.trim()
     }),
     servings: Number(elements.recipeServings.value) || 1,
+    defaultServings: Number(elements.recipeServings.value) || 1,
     folderId: "",
     sourceUrl: elements.recipeSourceUrl.value.trim(),
     photoUrl,
@@ -11036,8 +13975,15 @@ async function saveRecipeFromForm(event) {
     tags: collectRecipeTags(),
     ingredients: collectIngredientRows(),
     nutrition: collectNutritionRows(),
+    nutritionEstimate: currentRecipe?.nutritionEstimate || null,
+    ingredientNutritionMatches: currentRecipe?.ingredientNutritionMatches || [],
     steps: collectStepRows().join("\n")
   };
+  if (currentRecipe && nutritionRecipeSignature(currentRecipe) !== nutritionRecipeSignature(recipe)) {
+    recipe.nutritionEstimate = currentRecipe.nutritionEstimate
+      ? { ...currentRecipe.nutritionEstimate, stale: true }
+      : null;
+  }
 
   const index = activeRecipes().findIndex((item) => item.id === id);
   if (index >= 0) {
@@ -11297,6 +14243,250 @@ function normalizeNutritionFacts(facts) {
     .filter((fact) => fact.nutrient || fact.amount);
 }
 
+function normalizeNutritionCandidate(candidate) {
+  if (!candidate || typeof candidate !== "object") return {};
+  return {
+    fdcId: String(candidate.fdcId || ""),
+    description: String(candidate.description || candidate.matchedFood || "").trim(),
+    brandOwner: String(candidate.brandOwner || "").trim(),
+    dataType: String(candidate.dataType || "").trim(),
+    servingSize: Number(candidate.servingSize) || null,
+    servingSizeUnit: String(candidate.servingSizeUnit || "").trim(),
+    householdServingFullText: String(candidate.householdServingFullText || "").trim(),
+    foodNutrients: Array.isArray(candidate.foodNutrients) ? candidate.foodNutrients : [],
+    source: String(candidate.source || "USDA FoodData Central"),
+    confidenceScore: Math.max(0, Math.min(1, Number(candidate.confidenceScore) || 0))
+  };
+}
+
+function normalizeIngredientNutritionMatches(matches) {
+  return (Array.isArray(matches) ? matches : []).map((match) => ({
+    rawLine: String(match?.rawLine || "").trim(),
+    ingredientName: String(match?.ingredientName || "").trim(),
+    normalizedName: nutritionDomain().normalizeIngredientName(match?.normalizedName || match?.ingredientName),
+    quantity: Number.isFinite(Number(match?.quantity)) ? Number(match.quantity) : null,
+    unit: nutritionDomain().normalizeUnit(match?.unit),
+    preparationNote: String(match?.preparationNote || "").trim(),
+    optional: Boolean(match?.optional),
+    required: match?.required !== false,
+    fdcId: String(match?.fdcId || ""),
+    matchedFood: String(match?.matchedFood || match?.description || "").trim(),
+    source: String(match?.source || "").trim(),
+    grams: Number.isFinite(Number(match?.grams)) ? Number(match.grams) : null,
+    conversionConfidenceScore: Math.max(0, Math.min(1, Number(match?.conversionConfidenceScore) || 0)),
+    confidenceScore: Math.max(0, Math.min(1, Number(match?.confidenceScore) || 0)),
+    conversionNote: String(match?.conversionNote || "").trim(),
+    nutrients: match?.nutrients && typeof match.nutrients === "object" ? match.nutrients : {},
+    candidates: (Array.isArray(match?.candidates) ? match.candidates : []).map(normalizeNutritionCandidate)
+  }));
+}
+
+function normalizeNutritionEstimate(estimate) {
+  if (!estimate || typeof estimate !== "object" || Array.isArray(estimate)) return null;
+  const normalizeValues = (values) => Object.fromEntries(
+    nutritionDomain().nutrientDefinitions.map(({ key }) => [key, Number(values?.[key]) || 0])
+  );
+  return {
+    totals: normalizeValues(estimate.totals),
+    perServing: normalizeValues(estimate.perServing),
+    servings: Math.max(1, Number(estimate.servings) || 1),
+    confidenceScore: Math.max(0, Math.min(1, Number(estimate.confidenceScore) || 0)),
+    source: String(estimate.source || "USDA FoodData Central"),
+    lastCalculatedAt: String(estimate.lastCalculatedAt || ""),
+    disclaimer: "Estimated from ingredient data; actual values vary.",
+    stale: Boolean(estimate.stale)
+  };
+}
+
+function nutritionRecipeSignature(recipe) {
+  return JSON.stringify({
+    servings: Math.max(1, Number(recipe?.servings) || 1),
+    ingredients: normalizeIngredients(recipe?.ingredients).map((ingredient) => ({
+      amount: ingredient.amount,
+      quantity: ingredient.quantity,
+      item: ingredient.item,
+      prep: ingredient.prep
+    }))
+  });
+}
+
+async function openNutritionEstimateDialog(recipeId) {
+  const recipe = activeRecipes().find((item) => item.id === recipeId);
+  if (!recipe) return;
+  const ingredients = normalizeIngredients(recipe.ingredients);
+  if (!ingredients.length) {
+    window.alert("Add ingredients before estimating nutrition.");
+    return;
+  }
+  pendingNutritionRecipeId = recipe.id;
+  pendingNutritionEstimate = null;
+  elements.nutritionEstimateServings.value = Math.max(1, Number(recipe.servings) || 1);
+  elements.nutritionMatchList.innerHTML = "";
+  elements.nutritionEstimateSummary.innerHTML = "";
+  elements.saveNutritionEstimateBtn.disabled = true;
+  setNutritionEstimateStatus("Matching ingredients with USDA FoodData Central...");
+  if (elements.recipeViewDialog.open) elements.recipeViewDialog.close();
+  elements.nutritionEstimateDialog.showModal();
+  try {
+    const helperUrl = nutritionEstimateHelperUrl();
+    if (!helperUrl) throw new Error("Nutrition estimates need the local helper or live app.");
+    const response = await fetch(helperUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ingredients,
+        servings: elements.nutritionEstimateServings.value,
+        corrections: state.nutritionIngredientMappings || {}
+      })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `Nutrition estimate failed with status ${response.status}`);
+    pendingNutritionEstimate = {
+      ...payload.estimate,
+      matches: normalizeIngredientNutritionMatches(payload.estimate?.matches)
+    };
+    recalculatePendingNutritionEstimate();
+    renderNutritionMatchReview();
+    elements.saveNutritionEstimateBtn.disabled = false;
+    setNutritionEstimateStatus("Review every ingredient match before saving.");
+  } catch (error) {
+    setNutritionEstimateStatus(error.message || "Nutrition could not be estimated.");
+  }
+}
+
+function nutritionEstimateHelperUrl() {
+  if (canUseLocalBackend()) return "/api/estimate-nutrition";
+  if (window.location.protocol.startsWith("http")) return "/.netlify/functions/estimate-nutrition";
+  return "";
+}
+
+function closeNutritionEstimateDialog() {
+  elements.nutritionEstimateDialog.close();
+  pendingNutritionEstimate = null;
+  pendingNutritionRecipeId = "";
+}
+
+function setNutritionEstimateStatus(message) {
+  elements.nutritionEstimateStatus.textContent = message;
+}
+
+function renderNutritionMatchReview() {
+  const matches = pendingNutritionEstimate?.matches || [];
+  elements.nutritionMatchList.innerHTML = matches.map((match, index) => {
+    const selectedId = String(match.fdcId || "");
+    return `
+      <article class="nutrition-match-row ${selectedId ? "" : "needs-review"}">
+        <div class="nutrition-match-ingredient">
+          <strong>${escapeHtml(match.rawLine || match.ingredientName)}</strong>
+          <small>${match.grams === null ? "Gram amount unavailable" : `${formatNutritionNumber(match.grams)} g estimated`} · ${Math.round((match.confidenceScore || 0) * 100)}% confidence</small>
+        </div>
+        <label>
+          Matched food
+          <select data-nutrition-match-index="${index}">
+            <option value="">No match</option>
+            ${(match.candidates || []).map((candidate) => `
+              <option value="${escapeHtml(candidate.fdcId)}" ${String(candidate.fdcId) === selectedId ? "selected" : ""}>
+                ${escapeHtml(candidate.description)}${candidate.brandOwner ? ` — ${escapeHtml(candidate.brandOwner)}` : ""}
+              </option>
+            `).join("")}
+          </select>
+        </label>
+        ${match.conversionNote ? `<p>${escapeHtml(match.conversionNote)}</p>` : ""}
+      </article>
+    `;
+  }).join("");
+}
+
+function handleNutritionMatchChange(event) {
+  const select = event.target.closest("[data-nutrition-match-index]");
+  if (!select || !pendingNutritionEstimate) return;
+  const index = Number(select.dataset.nutritionMatchIndex);
+  const current = pendingNutritionEstimate.matches[index];
+  if (!current) return;
+  const candidate = current.candidates.find((item) => String(item.fdcId) === select.value);
+  pendingNutritionEstimate.matches[index] = candidate
+    ? { ...nutritionDomain().calculateIngredientNutrition(current, candidate), candidates: current.candidates }
+    : { ...current, fdcId: "", matchedFood: "", source: "", grams: null, confidenceScore: 0, nutrients: {} };
+  recalculatePendingNutritionEstimate();
+  renderNutritionMatchReview();
+}
+
+function recalculatePendingNutritionEstimate() {
+  if (!pendingNutritionEstimate) return;
+  const servings = Math.max(1, Number(elements.nutritionEstimateServings.value) || 1);
+  pendingNutritionEstimate = {
+    ...pendingNutritionEstimate,
+    ...nutritionDomain().sumNutrition(pendingNutritionEstimate.matches, servings),
+    servings,
+    confidenceScore: nutritionEstimateConfidence(pendingNutritionEstimate.matches),
+    source: "USDA FoodData Central",
+    lastCalculatedAt: new Date().toISOString(),
+    disclaimer: "Estimated from ingredient data; actual values vary.",
+    stale: false
+  };
+  renderNutritionEstimateSummary();
+}
+
+function nutritionEstimateConfidence(matches) {
+  const scored = matches.filter((match) => match.fdcId);
+  if (!matches.length || !scored.length) return 0;
+  return scored.reduce((sum, match) => sum + (Number(match.confidenceScore) || 0), 0) / matches.length;
+}
+
+function renderNutritionEstimateSummary() {
+  const estimate = normalizeNutritionEstimate(pendingNutritionEstimate);
+  if (!estimate) {
+    elements.nutritionEstimateSummary.innerHTML = "";
+    return;
+  }
+  const facts = nutritionDomain().nutritionFactsFromEstimate(estimate);
+  elements.nutritionEstimateSummary.innerHTML = `
+    <div class="recipe-view-section-heading">
+      <h3>Per serving estimate</h3>
+      <span>${Math.round(estimate.confidenceScore * 100)}% confidence</span>
+    </div>
+    <dl class="nutrition-facts-view">
+      ${facts.map((fact) => `
+        <div>
+          <dt>${escapeHtml(fact.nutrient)}</dt>
+          <dd>${escapeHtml(fact.amount)}</dd>
+        </div>
+      `).join("")}
+    </dl>
+  `;
+}
+
+function saveNutritionEstimate() {
+  const recipe = activeRecipes().find((item) => item.id === pendingNutritionRecipeId);
+  if (!recipe || !pendingNutritionEstimate) return;
+  const matches = normalizeIngredientNutritionMatches(pendingNutritionEstimate.matches);
+  const estimate = normalizeNutritionEstimate(pendingNutritionEstimate);
+  recipe.servings = estimate.servings;
+  recipe.nutritionEstimate = estimate;
+  recipe.ingredientNutritionMatches = matches.map(({ candidates, ...match }) => match);
+  recipe.nutrition = nutritionDomain().nutritionFactsFromEstimate(estimate);
+  recipe.updatedAt = new Date().toISOString();
+  if (!state.nutritionIngredientMappings || typeof state.nutritionIngredientMappings !== "object") {
+    state.nutritionIngredientMappings = {};
+  }
+  matches.forEach((match) => {
+    const candidate = match.candidates.find((item) => String(item.fdcId) === String(match.fdcId));
+    if (match.normalizedName && candidate) {
+      state.nutritionIngredientMappings[match.normalizedName] = normalizeNutritionCandidate(candidate);
+    }
+  });
+  persist();
+  saveRecipeRow(recipe);
+  closeNutritionEstimateDialog();
+  openRecipeView(recipe.id);
+}
+
+function formatNutritionNumber(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "";
+  return number >= 10 ? String(Math.round(number)) : number.toFixed(1).replace(/\.0$/, "");
+}
+
 function openImportDialog(prefilledUrl = "", shouldAutoFetch = false) {
   openRecipeBoxPage();
   elements.importUrl.value = normalizeRecipeUrlInput(prefilledUrl);
@@ -11402,32 +14592,36 @@ function openScanDialog() {
 }
 
 function replaceScanRecipeFiles() {
-  scanRecipeFiles = [...elements.scanImages.files || []];
+  scanRecipeFiles = [...elements.scanImages.files || []].slice(0, 6);
+  scanRecipeImageEdits = retainScanImageEdits(scanRecipeFiles, scanRecipeImageEdits);
   updateScanSelectionStatus();
 }
 
 function appendCameraScanRecipeFile() {
   const files = [...elements.scanCameraImage.files || []];
   if (files.length) scanRecipeFiles = [...scanRecipeFiles, ...files].slice(0, 6);
+  scanRecipeImageEdits = retainScanImageEdits(scanRecipeFiles, scanRecipeImageEdits);
   elements.scanCameraImage.value = "";
   updateScanSelectionStatus();
 }
 
 function clearScanRecipeFiles() {
   scanRecipeFiles = [];
+  scanRecipeImageEdits = new Map();
   elements.scanImages.value = "";
   elements.scanCameraImage.value = "";
+  renderScanRecipeImagePreviews();
   setScanStatus("Upload one or more clear photos, then review the extracted recipe before saving.");
 }
 
 function updateScanSelectionStatus() {
+  renderScanRecipeImagePreviews();
   if (!scanRecipeFiles.length) {
     setScanStatus("Upload one or more clear photos, then review the extracted recipe before saving.");
     return;
   }
   const pageText = scanRecipeFiles.length === 1 ? "photo" : "photos";
-  const extraText = scanRecipeFiles.length > 6 ? " Use up to 6 photos for one recipe scan." : "";
-  setScanStatus(`${scanRecipeFiles.length} ${pageText} selected.${extraText}`);
+  setScanStatus(`${scanRecipeFiles.length} ${pageText} selected.`);
 }
 
 async function scanRecipeFromImages() {
@@ -11444,7 +14638,12 @@ async function scanRecipeFromImages() {
   setScanStatus("Reading cookbook photo...");
   elements.scanImagesBtn.disabled = true;
   try {
-    const images = await Promise.all(files.map(fileToDataUrl));
+    const images = await Promise.all(files.map(async (file) => (
+      fileToDataUrl(await prepareScanImage(file, scanRecipeImageEdits.get(file), {
+        maxDimension: 1600,
+        quality: 0.82
+      }))
+    )));
     const helperUrl = recipeScanHelperUrl();
     if (!helperUrl) throw new Error("Recipe scanning needs the local helper or the live app.");
     const response = await fetch(helperUrl, {
@@ -11473,6 +14672,135 @@ function recipeScanHelperUrl() {
   if (canUseLocalBackend()) return "/api/scan-recipe";
   if (window.location.protocol.startsWith("http")) return "/.netlify/functions/scan-recipe";
   return "";
+}
+
+function renderScanRecipeImagePreviews() {
+  renderScanImagePreviews(scanRecipeFiles, scanRecipeImageEdits, elements.scanImagePreviewList, "cookbook");
+}
+
+function handleScanRecipePreviewAction(event) {
+  const button = event.target.closest("[data-scan-image-action]");
+  if (!button) return;
+  const index = Number(button.dataset.scanImageIndex);
+  if (!Number.isInteger(index) || !scanRecipeFiles[index]) return;
+  const result = applyScanImageAction(
+    scanRecipeFiles,
+    scanRecipeImageEdits,
+    index,
+    button.dataset.scanImageAction
+  );
+  scanRecipeFiles = result.files;
+  scanRecipeImageEdits = result.edits;
+  elements.scanImages.value = "";
+  updateScanSelectionStatus();
+}
+
+function retainScanImageEdits(files, edits) {
+  const next = new Map();
+  files.forEach((file) => {
+    next.set(file, {
+      rotation: Number(edits.get(file)?.rotation) || 0,
+      trim: Boolean(edits.get(file)?.trim)
+    });
+  });
+  return next;
+}
+
+function renderScanImagePreviews(files, edits, container, label) {
+  if (!container) return;
+  container.querySelectorAll("img[data-preview-url]").forEach((image) => {
+    URL.revokeObjectURL(image.dataset.previewUrl);
+  });
+  container.innerHTML = files.map((file, index) => {
+    const edit = edits.get(file) || { rotation: 0, trim: false };
+    const previewUrl = URL.createObjectURL(file);
+    return `
+      <article class="scan-image-preview">
+        <div class="scan-image-preview-frame">
+          <img
+            src="${previewUrl}"
+            data-preview-url="${previewUrl}"
+            alt="${escapeHtml(`${label} photo ${index + 1}`)}"
+            style="transform: rotate(${edit.rotation}deg)"
+          />
+        </div>
+        <div class="scan-image-preview-copy">
+          <strong>Page ${index + 1}</strong>
+          <small title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</small>
+        </div>
+        <div class="scan-image-preview-actions">
+          <button class="icon-btn" type="button" data-scan-image-action="rotate-left" data-scan-image-index="${index}" title="Rotate left" aria-label="Rotate page ${index + 1} left">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7H4V2M4.5 7.5A8 8 0 1 1 4 15" /></svg>
+          </button>
+          <button class="icon-btn" type="button" data-scan-image-action="rotate-right" data-scan-image-index="${index}" title="Rotate right" aria-label="Rotate page ${index + 1} right">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 7h5V2m-.5 5.5A8 8 0 1 0 20 15" /></svg>
+          </button>
+          <button class="scan-trim-btn ${edit.trim ? "is-active" : ""}" type="button" data-scan-image-action="trim" data-scan-image-index="${index}" aria-pressed="${edit.trim}">
+            Trim edges
+          </button>
+          <button class="icon-btn scan-remove-btn" type="button" data-scan-image-action="remove" data-scan-image-index="${index}" title="Remove photo" aria-label="Remove page ${index + 1}">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" /></svg>
+          </button>
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+function applyScanImageAction(files, edits, index, action) {
+  const nextFiles = [...files];
+  const nextEdits = retainScanImageEdits(nextFiles, edits);
+  const file = nextFiles[index];
+  if (action === "remove") {
+    nextFiles.splice(index, 1);
+    nextEdits.delete(file);
+    return { files: nextFiles, edits: retainScanImageEdits(nextFiles, nextEdits) };
+  }
+  const edit = nextEdits.get(file) || { rotation: 0, trim: false };
+  if (action === "rotate-left") edit.rotation = (edit.rotation + 270) % 360;
+  if (action === "rotate-right") edit.rotation = (edit.rotation + 90) % 360;
+  if (action === "trim") edit.trim = !edit.trim;
+  nextEdits.set(file, edit);
+  return { files: nextFiles, edits: nextEdits };
+}
+
+async function prepareScanImage(file, edit = {}, options = {}) {
+  const image = await imageElementFromFile(file);
+  const trimRatio = edit.trim ? 0.04 : 0;
+  const sourceX = Math.round(image.naturalWidth * trimRatio);
+  const sourceY = Math.round(image.naturalHeight * trimRatio);
+  const sourceWidth = Math.max(1, image.naturalWidth - sourceX * 2);
+  const sourceHeight = Math.max(1, image.naturalHeight - sourceY * 2);
+  const maxDimension = Number(options.maxDimension) || 1600;
+  const scale = Math.min(1, maxDimension / Math.max(sourceWidth, sourceHeight));
+  const drawWidth = Math.max(1, Math.round(sourceWidth * scale));
+  const drawHeight = Math.max(1, Math.round(sourceHeight * scale));
+  const rotation = ((Number(edit.rotation) || 0) % 360 + 360) % 360;
+  const swapsDimensions = rotation === 90 || rotation === 270;
+  const canvas = document.createElement("canvas");
+  canvas.width = swapsDimensions ? drawHeight : drawWidth;
+  canvas.height = swapsDimensions ? drawWidth : drawHeight;
+  const context = canvas.getContext("2d");
+  context.translate(canvas.width / 2, canvas.height / 2);
+  context.rotate(rotation * Math.PI / 180);
+  context.drawImage(
+    image,
+    sourceX,
+    sourceY,
+    sourceWidth,
+    sourceHeight,
+    -drawWidth / 2,
+    -drawHeight / 2,
+    drawWidth,
+    drawHeight
+  );
+  URL.revokeObjectURL(image.src);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) reject(new Error("Could not prepare that scan."));
+      else resolve(blob);
+    }, "image/jpeg", Number(options.quality) || 0.82);
+  });
 }
 
 function fileToDataUrl(file) {
@@ -11725,7 +15053,10 @@ function normalizeIngredients(ingredients) {
         amount: ingredient.amount || "",
         quantity: ingredient.quantity || ingredient.unit || "",
         item: ingredient.item || "",
-        prep: ingredient.prep || ""
+        prep: ingredient.prep || "",
+        rawLine: ingredient.rawLine || ingredientToText(ingredient),
+        optional: Boolean(ingredient.optional) || /\boptional\b/i.test(`${ingredient.item || ""} ${ingredient.prep || ""}`),
+        required: ingredient.required !== false && !Boolean(ingredient.optional)
       };
     })
     .filter((ingredient) => ingredient.item || ingredient.amount || ingredient.quantity || ingredient.prep);
@@ -11756,7 +15087,8 @@ function parseIngredientLine(line) {
   }
   const prep = prepOptions.includes(prepText) ? prepText : "";
   const item = prep && prepMatch ? parts.join(" ") : [parts.join(" "), prepText && !prep ? `(${prepText})` : ""].filter(Boolean).join(" ");
-  return { amount, quantity, item, prep };
+  const optional = /\boptional\b/i.test(`${normalizedLine} ${prepText}`);
+  return { amount, quantity, item, prep, rawLine: normalizedLine, optional, required: !optional };
 }
 
 function takeIngredientAmount(parts, options) {
@@ -11853,8 +15185,8 @@ function removeRecipeFromMealSlots(slots, recipeId) {
     [...day.meals, ...Object.keys(combinedMealSections)].forEach((meal) => {
       const slotValue = slots?.[day.id]?.[meal];
       if (Array.isArray(slotValue)) {
-        slots[day.id][meal] = compactSlotEntries(slotValue.filter((entry) => entry !== recipeId));
-      } else if (slotValue === recipeId) {
+        slots[day.id][meal] = compactSlotEntries(slotValue.filter((entry) => recipeIdForSlot(entry) !== recipeId));
+      } else if (recipeIdForSlot(slotValue) === recipeId) {
         slots[day.id][meal] = "";
       }
     });
@@ -11938,22 +15270,30 @@ function autoGenerateMealEntries(week, day, meal, recipeQueue, startIndex, conte
       entries[index] = isGroceryMealSlot(rule.value) ? rule.value : groceryMealSlotId(rule.value);
     } else if (rule?.action === "custom") {
       if (!rule.value) return;
-      const value = recipeOrCustomMealValue(rule.value);
+      const value = recipeOrCustomMealValue(rule.value, day.id, meal);
       if (!value) return;
       entries[index] = value;
     } else if (rule?.action === "folderSame") {
       const recipe = sharedAutoGenerateRecipe(rule, recipeQueue, context);
       if (!recipe) return;
-      entries[index] = recipe.id;
+      entries[index] = createPlannedRecipeEntry(recipe, day.id, meal);
     } else if (rule?.action === "tags") {
       const recipe = nextGeneratedRecipe(recipeQueue, nextIndex, meal, rule, context);
       if (!recipe.id) return;
-      entries[index] = recipe.id;
+      entries[index] = createPlannedRecipeEntry(
+        activeRecipes().find((item) => item.id === recipe.id),
+        day.id,
+        meal
+      );
       nextIndex = recipe.nextIndex;
     } else {
       const recipe = nextGeneratedRecipe(recipeQueue, nextIndex, meal, rule, context);
       if (!recipe.id) return;
-      entries[index] = recipe.id;
+      entries[index] = createPlannedRecipeEntry(
+        activeRecipes().find((item) => item.id === recipe.id),
+        day.id,
+        meal
+      );
       nextIndex = recipe.nextIndex;
     }
     filledCount += 1;
@@ -12287,23 +15627,24 @@ function applyDefaultMealEntry(week, day, defaultEntry) {
   if (!day.meals.includes(defaultEntry.meal)) return;
   const entries = mealEntryList(slotEntries(week.slots[day.id][defaultEntry.meal]), defaultEntry.meal);
   if (entries[defaultEntry.index]) return;
-  entries[defaultEntry.index] = recipeOrCustomMealValue(defaultEntry.value);
+  entries[defaultEntry.index] = recipeOrCustomMealValue(defaultEntry.value, day.id, defaultEntry.meal);
   week.slots[day.id][defaultEntry.meal] = compactMealSlotEntries(entries, defaultEntry.meal);
 }
 
-function recipeOrCustomMealValue(value) {
+function recipeOrCustomMealValue(value, dayId = "", meal = "") {
+  if (isPlannedRecipeEntry(value)) return normalizePlannedRecipeEntry(value);
   if (isGroceryMealSlot(value)) return value;
-  if (activeRecipes().some((item) => item.id === value)) return value;
+  const recipeById = activeRecipes().find((item) => item.id === value);
+  if (recipeById) return createPlannedRecipeEntry(recipeById, dayId, meal);
   const recipe = activeRecipes().find((item) => normalize(item.name) === normalize(value));
   if (!recipe) {
     const groceryItem = grocerySuggestionItems({ includeCurrentGroceries: false }).find((item) => normalize(item) === normalize(value));
     return groceryItem ? groceryMealSlotId(groceryItem) : value;
   }
-  return recipe.id;
+  return createPlannedRecipeEntry(recipe, dayId, meal);
 }
 
 function buildGroceryItems(week = weekState()) {
-  const recipeIds = new Set();
   const groceryRows = [];
   const slots = mealSlotsForWeek(week);
   const combinedState = combinedMealSectionsForWeek(week);
@@ -12314,16 +15655,15 @@ function buildGroceryItems(week = weekState()) {
         groceryRows.push(...normalizeIngredients(groceryRecipe.ingredients).map((ingredient) => scaledIngredientToText(ingredient, groceryRecipe.groceryMealServings)));
         return;
       }
-      if (recipeForSlot(entry)) recipeIds.add(entry);
+      const recipe = recipeForSlot(entry);
+      if (!recipe) return;
+      const scale = mealPlanServingsDomain().scalingFactor(entry, recipe);
+      groceryRows.push(...normalizeIngredients(recipe.ingredients)
+        .map((ingredient) => scaledIngredientToText(ingredient, scale)));
     });
   }));
 
-  return [
-    ...[...recipeIds]
-    .flatMap((id) => normalizeIngredients(activeRecipes().find((recipe) => recipe.id === id)?.ingredients || []).map(ingredientToText))
-      .filter(Boolean),
-    ...groceryRows.filter(Boolean)
-  ].sort((a, b) => normalize(a).localeCompare(normalize(b)));
+  return groceryRows.filter(Boolean).sort((a, b) => normalize(a).localeCompare(normalize(b)));
 }
 
 function buildGroceryRows(week = weekState()) {
@@ -12331,7 +15671,6 @@ function buildGroceryRows(week = weekState()) {
 }
 
 function buildRawGroceryRows(week = weekState()) {
-  const recipeIds = new Set();
   const rows = [];
   const slots = mealSlotsForWeek(week);
   const combinedState = combinedMealSectionsForWeek(week);
@@ -12348,38 +15687,63 @@ function buildRawGroceryRows(week = weekState()) {
           .forEach((row) => rows.push(row));
         return;
       }
-      if (recipeForSlot(entry)) recipeIds.add(entry);
+      const recipe = recipeForSlot(entry);
+      if (!recipe) return;
+      const scale = mealPlanServingsDomain().scalingFactor(entry, recipe);
+      normalizeIngredients(recipe.ingredients)
+        .map((ingredient) => ingredientToGroceryRow({
+          ...ingredient,
+          amount: scaleIngredientAmount(ingredient.amount, scale)
+        }, recipe))
+        .filter((row) => row.item)
+        .forEach((row) => rows.push(row));
     });
   }));
 
-  [...recipeIds].forEach((id) => {
-    const recipe = activeRecipes().find((item) => item.id === id);
-    normalizeIngredients(recipe?.ingredients || [])
-      .map((ingredient) => ingredientToGroceryRow(ingredient, recipe))
-      .filter((row) => row.item)
-      .forEach((row) => rows.push(row));
-  });
-
   return rows;
+}
+
+function mealPlanNutritionTotals(week = weekState()) {
+  const entries = [];
+  const slots = mealSlotsForWeek(week);
+  const combinedState = combinedMealSectionsForWeek(week);
+  prepDays.forEach((day) => mealKeysForDay(day, combinedState).forEach((meal) => {
+    slotEntries(slots?.[day.id]?.[meal]).forEach((entry) => {
+      const recipe = recipeForSlot(entry);
+      if (recipe && !recipe.virtualGroceryRecipe) entries.push(entry);
+    });
+  }));
+  return mealPlanServingsDomain().sumMealPlanNutrition(
+    entries,
+    (recipeId) => activeRecipes().find((recipe) => recipe.id === recipeId)
+  );
 }
 
 function ingredientToGroceryRow(ingredient, recipe = null) {
   const normalized = typeof ingredient === "string" ? parseIngredientLine(ingredient) : ingredient;
   const item = normalized.item || "";
+  const identity = normalizeGroceryItemName(item);
   const amount = normalized.amount || "";
   const unit = normalized.quantity || "";
   const quantity = [amount, unit].filter(Boolean).join(" ");
   const prep = normalized.prep || "";
   return {
-    key: groceryRowKey(item),
-    item,
+    key: identity.canonicalName,
+    item: identity.displayName || item,
+    displayName: identity.displayName || item,
+    canonicalName: identity.canonicalName,
+    rawNames: [item].filter(Boolean),
     amount,
     unit,
     quantity,
     prep,
+    notes: [...new Set([...identity.notes, prep].filter(Boolean))],
+    category: identity.category,
+    subcategory: identity.subcategory,
     manual: false,
     sourceRecipeId: recipe?.id || "",
-    sourceRecipeName: recipe?.name || ""
+    sourceRecipeName: recipe?.name || "",
+    sourceRecipeIds: recipe?.id ? [recipe.id] : []
   };
 }
 
@@ -12417,55 +15781,34 @@ function buildGroceryRowsWithManual(week = weekState()) {
 function manualGroceryRow(value) {
   const parsed = parseIngredientLine(value);
   const item = parsed.item || value;
+  const identity = normalizeGroceryItemName(item);
   const amount = parsed.amount || "";
   const unit = parsed.quantity || "";
   const quantity = [amount, unit].filter(Boolean).join(" ");
   return {
-    key: groceryRowKey(item),
-    item,
+    key: identity.canonicalName,
+    item: identity.displayName || item,
+    displayName: identity.displayName || item,
+    canonicalName: identity.canonicalName,
+    rawNames: [item].filter(Boolean),
     amount,
     unit,
     quantity,
     prep: parsed.prep || "",
+    notes: [...new Set([...identity.notes, parsed.prep].filter(Boolean))],
+    category: identity.category,
+    subcategory: identity.subcategory,
     manual: true,
-    manualValue: value
+    manualValue: value,
+    sourceRecipeIds: []
   };
 }
 
 function aggregateGroceryRows(rows) {
-  const grouped = new Map();
-  rows.forEach((row) => {
-    if (!row.item) return;
-    const key = groceryRowKey(row.item);
-    if (!grouped.has(key)) {
-      grouped.set(key, {
-        key,
-        item: row.item,
-        prep: "",
-        manual: Boolean(row.manual),
-        manualValue: row.manualValue || "",
-        sourceRecipeId: row.sourceRecipeId || "",
-        sourceRecipeName: row.sourceRecipeName || "",
-        quantityParts: new Map(),
-        looseQuantities: []
-      });
-    }
-
-    const group = grouped.get(key);
-    if (preferGroceryDisplayItem(row.item, group.item)) group.item = row.item;
-    group.manual = group.manual && Boolean(row.manual);
-    if (group.manual && group.manualValue && row.manualValue && group.manualValue !== row.manualValue) {
-      group.manualValue = "";
-    }
-    if (!group.sourceRecipeId && row.sourceRecipeId) {
-      group.sourceRecipeId = row.sourceRecipeId;
-      group.sourceRecipeName = row.sourceRecipeName || "";
-    }
-    addQuantityToGroceryGroup(group, row);
-  });
-
-  return [...grouped.values()]
-    .map(finalizeGroceryGroup)
+  return groceryCatalog().mergeGroceryRows(rows, {
+    aliases: groceryAliases(),
+    splitPreferences: grocerySplitPreferences()
+  })
     .sort((a, b) => normalize(a.item).localeCompare(normalize(b.item)) || normalize(a.quantity).localeCompare(normalize(b.quantity)));
 }
 
@@ -12488,13 +15831,20 @@ function finalizeGroceryGroup(group) {
   const looseQuantities = [...new Set(group.looseQuantities.filter(Boolean))];
   return {
     key: group.key,
-    item: group.item,
+    item: group.displayName,
+    displayName: group.displayName,
+    canonicalName: group.canonicalName,
+    rawNames: [...group.rawNames],
     quantity: [...quantityParts, ...looseQuantities].join(" + "),
     prep: "",
+    notes: [...group.notes],
+    category: group.category,
+    subcategory: group.subcategory,
     manual: group.manual && Boolean(group.manualValue),
     manualValue: group.manualValue,
     sourceRecipeId: group.sourceRecipeId,
-    sourceRecipeName: group.sourceRecipeName
+    sourceRecipeName: group.sourceRecipeName,
+    sourceRecipeIds: [...group.sourceRecipeIds]
   };
 }
 
@@ -12549,35 +15899,23 @@ function groceryRowKey(item) {
   return canonicalGroceryItemKey(item);
 }
 
+function normalizeGroceryItemName(item) {
+  return groceryCatalog().normalizeGroceryItemName(item, {
+    aliases: state?.groceryAliases || {},
+    splitPreferences: state?.grocerySplitPreferences || {}
+  });
+}
+
 function canonicalGroceryItemKey(item) {
-  const baseKey = baseGroceryItemKey(item);
-  if (!baseKey) return "";
-  const aliases = state?.groceryAliases && typeof state.groceryAliases === "object" ? state.groceryAliases : {};
-  if (aliases[baseKey]) return baseKey;
-  const aliasMatch = Object.entries(aliases).find(([, values]) => (
-    Array.isArray(values) && values.some((alias) => baseGroceryItemKey(alias) === baseKey)
-  ));
-  return aliasMatch?.[0] || baseKey;
+  return normalizeGroceryItemName(item).canonicalName;
 }
 
 function baseGroceryItemKey(item) {
-  const normalized = normalize(item);
-  if (!normalized) return "";
-  return normalized
-    .split(" ")
-    .map(canonicalGroceryWord)
-    .join(" ");
+  return groceryCatalog().normalizeGroceryItemName(item).canonicalName;
 }
 
 function canonicalGroceryWord(word) {
-  if (word.length <= 3) return word;
-  if (["greens"].includes(word)) return word;
-  if (/(ss|us|is)$/.test(word)) return word;
-  if (word.endsWith("ies") && word.length > 4) return `${word.slice(0, -3)}y`;
-  if (word.endsWith("oes") && word.length > 4) return word.slice(0, -2);
-  if (word.endsWith("ches") || word.endsWith("shes") || word.endsWith("xes") || word.endsWith("zes")) return word.slice(0, -2);
-  if (word.endsWith("s") && !word.endsWith("ss")) return word.slice(0, -1);
-  return word;
+  return groceryCatalog().singularizeWord(word);
 }
 
 function preferGroceryDisplayItem(candidate, current) {
@@ -12612,7 +15950,8 @@ function buildGroceryText() {
       checked: Boolean(state.checkedGroceries[groceryCheckedKey(groceryWeek.key, row.key)])
     }));
   if (!items.length) return "No groceries needed yet.";
-  const sections = groceryStoreSections(items).filter((section) => section.rows.length);
+  const pricePlan = optimizeGroceryBasket(items);
+  const sections = groceryStoreSections(items, pricePlan.assignments).filter((section) => section.rows.length);
   if (sections.length === 1 && sections[0].storeId === "") {
     return sections[0].rows.map((row) => `- ${[row.quantity, row.item].filter(Boolean).join(" ")}`).join("\n");
   }

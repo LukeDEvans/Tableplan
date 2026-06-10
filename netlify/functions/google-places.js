@@ -1,5 +1,6 @@
 const GOOGLE_PLACES_BASE_URL = "https://places.googleapis.com/v1";
 const STORE_TYPES = ["grocery_store", "supermarket", "warehouse_store", "food_store", "market"];
+const RESTAURANT_TYPES = ["restaurant", "cafe", "bar", "bakery", "fast_food_restaurant"];
 const DEFAULT_SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const DEFAULT_ALLOWED_EMAIL = "mrlukedevans@gmail.com";
 const ALLOWED_ORIGINS = new Set([
@@ -30,13 +31,37 @@ exports.handler = async (event) => {
         })
       });
     }
+    if (action === "restaurant-details") {
+      return respond(200, {
+        restaurant: await fetchRestaurantDetails({
+          apiKey,
+          placeId: event.queryStringParameters?.placeId,
+          sessionToken: event.queryStringParameters?.sessionToken,
+          name: event.queryStringParameters?.name
+        })
+      });
+    }
+    if (action === "restaurant-autocomplete") {
+      return respond(200, {
+        suggestions: await fetchPlaceSuggestions({
+          apiKey,
+          input: event.queryStringParameters?.input,
+          sessionToken: event.queryStringParameters?.sessionToken,
+          latitude: event.queryStringParameters?.latitude,
+          longitude: event.queryStringParameters?.longitude,
+          useBias: true
+        })
+      });
+    }
     return respond(200, {
       suggestions: await fetchPlaceSuggestions({
         apiKey,
         input: event.queryStringParameters?.input,
         sessionToken: event.queryStringParameters?.sessionToken,
         latitude: event.queryStringParameters?.latitude,
-        longitude: event.queryStringParameters?.longitude
+        longitude: event.queryStringParameters?.longitude,
+        useBias: true
+        // No includedPrimaryTypes — allows any store (hardware, pharmacy, clothing, etc.)
       })
     });
   } catch (error) {
@@ -75,10 +100,11 @@ async function authorizeRequest(event) {
   return { ok: true, user };
 }
 
-async function fetchPlaceSuggestions({ apiKey, input, sessionToken, latitude, longitude }) {
+async function fetchPlaceSuggestions({ apiKey, input, sessionToken, latitude, longitude, types, useBias = false }) {
   const query = String(input || "").trim();
   if (query.length < 2) return [];
-  const locationRestriction = googleLocationRestriction(latitude, longitude);
+  const locationCircle = googleLocationRestriction(latitude, longitude);
+  const locationKey = useBias ? "locationBias" : "locationRestriction";
   const response = await fetch(`${GOOGLE_PLACES_BASE_URL}/places:autocomplete`, {
     method: "POST",
     headers: {
@@ -89,11 +115,11 @@ async function fetchPlaceSuggestions({ apiKey, input, sessionToken, latitude, lo
     body: JSON.stringify({
       input: query,
       sessionToken: cleanSessionToken(sessionToken),
-      includedPrimaryTypes: STORE_TYPES,
+      ...(types ? { includedPrimaryTypes: types } : {}),
       includedRegionCodes: ["us"],
       languageCode: "en",
       regionCode: "us",
-      ...(locationRestriction ? { locationRestriction } : {})
+      ...(locationCircle ? { [locationKey]: locationCircle } : {})
     })
   });
   const body = await readGoogleResponse(response);
@@ -142,6 +168,30 @@ async function fetchPlaceDetails({ apiKey, placeId, sessionToken, name }) {
     latitude: Number(place.location?.latitude) || null,
     longitude: Number(place.location?.longitude) || null,
     types: Array.isArray(place.types) ? place.types : []
+  };
+}
+
+async function fetchRestaurantDetails({ apiKey, placeId, sessionToken, name }) {
+  const id = String(placeId || "").trim();
+  if (!id) throw requestError(400, "Missing Google Place ID.");
+  const params = new URLSearchParams({ languageCode: "en", regionCode: "US" });
+  const token = cleanSessionToken(sessionToken);
+  if (token) params.set("sessionToken", token);
+  const response = await fetch(`${GOOGLE_PLACES_BASE_URL}/places/${encodeURIComponent(id)}?${params}`, {
+    headers: {
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": "id,displayName,formattedAddress,location,websiteUri,googleMapsUri"
+    }
+  });
+  const place = await readGoogleResponse(response);
+  return {
+    placeId: place.id || id,
+    name: place.displayName?.text || String(name || "").trim() || "Restaurant",
+    address: place.formattedAddress || "",
+    latitude: Number(place.location?.latitude) || null,
+    longitude: Number(place.location?.longitude) || null,
+    websiteUri: place.websiteUri || "",
+    googleMapsUri: place.googleMapsUri || ""
   };
 }
 

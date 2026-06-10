@@ -25,7 +25,8 @@ Return ONLY a valid JSON array of 6 strings — no explanation, no markdown fenc
       user: currentPrefs ? `Current preferences:\n${currentPrefs}` : "No preferences set yet."
     });
     let questions;
-    try { questions = JSON.parse(raw.trim()); } catch { questions = raw.split("\n").filter(Boolean).slice(0, 6); }
+    const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+    try { questions = JSON.parse(cleaned); } catch { questions = cleaned.split("\n").map((s) => s.trim().replace(/^["'\d.\s-]+/, "").replace(/[",]+$/, "").trim()).filter((s) => s.length > 10).slice(0, 6); }
     return jsonResponse(200, { questions });
 
   } else if (body.step === "update") {
