@@ -1,4 +1,5 @@
 const STORAGE_KEY = "tableplan-state-v1";
+const _tabIndInit = new WeakSet();
 const CALENDAR_CACHE_KEY = "eat-calendars-v1";
 const HOLIDAY_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 const defaultCalendarColors = ["#e5e9ff", "#e8f6d0", "#ffe2ef", "#fff6b8", "#d9f4f0", "#eee4ff"];
@@ -142,6 +143,9 @@ let activeSharedStorageProvider = null;
 let rowStorageReady = false;
 let supabaseClient = null;
 let authSession = null;
+let userGroup = null;
+let groupMembers = [];
+let pendingInviteToken = null;
 let activeFolder = "";
 let activeRecipeTag = "";
 let currentWeek = startOfPrepWindow(new Date());
@@ -195,6 +199,7 @@ let inventoryItemPendingId = null;
 let inventoryDragItemId = null;
 let mealSwipeGesture = null;
 let doTaskSwipeGesture = null;
+let grocerySwipeGesture = null;
 let autoRuleSwipeGesture = null;
 let workoutPoolSwipeGesture = null;
 let mealPointerDeleteGesture = null;
@@ -218,6 +223,7 @@ let pendingGroceryReviewItems = [];
 let calendarEvents = loadCachedCalendarEvents();
 let activeCookingInterval = null;
 let selectedGroceryWeekKey = "";
+let activeGroceryStoreTab = "all";
 let currentActiveRecipeViewId = "";
 let recipeViewMealContext = null;
 const activeRecipeScrollPositions = new Map();
@@ -266,6 +272,7 @@ let restaurantSearchTimer = null;
 let restaurantSearchSessionToken = "";
 let restaurantSearchSuggestions = [];
 let restaurantSearchPending = null;
+let restaurantInfoPopoverContext = null;
 let draggedGroceryStoreId = "";
 let activeGroceryStoreLayoutId = "";
 let draggedGroceryStoreSectionId = "";
@@ -275,10 +282,10 @@ const elements = {
   weekJumpMenu: document.querySelector("#weekJumpMenu"),
   previousWeek: document.querySelector("#previousWeek"),
   nextWeek: document.querySelector("#nextWeek"),
-  authStatus: document.querySelector("#authStatus"),
   authButton: document.querySelector("#authButton"),
-  authMenu: document.querySelector("#authMenu"),
-  authMenuAction: document.querySelector("#authMenuAction"),
+  profileDialog: document.querySelector("#profileDialog"),
+  adminUsersDialog: document.querySelector("#adminUsersDialog"),
+  adminHouseholdsDialog: document.querySelector("#adminHouseholdsDialog"),
   syncStatus: document.querySelector("#syncStatus"),
   authDialog: document.querySelector("#authDialog"),
   authForm: document.querySelector("#authForm"),
@@ -310,16 +317,24 @@ const elements = {
   restaurantSearchInput: document.querySelector("#restaurantSearchInput"),
   restaurantSearchStatus: document.querySelector("#restaurantSearchStatus"),
   restaurantSearchSuggestionsEl: document.querySelector("#restaurantSearchSuggestions"),
+  restaurantInfoPopover: document.querySelector("#restaurantInfoPopover"),
+  restaurantInfoPopoverName: document.querySelector("#restaurantInfoPopoverName"),
+  restaurantInfoDirectionsLink: document.querySelector("#restaurantInfoDirectionsLink"),
+  restaurantInfoMenuLink: document.querySelector("#restaurantInfoMenuLink"),
+  restaurantInfoRemoveBtn: document.querySelector("#restaurantInfoRemoveBtn"),
   menuIngredientOptionsBtn: document.querySelector("#menuIngredientOptionsBtn"),
   menuFoodHealthSettingsBtn: document.querySelector("#menuFoodHealthSettingsBtn"),
   menuWatchTheatersBtn: document.querySelector("#menuWatchTheatersBtn"),
   menuRecurringTasksBtn: document.querySelector("#menuRecurringTasksBtn"),
   menuWorkoutLibraryBtn: document.querySelector("#menuWorkoutLibraryBtn"),
   menuWorkoutLogsBtn: document.querySelector("#menuWorkoutLogsBtn"),
+  menuRecreateHobbiesBtn: document.querySelector("#menuRecreateHobbiesBtn"),
+  menuCalendarsBtn: document.querySelector("#menuCalendarsBtn"),
   contextSettingsDialog: document.querySelector("#contextSettingsDialog"),
   contextSettingsTitle: document.querySelector("#contextSettingsTitle"),
   contextSettingsBody: document.querySelector("#contextSettingsBody"),
   closeContextSettingsBtn: document.querySelector("#closeContextSettingsBtn"),
+  contextSettingsBackBtn: document.querySelector("#contextSettingsBackBtn"),
   doneContextSettingsBtn: document.querySelector("#doneContextSettingsBtn"),
   homeMainPage: document.querySelector("#homeMainPage"),
   homeEatBtn: document.querySelector("#homeEatBtn"),
@@ -365,9 +380,13 @@ const elements = {
   watchPlannerGrid: document.querySelector("#watchPlannerGrid"),
   shopMainPage: document.querySelector("#shopMainPage"),
   shopReceiptsList: document.querySelector("#shopReceiptsList"),
+  openShopReceiptsBtn: document.querySelector("#openShopReceiptsBtn"),
+  shopReceiptsDialog: document.querySelector("#shopReceiptsDialog"),
+  closeShopReceiptsBtn: document.querySelector("#closeShopReceiptsBtn"),
   homeShopBtn: document.querySelector("#homeShopBtn"),
   titleShopBtn: document.querySelector("#titleShopBtn"),
-  shopScanReceiptBtn: document.querySelector("#shopScanReceiptBtn"),
+  shopScanDirectBtn: document.querySelector("#shopScanDirectBtn"),
+  shopScanDirectInput: document.querySelector("#shopScanDirectInput"),
   inventoryMainPage: document.querySelector("#inventoryMainPage"),
   inventoryPlannerGrid: document.querySelector("#inventoryPlannerGrid"),
   homeInventoryBtn: document.querySelector("#homeInventoryBtn"),
@@ -571,6 +590,7 @@ const elements = {
   openRestoreBackupBtn: document.querySelector("#openRestoreBackupBtn"),
   openTrashBtn: document.querySelector("#openTrashBtn"),
   autoRulesDialog: document.querySelector("#autoRulesDialog"),
+  mealAutoFillDialog: document.querySelector("#mealAutoFillDialog"),
   autoRuleTrashTarget: document.querySelector("#autoRuleTrashTarget"),
   autoRuleList: document.querySelector("#autoRuleList"),
   autoRuleOptions: document.querySelector("#autoRuleOptions"),
@@ -706,6 +726,11 @@ const elements = {
   emailInterviewStep2: document.querySelector("#emailInterviewStep2"),
   emailInterviewResult: document.querySelector("#emailInterviewResult"),
   weeklyEmailSetup: document.querySelector("#weeklyEmailSetup"),
+  emailScheduleSection: document.querySelector("#emailScheduleSection"),
+  emailScheduleEnabled: document.querySelector("#emailScheduleEnabled"),
+  emailScheduleDetails: document.querySelector("#emailScheduleDetails"),
+  emailScheduleTime: document.querySelector("#emailScheduleTime"),
+  emailScheduleTimezone: document.querySelector("#emailScheduleTimezone"),
   weeklyEmailNotes: document.querySelector("#weeklyEmailNotes"),
   weeklyEmailPreviewArea: document.querySelector("#weeklyEmailPreviewArea"),
   weeklyEmailPreviewFrame: document.querySelector("#weeklyEmailPreviewFrame"),
@@ -730,15 +755,12 @@ const elements = {
   cookSessionPhoto: document.querySelector("#cookSessionPhoto"),
   cookSessionPhotoPreview: document.querySelector("#cookSessionPhotoPreview"),
   groceryList: document.querySelector("#groceryList"),
-  groceryWeekSelect: document.querySelector("#groceryWeekSelect"),
   groceryForm: document.querySelector("#groceryForm"),
   groceryInput: document.querySelector("#groceryInput"),
-  grocerySuggestions: document.querySelector("#grocerySuggestions"),
   pantryForm: document.querySelector("#pantryForm"),
   pantryInput: document.querySelector("#pantryInput"),
   pantryList: document.querySelector("#pantryList"),
   newRecipeBtn: document.querySelector("#newRecipeBtn"),
-  copyGroceriesBtn: document.querySelector("#copyGroceriesBtn"),
   recipeDialog: document.querySelector("#recipeDialog"),
   recipeViewDialog: document.querySelector("#recipeViewDialog"),
   recipeViewTitle: document.querySelector("#recipeViewTitle"),
@@ -844,10 +866,12 @@ initializeApp();
 function bindEvents() {
   elements.previousWeek.addEventListener("click", () => {
     if (activeAppArea === "plan") { navigatePlanView(-1); return; }
+    if (activeAppArea === "shop") { navigateGroceryWeek(-1); return; }
     moveWeek(-7);
   });
   elements.nextWeek.addEventListener("click", () => {
     if (activeAppArea === "plan") { navigatePlanView(1); return; }
+    if (activeAppArea === "shop") { navigateGroceryWeek(1); return; }
     moveWeek(7);
   });
   elements.weekLabel.addEventListener("click", (event) => {
@@ -868,9 +892,13 @@ function bindEvents() {
     if (button) jumpToWeek(button.dataset.weekJump);
   });
   elements.weekJumpMenu.addEventListener("wheel", (event) => event.stopPropagation(), { passive: true });
-  elements.authButton.addEventListener("click", toggleAuthMenu);
-  elements.authMenu.addEventListener("click", (event) => event.stopPropagation());
-  elements.authMenuAction.addEventListener("click", toggleAuth);
+  elements.authButton.addEventListener("click", openProfileDialog);
+  document.querySelector("#closeProfileBtn").addEventListener("click", () => elements.profileDialog.close());
+  document.querySelector("#saveProfileBtn").addEventListener("click", saveProfile);
+  document.querySelector("#profileLogOutBtn").addEventListener("click", () => { elements.profileDialog.close(); toggleAuth(); });
+  document.querySelector("#profileLogInBtn").addEventListener("click", () => { elements.profileDialog.close(); toggleAuth(); });
+  document.querySelector("#closeAdminUsersBtn").addEventListener("click", () => elements.adminUsersDialog.close());
+  document.querySelector("#closeAdminHouseholdsBtn").addEventListener("click", () => elements.adminHouseholdsDialog.close());
   elements.authForm.addEventListener("submit", sendSignInLink);
   elements.googleSignInBtn.addEventListener("click", signInWithGoogle);
   elements.appleSignInBtn.addEventListener("click", signInWithApple);
@@ -917,7 +945,10 @@ function bindEvents() {
   elements.menuRecurringTasksBtn.addEventListener("click", () => openSettingsMenuDialog(openRecurringTasksDialog));
   elements.menuWorkoutLibraryBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLibraryDialog));
   elements.menuWorkoutLogsBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLogsDialog));
+  elements.menuRecreateHobbiesBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("recreate")));
+  elements.menuCalendarsBtn.addEventListener("click", () => openSettingsMenuDialog(openCalendarsDialog));
   elements.closeContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
+  elements.contextSettingsBackBtn.addEventListener("click", () => renderContextSettingsDialog("general"));
   elements.doneContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
   elements.contextSettingsBody.addEventListener("click", handleContextSettingsAction);
   elements.contextSettingsBody.addEventListener("change", handleContextSettingsChange);
@@ -1101,6 +1132,15 @@ function bindEvents() {
   document.querySelector("#addMealTypeBtn").addEventListener("click", addMealType);
   elements.closeAutoRulesBtn.addEventListener("click", closeAutoRulesDialog);
   elements.saveAutoRulesBtn.addEventListener("click", closeAutoRulesDialog);
+  document.querySelector("#closeMealAutoFillBtn").addEventListener("click", () => elements.mealAutoFillDialog.close());
+  document.querySelector("#mealAutoFillRulesBtn").addEventListener("click", () => {
+    elements.mealAutoFillDialog.close();
+    autoGenerateMealPlan();
+  });
+  document.querySelector("#mealAutoFillAiBtn").addEventListener("click", () => {
+    elements.mealAutoFillDialog.close();
+    autoGenerateMealPlan();
+  });
   elements.tagForm.addEventListener("submit", addRecipeTag);
   elements.closeTagsBtn.addEventListener("click", () => elements.tagsDialog.close());
   elements.doneTagsBtn.addEventListener("click", () => elements.tagsDialog.close());
@@ -1155,6 +1195,13 @@ function bindEvents() {
   elements.previewWeeklyEmailBtn.addEventListener("click", generateWeeklyEmailPreview);
   elements.sendWeeklyEmailBtn.addEventListener("click", sendWeeklyEmail);
   elements.tuneEmailPrefsBtn.addEventListener("click", openEmailInterviewDialog);
+  elements.emailScheduleEnabled.addEventListener("change", () => {
+    elements.emailScheduleDetails.hidden = !elements.emailScheduleEnabled.checked;
+    saveEmailScheduleToState();
+  });
+  elements.emailScheduleSection.addEventListener("change", (e) => {
+    if (e.target !== elements.emailScheduleEnabled) saveEmailScheduleToState();
+  });
   elements.closeEmailInterviewBtn.addEventListener("click", () => elements.emailInterviewDialog.close());
   elements.emailInterviewCancelBtn.addEventListener("click", () => elements.emailInterviewDialog.close());
   elements.emailInterviewBackBtn.addEventListener("click", emailInterviewGoBack);
@@ -1212,11 +1259,6 @@ function bindEvents() {
       recipeViewMealContext = null;
     }
   });
-  elements.copyGroceriesBtn.addEventListener("click", () => copyText(buildGroceryText(), elements.copyGroceriesBtn, "Copied"));
-  elements.groceryWeekSelect.addEventListener("change", () => {
-    selectedGroceryWeekKey = elements.groceryWeekSelect.value;
-    renderGroceries();
-  });
   elements.groceryForm.addEventListener("submit", addManualGroceryItem);
   elements.closeRecipeBtn.addEventListener("click", () => elements.recipeDialog.close());
   elements.cancelRecipeBtn.addEventListener("click", () => elements.recipeDialog.close());
@@ -1245,7 +1287,18 @@ function bindEvents() {
   elements.titleReadBtn.addEventListener("click", showReadingApp);
   elements.homeShopBtn.addEventListener("click", showShopApp);
   elements.titleShopBtn.addEventListener("click", showShopApp);
-  elements.shopScanReceiptBtn.addEventListener("click", openReceiptScanDialog);
+  elements.openShopReceiptsBtn.addEventListener("click", openShopReceiptsDialog);
+  elements.closeShopReceiptsBtn.addEventListener("click", closeShopReceiptsDialog);
+  elements.shopScanDirectBtn.addEventListener("click", () => elements.shopScanDirectInput.click());
+  elements.shopScanDirectInput.addEventListener("change", () => {
+    const files = [...(elements.shopScanDirectInput.files || [])];
+    if (!files.length) return;
+    openReceiptScanDialog();
+    receiptScanFiles = files.slice(0, 6);
+    receiptImageEdits = retainScanImageEdits(receiptScanFiles, receiptImageEdits);
+    elements.shopScanDirectInput.value = "";
+    updateReceiptScanSelectionStatus();
+  });
   elements.homeInventoryBtn.addEventListener("click", showInventoryApp);
   elements.titleInventoryBtn.addEventListener("click", showInventoryApp);
   elements.inventoryBoxDialog.addEventListener("click", closeDialogOnBackdropClick);
@@ -1283,6 +1336,19 @@ function bindEvents() {
     restaurantSearchSuggestions = [];
     restaurantSearchPending = null;
   });
+  document.addEventListener("pointerdown", (e) => {
+    if (!elements.restaurantInfoPopover.hidden && !elements.restaurantInfoPopover.contains(e.target)) {
+      closeRestaurantInfoPopover();
+    }
+  }, true);
+  elements.restaurantInfoRemoveBtn.addEventListener("click", () => {
+    if (restaurantInfoPopoverContext) {
+      clearMealRestaurant(restaurantInfoPopoverContext.day, restaurantInfoPopoverContext.meal, restaurantInfoPopoverContext.index);
+    }
+    closeRestaurantInfoPopover();
+  });
+  elements.restaurantInfoDirectionsLink.addEventListener("click", () => closeRestaurantInfoPopover());
+  elements.restaurantInfoMenuLink.addEventListener("click", () => closeRestaurantInfoPopover());
   elements.restaurantSearchInput.addEventListener("input", () => {
     const query = elements.restaurantSearchInput.value.trim();
     window.clearTimeout(restaurantSearchTimer);
@@ -1295,6 +1361,16 @@ function bindEvents() {
     elements.restaurantSearchStatus.textContent = "Searching…";
     restaurantSearchTimer = window.setTimeout(() => searchRestaurantLocations(query), 300);
   });
+  document.querySelector("#groupSetupForm")?.addEventListener("submit", submitGroupSetup);
+  document.querySelector("#groupSettingsBtn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const menu = document.getElementById("groupSettingsMenu");
+    if (!menu) return;
+    const willOpen = menu.hidden;
+    menu.hidden = !willOpen;
+    document.getElementById("groupSettingsBtn").setAttribute("aria-expanded", String(willOpen));
+    if (willOpen) renderGroupSettingsSection();
+  });
 }
 
 function closeDialogOnBackdropClick(event) {
@@ -1302,12 +1378,24 @@ function closeDialogOnBackdropClick(event) {
 }
 
 async function initializeApp() {
+  handleInviteUrlParameter();
   await initializeSupabaseAuth();
+  if (authSession?.access_token) {
+    await loadOrCreateUserGroup();
+    await migratePersonalStateIfNeeded();
+  }
   await hydrateStateFromSharedStorage();
   await hydrateRecipeRowsFromSupabase();
   applyInitialMealPlanFocus();
   handleImportUrlParameter();
+  handleHashNavigation();
   loadCalendarEvents();
+}
+
+function handleHashNavigation() {
+  const hash = window.location.hash.slice(1).toLowerCase();
+  const routes = { shop: showShopApp, nourish: showEatApp, sweat: showPlayApp, maintain: showDoApp };
+  routes[hash]?.();
 }
 
 async function initializeSupabaseAuth() {
@@ -1341,51 +1429,79 @@ async function initializeSupabaseAuth() {
       }
       sharedStorageReady = false;
       activeSharedStorageProvider = null;
+      await loadOrCreateUserGroup();
       await hydrateStateFromSharedStorage();
       await hydrateRecipeRowsFromSupabase();
+      maybeAutoLinkProfile();
     }
   });
   updateAuthUi();
 }
 
-function updateAuthUi(message = "") {
-  if (!elements.authStatus || !elements.authButton || !elements.authMenuAction) return;
-
-  if (!canUseCloudStorage()) {
-    elements.authStatus.textContent = "Local storage";
-    elements.authMenuAction.hidden = true;
-    return;
-  }
-
-  elements.authButton.hidden = false;
-  elements.authMenuAction.hidden = false;
-  if (authSession?.user?.email) {
-    elements.authStatus.textContent = authSession.user.email;
-    elements.authMenuAction.textContent = "Log out";
-    elements.authMenuAction.setAttribute("aria-label", "Log out");
-    return;
-  }
-
-  elements.authStatus.textContent = message || "Sign in to sync";
-  elements.authMenuAction.textContent = "Log in";
-  elements.authMenuAction.setAttribute("aria-label", "Log in");
+function updateAuthUi() {
+  updateGroupSettingsSection();
+  if (elements.authButton) elements.authButton.hidden = false;
 }
 
-function toggleAuthMenu(event) {
-  event.stopPropagation();
-  const willOpen = elements.authMenu.hidden;
+function openProfileDialog() {
   closeFloatingMenus();
-  elements.authMenu.hidden = !willOpen;
-  elements.authButton.setAttribute("aria-expanded", String(willOpen));
+  renderProfileDialog();
+  elements.profileDialog.showModal();
 }
 
-function closeAuthMenu() {
-  elements.authMenu.hidden = true;
-  elements.authButton.setAttribute("aria-expanded", "false");
+function renderProfileDialog() {
+  const member = getCurrentProfileMember();
+  const isLoggedIn = !!authSession?.access_token;
+  const email = authSession?.user?.email || "";
+  const name = member?.label || userGroup?.display_name || email.split("@")[0] || "";
+  const initials = name.trim().split(/\s+/).map(w => w[0]?.toUpperCase() || "").slice(0, 2).join("");
+
+  elements.profileDialog.querySelector(".profile-avatar-large").textContent = initials || "?";
+  elements.profileDialog.querySelector("#profileNameInput").value = member?.label || userGroup?.display_name || "";
+  elements.profileDialog.querySelector("#profileDobInput").value = member?.dob || "";
+
+  const emailEl = elements.profileDialog.querySelector("#profileEmailDisplay");
+  emailEl.textContent = email || (isLoggedIn ? "" : "Not signed in");
+  emailEl.hidden = !email && isLoggedIn;
+
+  elements.profileDialog.querySelector("#profileLogOutBtn").hidden = !isLoggedIn;
+  elements.profileDialog.querySelector("#profileLogInBtn").hidden = isLoggedIn;
+}
+
+function saveProfile() {
+  const dialog = elements.profileDialog;
+  const newName = dialog.querySelector("#profileNameInput").value.trim();
+  const newDob = dialog.querySelector("#profileDobInput").value.trim();
+
+  const member = getCurrentProfileMember();
+  if (member && newName) {
+    const members = normalizeMealPlanConfig(state.mealPlanConfig).members;
+    state.mealPlanConfig = normalizeMealPlanConfig({
+      ...state.mealPlanConfig,
+      members: members.map(m => m.id === member.id ? { ...m, label: newName, dob: newDob } : m)
+    });
+    persist();
+    render();
+    updateAuthUi();
+    if (supabaseClient && authSession?.access_token) {
+      supabaseClient.auth.updateUser({ data: { dob: newDob } }).catch(() => {});
+    }
+  } else if (member && newDob !== (member.dob || "")) {
+    const members = normalizeMealPlanConfig(state.mealPlanConfig).members;
+    state.mealPlanConfig = normalizeMealPlanConfig({
+      ...state.mealPlanConfig,
+      members: members.map(m => m.id === member.id ? { ...m, dob: newDob } : m)
+    });
+    persist();
+    if (supabaseClient && authSession?.access_token) {
+      supabaseClient.auth.updateUser({ data: { dob: newDob } }).catch(() => {});
+    }
+  }
+
+  dialog.close();
 }
 
 async function toggleAuth() {
-  closeAuthMenu();
   if (!supabaseClient && canUseCloudStorage() && window.supabase?.createClient) {
     supabaseClient = window.supabase.createClient(supabaseBaseUrl(), supabaseConfig().anonKey);
   }
@@ -1451,6 +1567,268 @@ async function signInWithOAuthProvider(provider, label) {
   if (error) elements.authMessage.textContent = error.message;
 }
 
+function handleInviteUrlParameter() {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get("invite");
+  if (token) {
+    sessionStorage.setItem("live_invite_token", token);
+    window.history.replaceState({}, "", window.location.pathname + window.location.hash);
+  }
+  const stored = sessionStorage.getItem("live_invite_token");
+  if (stored) pendingInviteToken = stored;
+}
+
+async function loadOrCreateUserGroup() {
+  if (!supabaseClient || !authSession?.access_token) return;
+  try {
+    const res = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(authSession.user.id)}&select=group_id,role,display_name,live_groups(id,disabled_pages)`,
+      { headers: supabaseHeaders() }
+    );
+    if (res.ok) {
+      const rows = await res.json();
+      if (rows.length) {
+        const member = rows[0];
+        const group = member.live_groups;
+        userGroup = { id: member.group_id, disabled_pages: group?.disabled_pages || [], role: member.role, display_name: member.display_name };
+        await loadGroupMembers();
+        updateGroupSettingsSection();
+        return;
+      }
+    }
+  } catch (e) {
+    console.warn("Could not load group:", e);
+  }
+  openGroupSetupDialog();
+}
+
+async function migratePersonalStateIfNeeded() {
+  if (!authSession?.access_token || !userGroup?.id) return;
+  if (localStorage.getItem("live_migrated_personal")) return;
+  // Mark immediately so a network error doesn't cause repeated attempts
+  localStorage.setItem("live_migrated_personal", "1");
+  try {
+    const [personalRes, groupRes] = await Promise.all([
+      fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.personal&select=state`, { headers: supabaseHeaders(), cache: "no-store" }),
+      fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(userGroup.id)}&select=state`, { headers: supabaseHeaders(), cache: "no-store" }),
+    ]);
+    if (!personalRes.ok || !groupRes.ok) return;
+    const personalState = (await personalRes.json())[0]?.state;
+    const groupState = (await groupRes.json())[0]?.state;
+    if (!personalState) return;
+    const personalTs = personalState.stateUpdatedAt || "";
+    const groupTs = groupState?.stateUpdatedAt || "";
+    if (!groupTs || personalTs > groupTs) {
+      await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?on_conflict=id`, {
+        method: "POST",
+        headers: { ...supabaseHeaders(), Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({ id: userGroup.id, state: personalState, updated_at: new Date().toISOString() })
+      });
+      console.info(`[migration] personal state (${personalTs || "no timestamp"}) → group key (was: ${groupTs || "none"})`);
+    }
+  } catch (e) {
+    console.warn("[migration] personal → group failed:", e);
+  }
+}
+
+async function loadGroupMembers() {
+  if (!userGroup?.id) return;
+  try {
+    const res = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/live_group_members?group_id=eq.${userGroup.id}&select=user_id,display_name,role`,
+      { headers: supabaseHeaders() }
+    );
+    if (res.ok) groupMembers = await res.json();
+  } catch (e) {
+    console.warn("Could not load group members:", e);
+  }
+}
+
+function openGroupSetupDialog() {
+  const dialog = document.getElementById("groupSetupDialog");
+  if (!dialog || dialog.open) return;
+  const hasInvite = Boolean(pendingInviteToken);
+  dialog.querySelector("[data-setup-title]").textContent = hasInvite ? "You've been invited" : "Welcome to Live";
+  dialog.querySelector("[data-setup-desc]").textContent = hasInvite ? "Enter your name to join your family group." : "Enter your name to set up your group.";
+  dialog.querySelector("[data-setup-submit]").textContent = hasInvite ? "Join" : "Get Started";
+  dialog.querySelector("[data-setup-error]").textContent = "";
+  dialog.querySelector("[data-setup-name]").value = "";
+  dialog.showModal();
+}
+
+async function submitGroupSetup(event) {
+  event.preventDefault();
+  const dialog = document.getElementById("groupSetupDialog");
+  const displayName = dialog.querySelector("[data-setup-name]").value.trim();
+  const errorEl = dialog.querySelector("[data-setup-error]");
+  const btn = dialog.querySelector("[data-setup-submit]");
+  if (!displayName) { errorEl.textContent = "Please enter your name."; return; }
+  btn.disabled = true;
+  errorEl.textContent = "";
+  try {
+    if (pendingInviteToken) {
+      await acceptGroupInvite(pendingInviteToken, displayName);
+      maybeAutoLinkProfile();
+    } else {
+      await createUserGroup(displayName);
+    }
+    dialog.close();
+    sessionStorage.removeItem("live_invite_token");
+    pendingInviteToken = null;
+    updateGroupSettingsSection();
+  } catch (e) {
+    errorEl.textContent = e.message || "Something went wrong. Please try again.";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function createUserGroup(displayName) {
+  const groupId = crypto.randomUUID();
+  const groupRes = await fetch(`${supabaseBaseUrl()}/rest/v1/live_groups`, {
+    method: "POST",
+    headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
+    body: JSON.stringify({ id: groupId, created_by: authSession.user.id, disabled_pages: [] })
+  });
+  if (!groupRes.ok) {
+    const body = await groupRes.json().catch(() => ({}));
+    throw new Error(`Could not create group (${groupRes.status}): ${body.message || body.error || JSON.stringify(body)}`);
+  }
+  const memberRes = await fetch(`${supabaseBaseUrl()}/rest/v1/live_group_members`, {
+    method: "POST",
+    headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
+    body: JSON.stringify({ group_id: groupId, user_id: authSession.user.id, display_name: displayName, role: "admin" })
+  });
+  if (!memberRes.ok) {
+    const body = await memberRes.json().catch(() => ({}));
+    throw new Error(`Could not add group membership (${memberRes.status}): ${body.message || body.error || JSON.stringify(body)}`);
+  }
+  const group = { id: groupId };
+  userGroup = { id: group.id, disabled_pages: [], role: "admin", display_name: displayName };
+  groupMembers = [{ user_id: authSession.user.id, display_name: displayName, role: "admin" }];
+  await writeStateToSupabase();
+  sharedStorageReady = true;
+  activeSharedStorageProvider = { label: "Supabase", load: loadStateFromSupabase, write: writeStateToSupabase };
+}
+
+async function acceptGroupInvite(token, displayName) {
+  const res = await fetch("/.netlify/functions/accept-invite", {
+    method: "POST",
+    headers: { "content-type": "application/json", Authorization: `Bearer ${authSession.access_token}` },
+    body: JSON.stringify({ token, displayName })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Could not join group.");
+  userGroup = { id: data.groupId, disabled_pages: data.disabledPages || [], role: "member", display_name: displayName };
+  await loadGroupMembers();
+  sharedStorageReady = false;
+  activeSharedStorageProvider = null;
+  await hydrateStateFromSharedStorage();
+}
+
+async function sendGroupInvite(email) {
+  const res = await fetch("/.netlify/functions/send-invite", {
+    method: "POST",
+    headers: { "content-type": "application/json", Authorization: `Bearer ${authSession.access_token}` },
+    body: JSON.stringify({ email })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Could not send invite.");
+  return data;
+}
+
+function updateGroupSettingsSection() {
+  const section = document.getElementById("groupSettingsSection");
+  if (!section) return;
+  if (authSession?.access_token !== undefined) {
+    section.hidden = !authSession.access_token;
+  }
+  if (!authSession?.access_token || !userGroup) return;
+  const menu = document.getElementById("groupSettingsMenu");
+  if (menu && !menu.hidden) renderGroupSettingsSection();
+}
+
+function renderGroupSettingsSection() {
+  const body = document.getElementById("groupSettingsMenu");
+  if (!body || !userGroup) return;
+  const isAdmin = userGroup.role === "admin";
+  const memberHtml = groupMembers.map((m) => `
+    <div class="config-row group-member-row">
+      <span>${escapeHtml(m.display_name || m.user_id)}</span>
+      <span class="muted-label">${m.role === "admin" ? "Admin" : "Member"}</span>
+    </div>
+  `).join("");
+  const inviteHtml = isAdmin ? `
+    <div class="group-invite-form">
+      <p class="settings-subheading">Invite someone</p>
+      <div class="inline-form">
+        <input type="email" id="groupInviteEmail" placeholder="email@example.com" autocomplete="email" />
+        <button class="secondary-btn" type="button" id="sendGroupInviteBtn">Send invite</button>
+      </div>
+      <p class="import-status" id="groupInviteStatus"></p>
+    </div>
+  ` : "";
+  const pages = [
+    { key: "eat", label: "Meal Plan" }, { key: "shop", label: "Shop" },
+    { key: "do", label: "To-Do" }, { key: "watch", label: "Watch" },
+    { key: "play", label: "Sweat" }, { key: "read", label: "Read" },
+    { key: "recreate", label: "Recreate" }, { key: "plan", label: "Schedule" },
+    { key: "inventory", label: "Stock" }
+  ];
+  const pageAccessHtml = isAdmin ? `
+    <div class="group-page-access">
+      <p class="settings-subheading">Members can access</p>
+      ${pages.map((p) => `
+        <label class="settings-toggle-row">
+          <input type="checkbox" data-group-page="${escapeHtml(p.key)}"
+            ${!(userGroup.disabled_pages || []).includes(p.key) ? "checked" : ""} />
+          ${escapeHtml(p.label)}
+        </label>
+      `).join("")}
+    </div>
+  ` : "";
+  body.innerHTML = `
+    <div class="group-members-list">${memberHtml || '<p class="muted-label">No members yet.</p>'}</div>
+    ${inviteHtml}
+    ${pageAccessHtml}
+  `;
+  if (isAdmin) {
+    document.getElementById("sendGroupInviteBtn")?.addEventListener("click", async () => {
+      const emailInput = document.getElementById("groupInviteEmail");
+      const status = document.getElementById("groupInviteStatus");
+      const email = emailInput?.value.trim();
+      if (!email) return;
+      status.textContent = "Sending…";
+      try {
+        const result = await sendGroupInvite(email);
+        status.innerHTML = `Invite sent to ${escapeHtml(email)}.${result.inviteUrl ? ` <a href="${escapeHtml(result.inviteUrl)}" target="_blank" rel="noopener">Open link</a>` : ""}`;
+        if (emailInput) emailInput.value = "";
+      } catch (e) {
+        status.textContent = e.message;
+      }
+    });
+    body.querySelectorAll("[data-group-page]").forEach((checkbox) => {
+      checkbox.addEventListener("change", () => setGroupPageVisibility(checkbox.dataset.groupPage, !checkbox.checked));
+    });
+  }
+}
+
+async function setGroupPageVisibility(page, disabled) {
+  if (!userGroup?.id || userGroup.role !== "admin") return;
+  const current = userGroup.disabled_pages || [];
+  const updated = disabled ? [...new Set([...current, page])] : current.filter((p) => p !== page);
+  const res = await fetch(`${supabaseBaseUrl()}/rest/v1/live_groups?id=eq.${userGroup.id}`, {
+    method: "PATCH",
+    headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
+    body: JSON.stringify({ disabled_pages: updated })
+  });
+  if (!res.ok) { console.warn("Could not update page visibility"); return; }
+  userGroup.disabled_pages = updated;
+  updatePageTitleMenu();
+  updatePageVisibility();
+  updateSettingsMenuOptions();
+}
+
 function loadState() {
   const saved = localStorage.getItem(STORAGE_KEY);
   if (!saved) return defaultState();
@@ -1467,6 +1845,57 @@ function persist() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   saveStateToSharedStorage();
   scheduleLocalBackup();
+}
+
+function getAppName() {
+  return state.appName || "Live";
+}
+
+function getCurrentProfileMember() {
+  const members = normalizeMealPlanConfig(state.mealPlanConfig).members;
+  if (authSession?.user?.id) {
+    return members.find(m => m.linkedUserId === authSession.user.id) || null;
+  }
+  return members.length === 1 ? members[0] : null;
+}
+
+function maybeAutoLinkProfile() {
+  const userId = authSession?.user?.id;
+  if (!userId) return;
+  const members = normalizeMealPlanConfig(state.mealPlanConfig).members;
+  if (members.some(m => m.linkedUserId === userId)) return;
+  const displayName = (userGroup?.display_name || authSession.user.email?.split("@")[0] || "").trim().toLowerCase();
+  if (!displayName) return;
+  const match = members.find(m => m.label.trim().toLowerCase() === displayName);
+  if (!match) return;
+  state.mealPlanConfig = normalizeMealPlanConfig({
+    ...state.mealPlanConfig,
+    members: members.map(m => m.id === match.id ? { ...m, linkedUserId: userId } : m)
+  });
+  persist();
+}
+
+function isHohConfigured() { return (state.hohMemberIds || []).length > 0; }
+
+function updateTabIndicator(stableParent) {
+  if (!stableParent) return;
+  const container = stableParent.querySelector(".day-tabs, .watch-category-tabs, .workout-log-tabs, .recreate-topic-tabs");
+  if (!container) return;
+  const set = (el) => {
+    const active = el.querySelector(".is-active");
+    if (!active) return;
+    stableParent.style.setProperty("--tab-ind-l", active.offsetLeft + "px");
+    stableParent.style.setProperty("--tab-ind-w", active.offsetWidth + "px");
+  };
+  if (_tabIndInit.has(stableParent)) {
+    requestAnimationFrame(() => {
+      const c = stableParent.querySelector(".day-tabs, .watch-category-tabs, .workout-log-tabs, .recreate-topic-tabs");
+      if (c) set(c);
+    });
+  } else {
+    _tabIndInit.add(stableParent);
+    set(container);
+  }
 }
 
 async function persistImmediately(label = "saving") {
@@ -1509,6 +1938,8 @@ function defaultState() {
     inventoryRoomVisibility: {},
     watchShowtimesData: {},
     sailingLog: [],
+    recreateHobbies: { sailing: true, piano: true },
+    pianoSongs: [],
     workouts: [],
     playAutoRules: [],
     pantry: ["olive oil", "salt", "pepper"],
@@ -1552,6 +1983,8 @@ function defaultState() {
     collapsedSections: defaultCollapsedSections(),
     collapsedDays: {},
     emailPrefs: "",
+    appName: "",
+    hohMemberIds: [],
     stateUpdatedAt: ""
   };
 }
@@ -1581,6 +2014,8 @@ function normalizeState(parsed) {
     inventoryRoomVisibility: normalizeInventoryRoomVisibility(parsed?.inventoryRoomVisibility),
     watchShowtimesData: normalizeShowtimesData(parsed?.watchShowtimesData),
     sailingLog: normalizeSailingLog(parsed?.sailingLog),
+    recreateHobbies: normalizeRecreateHobbies(parsed?.recreateHobbies),
+    pianoSongs: normalizePianoSongs(parsed?.pianoSongs),
     workouts: normalizeWorkouts(parsed?.workouts),
     playAutoRules: normalizePlayAutoRules(parsed?.playAutoRules),
     pantry: Array.isArray(parsed?.pantry) ? parsed.pantry : [],
@@ -1640,6 +2075,14 @@ function normalizeState(parsed) {
     planEvents: normalizePlanEvents(parsed?.planEvents),
     planCalendars: normalizePlanCalendars(parsed?.planCalendars),
     mealPlanConfig,
+    appName: typeof parsed?.appName === "string" ? parsed.appName.trim() : "",
+    hohMemberIds: (() => {
+      const members = mealPlanConfig.members;
+      if (!members.length) return [];
+      const validIds = new Set(members.map(m => m.id));
+      const saved = (Array.isArray(parsed?.hohMemberIds) ? parsed.hohMemberIds : []).filter(id => validIds.has(id));
+      return saved.length > 0 ? saved : [members[0].id];
+    })(),
     emailPrefs: String(parsed?.emailPrefs || ""),
     stateUpdatedAt: typeof parsed?.stateUpdatedAt === "string" ? parsed.stateUpdatedAt : ""
   };
@@ -1669,7 +2112,8 @@ function defaultWeeklyEmailSettings() {
     includeMissingNotes: true,
     includeUpcomingStatus: true,
     includePlannedCount: true,
-    includeEmptyMeals: true
+    includeEmptyMeals: true,
+    emailSchedule: { enabled: false, days: [], time: "08:00", timezone: "" }
   };
 }
 
@@ -1714,7 +2158,18 @@ function normalizeWeeklyEmailSettings(settings) {
     includeMissingNotes: settings?.includeMissingNotes !== false,
     includeUpcomingStatus: settings?.includeUpcomingStatus !== false,
     includePlannedCount: settings?.includePlannedCount !== false,
-    includeEmptyMeals: settings?.includeEmptyMeals !== false
+    includeEmptyMeals: settings?.includeEmptyMeals !== false,
+    emailSchedule: normalizeEmailSchedule(settings?.emailSchedule)
+  };
+}
+
+function normalizeEmailSchedule(s) {
+  const validDays = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  return {
+    enabled: Boolean(s?.enabled),
+    days: (Array.isArray(s?.days) ? s.days : []).filter((d) => validDays.includes(d)),
+    time: /^\d{2}:\d{2}$/.test(s?.time || "") ? s.time : "08:00",
+    timezone: String(s?.timezone || "").trim()
   };
 }
 
@@ -2175,6 +2630,24 @@ function normalizeShowtimesData(raw) {
   return out;
 }
 
+function normalizeRecreateHobbies(h) {
+  const defaults = { sailing: true, piano: true };
+  if (!h || typeof h !== "object") return { ...defaults };
+  return {
+    sailing: h.sailing !== false,
+    piano: h.piano !== false,
+  };
+}
+
+function normalizePianoSongs(songs) {
+  return (Array.isArray(songs) ? songs : []).map((s) => ({
+    id: s?.id || createId("piano"),
+    title: String(s?.title || ""),
+    learned: Boolean(s?.learned),
+    sheetMusicUrl: String(s?.sheetMusicUrl || ""),
+  }));
+}
+
 function normalizeSailingLog(entries) {
   return (Array.isArray(entries) ? entries : []).map((e) => ({
     id: e?.id || createId("sail"),
@@ -2275,6 +2748,9 @@ function normalizePageVisibility(visibility) {
 }
 
 function isPageEnabled(page) {
+  if (userGroup && userGroup.role !== "admin") {
+    return !(userGroup.disabled_pages || []).includes(page);
+  }
   return normalizePageVisibility(state.pageVisibility)[page] !== false;
 }
 
@@ -3534,7 +4010,8 @@ function sharedStorageProviders() {
 }
 
 function supabaseConfig() {
-  return window.TABLEPLAN_SUPABASE || {};
+  const base = window.TABLEPLAN_SUPABASE || {};
+  return { ...base, stateId: userGroup?.id || base.stateId };
 }
 
 function supabaseBaseUrl() {
@@ -3587,7 +4064,7 @@ function normalizeMealPlanConfig(config) {
   const rawMembers = Array.isArray(config?.members) ? config.members : [];
   const rawTypes = Array.isArray(config?.mealTypes) ? config.mealTypes : [];
   const members = rawMembers.length
-    ? rawMembers.map(m => ({ id: String(m?.id || createId("member")), label: String(m?.label || "").trim(), dob: String(m?.dob || "").trim() })).filter(m => m.label)
+    ? rawMembers.map(m => ({ id: String(m?.id || createId("member")), label: String(m?.label || "").trim(), dob: String(m?.dob || "").trim(), linkedUserId: m?.linkedUserId || null })).filter(m => m.label)
     : defaults.members;
   const mealTypes = rawTypes.length
     ? rawTypes.map(t => ({ id: String(t?.id || createId("mealtype")), label: String(t?.label || "").trim() })).filter(t => t.label)
@@ -3764,6 +4241,9 @@ function folderName(folderId) {
 }
 
 function render() {
+  const name = getAppName();
+  elements.homeMainPage.querySelector("h2").textContent = name;
+  document.title = name;
   updatePageVisibility();
   const week = weekState();
   const weekRangeLabel = formatWeekRange(currentWeek, activeAppArea === "do" ? 6 : 7);
@@ -3801,10 +4281,13 @@ function setWeekToolsMode(mode) {
   weekTools.hidden = false;
   weekTools.classList.toggle("today-mode", mode === "today");
   weekTools.classList.toggle("plan-mode", mode === "plan");
+  weekTools.classList.toggle("shop-mode", mode === "shop");
   if (mode === "today") {
     elements.weekLabel.textContent = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
   } else if (mode === "plan") {
     elements.weekLabel.textContent = planViewLabel();
+  } else if (mode === "shop") {
+    elements.weekLabel.textContent = selectedGroceryWeek()?.label || "";
   } else {
     const endOffset = activeAppArea === "do" ? 6 : 7;
     elements.weekLabel.textContent = formatWeekRange(currentWeek, endOffset);
@@ -3870,7 +4353,7 @@ function showDoApp(event) {
   elements.settingsMainPage.hidden = true;
   setWeekToolsMode("week");
   elements.activeCookingSection.hidden = true;
-  setPageTitle("To Do List");
+  setPageTitle("To-Do");
   renderDoPlanner();
   closePageTitleMenu();
   closeAppMenu();
@@ -3896,7 +4379,7 @@ function showPlayApp(event) {
   elements.settingsMainPage.hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Exercise");
+  setPageTitle("Sweat");
   renderPlayPlanner();
   closePageTitleMenu();
   closeAppMenu();
@@ -3922,7 +4405,7 @@ function showWatchApp(event) {
   elements.settingsMainPage.hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Watch List");
+  setPageTitle("Watch");
   renderWatchPlanner();
   closePageTitleMenu();
   closeAppMenu();
@@ -3944,7 +4427,7 @@ function showRecreateApp(event) {
   elements.settingsMainPage.hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Sail");
+  setPageTitle("Recreate");
   renderRecreatePage();
   closePageTitleMenu();
   closeAppMenu();
@@ -3967,7 +4450,7 @@ function showPlanApp(event) {
   elements.settingsMainPage.hidden = true;
   setWeekToolsMode("plan");
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Calendar");
+  setPageTitle("Schedule");
   fetchAllPlanCalendars();
   renderPlanPage();
   closePageTitleMenu();
@@ -3993,7 +4476,6 @@ function showSettingsApp(event) {
   setPageTitle("Settings");
   closePageTitleMenu();
   closeAppMenu();
-  renderWatchSettingsMenu();
 }
 
 function showHomeApp(event) {
@@ -4012,7 +4494,7 @@ function showHomeApp(event) {
   elements.settingsMainPage.hidden = true;
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Live");
+  setPageTitle(getAppName());
   closePageTitleMenu();
   closeAppMenu();
 }
@@ -4035,7 +4517,7 @@ function showReadingApp(event) {
   elements.settingsMainPage.hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Reading List");
+  setPageTitle("Read");
   renderReadingPlanner();
   closePageTitleMenu();
   closeAppMenu();
@@ -4058,7 +4540,7 @@ function showInventoryApp(event) {
   elements.settingsMainPage.hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Inventory");
+  setPageTitle("Stock");
   renderInventoryPage();
   closePageTitleMenu();
   closeAppMenu();
@@ -4078,10 +4560,11 @@ function showShopApp(event) {
   elements.watchMainPage.hidden = true;
   elements.readingMainPage.hidden = true;
   elements.shopMainPage.hidden = false;
+  elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
-  setWeekToolsMode("today");
+  setWeekToolsMode("shop");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Shop");
   renderShopPage();
@@ -4090,14 +4573,15 @@ function showShopApp(event) {
 }
 
 function currentMainPageTitle() {
-  if (activeAppArea === "home") return "Live";
-  if (activeAppArea === "do") return "To Do List";
-  if (activeAppArea === "play") return "Exercise Plan";
-  if (activeAppArea === "watch") return "Watch List";
-  if (activeAppArea === "read") return "Reading List";
+  if (activeAppArea === "home") return getAppName();
+  if (activeAppArea === "do") return "To-Do";
+  if (activeAppArea === "play") return "Sweat";
+  if (activeAppArea === "plan") return "Schedule";
+  if (activeAppArea === "inventory") return "Stock";
+  if (activeAppArea === "watch") return "Watch";
+  if (activeAppArea === "read") return "Read";
   if (activeAppArea === "shop") return "Shop";
-  if (activeAppArea === "inventory") return "Inventory";
-  if (activeAppArea === "recreate") return "Sail";
+  if (activeAppArea === "recreate") return "Recreate";
   if (activeAppArea === "settings") return "Settings";
   return "Meal Plan";
 }
@@ -4391,6 +4875,7 @@ function renderDoPlanner() {
     list.addEventListener("dragleave", clearDoTaskDropOver);
   });
   bindDoTaskControls(elements.doPlannerGrid);
+  updateTabIndicator(elements.doPlannerGrid);
 }
 
 function doDayTabTemplate(day, isActive) {
@@ -4790,6 +5275,7 @@ function renderWorkoutLogs() {
     elements.workoutLogsDialog.close();
     openPastWorkoutDialog(workoutId);
   });
+  updateTabIndicator(elements.workoutLogsList);
 }
 
 function workoutLogEntries() {
@@ -4961,7 +5447,7 @@ function openWorkoutDetail(context = {}) {
   const title = workout?.title || task?.title || "Workout";
   const data = normalizeExerciseData(task?.exerciseData);
   const details = workout?.exerciseDetails || task?.exerciseDetails || normalizeExerciseDetails(null, task?.exerciseNotes);
-  elements.workoutDetailLabel.textContent = "Exercise";
+  elements.workoutDetailLabel.textContent = "Sweat";
   elements.workoutDetailTitle.textContent = title;
   elements.workoutDetailName.value = title;
   renderWorkoutDetailFields(details);
@@ -4985,7 +5471,7 @@ function openWorkoutDetail(context = {}) {
 function openNewWorkoutDialog() {
   activeWorkoutDetail = { isNew: true };
   const details = defaultExerciseDetails("timed");
-  elements.workoutDetailLabel.textContent = "Exercise";
+  elements.workoutDetailLabel.textContent = "Sweat";
   elements.workoutDetailTitle.textContent = "New Exercise";
   elements.workoutDetailName.value = "";
   renderWorkoutDetailFields(details);
@@ -8690,7 +9176,6 @@ function toggleAppMenu(event) {
   closeFolderMenu();
   closeDirectorySubmenus();
   closePageTitleMenu();
-  closeAuthMenu();
   closeWeekJumpMenu();
   updateSettingsMenuOptions();
   elements.appMenu.hidden = !willOpen;
@@ -8709,6 +9194,8 @@ function updateSettingsMenuOptions() {
   const isShop = activeAppArea === "shop";
   const isPlay = activeAppArea === "play";
   const isDo = activeAppArea === "do";
+  const isRecreate = activeAppArea === "recreate";
+  const isPlan = activeAppArea === "plan";
   elements.menuAutoRulesBtn.hidden = !isEat;
   elements.menuTagsBtn.hidden = !isEat;
   elements.menuGroceryListBtn.hidden = !isShop;
@@ -8722,10 +9209,12 @@ function updateSettingsMenuOptions() {
   elements.menuWorkoutLibraryBtn.hidden = !isPlay;
   elements.menuWorkoutLogsBtn.hidden = !isPlay;
   elements.menuInventoryRoomsBtn.hidden = activeAppArea !== "inventory";
+  elements.menuRecreateHobbiesBtn.hidden = !isRecreate;
+  elements.menuCalendarsBtn.hidden = !isPlan;
 }
 
 function hasPageSpecificSettings() {
-  return ["eat", "play", "do", "watch", "shop", "inventory"].includes(activeAppArea);
+  return ["eat", "play", "do", "watch", "shop", "inventory", "recreate", "plan"].includes(activeAppArea);
 }
 
 function openSettingsMenuDialog(openDialog) {
@@ -8734,7 +9223,7 @@ function openSettingsMenuDialog(openDialog) {
 }
 
 function openContextSettingsDialog(kind) {
-  const normalizedKind = ["general", "eat", "do", "play", "watch"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -8744,76 +9233,76 @@ function openContextSettingsDialog(kind) {
 function renderContextSettingsDialog(kind) {
   const titles = {
     general: "Settings",
-    eat: "Eat",
-    do: "Do",
-    play: "Play"
+    eat: "Meal Plan",
+    do: "To-Do",
+    play: "Sweat",
+    family: "Household",
+    recreate: "Recreate",
+    pages: "Pages",
+    "location-services": "Location Services"
   };
+  const isSubPanel = !["general", "eat", "do", "play", "watch", "recreate"].includes(kind);
+  elements.contextSettingsBackBtn.hidden = !isSubPanel;
   elements.contextSettingsTitle.textContent = titles[kind] || "Settings";
   if (kind === "general") {
+    const isAdmin = !authSession?.access_token || userGroup?.role === "admin";
     elements.contextSettingsBody.innerHTML = `
-      <div class="theme-setting" role="group" aria-label="Display mode">
-        <span class="theme-setting-title">Display</span>
-        <label>
-          <input type="radio" name="contextThemeMode" value="light" ${state.themeMode === "light" ? "checked" : ""} />
-          Light
-        </label>
-        <label>
-          <input type="radio" name="contextThemeMode" value="dark" ${state.themeMode === "dark" ? "checked" : ""} />
-          Dark
-        </label>
-        <label>
-          <input type="radio" name="contextThemeMode" value="auto" ${state.themeMode === "auto" ? "checked" : ""} />
-          Auto
-        </label>
+      <div class="settings-action-grid">
+        <button type="button" data-context-settings-action="pages">Pages</button>
+        <button type="button" data-context-settings-action="location-services">Location Services</button>
+        <button type="button" data-context-settings-action="weekly-email">Email</button>
+        <button type="button" data-context-settings-action="family">Household</button>
       </div>
-      <div class="page-visibility-setting" role="group" aria-label="Enabled pages">
-        <span class="theme-setting-title">Pages</span>
-        <label>
-          <input type="checkbox" data-page-visibility="eat" ${isPageEnabled("eat") ? "checked" : ""} />
-          Eat
-        </label>
-        <label>
-          <input type="checkbox" data-page-visibility="play" ${isPageEnabled("play") ? "checked" : ""} />
-          Play
-        </label>
-        <label>
-          <input type="checkbox" data-page-visibility="do" ${isPageEnabled("do") ? "checked" : ""} />
-          Do
-        </label>
-        <label>
-          <input type="checkbox" data-page-visibility="watch" ${isPageEnabled("watch") ? "checked" : ""} />
-          Watch
-        </label>
-        <label>
-          <input type="checkbox" data-page-visibility="read" ${isPageEnabled("read") ? "checked" : ""} />
-          Read
-        </label>
-        <label>
-          <input type="checkbox" data-page-visibility="shop" ${isPageEnabled("shop") ? "checked" : ""} />
-          Shop
-        </label>
-        <label>
-          <input type="checkbox" data-page-visibility="inventory" ${isPageEnabled("inventory") ? "checked" : ""} />
-          Inventory
-        </label>
-        <label>
-          <input type="checkbox" data-page-visibility="recreate" ${isPageEnabled("recreate") ? "checked" : ""} />
-          Sail
-        </label>
-        <label>
-          <input type="checkbox" data-page-visibility="plan" ${isPageEnabled("plan") ? "checked" : ""} />
-          Plan
-        </label>
+      ${isAdmin ? `
+        <div class="settings-admin-section">
+          <span class="theme-setting-title">Admin</span>
+          <div class="settings-action-grid">
+            <button type="button" data-context-settings-action="backup-health">Backup Health</button>
+            <button type="button" data-context-settings-action="restore-backup">Restore Backup</button>
+            <button type="button" data-context-settings-action="admin-users">Users</button>
+            <button type="button" data-context-settings-action="admin-households">Households</button>
+          </div>
+        </div>
+      ` : ""}
+    `;
+    return;
+  }
+
+  if (kind === "pages") {
+    const pages = [
+      { key: "eat",       label: "Meal Plan"  },
+      { key: "shop",      label: "Shop"       },
+      { key: "do",        label: "To-Do"      },
+      { key: "play",      label: "Sweat"      },
+      { key: "watch",     label: "Watch"      },
+      { key: "read",      label: "Read"       },
+      { key: "recreate",  label: "Recreate"   },
+      { key: "plan",      label: "Schedule"   },
+      { key: "inventory", label: "Inventory"  },
+    ];
+    elements.contextSettingsBody.innerHTML = `
+      <div class="page-vis-card" role="group" aria-label="Enabled pages">
+        ${pages.map(({ key, label }) => `
+          <label class="page-vis-row">
+            <span class="page-vis-name">${escapeHtml(label)}</span>
+            <input type="checkbox" class="page-vis-cb" data-page-visibility="${escapeHtml(key)}"
+              ${isPageEnabled(key) ? "checked" : ""} />
+            <span class="page-vis-toggle" aria-hidden="true"></span>
+          </label>
+        `).join("")}
       </div>
+    `;
+    return;
+  }
+
+  if (kind === "location-services") {
+    elements.contextSettingsBody.innerHTML = `
       <div class="location-sharing-setting">
-        <span>
-          <strong>Location</strong>
-          <small>Show nearby results when searching for stores and restaurants.</small>
-        </span>
         <label>
           <input type="checkbox" data-location-sharing ${state.locationSharingEnabled ? "checked" : ""} />
-          Use location
+          Enable location services
         </label>
+        <p class="location-services-hint">Show nearby results when searching for stores and restaurants.</p>
         ${state.locationSharingEnabled ? `
           <div class="location-status-row">
             <span class="location-status-text" id="locationStatusText">${
@@ -8825,14 +9314,6 @@ function renderContextSettingsDialog(kind) {
           </div>
         ` : ""}
       </div>
-      <div class="settings-action-grid">
-        <button type="button" data-context-settings-action="calendars">Calendars</button>
-        <button type="button" data-context-settings-action="weekly-email">Weekly Email</button>
-        <button type="button" data-context-settings-action="backup-health">Backup Health</button>
-        <button type="button" data-context-settings-action="restore-backup">Restore Backup</button>
-        <button type="button" data-context-settings-action="trash">Trash</button>
-        <button type="button" data-context-settings-action="family-members">Family Members</button>
-      </div>
     `;
     return;
   }
@@ -8843,7 +9324,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="auto-rules">Auto-Fill Rules</button>
         <button type="button" data-context-settings-action="tags">Tags</button>
         <button type="button" data-context-settings-action="grocery-list">Grocery List</button>
-        <button type="button" data-context-settings-action="grocery-pricing">Receipts & Price History</button>
+        <button type="button" data-context-settings-action="grocery-pricing">Receipts &amp; Price History</button>
         <button type="button" data-context-settings-action="grocery-items">Grocery Items</button>
         <button type="button" data-context-settings-action="ingredient-options">Ingredient Options</button>
         <button type="button" data-context-settings-action="food-health-settings">Nutrition Settings</button>
@@ -8864,6 +9345,125 @@ function renderContextSettingsDialog(kind) {
 
   if (kind === "watch") {
     renderWatchContextSettings();
+    return;
+  }
+
+  if (kind === "family") {
+    const config = normalizeMealPlanConfig(state.mealPlanConfig);
+    const existingNames = new Set(config.members.map((m) => m.label.trim().toLowerCase()));
+    const autoMembers = groupMembers
+      .filter((gm) => gm.display_name && !existingNames.has(gm.display_name.trim().toLowerCase()))
+      .map((gm) => ({ id: createId("member"), label: gm.display_name, dob: "", linkedUserId: gm.user_id }));
+    const allMembers = [...config.members, ...autoMembers];
+    const currentUserId = authSession?.user?.id;
+    const hohIds = new Set(state.hohMemberIds || []);
+    const memberRowsHtml = allMembers.map((m) => {
+      const isHoh = hohIds.has(m.id);
+      const isLinked = !!m.linkedUserId;
+      const isCurrentUser = currentUserId && m.linkedUserId === currentUserId;
+      return `
+        <div class="config-row" data-member-row data-member-id="${escapeHtml(m.id)}" data-member-linked-user-id="${escapeHtml(m.linkedUserId || "")}">
+          <input type="text" class="config-input${isLinked ? " config-input-readonly" : ""}" value="${escapeHtml(m.label)}" placeholder="Name" ${isLinked ? "readonly" : ""} />
+          <input type="date" class="config-input config-dob-input${isLinked ? " config-input-readonly" : ""}" data-member-dob value="${escapeHtml(m.dob || "")}" title="${isLinked ? "Edit via profile" : "Date of birth"}" ${isLinked ? "readonly" : ""} />
+          <label class="hoh-member-toggle-label" title="Head of household">
+            <input type="checkbox" class="hoh-member-cb" data-member-hoh ${isHoh ? "checked" : ""} ${isHoh && hohIds.size === 1 ? "disabled" : ""} />
+            <span class="hoh-member-toggle" aria-hidden="true"></span>
+            <span class="hoh-toggle-text">HoH</span>
+          </label>
+          ${isCurrentUser ? "" : `
+            <button type="button" class="icon-btn config-remove-btn" data-remove-member aria-label="Remove">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          `}
+        </div>
+      `;
+    }).join("");
+
+    const groupHtml = (() => {
+      if (!authSession?.access_token) return "";
+      if (!userGroup) return `
+        <div class="family-group-section">
+          <p class="settings-subheading">Shared account</p>
+          <p style="margin-bottom:10px;font-size:0.9rem;">Set up a family group to share this app with others.</p>
+          <button class="secondary-btn" type="button" data-context-settings-action="setup-group">Set Up Group</button>
+        </div>
+      `;
+      const isAdmin = userGroup.role === "admin";
+      const pages = [
+        { key: "eat", label: "Meal Plan" }, { key: "shop", label: "Shop" },
+        { key: "do", label: "To-Do" }, { key: "watch", label: "Watch" },
+        { key: "play", label: "Sweat" }, { key: "read", label: "Read" },
+        { key: "recreate", label: "Recreate" }, { key: "plan", label: "Schedule" },
+        { key: "inventory", label: "Stock" }
+      ];
+      const accountMembersHtml = groupMembers.map((m) => `
+        <div class="config-row group-member-row">
+          <span>${escapeHtml(m.display_name || m.user_id)}</span>
+          <span class="muted-label">${m.role === "admin" ? "Admin" : "Member"}</span>
+        </div>
+      `).join("");
+      return `
+        <div class="family-group-section">
+          <p class="settings-subheading">Shared account</p>
+          <div class="group-members-list">${accountMembersHtml}</div>
+          ${isAdmin ? `
+            <div class="group-invite-form">
+              <p class="settings-subheading">Invite someone</p>
+              <div class="inline-form">
+                <input type="email" id="groupInviteEmail" placeholder="email@example.com" autocomplete="email" />
+                <button class="secondary-btn" type="button" data-context-settings-action="send-invite">Invite</button>
+              </div>
+              <p class="import-status" id="groupInviteStatus"></p>
+            </div>
+            <div class="group-page-access">
+              <p class="settings-subheading">Members can access</p>
+              <div class="group-page-access-grid">
+                ${pages.map((p) => `
+                  <label class="settings-toggle-row">
+                    <input type="checkbox" data-group-page="${escapeHtml(p.key)}"
+                      ${!(userGroup.disabled_pages || []).includes(p.key) ? "checked" : ""} />
+                    ${escapeHtml(p.label)}
+                  </label>
+                `).join("")}
+              </div>
+            </div>
+          ` : ""}
+        </div>
+      `;
+    })();
+
+    elements.contextSettingsBody.innerHTML = `
+      <div class="family-members-inline-section">
+        <p class="settings-subheading">App Name</p>
+        <input type="text" class="config-input" id="contextAppNameInput" value="${escapeHtml(state.appName || "")}" placeholder="Live" maxlength="32" autocomplete="off" style="margin-bottom:4px" />
+        <p class="settings-subheading">Members</p>
+        <div data-family-members-list>${memberRowsHtml}</div>
+        <div class="family-members-inline-actions">
+          <button class="secondary-btn" type="button" data-context-settings-action="add-family-member">+ Add</button>
+          <button class="primary-btn" type="button" data-context-settings-action="save-family-members">Save</button>
+        </div>
+      </div>
+      ${groupHtml}
+    `;
+    elements.contextSettingsBody.querySelectorAll("[data-remove-member]").forEach((btn) => {
+      btn.addEventListener("click", () => btn.closest("[data-member-row]").remove());
+    });
+    return;
+  }
+
+  if (kind === "recreate") {
+    elements.contextSettingsBody.innerHTML = `
+      <div class="page-visibility-setting" role="group" aria-label="Visible hobbies">
+        <span class="theme-setting-title">Hobbies</span>
+        ${RECREATE_HOBBIES.map((h) => `
+          <label>
+            <input type="checkbox" data-hobby-visibility="${escapeHtml(h.key)}"
+              ${(state.recreateHobbies || {})[h.key] !== false ? "checked" : ""} />
+            ${escapeHtml(h.label)}
+          </label>
+        `).join("")}
+      </div>
+    `;
     return;
   }
 
@@ -8968,6 +9568,15 @@ function handleContextSettingsChange(event) {
   if (pageVisibilityInput) setPageVisibility(pageVisibilityInput.dataset.pageVisibility, pageVisibilityInput.checked);
   const locationSharingInput = event.target.closest?.("[data-location-sharing]");
   if (locationSharingInput) setLocationSharingEnabled(locationSharingInput.checked, locationSharingInput);
+  const groupPageInput = event.target.closest?.("[data-group-page]");
+  if (groupPageInput) setGroupPageVisibility(groupPageInput.dataset.groupPage, !groupPageInput.checked);
+  const hobbyVisInput = event.target.closest?.("[data-hobby-visibility]");
+  if (hobbyVisInput) {
+    if (!state.recreateHobbies) state.recreateHobbies = {};
+    state.recreateHobbies[hobbyVisInput.dataset.hobbyVisibility] = hobbyVisInput.checked;
+    persist();
+    if (activeAppArea === "recreate") renderRecreatePage();
+  }
 }
 
 function handleContextSettingsAction(event) {
@@ -8983,6 +9592,8 @@ function handleContextSettingsAction(event) {
     "weekly-email": () => closeAndRun(openWeeklyEmailDialog),
     "backup-health": () => closeAndRun(openBackupHealthDialog),
     "restore-backup": () => closeAndRun(openRestoreDialog),
+    "admin-users": () => closeAndRun(openAdminUsersDialog),
+    "admin-households": () => closeAndRun(openAdminHouseholdsDialog),
     "trash": () => closeAndRun(openTrashDialog),
     "auto-rules": () => closeAndRun(openAutoRulesDialog),
     "tags": () => closeAndRun(openTagsDialog),
@@ -8995,9 +9606,84 @@ function handleContextSettingsAction(event) {
     "workout-library": () => closeAndRun(openWorkoutLibraryDialog),
     "workout-logs": () => closeAndRun(openWorkoutLogsDialog),
     "play-auto-rules": () => closeAndRun(openPlayAutoRulesDialog),
-    "family-members": () => closeAndRun(openFamilyMembersDialog),
+    "family-members": () => renderContextSettingsDialog("family"),
     "meal-plan-settings": () => closeAndRun(openMealPlanSettingsDialog),
-    "test-location": () => testLocationAccess()
+    "test-location": () => testLocationAccess(),
+    "family": () => renderContextSettingsDialog("family"),
+    "pages": () => renderContextSettingsDialog("pages"),
+    "location-services": () => renderContextSettingsDialog("location-services"),
+    "add-family-member": () => {
+      const list = elements.contextSettingsBody.querySelector("[data-family-members-list]");
+      if (!list) return;
+      const id = createId("member");
+      const div = document.createElement("div");
+      div.className = "config-row";
+      div.setAttribute("data-member-row", "");
+      div.setAttribute("data-member-id", id);
+      div.innerHTML = `
+        <input type="text" class="config-input" value="" placeholder="Name" />
+        <input type="date" class="config-input config-dob-input" data-member-dob value="" title="Date of birth" />
+        <button type="button" class="icon-btn config-remove-btn" data-remove-member aria-label="Remove">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      `;
+      div.querySelector("[data-remove-member]").addEventListener("click", () => div.remove());
+      list.appendChild(div);
+      div.querySelector("input").focus();
+    },
+    "save-family-members": () => {
+      const appNameInput = document.getElementById("contextAppNameInput");
+      if (appNameInput) state.appName = appNameInput.value.trim();
+      const rows = elements.contextSettingsBody.querySelectorAll("[data-member-row]");
+      const newMembers = [];
+      const newHohIds = [];
+      rows.forEach((row) => {
+        const id = row.dataset.memberId;
+        const linkedUserId = row.dataset.memberLinkedUserId || null;
+        const label = (row.querySelector("input[type='text']")?.value || "").trim();
+        const dob = (row.querySelector("[data-member-dob]")?.value || "").trim();
+        if (label) {
+          newMembers.push({ id, label, dob, linkedUserId: linkedUserId || null });
+          if (row.querySelector("[data-member-hoh]")?.checked) newHohIds.push(id);
+        }
+      });
+      const validMemberIds = new Set(newMembers.map(m => m.id));
+      state.hohMemberIds = newHohIds.filter(id => validMemberIds.has(id));
+      if (state.hohMemberIds.length === 0 && newMembers.length > 0) state.hohMemberIds = [newMembers[0].id];
+      if (!newMembers.length) { alert("At least one family member is required."); return; }
+      if (isHohConfigured() && newHohIds.length === 0) { alert("At least one Head of Household is required. Designate another member before removing the last one."); return; }
+      const oldConfig = normalizeMealPlanConfig(state.mealPlanConfig);
+      state.mealPlanConfig = normalizeMealPlanConfig({ ...state.mealPlanConfig, members: newMembers });
+      const newConfig = normalizeMealPlanConfig(state.mealPlanConfig);
+      recomputeMealPlanLayout();
+      applyMealPlanConfigChange(oldConfig, newConfig);
+      persist();
+      render();
+      if (activeAppArea === "home") setPageTitle(getAppName());
+      renderContextSettingsDialog("family");
+    },
+    "setup-group": () => { elements.contextSettingsDialog.close(); openGroupSetupDialog(); },
+    "send-invite": async () => {
+      const emailInput = document.getElementById("groupInviteEmail");
+      const statusEl = document.getElementById("groupInviteStatus");
+      if (!emailInput || !statusEl) return;
+      const email = emailInput.value.trim();
+      if (!email) { statusEl.textContent = "Enter an email address."; return; }
+      statusEl.textContent = "Sending…";
+      try {
+        const res = await fetch("/.netlify/functions/send-invite", {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${authSession.access_token}` },
+          body: JSON.stringify({ email, group_id: userGroup.id })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+        statusEl.innerHTML = `Invite sent to ${escapeHtml(email)}.${data.inviteUrl ? ` <a href="${escapeHtml(data.inviteUrl)}" target="_blank" rel="noopener">Open link</a>` : ""}`;
+        emailInput.value = "";
+      } catch (e) {
+        statusEl.textContent = e.message || "Could not send invite.";
+      }
+    }
   };
   actions[action]?.();
 }
@@ -9008,7 +9694,6 @@ function togglePageTitleMenu(event) {
   closeFolderMenu();
   closeSettingsMenu();
   closeAppMenu();
-  closeAuthMenu();
   closeWeekJumpMenu();
   if (willOpen) {
     openPageTitleMenu();
@@ -9171,7 +9856,6 @@ function closeFloatingMenus() {
   closeSettingsMenu();
   closeAppMenu();
   closePageTitleMenu();
-  closeAuthMenu();
   closeWeekJumpMenu();
 }
 
@@ -9590,6 +10274,37 @@ function createRestaurantSearchSessionToken() {
   return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function openRestaurantInfoPopover(restaurant, day, meal, index, anchorEl) {
+  restaurantInfoPopoverContext = { day, meal, index };
+  const mapsUrl = restaurant.googleMapsUri || storeDirectionsUrl(restaurant);
+  elements.restaurantInfoPopoverName.textContent = restaurant.name;
+  elements.restaurantInfoDirectionsLink.href = mapsUrl || "";
+  elements.restaurantInfoDirectionsLink.hidden = !mapsUrl;
+  elements.restaurantInfoMenuLink.href = restaurant.websiteUri || "";
+  elements.restaurantInfoMenuLink.hidden = !restaurant.websiteUri;
+  elements.restaurantInfoPopover.hidden = false;
+  requestAnimationFrame(() => {
+    const rect = anchorEl.getBoundingClientRect();
+    const popover = elements.restaurantInfoPopover;
+    const pw = popover.offsetWidth;
+    const ph = popover.offsetHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let left = rect.left;
+    if (left + pw > vw - 8) left = vw - pw - 8;
+    if (left < 8) left = 8;
+    let top = rect.bottom + 4;
+    if (top + ph > vh - 8) top = rect.top - ph - 4;
+    popover.style.top = `${top}px`;
+    popover.style.left = `${left}px`;
+  });
+}
+
+function closeRestaurantInfoPopover() {
+  elements.restaurantInfoPopover.hidden = true;
+  restaurantInfoPopoverContext = null;
+}
+
 function openRestaurantSearchDialog(day, meal, index) {
   restaurantSearchPending = { day, meal, index };
   restaurantSearchSessionToken = createRestaurantSearchSessionToken();
@@ -9719,12 +10434,7 @@ function renderMealRestaurantArea(restaurant, day, meal, index) {
       </div>
     `;
   }
-  return `
-    <button class="meal-restaurant-link-btn" type="button" data-link-restaurant data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
-      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-      Link restaurant
-    </button>
-  `;
+  return "";
 }
 
 function groceryPlacesApiUrl(params) {
@@ -10061,6 +10771,15 @@ function renderGroceryPriceObservations() {
   });
 }
 
+function openShopReceiptsDialog() {
+  renderShopReceipts();
+  elements.shopReceiptsDialog.showModal();
+}
+
+function closeShopReceiptsDialog() {
+  elements.shopReceiptsDialog.close();
+}
+
 function openReceiptScanDialog() {
   receiptScanFiles = [];
   receiptImageEdits = new Map();
@@ -10072,6 +10791,7 @@ function openReceiptScanDialog() {
   elements.scanReceiptImagesBtn.hidden = false;
   setReceiptScanStatus("Upload a clear receipt photo, then review every line before saving.");
   elements.groceryPricingDialog.close();
+  if (elements.shopReceiptsDialog.open) elements.shopReceiptsDialog.close();
   elements.receiptScanDialog.showModal();
 }
 
@@ -10733,7 +11453,6 @@ function resetGroceryLibrary() {
 
 function refreshGroceryLibraryViews() {
   renderGroceryLibrary();
-  renderGrocerySuggestions();
   renderIngredientSuggestions();
   renderGroceries();
 }
@@ -10944,6 +11663,67 @@ function renderCalendarList() {
   });
 }
 
+const COMMON_TIMEZONES = [
+  { value: "America/New_York", label: "Eastern Time (ET)" },
+  { value: "America/Chicago", label: "Central Time (CT)" },
+  { value: "America/Denver", label: "Mountain Time (MT)" },
+  { value: "America/Los_Angeles", label: "Pacific Time (PT)" },
+  { value: "America/Anchorage", label: "Alaska" },
+  { value: "Pacific/Honolulu", label: "Hawaii" },
+  { value: "America/Toronto", label: "Toronto" },
+  { value: "America/Vancouver", label: "Vancouver" },
+  { value: "America/Mexico_City", label: "Mexico City" },
+  { value: "America/Sao_Paulo", label: "São Paulo" },
+  { value: "America/Buenos_Aires", label: "Buenos Aires" },
+  { value: "Europe/London", label: "London (GMT/BST)" },
+  { value: "Europe/Paris", label: "Paris / Central Europe" },
+  { value: "Europe/Berlin", label: "Berlin" },
+  { value: "Europe/Amsterdam", label: "Amsterdam" },
+  { value: "Europe/Stockholm", label: "Stockholm" },
+  { value: "Europe/Helsinki", label: "Helsinki (EET)" },
+  { value: "Europe/Moscow", label: "Moscow" },
+  { value: "Asia/Dubai", label: "Dubai (GST)" },
+  { value: "Asia/Kolkata", label: "India (IST)" },
+  { value: "Asia/Singapore", label: "Singapore" },
+  { value: "Asia/Tokyo", label: "Tokyo (JST)" },
+  { value: "Asia/Seoul", label: "Seoul (KST)" },
+  { value: "Asia/Shanghai", label: "China (CST)" },
+  { value: "Australia/Sydney", label: "Sydney (AEST)" },
+  { value: "Australia/Melbourne", label: "Melbourne" },
+  { value: "Pacific/Auckland", label: "Auckland (NZST)" },
+  { value: "UTC", label: "UTC" },
+];
+
+function populateEmailScheduleTimezones(selectEl, currentTz) {
+  const detected = currentTz || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const inList = COMMON_TIMEZONES.some((tz) => tz.value === detected);
+  selectEl.innerHTML = "";
+  if (!inList) {
+    const opt = document.createElement("option");
+    opt.value = detected;
+    opt.textContent = detected;
+    selectEl.appendChild(opt);
+  }
+  COMMON_TIMEZONES.forEach(({ value, label }) => {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    selectEl.appendChild(opt);
+  });
+  selectEl.value = detected;
+}
+
+function saveEmailScheduleToState() {
+  if (!state.weeklyEmailSettings) state.weeklyEmailSettings = defaultWeeklyEmailSettings();
+  const sched = state.weeklyEmailSettings.emailSchedule || {};
+  sched.enabled = elements.emailScheduleEnabled.checked;
+  sched.time = elements.emailScheduleTime.value || "08:00";
+  sched.timezone = elements.emailScheduleTimezone.value;
+  sched.days = [...elements.emailScheduleSection.querySelectorAll(".email-schedule-day:checked")].map((cb) => cb.value);
+  state.weeklyEmailSettings.emailSchedule = sched;
+  persist();
+}
+
 async function openWeeklyEmailDialog(event) {
   event?.stopPropagation();
   closeSettingsMenu();
@@ -10952,6 +11732,17 @@ async function openWeeklyEmailDialog(event) {
   elements.weeklyEmailPlaceholder.hidden = false;
   elements.weeklyEmailNotes.value = "";
   elements.sendWeeklyEmailBtn.disabled = true;
+
+  const sched = normalizeEmailSchedule(state.weeklyEmailSettings?.emailSchedule);
+  elements.emailScheduleEnabled.checked = sched.enabled;
+  elements.emailScheduleDetails.hidden = !sched.enabled;
+  const currentTz = sched.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  populateEmailScheduleTimezones(elements.emailScheduleTimezone, currentTz);
+  elements.emailScheduleTime.value = sched.time;
+  elements.emailScheduleSection.querySelectorAll(".email-schedule-day").forEach((cb) => {
+    cb.checked = sched.days.includes(cb.value);
+  });
+
   elements.weeklyEmailDialog.showModal();
   try {
     const res = await fetch("/api/weekly-email");
@@ -11093,6 +11884,72 @@ async function emailInterviewSave() {
   setTimeout(() => elements.emailInterviewDialog.close(), 1200);
 }
 
+async function fetchAdminData() {
+  if (!authSession?.access_token) throw new Error("Not signed in.");
+  const res = await fetch("/api/admin-data", {
+    headers: { Authorization: `Bearer ${authSession.access_token}` }
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+  return data;
+}
+
+function shortId(id) {
+  return id ? id.slice(0, 8).toUpperCase() : "—";
+}
+
+async function openAdminUsersDialog() {
+  const body = document.querySelector("#adminUsersBody");
+  body.innerHTML = `<p class="admin-data-loading">Loading...</p>`;
+  elements.adminUsersDialog.showModal();
+  let data;
+  try { data = await fetchAdminData(); } catch (e) { body.innerHTML = `<p class="admin-data-loading">${escapeHtml(e.message)}</p>`; return; }
+  if (!data.users.length) { body.innerHTML = `<p class="admin-data-loading">No users found.</p>`; return; }
+  body.innerHTML = `
+    <table class="admin-data-table">
+      <thead><tr>
+        <th>Name</th><th>Email</th><th>User ID</th><th>DOB</th><th>Household ID</th>
+      </tr></thead>
+      <tbody>
+        ${data.users.map(u => `
+          <tr>
+            <td>${escapeHtml(u.display_name || "—")}</td>
+            <td>${escapeHtml(u.email || "—")}</td>
+            <td class="admin-id-cell">${escapeHtml(shortId(u.id))}</td>
+            <td>${escapeHtml(u.dob || "—")}</td>
+            <td class="admin-id-cell">${u.household_id ? escapeHtml(shortId(u.household_id)) : "—"}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+async function openAdminHouseholdsDialog() {
+  const body = document.querySelector("#adminHouseholdsBody");
+  body.innerHTML = `<p class="admin-data-loading">Loading...</p>`;
+  elements.adminHouseholdsDialog.showModal();
+  let data;
+  try { data = await fetchAdminData(); } catch (e) { body.innerHTML = `<p class="admin-data-loading">${escapeHtml(e.message)}</p>`; return; }
+  if (!data.households.length) { body.innerHTML = `<p class="admin-data-loading">No households found.</p>`; return; }
+  body.innerHTML = `
+    <table class="admin-data-table">
+      <thead><tr>
+        <th>Household ID</th><th>Members</th><th>Admin</th>
+      </tr></thead>
+      <tbody>
+        ${data.households.map(h => `
+          <tr>
+            <td class="admin-id-cell">${escapeHtml(shortId(h.id))}</td>
+            <td>${h.member_count}</td>
+            <td>${escapeHtml(h.admin_name || "—")}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
 function openBackupHealthDialog(event) {
   event?.stopPropagation();
   closeSettingsMenu();
@@ -11151,16 +12008,32 @@ function openFamilyMembersDialog() {
 
 function renderFamilyMembersList() {
   const config = normalizeMealPlanConfig(state.mealPlanConfig);
+  const existingNames = new Set(config.members.map(m => m.label.trim().toLowerCase()));
+
+  // Auto-include group members not already in the list
+  const autoMembers = groupMembers
+    .filter(gm => gm.display_name && !existingNames.has(gm.display_name.trim().toLowerCase()))
+    .map(gm => ({ id: createId("member"), label: gm.display_name, dob: "", linkedUserId: gm.user_id }));
+
+  const allMembers = [...config.members, ...autoMembers];
+  const currentUserId = authSession?.user?.id;
+
   const list = elements.familyMembersDialog.querySelector("[data-members-list]");
-  list.innerHTML = config.members.map(m => `
-    <div class="config-row" data-member-row data-member-id="${escapeHtml(m.id)}">
-      <input type="text" class="config-input" value="${escapeHtml(m.label)}" placeholder="Name" />
-      <input type="date" class="config-input config-dob-input" data-member-dob value="${escapeHtml(m.dob || "")}" title="Date of birth" />
-      <button type="button" class="icon-btn config-remove-btn" data-remove-member aria-label="Remove">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-      </button>
-    </div>
-  `).join("");
+  list.innerHTML = allMembers.map(m => {
+    const isLinked = !!m.linkedUserId;
+    const isCurrentUser = currentUserId && m.linkedUserId === currentUserId;
+    return `
+      <div class="config-row" data-member-row data-member-id="${escapeHtml(m.id)}" data-member-linked-user-id="${escapeHtml(m.linkedUserId || "")}">
+        <input type="text" class="config-input${isLinked ? " config-input-readonly" : ""}" value="${escapeHtml(m.label)}" placeholder="Name" ${isLinked ? "readonly" : ""} />
+        <input type="date" class="config-input config-dob-input${isLinked ? " config-input-readonly" : ""}" data-member-dob value="${escapeHtml(m.dob || "")}" title="${isLinked ? "Edit via profile" : "Date of birth"}" ${isLinked ? "readonly" : ""} />
+        ${isCurrentUser ? "" : `
+          <button type="button" class="icon-btn config-remove-btn" data-remove-member aria-label="Remove">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        `}
+      </div>
+    `;
+  }).join("");
   list.querySelectorAll("[data-remove-member]").forEach(btn => {
     btn.addEventListener("click", () => btn.closest("[data-member-row]").remove());
   });
@@ -11190,9 +12063,10 @@ function saveMealPlanMembers() {
   const newMembers = [];
   rows.forEach(row => {
     const id = row.dataset.memberId;
-    const label = row.querySelector("input[type='text']").value.trim();
+    const linkedUserId = row.dataset.memberLinkedUserId || null;
+    const label = (row.querySelector("input[type='text']")?.value || "").trim();
     const dob = (row.querySelector("[data-member-dob]")?.value || "").trim();
-    if (label) newMembers.push({ id, label, dob });
+    if (label) newMembers.push({ id, label, dob, linkedUserId: linkedUserId || null });
   });
   if (!newMembers.length) { alert("At least one family member is required."); return; }
   const oldConfig = normalizeMealPlanConfig(state.mealPlanConfig);
@@ -11202,6 +12076,7 @@ function saveMealPlanMembers() {
   applyMealPlanConfigChange(oldConfig, newConfig);
   persist();
   render();
+  if (activeAppArea === "home") setPageTitle(getAppName());
   elements.familyMembersDialog.close();
 }
 
@@ -12026,7 +12901,7 @@ function restoreUserDataSummary(userData) {
     ["Ingredient Options", ingredientCount],
     ["Checked Grocery States", userData.checkedGroceries.length],
     ["Pantry Items", userData.pantryItems.length],
-    ["Weekly Email Draft", userData.weeklyEmailSettings ? 1 : 0],
+    ["Email Settings", userData.weeklyEmailSettings ? 1 : 0],
     ["Display Setting", userData.themeMode ? 1 : 0],
     ["Location Setting", typeof userData.locationSharingEnabled === "boolean" ? 1 : 0],
     ["Page Visibility", userData.pageVisibility ? 1 : 0]
@@ -12662,14 +13537,12 @@ function renderPlanner() {
   const previousCarouselState = currentPlannerCarouselState();
   const week = weekState();
   const activeDay = ensureActivePlannerDay();
-  const isPublished = isPublishedMealPlanView(week);
   const visibleSlots = mealSlotsForWeek(week);
   const combinedState = combinedMealSectionsForWeek(week);
   const mealPlanColumns = mealColumnConfigs
     .map((column) => {
       const columnHtml = columnMealsForDay(activeDay, column, combinedState).filter(Boolean).map((meal) => (
         slotTemplate(activeDay, meal, visibleSlots?.[activeDay.id]?.[meal] || "", {
-          readOnly: isPublished,
           displayMeal: displayMealName(meal),
           combined: isCombinedMealKey(meal)
         })
@@ -12703,7 +13576,7 @@ function renderPlanner() {
     </div>
     <section class="day-column planner-day-panel" role="tabpanel" id="panel-${activeDay.id}" aria-labelledby="tab-${activeDay.id}">
       ${activeDayEventsTemplate(activeDay)}
-      <div class="day-slots-carousel ${isPublished ? "is-published" : ""}" style="--meal-column-count: ${mealPlanColumnCount};" aria-label="${escapeHtml(activeDay.name)} meals">
+      <div class="day-slots-carousel" style="--meal-column-count: ${mealPlanColumnCount};" aria-label="${escapeHtml(activeDay.name)} meals">
         ${mealPlanColumns.map(({ html }) => `
           <div class="meal-plan-column">
             ${html}
@@ -12712,16 +13585,16 @@ function renderPlanner() {
       </div>
       <div class="meal-plan-publish-row">
         <div class="meal-plan-page-actions">
-          <button class="secondary-btn" type="button" data-open-recipe-box-page>Recipe Box</button>
+          <button class="secondary-btn" type="button" data-open-recipe-box-page>Recipes</button>
           <button class="secondary-btn" type="button" data-open-groceries-page>Groceries</button>
           <button class="secondary-btn" type="button" data-open-daily-dozen-page>Nutrition</button>
         </div>
-        <div class="meal-plan-publish-actions">
-          <span class="meal-plan-view-label">${isPublished ? "Published view" : "Edit view"}</span>
-          <button class="${isPublished ? "secondary-btn" : "primary-btn"}" type="button" data-toggle-meal-plan-view>
-            ${isPublished ? "Edit" : "Publish"}
-          </button>
-        </div>
+        <button class="primary-btn icon-primary-btn" type="button" data-open-meal-autofill title="Auto-fill week" aria-label="Auto-fill week">
+          <svg class="fast-forward-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 6.5 12.5 12 5 17.5Z" />
+            <path d="M12 6.5 19.5 12 12 17.5Z" />
+          </svg>
+        </button>
       </div>
     </section>
   `;
@@ -12797,6 +13670,20 @@ function renderPlanner() {
     btn.addEventListener("click", (e) => { e.stopPropagation(); clearMealRestaurant(btn.dataset.day, btn.dataset.meal, Number(btn.dataset.index)); });
   });
 
+  elements.plannerGrid.querySelectorAll("[data-show-restaurant-info]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const week = weekState();
+      const { day, meal } = btn.dataset;
+      const index = Number(btn.dataset.index);
+      const entries = mealEntryList(slotEntries(week.slots?.[day]?.[meal]), meal);
+      const specialMeal = specialMealForSlot(entries[index]);
+      if (specialMeal?.restaurant) {
+        openRestaurantInfoPopover(specialMeal.restaurant, day, meal, index, btn);
+      }
+    });
+  });
+
   elements.plannerGrid.querySelectorAll("[data-planned-servings]").forEach((input) => {
     input.addEventListener("click", (event) => event.stopPropagation());
     input.addEventListener("pointerdown", (event) => event.stopPropagation());
@@ -12836,10 +13723,6 @@ function renderPlanner() {
     });
   });
 
-  elements.plannerGrid.querySelectorAll("[data-toggle-meal-plan-view]").forEach((button) => {
-    button.addEventListener("click", toggleMealPlanView);
-  });
-
   elements.plannerGrid.querySelectorAll("[data-open-recipe-box-page]").forEach((button) => {
     button.addEventListener("click", openRecipeBoxPage);
   });
@@ -12850,6 +13733,10 @@ function renderPlanner() {
 
   elements.plannerGrid.querySelectorAll("[data-open-daily-dozen-page]").forEach((button) => {
     button.addEventListener("click", () => openDailyDozenPage());
+  });
+
+  elements.plannerGrid.querySelector("[data-open-meal-autofill]")?.addEventListener("click", () => {
+    elements.mealAutoFillDialog.showModal();
   });
 
   elements.plannerGrid.querySelectorAll("[data-meal-entry][draggable='true']").forEach((entry) => {
@@ -12885,6 +13772,7 @@ function renderPlanner() {
   });
 
   restorePlannerCarouselState(previousCarouselState, activeDay.id);
+  updateTabIndicator(elements.plannerGrid);
 }
 
 function currentPlannerCarouselState() {
@@ -13733,14 +14621,18 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
   }
 
   if (specialMeal) {
+    const restaurantLinked = specialMeal.type === "out" && specialMeal.restaurant?.placeId;
+    const pinTitle = restaurantLinked ? "Change restaurant" : "Link restaurant";
     return `
       <div class="meal-entry draggable-meal-entry special-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true">
         <div class="special-meal-card">
           <div class="special-meal-label-row">
-            <strong>${escapeHtml(specialMealLabel(specialMeal.type))}${specialMeal.note ? " -" : ""}</strong>
-            <input data-special-meal-note data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" value="${escapeHtml(specialMeal.note)}" placeholder="${escapeHtml(specialMealPlaceholder(specialMeal.type))}" />
+            <strong>${escapeHtml(specialMealLabel(specialMeal.type))}${specialMeal.note && !restaurantLinked ? " -" : ""}</strong>
+            ${restaurantLinked
+              ? `<button class="meal-restaurant-name-btn" type="button" data-show-restaurant-info data-day="${escapeHtml(day.id)}" data-meal="${escapeHtml(meal)}" data-index="${index}">${escapeHtml(specialMeal.restaurant.name)}</button>`
+              : `<input data-special-meal-note data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" value="${escapeHtml(specialMeal.note)}" placeholder="${escapeHtml(specialMealPlaceholder(specialMeal.type))}" />`}
+            ${specialMeal.type === "out" ? `<button class="meal-restaurant-pin-btn" type="button" data-link-restaurant data-day="${escapeHtml(day.id)}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="${pinTitle}" aria-label="${pinTitle}"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></button>` : ""}
           </div>
-          ${specialMeal.type === "out" ? renderMealRestaurantArea(specialMeal.restaurant, day.id, meal, index) : ""}
         </div>
         <button class="meal-swipe-delete" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" aria-label="Delete ${escapeHtml(specialMealLabel(specialMeal.type))}">Delete</button>
       </div>
@@ -13828,10 +14720,11 @@ function stackedDishesIconTemplate() {
 function broccoliIconTemplate() {
   return `
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 21v-6" />
-      <path d="M9 21h6" />
-      <path d="M9.2 15.2c-2.6.2-4.6-1.4-4.6-3.7 0-1.9 1.4-3.4 3.2-3.6.4-2.2 2.2-3.9 4.4-3.9s4 1.7 4.4 3.9c1.8.2 3.2 1.7 3.2 3.6 0 2.3-2 3.9-4.6 3.7" />
-      <path d="M8.8 12.2c1 .2 1.8.9 2.2 1.8M15.2 12.2c-1 .2-1.8.9-2.2 1.8" />
+      <path d="M12 6 C11.5 4 9.5 2.5 9 3.5" />
+      <path d="M12 6 C12 3.5 13.5 2.5 14.5 3.5" />
+      <path d="M12 6 C12.5 3.5 14.5 2.5 15.5 3.5" />
+      <path d="M12 21 C9.5 19.5 8.5 15 9 10 C9.5 7 11 6 12 6 C13 6 14.5 7 15 10 C15.5 15 14.5 19.5 12 21 Z" />
+      <path d="M10 12.5 C11 12 13 12 14 12.5" />
     </svg>
   `;
 }
@@ -13839,11 +14732,8 @@ function broccoliIconTemplate() {
 function outMealIconTemplate() {
   return `
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M7 9V4h10v5" />
-      <path d="M5 9h14l2 4H3Z" />
-      <path d="M6 13v6h3v-4h6v4h3v-6" />
-      <path d="M10 6v3M14 6v3" />
-      <path d="M10 6c0-1 1-1.8 2-1.8S14 5 14 6" />
+      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+      <path d="M15 10 A3 3 0 0 0 9 10 A3 3 0 0 0 15 10Z" />
     </svg>
   `;
 }
@@ -13851,10 +14741,8 @@ function outMealIconTemplate() {
 function leftoversIconTemplate() {
   return `
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M6 9h12l-1 5H7Z" />
-      <path d="M8 14h8v5H8Z" />
-      <path d="M7 5h10l1 4H6Z" />
-      <path d="M9 3h6v2H9Z" />
+      <path d="M12 5 C11.5 3.5 13.5 2.5 14.5 3" />
+      <path d="M12 5 C9 5 7 6.5 7 8.5 C7 10 9 10.5 9 12 C9 13.5 7 14 7 15.5 C7 17.5 9 19 12 19 C15 19 17 17.5 17 15.5 C17 14 15 13.5 15 12 C15 10.5 17 10 17 8.5 C17 6.5 15 5 12 5 Z" />
     </svg>
   `;
 }
@@ -13865,7 +14753,7 @@ function minimumMealEntryCount(meal) {
 
 function handleMealEntryDragStart(event) {
   if (event.currentTarget.querySelector("[data-meal-input]")
-    || event.target.closest("[data-special-meal-note], [data-planned-servings], [data-link-restaurant], [data-unlink-restaurant], .meal-restaurant-bar-link")) {
+    || event.target.closest("[data-special-meal-note], [data-planned-servings], [data-link-restaurant], [data-unlink-restaurant], [data-show-restaurant-info], .meal-restaurant-bar-link")) {
     event.preventDefault();
     return;
   }
@@ -14346,7 +15234,7 @@ function activeTrashTarget() {
 
 function handleMealEntryPointerDown(event) {
   if (event.pointerType === "mouse") {
-    if (event.button !== 0 || event.currentTarget.querySelector("[data-meal-input]") || event.target.closest("[data-special-meal-note], [data-link-restaurant], [data-unlink-restaurant], .meal-restaurant-bar-link")) return;
+    if (event.button !== 0 || event.currentTarget.querySelector("[data-meal-input]") || event.target.closest("[data-special-meal-note], [data-link-restaurant], [data-unlink-restaurant], [data-show-restaurant-info], .meal-restaurant-bar-link")) return;
     startMealPointerDeleteGesture(event.currentTarget, event.clientX, event.clientY);
     return;
   }
@@ -14364,7 +15252,7 @@ function handleMealEntryPointerDown(event) {
 }
 
 function handleMealEntryMouseDown(event) {
-  if (event.button !== 0 || event.currentTarget.querySelector("[data-meal-input]") || event.target.closest("[data-special-meal-note], [data-link-restaurant], [data-unlink-restaurant], .meal-restaurant-bar-link") || mealPointerDeleteGesture) return;
+  if (event.button !== 0 || event.currentTarget.querySelector("[data-meal-input]") || event.target.closest("[data-special-meal-note], [data-link-restaurant], [data-unlink-restaurant], [data-show-restaurant-info], .meal-restaurant-bar-link") || mealPointerDeleteGesture) return;
   startMealPointerDeleteGesture(event.currentTarget, event.clientX, event.clientY);
 }
 
@@ -15081,36 +15969,85 @@ function autoGeneratePlannerDay(dayId) {
   renderGroceries();
 }
 
+function renderGroceryStoreTabs() {
+  const el = document.getElementById("groceryStoreTabBar");
+  if (!el) return;
+  const stores = groceryStores();
+  if (!stores.length) { el.innerHTML = ""; return; }
+  if (!stores.some((s) => s.id === activeGroceryStoreTab) && activeGroceryStoreTab !== "all") {
+    activeGroceryStoreTab = "all";
+  }
+  el.innerHTML = `
+    <div class="watch-category-tabs" role="tablist" aria-label="Store">
+      <button class="watch-category-tab${activeGroceryStoreTab === "all" ? " is-active" : ""}" type="button" role="tab" data-grocery-tab="all">All</button>
+      ${stores.map((store) => `
+        <button class="watch-category-tab${activeGroceryStoreTab === store.id ? " is-active" : ""}" type="button" role="tab" data-grocery-tab="${escapeHtml(store.id)}">${escapeHtml(store.name)}</button>
+      `).join("")}
+    </div>
+  `;
+  el.querySelectorAll("[data-grocery-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      activeGroceryStoreTab = btn.dataset.groceryTab;
+      renderGroceries();
+    });
+  });
+  updateTabIndicator(el);
+}
+
 function renderGroceries() {
-  renderGrocerySuggestions();
   renderGroceryWeekOptions();
+  renderGroceryStoreTabs();
   const groceryWeek = selectedGroceryWeek();
   if (!groceryWeek) {
-    elements.groceryList.innerHTML = `<div class="empty-state">Publish a week to generate groceries.</div>`;
+    elements.groceryList.innerHTML = `<div class="empty-state">Add meals to your plan and groceries will appear here.</div>`;
     return;
   }
-  const groceries = buildGroceryRowsWithManual(groceryWeek.week);
+
+  // Manual items — shown at top in All tab regardless of pantry
+  const manualRows = activeGroceryStoreTab === "all"
+    ? manualGroceryItems(groceryWeek.week).map(manualGroceryRow).map((row) => ({
+        ...row,
+        checkedKey: groceryCheckedKey(groceryWeek.key, row.key),
+        checked: Boolean(state.checkedGroceries[groceryCheckedKey(groceryWeek.key, row.key)])
+      }))
+    : [];
+
+  // Plan-derived items — filtered by pantry
   const pantrySet = new Set(state.pantry.map(groceryRowKey));
-  const needed = groceries
-    .filter((row) => !pantrySet.has(groceryRowKey(row.item)))
+  const skippedKeys = new Set(groceryWeek.week.skippedGroceryKeys || []);
+  const needed = aggregateGroceryRows(buildRawGroceryRows(groceryWeek.week))
+    .filter((row) => !pantrySet.has(groceryRowKey(row.item)) && !skippedKeys.has(row.key))
     .map((row) => ({
       ...row,
       checkedKey: groceryCheckedKey(groceryWeek.key, row.key),
       checked: Boolean(state.checkedGroceries[groceryCheckedKey(groceryWeek.key, row.key)])
     }));
   const pricePlan = optimizeGroceryBasket(needed);
+  const storeSections = groceryStoreSections(needed, pricePlan.assignments, pricePlan.estimates);
 
-  if (!needed.length) {
-    elements.groceryList.innerHTML = `<div class="empty-state">Choose meals for the prep window and groceries will appear here. Pantry items are skipped automatically.</div>`;
+  if (!manualRows.length && !needed.length) {
+    elements.groceryList.innerHTML = `<div class="empty-state">Add meals to your plan and groceries will appear here.</div>`;
     return;
   }
 
-  elements.groceryList.innerHTML = `
-    ${groceryPricePlanTemplate(pricePlan)}
-    ${groceryFallbackRoutingTemplate(needed, pricePlan.assignments)}
-    ${groceryStoreSections(needed, pricePlan.assignments, pricePlan.estimates)
-    .map(({ storeId, name, store, sectionGroups }) => `
-      <section class="grocery-store-section" data-grocery-store-section="${escapeHtml(storeId)}">
+  const miscSection = manualRows.length ? `
+    <section class="grocery-store-section grocery-misc-section" data-grocery-store-section="">
+      <div class="grocery-store-heading">
+        <h3>Miscellaneous</h3>
+      </div>
+      <div class="grocery-store-section-groups">
+        <section class="grocery-section-group">
+          <div class="grocery-store-list" data-grocery-store-list="" data-grocery-store-section-list="">
+            ${manualRows.map(groceryItemTemplate).join("")}
+          </div>
+        </section>
+      </div>
+    </section>
+  ` : "";
+
+  const storeSection = ({ storeId, name, store, sectionGroups }) => `
+    <section class="grocery-store-section" data-grocery-store-section="${escapeHtml(storeId)}">
+      ${activeGroceryStoreTab === "all" ? `
         <div class="grocery-store-heading" ${storeId ? `data-grocery-store-setting="${escapeHtml(storeId)}"` : ""}>
           <h3>${escapeHtml(name)}</h3>
           ${storeDirectionsUrl(store) ? `
@@ -15119,22 +16056,37 @@ function renderGroceries() {
             </a>
           ` : ""}
         </div>
-        <div class="grocery-store-section-groups">
-          ${sectionGroups.map((group) => `
-            <section class="grocery-section-group">
-              ${group.name ? `<h4>${escapeHtml(group.name)}</h4>` : ""}
-              <div class="grocery-store-list ${group.rows.length ? "" : "is-empty"}"
-                data-grocery-store-list="${escapeHtml(storeId)}"
-                data-grocery-store-section-list="${escapeHtml(group.sectionId)}">
-                ${group.rows.length ? group.rows.map(groceryItemTemplate).join("") : `<div class="grocery-store-empty">Drop items here</div>`}
-              </div>
-            </section>
-          `).join("")}
-        </div>
-      </section>
-    `)
-    .join("")}
+      ` : ""}
+      <div class="grocery-store-section-groups">
+        ${sectionGroups.map((group) => `
+          <section class="grocery-section-group">
+            ${group.name ? `<h4>${escapeHtml(group.name)}</h4>` : ""}
+            <div class="grocery-store-list ${group.rows.length ? "" : "is-empty"}"
+              data-grocery-store-list="${escapeHtml(storeId)}"
+              data-grocery-store-section-list="${escapeHtml(group.sectionId)}">
+              ${group.rows.length ? group.rows.map(groceryItemTemplate).join("") : `<div class="grocery-store-empty">Drop items here</div>`}
+            </div>
+          </section>
+        `).join("")}
+      </div>
+    </section>
   `;
+
+  let planSections;
+  if (activeGroceryStoreTab === "all") {
+    planSections = needed.length ? `
+      ${groceryPricePlanTemplate(pricePlan)}
+      ${groceryFallbackRoutingTemplate(needed, pricePlan.assignments)}
+      ${storeSections.map(storeSection).join("")}
+    ` : "";
+  } else {
+    const active = storeSections.find((s) => s.storeId === activeGroceryStoreTab);
+    planSections = active?.rows.length
+      ? storeSection(active)
+      : `<div class="empty-state">No items assigned to this store yet. Drag items here from the All tab to assign them.</div>`;
+  }
+
+  elements.groceryList.innerHTML = miscSection + planSections;
 
   elements.groceryList.querySelectorAll("[data-grocery]").forEach((checkbox) => {
     checkbox.addEventListener("change", () => {
@@ -15143,11 +16095,26 @@ function renderGroceries() {
       renderGroceries();
     });
   });
-  elements.groceryList.querySelectorAll("[data-remove-grocery]").forEach((button) => {
-    button.addEventListener("click", () => removeManualGroceryItem(button.dataset.removeGrocery));
+  elements.groceryList.querySelectorAll("[data-grocery-wrap-key]").forEach((wrap) => {
+    wrap.addEventListener("contextmenu", openGroceryItemMenu);
+    wrap.addEventListener("pointerdown", handleGrocerySwipePointerDown);
+    wrap.addEventListener("pointermove", handleGrocerySwipePointerMove);
+    wrap.addEventListener("pointerup", handleGrocerySwipePointerEnd);
+    wrap.addEventListener("pointercancel", handleGrocerySwipePointerEnd);
+  });
+  elements.groceryList.querySelectorAll("[data-grocery-action-edit]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      closeGrocerySwipe();
+      editGroceryItem(btn.dataset.groceryActionEdit);
+    });
+  });
+  elements.groceryList.querySelectorAll("[data-grocery-action-delete]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      closeGrocerySwipe();
+      deleteGroceryItem(btn.dataset.groceryActionDelete);
+    });
   });
   elements.groceryList.querySelectorAll("[data-grocery-row-key]").forEach((item) => {
-    item.addEventListener("contextmenu", openGroceryItemIdentityMenu);
     item.addEventListener("dragstart", handleGroceryItemDragStart);
     item.addEventListener("dragend", clearGroceryItemDragState);
     item.addEventListener("dragover", handleGroceryItemDragOver);
@@ -15392,26 +16359,31 @@ function groceryRowStoreOrder(row, locations) {
 
 function groceryItemTemplate(row) {
   return `
-    <label class="grocery-item ${row.checked ? "checked" : ""}" draggable="true" data-grocery-row-key="${escapeHtml(row.key)}" title="Drag to organize">
-      <input type="checkbox" data-grocery="${escapeHtml(row.checkedKey)}" ${row.checked ? "checked" : ""} />
-      <span class="grocery-name">
-        ${escapeHtml(row.displayName || row.item)}
-        ${row.notes?.length ? `<small>${escapeHtml(row.notes.join(" · "))}</small>` : ""}
-        ${row.priceEstimate ? `
-          <small>${formatCurrency(row.priceEstimate.cost)} estimated · ${row.priceEstimate.source === "receipt" ? `based on receipt ${escapeHtml(formatReceiptObservationDate(row.priceEstimate.observedAt))}` : "manual estimate"}</small>
-        ` : ""}
-      </span>
-      <span class="grocery-quantity">${escapeHtml(row.quantity || "")}</span>
-      ${row.manual ? `<button class="grocery-remove-btn" type="button" data-remove-grocery="${escapeHtml(row.manualValue)}" title="Remove grocery item" aria-label="Remove ${escapeHtml(row.item)}">×</button>` : ""}
-    </label>
+    <div class="grocery-item-wrap" data-grocery-wrap-key="${escapeHtml(row.key)}">
+      <label class="grocery-item ${row.checked ? "checked" : ""}" draggable="true" data-grocery-row-key="${escapeHtml(row.key)}" title="Drag to organize">
+        <input type="checkbox" data-grocery="${escapeHtml(row.checkedKey)}" ${row.checked ? "checked" : ""} />
+        <span class="grocery-name">
+          ${escapeHtml(row.displayName || row.item)}
+          ${row.notes?.length ? `<small>${escapeHtml(row.notes.join(" · "))}</small>` : ""}
+          ${row.priceEstimate ? `
+            <small>${formatCurrency(row.priceEstimate.cost)} estimated · ${row.priceEstimate.source === "receipt" ? `based on receipt ${escapeHtml(formatReceiptObservationDate(row.priceEstimate.observedAt))}` : "manual estimate"}</small>
+          ` : ""}
+        </span>
+        <span class="grocery-quantity">${escapeHtml(row.quantity || "")}</span>
+      </label>
+      <div class="grocery-swipe-actions">
+        <button class="grocery-swipe-btn grocery-swipe-edit" type="button" data-grocery-action-edit="${escapeHtml(row.key)}">Edit</button>
+        <button class="grocery-swipe-btn grocery-swipe-delete" type="button" data-grocery-action-delete="${escapeHtml(row.key)}">Delete</button>
+      </div>
+    </div>
   `;
 }
 
-function openGroceryItemIdentityMenu(event) {
+function openGroceryItemMenu(event) {
   event.preventDefault();
   event.stopPropagation();
   closeFolderMenu();
-  const key = event.currentTarget.dataset.groceryRowKey;
+  const key = event.currentTarget.dataset.groceryWrapKey;
   const groceryWeek = selectedGroceryWeek();
   const row = groceryWeek
     ? buildGroceryRowsWithManual(groceryWeek.week).find((item) => item.key === key)
@@ -15421,26 +16393,21 @@ function openGroceryItemIdentityMenu(event) {
   menu.className = "folder-context-menu grocery-library-context-menu";
   menu.setAttribute("role", "menu");
   menu.innerHTML = `
-    <button type="button" role="menuitem" data-merge-grocery-item>Merge with...</button>
-    <button type="button" role="menuitem" data-split-grocery-item>Keep a name separate...</button>
-    <button type="button" role="menuitem" data-daily-dozen-grocery-item>Daily Dozen tags</button>
+    <button type="button" role="menuitem" data-edit-grocery-item>Edit</button>
+    <button type="button" role="menuitem" data-delete-grocery-item>Delete</button>
   `;
   document.body.append(menu);
   const x = Math.min(event.clientX || 10, window.innerWidth - menu.offsetWidth - 10);
   const y = Math.min(event.clientY || 10, window.innerHeight - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
-  menu.querySelector("[data-merge-grocery-item]").addEventListener("click", () => {
+  menu.querySelector("[data-edit-grocery-item]").addEventListener("click", () => {
     closeFolderMenu();
-    learnGroceryItemMerge(row);
+    editGroceryItem(key);
   });
-  menu.querySelector("[data-split-grocery-item]").addEventListener("click", () => {
+  menu.querySelector("[data-delete-grocery-item]").addEventListener("click", () => {
     closeFolderMenu();
-    learnGroceryItemSplit(row);
-  });
-  menu.querySelector("[data-daily-dozen-grocery-item]").addEventListener("click", () => {
-    closeFolderMenu();
-    openDailyDozenTagEditor(row.displayName || row.item);
+    deleteGroceryItem(key);
   });
 }
 
@@ -15666,48 +16633,61 @@ function clearGroceryItemDragState() {
 }
 
 function renderGroceryWeekOptions() {
-  if (!elements.groceryWeekSelect) return;
-  const weeks = publishedGroceryWeekOptions();
-  if (!weeks.length) {
-    elements.groceryWeekSelect.innerHTML = `<option value="">No published weeks</option>`;
-    elements.groceryWeekSelect.disabled = true;
-    selectedGroceryWeekKey = "";
-    return;
-  }
-  elements.groceryWeekSelect.disabled = false;
+  const weeks = liveGroceryWeekOptions();
   if (!weeks.some((week) => week.key === selectedGroceryWeekKey)) {
     const activeKey = weekKey();
-    selectedGroceryWeekKey = weeks.find((week) => week.key === activeKey)?.key || weeks[0].key;
+    selectedGroceryWeekKey = weeks.find((week) => week.key === activeKey)?.key || weeks[0]?.key || "";
   }
-  elements.groceryWeekSelect.innerHTML = weeks
-    .map((week) => `<option value="${escapeHtml(week.key)}" ${week.key === selectedGroceryWeekKey ? "selected" : ""}>${escapeHtml(week.label)}</option>`)
-    .join("");
+  if (activeAppArea === "shop") {
+    const current = weeks.find((w) => w.key === selectedGroceryWeekKey);
+    elements.weekLabel.textContent = current?.label || "";
+  }
 }
 
-function publishedGroceryWeekOptions() {
-  return Object.values(state.publishedWeeks || {})
-    .filter((week) => week?.weekKey && week?.slots)
-    .sort((a, b) => String(b.weekKey).localeCompare(String(a.weekKey)))
-    .map((week) => ({
-      key: week.weekKey,
-      label: week.rangeLabel || formatWeekRange(dateFromWeekKey(week.weekKey)),
-      week: publishedGroceryWeekState(week)
-    }));
+function navigateGroceryWeek(delta) {
+  const weeks = liveGroceryWeekOptions();
+  const idx = weeks.findIndex((w) => w.key === selectedGroceryWeekKey);
+  const next = weeks[idx - delta];
+  if (next) {
+    selectedGroceryWeekKey = next.key;
+    renderGroceries();
+  }
 }
 
-function publishedGroceryWeekState(archiveWeek) {
-  return {
-    slots: cloneMealSlots(archiveWeek.slots || {}),
-    publishedSlots: cloneMealSlots(archiveWeek.slots || {}),
-    combinedMealSections: cloneCombinedMealSections(archiveWeek.combinedMealSections || {}),
-    publishedCombinedMealSections: cloneCombinedMealSections(archiveWeek.combinedMealSections || {}),
-    mealPlanView: "published",
-    manualGroceries: Array.isArray(archiveWeek.manualGroceries) ? [...archiveWeek.manualGroceries] : []
-  };
+function liveGroceryWeekOptions() {
+  const currentKey = weekKey();
+  const seen = new Set();
+  const result = [];
+  Object.entries(state.plans || {}).forEach(([key, plan]) => {
+    if (!plan || seen.has(key)) return;
+    if (key === currentKey || hasMealPlanSlots(plan.slots)) {
+      seen.add(key);
+      result.push({
+        key,
+        label: plan.rangeLabel || formatWeekRange(dateFromWeekKey(key)),
+        week: plan
+      });
+    }
+  });
+  if (!seen.has(currentKey)) {
+    result.push({
+      key: currentKey,
+      label: formatWeekRange(dateFromWeekKey(currentKey)),
+      week: weekState()
+    });
+  }
+  return result.sort((a, b) => String(b.key).localeCompare(String(a.key)));
+}
+
+function hasMealPlanSlots(slots) {
+  if (!slots) return false;
+  return Object.values(slots).some((daySlots) =>
+    daySlots && Object.values(daySlots).some((v) => String(v || "").trim())
+  );
 }
 
 function selectedGroceryWeek() {
-  const weeks = publishedGroceryWeekOptions();
+  const weeks = liveGroceryWeekOptions();
   return weeks.find((week) => week.key === selectedGroceryWeekKey) || weeks[0] || null;
 }
 
@@ -15715,30 +16695,16 @@ function groceryCheckedKey(weekKeyValue, rowKey) {
   return `${weekKeyValue || "week"}|${rowKey}`;
 }
 
-function renderGrocerySuggestions() {
-  const suggestions = grocerySuggestionItems();
-  elements.grocerySuggestions.innerHTML = suggestions
-    .map((item) => `<option value="${escapeHtml(item)}"></option>`)
-    .join("");
-}
-
 function addManualGroceryItem(event) {
   event.preventDefault();
   const item = elements.groceryInput.value.trim();
   if (!item) return;
   const selectedWeek = selectedGroceryWeek();
-  const week = selectedWeek && state.plans[selectedWeek.key]
-    ? state.plans[selectedWeek.key]
-    : selectedWeek && state.publishedWeeks?.[selectedWeek.key]
-      ? state.publishedWeeks[selectedWeek.key]
-      : weekState();
+  const week = (selectedWeek && state.plans[selectedWeek.key]) || weekState();
   if (!Array.isArray(week.manualGroceries)) week.manualGroceries = [];
   if (!week.manualGroceries.some((existing) => normalize(existing) === normalize(item))) {
     week.manualGroceries.push(item);
     week.manualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
-  }
-  if (selectedWeek?.key && state.publishedWeeks?.[selectedWeek.key]) {
-    state.publishedWeeks[selectedWeek.key].manualGroceries = [...week.manualGroceries];
   }
   elements.groceryInput.value = "";
   persist();
@@ -15747,20 +16713,80 @@ function addManualGroceryItem(event) {
 
 function removeManualGroceryItem(item) {
   const selectedWeek = selectedGroceryWeek();
-  const week = selectedWeek && state.plans[selectedWeek.key]
-    ? state.plans[selectedWeek.key]
-    : selectedWeek && state.publishedWeeks?.[selectedWeek.key]
-      ? state.publishedWeeks[selectedWeek.key]
-      : weekState();
+  const week = (selectedWeek && state.plans[selectedWeek.key]) || weekState();
   week.manualGroceries = manualGroceryItems(week).filter((existing) => existing !== item);
-  if (selectedWeek?.key && state.publishedWeeks?.[selectedWeek.key]) {
-    state.publishedWeeks[selectedWeek.key].manualGroceries = [...week.manualGroceries];
-  }
   Object.keys(state.checkedGroceries).forEach((key) => {
     if (key === groceryCheckedKey(selectedWeek?.key || weekKey(), manualGroceryRow(item).key)) delete state.checkedGroceries[key];
   });
   persist();
   renderGroceries();
+}
+
+function editGroceryItem(key) {
+  const groceryWeek = selectedGroceryWeek();
+  if (!groceryWeek) return;
+  const row = buildGroceryRowsWithManual(groceryWeek.week).find((r) => r.key === key);
+  if (!row) return;
+  if (row.manual) {
+    const updated = window.prompt("Edit item:", row.manualValue);
+    if (updated === null) return;
+    const trimmed = updated.trim();
+    if (!trimmed || trimmed === row.manualValue) return;
+    const week = groceryWeek.week;
+    week.manualGroceries = manualGroceryItems(week).map((v) => (v === row.manualValue ? trimmed : v));
+    persist();
+    renderGroceries();
+  } else {
+    learnGroceryItemMerge(row);
+  }
+}
+
+function deleteGroceryItem(key) {
+  const groceryWeek = selectedGroceryWeek();
+  if (!groceryWeek) return;
+  const row = buildGroceryRowsWithManual(groceryWeek.week).find((r) => r.key === key);
+  if (!row) return;
+  if (row.manual) {
+    removeManualGroceryItem(row.manualValue);
+  } else {
+    const week = groceryWeek.week;
+    week.skippedGroceryKeys = [...new Set([...(week.skippedGroceryKeys || []), key])];
+    persist();
+    renderGroceries();
+  }
+}
+
+function closeGrocerySwipe() {
+  document.querySelectorAll(".grocery-item-wrap.is-swiped").forEach((el) => el.classList.remove("is-swiped"));
+  grocerySwipeGesture = null;
+}
+
+function handleGrocerySwipePointerDown(event) {
+  if (event.pointerType === "mouse") return;
+  grocerySwipeGesture = { id: event.pointerId, startX: event.clientX, startY: event.clientY, wrap: event.currentTarget };
+  event.currentTarget.setPointerCapture(event.pointerId);
+}
+
+function handleGrocerySwipePointerMove(event) {
+  if (!grocerySwipeGesture || grocerySwipeGesture.id !== event.pointerId) return;
+  const dx = event.clientX - grocerySwipeGesture.startX;
+  const dy = event.clientY - grocerySwipeGesture.startY;
+  const wrap = grocerySwipeGesture.wrap;
+  if (Math.abs(dy) > Math.abs(dx) + 5 && !wrap.classList.contains("is-swiped")) {
+    grocerySwipeGesture = null;
+    return;
+  }
+  if (dx < -30) {
+    document.querySelectorAll(".grocery-item-wrap.is-swiped").forEach((el) => { if (el !== wrap) el.classList.remove("is-swiped"); });
+    wrap.classList.add("is-swiped");
+  } else if (dx > 10) {
+    wrap.classList.remove("is-swiped");
+  }
+}
+
+function handleGrocerySwipePointerEnd(event) {
+  if (!grocerySwipeGesture || grocerySwipeGesture.id !== event.pointerId) return;
+  grocerySwipeGesture = null;
 }
 
 function scheduleGroceryItemReview(rows) {
@@ -15808,7 +16834,6 @@ function openGroceryReviewItems(reviewItems, contextText) {
 }
 
 function unlistedPublishedGroceryItems() {
-  if (!isPublishedMealPlanView(weekState())) return [];
   return unlistedGroceryItemsForWeek(weekState());
 }
 
@@ -18060,21 +19085,19 @@ function migrateLegacyMealSlots(slots, day) {
 }
 
 function mealPlanViewMode(week) {
-  return week?.mealPlanView === "published" ? "published" : "edit";
+  return "edit";
 }
 
 function isPublishedMealPlanView(week) {
-  return mealPlanViewMode(week) === "published";
+  return false;
 }
 
 function mealSlotsForWeek(week) {
-  return isPublishedMealPlanView(week) && week.publishedSlots ? week.publishedSlots : week.slots;
+  return week?.slots;
 }
 
 function combinedMealSectionsForWeek(week) {
-  return isPublishedMealPlanView(week) && week.publishedCombinedMealSections
-    ? week.publishedCombinedMealSections
-    : week.combinedMealSections;
+  return week?.combinedMealSections;
 }
 
 function cloneMealSlots(slots) {
@@ -18478,7 +19501,7 @@ function isManualGroceryItem(item) {
 
 function buildGroceryText() {
   const groceryWeek = selectedGroceryWeek();
-  if (!groceryWeek) return "Publish a week to generate groceries.";
+  if (!groceryWeek) return "No groceries yet.";
   const pantrySet = new Set(state.pantry.map(groceryRowKey));
   const items = buildGroceryRowsWithManual(groceryWeek.week)
     .filter((row) => !pantrySet.has(groceryRowKey(row.item)))
@@ -18828,6 +19851,7 @@ function renderWatchPlanner() {
 
   elements.watchPlannerGrid.querySelector("[data-open-watch-archive]")
     ?.addEventListener("click", openWatchArchive);
+  updateTabIndicator(elements.watchPlannerGrid);
 }
 
 function watchDayTabTemplate(day, isActive) {
@@ -20063,26 +21087,57 @@ async function loadWatchSeasonEpisodes(itemId, seasonNum) {
 
 // ── Recreate page ──────────────────────────────────────────
 
+const RECREATE_HOBBIES = [
+  { key: "sailing", label: "Sailing" },
+  { key: "piano", label: "Piano" },
+];
+
 let sailLogPendingId = null;
+let activeRecreateHobby = "sailing";
+
+// Metronome state
+let metronomeBpm = 120;
+let metronomeIsPlaying = false;
+let metronomeAudioCtx = null;
+let metronomeNextBeatTime = 0;
+let metronomeSchedulerId = null;
+let metronomeBeatCount = 0;
+let metronomeTapTimes = [];
+let metronomeAccentEnabled = true;
 
 function sailingLogList() {
   if (!Array.isArray(state.sailingLog)) state.sailingLog = [];
   return state.sailingLog;
 }
 
+function visibleRecreateHobbies() {
+  const hobbies = state.recreateHobbies || {};
+  return RECREATE_HOBBIES.filter((h) => hobbies[h.key] !== false);
+}
+
 function renderRecreatePage() {
   if (!elements.recreatePlannerGrid) return;
+  const visible = visibleRecreateHobbies();
+  if (!visible.find((h) => h.key === activeRecreateHobby)) {
+    activeRecreateHobby = visible[0]?.key || "sailing";
+  }
+  const tabsHtml = visible.map((h) => `
+    <button class="recreate-topic-tab${h.key === activeRecreateHobby ? " is-active" : ""}"
+      role="tab" aria-selected="${h.key === activeRecreateHobby}" data-hobby-tab="${h.key}">
+      ${escapeHtml(h.label)}
+    </button>
+  `).join("");
+  let bodyHtml = "";
+  if (activeRecreateHobby === "sailing") bodyHtml = renderSailingLogPanel();
+  else if (activeRecreateHobby === "piano") bodyHtml = renderPianoPanel();
   elements.recreatePlannerGrid.innerHTML = `
     <div class="recreate-page">
-      <div class="recreate-topic-tabs" role="tablist">
-        <button class="recreate-topic-tab is-active" role="tab" aria-selected="true">Sailing Log</button>
-      </div>
-      <div class="recreate-topic-body">
-        ${renderSailingLogPanel()}
-      </div>
+      <div class="recreate-topic-tabs" role="tablist">${tabsHtml}</div>
+      <div class="recreate-topic-body">${bodyHtml}</div>
     </div>
   `;
   bindRecreateControls();
+  updateTabIndicator(elements.recreatePlannerGrid);
 }
 
 function renderSailingLogPanel() {
@@ -20146,11 +21201,313 @@ function sailLogCardTemplate(entry) {
 }
 
 function bindRecreateControls() {
-  elements.recreatePlannerGrid.querySelector("[data-new-sail-log]")
-    ?.addEventListener("click", () => openSailLogDialog(null));
-  elements.recreatePlannerGrid.querySelectorAll("[data-sail-log-id]").forEach((card) => {
-    card.addEventListener("contextmenu", openSailLogCardMenu);
+  elements.recreatePlannerGrid.querySelectorAll("[data-hobby-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      stopMetronome();
+      activeRecreateHobby = btn.dataset.hobbyTab;
+      renderRecreatePage();
+    });
   });
+  if (activeRecreateHobby === "sailing") {
+    elements.recreatePlannerGrid.querySelector("[data-new-sail-log]")
+      ?.addEventListener("click", () => openSailLogDialog(null));
+    elements.recreatePlannerGrid.querySelectorAll("[data-sail-log-id]").forEach((card) => {
+      card.addEventListener("contextmenu", openSailLogCardMenu);
+    });
+  } else if (activeRecreateHobby === "piano") {
+    bindPianoControls();
+  }
+}
+
+// ── Piano panel ────────────────────────────────────────────
+
+function renderPianoPanel() {
+  const songs = state.pianoSongs || [];
+  const songsHtml = songs.length
+    ? songs.map((s) => `
+      <div class="piano-song-row" data-piano-song-id="${escapeHtml(s.id)}">
+        <label class="piano-song-check">
+          <input type="checkbox" ${s.learned ? "checked" : ""} data-piano-song-learned="${escapeHtml(s.id)}" />
+          <span class="piano-song-title${s.learned ? " is-learned" : ""}">${escapeHtml(s.title)}</span>
+        </label>
+        <div class="piano-song-actions">
+          ${s.sheetMusicUrl ? `<a href="${escapeHtml(s.sheetMusicUrl)}" target="_blank" class="icon-btn piano-song-link" title="Open sheet music" aria-label="Open sheet music">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="m10 14 11-11"/></svg>
+          </a>` : ""}
+          <button class="icon-btn piano-song-edit-btn" type="button" data-piano-song-edit="${escapeHtml(s.id)}" title="Edit">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5Z"/></svg>
+          </button>
+          <button class="icon-btn piano-song-delete-btn" type="button" data-piano-song-delete="${escapeHtml(s.id)}" title="Delete">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+      </div>
+    `).join("")
+    : `<p class="piano-empty-state">No songs yet. Add one below.</p>`;
+
+  return `
+    <div class="piano-panel">
+      <div class="piano-metronome">
+        <div class="metronome-visual">
+          <svg class="metronome-pendulum-svg" viewBox="-50 -118 100 136" aria-hidden="true">
+            <g id="metronomeNeedle" class="metronome-needle-group">
+              <line class="metronome-rod" x1="0" y1="2" x2="0" y2="-108"/>
+              <circle class="metronome-bob" cx="0" cy="-72" r="9"/>
+              <circle class="metronome-tip-dot" cx="0" cy="-108" r="3.5"/>
+            </g>
+            <ellipse class="metronome-pivot" cx="0" cy="2" rx="5" ry="4"/>
+            <polygon class="metronome-base-tri" points="-26,15 26,15 11,2 -11,2"/>
+          </svg>
+        </div>
+        <div class="metronome-bpm-row">
+          <button class="icon-btn metronome-adj-btn" type="button" id="metronomeDecBtn" aria-label="Decrease tempo">−</button>
+          <div class="metronome-bpm-display">
+            <input class="metronome-bpm-input" type="number" id="metronomeBpmInput"
+              min="20" max="300" value="${metronomeBpm}" aria-label="Tempo in BPM" />
+            <span class="metronome-bpm-unit">BPM</span>
+          </div>
+          <button class="icon-btn metronome-adj-btn" type="button" id="metronomeIncBtn" aria-label="Increase tempo">+</button>
+        </div>
+        <input type="range" class="metronome-slider" id="metronomeBpmSlider"
+          min="20" max="300" value="${metronomeBpm}" aria-label="Tempo slider" />
+        <div class="metronome-actions">
+          <button class="secondary-btn" type="button" id="metronomeTapBtn">Tap</button>
+          <button class="secondary-btn${metronomeAccentEnabled ? " is-active-toggle" : ""}" type="button" id="metronomeAccentBtn">Accent</button>
+          <button class="${metronomeIsPlaying ? "primary-btn" : "secondary-btn"} metronome-play-btn" type="button" id="metronomePlayBtn">
+            ${metronomeIsPlaying ? "Stop" : "Play"}
+          </button>
+        </div>
+      </div>
+
+      <div class="piano-songs-section">
+        <div class="piano-songs-head">
+          <span class="settings-subheading">Songs</span>
+        </div>
+        <div class="piano-songs-list" id="pianoSongsList">${songsHtml}</div>
+        <form class="piano-add-song-form inline-form" id="pianoAddSongForm">
+          <input type="text" id="pianoAddSongInput" placeholder="Song title" autocomplete="off" required />
+          <button class="icon-btn" type="submit" title="Add song" aria-label="Add song">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function bindPianoControls() {
+  const grid = elements.recreatePlannerGrid;
+
+  // Metronome controls
+  grid.querySelector("#metronomePlayBtn")?.addEventListener("click", () => {
+    metronomeIsPlaying ? stopMetronome() : startMetronome();
+  });
+  grid.querySelector("#metronomeTapBtn")?.addEventListener("click", metronomeTapTempo);
+  grid.querySelector("#metronomeAccentBtn")?.addEventListener("click", () => {
+    metronomeAccentEnabled = !metronomeAccentEnabled;
+    const btn = document.getElementById("metronomeAccentBtn");
+    if (btn) btn.classList.toggle("is-active-toggle", metronomeAccentEnabled);
+  });
+  grid.querySelector("#metronomeDecBtn")?.addEventListener("click", () => setMetronomeBpm(metronomeBpm - 1));
+  grid.querySelector("#metronomeIncBtn")?.addEventListener("click", () => setMetronomeBpm(metronomeBpm + 1));
+  const attachRepeat = (btnId, delta) => {
+    grid.querySelector(btnId)?.addEventListener("pointerdown", () => {
+      startMetronomeRepeat(delta);
+      document.addEventListener("pointerup", stopMetronomeRepeat, { once: true });
+    });
+  };
+  attachRepeat("#metronomeDecBtn", -1);
+  attachRepeat("#metronomeIncBtn", 1);
+  grid.querySelector("#metronomeBpmSlider")?.addEventListener("input", (e) => setMetronomeBpm(Number(e.target.value)));
+  grid.querySelector("#metronomeBpmInput")?.addEventListener("change", (e) => setMetronomeBpm(Number(e.target.value)));
+
+  // Song list controls
+  grid.querySelector("#pianoAddSongForm")?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const input = grid.querySelector("#pianoAddSongInput");
+    const title = input?.value.trim();
+    if (!title) return;
+    if (!Array.isArray(state.pianoSongs)) state.pianoSongs = [];
+    state.pianoSongs.push({ id: createId("piano"), title, learned: false, sheetMusicUrl: "" });
+    persist();
+    input.value = "";
+    renderPianoSongsList();
+  });
+
+  grid.querySelector("#pianoSongsList")?.addEventListener("change", (e) => {
+    const learnedInput = e.target.closest("[data-piano-song-learned]");
+    if (learnedInput) {
+      const song = (state.pianoSongs || []).find((s) => s.id === learnedInput.dataset.pianoSongLearned);
+      if (song) { song.learned = learnedInput.checked; persist(); renderPianoSongsList(); }
+    }
+  });
+
+  grid.querySelector("#pianoSongsList")?.addEventListener("click", (e) => {
+    const editBtn = e.target.closest("[data-piano-song-edit]");
+    if (editBtn) { openPianoSongEdit(editBtn.dataset.pianoSongEdit); return; }
+    const delBtn = e.target.closest("[data-piano-song-delete]");
+    if (delBtn) {
+      state.pianoSongs = (state.pianoSongs || []).filter((s) => s.id !== delBtn.dataset.pianoSongDelete);
+      persist();
+      renderPianoSongsList();
+    }
+  });
+}
+
+function renderPianoSongsList() {
+  const list = document.getElementById("pianoSongsList");
+  if (!list) return;
+  const songs = state.pianoSongs || [];
+  if (!songs.length) { list.innerHTML = `<p class="piano-empty-state">No songs yet. Add one below.</p>`; return; }
+  list.innerHTML = songs.map((s) => `
+    <div class="piano-song-row" data-piano-song-id="${escapeHtml(s.id)}">
+      <label class="piano-song-check">
+        <input type="checkbox" ${s.learned ? "checked" : ""} data-piano-song-learned="${escapeHtml(s.id)}" />
+        <span class="piano-song-title${s.learned ? " is-learned" : ""}">${escapeHtml(s.title)}</span>
+      </label>
+      <div class="piano-song-actions">
+        ${s.sheetMusicUrl ? `<a href="${escapeHtml(s.sheetMusicUrl)}" target="_blank" class="icon-btn piano-song-link" title="Open sheet music" aria-label="Open sheet music">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="m10 14 11-11"/></svg>
+        </a>` : ""}
+        <button class="icon-btn piano-song-edit-btn" type="button" data-piano-song-edit="${escapeHtml(s.id)}" title="Edit">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5Z"/></svg>
+        </button>
+        <button class="icon-btn piano-song-delete-btn" type="button" data-piano-song-delete="${escapeHtml(s.id)}" title="Delete">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+    </div>
+  `).join("");
+}
+
+function openPianoSongEdit(id) {
+  const song = (state.pianoSongs || []).find((s) => s.id === id);
+  if (!song) return;
+  const title = prompt("Song title:", song.title);
+  if (title === null) return;
+  const url = prompt("Sheet music URL (leave blank if none):", song.sheetMusicUrl);
+  if (url === null) return;
+  song.title = title.trim() || song.title;
+  song.sheetMusicUrl = url.trim();
+  persist();
+  renderPianoSongsList();
+}
+
+// ── Metronome engine ────────────────────────────────────────
+
+let metronomeRepeatTimer = null;
+
+function metronomeGetAudioCtx() {
+  if (!metronomeAudioCtx) {
+    metronomeAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  return metronomeAudioCtx;
+}
+
+function metronomeScheduleBeat(time, accent) {
+  const ctx = metronomeGetAudioCtx();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.frequency.value = accent ? 1100 : 880;
+  gain.gain.setValueAtTime(accent ? 0.45 : 0.28, time);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + 0.06);
+  osc.start(time);
+  osc.stop(time + 0.06);
+}
+
+function metronomeSchedulerTick() {
+  const ctx = metronomeGetAudioCtx();
+  while (metronomeNextBeatTime < ctx.currentTime + 0.12) {
+    const accent = metronomeAccentEnabled && metronomeBeatCount % 4 === 0;
+    metronomeScheduleBeat(metronomeNextBeatTime, accent);
+    const delay = Math.max(0, (metronomeNextBeatTime - ctx.currentTime) * 1000);
+    const beat = metronomeBeatCount;
+    setTimeout(() => flashMetronomeIndicator(beat), delay);
+    metronomeNextBeatTime += 60 / metronomeBpm;
+    metronomeBeatCount++;
+  }
+  metronomeSchedulerId = setTimeout(metronomeSchedulerTick, 25);
+}
+
+function startMetronome() {
+  if (metronomeIsPlaying) return;
+  const ctx = metronomeGetAudioCtx();
+  if (ctx.state === "suspended") ctx.resume();
+  metronomeIsPlaying = true;
+  metronomeBeatCount = 0;
+  metronomeNextBeatTime = ctx.currentTime + 0.05;
+  metronomeSchedulerTick();
+  updateMetronomePlayBtn();
+}
+
+function stopMetronome() {
+  if (!metronomeIsPlaying) return;
+  clearTimeout(metronomeSchedulerId);
+  metronomeIsPlaying = false;
+  updateMetronomePlayBtn();
+  const needle = document.getElementById("metronomeNeedle");
+  if (needle) {
+    needle.style.transitionDuration = "0.4s";
+    needle.style.transform = "rotate(0deg)";
+  }
+}
+
+function updateMetronomePlayBtn() {
+  const btn = document.getElementById("metronomePlayBtn");
+  if (!btn) return;
+  btn.textContent = metronomeIsPlaying ? "Stop" : "Play";
+  btn.className = (metronomeIsPlaying ? "primary-btn" : "secondary-btn") + " metronome-play-btn";
+}
+
+function flashMetronomeIndicator(beat) {
+  const needle = document.getElementById("metronomeNeedle");
+  if (!needle || !metronomeIsPlaying) return;
+  const angle = beat % 2 === 0 ? -30 : 30;
+  const duration = 60 / metronomeBpm;
+  needle.style.transitionDuration = `${duration}s`;
+  needle.style.transform = `rotate(${angle}deg)`;
+  const bob = needle.querySelector(".metronome-bob");
+  if (bob) bob.style.fill = (metronomeAccentEnabled && beat % 4 === 0) ? "var(--tomato, #e05252)" : "var(--accent)";
+}
+
+function setMetronomeBpm(bpm) {
+  metronomeBpm = Math.max(20, Math.min(300, Math.round(bpm)));
+  const input = document.getElementById("metronomeBpmInput");
+  if (input) input.value = metronomeBpm;
+  const slider = document.getElementById("metronomeBpmSlider");
+  if (slider) slider.value = metronomeBpm;
+}
+
+function metronomeTapTempo() {
+  const now = performance.now();
+  if (metronomeTapTimes.length > 0 && now - metronomeTapTimes[metronomeTapTimes.length - 1] > 2500) {
+    metronomeTapTimes = [];
+  }
+  metronomeTapTimes.push(now);
+  if (metronomeTapTimes.length >= 2) {
+    const intervals = [];
+    for (let i = 1; i < metronomeTapTimes.length; i++) intervals.push(metronomeTapTimes[i] - metronomeTapTimes[i - 1]);
+    const avg = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+    setMetronomeBpm(Math.round(60000 / avg));
+  }
+}
+
+function startMetronomeRepeat(delta) {
+  stopMetronomeRepeat();
+  let delay = 400;
+  const tick = () => {
+    setMetronomeBpm(metronomeBpm + delta);
+    delay = Math.max(60, delay * 0.85);
+    metronomeRepeatTimer = setTimeout(tick, delay);
+  };
+  metronomeRepeatTimer = setTimeout(tick, delay);
+}
+
+function stopMetronomeRepeat() {
+  clearTimeout(metronomeRepeatTimer);
+  metronomeRepeatTimer = null;
 }
 
 function openSailLogCardMenu(event) {
@@ -20621,7 +21978,7 @@ function getAppDataEvents(startKey, endKey) {
   (state.workouts || []).forEach((w) => {
     (w.logs || []).forEach((log) => {
       if (!log.date || log.date < startKey || log.date > endKey) return;
-      events.push({ id: `play-${log.id}`, title: w.title || "Workout", date: log.date, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.play, source: "play", calendarName: "Exercise" });
+      events.push({ id: `play-${log.id}`, title: w.title || "Workout", date: log.date, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.play, source: "play", calendarName: "Sweat" });
     });
   });
   const doTasks = [...(state.doPlans ? Object.values(state.doPlans).flatMap((d) => Object.values(d || {}).flat()) : []), ...(state.doTasks || [])];
@@ -20630,7 +21987,7 @@ function getAppDataEvents(startKey, endKey) {
     if (!key || key < startKey || key > endKey) return;
     const title = task.title || task.text || task.name;
     if (!title) return;
-    events.push({ id: `do-${task.id || title}`, title, date: key, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.do, source: "do", calendarName: "To Do" });
+    events.push({ id: `do-${task.id || title}`, title, date: key, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.do, source: "do", calendarName: "To-Do" });
   });
   return events;
 }
@@ -21560,6 +22917,7 @@ function renderReadingPlanner() {
 
   elements.readingPlannerGrid.querySelector("[data-open-reading-archive]")
     ?.addEventListener("click", openReadingArchive);
+  updateTabIndicator(elements.readingPlannerGrid);
 }
 
 function readingListTemplate() {

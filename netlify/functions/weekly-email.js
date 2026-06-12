@@ -31,6 +31,8 @@ exports.handler = async (event) => {
   const context = buildWeeklyContext(appState, notes);
   const prefsSection = prefs ? `\n\nSTANDING PREFERENCES FROM LUKE:\n${prefs}` : "";
 
+  const appUrl = (process.env.APP_URL || process.env.URL || "").replace(/\/$/, "");
+
   const html = await claudeCall(anthropicKey, {
     maxTokens: 2048,
     system: `You are a personal assistant writing a weekly digest email for a life-management app called "Live". The user is Luke.
@@ -38,6 +40,12 @@ Write a warm, personal, helpful email in clean HTML with inline styles (for emai
 Style: body background #FFFDF6, font Arial/sans-serif, max-width 600px centered, headings color #92400E, body text #1C1917.
 Structure: warm greeting → week recap (recipes, meals, exercise, to-do, watching, calendar) → anything flagged ⚠️ needing attention → brief look ahead.
 Tone: like a thoughtful friend reviewing the week with Luke, not a corporate newsletter. Conversational, encouraging, scannable.
+${appUrl ? `When referencing something that needs action in the app, include a clickable hyperlink to the app. Use these URLs:
+- Update pantry / grocery list: ${appUrl}/#shop
+- Review meal plan: ${appUrl}/#nourish
+- Add workouts: ${appUrl}/#sweat
+- Check to-do list: ${appUrl}/#maintain
+Format links like: <a href="URL" style="color:#92400E">link text</a>` : ""}
 Output ONLY the HTML body content (start with a <div> or <table>, no doctype/html/head/body tags).${prefsSection}`,
     user: context
   });
@@ -188,6 +196,17 @@ function buildWeeklyContext(state, notes = "") {
     lines.push("=== CALENDAR ===");
     if (calThis.length) { lines.push("This week:"); calThis.forEach((e) => lines.push(`  - ${e.date}: ${e.title}${e.startTime ? ` at ${e.startTime}` : ""}`)); }
     if (calNext.length) { lines.push("Next week:"); calNext.forEach((e) => lines.push(`  - ${e.date}: ${e.title}${e.startTime ? ` at ${e.startTime}` : ""}`)); }
+  }
+
+  lines.push("");
+  lines.push("=== PANTRY ===");
+  const pantry = Array.isArray(state.pantry) ? state.pantry : [];
+  if (pantry.length) {
+    lines.push(`${pantry.length} item${pantry.length === 1 ? "" : "s"} in pantry: ${pantry.slice(0, 10).join(", ")}${pantry.length > 10 ? ` … and ${pantry.length - 10} more` : ""}`);
+    lines.push("⚠️ REMINDER: Review and update your pantry before the weekend so your grocery list is accurate.");
+  } else {
+    lines.push("Pantry is empty.");
+    lines.push("⚠️ REMINDER: Add staple ingredients to your pantry so they are automatically excluded from your grocery list.");
   }
 
   if (notes) { lines.push(""); lines.push("=== NOTES FOR THIS EMAIL ==="); lines.push(notes); }

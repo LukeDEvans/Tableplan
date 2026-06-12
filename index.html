@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=daily-dozen-1" />
+    <link rel="stylesheet" href="./styles.css?v=daily-dozen-5" />
   </head>
   <body>
     <div class="app-shell">
@@ -29,18 +29,20 @@
               <div class="app-menu" id="appMenu" hidden>
                 <button type="button" id="generalSettingsMenuBtn">Settings</button>
                 <button type="button" id="menuAutoRulesBtn">Auto-Fill Rules</button>
-                <button type="button" id="menuTagsBtn">Tags</button>
-                <button type="button" id="menuGroceryListBtn">Preferred Stores</button>
-                <button type="button" id="menuGroceryPricingBtn">Receipts & Price History</button>
+                <button type="button" id="menuInventoryRoomsBtn">Default Rooms</button>
                 <button type="button" id="menuGroceryItemsBtn">Grocery Items</button>
                 <button type="button" id="menuIngredientOptionsBtn">Ingredient Options</button>
-                <button type="button" id="menuFoodHealthSettingsBtn">Nutrition Settings</button>
-                <button type="button" id="menuMealPlanSettingsBtn">Meal Plan Settings</button>
+                <button type="button" id="menuMealPlanSettingsBtn">Meals</button>
                 <button type="button" id="menuWatchTheatersBtn">Movie Theaters</button>
+                <button type="button" id="menuFoodHealthSettingsBtn">Nutrition</button>
+                <button type="button" id="menuGroceryListBtn">Preferred Stores</button>
+                <button type="button" id="menuGroceryPricingBtn">Receipts & Price History</button>
+                <button type="button" id="menuTagsBtn">Recipe Tags</button>
                 <button type="button" id="menuRecurringTasksBtn">Recurring Tasks</button>
-                <button type="button" id="menuWorkoutLibraryBtn">Workouts</button>
                 <button type="button" id="menuWorkoutLogsBtn">Workout Logs</button>
-                <button type="button" id="menuInventoryRoomsBtn">Default Rooms</button>
+                <button type="button" id="menuWorkoutLibraryBtn">Workouts</button>
+                <button type="button" id="menuRecreateHobbiesBtn">Hobbies</button>
+                <button type="button" id="menuCalendarsBtn">Calendars</button>
               </div>
             </div>
             <div class="page-title-wrap" id="pageTitleWrap" hidden>
@@ -50,30 +52,26 @@
                 </button>
               </h1>
               <div class="page-title-menu" id="pageTitleMenu" hidden>
-                <button type="button" id="titleExercisePlanBtn">Exercise</button>
+                <button type="button" id="titleExercisePlanBtn">Sweat</button>
                 <button type="button" id="titleMealPlanBtn">Meal Plan</button>
-                <button type="button" id="titlePlanBtn">Calendar</button>
-                <button type="button" id="titleRecreateBtn">Sail</button>
+                <button type="button" id="titlePlanBtn">Schedule</button>
+                <button type="button" id="titleRecreateBtn">Recreate</button>
                 <button type="button" id="titleShopBtn">Shop</button>
-                <button type="button" id="titleInventoryBtn">Inventory</button>
-                <button type="button" id="titleToDoListBtn">To Do List</button>
-                <button type="button" id="titleWatchBtn">Watch List</button>
-                <button type="button" id="titleReadBtn">Reading List</button>
+                <button type="button" id="titleInventoryBtn">Stock</button>
+                <button type="button" id="titleToDoListBtn">To-Do</button>
+                <button type="button" id="titleWatchBtn">Watch</button>
+                <button type="button" id="titleReadBtn">Read</button>
               </div>
             </div>
           </div>
           <div class="account-tools">
             <div id="syncStatus" class="sync-status" aria-live="polite" hidden></div>
-            <button class="auth-profile-btn" id="authButton" type="button" title="Account" aria-label="Account" aria-expanded="false" aria-controls="authMenu">
+            <button class="auth-profile-btn" id="authButton" type="button" title="Account" aria-label="Account">
               <svg viewBox="0 0 32 32" aria-hidden="true">
                 <path d="M16 15.4c3.1 0 5.6-2.5 5.6-5.6S19.1 4.2 16 4.2s-5.6 2.5-5.6 5.6 2.5 5.6 5.6 5.6Z" />
                 <path d="M6.2 27.8c.8-5 4.9-8.7 9.8-8.7s9 3.7 9.8 8.7" />
               </svg>
             </button>
-            <div class="auth-menu" id="authMenu" hidden>
-              <span id="authStatus">Local storage</span>
-              <button class="secondary-btn" id="authMenuAction" type="button">Sign in</button>
-            </div>
           </div>
         </div>
         <div class="week-tools" hidden>
@@ -102,13 +100,13 @@
           <div class="home-center">
             <h2>Live</h2>
             <nav class="home-links" aria-label="App pages">
-              <button type="button" id="homeDoBtn">Do</button>
-              <button type="button" id="homeEatBtn">Eat</button>
-              <button type="button" id="homeInventoryBtn">Inventory</button>
-              <button type="button" id="homePlanBtn">Plan</button>
-              <button type="button" id="homePlayBtn">Play</button>
+              <button type="button" id="homeDoBtn">To-Do</button>
+              <button type="button" id="homeEatBtn">Meal Plan</button>
+              <button type="button" id="homeInventoryBtn">Stock</button>
+              <button type="button" id="homePlanBtn">Schedule</button>
+              <button type="button" id="homePlayBtn">Sweat</button>
               <button type="button" id="homeReadBtn">Read</button>
-              <button type="button" id="homeRecreateBtn">Sail</button>
+              <button type="button" id="homeRecreateBtn">Recreate</button>
               <button type="button" id="homeShopBtn">Shop</button>
               <button type="button" id="homeWatchBtn">Watch</button>
             </nav>
@@ -134,38 +132,28 @@
         <section class="planner-column do-column" id="shopMainPage" aria-label="Shop" hidden>
           <div class="shop-layout">
             <div class="shop-list-panel">
-              <div class="shop-panel-head">
-                <span class="shop-panel-title">Shopping List</span>
-                <button class="icon-btn" id="copyGroceriesBtn" title="Copy list" aria-label="Copy list">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h10v12H8z" /><path d="M6 16H4V4h12v2" /></svg>
-                </button>
-              </div>
-              <label class="grocery-week-picker">
-                Week
-                <select id="groceryWeekSelect"></select>
-              </label>
+              <div class="watch-category-bar" id="groceryStoreTabBar"></div>
               <form class="inline-form grocery-form" id="groceryForm">
-                <input id="groceryInput" list="grocerySuggestions" placeholder="Add item" />
-                <datalist id="grocerySuggestions"></datalist>
+                <input id="groceryInput" placeholder="Add item" autocomplete="off" />
                 <button class="icon-btn" title="Add item" aria-label="Add item">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
                 </button>
               </form>
               <div class="grocery-list" id="groceryList"></div>
             </div>
-            <div class="shop-receipts-panel">
-              <div class="shop-panel-head">
-                <span class="shop-panel-title">Receipts</span>
-                <button class="secondary-btn compact-btn" type="button" id="shopScanReceiptBtn">+ Scan</button>
-              </div>
-              <div id="shopReceiptsList"></div>
+            <div class="shop-page-actions">
+              <button class="secondary-btn" type="button" id="openShopReceiptsBtn">Receipts</button>
+              <button class="primary-btn icon-primary-btn" type="button" id="shopScanDirectBtn" title="Scan receipt" aria-label="Scan receipt">
+                <span aria-hidden="true">+</span>
+              </button>
+              <input class="visually-hidden" id="shopScanDirectInput" type="file" accept="image/*" capture="environment" />
             </div>
           </div>
         </section>
         <section class="planner-column do-column" id="inventoryMainPage" aria-label="Inventory" hidden>
           <div class="planner-grid" id="inventoryPlannerGrid"></div>
         </section>
-        <section class="planner-column do-column" id="recreateMainPage" aria-label="Sail" hidden>
+        <section class="planner-column do-column" id="recreateMainPage" aria-label="Recreate" hidden>
           <div class="planner-grid" id="recreatePlannerGrid"></div>
         </section>
         <section class="planner-column do-column" id="planMainPage" aria-label="Plan" hidden>
@@ -174,11 +162,11 @@
         <section class="planner-column settings-page" id="settingsMainPage" aria-label="Settings" hidden>
           <div class="settings-page-list">
             <section class="settings-page-section">
-              <button class="settings-section-toggle" type="button" id="generalSettingsBtn" aria-expanded="true" aria-controls="generalSettingsMenu">
+              <button class="settings-section-toggle" type="button" id="generalSettingsBtn" aria-expanded="false" aria-controls="generalSettingsMenu">
                 <span>General</span>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
               </button>
-              <div class="settings-page-body" id="generalSettingsMenu">
+              <div class="settings-page-body" id="generalSettingsMenu" hidden>
                 <fieldset class="theme-setting" aria-label="Display mode">
                   <legend>Display</legend>
                   <label>
@@ -196,7 +184,7 @@
                 </fieldset>
                 <div class="settings-action-grid">
                   <button type="button" id="openCalendarsBtn">Calendars</button>
-                  <button type="button" id="openWeeklyEmailBtn">Weekly Email</button>
+                  <button type="button" id="openWeeklyEmailBtn">Email</button>
                   <button type="button" id="openBackupHealthBtn">Backup Health</button>
                   <button type="button" id="openRestoreBackupBtn">Restore Backup</button>
                   <button type="button" id="openTrashBtn">Trash</button>
@@ -206,28 +194,28 @@
             </section>
 
             <section class="settings-page-section">
-              <button class="settings-section-toggle" type="button" id="eatSettingsBtn" aria-expanded="true" aria-controls="eatSettingsMenu">
-                <span>Eat</span>
+              <button class="settings-section-toggle" type="button" id="eatSettingsBtn" aria-expanded="false" aria-controls="eatSettingsMenu">
+                <span>Meal Plan</span>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
               </button>
-              <div class="settings-page-body" id="eatSettingsMenu">
+              <div class="settings-page-body" id="eatSettingsMenu" hidden>
                 <div class="settings-action-grid">
                   <button type="button" id="openAutoRulesBtn">Auto-Fill Rules</button>
-                  <button type="button" id="openTagsBtn">Tags</button>
+                  <button type="button" id="openTagsBtn">Recipe Tags</button>
                   <button type="button" id="openGroceryLibraryBtn">Grocery Items</button>
                   <button type="button" id="openIngredientOptionsBtn">Ingredient Options</button>
-                  <button type="button" id="openFoodHealthSettingsBtn">Nutrition Settings</button>
-                  <button type="button" id="openMealPlanSettingsBtn">Meal Plan Settings</button>
+                  <button type="button" id="openFoodHealthSettingsBtn">Nutrition</button>
+                  <button type="button" id="openMealPlanSettingsBtn">Meals</button>
                 </div>
               </div>
             </section>
 
             <section class="settings-page-section">
-              <button class="settings-section-toggle" type="button" id="doSettingsBtn" aria-expanded="true" aria-controls="doSettingsMenu">
-                <span>Do</span>
+              <button class="settings-section-toggle" type="button" id="doSettingsBtn" aria-expanded="false" aria-controls="doSettingsMenu">
+                <span>To-Do</span>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
               </button>
-              <div class="settings-page-body" id="doSettingsMenu">
+              <div class="settings-page-body" id="doSettingsMenu" hidden>
                 <div class="settings-action-grid">
                   <button type="button" id="openRecurringTasksBtn">Recurring Tasks</button>
                 </div>
@@ -235,11 +223,11 @@
             </section>
 
             <section class="settings-page-section">
-              <button class="settings-section-toggle" type="button" id="playSettingsBtn" aria-expanded="true" aria-controls="playSettingsMenu">
-                <span>Play</span>
+              <button class="settings-section-toggle" type="button" id="playSettingsBtn" aria-expanded="false" aria-controls="playSettingsMenu">
+                <span>Sweat</span>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
               </button>
-              <div class="settings-page-body" id="playSettingsMenu">
+              <div class="settings-page-body" id="playSettingsMenu" hidden>
                 <div class="settings-action-grid">
                   <button type="button" id="openWorkoutLibraryBtn">Workouts</button>
                   <button type="button" id="openWorkoutLogsBtn">Workout Logs</button>
@@ -249,11 +237,19 @@
             </section>
 
             <section class="settings-page-section">
-              <button class="settings-section-toggle" type="button" id="watchSettingsBtn" aria-expanded="true" aria-controls="watchSettingsMenu">
+              <button class="settings-section-toggle" type="button" id="watchSettingsBtn" aria-expanded="false" aria-controls="watchSettingsMenu">
                 <span>Watch</span>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
               </button>
-              <div class="settings-page-body" id="watchSettingsMenu"></div>
+              <div class="settings-page-body" id="watchSettingsMenu" hidden></div>
+            </section>
+
+            <section class="settings-page-section" id="groupSettingsSection">
+              <button class="settings-section-toggle" type="button" id="groupSettingsBtn" aria-expanded="false" aria-controls="groupSettingsMenu">
+                <span>Household</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+              </button>
+              <div class="settings-page-body" id="groupSettingsMenu" hidden></div>
             </section>
           </div>
         </section>
@@ -262,7 +258,10 @@
       <dialog class="recipe-dialog auth-dialog context-settings-dialog" id="contextSettingsDialog">
         <div class="recipe-form">
           <div class="dialog-head">
-            <div>
+            <div class="dialog-head-title-row">
+              <button class="icon-btn context-settings-back-btn" id="contextSettingsBackBtn" type="button" title="Back" aria-label="Back" hidden>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+              </button>
               <h2 id="contextSettingsTitle">Settings</h2>
             </div>
             <button class="icon-btn" id="closeContextSettingsBtn" type="button" title="Close" aria-label="Close">
@@ -525,6 +524,15 @@
           </div>
         </div>
       </dialog>
+
+      <div id="restaurantInfoPopover" class="restaurant-info-popover" hidden>
+        <p class="restaurant-info-name" id="restaurantInfoPopoverName"></p>
+        <div class="restaurant-info-actions">
+          <a id="restaurantInfoDirectionsLink" class="restaurant-info-action-link" href="" target="_blank" rel="noopener noreferrer">Directions</a>
+          <a id="restaurantInfoMenuLink" class="restaurant-info-action-link" href="" target="_blank" rel="noopener noreferrer" hidden>Menu</a>
+          <button type="button" id="restaurantInfoRemoveBtn" class="restaurant-info-remove-btn">Remove</button>
+        </div>
+      </div>
 
       <dialog class="recipe-dialog auth-dialog" id="inventoryRoomsDialog">
         <div class="recipe-form">
@@ -1263,6 +1271,83 @@
       </div>
     </dialog>
 
+    <dialog class="recipe-dialog admin-data-dialog" id="adminUsersDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <h2>Users</h2>
+          <button class="icon-btn" id="closeAdminUsersBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div id="adminUsersBody" class="admin-data-body"></div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog admin-data-dialog" id="adminHouseholdsDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <h2>Households</h2>
+          <button class="icon-btn" id="closeAdminHouseholdsBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div id="adminHouseholdsBody" class="admin-data-body"></div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog" id="mealAutoFillDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <div>
+            <h2>Auto-Fill Week</h2>
+          </div>
+          <button class="icon-btn" id="closeMealAutoFillBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div class="meal-autofill-choices">
+          <button class="secondary-btn" type="button" id="mealAutoFillRulesBtn">Auto-fill rules</button>
+          <button class="primary-btn" type="button" id="mealAutoFillAiBtn">Auto-fill rules + AI</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="recipe-dialog profile-dialog" id="profileDialog">
+      <div class="recipe-form">
+        <div class="dialog-head">
+          <h2>Profile</h2>
+          <button class="icon-btn" id="closeProfileBtn" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div class="profile-dialog-body">
+          <div class="profile-avatar-row">
+            <div class="profile-avatar-large"></div>
+            <div class="profile-identity">
+              <p id="profileEmailDisplay"></p>
+            </div>
+          </div>
+          <label class="profile-field-label">
+            Name
+            <input type="text" id="profileNameInput" class="config-input" autocomplete="off" placeholder="Your name" />
+          </label>
+          <label class="profile-field-label">
+            Birthday
+            <input type="date" id="profileDobInput" class="config-input" />
+          </label>
+        </div>
+        <div class="dialog-actions">
+          <div>
+            <button class="secondary-btn" type="button" id="profileLogOutBtn" hidden>Log out</button>
+            <button class="secondary-btn" type="button" id="profileLogInBtn">Log in</button>
+          </div>
+          <div>
+            <button class="primary-btn" type="button" id="saveProfileBtn">Save</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
     <dialog class="recipe-dialog auth-dialog" id="tagsDialog">
       <div class="recipe-form">
         <div class="dialog-head">
@@ -1612,6 +1697,20 @@
       </div>
     </dialog>
 
+    <dialog class="page-dialog" id="shopReceiptsDialog">
+      <section class="panel app-page-panel shop-receipts-page" aria-label="Receipts">
+        <div class="panel-head">
+          <div class="section-heading">
+            <h2>Receipts</h2>
+          </div>
+          <button class="icon-btn" type="button" id="closeShopReceiptsBtn" title="Close Receipts" aria-label="Close Receipts">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div id="shopReceiptsList"></div>
+      </section>
+    </dialog>
+
     <dialog class="recipe-dialog auth-dialog" id="ingredientOptionsDialog">
       <div class="recipe-form">
         <div class="dialog-head">
@@ -1786,7 +1885,7 @@
       <div class="recipe-form">
         <div class="dialog-head">
           <div>
-            <h2>Weekly Email</h2>
+            <h2>Email</h2>
           </div>
           <button class="icon-btn" id="closeWeeklyEmailBtn" type="button" title="Close" aria-label="Close">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
@@ -1795,6 +1894,34 @@
         <div class="weekly-email-body">
           <div id="weeklyEmailSetup" class="weekly-email-setup" hidden>
             <p class="weekly-email-setup-msg"></p>
+          </div>
+          <div id="emailScheduleSection" class="email-schedule-section">
+            <label class="email-schedule-toggle-label">
+              <input type="checkbox" id="emailScheduleEnabled" />
+              Schedule automatic sends
+            </label>
+            <div id="emailScheduleDetails" class="email-schedule-details" hidden>
+              <div class="email-schedule-days-row">
+                <span class="email-schedule-field-label">Days</span>
+                <div class="email-schedule-day-checkboxes">
+                  <label><input type="checkbox" class="email-schedule-day" value="sun" />Sun</label>
+                  <label><input type="checkbox" class="email-schedule-day" value="mon" />Mon</label>
+                  <label><input type="checkbox" class="email-schedule-day" value="tue" />Tue</label>
+                  <label><input type="checkbox" class="email-schedule-day" value="wed" />Wed</label>
+                  <label><input type="checkbox" class="email-schedule-day" value="thu" />Thu</label>
+                  <label><input type="checkbox" class="email-schedule-day" value="fri" />Fri</label>
+                  <label><input type="checkbox" class="email-schedule-day" value="sat" />Sat</label>
+                </div>
+              </div>
+              <div class="email-schedule-time-row">
+                <label class="email-schedule-field-label" for="emailScheduleTime">Time</label>
+                <input type="time" id="emailScheduleTime" step="900" />
+                <label class="email-schedule-field-label" for="emailScheduleTimezone">Timezone</label>
+                <select id="emailScheduleTimezone" class="email-schedule-tz-select">
+                  <option value="">Detecting…</option>
+                </select>
+              </div>
+            </div>
           </div>
           <div class="weekly-email-notes-row">
             <label class="weekly-email-notes-label" for="weeklyEmailNotes">Notes for this email <span class="muted-label">(one-time context, not saved)</span></label>
@@ -1822,7 +1949,7 @@
       <div class="recipe-form">
         <div class="dialog-head">
           <div>
-            <p class="muted-label">Weekly email</p>
+            <p class="muted-label">Email</p>
             <h2>Tune preferences</h2>
           </div>
           <button class="icon-btn" id="closeEmailInterviewBtn" type="button" title="Close" aria-label="Close">
@@ -1943,6 +2070,27 @@
             <button class="secondary-btn" type="button" id="cancelAuthBtn">Cancel</button>
             <button class="primary-btn" id="sendLoginBtn" value="default">Send sign-in link</button>
           </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="groupSetupDialog" class="recipe-dialog auth-dialog">
+      <form class="recipe-form" id="groupSetupForm">
+        <div class="dialog-head">
+          <div>
+            <p class="muted-label">Family setup</p>
+            <h2 data-setup-title>Welcome to Live</h2>
+          </div>
+        </div>
+        <p style="margin-bottom:12px;" data-setup-desc>Enter your name to set up your group.</p>
+        <label>
+          Your name
+          <input type="text" data-setup-name placeholder="First name" autocomplete="given-name" required />
+        </label>
+        <p class="import-status" data-setup-error></p>
+        <div class="dialog-actions">
+          <span></span>
+          <button class="primary-btn" type="submit" data-setup-submit>Get Started</button>
         </div>
       </form>
     </dialog>
@@ -2130,6 +2278,6 @@
     <script src="./meal-plan-servings.js?v=meal-plan-servings-1"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./supabase-config.js?v=auth-deploy-1"></script>
-    <script src="./app.js?v=food-health-1"></script>
+    <script src="./app.js?v=food-health-9"></script>
   </body>
 </html>

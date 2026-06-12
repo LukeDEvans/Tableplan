@@ -116,6 +116,10 @@ const server = http.createServer(async (request, response) => {
       await handleBackup(request, response);
       return;
     }
+    if (url.pathname === "/api/admin-data") {
+      await handleNetlifyFunction("./netlify/functions/admin-data", request, response);
+      return;
+    }
 
     await serveStatic(url.pathname, request, response);
   } catch (error) {
@@ -1158,6 +1162,22 @@ async function serveStatic(pathname, request, response) {
   });
   if (request.method !== "HEAD") response.end(file);
   else response.end();
+}
+
+async function handleNetlifyFunction(modulePath, request, response) {
+  const fn = require(modulePath);
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  const body = Buffer.concat(chunks).toString();
+  const event = {
+    httpMethod: request.method,
+    headers: request.headers,
+    body,
+    queryStringParameters: {}
+  };
+  const result = await fn.handler(event);
+  response.writeHead(result.statusCode, result.headers || { "content-type": "application/json; charset=utf-8" });
+  response.end(result.body);
 }
 
 function sendJson(response, status, body) {

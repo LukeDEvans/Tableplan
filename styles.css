@@ -582,7 +582,8 @@ h3 {
 }
 
 .week-tools.today-mode .prep-date-range,
-.week-tools.plan-mode .prep-date-range {
+.week-tools.plan-mode .prep-date-range,
+.week-tools.shop-mode .prep-date-range {
   pointer-events: none;
   cursor: default;
 }
@@ -678,6 +679,67 @@ h3 {
 .auth-menu .secondary-btn {
   justify-content: center;
   width: 100%;
+}
+
+.profile-dialog {
+  width: min(360px, calc(100vw - 28px));
+}
+
+.profile-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 8px 0 4px;
+}
+
+.profile-avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+.profile-avatar-large {
+  width: 54px;
+  height: 54px;
+  min-width: 54px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 25%, rgba(255, 255, 255, 0.26), transparent 42%),
+    var(--accent);
+  color: #fffaf0;
+  display: grid;
+  place-items: center;
+  font-size: 1.2rem;
+  font-weight: 850;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.profile-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+#profileEmailDisplay {
+  margin: 0;
+  font-size: 0.82rem;
+  color: color-mix(in srgb, var(--ink) 55%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profile-field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--ink) 55%, transparent);
 }
 
 .prep-window-copy {
@@ -1097,6 +1159,11 @@ textarea {
   stroke: currentColor;
 }
 
+[data-open-meal-autofill] .fast-forward-icon {
+  width: 20px;
+  height: 20px;
+}
+
 .collapse-btn svg {
   transition: transform 0.18s ease;
 }
@@ -1444,14 +1511,9 @@ select:focus {
 
 .location-sharing-setting {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 8px;
   margin: 0 0 6px;
-  padding: 8px;
-  border: 1px solid color-mix(in srgb, var(--blue) 48%, var(--line));
-  background: var(--surface-strong);
 }
 
 .location-sharing-setting > span {
@@ -1623,11 +1685,79 @@ select:focus {
   display: none;
 }
 
+.settings-subheading {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 14px 0 6px;
+}
+
+.settings-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+
+.settings-toggle-row input[type="checkbox"] {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
+.dialog-head-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dialog-head-title-row h2 { margin: 0; }
+.context-settings-back-btn { flex-shrink: 0; }
+
+.family-members-inline-section { margin-bottom: 4px; }
+.family-members-inline-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+.family-group-section { margin-top: 18px; padding-top: 14px; border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); }
+
+.location-services-hint { margin: 6px 0 0; font-size: 0.82rem; color: var(--muted); }
+
+.group-members-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 4px;
+}
+
+.group-member-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+}
+
+.group-invite-form {
+  margin-top: 8px;
+}
+
+.group-page-access {
+  margin-top: 4px;
+}
+
+.group-page-access .settings-subheading {
+  margin-bottom: 4px;
+}
+
+.group-page-access-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0 8px;
+}
+
 .settings-action-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 8px;
 }
+
+.settings-admin-section { margin-top: 18px; padding-top: 14px; border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); }
 
 .settings-action-grid button {
   min-height: 42px;
@@ -1824,29 +1954,33 @@ select:focus {
 }
 
 .day-tabs {
-  display: grid;
-  grid-template-columns: repeat(8, minmax(64px, 1fr));
-  gap: 6px;
+  display: flex;
   overflow-x: auto;
-  padding-bottom: 2px;
-  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
   background: transparent;
+  position: relative;
 }
 
 .day-tab {
-  display: grid;
-  justify-items: center;
-  align-content: center;
-  min-width: 0;
-  min-height: 58px;
-  padding: 6px 5px;
-  border: 1px solid color-mix(in srgb, var(--sun) 48%, var(--line));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--sun-pale) 76%, #ffffff);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-width: 40px;
+  min-height: 54px;
+  padding: 6px 4px;
+  border: none;
+  border-radius: 8px 8px 0 0;
+  border-bottom: 2px solid transparent;
+  background: none;
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 850;
   line-height: 1.15;
+  cursor: pointer;
+  margin-bottom: -1px;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
 
 .day-tab-day,
@@ -1869,17 +2003,19 @@ select:focus {
   display: none;
 }
 
+.day-tab:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
 .day-tab.is-active {
-  border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
-  background: color-mix(in srgb, var(--accent-soft) 82%, #ffffff);
   color: var(--accent-dark);
-  box-shadow: inset 0 3px 0 var(--accent);
+  background: none;
 }
 
 .day-tab.has-synced-calendar:not(.is-active) {
-  background: var(--calendar-tab-background, #e5e9ff);
-  border-color: var(--calendar-tab-border, #c2ccff);
   color: var(--calendar-tab-ink, #243178);
+  border-bottom-color: var(--calendar-tab-border, #c2ccff);
 }
 
 .day-tab.has-synced-calendar:not(.is-active) .day-tab-date {
@@ -1891,9 +2027,8 @@ select:focus {
 }
 
 .day-tab.meal-day-drop-over {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent-soft) 78%, #ffffff);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 26%, transparent);
+  border-bottom-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 60%, transparent);
 }
 
 .day-event-list {
@@ -2578,8 +2713,7 @@ select:focus {
 }
 
 .special-meal-label-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  display: flex;
   align-items: center;
   gap: 5px;
   min-height: 36px;
@@ -2593,6 +2727,8 @@ select:focus {
 }
 
 .special-meal-card input {
+  flex: 1;
+  min-width: 0;
   min-height: 28px;
   padding: 0;
   border: 0;
@@ -2652,22 +2788,108 @@ select:focus {
 }
 .meal-restaurant-unlink-btn:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 8%, transparent); }
 
-.meal-restaurant-link-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.meal-restaurant-pin-btn {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
   background: transparent;
   border: none;
-  color: color-mix(in srgb, var(--ink) 40%, transparent);
-  font-size: 0.73rem;
+  color: var(--accent-dark);
   cursor: pointer;
-  padding: 3px 0 6px;
-  border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
-  width: 100%;
-  text-align: left;
-  transition: color 0.1s;
+  transition: background 0.12s;
 }
-.meal-restaurant-link-btn:hover { color: var(--accent-dark); }
+.meal-restaurant-pin-btn svg {
+  width: 16px;
+  height: 16px;
+}
+.meal-restaurant-pin-btn:hover {
+  background: var(--accent-soft);
+}
+
+.meal-restaurant-name-btn {
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  padding: 1px 8px;
+  text-align: left;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--accent-dark);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.12s;
+}
+.meal-restaurant-name-btn:hover {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.restaurant-info-popover {
+  position: fixed;
+  z-index: 900;
+  background: var(--surface-strong);
+  border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  padding: 12px 12px 8px;
+  min-width: 160px;
+  max-width: 240px;
+}
+.restaurant-info-name {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0 0 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.restaurant-info-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.restaurant-info-action-link {
+  display: block;
+  padding: 7px 12px;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--accent-dark);
+  text-decoration: none;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  text-align: center;
+  transition: background 0.12s;
+}
+.restaurant-info-action-link:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.restaurant-info-remove-btn {
+  display: block;
+  width: 100%;
+  margin-top: 2px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.12s, color 0.12s;
+}
+.restaurant-info-remove-btn:hover {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink);
+}
 
 .custom-meal-link {
   border-color: var(--line);
@@ -3354,7 +3576,6 @@ select:focus {
 }
 
 #doPlannerGrid .day-tabs {
-  grid-template-columns: repeat(7, 1fr);
   overflow-x: visible;
 }
 
@@ -3688,26 +3909,35 @@ select:focus {
 
 .workout-log-tabs {
   display: flex;
-  gap: 7px;
+  gap: 0;
   overflow-x: auto;
-  padding-bottom: 2px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  position: relative;
 }
 
 .workout-log-tab {
   flex: 0 0 auto;
-  padding: 8px 12px;
-  border: 1px solid color-mix(in srgb, var(--sun) 52%, #ffffff);
-  border-radius: 999px;
-  background: rgba(255, 253, 246, 0.82);
-  color: var(--ink);
-  font-weight: 850;
+  padding: 7px 14px;
+  border: none;
+  border-radius: 8px 8px 0 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 600;
   cursor: pointer;
+  margin-bottom: -1px;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.workout-log-tab:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
 }
 
 .workout-log-tab.is-active {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent-soft) 62%, #ffffff);
   color: var(--accent-dark);
+  background: none;
 }
 
 .workout-log-tab-panel {
@@ -4698,8 +4928,76 @@ textarea {
   width: min(480px, calc(100vw - 28px));
 }
 
+.admin-data-dialog {
+  width: min(720px, calc(100vw - 28px));
+}
+
+.admin-data-body {
+  overflow-x: auto;
+  padding: 4px 0;
+}
+
+.admin-data-loading {
+  padding: 24px 0;
+  text-align: center;
+  color: color-mix(in srgb, var(--ink) 45%, transparent);
+  font-size: 0.9rem;
+}
+
+.admin-data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.admin-data-table th {
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, var(--ink) 50%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  white-space: nowrap;
+}
+
+.admin-data-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink);
+  vertical-align: middle;
+}
+
+.admin-data-table tr:last-child td {
+  border-bottom: none;
+}
+
+.admin-id-cell {
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: color-mix(in srgb, var(--ink) 60%, transparent);
+  white-space: nowrap;
+}
+
 .auto-rules-dialog {
   width: min(1120px, calc(100vw - 28px));
+}
+
+#mealAutoFillDialog {
+  width: min(320px, calc(100vw - 28px));
+}
+
+.meal-autofill-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 0 4px;
+}
+
+.meal-autofill-choices .secondary-btn,
+.meal-autofill-choices .primary-btn {
+  justify-content: center;
 }
 
 .auto-rules-dialog .recipe-form {
@@ -5274,24 +5572,6 @@ textarea {
   outline: 0;
 }
 
-.grocery-week-picker {
-  display: grid;
-  gap: 5px;
-  margin-bottom: 10px;
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 850;
-}
-
-.grocery-week-picker select {
-  min-height: 38px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface-strong);
-  color: var(--ink);
-  font-weight: 800;
-}
 
 .grocery-review-card {
   display: grid;
@@ -5625,6 +5905,76 @@ textarea {
   width: 11px;
   height: 11px;
   accent-color: var(--accent);
+}
+
+/* ─── Page Visibility Toggle List ───────────────────────────────────────────── */
+.page-vis-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface-strong);
+}
+
+.page-vis-row {
+  position: relative;
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0 82px 0 18px;
+  min-height: 54px;
+  line-height: 54px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--line);
+  transition: background 0.12s;
+}
+
+.page-vis-row:last-child { border-bottom: none; }
+
+.page-vis-row:active { background: color-mix(in srgb, var(--accent-soft) 60%, transparent); }
+
+.page-vis-name {
+  display: inline;
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--ink);
+  user-select: none;
+}
+
+.page-vis-cb {
+  display: none;
+}
+
+.page-vis-toggle {
+  position: absolute;
+  top: 50%;
+  right: 18px;
+  transform: translateY(-50%);
+  width: 50px;
+  height: 30px;
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--ink) 18%, transparent);
+  transition: background 0.2s ease;
+}
+
+.page-vis-toggle::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  transition: transform 0.2s ease;
+}
+
+.page-vis-cb:checked + .page-vis-toggle {
+  background: var(--accent);
+}
+
+.page-vis-cb:checked + .page-vis-toggle::after {
+  transform: translateX(20px);
 }
 
 .recipe-form .tag-choice {
@@ -6485,7 +6835,6 @@ textarea {
 
 body[data-theme="dark"] .panel,
 body[data-theme="dark"] .day-head,
-body[data-theme="dark"] .day-tab,
 body[data-theme="dark"] .folder-context-menu,
 body[data-theme="dark"] .app-menu,
 body[data-theme="dark"] .week-jump-menu,
@@ -6580,7 +6929,6 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
 @media (prefers-color-scheme: dark) {
   body[data-theme="auto"] .panel,
   body[data-theme="auto"] .day-head,
-  body[data-theme="auto"] .day-tab,
   body[data-theme="auto"] .folder-context-menu,
   body[data-theme="auto"] .app-menu,
   body[data-theme="auto"] .week-jump-menu,
@@ -6708,6 +7056,17 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
     display: block;
   }
 
+}
+
+.do-task-swipe-actions,
+.workout-pool-swipe-actions,
+.grocery-swipe-actions {
+  display: none;
+}
+
+.grocery-item-wrap {
+  position: relative;
+  overflow: hidden;
 }
 
 @media (max-width: 560px) {
@@ -6949,8 +7308,6 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
   }
 
   .day-tabs {
-    grid-template-columns: repeat(8, minmax(0, 1fr));
-    gap: 4px;
     overflow-x: visible;
   }
 
@@ -6959,9 +7316,9 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
   }
 
   .day-tab {
-    min-height: 40px;
+    min-height: 44px;
     padding: 5px 2px;
-    border-radius: 6px;
+    border-radius: 6px 6px 0 0;
   }
 
   .day-tab .day-tab-full,
@@ -7116,6 +7473,47 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
     transform: translateX(0);
   }
 
+  .grocery-item-wrap label {
+    transition: transform 0.18s ease;
+  }
+
+  .grocery-item-wrap.is-swiped label {
+    transform: translateX(-72px);
+  }
+
+  .grocery-swipe-actions {
+    position: absolute;
+    inset: 0 0 0 auto;
+    display: grid;
+    grid-template-rows: 1fr 1fr;
+    width: 72px;
+    transform: translateX(100%);
+    transition: transform 0.18s ease;
+  }
+
+  .grocery-item-wrap.is-swiped .grocery-swipe-actions {
+    transform: translateX(0);
+  }
+
+  .grocery-swipe-btn {
+    display: grid;
+    place-items: center;
+    font-size: 0.72rem;
+    font-weight: 900;
+    color: #fff;
+    min-height: 0;
+    padding: 0;
+    border-radius: 0;
+  }
+
+  .grocery-swipe-edit {
+    background: var(--accent);
+  }
+
+  .grocery-swipe-delete {
+    background: var(--tomato);
+  }
+
   .toolbar-actions,
   .dialog-actions > div {
     display: grid;
@@ -7190,44 +7588,50 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
 .watch-category-tabs {
   display: flex;
   flex: 1;
-  gap: 7px;
+  gap: 0;
   overflow-x: auto;
-  padding-bottom: 2px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  position: relative;
 }
 
 .watch-category-tab {
   flex: 0 0 auto;
-  padding: 7px 16px;
-  border: 1px solid color-mix(in srgb, var(--sun) 52%, var(--line));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--sun-pale) 76%, #ffffff);
+  padding: 7px 14px;
+  border: none;
+  border-radius: 8px 8px 0 0;
+  border-bottom: 2px solid transparent;
+  background: none;
   color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 850;
+  font-size: 0.82rem;
+  font-weight: 600;
   line-height: 1.2;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
+  margin-bottom: -1px;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.watch-category-tab:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
 }
 
 .watch-category-tab.is-active {
-  border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
-  background: color-mix(in srgb, var(--accent-soft) 82%, #ffffff);
   color: var(--accent-dark);
-  box-shadow: inset 0 3px 0 var(--accent);
+  background: none;
 }
 
 .watch-category-tab.watch-drop-over {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent-soft) 70%, #ffffff);
   color: var(--accent-dark);
-  box-shadow: inset 0 3px 0 var(--accent);
+  border-bottom-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 60%, transparent);
 }
 
 .watch-category-add-tab {
   color: var(--muted);
-  font-size: 1rem;
+  font-size: 1.1rem;
   padding: 4px 12px;
+  border-radius: 0;
 }
 
 .watch-category-new-form {
@@ -8254,6 +8658,7 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
   padding: 10px 16px 0;
   border-bottom: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
   flex-shrink: 0;
+  position: relative;
 }
 
 .recreate-topic-tab {
@@ -8278,8 +8683,26 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
 
 .recreate-topic-tab.is-active {
   color: var(--accent-dark);
-  border-bottom-color: var(--accent);
   background: none;
+}
+
+/* Sliding active-tab indicator shared by all tab bars */
+.day-tabs::after,
+.watch-category-tabs::after,
+.workout-log-tabs::after,
+.recreate-topic-tabs::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: var(--tab-ind-l, 0px);
+  width: var(--tab-ind-w, 0px);
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  pointer-events: none;
+  z-index: 1;
+  transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              width 0.22s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .recreate-topic-body {
@@ -9017,6 +9440,16 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
 .weekly-email-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; padding: 32px; color: var(--text-muted, #888); text-align: center; font-size: 0.95rem; }
 .weekly-email-actions-right { display: flex; gap: 8px; }
 /* ─── End Weekly Email Dialog ────────────────────────────────────────────────── */
+.email-schedule-section { padding: 10px 0 8px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); margin-bottom: 10px; }
+.email-schedule-toggle-label { display: flex; align-items: center; gap: 8px; font-size: 0.875rem; font-weight: 600; cursor: pointer; }
+.email-schedule-details { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.email-schedule-days-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.email-schedule-day-checkboxes { display: flex; gap: 6px; flex-wrap: wrap; }
+.email-schedule-day-checkboxes label { display: flex; align-items: center; gap: 3px; font-size: 0.82rem; cursor: pointer; }
+.email-schedule-time-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.email-schedule-field-label { font-size: 0.82rem; font-weight: 600; white-space: nowrap; }
+#emailScheduleTime { font-size: 0.875rem; padding: 4px 6px; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); background: var(--surface, #fff); font-family: inherit; }
+.email-schedule-tz-select { font-size: 0.82rem; padding: 4px 6px; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); background: var(--surface, #fff); font-family: inherit; max-width: 220px; }
 .weekly-email-notes-row { display: flex; flex-direction: column; gap: 4px; padding-bottom: 10px; }
 .weekly-email-notes-label { font-size: 0.85rem; font-weight: 600; }
 .weekly-email-notes { width: 100%; box-sizing: border-box; resize: vertical; font-size: 0.875rem; padding: 8px 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); background: var(--surface, #fff); font-family: inherit; }
@@ -9118,6 +9551,18 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
 .add-task-dialog .dialog-actions { flex-shrink: 0; }
 
 .config-dialog-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+/* Head of Household */
+.config-input-readonly { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+.hoh-member-toggle-label { display: flex; align-items: center; gap: 5px; cursor: pointer; flex-shrink: 0; }
+.hoh-member-cb:disabled ~ .hoh-member-toggle { opacity: 0.45; cursor: not-allowed; }
+.hoh-member-cb:disabled ~ .hoh-toggle-text { opacity: 0.45; }
+.hoh-member-toggle-label:has(.hoh-member-cb:disabled) { cursor: not-allowed; }
+.hoh-member-cb { display: none; }
+.hoh-member-toggle { position: relative; width: 34px; height: 20px; border-radius: 10px; background: color-mix(in srgb, var(--ink) 18%, transparent); transition: background 0.2s; flex-shrink: 0; }
+.hoh-member-toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.2); transition: transform 0.2s; }
+.hoh-member-cb:checked + .hoh-member-toggle { background: var(--accent); }
+.hoh-member-cb:checked + .hoh-member-toggle::after { transform: translateX(14px); }
+.hoh-toggle-text { font-size: 0.78rem; font-weight: 600; color: var(--muted); }
 .config-dialog-body h3 { margin: 0; font-size: 0.9rem; font-weight: 600; color: var(--ink); }
 .config-list { display: flex; flex-direction: column; gap: 8px; }
 .config-row { display: flex; align-items: center; gap: 8px; }
@@ -9192,30 +9637,44 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
 #shopMainPage { overflow-y: auto; }
 
 .shop-layout {
-  display: grid;
-  grid-template-columns: 1fr 300px;
-  gap: 0;
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
 }
 
-@media (max-width: 700px) {
-  .shop-layout { grid-template-columns: 1fr; }
-}
-
-.shop-list-panel,
-.shop-receipts-panel {
+.shop-list-panel {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
   padding: 16px;
   gap: 10px;
+  flex: 1;
+  min-height: 0;
 }
 
-.shop-receipts-panel {
-  border-left: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
-  background: color-mix(in srgb, var(--ink) 2%, transparent);
+#groceryStoreTabBar:not(:empty) {
+  margin-bottom: 2px;
 }
+
+.shop-page-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  flex-shrink: 0;
+}
+
+.shop-receipts-page {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
 
 .shop-panel-head {
   display: flex;
@@ -9258,6 +9717,12 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
 
 .shop-receipt-meta span::after { content: "·"; margin-left: 6px; }
 .shop-receipt-meta span:last-child::after { content: ""; margin-left: 0; }
+
+.grocery-plan-empty {
+  font-size: 0.82rem;
+  color: var(--muted);
+  padding: 12px 0 4px;
+}
 
 /* ── Inventory page ─────────────────────────────────────────────── */
 #inventoryMainPage { overflow-y: auto; }
@@ -9534,4 +9999,228 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
   .inventory-add-room-card {
     width: 100%;
   }
+}
+
+/* ── Piano panel ─────────────────────────────────────────── */
+
+.piano-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  max-width: 480px;
+  margin: 0 auto;
+  padding-bottom: 24px;
+}
+
+/* Metronome */
+
+.piano-metronome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  background: color-mix(in srgb, var(--accent-soft) 20%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  border-radius: 20px;
+  padding: 24px 20px 20px;
+}
+
+.metronome-visual {
+  height: 148px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.metronome-pendulum-svg {
+  width: 100px;
+  height: 148px;
+  overflow: visible;
+}
+
+.metronome-needle-group {
+  transform-origin: 0px 2px;
+  transition-property: transform;
+  transition-timing-function: ease-in-out;
+  transform: rotate(0deg);
+}
+
+.metronome-rod {
+  stroke: var(--ink);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.metronome-bob {
+  fill: var(--accent);
+  transition: fill 0.1s;
+}
+
+.metronome-tip-dot {
+  fill: var(--ink);
+}
+
+.metronome-pivot {
+  fill: var(--ink);
+}
+
+.metronome-base-tri {
+  fill: color-mix(in srgb, var(--ink) 22%, transparent);
+}
+
+.metronome-bpm-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.metronome-adj-btn {
+  font-size: 1.4rem;
+  font-weight: 700;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+.metronome-bpm-display {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.metronome-bpm-input {
+  width: 72px;
+  text-align: center;
+  font-size: 2.2rem;
+  font-weight: 700;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  padding: 0;
+  -moz-appearance: textfield;
+}
+
+.metronome-bpm-input::-webkit-outer-spin-button,
+.metronome-bpm-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+}
+
+.metronome-bpm-unit {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.metronome-slider {
+  width: 100%;
+  max-width: 280px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.metronome-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.metronome-play-btn {
+  min-width: 90px;
+}
+
+.is-active-toggle {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent-dark);
+}
+
+/* Piano songs */
+
+.piano-songs-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.piano-songs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.piano-songs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.piano-empty-state {
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding: 8px 0;
+}
+
+.piano-song-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: rgba(255, 253, 246, 0.6);
+  border: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.piano-song-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+
+.piano-song-title {
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.piano-song-title.is-learned {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.piano-song-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.piano-song-link,
+.piano-song-edit-btn,
+.piano-song-delete-btn {
+  width: 30px;
+  height: 30px;
+  min-height: 0;
+  padding: 0;
+  opacity: 0.5;
+  transition: opacity 0.15s;
+}
+
+.piano-song-link:hover,
+.piano-song-edit-btn:hover,
+.piano-song-delete-btn:hover {
+  opacity: 1;
+}
+
+.piano-song-delete-btn:hover {
+  color: var(--tomato, #e05252);
+}
+
+.piano-add-song-form {
+  margin-top: 4px;
 }
