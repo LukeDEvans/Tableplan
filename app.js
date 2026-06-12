@@ -141,6 +141,9 @@ let sharedStorageSaveTimer = null;
 let localBackupTimer = null;
 let activeSharedStorageProvider = null;
 let rowStorageReady = false;
+let lastCloudSnapshotAt = 0;
+const CLOUD_SNAPSHOT_INTERVAL_MS = 60 * 60 * 1000;
+const CLOUD_SNAPSHOT_KEEP = 25;
 let supabaseClient = null;
 let authSession = null;
 let userGroup = null;
@@ -837,6 +840,7 @@ const elements = {
   refreshBackupHealthBtn: document.querySelector("#refreshBackupHealthBtn"),
   doneBackupHealthBtn: document.querySelector("#doneBackupHealthBtn"),
   restoreDialog: document.querySelector("#restoreDialog"),
+  restoreCloudList: document.querySelector("#restoreCloudList"),
   restoreBackupList: document.querySelector("#restoreBackupList"),
   restoreFileLabel: document.querySelector("#restoreFileLabel"),
   restoreFileInput: document.querySelector("#restoreFileInput"),
@@ -3603,9 +3607,35 @@ async function writeStateToSharedStorage() {
   try {
     await activeSharedStorageProvider.write();
     updateSyncStatus("saved");
+    maybeWriteCloudSnapshot().catch(() => {});
   } catch (error) {
     updateSyncStatus("failed");
     throw error;
+  }
+}
+
+async function maybeWriteCloudSnapshot() {
+  if (!userGroup?.id || !authSession?.access_token) return;
+  if (Date.now() - lastCloudSnapshotAt < CLOUD_SNAPSHOT_INTERVAL_MS) return;
+  lastCloudSnapshotAt = Date.now();
+  const insertRes = await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_state_history`, {
+    method: "POST",
+    headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
+    body: JSON.stringify({ group_id: userGroup.id, state })
+  });
+  if (!insertRes.ok) return;
+  const listRes = await fetch(
+    `${supabaseBaseUrl()}/rest/v1/tableplan_state_history?group_id=eq.${encodeURIComponent(userGroup.id)}&select=id,created_at&order=created_at.desc`,
+    { headers: supabaseHeaders() }
+  );
+  if (!listRes.ok) return;
+  const rows = await listRes.json();
+  const toDelete = rows.slice(CLOUD_SNAPSHOT_KEEP).map(r => r.id);
+  if (toDelete.length) {
+    await fetch(
+      `${supabaseBaseUrl()}/rest/v1/tableplan_state_history?id=in.(${toDelete.join(",")})`,
+      { method: "DELETE", headers: supabaseHeaders() }
+    );
   }
 }
 
@@ -12295,10 +12325,11 @@ function closeRestoreDialog() {
 }
 
 async function loadRestoreBackupList() {
+  loadCloudBackupList();
   if (!canUseLocalBackend()) {
     elements.restoreBackupList.hidden = true;
     delete elements.restoreFileLabel.dataset.secondary;
-    elements.restorePreview.textContent = "Choose a backup JSON file above to preview what will be restored.";
+    elements.restorePreview.textContent = "Choose a backup above or upload a JSON file to preview what will be restored.";
     return;
   }
   elements.restoreBackupList.hidden = false;
@@ -12322,6 +12353,68 @@ async function loadRestoreBackupList() {
   }
 }
 
+async function loadCloudBackupList() {
+  if (!authSession?.access_token || !userGroup?.id) { elements.restoreCloudList.hidden = true; return; }
+  elements.restoreCloudList.hidden = false;
+  elements.restoreCloudList.innerHTML = `<p class="restore-backup-list-loading">Loading cloud backups…</p>`;
+  try {
+    const res = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/tableplan_state_history?group_id=eq.${encodeURIComponent(userGroup.id)}&select=id,created_at&order=created_at.desc`,
+      { headers: supabaseHeaders(), cache: "no-store" }
+    );
+    if (!res.ok) throw new Error(`Status ${res.status}`);
+    const rows = await res.json();
+    if (!rows.length) { elements.restoreCloudList.innerHTML = `<p class="restore-backup-list-empty">No cloud backups yet — one will be created on your next save.</p>`; return; }
+    elements.restoreCloudList.innerHTML = restoreCloudListTemplate(rows);
+    elements.restoreCloudList.querySelectorAll("[data-select-cloud-backup]").forEach((card) => {
+      card.addEventListener("click", () => selectCloudBackup(card.dataset.selectCloudBackup, card));
+    });
+  } catch (e) {
+    elements.restoreCloudList.innerHTML = `<p class="restore-backup-list-empty">Could not load cloud backups: ${escapeHtml(e.message)}</p>`;
+  }
+}
+
+function restoreCloudListTemplate(rows) {
+  return `
+    <p class="restore-backup-list-label">Cloud backups</p>
+    <div class="restore-backup-list">
+      ${rows.map((row) => {
+        const date = new Date(row.created_at);
+        const timeStr = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        const today = new Date(); today.setHours(0,0,0,0);
+        const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+        const dateDay = new Date(date); dateDay.setHours(0,0,0,0);
+        const dateStr = dateDay >= today ? `Today at ${timeStr}` : dateDay >= yesterday ? `Yesterday at ${timeStr}` : `${date.toLocaleDateString([], { month: "short", day: "numeric" })} at ${timeStr}`;
+        return `<button type="button" class="restore-backup-card" data-select-cloud-backup="${escapeHtml(row.id)}">
+          <span class="restore-backup-card-date">${escapeHtml(dateStr)}</span>
+          <span class="restore-backup-card-meta">Cloud</span>
+        </button>`;
+      }).join("")}
+    </div>
+  `;
+}
+
+async function selectCloudBackup(id, cardEl) {
+  elements.restoreCloudList.querySelectorAll(".restore-backup-card").forEach((c) => c.classList.remove("is-selected"));
+  elements.restoreBackupList?.querySelectorAll(".restore-backup-card").forEach((c) => c.classList.remove("is-selected"));
+  cardEl?.classList.add("is-selected");
+  pendingRestore = null;
+  elements.mergeRestoreBtn.disabled = true;
+  elements.restorePreview.textContent = "Loading backup…";
+  try {
+    const res = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/tableplan_state_history?id=eq.${encodeURIComponent(id)}&select=state,created_at`,
+      { headers: supabaseHeaders(), cache: "no-store" }
+    );
+    if (!res.ok) throw new Error("Could not load cloud backup.");
+    const [row] = await res.json();
+    if (!row) throw new Error("Backup not found.");
+    applyRestorePreview(row.state, `cloud-${id}`);
+  } catch (e) {
+    elements.restorePreview.textContent = `Could not load this backup: ${e.message}`;
+  }
+}
+
 function restoreBackupListTemplate(backups) {
   const now = Date.now();
   return `
@@ -12329,9 +12422,11 @@ function restoreBackupListTemplate(backups) {
     <div class="restore-backup-list">
       ${backups.map((backup) => {
         const date = new Date(backup.modifiedAt);
-        const diffDays = Math.floor((now - date) / 86400000);
         const timeStr = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-        const dateStr = diffDays === 0 ? `Today at ${timeStr}` : diffDays === 1 ? `Yesterday at ${timeStr}` : `${date.toLocaleDateString([], { month: "short", day: "numeric" })} at ${timeStr}`;
+        const today = new Date(); today.setHours(0,0,0,0);
+        const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+        const dateDay = new Date(date); dateDay.setHours(0,0,0,0);
+        const dateStr = dateDay >= today ? `Today at ${timeStr}` : dateDay >= yesterday ? `Yesterday at ${timeStr}` : `${date.toLocaleDateString([], { month: "short", day: "numeric" })} at ${timeStr}`;
         const isSafety = backup.fileName.startsWith("eat-safety-");
         const sizeKb = Math.round(backup.size / 1024);
         return `
@@ -12347,6 +12442,7 @@ function restoreBackupListTemplate(backups) {
 
 async function selectRestoreBackup(fileName, cardEl) {
   elements.restoreBackupList.querySelectorAll(".restore-backup-card").forEach((c) => c.classList.remove("is-selected"));
+  elements.restoreCloudList?.querySelectorAll(".restore-backup-card").forEach((c) => c.classList.remove("is-selected"));
   cardEl?.classList.add("is-selected");
   pendingRestore = null;
   elements.mergeRestoreBtn.disabled = true;

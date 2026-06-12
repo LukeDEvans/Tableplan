@@ -1,68 +1,44 @@
--- Append-only history for the account-wide Live state document.
--- Run once in the Supabase SQL editor.
+-- Rolling cloud backup history for each household.
+-- The app inserts at most once per hour and keeps the 25 most recent entries.
 
-create table if not exists public.tableplan_state_history (
-  version_id bigint generated always as identity primary key,
-  state_id text not null,
-  state jsonb not null,
-  original_updated_at timestamptz,
-  archived_at timestamptz not null default now()
+CREATE TABLE IF NOT EXISTS tableplan_state_history (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  group_id UUID NOT NULL,
+  state JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-alter table public.tableplan_state_history enable row level security;
+CREATE INDEX IF NOT EXISTS idx_state_history_group
+  ON tableplan_state_history (group_id, created_at DESC);
 
-revoke all on public.tableplan_state_history from anon;
-grant select on public.tableplan_state_history to authenticated;
+ALTER TABLE tableplan_state_history ENABLE ROW LEVEL SECURITY;
 
-drop policy if exists "Only Luke can read tableplan state history"
-on public.tableplan_state_history;
-
-create policy "Only Luke can read tableplan state history"
-on public.tableplan_state_history
-for select
-to authenticated
-using (
-  state_id = 'personal'
-  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com'
-);
-
-create or replace function public.archive_tableplan_state()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  if old.state is distinct from new.state then
-    insert into public.tableplan_state_history (
-      state_id,
-      state,
-      original_updated_at
+CREATE POLICY "Members can read group history"
+  ON tableplan_state_history FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM live_group_members
+      WHERE live_group_members.group_id = tableplan_state_history.group_id
+        AND live_group_members.user_id = auth.uid()
     )
-    values (
-      old.id,
-      old.state,
-      old.updated_at
-    );
+  );
 
-    delete from public.tableplan_state_history
-    where version_id in (
-      select version_id
-      from public.tableplan_state_history
-      where state_id = old.id
-      order by archived_at desc, version_id desc
-      offset 100
-    );
-  end if;
+CREATE POLICY "Members can insert group history"
+  ON tableplan_state_history FOR INSERT
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM live_group_members
+      WHERE live_group_members.group_id = tableplan_state_history.group_id
+        AND live_group_members.user_id = auth.uid()
+    )
+  );
 
-  return new;
-end;
-$$;
-
-drop trigger if exists archive_tableplan_state_before_update
-on public.tableplan_states;
-
-create trigger archive_tableplan_state_before_update
-before update on public.tableplan_states
-for each row
-execute function public.archive_tableplan_state();
+CREATE POLICY "Members can delete group history"
+  ON tableplan_state_history FOR DELETE
+  USING (
+    EXISTS (
+      SELECT 1 FROM live_group_members
+      WHERE live_group_members.group_id = tableplan_state_history.group_id
+        AND live_group_members.user_id = auth.uid()
+    )
+  );
