@@ -1382,6 +1382,9 @@ function closeDialogOnBackdropClick(event) {
 }
 
 async function initializeApp() {
+  registerServiceWorker();
+  window.addEventListener("online", handleCameOnline);
+  window.addEventListener("offline", () => updateSyncStatus("offline"));
   handleInviteUrlParameter();
   await initializeSupabaseAuth();
   if (authSession?.access_token) {
@@ -3609,8 +3612,31 @@ async function writeStateToSharedStorage() {
     updateSyncStatus("saved");
     maybeWriteCloudSnapshot().catch(() => {});
   } catch (error) {
-    updateSyncStatus("failed");
-    throw error;
+    if (!navigator.onLine) {
+      updateSyncStatus("offline");
+    } else {
+      updateSyncStatus("failed");
+      throw error;
+    }
+  }
+}
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.register("/sw.js").catch((e) => console.warn("SW registration failed:", e));
+}
+
+async function handleCameOnline() {
+  if (!canUseCloudStorage() || !authSession?.access_token || !userGroup?.id) return;
+  if (!activeSharedStorageProvider) {
+    activeSharedStorageProvider = { label: "Supabase", load: loadStateFromSupabase, write: writeStateToSupabase };
+  }
+  try {
+    await writeStateToSupabase();
+    sharedStorageReady = true;
+    updateSyncStatus("saved");
+  } catch (e) {
+    console.warn("[reconnect] flush failed:", e);
   }
 }
 
@@ -3646,12 +3672,11 @@ function updateSyncStatus(status) {
   window.clearTimeout(syncHideTimer);
   el.removeAttribute("hidden");
   el.dataset.status = status;
-  el.textContent = status === "saving" ? "Saving…" : status === "saved" ? "Saved" : "⚠ Data not saved to cloud";
+  el.textContent = status === "saving" ? "Saving…" : status === "saved" ? "Saved" : status === "offline" ? "Offline" : "⚠ Data not saved to cloud";
   if (status === "saved") {
     syncHideTimer = window.setTimeout(() => { el.setAttribute("hidden", ""); delete el.dataset.status; }, 2000);
   }
-  // "failed" intentionally has no hide timer — stays visible until the next successful save,
-  // so the user knows to keep the tab open until the warning clears.
+  // "failed" and "offline" have no hide timer — stay visible until next successful save.
 }
 
 function scheduleLocalBackup() {

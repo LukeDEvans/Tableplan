@@ -611,6 +611,7 @@ h3 {
 .sync-status[data-status="saving"] { color: var(--muted); }
 .sync-status[data-status="saved"] { color: var(--accent-dark); }
 .sync-status[data-status="failed"] { color: #c0392b; background: #fdecea; padding: 4px 10px; }
+.sync-status[data-status="offline"] { color: #92400E; background: #fef3c7; padding: 4px 10px; }
 
 .auth-profile-btn {
   display: grid;

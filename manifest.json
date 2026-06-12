@@ -1,0 +1,12 @@
+{
+  "name": "Live",
+  "short_name": "Live",
+  "description": "Personal life management",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFFDF6",
+  "theme_color": "#32B496",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
