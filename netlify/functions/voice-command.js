@@ -22,9 +22,10 @@ exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return jsonResponse(405, { error: "Method not allowed." });
 
   let body;
-  try { body = JSON.parse(event.body || "{}"); } catch { return jsonResponse(400, { error: "Invalid JSON." }); }
+  try { body = JSON.parse(event.body || "{}"); } catch { console.log("VOICE: invalid JSON", event.body); return jsonResponse(400, { error: "Invalid JSON." }); }
 
   const transcript = String(body.transcript || "").trim();
+  console.log("VOICE: transcript=", JSON.stringify(transcript), "householdId=", JSON.stringify(body.householdId), "secret=", body.secret ? "(set)" : "(missing)");
   if (!transcript) return jsonResponse(400, { error: "No transcript provided." });
 
   const householdId = String(body.householdId || "").trim();
@@ -33,10 +34,10 @@ exports.handler = async (event) => {
   const providedSecret = String(body.secret || "");
 
   const apiKey = (process.env.ANTHROPIC_API_KEY || "").trim();
-  if (!apiKey) return jsonResponse(503, { error: "ANTHROPIC_API_KEY not configured." });
+  if (!apiKey) { console.log("VOICE: missing ANTHROPIC_API_KEY"); return jsonResponse(503, { error: "ANTHROPIC_API_KEY not configured." }); }
 
   const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
-  if (!serviceKey) return jsonResponse(503, { error: "SUPABASE_SERVICE_ROLE_KEY not configured." });
+  if (!serviceKey) { console.log("VOICE: missing SUPABASE_SERVICE_ROLE_KEY"); return jsonResponse(503, { error: "SUPABASE_SERVICE_ROLE_KEY not configured." }); }
 
   // Compute today's day context
   const now = new Date();
@@ -63,11 +64,13 @@ exports.handler = async (event) => {
   try {
     await applyToSupabase(real, householdId, providedSecret, serviceKey, currentWeekKey);
   } catch (err) {
+    console.log("VOICE: applyToSupabase error:", err.message);
     if (err.message === "UNAUTHORIZED") return jsonResponse(401, { error: "Invalid passphrase." }, corsHeaders());
     return jsonResponse(500, { error: "Failed to update: " + err.message }, corsHeaders());
   }
 
   const confirmation = real.map((a) => describeAction(a)).join(". ");
+  console.log("VOICE: success:", confirmation);
   return jsonResponse(200, { message: confirmation + ".", actions: real }, corsHeaders());
 };
 
