@@ -160,6 +160,7 @@ let mealEntryClickTimer = null;
 let editingMealEntry = null;
 let suppressMealEntryClick = false;
 let copiedMealEntry = "";
+let copiedMealSlot = null;
 let editingFolderId = "";
 let folderMenuId = "";
 let draggedMealEntry = null;
@@ -865,6 +866,101 @@ applyThemeMode();
 migrateLegacyRecipeOrganization();
 render();
 bindEvents();
+function initTouchDragPolyfill() {
+  let pending = null; // { sourceEl, startX, startY, timer }
+  let active = null;  // { sourceEl, ghost, lastOver }
+
+  function makeDragEvent(type, { clientX = 0, clientY = 0 } = {}) {
+    try {
+      const dt = new DataTransfer();
+      return new DragEvent(type, { bubbles: true, cancelable: true, clientX, clientY, dataTransfer: dt });
+    } catch {
+      return new DragEvent(type, { bubbles: true, cancelable: true, clientX, clientY });
+    }
+  }
+
+  function elementUnder(x, y) {
+    active.ghost.style.visibility = "hidden";
+    const el = document.elementFromPoint(x, y);
+    active.ghost.style.visibility = "";
+    return el;
+  }
+
+  document.addEventListener("touchstart", (event) => {
+    if (active) return;
+    const sourceEl = event.target.closest("[draggable='true']");
+    if (!sourceEl) return;
+    const touch = event.touches[0];
+    const startX = touch.clientX;
+    const startY = touch.clientY;
+    const timer = setTimeout(() => {
+      pending = null;
+      const rect = sourceEl.getBoundingClientRect();
+      const ghost = sourceEl.cloneNode(true);
+      ghost.style.cssText = `position:fixed;z-index:9999;pointer-events:none;opacity:0.82;`
+        + `width:${rect.width}px;height:${rect.height}px;overflow:hidden;`
+        + `left:${startX - rect.width / 2}px;top:${startY - rect.height / 2}px;`
+        + `box-shadow:0 8px 24px rgba(0,0,0,.28);border-radius:10px;margin:0;transform:scale(1.04);`;
+      document.body.appendChild(ghost);
+      navigator.vibrate?.(40);
+      document.body.classList.add("touch-drag-active");
+      sourceEl.dispatchEvent(makeDragEvent("dragstart", { clientX: startX, clientY: startY }));
+      active = { sourceEl, ghost, lastOver: null };
+    }, 500);
+    pending = { sourceEl, startX, startY, timer };
+  }, { passive: true });
+
+  document.addEventListener("touchmove", (event) => {
+    if (pending) {
+      const touch = event.touches[0];
+      if (Math.hypot(touch.clientX - pending.startX, touch.clientY - pending.startY) > 10) {
+        clearTimeout(pending.timer);
+        pending = null;
+      }
+      return;
+    }
+    if (!active) return;
+    event.preventDefault();
+    const touch = event.touches[0];
+    const x = touch.clientX;
+    const y = touch.clientY;
+    active.ghost.style.left = `${x - active.ghost.offsetWidth / 2}px`;
+    active.ghost.style.top = `${y - active.ghost.offsetHeight / 2}px`;
+    active.sourceEl.dispatchEvent(makeDragEvent("drag", { clientX: x, clientY: y }));
+    const el = elementUnder(x, y);
+    if (el !== active.lastOver) {
+      if (active.lastOver) active.lastOver.dispatchEvent(new DragEvent("dragleave", { bubbles: true }));
+      if (el) el.dispatchEvent(makeDragEvent("dragover", { clientX: x, clientY: y }));
+      active.lastOver = el;
+    } else if (el) {
+      el.dispatchEvent(makeDragEvent("dragover", { clientX: x, clientY: y }));
+    }
+  }, { passive: false });
+
+  document.addEventListener("touchend", (event) => {
+    if (pending) { clearTimeout(pending.timer); pending = null; return; }
+    if (!active) return;
+    const touch = event.changedTouches[0];
+    const x = touch.clientX;
+    const y = touch.clientY;
+    const el = elementUnder(x, y);
+    active.ghost.remove();
+    if (el) el.dispatchEvent(makeDragEvent("drop", { clientX: x, clientY: y }));
+    active.sourceEl.dispatchEvent(makeDragEvent("dragend", { clientX: x, clientY: y }));
+    document.body.classList.remove("touch-drag-active");
+    active = null;
+  });
+
+  document.addEventListener("touchcancel", () => {
+    if (pending) { clearTimeout(pending.timer); pending = null; return; }
+    if (!active) return;
+    active.ghost.remove();
+    active.sourceEl.dispatchEvent(new DragEvent("dragend", { bubbles: true }));
+    document.body.classList.remove("touch-drag-active");
+    active = null;
+  });
+}
+
 initializeApp();
 
 function bindEvents() {
@@ -1382,6 +1478,7 @@ function closeDialogOnBackdropClick(event) {
 }
 
 async function initializeApp() {
+  initTouchDragPolyfill();
   registerServiceWorker();
   window.addEventListener("online", handleCameOnline);
   window.addEventListener("offline", () => updateSyncStatus("offline"));
@@ -8904,6 +9001,73 @@ function openEmptyMealEntryMenu(event) {
   pasteButton.addEventListener("click", pasteFromMenu);
 }
 
+function openMealSlotMenu(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeFolderMenu();
+
+  const slotEl = event.currentTarget;
+  const day = slotEl.dataset.day;
+  const meal = slotEl.dataset.meal;
+  if (!day || !meal) return;
+
+  const week = weekState();
+  const entries = slotEntries(week.slots?.[day]?.[meal]).filter(Boolean);
+  const hasCopied = !!copiedMealSlot;
+  if (!entries.length && !hasCopied) return;
+
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu meal-entry-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    ${entries.length ? `<button type="button" role="menuitem" data-copy-meal-slot-menu>Copy meal</button>` : ""}
+    ${hasCopied ? `<button type="button" role="menuitem" data-paste-meal-slot-menu>Paste meal</button>` : ""}
+  `;
+
+  document.body.append(menu);
+  const sourceRect = slotEl.getBoundingClientRect();
+  const rawX = event.clientX || sourceRect.right || 10;
+  const rawY = event.clientY || sourceRect.bottom || 10;
+  const x = Math.min(rawX, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(rawY, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+
+  const runAction = (fn) => (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    closeFolderMenu();
+    fn();
+  };
+
+  menu.querySelector("[data-copy-meal-slot-menu]")?.addEventListener("pointerdown", runAction(() => copyMealSlot(day, meal)));
+  menu.querySelector("[data-copy-meal-slot-menu]")?.addEventListener("mousedown", runAction(() => copyMealSlot(day, meal)));
+  menu.querySelector("[data-copy-meal-slot-menu]")?.addEventListener("click", runAction(() => copyMealSlot(day, meal)));
+
+  menu.querySelector("[data-paste-meal-slot-menu]")?.addEventListener("pointerdown", runAction(() => pasteMealSlot(day, meal)));
+  menu.querySelector("[data-paste-meal-slot-menu]")?.addEventListener("mousedown", runAction(() => pasteMealSlot(day, meal)));
+  menu.querySelector("[data-paste-meal-slot-menu]")?.addEventListener("click", runAction(() => pasteMealSlot(day, meal)));
+}
+
+function copyMealSlot(day, meal) {
+  const week = weekState();
+  const entries = slotEntries(week.slots?.[day]?.[meal]).filter(Boolean);
+  if (!entries.length) return;
+  copiedMealSlot = entries.map((entry) =>
+    isPlannedRecipeEntry(entry) ? { ...entry, id: createId("meal-plan-recipe") } : entry
+  );
+}
+
+function pasteMealSlot(day, meal) {
+  if (!copiedMealSlot) return;
+  const entries = copiedMealSlot.map((entry) =>
+    isPlannedRecipeEntry(entry)
+      ? plannedEntryAtLocation({ ...entry, id: createId("meal-plan-recipe") }, day, meal)
+      : entry
+  );
+  setMeal(day, meal, compactMealSlotEntries(entries, meal));
+}
+
 function recipeForMealEntry(day, meal, index) {
   const week = weekState();
   const entries = mealEntryList(slotEntries(week.slots?.[day]?.[meal]), meal);
@@ -10445,6 +10609,7 @@ async function selectRestaurantForMeal(placeId) {
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error || "Restaurant details could not be fetched.");
     const r = body.restaurant;
+    if (!r?.name) throw new Error("Restaurant details could not be loaded.");
     const { day, meal, index } = restaurantSearchPending;
     const week = weekState();
     const entries = mealEntryList(slotEntries(week.slots?.[day]?.[meal]), meal);
@@ -13879,6 +14044,7 @@ function renderPlanner() {
     slot.addEventListener("dragover", handleMealSlotDragOver);
     slot.addEventListener("dragleave", () => slot.classList.remove("drag-over"));
     slot.addEventListener("drop", handleMealSlotDrop);
+    slot.addEventListener("contextmenu", openMealSlotMenu);
   });
 
   elements.plannerGrid.querySelectorAll("[data-meal-section-drag]").forEach((handle) => {
@@ -14723,19 +14889,9 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
   if (recipe) {
     return `
       <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true">
-        <div class="meal-recipe-plan">
-          <button class="recipe-meal-link" type="button" data-view-recipe="${escapeHtml(recipe.id)}" data-edit-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Double-click to edit">
-            ${escapeHtml(recipe.name)}
-          </button>
-          <label class="meal-planned-servings-editor">
-            <span>Cook</span>
-            <input type="number" min="0.25" step="0.25" inputmode="decimal"
-              data-planned-servings data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}"
-              value="${escapeHtml(String(plannedServingsForEntry(entry, recipe)))}"
-              aria-label="Planned servings for ${escapeHtml(recipe.name)}" />
-            <span>servings</span>
-          </label>
-        </div>
+        <button class="recipe-meal-link" type="button" data-view-recipe="${escapeHtml(recipe.id)}" data-edit-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Double-click to edit">
+          ${escapeHtml(recipe.name)}
+        </button>
         <button class="meal-swipe-delete" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" aria-label="Delete ${escapeHtml(recipe.name)}">Delete</button>
       </div>
     `;
@@ -16111,6 +16267,26 @@ function renderGroceryStoreTabs() {
       activeGroceryStoreTab = btn.dataset.groceryTab;
       renderGroceries();
     });
+    if (btn.dataset.groceryTab !== "all") {
+      btn.addEventListener("dragover", (event) => {
+        if (!draggedGroceryItem?.itemKey) return;
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+        btn.classList.add("drag-over");
+      });
+      btn.addEventListener("dragleave", () => btn.classList.remove("drag-over"));
+      btn.addEventListener("dragend", () => btn.classList.remove("drag-over"));
+      btn.addEventListener("drop", (event) => {
+        btn.classList.remove("drag-over");
+        if (!draggedGroceryItem?.itemKey) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const targetStoreId = btn.dataset.groceryTab;
+        const itemKey = draggedGroceryItem.itemKey;
+        moveGroceryItem(itemKey, targetStoreId, "", "after", "");
+        activeGroceryStoreTab = targetStoreId;
+      });
+    }
   });
   updateTabIndicator(el);
 }
@@ -16151,47 +16327,47 @@ function renderGroceries() {
     return;
   }
 
+  const sortCheckedLast = (rows) => {
+    const unchecked = rows.filter((r) => !r.checked);
+    const checked = rows.filter((r) => r.checked);
+    return [...unchecked, ...checked];
+  };
+
   const miscSection = manualRows.length ? `
     <section class="grocery-store-section grocery-misc-section" data-grocery-store-section="">
       <div class="grocery-store-heading">
         <h3>Miscellaneous</h3>
       </div>
-      <div class="grocery-store-section-groups">
-        <section class="grocery-section-group">
-          <div class="grocery-store-list" data-grocery-store-list="" data-grocery-store-section-list="">
-            ${manualRows.map(groceryItemTemplate).join("")}
-          </div>
-        </section>
+      <div class="grocery-store-list" data-grocery-store-list="" data-grocery-store-section-list="">
+        ${sortCheckedLast(manualRows).map(groceryItemTemplate).join("")}
       </div>
     </section>
   ` : "";
 
-  const storeSection = ({ storeId, name, store, sectionGroups }) => `
-    <section class="grocery-store-section" data-grocery-store-section="${escapeHtml(storeId)}">
-      ${activeGroceryStoreTab === "all" ? `
-        <div class="grocery-store-heading" ${storeId ? `data-grocery-store-setting="${escapeHtml(storeId)}"` : ""}>
-          <h3>${escapeHtml(name)}</h3>
-          ${storeDirectionsUrl(store) ? `
-            <a class="icon-btn grocery-store-directions" href="${escapeHtml(storeDirectionsUrl(store))}" target="_blank" rel="noopener" title="Directions to ${escapeHtml(name)}" aria-label="Directions to ${escapeHtml(name)}">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 5 6 6-6 6v-4H8a4 4 0 0 0-4 4V9a4 4 0 0 1 4-4h5Z" /></svg>
-            </a>
-          ` : ""}
+  const storeSection = ({ storeId, name, store, sectionGroups }) => {
+    // Flatten groups preserving section order; checked items sink to the bottom
+    const flatRows = sectionGroups.flatMap((group) => group.rows);
+    const sortedRows = sortCheckedLast(flatRows);
+    return `
+      <section class="grocery-store-section" data-grocery-store-section="${escapeHtml(storeId)}">
+        ${activeGroceryStoreTab === "all" ? `
+          <div class="grocery-store-heading" ${storeId ? `data-grocery-store-setting="${escapeHtml(storeId)}"` : ""}>
+            <h3>${escapeHtml(name)}</h3>
+            ${storeDirectionsUrl(store) ? `
+              <a class="icon-btn grocery-store-directions" href="${escapeHtml(storeDirectionsUrl(store))}" target="_blank" rel="noopener" title="Directions to ${escapeHtml(name)}" aria-label="Directions to ${escapeHtml(name)}">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 5 6 6-6 6v-4H8a4 4 0 0 0-4 4V9a4 4 0 0 1 4-4h5Z" /></svg>
+              </a>
+            ` : ""}
+          </div>
+        ` : ""}
+        <div class="grocery-store-list ${sortedRows.length ? "" : "is-empty"}"
+          data-grocery-store-list="${escapeHtml(storeId)}"
+          data-grocery-store-section-list="">
+          ${sortedRows.length ? sortedRows.map(groceryItemTemplate).join("") : `<div class="grocery-store-empty">Drop items here</div>`}
         </div>
-      ` : ""}
-      <div class="grocery-store-section-groups">
-        ${sectionGroups.map((group) => `
-          <section class="grocery-section-group">
-            ${group.name ? `<h4>${escapeHtml(group.name)}</h4>` : ""}
-            <div class="grocery-store-list ${group.rows.length ? "" : "is-empty"}"
-              data-grocery-store-list="${escapeHtml(storeId)}"
-              data-grocery-store-section-list="${escapeHtml(group.sectionId)}">
-              ${group.rows.length ? group.rows.map(groceryItemTemplate).join("") : `<div class="grocery-store-empty">Drop items here</div>`}
-            </div>
-          </section>
-        `).join("")}
-      </div>
-    </section>
-  `;
+      </section>
+    `;
+  };
 
   let planSections;
   if (activeGroceryStoreTab === "all") {

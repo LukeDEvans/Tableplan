@@ -1,4 +1,4 @@
-const CACHE = "live-v1";
+const CACHE = "live-v2";
 const PRECACHE = ["/", "/favicon.svg"];
 const SKIP_HOSTS = ["supabase.co", "googleapis.com", "gstatic.com"];
 
@@ -41,7 +41,7 @@ self.addEventListener("fetch", (event) => {
   // Static assets: serve cached immediately, update cache in background
   event.respondWith(
     caches.open(CACHE).then(async (cache) => {
-      const cached = await cache.match(request, { ignoreSearch: true });
+      const cached = await cache.match(request);
       const fetchAndCache = fetch(request).then((res) => {
         if (res.ok) cache.put(request, res.clone());
         return res;

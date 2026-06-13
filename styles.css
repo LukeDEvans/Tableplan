@@ -5364,6 +5364,57 @@ textarea {
   min-width: 0;
 }
 
+.recipe-meal-card {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--accent) 44%, #ffffff);
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+
+.recipe-meal-card:hover,
+.recipe-meal-card:focus-within {
+  border-color: var(--accent);
+  background: #d1eadf;
+}
+
+.recipe-meal-card .recipe-meal-link {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  min-height: unset;
+  min-width: 0;
+  width: 100%;
+  text-align: left;
+}
+
+.recipe-meal-card .recipe-meal-link:hover,
+.recipe-meal-card .recipe-meal-link:focus-visible {
+  border: none;
+  background: transparent;
+  outline: none;
+}
+
+.published-recipe-card {
+  border: none;
+  background: transparent;
+  padding: 0;
+  gap: 2px;
+}
+
+.published-recipe-card:hover,
+.published-recipe-card:focus-within {
+  border: none;
+  background: transparent;
+}
+
 .meal-planned-servings-editor {
   display: flex;
   align-items: center;
@@ -6905,6 +6956,22 @@ body[data-theme="dark"] .recipe-meal-link:focus-visible {
   background: #083f25;
 }
 
+body[data-theme="dark"] .recipe-meal-card {
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+}
+
+body[data-theme="dark"] .recipe-meal-card:hover,
+body[data-theme="dark"] .recipe-meal-card:focus-within {
+  background: #083f25;
+}
+
+body[data-theme="dark"] .recipe-meal-card .recipe-meal-link,
+body[data-theme="dark"] .recipe-meal-card .recipe-meal-link:hover,
+body[data-theme="dark"] .recipe-meal-card .recipe-meal-link:focus-visible {
+  background: transparent;
+}
+
 body[data-theme="dark"] .recipe-view-section h3,
 body[data-theme="dark"] .recipe-view-section li,
 body[data-theme="dark"] .recipe-steps-view,
@@ -7622,10 +7689,20 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
   background: none;
 }
 
-.watch-category-tab.watch-drop-over {
+.watch-category-tab.watch-drop-over,
+.watch-category-tab.drag-over {
   color: var(--accent-dark);
   border-bottom-color: var(--accent);
   background: color-mix(in srgb, var(--accent-soft) 60%, transparent);
+}
+
+body.touch-drag-active {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body.touch-drag-active * {
+  cursor: grabbing !important;
 }
 
 .watch-category-add-tab {

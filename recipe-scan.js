@@ -1,25 +1,30 @@
-const DEFAULT_SCAN_MODEL = "gpt-4.1-mini";
+const DEFAULT_SCAN_MODEL = "claude-haiku-4-5-20251001";
 
 async function scanRecipeFromImages(images, options = {}) {
-  const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
+  const apiKey = options.apiKey || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    throw new Error("Recipe scanning needs OPENAI_API_KEY set on the server.");
+    throw new Error("Recipe scanning needs ANTHROPIC_API_KEY set on the server.");
   }
   const cleanImages = validateImages(images);
-  const response = await fetch("https://api.openai.com/v1/responses", {
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
-      authorization: `Bearer ${apiKey}`,
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      model: options.model || process.env.OPENAI_RECIPE_SCAN_MODEL || DEFAULT_SCAN_MODEL,
+      model: options.model || process.env.ANTHROPIC_RECIPE_SCAN_MODEL || DEFAULT_SCAN_MODEL,
+      max_tokens: 4096,
       temperature: 0,
-      input: [{
+      messages: [{
         role: "user",
         content: [
-          { type: "input_text", text: recipeScanPrompt() },
-          ...cleanImages.map((image) => ({ type: "input_image", image_url: image, detail: "high" }))
+          { type: "text", text: recipeScanPrompt() },
+          ...cleanImages.map((image) => {
+            const { media_type, data } = parseDataUrl(image);
+            return { type: "image", source: { type: "base64", media_type, data } };
+          })
         ]
       }]
     })
@@ -27,9 +32,15 @@ async function scanRecipeFromImages(images, options = {}) {
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.error?.message || `OpenAI scan failed with status ${response.status}`);
+    throw new Error(payload.error?.message || `Recipe scan failed with status ${response.status}`);
   }
   return normalizeScannedRecipe(parseRecipeJson(outputText(payload)));
+}
+
+function parseDataUrl(dataUrl) {
+  const match = dataUrl.match(/^data:(image\/[a-z+]+);base64,(.+)$/i);
+  if (!match) throw new Error("Invalid image data URL.");
+  return { media_type: match[1].toLowerCase(), data: match[2] };
 }
 
 function validateImages(images) {
@@ -70,10 +81,9 @@ function recipeScanPrompt() {
 }
 
 function outputText(payload) {
-  if (payload.output_text) return payload.output_text;
-  return (payload.output || [])
-    .flatMap((item) => item.content || [])
-    .map((content) => content.text || "")
+  return (payload.content || [])
+    .filter((block) => block.type === "text")
+    .map((block) => block.text || "")
     .join("\n")
     .trim();
 }
