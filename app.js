@@ -1532,6 +1532,7 @@ async function initializeApp() {
 
 function handleHashNavigation() {
   const hash = window.location.hash.slice(1).toLowerCase();
+  history.replaceState(null, "", location.pathname);
   const routes = {
     eat: showEatApp, nourish: showEatApp,
     do: showDoApp, maintain: showDoApp,
@@ -3846,6 +3847,9 @@ async function writeStateToSharedStorage() {
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   navigator.serviceWorker.register("/sw.js").catch((e) => console.warn("SW registration failed:", e));
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    window.location.replace(window.location.pathname);
+  });
 }
 
 async function handleCameOnline() {
@@ -9578,7 +9582,7 @@ function openSettingsMenuDialog(openDialog) {
 }
 
 function openContextSettingsDialog(kind) {
-  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -9594,7 +9598,8 @@ function renderContextSettingsDialog(kind) {
     family: "Household",
     recreate: "Recreate",
     pages: "Pages",
-    "location-services": "Location Services"
+    "location-services": "Location Services",
+    "voice-commands": "Voice Commands"
   };
   const isSubPanel = !["general", "eat", "do", "play", "watch", "recreate"].includes(kind);
   elements.contextSettingsBackBtn.hidden = !isSubPanel;
@@ -9607,6 +9612,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="location-services">Location Services</button>
         <button type="button" data-context-settings-action="weekly-email">Email</button>
         <button type="button" data-context-settings-action="family">Household</button>
+        <button type="button" data-context-settings-action="voice-commands">Voice Commands</button>
       </div>
       ${isAdmin ? `
         <div class="settings-admin-section">
@@ -9668,6 +9674,33 @@ function renderContextSettingsDialog(kind) {
             <button class="secondary-btn compact-btn" type="button" data-context-settings-action="test-location">Test</button>
           </div>
         ` : ""}
+      </div>
+    `;
+    return;
+  }
+
+  if (kind === "voice-commands") {
+    const secret = state.voiceCommandSecret || "";
+    const hid = userGroup?.id;
+    const endpoint = `${window.location.origin}/api/voice-command`;
+    const previewHtml = (secret && hid) ? `
+      <div class="voice-setup-shortcut">
+        <p class="voice-setup-label">Siri Shortcut — paste into "Get Contents of URL" body:</p>
+        <pre class="voice-setup-json" id="voiceSetupJsonDialog">${escapeHtml(`POST ${endpoint}\n\n${JSON.stringify({transcript:"{{Dictated Text}}", householdId: hid, secret}, null, 2)}`)}</pre>
+        <button class="secondary-btn" type="button" data-context-settings-action="copy-voice-setup">Copy</button>
+      </div>
+    ` : "";
+    elements.contextSettingsBody.innerHTML = `
+      <div class="voice-setup">
+        <p class="voice-setup-hint">Set a passphrase to authenticate voice commands from Siri or Alexa. You'll paste the generated JSON into your Shortcut once.</p>
+        <div class="voice-setup-row">
+          <label for="voiceSecretInputDialog">Passphrase</label>
+          <div class="voice-setup-input-row">
+            <input type="text" id="voiceSecretInputDialog" placeholder="e.g. sunshine-lake-42" autocomplete="off" spellcheck="false" value="${escapeHtml(secret)}" />
+            <button class="primary-btn" type="button" data-context-settings-action="save-voice-secret">Save</button>
+          </div>
+        </div>
+        ${previewHtml}
       </div>
     `;
     return;
@@ -9967,6 +10000,19 @@ function handleContextSettingsAction(event) {
     "family": () => renderContextSettingsDialog("family"),
     "pages": () => renderContextSettingsDialog("pages"),
     "location-services": () => renderContextSettingsDialog("location-services"),
+    "voice-commands": () => renderContextSettingsDialog("voice-commands"),
+    "save-voice-secret": () => {
+      const input = document.getElementById("voiceSecretInputDialog");
+      if (!input) return;
+      state.voiceCommandSecret = input.value.trim();
+      persist();
+      renderContextSettingsDialog("voice-commands");
+    },
+    "copy-voice-setup": () => {
+      const jsonEl = document.getElementById("voiceSetupJsonDialog");
+      if (!jsonEl) return;
+      navigator.clipboard.writeText(jsonEl.textContent).catch(() => {});
+    },
     "add-family-member": () => {
       const list = elements.contextSettingsBody.querySelector("[data-family-members-list]");
       if (!list) return;
