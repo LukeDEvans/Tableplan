@@ -104,6 +104,10 @@ const server = http.createServer(async (request, response) => {
       await handleAutoTagGrocery(request, response);
       return;
     }
+    if (url.pathname === "/api/voice-command") {
+      await handleVoiceCommand(request, response);
+      return;
+    }
     if (url.pathname === "/api/ics-proxy") {
       await handleIcsProxy(url, response);
       return;
@@ -627,6 +631,71 @@ Rules:
   let tags;
   try { tags = JSON.parse(cleaned); } catch { sendJson(response, 500, { error: "AI returned invalid JSON." }); return; }
   sendJson(response, 200, { tags });
+}
+
+async function handleVoiceCommand(request, response) {
+  if (request.method !== "POST") { sendJson(response, 405, { error: "Method not allowed." }); return; }
+  let body;
+  try { body = JSON.parse(await readRequestBody(request)); } catch { sendJson(response, 400, { error: "Invalid JSON." }); return; }
+
+  const transcript = String(body.transcript || "").trim();
+  if (!transcript) { sendJson(response, 400, { error: "No transcript provided." }); return; }
+
+  const apiKey = String(process.env.ANTHROPIC_API_KEY || "").trim();
+  if (!apiKey) { sendJson(response, 503, { error: "ANTHROPIC_API_KEY not set in .env" }); return; }
+
+  const ctx = body.context || {};
+  const today = String(ctx.today || new Date().toISOString().split("T")[0]);
+  const todayDayId = String(ctx.todayDayId || "backlog");
+  const todayWeekKey = String(ctx.todayWeekKey || today);
+  const ctxWeekKey = String(ctx.weekKey || today);
+  const recipes = Array.isArray(ctx.recipes) ? ctx.recipes.slice(0, 200) : [];
+  const days = Array.isArray(ctx.days) ? ctx.days : [];
+
+  const raw = await claudeCall(apiKey, {
+    system: `You are a voice command parser for a personal life-management app. Convert the spoken command into structured JSON actions.
+
+Today is ${today}. Today's day ID is "${todayDayId}" and its week key is "${todayWeekKey}".
+The currently visible meal-plan week starts on ${ctxWeekKey}.
+
+Valid day IDs (shared by meal plan and to-do list):
+${days.map((d) => `- "${d.id}" = ${d.name}`).join("\n")}
+
+Saved recipes (id → name):
+${recipes.length ? recipes.map((r) => `- ${r.id}: ${r.name}`).join("\n") : "(none saved yet)"}
+
+Return ONLY a JSON array of actions — no explanation, no markdown.
+
+Supported actions:
+
+Set a meal on a specific day:
+{"action":"setMeal","dayId":"<day id>","mealType":"breakfast|lunch|dinner","recipeId":"<id or null>","recipeName":"<spoken name>"}
+- Match the recipe name to the list above. If found, set recipeId; otherwise null.
+- Infer mealType from context: soup/pasta/chicken/steak → dinner; eggs/oatmeal/pancakes → breakfast; sandwich/salad/wrap → lunch. Default to dinner if unclear.
+- "this weekend" → expand to saturday and sunday (two actions).
+
+Add a misc grocery item:
+{"action":"addGrocery","item":"<item name>"}
+
+Add a task to a specific day's to-do list or the backlog:
+{"action":"addTask","title":"<task>","dayId":"<day id or 'backlog'>","weekKey":"<week key>"}
+- When user says "today": dayId="${todayDayId}", weekKey="${todayWeekKey}"
+- When user names a specific day (Monday, Tuesday…): use that day's id, weekKey="${ctxWeekKey}"
+- When no day is mentioned: dayId="backlog"
+
+If unclear or unsupported:
+{"action":"unknown","message":"<brief explanation>"}
+
+Return multiple actions if the user said multiple things.`,
+    user: transcript,
+    maxTokens: 1024
+  });
+
+  const cleaned2 = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  let actions;
+  try { actions = JSON.parse(cleaned2); } catch { sendJson(response, 500, { error: "AI returned invalid response." }); return; }
+  if (!Array.isArray(actions)) actions = [actions];
+  sendJson(response, 200, { actions });
 }
 
 async function handleWeeklyEmail(request, response) {

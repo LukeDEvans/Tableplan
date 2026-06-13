@@ -279,6 +279,7 @@ let restaurantSearchPending = null;
 let restaurantInfoPopoverContext = null;
 let draggedGroceryStoreId = "";
 let activeGroceryStoreLayoutId = "";
+let storeRankItemKey = "";
 let draggedGroceryStoreSectionId = "";
 
 const elements = {
@@ -291,6 +292,8 @@ const elements = {
   adminUsersDialog: document.querySelector("#adminUsersDialog"),
   adminHouseholdsDialog: document.querySelector("#adminHouseholdsDialog"),
   syncStatus: document.querySelector("#syncStatus"),
+  voiceMicBtn: document.querySelector("#voiceMicBtn"),
+  voiceToast: document.querySelector("#voiceToast"),
   authDialog: document.querySelector("#authDialog"),
   authForm: document.querySelector("#authForm"),
   authEmail: document.querySelector("#authEmail"),
@@ -425,11 +428,14 @@ const elements = {
   savePlanEventBtn: document.querySelector("#savePlanEventBtn"),
   deletePlanEventBtn: document.querySelector("#deletePlanEventBtn"),
   planCalDialog: document.querySelector("#planCalDialog"),
+  planAddCalDialog: document.querySelector("#planAddCalDialog"),
   planCalList: document.querySelector("#planCalList"),
   planNewCalName: document.querySelector("#planNewCalName"),
   planNewCalUrl: document.querySelector("#planNewCalUrl"),
   planNewCalColorPicker: document.querySelector("#planNewCalColorPicker"),
   closePlanCalBtn: document.querySelector("#closePlanCalBtn"),
+  closePlanAddCalBtn: document.querySelector("#closePlanAddCalBtn"),
+  openAddPlanCalBtn: document.querySelector("#openAddPlanCalBtn"),
   addPlanCalBtn: document.querySelector("#addPlanCalBtn"),
   sailLogDialog: document.querySelector("#sailLogDialog"),
   sailLogForm: document.querySelector("#sailLogForm"),
@@ -643,6 +649,12 @@ const elements = {
   saveGroceryLibraryBtn: document.querySelector("#saveGroceryLibraryBtn"),
   resetGroceryLibraryBtn: document.querySelector("#resetGroceryLibraryBtn"),
   autoTagGroceryBtn: document.querySelector("#autoTagGroceryBtn"),
+  storeRankDialog: document.querySelector("#storeRankDialog"),
+  storeRankTitle: document.querySelector("#storeRankTitle"),
+  storeRankList: document.querySelector("#storeRankList"),
+  storeRankStoreSelect: document.querySelector("#storeRankStoreSelect"),
+  addStoreRankBtn: document.querySelector("#addStoreRankBtn"),
+  closeStoreRankBtn: document.querySelector("#closeStoreRankBtn"),
   groceryStoresDialog: document.querySelector("#groceryStoresDialog"),
   groceryStoresForm: document.querySelector("#groceryStoresForm"),
   groceryStoreInput: document.querySelector("#groceryStoreInput"),
@@ -1028,6 +1040,8 @@ function bindEvents() {
   elements.savePlanEventBtn.addEventListener("click", savePlanEvent);
   elements.deletePlanEventBtn.addEventListener("click", deletePlanEvent);
   elements.closePlanCalBtn.addEventListener("click", () => elements.planCalDialog.close());
+  elements.openAddPlanCalBtn.addEventListener("click", openAddPlanCalDialog);
+  elements.closePlanAddCalBtn.addEventListener("click", () => elements.planAddCalDialog.close());
   elements.addPlanCalBtn.addEventListener("click", addPlanCalendar);
   elements.closeSailLogBtn.addEventListener("click", () => elements.sailLogDialog.close());
   elements.sailLogDialog.addEventListener("click", closeDialogOnBackdropClick);
@@ -1256,6 +1270,8 @@ function bindEvents() {
   });
   elements.resetGroceryLibraryBtn.addEventListener("click", resetGroceryLibrary);
   elements.autoTagGroceryBtn.addEventListener("click", autoTagGroceryWithAI);
+  elements.closeStoreRankBtn.addEventListener("click", () => elements.storeRankDialog.close());
+  elements.addStoreRankBtn.addEventListener("click", addStoreToRank);
   elements.closeGroceryStoresBtn.addEventListener("click", () => elements.groceryStoresDialog.close());
   elements.doneGroceryStoresBtn.addEventListener("click", () => elements.groceryStoresDialog.close());
   elements.groceryStoresForm.addEventListener("submit", addGroceryStore);
@@ -1471,6 +1487,23 @@ function bindEvents() {
     document.getElementById("groupSettingsBtn").setAttribute("aria-expanded", String(willOpen));
     if (willOpen) renderGroupSettingsSection();
   });
+
+  document.querySelector("#voiceSettingsBtn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const menu = document.getElementById("voiceSettingsMenu");
+    if (!menu) return;
+    const willOpen = menu.hidden;
+    menu.hidden = !willOpen;
+    document.getElementById("voiceSettingsBtn").setAttribute("aria-expanded", String(willOpen));
+    if (willOpen) renderVoiceSettings();
+  });
+
+  document.querySelector("#saveVoiceSecretBtn")?.addEventListener("click", saveVoiceSecret);
+  document.querySelector("#copyVoiceSetupBtn")?.addEventListener("click", () => {
+    const pre = document.getElementById("voiceSetupJson");
+    if (!pre) return;
+    copyText(pre.textContent, document.getElementById("copyVoiceSetupBtn"), "Copied!");
+  });
 }
 
 function closeDialogOnBackdropClick(event) {
@@ -1494,12 +1527,29 @@ async function initializeApp() {
   handleImportUrlParameter();
   handleHashNavigation();
   loadCalendarEvents();
+  initVoiceCommand();
 }
 
 function handleHashNavigation() {
   const hash = window.location.hash.slice(1).toLowerCase();
-  const routes = { shop: showShopApp, nourish: showEatApp, sweat: showPlayApp, maintain: showDoApp };
+  const routes = {
+    eat: showEatApp, nourish: showEatApp,
+    do: showDoApp, maintain: showDoApp,
+    sweat: showPlayApp,
+    shop: showShopApp,
+    watch: showWatchApp,
+    recreate: showRecreateApp,
+    schedule: showPlanApp,
+    settings: showSettingsApp,
+    home: showHomeApp,
+    read: showReadingApp,
+    stock: showInventoryApp,
+  };
   routes[hash]?.();
+}
+
+function setPageHash(hash) {
+  history.replaceState(null, "", hash ? "#" + hash : location.pathname);
 }
 
 async function initializeSupabaseAuth() {
@@ -2047,6 +2097,7 @@ function defaultState() {
     workouts: [],
     playAutoRules: [],
     pantry: ["olive oil", "salt", "pepper"],
+    persistentManualGroceries: [],
     checkedGroceries: {},
     recipeTags: defaultRecipeTags(),
     groceryBaseItems: defaultGroceryBaseItems(),
@@ -2089,6 +2140,7 @@ function defaultState() {
     emailPrefs: "",
     appName: "",
     hohMemberIds: [],
+    voiceCommandSecret: "",
     stateUpdatedAt: ""
   };
 }
@@ -2123,6 +2175,7 @@ function normalizeState(parsed) {
     workouts: normalizeWorkouts(parsed?.workouts),
     playAutoRules: normalizePlayAutoRules(parsed?.playAutoRules),
     pantry: Array.isArray(parsed?.pantry) ? parsed.pantry : [],
+    persistentManualGroceries: normalizePersistentManualGroceries(parsed),
     checkedGroceries: parsed?.checkedGroceries || {},
     recipeTags: normalizeRecipeTags(parsed?.recipeTags),
     groceryBaseItems: Array.isArray(parsed?.groceryBaseItems) ? normalizeGroceryBaseItems(parsed.groceryBaseItems) : defaultGroceryBaseItems(),
@@ -2188,6 +2241,7 @@ function normalizeState(parsed) {
       return saved.length > 0 ? saved : [members[0].id];
     })(),
     emailPrefs: String(parsed?.emailPrefs || ""),
+    voiceCommandSecret: typeof parsed?.voiceCommandSecret === "string" ? parsed.voiceCommandSecret : "",
     stateUpdatedAt: typeof parsed?.stateUpdatedAt === "string" ? parsed.stateUpdatedAt : ""
   };
   ensureGroceryCatalog(normalized);
@@ -3318,7 +3372,8 @@ function normalizeGroceryStores(stores) {
         latitude: normalizeStoreCoordinate(store?.latitude),
         longitude: normalizeStoreCoordinate(store?.longitude),
         types: Array.isArray(store?.types) ? store.types.map((type) => String(type || "").trim()).filter(Boolean) : [],
-        sections: normalizeGroceryStoreSections(store?.sections, id)
+        sections: normalizeGroceryStoreSections(store?.sections, id),
+        enabled: store?.enabled !== false
       };
     })
     .filter((store) => {
@@ -3363,6 +3418,17 @@ function normalizeGroceryStoreSections(sections, storeId) {
     .map((section, index) => ({ ...section, sortOrder: (index + 1) * 10 }));
 }
 
+function normalizePersistentManualGroceries(parsed) {
+  const saved = Array.isArray(parsed?.persistentManualGroceries) ? parsed.persistentManualGroceries : [];
+  const fromWeeks = Object.values(parsed?.plans || {}).flatMap((week) =>
+    Array.isArray(week?.manualGroceries) ? week.manualGroceries : []
+  );
+  return [...new Set([...saved, ...fromWeeks])]
+    .map(String)
+    .filter(Boolean)
+    .sort((a, b) => normalize(a).localeCompare(normalize(b)));
+}
+
 function normalizeStoreCoordinate(value) {
   if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
@@ -3382,8 +3448,15 @@ function normalizeGroceryItemLocations(locations, stores = []) {
     if (!key || !location || typeof location !== "object") return;
     const storeId = validStoreIds.has(String(location.storeId || "")) ? String(location.storeId) : "";
     const order = Number(location.order);
+    const existingRank = Array.isArray(location.storeRank)
+      ? location.storeRank.map(String).filter((id) => validStoreIds.has(id))
+      : [];
+    const storeRank = storeId
+      ? [storeId, ...existingRank.filter((id) => id !== storeId)]
+      : existingRank;
     normalizedLocations[key] = {
       storeId,
+      storeRank,
       order: Number.isFinite(order) ? order : 0
     };
   });
@@ -3655,6 +3728,57 @@ function trashedRecipes() {
   return state.trashedRecipes;
 }
 
+function mergeStates(newer, older) {
+  const merged = { ...newer };
+
+  function unionById(a, b) {
+    const map = new Map((b || []).filter((x) => x?.id != null).map((x) => [x.id, x]));
+    (a || []).filter((x) => x?.id != null).forEach((x) => map.set(x.id, x));
+    return [...map.values()];
+  }
+
+  function unionStrings(a, b) {
+    return [...new Set([...(a || []), ...(b || [])].map(String).filter(Boolean))];
+  }
+
+  function unionByKey(a, b) {
+    return { ...(b || {}), ...(a || {}) };
+  }
+
+  // Durable id-keyed records — union so neither device loses additions
+  for (const key of [
+    "planCalendars", "receipts", "groceryStores",
+    "watchItems", "readingItems",
+    "inventoryBoxes", "inventoryItems",
+    "sailingLog", "pianoSongs", "workouts",
+    "playAutoRules", "recurringTasks",
+    "doTasks", "doBacklog", "playBacklog",
+    "recipes", "trashedRecipes",
+    "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries",
+  ]) {
+    merged[key] = unionById(newer[key], older[key]);
+  }
+
+  // String-set collections — additive
+  merged.pantry = unionStrings(newer.pantry, older.pantry);
+  merged.persistentManualGroceries = unionStrings(newer.persistentManualGroceries, older.persistentManualGroceries);
+
+  // Keyed maps — union of keys, newer wins on conflict
+  for (const key of [
+    "plans", "doPlans", "watchPlans", "playPlans",
+    "groceryItemLocations", "groceryStoreItemSections",
+    "groceryAliases", "grocerySplitPreferences",
+    "receiptItemMappings", "personGoals",
+    "checkedGroceries",
+  ]) {
+    merged[key] = unionByKey(newer[key], older[key]);
+  }
+
+  // Stamp with now so this merged state wins any further comparisons
+  merged.stateUpdatedAt = new Date().toISOString();
+  return merged;
+}
+
 async function hydrateStateFromSharedStorage() {
   const providers = sharedStorageProviders();
   if (!providers.length) return;
@@ -3666,17 +3790,18 @@ async function hydrateStateFromSharedStorage() {
       if (sharedState) {
         const localTs = state.stateUpdatedAt || "";
         const remoteTs = sharedState.stateUpdatedAt || "";
-        // Local wins when: it has a timestamp AND (remote has no timestamp OR local is same-age-or-newer).
-        // Without this, a Supabase record that was never given a stateUpdatedAt would silently overwrite
-        // valid local state because the old condition required BOTH timestamps to be non-empty.
-        const localWins = localTs && (!remoteTs || localTs >= remoteTs);
-        if (localWins) {
-          console.info(`Local state (${localTs}) is same-or-newer than ${provider.label} (${remoteTs || "no timestamp"}); pushing local state upstream.`);
-          await provider.write();
+        const localIsNewer = localTs && (!remoteTs || localTs >= remoteTs);
+        if (localIsNewer) {
+          console.info(`Local state (${localTs}) is same-or-newer than ${provider.label} (${remoteTs || "no timestamp"}); merging and pushing.`);
+          const merged = mergeStates(state, sharedState);
+          applyStoredState(merged);
         } else {
+          console.info(`Remote state (${remoteTs}) is newer than local (${localTs || "no timestamp"}); merging and applying.`);
           await snapshotBeforeSharedStateReplacement(sharedState, provider.label);
-          applyStoredState(sharedState);
+          const merged = mergeStates(sharedState, state);
+          applyStoredState(merged);
         }
+        await provider.write();
       }
       else await provider.write();
       sharedStorageReady = true;
@@ -3737,9 +3862,9 @@ async function handleCameOnline() {
   }
 }
 
-async function maybeWriteCloudSnapshot() {
+async function maybeWriteCloudSnapshot({ force = false } = {}) {
   if (!userGroup?.id || !authSession?.access_token) return;
-  if (Date.now() - lastCloudSnapshotAt < CLOUD_SNAPSHOT_INTERVAL_MS) return;
+  if (!force && Date.now() - lastCloudSnapshotAt < CLOUD_SNAPSHOT_INTERVAL_MS) return;
   lastCloudSnapshotAt = Date.now();
   const insertRes = await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_state_history`, {
     method: "POST",
@@ -4424,6 +4549,7 @@ function showEatApp(event) {
   }
   activateEatShell();
   setPageTitle("Meal Plan");
+  setPageHash("eat");
   closePageTitleMenu();
   closeAppMenu();
 }
@@ -4506,6 +4632,7 @@ function showDoApp(event) {
   setWeekToolsMode("week");
   elements.activeCookingSection.hidden = true;
   setPageTitle("To-Do");
+  setPageHash("do");
   renderDoPlanner();
   closePageTitleMenu();
   closeAppMenu();
@@ -4532,6 +4659,7 @@ function showPlayApp(event) {
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Sweat");
+  setPageHash("sweat");
   renderPlayPlanner();
   closePageTitleMenu();
   closeAppMenu();
@@ -4558,6 +4686,7 @@ function showWatchApp(event) {
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Watch");
+  setPageHash("watch");
   renderWatchPlanner();
   closePageTitleMenu();
   closeAppMenu();
@@ -4580,6 +4709,7 @@ function showRecreateApp(event) {
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Recreate");
+  setPageHash("recreate");
   renderRecreatePage();
   closePageTitleMenu();
   closeAppMenu();
@@ -4603,6 +4733,7 @@ function showPlanApp(event) {
   setWeekToolsMode("plan");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Schedule");
+  setPageHash("schedule");
   fetchAllPlanCalendars();
   renderPlanPage();
   closePageTitleMenu();
@@ -4626,6 +4757,7 @@ function showSettingsApp(event) {
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
   setPageTitle("Settings");
+  setPageHash("settings");
   closePageTitleMenu();
   closeAppMenu();
 }
@@ -4647,6 +4779,7 @@ function showHomeApp(event) {
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
   setPageTitle(getAppName());
+  setPageHash("");
   closePageTitleMenu();
   closeAppMenu();
 }
@@ -4670,6 +4803,7 @@ function showReadingApp(event) {
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Read");
+  setPageHash("read");
   renderReadingPlanner();
   closePageTitleMenu();
   closeAppMenu();
@@ -4693,6 +4827,7 @@ function showInventoryApp(event) {
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Stock");
+  setPageHash("stock");
   renderInventoryPage();
   closePageTitleMenu();
   closeAppMenu();
@@ -4719,6 +4854,7 @@ function showShopApp(event) {
   setWeekToolsMode("shop");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Shop");
+  setPageHash("shop");
   renderShopPage();
   closePageTitleMenu();
   closeAppMenu();
@@ -9807,7 +9943,7 @@ function handleContextSettingsAction(event) {
     callback();
   };
   const actions = {
-    "calendars": () => closeAndRun(openCalendarsDialog),
+    "calendars": () => closeAndRun(openPlanCalDialog),
     "weekly-email": () => closeAndRun(openWeeklyEmailDialog),
     "backup-health": () => closeAndRun(openBackupHealthDialog),
     "restore-backup": () => closeAndRun(openRestoreDialog),
@@ -10161,17 +10297,15 @@ function renderGroceryStoresSettings() {
   const stores = groceryStores();
   elements.groceryStoresList.innerHTML = stores.length
     ? stores.map((store) => `
-      <div class="grocery-store-setting" data-grocery-store-setting="${escapeHtml(store.id)}" draggable="true" title="Drag to reorder">
+      <div class="grocery-store-setting${store.enabled ? "" : " is-disabled"}" data-grocery-store-setting="${escapeHtml(store.id)}" draggable="true" title="Drag to reorder">
         <span class="grocery-store-setting-details">
           <strong>${escapeHtml(store.name)}</strong>
           <small>${escapeHtml(store.address || "Manually added store")}</small>
         </span>
         <span class="grocery-store-setting-actions">
-          ${storeDirectionsUrl(store) ? `
-            <a class="icon-btn" href="${escapeHtml(storeDirectionsUrl(store))}" target="_blank" rel="noopener" title="Directions to ${escapeHtml(store.name)}" aria-label="Directions to ${escapeHtml(store.name)}">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 5 6 6-6 6v-4H8a4 4 0 0 0-4 4V9a4 4 0 0 1 4-4h5Z" /></svg>
-            </a>
-          ` : ""}
+          <label class="grocery-store-toggle" title="${store.enabled ? "Hide from shop list" : "Show in shop list"}">
+            <input type="checkbox" data-store-toggle="${escapeHtml(store.id)}" ${store.enabled ? "checked" : ""} />
+          </label>
         </span>
       </div>
     `).join("")
@@ -10184,6 +10318,17 @@ function renderGroceryStoresSettings() {
     row.addEventListener("dragleave", clearGroceryStoreOrderDropTarget);
     row.addEventListener("drop", handleGroceryStoreOrderDrop);
     row.addEventListener("dragend", clearGroceryStoreOrderDragState);
+  });
+  elements.groceryStoresList.querySelectorAll("[data-store-toggle]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const storeId = checkbox.dataset.storeToggle;
+      state.groceryStores = groceryStores().map((s) =>
+        s.id === storeId ? { ...s, enabled: checkbox.checked } : s
+      );
+      persist();
+      renderGroceryStoresSettings();
+      renderGroceries();
+    });
   });
 }
 
@@ -11225,6 +11370,7 @@ function saveReviewedReceipt(event) {
     ...receipt.lineItems.map((line) => line.normalizedName)
   ]);
   persist();
+  maybeWriteCloudSnapshot({ force: true }).catch(() => {});
   renderGroceries();
   renderShopReceipts();
   elements.receiptScanDialog.close();
@@ -13393,10 +13539,15 @@ function mergeUserDataFromRestore(restore) {
       if (currentStore) storeIdMap.set(backupStore.id, currentStore.id);
     });
     const locations = groceryItemLocations();
-    data.groceryItemLocations.forEach(({ itemKey, storeId, order }) => {
+    data.groceryItemLocations.forEach(({ itemKey, storeId, storeRank, order }) => {
       if (locations[itemKey]) return;
+      const mappedStoreId = storeIdMap.get(storeId) || "";
+      const mappedRank = Array.isArray(storeRank)
+        ? storeRank.map((id) => storeIdMap.get(id) || "").filter(Boolean)
+        : (mappedStoreId ? [mappedStoreId] : []);
       locations[itemKey] = {
-        storeId: storeIdMap.get(storeId) || "",
+        storeId: mappedStoreId,
+        storeRank: mappedRank,
         order: Number.isFinite(Number(order)) ? Number(order) : 0
       };
     });
@@ -16249,7 +16400,7 @@ function autoGeneratePlannerDay(dayId) {
 function renderGroceryStoreTabs() {
   const el = document.getElementById("groceryStoreTabBar");
   if (!el) return;
-  const stores = groceryStores();
+  const stores = groceryStores().filter((s) => s.enabled !== false);
   if (!stores.length) { el.innerHTML = ""; return; }
   if (!stores.some((s) => s.id === activeGroceryStoreTab) && activeGroceryStoreTab !== "all") {
     activeGroceryStoreTab = "all";
@@ -16572,20 +16723,31 @@ function normalizeComparablePriceUnit(value) {
   return aliases[unit] ?? unit;
 }
 
+function resolveItemEffectiveStoreId(itemKey, locations, enabledStoreIds) {
+  const loc = locations[itemKey];
+  if (!loc) return null;
+  const rank = loc.storeRank?.length ? loc.storeRank : (loc.storeId ? [loc.storeId] : []);
+  for (const id of rank) {
+    if (enabledStoreIds.has(id)) return id;
+  }
+  return null;
+}
+
 function groceryStoreSections(rows, priceAssignments = {}, priceEstimates = {}) {
   const locations = groceryItemLocations();
   const itemSections = groceryStoreItemSections();
-  const stores = groceryStores().map((store) => ({ storeId: store.id, name: store.name, store }));
+  const enabledStores = groceryStores().filter((s) => s.enabled !== false);
+  const enabledStoreIds = new Set(enabledStores.map((s) => s.id));
+  const stores = enabledStores.map((store) => ({ storeId: store.id, name: store.name, store }));
   const fallbackStoreId = stores[0]?.storeId || "";
   const sections = [...stores, { storeId: "", name: "Unassigned", store: null }];
   return sections
     .map((section) => {
       const storeRows = rows
-        .filter((row) => (
-          locations[row.key]?.storeId
-          || priceAssignments[row.key]
-          || fallbackStoreId
-        ) === section.storeId)
+        .filter((row) => {
+          const effective = resolveItemEffectiveStoreId(row.key, locations, enabledStoreIds);
+          return (effective || priceAssignments[row.key] || fallbackStoreId) === section.storeId;
+        })
         .map((row) => ({ ...row, priceEstimate: priceEstimates[row.key] || null }))
         .sort((a, b) => Number(a.checked) - Number(b.checked)
           || groceryRowStoreOrder(a, locations) - groceryRowStoreOrder(b, locations)
@@ -16691,6 +16853,7 @@ function openGroceryItemMenu(event) {
   menu.setAttribute("role", "menu");
   menu.innerHTML = `
     <button type="button" role="menuitem" data-edit-grocery-item>Edit</button>
+    <button type="button" role="menuitem" data-store-rank-grocery-item>Preferred stores</button>
     <button type="button" role="menuitem" data-delete-grocery-item>Delete</button>
   `;
   document.body.append(menu);
@@ -16702,10 +16865,111 @@ function openGroceryItemMenu(event) {
     closeFolderMenu();
     editGroceryItem(key);
   });
+  menu.querySelector("[data-store-rank-grocery-item]").addEventListener("click", () => {
+    closeFolderMenu();
+    openStoreRankDialog(key);
+  });
   menu.querySelector("[data-delete-grocery-item]").addEventListener("click", () => {
     closeFolderMenu();
     deleteGroceryItem(key);
   });
+}
+
+function openStoreRankDialog(itemKey) {
+  const locations = groceryItemLocations();
+  const loc = locations[itemKey];
+  const label = itemKey.replace(/-/g, " ");
+  storeRankItemKey = itemKey;
+  elements.storeRankTitle.textContent = label.charAt(0).toUpperCase() + label.slice(1);
+  renderStoreRankList();
+  elements.storeRankDialog.showModal();
+}
+
+function renderStoreRankList() {
+  const locations = groceryItemLocations();
+  const loc = locations[storeRankItemKey];
+  const allStores = groceryStores();
+  const storeMap = new Map(allStores.map((s) => [s.id, s]));
+  const rank = loc?.storeRank?.length
+    ? loc.storeRank.filter((id) => storeMap.has(id))
+    : (loc?.storeId ? [loc.storeId] : []);
+
+  elements.storeRankList.innerHTML = rank.length
+    ? rank.map((storeId, i) => {
+        const store = storeMap.get(storeId);
+        const disabled = store?.enabled === false;
+        return `
+          <div class="store-rank-row" data-rank-store-id="${escapeHtml(storeId)}">
+            <span class="store-rank-index">${i + 1}</span>
+            <span class="store-rank-name${disabled ? " is-hidden-store" : ""}">${escapeHtml(store?.name || storeId)}${disabled ? " <small>(hidden)</small>" : ""}</span>
+            <span class="store-rank-actions">
+              ${i > 0 ? `<button class="icon-btn" type="button" data-rank-up="${escapeHtml(storeId)}" aria-label="Move up"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg></button>` : ""}
+              ${i < rank.length - 1 ? `<button class="icon-btn" type="button" data-rank-down="${escapeHtml(storeId)}" aria-label="Move down"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>` : ""}
+              ${rank.length > 1 ? `<button class="icon-btn" type="button" data-rank-remove="${escapeHtml(storeId)}" aria-label="Remove"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>` : ""}
+            </span>
+          </div>
+        `;
+      }).join("")
+    : `<p class="muted-label">No store preference set. Drag items in the shop list to assign stores.</p>`;
+
+  const rankedIds = new Set(rank);
+  const available = allStores.filter((s) => !rankedIds.has(s.id));
+  elements.storeRankStoreSelect.innerHTML = available.length
+    ? `<option value="">Add a fallback store…</option>${available.map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join("")}`
+    : `<option value="">All stores ranked</option>`;
+  elements.addStoreRankBtn.disabled = !available.length;
+
+  elements.storeRankList.querySelectorAll("[data-rank-up]").forEach((btn) => {
+    btn.addEventListener("click", () => moveStoreRank(btn.dataset.rankUp, -1));
+  });
+  elements.storeRankList.querySelectorAll("[data-rank-down]").forEach((btn) => {
+    btn.addEventListener("click", () => moveStoreRank(btn.dataset.rankDown, 1));
+  });
+  elements.storeRankList.querySelectorAll("[data-rank-remove]").forEach((btn) => {
+    btn.addEventListener("click", () => removeStoreFromRank(btn.dataset.rankRemove));
+  });
+}
+
+function moveStoreRank(storeId, dir) {
+  const locations = groceryItemLocations();
+  const loc = locations[storeRankItemKey];
+  if (!loc) return;
+  const rank = [...(loc.storeRank || [])];
+  const idx = rank.indexOf(storeId);
+  if (idx < 0) return;
+  const swapIdx = idx + dir;
+  if (swapIdx < 0 || swapIdx >= rank.length) return;
+  [rank[idx], rank[swapIdx]] = [rank[swapIdx], rank[idx]];
+  locations[storeRankItemKey] = { ...loc, storeId: rank[0] || loc.storeId, storeRank: rank };
+  state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
+  persist();
+  renderStoreRankList();
+  renderGroceries();
+}
+
+function removeStoreFromRank(storeId) {
+  const locations = groceryItemLocations();
+  const loc = locations[storeRankItemKey];
+  if (!loc) return;
+  const rank = (loc.storeRank || []).filter((id) => id !== storeId);
+  locations[storeRankItemKey] = { ...loc, storeId: rank[0] || "", storeRank: rank };
+  state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
+  persist();
+  renderStoreRankList();
+  renderGroceries();
+}
+
+function addStoreToRank() {
+  const storeId = elements.storeRankStoreSelect.value;
+  if (!storeId) return;
+  const locations = groceryItemLocations();
+  const loc = locations[storeRankItemKey] || { storeId: "", storeRank: [], order: 0 };
+  const rank = [...(loc.storeRank || []), storeId];
+  locations[storeRankItemKey] = { ...loc, storeId: rank[0] || storeId, storeRank: rank };
+  state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
+  persist();
+  renderStoreRankList();
+  renderGroceries();
 }
 
 function learnGroceryItemMerge(row) {
@@ -16918,7 +17182,12 @@ function orderedGroceryKeysForStore(storeId, locations) {
 
 function reindexGroceryStore(storeId, keys, locations) {
   keys.forEach((key, index) => {
-    locations[key] = { storeId, order: (index + 1) * 100 };
+    const existing = locations[key];
+    const oldRank = existing?.storeRank || (existing?.storeId ? [existing.storeId] : []);
+    const storeRank = storeId
+      ? [storeId, ...oldRank.filter((id) => id !== storeId)]
+      : oldRank;
+    locations[key] = { storeId, storeRank, order: (index + 1) * 100 };
   });
 }
 
@@ -16996,12 +17265,10 @@ function addManualGroceryItem(event) {
   event.preventDefault();
   const item = elements.groceryInput.value.trim();
   if (!item) return;
-  const selectedWeek = selectedGroceryWeek();
-  const week = (selectedWeek && state.plans[selectedWeek.key]) || weekState();
-  if (!Array.isArray(week.manualGroceries)) week.manualGroceries = [];
-  if (!week.manualGroceries.some((existing) => normalize(existing) === normalize(item))) {
-    week.manualGroceries.push(item);
-    week.manualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
+  if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
+  if (!state.persistentManualGroceries.some((existing) => normalize(existing) === normalize(item))) {
+    state.persistentManualGroceries.push(item);
+    state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
   }
   elements.groceryInput.value = "";
   persist();
@@ -17009,11 +17276,10 @@ function addManualGroceryItem(event) {
 }
 
 function removeManualGroceryItem(item) {
-  const selectedWeek = selectedGroceryWeek();
-  const week = (selectedWeek && state.plans[selectedWeek.key]) || weekState();
-  week.manualGroceries = manualGroceryItems(week).filter((existing) => existing !== item);
+  state.persistentManualGroceries = (state.persistentManualGroceries || []).filter((existing) => existing !== item);
+  const itemKey = manualGroceryRow(item).key;
   Object.keys(state.checkedGroceries).forEach((key) => {
-    if (key === groceryCheckedKey(selectedWeek?.key || weekKey(), manualGroceryRow(item).key)) delete state.checkedGroceries[key];
+    if (key.endsWith(`|${itemKey}`)) delete state.checkedGroceries[key];
   });
   persist();
   renderGroceries();
@@ -17029,8 +17295,7 @@ function editGroceryItem(key) {
     if (updated === null) return;
     const trimmed = updated.trim();
     if (!trimmed || trimmed === row.manualValue) return;
-    const week = groceryWeek.week;
-    week.manualGroceries = manualGroceryItems(week).map((v) => (v === row.manualValue ? trimmed : v));
+    state.persistentManualGroceries = (state.persistentManualGroceries || []).map((v) => (v === row.manualValue ? trimmed : v));
     persist();
     renderGroceries();
   } else {
@@ -19623,7 +19888,7 @@ function grocerySuggestionItems({ includeCurrentGroceries = true } = {}) {
 }
 
 function manualGroceryItems(week = weekState()) {
-  return Array.isArray(week.manualGroceries) ? week.manualGroceries : [];
+  return Array.isArray(state.persistentManualGroceries) ? state.persistentManualGroceries : [];
 }
 
 function buildGroceryItemsWithManual(week = weekState()) {
@@ -22544,10 +22809,14 @@ function deletePlanEvent() {
 
 function openPlanCalDialog() {
   renderPlanCalList();
+  elements.planCalDialog.showModal();
+}
+
+function openAddPlanCalDialog() {
   renderPlanColorPicker(elements.planNewCalColorPicker, PLAN_COLORS[2], "planNewCalColor");
   elements.planNewCalName.value = "";
   elements.planNewCalUrl.value = "";
-  elements.planCalDialog.showModal();
+  elements.planAddCalDialog.showModal();
 }
 
 function renderPlanCalList() {
@@ -22597,8 +22866,8 @@ async function addPlanCalendar() {
   const newCal = { id: createId("plan-cal"), name, url, color, enabled: true, lastFetched: null };
   state.planCalendars = [...(state.planCalendars || []), newCal];
   persist();
-  elements.planNewCalName.value = "";
-  elements.planNewCalUrl.value = "";
+  maybeWriteCloudSnapshot({ force: true }).catch(() => {});
+  elements.planAddCalDialog.close();
   renderPlanCalList();
   await fetchOnePlanCalendar(newCal);
   if (activeAppArea === "plan") renderPlanPage();
@@ -23728,4 +23997,227 @@ async function copyText(text, button, label) {
   setTimeout(() => {
     button.innerHTML = previous;
   }, 900);
+}
+
+// ── Voice settings ────────────────────────────────────────────────────────────
+
+function renderVoiceSettings() {
+  const input = document.getElementById("voiceSecretInput");
+  if (!input) return;
+  input.value = state.voiceCommandSecret || "";
+  updateVoiceSetupPreview();
+}
+
+function saveVoiceSecret() {
+  const input = document.getElementById("voiceSecretInput");
+  if (!input) return;
+  state.voiceCommandSecret = input.value.trim();
+  persist();
+  updateVoiceSetupPreview();
+}
+
+function updateVoiceSetupPreview() {
+  const shortcut = document.getElementById("voiceSetupShortcut");
+  const jsonEl = document.getElementById("voiceSetupJson");
+  if (!shortcut || !jsonEl) return;
+  const secret = state.voiceCommandSecret;
+  const hid = userGroup?.id;
+  if (!secret || !hid) {
+    shortcut.setAttribute("hidden", "");
+    return;
+  }
+  const endpoint = `${window.location.origin}/api/voice-command`;
+  const body = JSON.stringify({ transcript: "{{Dictated Text}}", householdId: hid, secret }, null, 2);
+  jsonEl.textContent = `POST ${endpoint}\n\n${body}`;
+  shortcut.removeAttribute("hidden");
+}
+
+// ── Voice command ──────────────────────────────────────────────────────────────
+
+let voiceState = "idle"; // idle | listening | processing
+let voiceToastTimer = null;
+
+function initVoiceCommand() {
+  const btn = elements.voiceMicBtn;
+  if (!btn) return;
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    btn.hidden = true;
+    return;
+  }
+
+  const recognition = new SpeechRecognition();
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.lang = "en-US";
+
+  recognition.onresult = (event) => {
+    const transcript = event.results[0]?.[0]?.transcript || "";
+    console.log("[voice] transcript:", transcript);
+    if (!transcript) { setVoiceState("idle"); return; }
+    setVoiceState("processing");
+    sendVoiceCommand(transcript).catch((err) => {
+      console.error("[voice] sendVoiceCommand failed:", err);
+      setVoiceState("idle");
+      showVoiceToast("Something went wrong. Check the console for details.");
+    });
+  };
+
+  recognition.onerror = (event) => {
+    console.error("[voice] SpeechRecognition error:", event.error);
+    setVoiceState("idle");
+    if (event.error !== "no-speech" && event.error !== "aborted") {
+      showVoiceToast("Mic error: " + event.error);
+    }
+  };
+
+  recognition.onend = () => {
+    if (voiceState === "listening") setVoiceState("idle");
+  };
+
+  btn.addEventListener("click", () => {
+    if (voiceState === "idle") {
+      setVoiceState("listening");
+      try { recognition.start(); } catch { setVoiceState("idle"); }
+    } else if (voiceState === "listening") {
+      recognition.stop();
+      setVoiceState("idle");
+    }
+  });
+}
+
+function setVoiceState(newState) {
+  voiceState = newState;
+  const btn = elements.voiceMicBtn;
+  if (!btn) return;
+  btn.dataset.voiceState = newState;
+  if (newState === "idle") {
+    btn.title = "Voice command";
+    btn.setAttribute("aria-label", "Voice command");
+    btn.disabled = false;
+  } else if (newState === "listening") {
+    btn.title = "Listening… click to cancel";
+    btn.setAttribute("aria-label", "Listening… click to cancel");
+    btn.disabled = false;
+  } else {
+    btn.title = "Processing…";
+    btn.setAttribute("aria-label", "Processing…");
+    btn.disabled = true;
+  }
+}
+
+async function sendVoiceCommand(transcript) {
+  // Resolve today to a concrete prepDay id + week key
+  const todayDate = new Date();
+  todayDate.setHours(0, 0, 0, 0);
+  const todayWeekStart = startOfPrepWindow(todayDate);
+  const todayWeekKey = dateKeyFromDate(todayWeekStart);
+  let todayDayId = "backlog";
+  for (const day of doPrepDays) {
+    const d = addDays(todayWeekStart, day.offset);
+    d.setHours(0, 0, 0, 0);
+    if (d.getTime() === todayDate.getTime()) { todayDayId = day.id; break; }
+  }
+
+  const context = {
+    today: todayDate.toISOString().split("T")[0],
+    todayDayId,
+    todayWeekKey,
+    weekKey: weekKey(),
+    days: prepDays.map((d) => ({ id: d.id, name: d.name })),
+    recipes: activeRecipes().slice(0, 200).map((r) => ({ id: r.id, name: r.name }))
+  };
+
+  console.log("[voice] sending to server:", transcript);
+  const response = await fetch("/api/voice-command", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ transcript, context })
+  });
+
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => ({}));
+    throw new Error(errBody.error || `Voice command failed: ${response.status}`);
+  }
+  const payload = await response.json();
+  console.log("[voice] actions from server:", payload.actions);
+  applyVoiceActions(payload.actions, transcript);
+  setVoiceState("idle");
+}
+
+function applyVoiceActions(actions, transcript) {
+  console.log("[voice] applying actions:", actions);
+  if (!Array.isArray(actions) || !actions.length) {
+    showVoiceToast(`Didn't understand: "${transcript}"`);
+    return;
+  }
+
+  const messages = [];
+
+  for (const action of actions) {
+    if (action.action === "setMeal") {
+      const config = mealColumnConfigs.find((c) => c.label.toLowerCase() === (action.mealType || "").toLowerCase());
+      const day = prepDays.find((d) => d.id === action.dayId);
+      if (!config || !day) { messages.push(`Couldn't find day "${action.dayId}" or meal "${action.mealType}".`); continue; }
+
+      const recipe = action.recipeId ? activeRecipes().find((r) => r.id === action.recipeId) : null;
+
+      for (const slot of config.meals) {
+        if (!day.meals.includes(slot)) continue;
+        const existing = slotEntries(weekState().slots?.[day.id]?.[slot]);
+        const entry = recipe ? createPlannedRecipeEntry(recipe, day.id, slot) : (action.recipeName || "");
+        setMeal(day.id, slot, compactMealSlotEntries([...existing, entry], slot));
+      }
+
+      const displayName = recipe?.name || action.recipeName || "item";
+      messages.push(`Added ${displayName} to ${day.name} ${config.label.toLowerCase()}`);
+
+    } else if (action.action === "addGrocery") {
+      const item = String(action.item || "").trim();
+      if (!item) { messages.push("No item name given."); continue; }
+      if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
+      if (!state.persistentManualGroceries.some((e) => normalize(e) === normalize(item))) {
+        state.persistentManualGroceries.push(item);
+        state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
+        persist();
+        renderGroceries();
+      }
+      messages.push(`"${item}" added to grocery list`);
+
+    } else if (action.action === "addTask") {
+      const title = String(action.title || "").trim();
+      if (!title) { messages.push("No task text given."); continue; }
+      const taskDayId = String(action.dayId || "backlog");
+      const taskWeekKey = String(action.weekKey || weekKey());
+      const validDay = doPrepDays.find((d) => d.id === taskDayId);
+      if (validDay) {
+        rawDoTasksForDay(taskDayId, taskWeekKey).push({ id: createId("task"), title, done: false, createdAt: new Date().toISOString() });
+        messages.push(`Task added to ${validDay.name}: "${title}"`);
+      } else {
+        doBacklogTasks().push({ id: createId("task"), title, done: false, weekKey: weekKey(), createdAt: new Date().toISOString() });
+        messages.push(`Task added to backlog: "${title}"`);
+      }
+      persist();
+      renderDoPlanner();
+
+    } else if (action.action === "unknown") {
+      messages.push(action.message || "I didn't understand that.");
+    }
+  }
+
+  showVoiceToast(messages.join(" · ") || "Done");
+}
+
+function showVoiceToast(message, duration = 4500) {
+  const toast = elements.voiceToast;
+  if (!toast) return;
+  toast.textContent = message;
+  toast.removeAttribute("hidden");
+  requestAnimationFrame(() => toast.classList.add("is-visible"));
+  window.clearTimeout(voiceToastTimer);
+  voiceToastTimer = window.setTimeout(() => {
+    toast.classList.remove("is-visible");
+    voiceToastTimer = window.setTimeout(() => toast.setAttribute("hidden", ""), 300);
+  }, duration);
 }
