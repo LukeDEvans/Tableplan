@@ -1528,13 +1528,12 @@ async function initializeApp() {
   window.addEventListener("offline", () => updateSyncStatus("offline"));
   handleInviteUrlParameter();
   await initializeSupabaseAuth();
-  await loadAdminConfig();
   if (authSession?.access_token) {
+    await loadAdminConfig();
     await loadOrCreateUserGroup();
     await migratePersonalStateIfNeeded();
   }
   await hydrateStateFromSharedStorage();
-  await migratePageVisibilityIfNeeded();
   await hydrateRecipeRowsFromSupabase();
   applyInitialMealPlanFocus();
   handleImportUrlParameter();
@@ -1828,21 +1827,6 @@ async function loadAdminConfig() {
   } catch (e) { console.warn("Could not load admin config:", e); }
 }
 
-async function migratePageVisibilityIfNeeded() {
-  if (!authSession?.access_token || !userGroup?.id) return;
-  if (personalDisabledPages.length > 0) return;
-  const legacy = state.pageVisibility;
-  if (!legacy) return;
-  const disabled = Object.entries(normalizePageVisibility(legacy))
-    .filter(([, v]) => v === false)
-    .map(([k]) => k);
-  if (!disabled.length) return;
-  personalDisabledPages = disabled;
-  await syncPersonalDisabledPages();
-  updatePageVisibility();
-  updatePageTitleMenu();
-}
-
 async function syncPersonalDisabledPages() {
   if (!userGroup?.id || !authSession?.user?.id) return;
   try {
@@ -2022,6 +2006,8 @@ function renderGroupSettingsSection() {
         status.textContent = e.message;
       }
     });
+  }
+  if (canManageHousehold) {
     body.querySelectorAll("[data-group-page]").forEach((checkbox) => {
       checkbox.addEventListener("change", () => setGroupPageVisibility(checkbox.dataset.groupPage, !checkbox.checked));
     });
@@ -2037,7 +2023,13 @@ async function setGroupPageVisibility(page, disabled) {
     headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
     body: JSON.stringify({ disabled_pages: updated })
   });
-  if (!res.ok) { console.warn("Could not update page visibility"); return; }
+  if (!res.ok) {
+    console.warn("Could not update page visibility");
+    document.querySelectorAll("[data-group-page]").forEach((cb) => {
+      cb.checked = !(userGroup.disabled_pages || []).includes(cb.dataset.groupPage);
+    });
+    return;
+  }
   userGroup.disabled_pages = updated;
   updatePageTitleMenu();
   updatePageVisibility();
