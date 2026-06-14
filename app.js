@@ -2233,7 +2233,7 @@ function defaultState() {
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
-    pageVisibility: { ...pageVisibilityDefaults },
+
     autoGenerateRules: defaultAutoGenerateRules(),
     mealPlanConfig: defaultMealPlanConfig(),
     collapsedSections: defaultCollapsedSections(),
@@ -2325,7 +2325,7 @@ function normalizeState(parsed) {
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
     locationSharingEnabled: Boolean(parsed?.locationSharingEnabled),
-    pageVisibility: normalizePageVisibility(parsed?.pageVisibility),
+
     autoGenerateRules: normalizeAutoGenerateRules(parsed?.autoGenerateRules),
     collapsedSections: parsed?.collapsedSections || defaultCollapsedSections(),
     collapsedDays: parsed?.collapsedDays || {},

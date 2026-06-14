@@ -18,6 +18,11 @@
   status = 200
 
 [[redirects]]
+  from = "/api/auto-tag-grocery"
+  to = "/.netlify/functions/auto-tag-grocery"
+  status = 200
+
+[[redirects]]
   from = "/api/weekly-email"
   to = "/.netlify/functions/weekly-email"
   status = 200
