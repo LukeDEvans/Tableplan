@@ -1746,10 +1746,54 @@ select:focus {
   margin-bottom: 4px;
 }
 
-.group-page-access-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0 8px;
+.group-page-access .group-page-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 6%, transparent);
+}
+.group-page-access .group-page-toggle-row:last-child { border-bottom: none; }
+.group-page-access .group-page-toggle-row input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  position: relative;
+  width: 36px;
+  height: 20px;
+  min-height: 0;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--sun-pale) 74%, #ffffff);
+  border: 1px solid color-mix(in srgb, var(--sun) 55%, var(--line));
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.18s, border-color 0.18s;
+}
+.group-page-access .group-page-toggle-row input[type="checkbox"]::before {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  top: 2px;
+  left: 2px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  transition: transform 0.18s;
+}
+.group-page-access .group-page-toggle-row input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent-dark);
+}
+.group-page-access .group-page-toggle-row input[type="checkbox"]:checked::before {
+  transform: translateX(16px);
 }
 
 .settings-action-grid {
@@ -4253,7 +4297,8 @@ select:focus {
 
 .workout-pool {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  grid-template-columns: repeat(auto-fill, 160px);
+  justify-content: start;
   gap: 12px;
   padding: 16px 16px 8px;
 }
@@ -4261,6 +4306,7 @@ select:focus {
 .workout-pool-card {
   display: grid;
   grid-template-rows: auto 1fr auto;
+  width: 100%;
   gap: 4px;
   padding: 16px 12px 14px;
   border: 1px solid color-mix(in srgb, var(--sun) 55%, var(--line));
@@ -9618,11 +9664,23 @@ body.touch-drag-active * {
 .weekly-email-actions-right { display: flex; gap: 8px; }
 /* ─── End Weekly Email Dialog ────────────────────────────────────────────────── */
 .email-schedule-section { padding: 10px 0 8px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); margin-bottom: 10px; }
-.email-schedule-toggle-label { display: flex; align-items: center; gap: 8px; font-size: 0.875rem; font-weight: 600; cursor: pointer; }
+.email-schedule-section .email-schedule-toggle-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.875rem; font-weight: 600; cursor: pointer; user-select: none; }
+.email-schedule-section .email-schedule-toggle-label input[type="checkbox"] { appearance: none; -webkit-appearance: none; display: block; position: relative; width: 36px; height: 20px; min-height: 0; border-radius: 10px; background: color-mix(in srgb, var(--sun-pale) 74%, #ffffff); border: 1px solid color-mix(in srgb, var(--sun) 55%, var(--line)); margin: 0; padding: 0; cursor: pointer; flex-shrink: 0; transition: background 0.18s, border-color 0.18s; }
+.email-schedule-section .email-schedule-toggle-label input[type="checkbox"]::before { content: ""; position: absolute; width: 14px; height: 14px; border-radius: 50%; background: #fff; top: 2px; left: 2px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); transition: transform 0.18s; }
+.email-schedule-section .email-schedule-toggle-label input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent-dark); }
+.email-schedule-section .email-schedule-toggle-label input[type="checkbox"]:checked::before { transform: translateX(16px); }
 .email-schedule-details { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
-.email-schedule-days-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.email-schedule-day-checkboxes { display: flex; gap: 6px; flex-wrap: wrap; }
-.email-schedule-day-checkboxes label { display: flex; align-items: center; gap: 3px; font-size: 0.82rem; cursor: pointer; }
+.email-schedule-days-row { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; container-type: inline-size; }
+.email-day-btn { display: flex; align-items: center; justify-content: flex-start; gap: 6px; background: none; border: none; padding: 4px 0; font-family: inherit; font-size: 0.8rem; font-weight: 600; color: var(--ink); cursor: pointer; user-select: none; min-width: 0; }
+.email-day-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; text-align: left; }
+.email-day-circle { display: block; flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid color-mix(in srgb, var(--sun) 55%, var(--line)); background: color-mix(in srgb, var(--sun-pale) 74%, #ffffff); transition: background 0.18s, border-color 0.18s; }
+.email-day-btn.is-on .email-day-circle { background: var(--accent); border-color: var(--accent-dark); }
+.email-day-btn:hover .email-day-circle { border-color: var(--accent); }
+.email-day-full { display: none; }
+.email-day-short { display: inline; }
+.email-day-letter { display: none; }
+@container (min-width: 400px) { .email-day-full { display: inline; } .email-day-short, .email-day-letter { display: none; } }
+@container (max-width: 175px) { .email-day-letter { display: inline; } .email-day-short, .email-day-full { display: none; } }
 .email-schedule-time-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .email-schedule-field-label { font-size: 0.82rem; font-weight: 600; white-space: nowrap; }
 #emailScheduleTime { font-size: 0.875rem; padding: 4px 6px; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); background: var(--surface, #fff); font-family: inherit; }
@@ -9730,16 +9788,13 @@ body.touch-drag-active * {
 .config-dialog-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 /* Head of Household */
 .config-input-readonly { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
-.hoh-member-toggle-label { display: flex; align-items: center; gap: 5px; cursor: pointer; flex-shrink: 0; }
-.hoh-member-cb:disabled ~ .hoh-member-toggle { opacity: 0.45; cursor: not-allowed; }
-.hoh-member-cb:disabled ~ .hoh-toggle-text { opacity: 0.45; }
-.hoh-member-toggle-label:has(.hoh-member-cb:disabled) { cursor: not-allowed; }
-.hoh-member-cb { display: none; }
-.hoh-member-toggle { position: relative; width: 34px; height: 20px; border-radius: 10px; background: color-mix(in srgb, var(--ink) 18%, transparent); transition: background 0.2s; flex-shrink: 0; }
-.hoh-member-toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.2); transition: transform 0.2s; }
-.hoh-member-cb:checked + .hoh-member-toggle { background: var(--accent); }
-.hoh-member-cb:checked + .hoh-member-toggle::after { transform: translateX(14px); }
-.hoh-toggle-text { font-size: 0.78rem; font-weight: 600; color: var(--muted); }
+.member-role-badge { display: inline-block; font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; flex-shrink: 0; background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--muted); }
+.member-role-badge--hoh { background: color-mix(in srgb, var(--sun) 30%, transparent); color: color-mix(in srgb, var(--sun) 55%, var(--ink)); }
+.member-role-badge--admin { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent-dark, var(--accent)); }
+.member-role-select { font-size: 0.78rem; padding: 2px 5px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); cursor: pointer; flex-shrink: 0; }
+.page-vis-row--locked { opacity: 0.6; }
+.page-vis-row--locked .page-vis-toggle { opacity: 0.5; }
+.page-vis-locked-note { font-size: 0.72rem; color: var(--muted); font-weight: 400; margin-left: 4px; }
 .config-dialog-body h3 { margin: 0; font-size: 0.9rem; font-weight: 600; color: var(--ink); }
 .config-list { display: flex; flex-direction: column; gap: 8px; }
 .config-row { display: flex; align-items: center; gap: 8px; }

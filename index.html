@@ -1955,21 +1955,39 @@
           </div>
           <div id="emailScheduleSection" class="email-schedule-section">
             <label class="email-schedule-toggle-label">
-              <input type="checkbox" id="emailScheduleEnabled" />
               Schedule automatic sends
+              <input type="checkbox" id="emailScheduleEnabled" />
             </label>
             <div id="emailScheduleDetails" class="email-schedule-details" hidden>
               <div class="email-schedule-days-row">
-                <span class="email-schedule-field-label">Days</span>
-                <div class="email-schedule-day-checkboxes">
-                  <label><input type="checkbox" class="email-schedule-day" value="sun" />Sun</label>
-                  <label><input type="checkbox" class="email-schedule-day" value="mon" />Mon</label>
-                  <label><input type="checkbox" class="email-schedule-day" value="tue" />Tue</label>
-                  <label><input type="checkbox" class="email-schedule-day" value="wed" />Wed</label>
-                  <label><input type="checkbox" class="email-schedule-day" value="thu" />Thu</label>
-                  <label><input type="checkbox" class="email-schedule-day" value="fri" />Fri</label>
-                  <label><input type="checkbox" class="email-schedule-day" value="sat" />Sat</label>
-                </div>
+                <button type="button" class="email-day-btn" data-day="sun" aria-pressed="false" aria-label="Sunday">
+                  <span class="email-day-circle"></span>
+                  <span class="email-day-name"><span class="email-day-full">Sunday</span><span class="email-day-short">Sun</span><span class="email-day-letter">S</span></span>
+                </button>
+                <button type="button" class="email-day-btn" data-day="mon" aria-pressed="false" aria-label="Monday">
+                  <span class="email-day-circle"></span>
+                  <span class="email-day-name"><span class="email-day-full">Monday</span><span class="email-day-short">Mon</span><span class="email-day-letter">M</span></span>
+                </button>
+                <button type="button" class="email-day-btn" data-day="tue" aria-pressed="false" aria-label="Tuesday">
+                  <span class="email-day-circle"></span>
+                  <span class="email-day-name"><span class="email-day-full">Tuesday</span><span class="email-day-short">Tue</span><span class="email-day-letter">T</span></span>
+                </button>
+                <button type="button" class="email-day-btn" data-day="wed" aria-pressed="false" aria-label="Wednesday">
+                  <span class="email-day-circle"></span>
+                  <span class="email-day-name"><span class="email-day-full">Wednesday</span><span class="email-day-short">Wed</span><span class="email-day-letter">W</span></span>
+                </button>
+                <button type="button" class="email-day-btn" data-day="thu" aria-pressed="false" aria-label="Thursday">
+                  <span class="email-day-circle"></span>
+                  <span class="email-day-name"><span class="email-day-full">Thursday</span><span class="email-day-short">Thu</span><span class="email-day-letter">T</span></span>
+                </button>
+                <button type="button" class="email-day-btn" data-day="fri" aria-pressed="false" aria-label="Friday">
+                  <span class="email-day-circle"></span>
+                  <span class="email-day-name"><span class="email-day-full">Friday</span><span class="email-day-short">Fri</span><span class="email-day-letter">F</span></span>
+                </button>
+                <button type="button" class="email-day-btn" data-day="sat" aria-pressed="false" aria-label="Saturday">
+                  <span class="email-day-circle"></span>
+                  <span class="email-day-name"><span class="email-day-full">Saturday</span><span class="email-day-short">Sat</span><span class="email-day-letter">S</span></span>
+                </button>
               </div>
               <div class="email-schedule-time-row">
                 <label class="email-schedule-field-label" for="emailScheduleTime">Time</label>
@@ -1990,7 +2008,7 @@
           </div>
           <div id="weeklyEmailPlaceholder" class="weekly-email-placeholder">
             <p>Claude will read your app data and write a personal weekly review email for you.</p>
-            <p class="muted-label weekly-email-prefs-hint">Standing preferences: <button class="inline-link-btn" type="button" id="tuneEmailPrefsBtn">Tune with AI</button> or edit <code>email-prefs.md</code> directly.</p>
+            <p class="muted-label weekly-email-prefs-hint">Standing preferences: <button class="inline-link-btn" type="button" id="tuneEmailPrefsBtn">Tune with AI</button> · <button class="inline-link-btn" type="button" id="editEmailPrefsBtn">Edit directly</button></p>
           </div>
         </div>
         <div class="dialog-actions">
@@ -2008,7 +2026,7 @@
         <div class="dialog-head">
           <div>
             <p class="muted-label">Email</p>
-            <h2>Tune preferences</h2>
+            <h2 id="emailInterviewTitle">Tune preferences</h2>
           </div>
           <button class="icon-btn" id="closeEmailInterviewBtn" type="button" title="Close" aria-label="Close">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
@@ -2022,8 +2040,8 @@
             <form id="emailInterviewForm" class="email-interview-form" hidden></form>
           </div>
           <div id="emailInterviewStep2" class="email-interview-step" hidden>
-            <p class="muted-label" style="margin:0 0 8px">Review and edit before saving — this will replace your <code>email-prefs.md</code></p>
-            <textarea id="emailInterviewResult" class="email-interview-result" spellcheck="false"></textarea>
+            <p class="muted-label" style="margin:0 0 8px">Your standing preferences — the AI reads these every time it writes your email.</p>
+            <textarea id="emailInterviewResult" class="email-interview-result" spellcheck="false" placeholder="No preferences saved yet. Type your preferences here, or close this and use &quot;Tune with AI&quot; to generate them from an interview.&#10;&#10;Example:&#10;• Keep the tone warm but concise — no more than 5 sentences per section&#10;• Always include the meal plan summary&#10;• Skip detailed exercise breakdowns, just a quick note on whether I hit my goals"></textarea>
           </div>
         </div>
         <div class="dialog-actions" id="emailInterviewActions">
@@ -2081,6 +2099,7 @@
           <span></span>
           <div>
             <button class="secondary-btn" type="button" id="cancelRestoreBtn">Cancel</button>
+            <button class="secondary-btn" type="button" id="fullRestoreBtn" disabled>Replace all data</button>
             <button class="primary-btn" type="button" id="mergeRestoreBtn" disabled>Merge missing items</button>
           </div>
         </div>

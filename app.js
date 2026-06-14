@@ -148,6 +148,8 @@ let supabaseClient = null;
 let authSession = null;
 let userGroup = null;
 let groupMembers = [];
+let adminDisabledPages = [];
+let personalDisabledPages = [];
 let pendingInviteToken = null;
 let activeFolder = "";
 let activeRecipeTag = "";
@@ -731,6 +733,8 @@ const elements = {
   previewWeeklyEmailBtn: document.querySelector("#previewWeeklyEmailBtn"),
   sendWeeklyEmailBtn: document.querySelector("#sendWeeklyEmailBtn"),
   tuneEmailPrefsBtn: document.querySelector("#tuneEmailPrefsBtn"),
+  editEmailPrefsBtn: document.querySelector("#editEmailPrefsBtn"),
+  emailInterviewTitle: document.querySelector("#emailInterviewTitle"),
   emailInterviewDialog: document.querySelector("#emailInterviewDialog"),
   closeEmailInterviewBtn: document.querySelector("#closeEmailInterviewBtn"),
   emailInterviewCancelBtn: document.querySelector("#emailInterviewCancelBtn"),
@@ -859,6 +863,7 @@ const elements = {
   restoreFileInput: document.querySelector("#restoreFileInput"),
   restorePreview: document.querySelector("#restorePreview"),
   mergeRestoreBtn: document.querySelector("#mergeRestoreBtn"),
+  fullRestoreBtn: document.querySelector("#fullRestoreBtn"),
   closeRestoreBtn: document.querySelector("#closeRestoreBtn"),
   cancelRestoreBtn: document.querySelector("#cancelRestoreBtn"),
   trashDialog: document.querySelector("#trashDialog"),
@@ -1311,12 +1316,17 @@ function bindEvents() {
   elements.previewWeeklyEmailBtn.addEventListener("click", generateWeeklyEmailPreview);
   elements.sendWeeklyEmailBtn.addEventListener("click", sendWeeklyEmail);
   elements.tuneEmailPrefsBtn.addEventListener("click", openEmailInterviewDialog);
+  elements.editEmailPrefsBtn.addEventListener("click", openEmailPrefsEditor);
   elements.emailScheduleEnabled.addEventListener("change", () => {
     elements.emailScheduleDetails.hidden = !elements.emailScheduleEnabled.checked;
     saveEmailScheduleToState();
   });
-  elements.emailScheduleSection.addEventListener("change", (e) => {
-    if (e.target !== elements.emailScheduleEnabled) saveEmailScheduleToState();
+  elements.emailScheduleSection.addEventListener("click", (e) => {
+    const btn = e.target.closest(".email-day-btn");
+    if (!btn) return;
+    btn.classList.toggle("is-on");
+    btn.setAttribute("aria-pressed", btn.classList.contains("is-on"));
+    saveEmailScheduleToState();
   });
   elements.closeEmailInterviewBtn.addEventListener("click", () => elements.emailInterviewDialog.close());
   elements.emailInterviewCancelBtn.addEventListener("click", () => elements.emailInterviewDialog.close());
@@ -1339,6 +1349,7 @@ function bindEvents() {
   elements.refreshBackupHealthBtn.addEventListener("click", loadBackupHealth);
   elements.restoreFileInput.addEventListener("change", previewRestoreFile);
   elements.mergeRestoreBtn.addEventListener("click", mergeMissingRecipesFromBackup);
+  elements.fullRestoreBtn.addEventListener("click", fullRestoreFromBackup);
   elements.closeRestoreBtn.addEventListener("click", closeRestoreDialog);
   elements.cancelRestoreBtn.addEventListener("click", closeRestoreDialog);
   elements.closeTrashBtn.addEventListener("click", () => elements.trashDialog.close());
@@ -1517,11 +1528,13 @@ async function initializeApp() {
   window.addEventListener("offline", () => updateSyncStatus("offline"));
   handleInviteUrlParameter();
   await initializeSupabaseAuth();
+  await loadAdminConfig();
   if (authSession?.access_token) {
     await loadOrCreateUserGroup();
     await migratePersonalStateIfNeeded();
   }
   await hydrateStateFromSharedStorage();
+  await migratePageVisibilityIfNeeded();
   await hydrateRecipeRowsFromSupabase();
   applyInitialMealPlanFocus();
   handleImportUrlParameter();
@@ -1584,6 +1597,7 @@ async function initializeSupabaseAuth() {
       }
       sharedStorageReady = false;
       activeSharedStorageProvider = null;
+      await loadAdminConfig();
       await loadOrCreateUserGroup();
       await hydrateStateFromSharedStorage();
       await hydrateRecipeRowsFromSupabase();
@@ -1737,7 +1751,7 @@ async function loadOrCreateUserGroup() {
   if (!supabaseClient || !authSession?.access_token) return;
   try {
     const res = await fetch(
-      `${supabaseBaseUrl()}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(authSession.user.id)}&select=group_id,role,display_name,live_groups(id,disabled_pages)`,
+      `${supabaseBaseUrl()}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(authSession.user.id)}&select=group_id,role,display_name,personal_disabled_pages,live_groups(id,disabled_pages)`,
       { headers: supabaseHeaders() }
     );
     if (res.ok) {
@@ -1746,6 +1760,7 @@ async function loadOrCreateUserGroup() {
         const member = rows[0];
         const group = member.live_groups;
         userGroup = { id: member.group_id, disabled_pages: group?.disabled_pages || [], role: member.role, display_name: member.display_name };
+        personalDisabledPages = member.personal_disabled_pages || [];
         await loadGroupMembers();
         updateGroupSettingsSection();
         return;
@@ -1797,6 +1812,49 @@ async function loadGroupMembers() {
   } catch (e) {
     console.warn("Could not load group members:", e);
   }
+}
+
+async function loadAdminConfig() {
+  if (!supabaseClient) return;
+  try {
+    const res = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/live_app_config?id=eq.1&select=admin_disabled_pages`,
+      { headers: supabaseHeaders() }
+    );
+    if (res.ok) {
+      const rows = await res.json();
+      adminDisabledPages = rows[0]?.admin_disabled_pages || [];
+    }
+  } catch (e) { console.warn("Could not load admin config:", e); }
+}
+
+async function migratePageVisibilityIfNeeded() {
+  if (!authSession?.access_token || !userGroup?.id) return;
+  if (personalDisabledPages.length > 0) return;
+  const legacy = state.pageVisibility;
+  if (!legacy) return;
+  const disabled = Object.entries(normalizePageVisibility(legacy))
+    .filter(([, v]) => v === false)
+    .map(([k]) => k);
+  if (!disabled.length) return;
+  personalDisabledPages = disabled;
+  await syncPersonalDisabledPages();
+  updatePageVisibility();
+  updatePageTitleMenu();
+}
+
+async function syncPersonalDisabledPages() {
+  if (!userGroup?.id || !authSession?.user?.id) return;
+  try {
+    await fetch(
+      `${supabaseBaseUrl()}/rest/v1/live_group_members?group_id=eq.${userGroup.id}&user_id=eq.${encodeURIComponent(authSession.user.id)}`,
+      {
+        method: "PATCH",
+        headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
+        body: JSON.stringify({ personal_disabled_pages: personalDisabledPages })
+      }
+    );
+  } catch (e) { console.warn("Could not sync personal page settings:", e); }
 }
 
 function openGroupSetupDialog() {
@@ -1907,10 +1965,12 @@ function renderGroupSettingsSection() {
   const body = document.getElementById("groupSettingsMenu");
   if (!body || !userGroup) return;
   const isAdmin = userGroup.role === "admin";
+  const canManageHousehold = isAdmin || userGroup.role === "hoh";
+  const roleLabel = (r) => r === "admin" ? "Admin" : r === "hoh" ? "HoH" : "Member";
   const memberHtml = groupMembers.map((m) => `
     <div class="config-row group-member-row">
       <span>${escapeHtml(m.display_name || m.user_id)}</span>
-      <span class="muted-label">${m.role === "admin" ? "Admin" : "Member"}</span>
+      <span class="muted-label">${escapeHtml(roleLabel(m.role))}</span>
     </div>
   `).join("");
   const inviteHtml = isAdmin ? `
@@ -1930,14 +1990,14 @@ function renderGroupSettingsSection() {
     { key: "recreate", label: "Recreate" }, { key: "plan", label: "Schedule" },
     { key: "inventory", label: "Stock" }
   ];
-  const pageAccessHtml = isAdmin ? `
+  const pageAccessHtml = canManageHousehold ? `
     <div class="group-page-access">
       <p class="settings-subheading">Members can access</p>
       ${pages.map((p) => `
-        <label class="settings-toggle-row">
+        <label class="group-page-toggle-row">
+          ${escapeHtml(p.label)}
           <input type="checkbox" data-group-page="${escapeHtml(p.key)}"
             ${!(userGroup.disabled_pages || []).includes(p.key) ? "checked" : ""} />
-          ${escapeHtml(p.label)}
         </label>
       `).join("")}
     </div>
@@ -1969,7 +2029,7 @@ function renderGroupSettingsSection() {
 }
 
 async function setGroupPageVisibility(page, disabled) {
-  if (!userGroup?.id || userGroup.role !== "admin") return;
+  if (!userGroup?.id || (userGroup.role !== "admin" && userGroup.role !== "hoh")) return;
   const current = userGroup.disabled_pages || [];
   const updated = disabled ? [...new Set([...current, page])] : current.filter((p) => p !== page);
   const res = await fetch(`${supabaseBaseUrl()}/rest/v1/live_groups?id=eq.${userGroup.id}`, {
@@ -1982,6 +2042,39 @@ async function setGroupPageVisibility(page, disabled) {
   updatePageTitleMenu();
   updatePageVisibility();
   updateSettingsMenuOptions();
+}
+
+async function setAdminDisabledPage(page, disabled) {
+  if (userGroup?.role !== "admin") return;
+  const updated = disabled
+    ? [...new Set([...adminDisabledPages, page])]
+    : adminDisabledPages.filter(p => p !== page);
+  const res = await fetch(`${supabaseBaseUrl()}/rest/v1/live_app_config?id=eq.1`, {
+    method: "PATCH",
+    headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
+    body: JSON.stringify({ admin_disabled_pages: updated })
+  });
+  if (!res.ok) { console.warn("Could not update global page settings"); return; }
+  adminDisabledPages = updated;
+  updatePageVisibility();
+  updatePageTitleMenu();
+  updateSettingsMenuOptions();
+}
+
+async function setGroupMemberRole(userId, newRole) {
+  if (!userGroup?.id || userGroup.role !== "admin") return;
+  if (!["hoh", "member"].includes(newRole)) return;
+  const res = await fetch(
+    `${supabaseBaseUrl()}/rest/v1/live_group_members?group_id=eq.${userGroup.id}&user_id=eq.${encodeURIComponent(userId)}`,
+    {
+      method: "PATCH",
+      headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
+      body: JSON.stringify({ role: newRole })
+    }
+  );
+  if (!res.ok) { console.warn("Could not update member role"); return; }
+  await loadGroupMembers();
+  renderContextSettingsDialog("family");
 }
 
 function loadState() {
@@ -2019,18 +2112,24 @@ function maybeAutoLinkProfile() {
   if (!userId) return;
   const members = normalizeMealPlanConfig(state.mealPlanConfig).members;
   if (members.some(m => m.linkedUserId === userId)) return;
-  const displayName = (userGroup?.display_name || authSession.user.email?.split("@")[0] || "").trim().toLowerCase();
-  if (!displayName) return;
-  const match = members.find(m => m.label.trim().toLowerCase() === displayName);
-  if (!match) return;
-  state.mealPlanConfig = normalizeMealPlanConfig({
-    ...state.mealPlanConfig,
-    members: members.map(m => m.id === match.id ? { ...m, linkedUserId: userId } : m)
-  });
+  const rawName = (userGroup?.display_name || authSession.user.email?.split("@")[0] || "").trim();
+  if (!rawName) return;
+  const match = members.find(m => m.label.trim().toLowerCase() === rawName.toLowerCase());
+  if (match) {
+    state.mealPlanConfig = normalizeMealPlanConfig({
+      ...state.mealPlanConfig,
+      members: members.map(m => m.id === match.id ? { ...m, linkedUserId: userId } : m)
+    });
+  } else {
+    state.mealPlanConfig = normalizeMealPlanConfig({
+      ...state.mealPlanConfig,
+      members: [...members, { id: createId("member"), label: rawName, dob: "", linkedUserId: userId }]
+    });
+    recomputeMealPlanLayout();
+  }
   persist();
 }
 
-function isHohConfigured() { return (state.hohMemberIds || []).length > 0; }
 
 function updateTabIndicator(stableParent) {
   if (!stableParent) return;
@@ -2127,6 +2226,7 @@ function defaultState() {
     foodHealthVersion: 1,
     ingredientOptions: defaultIngredientOptions(),
     calendars: [],
+    planEvents: [],
     groceryReviewDismissed: {},
     activeCooking: [],
     weeklyEmailSettings: defaultWeeklyEmailSettings(),
@@ -2140,7 +2240,6 @@ function defaultState() {
     collapsedDays: {},
     emailPrefs: "",
     appName: "",
-    hohMemberIds: [],
     voiceCommandSecret: "",
     stateUpdatedAt: ""
   };
@@ -2234,13 +2333,6 @@ function normalizeState(parsed) {
     planCalendars: normalizePlanCalendars(parsed?.planCalendars),
     mealPlanConfig,
     appName: typeof parsed?.appName === "string" ? parsed.appName.trim() : "",
-    hohMemberIds: (() => {
-      const members = mealPlanConfig.members;
-      if (!members.length) return [];
-      const validIds = new Set(members.map(m => m.id));
-      const saved = (Array.isArray(parsed?.hohMemberIds) ? parsed.hohMemberIds : []).filter(id => validIds.has(id));
-      return saved.length > 0 ? saved : [members[0].id];
-    })(),
     emailPrefs: String(parsed?.emailPrefs || ""),
     voiceCommandSecret: typeof parsed?.voiceCommandSecret === "string" ? parsed.voiceCommandSecret : "",
     stateUpdatedAt: typeof parsed?.stateUpdatedAt === "string" ? parsed.stateUpdatedAt : ""
@@ -2907,10 +2999,15 @@ function normalizePageVisibility(visibility) {
 }
 
 function isPageEnabled(page) {
-  if (userGroup && userGroup.role !== "admin") {
-    return !(userGroup.disabled_pages || []).includes(page);
-  }
-  return normalizePageVisibility(state.pageVisibility)[page] !== false;
+  if (userGroup?.role === "admin") return true;
+  if (adminDisabledPages.includes(page)) return false;
+  if ((userGroup?.disabled_pages || []).includes(page)) return false;
+  return true;
+}
+
+function isPagePersonallyEnabled(page) {
+  if (userGroup?.role === "admin") return true;
+  return isPageEnabled(page) && !personalDisabledPages.includes(page);
 }
 
 function defaultIngredientOptions() {
@@ -2973,13 +3070,17 @@ function setThemeMode(mode) {
 
 function setPageVisibility(page, enabled) {
   if (!Object.hasOwn(pageVisibilityDefaults, page)) return;
-  state.pageVisibility = normalizePageVisibility(state.pageVisibility);
-  state.pageVisibility[page] = Boolean(enabled);
+  if (!isPageEnabled(page)) return;
+  if (enabled) {
+    personalDisabledPages = personalDisabledPages.filter(p => p !== page);
+  } else {
+    if (!personalDisabledPages.includes(page)) personalDisabledPages.push(page);
+  }
   updatePageVisibilityControls();
   updatePageVisibility();
   updatePageTitleMenu();
   updateSettingsMenuOptions();
-  persist();
+  syncPersonalDisabledPages();
 }
 
 function normalizePublishedWeeks(value) {
@@ -3746,37 +3847,227 @@ function mergeStates(newer, older) {
     return { ...(b || {}), ...(a || {}) };
   }
 
-  // Durable id-keyed records — union so neither device loses additions
+  // ── ID-keyed arrays: union so neither device loses additions ──────────────
   for (const key of [
-    "planCalendars", "receipts", "groceryStores",
-    "watchItems", "readingItems",
-    "inventoryBoxes", "inventoryItems",
-    "sailingLog", "pianoSongs", "workouts",
-    "playAutoRules", "recurringTasks",
+    // Core content
+    "recipes", "trashedRecipes", "folders",
+    // Planning & tasks
+    "planCalendars", "planEvents", "autoGenerateRules",
     "doTasks", "doBacklog", "playBacklog",
-    "recipes", "trashedRecipes",
+    "recurringTasks", "playAutoRules",
+    // Watch / Read / Recreate
+    "watchItems", "readingItems",
+    "pianoSongs", "sailingLog",
+    // Inventory & shopping
+    "inventoryBoxes", "inventoryItems",
+    "groceryStores", "groceryPriceObservations", "priceHistory",
+    "receipts",
+    // Fitness
+    "workouts",
+    // Health & food
     "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries",
+    "checklistTemplates",
+    // Linked calendars
+    "calendars",
   ]) {
     merged[key] = unionById(newer[key], older[key]);
   }
 
-  // String-set collections — additive
+  // ── String-set arrays: additive ───────────────────────────────────────────
   merged.pantry = unionStrings(newer.pantry, older.pantry);
   merged.persistentManualGroceries = unionStrings(newer.persistentManualGroceries, older.persistentManualGroceries);
+  merged.recipeTags = unionStrings(newer.recipeTags, older.recipeTags);
 
-  // Keyed maps — union of keys, newer wins on conflict
+  // ── Flat keyed maps: union keys, newer wins on conflict ───────────────────
   for (const key of [
-    "plans", "doPlans", "watchPlans", "playPlans",
-    "groceryItemLocations", "groceryStoreItemSections",
-    "groceryAliases", "grocerySplitPreferences",
-    "receiptItemMappings", "personGoals",
-    "checkedGroceries",
+    "groceryItemLocations", "groceryAliases", "grocerySplitPreferences",
+    "receiptItemMappings", "personGoals", "checkedGroceries",
+    "nutritionIngredientMappings", "publishedWeeks",
+    "inventoryRoomVisibility", "watchShowtimesData",
+    "groceryReviewDismissed", "collapsedDays",
+    "personChecklistSettings",
   ]) {
     merged[key] = unionByKey(newer[key], older[key]);
   }
 
+  // ── Shallow object merges: older provides base, newer keys win ────────────
+  merged.recreateHobbies = { ...(older.recreateHobbies || {}), ...(newer.recreateHobbies || {}) };
+  merged.groceryPricingSettings = { ...(older.groceryPricingSettings || {}), ...(newer.groceryPricingSettings || {}) };
+  merged.collapsedSections = { ...(older.collapsedSections || {}), ...(newer.collapsedSections || {}) };
+
+  // ── Deep array-of-objects merges for settings with id-keyed sub-arrays ───
+  merged.watchSettings = {
+    theaters: unionById(newer.watchSettings?.theaters, older.watchSettings?.theaters),
+    categories: unionById(newer.watchSettings?.categories, older.watchSettings?.categories),
+  };
+  merged.readingSettings = {
+    categories: unionById(newer.readingSettings?.categories, older.readingSettings?.categories),
+  };
+  merged.ingredientOptions = {
+    numbers: unionStrings(newer.ingredientOptions?.numbers, older.ingredientOptions?.numbers),
+    quantities: unionStrings(newer.ingredientOptions?.quantities, older.ingredientOptions?.quantities),
+    items: unionStrings(newer.ingredientOptions?.items, older.ingredientOptions?.items),
+    prep: unionStrings(newer.ingredientOptions?.prep, older.ingredientOptions?.prep),
+  };
+
+  // ── Nested keyed maps: deep merge so empty local entry never erases data ──
+  merged.groceryStoreItemSections = mergeGroceryStoreItemSections(newer.groceryStoreItemSections, older.groceryStoreItemSections);
+
+  // ── Week/day plan structures: deep day-level merge ────────────────────────
+  merged.doPlans = mergeDoPlans(newer.doPlans, older.doPlans);
+  merged.watchPlans = mergeWatchPlans(newer.watchPlans, older.watchPlans);
+  merged.playPlans = mergePlayPlans(newer.playPlans, older.playPlans);
+
+  // ── Meal plans: deep slot-level merge ────────────────────────────────────
+  merged.plans = mergePlanWeeks(newer.plans, older.plans);
+
+  // ── Meal plan config: union members, prefer customized labels ─────────────
+  merged.mealPlanConfig = mergeMealPlanConfig(newer.mealPlanConfig, older.mealPlanConfig);
+
+  // ── Non-empty string fields: blank newer must never erase saved data ──────
+  merged.emailPrefs = newer.emailPrefs || older.emailPrefs || "";
+  merged.appName = newer.appName || older.appName || "";
+  merged.voiceCommandSecret = newer.voiceCommandSecret || older.voiceCommandSecret || "";
+
+  // ── Email schedule: preserve configured schedule over fresh-device defaults
+  merged.weeklyEmailSettings = mergeWeeklyEmailSettings(newer.weeklyEmailSettings, older.weeklyEmailSettings);
+
   // Stamp with now so this merged state wins any further comparisons
   merged.stateUpdatedAt = new Date().toISOString();
+  return merged;
+}
+
+function mergePlanWeeks(newer, older) {
+  const result = { ...(older || {}) };
+  for (const [wk, nWeek] of Object.entries(newer || {})) {
+    const oWeek = result[wk];
+    if (!oWeek) { result[wk] = nWeek; continue; }
+    const week = { ...oWeek, ...nWeek };
+    const nSlots = nWeek?.slots || {};
+    const oSlots = oWeek?.slots || {};
+    const slots = { ...oSlots };
+    for (const [day, nDay] of Object.entries(nSlots)) {
+      const oDay = oSlots[day] || {};
+      const dayMerged = { ...oDay };
+      for (const [slot, nVal] of Object.entries(nDay || {})) {
+        const oVal = oDay[slot];
+        const nHasData = nVal != null && nVal !== "" && !(Array.isArray(nVal) && !nVal.length);
+        const oHasData = oVal != null && oVal !== "" && !(Array.isArray(oVal) && !oVal.length);
+        dayMerged[slot] = nHasData ? nVal : (oHasData ? oVal : nVal);
+      }
+      slots[day] = dayMerged;
+    }
+    week.slots = slots;
+    if (Array.isArray(nWeek.manualGroceries) || Array.isArray(oWeek.manualGroceries)) {
+      week.manualGroceries = [...new Set([...(oWeek.manualGroceries || []), ...(nWeek.manualGroceries || [])])];
+    }
+    result[wk] = week;
+  }
+  return result;
+}
+
+function mergeMealPlanConfig(newer, older) {
+  if (!newer && !older) return undefined;
+  if (!newer) return older;
+  if (!older) return newer;
+  const defaults = defaultMealPlanConfig();
+  const defaultLabels = new Set(defaults.members.map((m) => m.label));
+  const oById = new Map((older.members || []).map((m) => [m.id, m]));
+  const nById = new Map((newer.members || []).map((m) => [m.id, m]));
+  const allIds = new Set([...oById.keys(), ...nById.keys()]);
+  const members = [...allIds].map((id) => {
+    const n = nById.get(id);
+    const o = oById.get(id);
+    if (!n) return o;
+    if (!o) return n;
+    const nIsDefault = defaultLabels.has(n.label);
+    const oIsDefault = defaultLabels.has(o.label);
+    if (nIsDefault && !oIsDefault) return { ...n, ...o, label: o.label };
+    return { ...o, ...n };
+  });
+  const oTypeById = new Map((older.mealTypes || []).map((t) => [t.id, t]));
+  const nTypeById = new Map((newer.mealTypes || []).map((t) => [t.id, t]));
+  const allTypeIds = new Set([...oTypeById.keys(), ...nTypeById.keys()]);
+  const mealTypes = [...allTypeIds].map((id) => nTypeById.get(id) || oTypeById.get(id));
+  return { members, mealTypes };
+}
+
+function mergeDoPlans(newer, older) {
+  const result = { ...(older || {}) };
+  for (const [wk, nWeek] of Object.entries(newer || {})) {
+    const oWeek = result[wk];
+    if (!oWeek) { result[wk] = nWeek; continue; }
+    const week = { ...oWeek };
+    for (const dayId of prepDays.map((d) => d.id)) {
+      const nTasks = nWeek[dayId] || [];
+      const oTasks = oWeek[dayId] || [];
+      const byId = new Map((oTasks).filter((x) => x?.id != null).map((x) => [x.id, x]));
+      (nTasks).filter((x) => x?.id != null).forEach((x) => byId.set(x.id, x));
+      week[dayId] = [...byId.values()];
+    }
+    const nSkipped = nWeek.__skippedRecurring || {};
+    const oSkipped = oWeek.__skippedRecurring || {};
+    week.__skippedRecurring = {};
+    for (const dayId of prepDays.map((d) => d.id)) {
+      week.__skippedRecurring[dayId] = [...new Set([...(oSkipped[dayId] || []), ...(nSkipped[dayId] || [])])];
+    }
+    if (nWeek.__active) week.__active = true;
+    result[wk] = week;
+  }
+  return result;
+}
+
+function mergeWatchPlans(newer, older) {
+  const result = { ...(older || {}) };
+  for (const [wk, nWeek] of Object.entries(newer || {})) {
+    const oWeek = result[wk];
+    if (!oWeek) { result[wk] = nWeek; continue; }
+    const week = {};
+    for (const dayId of prepDays.map((d) => d.id)) {
+      week[dayId] = [...new Set([...(oWeek[dayId] || []), ...(nWeek[dayId] || [])])];
+    }
+    result[wk] = week;
+  }
+  return result;
+}
+
+function mergePlayPlans(newer, older) {
+  const result = { ...(older || {}) };
+  for (const [wk, nWeek] of Object.entries(newer || {})) {
+    const oWeek = result[wk];
+    if (!oWeek) { result[wk] = nWeek; continue; }
+    const week = { ...oWeek };
+    for (const dayId of prepDays.map((d) => d.id)) {
+      const nTasks = nWeek[dayId] || [];
+      const oTasks = oWeek[dayId] || [];
+      const byId = new Map((oTasks).filter((x) => x?.id != null).map((x) => [x.id, x]));
+      (nTasks).filter((x) => x?.id != null).forEach((x) => byId.set(x.id, x));
+      week[dayId] = [...byId.values()];
+    }
+    if (nWeek.__active) week.__active = true;
+    result[wk] = week;
+  }
+  return result;
+}
+
+function mergeGroceryStoreItemSections(newer, older) {
+  const result = { ...(older || {}) };
+  for (const [storeId, nItems] of Object.entries(newer || {})) {
+    result[storeId] = { ...(result[storeId] || {}), ...nItems };
+  }
+  return result;
+}
+
+function mergeWeeklyEmailSettings(newer, older) {
+  if (!newer && !older) return defaultWeeklyEmailSettings();
+  if (!newer) return older;
+  if (!older) return newer;
+  const merged = { ...older, ...newer };
+  const nSched = newer.emailSchedule || {};
+  const oSched = older.emailSchedule || {};
+  // If newer has no configured schedule (disabled + no days = fresh defaults) but older does, keep older's
+  const newerIsDefaultSchedule = !nSched.enabled && (!nSched.days || !nSched.days.length);
+  merged.emailSchedule = (newerIsDefaultSchedule && oSched.enabled) ? oSched : nSched;
   return merged;
 }
 
@@ -3794,6 +4085,7 @@ async function hydrateStateFromSharedStorage() {
         const localIsNewer = localTs && (!remoteTs || localTs >= remoteTs);
         if (localIsNewer) {
           console.info(`Local state (${localTs}) is same-or-newer than ${provider.label} (${remoteTs || "no timestamp"}); merging and pushing.`);
+          await snapshotCloudStateBeforeOverwrite(sharedState);
           const merged = mergeStates(state, sharedState);
           applyStoredState(merged);
         } else {
@@ -3940,6 +4232,19 @@ async function snapshotBeforeSharedStateReplacement(sharedState, providerLabel) 
     });
   } catch (error) {
     console.warn("Could not create a protected pre-sync snapshot.", error);
+  }
+}
+
+async function snapshotCloudStateBeforeOverwrite(sharedState) {
+  if (!userGroup?.id || !authSession?.access_token || !sharedState) return;
+  try {
+    await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_state_history`, {
+      method: "POST",
+      headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
+      body: JSON.stringify({ group_id: userGroup.id, state: sharedState }),
+    });
+  } catch (e) {
+    console.warn("Could not snapshot cloud state before local overwrite:", e);
   }
 }
 
@@ -4527,9 +4832,12 @@ function render() {
   document.title = name;
   updatePageVisibility();
   const week = weekState();
-  const weekRangeLabel = formatWeekRange(currentWeek, activeAppArea === "do" ? 6 : 7);
-  elements.weekLabel.textContent = weekRangeLabel;
-  elements.weekLabel.setAttribute("aria-label", `Choose week. Current week is ${weekRangeLabel}`);
+  const weekTools = elements.weekLabel.closest(".week-tools");
+  if (!weekTools.classList.contains("today-mode") && !weekTools.classList.contains("plan-mode") && !weekTools.classList.contains("shop-mode")) {
+    const weekRangeLabel = formatWeekRange(currentWeek, activeAppArea === "do" ? 6 : 7);
+    elements.weekLabel.textContent = weekRangeLabel;
+    elements.weekLabel.setAttribute("aria-label", `Choose week. Current week is ${weekRangeLabel}`);
+  }
   renderWeekJumpMenu();
   renderActiveCooking();
   renderFolders();
@@ -9477,15 +9785,15 @@ function setPageTitle(title) {
 }
 
 function updatePageTitleMenu() {
-  elements.titleMealPlanBtn.hidden = activeAppArea === "eat" || !isPageEnabled("eat");
-  elements.titleExercisePlanBtn.hidden = activeAppArea === "play" || !isPageEnabled("play");
-  elements.titleToDoListBtn.hidden = activeAppArea === "do" || !isPageEnabled("do");
-  elements.titleWatchBtn.hidden = activeAppArea === "watch" || !isPageEnabled("watch");
-  elements.titleReadBtn.hidden = activeAppArea === "read" || !isPageEnabled("read");
-  elements.titleShopBtn.hidden = activeAppArea === "shop" || !isPageEnabled("shop");
-  elements.titleInventoryBtn.hidden = activeAppArea === "inventory" || !isPageEnabled("inventory");
-  elements.titleRecreateBtn.hidden = activeAppArea === "recreate" || !isPageEnabled("recreate");
-  elements.titlePlanBtn.hidden = activeAppArea === "plan" || !isPageEnabled("plan");
+  elements.titleMealPlanBtn.hidden = activeAppArea === "eat" || !isPagePersonallyEnabled("eat");
+  elements.titleExercisePlanBtn.hidden = activeAppArea === "play" || !isPagePersonallyEnabled("play");
+  elements.titleToDoListBtn.hidden = activeAppArea === "do" || !isPagePersonallyEnabled("do");
+  elements.titleWatchBtn.hidden = activeAppArea === "watch" || !isPagePersonallyEnabled("watch");
+  elements.titleReadBtn.hidden = activeAppArea === "read" || !isPagePersonallyEnabled("read");
+  elements.titleShopBtn.hidden = activeAppArea === "shop" || !isPagePersonallyEnabled("shop");
+  elements.titleInventoryBtn.hidden = activeAppArea === "inventory" || !isPagePersonallyEnabled("inventory");
+  elements.titleRecreateBtn.hidden = activeAppArea === "recreate" || !isPagePersonallyEnabled("recreate");
+  elements.titlePlanBtn.hidden = activeAppArea === "plan" || !isPagePersonallyEnabled("plan");
   const menu = elements.pageTitleMenu;
   const btns = [...menu.querySelectorAll("button")];
   btns.sort((a, b) => a.textContent.trim().localeCompare(b.textContent.trim()));
@@ -9493,22 +9801,24 @@ function updatePageTitleMenu() {
 }
 
 function updatePageVisibility() {
-  state.pageVisibility = normalizePageVisibility(state.pageVisibility);
-  elements.homeEatBtn.hidden = !state.pageVisibility.eat;
-  elements.homePlayBtn.hidden = !state.pageVisibility.play;
-  elements.homeDoBtn.hidden = !state.pageVisibility.do;
-  elements.homeWatchBtn.hidden = !state.pageVisibility.watch;
-  elements.homeReadBtn.hidden = !state.pageVisibility.read;
-  elements.homeShopBtn.hidden = !state.pageVisibility.shop;
-  elements.homeInventoryBtn.hidden = !state.pageVisibility.inventory;
-  elements.homeRecreateBtn.hidden = !state.pageVisibility.recreate;
-  elements.homePlanBtn.hidden = !state.pageVisibility.plan;
+  elements.homeEatBtn.hidden = !isPagePersonallyEnabled("eat");
+  elements.homePlayBtn.hidden = !isPagePersonallyEnabled("play");
+  elements.homeDoBtn.hidden = !isPagePersonallyEnabled("do");
+  elements.homeWatchBtn.hidden = !isPagePersonallyEnabled("watch");
+  elements.homeReadBtn.hidden = !isPagePersonallyEnabled("read");
+  elements.homeShopBtn.hidden = !isPagePersonallyEnabled("shop");
+  elements.homeInventoryBtn.hidden = !isPagePersonallyEnabled("inventory");
+  elements.homeRecreateBtn.hidden = !isPagePersonallyEnabled("recreate");
+  elements.homePlanBtn.hidden = !isPagePersonallyEnabled("plan");
   updatePageVisibilityControls();
 }
 
 function updatePageVisibilityControls() {
   document.querySelectorAll("[data-page-visibility]").forEach((input) => {
-    input.checked = isPageEnabled(input.dataset.pageVisibility);
+    const page = input.dataset.pageVisibility;
+    const locked = !isPageEnabled(page);
+    input.checked = isPagePersonallyEnabled(page);
+    input.disabled = locked;
   });
 }
 
@@ -9582,7 +9892,7 @@ function openSettingsMenuDialog(openDialog) {
 }
 
 function openContextSettingsDialog(kind) {
-  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -9599,7 +9909,8 @@ function renderContextSettingsDialog(kind) {
     recreate: "Recreate",
     pages: "Pages",
     "location-services": "Location Services",
-    "voice-commands": "Voice Commands"
+    "voice-commands": "Voice Commands",
+    "admin-pages": "Global Pages"
   };
   const isSubPanel = !["general", "eat", "do", "play", "watch", "recreate"].includes(kind);
   elements.contextSettingsBackBtn.hidden = !isSubPanel;
@@ -9618,6 +9929,7 @@ function renderContextSettingsDialog(kind) {
         <div class="settings-admin-section">
           <span class="theme-setting-title">Admin</span>
           <div class="settings-action-grid">
+            <button type="button" data-context-settings-action="admin-pages">Global Pages</button>
             <button type="button" data-context-settings-action="backup-health">Backup Health</button>
             <button type="button" data-context-settings-action="restore-backup">Restore Backup</button>
             <button type="button" data-context-settings-action="admin-users">Users</button>
@@ -9625,6 +9937,35 @@ function renderContextSettingsDialog(kind) {
           </div>
         </div>
       ` : ""}
+    `;
+    return;
+  }
+
+  if (kind === "admin-pages") {
+    if (userGroup?.role !== "admin") return;
+    const pages = [
+      { key: "eat",       label: "Meal Plan"  },
+      { key: "shop",      label: "Shop"       },
+      { key: "do",        label: "To-Do"      },
+      { key: "play",      label: "Sweat"      },
+      { key: "watch",     label: "Watch"      },
+      { key: "read",      label: "Read"       },
+      { key: "recreate",  label: "Recreate"   },
+      { key: "plan",      label: "Schedule"   },
+      { key: "inventory", label: "Inventory"  },
+    ];
+    elements.contextSettingsBody.innerHTML = `
+      <p class="muted-label" style="margin-bottom:10px;font-size:0.82rem">These pages are hidden for all users app-wide, regardless of household or personal settings.</p>
+      <div class="page-vis-card" role="group" aria-label="Globally enabled pages">
+        ${pages.map(({ key, label }) => `
+          <label class="page-vis-row">
+            <span class="page-vis-name">${escapeHtml(label)}</span>
+            <input type="checkbox" class="page-vis-cb" data-admin-page-visibility="${escapeHtml(key)}"
+              ${!adminDisabledPages.includes(key) ? "checked" : ""} />
+            <span class="page-vis-toggle" aria-hidden="true"></span>
+          </label>
+        `).join("")}
+      </div>
     `;
     return;
   }
@@ -9643,14 +9984,18 @@ function renderContextSettingsDialog(kind) {
     ];
     elements.contextSettingsBody.innerHTML = `
       <div class="page-vis-card" role="group" aria-label="Enabled pages">
-        ${pages.map(({ key, label }) => `
-          <label class="page-vis-row">
-            <span class="page-vis-name">${escapeHtml(label)}</span>
-            <input type="checkbox" class="page-vis-cb" data-page-visibility="${escapeHtml(key)}"
-              ${isPageEnabled(key) ? "checked" : ""} />
-            <span class="page-vis-toggle" aria-hidden="true"></span>
-          </label>
-        `).join("")}
+        ${pages.map(({ key, label }) => {
+          const locked = !isPageEnabled(key);
+          return `
+            <label class="page-vis-row${locked ? " page-vis-row--locked" : ""}">
+              <span class="page-vis-name">${escapeHtml(label)}${locked ? ' <span class="page-vis-locked-note">restricted</span>' : ""}</span>
+              <input type="checkbox" class="page-vis-cb" data-page-visibility="${escapeHtml(key)}"
+                ${isPagePersonallyEnabled(key) ? "checked" : ""}
+                ${locked ? "disabled" : ""} />
+              <span class="page-vis-toggle" aria-hidden="true"></span>
+            </label>
+          `;
+        }).join("")}
       </div>
     `;
     return;
@@ -9744,20 +10089,35 @@ function renderContextSettingsDialog(kind) {
       .map((gm) => ({ id: createId("member"), label: gm.display_name, dob: "", linkedUserId: gm.user_id }));
     const allMembers = [...config.members, ...autoMembers];
     const currentUserId = authSession?.user?.id;
-    const hohIds = new Set(state.hohMemberIds || []);
+    const viewerIsAdmin = userGroup?.role === "admin";
     const memberRowsHtml = allMembers.map((m) => {
-      const isHoh = hohIds.has(m.id);
       const isLinked = !!m.linkedUserId;
       const isCurrentUser = currentUserId && m.linkedUserId === currentUserId;
+      const groupMember = isLinked ? groupMembers.find(gm => gm.user_id === m.linkedUserId) : null;
+      const memberRole = groupMember?.role || null;
+
+      let roleHtml = "";
+      if (isLinked) {
+        if (isCurrentUser && memberRole === "admin") {
+          roleHtml = `<span class="member-role-badge member-role-badge--admin">Admin</span>`;
+        } else if (viewerIsAdmin && !isCurrentUser && memberRole && memberRole !== "admin") {
+          roleHtml = `
+            <select class="member-role-select" data-member-role title="Role">
+              <option value="hoh" ${memberRole === "hoh" ? "selected" : ""}>HoH</option>
+              <option value="member" ${memberRole === "member" ? "selected" : ""}>Member</option>
+            </select>`;
+        } else if (memberRole) {
+          const badgeClass = memberRole === "admin" ? "member-role-badge--admin" : memberRole === "hoh" ? "member-role-badge--hoh" : "";
+          const roleLabel = memberRole === "admin" ? "Admin" : memberRole === "hoh" ? "HoH" : "Member";
+          roleHtml = `<span class="member-role-badge ${badgeClass}">${escapeHtml(roleLabel)}</span>`;
+        }
+      }
+
       return `
         <div class="config-row" data-member-row data-member-id="${escapeHtml(m.id)}" data-member-linked-user-id="${escapeHtml(m.linkedUserId || "")}">
           <input type="text" class="config-input${isLinked ? " config-input-readonly" : ""}" value="${escapeHtml(m.label)}" placeholder="Name" ${isLinked ? "readonly" : ""} />
           <input type="date" class="config-input config-dob-input${isLinked ? " config-input-readonly" : ""}" data-member-dob value="${escapeHtml(m.dob || "")}" title="${isLinked ? "Edit via profile" : "Date of birth"}" ${isLinked ? "readonly" : ""} />
-          <label class="hoh-member-toggle-label" title="Head of household">
-            <input type="checkbox" class="hoh-member-cb" data-member-hoh ${isHoh ? "checked" : ""} ${isHoh && hohIds.size === 1 ? "disabled" : ""} />
-            <span class="hoh-member-toggle" aria-hidden="true"></span>
-            <span class="hoh-toggle-text">HoH</span>
-          </label>
+          ${roleHtml}
           ${isCurrentUser ? "" : `
             <button type="button" class="icon-btn config-remove-btn" data-remove-member aria-label="Remove">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -9777,6 +10137,7 @@ function renderContextSettingsDialog(kind) {
         </div>
       `;
       const isAdmin = userGroup.role === "admin";
+      const canManageHousehold = isAdmin || userGroup.role === "hoh";
       const pages = [
         { key: "eat", label: "Meal Plan" }, { key: "shop", label: "Shop" },
         { key: "do", label: "To-Do" }, { key: "watch", label: "Watch" },
@@ -9784,10 +10145,11 @@ function renderContextSettingsDialog(kind) {
         { key: "recreate", label: "Recreate" }, { key: "plan", label: "Schedule" },
         { key: "inventory", label: "Stock" }
       ];
+      const roleLabel = (r) => r === "admin" ? "Admin" : r === "hoh" ? "HoH" : "Member";
       const accountMembersHtml = groupMembers.map((m) => `
         <div class="config-row group-member-row">
           <span>${escapeHtml(m.display_name || m.user_id)}</span>
-          <span class="muted-label">${m.role === "admin" ? "Admin" : "Member"}</span>
+          <span class="muted-label">${escapeHtml(roleLabel(m.role))}</span>
         </div>
       `).join("");
       return `
@@ -9803,17 +10165,17 @@ function renderContextSettingsDialog(kind) {
               </div>
               <p class="import-status" id="groupInviteStatus"></p>
             </div>
+          ` : ""}
+          ${canManageHousehold ? `
             <div class="group-page-access">
               <p class="settings-subheading">Members can access</p>
-              <div class="group-page-access-grid">
-                ${pages.map((p) => `
-                  <label class="settings-toggle-row">
-                    <input type="checkbox" data-group-page="${escapeHtml(p.key)}"
-                      ${!(userGroup.disabled_pages || []).includes(p.key) ? "checked" : ""} />
-                    ${escapeHtml(p.label)}
-                  </label>
-                `).join("")}
-              </div>
+              ${pages.map((p) => `
+                <label class="group-page-toggle-row">
+                  ${escapeHtml(p.label)}
+                  <input type="checkbox" data-group-page="${escapeHtml(p.key)}"
+                    ${!(userGroup.disabled_pages || []).includes(p.key) ? "checked" : ""} />
+                </label>
+              `).join("")}
             </div>
           ` : ""}
         </div>
@@ -9954,10 +10316,18 @@ function handleContextSettingsChange(event) {
   if (themeInput) setThemeMode(themeInput.value);
   const pageVisibilityInput = event.target.closest?.("[data-page-visibility]");
   if (pageVisibilityInput) setPageVisibility(pageVisibilityInput.dataset.pageVisibility, pageVisibilityInput.checked);
+  const adminPageInput = event.target.closest?.("[data-admin-page-visibility]");
+  if (adminPageInput) setAdminDisabledPage(adminPageInput.dataset.adminPageVisibility, !adminPageInput.checked);
   const locationSharingInput = event.target.closest?.("[data-location-sharing]");
   if (locationSharingInput) setLocationSharingEnabled(locationSharingInput.checked, locationSharingInput);
   const groupPageInput = event.target.closest?.("[data-group-page]");
   if (groupPageInput) setGroupPageVisibility(groupPageInput.dataset.groupPage, !groupPageInput.checked);
+  const memberRoleSelect = event.target.closest?.("select[data-member-role]");
+  if (memberRoleSelect) {
+    const row = memberRoleSelect.closest("[data-member-row]");
+    const userId = row?.dataset.memberLinkedUserId;
+    if (userId) setGroupMemberRole(userId, memberRoleSelect.value);
+  }
   const hobbyVisInput = event.target.closest?.("[data-hobby-visibility]");
   if (hobbyVisInput) {
     if (!state.recreateHobbies) state.recreateHobbies = {};
@@ -9980,6 +10350,7 @@ function handleContextSettingsAction(event) {
     "weekly-email": () => closeAndRun(openWeeklyEmailDialog),
     "backup-health": () => closeAndRun(openBackupHealthDialog),
     "restore-backup": () => closeAndRun(openRestoreDialog),
+    "admin-pages": () => renderContextSettingsDialog("admin-pages"),
     "admin-users": () => closeAndRun(openAdminUsersDialog),
     "admin-households": () => closeAndRun(openAdminHouseholdsDialog),
     "trash": () => closeAndRun(openTrashDialog),
@@ -10037,22 +10408,14 @@ function handleContextSettingsAction(event) {
       if (appNameInput) state.appName = appNameInput.value.trim();
       const rows = elements.contextSettingsBody.querySelectorAll("[data-member-row]");
       const newMembers = [];
-      const newHohIds = [];
       rows.forEach((row) => {
         const id = row.dataset.memberId;
         const linkedUserId = row.dataset.memberLinkedUserId || null;
         const label = (row.querySelector("input[type='text']")?.value || "").trim();
         const dob = (row.querySelector("[data-member-dob]")?.value || "").trim();
-        if (label) {
-          newMembers.push({ id, label, dob, linkedUserId: linkedUserId || null });
-          if (row.querySelector("[data-member-hoh]")?.checked) newHohIds.push(id);
-        }
+        if (label) newMembers.push({ id, label, dob, linkedUserId: linkedUserId || null });
       });
-      const validMemberIds = new Set(newMembers.map(m => m.id));
-      state.hohMemberIds = newHohIds.filter(id => validMemberIds.has(id));
-      if (state.hohMemberIds.length === 0 && newMembers.length > 0) state.hohMemberIds = [newMembers[0].id];
       if (!newMembers.length) { alert("At least one family member is required."); return; }
-      if (isHohConfigured() && newHohIds.length === 0) { alert("At least one Head of Household is required. Designate another member before removing the last one."); return; }
       const oldConfig = normalizeMealPlanConfig(state.mealPlanConfig);
       state.mealPlanConfig = normalizeMealPlanConfig({ ...state.mealPlanConfig, members: newMembers });
       const newConfig = normalizeMealPlanConfig(state.mealPlanConfig);
@@ -12131,7 +12494,7 @@ function saveEmailScheduleToState() {
   sched.enabled = elements.emailScheduleEnabled.checked;
   sched.time = elements.emailScheduleTime.value || "08:00";
   sched.timezone = elements.emailScheduleTimezone.value;
-  sched.days = [...elements.emailScheduleSection.querySelectorAll(".email-schedule-day:checked")].map((cb) => cb.value);
+  sched.days = [...elements.emailScheduleSection.querySelectorAll(".email-day-btn.is-on")].map((btn) => btn.dataset.day);
   state.weeklyEmailSettings.emailSchedule = sched;
   persist();
 }
@@ -12151,8 +12514,10 @@ async function openWeeklyEmailDialog(event) {
   const currentTz = sched.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   populateEmailScheduleTimezones(elements.emailScheduleTimezone, currentTz);
   elements.emailScheduleTime.value = sched.time;
-  elements.emailScheduleSection.querySelectorAll(".email-schedule-day").forEach((cb) => {
-    cb.checked = sched.days.includes(cb.value);
+  elements.emailScheduleSection.querySelectorAll(".email-day-btn").forEach((btn) => {
+    const on = sched.days.includes(btn.dataset.day);
+    btn.classList.toggle("is-on", on);
+    btn.setAttribute("aria-pressed", on);
   });
 
   elements.weeklyEmailDialog.showModal();
@@ -12220,8 +12585,21 @@ async function sendWeeklyEmail() {
 
 let interviewQuestions = [];
 
+function openEmailPrefsEditor() {
+  interviewQuestions = [];
+  elements.emailInterviewTitle.textContent = "Standing preferences";
+  elements.emailInterviewStep1.hidden = true;
+  elements.emailInterviewStep2.hidden = false;
+  elements.emailInterviewBackBtn.hidden = true;
+  elements.emailInterviewResult.value = state.emailPrefs || "";
+  elements.emailInterviewNextBtn.textContent = "Save preferences";
+  elements.emailInterviewNextBtn.disabled = false;
+  elements.emailInterviewDialog.showModal();
+}
+
 async function openEmailInterviewDialog() {
   interviewQuestions = [];
+  elements.emailInterviewTitle.textContent = "Tune preferences";
   elements.emailInterviewLoading.hidden = false;
   elements.emailInterviewForm.hidden = true;
   elements.emailInterviewForm.innerHTML = "";
@@ -12697,6 +13075,7 @@ function openRestoreDialog(event) {
   elements.restoreFileInput.value = "";
   elements.mergeRestoreBtn.disabled = true;
   elements.restorePreview.textContent = "Select a backup above to preview what will be restored.";
+  elements.fullRestoreBtn.disabled = true;
   elements.restoreDialog.showModal();
   loadRestoreBackupList();
 }
@@ -12782,6 +13161,7 @@ async function selectCloudBackup(id, cardEl) {
   cardEl?.classList.add("is-selected");
   pendingRestore = null;
   elements.mergeRestoreBtn.disabled = true;
+  elements.fullRestoreBtn.disabled = true;
   elements.restorePreview.textContent = "Loading backup…";
   try {
     const res = await fetch(
@@ -12828,6 +13208,7 @@ async function selectRestoreBackup(fileName, cardEl) {
   cardEl?.classList.add("is-selected");
   pendingRestore = null;
   elements.mergeRestoreBtn.disabled = true;
+  elements.fullRestoreBtn.disabled = true;
   elements.restorePreview.textContent = "Loading backup…";
   try {
     const response = await fetch(`/api/backup?file=${encodeURIComponent(fileName)}`, { cache: "no-store" });
@@ -12841,6 +13222,7 @@ async function selectRestoreBackup(fileName, cardEl) {
 function applyRestorePreview(parsed, fileName) {
   pendingRestore = null;
   elements.mergeRestoreBtn.disabled = true;
+  elements.fullRestoreBtn.disabled = true;
   try {
     const backupState = normalizeRestoreState(parsed);
     const recipes = Array.isArray(backupState?.recipes) ? backupState.recipes.map(normalizeRecipe).filter((recipe) => recipe.name) : [];
@@ -12852,6 +13234,7 @@ function applyRestorePreview(parsed, fileName) {
     const userData = restoreUserDataPreview(backupState);
     pendingRestore = { fileName, state: backupState, recipes, missingRecipes, publishedWeeks, missingPublishedWeeks, calendars, missingCalendars, userData };
     elements.mergeRestoreBtn.disabled = !missingRecipes.length && !missingPublishedWeeks.length && !missingCalendars.length && !restoreUserDataChangeCount(userData);
+    elements.fullRestoreBtn.disabled = false;
     elements.restorePreview.innerHTML = restorePreviewTemplate(pendingRestore);
   } catch (error) {
     elements.restorePreview.textContent = `This backup could not be read: ${error.message || "Invalid file."}`;
@@ -12862,6 +13245,7 @@ async function previewRestoreFile() {
   elements.restoreBackupList?.querySelectorAll(".restore-backup-card").forEach((c) => c.classList.remove("is-selected"));
   pendingRestore = null;
   elements.mergeRestoreBtn.disabled = true;
+  elements.fullRestoreBtn.disabled = true;
   const file = elements.restoreFileInput.files?.[0];
   if (!file) {
     elements.restorePreview.textContent = "Select a backup above to preview what will be restored.";
@@ -13430,6 +13814,20 @@ async function mergeMissingRecipesFromBackup() {
   render();
   elements.restorePreview.innerHTML = `<div class="restore-preview-card"><strong>Merged ${restoredRecipes.length} missing recipe${restoredRecipes.length === 1 ? "" : "s"}, ${restoredWeeks.length} published week${restoredWeeks.length === 1 ? "" : "s"}, ${restoredCalendars.length} calendar${restoredCalendars.length === 1 ? "" : "s"}, and ${restoredUserDataCount} user setting/task item${restoredUserDataCount === 1 ? "" : "s"}.</strong></div>`;
   elements.mergeRestoreBtn.disabled = true;
+  elements.fullRestoreBtn.disabled = true;
+  pendingRestore = null;
+}
+
+async function fullRestoreFromBackup() {
+  if (!pendingRestore) return;
+  if (!window.confirm("This will replace all current data with the selected backup. Any changes since that backup will be lost. Continue?")) return;
+  if (!(await tryPreChangeBackup("full restore from backup"))) return;
+  applyStoredState(pendingRestore.state);
+  persist();
+  await persistImmediately("backup restore");
+  elements.restorePreview.innerHTML = `<div class="restore-preview-card"><strong>Backup restored successfully.</strong></div>`;
+  elements.mergeRestoreBtn.disabled = true;
+  elements.fullRestoreBtn.disabled = true;
   pendingRestore = null;
 }
 
@@ -13762,7 +14160,12 @@ function mergeUserDataFromRestore(restore) {
 
   if (data.pageVisibility) {
     state.pageVisibility = normalizePageVisibility(restore.state.pageVisibility);
+    personalDisabledPages = Object.entries(normalizePageVisibility(restore.state.pageVisibility))
+      .filter(([, v]) => v === false)
+      .map(([k]) => k);
+    syncPersonalDisabledPages();
     updatePageVisibility();
+    updatePageTitleMenu();
     merged += 1;
   }
 
