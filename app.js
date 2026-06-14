@@ -11614,7 +11614,7 @@ async function scanReceiptImages() {
     )));
     const response = await fetch(helperUrl, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` },
       body: JSON.stringify({ images })
     });
     const payload = await response.json().catch(() => ({}));
@@ -12249,7 +12249,7 @@ async function autoTagGroceryWithAI() {
     const names = untagged.map(item => item.name || item || "").filter(Boolean);
     const res = await fetch(endpoint, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` },
       body: JSON.stringify({ items: names })
     });
     if (!res.ok) {
@@ -14151,7 +14151,6 @@ function mergeUserDataFromRestore(restore) {
   }
 
   if (data.pageVisibility) {
-    state.pageVisibility = normalizePageVisibility(restore.state.pageVisibility);
     personalDisabledPages = Object.entries(normalizePageVisibility(restore.state.pageVisibility))
       .filter(([, v]) => v === false)
       .map(([k]) => k);
@@ -18897,7 +18896,7 @@ async function openNutritionEstimateDialog(recipeId) {
     if (!helperUrl) throw new Error("Nutrition estimates need the local helper or live app.");
     const response = await fetch(helperUrl, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` },
       body: JSON.stringify({
         ingredients,
         servings: elements.nutritionEstimateServings.value,
@@ -19089,7 +19088,7 @@ async function importRecipeFromUrl() {
 async function fetchRecipeWithBestAvailableMethod(url) {
   const helperUrl = recipeImportHelperUrl(url);
   if (helperUrl) {
-    const response = await fetch(helperUrl);
+    const response = await fetch(helperUrl, { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || `Import helper failed with status ${response.status}`);
     return {
@@ -19213,7 +19212,7 @@ async function scanRecipeFromImages() {
     if (!helperUrl) throw new Error("Recipe scanning needs the local helper or the live app.");
     const response = await fetch(helperUrl, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` },
       body: JSON.stringify({ images })
     });
     const payload = await response.json().catch(() => ({}));

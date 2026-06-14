@@ -22,10 +22,24 @@ exports.handler = async (event) => {
   const email = String(body.email || "").trim().toLowerCase();
   if (!email) return jsonResponse(400, { error: "Email is required." });
 
+  const existingRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/live_group_invites?group_id=eq.${memberRow.group_id}&email=eq.${encodeURIComponent(email)}&accepted_at=is.null&select=id,expires_at`,
+    { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } }
+  );
+  if (existingRes.ok) {
+    const existing = await existingRes.json();
+    const stillValid = existing.find(r => !r.expires_at || new Date(r.expires_at) > new Date());
+    if (stillValid) {
+      const appUrl = (process.env.APP_URL || process.env.URL || "").replace(/\/$/, "");
+      return jsonResponse(200, { ok: true, inviteUrl: `${appUrl}/?invite=${stillValid.id}` });
+    }
+  }
+
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
   const inviteRes = await fetch(`${SUPABASE_URL}/rest/v1/live_group_invites`, {
     method: "POST",
     headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "content-type": "application/json", Prefer: "return=representation" },
-    body: JSON.stringify({ group_id: memberRow.group_id, email, invited_by: caller.id })
+    body: JSON.stringify({ group_id: memberRow.group_id, email, invited_by: caller.id, expires_at: expiresAt })
   });
   if (!inviteRes.ok) return jsonResponse(500, { error: "Could not create invite." });
   const [invite] = await inviteRes.json();

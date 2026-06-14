@@ -18,13 +18,14 @@ exports.handler = async (event) => {
   if (!token) return jsonResponse(400, { error: "Invite token is required." });
 
   const inviteRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/live_group_invites?id=eq.${encodeURIComponent(token)}&select=id,group_id,email,accepted_at`,
+    `${SUPABASE_URL}/rest/v1/live_group_invites?id=eq.${encodeURIComponent(token)}&select=id,group_id,email,accepted_at,expires_at`,
     { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } }
   );
   if (!inviteRes.ok) return jsonResponse(500, { error: "Could not look up invite." });
   const [invite] = await inviteRes.json();
   if (!invite) return jsonResponse(404, { error: "Invite not found." });
   if (invite.accepted_at) return jsonResponse(409, { error: "This invite has already been used." });
+  if (invite.expires_at && new Date(invite.expires_at) < new Date()) return jsonResponse(410, { error: "This invite has expired. Ask the group admin to send a new one." });
   if (invite.email.toLowerCase() !== (caller.email || "").toLowerCase()) return jsonResponse(403, { error: "This invite was sent to a different email address." });
 
   const existingRes = await fetch(
