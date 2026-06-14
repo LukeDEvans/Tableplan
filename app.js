@@ -12514,7 +12514,7 @@ async function openWeeklyEmailDialog(event) {
 
   elements.weeklyEmailDialog.showModal();
   try {
-    const res = await fetch("/api/weekly-email");
+    const res = await fetch("/api/weekly-email", { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
     const cfg = await res.json();
     const missing = [];
     if (!cfg.hasAnthropicKey) missing.push("ANTHROPIC_API_KEY");
@@ -12545,7 +12545,7 @@ async function generateWeeklyEmailPreview() {
   elements.weeklyEmailPreviewFrame.srcdoc = "<p style='font-family:sans-serif;padding:24px;color:#888'>Generating your email with Claude…</p>";
   try {
     const notes = elements.weeklyEmailNotes.value.trim();
-    const res = await fetch("/api/weekly-email", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ preview: true, notes }) });
+    const res = await fetch("/api/weekly-email", { method: "POST", headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` }, body: JSON.stringify({ preview: true, notes }) });
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Server error ${res.status}`); }
     const { html } = await res.json();
     elements.weeklyEmailPreviewFrame.srcdoc = html;
@@ -12563,7 +12563,7 @@ async function sendWeeklyEmail() {
   elements.sendWeeklyEmailBtn.textContent = "Sending…";
   try {
     const notes = elements.weeklyEmailNotes.value.trim();
-    const res = await fetch("/api/weekly-email", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ preview: false, notes }) });
+    const res = await fetch("/api/weekly-email", { method: "POST", headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` }, body: JSON.stringify({ preview: false, notes }) });
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Server error ${res.status}`); }
     const { to } = await res.json();
     elements.sendWeeklyEmailBtn.textContent = `Sent to ${to}`;
@@ -12602,7 +12602,7 @@ async function openEmailInterviewDialog() {
   elements.emailInterviewNextBtn.disabled = true;
   elements.emailInterviewDialog.showModal();
   try {
-    const res = await fetch("/api/email-interview", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ step: "questions" }) });
+    const res = await fetch("/api/email-interview", { method: "POST", headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` }, body: JSON.stringify({ step: "questions" }) });
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Server error ${res.status}`); }
     const { questions } = await res.json();
     interviewQuestions = questions;
@@ -12633,7 +12633,7 @@ async function emailInterviewNext() {
   elements.emailInterviewNextBtn.disabled = true;
   elements.emailInterviewNextBtn.textContent = "Generating…";
   try {
-    const res = await fetch("/api/email-interview", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ step: "update", questions: interviewQuestions, answers }) });
+    const res = await fetch("/api/email-interview", { method: "POST", headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` }, body: JSON.stringify({ step: "update", questions: interviewQuestions, answers }) });
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Server error ${res.status}`); }
     const { prefs } = await res.json();
     elements.emailInterviewResult.value = prefs;
@@ -21070,7 +21070,7 @@ async function fetchShowtimes(itemId) {
   try {
     let location = "";
     try { location = await getUserLocationString(); } catch { /* use no location */ }
-    const res = await fetch(showtimesUrl(item.title, location));
+    const res = await fetch(showtimesUrl(item.title, location), { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
     const data = await res.json();
     // Preserve day structure; deduplicate theaters by name within each day
     const days = (data.showtimes || []).map((s) => {

@@ -3,6 +3,16 @@ const DEFAULT_TO_EMAIL = "mrlukedevans@gmail.com";
 const DEFAULT_FROM_EMAIL = "Live App <onboarding@resend.dev>";
 
 exports.handler = async (event) => {
+  if (event.httpMethod !== "GET" && event.httpMethod !== "POST") return jsonResponse(405, { error: "Method not allowed." });
+
+  const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+  if (!serviceKey) return jsonResponse(503, { error: "Service not configured." });
+
+  const authHeader = event.headers.authorization || event.headers.Authorization || "";
+  const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!accessToken) return jsonResponse(401, { error: "Not authenticated." });
+  if (!await verifySession(accessToken, serviceKey)) return jsonResponse(401, { error: "Invalid session." });
+
   if (event.httpMethod === "GET") {
     return jsonResponse(200, {
       hasAnthropicKey: Boolean(process.env.ANTHROPIC_API_KEY?.trim()),
@@ -12,16 +22,11 @@ exports.handler = async (event) => {
     });
   }
 
-  if (event.httpMethod !== "POST") return jsonResponse(405, { error: "Method not allowed." });
-
   let body;
   try { body = JSON.parse(event.body || "{}"); } catch { return jsonResponse(400, { error: "Invalid JSON." }); }
 
   const anthropicKey = (process.env.ANTHROPIC_API_KEY || "").trim();
   if (!anthropicKey) return jsonResponse(503, { error: "ANTHROPIC_API_KEY not configured in Netlify." });
-
-  const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
-  if (!serviceKey) return jsonResponse(503, { error: "SUPABASE_SERVICE_ROLE_KEY not configured in Netlify." });
 
   const appState = await loadStateFromSupabase(serviceKey);
   if (!appState) return jsonResponse(503, { error: "Could not load app state from Supabase." });
@@ -219,4 +224,13 @@ function hostname(url) { try { return new URL(url).hostname; } catch { return ur
 
 function jsonResponse(statusCode, body) {
   return { statusCode, headers: { "content-type": "application/json; charset=utf-8" }, body: JSON.stringify(body) };
+}
+
+async function verifySession(accessToken, serviceKey) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
+    });
+    return res.ok;
+  } catch { return false; }
 }

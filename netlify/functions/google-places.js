@@ -2,7 +2,7 @@ const GOOGLE_PLACES_BASE_URL = "https://places.googleapis.com/v1";
 const STORE_TYPES = ["grocery_store", "supermarket", "warehouse_store", "food_store", "market"];
 const RESTAURANT_TYPES = ["restaurant", "cafe", "bar", "bakery", "fast_food_restaurant"];
 const DEFAULT_SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
-const DEFAULT_ALLOWED_EMAIL = "mrlukedevans@gmail.com";
+
 const ALLOWED_ORIGINS = new Set([
   "https://effervescent-malabi-e0af55.netlify.app",
   "http://localhost:4174",
@@ -93,10 +93,6 @@ async function authorizeRequest(event) {
   });
   if (!response.ok) return { ok: false, statusCode: 401, error: "Your sign-in session could not be verified." };
   const user = await response.json();
-  const allowedEmail = String(process.env.GOOGLE_PLACES_ALLOWED_EMAIL || DEFAULT_ALLOWED_EMAIL).trim().toLowerCase();
-  if (allowedEmail && String(user.email || "").toLowerCase() !== allowedEmail) {
-    return { ok: false, statusCode: 403, error: "This account is not allowed to use store search." };
-  }
   return { ok: true, user };
 }
 
