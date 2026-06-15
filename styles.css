@@ -7645,6 +7645,10 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
     transform: translateX(0);
   }
 
+  .workout-pool {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .workout-pool-card-wrap {
     position: relative;
     overflow: hidden;

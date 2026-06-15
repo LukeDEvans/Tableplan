@@ -1970,7 +1970,7 @@ function renderGroupSettingsSection() {
   const pages = [
     { key: "eat", label: "Meal Plan" }, { key: "shop", label: "Shop" },
     { key: "do", label: "To-Do" }, { key: "watch", label: "Watch" },
-    { key: "play", label: "Sweat" }, { key: "read", label: "Read" },
+    { key: "play", label: "Exercise" }, { key: "read", label: "Read" },
     { key: "recreate", label: "Recreate" }, { key: "plan", label: "Schedule" },
     { key: "inventory", label: "Stock" }
   ];
@@ -4962,7 +4962,7 @@ function showPlayApp(event) {
   elements.settingsMainPage.hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Sweat");
+  setPageTitle("Exercise");
   setPageHash("sweat");
   renderPlayPlanner();
   closePageTitleMenu();
@@ -5167,7 +5167,7 @@ function showShopApp(event) {
 function currentMainPageTitle() {
   if (activeAppArea === "home") return getAppName();
   if (activeAppArea === "do") return "To-Do";
-  if (activeAppArea === "play") return "Sweat";
+  if (activeAppArea === "play") return "Exercise";
   if (activeAppArea === "plan") return "Schedule";
   if (activeAppArea === "inventory") return "Stock";
   if (activeAppArea === "watch") return "Watch";
@@ -6039,7 +6039,7 @@ function openWorkoutDetail(context = {}) {
   const title = workout?.title || task?.title || "Workout";
   const data = normalizeExerciseData(task?.exerciseData);
   const details = workout?.exerciseDetails || task?.exerciseDetails || normalizeExerciseDetails(null, task?.exerciseNotes);
-  elements.workoutDetailLabel.textContent = "Sweat";
+  elements.workoutDetailLabel.textContent = "Exercise";
   elements.workoutDetailTitle.textContent = title;
   elements.workoutDetailName.value = title;
   renderWorkoutDetailFields(details);
@@ -6063,7 +6063,7 @@ function openWorkoutDetail(context = {}) {
 function openNewWorkoutDialog() {
   activeWorkoutDetail = { isNew: true };
   const details = defaultExerciseDetails("timed");
-  elements.workoutDetailLabel.textContent = "Sweat";
+  elements.workoutDetailLabel.textContent = "Exercise";
   elements.workoutDetailTitle.textContent = "New Exercise";
   elements.workoutDetailName.value = "";
   renderWorkoutDetailFields(details);
@@ -9896,7 +9896,7 @@ function renderContextSettingsDialog(kind) {
     general: "Settings",
     eat: "Meal Plan",
     do: "To-Do",
-    play: "Sweat",
+    play: "Exercise",
     family: "Household",
     recreate: "Recreate",
     pages: "Pages",
@@ -9939,7 +9939,7 @@ function renderContextSettingsDialog(kind) {
       { key: "eat",       label: "Meal Plan"  },
       { key: "shop",      label: "Shop"       },
       { key: "do",        label: "To-Do"      },
-      { key: "play",      label: "Sweat"      },
+      { key: "play",      label: "Exercise"      },
       { key: "watch",     label: "Watch"      },
       { key: "read",      label: "Read"       },
       { key: "recreate",  label: "Recreate"   },
@@ -9967,7 +9967,7 @@ function renderContextSettingsDialog(kind) {
       { key: "eat",       label: "Meal Plan"  },
       { key: "shop",      label: "Shop"       },
       { key: "do",        label: "To-Do"      },
-      { key: "play",      label: "Sweat"      },
+      { key: "play",      label: "Exercise"      },
       { key: "watch",     label: "Watch"      },
       { key: "read",      label: "Read"       },
       { key: "recreate",  label: "Recreate"   },
@@ -10133,7 +10133,7 @@ function renderContextSettingsDialog(kind) {
       const pages = [
         { key: "eat", label: "Meal Plan" }, { key: "shop", label: "Shop" },
         { key: "do", label: "To-Do" }, { key: "watch", label: "Watch" },
-        { key: "play", label: "Sweat" }, { key: "read", label: "Read" },
+        { key: "play", label: "Exercise" }, { key: "read", label: "Read" },
         { key: "recreate", label: "Recreate" }, { key: "plan", label: "Schedule" },
         { key: "inventory", label: "Stock" }
       ];
@@ -22980,7 +22980,7 @@ function getAppDataEvents(startKey, endKey) {
   (state.workouts || []).forEach((w) => {
     (w.logs || []).forEach((log) => {
       if (!log.date || log.date < startKey || log.date > endKey) return;
-      events.push({ id: `play-${log.id}`, title: w.title || "Workout", date: log.date, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.play, source: "play", calendarName: "Sweat" });
+      events.push({ id: `play-${log.id}`, title: w.title || "Workout", date: log.date, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.play, source: "play", calendarName: "Exercise" });
     });
   });
   const doTasks = [...(state.doPlans ? Object.values(state.doPlans).flatMap((d) => Object.values(d || {}).flat()) : []), ...(state.doTasks || [])];
