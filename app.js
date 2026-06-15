@@ -4886,7 +4886,9 @@ function planViewLabel() {
   const sameYear = weekStart.getFullYear() === weekEnd.getFullYear();
   const sameMonth = weekStart.getMonth() === weekEnd.getMonth();
   const startStr = weekStart.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }) });
-  const endStr = weekEnd.toLocaleDateString(undefined, { day: "numeric", ...(sameMonth ? {} : { month: "short" }), year: "numeric" });
+  const endStr = sameMonth
+    ? `${weekEnd.getDate()}, ${weekEnd.getFullYear()}`
+    : weekEnd.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
   return `${startStr} – ${endStr}`;
 }
 
