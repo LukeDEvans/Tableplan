@@ -61,8 +61,9 @@ exports.handler = async (event) => {
   }
 
   // Apply mutations to Supabase state (secret validated inside)
+  let mutatedState;
   try {
-    await applyToSupabase(real, householdId, providedSecret, serviceKey, currentWeekKey);
+    mutatedState = await applyToSupabase(real, householdId, providedSecret, serviceKey, currentWeekKey);
   } catch (err) {
     console.log("VOICE: applyToSupabase error:", err.message);
     if (err.message === "UNAUTHORIZED") return jsonResponse(401, { error: "Invalid passphrase." }, corsHeaders());
@@ -70,6 +71,15 @@ exports.handler = async (event) => {
   }
 
   const confirmation = real.map((a) => describeAction(a)).join(". ");
+  logVoiceCommands(mutatedState, transcript, real, confirmation);
+
+  try {
+    await writeStateToSupabase(mutatedState, householdId, serviceKey);
+  } catch (err) {
+    console.log("VOICE: writeStateToSupabase error:", err.message);
+    return jsonResponse(500, { error: "Failed to save: " + err.message }, corsHeaders());
+  }
+
   console.log("VOICE: success:", confirmation);
   return jsonResponse(200, { message: confirmation + ".", actions: real }, corsHeaders());
 };
@@ -298,6 +308,23 @@ async function applyToSupabase(actions, householdId, providedSecret, serviceKey,
 
   state.stateUpdatedAt = new Date().toISOString();
 
+  return state;
+}
+
+function logVoiceCommands(state, transcript, actions, confirmation) {
+  if (!Array.isArray(state.voiceCommandLog)) state.voiceCommandLog = [];
+  state.voiceCommandLog.push({
+    id: newId(),
+    timestamp: new Date().toISOString(),
+    transcript,
+    description: confirmation,
+    actions,
+  });
+  const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+  state.voiceCommandLog = state.voiceCommandLog.filter((e) => e.timestamp >= cutoff);
+}
+
+async function writeStateToSupabase(state, householdId, serviceKey) {
   const writeRes = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
     method: "POST",
     headers: { ...serviceHeaders(serviceKey), Prefer: "resolution=merge-duplicates,return=minimal" },

@@ -214,6 +214,21 @@ function buildWeeklyContext(state, notes = "") {
     lines.push("⚠️ REMINDER: Add staple ingredients to your pantry so they are automatically excluded from your grocery list.");
   }
 
+  lines.push("");
+  const voiceLog = Array.isArray(state.voiceCommandLog) ? state.voiceCommandLog : [];
+  const weekVoiceLog = voiceLog.filter((e) => e.timestamp >= startKey && e.timestamp <= endKey + "T23:59:59Z");
+  lines.push("=== VOICE COMMANDS THIS WEEK ===");
+  if (weekVoiceLog.length) {
+    weekVoiceLog.forEach((e) => {
+      const d = new Date(e.timestamp);
+      const label = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+      lines.push(`- [${label}] "${e.transcript}" → ${e.description}`);
+    });
+    lines.push("⚠️ Review the above — voice commands may have incomplete data (no cover, no metadata). Open the app to fill in details or correct mistakes.");
+  } else {
+    lines.push("No voice commands used this week.");
+  }
+
   if (notes) { lines.push(""); lines.push("=== NOTES FOR THIS EMAIL ==="); lines.push(notes); }
 
   return lines.join("\n");
