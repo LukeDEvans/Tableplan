@@ -18181,7 +18181,7 @@ function recipeViewTemplate(recipe, requestedIngredientScale = 1) {
     </section>
     <div class="recipe-view-actions recipe-view-footer-actions">
       ${recipe.virtualGroceryRecipe ? "" : `<button class="recipe-edit-link" type="button" data-edit-recipe-view="${escapeHtml(recipe.id)}">Edit recipe</button>`}
-      ${recipe.sourceUrl ? `<a class="recipe-source-link" href="${escapeHtml(recipe.sourceUrl)}" target="_blank" rel="noreferrer">Source recipe</a>` : ""}
+      ${/^https?:\/\//i.test(recipe.sourceUrl) ? `<a class="recipe-source-link" href="${escapeHtml(recipe.sourceUrl)}" target="_blank" rel="noreferrer">Source recipe</a>` : ""}
     </div>
   `;
 }
