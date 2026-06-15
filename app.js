@@ -71,7 +71,8 @@ const pageVisibilityDefaults = {
   shop: true,
   inventory: true,
   recreate: true,
-  plan: true
+  plan: true,
+  mail: true
 };
 const DEFAULT_INVENTORY_ROOMS = [
   { id: "ibox-default-pantry",      name: "Pantry" },
@@ -426,6 +427,8 @@ const elements = {
   planEventEnd: document.querySelector("#planEventEnd"),
   planEventNotes: document.querySelector("#planEventNotes"),
   planEventColorPicker: document.querySelector("#planEventColorPicker"),
+  planEventCalPicker: document.querySelector("#planEventCalPicker"),
+  planEventCalRow: document.querySelector("#planEventCalRow"),
   closePlanEventBtn: document.querySelector("#closePlanEventBtn"),
   savePlanEventBtn: document.querySelector("#savePlanEventBtn"),
   deletePlanEventBtn: document.querySelector("#deletePlanEventBtn"),
@@ -437,8 +440,16 @@ const elements = {
   planNewCalColorPicker: document.querySelector("#planNewCalColorPicker"),
   closePlanCalBtn: document.querySelector("#closePlanCalBtn"),
   closePlanAddCalBtn: document.querySelector("#closePlanAddCalBtn"),
-  openAddPlanCalBtn: document.querySelector("#openAddPlanCalBtn"),
   addPlanCalBtn: document.querySelector("#addPlanCalBtn"),
+  mailMainPage: document.querySelector("#mailMainPage"),
+  homeMailBtn: document.querySelector("#homeMailBtn"),
+  titleMailBtn: document.querySelector("#titleMailBtn"),
+  mailConnectBtn: document.querySelector("#mailConnectBtn"),
+  mailComposeBtn: document.querySelector("#mailComposeBtn"),
+  mailRefreshBtn: document.querySelector("#mailRefreshBtn"),
+  mailSearchInput: document.querySelector("#mailSearchInput"),
+  mailList: document.querySelector("#mailList"),
+  mailThread: document.querySelector("#mailThread"),
   sailLogDialog: document.querySelector("#sailLogDialog"),
   sailLogForm: document.querySelector("#sailLogForm"),
   closeSailLogBtn: document.querySelector("#closeSailLogBtn"),
@@ -1038,6 +1049,14 @@ function bindEvents() {
   elements.titleRecreateBtn.addEventListener("click", showRecreateApp);
   elements.homePlanBtn.addEventListener("click", showPlanApp);
   elements.titlePlanBtn.addEventListener("click", showPlanApp);
+  elements.homeMailBtn?.addEventListener("click", showMailApp);
+  elements.titleMailBtn?.addEventListener("click", showMailApp);
+  elements.mailConnectBtn?.addEventListener("click", connectGmail);
+  elements.mailComposeBtn?.addEventListener("click", showMailCompose);
+  elements.mailRefreshBtn?.addEventListener("click", () => loadMailList(currentMailbox));
+  elements.mailSearchInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") loadMailList(currentMailbox, e.target.value); });
+  document.getElementById("mailDisconnectBtn")?.addEventListener("click", disconnectGmail);
+  // Mail label tabs are rendered dynamically via renderMailLabelTabs()
   elements.closePlanEventBtn.addEventListener("click", () => elements.planEventDialog.close());
   elements.planEventAllDay.addEventListener("change", () => {
     elements.planTimeFields.hidden = elements.planEventAllDay.checked;
@@ -1045,7 +1064,6 @@ function bindEvents() {
   elements.savePlanEventBtn.addEventListener("click", savePlanEvent);
   elements.deletePlanEventBtn.addEventListener("click", deletePlanEvent);
   elements.closePlanCalBtn.addEventListener("click", () => elements.planCalDialog.close());
-  elements.openAddPlanCalBtn.addEventListener("click", openAddPlanCalDialog);
   elements.closePlanAddCalBtn.addEventListener("click", () => elements.planAddCalDialog.close());
   elements.addPlanCalBtn.addEventListener("click", addPlanCalendar);
   elements.closeSailLogBtn.addEventListener("click", () => elements.sailLogDialog.close());
@@ -1543,7 +1561,10 @@ async function initializeApp() {
 }
 
 function handleHashNavigation() {
-  const hash = window.location.hash.slice(1).toLowerCase();
+  const rawHash = window.location.hash.slice(1);
+  const [hashBase, hashQuery] = rawHash.split("?");
+  const hash = hashBase.toLowerCase();
+  const hashParams = new URLSearchParams(hashQuery || "");
   history.replaceState(null, "", location.pathname);
   const routes = {
     eat: showEatApp, nourish: showEatApp,
@@ -1557,6 +1578,7 @@ function handleHashNavigation() {
     home: showHomeApp,
     read: showReadingApp,
     stock: showInventoryApp,
+    mail: () => showMailApp(null, hashParams),
   };
   routes[hash]?.();
 }
@@ -4918,6 +4940,7 @@ function activateEatShell() {
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
+  elements.mailMainPage.hidden = true;
   setWeekToolsMode("week");
   renderActiveCooking();
   renderPlanner();
@@ -4941,6 +4964,7 @@ function showDoApp(event) {
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
+  elements.mailMainPage.hidden = true;
   setWeekToolsMode("week");
   elements.activeCookingSection.hidden = true;
   setPageTitle("To-Do");
@@ -4968,6 +4992,7 @@ function showPlayApp(event) {
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
+  elements.mailMainPage.hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Exercise");
@@ -4995,6 +5020,7 @@ function showWatchApp(event) {
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
+  elements.mailMainPage.hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Watch");
@@ -5018,6 +5044,7 @@ function showRecreateApp(event) {
   elements.recreateMainPage.hidden = false;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
+  elements.mailMainPage.hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Recreate");
@@ -5042,6 +5069,7 @@ function showPlanApp(event) {
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = false;
   elements.settingsMainPage.hidden = true;
+  elements.mailMainPage.hidden = true;
   setWeekToolsMode("plan");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Schedule");
@@ -5066,6 +5094,7 @@ function showSettingsApp(event) {
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = false;
+  elements.mailMainPage.hidden = true;
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
   setPageTitle("Settings");
@@ -5088,6 +5117,7 @@ function showHomeApp(event) {
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
+  elements.mailMainPage.hidden = true;
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
   setPageTitle(getAppName());
@@ -5112,6 +5142,7 @@ function showReadingApp(event) {
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
+  elements.mailMainPage.hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Read");
@@ -5136,6 +5167,7 @@ function showInventoryApp(event) {
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
+  elements.mailMainPage.hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Stock");
@@ -5163,6 +5195,7 @@ function showShopApp(event) {
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
+  elements.mailMainPage.hidden = true;
   setWeekToolsMode("shop");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Shop");
@@ -5170,6 +5203,420 @@ function showShopApp(event) {
   renderShopPage();
   closePageTitleMenu();
   closeAppMenu();
+}
+
+function showMailApp(event, hashParams) {
+  event?.stopPropagation();
+  activeAppArea = "mail";
+  elements.homeMainPage.hidden = true;
+  document.querySelector("[data-section='mealPrep']").hidden = true;
+  elements.doMainPage.hidden = true;
+  elements.playMainPage.hidden = true;
+  elements.watchMainPage.hidden = true;
+  elements.readingMainPage.hidden = true;
+  elements.shopMainPage.hidden = true;
+  elements.inventoryMainPage.hidden = true;
+  elements.recreateMainPage.hidden = true;
+  elements.planMainPage.hidden = true;
+  elements.settingsMainPage.hidden = true;
+  elements.mailMainPage.hidden = false;
+  elements.weekLabel.closest(".week-tools").hidden = true;
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("Mail");
+  setPageHash("mail");
+  closePageTitleMenu();
+  closeAppMenu();
+  initMailPage(hashParams);
+}
+
+// ─── Mail / Gmail ─────────────────────────────────────────────────────────────
+
+let currentMailbox = "INBOX";
+let mailGmailConnected = false;
+let mailOpenThreadId = null;
+let mailNextPageToken = null;
+let mailCurrentQuery = "";
+let mailLabels = [];
+
+async function initMailPage(hashParams) {
+  if (hashParams?.get("gm_error")) {
+    alert("Gmail connection failed. Please try again.");
+  }
+  const status = await callGmailApi({ action: "status" });
+  if (!status) return;
+  mailGmailConnected = Boolean(status.connected);
+  const badge = document.getElementById("mailAccountBadge");
+  if (badge && status.email) badge.textContent = status.email;
+  renderMailConnectState();
+  if (mailGmailConnected) {
+    await loadMailLabels();
+    loadMailList(currentMailbox);
+  }
+}
+
+function renderMailConnectState() {
+  const connectView = document.getElementById("mailConnectView");
+  const mainView = document.getElementById("mailMainView");
+  const badge = document.getElementById("mailAccountBadge");
+  if (!connectView || !mainView) return;
+  connectView.hidden = mailGmailConnected;
+  mainView.hidden = !mailGmailConnected;
+}
+
+async function connectGmail() {
+  const res = await callGmailAuthApi();
+  if (res?.url) window.location.href = res.url;
+}
+
+async function disconnectGmail() {
+  if (!confirm("Disconnect your Gmail account?")) return;
+  await callGmailApi({ action: "disconnect" });
+  mailGmailConnected = false;
+  renderMailConnectState();
+}
+
+async function loadMailList(labelId, q = "", append = false) {
+  currentMailbox = labelId;
+  if (!append) {
+    mailNextPageToken = null;
+    mailCurrentQuery = q;
+    elements.mailList.innerHTML = `<div class="mail-loading">Loading…</div>`;
+    elements.mailThread.hidden = true;
+    mailOpenThreadId = null;
+  }
+  const data = await callGmailApi({
+    action: "list",
+    labelIds: [labelId],
+    q: (q || mailCurrentQuery) || undefined,
+    pageToken: append ? mailNextPageToken : undefined
+  });
+  if (!data) {
+    if (!append) elements.mailList.innerHTML = `<div class="mail-empty">Failed to load mail.</div>`;
+    return;
+  }
+  mailNextPageToken = data.nextPageToken || null;
+  const messages = data.messages || [];
+  if (append) {
+    elements.mailList.querySelector(".mail-load-more-btn")?.remove();
+  } else {
+    elements.mailList.innerHTML = "";
+    if (!messages.length) { elements.mailList.innerHTML = `<div class="mail-empty">No messages.</div>`; return; }
+  }
+  appendMailRows(messages);
+  if (mailNextPageToken) {
+    const btn = document.createElement("button");
+    btn.className = "mail-load-more-btn secondary-btn";
+    btn.type = "button";
+    btn.textContent = "Load more";
+    btn.addEventListener("click", () => loadMailList(currentMailbox, mailCurrentQuery, true));
+    elements.mailList.appendChild(btn);
+  }
+}
+
+function appendMailRows(messages) {
+  messages.forEach((m) => {
+    const btn = document.createElement("button");
+    btn.className = `mail-row${m.unread ? " mail-row--unread" : ""}`;
+    btn.type = "button";
+    btn.dataset.threadId = m.threadId;
+    btn.innerHTML = `<span class="mail-row-from">${escapeHtml(parseDisplayName(m.from))}</span>
+      <span class="mail-row-date">${escapeHtml(formatMailDate(m.internalDate))}</span>
+      <span class="mail-row-subject">${escapeHtml(m.subject)}</span>
+      <span class="mail-row-snippet">${escapeHtml(m.snippet || "")}</span>`;
+    btn.addEventListener("click", () => openMailThread(m.threadId));
+    elements.mailList.appendChild(btn);
+  });
+}
+
+async function loadMailLabels() {
+  const data = await callGmailApi({ action: "labels" });
+  if (!data?.labels) return;
+  const systemOrder = ["INBOX", "STARRED", "SENT", "DRAFT", "IMPORTANT", "SPAM", "TRASH"];
+  const system = data.labels.filter((l) => l.type === "system" && systemOrder.includes(l.id) && l.labelListVisibility !== "labelHide");
+  const user = data.labels.filter((l) => l.type === "user" && l.labelListVisibility !== "labelHide");
+  system.sort((a, b) => systemOrder.indexOf(a.id) - systemOrder.indexOf(b.id));
+  user.sort((a, b) => a.name.localeCompare(b.name));
+  mailLabels = [...system, ...user];
+  renderMailLabelTabs();
+}
+
+function formatSystemLabel(id) {
+  const names = { INBOX: "Inbox", SENT: "Sent", TRASH: "Trash", SPAM: "Spam", STARRED: "Starred", DRAFT: "Drafts", IMPORTANT: "Important" };
+  return names[id] || id;
+}
+
+function renderMailLabelTabs() {
+  const tabsEl = document.getElementById("mailTabs");
+  if (!tabsEl || !mailLabels.length) return;
+  tabsEl.innerHTML = mailLabels.map((l) => {
+    const label = l.type === "system" ? formatSystemLabel(l.id) : l.name;
+    const active = currentMailbox === l.id;
+    return `<button class="mail-tab${active ? " is-active" : ""}" type="button" data-mailbox="${escapeHtml(l.id)}" role="tab" aria-selected="${active}">${escapeHtml(label)}</button>`;
+  }).join("");
+  tabsEl.querySelectorAll(".mail-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      tabsEl.querySelectorAll(".mail-tab").forEach((t) => { t.classList.remove("is-active"); t.setAttribute("aria-selected", "false"); });
+      tab.classList.add("is-active");
+      tab.setAttribute("aria-selected", "true");
+      loadMailList(tab.dataset.mailbox);
+    });
+  });
+}
+
+function showMailMovePicker(thread) {
+  document.getElementById("mailMovePicker")?.remove();
+  const btn = document.getElementById("mailMoveBtn");
+  if (!btn) return;
+  const picker = document.createElement("div");
+  picker.id = "mailMovePicker";
+  picker.className = "mail-move-picker";
+  const options = mailLabels.filter((l) => l.id !== currentMailbox);
+  picker.innerHTML = options.map((l) => {
+    const label = l.type === "system" ? formatSystemLabel(l.id) : l.name;
+    return `<button class="mail-move-option" type="button" data-label-id="${escapeHtml(l.id)}">${escapeHtml(label)}</button>`;
+  }).join("");
+  picker.querySelectorAll(".mail-move-option").forEach((opt) => {
+    opt.addEventListener("click", () => {
+      picker.remove();
+      moveMailToLabel(thread.id, opt.dataset.labelId);
+    });
+  });
+  btn.insertAdjacentElement("afterend", picker);
+  setTimeout(() => document.addEventListener("click", () => document.getElementById("mailMovePicker")?.remove(), { once: true }), 0);
+}
+
+async function moveMailToLabel(threadId, targetLabelId) {
+  const data = await callGmailApi({ action: "move", threadId, addLabelIds: [targetLabelId], removeLabelIds: [currentMailbox] });
+  if (data?.ok) {
+    elements.mailList.querySelectorAll(`[data-thread-id="${CSS.escape(threadId)}"]`).forEach((el) => el.remove());
+    elements.mailThread.hidden = true;
+    mailOpenThreadId = null;
+    renderMailLabelTabs();
+  }
+}
+
+function showMailCompose() {
+  mailOpenThreadId = null;
+  elements.mailThread.hidden = false;
+  elements.mailThread.innerHTML = `
+    <div class="mail-thread-header">
+      <h2 class="mail-thread-subject">New Message</h2>
+    </div>
+    <div class="mail-compose-form">
+      <div class="mail-compose-field">
+        <label class="mail-compose-label" for="mailComposeTo">To</label>
+        <input class="mail-compose-input" type="email" id="mailComposeTo" placeholder="recipient@example.com" autocomplete="email" />
+      </div>
+      <div class="mail-compose-field">
+        <label class="mail-compose-label" for="mailComposeSubject">Subject</label>
+        <input class="mail-compose-input" type="text" id="mailComposeSubject" placeholder="Subject" />
+      </div>
+      <textarea class="mail-reply-body" id="mailComposeBody" rows="12" placeholder="Write your message…"></textarea>
+      <div class="mail-reply-actions">
+        <button class="secondary-btn" type="button" id="mailComposeCancelBtn">Cancel</button>
+        <button class="primary-btn" type="button" id="mailComposeSendBtn">Send</button>
+      </div>
+    </div>`;
+  document.getElementById("mailComposeCancelBtn").addEventListener("click", () => { elements.mailThread.hidden = true; });
+  document.getElementById("mailComposeSendBtn").addEventListener("click", sendMailCompose);
+  document.getElementById("mailComposeTo").focus();
+}
+
+async function sendMailCompose() {
+  const to = document.getElementById("mailComposeTo")?.value?.trim();
+  const subject = document.getElementById("mailComposeSubject")?.value?.trim() || "(no subject)";
+  const body = document.getElementById("mailComposeBody")?.value?.trim();
+  if (!to || !body) { alert("Please fill in the To field and message body."); return; }
+  const sendBtn = document.getElementById("mailComposeSendBtn");
+  sendBtn.disabled = true;
+  sendBtn.textContent = "Sending…";
+  const data = await callGmailApi({ action: "send", to, subject, body });
+  sendBtn.disabled = false;
+  sendBtn.textContent = "Send";
+  if (data?.ok) {
+    elements.mailThread.hidden = true;
+    elements.mailList.querySelectorAll(".mail-row").forEach((b) => b.classList.remove("mail-row--active"));
+  }
+}
+
+async function openMailThread(threadId) {
+  mailOpenThreadId = threadId;
+  elements.mailThread.hidden = false;
+  elements.mailThread.innerHTML = `<div class="mail-loading">Loading…</div>`;
+  const data = await callGmailApi({ action: "get", threadId });
+  if (!data?.thread) { elements.mailThread.innerHTML = `<div class="mail-empty">Failed to load thread.</div>`; return; }
+  renderMailThread(data.thread);
+  elements.mailList.querySelectorAll(".mail-row").forEach((b) => {
+    b.classList.toggle("mail-row--active", b.dataset.threadId === threadId);
+    if (b.dataset.threadId === threadId) b.classList.remove("mail-row--unread");
+  });
+}
+
+function renderMailThread(thread) {
+  const messages = thread.messages || [];
+  const last = messages[messages.length - 1];
+  const html = `
+    <div class="mail-thread-header">
+      <button class="mail-back-btn" type="button" id="mailBackBtn">← Back</button>
+      <h2 class="mail-thread-subject">${escapeHtml(last?.subject || "(no subject)")}</h2>
+    </div>
+    <div class="mail-thread-messages">
+      ${messages.map((m) => renderMailMessage(m)).join("")}
+    </div>
+    <div class="mail-reply-area" id="mailReplyArea">
+      <div class="mail-reply-controls">
+        <button class="secondary-btn mail-ai-draft-btn" type="button" id="mailAiDraftBtn">✦ Draft reply</button>
+        <button class="secondary-btn" type="button" id="mailReplyOpenBtn">Reply</button>
+        ${mailLabels.length ? `<div class="mail-move-wrap"><button class="secondary-btn mail-move-btn" type="button" id="mailMoveBtn">Move to ▾</button></div>` : ""}
+      </div>
+      <div class="mail-reply-compose" id="mailReplyCompose" hidden>
+        <div class="mail-reply-to">To: <span>${escapeHtml(last?.from || "")}</span></div>
+        <div class="mail-ai-instruction-row" id="mailAiInstructionRow" hidden>
+          <input class="mail-ai-instruction" id="mailAiInstruction" placeholder="Optional: tone or focus (e.g. 'be brief', 'ask about Thursday')" />
+          <button class="secondary-btn" type="button" id="mailAiGenerateBtn">Generate</button>
+        </div>
+        <textarea class="mail-reply-body" id="mailReplyBody" rows="8" placeholder="Write your reply…"></textarea>
+        <div class="mail-reply-actions">
+          <button class="secondary-btn" type="button" id="mailReplyCancelBtn">Cancel</button>
+          <button class="primary-btn" type="button" id="mailReplySendBtn">Send</button>
+        </div>
+      </div>
+    </div>`;
+  elements.mailThread.innerHTML = html;
+
+  document.getElementById("mailBackBtn").addEventListener("click", () => {
+    elements.mailThread.hidden = true;
+    mailOpenThreadId = null;
+  });
+  document.getElementById("mailReplyOpenBtn").addEventListener("click", () => {
+    document.getElementById("mailReplyCompose").hidden = false;
+    document.getElementById("mailAiInstructionRow").hidden = true;
+    document.getElementById("mailReplyBody").focus();
+  });
+  document.getElementById("mailAiDraftBtn").addEventListener("click", async () => {
+    document.getElementById("mailReplyCompose").hidden = false;
+    document.getElementById("mailAiInstructionRow").hidden = false;
+    document.getElementById("mailReplyBody").value = "";
+  });
+  document.getElementById("mailAiGenerateBtn").addEventListener("click", () => generateAiDraft(thread));
+  document.getElementById("mailReplyCancelBtn").addEventListener("click", () => {
+    document.getElementById("mailReplyCompose").hidden = true;
+  });
+  document.getElementById("mailReplySendBtn").addEventListener("click", () => sendMailReply(thread, last));
+  document.getElementById("mailMoveBtn")?.addEventListener("click", (e) => { e.stopPropagation(); showMailMovePicker(thread); });
+}
+
+function renderMailMessage(msg) {
+  const from = parseDisplayName(msg.from);
+  const date = msg.date ? new Date(msg.date).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  const bodyHtml = msg.body?.includes("<") ? sanitizeMailHtml(msg.body) : `<pre class="mail-msg-pre">${escapeHtml(msg.body || "")}</pre>`;
+  return `<div class="mail-msg">
+    <div class="mail-msg-meta">
+      <span class="mail-msg-from">${escapeHtml(from)}</span>
+      <span class="mail-msg-date">${escapeHtml(date)}</span>
+    </div>
+    <div class="mail-msg-body">${bodyHtml}</div>
+  </div>`;
+}
+
+async function generateAiDraft(thread) {
+  const btn = document.getElementById("mailAiGenerateBtn");
+  const instruction = document.getElementById("mailAiInstruction")?.value || "";
+  const bodyEl = document.getElementById("mailReplyBody");
+  btn.disabled = true;
+  btn.textContent = "Drafting…";
+  const context = (thread.messages || []).map((m) => {
+    const from = parseDisplayName(m.from);
+    const body = m.body?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 800);
+    return `From: ${from}\n${body}`;
+  }).join("\n\n---\n\n");
+  const data = await callGmailApi({ action: "draft", emailContext: context, userInstruction: instruction });
+  btn.disabled = false;
+  btn.textContent = "Generate";
+  if (data?.draft) { bodyEl.value = data.draft; bodyEl.focus(); }
+}
+
+async function sendMailReply(thread, lastMsg) {
+  const body = document.getElementById("mailReplyBody")?.value?.trim();
+  if (!body) return;
+  const sendBtn = document.getElementById("mailReplySendBtn");
+  sendBtn.disabled = true;
+  sendBtn.textContent = "Sending…";
+  const replyTo = lastMsg?.from || "";
+  const subject = lastMsg?.subject?.startsWith("Re:") ? lastMsg.subject : `Re: ${lastMsg?.subject || ""}`;
+  const data = await callGmailApi({
+    action: "send",
+    to: replyTo,
+    subject,
+    body,
+    inReplyTo: lastMsg?.messageId,
+    references: [lastMsg?.references, lastMsg?.messageId].filter(Boolean).join(" "),
+    threadId: thread.id
+  });
+  sendBtn.disabled = false;
+  sendBtn.textContent = "Send";
+  if (data?.ok) {
+    document.getElementById("mailReplyCompose").hidden = true;
+    document.getElementById("mailReplyBody").value = "";
+    openMailThread(thread.id);
+  }
+}
+
+function parseDisplayName(from) {
+  const m = from?.match(/^"?([^"<]+)"?\s*</);
+  return m ? m[1].trim() : (from || "");
+}
+
+function formatMailDate(internalDate) {
+  if (!internalDate) return "";
+  const d = new Date(Number(internalDate));
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+  if (now - d < 7 * 86400000) return d.toLocaleDateString(undefined, { weekday: "short" });
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function sanitizeMailHtml(html) {
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  div.querySelectorAll("script,style,link,iframe,object,embed,form").forEach((el) => el.remove());
+  div.querySelectorAll("*").forEach((el) => {
+    ["onclick","onload","onerror","onmouseover","src"].forEach((attr) => {
+      if (el.getAttribute(attr)?.toLowerCase().startsWith("javascript:")) el.removeAttribute(attr);
+    });
+  });
+  return div.innerHTML;
+}
+
+async function callGmailApi(body) {
+  const session = supabaseClient ? await supabaseClient.auth.getSession() : null;
+  const token = session?.data?.session?.access_token;
+  if (!token) return null;
+  try {
+    const res = await fetch("/.netlify/functions/gmail", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
+async function callGmailAuthApi() {
+  const session = supabaseClient ? await supabaseClient.auth.getSession() : null;
+  const token = session?.data?.session?.access_token;
+  if (!token) return null;
+  try {
+    const res = await fetch("/.netlify/functions/gmail-auth", {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
 }
 
 function currentMainPageTitle() {
@@ -5183,6 +5630,7 @@ function currentMainPageTitle() {
   if (activeAppArea === "shop") return "Shop";
   if (activeAppArea === "recreate") return "Recreate";
   if (activeAppArea === "settings") return "Settings";
+  if (activeAppArea === "mail") return "Mail";
   return "Meal Plan";
 }
 
@@ -9789,6 +10237,7 @@ function updatePageTitleMenu() {
   elements.titleInventoryBtn.hidden = activeAppArea === "inventory" || !isPagePersonallyEnabled("inventory");
   elements.titleRecreateBtn.hidden = activeAppArea === "recreate" || !isPagePersonallyEnabled("recreate");
   elements.titlePlanBtn.hidden = activeAppArea === "plan" || !isPagePersonallyEnabled("plan");
+  elements.titleMailBtn.hidden = activeAppArea === "mail" || !isPagePersonallyEnabled("mail");
   const menu = elements.pageTitleMenu;
   const btns = [...menu.querySelectorAll("button")];
   btns.sort((a, b) => a.textContent.trim().localeCompare(b.textContent.trim()));
@@ -9805,6 +10254,7 @@ function updatePageVisibility() {
   elements.homeInventoryBtn.hidden = !isPagePersonallyEnabled("inventory");
   elements.homeRecreateBtn.hidden = !isPagePersonallyEnabled("recreate");
   elements.homePlanBtn.hidden = !isPagePersonallyEnabled("plan");
+  elements.homeMailBtn.hidden = !isPagePersonallyEnabled("mail");
   updatePageVisibilityControls();
 }
 
@@ -9976,6 +10426,7 @@ function renderContextSettingsDialog(kind) {
       { key: "recreate",  label: "Recreate"   },
       { key: "plan",      label: "Schedule"   },
       { key: "inventory", label: "Inventory"  },
+      { key: "mail",      label: "Mail"       },
     ];
     elements.contextSettingsBody.innerHTML = `
       <div class="page-vis-card" role="group" aria-label="Enabled pages">
@@ -22840,6 +23291,7 @@ function normalizePlanEvents(events) {
     endTime: e?.endTime ? String(e.endTime).trim() : null,
     allDay: e?.allDay !== false,
     color: e?.color ? String(e.color) : null,
+    calendarId: e?.calendarId ? String(e.calendarId) : null,
     notes: String(e?.notes || "").trim(),
     createdAt: e?.createdAt || new Date().toISOString()
   })).filter((e) => e.date && e.title) : [];
@@ -22853,7 +23305,7 @@ function normalizePlanCalendars(calendars) {
     color: String(c?.color || PLAN_COLORS[0]),
     enabled: c?.enabled !== false,
     lastFetched: c?.lastFetched || null
-  })).filter((c) => c.url) : [];
+  })).filter((c) => c.id) : [];
 }
 
 function navigatePlanView(dir) {
@@ -22939,7 +23391,11 @@ function getPlanEventsForRange(startKey, endKey) {
   const events = [];
   (state.planEvents || []).forEach((e) => {
     if (e.date >= startKey && e.date <= endKey) {
-      events.push({ ...e, source: "personal", color: e.color || PLAN_COLORS[0] });
+      let color = e.color;
+      if (!color && e.calendarId) {
+        color = (state.planCalendars || []).find((c) => c.id === e.calendarId)?.color;
+      }
+      events.push({ ...e, source: "personal", color: color || PLAN_COLORS[0] });
     }
   });
   (state.planCalendars || []).filter((c) => c.enabled).forEach((cal) => {
@@ -23182,6 +23638,7 @@ function planFormatTime(time) {
 function openPlanEventDialog(date, eventId) {
   editingPlanEventId = eventId || null;
   const existing = eventId ? (state.planEvents || []).find((e) => e.id === eventId) : null;
+  const selectedCalId = existing?.calendarId || null;
   if (existing) {
     elements.planEventTitle.value = existing.title;
     elements.planEventDate.value = existing.date;
@@ -23205,6 +23662,7 @@ function openPlanEventDialog(date, eventId) {
     elements.deletePlanEventBtn.hidden = true;
     document.querySelector("#planEventDialogTitle").textContent = "New Event";
   }
+  renderPlanEventCalPicker(selectedCalId);
   elements.planEventDialog.showModal();
 }
 
@@ -23217,18 +23675,45 @@ function renderPlanColorPicker(container, selectedColor, name) {
   `).join("");
 }
 
+function renderPlanEventCalPicker(selectedCalId) {
+  const picker = elements.planEventCalPicker;
+  const row = elements.planEventCalRow;
+  if (!picker || !row) return;
+  const nativeCals = (state.planCalendars || []).filter((c) => !c.url);
+  if (!nativeCals.length) { row.hidden = true; return; }
+  row.hidden = false;
+  picker.innerHTML = [{ id: "", name: "None", color: "#999" }, ...nativeCals].map((c) => `
+    <button class="plan-evt-cal-chip${selectedCalId === c.id || (!selectedCalId && !c.id) ? " is-selected" : ""}"
+            type="button" data-plan-evt-cal="${escapeHtml(c.id)}" style="--chip-color:${escapeHtml(c.color)}">
+      <span class="plan-evt-cal-dot"></span>${escapeHtml(c.name)}
+    </button>
+  `).join("");
+  picker.querySelectorAll("[data-plan-evt-cal]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      picker.querySelectorAll("[data-plan-evt-cal]").forEach((b) => b.classList.remove("is-selected"));
+      btn.classList.add("is-selected");
+      const calId = btn.dataset.planEvtCal;
+      if (calId) {
+        const cal = nativeCals.find((c) => c.id === calId);
+        if (cal) renderPlanColorPicker(elements.planEventColorPicker, cal.color, "planEventColor");
+      }
+    });
+  });
+}
+
 function savePlanEvent() {
   const title = elements.planEventTitle.value.trim();
   const date = elements.planEventDate.value.trim();
   if (!title || !date) return;
   const allDay = elements.planEventAllDay.checked;
   const color = elements.planEventColorPicker.querySelector("input:checked")?.value || PLAN_COLORS[0];
+  const calId = elements.planEventCalPicker?.querySelector(".is-selected")?.dataset.planEvtCal || null;
   const eventData = {
     title, date, allDay,
     startTime: allDay ? null : (elements.planEventStart.value || null),
     endTime: allDay ? null : (elements.planEventEnd.value || null),
     notes: elements.planEventNotes.value.trim(),
-    color
+    color, calendarId: calId || null,
   };
   if (editingPlanEventId) {
     state.planEvents = (state.planEvents || []).map((e) =>
@@ -23264,23 +23749,66 @@ function openAddPlanCalDialog() {
 
 function renderPlanCalList() {
   const cals = state.planCalendars || [];
-  if (!cals.length) {
-    elements.planCalList.innerHTML = `<p class="muted-label">No calendars added yet.</p>`;
-    return;
-  }
-  elements.planCalList.innerHTML = cals.map((cal) => `
-    <div class="plan-cal-row">
-      <span class="plan-cal-dot" style="background:${escapeHtml(cal.color)}"></span>
-      <span class="plan-cal-name">${escapeHtml(cal.name)}</span>
-      <label class="plan-cal-toggle">
-        <input type="checkbox" data-cal-toggle="${escapeHtml(cal.id)}" ${cal.enabled ? "checked" : ""} />
-        <span>Show</span>
-      </label>
-      <button class="icon-btn plan-cal-delete" type="button" data-cal-delete="${escapeHtml(cal.id)}" aria-label="Remove calendar">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>
-      </button>
+  const native = cals.filter((c) => !c.url);
+  const subscribed = cals.filter((c) => c.url);
+
+  elements.planCalList.innerHTML = `
+    <div class="plan-cal-section">
+      <div class="plan-cal-section-head">
+        <span class="plan-cal-section-title">My Calendars</span>
+        <button class="plan-cal-text-btn" type="button" data-new-native-cal>+ New</button>
+      </div>
+      ${native.map((c) => planCalRowHtml(c)).join("")}
+      ${!native.length ? `<p class="plan-cal-empty">No calendars yet.</p>` : ""}
+      <div class="plan-cal-edit-row" id="planNewCalForm" hidden>
+        <div class="plan-cal-new-form-inner">
+          <div id="planNewCalColors" class="plan-cal-edit-colors"></div>
+          <input class="plan-cal-edit-name" type="text" id="planNewCalName" placeholder="Calendar name" autocomplete="off" maxlength="40" />
+        </div>
+        <div class="plan-cal-edit-actions">
+          <button class="primary-btn" type="button" data-save-native-cal>Add</button>
+          <button class="secondary-btn" type="button" data-cancel-native-cal>Cancel</button>
+        </div>
+      </div>
     </div>
-  `).join("");
+    <div class="plan-cal-section">
+      <div class="plan-cal-section-head">
+        <span class="plan-cal-section-title">Subscribed Calendars</span>
+        <button class="plan-cal-text-btn" type="button" data-add-ics-cal>+ Add URL</button>
+      </div>
+      ${subscribed.map((c) => planCalRowHtml(c)).join("")}
+      ${!subscribed.length ? `<p class="plan-cal-empty">No iCal subscriptions yet.</p>` : ""}
+    </div>
+  `;
+
+  const newCalForm = document.getElementById("planNewCalForm");
+  const newCalColors = document.getElementById("planNewCalColors");
+  const newCalName = document.getElementById("planNewCalName");
+
+  renderPlanColorPicker(newCalColors, PLAN_COLORS[0], "planNewNativeCalColor");
+
+  elements.planCalList.querySelector("[data-new-native-cal]")?.addEventListener("click", () => {
+    newCalForm.hidden = false;
+    newCalName.value = "";
+    renderPlanColorPicker(newCalColors, PLAN_COLORS[0], "planNewNativeCalColor");
+    newCalName.focus();
+  });
+  elements.planCalList.querySelector("[data-save-native-cal]")?.addEventListener("click", () => {
+    const name = newCalName.value.trim() || "My Calendar";
+    const color = newCalColors.querySelector("input:checked")?.value || PLAN_COLORS[0];
+    state.planCalendars = [...(state.planCalendars || []), { id: createId("plan-cal"), name, url: "", color, enabled: true, lastFetched: null }];
+    persist();
+    renderPlanCalList();
+    if (activeAppArea === "plan") renderPlanPage();
+  });
+  elements.planCalList.querySelector("[data-cancel-native-cal]")?.addEventListener("click", () => {
+    newCalForm.hidden = true;
+  });
+  elements.planCalList.querySelector("[data-add-ics-cal]")?.addEventListener("click", openAddPlanCalDialog);
+
+  elements.planCalList.querySelectorAll("[data-cal-edit]").forEach((btn) => {
+    btn.addEventListener("click", () => openPlanCalEditMode(btn.dataset.calEdit));
+  });
   elements.planCalList.querySelectorAll("[data-cal-toggle]").forEach((input) => {
     input.addEventListener("change", () => {
       const id = input.dataset.calToggle;
@@ -23291,6 +23819,7 @@ function renderPlanCalList() {
   });
   elements.planCalList.querySelectorAll("[data-cal-delete]").forEach((btn) => {
     btn.addEventListener("click", () => {
+      if (!confirm(`Remove "${(state.planCalendars || []).find((c) => c.id === btn.dataset.calDelete)?.name || "this calendar"}"?`)) return;
       const id = btn.dataset.calDelete;
       state.planCalendars = (state.planCalendars || []).filter((c) => c.id !== id);
       delete planCalendarCache[id];
@@ -23299,6 +23828,58 @@ function renderPlanCalList() {
       if (activeAppArea === "plan") renderPlanPage();
     });
   });
+}
+
+function planCalRowHtml(cal) {
+  return `
+    <div class="plan-cal-row" id="plan-cal-row-${escapeHtml(cal.id)}">
+      <span class="plan-cal-dot" style="background:${escapeHtml(cal.color)}"></span>
+      <span class="plan-cal-name">${escapeHtml(cal.name)}</span>
+      <label class="plan-cal-toggle">
+        <input type="checkbox" data-cal-toggle="${escapeHtml(cal.id)}" ${cal.enabled ? "checked" : ""} />
+        <span>Show</span>
+      </label>
+      <button class="icon-btn" type="button" data-cal-edit="${escapeHtml(cal.id)}" aria-label="Edit ${escapeHtml(cal.name)}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      </button>
+      <button class="icon-btn plan-cal-delete" type="button" data-cal-delete="${escapeHtml(cal.id)}" aria-label="Remove ${escapeHtml(cal.name)}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>
+      </button>
+    </div>
+  `;
+}
+
+function openPlanCalEditMode(id) {
+  const row = document.getElementById(`plan-cal-row-${id}`);
+  if (!row) return;
+  const cal = (state.planCalendars || []).find((c) => c.id === id);
+  if (!cal) return;
+  const colorPickerId = `cal-edit-color-${id}`;
+  const nameId = `cal-edit-name-${id}`;
+  row.innerHTML = `
+    <div class="plan-cal-edit-row">
+      <div class="plan-cal-new-form-inner">
+        <div id="${escapeHtml(colorPickerId)}" class="plan-cal-edit-colors"></div>
+        <input class="plan-cal-edit-name" type="text" id="${escapeHtml(nameId)}" value="${escapeHtml(cal.name)}" autocomplete="off" maxlength="40" />
+      </div>
+      <div class="plan-cal-edit-actions">
+        <button class="primary-btn" type="button" data-save-cal-edit="${escapeHtml(id)}">Save</button>
+        <button class="secondary-btn" type="button" data-cancel-cal-edit="${escapeHtml(id)}">Cancel</button>
+      </div>
+    </div>
+  `;
+  const colorContainer = document.getElementById(colorPickerId);
+  renderPlanColorPicker(colorContainer, cal.color, `calEditColor-${id}`);
+  row.querySelector(`[data-save-cal-edit]`)?.addEventListener("click", () => {
+    const newName = document.getElementById(nameId)?.value.trim() || cal.name;
+    const newColor = colorContainer?.querySelector("input:checked")?.value || cal.color;
+    state.planCalendars = (state.planCalendars || []).map((c) => c.id === id ? { ...c, name: newName, color: newColor } : c);
+    persist();
+    renderPlanCalList();
+    if (activeAppArea === "plan") renderPlanPage();
+  });
+  row.querySelector(`[data-cancel-cal-edit]`)?.addEventListener("click", () => renderPlanCalList());
+  document.getElementById(nameId)?.focus();
 }
 
 async function addPlanCalendar() {

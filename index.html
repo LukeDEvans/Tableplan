@@ -67,6 +67,7 @@
                 <button type="button" id="titleToDoListBtn">To-Do</button>
                 <button type="button" id="titleWatchBtn">Watch</button>
                 <button type="button" id="titleReadBtn">Read</button>
+                <button type="button" id="titleMailBtn">Mail</button>
               </div>
             </div>
           </div>
@@ -117,6 +118,7 @@
             <nav class="home-links" aria-label="App pages">
               <button type="button" id="homeDoBtn">To-Do</button>
               <button type="button" id="homeEatBtn">Meal Plan</button>
+              <button type="button" id="homeMailBtn">Mail</button>
               <button type="button" id="homeInventoryBtn">Stock</button>
               <button type="button" id="homePlanBtn">Schedule</button>
               <button type="button" id="homePlayBtn">Exercise</button>
@@ -173,6 +175,47 @@
         </section>
         <section class="planner-column do-column" id="planMainPage" aria-label="Plan" hidden>
           <div class="plan-calendar" id="planCalendar"></div>
+        </section>
+        <section class="planner-column do-column mail-page" id="mailMainPage" aria-label="Mail" hidden>
+          <div class="mail-page-inner">
+            <!-- Not connected -->
+            <div class="mail-connect-view" id="mailConnectView">
+              <div class="mail-connect-prompt">
+                <svg class="mail-connect-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 7 10 7 10-7"/></svg>
+                <h2>Connect Gmail</h2>
+                <p>Link your Gmail account to read, search, and reply to emails — with AI-drafted replies you review before sending.</p>
+                <button class="primary-btn" type="button" id="mailConnectBtn">Connect Gmail</button>
+              </div>
+            </div>
+            <!-- Connected -->
+            <div class="mail-main-view" id="mailMainView" hidden>
+              <div class="mail-toolbar">
+                <div class="mail-tabs" id="mailTabs" role="tablist">
+                  <button class="mail-tab is-active" type="button" data-mailbox="INBOX" role="tab" aria-selected="true">Inbox</button>
+                  <button class="mail-tab" type="button" data-mailbox="SENT" role="tab" aria-selected="false">Sent</button>
+                </div>
+                <button class="primary-btn mail-compose-btn" type="button" id="mailComposeBtn">+ Compose</button>
+                <span class="mail-account-email" id="mailAccountBadge"></span>
+                <div class="mail-toolbar-right">
+                  <div class="mail-search-wrap">
+                    <input class="mail-search-input" id="mailSearchInput" type="search" placeholder="Search…" aria-label="Search email" />
+                  </div>
+                  <button class="icon-btn mail-refresh-btn" type="button" id="mailRefreshBtn" title="Refresh" aria-label="Refresh">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4v5h.582m0 0a8.001 8.001 0 0 1 15.356 2m.062-2H20M20 20v-5h-.581m0 0A8.001 8.001 0 0 1 4.062 13m-.062 2H4"/></svg>
+                  </button>
+                  <button class="icon-btn mail-disconnect-btn" type="button" id="mailDisconnectBtn" title="Disconnect Gmail" aria-label="Disconnect Gmail">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.364 5.636a9 9 0 1 1-12.728 12.728 9 9 0 0 1 12.728-12.728M12 8v4m0 4h.01"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="mail-body">
+                <div class="mail-list-panel">
+                  <div class="mail-list" id="mailList"></div>
+                </div>
+                <div class="mail-thread-panel" id="mailThread" hidden></div>
+              </div>
+            </div>
+          </div>
         </section>
         <section class="planner-column settings-page" id="settingsMainPage" aria-label="Settings" hidden>
           <div class="settings-page-list">
@@ -2259,6 +2302,10 @@
             <span>Notes</span>
             <textarea id="planEventNotes" rows="2" placeholder="Optional notes"></textarea>
           </label>
+          <div class="form-field plan-evt-cal-row" id="planEventCalRow" hidden>
+            <span>Calendar</span>
+            <div class="plan-evt-cal-chips" id="planEventCalPicker"></div>
+          </div>
           <label class="form-field">
             <span>Color</span>
             <div class="plan-color-picker" id="planEventColorPicker"></div>
@@ -2283,7 +2330,6 @@
         </div>
         <div class="recipe-form-body">
           <div id="planCalList"></div>
-          <button class="secondary-btn plan-add-cal-open-btn" type="button" id="openAddPlanCalBtn">+ Add Calendar</button>
         </div>
       </form>
     </dialog>
