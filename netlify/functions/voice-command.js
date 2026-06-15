@@ -102,6 +102,11 @@ Add a task:
 - "today" → dayId="${todayDayId}"
 - No specific day mentioned → dayId="backlog"
 
+Add a book to the reading list:
+{"action":"addBook","title":"<book title>","authors":["<author name>"]}
+- Use for any request to add/save/remember a book, or "add to my reading list"
+- authors should be an array of strings; use [] if unknown
+
 If unclear:
 {"action":"unknown","message":"<brief explanation>"}
 
@@ -153,6 +158,28 @@ async function applyToSupabase(actions, householdId, providedSecret, serviceKey,
         state.persistentManualGroceries.push(item);
         state.persistentManualGroceries.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
       }
+    } else if (action.action === "addBook") {
+      const title = String(action.title || "").trim();
+      if (!title) continue;
+      const authors = Array.isArray(action.authors) ? action.authors.map((a) => String(a)).filter(Boolean) : [];
+      if (!Array.isArray(state.readingItems)) state.readingItems = [];
+      state.readingItems.push({
+        id: newId(),
+        title,
+        authors,
+        status: "want",
+        googleBooksId: null,
+        coverUrl: null,
+        year: null,
+        pageCount: null,
+        overview: null,
+        format: null,
+        readDate: null,
+        rating: null,
+        readNotes: null,
+        categories: [],
+        createdAt: new Date().toISOString(),
+      });
     } else if (action.action === "setMeal") {
       const { dayId, mealType, recipeName } = action;
       const slots = mealSlots[(mealType || "").toLowerCase()];
@@ -195,6 +222,10 @@ function describeAction(action) {
       : `Added "${action.title}" to your backlog`;
   }
   if (action.action === "addGrocery") return `Added ${action.item} to your grocery list`;
+  if (action.action === "addBook") {
+    const by = action.authors?.length ? ` by ${action.authors.join(", ")}` : "";
+    return `Added "${action.title}"${by} to your reading list`;
+  }
   if (action.action === "setMeal") {
     const day = prepDays.find((d) => d.id === action.dayId);
     return `Added ${action.recipeName} to ${day?.name || action.dayId} ${action.mealType}`;
