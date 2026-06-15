@@ -14755,7 +14755,7 @@ async function loadCalendarEvents(options = {}) {
   }
   try {
     const eventGroups = await Promise.all(calendars.map(async (calendar) => {
-      const response = await fetch(calendarHelperUrl(calendar.url), { cache: "no-store" });
+      const response = await fetch(calendarHelperUrl(calendar.url), { cache: "no-store", headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || `${calendar.name} sync failed with status ${response.status}`);
       return (Array.isArray(payload.events) ? payload.events : []).map((event) => ({
@@ -20723,7 +20723,7 @@ async function fetchWatchSearchResultsDialog(query) {
   const resultsEl = elements.watchSearchDialogResults;
   resultsEl.innerHTML = `<div class="watch-search-loading">Searching…</div>`;
   try {
-    const response = await fetch(tmdbSearchUrl(query));
+    const response = await fetch(tmdbSearchUrl(query), { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
     const data = await response.json();
     if (!response.ok) { resultsEl.innerHTML = `<div class="watch-search-error">${escapeHtml(data.error || "Search failed.")}</div>`; return; }
     if (!data.results?.length) { resultsEl.innerHTML = `<div class="watch-search-empty">No results found.</div>`; return; }
@@ -21913,7 +21913,7 @@ async function fetchWatchSearchResults(query, root, addForm) {
   resultsEl.innerHTML = `<div class="watch-search-loading">Searching...</div>`;
   resultsEl.hidden = false;
   try {
-    const response = await fetch(tmdbSearchUrl(query));
+    const response = await fetch(tmdbSearchUrl(query), { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
     const data = await response.json();
     if (!response.ok) {
       resultsEl.innerHTML = `<div class="watch-search-error">${escapeHtml(data.error || "Search failed.")}</div>`;
@@ -22001,7 +22001,7 @@ async function loadWatchProviders(itemId) {
   const item = watchItemById(itemId);
   if (!item?.tmdbId) return;
   try {
-    const response = await fetch(tmdbWatchProvidersUrl(item.tmdbId, item.type));
+    const response = await fetch(tmdbWatchProvidersUrl(item.tmdbId, item.type), { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
     const data = await response.json();
     if (!response.ok) return;
     item.streamingProviders = data.providers;
@@ -22029,7 +22029,7 @@ async function openWatchTmdbSearch(itemId, root) {
   resultsEl.innerHTML = `<div class="watch-search-loading">Searching for "${escapeHtml(item.title)}"...</div>`;
   resultsEl.hidden = false;
   try {
-    const response = await fetch(tmdbSearchUrl(item.title));
+    const response = await fetch(tmdbSearchUrl(item.title), { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
     const data = await response.json();
     if (!response.ok || !data.results?.length) {
       resultsEl.innerHTML = `<div class="watch-search-error">${escapeHtml(data.error || "No results found.")} <button class="secondary-btn compact-btn" type="button" data-close-watch-search>Close</button></div>`;
@@ -22073,7 +22073,7 @@ async function loadWatchSeasonEpisodes(itemId, seasonNum) {
   const item = watchItemById(itemId);
   if (!item?.tmdbId) return;
   try {
-    const response = await fetch(tmdbSeasonUrl(item.tmdbId, seasonNum));
+    const response = await fetch(tmdbSeasonUrl(item.tmdbId, seasonNum), { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
     const data = await response.json();
     if (!response.ok || !data.episodes?.length) return;
     if (!item.episodeData) item.episodeData = {};

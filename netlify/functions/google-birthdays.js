@@ -1,4 +1,13 @@
+const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
+
 exports.handler = async (event) => {
+  const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+  if (!serviceKey) return jsonResponse(503, { error: "Service not configured." });
+  const authHeader = event.headers.authorization || event.headers.Authorization || "";
+  const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!accessToken) return jsonResponse(401, { error: "Not authenticated." });
+  if (!await verifySession(accessToken, serviceKey)) return jsonResponse(401, { error: "Invalid session." });
+
   const calendarUrl = String(event.queryStringParameters?.url || "").trim();
   if (!calendarUrl) return jsonResponse(400, { error: "Missing birthday calendar URL." });
   if (!isAllowedCalendarUrl(calendarUrl)) return jsonResponse(400, { error: "Use a Google Calendar iCal URL." });
@@ -73,10 +82,16 @@ function cleanIcsText(value) {
 function jsonResponse(statusCode, body) {
   return {
     statusCode,
-    headers: {
-      "content-type": "application/json",
-      "cache-control": "no-store"
-    },
+    headers: { "content-type": "application/json", "cache-control": "no-store" },
     body: JSON.stringify(body)
   };
+}
+
+async function verifySession(accessToken, serviceKey) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
+    });
+    return res.ok;
+  } catch { return false; }
 }
