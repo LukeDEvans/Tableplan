@@ -4386,17 +4386,25 @@ select:focus {
 }
 
 .active-rep-weight-cell.is-complete {
-  border-color: color-mix(in srgb, #3a9a5c 60%, var(--line));
-  background: color-mix(in srgb, #d6f4e2 72%, #ffffff);
-  color: #1d6b3c;
   position: relative;
 }
 
-.rep-cell-mood {
-  display: block;
-  font-size: 0.75rem;
-  line-height: 1;
-  margin-top: 2px;
+.active-rep-weight-cell.mood-easy {
+  border-color: color-mix(in srgb, #3a9a5c 60%, var(--line));
+  background: color-mix(in srgb, #d6f4e2 72%, #ffffff);
+  color: #1d6b3c;
+}
+
+.active-rep-weight-cell.mood-ok {
+  border-color: color-mix(in srgb, #555 50%, var(--line));
+  background: color-mix(in srgb, #333 16%, #ffffff);
+  color: #222;
+}
+
+.active-rep-weight-cell.mood-hard {
+  border-color: color-mix(in srgb, #c0392b 55%, var(--line));
+  background: color-mix(in srgb, #e83434 14%, #ffffff);
+  color: #7a1a1a;
 }
 
 /* ── Rep mood dialog ──────────────────────────────────────────── */

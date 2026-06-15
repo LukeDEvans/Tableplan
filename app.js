@@ -6449,9 +6449,8 @@ function selectRepMood(mood) {
   elements.repMoodDialog.close();
   const cell = elements.activeExerciseContent.querySelector(`[data-active-rep-weight="${CSS.escape(key)}"]`);
   if (cell) {
-    cell.classList.add("is-complete");
-    const weight = recordingSession.repWeights[key] || "—";
-    cell.innerHTML = `${escapeHtml(weight)}<span class="rep-cell-mood" aria-hidden="true">${repMoodEmoji(mood)}</span>`;
+    cell.classList.add("is-complete", `mood-${mood}`);
+    cell.textContent = recordingSession.repWeights[key] || "—";
   }
 }
 
@@ -7465,13 +7464,13 @@ function repsRecordingTemplate(workout) {
                 const weight = recordingSession.repWeights[key] || rep.weight || "";
                 const done = recordingSession.setCompletion[key];
                 const mood = recordingSession.setRatings[key];
-                const moodSpan = done && mood ? `<span class="rep-cell-mood" aria-hidden="true">${repMoodEmoji(mood)}</span>` : "";
-                return `<button class="active-rep-weight-cell${done ? " is-complete" : ""}" type="button"
+                const moodClass = done && mood ? ` mood-${mood}` : "";
+                return `<button class="active-rep-weight-cell${done ? " is-complete" : ""}${moodClass}" type="button"
                   data-active-rep-weight="${escapeHtml(key)}"
                   data-lift-name="${escapeHtml(rep.lift || "Lift")}"
                   data-set-number="${setIndex + 1}"
                   aria-label="${escapeHtml(rep.lift || "Lift")} set ${setIndex + 1}"
-                >${escapeHtml(weight || "—")}${moodSpan}</button>`;
+                >${escapeHtml(weight || "—")}</button>`;
               }).join("")}
             </div>
           </div>
@@ -7532,11 +7531,6 @@ function bindGameRecordingFields() {
   });
 }
 
-function repMoodEmoji(mood) {
-  if (mood === "hard") return "😞";
-  if (mood === "easy") return "😊";
-  return "😐";
-}
 
 function playDayTabTemplate(day, isActive) {
   return doDayTabTemplate(day, isActive)
