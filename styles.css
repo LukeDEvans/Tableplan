@@ -9299,6 +9299,30 @@ body.touch-drag-active * {
   flex-shrink: 0;
 }
 
+/* Calendar fills the viewport on desktop */
+@media (min-width: 561px) {
+  #planMainPage {
+    height: calc(100dvh - 160px);
+    overflow: hidden;
+  }
+}
+
+/* Compact toolbar on mobile so all items fit on one line */
+@media (max-width: 560px) {
+  .plan-view-tabs {
+    padding: 6px 8px;
+    gap: 1px;
+  }
+  .plan-view-tab {
+    padding: 5px 6px;
+    font-size: 0.78rem;
+  }
+  .plan-today-btn {
+    padding: 5px 8px;
+    font-size: 0.75rem;
+  }
+}
+
 .plan-view-content {
   flex: 1;
   min-height: 0;
