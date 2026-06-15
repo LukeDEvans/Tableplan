@@ -6449,6 +6449,7 @@ function selectRepMood(mood) {
   elements.repMoodDialog.close();
   const cell = elements.activeExerciseContent.querySelector(`[data-active-rep-weight="${CSS.escape(key)}"]`);
   if (cell) {
+    cell.classList.remove("mood-easy", "mood-ok", "mood-hard");
     cell.classList.add("is-complete", `mood-${mood}`);
     cell.textContent = recordingSession.repWeights[key] || "—";
   }
