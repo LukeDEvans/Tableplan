@@ -2049,6 +2049,8 @@ select:focus {
   display: none;
 }
 
+.plan-label-short { display: none; }
+
 .day-tab:hover {
   color: var(--ink);
   background: color-mix(in srgb, var(--ink) 5%, transparent);
@@ -7281,6 +7283,9 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
   .day-tab .day-tab-date-short {
     display: block;
   }
+
+  .plan-label-full { display: none; }
+  .plan-label-short { display: inline; }
 
 }
 

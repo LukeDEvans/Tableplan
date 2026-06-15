@@ -4865,28 +4865,36 @@ function setWeekToolsMode(mode) {
   weekTools.classList.toggle("plan-mode", mode === "plan");
   weekTools.classList.toggle("shop-mode", mode === "shop");
   if (mode === "today") {
+    elements.weekLabel.removeAttribute("aria-label");
     elements.weekLabel.textContent = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
   } else if (mode === "plan") {
-    elements.weekLabel.textContent = planViewLabel();
+    const shortLabel = planViewLabel("short");
+    const fullLabel = planViewLabel("full");
+    elements.weekLabel.setAttribute("aria-label", fullLabel);
+    elements.weekLabel.innerHTML =
+      `<span class="plan-label-full" aria-hidden="true">${escapeHtml(fullLabel)}</span>` +
+      `<span class="plan-label-short" aria-hidden="true">${escapeHtml(shortLabel)}</span>`;
   } else if (mode === "shop") {
+    elements.weekLabel.removeAttribute("aria-label");
     elements.weekLabel.textContent = selectedGroceryWeek()?.label || "";
   } else {
+    elements.weekLabel.removeAttribute("aria-label");
     const endOffset = activeAppArea === "do" ? 6 : 7;
     elements.weekLabel.textContent = formatWeekRange(currentWeek, endOffset);
   }
 }
 
-function planViewLabel() {
+function planViewLabel(format = "short") {
   const d = planViewDate;
-  if (planViewMode === "month") return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
-  if (planViewMode === "day") return d.toLocaleDateString(undefined, { weekday: "short", month: "long", day: "numeric", year: "numeric" });
+  const monthFmt = format === "full" ? "long" : "short";
+  if (planViewMode === "month") return d.toLocaleDateString(undefined, { month: monthFmt, year: "numeric" });
+  if (planViewMode === "day") return d.toLocaleDateString(undefined, { weekday: "short", month: monthFmt, day: "numeric", year: "numeric" });
   if (planViewMode === "agenda") return "Upcoming";
   const weekStart = planWeekStart(d);
   const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6);
   const sameYear = weekStart.getFullYear() === weekEnd.getFullYear();
-  const sameMonth = weekStart.getMonth() === weekEnd.getMonth();
-  const startStr = weekStart.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }) });
-  const endStr = weekEnd.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  const startStr = weekStart.toLocaleDateString(undefined, { month: monthFmt, day: "numeric", ...(sameYear ? {} : { year: "numeric" }) });
+  const endStr = weekEnd.toLocaleDateString(undefined, { month: monthFmt, day: "numeric", year: "numeric" });
   return `${startStr} – ${endStr}`;
 }
 
