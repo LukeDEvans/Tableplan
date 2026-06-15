@@ -107,12 +107,38 @@ Add a book to the reading list:
 - Use for any request to add/save/remember a book, or "add to my reading list"
 - authors should be an array of strings; use [] if unknown
 
+Update a book's reading status:
+{"action":"markBookStatus","title":"<book title>","status":"reading|read"}
+- "reading" = currently reading; "read" = finished
+- Match to the title the user names
+
+Add a movie or TV show to the watchlist:
+{"action":"addWatch","title":"<title>","watchType":"movie|tv"}
+- Use "tv" for series/shows; "movie" for films
+- Default to "movie" if unclear
+
+Mark a movie or TV show as watched:
+{"action":"markWatched","title":"<title>"}
+
+Complete (tick off) a task:
+{"action":"completeTask","title":"<task title>"}
+- Match to the task title the user names
+
+Remove an item from the grocery list:
+{"action":"removeGrocery","item":"<item name>"}
+
+Add a workout to the exercise library:
+{"action":"addWorkout","title":"<workout or exercise name>"}
+
+Add a song to the piano practice list:
+{"action":"addPianoSong","title":"<song title>"}
+
 If unclear:
 {"action":"unknown","message":"<brief explanation>"}
 
 Multiple commands in one sentence → multiple actions.`,
     user: transcript,
-    maxTokens: 512,
+    maxTokens: 768,
   });
 
   const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
@@ -180,6 +206,72 @@ async function applyToSupabase(actions, householdId, providedSecret, serviceKey,
         categories: [],
         createdAt: new Date().toISOString(),
       });
+    } else if (action.action === "addWatch") {
+      const title = String(action.title || "").trim();
+      if (!title) continue;
+      const type = action.watchType === "tv" ? "tv" : "movie";
+      if (!Array.isArray(state.watchItems)) state.watchItems = [];
+      state.watchItems.push({
+        id: newId(), type, title, status: "want",
+        tmdbId: null, posterPath: null, year: null, overview: null,
+        streamingProviders: null, providersUpdatedAt: null,
+        totalSeasons: null, totalEpisodes: null, runtime: null, avgEpisodeRuntime: null,
+        watchedDate: null, rating: null, watchNotes: null,
+        seasonProgress: {}, episodeData: {}, categories: [],
+        createdAt: new Date().toISOString(),
+      });
+    } else if (action.action === "markWatched") {
+      const target = norm(action.title);
+      const item = (state.watchItems || []).find((i) => norm(i.title).includes(target) || target.includes(norm(i.title)));
+      if (item) {
+        item.status = "watched";
+        if (!item.watchedDate) item.watchedDate = new Date().toISOString().slice(0, 10);
+      }
+    } else if (action.action === "markBookStatus") {
+      const validStatus = ["reading", "read"].includes(action.status) ? action.status : null;
+      if (!validStatus) continue;
+      const target = norm(action.title);
+      const item = (state.readingItems || []).find((i) => norm(i.title).includes(target) || target.includes(norm(i.title)));
+      if (item) {
+        item.status = validStatus;
+        if (validStatus === "read" && !item.readDate) item.readDate = new Date().toISOString().slice(0, 10);
+      }
+    } else if (action.action === "completeTask") {
+      const target = norm(action.title);
+      const backlogTask = (state.doBacklog || []).find((t) => !t.done && norm(t.title).includes(target));
+      if (backlogTask) {
+        backlogTask.done = true;
+      } else {
+        const weekPlans = state.doPlans?.[currentWeekKey] || {};
+        outer: for (const dayId of Object.keys(weekPlans)) {
+          for (const task of (weekPlans[dayId] || [])) {
+            if (!task.done && norm(task.title).includes(target)) { task.done = true; break outer; }
+          }
+        }
+      }
+    } else if (action.action === "removeGrocery") {
+      const target = norm(action.item);
+      if (Array.isArray(state.persistentManualGroceries)) {
+        state.persistentManualGroceries = state.persistentManualGroceries.filter((i) => norm(i) !== target);
+      }
+    } else if (action.action === "addWorkout") {
+      const title = String(action.title || "").trim();
+      if (!title) continue;
+      if (!Array.isArray(state.workouts)) state.workouts = [];
+      state.workouts.push({
+        id: newId(), title, type: "timed",
+        exerciseDetails: {
+          type: "timed",
+          timed: { hours: "0", minutes: "30", seconds: "00", distanceWhole: "16", distanceDecimal: "00", distanceUnit: "km" },
+          reps: [], gameNotes: "",
+        },
+        notes: "", logs: [], createdAt: new Date().toISOString(),
+      });
+    } else if (action.action === "addPianoSong") {
+      const title = String(action.title || "").trim();
+      if (!title) continue;
+      if (!Array.isArray(state.pianoSongs)) state.pianoSongs = [];
+      state.pianoSongs.push({ id: newId(), title, learned: false, sheetMusicUrl: "" });
     } else if (action.action === "setMeal") {
       const { dayId, mealType, recipeName } = action;
       const slots = mealSlots[(mealType || "").toLowerCase()];
@@ -222,10 +314,22 @@ function describeAction(action) {
       : `Added "${action.title}" to your backlog`;
   }
   if (action.action === "addGrocery") return `Added ${action.item} to your grocery list`;
+  if (action.action === "removeGrocery") return `Removed ${action.item} from your grocery list`;
   if (action.action === "addBook") {
     const by = action.authors?.length ? ` by ${action.authors.join(", ")}` : "";
     return `Added "${action.title}"${by} to your reading list`;
   }
+  if (action.action === "markBookStatus") {
+    return action.status === "read" ? `Marked "${action.title}" as finished` : `Marked "${action.title}" as currently reading`;
+  }
+  if (action.action === "addWatch") {
+    const kind = action.watchType === "tv" ? "TV show" : "movie";
+    return `Added ${kind} "${action.title}" to your watchlist`;
+  }
+  if (action.action === "markWatched") return `Marked "${action.title}" as watched`;
+  if (action.action === "completeTask") return `Completed task "${action.title}"`;
+  if (action.action === "addWorkout") return `Added "${action.title}" to your exercise library`;
+  if (action.action === "addPianoSong") return `Added "${action.title}" to your piano practice list`;
   if (action.action === "setMeal") {
     const day = prepDays.find((d) => d.id === action.dayId);
     return `Added ${action.recipeName} to ${day?.name || action.dayId} ${action.mealType}`;
@@ -234,6 +338,10 @@ function describeAction(action) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+function norm(s) {
+  return String(s || "").toLowerCase().trim();
+}
 
 function startOfPrepWindow(date) {
   const d = new Date(date);
