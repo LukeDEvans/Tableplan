@@ -443,6 +443,7 @@ svg {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding-right: 0.25em;
 }
 
 .page-title-menu {
