@@ -3979,6 +3979,8 @@ function mergeStates(newer, older) {
     "checklistTemplates",
     // Linked calendars
     "calendars",
+    // Saved articles (Read/Listen)
+    "savedArticles",
   ]) {
     merged[key] = unionById(newer[key], older[key]);
   }
@@ -3987,6 +3989,7 @@ function mergeStates(newer, older) {
   merged.pantry = unionStrings(newer.pantry, older.pantry);
   merged.persistentManualGroceries = unionStrings(newer.persistentManualGroceries, older.persistentManualGroceries);
   merged.recipeTags = unionStrings(newer.recipeTags, older.recipeTags);
+  merged.readArticleIds = unionStrings(newer.readArticleIds, older.readArticleIds);
 
   // ── Flat keyed maps: union keys, newer wins on conflict ───────────────────
   for (const key of [
