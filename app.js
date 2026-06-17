@@ -4970,6 +4970,8 @@ function render() {
   renderDoPlanner();
   renderPlayPlanner();
   renderCollapsedSections();
+  if (activeAppArea === "read") renderArticleList("articleList", activeArticleTab);
+  if (activeAppArea === "listen") renderArticleList("listenList", activeListenTab);
 }
 
 function showEatApp(event) {
@@ -25443,6 +25445,21 @@ function saveArticleUrl(url) {
     switchListenTab(pub);
   }
 }
+
+// Called by the Chrome extension after it saves an article to Supabase, so the
+// in-memory state is updated immediately without requiring a page reload.
+window._liveAddArticle = function(article) {
+  if (!article?.url) return;
+  if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
+  if (state.savedArticles.find(a => a.url === article.url)) return;
+  state.savedArticles.push(article);
+  persist();
+  if (activeAppArea === "read" && activeArticleTab !== "books") {
+    renderArticleList("articleList", activeArticleTab);
+  } else if (activeAppArea === "listen") {
+    renderArticleList("listenList", activeListenTab);
+  }
+};
 
 function detectArticlePublication(url) {
   try {

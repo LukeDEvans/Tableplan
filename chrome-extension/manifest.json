@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Live",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Import recipes and save articles to the Live app.",
   "action": {
     "default_title": "Live",
@@ -11,6 +11,7 @@
   "host_permissions": [
     "https://effervescent-malabi-e0af55.netlify.app/*",
     "http://localhost:4174/*",
+    "http://localhost:8888/*",
     "https://noyocjcltrenwdovqrql.supabase.co/*",
     "https://www.nytimes.com/*",
     "https://www.economist.com/*"

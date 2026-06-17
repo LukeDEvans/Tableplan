@@ -108,6 +108,21 @@ async function saveArticle(url, title, tabId) {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || `Save failed with status ${response.status}`);
+
+  if (!payload.already_saved && payload.id) {
+    const article = {
+      id: payload.id,
+      url: body.url,
+      title: body.title,
+      publication: body.publication,
+      savedAt: new Date().toISOString(),
+      author: body.author || null,
+      date: body.date || null,
+      text: body.text || null
+    };
+    pushArticleToAppTabs(article).catch(() => {});
+  }
+
   return { ok: true, already_saved: payload.already_saved || false, hasText: Boolean(extracted?.text) };
 }
 
@@ -235,6 +250,26 @@ function extractEconomistFromDOM() {
     articles.push({ url, title, publication: "economist" });
   });
   return articles;
+}
+
+async function pushArticleToAppTabs(article) {
+  const APP_URLS = [
+    "https://effervescent-malabi-e0af55.netlify.app/*",
+    "http://localhost:4174/*",
+    "http://localhost:8888/*"
+  ];
+  const tabs = await chrome.tabs.query({ url: APP_URLS });
+  for (const tab of tabs) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: function(a) {
+          if (typeof window._liveAddArticle === "function") window._liveAddArticle(a);
+        },
+        args: [article]
+      });
+    } catch { /* tab may not be injectable; ignore */ }
+  }
 }
 
 function detectPublication(url) {
