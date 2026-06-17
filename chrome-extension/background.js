@@ -263,6 +263,7 @@ async function pushArticleToAppTabs(article) {
     try {
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
+        world: "MAIN",
         func: function(a) {
           if (typeof window._liveAddArticle === "function") window._liveAddArticle(a);
         },
