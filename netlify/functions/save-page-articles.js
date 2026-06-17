@@ -95,7 +95,7 @@ async function loadState(serviceKey, stateId) {
 }
 
 async function saveState(serviceKey, stateId, newState) {
-  await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
     method: "POST",
     headers: {
       apikey: serviceKey,
@@ -105,6 +105,7 @@ async function saveState(serviceKey, stateId, newState) {
     },
     body: JSON.stringify({ id: stateId, state: newState, updated_at: new Date().toISOString() })
   });
+  if (!res.ok) throw new Error(`State save failed (${res.status})`);
 }
 
 function json(statusCode, body) {

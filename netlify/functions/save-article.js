@@ -22,6 +22,7 @@ exports.handler = async (event) => {
   if (!stateId) return cors(json(404, { error: "User group not found." }));
 
   const currentState = await loadState(serviceKey, stateId);
+  if (!currentState) return cors(json(500, { error: "Could not load your current state. Please try again." }));
   const articles = Array.isArray(currentState?.savedArticles) ? currentState.savedArticles : [];
 
   const existing = articles.find((a) => a.url === url);
