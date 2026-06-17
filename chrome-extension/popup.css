@@ -38,54 +38,8 @@ button {
   font-weight: 800;
 }
 
-fieldset {
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-legend {
-  margin-bottom: 6px;
-  color: #6f6a60;
-  font-size: 0.76rem;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.target-options {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid #ded7cb;
-  border-radius: 8px;
-  background: #f6f1e8;
-}
-
-.target-option {
-  min-height: 32px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #504a42;
-}
-
-.target-option.is-selected,
-.target-option.is-selected:hover {
-  background: #2f7f68;
-  color: white;
-}
-
 button:hover {
   background: #205c4c;
-}
-
-.target-option:hover {
-  background: #ebe3d7;
-}
-
-.target-option.is-selected:hover {
-  background: #2f7f68;
 }
 
 button.secondary {
@@ -100,4 +54,23 @@ button.secondary:hover {
 
 button[hidden] {
   display: none;
+}
+
+.action-group {
+  display: grid;
+  gap: 6px;
+}
+
+.action-group[hidden] {
+  display: none;
+}
+
+button.secondary-action {
+  border: 1.5px solid #2f7f68;
+  background: transparent;
+  color: #2f7f68;
+}
+
+button.secondary-action:hover {
+  background: #edf7f4;
 }

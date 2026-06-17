@@ -164,6 +164,7 @@ let editingMealEntry = null;
 let suppressMealEntryClick = false;
 let copiedMealEntry = "";
 let copiedMealSlot = null;
+let copiedAutoRuleValue = null;
 let editingFolderId = "";
 let folderMenuId = "";
 let draggedMealEntry = null;
@@ -239,6 +240,7 @@ let receiptScanFiles = [];
 let scanRecipeImageEdits = new Map();
 let receiptImageEdits = new Map();
 let pendingReceiptDraft = null;
+let editingReceiptId = null;
 let pendingNutritionEstimate = null;
 let pendingNutritionRecipeId = "";
 let activeDailyDozenMemberId = "luke";
@@ -338,6 +340,7 @@ const elements = {
   menuRecurringTasksBtn: document.querySelector("#menuRecurringTasksBtn"),
   menuWorkoutLibraryBtn: document.querySelector("#menuWorkoutLibraryBtn"),
   menuWorkoutLogsBtn: document.querySelector("#menuWorkoutLogsBtn"),
+  menuReadSyncBtn: document.querySelector("#menuReadSyncBtn"),
   menuRecreateHobbiesBtn: document.querySelector("#menuRecreateHobbiesBtn"),
   menuCalendarsBtn: document.querySelector("#menuCalendarsBtn"),
   contextSettingsDialog: document.querySelector("#contextSettingsDialog"),
@@ -393,6 +396,22 @@ const elements = {
   openShopReceiptsBtn: document.querySelector("#openShopReceiptsBtn"),
   shopReceiptsDialog: document.querySelector("#shopReceiptsDialog"),
   closeShopReceiptsBtn: document.querySelector("#closeShopReceiptsBtn"),
+  shopReceiptsListView: document.querySelector("#shopReceiptsListView"),
+  shopReceiptsEditView: document.querySelector("#shopReceiptsEditView"),
+  shopReceiptEditBackBtn: document.querySelector("#shopReceiptEditBackBtn"),
+  shopReceiptEditCloseBtn: document.querySelector("#shopReceiptEditCloseBtn"),
+  receiptEditForm: document.querySelector("#receiptEditForm"),
+  editReceiptStoreName: document.querySelector("#editReceiptStoreName"),
+  editReceiptStoreId: document.querySelector("#editReceiptStoreId"),
+  editReceiptPurchaseDate: document.querySelector("#editReceiptPurchaseDate"),
+  editReceiptSubtotal: document.querySelector("#editReceiptSubtotal"),
+  editReceiptDiscounts: document.querySelector("#editReceiptDiscounts"),
+  editReceiptTax: document.querySelector("#editReceiptTax"),
+  editReceiptFees: document.querySelector("#editReceiptFees"),
+  editReceiptTotal: document.querySelector("#editReceiptTotal"),
+  editReceiptLineList: document.querySelector("#editReceiptLineList"),
+  addEditReceiptLineBtn: document.querySelector("#addEditReceiptLineBtn"),
+  deleteReceiptBtn: document.querySelector("#deleteReceiptBtn"),
   homeShopBtn: document.querySelector("#homeShopBtn"),
   titleShopBtn: document.querySelector("#titleShopBtn"),
   shopScanDirectBtn: document.querySelector("#shopScanDirectBtn"),
@@ -471,6 +490,9 @@ const elements = {
   homeReadBtn: document.querySelector("#homeReadBtn"),
   titleReadBtn: document.querySelector("#titleReadBtn"),
   readingMainPage: document.querySelector("#readingMainPage"),
+  listenMainPage: document.querySelector("#listenMainPage"),
+  homeListenBtn: document.querySelector("#homeListenBtn"),
+  titleListenBtn: document.querySelector("#titleListenBtn"),
   readingPlannerGrid: document.querySelector("#readingPlannerGrid"),
   readingSearchDialog: document.querySelector("#readingSearchDialog"),
   readingSearchDialogInput: document.querySelector("#readingSearchDialogInput"),
@@ -892,6 +914,7 @@ let pendingCookLogId = "";
 
 applyThemeMode();
 migrateLegacyRecipeOrganization();
+migrateGroceryDescriptorNames();
 render();
 bindEvents();
 function initTouchDragPolyfill() {
@@ -1056,6 +1079,15 @@ function bindEvents() {
   elements.mailRefreshBtn?.addEventListener("click", () => loadMailList(currentMailbox));
   elements.mailSearchInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") loadMailList(currentMailbox, e.target.value); });
   document.getElementById("mailDisconnectBtn")?.addEventListener("click", disconnectGmail);
+  document.getElementById("mailSidebarToggle")?.addEventListener("click", () => {
+    const sidebar = document.getElementById("mailSidebar");
+    if (!sidebar) return;
+    if (window.innerWidth <= 860) {
+      sidebar.classList.toggle("is-expanded");
+    } else {
+      sidebar.classList.toggle("is-collapsed");
+    }
+  });
   // Mail label tabs are rendered dynamically via renderMailLabelTabs()
   elements.closePlanEventBtn.addEventListener("click", () => elements.planEventDialog.close());
   elements.planEventAllDay.addEventListener("change", () => {
@@ -1078,6 +1110,7 @@ function bindEvents() {
   elements.menuIngredientOptionsBtn.addEventListener("click", () => openSettingsMenuDialog(openIngredientOptionsDialog));
   elements.menuFoodHealthSettingsBtn.addEventListener("click", () => openSettingsMenuDialog(openFoodHealthSettingsDialog));
   elements.menuMealPlanSettingsBtn.addEventListener("click", () => openSettingsMenuDialog(openMealPlanSettingsDialog));
+  elements.menuReadSyncBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("read-sync")));
   elements.menuWatchTheatersBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("watch")));
   elements.menuRecurringTasksBtn.addEventListener("click", () => openSettingsMenuDialog(openRecurringTasksDialog));
   elements.menuWorkoutLibraryBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLibraryDialog));
@@ -1199,6 +1232,15 @@ function bindEvents() {
   elements.doSettingsBtn.addEventListener("click", toggleDoSettingsMenu);
   elements.playSettingsBtn.addEventListener("click", togglePlaySettingsMenu);
   elements.watchSettingsBtn.addEventListener("click", toggleWatchSettingsMenu);
+  document.getElementById("readListenSettingsBtn")?.addEventListener("click", toggleReadListenSettingsMenu);
+  document.getElementById("saveNytCookieBtn")?.addEventListener("click", saveNytCookie);
+  document.getElementById("saveEconomistCookieBtn")?.addEventListener("click", saveEconomistCookie);
+  document.getElementById("syncArticlesSettingsBtn")?.addEventListener("click", () => syncSavedArticles("settings"));
+  document.getElementById("closeArticleSyncSettingsBtn")?.addEventListener("click", closeSyncSettingsDialog);
+  document.getElementById("cancelArticleSyncSettingsBtn")?.addEventListener("click", closeSyncSettingsDialog);
+  document.getElementById("dialogSaveNytCookieBtn")?.addEventListener("click", saveDialogNytCookie);
+  document.getElementById("dialogSaveEconomistCookieBtn")?.addEventListener("click", saveDialogEconomistCookie);
+  document.getElementById("dialogSyncNowBtn")?.addEventListener("click", () => syncSavedArticles("dialog"));
   elements.openRecurringTasksBtn.addEventListener("click", openRecurringTasksDialog);
   elements.openWorkoutLibraryBtn.addEventListener("click", openWorkoutLibraryDialog);
   elements.openWorkoutLogsBtn.addEventListener("click", openWorkoutLogsDialog);
@@ -1323,6 +1365,10 @@ function bindEvents() {
   elements.addReceiptLineBtn.addEventListener("click", () => addReceiptReviewLine());
   elements.cancelReceiptReviewBtn.addEventListener("click", () => elements.receiptScanDialog.close());
   elements.groceryLibraryForm.addEventListener("submit", addGroceryLibraryItem);
+  elements.groceryLibraryInput.addEventListener("input", () => {
+    const isPickingGrocery = pendingMealIngredientSelection || pendingAutoRuleIngredientSelection;
+    if (isPickingGrocery) renderGroceryLibrary(elements.groceryLibraryInput.value);
+  });
   elements.closeIngredientOptionsBtn.addEventListener("click", () => elements.ingredientOptionsDialog.close());
   elements.saveIngredientOptionsBtn.addEventListener("click", saveIngredientOptions);
   elements.resetIngredientOptionsBtn.addEventListener("click", resetIngredientOptions);
@@ -1430,10 +1476,17 @@ function bindEvents() {
   });
   elements.homeReadBtn.addEventListener("click", showReadingApp);
   elements.titleReadBtn.addEventListener("click", showReadingApp);
+  elements.homeListenBtn?.addEventListener("click", showListenApp);
+  elements.titleListenBtn?.addEventListener("click", showListenApp);
   elements.homeShopBtn.addEventListener("click", showShopApp);
   elements.titleShopBtn.addEventListener("click", showShopApp);
   elements.openShopReceiptsBtn.addEventListener("click", openShopReceiptsDialog);
   elements.closeShopReceiptsBtn.addEventListener("click", closeShopReceiptsDialog);
+  elements.shopReceiptEditBackBtn.addEventListener("click", closeReceiptEditView);
+  elements.shopReceiptEditCloseBtn.addEventListener("click", closeShopReceiptsDialog);
+  elements.addEditReceiptLineBtn.addEventListener("click", () => addEditReceiptLine());
+  elements.deleteReceiptBtn.addEventListener("click", deleteReceipt);
+  elements.receiptEditForm.addEventListener("submit", saveReceiptEdit);
   elements.shopScanDirectBtn.addEventListener("click", () => elements.shopScanDirectInput.click());
   elements.shopScanDirectInput.addEventListener("change", () => {
     const files = [...(elements.shopScanDirectInput.files || [])];
@@ -1577,6 +1630,7 @@ function handleHashNavigation() {
     settings: showSettingsApp,
     home: showHomeApp,
     read: showReadingApp,
+    listen: showListenApp,
     stock: showInventoryApp,
     mail: () => showMailApp(null, hashParams),
   };
@@ -2184,6 +2238,14 @@ async function persistImmediately(label = "saving") {
   if (failed) console.warn(`Immediate ${label} save did not complete.`, failed.reason);
 }
 
+function defaultReadPublications() {
+  return [
+    { key: "nyt", label: "New York Times", domain: "nytimes.com" },
+    { key: "economist", label: "The Economist", domain: "economist.com" },
+    { key: "startribune", label: "Star Tribune", domain: "startribune.com" }
+  ];
+}
+
 function defaultState() {
   return {
     recipes: seedRecipes,
@@ -2201,6 +2263,11 @@ function defaultState() {
     watchSettings: { theaters: [], categories: [] },
     readingItems: [],
     readingSettings: { categories: [] },
+    savedArticles: [],
+    articleSync: { nytCookie: "", economistCookie: "", lastSyncedAt: null },
+    readPublications: defaultReadPublications(),
+    articleSortOrder: "newest",
+    readArticleIds: [],
     inventoryBoxes: [],
     inventoryItems: [],
     inventoryRoomVisibility: {},
@@ -2279,6 +2346,15 @@ function normalizeState(parsed) {
     watchSettings: normalizeWatchSettings(parsed?.watchSettings),
     readingItems: normalizeReadingItems(parsed?.readingItems),
     readingSettings: normalizeReadingSettings(parsed?.readingSettings),
+    savedArticles: Array.isArray(parsed?.savedArticles) ? parsed.savedArticles : [],
+    articleSync: typeof parsed?.articleSync === "object" && parsed.articleSync !== null
+      ? { nytCookie: String(parsed.articleSync.nytCookie || ""), economistCookie: String(parsed.articleSync.economistCookie || ""), lastSyncedAt: parsed.articleSync.lastSyncedAt || null }
+      : { nytCookie: "", economistCookie: "", lastSyncedAt: null },
+    readPublications: Array.isArray(parsed?.readPublications) && parsed.readPublications.length > 0
+      ? parsed.readPublications.map(p => ({ key: String(p.key || ""), label: String(p.label || p.key || ""), domain: String(p.domain || "") })).filter(p => p.key)
+      : defaultReadPublications(),
+    articleSortOrder: parsed?.articleSortOrder === "oldest" ? "oldest" : "newest",
+    readArticleIds: Array.isArray(parsed?.readArticleIds) ? parsed.readArticleIds : [],
     inventoryBoxes: ensureDefaultInventoryRooms(normalizeInventoryBoxes(parsed?.inventoryBoxes)),
     inventoryItems: normalizeInventoryItems(parsed?.inventoryItems),
     inventoryRoomVisibility: normalizeInventoryRoomVisibility(parsed?.inventoryRoomVisibility),
@@ -3214,6 +3290,26 @@ function migrateRecipeFoldersToTags(targetState = state) {
 function migrateLegacyRecipeOrganization() {
   migrateRecipeFoldersToTags(state);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function migrateGroceryDescriptorNames() {
+  if (state.migrations?.groceryDescriptorNamesV1) return;
+  const pattern = /^(\w+(?:\s+\w+)*?)\s+bell\s+peppers?$/i;
+  const items = groceryBaseItems().slice();
+  let changed = false;
+  for (const item of items) {
+    const m = pattern.exec(item);
+    if (!m) continue;
+    const descriptor = m[1].toLowerCase();
+    const newName = `bell pepper, ${descriptor}`;
+    if (normalize(newName) === normalize(item)) continue;
+    const conflict = groceryBaseItems().some((e) => normalize(e) === normalize(newName) && normalize(e) !== normalize(item));
+    if (conflict) continue;
+    applyGroceryItemRename(item, newName);
+    changed = true;
+  }
+  state.migrations = { ...state.migrations, groceryDescriptorNamesV1: true };
+  if (changed) localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
 function defaultGroceryBaseItems() {
@@ -4437,6 +4533,10 @@ async function loadRecipeRowsFromSupabase() {
 }
 
 function recipeFromRow(row) {
+  const localRecipe = state.recipes?.find((recipe) => recipe.id === row.id);
+  // If local recipe was updated more recently than the stored row (e.g. a row write failed),
+  // prefer local values for fields that might be stale in row storage.
+  const localIsNewer = Boolean(localRecipe?.updatedAt && (!row.updated_at || localRecipe.updatedAt > row.updated_at));
   return {
     id: row.id,
     name: row.name || "",
@@ -4450,13 +4550,15 @@ function recipeFromRow(row) {
     createdAt: row.created_at || "",
     updatedAt: row.updated_at || "",
     ingredients: Array.isArray(row.ingredients) ? row.ingredients : [],
-    tags: Array.isArray(row.tags) ? row.tags : normalizeRecipeTagSelection(state.recipes?.find((recipe) => recipe.id === row.id)?.tags || []),
-    nutrition: Array.isArray(row.nutrition) ? row.nutrition : normalizeNutritionFacts(state.recipes?.find((recipe) => recipe.id === row.id)?.nutrition || []),
-    nutritionEstimate: row.nutrition_estimate || state.recipes?.find((recipe) => recipe.id === row.id)?.nutritionEstimate || null,
+    tags: (!localIsNewer && Array.isArray(row.tags))
+      ? row.tags
+      : normalizeRecipeTagSelection(localRecipe?.tags || []),
+    nutrition: Array.isArray(row.nutrition) ? row.nutrition : normalizeNutritionFacts(localRecipe?.nutrition || []),
+    nutritionEstimate: row.nutrition_estimate || localRecipe?.nutritionEstimate || null,
     ingredientNutritionMatches: Array.isArray(row.ingredient_nutrition_matches)
       ? row.ingredient_nutrition_matches
-      : state.recipes?.find((recipe) => recipe.id === row.id)?.ingredientNutritionMatches || [],
-    cookLog: Array.isArray(row.cook_log) ? row.cook_log : normalizeCookLog(state.recipes?.find((recipe) => recipe.id === row.id)?.cookLog || []),
+      : localRecipe?.ingredientNutritionMatches || [],
+    cookLog: Array.isArray(row.cook_log) ? row.cook_log : normalizeCookLog(localRecipe?.cookLog || []),
     steps: row.steps || ""
   };
 }
@@ -4565,7 +4667,7 @@ async function upsertRecipeRows(recipes) {
     });
   }
   if (!response.ok) {
-    const legacyRows = rows.map(({ tags, nutrition, nutrition_estimate, ingredient_nutrition_matches, cook_log, prep_time, cook_time, ...row }) => row);
+    const legacyRows = rows.map(({ nutrition, nutrition_estimate, ingredient_nutrition_matches, cook_log, prep_time, cook_time, ...row }) => row);
     response = await fetch(`${supabaseBaseUrl()}/rest/v1/eat_recipes?on_conflict=id`, {
       method: "POST",
       headers: {
@@ -4935,6 +5037,7 @@ function activateEatShell() {
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
   elements.readingMainPage.hidden = true;
+  elements.listenMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -4959,6 +5062,7 @@ function showDoApp(event) {
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
   elements.readingMainPage.hidden = true;
+  elements.listenMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -4987,6 +5091,7 @@ function showPlayApp(event) {
   elements.playMainPage.hidden = false;
   elements.watchMainPage.hidden = true;
   elements.readingMainPage.hidden = true;
+  elements.listenMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -5015,6 +5120,7 @@ function showWatchApp(event) {
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = false;
   elements.readingMainPage.hidden = true;
+  elements.listenMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -5040,6 +5146,7 @@ function showRecreateApp(event) {
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
   elements.readingMainPage.hidden = true;
+  elements.listenMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.recreateMainPage.hidden = false;
   elements.planMainPage.hidden = true;
@@ -5064,6 +5171,7 @@ function showPlanApp(event) {
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
   elements.readingMainPage.hidden = true;
+  elements.listenMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -5089,6 +5197,7 @@ function showSettingsApp(event) {
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
   elements.readingMainPage.hidden = true;
+  elements.listenMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -5099,6 +5208,7 @@ function showSettingsApp(event) {
   elements.activeCookingSection.hidden = true;
   setPageTitle("Settings");
   setPageHash("settings");
+  initReadListenSettings();
   closePageTitleMenu();
   closeAppMenu();
 }
@@ -5112,6 +5222,7 @@ function showHomeApp(event) {
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
   elements.readingMainPage.hidden = true;
+  elements.listenMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -5139,6 +5250,7 @@ function showReadingApp(event) {
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
   elements.readingMainPage.hidden = false;
+  elements.listenMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
@@ -5147,7 +5259,32 @@ function showReadingApp(event) {
   elements.activeCookingSection.hidden = true;
   setPageTitle("Read");
   setPageHash("read");
-  renderReadingPlanner();
+  initArticleReadPage();
+  closePageTitleMenu();
+  closeAppMenu();
+}
+
+function showListenApp(event) {
+  event?.stopPropagation();
+  activeAppArea = "listen";
+  elements.homeMainPage.hidden = true;
+  document.querySelector("[data-section='mealPrep']").hidden = true;
+  elements.doMainPage.hidden = true;
+  elements.playMainPage.hidden = true;
+  elements.watchMainPage.hidden = true;
+  elements.readingMainPage.hidden = true;
+  elements.listenMainPage.hidden = false;
+  elements.shopMainPage.hidden = true;
+  elements.inventoryMainPage.hidden = true;
+  elements.recreateMainPage.hidden = true;
+  elements.planMainPage.hidden = true;
+  elements.settingsMainPage.hidden = true;
+  elements.mailMainPage.hidden = true;
+  elements.weekLabel.closest(".week-tools").hidden = true;
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("Listen");
+  setPageHash("listen");
+  initListenPage();
   closePageTitleMenu();
   closeAppMenu();
 }
@@ -5162,6 +5299,7 @@ function showInventoryApp(event) {
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
   elements.readingMainPage.hidden = true;
+  elements.listenMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = false;
   elements.recreateMainPage.hidden = true;
@@ -5190,6 +5328,7 @@ function showShopApp(event) {
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
   elements.readingMainPage.hidden = true;
+  elements.listenMainPage.hidden = true;
   elements.shopMainPage.hidden = false;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -5214,6 +5353,7 @@ function showMailApp(event, hashParams) {
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
   elements.readingMainPage.hidden = true;
+  elements.listenMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -5237,14 +5377,14 @@ let mailOpenThreadId = null;
 let mailNextPageToken = null;
 let mailCurrentQuery = "";
 let mailLabels = [];
+let mailFolderExpanded = new Set();
 
 async function initMailPage(hashParams) {
   if (hashParams?.get("gm_error")) {
     alert("Gmail connection failed. Please try again.");
   }
   const status = await callGmailApi({ action: "status" });
-  if (!status) return;
-  mailGmailConnected = Boolean(status.connected);
+  mailGmailConnected = Boolean(status?.connected);
   const badge = document.getElementById("mailAccountBadge");
   if (badge && status.email) badge.textContent = status.email;
   renderMailConnectState();
@@ -5264,8 +5404,35 @@ function renderMailConnectState() {
 }
 
 async function connectGmail() {
-  const res = await callGmailAuthApi();
-  if (res?.url) window.location.href = res.url;
+  const btn = elements.mailConnectBtn;
+  if (btn) { btn.disabled = true; btn.textContent = "Connecting…"; }
+  const session = supabaseClient ? await supabaseClient.auth.getSession() : null;
+  const token = session?.data?.session?.access_token;
+  if (!token) {
+    alert("You need to be signed in to connect Gmail. Please sign in and try again.");
+    if (btn) { btn.disabled = false; btn.textContent = "Connect Gmail"; }
+    return;
+  }
+  try {
+    const res = await fetch("/.netlify/functions/gmail-auth", {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(`Could not start Gmail connection: ${data.error || res.status}`);
+      if (btn) { btn.disabled = false; btn.textContent = "Connect Gmail"; }
+      return;
+    }
+    if (data.url) {
+      window.location.href = data.url;
+    } else {
+      alert("Unexpected response from server. Check Netlify function logs.");
+      if (btn) { btn.disabled = false; btn.textContent = "Connect Gmail"; }
+    }
+  } catch (e) {
+    alert(`Connection error: ${e.message}`);
+    if (btn) { btn.disabled = false; btn.textContent = "Connect Gmail"; }
+  }
 }
 
 async function disconnectGmail() {
@@ -5315,16 +5482,20 @@ async function loadMailList(labelId, q = "", append = false) {
 
 function appendMailRows(messages) {
   messages.forEach((m) => {
-    const btn = document.createElement("button");
-    btn.className = `mail-row${m.unread ? " mail-row--unread" : ""}`;
-    btn.type = "button";
-    btn.dataset.threadId = m.threadId;
-    btn.innerHTML = `<span class="mail-row-from">${escapeHtml(parseDisplayName(m.from))}</span>
-      <span class="mail-row-date">${escapeHtml(formatMailDate(m.internalDate))}</span>
-      <span class="mail-row-subject">${escapeHtml(m.subject)}</span>
-      <span class="mail-row-snippet">${escapeHtml(m.snippet || "")}</span>`;
-    btn.addEventListener("click", () => openMailThread(m.threadId));
-    elements.mailList.appendChild(btn);
+    const row = document.createElement("div");
+    row.className = `mail-row${m.unread ? " mail-row--unread" : ""}`;
+    row.dataset.threadId = m.threadId;
+    row.innerHTML = `
+      <button class="mail-row-star" type="button" aria-label="Star" title="Star">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+      </button>
+      <span class="mail-row-from">${escapeHtml(parseDisplayName(m.from))}</span>
+      <span class="mail-row-content">
+        <span class="mail-row-subject">${escapeHtml(m.subject)}</span>${m.snippet ? `<span class="mail-row-sep"> — </span><span class="mail-row-snippet">${escapeHtml(m.snippet)}</span>` : ""}
+      </span>
+      <span class="mail-row-date">${escapeHtml(formatMailDate(m.internalDate))}</span>`;
+    row.addEventListener("click", (e) => { if (!e.target.closest(".mail-row-star")) openMailThread(m.threadId); });
+    elements.mailList.appendChild(row);
   });
 }
 
@@ -5346,21 +5517,109 @@ function formatSystemLabel(id) {
 }
 
 function renderMailLabelTabs() {
-  const tabsEl = document.getElementById("mailTabs");
-  if (!tabsEl || !mailLabels.length) return;
-  tabsEl.innerHTML = mailLabels.map((l) => {
-    const label = l.type === "system" ? formatSystemLabel(l.id) : l.name;
+  const navEl = document.getElementById("mailTabs");
+  if (!navEl || !mailLabels.length) return;
+
+  const system = mailLabels.filter((l) => l.type === "system");
+  const user = mailLabels.filter((l) => l.type === "user");
+
+  // Build tree from user labels — Gmail uses "/" as hierarchy separator.
+  // Only nest a label if every intermediate parent path exists as a real label.
+  // Labels like "chase/amazon" with no real "chase" label stay flat.
+  const realPaths = new Set(user.map((l) => l.name));
+  const nodeByPath = new Map();
+  const roots = [];
+  [...user].sort((a, b) => a.name.localeCompare(b.name)).forEach((l) => {
+    const parts = l.name.split("/");
+    const allParentsExist = parts.length > 1 &&
+      parts.slice(0, -1).every((_, i) => realPaths.has(parts.slice(0, i + 1).join("/")));
+    if (!allParentsExist) {
+      const node = { displayName: l.name, fullPath: l.name, id: l.id, children: [] };
+      nodeByPath.set(l.name, node);
+      roots.push(node);
+      return;
+    }
+    for (let i = 0; i < parts.length; i++) {
+      const fullPath = parts.slice(0, i + 1).join("/");
+      if (!nodeByPath.has(fullPath)) {
+        const node = { displayName: parts[i], fullPath, id: null, children: [] };
+        nodeByPath.set(fullPath, node);
+        if (i === 0) roots.push(node);
+        else nodeByPath.get(parts.slice(0, i).join("/"))?.children.push(node);
+      }
+      if (i === parts.length - 1) nodeByPath.get(fullPath).id = l.id;
+    }
+  });
+
+  function renderNode(node, depth) {
+    const active = node.id && currentMailbox === node.id;
+    const expanded = mailFolderExpanded.has(node.fullPath);
+    const indent = depth * 14;
+    if (!node.children.length) {
+      return `<button class="mail-label-item${active ? " is-active" : ""}" type="button" data-mailbox="${escapeHtml(node.id || "")}" role="tab" aria-selected="${active}" style="padding-left: calc(26px + ${indent}px)">
+        ${mailLabelIcon(node.id, "user")}<span>${escapeHtml(node.displayName)}</span>
+      </button>`;
+    }
+    return `<div class="mail-label-folder">
+      <div class="mail-label-folder-row" style="padding-left: ${indent}px">
+        <button class="mail-label-folder-chevron" type="button" aria-expanded="${expanded}" data-folder-toggle="${escapeHtml(node.fullPath)}" aria-label="${expanded ? "Collapse" : "Expand"} ${escapeHtml(node.displayName)}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+        ${node.id
+          ? `<button class="mail-label-item mail-label-folder-label${active ? " is-active" : ""}" type="button" data-mailbox="${escapeHtml(node.id)}" role="tab" aria-selected="${active}">
+              ${mailLabelIcon(node.id, "user")}<span>${escapeHtml(node.displayName)}</span>
+            </button>`
+          : `<span class="mail-label-folder-label mail-label-virtual">${mailLabelIcon("", "user")}<span>${escapeHtml(node.displayName)}</span></span>`
+        }
+      </div>
+      ${expanded ? `<div class="mail-label-children">${node.children.map((c) => renderNode(c, depth + 1)).join("")}</div>` : ""}
+    </div>`;
+  }
+
+  const systemHtml = system.map((l) => {
+    const label = formatSystemLabel(l.id);
     const active = currentMailbox === l.id;
-    return `<button class="mail-tab${active ? " is-active" : ""}" type="button" data-mailbox="${escapeHtml(l.id)}" role="tab" aria-selected="${active}">${escapeHtml(label)}</button>`;
+    return `<button class="mail-label-item${active ? " is-active" : ""}" type="button" data-mailbox="${escapeHtml(l.id)}" role="tab" aria-selected="${active}">
+      ${mailLabelIcon(l.id, l.type)}<span>${escapeHtml(label)}</span>
+    </button>`;
   }).join("");
-  tabsEl.querySelectorAll(".mail-tab").forEach((tab) => {
-    tab.addEventListener("click", () => {
-      tabsEl.querySelectorAll(".mail-tab").forEach((t) => { t.classList.remove("is-active"); t.setAttribute("aria-selected", "false"); });
-      tab.classList.add("is-active");
-      tab.setAttribute("aria-selected", "true");
-      loadMailList(tab.dataset.mailbox);
+
+  const userHtml = roots.map((n) => renderNode(n, 0)).join("");
+  const divider = system.length && user.length ? `<div class="mail-label-divider"></div>` : "";
+
+  navEl.innerHTML = systemHtml + divider + userHtml;
+
+  navEl.querySelectorAll(".mail-label-item").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      navEl.querySelectorAll(".mail-label-item").forEach((b) => { b.classList.remove("is-active"); b.setAttribute("aria-selected", "false"); });
+      btn.classList.add("is-active");
+      btn.setAttribute("aria-selected", "true");
+      loadMailList(btn.dataset.mailbox);
     });
   });
+
+  navEl.querySelectorAll("[data-folder-toggle]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const path = btn.dataset.folderToggle;
+      if (mailFolderExpanded.has(path)) mailFolderExpanded.delete(path);
+      else mailFolderExpanded.add(path);
+      renderMailLabelTabs();
+    });
+  });
+}
+
+function mailLabelIcon(id, type) {
+  const icons = {
+    INBOX:     `<svg viewBox="0 0 24 24" class="mail-label-icon" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>`,
+    STARRED:   `<svg viewBox="0 0 24 24" class="mail-label-icon" aria-hidden="true"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>`,
+    SENT:      `<svg viewBox="0 0 24 24" class="mail-label-icon" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22 11 13 2 9l20-7z"/></svg>`,
+    DRAFT:     `<svg viewBox="0 0 24 24" class="mail-label-icon" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`,
+    IMPORTANT: `<svg viewBox="0 0 24 24" class="mail-label-icon" aria-hidden="true"><polygon points="3,7 7,3 17,3 21,7 17,11 7,11"/></svg>`,
+    SPAM:      `<svg viewBox="0 0 24 24" class="mail-label-icon" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>`,
+    TRASH:     `<svg viewBox="0 0 24 24" class="mail-label-icon" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
+  };
+  const userIcon = `<svg viewBox="0 0 24 24" class="mail-label-icon" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>`;
+  return type === "user" ? userIcon : (icons[id] || userIcon);
 }
 
 function showMailMovePicker(thread) {
@@ -9719,6 +9978,7 @@ function openMealEntryMenu(event) {
   if (!day || !meal || Number.isNaN(index)) return;
   const recipe = recipeForMealEntry(day, meal, index);
   const canMakeAhead = recipe && !recipe.virtualGroceryRecipe;
+  const canCopyAsLeftovers = Boolean(nameForMealEntryLeftovers(day, meal, index));
 
   const menu = document.createElement("div");
   menu.className = "folder-context-menu meal-entry-context-menu";
@@ -9735,7 +9995,7 @@ function openMealEntryMenu(event) {
     <button type="button" role="menuitem" data-copy-meal-entry-menu data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
       Copy meal
     </button>
-    ${recipe ? `
+    ${canCopyAsLeftovers ? `
       <button type="button" role="menuitem" data-copy-leftovers-meal-entry-menu data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
         Copy as leftovers
       </button>
@@ -9978,10 +10238,18 @@ function copyMealEntry(day, meal, index) {
     : entry;
 }
 
+function nameForMealEntryLeftovers(day, meal, index) {
+  const entry = mealEntryValue(day, meal, index);
+  if (!entry || isSpecialMealSlot(entry)) return null;
+  const recipe = recipeForSlot(entry);
+  if (recipe) return recipe.name;
+  return typeof entry === "string" ? entry.trim() || null : null;
+}
+
 function copyMealEntryAsLeftovers(day, meal, index) {
-  const recipe = recipeForMealEntry(day, meal, index);
-  if (!recipe) return;
-  copiedMealEntry = specialMealSlotId("leftovers", recipe.name);
+  const name = nameForMealEntryLeftovers(day, meal, index);
+  if (!name) return;
+  copiedMealEntry = specialMealSlotId("leftovers", name);
 }
 
 function pasteMealEntry(day, meal, index) {
@@ -10063,15 +10331,32 @@ function openAutoRuleEntryMenu(event) {
   const index = Number(entry.dataset.index);
   if (!day || !meal || Number.isNaN(index)) return;
   const rule = autoGenerateRuleForSlot({ id: day }, meal, index);
-  if (!autoRuleInputValue(rule)) return;
+  const hasValue = Boolean(autoRuleInputValue(rule));
+
+  if (!hasValue && !copiedAutoRuleValue) return;
 
   const menu = document.createElement("div");
   menu.className = "folder-context-menu meal-entry-context-menu";
   menu.setAttribute("role", "menu");
   menu.innerHTML = `
-    <button type="button" role="menuitem" data-remove-auto-rule-menu data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
-      Remove
-    </button>
+    ${hasValue ? `
+      <button type="button" role="menuitem" data-copy-auto-rule-menu data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
+        Copy meal
+      </button>
+      <button type="button" role="menuitem" data-copy-leftovers-auto-rule-menu data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
+        Copy as leftovers
+      </button>
+    ` : ""}
+    ${copiedAutoRuleValue ? `
+      <button type="button" role="menuitem" data-paste-auto-rule-menu data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
+        Paste meal
+      </button>
+    ` : ""}
+    ${hasValue ? `
+      <button type="button" role="menuitem" data-remove-auto-rule-menu data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}">
+        Remove
+      </button>
+    ` : ""}
   `;
 
   elements.autoRulesDialog.append(menu);
@@ -10083,19 +10368,63 @@ function openAutoRuleEntryMenu(event) {
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
-  const removeButton = menu.querySelector("[data-remove-auto-rule-menu]");
-  let didRemove = false;
-  const removeFromMenu = (removeEvent) => {
-    removeEvent.preventDefault();
-    removeEvent.stopPropagation();
-    if (didRemove) return;
-    didRemove = true;
-    closeFolderMenu();
-    removeAutoRuleSlot(removeButton.dataset.day, removeButton.dataset.meal, Number(removeButton.dataset.index));
+  function bindAction(selector, fn) {
+    const btn = menu.querySelector(selector);
+    if (!btn) return;
+    let fired = false;
+    const handle = (e) => { e.preventDefault(); e.stopPropagation(); if (fired) return; fired = true; closeFolderMenu(); fn(e.currentTarget); };
+    btn.addEventListener("pointerdown", handle);
+    btn.addEventListener("mousedown", handle);
+    btn.addEventListener("click", handle);
+  }
+
+  bindAction("[data-copy-auto-rule-menu]", (btn) => copyAutoRuleEntry(btn.dataset.day, btn.dataset.meal, Number(btn.dataset.index)));
+  bindAction("[data-copy-leftovers-auto-rule-menu]", (btn) => copyAutoRuleEntryAsLeftovers(btn.dataset.day, btn.dataset.meal, Number(btn.dataset.index)));
+  bindAction("[data-paste-auto-rule-menu]", (btn) => pasteAutoRuleEntry(btn.dataset.day, btn.dataset.meal, Number(btn.dataset.index)));
+  bindAction("[data-remove-auto-rule-menu]", (btn) => removeAutoRuleSlot(btn.dataset.day, btn.dataset.meal, Number(btn.dataset.index)));
+}
+
+function copyAutoRuleEntry(day, meal, index) {
+  const rule = autoGenerateRuleForSlot({ id: day }, meal, index);
+  if (!rule || rule.action === "skip") return;
+  copiedAutoRuleValue = {
+    action: rule.action,
+    value: rule.value || "",
+    folderName: rule.folderName || "",
+    tags: rule.tags ? [...rule.tags] : [],
+    tagMatchMode: rule.tagMatchMode || "any",
+    selectionMode: rule.selectionMode || "random"
   };
-  removeButton.addEventListener("pointerdown", removeFromMenu);
-  removeButton.addEventListener("mousedown", removeFromMenu);
-  removeButton.addEventListener("click", removeFromMenu);
+}
+
+function copyAutoRuleEntryAsLeftovers(day, meal, index) {
+  const rule = autoGenerateRuleForSlot({ id: day }, meal, index);
+  if (!rule || rule.action === "skip") return;
+  let recipeName = "";
+  if (rule.action === "ingredient") {
+    recipeName = parseGroceryMealSlot(rule.value)?.item || String(rule.value || "").trim();
+  } else if (rule.action === "custom" && !isSpecialMealSlot(rule.value)) {
+    recipeName = parseGroceryMealSlot(rule.value)?.item || activeRecipes().find((r) => r.id === rule.value)?.name || rule.value || "";
+  }
+  copiedAutoRuleValue = { action: "custom", value: specialMealSlotId("leftovers", recipeName), folderName: "", tags: [], tagMatchMode: "any", selectionMode: "random" };
+}
+
+function pasteAutoRuleEntry(day, meal, index) {
+  if (!copiedAutoRuleValue) return;
+  const { action, value, folderName, tags, tagMatchMode, selectionMode } = copiedAutoRuleValue;
+  removeAutoRulesForDaySlot(day, meal, index);
+  let rule;
+  if (action === "tags") {
+    rule = autoRule(createId("rule"), [day], meal, index, "tags");
+    rule.tags = [...tags];
+    rule.tagMatchMode = tagMatchMode;
+    rule.selectionMode = selectionMode;
+  } else {
+    rule = autoRule(createId("rule"), [day], meal, index, action, folderName, value);
+  }
+  state.autoGenerateRules.unshift(rule);
+  persist();
+  renderAutoRules();
 }
 
 function openPlayTaskMenu(event) {
@@ -10233,6 +10562,7 @@ function updatePageTitleMenu() {
   elements.titleToDoListBtn.hidden = activeAppArea === "do" || !isPagePersonallyEnabled("do");
   elements.titleWatchBtn.hidden = activeAppArea === "watch" || !isPagePersonallyEnabled("watch");
   elements.titleReadBtn.hidden = activeAppArea === "read" || !isPagePersonallyEnabled("read");
+  elements.titleListenBtn.hidden = activeAppArea === "listen" || !isPagePersonallyEnabled("listen");
   elements.titleShopBtn.hidden = activeAppArea === "shop" || !isPagePersonallyEnabled("shop");
   elements.titleInventoryBtn.hidden = activeAppArea === "inventory" || !isPagePersonallyEnabled("inventory");
   elements.titleRecreateBtn.hidden = activeAppArea === "recreate" || !isPagePersonallyEnabled("recreate");
@@ -10250,6 +10580,7 @@ function updatePageVisibility() {
   elements.homeDoBtn.hidden = !isPagePersonallyEnabled("do");
   elements.homeWatchBtn.hidden = !isPagePersonallyEnabled("watch");
   elements.homeReadBtn.hidden = !isPagePersonallyEnabled("read");
+  elements.homeListenBtn.hidden = !isPagePersonallyEnabled("listen");
   elements.homeShopBtn.hidden = !isPagePersonallyEnabled("shop");
   elements.homeInventoryBtn.hidden = !isPagePersonallyEnabled("inventory");
   elements.homeRecreateBtn.hidden = !isPagePersonallyEnabled("recreate");
@@ -10323,12 +10654,13 @@ function updateSettingsMenuOptions() {
   elements.menuWorkoutLibraryBtn.hidden = !isPlay;
   elements.menuWorkoutLogsBtn.hidden = !isPlay;
   elements.menuInventoryRoomsBtn.hidden = activeAppArea !== "inventory";
+  elements.menuReadSyncBtn.hidden = !["read", "listen"].includes(activeAppArea);
   elements.menuRecreateHobbiesBtn.hidden = !isRecreate;
   elements.menuCalendarsBtn.hidden = !isPlan;
 }
 
 function hasPageSpecificSettings() {
-  return ["eat", "play", "do", "watch", "shop", "inventory", "recreate", "plan"].includes(activeAppArea);
+  return ["eat", "play", "do", "watch", "shop", "inventory", "recreate", "plan", "read", "listen"].includes(activeAppArea);
 }
 
 function openSettingsMenuDialog(openDialog) {
@@ -10337,7 +10669,7 @@ function openSettingsMenuDialog(openDialog) {
 }
 
 function openContextSettingsDialog(kind) {
-  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -10355,9 +10687,10 @@ function renderContextSettingsDialog(kind) {
     pages: "Pages",
     "location-services": "Location Services",
     "voice-commands": "Voice Commands",
-    "admin-pages": "Global Pages"
+    "admin-pages": "Global Pages",
+    "read-sync": "Sync Settings"
   };
-  const isSubPanel = !["general", "eat", "do", "play", "watch", "recreate"].includes(kind);
+  const isSubPanel = !["general", "eat", "do", "play", "watch", "recreate", "read-sync"].includes(kind);
   elements.contextSettingsBackBtn.hidden = !isSubPanel;
   elements.contextSettingsTitle.textContent = titles[kind] || "Settings";
   if (kind === "general") {
@@ -10494,6 +10827,97 @@ function renderContextSettingsDialog(kind) {
         ${previewHtml}
       </div>
     `;
+    return;
+  }
+
+  if (kind === "read-sync") {
+    const nytConnected = !!(state.articleSync?.nytCookie);
+    const econConnected = !!(state.articleSync?.economistCookie);
+    const lastSync = state.articleSync?.lastSyncedAt
+      ? new Date(state.articleSync.lastSyncedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+      : null;
+    const pubs = getReadPublications();
+    elements.contextSettingsBody.innerHTML = `
+      <div class="sync-context-settings">
+        <p class="sync-context-hint">Connect your accounts to sync saved articles automatically. The easiest way is to use the <strong>Live Chrome Extension</strong> — open it while signed in to the publication and click the connect button.</p>
+        <div class="sync-context-field">
+          <div class="sync-context-field-header">
+            <span class="sync-context-label">New York Times</span>
+            <span class="sync-context-status ${nytConnected ? "sync-status-ok" : "sync-status-off"}">${nytConnected ? "Connected" : "Not connected"}</span>
+          </div>
+          <div class="sync-context-input-row">
+            <input type="password" id="ctxNytCookieInput" class="sync-context-input" placeholder="${nytConnected ? "Paste to update NYT-S cookie" : "Paste NYT-S cookie value"}" autocomplete="off" spellcheck="false" />
+            <button type="button" class="primary-btn compact-btn" data-context-settings-action="save-nyt-cookie">Save</button>
+          </div>
+        </div>
+        <div class="sync-context-field">
+          <div class="sync-context-field-header">
+            <span class="sync-context-label">The Economist</span>
+            <span class="sync-context-status ${econConnected ? "sync-status-ok" : "sync-status-off"}">${econConnected ? "Connected" : "Not connected"}</span>
+          </div>
+          <div class="sync-context-input-row">
+            <input type="password" id="ctxEconomistCookieInput" class="sync-context-input" placeholder="${econConnected ? "Paste to update blaize_session cookie" : "Paste blaize_session cookie value"}" autocomplete="off" spellcheck="false" />
+            <button type="button" class="primary-btn compact-btn" data-context-settings-action="save-economist-cookie">Save</button>
+          </div>
+        </div>
+        ${(nytConnected || econConnected) ? `
+          <div class="sync-context-actions">
+            <button type="button" class="primary-btn" data-context-settings-action="sync-now-context">Sync now</button>
+            ${lastSync ? `<span class="sync-context-last">Last synced ${lastSync}</span>` : ""}
+          </div>
+        ` : ""}
+        <div class="sync-context-divider"></div>
+        <div class="sync-context-field">
+          <div class="sync-context-field-header">
+            <span class="sync-context-label">Publications</span>
+          </div>
+          <div class="sync-pub-list">
+            ${pubs.map(p => `
+              <div class="sync-pub-item">
+                <div class="sync-pub-info">
+                  <span class="sync-pub-name">${escapeHtml(p.label)}</span>
+                  <span class="sync-pub-domain">${escapeHtml(p.domain)}</span>
+                </div>
+                <button type="button" class="icon-btn sync-pub-remove" data-remove-pub="${escapeHtml(p.key)}" title="Remove ${escapeHtml(p.label)}" aria-label="Remove ${escapeHtml(p.label)}">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+            `).join("")}
+          </div>
+          <form class="sync-pub-add-form" id="ctxAddPubForm">
+            <div class="sync-pub-add-row">
+              <input type="text" id="ctxPubNameInput" class="sync-context-input" placeholder="Name (e.g. The Atlantic)" autocomplete="off" />
+              <input type="text" id="ctxPubDomainInput" class="sync-context-input" placeholder="Domain (e.g. theatlantic.com)" autocomplete="off" />
+              <button type="submit" class="primary-btn compact-btn">Add</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+    elements.contextSettingsBody.querySelectorAll("[data-remove-pub]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        removePublication(btn.dataset.removePub);
+        renderContextSettingsDialog("read-sync");
+      });
+    });
+    document.getElementById("ctxAddPubForm")?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const name = document.getElementById("ctxPubNameInput")?.value.trim();
+      const rawDomain = document.getElementById("ctxPubDomainInput")?.value.trim();
+      const domain = rawDomain ? rawDomain.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase() : "";
+      if (!name || !domain) return;
+      const key = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+      if (!key) return;
+      const existing = getReadPublications();
+      if (!existing.find(p => p.key === key || p.domain === domain)) {
+        if (!Array.isArray(state.readPublications)) state.readPublications = defaultReadPublications();
+        state.readPublications.push({ key, label: name, domain });
+        persist();
+        renderArticlePubTabs();
+        renderListenPubTabs();
+      }
+      renderContextSettingsDialog("read-sync");
+    });
     return;
   }
 
@@ -10818,6 +11242,32 @@ function handleContextSettingsAction(event) {
     "pages": () => renderContextSettingsDialog("pages"),
     "location-services": () => renderContextSettingsDialog("location-services"),
     "voice-commands": () => renderContextSettingsDialog("voice-commands"),
+    "save-nyt-cookie": () => {
+      const input = document.getElementById("ctxNytCookieInput");
+      const val = input?.value?.trim();
+      if (!val) return;
+      if (!state.articleSync) state.articleSync = {};
+      state.articleSync.nytCookie = val;
+      persist();
+      updateSyncButtons("read");
+      updateSyncButtons("listen");
+      renderContextSettingsDialog("read-sync");
+    },
+    "save-economist-cookie": () => {
+      const input = document.getElementById("ctxEconomistCookieInput");
+      const val = input?.value?.trim();
+      if (!val) return;
+      if (!state.articleSync) state.articleSync = {};
+      state.articleSync.economistCookie = val;
+      persist();
+      updateSyncButtons("read");
+      updateSyncButtons("listen");
+      renderContextSettingsDialog("read-sync");
+    },
+    "sync-now-context": () => {
+      elements.contextSettingsDialog.close();
+      syncSavedArticles(activeAppArea === "listen" ? "listen" : "read");
+    },
     "save-voice-secret": () => {
       const input = document.getElementById("voiceSecretInputDialog");
       if (!input) return;
@@ -11997,7 +12447,137 @@ function openShopReceiptsDialog() {
 }
 
 function closeShopReceiptsDialog() {
+  closeReceiptEditView();
   elements.shopReceiptsDialog.close();
+}
+
+function openReceiptEditView(receiptId) {
+  const receipt = (state.receipts || []).find((r) => r.id === receiptId);
+  if (!receipt) return;
+  editingReceiptId = receiptId;
+  elements.editReceiptStoreName.value = receipt.storeName || "";
+  elements.editReceiptStoreId.innerHTML = [
+    `<option value="">Unlinked store</option>`,
+    ...groceryStores().map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`)
+  ].join("");
+  elements.editReceiptStoreId.value = receipt.storeId || "";
+  elements.editReceiptPurchaseDate.value = receipt.purchaseDate || "";
+  elements.editReceiptSubtotal.value = receipt.subtotal || "";
+  elements.editReceiptDiscounts.value = receipt.discounts || "";
+  elements.editReceiptTax.value = receipt.tax || "";
+  elements.editReceiptFees.value = receipt.fees || "";
+  elements.editReceiptTotal.value = receipt.total || "";
+  elements.editReceiptLineList.innerHTML = "";
+  (receipt.lineItems || []).forEach((line) => addEditReceiptLine(line));
+  elements.shopReceiptsListView.hidden = true;
+  elements.shopReceiptsEditView.hidden = false;
+}
+
+function closeReceiptEditView() {
+  editingReceiptId = null;
+  if (elements.shopReceiptsListView) elements.shopReceiptsListView.hidden = false;
+  if (elements.shopReceiptsEditView) elements.shopReceiptsEditView.hidden = true;
+}
+
+function addEditReceiptLine(line = {}) {
+  const id = line.id || createId("rl");
+  const row = document.createElement("div");
+  row.className = "receipt-line-row";
+  row.dataset.receiptLineId = id;
+  row.dataset.originalName = line.normalizedName || "";
+  row.dataset.originalCategory = line.category || "";
+  row.innerHTML = `
+    <input data-receipt-raw value="${escapeHtml(line.rawText || "")}" aria-label="Raw receipt text" />
+    <input data-receipt-name value="${escapeHtml(line.normalizedName || "")}" placeholder="Item name" aria-label="Item name" />
+    <input data-receipt-category value="${escapeHtml(line.category || "")}" placeholder="Category" aria-label="Category" />
+    <input data-receipt-quantity type="number" min="0.001" step="0.001" value="${escapeHtml(String(line.quantity ?? 1))}" aria-label="Quantity" />
+    <select data-receipt-unit aria-label="Unit">
+      ${["each", "count", "oz", "lb", "g", "kg", "ml", "l", "fl oz"].map((unit) => (
+        `<option value="${unit}" ${(line.unit || "each") === unit ? "selected" : ""}>${unit}</option>`
+      )).join("")}
+    </select>
+    <input data-receipt-price type="number" min="0" step="0.01" value="${escapeHtml(String(line.totalPrice ?? 0))}" aria-label="Total price" />
+    <input data-receipt-discount type="number" min="0" step="0.01" value="${escapeHtml(String(line.discountAmount ?? 0))}" aria-label="Discount" />
+    <button class="icon-btn" type="button" data-remove-receipt-line title="Remove" aria-label="Remove line">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13" /></svg>
+    </button>
+    <input type="hidden" data-receipt-confidence value="${escapeHtml(String(line.confidenceScore ?? 0.9))}" />
+  `;
+  row.querySelector("[data-remove-receipt-line]").addEventListener("click", () => row.remove());
+  elements.editReceiptLineList.append(row);
+}
+
+function editedReceiptFromForm() {
+  const original = (state.receipts || []).find((r) => r.id === editingReceiptId) || {};
+  const lineItems = [...elements.editReceiptLineList.querySelectorAll("[data-receipt-line-id]")].map((row) => {
+    const normalizedName = row.querySelector("[data-receipt-name]").value.trim();
+    const category = row.querySelector("[data-receipt-category]").value.trim();
+    const quantity = Math.max(0.001, Number(row.querySelector("[data-receipt-quantity]").value) || 1);
+    const totalPrice = Math.max(0, Number(row.querySelector("[data-receipt-price]").value) || 0);
+    return {
+      id: row.dataset.receiptLineId,
+      rawText: row.querySelector("[data-receipt-raw]").value.trim(),
+      normalizedName,
+      category,
+      quantity,
+      unit: row.querySelector("[data-receipt-unit]").value,
+      totalPrice,
+      unitPrice: quantity ? totalPrice / quantity : 0,
+      discountAmount: Math.max(0, Number(row.querySelector("[data-receipt-discount]").value) || 0),
+      confidenceScore: Number(row.querySelector("[data-receipt-confidence]").value) || 0.9,
+      userCorrected: true
+    };
+  });
+  return receiptDomain().normalizeReceipt({
+    ...original,
+    storeName: elements.editReceiptStoreName.value.trim(),
+    storeId: elements.editReceiptStoreId.value,
+    purchaseDate: elements.editReceiptPurchaseDate.value,
+    subtotal: elements.editReceiptSubtotal.value,
+    discounts: elements.editReceiptDiscounts.value,
+    tax: elements.editReceiptTax.value,
+    fees: elements.editReceiptFees.value,
+    total: elements.editReceiptTotal.value,
+    lineItems
+  }, createId);
+}
+
+function saveReceiptEdit(event) {
+  event.preventDefault();
+  const receipt = editedReceiptFromForm();
+  if (!receipt.storeName || !receipt.purchaseDate) return;
+  const oldLineItemIds = new Set(
+    ((state.receipts || []).find((r) => r.id === editingReceiptId)?.lineItems || []).map((li) => li.id)
+  );
+  state.receipts = normalizeReceipts((state.receipts || []).map((r) => r.id === editingReceiptId ? receipt : r));
+  state.receiptItemMappings = receiptDomain().correctedMappingsFromReceipt(receipt, receiptItemMappings());
+  state.priceHistory = normalizePriceHistory([
+    ...receiptPriceHistory().filter((ph) => !oldLineItemIds.has(ph.sourceReceiptLineItemId)),
+    ...receiptDomain().priceHistoryFromReceipt(receipt, createId)
+  ], groceryStores());
+  state.groceryBaseItems = normalizeGroceryBaseItems([
+    ...groceryBaseItems(),
+    ...receipt.lineItems.map((li) => li.normalizedName)
+  ]);
+  persist();
+  maybeWriteCloudSnapshot({ force: true }).catch(() => {});
+  renderShopReceipts();
+  closeReceiptEditView();
+}
+
+function deleteReceipt() {
+  if (!editingReceiptId) return;
+  const receipt = (state.receipts || []).find((r) => r.id === editingReceiptId);
+  const lineItemIds = new Set((receipt?.lineItems || []).map((li) => li.id));
+  state.receipts = (state.receipts || []).filter((r) => r.id !== editingReceiptId);
+  state.priceHistory = normalizePriceHistory(
+    receiptPriceHistory().filter((ph) => !lineItemIds.has(ph.sourceReceiptLineItemId)),
+    groceryStores()
+  );
+  persist();
+  maybeWriteCloudSnapshot({ force: true }).catch(() => {});
+  renderShopReceipts();
+  closeReceiptEditView();
 }
 
 function openReceiptScanDialog() {
@@ -12281,6 +12861,7 @@ function openGroceryLibraryDialog(event) {
   pendingMealIngredientSelection = null;
   pendingAutoRuleIngredientSelection = null;
   closeSettingsMenu();
+  elements.groceryLibraryInput.placeholder = "Add grocery item";
   renderGroceryLibrary();
   elements.groceryLibraryInput.value = "";
   elements.groceryLibraryDialog.showModal();
@@ -12294,16 +12875,20 @@ function focusGroceryLibraryInput() {
   });
 }
 
-function renderGroceryLibrary() {
+function renderGroceryLibrary(query = "") {
   const items = groceryBaseItems();
-  if (!items.length) {
-    elements.groceryLibraryList.innerHTML = `<div class="empty-state">No grocery items yet.</div>`;
+  const isPickingGrocery = pendingMealIngredientSelection || pendingAutoRuleIngredientSelection;
+  const q = normalize(query);
+  const filteredItems = q ? items.filter((item) => normalize(item).includes(q)) : items;
+  if (!filteredItems.length) {
+    elements.groceryLibraryList.innerHTML = q
+      ? `<div class="empty-state">No items match "${escapeHtml(query)}".</div>`
+      : `<div class="empty-state">No grocery items yet.</div>`;
     return;
   }
 
-  const isPickingGrocery = pendingMealIngredientSelection || pendingAutoRuleIngredientSelection;
   const categories = new Map();
-  items.forEach((item) => {
+  filteredItems.forEach((item) => {
     const identity = normalizeGroceryItemName(item);
     if (!categories.has(identity.category)) categories.set(identity.category, new Map());
     const subcategories = categories.get(identity.category);
@@ -12352,23 +12937,39 @@ function renderGroceryLibrary() {
   });
   elements.groceryLibraryList.querySelectorAll("[data-grocery-library-item]").forEach((chip) => {
     chip.addEventListener("contextmenu", openGroceryLibraryItemMenu);
+    chip.addEventListener("dblclick", () => startInlineGroceryRename(chip));
   });
 }
 
 function addGroceryLibraryItem(event) {
   event.preventDefault();
-  const item = elements.groceryLibraryInput.value.trim();
-  if (!item) return;
-  state.groceryBaseItems = normalizeGroceryBaseItems([...groceryBaseItems(), item]);
-  clearDismissedGroceryReviewsForItem(item);
+  const isPickingGrocery = pendingMealIngredientSelection || pendingAutoRuleIngredientSelection;
+  const typed = elements.groceryLibraryInput.value.trim();
+  if (!typed) return;
+
+  if (isPickingGrocery) {
+    const q = normalize(typed);
+    const existing = groceryBaseItems();
+    const match = existing.find((i) => normalize(i) === q)
+      || existing.find((i) => normalize(i).startsWith(q))
+      || existing.find((i) => normalize(i).includes(q));
+    const item = match || typed;
+    if (!match) {
+      state.groceryBaseItems = normalizeGroceryBaseItems([...existing, item]);
+      clearDismissedGroceryReviewsForItem(item);
+      persist();
+    }
+    elements.groceryLibraryInput.value = "";
+    if (pendingAutoRuleIngredientSelection) chooseIngredientForPendingAutoRule(item);
+    else chooseIngredientForPendingMeal(item);
+    return;
+  }
+
+  state.groceryBaseItems = normalizeGroceryBaseItems([...groceryBaseItems(), typed]);
+  clearDismissedGroceryReviewsForItem(typed);
   elements.groceryLibraryInput.value = "";
   persist();
   refreshGroceryLibraryViews();
-  if (pendingAutoRuleIngredientSelection) {
-    chooseIngredientForPendingAutoRule(item);
-    return;
-  }
-  if (pendingMealIngredientSelection) chooseIngredientForPendingMeal(item);
 }
 
 function removeGroceryLibraryItem(item) {
@@ -12503,6 +13104,18 @@ function toggleGroceryLibrarySplitPreference(item) {
   renderGroceries();
 }
 
+function applyGroceryItemRename(oldItem, newItem) {
+  state.groceryBaseItems = normalizeGroceryBaseItems(groceryBaseItems().map((existing) => (
+    normalize(existing) === normalize(oldItem) ? newItem : existing
+  )));
+  renameGroceryAliasKey(oldItem, newItem);
+  renameGroceryItemLocation(oldItem, newItem);
+  renameGroceryStoreItemSection(oldItem, newItem);
+  renameGroceryDailyDozenTags(oldItem, newItem);
+  renameGroceryPriceObservations(oldItem, newItem);
+  renameReceiptPriceHistory(oldItem, newItem);
+}
+
 function renameGroceryLibraryItem(item) {
   const nextName = window.prompt("Rename grocery item", item);
   if (nextName === null) return;
@@ -12512,17 +13125,44 @@ function renameGroceryLibraryItem(item) {
     window.alert("That grocery item already exists.");
     return;
   }
-  state.groceryBaseItems = normalizeGroceryBaseItems(groceryBaseItems().map((existing) => (
-    normalize(existing) === normalize(item) ? trimmed : existing
-  )));
-  renameGroceryAliasKey(item, trimmed);
-  renameGroceryItemLocation(item, trimmed);
-  renameGroceryStoreItemSection(item, trimmed);
-  renameGroceryDailyDozenTags(item, trimmed);
-  renameGroceryPriceObservations(item, trimmed);
-  renameReceiptPriceHistory(item, trimmed);
+  applyGroceryItemRename(item, trimmed);
   persist();
   refreshGroceryLibraryViews();
+}
+
+function startInlineGroceryRename(chip) {
+  if (chip.dataset.editing) return;
+  chip.dataset.editing = "1";
+  const oldName = chip.dataset.groceryLibraryItem;
+  const input = document.createElement("input");
+  input.className = "grocery-library-rename-input";
+  input.value = oldName;
+  input.size = Math.max(10, oldName.length + 4);
+  chip.innerHTML = "";
+  chip.appendChild(input);
+  input.focus();
+  input.select();
+  let settled = false;
+  function commit() {
+    if (settled) return;
+    settled = true;
+    const newName = input.value.trim();
+    if (newName && normalize(newName) !== normalize(oldName)) {
+      const conflict = groceryBaseItems().some((e) => normalize(e) === normalize(newName));
+      if (!conflict) {
+        applyGroceryItemRename(oldName, newName);
+        persist();
+        refreshGroceryLibraryViews();
+        return;
+      }
+    }
+    refreshGroceryLibraryViews();
+  }
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); }
+    if (e.key === "Escape") { settled = true; refreshGroceryLibraryViews(); }
+  });
+  input.addEventListener("blur", commit);
 }
 
 function editGroceryLibraryAliases(item) {
@@ -14916,16 +15556,22 @@ function renderPlanner() {
       </div>
       <div class="meal-plan-publish-row">
         <div class="meal-plan-page-actions">
-          <button class="secondary-btn" type="button" data-open-recipe-box-page>Recipes</button>
-          <button class="secondary-btn" type="button" data-open-groceries-page>Groceries</button>
-          <button class="secondary-btn" type="button" data-open-daily-dozen-page>Nutrition</button>
+          <button class="secondary-btn planner-page-btn" type="button" data-open-recipe-box-page title="Recipes" aria-label="Recipes">
+            <svg class="planner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          </button>
+          <button class="secondary-btn planner-page-btn" type="button" data-open-groceries-page title="Groceries" aria-label="Groceries">
+            <svg class="planner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>
+          </button>
+          <button class="secondary-btn planner-page-btn" type="button" data-open-daily-dozen-page title="Nutrition" aria-label="Nutrition">
+            <svg class="planner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 22 20 2 20Z"/><line x1="8.5" y1="9" x2="15.5" y2="9"/><line x1="5.5" y1="14" x2="18.5" y2="14"/></svg>
+          </button>
+          <button class="primary-btn icon-primary-btn planner-page-btn" type="button" data-open-meal-autofill title="Auto-fill week" aria-label="Auto-fill week">
+            <svg class="fast-forward-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 6.5 12.5 12 5 17.5Z" />
+              <path d="M12 6.5 19.5 12 12 17.5Z" />
+            </svg>
+          </button>
         </div>
-        <button class="primary-btn icon-primary-btn" type="button" data-open-meal-autofill title="Auto-fill week" aria-label="Auto-fill week">
-          <svg class="fast-forward-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M5 6.5 12.5 12 5 17.5Z" />
-            <path d="M12 6.5 19.5 12 12 17.5Z" />
-          </svg>
-        </button>
       </div>
     </section>
   `;
@@ -15324,6 +15970,16 @@ function renderAutoRules() {
     button.addEventListener("click", () => selectAutoRuleDay(button.dataset.autoRuleDayTab));
   });
 
+  elements.autoRuleList.querySelectorAll("[data-auto-slot-toggle]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const ok = toggleAutoSlot(btn.dataset.day, btn.dataset.meal);
+      if (!ok) {
+        btn.classList.add("shake");
+        setTimeout(() => btn.classList.remove("shake"), 400);
+      }
+    });
+  });
+
   elements.autoRuleList.querySelectorAll("[data-auto-rule-input]").forEach((input) => {
     input.addEventListener("change", () => commitAutoRuleInput(input));
     input.addEventListener("blur", () => commitAutoRuleInput(input));
@@ -15385,11 +16041,8 @@ function renderAutoRules() {
     }));
   });
 
-  elements.autoRuleList.querySelectorAll("[data-skip-auto-rule]").forEach((button) => {
-    button.addEventListener("click", () => {
-      if (suppressAutoRuleClick) return;
-      setAutoRuleFromValue(button.dataset.day, button.dataset.meal, Number(button.dataset.index), "Do not fill");
-    });
+  elements.autoRuleList.querySelectorAll("[data-create-leftovers-auto-rule]").forEach((button) => {
+    button.addEventListener("click", () => setAutoRuleFromValue(button.dataset.day, button.dataset.meal, Number(button.dataset.index), "leftovers"));
   });
 
   elements.autoRuleList.querySelectorAll("[data-add-auto-rule]").forEach((button) => {
@@ -15462,12 +16115,19 @@ function autoRuleSlotTemplate(day, meal, displayMeal = meal) {
     : hasOpenEntry
       ? "Fill the open slot before adding another rule"
       : "Add another rule slot";
+  const isEnabled = isAutoSlotEnabled(day.id, meal);
+  const toggleTitle = isEnabled
+    ? "Auto-fill active — click to disable for this day"
+    : "Auto-fill disabled — click to enable for this day";
   return `
-    <div class="slot-card auto-rule-slot meal-${mealToken(meal)}">
+    <div class="slot-card auto-rule-slot meal-${mealToken(meal)} ${isEnabled ? "" : "is-slot-disabled"}">
       <div class="slot-topline">
+        <button class="auto-slot-toggle" type="button" data-auto-slot-toggle data-day="${day.id}" data-meal="${escapeHtml(meal)}" aria-pressed="${String(isEnabled)}" title="${escapeHtml(toggleTitle)}" aria-label="${escapeHtml(toggleTitle)}">
+          <span class="auto-slot-toggle-thumb"></span>
+        </button>
         <div class="slot-label">${escapeHtml(displayMeal)}</div>
         <div class="slot-actions">
-          <button class="slot-generate-btn auto-rule-skip-btn" type="button" data-skip-auto-rule data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="0" title="Do not fill" aria-label="Do not fill ${escapeHtml(displayMeal)}">–</button>
+          <button class="slot-generate-btn auto-rule-skip-btn" type="button" data-create-tag-auto-rule data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="0" title="Choose tags" aria-label="Choose tags for ${escapeHtml(displayMeal)}">#</button>
           <button class="slot-add-btn auto-rule-add-btn" type="button" data-add-auto-rule data-day="${day.id}" data-meal="${escapeHtml(meal)}" title="${addTitle}" aria-label="Add another ${escapeHtml(displayMeal)} rule slot" ${addDisabled ? "disabled" : ""}>+</button>
         </div>
       </div>
@@ -15514,9 +16174,11 @@ function autoRuleInputTemplate(day, meal, index, displayMeal = meal) {
         <button class="meal-pick-slot auto-rule-pick-slot" type="button" data-pick-auto-rule-recipe data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Choose ${escapeHtml(placeholder)} rule" aria-label="Choose ${escapeHtml(placeholder)} rule">
           ${stackedDishesIconTemplate()}
         </button>
-        <button class="meal-special-choice meal-tag-choice" type="button" data-create-tag-auto-rule data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Choose tags" aria-label="Choose tags for ${escapeHtml(placeholder)} rule">#</button>
         <button class="meal-special-choice meal-ingredient-choice" type="button" data-pick-auto-rule-ingredient data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Choose ingredient" aria-label="Choose ingredient for ${escapeHtml(placeholder)} rule">
           ${broccoliIconTemplate()}
+        </button>
+        <button class="meal-special-choice meal-leftover-choice" type="button" data-create-leftovers-auto-rule data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Leftovers" aria-label="Set as leftovers for ${escapeHtml(placeholder)} rule">
+          ${leftoversIconTemplate()}
         </button>
       </div>
     </div>
@@ -15577,7 +16239,11 @@ function autoRuleInputValue(rule) {
   if (["folder", "folderSame"].includes(rule.action)) return autoRuleFolderValue(rule.folderName);
   if (rule.action === "tags") return autoRuleTagValue(rule);
   if (rule.action === "ingredient") return parseGroceryMealSlot(rule.value)?.item || rule.value || "";
-  if (rule.action === "custom") return parseGroceryMealSlot(rule.value)?.item || activeRecipes().find((recipe) => recipe.id === rule.value)?.name || rule.value || "";
+  if (rule.action === "custom") {
+    const special = specialMealForSlot(rule.value);
+    if (special) return specialMealDisplayText(special);
+    return parseGroceryMealSlot(rule.value)?.item || activeRecipes().find((recipe) => recipe.id === rule.value)?.name || rule.value || "";
+  }
   return "";
 }
 
@@ -15737,6 +16403,7 @@ function openAutoRuleIngredientPicker(day, meal, index) {
   if (!day || !meal || Number.isNaN(index)) return;
   pendingAutoRuleIngredientSelection = { day, meal, index };
   closeFloatingMenus();
+  elements.groceryLibraryInput.placeholder = "Search items…";
   renderGroceryLibrary();
   elements.groceryLibraryInput.value = "";
   elements.groceryLibraryDialog.showModal();
@@ -15814,8 +16481,40 @@ function combinedMealMembersForDay(day, combinedState, combinedMeal) {
   return [];
 }
 
+function isAutoSlotEnabled(dayId, meal) {
+  return state.autoSlotEnabled?.[dayId]?.[meal] !== false;
+}
+
+function canToggleAutoSlot(dayId, meal, wouldBeEnabled) {
+  const day = prepDays.find((d) => d.id === dayId);
+  if (!day) return false;
+  const column = mealColumnConfigs.find((c) => c.combinedMeal === meal || c.meals.includes(meal));
+  if (!column) return false;
+  const personMeals = column.meals.filter((m) => day.meals.includes(m));
+  const allColumnMeals = [column.combinedMeal, ...personMeals].filter(Boolean);
+  const simEnabled = (m) => m === meal ? wouldBeEnabled : isAutoSlotEnabled(dayId, m);
+  if (!allColumnMeals.some(simEnabled)) return false;
+  if (column.combinedMeal && simEnabled(column.combinedMeal)) {
+    if (personMeals.filter((m) => !simEnabled(m)).length < 2) return false;
+  }
+  return true;
+}
+
+function toggleAutoSlot(dayId, meal) {
+  const wouldBeEnabled = !isAutoSlotEnabled(dayId, meal);
+  if (!canToggleAutoSlot(dayId, meal, wouldBeEnabled)) return false;
+  if (!state.autoSlotEnabled) state.autoSlotEnabled = {};
+  if (!state.autoSlotEnabled[dayId]) state.autoSlotEnabled[dayId] = {};
+  state.autoSlotEnabled[dayId][meal] = wouldBeEnabled;
+  persist();
+  renderAutoRules();
+  return true;
+}
+
 function mealKeysForDay(day, combinedState) {
-  return mealColumnConfigs.flatMap((column) => columnMealsForDay(day, column, combinedState)).filter(Boolean);
+  return mealColumnConfigs.flatMap((column) => columnMealsForDay(day, column, combinedState))
+    .filter(Boolean)
+    .filter((meal) => isAutoSlotEnabled(day.id, meal));
 }
 
 function displayMealName(meal) {
@@ -16167,6 +16866,11 @@ function handleMealSectionDragStart(event) {
   event.stopPropagation();
   event.dataTransfer.effectAllowed = "move";
   event.dataTransfer.setData("text/plain", JSON.stringify(draggedMealSection));
+  const carousel = event.currentTarget.closest(".day-slots-carousel");
+  if (carousel) {
+    carousel.classList.add("is-combining");
+    carousel.scrollLeft = 0;
+  }
 }
 
 function handleMealSectionDragOver(event) {
@@ -16191,6 +16895,7 @@ function handleMealSectionDrop(event) {
 function clearMealSectionDragState() {
   draggedMealSection = null;
   elements.plannerGrid.querySelectorAll(".section-drag-over").forEach((slot) => slot.classList.remove("section-drag-over"));
+  elements.plannerGrid.querySelectorAll(".day-slots-carousel.is-combining").forEach((c) => c.classList.remove("is-combining"));
 }
 
 function handleMealTrashDragOver(event) {
@@ -17012,6 +17717,7 @@ function openMealIngredientPicker(day, meal, index) {
   if (!day || !meal || Number.isNaN(index)) return;
   pendingMealIngredientSelection = { day, meal, index };
   closeFloatingMenus();
+  elements.groceryLibraryInput.placeholder = "Search items…";
   renderGroceryLibrary();
   elements.groceryLibraryInput.value = "";
   elements.groceryLibraryDialog.showModal();
@@ -24383,16 +25089,19 @@ function renderShopReceipts() {
     const total = r.total != null ? Number(r.total).toLocaleString("en-US", { style: "currency", currency: "USD" }) : "";
     const itemCount = Array.isArray(r.lineItems) ? r.lineItems.length : 0;
     return `
-      <div class="shop-receipt-card" data-receipt-id="${escapeHtml(r.id)}">
+      <button class="shop-receipt-card" type="button" data-receipt-id="${escapeHtml(r.id)}">
         <div class="shop-receipt-store">${escapeHtml(r.storeName || "Unknown store")}</div>
         <div class="shop-receipt-meta">
           ${date ? `<span>${escapeHtml(date)}</span>` : ""}
           ${itemCount ? `<span>${itemCount} item${itemCount !== 1 ? "s" : ""}</span>` : ""}
           ${total ? `<span>${escapeHtml(total)}</span>` : ""}
         </div>
-      </div>
+      </button>
     `;
   }).join("");
+  el.querySelectorAll("[data-receipt-id]").forEach((card) => {
+    card.addEventListener("click", () => openReceiptEditView(card.dataset.receiptId));
+  });
 }
 
 // ── Reading List ────────────────────────────────────────────────────
@@ -24404,6 +25113,708 @@ function readingItemsList() {
 
 function readingItemById(id) {
   return readingItemsList().find((item) => item.id === id) || null;
+}
+
+// ─── Article Read page ────────────────────────────────────────────────────────
+
+function getReadPublications() {
+  const pubs = state.readPublications;
+  return Array.isArray(pubs) && pubs.length > 0 ? pubs : defaultReadPublications();
+}
+
+function pubTabButton(key, label, activeTab, attr) {
+  const active = activeTab === key;
+  const icon = key === "all"
+    ? `<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>`
+    : key === "other"
+      ? `<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>`
+      : `<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h10M7 12h10M7 17h6"/>`;
+  return `<button class="article-sidebar-tab${active ? " is-active" : ""}" type="button" data-${attr}="${escapeHtml(key)}" role="tab" aria-selected="${active}"><svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true">${icon}</svg><span>${escapeHtml(label)}</span></button>`;
+}
+
+function allPubTabEntries() {
+  return [{ key: "all", label: "All" }, ...getReadPublications(), { key: "other", label: "Other" }];
+}
+
+function renderArticlePubTabs() {
+  const container = document.getElementById("articlePubTabs");
+  if (!container) return;
+  container.innerHTML = allPubTabEntries()
+    .map(p => pubTabButton(p.key, p.label, activeArticleTab, "article-tab")).join("");
+  container.querySelectorAll("[data-article-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => switchArticleTab(btn.dataset.articleTab));
+  });
+}
+
+function renderListenPubTabs() {
+  const container = document.getElementById("listenPubTabs");
+  if (!container) return;
+  container.innerHTML = allPubTabEntries()
+    .map(p => pubTabButton(p.key, p.label, activeListenTab, "listen-tab")).join("");
+  container.querySelectorAll("[data-listen-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => switchListenTab(btn.dataset.listenTab));
+  });
+}
+
+function removePublication(key) {
+  if (!Array.isArray(state.readPublications)) state.readPublications = defaultReadPublications();
+  state.readPublications = state.readPublications.filter(p => p.key !== key);
+  persist();
+  renderArticlePubTabs();
+  renderListenPubTabs();
+  if (activeArticleTab === key) switchArticleTab("all");
+  if (activeListenTab === key) switchListenTab("all");
+}
+
+let activeArticleTab = "books";
+let openArticleId = null;
+let articleReadTabsWired = false;
+
+function initArticleReadPage() {
+  renderArticlePubTabs();
+  wireArticleReadTabs();
+  switchArticleTab(activeArticleTab);
+  maybeAutoSync("read");
+}
+
+function wireArticleReadTabs() {
+  if (articleReadTabsWired) return;
+  articleReadTabsWired = true;
+
+  const sidebar = document.getElementById("articleReadSidebar");
+  if (sidebar) {
+    sidebar.querySelectorAll("[data-article-tab]").forEach((btn) => {
+      if (btn.closest("#articlePubTabs")) return;
+      btn.addEventListener("click", () => switchArticleTab(btn.dataset.articleTab));
+    });
+  }
+
+  document.getElementById("articleReaderCloseBtn")?.addEventListener("click", closeArticleReader);
+  document.getElementById("articleReaderDeleteBtn")?.addEventListener("click", deleteOpenArticle);
+  document.getElementById("articleReaderListenBtn")?.addEventListener("click", () => {
+    if (openArticleId) listenToArticle(openArticleId);
+  });
+  document.getElementById("articleAddBtn")?.addEventListener("click", openArticleSaveDialog);
+  document.getElementById("articleSyncBtn")?.addEventListener("click", () => syncSavedArticles("read"));
+  document.getElementById("articleSyncSettingsBtn")?.addEventListener("click", () => openSyncSettingsDialog("read"));
+  document.getElementById("readPageListenBtn")?.addEventListener("click", () => {
+    switchListenTab(activeArticleTab === "books" ? "all" : activeArticleTab);
+    showListenApp();
+  });
+  document.getElementById("closeArticleSaveBtn")?.addEventListener("click", closeArticleSaveDialog);
+  document.getElementById("cancelArticleSaveBtn")?.addEventListener("click", closeArticleSaveDialog);
+  document.getElementById("confirmArticleSaveBtn")?.addEventListener("click", confirmSaveArticle);
+  document.getElementById("articleUrlInput")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") confirmSaveArticle();
+  });
+}
+
+function switchArticleTab(tab) {
+  activeArticleTab = tab;
+  const sidebar = document.getElementById("articleReadSidebar");
+  if (sidebar) {
+    sidebar.querySelectorAll("[data-article-tab]").forEach((btn) => {
+      const active = btn.dataset.articleTab === tab;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-selected", String(active));
+    });
+  }
+  const booksPanel = document.getElementById("articleBooksPanel");
+  const listPanel = document.getElementById("articleListPanel");
+  const readerPanel = document.getElementById("articleReaderPanel");
+  const syncBtn = document.getElementById("articleSyncBtn");
+  const syncSettingsBtn = document.getElementById("articleSyncSettingsBtn");
+  const isArticleTab = getReadPublications().some(p => p.key === tab);
+  if (tab === "books") {
+    if (booksPanel) booksPanel.hidden = false;
+    if (listPanel) listPanel.hidden = true;
+    if (readerPanel) readerPanel.hidden = true;
+    if (syncBtn) syncBtn.hidden = true;
+    if (syncSettingsBtn) syncSettingsBtn.hidden = true;
+    renderReadingPlanner();
+  } else {
+    if (booksPanel) booksPanel.hidden = true;
+    if (listPanel) listPanel.hidden = false;
+    if (readerPanel) readerPanel.hidden = true;
+    if (syncBtn) syncBtn.hidden = !isArticleTab || !hasSyncCookies();
+    if (syncSettingsBtn) syncSettingsBtn.hidden = !isArticleTab;
+    openArticleId = null;
+    renderArticleList("articleList", tab);
+  }
+}
+
+function renderArticleList(containerId, pub) {
+  const listEl = document.getElementById(containerId);
+  if (!listEl) return;
+  const articles = getFilteredSortedArticles(pub);
+  const readIds = new Set(state.readArticleIds || []);
+  const sortOrder = state.articleSortOrder || "newest";
+
+  if (!articles.length) {
+    const pubEntry = getReadPublications().find(p => p.key === pub);
+    const pubName = pub === "all" ? "saved" : pub === "other" ? "Other" : (pubEntry?.label || pub);
+    const hasCookies = hasSyncCookies();
+    const isPub = !!pubEntry;
+    const syncHint = hasCookies && isPub
+      ? `<p>Click the <strong>sync</strong> button above to import your saved articles, or click <strong>+</strong> to paste a URL.</p>`
+      : `<p>Click <strong>+</strong> to paste an article URL${isPub ? ", or configure sync in <strong>Settings → Read &amp; Listen</strong>" : ""}.</p>`;
+    listEl.innerHTML = `<div class="article-empty"><p>No ${pubName} articles yet.</p>${syncHint}</div>`;
+    return;
+  }
+
+  const sortBar = pub === "all" ? `
+    <div class="article-sort-bar">
+      <button type="button" class="sort-btn${sortOrder === "newest" ? " is-active" : ""}" data-sort="newest">Newest first</button>
+      <button type="button" class="sort-btn${sortOrder === "oldest" ? " is-active" : ""}" data-sort="oldest">Oldest first</button>
+    </div>
+  ` : "";
+
+  listEl.innerHTML = sortBar + articles.map((a) => {
+    const isRead = readIds.has(a.id);
+    const pubLabel = pub === "all" ? (() => {
+      const entry = getReadPublications().find(p => p.key === a.publication);
+      return entry?.label || (a.publication === "other" ? "Other" : a.publication);
+    })() : "";
+    return `
+    <div class="article-row${isRead ? " article-row--read" : ""}" data-article-id="${escapeHtml(a.id)}" role="button" tabindex="0">
+      <div class="article-row-main">
+        <div class="article-row-title">${escapeHtml(a.title || a.url)}</div>
+        <div class="article-row-meta">
+          ${a.author ? `<span class="article-row-author">${escapeHtml(a.author)}</span>` : ""}
+          ${pubLabel ? `<span class="article-row-pub">${escapeHtml(pubLabel)}</span>` : ""}
+          <span class="article-row-date">${escapeHtml(formatArticleDate(a.savedAt))}</span>
+        </div>
+      </div>
+      ${isRead ? `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Read"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
+    </div>`;
+  }).join("");
+
+  listEl.querySelectorAll("[data-sort]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.articleSortOrder = btn.dataset.sort;
+      persist();
+      renderArticleList(containerId, pub);
+    });
+  });
+  listEl.querySelectorAll(".article-row").forEach((row) => {
+    row.addEventListener("click", () => openArticle(row.dataset.articleId, containerId));
+    row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") openArticle(row.dataset.articleId, containerId); });
+  });
+}
+
+function getFilteredSortedArticles(pub) {
+  const all = state.savedArticles || [];
+  const filtered = pub === "all" ? [...all] : all.filter(a => a.publication === pub);
+  const sortOrder = state.articleSortOrder || "newest";
+  filtered.sort((a, b) => {
+    const aTime = new Date(a.savedAt || 0).getTime();
+    const bTime = new Date(b.savedAt || 0).getTime();
+    return sortOrder === "newest" ? bTime - aTime : aTime - bTime;
+  });
+  return filtered;
+}
+
+function markArticleRead(id) {
+  if (!id) return;
+  if (!Array.isArray(state.readArticleIds)) state.readArticleIds = [];
+  if (!state.readArticleIds.includes(id)) {
+    state.readArticleIds.push(id);
+    persist();
+  }
+  document.querySelectorAll(`[data-article-id="${id}"]`).forEach((row) => {
+    row.classList.add("article-row--read");
+    if (!row.querySelector(".article-row-check")) {
+      row.insertAdjacentHTML("beforeend", `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Read"><polyline points="20 6 9 17 4 12"/></svg>`);
+    }
+  });
+}
+
+function openArticle(id, fromListId) {
+  const article = (state.savedArticles || []).find((a) => a.id === id);
+  if (!article) return;
+  openArticleId = id;
+
+  const isReadPage = fromListId === "articleList";
+  if (isReadPage) markArticleRead(id);
+  const readerPanel = isReadPage ? document.getElementById("articleReaderPanel") : document.getElementById("listenPlayerPanel");
+  const listPanel = isReadPage ? document.getElementById("articleListPanel") : document.getElementById("listenListPanel");
+  if (!readerPanel) return;
+
+  readerPanel.hidden = false;
+
+  const titleEl = readerPanel.querySelector(isReadPage ? "#articleReaderTitle" : "#listenPlayerTitle");
+  const metaEl = readerPanel.querySelector(isReadPage ? "#articleReaderMeta" : "#listenPlayerMeta");
+  const textEl = readerPanel.querySelector(isReadPage ? "#articleReaderText" : "#listenPlayerText");
+
+  if (titleEl) titleEl.textContent = article.title || article.url;
+  if (metaEl) {
+    const parts = [article.author, article.date].filter(Boolean);
+    metaEl.textContent = parts.join(" · ");
+  }
+  if (textEl) {
+    if (article.text) {
+      textEl.innerHTML = article.text;
+    } else {
+      textEl.innerHTML = `<div class="article-fetch-prompt"><p>Article text not yet loaded.</p><p class="article-fetch-hint">Click Fetch to load the article. Free and open-access articles load fully. Paywalled articles may return only the opening paragraphs.</p><button class="primary-btn" type="button" data-fetch-article="${escapeHtml(id)}">Fetch Article</button></div>`;
+      textEl.querySelector("[data-fetch-article]")?.addEventListener("click", () => fetchArticleText(id));
+    }
+  }
+
+  listPanel?.querySelectorAll(".article-row").forEach((row) => {
+    row.classList.toggle("article-row--active", row.dataset.articleId === id);
+  });
+}
+
+function closeArticleReader() {
+  const readerPanel = document.getElementById("articleReaderPanel");
+  if (readerPanel) readerPanel.hidden = true;
+  openArticleId = null;
+  document.querySelectorAll(".article-row--active").forEach((r) => r.classList.remove("article-row--active"));
+}
+
+function deleteOpenArticle() {
+  if (!openArticleId) return;
+  if (!confirm("Remove this article?")) return;
+  const deletedId = openArticleId;
+  state.savedArticles = (state.savedArticles || []).filter((a) => a.id !== deletedId);
+  state.readArticleIds = (state.readArticleIds || []).filter((id) => id !== deletedId);
+  persist();
+  closeArticleReader();
+  renderArticleList("articleList", activeArticleTab);
+}
+
+async function fetchArticleText(id) {
+  const article = (state.savedArticles || []).find((a) => a.id === id);
+  if (!article) return;
+  const textEl = document.getElementById("articleReaderText") || document.getElementById("listenPlayerText");
+  if (textEl) textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
+  try {
+    const res = await callNetlifyFunction("fetch-article", { url: article.url, publication: article.publication });
+    if (res?.text) {
+      article.text = res.text;
+      if (res.title && res.title !== article.url) article.title = res.title;
+      if (res.author) article.author = res.author;
+      if (res.date) article.date = res.date;
+      persist();
+      const fromList = activeAppArea === "listen" ? "listenList" : "articleList";
+      openArticle(id, fromList);
+    } else {
+      const msg = res?.error || "Could not extract article text.";
+      if (textEl) textEl.innerHTML = `<div class="article-fetch-prompt"><p class="article-fetch-hint">${escapeHtml(msg)}</p><a href="${escapeHtml(article.url)}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`;
+    }
+  } catch (e) {
+    if (textEl) textEl.innerHTML = `<div class="article-fetch-prompt"><p class="article-fetch-hint">Fetch failed. Check your connection and try again.</p><a href="${escapeHtml(article.url)}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`;
+  }
+}
+
+function openArticleSaveDialog() {
+  const dialog = document.getElementById("articleSaveDialog");
+  const input = document.getElementById("articleUrlInput");
+  if (!dialog) return;
+  if (input) input.value = "";
+  dialog.showModal();
+  input?.focus();
+}
+
+function closeArticleSaveDialog() {
+  document.getElementById("articleSaveDialog")?.close();
+}
+
+function confirmSaveArticle() {
+  const input = document.getElementById("articleUrlInput");
+  const url = input?.value.trim();
+  if (!url) return;
+  saveArticleUrl(url);
+  closeArticleSaveDialog();
+}
+
+function saveArticleUrl(url) {
+  const pub = detectArticlePublication(url);
+  const id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `art_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
+  state.savedArticles.push({ id, url, title: url, publication: pub, savedAt: new Date().toISOString(), author: null, date: null, text: null });
+  persist();
+  if (activeAppArea === "read") {
+    switchArticleTab(pub);
+  } else if (activeAppArea === "listen") {
+    switchListenTab(pub);
+  }
+}
+
+function detectArticlePublication(url) {
+  try {
+    const h = new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+    for (const p of getReadPublications()) {
+      if (p.domain && h.endsWith(p.domain.replace(/^www\./, ""))) return p.key;
+    }
+  } catch { /* ignore */ }
+  return "other";
+}
+
+function formatArticleDate(isoStr) {
+  if (!isoStr) return "";
+  try { return new Date(isoStr).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); } catch { return ""; }
+}
+
+// ─── Article sync ─────────────────────────────────────────────────────────────
+
+function hasSyncCookies() {
+  return !!(state.articleSync?.nytCookie || state.articleSync?.economistCookie);
+}
+
+function maybeAutoSync(source) {
+  if (!hasSyncCookies()) return;
+  const last = state.articleSync?.lastSyncedAt;
+  const oneHourAgo = Date.now() - 60 * 60 * 1000;
+  if (!last || new Date(last).getTime() < oneHourAgo) {
+    syncSavedArticles(source, true);
+  }
+}
+
+async function syncSavedArticles(source, silent = false) {
+  const syncBtn = source === "read"
+    ? document.getElementById("articleSyncBtn")
+    : source === "listen"
+      ? document.getElementById("listenSyncBtn")
+      : source === "dialog"
+        ? document.getElementById("dialogSyncNowBtn")
+        : document.getElementById("syncArticlesSettingsBtn");
+  const statusElId = source === "dialog" ? "dialogSyncStatus" : "articleSyncStatus";
+  const setStatus = (msg) => {
+    const el = document.getElementById(statusElId);
+    if (el) el.textContent = msg;
+    if (!silent && syncBtn && source !== "dialog") syncBtn.title = msg || "Sync saved articles";
+  };
+
+  if (syncBtn) syncBtn.classList.add("spinning");
+  if (!silent) setStatus("Syncing…");
+
+  try {
+    const res = await callNetlifyFunction("sync-saved-articles", {});
+    if (res?.ok) {
+      const added = (res.nytAdded || 0) + (res.economistAdded || 0);
+      if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
+      if (Array.isArray(res.articles)) {
+        for (const a of res.articles) {
+          if (!state.savedArticles.find((x) => x.url === a.url)) {
+            state.savedArticles.push(a);
+          } else {
+            const existing = state.savedArticles.find((x) => x.url === a.url);
+            if (existing && a.title && a.title !== a.url) existing.title = a.title;
+          }
+        }
+      }
+      if (!state.articleSync) state.articleSync = {};
+      state.articleSync.lastSyncedAt = new Date().toISOString();
+      persist();
+      const allPubKeys = ["all", "other", ...getReadPublications().map(p => p.key)];
+      if (source === "read" && allPubKeys.includes(activeArticleTab)) {
+        renderArticleList("articleList", activeArticleTab);
+      } else if (source === "listen" && allPubKeys.includes(activeListenTab)) {
+        renderArticleList("listenList", activeListenTab);
+      }
+      if (!silent) {
+        const errors = [res.nytError, res.economistError].filter(Boolean);
+        if (errors.length) {
+          setStatus(errors[0]);
+        } else {
+          setStatus(added > 0 ? `${added} new article${added !== 1 ? "s" : ""} added` : "Already up to date");
+        }
+      }
+      setTimeout(() => setStatus(""), 6000);
+    } else {
+      if (!silent) setStatus(res?.error || "Sync failed");
+      setTimeout(() => setStatus(""), 6000);
+    }
+  } catch (e) {
+    if (!silent) setStatus(e?.message || "Sync error");
+    setTimeout(() => setStatus(""), 6000);
+  } finally {
+    if (syncBtn) syncBtn.classList.remove("spinning");
+  }
+}
+
+// ─── Read & Listen settings ───────────────────────────────────────────────────
+
+function openSyncSettingsDialog(source) {
+  const dialog = document.getElementById("articleSyncSettingsDialog");
+  if (!dialog) return;
+  const nytInput = document.getElementById("dialogNytCookieInput");
+  const econInput = document.getElementById("dialogEconomistCookieInput");
+  const statusEl = document.getElementById("dialogSyncStatus");
+  if (nytInput) {
+    nytInput.value = "";
+    nytInput.placeholder = state.articleSync?.nytCookie ? "NYT-S cookie set ✓ — paste to update" : "Paste NYT-S cookie value";
+  }
+  if (econInput) {
+    econInput.value = "";
+    econInput.placeholder = state.articleSync?.economistCookie ? "blaize_session set ✓ — paste to update" : "Paste blaize_session cookie value";
+  }
+  if (statusEl) statusEl.textContent = "";
+  dialog.dataset.source = source;
+  dialog.showModal();
+}
+
+function closeSyncSettingsDialog() {
+  document.getElementById("articleSyncSettingsDialog")?.close();
+}
+
+function saveDialogNytCookie() {
+  const val = document.getElementById("dialogNytCookieInput")?.value.trim();
+  if (!val) return;
+  if (!state.articleSync) state.articleSync = {};
+  state.articleSync.nytCookie = val;
+  persist();
+  const input = document.getElementById("dialogNytCookieInput");
+  if (input) { input.value = ""; input.placeholder = "NYT-S cookie set ✓ — paste to update"; }
+  const el = document.getElementById("dialogSyncStatus");
+  if (el) { el.textContent = "NYT cookie saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
+  const source = document.getElementById("articleSyncSettingsDialog")?.dataset.source || "read";
+  updateSyncButtons(source);
+}
+
+function saveDialogEconomistCookie() {
+  const val = document.getElementById("dialogEconomistCookieInput")?.value.trim();
+  if (!val) return;
+  if (!state.articleSync) state.articleSync = {};
+  state.articleSync.economistCookie = val;
+  persist();
+  const input = document.getElementById("dialogEconomistCookieInput");
+  if (input) { input.value = ""; input.placeholder = "blaize_session set ✓ — paste to update"; }
+  const el = document.getElementById("dialogSyncStatus");
+  if (el) { el.textContent = "Economist cookie saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
+  const source = document.getElementById("articleSyncSettingsDialog")?.dataset.source || "read";
+  updateSyncButtons(source);
+}
+
+function updateSyncButtons(source) {
+  const pubs = getReadPublications();
+  if (source === "read") {
+    const syncBtn = document.getElementById("articleSyncBtn");
+    if (syncBtn) syncBtn.hidden = !pubs.some(p => p.key === activeArticleTab) || !hasSyncCookies();
+  } else if (source === "listen") {
+    const syncBtn = document.getElementById("listenSyncBtn");
+    if (syncBtn) syncBtn.hidden = !pubs.some(p => p.key === activeListenTab) || !hasSyncCookies();
+  }
+}
+
+function initReadListenSettings() {
+  populateReadListenSettings();
+}
+
+function toggleReadListenSettingsMenu() {
+  const menu = document.getElementById("readListenSettingsMenu");
+  const btn = document.getElementById("readListenSettingsBtn");
+  if (!menu || !btn) return;
+  const willOpen = menu.hidden;
+  menu.hidden = !willOpen;
+  btn.setAttribute("aria-expanded", String(willOpen));
+  if (willOpen) populateReadListenSettings();
+}
+
+function saveNytCookie() {
+  const val = document.getElementById("nytCookieInput")?.value.trim();
+  if (!state.articleSync) state.articleSync = {};
+  state.articleSync.nytCookie = val || "";
+  persist();
+  const el = document.getElementById("articleSyncStatus");
+  if (el) { el.textContent = "NYT cookie saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
+}
+
+function saveEconomistCookie() {
+  const val = document.getElementById("economistCookieInput")?.value.trim();
+  if (!state.articleSync) state.articleSync = {};
+  state.articleSync.economistCookie = val || "";
+  persist();
+  const el = document.getElementById("articleSyncStatus");
+  if (el) { el.textContent = "Economist cookie saved."; setTimeout(() => { el.textContent = ""; }, 3000); }
+}
+
+function populateReadListenSettings() {
+  const nytInput = document.getElementById("nytCookieInput");
+  const econInput = document.getElementById("economistCookieInput");
+  if (nytInput && state.articleSync?.nytCookie) nytInput.placeholder = "NYT-S cookie set ✓";
+  if (econInput && state.articleSync?.economistCookie) econInput.placeholder = "blaize_session cookie set ✓";
+}
+
+// ─── Listen page ──────────────────────────────────────────────────────────────
+
+let activeListenTab = "all";
+let listenTabsWired = false;
+let listenUtterance = null;
+let listenSpeaking = false;
+
+function initListenPage() {
+  renderListenPubTabs();
+  wireListenTabs();
+  switchListenTab(activeListenTab);
+  maybeAutoSync("listen");
+}
+
+function wireListenTabs() {
+  if (listenTabsWired) return;
+  listenTabsWired = true;
+
+  const sidebar = document.getElementById("listenSidebar");
+  if (sidebar) {
+    sidebar.querySelectorAll("[data-listen-tab]").forEach((btn) => {
+      if (btn.closest("#listenPubTabs")) return;
+      btn.addEventListener("click", () => switchListenTab(btn.dataset.listenTab));
+    });
+  }
+
+  document.getElementById("listenPlayerCloseBtn")?.addEventListener("click", closeListenPlayer);
+  document.getElementById("listenAddBtn")?.addEventListener("click", openArticleSaveDialog);
+  document.getElementById("listenSyncBtn")?.addEventListener("click", () => syncSavedArticles("listen"));
+  document.getElementById("listenSyncSettingsBtn")?.addEventListener("click", () => openSyncSettingsDialog("listen"));
+  document.getElementById("listenPageReadBtn")?.addEventListener("click", () => {
+    switchArticleTab(["all", "other", ...getReadPublications().map(p => p.key)].includes(activeListenTab) ? activeListenTab : "all");
+    showReadingApp();
+  });
+  document.getElementById("listenPlayPauseBtn")?.addEventListener("click", toggleListenPlayPause);
+  document.getElementById("listenStopBtn")?.addEventListener("click", stopListen);
+  document.getElementById("listenSpeedSelect")?.addEventListener("change", (e) => {
+    if (listenUtterance) listenUtterance.rate = parseFloat(e.target.value);
+  });
+}
+
+function switchListenTab(tab) {
+  activeListenTab = tab;
+  const sidebar = document.getElementById("listenSidebar");
+  if (sidebar) {
+    sidebar.querySelectorAll("[data-listen-tab]").forEach((btn) => {
+      const active = btn.dataset.listenTab === tab;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-selected", String(active));
+    });
+  }
+  const listEl = document.getElementById("listenList");
+  if (!listEl) return;
+
+  const listenSyncBtn = document.getElementById("listenSyncBtn");
+  const listenSyncSettingsBtn = document.getElementById("listenSyncSettingsBtn");
+  const isListenArticleTab = getReadPublications().some(p => p.key === tab);
+  if (listenSyncBtn) listenSyncBtn.hidden = !isListenArticleTab || !hasSyncCookies();
+  if (listenSyncSettingsBtn) listenSyncSettingsBtn.hidden = !isListenArticleTab;
+
+  if (["all", "other", ...getReadPublications().map(p => p.key)].includes(tab)) {
+    renderArticleList("listenList", tab);
+  } else if (tab === "podcasts") {
+    listEl.innerHTML = `<div class="article-empty"><p>Podcast support coming soon.</p><p>You'll be able to add podcast RSS feeds here.</p></div>`;
+  } else if (tab === "librivox") {
+    listEl.innerHTML = `<div class="article-empty"><p>LibriVox audiobooks coming soon.</p><p>Browse and listen to thousands of free public-domain books.</p></div>`;
+  } else if (tab === "audiobooks") {
+    listEl.innerHTML = `<div class="article-empty"><p>My Audiobooks coming soon.</p></div>`;
+  }
+}
+
+function listenToArticle(id) {
+  const article = (state.savedArticles || []).find((a) => a.id === id);
+  if (!article) return;
+  if (!article.text) {
+    alert("Fetch the article text first before listening.");
+    return;
+  }
+  if (activeAppArea !== "listen") {
+    switchListenTab(article.publication);
+    showListenApp();
+  }
+  stopListen();
+  openArticle(id, "listenList");
+  startListenTTS(article);
+}
+
+function startListenTTS(article) {
+  if (!window.speechSynthesis) { alert("Text-to-speech is not supported in this browser."); return; }
+  const text = article.text?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || "";
+  if (!text) return;
+  listenUtterance = new SpeechSynthesisUtterance(text);
+  const speedSelect = document.getElementById("listenSpeedSelect");
+  listenUtterance.rate = speedSelect ? parseFloat(speedSelect.value) : 1;
+  listenUtterance.onstart = () => { listenSpeaking = true; updateListenPlayBtn(); };
+  listenUtterance.onerror = () => { listenSpeaking = false; listenUtterance = null; updateListenPlayBtn(); };
+  listenUtterance.onend = () => {
+    listenSpeaking = false;
+    listenUtterance = null;
+    updateListenPlayBtn();
+    markArticleRead(article.id);
+    advanceListenArticle();
+  };
+  window.speechSynthesis.speak(listenUtterance);
+}
+
+function advanceListenArticle() {
+  const articles = getFilteredSortedArticles(activeListenTab);
+  const currentIndex = articles.findIndex(a => a.id === openArticleId);
+  if (currentIndex === -1) return;
+  for (let i = currentIndex + 1; i < articles.length; i++) {
+    if (articles[i].text) {
+      openArticle(articles[i].id, "listenList");
+      startListenTTS(articles[i]);
+      return;
+    }
+  }
+}
+
+function toggleListenPlayPause() {
+  if (!listenSpeaking) {
+    if (openArticleId) {
+      const article = (state.savedArticles || []).find((a) => a.id === openArticleId);
+      if (article) startListenTTS(article);
+    }
+    return;
+  }
+  if (window.speechSynthesis.paused) {
+    window.speechSynthesis.resume();
+    listenSpeaking = true;
+  } else {
+    window.speechSynthesis.pause();
+    listenSpeaking = false;
+  }
+  updateListenPlayBtn();
+}
+
+function stopListen() {
+  if (listenUtterance) listenUtterance.onend = null;
+  window.speechSynthesis?.cancel();
+  listenSpeaking = false;
+  listenUtterance = null;
+  updateListenPlayBtn();
+}
+
+function updateListenPlayBtn() {
+  const btn = document.getElementById("listenPlayPauseBtn");
+  const label = document.getElementById("listenBtnLabel");
+  const icon = document.getElementById("listenBtnIcon");
+  if (!btn) return;
+  const paused = window.speechSynthesis?.paused;
+  const playing = listenSpeaking && !paused;
+  if (label) label.textContent = playing ? "Pause" : "Play";
+  if (icon) icon.innerHTML = playing
+    ? `<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>`
+    : `<polygon points="5 3 19 12 5 21 5 3"/>`;
+}
+
+function closeListenPlayer() {
+  const panel = document.getElementById("listenPlayerPanel");
+  if (panel) panel.hidden = true;
+  stopListen();
+  openArticleId = null;
+  document.querySelectorAll(".article-row--active").forEach((r) => r.classList.remove("article-row--active"));
+}
+
+async function callNetlifyFunction(name, body) {
+  const session = supabaseClient ? await supabaseClient.auth.getSession() : null;
+  const token = session?.data?.session?.access_token;
+  const authHeader = token ? { authorization: `Bearer ${token}` } : {};
+  try {
+    const res = await fetch(`/.netlify/functions/${name}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...authHeader },
+      body: JSON.stringify(body)
+    });
+    return await res.json();
+  } catch (e) { return { error: String(e) }; }
 }
 
 function renderReadingPlanner() {

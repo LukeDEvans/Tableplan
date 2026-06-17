@@ -1,11 +1,9 @@
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5veW9jamNsdHJlbndkb3ZxcnFsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzMjk5MjUsImV4cCI6MjA5MzkwNTkyNX0.UFs3GHdG2yuqOvPGXr6D8DjbvnTLzgC5-KGilg4Oc94";
-const IMPORT_HELPERS = {
-  live: "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/import-recipe",
-  local: "http://localhost:4174/api/import-recipe"
-};
+const IMPORT_RECIPE_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/import-recipe";
+const SAVE_ARTICLE_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/save-article";
+const SAVE_PAGE_ARTICLES_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/save-page-articles";
 const SESSION_KEY = "eatSupabaseSession";
-const IMPORT_TARGET_KEY = "eatImportTarget";
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   handleMessage(message).then(sendResponse).catch((error) => {
@@ -16,11 +14,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 async function handleMessage(message) {
   if (message?.type === "sessionStatus") return sessionStatus();
-  if (message?.type === "importTarget") return importTargetStatus();
-  if (message?.type === "setImportTarget") return setImportTarget(message.target);
   if (message?.type === "signIn") return signInWithGoogle();
   if (message?.type === "signOut") return signOut();
   if (message?.type === "importRecipe") return importRecipe(message.url);
+  if (message?.type === "saveArticle") return saveArticle(message.url, message.title, message.tabId);
+  if (message?.type === "importFromPage") return importFromPage(message.tabId, message.publication);
   return { ok: false, error: "Unknown action." };
 }
 
@@ -63,23 +61,12 @@ async function signOut() {
   return { ok: true };
 }
 
-async function importTargetStatus() {
-  return { ok: true, target: await getImportTarget() };
-}
-
-async function setImportTarget(target) {
-  const normalizedTarget = IMPORT_HELPERS[target] ? target : "live";
-  await chrome.storage.local.set({ [IMPORT_TARGET_KEY]: normalizedTarget });
-  return { ok: true, target: normalizedTarget };
-}
-
 async function importRecipe(url) {
   const session = await getValidSession(true);
   const recipeUrl = normalizeRecipeUrlInput(url);
   if (!recipeUrl) throw new Error("Open a supported recipe URL first.");
 
-  const target = await getImportTarget();
-  const parsedRecipe = await parseRecipe(recipeUrl, target);
+  const parsedRecipe = await parseRecipe(recipeUrl);
   const existing = await recipeBySourceUrl(recipeUrl, session.access_token);
   const recipe = {
     ...parsedRecipe,
@@ -89,21 +76,184 @@ async function importRecipe(url) {
   };
 
   await saveRecipe(recipe, session.access_token, Boolean(existing?.id));
-  return { ok: true, updated: Boolean(existing?.id), name: recipe.name || "Recipe", target };
+  return { ok: true, updated: Boolean(existing?.id), name: recipe.name || "Recipe" };
 }
 
-async function parseRecipe(recipeUrl, target) {
-  const helperUrl = IMPORT_HELPERS[target] || IMPORT_HELPERS.live;
+async function saveArticle(url, title, tabId) {
+  const session = await getValidSession(true);
+  if (!url || !url.startsWith("http")) throw new Error("Open a web page first.");
+  const publication = detectPublication(url);
+
+  let extracted = null;
+  if (tabId) {
+    try {
+      const results = await chrome.scripting.executeScript({ target: { tabId }, func: extractArticleTextFromDOM });
+      extracted = results?.[0]?.result || null;
+    } catch { /* tab may not support scripting; proceed without text */ }
+  }
+
+  const body = {
+    url,
+    title: extracted?.title || title || url,
+    publication,
+    text: extracted?.text || null,
+    author: extracted?.author || null,
+    date: extracted?.date || null
+  };
+
+  const response = await fetch(SAVE_ARTICLE_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
+    body: JSON.stringify(body)
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `Save failed with status ${response.status}`);
+  return { ok: true, already_saved: payload.already_saved || false, hasText: Boolean(extracted?.text) };
+}
+
+// Runs inside the article page — must be self-contained (no closures, no imports)
+function extractArticleTextFromDOM() {
+  function esc(str) {
+    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function getMeta(name) {
+    return (
+      document.querySelector('meta[property="' + name + '"]')?.content ||
+      document.querySelector('meta[name="' + name + '"]')?.content ||
+      ""
+    );
+  }
+
+  const title = getMeta("og:title") || document.title || "";
+  const author = getMeta("author") || getMeta("article:author") || getMeta("byl") || "";
+  const date =
+    getMeta("article:published_time") ||
+    getMeta("date") ||
+    document.querySelector("time[datetime]")?.getAttribute("datetime") ||
+    "";
+
+  const SELECTORS = [
+    '[data-testid="article-body"]',
+    'section[name="articleBody"]',
+    '[class*="StoryBodyCompanionColumn"]',
+    '[class*="article__body-text"]',
+    '[class*="article__body"]',
+    '[class*="articleBody"]',
+    '[class*="article-body"]',
+    '[class*="story-body"]',
+    '[class*="post-body"]',
+    '[class*="entry-content"]',
+    "article",
+    "main"
+  ];
+
+  let container = null;
+  for (const sel of SELECTORS) {
+    try {
+      const el = document.querySelector(sel);
+      if (el) { container = el; break; }
+    } catch { /* skip bad selector */ }
+  }
+  if (!container) return null;
+
+  const SKIP_RE = /^(subscribe|sign in|log in|advertisement|share|follow|newsletter|cookies|more from|read more|listen|related)/i;
+  const seen = new Set();
+  const blocks = [];
+
+  container.querySelectorAll("p, h2, h3, h4, blockquote").forEach(function (el) {
+    if (el.closest("nav, aside, [aria-hidden='true'], [aria-hidden=\"true\"]")) return;
+    const cls = (el.getAttribute("class") || "") + " " + (el.parentElement?.getAttribute("class") || "");
+    if (/promo|newsletter|ad[-_]|related|recommend|paywall/i.test(cls)) return;
+    const text = (el.innerText || "").replace(/\s+/g, " ").trim();
+    if (text.length < 25 || seen.has(text)) return;
+    if (SKIP_RE.test(text)) return;
+    seen.add(text);
+    const tag = el.tagName.toLowerCase();
+    blocks.push(tag === "p" || tag === "blockquote" ? "<p>" + esc(text) + "</p>" : "<h3>" + esc(text) + "</h3>");
+  });
+
+  if (blocks.length < 3) return null;
+  return { title: title.trim(), author: author.trim(), date: date.trim(), text: blocks.join("\n") };
+}
+
+async function importFromPage(tabId, publication) {
+  const session = await getValidSession(true);
+
+  const extractor = publication === "nyt" ? extractNYTFromDOM : extractEconomistFromDOM;
+  const results = await chrome.scripting.executeScript({ target: { tabId }, func: extractor });
+  const articles = results?.[0]?.result;
+  if (!Array.isArray(articles) || articles.length === 0) {
+    throw new Error("No saved articles found on this page. Make sure you're on the saved articles page and it has finished loading.");
+  }
+
+  const response = await fetch(SAVE_PAGE_ARTICLES_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
+    body: JSON.stringify({ articles })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `Save failed (${response.status})`);
+  return { ok: true, imported: payload.imported, total: articles.length };
+}
+
+// Runs inside the NYT page — must be self-contained (no closures, no imports)
+function extractNYTFromDOM() {
+  const seen = new Set();
+  const articles = [];
+  const NYT_RE = /nytimes\.com\/(\d{4})\/(\d{2})\/(\d{2})\//;
+  const LANG_RE = /\/(es|zh|ar|fr|de)\//;
+  const root = document.querySelector("#stream-panel") || document.body;
+  root.querySelectorAll("a[href]").forEach((a) => {
+    const href = a.href;
+    if (!NYT_RE.test(href) || LANG_RE.test(href)) return;
+    const url = href.split("?")[0].split("#")[0].replace(/\/$/, "");
+    if (seen.has(url)) return;
+    seen.add(url);
+    const container = a.closest("article, li, [data-testid]") || a;
+    const titleEl = container.querySelector("h1,h2,h3,h4") || a;
+    const title = titleEl.textContent.trim() || url;
+    articles.push({ url, title, publication: "nyt" });
+  });
+  return articles;
+}
+
+// Runs inside the Economist page — must be self-contained
+function extractEconomistFromDOM() {
+  const seen = new Set();
+  const articles = [];
+  const ECON_RE = /economist\.com\/[a-z-]+\/\d{4}\/\d{2}\/\d{2}\//;
+  const root = document.querySelector('[class*="bookmarks-client"]') || document.body;
+  root.querySelectorAll("a[href]").forEach((a) => {
+    const href = a.href;
+    if (!ECON_RE.test(href)) return;
+    const url = href.split("?")[0].split("#")[0].replace(/\/$/, "");
+    if (seen.has(url)) return;
+    seen.add(url);
+    const container = a.closest("article, li, [class*='teaser']") || a;
+    const titleEl = container.querySelector("h3, h2, h4") || a;
+    const title = titleEl.textContent.trim() || url;
+    articles.push({ url, title, publication: "economist" });
+  });
+  return articles;
+}
+
+function detectPublication(url) {
+  try {
+    const h = new URL(url).hostname.toLowerCase();
+    if (h.includes("nytimes.com")) return "nyt";
+    if (h.includes("economist.com")) return "economist";
+    if (h.includes("startribune.com")) return "startribune";
+  } catch { /* ignore */ }
+  return "other";
+}
+
+async function parseRecipe(recipeUrl) {
+  const helperUrl = IMPORT_RECIPE_URL;
   const response = await fetch(`${helperUrl}?url=${encodeURIComponent(recipeUrl)}`);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || `Import failed with status ${response.status}`);
   if (!payload.recipe?.name && !payload.recipe?.ingredients?.length) throw new Error("No recipe data found.");
   return payload.recipe;
-}
-
-async function getImportTarget() {
-  const stored = await chrome.storage.local.get(IMPORT_TARGET_KEY);
-  return IMPORT_HELPERS[stored[IMPORT_TARGET_KEY]] ? stored[IMPORT_TARGET_KEY] : "live";
 }
 
 async function recipeBySourceUrl(sourceUrl, accessToken) {

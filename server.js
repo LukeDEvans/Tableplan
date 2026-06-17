@@ -52,6 +52,26 @@ const server = http.createServer(async (request, response) => {
       await handleRecipeImport(url, response);
       return;
     }
+    if (url.pathname === "/api/save-article") {
+      await handleNetlifyFunction("./netlify/functions/save-article", request, response);
+      return;
+    }
+    if (url.pathname === "/api/sync-saved-articles" || url.pathname === "/.netlify/functions/sync-saved-articles") {
+      await handleNetlifyFunction("./netlify/functions/sync-saved-articles", request, response);
+      return;
+    }
+    if (url.pathname === "/api/save-sync-cookie" || url.pathname === "/.netlify/functions/save-sync-cookie") {
+      await handleNetlifyFunction("./netlify/functions/save-sync-cookie", request, response);
+      return;
+    }
+    if (url.pathname === "/api/save-page-articles" || url.pathname === "/.netlify/functions/save-page-articles") {
+      await handleNetlifyFunction("./netlify/functions/save-page-articles", request, response);
+      return;
+    }
+    if (url.pathname === "/api/fetch-article" || url.pathname === "/.netlify/functions/fetch-article") {
+      await handleNetlifyFunction("./netlify/functions/fetch-article", request, response);
+      return;
+    }
     if (url.pathname === "/api/scan-recipe") {
       await handleRecipeScan(request, response);
       return;
@@ -122,6 +142,18 @@ const server = http.createServer(async (request, response) => {
     }
     if (url.pathname === "/api/admin-data") {
       await handleNetlifyFunction("./netlify/functions/admin-data", request, response);
+      return;
+    }
+    if (url.pathname === "/.netlify/functions/gmail") {
+      await handleNetlifyFunction("./netlify/functions/gmail", request, response);
+      return;
+    }
+    if (url.pathname === "/.netlify/functions/gmail-auth") {
+      await handleNetlifyFunction("./netlify/functions/gmail-auth", request, response);
+      return;
+    }
+    if (url.pathname === "/.netlify/functions/gmail-callback") {
+      await handleNetlifyFunction("./netlify/functions/gmail-callback", request, response, url);
       return;
     }
 
@@ -1233,16 +1265,18 @@ async function serveStatic(pathname, request, response) {
   else response.end();
 }
 
-async function handleNetlifyFunction(modulePath, request, response) {
+async function handleNetlifyFunction(modulePath, request, response, url = null) {
   const fn = require(modulePath);
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
   const body = Buffer.concat(chunks).toString();
+  const queryStringParameters = {};
+  if (url) url.searchParams.forEach((v, k) => { queryStringParameters[k] = v; });
   const event = {
     httpMethod: request.method,
     headers: request.headers,
     body,
-    queryStringParameters: {}
+    queryStringParameters
   };
   const result = await fn.handler(event);
   response.writeHead(result.statusCode, result.headers || { "content-type": "application/json; charset=utf-8" });

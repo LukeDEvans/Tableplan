@@ -1,17 +1,19 @@
 {
   "manifest_version": 3,
-  "name": "Eat Recipe Importer",
-  "version": "0.1.0",
-  "description": "Import web recipes directly into Eat.",
+  "name": "Live",
+  "version": "0.4.0",
+  "description": "Import recipes and save articles to the Live app.",
   "action": {
-    "default_title": "Import to Eat",
+    "default_title": "Live",
     "default_popup": "popup.html"
   },
-  "permissions": ["activeTab", "identity", "storage", "tabs"],
+  "permissions": ["activeTab", "identity", "scripting", "storage", "tabs"],
   "host_permissions": [
     "https://effervescent-malabi-e0af55.netlify.app/*",
     "http://localhost:4174/*",
-    "https://noyocjcltrenwdovqrql.supabase.co/*"
+    "https://noyocjcltrenwdovqrql.supabase.co/*",
+    "https://www.nytimes.com/*",
+    "https://www.economist.com/*"
   ],
   "background": {
     "service_worker": "background.js"

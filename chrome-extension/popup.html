@@ -3,23 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Import to Eat</title>
+    <title>Live</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <main>
-      <h1>Eat</h1>
+      <h1>Live</h1>
       <p id="accountStatus">Checking connection...</p>
-      <fieldset class="target-control" aria-label="Import target">
-        <legend>Import target</legend>
-        <div class="target-options">
-          <button class="target-option" id="targetLive" type="button" data-target="live">Live</button>
-          <button class="target-option" id="targetLocal" type="button" data-target="local">Local</button>
-        </div>
-      </fieldset>
-      <p id="status">Import recipes without opening Eat.</p>
+      <p id="status">Import recipes and save articles.</p>
       <button id="connectGoogle">Connect with Google</button>
-      <button id="importCurrentPage">Import current page</button>
+      <div class="action-group" id="actionGroup" hidden>
+        <button id="importCurrentPage">Import recipe</button>
+        <button id="saveCurrentArticle" class="secondary-action">Save article</button>
+      </div>
+      <div class="action-group" id="importSavedGroup" hidden>
+        <button id="importSavedArticles" type="button">Import all saved articles</button>
+      </div>
       <button class="secondary" id="signOut">Sign out</button>
     </main>
     <script src="popup.js"></script>

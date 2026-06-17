@@ -1,10 +1,14 @@
 const accountStatus = document.querySelector("#accountStatus");
 const status = document.querySelector("#status");
 const connectButton = document.querySelector("#connectGoogle");
+const actionGroup = document.querySelector("#actionGroup");
+const importSavedGroup = document.querySelector("#importSavedGroup");
 const importButton = document.querySelector("#importCurrentPage");
+const saveArticleButton = document.querySelector("#saveCurrentArticle");
+const importSavedButton = document.querySelector("#importSavedArticles");
 const signOutButton = document.querySelector("#signOut");
-const targetButtons = [...document.querySelectorAll(".target-option")];
-let importTarget = "live";
+let currentTabId = null;
+let currentTabPublication = null;
 
 async function send(message) {
   return chrome.runtime.sendMessage(message);
@@ -16,42 +20,39 @@ async function currentTab() {
 }
 
 async function refreshStatus() {
-  const [response, targetResponse] = await Promise.all([
-    send({ type: "sessionStatus" }),
-    send({ type: "importTarget" })
-  ]);
+  const response = await send({ type: "sessionStatus" });
   const signedIn = Boolean(response?.signedIn);
-  importTarget = targetResponse?.target || "live";
-  accountStatus.textContent = signedIn ? `Connected: ${response.email || "Eat"}` : "Not connected";
+  accountStatus.textContent = signedIn ? `Connected: ${response.email || "Live"}` : "Not connected";
   connectButton.hidden = signedIn;
-  importButton.hidden = !signedIn;
+  actionGroup.hidden = !signedIn;
   signOutButton.hidden = !signedIn;
-  renderImportTarget();
+  importSavedGroup.hidden = true;
+  if (signedIn) await updateActionLabels();
 }
 
-function renderImportTarget() {
-  targetButtons.forEach((button) => {
-    const selected = button.dataset.target === importTarget;
-    button.classList.toggle("is-selected", selected);
-    button.setAttribute("aria-pressed", selected ? "true" : "false");
-  });
+async function updateActionLabels() {
+  const tab = await currentTab();
+  if (!tab?.url) return;
+  currentTabId = tab.id;
+  const url = tab.url;
+  const isNYTSaved = /nytimes\.com\/saved\b/i.test(url);
+  const isEconSaved = /economist\.com\/for-you\/bookmarks\b/i.test(url);
+  currentTabPublication = isNYTSaved ? "nyt" : isEconSaved ? "economist" : null;
+  importSavedGroup.hidden = !currentTabPublication;
+  const isArticle = /nytimes\.com|economist\.com/i.test(url);
+  if (isArticle) {
+    saveArticleButton.style.order = "-1";
+    importButton.style.order = "0";
+  } else {
+    saveArticleButton.style.order = "0";
+    importButton.style.order = "-1";
+  }
 }
-
-targetButtons.forEach((button) => {
-  button.addEventListener("click", async () => {
-    const response = await send({ type: "setImportTarget", target: button.dataset.target });
-    importTarget = response?.target || "live";
-    renderImportTarget();
-    status.textContent = importTarget === "local"
-      ? "Using localhost. Keep the local Eat server running."
-      : "Using the live Eat importer.";
-  });
-});
 
 connectButton.addEventListener("click", async () => {
   status.textContent = "Opening Google sign-in...";
   const response = await send({ type: "signIn" });
-  status.textContent = response?.ok ? "Connected to Eat." : response?.error || "Could not connect.";
+  status.textContent = response?.ok ? "Connected to Live." : response?.error || "Could not connect.";
   await refreshStatus();
 });
 
@@ -67,12 +68,33 @@ importButton.addEventListener("click", async () => {
     status.textContent = "Open a recipe page first.";
     return;
   }
-
-  status.textContent = importTarget === "local" ? "Saving recipe through localhost..." : "Saving recipe...";
+  status.textContent = "Importing recipe...";
   const response = await send({ type: "importRecipe", url: tab.url });
   status.textContent = response?.ok
-    ? `${response.updated ? "Updated" : "Saved"} via ${response.target === "local" ? "Local" : "Live"}: ${response.name}`
+    ? `${response.updated ? "Updated" : "Saved"}: ${response.name}`
     : response?.error || "Import failed.";
+});
+
+importSavedButton.addEventListener("click", async () => {
+  if (!currentTabId || !currentTabPublication) return;
+  status.textContent = "Reading saved articles...";
+  const response = await send({ type: "importFromPage", tabId: currentTabId, publication: currentTabPublication });
+  status.textContent = response?.ok
+    ? `Imported ${response.imported} of ${response.total} articles. Reload the Live app to see them.`
+    : response?.error || "Import failed.";
+});
+
+saveArticleButton.addEventListener("click", async () => {
+  const tab = await currentTab();
+  if (!tab?.url || !tab.url.startsWith("http")) {
+    status.textContent = "Open an article page first.";
+    return;
+  }
+  status.textContent = "Saving article...";
+  const response = await send({ type: "saveArticle", url: tab.url, title: tab.title, tabId: tab.id });
+  status.textContent = response?.ok
+    ? (response.already_saved ? "Already saved." : response.hasText ? "Saved with full text." : "Saved (text not available).")
+    : response?.error || "Could not save article.";
 });
 
 refreshStatus();
