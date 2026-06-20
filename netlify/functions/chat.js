@@ -317,6 +317,103 @@ const TOOLS = [
       },
       required: ["category", "note"]
     }
+  },
+  {
+    name: "add_travel_idea",
+    description: "Save a destination as a travel idea in Luke's bucket list.",
+    input_schema: {
+      type: "object",
+      properties: {
+        destination: { type: "string", description: "Destination name, e.g. 'Japan' or 'Patagonia, Argentina'" },
+        description: { type: "string", description: "Why it's appealing, best time to visit, things to do, etc." }
+      },
+      required: ["destination"]
+    }
+  },
+  {
+    name: "add_trip",
+    description: "Create a new trip in Luke's travel planner.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Trip name, e.g. 'Japan Spring 2027'" },
+        destination: { type: "string", description: "Destination(s), e.g. 'Tokyo, Kyoto, Osaka'" },
+        status: { type: "string", enum: ["idea", "planning", "booked"], default: "planning" },
+        start_date: { type: "string", description: "Start date as YYYY-MM-DD" },
+        end_date: { type: "string", description: "End date as YYYY-MM-DD" },
+        party: {
+          type: "array",
+          items: { type: "string" },
+          description: "Who is going: Luke, MJ, Sophia, Friends, Family"
+        }
+      },
+      required: ["name"]
+    }
+  },
+  {
+    name: "add_trip_itinerary_day",
+    description: "Add a day to an existing trip's itinerary.",
+    input_schema: {
+      type: "object",
+      properties: {
+        trip_name: { type: "string", description: "Name of the trip (partial match)" },
+        date: { type: "string", description: "Date as YYYY-MM-DD" },
+        location: { type: "string", description: "City or area for that day" },
+        activities: {
+          type: "array",
+          description: "List of activities for the day",
+          items: {
+            type: "object",
+            properties: {
+              time: { type: "string", description: "e.g. '9:00 AM'" },
+              title: { type: "string", description: "Activity name" },
+              type: { type: "string", enum: ["activity", "meal", "accommodation", "transport", "rest"], default: "activity" },
+              notes: { type: "string" }
+            },
+            required: ["title"]
+          }
+        }
+      },
+      required: ["trip_name", "date"]
+    }
+  },
+  {
+    name: "add_trip_expense",
+    description: "Log an expense to a trip's budget tracker.",
+    input_schema: {
+      type: "object",
+      properties: {
+        trip_name: { type: "string", description: "Name of the trip (partial match)" },
+        description: { type: "string", description: "What was spent on" },
+        amount: { type: "number", description: "Amount in trip's currency" },
+        category: { type: "string", enum: ["flights", "accommodation", "food", "activities", "transport", "other"] },
+        date: { type: "string", description: "Date as YYYY-MM-DD, defaults to today" }
+      },
+      required: ["trip_name", "description", "amount", "category"]
+    }
+  },
+  {
+    name: "generate_packing_list",
+    description: "Generate a packing list for a trip and add it to the trip's packing tab.",
+    input_schema: {
+      type: "object",
+      properties: {
+        trip_name: { type: "string", description: "Name of the trip (partial match)" },
+        items: {
+          type: "array",
+          description: "Packing items to add",
+          items: {
+            type: "object",
+            properties: {
+              item: { type: "string", description: "Item name, e.g. 'Passport'" },
+              category: { type: "string", enum: ["documents", "clothing", "electronics", "health", "toiletries", "other"] }
+            },
+            required: ["item", "category"]
+          }
+        }
+      },
+      required: ["trip_name", "items"]
+    }
   }
 ];
 

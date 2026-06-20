@@ -80,7 +80,8 @@ const pageVisibilityDefaults = {
   inventory: true,
   recreate: true,
   plan: true,
-  mail: true
+  mail: true,
+  travel: true
 };
 const DEFAULT_INVENTORY_ROOMS = [
   { id: "ibox-default-pantry",      name: "Pantry" },
@@ -170,6 +171,7 @@ const STATE_SECTIONS = {
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "pianoSongs", "recreateHobbies"],
+  travel:    ["trips", "travelIdeas"],
   config:    ["weeklyEmailSettings", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
@@ -1111,6 +1113,17 @@ function bindEvents() {
   elements.titleToDoListBtn.addEventListener("click", showDoApp);
   elements.titleWatchBtn.addEventListener("click", showWatchApp);
   elements.titleRecreateBtn.addEventListener("click", showRecreateApp);
+  document.getElementById("homeBriefingRefresh")?.addEventListener("click", () => {
+    const todayKey = dateKeyFromDate(new Date());
+    try { localStorage.removeItem(`briefing_ai_${todayKey}`); } catch { /* ok */ }
+    const aiEl = document.getElementById("homeBriefingAi");
+    const cacheKey = `briefing_ai_${todayKey}`;
+    if (aiEl) {
+      aiEl.innerHTML = `<span class="home-briefing-ai-loading">Regenerating…</span>`;
+      fetchAndStreamBriefing(aiEl, cacheKey);
+    }
+    renderHomeBriefingPanels();
+  });
   elements.homeEatBtn.addEventListener("click", showEatApp);
   elements.homePlayBtn.addEventListener("click", showPlayApp);
   elements.homeDoBtn.addEventListener("click", showDoApp);
@@ -1119,6 +1132,7 @@ function bindEvents() {
   elements.titleRecreateBtn.addEventListener("click", showRecreateApp);
   elements.homePlanBtn.addEventListener("click", showPlanApp);
   elements.titlePlanBtn.addEventListener("click", showPlanApp);
+  document.getElementById("homeTravelBtn")?.addEventListener("click", showTravelApp);
   elements.homeMailBtn?.addEventListener("click", showMailApp);
   elements.titleMailBtn?.addEventListener("click", showMailApp);
   elements.mailConnectBtn?.addEventListener("click", connectGmail);
@@ -1133,6 +1147,20 @@ function bindEvents() {
       sidebar.classList.toggle("is-expanded");
     } else {
       sidebar.classList.toggle("is-collapsed");
+    }
+  });
+  // Travel page buttons
+  document.getElementById("travelNewTripBtn")?.addEventListener("click", showTravelNewTripDialog);
+  document.getElementById("travelAddIdeaBtn")?.addEventListener("click", showTravelNewIdeaDialog);
+  document.getElementById("travelEmptyTripBtn")?.addEventListener("click", showTravelNewTripDialog);
+  document.getElementById("travelEmptyIdeaBtn")?.addEventListener("click", showTravelNewIdeaDialog);
+  document.getElementById("travelSidebarToggle")?.addEventListener("click", () => {
+    document.getElementById("travelSidebar")?.classList.toggle("is-open");
+  });
+  document.getElementById("travelMainPage")?.addEventListener("click", e => {
+    const sidebar = document.getElementById("travelSidebar");
+    if (sidebar?.classList.contains("is-open") && !sidebar.contains(e.target) && !e.target.closest("#travelSidebarToggle")) {
+      sidebar.classList.remove("is-open");
     }
   });
   // Mail label tabs are rendered dynamically via renderMailLabelTabs()
@@ -2414,6 +2442,8 @@ function defaultState() {
     sailingLog: [],
     recreateHobbies: { sailing: true, piano: true },
     pianoSongs: [],
+    trips: [],
+    travelIdeas: [],
     workouts: [],
     playAutoRules: [],
     pantry: ["olive oil", "salt", "pepper"],
@@ -2505,6 +2535,8 @@ function normalizeState(parsed) {
     sailingLog: normalizeSailingLog(parsed?.sailingLog),
     recreateHobbies: normalizeRecreateHobbies(parsed?.recreateHobbies),
     pianoSongs: normalizePianoSongs(parsed?.pianoSongs),
+    trips: Array.isArray(parsed?.trips) ? parsed.trips : [],
+    travelIdeas: Array.isArray(parsed?.travelIdeas) ? parsed.travelIdeas : [],
     workouts: normalizeWorkouts(parsed?.workouts),
     playAutoRules: normalizePlayAutoRules(parsed?.playAutoRules),
     pantry: Array.isArray(parsed?.pantry) ? parsed.pantry : [],
@@ -5353,6 +5385,7 @@ function activateEatShell() {
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
+  document.getElementById("travelMainPage").hidden = true;
   setWeekToolsMode("week");
   renderActiveCooking();
   renderPlanner();
@@ -5377,6 +5410,7 @@ function showDoApp(event) {
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
+  document.getElementById("travelMainPage").hidden = true;
   setWeekToolsMode("week");
   elements.activeCookingSection.hidden = true;
   setPageTitle("To-Do");
@@ -5405,6 +5439,7 @@ function showPlayApp(event) {
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
+  document.getElementById("travelMainPage").hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Exercise");
@@ -5433,6 +5468,7 @@ function showWatchApp(event) {
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
+  document.getElementById("travelMainPage").hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Watch");
@@ -5457,6 +5493,7 @@ function showRecreateApp(event) {
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
+  document.getElementById("travelMainPage").hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Recreate");
@@ -5482,6 +5519,7 @@ function showPlanApp(event) {
   elements.planMainPage.hidden = false;
   elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
+  document.getElementById("travelMainPage").hidden = true;
   setWeekToolsMode("plan");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Calendar");
@@ -5507,6 +5545,7 @@ function showSettingsApp(event) {
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = false;
   elements.mailMainPage.hidden = true;
+  document.getElementById("travelMainPage").hidden = true;
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
   setPageTitle("Settings");
@@ -5531,12 +5570,15 @@ function showHomeApp(event) {
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
+  document.getElementById("travelMainPage").hidden = true;
+  document.getElementById("travelMainPage").hidden = true;
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
   setPageTitle(getAppName());
   setPageHash("");
   closePageTitleMenu();
   closeAppMenu();
+  renderHomeBriefing();
 }
 
 function showMediaApp(event) {
@@ -5555,6 +5597,7 @@ function showMediaApp(event) {
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
+  document.getElementById("travelMainPage").hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Media");
@@ -5582,6 +5625,7 @@ function showInventoryApp(event) {
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
+  document.getElementById("travelMainPage").hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Stock");
@@ -5610,6 +5654,7 @@ function showShopApp(event) {
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
+  document.getElementById("travelMainPage").hidden = true;
   setWeekToolsMode("shop");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Shop");
@@ -31512,6 +31557,88 @@ async function executeChatTool(name, input) {
         return `Note saved to ${category}.`;
       }
 
+      case "add_travel_idea": {
+        const dest = String(input.destination || "").trim();
+        if (!dest) return "No destination provided.";
+        if (!Array.isArray(state.travelIdeas)) state.travelIdeas = [];
+        const idea = defaultTravelIdea(dest);
+        if (input.description) idea.description = String(input.description).trim();
+        state.travelIdeas.push(idea);
+        persist();
+        if (activeAppArea === "travel") renderTravelSidebar();
+        return `Added travel idea: "${dest}"`;
+      }
+
+      case "add_trip": {
+        const name = String(input.name || "").trim();
+        if (!name) return "Trip name is required.";
+        if (!Array.isArray(state.trips)) state.trips = [];
+        const trip = defaultTrip({
+          name,
+          destination: String(input.destination || "").trim(),
+          status: ["idea","planning","booked"].includes(input.status) ? input.status : "planning",
+          startDate: /^\d{4}-\d{2}-\d{2}$/.test(input.start_date||"") ? input.start_date : "",
+          endDate: /^\d{4}-\d{2}-\d{2}$/.test(input.end_date||"") ? input.end_date : "",
+          party: Array.isArray(input.party) ? input.party.map(String) : ["Luke"]
+        });
+        state.trips.push(trip);
+        persist();
+        syncTripToCalendar(trip);
+        if (activeAppArea === "travel") { renderTravelSidebar(); openTravelItem(trip.id); }
+        return `Created trip "${name}"${trip.destination ? " to " + trip.destination : ""}.`;
+      }
+
+      case "add_trip_itinerary_day": {
+        const qname = String(input.trip_name || "").toLowerCase().trim();
+        const trip = travelTrips().find(t => t.name.toLowerCase().includes(qname));
+        if (!trip) return `No trip found matching "${input.trip_name}".`;
+        if (!Array.isArray(trip.itinerary)) trip.itinerary = [];
+        const activities = Array.isArray(input.activities)
+          ? input.activities.map(a => ({ id: createId("tact"), time: String(a.time||""), title: String(a.title||""), type: a.type||"activity", notes: String(a.notes||""), estimatedCost: 0 }))
+          : [];
+        trip.itinerary.push({ date: String(input.date||""), location: String(input.location||""), activities });
+        trip.itinerary.sort((a,b) => (a.date||"").localeCompare(b.date||""));
+        trip.updatedAt = new Date().toISOString();
+        persist();
+        if (activeAppArea === "travel" && travelOpenId === trip.id && travelOpenTab === "itinerary") renderTravelItinerary(trip);
+        return `Added itinerary day (${input.date || "undated"}, ${input.location || "location TBD"}) to "${trip.name}".`;
+      }
+
+      case "add_trip_expense": {
+        const qname = String(input.trip_name || "").toLowerCase().trim();
+        const trip = travelTrips().find(t => t.name.toLowerCase().includes(qname));
+        if (!trip) return `No trip found matching "${input.trip_name}".`;
+        if (!Array.isArray(trip.expenses)) trip.expenses = [];
+        const date = /^\d{4}-\d{2}-\d{2}$/.test(input.date||"") ? input.date : dateKeyFromDate(new Date());
+        trip.expenses.push({ id: createId("texp"), date, description: String(input.description||""), amount: Number(input.amount)||0, category: String(input.category||"other") });
+        trip.updatedAt = new Date().toISOString();
+        persist();
+        if (activeAppArea === "travel" && travelOpenId === trip.id && travelOpenTab === "budget") renderTravelBudget(trip);
+        return `Logged $${Number(input.amount).toFixed(2)} for "${input.description}" on "${trip.name}".`;
+      }
+
+      case "generate_packing_list": {
+        const qname = String(input.trip_name || "").toLowerCase().trim();
+        const trip = travelTrips().find(t => t.name.toLowerCase().includes(qname));
+        if (!trip) return `No trip found matching "${input.trip_name}".`;
+        if (!Array.isArray(trip.packingList)) trip.packingList = [];
+        const items = Array.isArray(input.items) ? input.items : [];
+        const added = [];
+        for (const i of items) {
+          const item = String(i.item||"").trim();
+          if (!item) continue;
+          if (trip.packingList.some(p => p.item.toLowerCase() === item.toLowerCase())) continue;
+          const validCat = ["documents","clothing","electronics","health","toiletries","other"];
+          const category = validCat.includes(i.category) ? i.category : "other";
+          trip.packingList.push({ id: createId("tpack"), item, category, packed: false });
+          added.push(item);
+        }
+        trip.updatedAt = new Date().toISOString();
+        persist();
+        if (activeAppArea === "travel" && travelOpenId === trip.id && travelOpenTab === "packing") renderTravelPacking(trip);
+        return `Added ${added.length} packing items to "${trip.name}".`;
+      }
+
       default:
         return `Unknown tool: ${name}`;
     }
@@ -31541,8 +31668,9 @@ function buildAiNotesContext() {
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY || "";
 
 function urlBase64ToUint8Array(base64String) {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const clean = base64String.trim().replace(/^["']|["']$/g, "");
+  const padding = "=".repeat((4 - (clean.length % 4)) % 4);
+  const base64 = (clean + padding).replace(/-/g, "+").replace(/_/g, "/");
   const raw = atob(base64);
   return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
 }
@@ -31601,7 +31729,1025 @@ function buildBriefingContext() {
   try { parts.push(buildChatHealthContext()); } catch { /* skip */ }
   try { parts.push(buildChatShopContext()); }  catch { /* skip */ }
   try { parts.push(buildChatSweatContext()); } catch { /* skip */ }
+  try { parts.push(buildChatTravelContext()); } catch { /* skip */ }
   return parts.filter(Boolean).join("\n\n");
+}
+
+// ── Travel ────────────────────────────────────────────────────────────────────
+
+let travelOpenId = null;
+let travelOpenTab = "itinerary";
+
+const TRAVEL_LOGISTIC_ICONS = {
+  flight: "✈️", hotel: "🏨", car: "🚗", train: "🚆", ferry: "⛴️", other: "📌"
+};
+const TRAVEL_BUDGET_CATS = ["flights", "accommodation", "food", "activities", "transport", "other"];
+const TRAVEL_PACKING_CATS = ["documents", "clothing", "electronics", "health", "toiletries", "other"];
+const TRAVEL_PARTY_OPTIONS = ["Luke", "MJ", "Sophia", "Friends", "Family"];
+
+function travelTrips() { return state.trips || []; }
+function travelIdeas() { return state.travelIdeas || []; }
+
+function defaultTrip(overrides = {}) {
+  return {
+    id: createId("trip"),
+    name: "New Trip",
+    destination: "",
+    status: "planning",
+    startDate: "",
+    endDate: "",
+    party: ["Luke"],
+    currency: "USD",
+    budget: {
+      total: 0,
+      categories: Object.fromEntries(TRAVEL_BUDGET_CATS.map(c => [c, { budgeted: 0, spent: 0 }]))
+    },
+    itinerary: [],
+    logistics: [],
+    expenses: [],
+    packingList: [],
+    notes: "",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...overrides
+  };
+}
+
+function defaultTravelIdea(destination = "") {
+  return { id: createId("tidea"), destination, description: "", tags: [], createdAt: new Date().toISOString() };
+}
+
+function tripStatus(trip) {
+  if (trip.status === "completed") return "completed";
+  if (!trip.startDate) return trip.status || "planning";
+  const today = dateKeyFromDate(new Date());
+  if (trip.endDate && trip.endDate < today) return "completed";
+  if (trip.startDate <= today && (!trip.endDate || trip.endDate >= today)) return "current";
+  return trip.status || "planning";
+}
+
+function formatTravelDate(d) {
+  if (!d) return "";
+  const [y, m, day] = d.split("-");
+  return new Date(+y, +m - 1, +day).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function showTravelApp(event) {
+  event?.stopPropagation();
+  activeAppArea = "travel";
+  elements.homeMainPage.hidden = true;
+  document.querySelector("[data-section='mealPrep']").hidden = true;
+  elements.doMainPage.hidden = true;
+  elements.playMainPage.hidden = true;
+  elements.watchMainPage.hidden = true;
+  elements.mediaMainPage.hidden = true;
+  elements.shopMainPage.hidden = true;
+  elements.inventoryMainPage.hidden = true;
+  elements.recreateMainPage.hidden = true;
+  elements.planMainPage.hidden = true;
+  elements.settingsMainPage.hidden = true;
+  elements.mailMainPage.hidden = true;
+  document.getElementById("travelMainPage").hidden = false;
+  elements.weekLabel.closest(".week-tools").hidden = true;
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("Travel");
+  setPageHash("travel");
+  closePageTitleMenu();
+  closeAppMenu();
+  renderTravelPage();
+}
+
+function renderTravelPage() {
+  renderTravelSidebar();
+  if (travelOpenId) {
+    const trip = travelTrips().find(t => t.id === travelOpenId)
+      || { _isIdea: true, ...travelIdeas().find(i => i.id === travelOpenId) };
+    if (trip?.id) { openTravelItem(travelOpenId, false); return; }
+  }
+  document.getElementById("travelDetail").hidden = true;
+  document.getElementById("travelEmpty").hidden = false;
+}
+
+function renderTravelSidebar() {
+  const ideas = travelIdeas();
+  const trips = travelTrips();
+  const today = dateKeyFromDate(new Date());
+
+  const upcoming = trips.filter(t => !t.startDate || !t.endDate || t.endDate >= today);
+  const past = trips.filter(t => t.startDate && t.endDate && t.endDate < today && t.status !== "idea");
+
+  function rowHtml(item, isIdea) {
+    const status = isIdea ? "idea" : tripStatus(item);
+    const statusLabel = { idea: "Idea", planning: "Planning", booked: "Booked", current: "Now", completed: "Past" }[status] || status;
+    const isActive = item.id === travelOpenId;
+    const icon = isIdea ? "💡" : (status === "current" ? "🌍" : status === "booked" ? "✅" : "✈️");
+    return `<button class="travel-sidebar-row${isActive ? " is-active" : ""}" type="button" data-travel-id="${escapeHtml(item.id)}">
+      <span class="travel-sidebar-row-icon">${icon}</span>
+      <span class="travel-sidebar-row-name">${escapeHtml(isIdea ? item.destination : item.name)}</span>
+      ${!isIdea ? `<span class="travel-sidebar-row-status status-${status}">${statusLabel}</span>` : ""}
+    </button>`;
+  }
+
+  document.getElementById("travelIdeasList").innerHTML =
+    ideas.length ? ideas.map(i => rowHtml(i, true)).join("") : `<div style="padding:4px 14px;font-size:0.78rem;color:var(--text-muted)">No ideas yet</div>`;
+  document.getElementById("travelUpcomingList").innerHTML =
+    upcoming.length ? upcoming.map(t => rowHtml(t, false)).join("") : `<div style="padding:4px 14px;font-size:0.78rem;color:var(--text-muted)">No upcoming trips</div>`;
+  document.getElementById("travelPastList").innerHTML =
+    past.length ? past.map(t => rowHtml(t, false)).join("") : "";
+  document.getElementById("travelPastGroup").hidden = past.length === 0;
+
+  document.getElementById("travelSidebar").querySelectorAll("[data-travel-id]").forEach(btn => {
+    btn.addEventListener("click", () => openTravelItem(btn.dataset.travelId));
+  });
+}
+
+function openTravelItem(id, updateSidebar = true) {
+  travelOpenId = id;
+  if (updateSidebar) renderTravelSidebar();
+
+  const idea = travelIdeas().find(i => i.id === id);
+  if (idea) { renderTravelIdeaDetail(idea); return; }
+
+  const trip = travelTrips().find(t => t.id === id);
+  if (trip) { renderTravelTripDetail(trip); return; }
+
+  document.getElementById("travelDetail").hidden = true;
+  document.getElementById("travelEmpty").hidden = false;
+}
+
+function renderTravelIdeaDetail(idea) {
+  document.getElementById("travelEmpty").hidden = true;
+  const detail = document.getElementById("travelDetail");
+  detail.hidden = false;
+
+  document.getElementById("travelDetailName").textContent = idea.destination;
+  document.getElementById("travelStatusSelect").value = "idea";
+  document.getElementById("travelStatusSelect").disabled = true;
+  document.getElementById("travelDetailMeta").innerHTML =
+    `<span class="travel-meta-chip">💡 Travel idea</span>
+     ${idea.description ? `<span>${escapeHtml(idea.description)}</span>` : ""}`;
+
+  // Hide trip-only tabs, show notes only
+  detail.querySelectorAll(".travel-tab").forEach(t => {
+    t.hidden = t.dataset.travelTab !== "notes";
+    if (t.dataset.travelTab === "notes") t.click();
+  });
+
+  document.getElementById("travelTabNotes").innerHTML = `
+    <textarea class="travel-notes-area" id="travelIdeaNotes" placeholder="What draws you to ${escapeHtml(idea.destination)}? Best time to visit, things to do, links…">${escapeHtml(idea.description || "")}</textarea>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+      <button class="primary-btn" type="button" id="travelConvertTripBtn">Turn into a Trip</button>
+      <button class="secondary-btn" type="button" id="travelDeleteIdeaBtn">Delete Idea</button>
+    </div>`;
+
+  document.getElementById("travelIdeaNotes").addEventListener("input", e => {
+    idea.description = e.target.value;
+    persist();
+  });
+  document.getElementById("travelConvertTripBtn").addEventListener("click", () => {
+    const trip = defaultTrip({ name: idea.destination, destination: idea.destination, notes: idea.description || "" });
+    if (!Array.isArray(state.trips)) state.trips = [];
+    state.trips.push(trip);
+    state.travelIdeas = (state.travelIdeas || []).filter(i => i.id !== idea.id);
+    persist();
+    openTravelItem(trip.id);
+    renderTravelSidebar();
+  });
+  document.getElementById("travelDeleteIdeaBtn").addEventListener("click", () => {
+    if (!confirm(`Delete idea "${idea.destination}"?`)) return;
+    state.travelIdeas = (state.travelIdeas || []).filter(i => i.id !== idea.id);
+    persist();
+    travelOpenId = null;
+    renderTravelPage();
+  });
+}
+
+function renderTravelTripDetail(trip) {
+  document.getElementById("travelEmpty").hidden = true;
+  const detail = document.getElementById("travelDetail");
+  detail.hidden = false;
+
+  // Title (contenteditable)
+  const nameEl = document.getElementById("travelDetailName");
+  nameEl.textContent = trip.name;
+  nameEl.oninput = () => {
+    trip.name = nameEl.textContent.trim();
+    trip.updatedAt = new Date().toISOString();
+    persist();
+    renderTravelSidebar();
+  };
+
+  // Status select
+  const statusSel = document.getElementById("travelStatusSelect");
+  statusSel.disabled = false;
+  statusSel.value = trip.status || "planning";
+  statusSel.onchange = () => {
+    trip.status = statusSel.value;
+    trip.updatedAt = new Date().toISOString();
+    persist();
+    renderTravelSidebar();
+    syncTripToCalendar(trip);
+  };
+
+  // Meta row
+  const dateStr = trip.startDate
+    ? `${formatTravelDate(trip.startDate)}${trip.endDate ? " – " + formatTravelDate(trip.endDate) : ""}`
+    : "No dates set";
+  const nights = (trip.startDate && trip.endDate)
+    ? Math.round((new Date(trip.endDate) - new Date(trip.startDate)) / 86400000)
+    : null;
+  const partyStr = (trip.party || []).join(", ") || "Solo";
+  document.getElementById("travelDetailMeta").innerHTML = `
+    <span class="travel-meta-chip" id="travelEditDatesBtn" title="Edit dates">📅 ${escapeHtml(dateStr)}${nights ? ` (${nights}n)` : ""}</span>
+    <span class="travel-meta-chip" id="travelEditPartyBtn" title="Edit party">👥 ${escapeHtml(partyStr)}</span>
+    ${trip.destination ? `<span class="travel-meta-chip">📍 ${escapeHtml(trip.destination)}</span>` : `<span class="travel-meta-chip" id="travelEditDestBtn" title="Edit destination">📍 Add destination</span>`}
+  `;
+  document.getElementById("travelEditDatesBtn")?.addEventListener("click", () => showTravelEditDatesDialog(trip));
+  document.getElementById("travelEditPartyBtn")?.addEventListener("click", () => showTravelEditPartyDialog(trip));
+  document.getElementById("travelEditDestBtn")?.addEventListener("click", () => showTravelEditDestDialog(trip));
+  document.getElementById("travelDeleteBtn").onclick = () => {
+    if (!confirm(`Delete trip "${trip.name}"?`)) return;
+    state.trips = (state.trips || []).filter(t => t.id !== trip.id);
+    persist();
+    travelOpenId = null;
+    renderTravelPage();
+  };
+
+  // Show all tabs
+  detail.querySelectorAll(".travel-tab").forEach(t => { t.hidden = false; });
+  switchTravelTab(travelOpenTab, trip);
+
+  detail.querySelectorAll(".travel-tab").forEach(btn => {
+    btn.onclick = () => switchTravelTab(btn.dataset.travelTab, trip);
+  });
+}
+
+function switchTravelTab(tab, trip) {
+  travelOpenTab = tab;
+  document.querySelectorAll(".travel-tab").forEach(b => b.classList.toggle("is-active", b.dataset.travelTab === tab));
+  document.querySelectorAll(".travel-tab-panel").forEach(p => p.hidden = true);
+  const panelId = { itinerary: "travelTabItinerary", logistics: "travelTabLogistics", budget: "travelTabBudget", packing: "travelTabPacking", notes: "travelTabNotes" }[tab];
+  if (!panelId) return;
+  document.getElementById(panelId).hidden = false;
+  switch (tab) {
+    case "itinerary":  renderTravelItinerary(trip); break;
+    case "logistics":  renderTravelLogistics(trip); break;
+    case "budget":     renderTravelBudget(trip); break;
+    case "packing":    renderTravelPacking(trip); break;
+    case "notes":      renderTravelNotes(trip); break;
+  }
+}
+
+// ── Itinerary ──────────────────────────────────────────────────────────────────
+
+function renderTravelItinerary(trip) {
+  const el = document.getElementById("travelTabItinerary");
+  if (!trip.itinerary?.length) {
+    el.innerHTML = `
+      <p style="color:var(--text-muted);font-size:0.875rem">No itinerary yet. Add days manually or ask the AI to generate one.</p>
+      <button class="travel-add-day-btn" type="button" id="travelAddDayBtn">+ Add day</button>`;
+    document.getElementById("travelAddDayBtn").addEventListener("click", () => addTravelDay(trip));
+    return;
+  }
+
+  el.innerHTML = trip.itinerary.map((day, di) => `
+    <div class="travel-day-card" data-day-index="${di}">
+      <div class="travel-day-header">
+        <span class="travel-day-date">${day.date ? formatTravelDate(day.date) : `Day ${di + 1}`}</span>
+        <input class="travel-day-location" placeholder="Location" value="${escapeHtml(day.location || "")}" data-day-location="${di}" />
+        <button class="travel-day-add-btn" type="button" data-day-add="${di}">+ Activity</button>
+        <button class="travel-activity-remove" type="button" data-day-remove="${di}" title="Remove day">✕</button>
+      </div>
+      ${(day.activities || []).map((act, ai) => `
+        <div class="travel-activity" data-act-index="${ai}">
+          <input class="travel-activity-time" placeholder="Time" value="${escapeHtml(act.time || "")}" data-act-time="${di}-${ai}" />
+          <span class="travel-activity-type-dot travel-activity-dot-${act.type || "activity"}"></span>
+          <div style="flex:1;min-width:0">
+            <input class="travel-activity-title" placeholder="Activity" value="${escapeHtml(act.title || "")}" data-act-title="${di}-${ai}" />
+            ${act.notes !== undefined ? `<input class="travel-activity-notes" placeholder="Notes" value="${escapeHtml(act.notes || "")}" data-act-notes="${di}-${ai}" />` : ""}
+          </div>
+          <button class="travel-activity-remove" type="button" data-act-remove="${di}-${ai}" title="Remove">✕</button>
+        </div>`).join("")}
+    </div>`).join("") + `<button class="travel-add-day-btn" type="button" id="travelAddDayBtn">+ Add day</button>`;
+
+  el.querySelectorAll("[data-day-location]").forEach(inp => {
+    inp.addEventListener("change", e => {
+      trip.itinerary[+e.target.dataset.dayLocation].location = e.target.value;
+      trip.updatedAt = new Date().toISOString(); persist();
+    });
+  });
+  el.querySelectorAll("[data-act-title]").forEach(inp => {
+    inp.addEventListener("change", e => {
+      const [di, ai] = e.target.dataset.actTitle.split("-").map(Number);
+      trip.itinerary[di].activities[ai].title = e.target.value;
+      trip.updatedAt = new Date().toISOString(); persist();
+    });
+  });
+  el.querySelectorAll("[data-act-time]").forEach(inp => {
+    inp.addEventListener("change", e => {
+      const [di, ai] = e.target.dataset.actTime.split("-").map(Number);
+      trip.itinerary[di].activities[ai].time = e.target.value;
+      trip.updatedAt = new Date().toISOString(); persist();
+    });
+  });
+  el.querySelectorAll("[data-act-notes]").forEach(inp => {
+    inp.addEventListener("change", e => {
+      const [di, ai] = e.target.dataset.actNotes.split("-").map(Number);
+      trip.itinerary[di].activities[ai].notes = e.target.value;
+      trip.updatedAt = new Date().toISOString(); persist();
+    });
+  });
+  el.querySelectorAll("[data-day-add]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const di = +btn.dataset.dayAdd;
+      if (!trip.itinerary[di].activities) trip.itinerary[di].activities = [];
+      trip.itinerary[di].activities.push({ id: createId("tact"), time: "", title: "", type: "activity", notes: "", estimatedCost: 0 });
+      trip.updatedAt = new Date().toISOString(); persist();
+      renderTravelItinerary(trip);
+    });
+  });
+  el.querySelectorAll("[data-day-remove]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const di = +btn.dataset.dayRemove;
+      trip.itinerary.splice(di, 1);
+      trip.updatedAt = new Date().toISOString(); persist();
+      renderTravelItinerary(trip);
+    });
+  });
+  el.querySelectorAll("[data-act-remove]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const [di, ai] = btn.dataset.actRemove.split("-").map(Number);
+      trip.itinerary[di].activities.splice(ai, 1);
+      trip.updatedAt = new Date().toISOString(); persist();
+      renderTravelItinerary(trip);
+    });
+  });
+  document.getElementById("travelAddDayBtn")?.addEventListener("click", () => addTravelDay(trip));
+}
+
+function addTravelDay(trip) {
+  if (!Array.isArray(trip.itinerary)) trip.itinerary = [];
+  const lastDay = trip.itinerary[trip.itinerary.length - 1];
+  let date = "";
+  if (lastDay?.date) {
+    const d = new Date(lastDay.date + "T12:00:00");
+    d.setDate(d.getDate() + 1);
+    date = dateKeyFromDate(d);
+  } else if (trip.startDate) {
+    const d = new Date(trip.startDate + "T12:00:00");
+    d.setDate(d.getDate() + trip.itinerary.length);
+    date = dateKeyFromDate(d);
+  }
+  trip.itinerary.push({ date, location: "", activities: [] });
+  trip.updatedAt = new Date().toISOString();
+  persist();
+  renderTravelItinerary(trip);
+}
+
+// ── Logistics ──────────────────────────────────────────────────────────────────
+
+function renderTravelLogistics(trip) {
+  const el = document.getElementById("travelTabLogistics");
+  const items = trip.logistics || [];
+
+  el.innerHTML = `
+    <div class="travel-logistics-list" id="travelLogisticsList">
+      ${items.map((l, i) => `
+        <div class="travel-logistic-card">
+          <span class="travel-logistic-icon">${TRAVEL_LOGISTIC_ICONS[l.type] || "📌"}</span>
+          <div class="travel-logistic-body">
+            <input class="travel-logistic-title" value="${escapeHtml(l.title || "")}" placeholder="Title" data-log-title="${i}" />
+            <div class="travel-logistic-meta">
+              <select class="travel-logistic-field" data-log-type="${i}" style="min-width:70px">
+                ${["flight","hotel","car","train","ferry","other"].map(t => `<option value="${t}"${l.type===t?" selected":""}>${t.charAt(0).toUpperCase()+t.slice(1)}</option>`).join("")}
+              </select>
+              <input class="travel-logistic-field" type="date" value="${l.startDate||""}" placeholder="Date" data-log-date="${i}" />
+              <input class="travel-logistic-field" placeholder="Confirmation #" value="${escapeHtml(l.confirmation||"")}" data-log-conf="${i}" style="min-width:100px" />
+              <input class="travel-logistic-field" placeholder="Notes" value="${escapeHtml(l.notes||"")}" data-log-notes="${i}" style="min-width:80px" />
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <div class="travel-logistic-cost">$<input class="travel-budget-amount" type="number" min="0" value="${l.cost||0}" data-log-cost="${i}" style="width:55px" /></div>
+            <button class="travel-logistic-remove" type="button" data-log-remove="${i}">✕</button>
+          </div>
+        </div>`).join("")}
+    </div>
+    <button class="travel-add-day-btn" type="button" id="travelAddLogisticBtn">+ Add flight / hotel / car</button>`;
+
+  el.querySelectorAll("[data-log-title]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logTitle].title = e.target.value; persist(); }));
+  el.querySelectorAll("[data-log-type]").forEach(sel => sel.addEventListener("change", e => { trip.logistics[+e.target.dataset.logType].type = e.target.value; renderTravelLogistics(trip); persist(); }));
+  el.querySelectorAll("[data-log-date]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logDate].startDate = e.target.value; persist(); }));
+  el.querySelectorAll("[data-log-conf]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logConf].confirmation = e.target.value; persist(); }));
+  el.querySelectorAll("[data-log-notes]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logNotes].notes = e.target.value; persist(); }));
+  el.querySelectorAll("[data-log-cost]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logCost].cost = parseFloat(e.target.value) || 0; trip.updatedAt = new Date().toISOString(); persist(); renderTravelBudget(trip); }));
+  el.querySelectorAll("[data-log-remove]").forEach(btn => btn.addEventListener("click", () => { trip.logistics.splice(+btn.dataset.logRemove, 1); persist(); renderTravelLogistics(trip); }));
+  document.getElementById("travelAddLogisticBtn").addEventListener("click", () => {
+    if (!Array.isArray(trip.logistics)) trip.logistics = [];
+    trip.logistics.push({ id: createId("tlog"), type: "flight", title: "", startDate: "", confirmation: "", cost: 0, notes: "" });
+    trip.updatedAt = new Date().toISOString(); persist();
+    renderTravelLogistics(trip);
+  });
+}
+
+// ── Budget ──────────────────────────────────────────────────────────────────────
+
+function renderTravelBudget(trip) {
+  const el = document.getElementById("travelTabBudget");
+  if (!trip.budget) trip.budget = { total: 0, categories: Object.fromEntries(TRAVEL_BUDGET_CATS.map(c => [c, { budgeted: 0, spent: 0 }])) };
+  const budget = trip.budget;
+  const totalBudgeted = Object.values(budget.categories).reduce((s, c) => s + (c.budgeted || 0), 0) || budget.total || 0;
+  const totalSpent = (trip.expenses || []).reduce((s, e) => s + (e.amount || 0), 0);
+  const pct = totalBudgeted ? Math.min(100, Math.round(totalSpent / totalBudgeted * 100)) : 0;
+  const overBudget = totalSpent > totalBudgeted && totalBudgeted > 0;
+
+  const catRows = TRAVEL_BUDGET_CATS.map(cat => {
+    const catData = budget.categories[cat] || { budgeted: 0, spent: 0 };
+    const catSpent = (trip.expenses || []).filter(e => e.category === cat).reduce((s, e) => s + (e.amount || 0), 0);
+    const catPct = catData.budgeted ? Math.min(100, Math.round(catSpent / catData.budgeted * 100)) : 0;
+    return `<div class="travel-budget-cat">
+      <span class="travel-budget-cat-name">${cat.charAt(0).toUpperCase() + cat.slice(1)}</span>
+      <div class="travel-budget-cat-bar-wrap"><div class="travel-budget-cat-bar${catPct >= 100 ? " over" : ""}" style="width:${catPct}%"></div></div>
+      <span style="font-size:0.75rem;color:var(--text-muted);text-align:right;min-width:45px">$${catSpent.toFixed(0)} / </span>
+      <input class="travel-budget-amount" type="number" min="0" value="${catData.budgeted||0}" data-budget-cat="${cat}" style="width:55px" title="Budget for ${cat}" />
+    </div>`;
+  }).join("");
+
+  const expenses = trip.expenses || [];
+  const expenseRows = expenses.length ? expenses.map((e, i) => `
+    <div class="travel-expense-row">
+      <span class="travel-expense-date">${e.date || "—"}</span>
+      <input class="travel-expense-desc" value="${escapeHtml(e.description||"")}" placeholder="Description" data-exp-desc="${i}" />
+      <span class="travel-expense-cat">${e.category || "other"}</span>
+      <span class="travel-expense-amount">$${(e.amount||0).toFixed(2)}</span>
+      <button class="travel-expense-remove" type="button" data-exp-remove="${i}">✕</button>
+    </div>`).join("") : `<div style="font-size:0.82rem;color:var(--text-muted);padding:6px 0">No expenses logged yet.</div>`;
+
+  el.innerHTML = `
+    <div class="travel-budget-summary">
+      <div class="travel-budget-total-row">
+        <span class="travel-budget-total-label">Budget</span>
+        <span style="font-size:0.9rem;font-weight:700;color:${overBudget?"#e74c3c":"var(--ink)"}">$${totalSpent.toFixed(0)} <span style="font-weight:400;color:var(--text-muted)">/ $${totalBudgeted.toFixed(0)}</span></span>
+      </div>
+      <div class="travel-budget-bar-wrap"><div class="travel-budget-bar${overBudget?" over-budget":""}" style="width:${pct}%"></div></div>
+      <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:10px">${pct}% of budget used</div>
+      <div class="travel-budget-categories">${catRows}</div>
+    </div>
+    <div class="travel-expenses-section">
+      <div class="travel-expenses-header">
+        <span class="travel-expenses-title">Expenses</span>
+        <button class="travel-add-day-btn" type="button" id="travelAddExpenseBtn" style="font-size:0.78rem">+ Add expense</button>
+      </div>
+      <div id="travelExpensesList">${expenseRows}</div>
+    </div>`;
+
+  el.querySelectorAll("[data-budget-cat]").forEach(inp => {
+    inp.addEventListener("change", e => {
+      const cat = e.target.dataset.budgetCat;
+      if (!budget.categories[cat]) budget.categories[cat] = { budgeted: 0, spent: 0 };
+      budget.categories[cat].budgeted = parseFloat(e.target.value) || 0;
+      budget.total = Object.values(budget.categories).reduce((s, c) => s + (c.budgeted || 0), 0);
+      trip.updatedAt = new Date().toISOString(); persist();
+      renderTravelBudget(trip);
+    });
+  });
+  el.querySelectorAll("[data-exp-desc]").forEach(inp => inp.addEventListener("change", e => { trip.expenses[+e.target.dataset.expDesc].description = e.target.value; persist(); }));
+  el.querySelectorAll("[data-exp-remove]").forEach(btn => btn.addEventListener("click", () => { trip.expenses.splice(+btn.dataset.expRemove, 1); persist(); renderTravelBudget(trip); }));
+  document.getElementById("travelAddExpenseBtn").addEventListener("click", () => showTravelAddExpenseDialog(trip));
+}
+
+// ── Packing ──────────────────────────────────────────────────────────────────────
+
+function renderTravelPacking(trip) {
+  const el = document.getElementById("travelTabPacking");
+  const items = trip.packingList || [];
+  const packed = items.filter(i => i.packed).length;
+
+  const byCat = Object.fromEntries(TRAVEL_PACKING_CATS.map(c => [c, []]));
+  items.forEach(item => { (byCat[item.category] || byCat.other).push(item); });
+
+  const catHtml = TRAVEL_PACKING_CATS.map(cat => {
+    const catItems = byCat[cat];
+    if (!catItems.length) return "";
+    return `<div>
+      <div class="travel-packing-cat-label">${cat}</div>
+      ${catItems.map((item, _) => {
+        const gi = items.indexOf(item);
+        return `<div class="travel-packing-item${item.packed?" is-packed":""}" data-pack-idx="${gi}">
+          <input type="checkbox" ${item.packed?"checked":""} data-pack-check="${gi}" />
+          <input class="travel-packing-item-name" value="${escapeHtml(item.item||"")}" placeholder="Item" data-pack-name="${gi}" />
+          <button class="travel-packing-item-remove" type="button" data-pack-remove="${gi}">✕</button>
+        </div>`;
+      }).join("")}
+    </div>`;
+  }).join("");
+
+  el.innerHTML = `
+    ${items.length ? `<div class="travel-packing-progress">${packed} / ${items.length} packed</div>` : ""}
+    <div class="travel-packing-categories">${catHtml || "<p style='color:var(--text-muted);font-size:0.875rem'>No packing list yet. Add items or ask the AI to generate one.</p>"}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+      <button class="travel-add-day-btn" type="button" id="travelAddPackingBtn">+ Add item</button>
+      ${!items.length ? `<button class="secondary-btn" type="button" id="travelGenPackingBtn" style="font-size:0.82rem">Generate with AI</button>` : ""}
+    </div>`;
+
+  el.querySelectorAll("[data-pack-check]").forEach(cb => {
+    cb.addEventListener("change", e => {
+      const idx = +e.target.dataset.packCheck;
+      trip.packingList[idx].packed = e.target.checked;
+      trip.updatedAt = new Date().toISOString(); persist();
+      renderTravelPacking(trip);
+    });
+  });
+  el.querySelectorAll("[data-pack-name]").forEach(inp => inp.addEventListener("change", e => { trip.packingList[+e.target.dataset.packName].item = e.target.value; persist(); }));
+  el.querySelectorAll("[data-pack-remove]").forEach(btn => btn.addEventListener("click", () => { trip.packingList.splice(+btn.dataset.packRemove, 1); persist(); renderTravelPacking(trip); }));
+  document.getElementById("travelAddPackingBtn").addEventListener("click", () => showTravelAddPackingItemDialog(trip));
+  document.getElementById("travelGenPackingBtn")?.addEventListener("click", () => {
+    openAiPanel();
+    sendChatMessage(`Generate a packing list for my trip "${trip.name}" to ${trip.destination || "my destination"}${trip.startDate ? ` (${formatTravelDate(trip.startDate)} – ${formatTravelDate(trip.endDate)})` : ""}. Use the generate_packing_list tool.`);
+  });
+}
+
+// ── Notes ──────────────────────────────────────────────────────────────────────
+
+function renderTravelNotes(trip) {
+  const el = document.getElementById("travelTabNotes");
+  el.innerHTML = `<textarea class="travel-notes-area" id="travelTripNotes" placeholder="Notes, links, tips, contact info…">${escapeHtml(trip.notes||"")}</textarea>`;
+  document.getElementById("travelTripNotes").addEventListener("input", e => {
+    trip.notes = e.target.value;
+    trip.updatedAt = new Date().toISOString();
+    persist();
+  });
+}
+
+// ── Dialogs ──────────────────────────────────────────────────────────────────────
+
+function showTravelNewTripDialog() {
+  const d = document.createElement("dialog");
+  d.className = "context-settings-dialog";
+  d.innerHTML = `
+    <form method="dialog">
+      <h3 style="margin:0 0 14px">New Trip</h3>
+      <div class="travel-dialog-field"><label>Trip name</label><input id="tnTripName" class="text-input" placeholder="e.g. Japan Spring 2027" /></div>
+      <div class="travel-dialog-field"><label>Destination</label><input id="tnDest" class="text-input" placeholder="e.g. Tokyo, Kyoto, Osaka" /></div>
+      <div class="travel-dialog-field">
+        <label>Status</label>
+        <select id="tnStatus" class="text-input">
+          <option value="planning">Planning</option>
+          <option value="booked">Booked</option>
+          <option value="idea">Idea</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:8px">
+        <div class="travel-dialog-field" style="flex:1"><label>Start date</label><input id="tnStart" type="date" class="text-input" /></div>
+        <div class="travel-dialog-field" style="flex:1"><label>End date</label><input id="tnEnd" type="date" class="text-input" /></div>
+      </div>
+      <div class="travel-dialog-field">
+        <label>Who's coming?</label>
+        <div class="travel-party-chips" id="tnPartyChips">
+          ${TRAVEL_PARTY_OPTIONS.map(p => `<button type="button" class="travel-party-chip${p==="Luke"?" is-selected":""}" data-party="${p}">${p}</button>`).join("")}
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button type="button" class="secondary-btn" id="tnCancel">Cancel</button>
+        <button type="button" class="primary-btn" id="tnCreate">Create</button>
+      </div>
+    </form>`;
+  document.body.appendChild(d);
+  d.showModal();
+  d.querySelectorAll(".travel-party-chip").forEach(btn => {
+    btn.addEventListener("click", () => btn.classList.toggle("is-selected"));
+  });
+  d.querySelector("#tnCancel").addEventListener("click", () => d.remove());
+  d.querySelector("#tnCreate").addEventListener("click", () => {
+    const name = d.querySelector("#tnTripName").value.trim();
+    if (!name) { d.querySelector("#tnTripName").focus(); return; }
+    const party = [...d.querySelectorAll(".travel-party-chip.is-selected")].map(b => b.dataset.party);
+    const trip = defaultTrip({
+      name,
+      destination: d.querySelector("#tnDest").value.trim(),
+      status: d.querySelector("#tnStatus").value,
+      startDate: d.querySelector("#tnStart").value || "",
+      endDate: d.querySelector("#tnEnd").value || "",
+      party
+    });
+    if (!Array.isArray(state.trips)) state.trips = [];
+    state.trips.push(trip);
+    persist();
+    syncTripToCalendar(trip);
+    d.remove();
+    renderTravelSidebar();
+    openTravelItem(trip.id);
+  });
+}
+
+function showTravelNewIdeaDialog() {
+  const d = document.createElement("dialog");
+  d.className = "context-settings-dialog";
+  d.innerHTML = `
+    <form method="dialog">
+      <h3 style="margin:0 0 14px">Save a Travel Idea</h3>
+      <div class="travel-dialog-field"><label>Destination</label><input id="tiDest" class="text-input" placeholder="e.g. Patagonia, Japan, Iceland" autofocus /></div>
+      <div class="travel-dialog-field"><label>Notes (optional)</label><textarea id="tiNotes" class="text-input" rows="3" placeholder="What draws you there? Best season, things to do…"></textarea></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button type="button" class="secondary-btn" id="tiCancel">Cancel</button>
+        <button type="button" class="primary-btn" id="tiSave">Save idea</button>
+      </div>
+    </form>`;
+  document.body.appendChild(d);
+  d.showModal();
+  d.querySelector("#tiCancel").addEventListener("click", () => d.remove());
+  d.querySelector("#tiSave").addEventListener("click", () => {
+    const dest = d.querySelector("#tiDest").value.trim();
+    if (!dest) { d.querySelector("#tiDest").focus(); return; }
+    const idea = defaultTravelIdea(dest);
+    idea.description = d.querySelector("#tiNotes").value.trim();
+    if (!Array.isArray(state.travelIdeas)) state.travelIdeas = [];
+    state.travelIdeas.push(idea);
+    persist();
+    d.remove();
+    renderTravelSidebar();
+    openTravelItem(idea.id);
+  });
+}
+
+function showTravelEditDatesDialog(trip) {
+  const d = document.createElement("dialog");
+  d.className = "context-settings-dialog";
+  d.innerHTML = `
+    <form method="dialog">
+      <h3 style="margin:0 0 14px">Trip Dates</h3>
+      <div style="display:flex;gap:8px">
+        <div class="travel-dialog-field" style="flex:1"><label>Start</label><input id="tedStart" type="date" class="text-input" value="${trip.startDate||""}" /></div>
+        <div class="travel-dialog-field" style="flex:1"><label>End</label><input id="tedEnd" type="date" class="text-input" value="${trip.endDate||""}" /></div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+        <button type="button" class="secondary-btn" id="tedCancel">Cancel</button>
+        <button type="button" class="primary-btn" id="tedSave">Save</button>
+      </div>
+    </form>`;
+  document.body.appendChild(d);
+  d.showModal();
+  d.querySelector("#tedCancel").addEventListener("click", () => d.remove());
+  d.querySelector("#tedSave").addEventListener("click", () => {
+    trip.startDate = d.querySelector("#tedStart").value;
+    trip.endDate = d.querySelector("#tedEnd").value;
+    trip.updatedAt = new Date().toISOString();
+    persist();
+    syncTripToCalendar(trip);
+    d.remove();
+    renderTravelTripDetail(trip);
+    renderTravelSidebar();
+  });
+}
+
+function showTravelEditPartyDialog(trip) {
+  const d = document.createElement("dialog");
+  d.className = "context-settings-dialog";
+  d.innerHTML = `
+    <form method="dialog">
+      <h3 style="margin:0 0 14px">Who's Coming?</h3>
+      <div class="travel-party-chips" id="tepChips">
+        ${TRAVEL_PARTY_OPTIONS.map(p => `<button type="button" class="travel-party-chip${(trip.party||[]).includes(p)?" is-selected":""}" data-party="${p}">${p}</button>`).join("")}
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+        <button type="button" class="secondary-btn" id="tepCancel">Cancel</button>
+        <button type="button" class="primary-btn" id="tepSave">Save</button>
+      </div>
+    </form>`;
+  document.body.appendChild(d);
+  d.showModal();
+  d.querySelectorAll(".travel-party-chip").forEach(btn => btn.addEventListener("click", () => btn.classList.toggle("is-selected")));
+  d.querySelector("#tepCancel").addEventListener("click", () => d.remove());
+  d.querySelector("#tepSave").addEventListener("click", () => {
+    trip.party = [...d.querySelectorAll(".travel-party-chip.is-selected")].map(b => b.dataset.party);
+    trip.updatedAt = new Date().toISOString(); persist();
+    d.remove(); renderTravelTripDetail(trip);
+  });
+}
+
+function showTravelEditDestDialog(trip) {
+  const d = document.createElement("dialog");
+  d.className = "context-settings-dialog";
+  d.innerHTML = `
+    <form method="dialog">
+      <h3 style="margin:0 0 14px">Destination</h3>
+      <input id="teddDest" class="text-input" value="${escapeHtml(trip.destination||"")}" placeholder="e.g. Tokyo, Kyoto, Osaka — Japan" autofocus />
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+        <button type="button" class="secondary-btn" id="teddCancel">Cancel</button>
+        <button type="button" class="primary-btn" id="teddSave">Save</button>
+      </div>
+    </form>`;
+  document.body.appendChild(d);
+  d.showModal();
+  d.querySelector("#teddCancel").addEventListener("click", () => d.remove());
+  d.querySelector("#teddSave").addEventListener("click", () => {
+    trip.destination = d.querySelector("#teddDest").value.trim();
+    trip.updatedAt = new Date().toISOString(); persist();
+    d.remove(); renderTravelTripDetail(trip);
+  });
+}
+
+function showTravelAddExpenseDialog(trip) {
+  const d = document.createElement("dialog");
+  d.className = "context-settings-dialog";
+  d.innerHTML = `
+    <form method="dialog">
+      <h3 style="margin:0 0 14px">Log Expense</h3>
+      <div class="travel-dialog-field"><label>Description</label><input id="taeDesc" class="text-input" placeholder="e.g. Flight SFO→NRT" autofocus /></div>
+      <div style="display:flex;gap:8px">
+        <div class="travel-dialog-field" style="flex:1"><label>Amount (${trip.currency||"USD"})</label><input id="taeAmount" type="number" min="0" step="0.01" class="text-input" placeholder="0.00" /></div>
+        <div class="travel-dialog-field" style="flex:1"><label>Date</label><input id="taeDate" type="date" class="text-input" value="${dateKeyFromDate(new Date())}" /></div>
+      </div>
+      <div class="travel-dialog-field">
+        <label>Category</label>
+        <select id="taeCat" class="text-input">
+          ${TRAVEL_BUDGET_CATS.map(c => `<option value="${c}">${c.charAt(0).toUpperCase()+c.slice(1)}</option>`).join("")}
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+        <button type="button" class="secondary-btn" id="taeCancel">Cancel</button>
+        <button type="button" class="primary-btn" id="taeSave">Log expense</button>
+      </div>
+    </form>`;
+  document.body.appendChild(d);
+  d.showModal();
+  d.querySelector("#taeCancel").addEventListener("click", () => d.remove());
+  d.querySelector("#taeSave").addEventListener("click", () => {
+    const desc = d.querySelector("#taeDesc").value.trim();
+    const amount = parseFloat(d.querySelector("#taeAmount").value) || 0;
+    if (!desc || !amount) return;
+    if (!Array.isArray(trip.expenses)) trip.expenses = [];
+    trip.expenses.push({ id: createId("texp"), date: d.querySelector("#taeDate").value, description: desc, amount, category: d.querySelector("#taeCat").value });
+    trip.updatedAt = new Date().toISOString(); persist();
+    d.remove(); renderTravelBudget(trip);
+  });
+}
+
+function showTravelAddPackingItemDialog(trip) {
+  const d = document.createElement("dialog");
+  d.className = "context-settings-dialog";
+  d.innerHTML = `
+    <form method="dialog">
+      <h3 style="margin:0 0 14px">Add Packing Item</h3>
+      <div class="travel-dialog-field"><label>Item</label><input id="tapItem" class="text-input" placeholder="e.g. Passport" autofocus /></div>
+      <div class="travel-dialog-field">
+        <label>Category</label>
+        <select id="tapCat" class="text-input">
+          ${TRAVEL_PACKING_CATS.map(c => `<option value="${c}">${c.charAt(0).toUpperCase()+c.slice(1)}</option>`).join("")}
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+        <button type="button" class="secondary-btn" id="tapCancel">Cancel</button>
+        <button type="button" class="primary-btn" id="tapSave">Add</button>
+      </div>
+    </form>`;
+  document.body.appendChild(d);
+  d.showModal();
+  d.querySelector("#tapCancel").addEventListener("click", () => d.remove());
+  d.querySelector("#tapSave").addEventListener("click", () => {
+    const item = d.querySelector("#tapItem").value.trim();
+    if (!item) return;
+    if (!Array.isArray(trip.packingList)) trip.packingList = [];
+    trip.packingList.push({ id: createId("tpack"), item, category: d.querySelector("#tapCat").value, packed: false });
+    trip.updatedAt = new Date().toISOString(); persist();
+    d.remove(); renderTravelPacking(trip);
+  });
+}
+
+// ── Calendar sync ──────────────────────────────────────────────────────────────
+
+function syncTripToCalendar(trip) {
+  if (!trip.startDate || !trip.endDate) return;
+  const title = `✈ ${trip.name}`;
+  state.planEvents = (state.planEvents || []).filter(e => e.travelTripId !== trip.id);
+  state.planEvents.push({
+    id: createId("plan-evt"),
+    travelTripId: trip.id,
+    createdAt: new Date().toISOString(),
+    title, date: trip.startDate, endDate: trip.endDate,
+    allDay: true, startTime: null, endTime: null,
+    notes: trip.destination || "", color: "#e67e22", calendarId: null
+  });
+  persist();
+  if (activeAppArea === "plan") renderPlanPage();
+}
+
+// ── AI chat context ────────────────────────────────────────────────────────────
+
+function buildChatTravelContext() {
+  const lines = [];
+  const ideas = travelIdeas();
+  const trips = travelTrips();
+
+  if (ideas.length) {
+    lines.push(`TRAVEL IDEAS (${ideas.length}):`);
+    ideas.forEach(i => lines.push(`  - ${i.destination}${i.description ? ` — ${i.description.slice(0,80)}` : ""}`));
+  }
+
+  const today = dateKeyFromDate(new Date());
+  const upcoming = trips.filter(t => !t.endDate || t.endDate >= today);
+  const past = trips.filter(t => t.endDate && t.endDate < today);
+
+  if (upcoming.length) {
+    lines.push(`\nUPCOMING TRIPS (${upcoming.length}):`);
+    upcoming.forEach(t => {
+      lines.push(`  Trip: "${t.name}" [${tripStatus(t)}]`);
+      if (t.destination) lines.push(`  Destination: ${t.destination}`);
+      if (t.startDate) lines.push(`  Dates: ${formatTravelDate(t.startDate)} – ${formatTravelDate(t.endDate)}`);
+      if (t.party?.length) lines.push(`  Party: ${t.party.join(", ")}`);
+      const totalBudgeted = t.budget?.total || Object.values(t.budget?.categories||{}).reduce((s,c) => s+(c.budgeted||0), 0);
+      const totalSpent = (t.expenses||[]).reduce((s,e) => s+(e.amount||0), 0);
+      if (totalBudgeted) lines.push(`  Budget: $${totalSpent.toFixed(0)} spent of $${totalBudgeted.toFixed(0)}`);
+      if (t.itinerary?.length) {
+        lines.push(`  Itinerary (${t.itinerary.length} days):`);
+        t.itinerary.slice(0, 3).forEach(day => {
+          lines.push(`    ${day.date ? formatTravelDate(day.date) : "?"}: ${day.location || "location TBD"}`);
+          (day.activities||[]).slice(0, 3).forEach(a => lines.push(`      - ${a.time ? a.time+" " : ""}${a.title}`));
+        });
+        if (t.itinerary.length > 3) lines.push(`    … and ${t.itinerary.length - 3} more days`);
+      }
+      if (t.logistics?.length) {
+        lines.push(`  Logistics:`);
+        t.logistics.forEach(l => lines.push(`    [${l.type.toUpperCase()}] ${l.title}${l.startDate ? ", "+l.startDate : ""}${l.confirmation ? ", Conf: "+l.confirmation : ""}${l.cost ? ", $"+l.cost : ""}`));
+      }
+    });
+  }
+
+  if (past.length) {
+    lines.push(`\nPAST TRIPS (${past.length}): ${past.map(t => t.name).join(", ")}`);
+  }
+
+  return lines.join("\n") || "No travel data yet.";
+}
+
+// ── Home-screen briefing panel ────────────────────────────────────────────────
+
+async function renderHomeBriefing() {
+  const panel = document.getElementById("homeBriefing");
+  if (!panel) return;
+  panel.hidden = false;
+
+  const dateEl = document.getElementById("homeBriefingDate");
+  if (dateEl) {
+    dateEl.textContent = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  }
+
+  renderHomeBriefingPanels();
+
+  const todayKey = dateKeyFromDate(new Date());
+  const cacheKey = `briefing_ai_${todayKey}`;
+  const cached = readBriefingCache(cacheKey);
+  const aiEl = document.getElementById("homeBriefingAi");
+  if (!aiEl) return;
+
+  if (cached) {
+    aiEl.textContent = cached;
+  } else {
+    aiEl.innerHTML = `<span class="home-briefing-ai-loading">Generating…</span>`;
+    await fetchAndStreamBriefing(aiEl, cacheKey);
+  }
+}
+
+function readBriefingCache(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const { text, ts } = JSON.parse(raw);
+    if (Date.now() - ts > 6 * 60 * 60 * 1000) return null;
+    return text;
+  } catch { return null; }
+}
+
+function renderHomeBriefingPanels() {
+  const el = document.getElementById("homeBriefingPanels");
+  if (!el) return;
+
+  const todayKey = dateKeyFromDate(new Date());
+  const tomorrowKey = dateKeyFromDate(addDays(new Date(), 1));
+
+  // Calendar: today + tomorrow
+  const events = (state.planEvents || [])
+    .filter(e => e.date === todayKey || e.date === tomorrowKey)
+    .sort((a, b) => a.date.localeCompare(b.date) || (a.startTime || "").localeCompare(b.startTime || ""));
+
+  // Tasks: today's tasks from the do planner
+  const wk = weekKey();
+  const todayDayId = doPrepDays.find(d => {
+    const ws = startOfPrepWindow(new Date());
+    const dd = addDays(ws, d.offset);
+    dd.setHours(0, 0, 0, 0);
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    return dd.getTime() === t.getTime();
+  })?.id;
+  const todayTasks = todayDayId ? rawDoTasksForDay(todayDayId, wk).filter(t => !t.done) : [];
+  const overdueTasks = doPrepDays
+    .flatMap(d => rawDoTasksForDay(d.id, wk).filter(t => !t.done && t.dueDate && t.dueDate < todayKey))
+    .slice(0, 3);
+
+  // Dinner tonight — slot keys are named "MJ Dinner", "Luke Dinner", etc.
+  const plan = state.plans?.[wk];
+  const todaySlots = plan?.slots?.[todayDayId] || {};
+  const dinner = Object.entries(todaySlots)
+    .filter(([key]) => key.toLowerCase().includes("dinner"))
+    .flatMap(([, v]) => Array.isArray(v) ? v : [v])
+    .filter(Boolean)
+    .map(entry => mealInputValue(entry))
+    .filter(Boolean)
+    .filter((name, i, arr) => arr.indexOf(name) === i); // dedupe combined/individual
+
+  function evHtml(e) {
+    const isTomorrow = e.date === tomorrowKey;
+    const time = !e.allDay && e.startTime ? `${e.startTime} ` : "";
+    return `<div class="home-briefing-item${isTomorrow ? " hb-tomorrow" : ""}">${escapeHtml(time + (isTomorrow ? "Tomorrow: " : "") + e.title)}</div>`;
+  }
+
+  function taskHtml(t, overdue) {
+    return `<div class="home-briefing-item${overdue ? " hb-overdue" : ""}">${escapeHtml(t.title)}</div>`;
+  }
+
+  const allTasks = [...overdueTasks.map(t => taskHtml(t, true)), ...todayTasks.slice(0, 3 - overdueTasks.length).map(t => taskHtml(t, false))];
+
+  el.innerHTML = `
+    <button type="button" class="home-briefing-panel home-briefing-panel--btn" id="hbCalPanel">
+      <div class="home-briefing-panel-label">Calendar</div>
+      ${events.length ? events.slice(0, 3).map(evHtml).join("") : '<div class="home-briefing-empty">Clear</div>'}
+    </button>
+    <button type="button" class="home-briefing-panel home-briefing-panel--btn" id="hbDoPanel">
+      <div class="home-briefing-panel-label">Tasks</div>
+      ${allTasks.length ? allTasks.join("") : '<div class="home-briefing-empty">All clear</div>'}
+    </button>
+    ${dinner.length ? `
+    <button type="button" class="home-briefing-panel home-briefing-panel--btn" id="hbEatPanel">
+      <div class="home-briefing-panel-label">Tonight</div>
+      ${dinner.slice(0, 2).map(m => `<div class="home-briefing-item">${escapeHtml(m)}</div>`).join("")}
+    </button>` : ""}
+  `;
+
+  document.getElementById("hbCalPanel")?.addEventListener("click", showPlanApp);
+  document.getElementById("hbDoPanel")?.addEventListener("click", showDoApp);
+  document.getElementById("hbEatPanel")?.addEventListener("click", showEatApp);
+}
+
+async function fetchAndStreamBriefing(targetEl, cacheKey) {
+  const session = supabaseClient ? await supabaseClient.auth.getSession() : null;
+  const token = session?.data?.session?.access_token;
+  if (!token) { targetEl.textContent = ""; return; }
+
+  // Pull recent inbox for mail context
+  let mailContext = "";
+  try {
+    const mailData = await callGmailApi({ action: "list", labelIds: ["INBOX"], maxResults: 6 });
+    const threads = (mailData?.messages || []).slice(0, 6);
+    if (threads.length) {
+      mailContext = "\n\nRECENT INBOX:\n" + threads.map(m =>
+        `  - From ${m.from || "unknown"}: "${m.subject || "(no subject)"}"`
+        + (m.snippet ? ` — ${cleanMailSnippet(m.snippet).slice(0, 80)}` : "")
+      ).join("\n");
+    }
+  } catch { /* mail unavailable, continue without it */ }
+
+  const ctx = buildBriefingContext() + mailContext;
+  const prompt = "Give me a 2–3 sentence morning briefing for my home screen. Lead with the single most time-sensitive thing today across my calendar, tasks, and mail. Be warm but direct — prose only, no bullet points.";
+  const messages = [{ role: "user", content: `CURRENT CONTEXT:\n${ctx}\n\n---\n\n${prompt}` }];
+
+  let res;
+  try {
+    res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ messages })
+    });
+  } catch { targetEl.textContent = ""; return; }
+
+  if (!res.ok) { targetEl.textContent = ""; return; }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let text = "";
+  targetEl.textContent = "";
+
+  try {
+    outer: while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const raw = line.slice(6).trim();
+        if (!raw) continue;
+        let ev;
+        try { ev = JSON.parse(raw); } catch { continue; }
+        if (ev.type === "text") { text += ev.text; targetEl.textContent = text; }
+        if (ev.type === "done") break outer;
+      }
+    }
+  } catch { /* partial text is fine */ }
+
+  if (text) {
+    try { localStorage.setItem(cacheKey, JSON.stringify({ text, ts: Date.now() })); } catch { /* storage full */ }
+  }
 }
 
 async function sendDailyBriefing() {
@@ -31641,6 +32787,7 @@ function buildChatContext(section) {
       case "sweat":    ctx += buildChatSweatContext() + "\n\n" + buildChatHealthContext(); break;
       case "schedule": ctx += buildChatPlanContext();     break;
       case "stock":    ctx += buildChatStockContext();    break;
+      case "travel":   ctx += buildChatTravelContext();   break;
       default:         ctx += buildChatGeneralContext();  break;
     }
   } catch (e) { console.error("[chat context]", e); }

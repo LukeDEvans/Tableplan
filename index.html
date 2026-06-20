@@ -167,12 +167,23 @@
         <section class="home-page" id="homeMainPage" aria-label="Live home">
           <div class="home-center">
             <h2>Live</h2>
+            <div class="home-briefing" id="homeBriefing" hidden>
+              <div class="home-briefing-top">
+                <span class="home-briefing-date" id="homeBriefingDate"></span>
+                <button class="home-briefing-refresh" id="homeBriefingRefresh" type="button" aria-label="Refresh briefing">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                </button>
+              </div>
+              <div class="home-briefing-ai" id="homeBriefingAi"></div>
+              <div class="home-briefing-panels" id="homeBriefingPanels"></div>
+            </div>
             <nav class="home-links" aria-label="App pages">
               <button type="button" id="homePlayBtn">Exercise</button>
               <button type="button" id="homeMailBtn">Mail</button>
               <button type="button" id="homeEatBtn">Meal Plan</button>
               <button type="button" id="homeReadBtn">Media</button>
               <button type="button" id="homeRecreateBtn">Recreate</button>
+              <button type="button" id="homeTravelBtn">Travel</button>
               <button type="button" id="homePlanBtn">Calendar</button>
               <button type="button" id="homeShopBtn">Shop</button>
               <button type="button" id="homeInventoryBtn">Stock</button>
@@ -383,6 +394,76 @@
         </section>
         <section class="planner-column do-column" id="recreateMainPage" aria-label="Recreate" hidden>
           <div class="planner-grid" id="recreatePlannerGrid"></div>
+        </section>
+        <section class="travel-page" id="travelMainPage" aria-label="Travel" hidden>
+          <div class="travel-mobile-bar">
+            <button class="icon-btn" type="button" id="travelSidebarToggle" aria-label="Toggle sidebar">
+              <svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </button>
+            <span class="travel-mobile-title" id="travelMobileTitle">Travel</span>
+          </div>
+          <div class="travel-layout">
+            <div class="travel-sidebar" id="travelSidebar">
+              <div class="travel-sidebar-header">
+                <span class="travel-sidebar-heading">Travel</span>
+                <button class="travel-new-btn" type="button" id="travelNewTripBtn">+ Trip</button>
+              </div>
+              <div class="travel-sidebar-group" id="travelIdeasGroup">
+                <div class="travel-sidebar-label">Ideas</div>
+                <div id="travelIdeasList"></div>
+                <button class="travel-add-link" type="button" id="travelAddIdeaBtn">+ Add idea</button>
+              </div>
+              <div class="travel-sidebar-group" id="travelUpcomingGroup">
+                <div class="travel-sidebar-label">Upcoming</div>
+                <div id="travelUpcomingList"></div>
+              </div>
+              <div class="travel-sidebar-group" id="travelPastGroup">
+                <div class="travel-sidebar-label">Past</div>
+                <div id="travelPastList"></div>
+              </div>
+            </div>
+            <div class="travel-detail" id="travelDetail" hidden>
+              <div class="travel-detail-header">
+                <div class="travel-detail-title-row">
+                  <h2 class="travel-detail-name" id="travelDetailName" contenteditable="true" spellcheck="true"></h2>
+                  <div class="travel-detail-header-actions">
+                    <select class="travel-status-select" id="travelStatusSelect">
+                      <option value="idea">Idea</option>
+                      <option value="planning">Planning</option>
+                      <option value="booked">Booked</option>
+                      <option value="completed">Completed</option>
+                    </select>
+                    <button class="icon-btn travel-delete-btn" type="button" id="travelDeleteBtn" title="Delete trip">
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="travel-detail-meta" id="travelDetailMeta"></div>
+                <nav class="travel-tabs" id="travelTabs" aria-label="Trip sections">
+                  <button class="travel-tab is-active" type="button" data-travel-tab="itinerary">Itinerary</button>
+                  <button class="travel-tab" type="button" data-travel-tab="logistics">Logistics</button>
+                  <button class="travel-tab" type="button" data-travel-tab="budget">Budget</button>
+                  <button class="travel-tab" type="button" data-travel-tab="packing">Packing</button>
+                  <button class="travel-tab" type="button" data-travel-tab="notes">Notes</button>
+                </nav>
+              </div>
+              <div class="travel-detail-body">
+                <div class="travel-tab-panel" id="travelTabItinerary"></div>
+                <div class="travel-tab-panel" id="travelTabLogistics" hidden></div>
+                <div class="travel-tab-panel" id="travelTabBudget" hidden></div>
+                <div class="travel-tab-panel" id="travelTabPacking" hidden></div>
+                <div class="travel-tab-panel" id="travelTabNotes" hidden></div>
+              </div>
+            </div>
+            <div class="travel-empty" id="travelEmpty">
+              <div class="travel-empty-icon">✈</div>
+              <p>Where to next? Save ideas or plan a full trip.</p>
+              <div class="travel-empty-actions">
+                <button class="primary-btn" type="button" id="travelEmptyTripBtn">+ Plan a trip</button>
+                <button class="secondary-btn" type="button" id="travelEmptyIdeaBtn">+ Save an idea</button>
+              </div>
+            </div>
+          </div>
         </section>
         <section class="planner-column do-column" id="planMainPage" aria-label="Plan" hidden>
           <div class="plan-calendar" id="planCalendar"></div>
