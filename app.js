@@ -31815,6 +31815,10 @@ function showTravelApp(event) {
   closePageTitleMenu();
   closeAppMenu();
   renderTravelPage();
+  document.getElementById("travelNewTripBtn")?.addEventListener("click", showTravelNewTripDialog);
+  document.getElementById("travelAddIdeaBtn")?.addEventListener("click", showTravelNewIdeaDialog);
+  document.getElementById("travelEmptyTripBtn")?.addEventListener("click", showTravelNewTripDialog);
+  document.getElementById("travelEmptyIdeaBtn")?.addEventListener("click", showTravelNewIdeaDialog);
 }
 
 function renderTravelPage() {
@@ -32282,9 +32286,9 @@ function renderTravelNotes(trip) {
 
 function showTravelNewTripDialog() {
   const d = document.createElement("dialog");
-  d.className = "context-settings-dialog";
+  d.className = "recipe-dialog auth-dialog";
   d.innerHTML = `
-    <form method="dialog">
+    <div class="recipe-form"><form method="dialog" style="display:contents">
       <h3 style="margin:0 0 14px">New Trip</h3>
       <div class="travel-dialog-field"><label>Trip name</label><input id="tnTripName" class="text-input" placeholder="e.g. Japan Spring 2027" /></div>
       <div class="travel-dialog-field"><label>Destination</label><input id="tnDest" class="text-input" placeholder="e.g. Tokyo, Kyoto, Osaka" /></div>
@@ -32310,7 +32314,7 @@ function showTravelNewTripDialog() {
         <button type="button" class="secondary-btn" id="tnCancel">Cancel</button>
         <button type="button" class="primary-btn" id="tnCreate">Create</button>
       </div>
-    </form>`;
+    </form></div>`;
   document.body.appendChild(d);
   d.showModal();
   d.querySelectorAll(".travel-party-chip").forEach(btn => {
@@ -32341,9 +32345,9 @@ function showTravelNewTripDialog() {
 
 function showTravelNewIdeaDialog() {
   const d = document.createElement("dialog");
-  d.className = "context-settings-dialog";
+  d.className = "recipe-dialog auth-dialog";
   d.innerHTML = `
-    <form method="dialog">
+    <div class="recipe-form"><form method="dialog" style="display:contents">
       <h3 style="margin:0 0 14px">Save a Travel Idea</h3>
       <div class="travel-dialog-field"><label>Destination</label><input id="tiDest" class="text-input" placeholder="e.g. Patagonia, Japan, Iceland" autofocus /></div>
       <div class="travel-dialog-field"><label>Notes (optional)</label><textarea id="tiNotes" class="text-input" rows="3" placeholder="What draws you there? Best season, things to do…"></textarea></div>
@@ -32351,7 +32355,7 @@ function showTravelNewIdeaDialog() {
         <button type="button" class="secondary-btn" id="tiCancel">Cancel</button>
         <button type="button" class="primary-btn" id="tiSave">Save idea</button>
       </div>
-    </form>`;
+    </form></div>`;
   document.body.appendChild(d);
   d.showModal();
   d.querySelector("#tiCancel").addEventListener("click", () => d.remove());
@@ -32371,9 +32375,9 @@ function showTravelNewIdeaDialog() {
 
 function showTravelEditDatesDialog(trip) {
   const d = document.createElement("dialog");
-  d.className = "context-settings-dialog";
+  d.className = "recipe-dialog auth-dialog";
   d.innerHTML = `
-    <form method="dialog">
+    <div class="recipe-form"><form method="dialog" style="display:contents">
       <h3 style="margin:0 0 14px">Trip Dates</h3>
       <div style="display:flex;gap:8px">
         <div class="travel-dialog-field" style="flex:1"><label>Start</label><input id="tedStart" type="date" class="text-input" value="${trip.startDate||""}" /></div>
@@ -32383,7 +32387,7 @@ function showTravelEditDatesDialog(trip) {
         <button type="button" class="secondary-btn" id="tedCancel">Cancel</button>
         <button type="button" class="primary-btn" id="tedSave">Save</button>
       </div>
-    </form>`;
+    </form></div>`;
   document.body.appendChild(d);
   d.showModal();
   d.querySelector("#tedCancel").addEventListener("click", () => d.remove());
@@ -32401,9 +32405,9 @@ function showTravelEditDatesDialog(trip) {
 
 function showTravelEditPartyDialog(trip) {
   const d = document.createElement("dialog");
-  d.className = "context-settings-dialog";
+  d.className = "recipe-dialog auth-dialog";
   d.innerHTML = `
-    <form method="dialog">
+    <div class="recipe-form"><form method="dialog" style="display:contents">
       <h3 style="margin:0 0 14px">Who's Coming?</h3>
       <div class="travel-party-chips" id="tepChips">
         ${TRAVEL_PARTY_OPTIONS.map(p => `<button type="button" class="travel-party-chip${(trip.party||[]).includes(p)?" is-selected":""}" data-party="${p}">${p}</button>`).join("")}
@@ -32412,7 +32416,7 @@ function showTravelEditPartyDialog(trip) {
         <button type="button" class="secondary-btn" id="tepCancel">Cancel</button>
         <button type="button" class="primary-btn" id="tepSave">Save</button>
       </div>
-    </form>`;
+    </form></div>`;
   document.body.appendChild(d);
   d.showModal();
   d.querySelectorAll(".travel-party-chip").forEach(btn => btn.addEventListener("click", () => btn.classList.toggle("is-selected")));
@@ -32426,16 +32430,16 @@ function showTravelEditPartyDialog(trip) {
 
 function showTravelEditDestDialog(trip) {
   const d = document.createElement("dialog");
-  d.className = "context-settings-dialog";
+  d.className = "recipe-dialog auth-dialog";
   d.innerHTML = `
-    <form method="dialog">
+    <div class="recipe-form"><form method="dialog" style="display:contents">
       <h3 style="margin:0 0 14px">Destination</h3>
       <input id="teddDest" class="text-input" value="${escapeHtml(trip.destination||"")}" placeholder="e.g. Tokyo, Kyoto, Osaka — Japan" autofocus />
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
         <button type="button" class="secondary-btn" id="teddCancel">Cancel</button>
         <button type="button" class="primary-btn" id="teddSave">Save</button>
       </div>
-    </form>`;
+    </form></div>`;
   document.body.appendChild(d);
   d.showModal();
   d.querySelector("#teddCancel").addEventListener("click", () => d.remove());
@@ -32448,9 +32452,9 @@ function showTravelEditDestDialog(trip) {
 
 function showTravelAddExpenseDialog(trip) {
   const d = document.createElement("dialog");
-  d.className = "context-settings-dialog";
+  d.className = "recipe-dialog auth-dialog";
   d.innerHTML = `
-    <form method="dialog">
+    <div class="recipe-form"><form method="dialog" style="display:contents">
       <h3 style="margin:0 0 14px">Log Expense</h3>
       <div class="travel-dialog-field"><label>Description</label><input id="taeDesc" class="text-input" placeholder="e.g. Flight SFO→NRT" autofocus /></div>
       <div style="display:flex;gap:8px">
@@ -32467,7 +32471,7 @@ function showTravelAddExpenseDialog(trip) {
         <button type="button" class="secondary-btn" id="taeCancel">Cancel</button>
         <button type="button" class="primary-btn" id="taeSave">Log expense</button>
       </div>
-    </form>`;
+    </form></div>`;
   document.body.appendChild(d);
   d.showModal();
   d.querySelector("#taeCancel").addEventListener("click", () => d.remove());
@@ -32484,9 +32488,9 @@ function showTravelAddExpenseDialog(trip) {
 
 function showTravelAddPackingItemDialog(trip) {
   const d = document.createElement("dialog");
-  d.className = "context-settings-dialog";
+  d.className = "recipe-dialog auth-dialog";
   d.innerHTML = `
-    <form method="dialog">
+    <div class="recipe-form"><form method="dialog" style="display:contents">
       <h3 style="margin:0 0 14px">Add Packing Item</h3>
       <div class="travel-dialog-field"><label>Item</label><input id="tapItem" class="text-input" placeholder="e.g. Passport" autofocus /></div>
       <div class="travel-dialog-field">
@@ -32499,7 +32503,7 @@ function showTravelAddPackingItemDialog(trip) {
         <button type="button" class="secondary-btn" id="tapCancel">Cancel</button>
         <button type="button" class="primary-btn" id="tapSave">Add</button>
       </div>
-    </form>`;
+    </form></div>`;
   document.body.appendChild(d);
   d.showModal();
   d.querySelector("#tapCancel").addEventListener("click", () => d.remove());
