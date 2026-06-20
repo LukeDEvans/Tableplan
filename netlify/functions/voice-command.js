@@ -143,6 +143,14 @@ Add a workout to the exercise library:
 Add a song to the piano practice list:
 {"action":"addPianoSong","title":"<song title>"}
 
+Log a food or meal to the food log (what was actually eaten, not the meal plan):
+{"action":"logMeal","name":"<food or meal name>","mealType":"breakfast|lunch|dinner|snack","date":"<YYYY-MM-DD or omit for today>"}
+
+Add a personal calendar event:
+{"action":"addEvent","title":"<event title>","date":"<YYYY-MM-DD>","startTime":"<HH:MM or omit for all-day>","endTime":"<HH:MM or omit>","notes":"<optional>"}
+- "today" → date="${today.slice(0,10)}"
+- For timed events include startTime in 24h format; omit for all-day
+
 If unclear:
 {"action":"unknown","message":"<brief explanation>"}
 
@@ -277,6 +285,39 @@ async function applyToSupabase(actions, householdId, providedSecret, serviceKey,
         },
         notes: "", logs: [], createdAt: new Date().toISOString(),
       });
+    } else if (action.action === "addEvent") {
+      const title = String(action.title || "").trim();
+      const date = String(action.date || "").trim();
+      if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+      const startTime = action.startTime ? String(action.startTime).trim() : null;
+      const endTime = action.endTime ? String(action.endTime).trim() : null;
+      const notes = String(action.notes || "").trim();
+      const allDay = !startTime;
+      if (!Array.isArray(state.planEvents)) state.planEvents = [];
+      state.planEvents.push({
+        id: newId(), createdAt: new Date().toISOString(),
+        title, date, allDay, startTime: allDay ? null : startTime,
+        endTime: allDay ? null : endTime, notes,
+        color: "#4285f4", calendarId: null
+      });
+    } else if (action.action === "logMeal") {
+      const displayName = String(action.name || "").trim();
+      if (!displayName) continue;
+      const mealTypes = ["breakfast", "lunch", "dinner", "snack"];
+      const mealType = mealTypes.includes(action.mealType) ? action.mealType : "snack";
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(action.date || "")
+        ? action.date
+        : new Date().toISOString().slice(0, 10);
+      const members = Array.isArray(state.familyMembers) ? state.familyMembers : [];
+      const lukeId = members.find((m) => (m.name || "").toLowerCase().includes("luke"))?.id || members[0]?.id || "";
+      if (!lukeId) continue;
+      if (!Array.isArray(state.foodLogEntries)) state.foodLogEntries = [];
+      state.foodLogEntries.push({
+        id: newId(), familyMemberId: lukeId,
+        date, sourceType: "manual", sourceId: "", displayName,
+        servingMultiplier: 1, mealType, notes: "", leftovers: false,
+        nutritionSnapshot: {}, checklistContributions: []
+      });
     } else if (action.action === "addPianoSong") {
       const title = String(action.title || "").trim();
       if (!title) continue;
@@ -357,6 +398,11 @@ function describeAction(action) {
   if (action.action === "completeTask") return `Completed task "${action.title}"`;
   if (action.action === "addWorkout") return `Added "${action.title}" to your exercise library`;
   if (action.action === "addPianoSong") return `Added "${action.title}" to your piano practice list`;
+  if (action.action === "logMeal") return `Logged "${action.name}" as ${action.mealType || "snack"}${action.date ? ` on ${action.date}` : " today"}`;
+  if (action.action === "addEvent") {
+    const timeStr = action.startTime ? ` at ${action.startTime}` : "";
+    return `Added "${action.title}" to your calendar on ${action.date}${timeStr}`;
+  }
   if (action.action === "setMeal") {
     const day = prepDays.find((d) => d.id === action.dayId);
     return `Added ${action.recipeName} to ${day?.name || action.dayId} ${action.mealType}`;

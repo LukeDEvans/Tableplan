@@ -1,3 +1,11 @@
+import * as LiveGroceryCatalog from './grocery-catalog.js';
+import * as LiveDailyDozen from './daily-dozen.js';
+import * as LiveFoodHealth from './food-health.js';
+import * as LiveFoodHealthChecklists from './food-health-checklists.js';
+import * as LiveMealPlanServings from './meal-plan-servings.js';
+import * as LiveReceiptDomain from './receipt-domain.js';
+import * as NutritionDomain from './nutrition-domain.js';
+
 const STORAGE_KEY = "tableplan-state-v1";
 const _tabIndInit = new WeakSet();
 const CALENDAR_CACHE_KEY = "eat-calendars-v1";
@@ -21,7 +29,7 @@ const autoRuleMealKeys = [...meals, ...Object.keys(combinedMealSections)];
 const fullDayMeals = meals;
 const defaultAmountOptions = ["", "pinch", "1/8", "1/4", "1/3", "1/2", "2/3", "3/4", "1", "1 1/4", "1 1/2", "1 3/4", "2", "2 1/4", "2 1/2", "2 3/4", "3", "3 1/4", "3 1/2", "3 3/4", "4", "4 1/4", "4 1/2", "4 3/4", "5", "5 1/4", "5 1/2", "5 3/4", "6", "6 1/4", "6 1/2", "6 3/4", "7", "7 1/4", "7 1/2", "7 3/4", "8", "8 1/4", "8 1/2", "8 3/4", "9", "9 1/4", "9 1/2", "9 3/4", "10", "10 1/4", "10 1/2", "10 3/4", "11", "11 1/4", "11 1/2", "11 3/4", "12", "12 1/4", "12 1/2", "12 3/4", "13", "13 1/4", "13 1/2", "13 3/4", "14", "14 1/4", "14 1/2", "14 3/4", "15", "15 1/4", "15 1/2", "15 3/4", "16"];
 const defaultQuantityOptions = ["", "to taste", "tsp", "Tbsp", "C", "pt", "qt", "gal", "oz", "lb", "g", "kg", "ml", "L", "can", "jar", "clove", "slice", "bunch", "package"];
-const defaultPrepOptions = ["", "chopped", "diced", "minced", "sliced", "grated", "zested", "juiced", "peeled", "crushed", "rinsed", "drained", "cooked", "uncooked", "melted", "softened"];
+const defaultPrepOptions = ["", "beaten", "blanched", "boiled", "chopped", "coarsely chopped", "finely chopped", "roughly chopped", "cold", "cooked", "cooled", "cored", "crumbled", "crushed", "cubed", "deveined", "diced", "finely diced", "dissolved", "drained", "dried", "divided", "finely grated", "freshly grated", "grated", "ground", "halved", "juiced", "melted", "minced", "optional", "patted dry", "peeled", "pitted", "quartered", "refrigerated", "rinsed", "roasted", "room temperature", "seeded", "shredded", "sifted", "sliced", "thinly sliced", "roughly sliced", "softened", "squeezed", "steamed", "strained", "thawed", "toasted", "trimmed", "uncooked", "zested"];
 let amountOptions = [...defaultAmountOptions];
 let quantityOptions = [...defaultQuantityOptions];
 let prepOptions = [...defaultPrepOptions];
@@ -139,12 +147,35 @@ const seedRecipes = [
 const state = loadState();
 let sharedStorageReady = false;
 let sharedStorageSaveTimer = null;
+let sharedStorageRetryTimer = null;
+let sharedStorageRetryCount = 0;
+const SHARED_STORAGE_RETRY_DELAYS = [5000, 15000, 45000]; // 5s, 15s, 45s
 let localBackupTimer = null;
 let activeSharedStorageProvider = null;
 let rowStorageReady = false;
 let lastCloudSnapshotAt = 0;
 const CLOUD_SNAPSHOT_INTERVAL_MS = 60 * 60 * 1000;
-const CLOUD_SNAPSHOT_KEEP = 25;
+const CLOUD_SNAPSHOT_KEEP = 25;        // dense recent snapshots
+const CLOUD_SNAPSHOT_HOURLY_MAX = 720; // 1 per hour going back up to 30 days
+
+// Each section is stored as its own Supabase row: id = "{stateId}:{section}"
+const STATE_SECTIONS = {
+  eat:       ["recipes", "trashedRecipes", "folders", "plans", "publishedWeeks", "recipeTags", "ingredientOptions", "autoGenerateRules", "mealPlanConfig", "activeCooking"],
+  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "checkedGroceries", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory"],
+  do:        ["doTasks", "doPlans", "doBacklog", "recurringTasks", "collapsedDays"],
+  play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
+  watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey"],
+  plan:      ["calendars", "planEvents", "planCalendars"],
+  health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
+  inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
+  recreate:  ["sailingLog", "pianoSongs", "recreateHobbies"],
+  config:    ["weeklyEmailSettings", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
+};
+
+// JSON snapshot of each section as of the last successful Supabase write.
+// null means "never written this session — write everything".
+let lastWrittenSections = null;
 let supabaseClient = null;
 let authSession = null;
 let userGroup = null;
@@ -232,6 +263,8 @@ let calendarEvents = loadCachedCalendarEvents();
 let activeCookingInterval = null;
 let selectedGroceryWeekKey = "";
 let activeGroceryStoreTab = "all";
+let groceryRangeStart = "";
+let groceryRangeEnd = "";
 let currentActiveRecipeViewId = "";
 let recipeViewMealContext = null;
 const activeRecipeScrollPositions = new Map();
@@ -303,6 +336,12 @@ const elements = {
   authForm: document.querySelector("#authForm"),
   authEmail: document.querySelector("#authEmail"),
   authMessage: document.querySelector("#authMessage"),
+  authEmailSection: document.querySelector("#authEmailSection"),
+  authOtpSection: document.querySelector("#authOtpSection"),
+  authOtpInput: document.querySelector("#authOtpInput"),
+  authCodeSentMsg: document.querySelector("#authCodeSentMsg"),
+  authBackBtn: document.querySelector("#authBackBtn"),
+  sendLoginBtn: document.querySelector("#sendLoginBtn"),
   googleSignInBtn: document.querySelector("#googleSignInBtn"),
   appleSignInBtn: document.querySelector("#appleSignInBtn"),
   closeAuthBtn: document.querySelector("#closeAuthBtn"),
@@ -340,6 +379,8 @@ const elements = {
   menuRecurringTasksBtn: document.querySelector("#menuRecurringTasksBtn"),
   menuWorkoutLibraryBtn: document.querySelector("#menuWorkoutLibraryBtn"),
   menuWorkoutLogsBtn: document.querySelector("#menuWorkoutLogsBtn"),
+  menuPodcastPriorityBtn: document.querySelector("#menuPodcastPriorityBtn"),
+  menuPublicationsBtn: document.querySelector("#menuPublicationsBtn"),
   menuReadSyncBtn: document.querySelector("#menuReadSyncBtn"),
   menuRecreateHobbiesBtn: document.querySelector("#menuRecreateHobbiesBtn"),
   menuCalendarsBtn: document.querySelector("#menuCalendarsBtn"),
@@ -489,10 +530,7 @@ const elements = {
   closeWatchArchiveBtn: document.querySelector("#closeWatchArchiveBtn"),
   homeReadBtn: document.querySelector("#homeReadBtn"),
   titleReadBtn: document.querySelector("#titleReadBtn"),
-  readingMainPage: document.querySelector("#readingMainPage"),
-  listenMainPage: document.querySelector("#listenMainPage"),
-  homeListenBtn: document.querySelector("#homeListenBtn"),
-  titleListenBtn: document.querySelector("#titleListenBtn"),
+  mediaMainPage: document.querySelector("#mediaMainPage"),
   readingPlannerGrid: document.querySelector("#readingPlannerGrid"),
   readingSearchDialog: document.querySelector("#readingSearchDialog"),
   readingSearchDialogInput: document.querySelector("#readingSearchDialogInput"),
@@ -1050,9 +1088,18 @@ function bindEvents() {
   document.querySelector("#profileLogInBtn").addEventListener("click", () => { elements.profileDialog.close(); toggleAuth(); });
   document.querySelector("#closeAdminUsersBtn").addEventListener("click", () => elements.adminUsersDialog.close());
   document.querySelector("#closeAdminHouseholdsBtn").addEventListener("click", () => elements.adminHouseholdsDialog.close());
-  elements.authForm.addEventListener("submit", sendSignInLink);
+  elements.sendLoginBtn.addEventListener("click", handleAuthFormSubmit);
+  elements.authBackBtn.addEventListener("click", resetAuthToEmailStep);
+  elements.authEmail.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); handleAuthFormSubmit(e); } });
+  elements.authOtpInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); handleAuthFormSubmit(e); } });
   elements.googleSignInBtn.addEventListener("click", signInWithGoogle);
   elements.appleSignInBtn.addEventListener("click", signInWithApple);
+  const isLocalhost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+  if (window.location.protocol === "http:" && !isLocalhost) {
+    elements.googleSignInBtn.hidden = true;
+    elements.appleSignInBtn.hidden = true;
+    document.querySelector(".auth-divider")?.remove();
+  }
   elements.closeAuthBtn.addEventListener("click", () => elements.authDialog.close());
   elements.cancelAuthBtn.addEventListener("click", () => elements.authDialog.close());
   elements.appMenuBtn.addEventListener("click", handleAppMenuButtonClick);
@@ -1110,6 +1157,8 @@ function bindEvents() {
   elements.menuIngredientOptionsBtn.addEventListener("click", () => openSettingsMenuDialog(openIngredientOptionsDialog));
   elements.menuFoodHealthSettingsBtn.addEventListener("click", () => openSettingsMenuDialog(openFoodHealthSettingsDialog));
   elements.menuMealPlanSettingsBtn.addEventListener("click", () => openSettingsMenuDialog(openMealPlanSettingsDialog));
+  elements.menuPodcastPriorityBtn.addEventListener("click", () => openSettingsMenuDialog(showPodcastPriorityModal));
+  elements.menuPublicationsBtn.addEventListener("click", () => openSettingsMenuDialog(showPublicationsModal));
   elements.menuReadSyncBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("read-sync")));
   elements.menuWatchTheatersBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("watch")));
   elements.menuRecurringTasksBtn.addEventListener("click", () => openSettingsMenuDialog(openRecurringTasksDialog));
@@ -1170,11 +1219,11 @@ function bindEvents() {
   elements.closeGroceriesPageBtn?.addEventListener("click", () => elements.groceriesPageDialog.close());
   elements.closeDailyDozenPageBtn.addEventListener("click", closeDailyDozenPage);
   elements.dailyDozenTodayBtn.addEventListener("click", () => {
-    activeDailyDozenDate = dailyDozenDomain().localDateKey();
+    activeDailyDozenDate = LiveDailyDozen.localDateKey();
     renderDailyDozen();
   });
   elements.dailyDozenDate.addEventListener("change", () => {
-    activeDailyDozenDate = elements.dailyDozenDate.value || dailyDozenDomain().localDateKey();
+    activeDailyDozenDate = elements.dailyDozenDate.value || LiveDailyDozen.localDateKey();
     renderDailyDozen();
   });
   elements.addFoodLogBtn.addEventListener("click", () => openFoodLogDialog("manual"));
@@ -1451,8 +1500,18 @@ function bindEvents() {
     }
   });
   elements.groceryForm.addEventListener("submit", addManualGroceryItem);
+
+  document.getElementById("groceryRangeStartBtn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleGroceryRangeMenu("start");
+  });
+  document.getElementById("groceryRangeEndBtn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleGroceryRangeMenu("end");
+  });
   elements.closeRecipeBtn.addEventListener("click", () => elements.recipeDialog.close());
   elements.cancelRecipeBtn.addEventListener("click", () => elements.recipeDialog.close());
+  initAiRecipeToolbar();
   elements.pantryForm?.addEventListener("submit", addPantryItem);
   document.querySelectorAll("dialog").forEach((dialog) => {
     dialog.addEventListener("click", closeDialogOnBackdropClick);
@@ -1474,10 +1533,8 @@ function bindEvents() {
       writeLocalBackup().catch(() => {});
     }
   });
-  elements.homeReadBtn.addEventListener("click", showReadingApp);
-  elements.titleReadBtn.addEventListener("click", showReadingApp);
-  elements.homeListenBtn?.addEventListener("click", showListenApp);
-  elements.titleListenBtn?.addEventListener("click", showListenApp);
+  elements.homeReadBtn.addEventListener("click", showMediaApp);
+  elements.titleReadBtn.addEventListener("click", showMediaApp);
   elements.homeShopBtn.addEventListener("click", showShopApp);
   elements.titleShopBtn.addEventListener("click", showShopApp);
   elements.openShopReceiptsBtn.addEventListener("click", openShopReceiptsDialog);
@@ -1593,6 +1650,10 @@ function closeDialogOnBackdropClick(event) {
 }
 
 async function initializeApp() {
+  initDoPlannerDelegation();
+  initTasksPageDelegation();
+  initPlanCalListDelegation();
+  initPodcastEpisodeListDelegation();
   initTouchDragPolyfill();
   registerServiceWorker();
   window.addEventListener("online", handleCameOnline);
@@ -1610,7 +1671,9 @@ async function initializeApp() {
   handleImportUrlParameter();
   handleHashNavigation();
   loadCalendarEvents();
-  initVoiceCommand();
+  initAiChatPanel();
+  initRecipeTimer();
+  wireMiniPlayer();
 }
 
 function handleHashNavigation() {
@@ -1629,8 +1692,9 @@ function handleHashNavigation() {
     schedule: showPlanApp,
     settings: showSettingsApp,
     home: showHomeApp,
-    read: showReadingApp,
-    listen: showListenApp,
+    read: showMediaApp,
+    listen: showMediaApp,
+    media: showMediaApp,
     stock: showInventoryApp,
     mail: () => showMailApp(null, hashParams),
   };
@@ -1639,6 +1703,7 @@ function handleHashNavigation() {
 
 function setPageHash(hash) {
   history.replaceState(null, "", hash ? "#" + hash : location.pathname);
+  window.scrollTo({ top: 0, behavior: "instant" });
 }
 
 async function initializeSupabaseAuth() {
@@ -1660,16 +1725,15 @@ async function initializeSupabaseAuth() {
   }
 
   authSession = data.session;
+  if (authSession?.access_token) warmMailStatus();
   supabaseClient.auth.onAuthStateChange(async (_event, session) => {
     authSession = session;
     updateAuthUi();
     if (session?.access_token) {
-      // Flush any in-flight debounced write BEFORE resetting — otherwise the 250ms
-      // timer fires after sharedStorageReady=false and the write is silently dropped.
-      if (sharedStorageReady && activeSharedStorageProvider) {
-        window.clearTimeout(sharedStorageSaveTimer);
-        await writeStateToSharedStorage().catch(() => {});
-      }
+      // Cancel any pending debounced write — the re-hydration below will write back
+      // if needed. We intentionally do NOT flush here: flushing stale in-memory state
+      // (e.g. from a dev server with old localStorage) would overwrite newer cloud data.
+      window.clearTimeout(sharedStorageSaveTimer);
       sharedStorageReady = false;
       activeSharedStorageProvider = null;
       await loadAdminConfig();
@@ -1677,6 +1741,9 @@ async function initializeSupabaseAuth() {
       await hydrateStateFromSharedStorage();
       await hydrateRecipeRowsFromSupabase();
       maybeAutoLinkProfile();
+      warmMailStatus();
+    } else {
+      mailStatusPromise = null;
     }
   });
   updateAuthUi();
@@ -1759,13 +1826,30 @@ async function toggleAuth() {
     return;
   }
 
-  elements.authMessage.textContent = "";
+  resetAuthToEmailStep();
   elements.authDialog.showModal();
   elements.authEmail.focus();
 }
 
-async function sendSignInLink(event) {
-  event.preventDefault();
+function resetAuthToEmailStep() {
+  elements.authEmailSection.hidden = false;
+  elements.authOtpSection.hidden = true;
+  elements.authBackBtn.hidden = true;
+  elements.sendLoginBtn.textContent = "Send code";
+  elements.authMessage.textContent = "";
+  if (elements.authOtpInput) elements.authOtpInput.value = "";
+}
+
+async function handleAuthFormSubmit(event) {
+  if (event?.preventDefault) event.preventDefault();
+  if (!elements.authOtpSection.hidden) {
+    await verifySignInCode();
+  } else {
+    await sendSignInCode();
+  }
+}
+
+async function sendSignInCode() {
   if (!supabaseClient) {
     elements.authMessage.textContent = "Cloud sync is not available right now.";
     return;
@@ -1774,19 +1858,49 @@ async function sendSignInLink(event) {
   const email = elements.authEmail.value.trim();
   if (!email) return;
 
-  elements.authMessage.textContent = "Sending sign-in link...";
-  const redirectTo = window.location.href.split("#")[0];
-  const { error } = await supabaseClient.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: redirectTo }
-  });
+  elements.authMessage.textContent = "Sending code...";
+  elements.sendLoginBtn.disabled = true;
+
+  const { error } = await supabaseClient.auth.signInWithOtp({ email });
+
+  elements.sendLoginBtn.disabled = false;
 
   if (error) {
     elements.authMessage.textContent = error.message;
     return;
   }
 
-  elements.authMessage.textContent = "Check your email for the sign-in link.";
+  elements.authEmailSection.hidden = true;
+  elements.authOtpSection.hidden = false;
+  elements.authBackBtn.hidden = false;
+  elements.sendLoginBtn.textContent = "Verify code";
+  elements.authCodeSentMsg.textContent = `Code sent to ${email}`;
+  elements.authMessage.textContent = "";
+  elements.authOtpInput.focus();
+}
+
+async function verifySignInCode() {
+  const email = elements.authEmail.value.trim();
+  const token = (elements.authOtpInput.value || "").trim().replace(/\s/g, "");
+
+  if (!token) {
+    elements.authMessage.textContent = "Please enter the code.";
+    return;
+  }
+
+  elements.authMessage.textContent = "Verifying...";
+  elements.sendLoginBtn.disabled = true;
+
+  const { error } = await supabaseClient.auth.verifyOtp({ email, token, type: "email" });
+
+  elements.sendLoginBtn.disabled = false;
+
+  if (error) {
+    elements.authMessage.textContent = error.message;
+    return;
+  }
+
+  elements.authDialog.close();
 }
 
 async function signInWithGoogle() {
@@ -2047,7 +2161,7 @@ function renderGroupSettingsSection() {
     { key: "eat", label: "Meal Plan" }, { key: "shop", label: "Shop" },
     { key: "do", label: "To-Do" }, { key: "watch", label: "Watch" },
     { key: "play", label: "Exercise" }, { key: "read", label: "Read" },
-    { key: "recreate", label: "Recreate" }, { key: "plan", label: "Schedule" },
+    { key: "recreate", label: "Recreate" }, { key: "plan", label: "Calendar" },
     { key: "inventory", label: "Stock" }
   ];
   const pageAccessHtml = canManageHousehold ? `
@@ -2163,6 +2277,12 @@ function persist() {
   scheduleLocalBackup();
 }
 
+function trackUsage(key) {
+  if (!state.apiUsage || typeof state.apiUsage !== "object") state.apiUsage = {};
+  state.apiUsage[key] = (state.apiUsage[key] || 0) + 1;
+  persist();
+}
+
 function getAppName() {
   return state.appName || "Live";
 }
@@ -2268,6 +2388,25 @@ function defaultState() {
     readPublications: defaultReadPublications(),
     articleSortOrder: "newest",
     readArticleIds: [],
+    articleReadDates: {},
+    podcasts: [],
+    podcastProgress: {},
+    podcastPlaylists: [],
+    podcastPlaylistItems: {},
+    podcastQueue: [],
+    podcastSaved: [],
+    podcastSavedCategories: [],
+    podcastSavedEpisodeCategories: {},
+    podcastShowTiers: {},
+    podcastEpisodeTiers: {},
+    podcastTierCount: 3,
+    podcastPrioritySort: "oldest",
+    podcastPlaylistWindow: "month",
+    libraryKey: "hclib",
+    podcastPlaylistIncludeArticles: false,
+    podcastAutoSkipped: [],
+    podcastSkipAds: false,
+    publicationTiers: {},
     inventoryBoxes: [],
     inventoryItems: [],
     inventoryRoomVisibility: {},
@@ -2294,8 +2433,8 @@ function defaultState() {
     receiptItemMappings: {},
     priceHistory: [],
     nutritionIngredientMappings: {},
-    dailyDozenCategories: dailyDozenDomain().categories,
-    familyMembers: dailyDozenDomain().familyMembers,
+    dailyDozenCategories: LiveDailyDozen.categories,
+    familyMembers: LiveDailyDozen.familyMembers,
     dailyDozenEntries: [],
     groceryDailyDozenTags: defaultGroceryDailyDozenTags(),
     dailyDozenTagSeedVersion: 2,
@@ -2322,6 +2461,10 @@ function defaultState() {
     emailPrefs: "",
     appName: "",
     voiceCommandSecret: "",
+    tombstones: {},
+    apiUsage: {},
+    aiNotes: { userPreferences: [], appGaps: [], suggestions: [], patterns: [] },
+    aiSettings: { dailyBriefingEnabled: true },
     stateUpdatedAt: ""
   };
 }
@@ -2378,12 +2521,12 @@ function normalizeState(parsed) {
     groceryPriceObservations: normalizeGroceryPriceObservations(parsed?.groceryPriceObservations, parsed?.groceryStores),
     groceryPricingSettings: normalizeGroceryPricingSettings(parsed?.groceryPricingSettings),
     receipts: normalizeReceipts(parsed?.receipts),
-    receiptItemMappings: receiptDomain().normalizeMappings(parsed?.receiptItemMappings),
+    receiptItemMappings: LiveReceiptDomain.normalizeMappings(parsed?.receiptItemMappings),
     priceHistory: normalizePriceHistory(parsed?.priceHistory, parsed?.groceryStores),
     nutritionIngredientMappings: normalizeNutritionIngredientMappings(parsed?.nutritionIngredientMappings),
-    dailyDozenCategories: dailyDozenDomain().normalizeCategories(parsed?.dailyDozenCategories),
-    familyMembers: dailyDozenDomain().normalizeFamilyMembers(parsed?.familyMembers),
-    dailyDozenEntries: dailyDozenDomain().normalizeEntries(
+    dailyDozenCategories: LiveDailyDozen.normalizeCategories(parsed?.dailyDozenCategories),
+    familyMembers: LiveDailyDozen.normalizeFamilyMembers(parsed?.familyMembers),
+    dailyDozenEntries: LiveDailyDozen.normalizeEntries(
       parsed?.dailyDozenEntries,
       parsed?.familyMembers,
       parsed?.dailyDozenCategories
@@ -2392,19 +2535,19 @@ function normalizeState(parsed) {
       ? normalizeGroceryDailyDozenTags(parsed.groceryDailyDozenTags)
       : defaultGroceryDailyDozenTags(),
     dailyDozenTagSeedVersion: Number(parsed?.dailyDozenTagSeedVersion) || 0,
-    checklistTemplates: foodHealthDomain().normalizeTemplates(
+    checklistTemplates: LiveFoodHealth.normalizeTemplates(
       parsed?.checklistTemplates,
-      dailyDozenDomain().normalizeCategories(parsed?.dailyDozenCategories)
+      LiveDailyDozen.normalizeCategories(parsed?.dailyDozenCategories)
     ),
     personChecklistSettings: {},
     personGoals: normalizePersonGoals(parsed?.personGoals),
-    dailyChecklistEntries: foodHealthDomain().normalizeDailyChecklistEntries(
+    dailyChecklistEntries: LiveFoodHealth.normalizeDailyChecklistEntries(
       parsed?.dailyChecklistEntries,
-      dailyDozenDomain().normalizeFamilyMembers(parsed?.familyMembers).map((member) => member.id)
+      LiveDailyDozen.normalizeFamilyMembers(parsed?.familyMembers).map((member) => member.id)
     ),
-    foodLogEntries: foodHealthDomain().normalizeFoodLogEntries(
+    foodLogEntries: LiveFoodHealth.normalizeFoodLogEntries(
       parsed?.foodLogEntries,
-      dailyDozenDomain().normalizeFamilyMembers(parsed?.familyMembers).map((member) => member.id)
+      LiveDailyDozen.normalizeFamilyMembers(parsed?.familyMembers).map((member) => member.id)
     ),
     foodHealthVersion: Number(parsed?.foodHealthVersion) || 0,
     ingredientOptions: normalizeIngredientOptions(parsed?.ingredientOptions),
@@ -2425,11 +2568,26 @@ function normalizeState(parsed) {
     appName: typeof parsed?.appName === "string" ? parsed.appName.trim() : "",
     emailPrefs: String(parsed?.emailPrefs || ""),
     voiceCommandSecret: typeof parsed?.voiceCommandSecret === "string" ? parsed.voiceCommandSecret : "",
-    stateUpdatedAt: typeof parsed?.stateUpdatedAt === "string" ? parsed.stateUpdatedAt : ""
+    tombstones: normalizeTombstones(parsed?.tombstones),
+    apiUsage: (parsed?.apiUsage && typeof parsed.apiUsage === "object" && !Array.isArray(parsed.apiUsage)) ? parsed.apiUsage : {},
+    stateUpdatedAt: typeof parsed?.stateUpdatedAt === "string" ? parsed.stateUpdatedAt : "",
+    // Podcast — not normalized elsewhere; guard the types that render functions loop over directly.
+    podcasts: Array.isArray(parsed?.podcasts) ? parsed.podcasts : [],
+    podcastProgress: (parsed?.podcastProgress !== null && typeof parsed?.podcastProgress === "object" && !Array.isArray(parsed?.podcastProgress)) ? parsed.podcastProgress : {},
+    podcastSaved: Array.isArray(parsed?.podcastSaved) ? parsed.podcastSaved : [],
+    podcastQueue: Array.isArray(parsed?.podcastQueue) ? parsed.podcastQueue : [],
+    podcastAutoSkipped: Array.isArray(parsed?.podcastAutoSkipped) ? parsed.podcastAutoSkipped : [],
+    podcastSavedCategories: Array.isArray(parsed?.podcastSavedCategories) ? parsed.podcastSavedCategories : [],
+    podcastSavedEpisodeCategories: (parsed?.podcastSavedEpisodeCategories !== null && typeof parsed?.podcastSavedEpisodeCategories === "object" && !Array.isArray(parsed?.podcastSavedEpisodeCategories)) ? parsed.podcastSavedEpisodeCategories : {},
+    podcastShowTiers: (parsed?.podcastShowTiers !== null && typeof parsed?.podcastShowTiers === "object" && !Array.isArray(parsed?.podcastShowTiers)) ? parsed.podcastShowTiers : {},
+    podcastEpisodeTiers: (parsed?.podcastEpisodeTiers !== null && typeof parsed?.podcastEpisodeTiers === "object" && !Array.isArray(parsed?.podcastEpisodeTiers)) ? parsed.podcastEpisodeTiers : {},
+    podcastSkipAds: Boolean(parsed?.podcastSkipAds),
+    podcastTierCount: Number.isInteger(parsed?.podcastTierCount) ? parsed.podcastTierCount : 3,
+    podcastPrioritySort: parsed?.podcastPrioritySort === "newest" ? "newest" : "oldest"
   };
   ensureGroceryCatalog(normalized);
   ensureDailyDozenSeedTags(normalized);
-  normalized.personChecklistSettings = foodHealthDomain().normalizePersonSettings(
+  normalized.personChecklistSettings = LiveFoodHealth.normalizePersonSettings(
     parsed?.personChecklistSettings,
     normalized.familyMembers,
     normalized.checklistTemplates
@@ -2441,6 +2599,43 @@ function normalizeState(parsed) {
   cleanupAutoAppliedFutureMealDefaults(normalized);
   syncPublishedWeekArchiveFromPlans(normalized);
   return normalized;
+}
+
+const MAX_TOMBSTONES_PER_KEY = 200;
+
+function normalizeTombstones(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const result = {};
+  for (const [key, val] of Object.entries(raw)) {
+    if (Array.isArray(val)) {
+      const cleaned = val.map(String).filter(Boolean);
+      result[key] = cleaned.length > MAX_TOMBSTONES_PER_KEY ? cleaned.slice(-MAX_TOMBSTONES_PER_KEY) : cleaned;
+    }
+  }
+  return result;
+}
+
+function recordDeletion(arrayKey, id) {
+  if (!id) return;
+  const idStr = String(id);
+  if (!state.tombstones) state.tombstones = {};
+  if (!Array.isArray(state.tombstones[arrayKey])) state.tombstones[arrayKey] = [];
+  if (!state.tombstones[arrayKey].includes(idStr)) {
+    state.tombstones[arrayKey].push(idStr);
+    if (state.tombstones[arrayKey].length > MAX_TOMBSTONES_PER_KEY) {
+      state.tombstones[arrayKey] = state.tombstones[arrayKey].slice(-MAX_TOMBSTONES_PER_KEY);
+    }
+  }
+}
+
+function recordDeletions(arrayKey, ids) {
+  for (const id of ids) recordDeletion(arrayKey, id);
+}
+
+function unrecordDeletion(arrayKey, id) {
+  const idStr = String(id);
+  if (!state.tombstones?.[arrayKey]) return;
+  state.tombstones[arrayKey] = state.tombstones[arrayKey].filter(t => t !== idStr);
 }
 
 function defaultWeeklyEmailSettings() {
@@ -3315,7 +3510,7 @@ function migrateGroceryDescriptorNames() {
 function defaultGroceryBaseItems() {
   return normalizeGroceryBaseItems([
     ...commonGroceryItems,
-    ...groceryCatalog().catalogEntries().map((entry) => entry.name)
+    ...LiveGroceryCatalog.catalogEntries().map((entry) => entry.name)
   ]);
 }
 
@@ -3323,7 +3518,7 @@ function ensureGroceryCatalog(targetState) {
   if (targetState.groceryCatalogVersion >= 1) return;
   targetState.groceryBaseItems = normalizeGroceryBaseItems([
     ...(targetState.groceryBaseItems || []),
-    ...groceryCatalog().catalogEntries().map((entry) => entry.name)
+    ...LiveGroceryCatalog.catalogEntries().map((entry) => entry.name)
   ]);
   targetState.groceryCatalogVersion = 1;
 }
@@ -3334,7 +3529,7 @@ function normalizeGroceryBaseItems(items) {
     .map((item) => String(item || "").trim())
     .filter(Boolean)
     .forEach((item) => {
-      const identity = groceryCatalog().normalizeGroceryItemName(item);
+      const identity = LiveGroceryCatalog.normalizeGroceryItemName(item);
       const key = identity.canonicalName || normalize(item);
       const displayName = identity.category === "Other" ? item : identity.displayName;
       if (!normalizedItems.has(key)) normalizedItems.set(key, displayName);
@@ -3347,32 +3542,13 @@ function groceryBaseItems() {
   return state.groceryBaseItems;
 }
 
-function groceryCatalog() {
-  if (!window.LiveGroceryCatalog) throw new Error("Grocery catalog tools are unavailable.");
-  return window.LiveGroceryCatalog;
-}
-
-function dailyDozenDomain() {
-  if (!window.LiveDailyDozen) throw new Error("Daily Dozen tools are unavailable.");
-  return window.LiveDailyDozen;
-}
-
-function foodHealthDomain() {
-  if (!window.LiveFoodHealth) throw new Error("Nutrition tools are unavailable.");
-  return window.LiveFoodHealth;
-}
-
-function mealPlanServingsDomain() {
-  if (!window.LiveMealPlanServings) throw new Error("Meal plan serving tools are unavailable.");
-  return window.LiveMealPlanServings;
-}
 
 function recipeDefaultServings(recipe) {
-  return mealPlanServingsDomain().recipeDefaultServings(recipe);
+  return LiveMealPlanServings.recipeDefaultServings(recipe);
 }
 
 function isPlannedRecipeEntry(entry) {
-  return mealPlanServingsDomain().isMealPlanRecipe(entry);
+  return LiveMealPlanServings.isMealPlanRecipe(entry);
 }
 
 function recipeIdForSlot(entry) {
@@ -3380,13 +3556,13 @@ function recipeIdForSlot(entry) {
 }
 
 function plannedServingsForEntry(entry, recipe = recipeForSlot(entry)) {
-  return mealPlanServingsDomain().plannedServings(entry, recipe);
+  return LiveMealPlanServings.plannedServings(entry, recipe);
 }
 
 function createPlannedRecipeEntry(recipe, dayId = "", meal = "", plannedServings = null) {
   const day = prepDays.find((item) => item.id === dayId);
   const date = day ? dateKeyFromDate(addDays(currentWeek, day.offset)) : "";
-  return mealPlanServingsDomain().createMealPlanRecipe(recipe, {
+  return LiveMealPlanServings.createMealPlanRecipe(recipe, {
     id: createId("meal-plan-recipe"),
     date,
     mealType: meal,
@@ -3396,7 +3572,7 @@ function createPlannedRecipeEntry(recipe, dayId = "", meal = "", plannedServings
 
 function normalizePlannedRecipeEntry(entry) {
   if (!isPlannedRecipeEntry(entry)) return entry;
-  return mealPlanServingsDomain().normalizeMealPlanRecipe(entry, activeRecipes().find((recipe) => recipe.id === entry.recipeId));
+  return LiveMealPlanServings.normalizeMealPlanRecipe(entry, activeRecipes().find((recipe) => recipe.id === entry.recipeId));
 }
 
 function plannedEntryAtLocation(entry, dayId, meal) {
@@ -3410,25 +3586,25 @@ function plannedEntryAtLocation(entry, dayId, meal) {
 }
 
 function defaultChecklistTemplates() {
-  return foodHealthDomain().builtInTemplates(
-    dailyDozenDomain().categories,
-    window.LiveFoodHealthChecklists?.placeholderTemplates || []
+  return LiveFoodHealth.builtInTemplates(
+    LiveDailyDozen.categories,
+    LiveFoodHealthChecklists.placeholderTemplates
   );
 }
 
 function defaultPersonChecklistSettings() {
-  return foodHealthDomain().normalizePersonSettings(
+  return LiveFoodHealth.normalizePersonSettings(
     {},
-    dailyDozenDomain().familyMembers,
+    LiveDailyDozen.familyMembers,
     defaultChecklistTemplates()
   );
 }
 
 function ensureFoodHealthMigration(targetState) {
   if (targetState.foodHealthVersion >= 1) return;
-  const migrated = foodHealthDomain().migrateDailyDozenEntries(targetState.dailyDozenEntries);
+  const migrated = LiveFoodHealth.migrateDailyDozenEntries(targetState.dailyDozenEntries);
   const existingIds = new Set((targetState.dailyChecklistEntries || []).map((entry) => entry.id));
-  targetState.dailyChecklistEntries = foodHealthDomain().normalizeDailyChecklistEntries(
+  targetState.dailyChecklistEntries = LiveFoodHealth.normalizeDailyChecklistEntries(
     [...(targetState.dailyChecklistEntries || []), ...migrated.filter((entry) => !existingIds.has(entry.id))],
     targetState.familyMembers.map((member) => member.id)
   );
@@ -3436,12 +3612,12 @@ function ensureFoodHealthMigration(targetState) {
 }
 
 function checklistTemplates() {
-  state.checklistTemplates = foodHealthDomain().normalizeTemplates(state.checklistTemplates, dailyDozenCategories());
+  state.checklistTemplates = LiveFoodHealth.normalizeTemplates(state.checklistTemplates, dailyDozenCategories());
   return state.checklistTemplates;
 }
 
 function personChecklistSettings() {
-  state.personChecklistSettings = foodHealthDomain().normalizePersonSettings(
+  state.personChecklistSettings = LiveFoodHealth.normalizePersonSettings(
     state.personChecklistSettings,
     familyMembers(),
     checklistTemplates()
@@ -3450,7 +3626,7 @@ function personChecklistSettings() {
 }
 
 function dailyChecklistEntries() {
-  state.dailyChecklistEntries = foodHealthDomain().normalizeDailyChecklistEntries(
+  state.dailyChecklistEntries = LiveFoodHealth.normalizeDailyChecklistEntries(
     state.dailyChecklistEntries,
     familyMembers().map((member) => member.id)
   );
@@ -3458,7 +3634,7 @@ function dailyChecklistEntries() {
 }
 
 function foodLogEntries() {
-  state.foodLogEntries = foodHealthDomain().normalizeFoodLogEntries(
+  state.foodLogEntries = LiveFoodHealth.normalizeFoodLogEntries(
     state.foodLogEntries,
     familyMembers().map((member) => member.id)
   );
@@ -3489,11 +3665,11 @@ function dailyDozenItemKey(item) {
 }
 
 function defaultGroceryDailyDozenTags() {
-  return dailyDozenDomain().seededTagMap((item) => groceryCatalog().normalizeGroceryItemName(item).canonicalName);
+  return LiveDailyDozen.seededTagMap((item) => LiveGroceryCatalog.normalizeGroceryItemName(item).canonicalName);
 }
 
 function normalizeGroceryDailyDozenTags(tags) {
-  return dailyDozenDomain().normalizeTagMap(tags, dailyDozenDomain().categories);
+  return LiveDailyDozen.normalizeTagMap(tags, LiveDailyDozen.categories);
 }
 
 function groceryDailyDozenTags() {
@@ -3510,17 +3686,17 @@ function ensureDailyDozenSeedTags(targetState) {
 }
 
 function dailyDozenCategories() {
-  state.dailyDozenCategories = dailyDozenDomain().normalizeCategories(state.dailyDozenCategories);
+  state.dailyDozenCategories = LiveDailyDozen.normalizeCategories(state.dailyDozenCategories);
   return state.dailyDozenCategories;
 }
 
 function familyMembers() {
-  state.familyMembers = dailyDozenDomain().normalizeFamilyMembers(state.familyMembers);
+  state.familyMembers = LiveDailyDozen.normalizeFamilyMembers(state.familyMembers);
   return state.familyMembers;
 }
 
 function dailyDozenEntries() {
-  state.dailyDozenEntries = dailyDozenDomain().normalizeEntries(
+  state.dailyDozenEntries = LiveDailyDozen.normalizeEntries(
     state.dailyDozenEntries,
     familyMembers(),
     dailyDozenCategories()
@@ -3532,8 +3708,8 @@ function normalizeGrocerySplitPreferences(preferences) {
   if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) return {};
   return Object.fromEntries(Object.entries(preferences)
     .map(([key, value]) => [
-      groceryCatalog().normalizeGroceryItemName(key).normalizedName,
-      groceryCatalog().normalizeGroceryItemName(value).normalizedName
+      LiveGroceryCatalog.normalizeGroceryItemName(key).normalizedName,
+      LiveGroceryCatalog.normalizeGroceryItemName(value).normalizedName
     ])
     .filter(([key, value]) => key && value));
 }
@@ -3720,25 +3896,15 @@ const groceryPriceProviders = {
   }
 };
 
-function receiptDomain() {
-  if (!window.LiveReceiptDomain) throw new Error("Receipt tools are unavailable.");
-  return window.LiveReceiptDomain;
-}
-
-function nutritionDomain() {
-  if (!window.NutritionDomain) throw new Error("Nutrition estimate tools are unavailable.");
-  return window.NutritionDomain;
-}
-
 function normalizeNutritionIngredientMappings(mappings) {
   if (!mappings || typeof mappings !== "object" || Array.isArray(mappings)) return {};
   return Object.fromEntries(Object.entries(mappings)
-    .map(([key, value]) => [nutritionDomain().correctionKey(key), normalizeNutritionCandidate(value)])
+    .map(([key, value]) => [NutritionDomain.correctionKey(key), normalizeNutritionCandidate(value)])
     .filter(([key, value]) => key && value.fdcId));
 }
 
 function normalizeReceipts(receipts) {
-  return (Array.isArray(receipts) ? receipts : []).map((receipt) => receiptDomain().normalizeReceipt(receipt, createId));
+  return (Array.isArray(receipts) ? receipts : []).map((receipt) => LiveReceiptDomain.normalizeReceipt(receipt, createId));
 }
 
 function normalizePriceHistory(history, stores = []) {
@@ -3768,7 +3934,7 @@ function receiptPriceHistory() {
 }
 
 function receiptItemMappings() {
-  state.receiptItemMappings = receiptDomain().normalizeMappings(state.receiptItemMappings);
+  state.receiptItemMappings = LiveReceiptDomain.normalizeMappings(state.receiptItemMappings);
   return state.receiptItemMappings;
 }
 
@@ -3940,13 +4106,29 @@ function trashedRecipes() {
   return state.trashedRecipes;
 }
 
+function mergeTombstones(a, b) {
+  const result = {};
+  const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
+  for (const key of keys) {
+    result[key] = [...new Set([...(a?.[key] || []), ...(b?.[key] || [])])];
+  }
+  return result;
+}
+
 function mergeStates(newer, older) {
   const merged = { ...newer };
 
-  function unionById(a, b) {
+  // Merge tombstones first so unionById can filter against the combined set
+  merged.tombstones = mergeTombstones(newer.tombstones, older.tombstones);
+
+  function unionById(a, b, tombstoneKey = null) {
+    const tombstoned = tombstoneKey && merged.tombstones?.[tombstoneKey]?.length
+      ? new Set(merged.tombstones[tombstoneKey])
+      : null;
     const map = new Map((b || []).filter((x) => x?.id != null).map((x) => [x.id, x]));
     (a || []).filter((x) => x?.id != null).forEach((x) => map.set(x.id, x));
-    return [...map.values()];
+    const arr = [...map.values()];
+    return tombstoned ? arr.filter(x => !tombstoned.has(String(x.id))) : arr;
   }
 
   function unionStrings(a, b) {
@@ -3981,8 +4163,10 @@ function mergeStates(newer, older) {
     "calendars",
     // Saved articles (Read/Listen)
     "savedArticles",
+    // Podcast saved tabs
+    "podcastSavedCategories",
   ]) {
-    merged[key] = unionById(newer[key], older[key]);
+    merged[key] = unionById(newer[key], older[key], key);
   }
 
   // ── String-set arrays: additive ───────────────────────────────────────────
@@ -3999,6 +4183,7 @@ function mergeStates(newer, older) {
     "inventoryRoomVisibility", "watchShowtimesData",
     "groceryReviewDismissed", "collapsedDays",
     "personChecklistSettings",
+    "podcastSavedEpisodeCategories",
   ]) {
     merged[key] = unionByKey(newer[key], older[key]);
   }
@@ -4010,11 +4195,11 @@ function mergeStates(newer, older) {
 
   // ── Deep array-of-objects merges for settings with id-keyed sub-arrays ───
   merged.watchSettings = {
-    theaters: unionById(newer.watchSettings?.theaters, older.watchSettings?.theaters),
-    categories: unionById(newer.watchSettings?.categories, older.watchSettings?.categories),
+    theaters: unionById(newer.watchSettings?.theaters, older.watchSettings?.theaters, "watchSettings.theaters"),
+    categories: unionById(newer.watchSettings?.categories, older.watchSettings?.categories, "watchSettings.categories"),
   };
   merged.readingSettings = {
-    categories: unionById(newer.readingSettings?.categories, older.readingSettings?.categories),
+    categories: unionById(newer.readingSettings?.categories, older.readingSettings?.categories, "readingSettings.categories"),
   };
   merged.ingredientOptions = {
     numbers: unionStrings(newer.ingredientOptions?.numbers, older.ingredientOptions?.numbers),
@@ -4027,9 +4212,9 @@ function mergeStates(newer, older) {
   merged.groceryStoreItemSections = mergeGroceryStoreItemSections(newer.groceryStoreItemSections, older.groceryStoreItemSections);
 
   // ── Week/day plan structures: deep day-level merge ────────────────────────
-  merged.doPlans = mergeDoPlans(newer.doPlans, older.doPlans);
+  merged.doPlans = mergeDoPlans(newer.doPlans, older.doPlans, merged.tombstones);
   merged.watchPlans = mergeWatchPlans(newer.watchPlans, older.watchPlans);
-  merged.playPlans = mergePlayPlans(newer.playPlans, older.playPlans);
+  merged.playPlans = mergePlayPlans(newer.playPlans, older.playPlans, merged.tombstones);
 
   // ── Meal plans: deep slot-level merge ────────────────────────────────────
   merged.plans = mergePlanWeeks(newer.plans, older.plans);
@@ -4045,8 +4230,11 @@ function mergeStates(newer, older) {
   // ── Email schedule: preserve configured schedule over fresh-device defaults
   merged.weeklyEmailSettings = mergeWeeklyEmailSettings(newer.weeklyEmailSettings, older.weeklyEmailSettings);
 
-  // Stamp with now so this merged state wins any further comparisons
-  merged.stateUpdatedAt = new Date().toISOString();
+  // Preserve the actual data timestamp — only persist() (user-initiated changes) should advance it.
+  // Stamping NOW here caused every sync to look "newer than both inputs", creating race conditions
+  // where two devices alternating syncs would each overwrite the other regardless of real change order.
+  merged.stateUpdatedAt = [newer.stateUpdatedAt, older.stateUpdatedAt]
+    .filter(Boolean).sort().at(-1) || new Date().toISOString();
   return merged;
 }
 
@@ -4087,11 +4275,10 @@ function mergeMealPlanConfig(newer, older) {
   const defaultLabels = new Set(defaults.members.map((m) => m.label));
   const oById = new Map((older.members || []).map((m) => [m.id, m]));
   const nById = new Map((newer.members || []).map((m) => [m.id, m]));
-  const allIds = new Set([...oById.keys(), ...nById.keys()]);
-  const members = [...allIds].map((id) => {
+  // Use newer's member list as authoritative — don't resurrect members deleted in newer
+  const members = [...nById.keys()].map((id) => {
     const n = nById.get(id);
     const o = oById.get(id);
-    if (!n) return o;
     if (!o) return n;
     const nIsDefault = defaultLabels.has(n.label);
     const oIsDefault = defaultLabels.has(o.label);
@@ -4105,7 +4292,8 @@ function mergeMealPlanConfig(newer, older) {
   return { members, mealTypes };
 }
 
-function mergeDoPlans(newer, older) {
+function mergeDoPlans(newer, older, tombstones) {
+  const tombstoned = tombstones?.doPlanTasks?.length ? new Set(tombstones.doPlanTasks.map(String)) : null;
   const result = { ...(older || {}) };
   for (const [wk, nWeek] of Object.entries(newer || {})) {
     const oWeek = result[wk];
@@ -4116,7 +4304,8 @@ function mergeDoPlans(newer, older) {
       const oTasks = oWeek[dayId] || [];
       const byId = new Map((oTasks).filter((x) => x?.id != null).map((x) => [x.id, x]));
       (nTasks).filter((x) => x?.id != null).forEach((x) => byId.set(x.id, x));
-      week[dayId] = [...byId.values()];
+      const merged = [...byId.values()];
+      week[dayId] = tombstoned ? merged.filter((x) => !tombstoned.has(String(x.id))) : merged;
     }
     const nSkipped = nWeek.__skippedRecurring || {};
     const oSkipped = oWeek.__skippedRecurring || {};
@@ -4144,7 +4333,8 @@ function mergeWatchPlans(newer, older) {
   return result;
 }
 
-function mergePlayPlans(newer, older) {
+function mergePlayPlans(newer, older, tombstones) {
+  const tombstoned = tombstones?.playPlanTasks?.length ? new Set(tombstones.playPlanTasks.map(String)) : null;
   const result = { ...(older || {}) };
   for (const [wk, nWeek] of Object.entries(newer || {})) {
     const oWeek = result[wk];
@@ -4155,7 +4345,8 @@ function mergePlayPlans(newer, older) {
       const oTasks = oWeek[dayId] || [];
       const byId = new Map((oTasks).filter((x) => x?.id != null).map((x) => [x.id, x]));
       (nTasks).filter((x) => x?.id != null).forEach((x) => byId.set(x.id, x));
-      week[dayId] = [...byId.values()];
+      const merged = [...byId.values()];
+      week[dayId] = tombstoned ? merged.filter((x) => !tombstoned.has(String(x.id))) : merged;
     }
     if (nWeek.__active) week.__active = true;
     result[wk] = week;
@@ -4201,13 +4392,19 @@ async function hydrateStateFromSharedStorage() {
           await snapshotCloudStateBeforeOverwrite(sharedState);
           const merged = mergeStates(state, sharedState);
           applyStoredState(merged);
+          await provider.write();
         } else {
           console.info(`Remote state (${remoteTs}) is newer than local (${localTs || "no timestamp"}); merging and applying.`);
           await snapshotBeforeSharedStateReplacement(sharedState, provider.label);
           const merged = mergeStates(sharedState, state);
           applyStoredState(merged);
+          // Only write back if local actually contributed something new (tombstones, additions).
+          // Comparing signatures detects whether the merge changed anything vs the remote state —
+          // a stale device with nothing new to offer produces an identical signature and is skipped.
+          if (localTs && recoverableStateSignature(merged) !== recoverableStateSignature(sharedState)) {
+            await provider.write();
+          }
         }
-        await provider.write();
       }
       else await provider.write();
       sharedStorageReady = true;
@@ -4234,17 +4431,23 @@ function saveStateToSharedStorage() {
 
 async function writeStateToSharedStorage() {
   if (!activeSharedStorageProvider) return;
+  window.clearTimeout(sharedStorageRetryTimer);
   updateSyncStatus("saving");
   try {
     await activeSharedStorageProvider.write();
     updateSyncStatus("saved");
+    sharedStorageRetryCount = 0;
     maybeWriteCloudSnapshot().catch(() => {});
   } catch (error) {
     if (!navigator.onLine) {
       updateSyncStatus("offline");
+      // handleCameOnline() will re-flush when the connection restores.
     } else {
       updateSyncStatus("failed");
-      throw error;
+      if (sharedStorageRetryCount < SHARED_STORAGE_RETRY_DELAYS.length) {
+        const delay = SHARED_STORAGE_RETRY_DELAYS[sharedStorageRetryCount++];
+        sharedStorageRetryTimer = window.setTimeout(writeStateToSharedStorage, delay);
+      }
     }
   }
 }
@@ -4265,6 +4468,8 @@ async function handleCameOnline() {
   try {
     await writeStateToSupabase();
     sharedStorageReady = true;
+    sharedStorageRetryCount = 0;
+    window.clearTimeout(sharedStorageRetryTimer);
     updateSyncStatus("saved");
   } catch (e) {
     console.warn("[reconnect] flush failed:", e);
@@ -4273,7 +4478,26 @@ async function handleCameOnline() {
 
 async function maybeWriteCloudSnapshot({ force = false } = {}) {
   if (!userGroup?.id || !authSession?.access_token) return;
-  if (!force && Date.now() - lastCloudSnapshotAt < CLOUD_SNAPSHOT_INTERVAL_MS) return;
+  // Fast in-memory check — avoids a network round-trip when the guard is warm.
+  if (!force && lastCloudSnapshotAt && Date.now() - lastCloudSnapshotAt < CLOUD_SNAPSHOT_INTERVAL_MS) return;
+  // In-memory guard is cold (e.g. fresh page load) — verify against the server so rapid
+  // reloads don't burn through the 25-snapshot quota within minutes.
+  if (!force) {
+    try {
+      const chk = await fetch(
+        `${supabaseBaseUrl()}/rest/v1/tableplan_state_history?group_id=eq.${encodeURIComponent(userGroup.id)}&select=created_at&order=created_at.desc&limit=1`,
+        { headers: supabaseHeaders() }
+      );
+      if (chk.ok) {
+        const rows = await chk.json();
+        if (rows.length) {
+          const age = Date.now() - new Date(rows[0].created_at).getTime();
+          lastCloudSnapshotAt = Date.now() - age; // sync in-memory guard to server reality
+          if (age < CLOUD_SNAPSHOT_INTERVAL_MS) return;
+        }
+      }
+    } catch { /* non-fatal — fall through and write the snapshot */ }
+  }
   lastCloudSnapshotAt = Date.now();
   const insertRes = await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_state_history`, {
     method: "POST",
@@ -4287,7 +4511,18 @@ async function maybeWriteCloudSnapshot({ force = false } = {}) {
   );
   if (!listRes.ok) return;
   const rows = await listRes.json();
-  const toDelete = rows.slice(CLOUD_SNAPSHOT_KEEP).map(r => r.id);
+  // Tiered retention: keep the 25 most recent (dense), then 1 per hour going back up to 30 days.
+  // rows is sorted newest-first, so the first match in each hour bucket is the one to keep.
+  const seenHours = new Set();
+  const toDelete = [];
+  rows.slice(CLOUD_SNAPSHOT_KEEP).forEach((row) => {
+    const hour = new Date(row.created_at).toISOString().slice(0, 13);
+    if (!seenHours.has(hour) && seenHours.size < CLOUD_SNAPSHOT_HOURLY_MAX) {
+      seenHours.add(hour);
+    } else {
+      toDelete.push(row.id);
+    }
+  });
   if (toDelete.length) {
     await fetch(
       `${supabaseBaseUrl()}/rest/v1/tableplan_state_history?id=in.(${toDelete.join(",")})`,
@@ -4414,6 +4649,7 @@ function applyStoredState(storedState) {
   Object.assign(showtimesCache, state.watchShowtimesData || {});
   applyThemeMode();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  lastWrittenSections = null; // force full re-upload after any full state replacement
   render();
 }
 
@@ -4433,31 +4669,87 @@ async function writeStateToLocalBackend() {
   });
 }
 
+function extractSectionData(keys) {
+  const obj = {};
+  for (const key of keys) {
+    if (key in state) obj[key] = state[key];
+  }
+  return obj;
+}
+
+function updateLastWrittenSections() {
+  lastWrittenSections = {};
+  for (const [section, keys] of Object.entries(STATE_SECTIONS)) {
+    lastWrittenSections[section] = JSON.stringify(extractSectionData(keys));
+  }
+}
+
+function assembleSectionRows(rows) {
+  const assembled = {};
+  let latestTs = "";
+  for (const row of rows) {
+    const { stateUpdatedAt, ...data } = row.state || {};
+    Object.assign(assembled, data);
+    if (stateUpdatedAt && stateUpdatedAt > latestTs) latestTs = stateUpdatedAt;
+  }
+  if (latestTs) assembled.stateUpdatedAt = latestTs;
+  return assembled;
+}
+
 async function loadStateFromSupabase() {
-  const response = await fetch(supabaseStateUrl(true), {
-    headers: supabaseHeaders(),
-    cache: "no-store"
-  });
-  if (!response.ok) throw new Error(`Supabase state load failed with status ${response.status}`);
-  const rows = await response.json();
-  return rows[0]?.state || null;
+  const config = supabaseConfig();
+  const stateId = config.stateId;
+  const sectionIds = Object.keys(STATE_SECTIONS).map(s => `${stateId}:${s}`).join(",");
+
+  const res = await fetch(
+    `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=in.(${sectionIds})&select=id,state`,
+    { headers: supabaseHeaders(), cache: "no-store" }
+  );
+  if (!res.ok) throw new Error(`Supabase state load failed with status ${res.status}`);
+  const rows = await res.json();
+
+  if (rows.length > 0) return assembleSectionRows(rows);
+
+  // Migration fallback: no section rows yet — load old unified row
+  const fallbackRes = await fetch(
+    `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(stateId)}&select=state`,
+    { headers: supabaseHeaders(), cache: "no-store" }
+  );
+  if (!fallbackRes.ok) throw new Error(`Supabase state load failed with status ${fallbackRes.status}`);
+  const fallbackRows = await fallbackRes.json();
+  return fallbackRows[0]?.state || null;
 }
 
 async function writeStateToSupabase() {
   const config = supabaseConfig();
-  const response = await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?on_conflict=id`, {
-    method: "POST",
-    headers: {
-      ...supabaseHeaders(),
-      Prefer: "resolution=merge-duplicates,return=minimal"
-    },
-    body: JSON.stringify({
-      id: config.stateId,
-      state,
-      updated_at: new Date().toISOString()
-    })
-  });
-  if (!response.ok) throw new Error(`Supabase state save failed with status ${response.status}`);
+  const stateId = config.stateId;
+  const now = new Date().toISOString();
+
+  const sectionsToWrite = [];
+  for (const [section, keys] of Object.entries(STATE_SECTIONS)) {
+    const currentJson = JSON.stringify(extractSectionData(keys));
+    if (!lastWrittenSections || lastWrittenSections[section] !== currentJson) {
+      sectionsToWrite.push({ section, data: JSON.parse(currentJson) });
+    }
+  }
+
+  if (sectionsToWrite.length === 0) return;
+
+  await Promise.all(
+    sectionsToWrite.map(({ section, data }) =>
+      fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?on_conflict=id`, {
+        method: "POST",
+        headers: { ...supabaseHeaders(), Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({
+          id: `${stateId}:${section}`,
+          state: { ...data, stateUpdatedAt: state.stateUpdatedAt },
+          updated_at: now
+        })
+      }).then(r => { if (!r.ok) throw new Error(`Supabase section "${section}" save failed: ${r.status}`); })
+    )
+  );
+
+  updateLastWrittenSections();
 }
 
 async function hydrateRecipeRowsFromSupabase() {
@@ -4768,8 +5060,9 @@ function normalizeMealPlanConfig(config) {
   const defaults = defaultMealPlanConfig();
   const rawMembers = Array.isArray(config?.members) ? config.members : [];
   const rawTypes = Array.isArray(config?.mealTypes) ? config.mealTypes : [];
+  const seenMemberIds = new Set();
   const members = rawMembers.length
-    ? rawMembers.map(m => ({ id: String(m?.id || createId("member")), label: String(m?.label || "").trim(), dob: String(m?.dob || "").trim(), linkedUserId: m?.linkedUserId || null })).filter(m => m.label)
+    ? rawMembers.map(m => ({ id: String(m?.id || createId("member")), label: String(m?.label || "").trim(), dob: String(m?.dob || "").trim(), linkedUserId: m?.linkedUserId || null })).filter(m => m.label && !seenMemberIds.has(m.id) && seenMemberIds.add(m.id))
     : defaults.members;
   const mealTypes = rawTypes.length
     ? rawTypes.map(t => ({ id: String(t?.id || createId("mealtype")), label: String(t?.label || "").trim() })).filter(t => t.label)
@@ -4970,8 +5263,9 @@ function render() {
   renderDoPlanner();
   renderPlayPlanner();
   renderCollapsedSections();
-  if (activeAppArea === "read") renderArticleList("articleList", activeArticleTab);
-  if (activeAppArea === "listen") renderArticleList("listenList", activeListenTab);
+  if (activeAppArea === "media" && !["books","books-audible","books-libby","books-kindle","podcasts"].includes(activeMediaTab)) {
+    renderArticleList("articleList", activeMediaTab);
+  }
 }
 
 function showEatApp(event) {
@@ -4993,6 +5287,17 @@ function setWeekToolsMode(mode) {
   weekTools.classList.toggle("today-mode", mode === "today");
   weekTools.classList.toggle("plan-mode", mode === "plan");
   weekTools.classList.toggle("shop-mode", mode === "shop");
+
+  const isShop = mode === "shop";
+  const rangeBar = document.getElementById("groceryRangeBar");
+  const prevBtn = document.getElementById("previousWeek");
+  const nextBtn = document.getElementById("nextWeek");
+  const prepCopy = weekTools.querySelector(".prep-window-copy");
+  if (rangeBar) rangeBar.hidden = !isShop;
+  if (prevBtn) prevBtn.hidden = isShop;
+  if (nextBtn) nextBtn.hidden = isShop;
+  if (prepCopy) prepCopy.hidden = isShop;
+
   if (mode === "today") {
     elements.weekLabel.removeAttribute("aria-label");
     elements.weekLabel.textContent = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
@@ -5041,8 +5346,7 @@ function activateEatShell() {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
-  elements.readingMainPage.hidden = true;
-  elements.listenMainPage.hidden = true;
+  elements.mediaMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -5066,8 +5370,7 @@ function showDoApp(event) {
   elements.doMainPage.hidden = false;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
-  elements.readingMainPage.hidden = true;
-  elements.listenMainPage.hidden = true;
+  elements.mediaMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -5095,8 +5398,7 @@ function showPlayApp(event) {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = false;
   elements.watchMainPage.hidden = true;
-  elements.readingMainPage.hidden = true;
-  elements.listenMainPage.hidden = true;
+  elements.mediaMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -5124,8 +5426,7 @@ function showWatchApp(event) {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = false;
-  elements.readingMainPage.hidden = true;
-  elements.listenMainPage.hidden = true;
+  elements.mediaMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -5150,8 +5451,7 @@ function showRecreateApp(event) {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
-  elements.readingMainPage.hidden = true;
-  elements.listenMainPage.hidden = true;
+  elements.mediaMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.recreateMainPage.hidden = false;
   elements.planMainPage.hidden = true;
@@ -5175,8 +5475,7 @@ function showPlanApp(event) {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
-  elements.readingMainPage.hidden = true;
-  elements.listenMainPage.hidden = true;
+  elements.mediaMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -5185,7 +5484,7 @@ function showPlanApp(event) {
   elements.mailMainPage.hidden = true;
   setWeekToolsMode("plan");
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Schedule");
+  setPageTitle("Calendar");
   setPageHash("schedule");
   fetchAllPlanCalendars();
   renderPlanPage();
@@ -5201,8 +5500,7 @@ function showSettingsApp(event) {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
-  elements.readingMainPage.hidden = true;
-  elements.listenMainPage.hidden = true;
+  elements.mediaMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -5226,8 +5524,7 @@ function showHomeApp(event) {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
-  elements.readingMainPage.hidden = true;
-  elements.listenMainPage.hidden = true;
+  elements.mediaMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -5242,57 +5539,32 @@ function showHomeApp(event) {
   closeAppMenu();
 }
 
-function showReadingApp(event) {
+function showMediaApp(event) {
   event?.stopPropagation();
-  if (!isPageEnabled("read")) {
-    showHomeApp();
-    return;
-  }
-  activeAppArea = "read";
+  if (!isPageEnabled("read")) { showHomeApp(); return; }
+  activeAppArea = "media";
   elements.homeMainPage.hidden = true;
   document.querySelector("[data-section='mealPrep']").hidden = true;
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
-  elements.readingMainPage.hidden = false;
-  elements.listenMainPage.hidden = true;
-  elements.recreateMainPage.hidden = true;
-  elements.planMainPage.hidden = true;
-  elements.settingsMainPage.hidden = true;
-  elements.mailMainPage.hidden = true;
-  setWeekToolsMode("today");
-  elements.activeCookingSection.hidden = true;
-  setPageTitle("Read");
-  setPageHash("read");
-  initArticleReadPage();
-  closePageTitleMenu();
-  closeAppMenu();
-}
-
-function showListenApp(event) {
-  event?.stopPropagation();
-  activeAppArea = "listen";
-  elements.homeMainPage.hidden = true;
-  document.querySelector("[data-section='mealPrep']").hidden = true;
-  elements.doMainPage.hidden = true;
-  elements.playMainPage.hidden = true;
-  elements.watchMainPage.hidden = true;
-  elements.readingMainPage.hidden = true;
-  elements.listenMainPage.hidden = false;
+  elements.mediaMainPage.hidden = false;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
-  elements.weekLabel.closest(".week-tools").hidden = true;
+  setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Listen");
-  setPageHash("listen");
-  initListenPage();
+  setPageTitle("Media");
+  setPageHash("media");
+  initMediaPage();
   closePageTitleMenu();
   closeAppMenu();
 }
+function showReadingApp(event) { showMediaApp(event); }
+function showListenApp(event) { showMediaApp(event); }
 
 function showInventoryApp(event) {
   event?.stopPropagation();
@@ -5303,8 +5575,7 @@ function showInventoryApp(event) {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
-  elements.readingMainPage.hidden = true;
-  elements.listenMainPage.hidden = true;
+  elements.mediaMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = false;
   elements.recreateMainPage.hidden = true;
@@ -5332,8 +5603,7 @@ function showShopApp(event) {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
-  elements.readingMainPage.hidden = true;
-  elements.listenMainPage.hidden = true;
+  elements.mediaMainPage.hidden = true;
   elements.shopMainPage.hidden = false;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -5344,6 +5614,7 @@ function showShopApp(event) {
   elements.activeCookingSection.hidden = true;
   setPageTitle("Shop");
   setPageHash("shop");
+  initGroceryRange();
   renderShopPage();
   closePageTitleMenu();
   closeAppMenu();
@@ -5357,8 +5628,7 @@ function showMailApp(event, hashParams) {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
-  elements.readingMainPage.hidden = true;
-  elements.listenMainPage.hidden = true;
+  elements.mediaMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -5378,25 +5648,53 @@ function showMailApp(event, hashParams) {
 
 let currentMailbox = "INBOX";
 let mailGmailConnected = false;
+let mailStatusPromise = null; // pre-fetched status so Mail page loads instantly
 let mailOpenThreadId = null;
 let mailNextPageToken = null;
 let mailCurrentQuery = "";
 let mailLabels = [];
 let mailFolderExpanded = new Set();
+let mailSelected = new Map(); // threadId → { subject }
+let mailBulkBarWired = false;
+
+function warmMailStatus() {
+  if (!authSession?.access_token) return;
+  mailStatusPromise = callGmailApi({ action: "status" });
+}
+
+(function setupMailSwipe() {
+  let touchStartX = 0, touchStartY = 0;
+  elements.mailThread.addEventListener("touchstart", (e) => {
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+  }, { passive: true });
+  elements.mailThread.addEventListener("touchend", (e) => {
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    const dy = e.changedTouches[0].clientY - touchStartY;
+    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    const rows = [...elements.mailList.querySelectorAll(".mail-row[data-thread-id]")];
+    const idx = rows.findIndex(r => r.dataset.threadId === mailOpenThreadId);
+    if (idx === -1) return;
+    const target = dx < 0 ? rows[idx + 1] : rows[idx - 1];
+    if (target) openMailThread(target.dataset.threadId);
+  }, { passive: true });
+})()
 
 async function initMailPage(hashParams) {
   if (hashParams?.get("gm_error")) {
     alert("Gmail connection failed. Please try again.");
   }
-  const status = await callGmailApi({ action: "status" });
+  const status = await (mailStatusPromise ?? callGmailApi({ action: "status" }));
+  mailStatusPromise = null;
   mailGmailConnected = Boolean(status?.connected);
   const badge = document.getElementById("mailAccountBadge");
-  if (badge && status.email) badge.textContent = status.email;
+  if (badge && status?.email) badge.textContent = status.email;
   renderMailConnectState();
   if (mailGmailConnected) {
     await loadMailLabels();
     loadMailList(currentMailbox);
   }
+  warmMailStatus(); // re-arm for next visit
 }
 
 function renderMailConnectState() {
@@ -5444,6 +5742,7 @@ async function disconnectGmail() {
   if (!confirm("Disconnect your Gmail account?")) return;
   await callGmailApi({ action: "disconnect" });
   mailGmailConnected = false;
+  mailStatusPromise = null;
   renderMailConnectState();
 }
 
@@ -5452,6 +5751,8 @@ async function loadMailList(labelId, q = "", append = false) {
   if (!append) {
     mailNextPageToken = null;
     mailCurrentQuery = q;
+    mailSelected.clear();
+    updateMailBulkBar();
     elements.mailList.innerHTML = `<div class="mail-loading">Loading…</div>`;
     elements.mailThread.hidden = true;
     mailOpenThreadId = null;
@@ -5488,27 +5789,127 @@ async function loadMailList(labelId, q = "", append = false) {
 function appendMailRows(messages) {
   messages.forEach((m) => {
     const row = document.createElement("div");
-    row.className = `mail-row${m.unread ? " mail-row--unread" : ""}`;
+    row.className = `mail-row${m.unread ? " mail-row--unread" : ""}${m.starred ? " mail-row--starred" : ""}`;
     row.dataset.threadId = m.threadId;
     row.innerHTML = `
-      <button class="mail-row-star" type="button" aria-label="Star" title="Star">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-      </button>
+      <div class="mail-row-left">
+        <button class="mail-row-check" type="button" aria-label="Select" title="Select">
+          <svg class="mail-row-check-box" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+          <svg class="mail-row-check-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" fill="currentColor"/><path d="m9 12 2 2 4-4" stroke="white" stroke-width="2.5" fill="none"/></svg>
+        </button>
+        <button class="mail-row-star${m.starred ? " is-starred" : ""}" type="button" aria-label="${m.starred ? "Unstar" : "Star"}" title="${m.starred ? "Unstar" : "Star"}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+        </button>
+        <button class="mail-row-label-btn" type="button" aria-label="Label" title="Label">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+        </button>
+      </div>
       <span class="mail-row-from">${escapeHtml(parseDisplayName(m.from))}</span>
       <span class="mail-row-content">
-        <span class="mail-row-subject">${escapeHtml(m.subject)}</span>${m.snippet ? `<span class="mail-row-sep"> — </span><span class="mail-row-snippet">${escapeHtml(m.snippet)}</span>` : ""}
+        <span class="mail-row-subject">${escapeHtml(m.subject)}</span>${m.snippet ? `<span class="mail-row-sep"> — </span><span class="mail-row-snippet">${escapeHtml(cleanMailSnippet(m.snippet))}</span>` : ""}
       </span>
-      <span class="mail-row-date">${escapeHtml(formatMailDate(m.internalDate))}</span>`;
-    row.addEventListener("click", (e) => { if (!e.target.closest(".mail-row-star")) openMailThread(m.threadId); });
+      <div class="mail-row-right">
+        <span class="mail-row-date">${escapeHtml(formatMailDate(m.internalDate))}</span>
+        <div class="mail-row-actions" aria-label="Quick actions">
+          <button class="mail-row-action-btn" type="button" data-row-action="archive" title="Archive" aria-label="Archive">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+          </button>
+          <button class="mail-row-action-btn" type="button" data-row-action="delete" title="Delete" aria-label="Delete">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          </button>
+          <button class="mail-row-action-btn" type="button" data-row-action="unread" title="Mark as unread" aria-label="Mark as unread">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.2 8.4c.5.38.8.97.8 1.6v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V10c0-.63.3-1.22.8-1.6l8-6a2 2 0 0 1 2.4 0l8 6z"/></svg>
+          </button>
+          <button class="mail-row-action-btn" type="button" data-row-action="snooze" title="Snooze" aria-label="Snooze">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          </button>
+        </div>
+      </div>`;
+
+    row.addEventListener("click", (e) => {
+      if (e.target.closest(".mail-row-left, .mail-row-actions")) return;
+      openMailThread(m.threadId);
+    });
+
+    row.querySelector(".mail-row-check").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const selected = row.classList.toggle("mail-row--selected");
+      if (selected) mailSelected.set(m.threadId, { subject: m.subject });
+      else mailSelected.delete(m.threadId);
+      updateMailBulkBar();
+    });
+
+    const starBtn = row.querySelector(".mail-row-star");
+    starBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const nowStarred = !starBtn.classList.contains("is-starred");
+      starBtn.classList.toggle("is-starred", nowStarred);
+      starBtn.setAttribute("aria-label", nowStarred ? "Unstar" : "Star");
+      callGmailApi({ action: "move", threadId: m.threadId, addLabelIds: nowStarred ? ["STARRED"] : [], removeLabelIds: nowStarred ? [] : ["STARRED"] });
+    });
+
+    row.querySelector(".mail-row-label-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      showRowLabelPicker(m.threadId, e.currentTarget, row);
+    });
+
+    row.querySelector(".mail-row-actions").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const btn = e.target.closest("[data-row-action]");
+      if (!btn) return;
+      const action = btn.dataset.rowAction;
+      if (action === "archive") {
+        await callGmailApi({ action: "move", threadId: m.threadId, addLabelIds: [], removeLabelIds: ["INBOX"] });
+        row.remove();
+        if (mailOpenThreadId === m.threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
+      } else if (action === "delete") {
+        await callGmailApi({ action: "move", threadId: m.threadId, addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] });
+        row.remove();
+        if (mailOpenThreadId === m.threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
+      } else if (action === "unread") {
+        await callGmailApi({ action: "move", threadId: m.threadId, addLabelIds: ["UNREAD"], removeLabelIds: [] });
+        row.classList.add("mail-row--unread");
+      } else if (action === "snooze") {
+        showMailToast("Snooze coming soon");
+      }
+    });
+
     elements.mailList.appendChild(row);
   });
+}
+
+function showRowLabelPicker(threadId, btn, row) {
+  document.getElementById("rowLabelPicker")?.remove();
+  const options = mailLabels.filter((l) => l.id !== currentMailbox);
+  if (!options.length) { showMailToast("No labels available"); return; }
+  const picker = document.createElement("div");
+  picker.id = "rowLabelPicker";
+  picker.className = "mail-move-picker";
+  picker.innerHTML = options.map((l) => {
+    const label = l.type === "system" ? formatSystemLabel(l.id) : l.name;
+    return `<button class="mail-move-option" type="button" data-label-id="${escapeHtml(l.id)}">${escapeHtml(label)}</button>`;
+  }).join("");
+  picker.querySelectorAll(".mail-move-option").forEach((opt) => {
+    opt.addEventListener("click", async () => {
+      picker.remove();
+      const data = await callGmailApi({ action: "move", threadId, addLabelIds: [opt.dataset.labelId], removeLabelIds: [currentMailbox] });
+      if (data?.ok) {
+        row.remove();
+        if (mailOpenThreadId === threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
+      }
+    });
+  });
+  btn.parentElement.style.position = "relative";
+  btn.parentElement.appendChild(picker);
+  setTimeout(() => document.addEventListener("click", () => document.getElementById("rowLabelPicker")?.remove(), { once: true }), 0);
 }
 
 async function loadMailLabels() {
   const data = await callGmailApi({ action: "labels" });
   if (!data?.labels) return;
   const systemOrder = ["INBOX", "STARRED", "SENT", "DRAFT", "IMPORTANT", "SPAM", "TRASH"];
-  const system = data.labels.filter((l) => l.type === "system" && systemOrder.includes(l.id) && l.labelListVisibility !== "labelHide");
+  const alwaysShow = new Set(["INBOX", "SPAM", "TRASH"]);
+  const system = data.labels.filter((l) => l.type === "system" && systemOrder.includes(l.id) && (alwaysShow.has(l.id) || l.labelListVisibility !== "labelHide"));
   const user = data.labels.filter((l) => l.type === "user" && l.labelListVisibility !== "labelHide");
   system.sort((a, b) => systemOrder.indexOf(a.id) - systemOrder.indexOf(b.id));
   user.sort((a, b) => a.name.localeCompare(b.name));
@@ -5529,37 +5930,59 @@ function renderMailLabelTabs() {
   const user = mailLabels.filter((l) => l.type === "user");
 
   // Build tree from user labels — Gmail uses "/" as hierarchy separator.
-  // Only nest a label if every intermediate parent path exists as a real label.
-  // Labels like "chase/amazon" with no real "chase" label stay flat.
+  // Nest under the deepest existing real-label prefix; display name strips that prefix.
+  // e.g. "Finances/Chase/Amazon" with only "Finances" real → child of Finances, shows "Chase/Amazon"
   const realPaths = new Set(user.map((l) => l.name));
   const nodeByPath = new Map();
   const roots = [];
   [...user].sort((a, b) => a.name.localeCompare(b.name)).forEach((l) => {
     const parts = l.name.split("/");
-    const allParentsExist = parts.length > 1 &&
-      parts.slice(0, -1).every((_, i) => realPaths.has(parts.slice(0, i + 1).join("/")));
-    if (!allParentsExist) {
+
+    if (parts.length === 1) {
+      if (!nodeByPath.has(l.name)) {
+        const node = { displayName: l.name, fullPath: l.name, id: l.id, children: [] };
+        nodeByPath.set(l.name, node);
+        roots.push(node);
+      } else {
+        nodeByPath.get(l.name).id = l.id;
+      }
+      return;
+    }
+
+    // Find the deepest prefix that is a real label
+    let parentPath = null;
+    for (let i = parts.length - 1; i >= 1; i--) {
+      const prefix = parts.slice(0, i).join("/");
+      if (realPaths.has(prefix)) { parentPath = prefix; break; }
+    }
+
+    if (!parentPath) {
+      // No existing parent — show flat with full name
       const node = { displayName: l.name, fullPath: l.name, id: l.id, children: [] };
       nodeByPath.set(l.name, node);
       roots.push(node);
       return;
     }
-    for (let i = 0; i < parts.length; i++) {
-      const fullPath = parts.slice(0, i + 1).join("/");
-      if (!nodeByPath.has(fullPath)) {
-        const node = { displayName: parts[i], fullPath, id: null, children: [] };
-        nodeByPath.set(fullPath, node);
-        if (i === 0) roots.push(node);
-        else nodeByPath.get(parts.slice(0, i).join("/"))?.children.push(node);
-      }
-      if (i === parts.length - 1) nodeByPath.get(fullPath).id = l.id;
+
+    // Ensure parent node exists
+    if (!nodeByPath.has(parentPath)) {
+      const parentParts = parentPath.split("/");
+      const pNode = { displayName: parentParts[parentParts.length - 1], fullPath: parentPath, id: user.find((u) => u.name === parentPath)?.id || null, children: [] };
+      nodeByPath.set(parentPath, pNode);
+      roots.push(pNode);
     }
+
+    // Strip the parent prefix from display name
+    const displayName = l.name.slice(parentPath.length + 1);
+    const node = { displayName, fullPath: l.name, id: l.id, children: [] };
+    nodeByPath.set(l.name, node);
+    nodeByPath.get(parentPath).children.push(node);
   });
 
   function renderNode(node, depth) {
     const active = node.id && currentMailbox === node.id;
     const expanded = mailFolderExpanded.has(node.fullPath);
-    const indent = depth * 14;
+    const indent = depth * 16;
     if (!node.children.length) {
       return `<button class="mail-label-item${active ? " is-active" : ""}" type="button" data-mailbox="${escapeHtml(node.id || "")}" role="tab" aria-selected="${active}" style="padding-left: calc(26px + ${indent}px)">
         ${mailLabelIcon(node.id, "user")}<span>${escapeHtml(node.displayName)}</span>
@@ -5645,16 +6068,14 @@ function showMailMovePicker(thread) {
       moveMailToLabel(thread.id, opt.dataset.labelId);
     });
   });
-  btn.insertAdjacentElement("afterend", picker);
+  btn.closest(".mail-move-wrap").appendChild(picker);
   setTimeout(() => document.addEventListener("click", () => document.getElementById("mailMovePicker")?.remove(), { once: true }), 0);
 }
 
 async function moveMailToLabel(threadId, targetLabelId) {
   const data = await callGmailApi({ action: "move", threadId, addLabelIds: [targetLabelId], removeLabelIds: [currentMailbox] });
   if (data?.ok) {
-    elements.mailList.querySelectorAll(`[data-thread-id="${CSS.escape(threadId)}"]`).forEach((el) => el.remove());
-    elements.mailThread.hidden = true;
-    mailOpenThreadId = null;
+    afterMailThreadAction(threadId);
     renderMailLabelTabs();
   }
 }
@@ -5704,6 +6125,7 @@ async function sendMailCompose() {
 }
 
 async function openMailThread(threadId) {
+  trackUsage("gmail_thread");
   mailOpenThreadId = threadId;
   elements.mailThread.hidden = false;
   elements.mailThread.innerHTML = `<div class="mail-loading">Loading…</div>`;
@@ -5719,55 +6141,352 @@ async function openMailThread(threadId) {
 function renderMailThread(thread) {
   const messages = thread.messages || [];
   const last = messages[messages.length - 1];
+  const subject = last?.subject || "(no subject)";
   const html = `
-    <div class="mail-thread-header">
-      <button class="mail-back-btn" type="button" id="mailBackBtn">← Back</button>
-      <h2 class="mail-thread-subject">${escapeHtml(last?.subject || "(no subject)")}</h2>
-    </div>
-    <div class="mail-thread-messages">
-      ${messages.map((m) => renderMailMessage(m)).join("")}
-    </div>
-    <div class="mail-reply-area" id="mailReplyArea">
-      <div class="mail-reply-controls">
-        <button class="secondary-btn mail-ai-draft-btn" type="button" id="mailAiDraftBtn">✦ Draft reply</button>
-        <button class="secondary-btn" type="button" id="mailReplyOpenBtn">Reply</button>
-        ${mailLabels.length ? `<div class="mail-move-wrap"><button class="secondary-btn mail-move-btn" type="button" id="mailMoveBtn">Move to ▾</button></div>` : ""}
-      </div>
-      <div class="mail-reply-compose" id="mailReplyCompose" hidden>
-        <div class="mail-reply-to">To: <span>${escapeHtml(last?.from || "")}</span></div>
-        <div class="mail-ai-instruction-row" id="mailAiInstructionRow" hidden>
-          <input class="mail-ai-instruction" id="mailAiInstruction" placeholder="Optional: tone or focus (e.g. 'be brief', 'ask about Thursday')" />
-          <button class="secondary-btn" type="button" id="mailAiGenerateBtn">Generate</button>
+    <div class="mail-thread-toolbar">
+      <button class="icon-btn mail-action-btn" type="button" id="mailBackBtn" title="Back" aria-label="Back">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5"/><path d="m12 5-7 7 7 7"/></svg>
+      </button>
+      <div class="mail-thread-actions">
+        <button class="icon-btn mail-action-btn" type="button" id="mailArchiveBtn" title="Archive">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+        </button>
+        <button class="icon-btn mail-action-btn" type="button" id="mailSpamBtn" title="Report spam">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><octagon/><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        </button>
+        <button class="icon-btn mail-action-btn" type="button" id="mailDeleteBtn" title="Delete">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>
+        <button class="icon-btn mail-action-btn" type="button" id="mailUnreadBtn" title="Mark as unread">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.2 8.4c.5.38.8.97.8 1.6v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V10c0-.63.3-1.22.8-1.6l8-6a2 2 0 0 1 2.4 0l8 6z"/></svg>
+        </button>
+        <div class="mail-action-divider"></div>
+        <div class="mail-move-wrap">
+          <button class="icon-btn mail-action-btn" type="button" id="mailMoveBtn" title="Move to">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          </button>
         </div>
-        <textarea class="mail-reply-body" id="mailReplyBody" rows="8" placeholder="Write your reply…"></textarea>
-        <div class="mail-reply-actions">
-          <button class="secondary-btn" type="button" id="mailReplyCancelBtn">Cancel</button>
-          <button class="primary-btn" type="button" id="mailReplySendBtn">Send</button>
+        <div class="mail-more-wrap">
+          <button class="icon-btn mail-action-btn" type="button" id="mailMoreBtn" title="More actions" aria-label="More actions">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.2" fill="currentColor" stroke="none"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="mail-nav-counter" id="mailNavCounter"></div>
+    </div>
+    <div class="mail-thread-body">
+      <div class="mail-thread-subject-bar">
+        <h2 class="mail-thread-subject">${escapeHtml(subject)}</h2>
+      </div>
+      <div class="mail-thread-messages">
+        ${messages.map((m) => renderMailMessage(m)).join("")}
+      </div>
+      <div class="mail-reply-area" id="mailReplyArea">
+        <div class="mail-reply-controls">
+          <button class="secondary-btn mail-ai-draft-btn" type="button" id="mailAiDraftBtn">✦ Draft reply</button>
+          <button class="secondary-btn" type="button" id="mailReplyOpenBtn">Reply</button>
+        </div>
+        <div class="mail-reply-compose" id="mailReplyCompose" hidden>
+          <div class="mail-reply-to">To: <span>${escapeHtml(last?.from || "")}</span></div>
+          <div class="mail-ai-instruction-row" id="mailAiInstructionRow" hidden>
+            <input class="mail-ai-instruction" id="mailAiInstruction" placeholder="Optional: tone or focus (e.g. 'be brief', 'ask about Thursday')" />
+            <button class="secondary-btn" type="button" id="mailAiGenerateBtn">Generate</button>
+          </div>
+          <textarea class="mail-reply-body" id="mailReplyBody" rows="8" placeholder="Write your reply…"></textarea>
+          <div class="mail-reply-actions">
+            <button class="secondary-btn" type="button" id="mailReplyCancelBtn">Cancel</button>
+            <button class="primary-btn" type="button" id="mailReplySendBtn">Send</button>
+          </div>
         </div>
       </div>
     </div>`;
   elements.mailThread.innerHTML = html;
 
-  document.getElementById("mailBackBtn").addEventListener("click", () => {
-    elements.mailThread.hidden = true;
-    mailOpenThreadId = null;
-  });
+  document.getElementById("mailBackBtn").addEventListener("click", () => { elements.mailThread.hidden = true; mailOpenThreadId = null; });
+  const mailRows = [...elements.mailList.querySelectorAll(".mail-row[data-thread-id]")];
+  const mailIdx = mailRows.findIndex(r => r.dataset.threadId === thread.id);
+  const navCounter = document.getElementById("mailNavCounter");
+  if (mailIdx !== -1) {
+    navCounter.innerHTML = `
+      <button class="icon-btn mail-action-btn" type="button" id="mailNavPrevBtn" title="Previous email" ${mailIdx === 0 ? "disabled" : ""}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span class="mail-nav-label">${mailIdx + 1} of ${mailRows.length}</span>
+      <button class="icon-btn mail-action-btn" type="button" id="mailNavNextBtn" title="Next email" ${mailIdx === mailRows.length - 1 ? "disabled" : ""}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
+      </button>`;
+    document.getElementById("mailNavPrevBtn").addEventListener("click", () => openMailThread(mailRows[mailIdx - 1].dataset.threadId));
+    document.getElementById("mailNavNextBtn").addEventListener("click", () => openMailThread(mailRows[mailIdx + 1].dataset.threadId));
+  }
+  document.getElementById("mailArchiveBtn").addEventListener("click", () => archiveMailThread(thread));
+  document.getElementById("mailSpamBtn").addEventListener("click", () => spamMailThread(thread));
+  document.getElementById("mailDeleteBtn").addEventListener("click", () => deleteMailThread(thread));
+  document.getElementById("mailUnreadBtn").addEventListener("click", () => markMailUnread(thread));
+  document.getElementById("mailMoveBtn").addEventListener("click", (e) => { e.stopPropagation(); showMailMovePicker(thread); });
+  document.getElementById("mailMoreBtn").addEventListener("click", (e) => { e.stopPropagation(); showMailMoreMenu(thread, last); });
   document.getElementById("mailReplyOpenBtn").addEventListener("click", () => {
     document.getElementById("mailReplyCompose").hidden = false;
     document.getElementById("mailAiInstructionRow").hidden = true;
     document.getElementById("mailReplyBody").focus();
   });
-  document.getElementById("mailAiDraftBtn").addEventListener("click", async () => {
+  document.getElementById("mailAiDraftBtn").addEventListener("click", () => {
     document.getElementById("mailReplyCompose").hidden = false;
     document.getElementById("mailAiInstructionRow").hidden = false;
     document.getElementById("mailReplyBody").value = "";
   });
   document.getElementById("mailAiGenerateBtn").addEventListener("click", () => generateAiDraft(thread));
-  document.getElementById("mailReplyCancelBtn").addEventListener("click", () => {
-    document.getElementById("mailReplyCompose").hidden = true;
-  });
+  document.getElementById("mailReplyCancelBtn").addEventListener("click", () => { document.getElementById("mailReplyCompose").hidden = true; });
   document.getElementById("mailReplySendBtn").addEventListener("click", () => sendMailReply(thread, last));
-  document.getElementById("mailMoveBtn")?.addEventListener("click", (e) => { e.stopPropagation(); showMailMovePicker(thread); });
+}
+
+async function archiveMailThread(thread) {
+  const data = await callGmailApi({ action: "move", threadId: thread.id, addLabelIds: [], removeLabelIds: ["INBOX"] });
+  if (data?.ok) afterMailThreadAction(thread.id);
+}
+
+async function spamMailThread(thread) {
+  const data = await callGmailApi({ action: "move", threadId: thread.id, addLabelIds: ["SPAM"], removeLabelIds: ["INBOX"] });
+  if (data?.ok) afterMailThreadAction(thread.id);
+}
+
+async function deleteMailThread(thread) {
+  const data = await callGmailApi({ action: "move", threadId: thread.id, addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] });
+  if (data?.ok) afterMailThreadAction(thread.id);
+}
+
+async function markMailUnread(thread) {
+  const data = await callGmailApi({ action: "move", threadId: thread.id, addLabelIds: ["UNREAD"], removeLabelIds: [] });
+  if (data?.ok) {
+    elements.mailList.querySelectorAll(`[data-thread-id="${CSS.escape(thread.id)}"]`).forEach((el) => el.classList.add("mail-row--unread"));
+    elements.mailThread.hidden = true;
+    mailOpenThreadId = null;
+  }
+}
+
+function afterMailThreadAction(threadId) {
+  elements.mailList.querySelectorAll(`[data-thread-id="${CSS.escape(threadId)}"]`).forEach((el) => el.remove());
+  elements.mailThread.hidden = true;
+  mailOpenThreadId = null;
+}
+
+function showMailMoreMenu(thread, lastMsg) {
+  document.getElementById("mailMoreMenu")?.remove();
+  const btn = document.getElementById("mailMoreBtn");
+  if (!btn) return;
+  const menu = document.createElement("div");
+  menu.id = "mailMoreMenu";
+  menu.className = "mail-more-menu";
+  menu.innerHTML = `
+    <button class="mail-more-option" type="button" data-action="snooze">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+      Snooze
+    </button>
+    <button class="mail-more-option" type="button" data-action="add-task">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      Add to tasks
+    </button>
+    <button class="mail-more-option" type="button" data-action="create-event">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Create event
+    </button>
+    <button class="mail-more-option" type="button" data-action="read-as-article">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      Read as article
+    </button>
+    <div class="mail-more-divider"></div>
+    <button class="mail-more-option" type="button" data-action="label">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+      Label as
+    </button>`;
+  menu.addEventListener("click", (e) => {
+    const opt = e.target.closest("[data-action]");
+    if (!opt) return;
+    menu.remove();
+    const action = opt.dataset.action;
+    if (action === "snooze") showMailToast("Snooze coming soon");
+    else if (action === "add-task") addEmailToTasks(lastMsg?.subject || "(no subject)");
+    else if (action === "create-event") createEventFromEmail(lastMsg?.subject || "");
+    else if (action === "read-as-article") saveMailAsArticle(thread, lastMsg);
+    else if (action === "label") showMailMovePicker(thread);
+  });
+  btn.closest(".mail-more-wrap").appendChild(menu);
+  setTimeout(() => document.addEventListener("click", () => document.getElementById("mailMoreMenu")?.remove(), { once: true }), 0);
+}
+
+function addEmailToTasks(subject) {
+  doBacklogTasks().push({ id: createId("task"), title: subject, done: false, weekKey: weekKey(), createdAt: new Date().toISOString() });
+  persist();
+  showMailToast("Added to tasks");
+}
+
+function createEventFromEmail(subject) {
+  openPlanEventDialog(dateKeyFromDate(new Date()));
+  elements.planEventTitle.value = subject;
+}
+
+function saveMailAsArticle(thread, lastMsg) {
+  if (!lastMsg) return;
+  const id = "email-" + thread.id;
+  const sanitized = lastMsg.body?.includes("<")
+    ? sanitizeMailHtml(lastMsg.body)
+    : `<pre style="white-space:pre-wrap;font-family:inherit">${escapeHtml(lastMsg.body || "")}</pre>`;
+  if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
+  state.savedArticles = state.savedArticles.filter((a) => a.id !== id);
+  state.savedArticles.push({
+    id,
+    url: null,
+    title: lastMsg.subject || "(no subject)",
+    author: parseDisplayName(lastMsg.from),
+    date: lastMsg.date ? new Date(lastMsg.date).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "",
+    publication: "email",
+    savedAt: new Date().toISOString(),
+    text: sanitized
+  });
+  persist();
+  showMediaApp();
+  switchMediaTab("all");
+  openArticle(id, "articleList");
+}
+
+function showMailToast(message) {
+  document.getElementById("mailToast")?.remove();
+  const toast = document.createElement("div");
+  toast.id = "mailToast";
+  toast.className = "mail-toast";
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 3000);
+}
+
+function updateMailBulkBar() {
+  const bar = document.getElementById("mailBulkBar");
+  if (!bar) return;
+  const count = mailSelected.size;
+  bar.hidden = count === 0;
+  const countEl = document.getElementById("mailBulkCount");
+  if (countEl) countEl.textContent = `${count} selected`;
+  if (count > 0 && !mailBulkBarWired) wireMailBulkBar();
+}
+
+function wireMailBulkBar() {
+  mailBulkBarWired = true;
+
+  document.getElementById("mailBulkDeselect")?.addEventListener("click", () => {
+    mailSelected.clear();
+    elements.mailList.querySelectorAll(".mail-row--selected").forEach((r) => r.classList.remove("mail-row--selected"));
+    updateMailBulkBar();
+  });
+
+  document.getElementById("mailBulkDelete")?.addEventListener("click", async () => {
+    const ids = [...mailSelected.keys()];
+    await Promise.all(ids.map((threadId) => callGmailApi({ action: "move", threadId, addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] })));
+    ids.forEach((threadId) => {
+      elements.mailList.querySelectorAll(`[data-thread-id="${CSS.escape(threadId)}"]`).forEach((r) => r.remove());
+      mailSelected.delete(threadId);
+      if (mailOpenThreadId === threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
+    });
+    updateMailBulkBar();
+  });
+
+  document.getElementById("mailBulkUnread")?.addEventListener("click", async () => {
+    const ids = [...mailSelected.keys()];
+    await Promise.all(ids.map((threadId) => callGmailApi({ action: "move", threadId, addLabelIds: ["UNREAD"], removeLabelIds: [] })));
+    ids.forEach((threadId) => {
+      elements.mailList.querySelectorAll(`[data-thread-id="${CSS.escape(threadId)}"]`).forEach((r) => r.classList.add("mail-row--unread"));
+      mailSelected.delete(threadId);
+    });
+    elements.mailList.querySelectorAll(".mail-row--selected").forEach((r) => r.classList.remove("mail-row--selected"));
+    updateMailBulkBar();
+  });
+
+  document.getElementById("mailBulkMove")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    showBulkMovePicker();
+  });
+
+  document.getElementById("mailBulkMore")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    showBulkMoreMenu();
+  });
+}
+
+function showBulkMovePicker() {
+  document.getElementById("bulkMovePicker")?.remove();
+  const btn = document.getElementById("mailBulkMove");
+  if (!btn) return;
+  const options = mailLabels.filter((l) => l.id !== currentMailbox);
+  if (!options.length) { showMailToast("No labels available"); return; }
+  const picker = document.createElement("div");
+  picker.id = "bulkMovePicker";
+  picker.className = "mail-move-picker";
+  picker.innerHTML = options.map((l) => {
+    const label = l.type === "system" ? formatSystemLabel(l.id) : l.name;
+    return `<button class="mail-move-option" type="button" data-label-id="${escapeHtml(l.id)}">${escapeHtml(label)}</button>`;
+  }).join("");
+  picker.querySelectorAll(".mail-move-option").forEach((opt) => {
+    opt.addEventListener("click", async () => {
+      picker.remove();
+      const ids = [...mailSelected.keys()];
+      await Promise.all(ids.map((threadId) => callGmailApi({ action: "move", threadId, addLabelIds: [opt.dataset.labelId], removeLabelIds: [currentMailbox] })));
+      ids.forEach((threadId) => {
+        elements.mailList.querySelectorAll(`[data-thread-id="${CSS.escape(threadId)}"]`).forEach((r) => r.remove());
+        mailSelected.delete(threadId);
+        if (mailOpenThreadId === threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
+      });
+      updateMailBulkBar();
+    });
+  });
+  btn.closest(".mail-move-wrap").appendChild(picker);
+  setTimeout(() => document.addEventListener("click", () => document.getElementById("bulkMovePicker")?.remove(), { once: true }), 0);
+}
+
+function showBulkMoreMenu() {
+  document.getElementById("mailBulkMoreMenu")?.remove();
+  const btn = document.getElementById("mailBulkMore");
+  if (!btn) return;
+  const menu = document.createElement("div");
+  menu.id = "mailBulkMoreMenu";
+  menu.className = "mail-more-menu";
+  menu.innerHTML = `
+    <button class="mail-more-option" type="button" data-action="snooze">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+      Snooze
+    </button>
+    <button class="mail-more-option" type="button" data-action="add-task">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      Add to tasks
+    </button>
+    <button class="mail-more-option" type="button" data-action="create-event">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Create event
+    </button>
+    <div class="mail-more-divider"></div>
+    <button class="mail-more-option" type="button" data-action="label">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+      Label as
+    </button>`;
+  menu.addEventListener("click", (e) => {
+    const opt = e.target.closest("[data-action]");
+    if (!opt) return;
+    menu.remove();
+    const action = opt.dataset.action;
+    if (action === "snooze") {
+      showMailToast("Snooze coming soon");
+    } else if (action === "add-task") {
+      [...mailSelected.values()].forEach(({ subject }) => {
+        doBacklogTasks().push({ id: createId("task"), title: subject, done: false, weekKey: weekKey(), createdAt: new Date().toISOString() });
+      });
+      persist();
+      showMailToast(`Added ${mailSelected.size} task${mailSelected.size !== 1 ? "s" : ""}`);
+    } else if (action === "create-event") {
+      const firstSubject = [...mailSelected.values()][0]?.subject || "";
+      createEventFromEmail(firstSubject);
+    } else if (action === "label") {
+      showBulkMovePicker();
+    }
+  });
+  btn.closest(".mail-more-wrap").appendChild(menu);
+  setTimeout(() => document.addEventListener("click", () => document.getElementById("mailBulkMoreMenu")?.remove(), { once: true }), 0);
 }
 
 function renderMailMessage(msg) {
@@ -5826,6 +6545,16 @@ async function sendMailReply(thread, lastMsg) {
   }
 }
 
+function cleanMailSnippet(raw) {
+  if (!raw) return "";
+  return raw
+    .replace(/&(zwnj|zwj|lrm|rlm|shy|#8203|#8204|#8205|#xfeff|#x200[bcdef]);/gi, "")
+    .replace(/[​‌‍‎‏﻿­]/g, "")
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function parseDisplayName(from) {
   const m = from?.match(/^"?([^"<]+)"?\s*</);
   return m ? m[1].trim() : (from || "");
@@ -5851,6 +6580,22 @@ function sanitizeMailHtml(html) {
     ["onclick","onload","onerror","onmouseover","src"].forEach((attr) => {
       if (el.getAttribute(attr)?.toLowerCase().startsWith("javascript:")) el.removeAttribute(attr);
     });
+  });
+  div.querySelectorAll("a[href]").forEach((a) => {
+    a.setAttribute("target", "_blank");
+    a.setAttribute("rel", "noopener noreferrer");
+  });
+  // Strip fixed-pixel widths from table elements so email layouts reflow to fit the viewport.
+  // Many HTML emails hard-code widths like <table width="600"> which CSS max-width can't override.
+  div.querySelectorAll("table, td, th, div, center").forEach((el) => {
+    const w = el.getAttribute("width");
+    if (w && /^\d+$/.test(w.trim())) el.removeAttribute("width");
+    if (el.style.width && /^\d+px$/.test(el.style.width.trim())) el.style.removeProperty("width");
+    if (el.style.minWidth && /^\d+px$/.test(el.style.minWidth.trim())) el.style.removeProperty("min-width");
+  });
+  div.querySelectorAll("img").forEach((img) => {
+    if (img.style.width && /^\d+px$/.test(img.style.width.trim())) img.style.removeProperty("width");
+    img.removeAttribute("width");
   });
   return div.innerHTML;
 }
@@ -5887,10 +6632,10 @@ function currentMainPageTitle() {
   if (activeAppArea === "home") return getAppName();
   if (activeAppArea === "do") return "To-Do";
   if (activeAppArea === "play") return "Exercise";
-  if (activeAppArea === "plan") return "Schedule";
+  if (activeAppArea === "plan") return "Calendar";
   if (activeAppArea === "inventory") return "Stock";
   if (activeAppArea === "watch") return "Watch";
-  if (activeAppArea === "read") return "Read";
+  if (activeAppArea === "media") return "Media";
   if (activeAppArea === "shop") return "Shop";
   if (activeAppArea === "recreate") return "Recreate";
   if (activeAppArea === "settings") return "Settings";
@@ -6138,6 +6883,76 @@ function openDoTaskLogView(dayId, taskId) {
 }
 
 
+function initDoPlannerDelegation() {
+  const grid = elements.doPlannerGrid;
+  if (!grid) return;
+
+  grid.addEventListener("click", (e) => {
+    const dayTab = e.target.closest("[data-do-day-tab]");
+    if (dayTab) { selectPlannerDay(dayTab.dataset.doDayTab); return; }
+    if (e.target.closest("[data-open-add-task]")) { openAddTaskDialog(); return; }
+    const del = e.target.closest("[data-do-task-delete]");
+    if (del) { deleteDoTask(del.dataset.doDay, del.dataset.doTaskDelete); return; }
+    const edit = e.target.closest("[data-do-task-swipe-edit]");
+    if (edit) { openEditTaskDialog(edit.dataset.doDay, edit.dataset.doTaskSwipeEdit); return; }
+  });
+
+  grid.addEventListener("change", (e) => {
+    const toggle = e.target.closest("[data-do-task-toggle]");
+    if (toggle) toggleDoTask(toggle.dataset.doDay, toggle.dataset.doTaskToggle, toggle.checked);
+  });
+
+  grid.addEventListener("dragover", (e) => {
+    if (!Array.from(e.dataTransfer.types || []).includes("application/json")) return;
+    const target = e.target.closest("[data-do-day-tab], [data-do-task-drop-day], [data-do-backlog-drop]");
+    if (!target) return;
+    e.preventDefault();
+    target.classList.add("do-task-drop-over");
+  });
+
+  grid.addEventListener("dragleave", (e) => {
+    const target = e.target.closest("[data-do-day-tab], [data-do-task-drop-day], [data-do-backlog-drop]");
+    if (!target || target.contains(e.relatedTarget)) return;
+    target.classList.remove("do-task-drop-over");
+  });
+
+  grid.addEventListener("drop", (e) => {
+    const dayTarget = e.target.closest("[data-do-day-tab], [data-do-task-drop-day]");
+    if (dayTarget) {
+      e.preventDefault();
+      dayTarget.classList.remove("do-task-drop-over");
+      const payload = doTaskDragPayload(e);
+      const targetDay = dayTarget.dataset.doTaskDropDay || dayTarget.dataset.doDayTab;
+      if (payload && targetDay) { moveDoTask(payload.sourceDay, targetDay, payload.taskId); clearDoTaskDragState(); }
+      return;
+    }
+    const backlogTarget = e.target.closest("[data-do-backlog-drop]");
+    if (backlogTarget) {
+      e.preventDefault();
+      backlogTarget.classList.remove("do-task-drop-over");
+      const payload = doTaskDragPayload(e);
+      if (payload) { moveDoTask(payload.sourceDay, "backlog", payload.taskId); clearDoTaskDragState(); }
+    }
+  });
+}
+
+function initTasksPageDelegation() {
+  const dialog = elements.tasksPageDialog;
+  if (!dialog) return;
+
+  dialog.addEventListener("click", (e) => {
+    const del = e.target.closest("[data-do-task-delete]");
+    if (del) { deleteDoTask(del.dataset.doDay, del.dataset.doTaskDelete); return; }
+    const edit = e.target.closest("[data-do-task-swipe-edit]");
+    if (edit) { openEditTaskDialog(edit.dataset.doDay, edit.dataset.doTaskSwipeEdit); return; }
+  });
+
+  dialog.addEventListener("change", (e) => {
+    const toggle = e.target.closest("[data-do-task-toggle]");
+    if (toggle) toggleDoTask(toggle.dataset.doDay, toggle.dataset.doTaskToggle, toggle.checked);
+  });
+}
+
 function renderDoPlanner() {
   if (!elements.doPlannerGrid) return;
   if (!doPrepDays.some((day) => day.id === activePlannerDayId)) activePlannerDayId = doPrepDays[0].id;
@@ -6169,23 +6984,6 @@ function renderDoPlanner() {
       </section>
     </div>
   `;
-  elements.doPlannerGrid.querySelectorAll("[data-do-day-tab]").forEach((button) => {
-    button.addEventListener("click", () => selectPlannerDay(button.dataset.doDayTab));
-    button.addEventListener("dragover", handleDoTaskDragOver);
-    button.addEventListener("drop", handleDoTaskDropOnDay);
-    button.addEventListener("dragleave", clearDoTaskDropOver);
-  });
-  elements.doPlannerGrid.querySelector("[data-open-add-task]")?.addEventListener("click", openAddTaskDialog);
-  elements.doPlannerGrid.querySelectorAll("[data-do-task-drop-day]").forEach((list) => {
-    list.addEventListener("dragover", handleDoTaskDragOver);
-    list.addEventListener("drop", handleDoTaskDropOnDay);
-    list.addEventListener("dragleave", clearDoTaskDropOver);
-  });
-  elements.doPlannerGrid.querySelectorAll("[data-do-backlog-drop]").forEach((list) => {
-    list.addEventListener("dragover", handleDoTaskDragOver);
-    list.addEventListener("drop", handleDoTaskDropOnBacklog);
-    list.addEventListener("dragleave", clearDoTaskDropOver);
-  });
   bindDoTaskControls(elements.doPlannerGrid);
   updateTabIndicator(elements.doPlannerGrid);
 }
@@ -6227,6 +7025,8 @@ function doBacklogListTemplate() {
 }
 
 function bindDoTaskControls(root = document) {
+  // Drag source and touch-swipe handlers must stay per-element (use currentTarget internally).
+  // Click/change handlers are handled by delegated listeners set up in initDoPlannerDelegation / initTasksPageDelegation.
   root.querySelectorAll("[data-do-task]").forEach((item) => {
     item.addEventListener("dragstart", handleDoTaskDragStart);
     item.addEventListener("drag", handleDoTaskDrag);
@@ -6236,15 +7036,6 @@ function bindDoTaskControls(root = document) {
     item.addEventListener("pointermove", handleDoTaskPointerMove);
     item.addEventListener("pointerup", handleDoTaskPointerEnd);
     item.addEventListener("pointercancel", handleDoTaskPointerEnd);
-  });
-  root.querySelectorAll("[data-do-task-toggle]").forEach((checkbox) => {
-    checkbox.addEventListener("change", () => toggleDoTask(checkbox.dataset.doDay, checkbox.dataset.doTaskToggle, checkbox.checked));
-  });
-  root.querySelectorAll("[data-do-task-delete]").forEach((button) => {
-    button.addEventListener("click", () => deleteDoTask(button.dataset.doDay, button.dataset.doTaskDelete));
-  });
-  root.querySelectorAll("[data-do-task-swipe-edit]").forEach((button) => {
-    button.addEventListener("click", () => openEditTaskDialog(button.dataset.doDay, button.dataset.doTaskSwipeEdit));
   });
 }
 
@@ -6494,6 +7285,7 @@ function toggleRecurringTaskDay(taskId, dayId, checked) {
 }
 
 function deleteRecurringTask(taskId) {
+  recordDeletion("recurringTasks", taskId);
   state.recurringTasks = state.recurringTasks.filter((task) => task.id !== taskId);
   removeRecurringTaskInstances(taskId);
   persist();
@@ -7399,6 +8191,9 @@ function syncPlayWorkoutTitles(workoutId, title, details = null, notes = "") {
 }
 
 function deleteWorkout(workoutId) {
+  recordDeletion("workouts", workoutId);
+  const rulesRemoved = state.playAutoRules.filter(r => r.workoutId === workoutId);
+  recordDeletions("playAutoRules", rulesRemoved.map(r => r.id));
   state.workouts = normalizeWorkouts(state.workouts).filter((workout) => workout.id !== workoutId);
   state.playAutoRules = normalizePlayAutoRules(state.playAutoRules).filter((rule) => rule.workoutId !== workoutId);
   persist();
@@ -7535,6 +8330,7 @@ function togglePlayAutoRuleDay(ruleId, dayId, checked) {
 }
 
 function deletePlayAutoRule(ruleId) {
+  recordDeletion("playAutoRules", ruleId);
   state.playAutoRules = normalizePlayAutoRules(state.playAutoRules).filter((rule) => rule.id !== ruleId);
   removePlayAutoRuleInstances(ruleId);
   persist();
@@ -7647,8 +8443,10 @@ function applyDoTaskToggle(dayId, taskId, done) {
 
 function deleteDoTask(dayId, taskId) {
   if (dayId === "backlog") {
+    recordDeletion("doBacklog", taskId);
     state.doBacklog = doBacklogTasks().filter((task) => task.id !== taskId);
   } else {
+    recordDeletion("doPlanTasks", taskId);
     const key = weekKey();
     const tasks = doTasksForDay(dayId);
     const task = tasks.find((item) => item.id === taskId);
@@ -7855,6 +8653,7 @@ function moveDoTask(sourceDay, targetDay, taskId) {
   const nextTask = { ...task };
   if (sourceDay === "backlog") {
     if (task.taskType !== "regular") {
+      recordDeletion("doBacklog", taskId);
       state.doBacklog = sourceTasks.filter((item) => item.id !== taskId);
     } else {
       nextTask.id = createId("task");
@@ -8545,8 +9344,10 @@ function togglePlayTask(dayId, taskId, done) {
 
 function deletePlayTask(dayId, taskId) {
   if (dayId === "backlog") {
+    recordDeletion("playBacklog", taskId);
     state.playBacklog = playBacklogTasks().filter((task) => task.id !== taskId);
   } else {
+    recordDeletion("playPlanTasks", taskId);
     playTasksForDay(dayId);
     state.playPlans[weekKey()][dayId] = state.playPlans[weekKey()][dayId].filter((task) => task.id !== taskId);
   }
@@ -8813,7 +9614,7 @@ function openDailyDozenPage(recipeId = "") {
   if (elements.recipeBoxPageDialog.open) elements.recipeBoxPageDialog.close();
   if (elements.groceriesPageDialog.open) elements.groceriesPageDialog.close();
   pendingDailyDozenRecipeId = String(recipeId || "");
-  activeDailyDozenDate = activeDailyDozenDate || dailyDozenDomain().localDateKey();
+  activeDailyDozenDate = activeDailyDozenDate || LiveDailyDozen.localDateKey();
   if (!familyMembers().some((member) => member.id === activeDailyDozenMemberId)) {
     activeDailyDozenMemberId = familyMembers()[0]?.id || "";
   }
@@ -8829,10 +9630,10 @@ function closeDailyDozenPage() {
 }
 
 function renderDailyDozen() {
-  const date = activeDailyDozenDate || dailyDozenDomain().localDateKey();
+  const date = activeDailyDozenDate || LiveDailyDozen.localDateKey();
   activeDailyDozenDate = date;
   elements.dailyDozenDate.value = date;
-  elements.dailyDozenTodayBtn.disabled = date === dailyDozenDomain().localDateKey();
+  elements.dailyDozenTodayBtn.disabled = date === LiveDailyDozen.localDateKey();
   const members = familyMembers();
   elements.dailyDozenMembers.innerHTML = members.map((member) => `
     <button type="button" role="tab" data-daily-dozen-member="${escapeHtml(member.id)}"
@@ -8853,7 +9654,7 @@ function renderDailyDozen() {
   elements.dailyDozenGoals.innerHTML = enabledGoals.length ? enabledGoals.map(goalId => {
     const tmpl = checklistTemplates().find(t => t.id === goalId);
     if (!tmpl?.items?.length) return "";
-    const goalProgress = foodHealthDomain().checklistProgress({
+    const goalProgress = LiveFoodHealth.checklistProgress({
       template: tmpl,
       settings: goalId === "daily-dozen" ? personSettings : {},
       manualEntries: dailyChecklistEntries(),
@@ -8935,7 +9736,7 @@ function renderDailyDozenRecipeSuggestion() {
 }
 
 function dailyDozenRecipeSuggestions(recipe) {
-  return dailyDozenDomain().recipeSuggestions(
+  return LiveDailyDozen.recipeSuggestions(
     normalizeIngredients(recipe?.ingredients || []),
     groceryDailyDozenTags(),
     dailyDozenItemKey
@@ -8967,7 +9768,7 @@ function adjustDailyDozenServing(categoryId, amount, source = {}) {
   } else {
     reduceDailyDozenServing(categoryId, Math.abs(amount));
   }
-  state.dailyChecklistEntries = foodHealthDomain().normalizeDailyChecklistEntries(
+  state.dailyChecklistEntries = LiveFoodHealth.normalizeDailyChecklistEntries(
     state.dailyChecklistEntries,
     familyMembers().map((member) => member.id)
   );
@@ -8991,7 +9792,7 @@ function reduceDailyDozenServing(categoryId, amount) {
 }
 
 function renderFoodHealthNutrition() {
-  const totals = foodHealthDomain().nutritionTotals(foodLogEntries(), activeDailyDozenMemberId, activeDailyDozenDate);
+  const totals = LiveFoodHealth.nutritionTotals(foodLogEntries(), activeDailyDozenMemberId, activeDailyDozenDate);
   const targets = personChecklistSettings()[activeDailyDozenMemberId]?.nutritionTargets || {};
   const member = familyMembers().find((item) => item.id === activeDailyDozenMemberId);
   elements.foodHealthTargetNote.textContent = activeDailyDozenMemberId === "sophia" && !Object.keys(targets).length
@@ -8999,7 +9800,7 @@ function renderFoodHealthNutrition() {
     : "Estimated from logged foods; actual values vary. Targets are optional and user-configured.";
   const labels = { calories: "Calories", protein: "Protein", carbs: "Carbs", fat: "Fat", fiber: "Fiber", sugar: "Sugar", sodium: "Sodium", saturatedFat: "Saturated fat" };
   const units = { calories: "kcal", protein: "g", carbs: "g", fat: "g", fiber: "g", sugar: "g", sodium: "mg", saturatedFat: "g" };
-  elements.foodHealthNutrition.innerHTML = foodHealthDomain().nutrientKeys.map((key) => `
+  elements.foodHealthNutrition.innerHTML = LiveFoodHealth.nutrientKeys.map((key) => `
     <article>
       <span>${escapeHtml(labels[key])}</span>
       <strong>${formatNutritionValue(totals[key])} <small>${units[key]}</small></strong>
@@ -9012,7 +9813,7 @@ function renderFoodHealthNutrition() {
 function renderFoodHealthMeals() {
   const entries = foodLogEntries().filter((entry) => entry.familyMemberId === activeDailyDozenMemberId
     && entry.date === activeDailyDozenDate);
-  elements.foodHealthMeals.innerHTML = foodHealthDomain().mealTypes.map((mealType) => {
+  elements.foodHealthMeals.innerHTML = LiveFoodHealth.mealTypes.map((mealType) => {
     const mealEntries = entries.filter((entry) => entry.mealType === mealType);
     return `
       <section class="food-health-meal-group">
@@ -9109,7 +9910,7 @@ function renderFoodLogSourceFields(entry = null) {
 
 function renderFoodLogNutritionInputs(snapshot = {}) {
   const labels = { calories: "Calories", protein: "Protein (g)", carbs: "Carbs (g)", fat: "Fat (g)", fiber: "Fiber (g)", sugar: "Sugar (g)", sodium: "Sodium (mg)", saturatedFat: "Saturated fat (g)" };
-  elements.foodLogNutritionInputs.innerHTML = foodHealthDomain().nutrientKeys.map((key) => `
+  elements.foodLogNutritionInputs.innerHTML = LiveFoodHealth.nutrientKeys.map((key) => `
     <label>${escapeHtml(labels[key])}<input type="number" min="0" step="0.1" data-food-nutrient="${key}" value="${Number(snapshot?.[key]) || ""}" /></label>
   `).join("");
 }
@@ -9168,8 +9969,8 @@ function saveFoodLogEntry(event) {
   const manualValues = Object.fromEntries([...elements.foodLogNutritionInputs.querySelectorAll("[data-food-nutrient]")]
     .map((input) => [input.dataset.foodNutrient, Number(input.value) || 0]));
   const nutritionSnapshot = recipe
-    ? foodHealthDomain().snapshotFromRecipe(recipe, servingMultiplier, id)
-    : foodHealthDomain().snapshotFromValues(manualValues, servingMultiplier, id, sourceType === "grocery_item" ? 0.5 : 1);
+    ? LiveFoodHealth.snapshotFromRecipe(recipe, servingMultiplier, id)
+    : LiveFoodHealth.snapshotFromValues(manualValues, servingMultiplier, id, sourceType === "grocery_item" ? 0.5 : 1);
   const checklistContributions = [...elements.foodLogChecklistSuggestions.querySelectorAll("[data-food-checklist-item]")].map((checkbox) => ({
     foodLogEntryId: id,
     checklistItemId: checkbox.dataset.foodChecklistItem,
@@ -9194,7 +9995,7 @@ function saveFoodLogEntry(event) {
   const index = state.foodLogEntries.findIndex((entry) => entry.id === id);
   if (index >= 0) state.foodLogEntries[index] = next;
   else state.foodLogEntries.push(next);
-  state.foodLogEntries = foodHealthDomain().normalizeFoodLogEntries(state.foodLogEntries, familyMembers().map((member) => member.id));
+  state.foodLogEntries = LiveFoodHealth.normalizeFoodLogEntries(state.foodLogEntries, familyMembers().map((member) => member.id));
   persist();
   closeFoodLogDialog();
   renderDailyDozen();
@@ -9202,6 +10003,7 @@ function saveFoodLogEntry(event) {
 
 function deleteFoodLogEntry() {
   if (!editingFoodLogEntryId) return;
+  recordDeletion("foodLogEntries", editingFoodLogEntryId);
   state.foodLogEntries = foodLogEntries().filter((entry) => entry.id !== editingFoodLogEntryId);
   persist();
   closeFoodLogDialog();
@@ -9212,7 +10014,7 @@ function recalculateFoodLogEntry(entryId) {
   const entry = foodLogEntries().find((item) => item.id === entryId);
   const recipe = activeRecipes().find((item) => item.id === entry?.sourceId);
   if (!entry || !recipe) return;
-  entry.nutritionSnapshot = foodHealthDomain().snapshotFromRecipe(recipe, entry.servingMultiplier, entry.id);
+  entry.nutritionSnapshot = LiveFoodHealth.snapshotFromRecipe(recipe, entry.servingMultiplier, entry.id);
   persist();
   renderDailyDozen();
 }
@@ -9221,7 +10023,7 @@ function copyFoodLogEntryToMember(entryId) {
   const entry = foodLogEntries().find((item) => item.id === entryId);
   const select = elements.foodHealthMeals.querySelector(`[data-copy-food-target="${entryId}"]`);
   if (!entry || !select?.value) return;
-  state.foodLogEntries.push(foodHealthDomain().copyFoodLogEntry(entry, select.value, createId("food-log")));
+  state.foodLogEntries.push(LiveFoodHealth.copyFoodLogEntry(entry, select.value, createId("food-log")));
   persist();
   renderDailyDozen();
 }
@@ -9260,7 +10062,7 @@ function renderFoodHealthSettings() {
   elements.foodHealthNutritionTargetNote.textContent = activeFoodHealthSettingsMemberId === "sophia"
     ? "No adult targets are applied by default. Enter only targets you have chosen for Sophia."
     : "Optional personal targets. Leave blank to show totals without comparison.";
-  elements.foodHealthNutritionTargets.innerHTML = foodHealthDomain().nutrientKeys.map((key) => `
+  elements.foodHealthNutritionTargets.innerHTML = LiveFoodHealth.nutrientKeys.map((key) => `
     <label>${escapeHtml(labels[key])}<input type="number" min="0" step="0.1" data-health-nutrition-target="${key}" value="${settings.nutritionTargets?.[key] ?? ""}" /></label>
   `).join("");
 }
@@ -9300,7 +10102,7 @@ function saveFoodHealthSettings() {
     nutritionTargets,
     useAdultNutritionTargets: personId !== "sophia" && Object.keys(nutritionTargets).length > 0
   };
-  state.personChecklistSettings = foodHealthDomain().normalizePersonSettings(
+  state.personChecklistSettings = LiveFoodHealth.normalizePersonSettings(
     state.personChecklistSettings,
     familyMembers(),
     checklistTemplates()
@@ -10566,8 +11368,7 @@ function updatePageTitleMenu() {
   elements.titleExercisePlanBtn.hidden = activeAppArea === "play" || !isPagePersonallyEnabled("play");
   elements.titleToDoListBtn.hidden = activeAppArea === "do" || !isPagePersonallyEnabled("do");
   elements.titleWatchBtn.hidden = activeAppArea === "watch" || !isPagePersonallyEnabled("watch");
-  elements.titleReadBtn.hidden = activeAppArea === "read" || !isPagePersonallyEnabled("read");
-  elements.titleListenBtn.hidden = activeAppArea === "listen" || !isPagePersonallyEnabled("listen");
+  elements.titleReadBtn.hidden = activeAppArea === "media" || !isPagePersonallyEnabled("read");
   elements.titleShopBtn.hidden = activeAppArea === "shop" || !isPagePersonallyEnabled("shop");
   elements.titleInventoryBtn.hidden = activeAppArea === "inventory" || !isPagePersonallyEnabled("inventory");
   elements.titleRecreateBtn.hidden = activeAppArea === "recreate" || !isPagePersonallyEnabled("recreate");
@@ -10585,7 +11386,6 @@ function updatePageVisibility() {
   elements.homeDoBtn.hidden = !isPagePersonallyEnabled("do");
   elements.homeWatchBtn.hidden = !isPagePersonallyEnabled("watch");
   elements.homeReadBtn.hidden = !isPagePersonallyEnabled("read");
-  elements.homeListenBtn.hidden = !isPagePersonallyEnabled("listen");
   elements.homeShopBtn.hidden = !isPagePersonallyEnabled("shop");
   elements.homeInventoryBtn.hidden = !isPagePersonallyEnabled("inventory");
   elements.homeRecreateBtn.hidden = !isPagePersonallyEnabled("recreate");
@@ -10659,13 +11459,15 @@ function updateSettingsMenuOptions() {
   elements.menuWorkoutLibraryBtn.hidden = !isPlay;
   elements.menuWorkoutLogsBtn.hidden = !isPlay;
   elements.menuInventoryRoomsBtn.hidden = activeAppArea !== "inventory";
-  elements.menuReadSyncBtn.hidden = !["read", "listen"].includes(activeAppArea);
+  elements.menuReadSyncBtn.hidden = !["read", "listen", "media"].includes(activeAppArea);
+  elements.menuPodcastPriorityBtn.hidden = activeAppArea !== "media";
+  elements.menuPublicationsBtn.hidden = activeAppArea !== "media";
   elements.menuRecreateHobbiesBtn.hidden = !isRecreate;
   elements.menuCalendarsBtn.hidden = !isPlan;
 }
 
 function hasPageSpecificSettings() {
-  return ["eat", "play", "do", "watch", "shop", "inventory", "recreate", "plan", "read", "listen"].includes(activeAppArea);
+  return ["eat", "play", "do", "watch", "shop", "inventory", "recreate", "plan", "read", "listen", "media"].includes(activeAppArea);
 }
 
 function openSettingsMenuDialog(openDialog) {
@@ -10674,7 +11476,7 @@ function openSettingsMenuDialog(openDialog) {
 }
 
 function openContextSettingsDialog(kind) {
-  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync", "ai-notes"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -10693,7 +11495,9 @@ function renderContextSettingsDialog(kind) {
     "location-services": "Location Services",
     "voice-commands": "Voice Commands",
     "admin-pages": "Global Pages",
-    "read-sync": "Sync Settings"
+    "read-sync": "Sync Settings",
+    "api-usage": "API Usage",
+    "ai-notes": "AI Notes"
   };
   const isSubPanel = !["general", "eat", "do", "play", "watch", "recreate", "read-sync"].includes(kind);
   elements.contextSettingsBackBtn.hidden = !isSubPanel;
@@ -10707,6 +11511,9 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="weekly-email">Email</button>
         <button type="button" data-context-settings-action="family">Household</button>
         <button type="button" data-context-settings-action="voice-commands">Voice Commands</button>
+        <button type="button" data-context-settings-action="ai-log">AI Action Log</button>
+        <button type="button" data-context-settings-action="ai-notes">AI Notes</button>
+        <button type="button" data-context-settings-action="api-usage">API Usage</button>
       </div>
       ${isAdmin ? `
         <div class="settings-admin-section">
@@ -10734,7 +11541,7 @@ function renderContextSettingsDialog(kind) {
       { key: "watch",     label: "Watch"      },
       { key: "read",      label: "Read"       },
       { key: "recreate",  label: "Recreate"   },
-      { key: "plan",      label: "Schedule"   },
+      { key: "plan",      label: "Calendar"   },
       { key: "inventory", label: "Inventory"  },
     ];
     elements.contextSettingsBody.innerHTML = `
@@ -10762,7 +11569,7 @@ function renderContextSettingsDialog(kind) {
       { key: "watch",     label: "Watch"      },
       { key: "read",      label: "Read"       },
       { key: "recreate",  label: "Recreate"   },
-      { key: "plan",      label: "Schedule"   },
+      { key: "plan",      label: "Calendar"   },
       { key: "inventory", label: "Inventory"  },
       { key: "mail",      label: "Mail"       },
     ];
@@ -10832,6 +11639,215 @@ function renderContextSettingsDialog(kind) {
         ${previewHtml}
       </div>
     `;
+    return;
+  }
+
+  if (kind === "ai-log") {
+    const log = state.aiActionLog || [];
+    const fmt = (ts) => { try { return new Date(ts).toLocaleString(); } catch { return ts; } };
+    const rows = log.length
+      ? log.map((entry) => `
+          <div class="ai-log-row">
+            <div class="ai-log-meta">
+              <span class="ai-log-tool">${escapeHtml(entry.tool || "")}</span>
+              <span class="ai-log-time">${escapeHtml(fmt(entry.ts))}</span>
+            </div>
+            <div class="ai-log-result">${escapeHtml(entry.result || "")}</div>
+          </div>`).join("")
+      : `<p class="muted-label" style="padding:12px 0">No AI actions recorded yet.</p>`;
+    elements.contextSettingsBody.innerHTML = `
+      <p class="muted-label" style="margin-bottom:12px;font-size:0.82rem">Actions taken by the AI assistant (last 100). These are changes Claude made to your data via chat.</p>
+      <div class="ai-log-list">${rows}</div>
+      ${log.length ? `<button type="button" class="secondary-btn" style="margin-top:12px" id="aiLogClearBtn">Clear log</button>` : ""}
+    `;
+    document.getElementById("aiLogClearBtn")?.addEventListener("click", () => {
+      state.aiActionLog = [];
+      persist();
+      renderContextSettingsDialog("ai-log");
+    });
+    return;
+  }
+
+  if (kind === "api-usage") {
+    const u = state.apiUsage || {};
+    const services = [
+      {
+        name: "Anthropic (Claude)",
+        color: "#d97706",
+        billing: "https://console.anthropic.com/settings/billing",
+        rows: [
+          { label: "Chat messages", key: "claude_chat" },
+          { label: "Voice commands", key: "claude_voice" },
+          { label: "Recipe imports", key: "claude_recipe_import" },
+          { label: "Recipe scans", key: "claude_recipe_scan" },
+          { label: "Receipt scans", key: "claude_receipt_scan" },
+          { label: "Nutrition estimates", key: "claude_nutrition" },
+        ]
+      },
+      {
+        name: "Google",
+        color: "#1a73e8",
+        billing: "https://console.cloud.google.com/billing",
+        rows: [
+          { label: "Gmail threads opened", key: "gmail_thread" },
+          { label: "Text-to-speech", key: "google_tts" },
+        ]
+      },
+      {
+        name: "TMDB (Movies & TV)",
+        color: "#01b4e4",
+        billing: "https://www.themoviedb.org/settings/api",
+        note: "Free tier — 1M requests/month",
+        rows: [
+          { label: "Searches", key: "tmdb_search" },
+        ]
+      },
+      {
+        name: "Supabase",
+        color: "#3ecf8e",
+        billing: "https://supabase.com/dashboard/account/billing",
+        note: "Check dashboard for storage & bandwidth",
+        rows: []
+      },
+      {
+        name: "Netlify",
+        color: "#00ad9f",
+        billing: "https://app.netlify.com/teams/user/billing",
+        note: "Check dashboard for bandwidth & function invocations",
+        rows: []
+      },
+    ];
+    elements.contextSettingsBody.innerHTML = `
+      ${services.map((svc) => `
+        <div class="usage-service-card">
+          <div class="usage-service-header">
+            <span class="usage-service-dot" style="background:${escapeHtml(svc.color)}"></span>
+            <strong class="usage-service-name">${escapeHtml(svc.name)}</strong>
+            <a class="usage-billing-link" href="${escapeHtml(svc.billing)}" target="_blank" rel="noopener noreferrer">Billing ↗</a>
+          </div>
+          ${svc.rows.length ? `
+            <div class="usage-rows">
+              ${svc.rows.map((r) => `
+                <div class="usage-row">
+                  <span class="usage-row-label">${escapeHtml(r.label)}</span>
+                  <span class="usage-row-count">${(u[r.key] || 0).toLocaleString()}</span>
+                </div>
+              `).join("")}
+            </div>
+          ` : ""}
+          ${svc.note ? `<p class="usage-service-note">${escapeHtml(svc.note)}</p>` : ""}
+        </div>
+      `).join("")}
+      <button class="usage-reset-btn" type="button" id="resetUsageCountersBtn">Reset counters</button>
+    `;
+    document.getElementById("resetUsageCountersBtn")?.addEventListener("click", () => {
+      if (!confirm("Reset all usage counters to zero?")) return;
+      state.apiUsage = {};
+      persist();
+      renderContextSettingsDialog("api-usage");
+    });
+    return;
+  }
+
+  if (kind === "ai-notes") {
+    const notes = state.aiNotes || {};
+    const categories = [
+      { key: "userPreferences", label: "User Preferences", hint: "How Luke likes to work and communicate" },
+      { key: "patterns",        label: "Usage Patterns",   hint: "Recurring behaviours and common requests" },
+      { key: "appGaps",         label: "App Gaps",         hint: "Things you asked for that the assistant can't do yet" },
+      { key: "suggestions",     label: "Improvement Ideas",hint: "Features or changes to consider building" },
+    ];
+    const fmt = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
+    const totalNotes = categories.reduce((s, c) => s + (Array.isArray(notes[c.key]) ? notes[c.key].length : 0), 0);
+    const sections = categories.map(({ key, label, hint }) => {
+      const entries = Array.isArray(notes[key]) ? notes[key] : [];
+      const rows = entries.length
+        ? entries.map((n) => `
+            <div class="ai-note-row" data-note-id="${escapeHtml(n.id)}" data-note-cat="${escapeHtml(key)}">
+              <span class="ai-note-text">${escapeHtml(n.text)}</span>
+              <span class="ai-note-date">${fmt(n.timestamp)}</span>
+              <button class="ai-note-delete" type="button" aria-label="Delete note" data-note-id="${escapeHtml(n.id)}" data-note-cat="${escapeHtml(key)}">✕</button>
+            </div>`).join("")
+        : `<p class="muted-label ai-note-empty">Nothing noted yet</p>`;
+      return `
+        <div class="ai-notes-category">
+          <div class="ai-notes-cat-header">
+            <strong>${escapeHtml(label)}</strong>
+            <span class="ai-notes-cat-hint">${escapeHtml(hint)}</span>
+          </div>
+          <div class="ai-notes-rows">${rows}</div>
+        </div>`;
+    }).join("");
+    const briefingOn = state.aiSettings?.dailyBriefingEnabled !== false;
+    const pushSupported = "PushManager" in window && "serviceWorker" in navigator;
+    const pushSubscribed = localStorage.getItem("live_push_subscribed") === "1";
+    const pushPermission = pushSupported ? Notification.permission : "denied";
+    const pushStatusText = !pushSupported ? "Not supported in this browser."
+      : pushPermission === "denied" ? "Blocked by browser — check site settings."
+      : pushSubscribed ? "Active — you'll receive a morning notification daily."
+      : "Not enabled.";
+    const canSubscribe = pushSupported && pushPermission !== "denied" && !pushSubscribed && briefingOn;
+    const canUnsubscribe = pushSubscribed;
+    elements.contextSettingsBody.innerHTML = `
+      <div class="ai-settings-section">
+        <div class="ai-settings-row">
+          <div>
+            <strong>Daily briefing</strong>
+            <p class="muted-label" style="margin:2px 0 0;font-size:0.8rem">Summarises your day: tasks, meals, calendar, and daily dozen progress.</p>
+          </div>
+          <label class="toggle-switch" aria-label="Daily briefing">
+            <input type="checkbox" id="dailyBriefingToggle" ${briefingOn ? "checked" : ""} />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        ${briefingOn ? `
+        <div style="border-top:1px solid var(--border-subtle,#e5e7eb);margin-top:12px;padding-top:12px">
+          <div class="ai-settings-row" style="align-items:center">
+            <div>
+              <strong style="font-size:0.88rem">Push notifications</strong>
+              <p class="muted-label" style="margin:2px 0 0;font-size:0.78rem">${escapeHtml(pushStatusText)}</p>
+            </div>
+            ${canSubscribe ? `<button type="button" class="secondary-btn" id="pushEnableBtn" style="font-size:0.82rem;white-space:nowrap">Enable</button>` : ""}
+            ${canUnsubscribe ? `<button type="button" class="secondary-btn" id="pushDisableBtn" style="font-size:0.82rem;white-space:nowrap">Disable</button>` : ""}
+          </div>
+          ${!pushSupported || pushPermission === "denied" ? "" : `<p class="muted-label" style="font-size:0.75rem;margin-top:6px">On iOS: add this app to your Home Screen first, then enable notifications here.</p>`}
+        </div>` : ""}
+      </div>
+      <p class="muted-label" style="margin:16px 0 10px;font-size:0.82rem">
+        Notes the AI assistant has saved about you and the app. Included in every conversation so the assistant remembers context across sessions.
+      </p>
+      ${sections}
+      ${totalNotes ? `<button type="button" class="secondary-btn" style="margin-top:14px" id="aiNotesClearBtn">Clear all notes</button>` : ""}
+    `;
+    document.getElementById("dailyBriefingToggle")?.addEventListener("change", (e) => {
+      if (!state.aiSettings) state.aiSettings = {};
+      state.aiSettings.dailyBriefingEnabled = e.target.checked;
+      persist();
+      renderContextSettingsDialog("ai-notes");
+    });
+    document.getElementById("pushEnableBtn")?.addEventListener("click", async () => {
+      await enablePushNotifications();
+      renderContextSettingsDialog("ai-notes");
+    });
+    document.getElementById("pushDisableBtn")?.addEventListener("click", async () => {
+      await disablePushNotifications();
+      renderContextSettingsDialog("ai-notes");
+    });
+    elements.contextSettingsBody.querySelectorAll(".ai-note-delete").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const { noteId, noteCat } = btn.dataset;
+        if (!Array.isArray(state.aiNotes?.[noteCat])) return;
+        state.aiNotes[noteCat] = state.aiNotes[noteCat].filter((n) => n.id !== noteId);
+        persist();
+        renderContextSettingsDialog("ai-notes");
+      });
+    });
+    document.getElementById("aiNotesClearBtn")?.addEventListener("click", () => {
+      if (!confirm("Clear all AI notes? This cannot be undone.")) return;
+      state.aiNotes = { userPreferences: [], appGaps: [], suggestions: [], patterns: [] };
+      persist();
+      renderContextSettingsDialog("ai-notes");
+    });
     return;
   }
 
@@ -10918,8 +11934,7 @@ function renderContextSettingsDialog(kind) {
         if (!Array.isArray(state.readPublications)) state.readPublications = defaultReadPublications();
         state.readPublications.push({ key, label: name, domain });
         persist();
-        renderArticlePubTabs();
-        renderListenPubTabs();
+        renderMediaPubTabs();
       }
       renderContextSettingsDialog("read-sync");
     });
@@ -11017,7 +12032,7 @@ function renderContextSettingsDialog(kind) {
         { key: "eat", label: "Meal Plan" }, { key: "shop", label: "Shop" },
         { key: "do", label: "To-Do" }, { key: "watch", label: "Watch" },
         { key: "play", label: "Exercise" }, { key: "read", label: "Read" },
-        { key: "recreate", label: "Recreate" }, { key: "plan", label: "Schedule" },
+        { key: "recreate", label: "Recreate" }, { key: "plan", label: "Calendar" },
         { key: "inventory", label: "Stock" }
       ];
       const roleLabel = (r) => r === "admin" ? "Admin" : r === "hoh" ? "HoH" : "Member";
@@ -11157,6 +12172,7 @@ function renderWatchContextSettings() {
     btn.addEventListener("click", () => {
       if (state.watchSettings?.categories) {
         const id = btn.dataset.deleteCategory;
+        recordDeletion("watchSettings.categories", id);
         state.watchSettings.categories = state.watchSettings.categories.filter((c) => c.id !== id);
         if (activeWatchCategory === id) activeWatchCategory = "all";
         persist();
@@ -11178,6 +12194,7 @@ function renderWatchContextSettings() {
   elements.contextSettingsBody.querySelectorAll("[data-delete-theater]").forEach((btn) => {
     btn.addEventListener("click", () => {
       if (state.watchSettings?.theaters) {
+        recordDeletion("watchSettings.theaters", btn.dataset.deleteTheater);
         state.watchSettings.theaters = state.watchSettings.theaters.filter((t) => t.id !== btn.dataset.deleteTheater);
         persist();
         renderWatchContextSettings();
@@ -11247,6 +12264,9 @@ function handleContextSettingsAction(event) {
     "pages": () => renderContextSettingsDialog("pages"),
     "location-services": () => renderContextSettingsDialog("location-services"),
     "voice-commands": () => renderContextSettingsDialog("voice-commands"),
+    "ai-log": () => renderContextSettingsDialog("ai-log"),
+    "ai-notes": () => renderContextSettingsDialog("ai-notes"),
+    "api-usage": () => renderContextSettingsDialog("api-usage"),
     "save-nyt-cookie": () => {
       const input = document.getElementById("ctxNytCookieInput");
       const val = input?.value?.trim();
@@ -11271,7 +12291,7 @@ function handleContextSettingsAction(event) {
     },
     "sync-now-context": () => {
       elements.contextSettingsDialog.close();
-      syncSavedArticles(activeAppArea === "listen" ? "listen" : "read");
+      syncSavedArticles("read");
     },
     "save-voice-secret": () => {
       const input = document.getElementById("voiceSecretInputDialog");
@@ -11394,6 +12414,7 @@ function toggleGeneralSettingsMenu(event) {
   elements.generalSettingsBtn.setAttribute("aria-expanded", String(willOpen));
 }
 
+
 function toggleEatSettingsMenu(event) {
   event.stopPropagation();
   const willOpen = elements.eatSettingsMenu.hidden;
@@ -11479,6 +12500,7 @@ function renderWatchSettingsMenu() {
     btn.addEventListener("click", () => {
       const id = btn.dataset.deleteCategory;
       if (state.watchSettings?.categories) {
+        recordDeletion("watchSettings.categories", id);
         state.watchSettings.categories = state.watchSettings.categories.filter((c) => c.id !== id);
         if (activeWatchCategory === id) activeWatchCategory = "all";
         persist();
@@ -11501,6 +12523,7 @@ function renderWatchSettingsMenu() {
     btn.addEventListener("click", () => {
       const id = btn.dataset.deleteTheater;
       if (state.watchSettings?.theaters) {
+        recordDeletion("watchSettings.theaters", id);
         state.watchSettings.theaters = state.watchSettings.theaters.filter((t) => t.id !== id);
         persist();
         renderWatchSettingsMenu();
@@ -11522,10 +12545,14 @@ function closeFloatingMenus() {
   closeAppMenu();
   closePageTitleMenu();
   closeWeekJumpMenu();
+  closeGroceryRangeMenus();
 }
 
 function closeFloatingMenusOnPageScroll(event) {
   if (elements.weekJumpMenu?.contains(event.target)) return;
+  const startMenu = document.getElementById("groceryRangeStartMenu");
+  const endMenu = document.getElementById("groceryRangeEndMenu");
+  if (startMenu?.contains(event.target) || endMenu?.contains(event.target)) return;
   closeFloatingMenus();
 }
 
@@ -12329,6 +13356,7 @@ function saveGroceryStoreLayout(event) {
 function removeGroceryStore(storeId) {
   const store = groceryStores().find((item) => item.id === storeId);
   if (!store || !window.confirm(`Remove ${store.name}? Its grocery items will move to Unassigned.`)) return;
+  recordDeletion("groceryStores", storeId);
   state.groceryStores = groceryStores().filter((item) => item.id !== storeId);
   const locations = groceryItemLocations();
   Object.values(locations).forEach((location) => {
@@ -12533,7 +13561,7 @@ function editedReceiptFromForm() {
       userCorrected: true
     };
   });
-  return receiptDomain().normalizeReceipt({
+  return LiveReceiptDomain.normalizeReceipt({
     ...original,
     storeName: elements.editReceiptStoreName.value.trim(),
     storeId: elements.editReceiptStoreId.value,
@@ -12555,10 +13583,10 @@ function saveReceiptEdit(event) {
     ((state.receipts || []).find((r) => r.id === editingReceiptId)?.lineItems || []).map((li) => li.id)
   );
   state.receipts = normalizeReceipts((state.receipts || []).map((r) => r.id === editingReceiptId ? receipt : r));
-  state.receiptItemMappings = receiptDomain().correctedMappingsFromReceipt(receipt, receiptItemMappings());
+  state.receiptItemMappings = LiveReceiptDomain.correctedMappingsFromReceipt(receipt, receiptItemMappings());
   state.priceHistory = normalizePriceHistory([
     ...receiptPriceHistory().filter((ph) => !oldLineItemIds.has(ph.sourceReceiptLineItemId)),
-    ...receiptDomain().priceHistoryFromReceipt(receipt, createId)
+    ...LiveReceiptDomain.priceHistoryFromReceipt(receipt, createId)
   ], groceryStores());
   state.groceryBaseItems = normalizeGroceryBaseItems([
     ...groceryBaseItems(),
@@ -12574,6 +13602,7 @@ function deleteReceipt() {
   if (!editingReceiptId) return;
   const receipt = (state.receipts || []).find((r) => r.id === editingReceiptId);
   const lineItemIds = new Set((receipt?.lineItems || []).map((li) => li.id));
+  recordDeletion("receipts", editingReceiptId);
   state.receipts = (state.receipts || []).filter((r) => r.id !== editingReceiptId);
   state.priceHistory = normalizePriceHistory(
     receiptPriceHistory().filter((ph) => !lineItemIds.has(ph.sourceReceiptLineItemId)),
@@ -12640,6 +13669,7 @@ async function scanReceiptImages() {
     setReceiptScanStatus("Choose at least one receipt photo first.");
     return;
   }
+  trackUsage("claude_receipt_scan");
   setReceiptScanStatus("Reading receipt...");
   elements.scanReceiptImagesBtn.disabled = true;
   try {
@@ -12658,8 +13688,8 @@ async function scanReceiptImages() {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || `Receipt scan failed with status ${response.status}`);
-    pendingReceiptDraft = receiptDomain().applyReceiptMappings(
-      receiptDomain().normalizeReceipt({
+    pendingReceiptDraft = LiveReceiptDomain.applyReceiptMappings(
+      LiveReceiptDomain.normalizeReceipt({
         ...payload.receipt,
         fileRef: receiptScanFiles.map((file) => file.name).join(", ")
       }, createId),
@@ -12732,7 +13762,7 @@ function matchReceiptStoreId(storeName) {
 }
 
 function addReceiptReviewLine(line = {}) {
-  const normalized = receiptDomain().normalizeReceiptLineItem(line, pendingReceiptDraft?.id || "", createId);
+  const normalized = LiveReceiptDomain.normalizeReceiptLineItem(line, pendingReceiptDraft?.id || "", createId);
   const row = document.createElement("div");
   row.className = "receipt-line-row";
   row.dataset.receiptLineId = normalized.id;
@@ -12781,7 +13811,7 @@ function reviewedReceiptFromForm() {
       userCorrected: normalizedName !== row.dataset.originalName || category !== row.dataset.originalCategory
     };
   });
-  return receiptDomain().normalizeReceipt({
+  return LiveReceiptDomain.normalizeReceipt({
     ...base,
     storeName: elements.receiptStoreName.value,
     storeId: elements.receiptStoreId.value,
@@ -12800,10 +13830,10 @@ function saveReviewedReceipt(event) {
   const receipt = reviewedReceiptFromForm();
   if (!receipt.storeName || !receipt.purchaseDate || !receipt.lineItems.length) return;
   state.receipts = normalizeReceipts([...(state.receipts || []), receipt]);
-  state.receiptItemMappings = receiptDomain().correctedMappingsFromReceipt(receipt, receiptItemMappings());
+  state.receiptItemMappings = LiveReceiptDomain.correctedMappingsFromReceipt(receipt, receiptItemMappings());
   state.priceHistory = normalizePriceHistory([
     ...receiptPriceHistory(),
-    ...receiptDomain().priceHistoryFromReceipt(receipt, createId)
+    ...LiveReceiptDomain.priceHistoryFromReceipt(receipt, createId)
   ], groceryStores());
   state.groceryBaseItems = normalizeGroceryBaseItems([
     ...groceryBaseItems(),
@@ -12829,7 +13859,7 @@ function renderReceiptPriceTrends() {
   }
   const grouped = new Map();
   history.forEach((entry) => {
-    const key = receiptDomain().normalizedName(entry.normalizedItemName);
+    const key = LiveReceiptDomain.normalizedName(entry.normalizedItemName);
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(entry);
   });
@@ -13001,7 +14031,7 @@ function openGroceryLibraryItemMenu(event) {
     <button type="button" role="menuitem" data-aliases-grocery-library-item="${escapeHtml(item)}">Aliases</button>
     <button type="button" role="menuitem" data-daily-dozen-grocery-library-item="${escapeHtml(item)}">Daily Dozen tags</button>
     <button type="button" role="menuitem" data-separate-grocery-library-item="${escapeHtml(item)}">
-      ${grocerySplitPreferences()[groceryCatalog().normalizeGroceryItemName(item).normalizedName] ? "Use automatic matching" : "Keep separate"}
+      ${grocerySplitPreferences()[LiveGroceryCatalog.normalizeGroceryItemName(item).normalizedName] ? "Use automatic matching" : "Keep separate"}
     </button>
   `;
 
@@ -13092,14 +14122,14 @@ function saveDailyDozenTagEditor() {
   const tagMap = { ...groceryDailyDozenTags() };
   if (tags.length) tagMap[editingDailyDozenGroceryItem] = tags;
   else delete tagMap[editingDailyDozenGroceryItem];
-  state.groceryDailyDozenTags = dailyDozenDomain().normalizeTagMap(tagMap, dailyDozenCategories());
+  state.groceryDailyDozenTags = LiveDailyDozen.normalizeTagMap(tagMap, dailyDozenCategories());
   persist();
   closeDailyDozenTagEditor();
   if (elements.dailyDozenPageDialog.open) renderDailyDozen();
 }
 
 function toggleGroceryLibrarySplitPreference(item) {
-  const identity = groceryCatalog().normalizeGroceryItemName(item);
+  const identity = LiveGroceryCatalog.normalizeGroceryItemName(item);
   const preferences = grocerySplitPreferences();
   if (preferences[identity.normalizedName]) delete preferences[identity.normalizedName];
   else preferences[identity.normalizedName] = identity.normalizedName;
@@ -13521,6 +14551,7 @@ function renderCalendarList() {
   });
   elements.calendarList.querySelectorAll("[data-remove-calendar]").forEach((button) => {
     button.addEventListener("click", () => {
+      recordDeletion("calendars", button.dataset.removeCalendar);
       state.calendars = state.calendars.filter((calendar) => calendar.id !== button.dataset.removeCalendar);
       persist();
       renderCalendarList();
@@ -14141,7 +15172,10 @@ function restoreTrashedRecipe(trashId) {
   const item = trashedRecipes().find((entry) => entry.id === trashId);
   if (!item) return;
   const recipe = item.recipe;
+  const originalId = recipe.id;
   recipe.id = activeRecipes().some((existing) => existing.id === recipe.id) ? createId("recipe") : recipe.id;
+  unrecordDeletion("recipes", originalId); // allow restored recipe to survive merges
+  recordDeletion("trashedRecipes", trashId);
   activeRecipes().push(recipe);
   state.trashedRecipes = trashedRecipes().filter((entry) => entry.id !== trashId);
   persist();
@@ -14154,6 +15188,7 @@ async function permanentlyDeleteTrashedRecipe(trashId) {
   const item = trashedRecipes().find((entry) => entry.id === trashId);
   if (!item || !window.confirm(`Permanently delete "${item.recipe.name || "this recipe"}"?`)) return;
   if (!(await tryPreChangeBackup("permanently deleting a trashed recipe"))) return;
+  recordDeletion("trashedRecipes", trashId);
   state.trashedRecipes = trashedRecipes().filter((entry) => entry.id !== trashId);
   persist();
   renderTrash();
@@ -14256,7 +15291,7 @@ async function selectCloudBackup(id, cardEl) {
   elements.restorePreview.textContent = "Loading backup…";
   try {
     const res = await fetch(
-      `${supabaseBaseUrl()}/rest/v1/tableplan_state_history?id=eq.${encodeURIComponent(id)}&select=state,created_at`,
+      `${supabaseBaseUrl()}/rest/v1/tableplan_state_history?id=eq.${encodeURIComponent(id)}&group_id=eq.${encodeURIComponent(userGroup.id)}&select=state,created_at`,
       { headers: supabaseHeaders(), cache: "no-store" }
     );
     if (!res.ok) throw new Error("Could not load cloud backup.");
@@ -14481,7 +15516,7 @@ function missingRestoreNutritionMappings(backupState) {
 
 function missingRestoreDailyDozenEntries(backupState) {
   const currentIds = new Set(dailyDozenEntries().map((entry) => entry.id));
-  return dailyDozenDomain().normalizeEntries(
+  return LiveDailyDozen.normalizeEntries(
     backupState?.dailyDozenEntries,
     backupState?.familyMembers,
     backupState?.dailyDozenCategories
@@ -14498,7 +15533,7 @@ function missingRestoreDailyDozenTags(backupState) {
 
 function missingRestoreFoodLogEntries(backupState) {
   const currentIds = new Set(foodLogEntries().map((entry) => entry.id));
-  return foodHealthDomain().normalizeFoodLogEntries(
+  return LiveFoodHealth.normalizeFoodLogEntries(
     backupState?.foodLogEntries,
     familyMembers().map((member) => member.id)
   ).filter((entry) => !currentIds.has(entry.id));
@@ -14506,7 +15541,7 @@ function missingRestoreFoodLogEntries(backupState) {
 
 function missingRestoreDailyChecklistEntries(backupState) {
   const currentIds = new Set(dailyChecklistEntries().map((entry) => entry.id));
-  return foodHealthDomain().normalizeDailyChecklistEntries(
+  return LiveFoodHealth.normalizeDailyChecklistEntries(
     backupState?.dailyChecklistEntries,
     familyMembers().map((member) => member.id)
   ).filter((entry) => !currentIds.has(entry.id));
@@ -14745,7 +15780,7 @@ function missingRestoreReceipts(backupState) {
 
 function missingRestoreReceiptMappings(backupState) {
   const current = receiptItemMappings();
-  return Object.entries(receiptDomain().normalizeMappings(backupState?.receiptItemMappings))
+  return Object.entries(LiveReceiptDomain.normalizeMappings(backupState?.receiptItemMappings))
     .filter(([key]) => !current[key])
     .map(([key, mapping]) => ({ key, mapping }));
 }
@@ -15141,7 +16176,7 @@ function mergeUserDataFromRestore(restore) {
     data.receiptItemMappings.forEach(({ key, mapping }) => {
       if (!mappings[key]) mappings[key] = mapping;
     });
-    state.receiptItemMappings = receiptDomain().normalizeMappings(mappings);
+    state.receiptItemMappings = LiveReceiptDomain.normalizeMappings(mappings);
     merged += data.receiptItemMappings.length;
   }
 
@@ -15164,7 +16199,7 @@ function mergeUserDataFromRestore(restore) {
   }
 
   if ((data.dailyDozenEntries || []).length) {
-    state.dailyDozenEntries = dailyDozenDomain().normalizeEntries(
+    state.dailyDozenEntries = LiveDailyDozen.normalizeEntries(
       [...dailyDozenEntries(), ...data.dailyDozenEntries],
       familyMembers(),
       dailyDozenCategories()
@@ -15182,7 +16217,7 @@ function mergeUserDataFromRestore(restore) {
   }
 
   if ((data.foodLogEntries || []).length) {
-    state.foodLogEntries = foodHealthDomain().normalizeFoodLogEntries(
+    state.foodLogEntries = LiveFoodHealth.normalizeFoodLogEntries(
       [...foodLogEntries(), ...data.foodLogEntries],
       familyMembers().map((member) => member.id)
     );
@@ -15190,7 +16225,7 @@ function mergeUserDataFromRestore(restore) {
   }
 
   if ((data.dailyChecklistEntries || []).length) {
-    state.dailyChecklistEntries = foodHealthDomain().normalizeDailyChecklistEntries(
+    state.dailyChecklistEntries = LiveFoodHealth.normalizeDailyChecklistEntries(
       [...dailyChecklistEntries(), ...data.dailyChecklistEntries],
       familyMembers().map((member) => member.id)
     );
@@ -15198,7 +16233,7 @@ function mergeUserDataFromRestore(restore) {
   }
 
   if (data.personChecklistSettings) {
-    state.personChecklistSettings = foodHealthDomain().normalizePersonSettings(
+    state.personChecklistSettings = LiveFoodHealth.normalizePersonSettings(
       restore.state.personChecklistSettings,
       familyMembers(),
       checklistTemplates()
@@ -15296,6 +16331,7 @@ async function deleteFolder(folderId, folderName) {
   if (!window.confirm(message)) return;
   if (!(await tryPreChangeBackup("deleting a folder"))) return;
 
+  recordDeletion("folders", folderId);
   state.folders = normalizedFolders().filter((folder) => folder.id !== folderId);
   state.folders.forEach((folder) => {
     if (folder.parentId === folderId) folder.parentId = "";
@@ -15561,21 +16597,25 @@ function renderPlanner() {
       </div>
       <div class="meal-plan-publish-row">
         <div class="meal-plan-page-actions">
-          <button class="secondary-btn planner-page-btn" type="button" data-open-recipe-box-page title="Recipes" aria-label="Recipes">
-            <svg class="planner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-          </button>
-          <button class="secondary-btn planner-page-btn" type="button" data-open-groceries-page title="Groceries" aria-label="Groceries">
-            <svg class="planner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>
-          </button>
-          <button class="secondary-btn planner-page-btn" type="button" data-open-daily-dozen-page title="Nutrition" aria-label="Nutrition">
-            <svg class="planner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 22 20 2 20Z"/><line x1="8.5" y1="9" x2="15.5" y2="9"/><line x1="5.5" y1="14" x2="18.5" y2="14"/></svg>
-          </button>
-          <button class="primary-btn icon-primary-btn planner-page-btn" type="button" data-open-meal-autofill title="Auto-fill week" aria-label="Auto-fill week">
-            <svg class="fast-forward-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M5 6.5 12.5 12 5 17.5Z" />
-              <path d="M12 6.5 19.5 12 12 17.5Z" />
-            </svg>
-          </button>
+          <div class="meal-plan-btns-left">
+            <button class="secondary-btn planner-page-btn" type="button" data-open-recipe-box-page title="Recipe Book" aria-label="Recipe Book">
+              <svg class="planner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+            </button>
+            <button class="secondary-btn planner-page-btn" type="button" data-open-groceries-page title="Groceries" aria-label="Groceries">
+              <svg class="planner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>
+            </button>
+          </div>
+          <div class="meal-plan-btns-right">
+            <button class="secondary-btn planner-page-btn" type="button" data-open-daily-dozen-page title="Nutrition" aria-label="Nutrition">
+              <svg class="planner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 22 20 2 20Z"/><line x1="8.5" y1="9" x2="15.5" y2="9"/><line x1="5.5" y1="14" x2="18.5" y2="14"/></svg>
+            </button>
+            <button class="primary-btn icon-primary-btn planner-page-btn" type="button" data-open-meal-autofill title="Auto-fill" aria-label="Auto-fill">
+              <svg class="fast-forward-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 6.5 12.5 12 5 17.5Z" />
+                <path d="M12 6.5 19.5 12 12 17.5Z" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
     </section>
@@ -18040,7 +19080,6 @@ function renderGroceryStoreTabs() {
         const targetStoreId = btn.dataset.groceryTab;
         const itemKey = draggedGroceryItem.itemKey;
         moveGroceryItem(itemKey, targetStoreId, "", "after", "");
-        activeGroceryStoreTab = targetStoreId;
       });
     }
   });
@@ -18050,35 +19089,51 @@ function renderGroceryStoreTabs() {
 function renderGroceries() {
   renderGroceryWeekOptions();
   renderGroceryStoreTabs();
-  const groceryWeek = selectedGroceryWeek();
-  if (!groceryWeek) {
-    elements.groceryList.innerHTML = `<div class="empty-state">Add meals to your plan and groceries will appear here.</div>`;
-    return;
-  }
+  if (!groceryRangeStart || !groceryRangeEnd) initGroceryRange();
+  const rangeKey = `${groceryRangeStart}/${groceryRangeEnd}`;
+  const isCheckedRow = (rowKey) => {
+    const newVal = state.checkedGroceries[groceryCheckedKey(rangeKey, rowKey)];
+    if (newVal !== undefined) return Boolean(newVal);
+    return Boolean(state.checkedGroceries[groceryCheckedKey(groceryRangeStart, rowKey)]);
+  };
 
-  // Manual items — shown at top in All tab regardless of pantry
-  const manualRows = activeGroceryStoreTab === "all"
-    ? manualGroceryItems(groceryWeek.week).map(manualGroceryRow).map((row) => ({
-        ...row,
-        checkedKey: groceryCheckedKey(groceryWeek.key, row.key),
-        checked: Boolean(state.checkedGroceries[groceryCheckedKey(groceryWeek.key, row.key)])
-      }))
+  // Manual items — build all, then split by whether they have a saved store preference
+  const allManualRows = manualGroceryItems().map(manualGroceryRow).map((row) => ({
+    ...row,
+    checkedKey: groceryCheckedKey(rangeKey, row.key),
+    checked: isCheckedRow(row.key)
+  }));
+  const manualLocations = groceryItemLocations();
+  const locatedManualRows = allManualRows.filter((row) => manualLocations[row.key]?.storeId);
+  const unlocatedManualRows = activeGroceryStoreTab === "all"
+    ? allManualRows.filter((row) => !manualLocations[row.key]?.storeId)
     : [];
 
-  // Plan-derived items — filtered by pantry
+  // Plan-derived items — filtered by pantry; skipped keys collected across all weeks in range
   const pantrySet = new Set(state.pantry.map(groceryRowKey));
-  const skippedKeys = new Set(groceryWeek.week.skippedGroceryKeys || []);
-  const needed = aggregateGroceryRows(buildRawGroceryRows(groceryWeek.week))
+  const skippedKeys = new Set();
+  Object.entries(state.plans || {}).forEach(([key, weekPlan]) => {
+    if (!weekPlan) return;
+    const ws = dateFromWeekKey(key);
+    if (isNaN(ws.getTime())) return;
+    const wsISO = dateKeyFromDate(ws);
+    const weDate = new Date(ws); weDate.setDate(ws.getDate() + 7);
+    const weISO = dateKeyFromDate(weDate);
+    if (weISO < groceryRangeStart || wsISO > groceryRangeEnd) return;
+    (weekPlan.skippedGroceryKeys || []).forEach((k) => skippedKeys.add(k));
+  });
+  const needed = aggregateGroceryRows(buildRawGroceryRowsForRange(groceryRangeStart, groceryRangeEnd))
     .filter((row) => !pantrySet.has(groceryRowKey(row.item)) && !skippedKeys.has(row.key))
     .map((row) => ({
       ...row,
-      checkedKey: groceryCheckedKey(groceryWeek.key, row.key),
-      checked: Boolean(state.checkedGroceries[groceryCheckedKey(groceryWeek.key, row.key)])
+      checkedKey: groceryCheckedKey(rangeKey, row.key),
+      checked: isCheckedRow(row.key)
     }));
   const pricePlan = optimizeGroceryBasket(needed);
-  const storeSections = groceryStoreSections(needed, pricePlan.assignments, pricePlan.estimates);
+  // Located manual items join the store routing so their preferences are respected
+  const storeSections = groceryStoreSections([...needed, ...locatedManualRows], pricePlan.assignments, pricePlan.estimates);
 
-  if (!manualRows.length && !needed.length) {
+  if (!unlocatedManualRows.length && !needed.length && !locatedManualRows.length) {
     elements.groceryList.innerHTML = `<div class="empty-state">Add meals to your plan and groceries will appear here.</div>`;
     return;
   }
@@ -18089,13 +19144,13 @@ function renderGroceries() {
     return [...unchecked, ...checked];
   };
 
-  const miscSection = manualRows.length ? `
+  const miscSection = unlocatedManualRows.length ? `
     <section class="grocery-store-section grocery-misc-section" data-grocery-store-section="">
       <div class="grocery-store-heading">
         <h3>Miscellaneous</h3>
       </div>
       <div class="grocery-store-list" data-grocery-store-list="" data-grocery-store-section-list="">
-        ${sortCheckedLast(manualRows).map(groceryItemTemplate).join("")}
+        ${sortCheckedLast(unlocatedManualRows).map(groceryItemTemplate).join("")}
       </div>
     </section>
   ` : "";
@@ -18436,8 +19491,12 @@ function groceryItemTemplate(row) {
         <span class="grocery-quantity">${escapeHtml(row.quantity || "")}</span>
       </label>
       <div class="grocery-swipe-actions">
-        <button class="grocery-swipe-btn grocery-swipe-edit" type="button" data-grocery-action-edit="${escapeHtml(row.key)}">Edit</button>
-        <button class="grocery-swipe-btn grocery-swipe-delete" type="button" data-grocery-action-delete="${escapeHtml(row.key)}">Delete</button>
+        <button class="grocery-swipe-btn grocery-swipe-edit" type="button" data-grocery-action-edit="${escapeHtml(row.key)}" aria-label="Edit">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button class="grocery-swipe-btn grocery-swipe-delete" type="button" data-grocery-action-delete="${escapeHtml(row.key)}" aria-label="Delete">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>
+        </button>
       </div>
     </div>
   `;
@@ -18586,7 +19645,7 @@ function learnGroceryItemMerge(row) {
   state.groceryBaseItems = normalizeGroceryBaseItems([...groceryBaseItems(), trimmed]);
   setGroceryAliasesForItem(trimmed, [...groceryAliasesForItem(trimmed), ...aliases]);
   aliases.forEach((name) => {
-    const normalizedName = groceryCatalog().normalizeGroceryItemName(name).normalizedName;
+    const normalizedName = LiveGroceryCatalog.normalizeGroceryItemName(name).normalizedName;
     if (state.grocerySplitPreferences) delete state.grocerySplitPreferences[normalizedName];
   });
   rekeyGroceryIdentityState();
@@ -18605,7 +19664,7 @@ function learnGroceryItemSplit(row) {
   if (selected === null) return;
   const matched = choices.find((name) => normalize(name) === normalize(selected)) || selected.trim();
   if (!matched) return;
-  const identity = groceryCatalog().normalizeGroceryItemName(matched);
+  const identity = LiveGroceryCatalog.normalizeGroceryItemName(matched);
   state.grocerySplitPreferences = {
     ...grocerySplitPreferences(),
     [identity.normalizedName]: identity.normalizedName
@@ -18671,9 +19730,11 @@ function handleGroceryItemDragStart(event) {
   const sectionId = sourceList?.dataset.groceryStoreSectionList || "";
   if (!itemKey) return;
   draggedGroceryItem = { itemKey, sourceStoreId: storeId, sourceSectionId: sectionId };
-  event.dataTransfer.effectAllowed = "move";
-  event.dataTransfer.setData("application/x-live-grocery", JSON.stringify(draggedGroceryItem));
-  event.dataTransfer.setData("text/plain", itemKey);
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/x-live-grocery", JSON.stringify(draggedGroceryItem));
+    event.dataTransfer.setData("text/plain", itemKey);
+  }
   event.currentTarget.classList.add("is-dragging");
 }
 
@@ -18690,7 +19751,7 @@ function handleGroceryItemDragOver(event) {
   });
   target.classList.toggle("drop-before", position === "before");
   target.classList.toggle("drop-after", position === "after");
-  event.dataTransfer.dropEffect = "move";
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
 }
 
 function handleGroceryItemDrop(event) {
@@ -18715,7 +19776,7 @@ function handleGroceryStoreDragOver(event) {
   if (!groceryDragPayload(event) || event.target.closest("[data-grocery-row-key]")) return;
   event.preventDefault();
   event.currentTarget.classList.add("drag-over");
-  event.dataTransfer.dropEffect = "move";
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
 }
 
 function handleGroceryStoreDrop(event) {
@@ -18810,12 +19871,18 @@ function renderGroceryWeekOptions() {
     selectedGroceryWeekKey = weeks.find((week) => week.key === activeKey)?.key || weeks[0]?.key || "";
   }
   if (activeAppArea === "shop") {
-    const current = weeks.find((w) => w.key === selectedGroceryWeekKey);
-    elements.weekLabel.textContent = current?.label || "";
+    const label = groceryRangeStart && groceryRangeEnd
+      ? `${formatShortDate(groceryRangeStart)} – ${formatShortDate(groceryRangeEnd)}`
+      : (weeks.find((w) => w.key === selectedGroceryWeekKey)?.label || "");
+    elements.weekLabel.textContent = label;
   }
 }
 
 function navigateGroceryWeek(delta) {
+  if (activeAppArea === "shop") {
+    shiftGroceryRange(delta * 7);
+    return;
+  }
   const weeks = liveGroceryWeekOptions();
   const idx = weeks.findIndex((w) => w.key === selectedGroceryWeekKey);
   const next = weeks[idx - delta];
@@ -18909,15 +19976,26 @@ function editGroceryItem(key) {
 }
 
 function deleteGroceryItem(key) {
-  const groceryWeek = selectedGroceryWeek();
-  if (!groceryWeek) return;
-  const row = buildGroceryRowsWithManual(groceryWeek.week).find((r) => r.key === key);
-  if (!row) return;
-  if (row.manual) {
-    removeManualGroceryItem(row.manualValue);
-  } else {
-    const week = groceryWeek.week;
-    week.skippedGroceryKeys = [...new Set([...(week.skippedGroceryKeys || []), key])];
+  // Check manual items first
+  const manualRow = manualGroceryItems().map(manualGroceryRow).find((r) => r.key === key);
+  if (manualRow) {
+    removeManualGroceryItem(manualRow.manualValue);
+    return;
+  }
+  // For plan-derived items, add to skippedGroceryKeys for every week overlapping the current range
+  let saved = false;
+  Object.entries(state.plans || {}).forEach(([planKey, weekPlan]) => {
+    if (!weekPlan) return;
+    const ws = dateFromWeekKey(planKey);
+    if (isNaN(ws.getTime())) return;
+    const wsISO = dateKeyFromDate(ws);
+    const weDate = new Date(ws); weDate.setDate(ws.getDate() + 7);
+    const weISO = dateKeyFromDate(weDate);
+    if (weISO < groceryRangeStart || wsISO > groceryRangeEnd) return;
+    weekPlan.skippedGroceryKeys = [...new Set([...(weekPlan.skippedGroceryKeys || []), key])];
+    saved = true;
+  });
+  if (saved) {
     persist();
     renderGroceries();
   }
@@ -19320,12 +20398,12 @@ function recipeViewTemplate(recipe, requestedIngredientScale = 1) {
     `}
     <section class="recipe-view-section">
       <h3>Instructions</h3>
-      ${steps.length ? `<ol class="recipe-steps-view">${steps.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ol>` : `<p class="empty-state">No instructions added yet.</p>`}
+      ${steps.length ? `<ol class="recipe-steps-view">${steps.map((step) => `<li>${linkTimerMentions(escapeHtml(step))}</li>`).join("")}</ol>` : `<p class="empty-state">No instructions added yet.</p>`}
     </section>
     <section class="recipe-view-section">
       <div class="recipe-view-section-heading">
         <h3>Nutrition Facts</h3>
-        ${recipe.virtualGroceryRecipe ? "" : `<button class="secondary-btn compact-btn" type="button" data-estimate-nutrition="${escapeHtml(recipe.id)}">Estimate nutrition</button>`}
+        ${recipe.nutritionEstimate?.stale ? `<span class="nutrition-stale-badge">Recalculating…</span>` : ""}
       </div>
       ${nutrition.length ? `<dl class="nutrition-facts-view">${nutrition.map((fact) => `
         <div>
@@ -19377,6 +20455,7 @@ function activeRecipeViewTemplate(recipe, cookingItem) {
           <span class="active-cooking-step-label">Step ${index + 1}</span>
           <span class="active-cooking-step-text">${escapeHtml(step)}</span>
         </button>
+        ${stepTimerButtons(step)}
       </li>
     `).join("")}</ol>` : `<p class="empty-state">No instructions added yet.</p>`)}
     <section class="recipe-view-section active-cooking-notes">
@@ -19633,6 +20712,8 @@ function populateRecipeForm(recipe) {
   renderNutritionRows(recipe ? normalizeNutritionFacts(recipe.nutrition) : [blankNutritionFact()]);
   renderCookLogRows(recipe ? normalizeCookLog(recipe.cookLog) : []);
   elements.deleteRecipeBtn.hidden = !recipe;
+  const aiStatus = document.getElementById("recipeAiStatus");
+  if (aiStatus) { aiStatus.textContent = ""; aiStatus.hidden = true; }
 }
 
 function handleRecipePhotoSelection() {
@@ -19708,8 +20789,12 @@ async function saveRecipeFromForm(event) {
     ingredientNutritionMatches: currentRecipe?.ingredientNutritionMatches || [],
     steps: collectStepRows().join("\n")
   };
-  if (currentRecipe && nutritionRecipeSignature(currentRecipe) !== nutritionRecipeSignature(recipe)) {
-    recipe.nutritionEstimate = currentRecipe.nutritionEstimate
+  const needsNutrition = !currentRecipe
+    || !currentRecipe.nutritionEstimate
+    || nutritionRecipeSignature(currentRecipe) !== nutritionRecipeSignature(recipe);
+
+  if (needsNutrition) {
+    recipe.nutritionEstimate = currentRecipe?.nutritionEstimate
       ? { ...currentRecipe.nutritionEstimate, stale: true }
       : null;
   }
@@ -19726,6 +20811,41 @@ async function saveRecipeFromForm(event) {
   pendingRecipePhotoFile = null;
   elements.recipeDialog.close();
   render();
+
+  if (needsNutrition && recipe.ingredients?.length) {
+    autoEstimateNutrition(recipe.id);
+  }
+}
+
+async function autoEstimateNutrition(recipeId) {
+  const helperUrl = nutritionEstimateHelperUrl();
+  if (!helperUrl || !authSession?.access_token) return;
+  const recipe = activeRecipes().find((r) => r.id === recipeId);
+  if (!recipe?.ingredients?.length) return;
+  const ingredients = normalizeIngredients(recipe.ingredients);
+  try {
+    const response = await fetch(helperUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${authSession.access_token}` },
+      body: JSON.stringify({
+        ingredients,
+        servings: Math.max(1, Number(recipe.servings) || 1),
+        corrections: state.nutritionIngredientMappings || {}
+      })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) return;
+    const fresh = activeRecipes().find((r) => r.id === recipeId);
+    if (!fresh) return;
+    fresh.nutritionEstimate = {
+      ...payload.estimate,
+      matches: normalizeIngredientNutritionMatches(payload.estimate?.matches),
+      stale: false
+    };
+    persist();
+    saveRecipeRow(fresh);
+    render();
+  } catch { /* silently skip — nutrition is best-effort */ }
 }
 
 function collectRecipeTags() {
@@ -19899,15 +21019,24 @@ function normalizeInstructionSteps(steps) {
   const text = String(steps || "").trim();
   if (!text) return [];
   const lineSteps = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  if (lineSteps.length > 1) return lineSteps.map(stripInstructionStepPrefix).filter(Boolean);
+  if (lineSteps.length > 1) {
+    return lineSteps
+      .filter((line) => !isStepHeaderOnly(line))
+      .map(stripInstructionStepPrefix)
+      .filter(Boolean);
+  }
   return text
     .split(/(?<=[.!?])\s+(?=[A-Z0-9])/)
     .map(stripInstructionStepPrefix)
     .filter(Boolean);
 }
 
+function isStepHeaderOnly(line) {
+  return /^(step\s*)?\d+[\s.):–\-]*$/i.test(line.trim());
+}
+
 function stripInstructionStepPrefix(step) {
-  return String(step || "").trim().replace(/^(step\s*)?\d+[\).:-]\s*/i, "").trim();
+  return String(step || "").trim().replace(/^(step\s*)?\d+[\).:\-]\s*/i, "").trim();
 }
 
 function blankNutritionFact() {
@@ -19992,9 +21121,9 @@ function normalizeIngredientNutritionMatches(matches) {
   return (Array.isArray(matches) ? matches : []).map((match) => ({
     rawLine: String(match?.rawLine || "").trim(),
     ingredientName: String(match?.ingredientName || "").trim(),
-    normalizedName: nutritionDomain().normalizeIngredientName(match?.normalizedName || match?.ingredientName),
+    normalizedName: NutritionDomain.normalizeIngredientName(match?.normalizedName || match?.ingredientName),
     quantity: Number.isFinite(Number(match?.quantity)) ? Number(match.quantity) : null,
-    unit: nutritionDomain().normalizeUnit(match?.unit),
+    unit: NutritionDomain.normalizeUnit(match?.unit),
     preparationNote: String(match?.preparationNote || "").trim(),
     optional: Boolean(match?.optional),
     required: match?.required !== false,
@@ -20013,7 +21142,7 @@ function normalizeIngredientNutritionMatches(matches) {
 function normalizeNutritionEstimate(estimate) {
   if (!estimate || typeof estimate !== "object" || Array.isArray(estimate)) return null;
   const normalizeValues = (values) => Object.fromEntries(
-    nutritionDomain().nutrientDefinitions.map(({ key }) => [key, Number(values?.[key]) || 0])
+    NutritionDomain.nutrientDefinitions.map(({ key }) => [key, Number(values?.[key]) || 0])
   );
   return {
     totals: normalizeValues(estimate.totals),
@@ -20053,6 +21182,7 @@ async function openNutritionEstimateDialog(recipeId) {
   elements.nutritionMatchList.innerHTML = "";
   elements.nutritionEstimateSummary.innerHTML = "";
   elements.saveNutritionEstimateBtn.disabled = true;
+  trackUsage("claude_nutrition");
   setNutritionEstimateStatus("Matching ingredients with USDA FoodData Central...");
   if (elements.recipeViewDialog.open) elements.recipeViewDialog.close();
   elements.nutritionEstimateDialog.showModal();
@@ -20134,7 +21264,7 @@ function handleNutritionMatchChange(event) {
   if (!current) return;
   const candidate = current.candidates.find((item) => String(item.fdcId) === select.value);
   pendingNutritionEstimate.matches[index] = candidate
-    ? { ...nutritionDomain().calculateIngredientNutrition(current, candidate), candidates: current.candidates }
+    ? { ...NutritionDomain.calculateIngredientNutrition(current, candidate), candidates: current.candidates }
     : { ...current, fdcId: "", matchedFood: "", source: "", grams: null, confidenceScore: 0, nutrients: {} };
   recalculatePendingNutritionEstimate();
   renderNutritionMatchReview();
@@ -20145,7 +21275,7 @@ function recalculatePendingNutritionEstimate() {
   const servings = Math.max(1, Number(elements.nutritionEstimateServings.value) || 1);
   pendingNutritionEstimate = {
     ...pendingNutritionEstimate,
-    ...nutritionDomain().sumNutrition(pendingNutritionEstimate.matches, servings),
+    ...NutritionDomain.sumNutrition(pendingNutritionEstimate.matches, servings),
     servings,
     confidenceScore: nutritionEstimateConfidence(pendingNutritionEstimate.matches),
     source: "USDA FoodData Central",
@@ -20168,7 +21298,7 @@ function renderNutritionEstimateSummary() {
     elements.nutritionEstimateSummary.innerHTML = "";
     return;
   }
-  const facts = nutritionDomain().nutritionFactsFromEstimate(estimate);
+  const facts = NutritionDomain.nutritionFactsFromEstimate(estimate);
   elements.nutritionEstimateSummary.innerHTML = `
     <div class="recipe-view-section-heading">
       <h3>Per serving estimate</h3>
@@ -20193,7 +21323,7 @@ function saveNutritionEstimate() {
   recipe.servings = estimate.servings;
   recipe.nutritionEstimate = estimate;
   recipe.ingredientNutritionMatches = matches.map(({ candidates, ...match }) => match);
-  recipe.nutrition = nutritionDomain().nutritionFactsFromEstimate(estimate);
+  recipe.nutrition = NutritionDomain.nutritionFactsFromEstimate(estimate);
   recipe.updatedAt = new Date().toISOString();
   if (!state.nutritionIngredientMappings || typeof state.nutritionIngredientMappings !== "object") {
     state.nutritionIngredientMappings = {};
@@ -20251,6 +21381,7 @@ async function importRecipeFromUrl() {
 }
 
 async function fetchRecipeWithBestAvailableMethod(url) {
+  trackUsage("claude_recipe_import");
   const helperUrl = recipeImportHelperUrl(url);
   if (helperUrl) {
     const response = await fetch(helperUrl, { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
@@ -20373,6 +21504,7 @@ async function scanRecipeFromImages() {
         quality: 0.82
       }))
     )));
+    trackUsage("claude_recipe_scan");
     const helperUrl = recipeScanHelperUrl();
     if (!helperUrl) throw new Error("Recipe scanning needs the local helper or the live app.");
     const response = await fetch(helperUrl, {
@@ -20792,30 +21924,52 @@ function normalizeIngredients(ingredients) {
 }
 
 function parseIngredientLine(line) {
-  const normalizedLine = line.trim()
-    .replace(/^[-*]\s*/, "")
-    .replace(/⅛/g, "1/8")
-    .replace(/¼/g, "1/4")
-    .replace(/⅓/g, "1/3")
-    .replace(/½/g, "1/2")
-    .replace(/⅔/g, "2/3")
-    .replace(/¾/g, "3/4");
+  let normalizedLine = line.trim()
+    .replace(/^[-*•]\s*/, "")
+    .replace(/⅛/g, "1/8").replace(/¼/g, "1/4").replace(/⅓/g, "1/3")
+    .replace(/½/g, "1/2").replace(/⅔/g, "2/3").replace(/¾/g, "3/4");
+
+  // Strip inline packaging parentheticals like "(14 oz)" or "(15-oz)" that appear
+  // after an amount but before a unit — e.g. "1 (14 oz) can tomatoes"
+  normalizedLine = normalizedLine.replace(/^(\d[\d\s/]*)\s*\([\d.\s–\-]+\s*oz\)/i, "$1");
+
+  // Extract trailing prep in parentheses — "(beaten)", "(room temperature)", etc.
   const prepMatch = normalizedLine.match(/\(([^)]+)\)$/);
-  const prepText = prepMatch ? prepMatch[1].toLowerCase() : "";
-  const lineWithoutPrep = prepMatch ? normalizedLine.slice(0, prepMatch.index).trim() : normalizedLine;
-  const parts = lineWithoutPrep.split(/\s+/);
+  const prepText = prepMatch ? prepMatch[1].toLowerCase().trim() : "";
+  const lineWithoutTrailingPrep = prepMatch ? normalizedLine.slice(0, prepMatch.index).trim() : normalizedLine;
+  const parts = lineWithoutTrailingPrep.split(/\s+/);
+
   const amount = takeIngredientAmount(parts, amountOptions);
   let quantity = "";
   const rawUnit = parts[0] || "";
   const unit = rawUnit.toLowerCase();
-  const unitMap = { c: "C", cup: "C", cups: "C", tablespoon: "Tbsp", tablespoons: "Tbsp", tbsp: "Tbsp", teaspoon: "tsp", teaspoons: "tsp", tsp: "tsp", pound: "lb", pounds: "lb", lb: "lb", ounce: "oz", ounces: "oz", oz: "oz", cans: "can", can: "can", cloves: "clove", clove: "clove", slices: "slice", slice: "slice" };
+  const unitMap = {
+    c: "C", cup: "C", cups: "C",
+    tablespoon: "Tbsp", tablespoons: "Tbsp", tbsp: "Tbsp",
+    teaspoon: "tsp", teaspoons: "tsp", tsp: "tsp",
+    pound: "lb", pounds: "lb", lb: "lb",
+    ounce: "oz", ounces: "oz", oz: "oz",
+    cans: "can", can: "can", cloves: "clove", clove: "clove",
+    slices: "slice", slice: "slice", bunch: "bunch", bunches: "bunch",
+    package: "package", packages: "package", pkg: "package",
+    g: "g", gram: "g", grams: "g", kg: "kg",
+    ml: "ml", l: "L", liter: "L", liters: "L",
+    qt: "qt", quart: "qt", pt: "pt", pint: "pt",
+    stick: "stick", sticks: "stick", sprig: "sprig", sprigs: "sprig",
+    head: "head", heads: "head", stalk: "stalk", stalks: "stalk",
+  };
   const mappedUnit = rawUnit === "T" ? "Tbsp" : rawUnit === "t" ? "tsp" : unitMap[unit];
-  if (mappedUnit) {
-    quantity = mappedUnit;
-    parts.shift();
-  }
-  const prep = prepOptions.includes(prepText) ? prepText : "";
-  const item = prep && prepMatch ? parts.join(" ") : [parts.join(" "), prepText && !prep ? `(${prepText})` : ""].filter(Boolean).join(" ");
+  if (mappedUnit) { quantity = mappedUnit; parts.shift(); }
+
+  // Check for trailing prep word at end of item (e.g. "garlic cloves minced")
+  const trailingPrep = prepOptions.includes(parts.at(-1)?.toLowerCase()) ? parts.pop().toLowerCase() : "";
+
+  // Prefer explicit end-of-line prep in parens; fall back to trailing word
+  const prep = prepOptions.includes(prepText) ? prepText : trailingPrep;
+  const itemParts = parts.join(" ");
+  const leftoverPrep = prepText && !prep ? `(${prepText})` : "";
+  const item = [itemParts, leftoverPrep].filter(Boolean).join(" ");
+
   const optional = /\boptional\b/i.test(`${normalizedLine} ${prepText}`);
   return { amount, quantity, item, prep, rawLine: normalizedLine, optional, required: !optional };
 }
@@ -20868,6 +22022,7 @@ async function deleteRecipeById(id) {
   if (!recipe) return false;
   closeFolderMenu();
   if (!(await tryPreChangeBackup("deleting a recipe"))) return false;
+  recordDeletion("recipes", id);
   state.recipes = activeRecipes().filter((item) => item.id !== id);
   trashedRecipes().unshift({
     id: createId("trash"),
@@ -21384,7 +22539,7 @@ function buildGroceryItems(week = weekState()) {
       }
       const recipe = recipeForSlot(entry);
       if (!recipe) return;
-      const scale = mealPlanServingsDomain().scalingFactor(entry, recipe);
+      const scale = LiveMealPlanServings.scalingFactor(entry, recipe);
       groceryRows.push(...normalizeIngredients(recipe.ingredients)
         .map((ingredient) => scaledIngredientToText(ingredient, scale)));
     });
@@ -21416,7 +22571,7 @@ function buildRawGroceryRows(week = weekState()) {
       }
       const recipe = recipeForSlot(entry);
       if (!recipe) return;
-      const scale = mealPlanServingsDomain().scalingFactor(entry, recipe);
+      const scale = LiveMealPlanServings.scalingFactor(entry, recipe);
       normalizeIngredients(recipe.ingredients)
         .map((ingredient) => ingredientToGroceryRow({
           ...ingredient,
@@ -21430,6 +22585,187 @@ function buildRawGroceryRows(week = weekState()) {
   return rows;
 }
 
+function buildRawGroceryRowsForRange(startISO, endISO) {
+  if (!startISO || !endISO) return buildRawGroceryRows();
+  const rows = [];
+  Object.entries(state.plans || {}).forEach(([key, weekPlan]) => {
+    if (!weekPlan) return;
+    const weekStart = dateFromWeekKey(key);
+    if (isNaN(weekStart.getTime())) return;
+    prepDays.forEach((day) => {
+      const dayDate = new Date(weekStart);
+      dayDate.setDate(weekStart.getDate() + day.offset);
+      const dayISO = dateKeyFromDate(dayDate);
+      if (dayISO < startISO || dayISO > endISO) return;
+      const slots = mealSlotsForWeek(weekPlan);
+      const combinedState = combinedMealSectionsForWeek(weekPlan);
+      mealKeysForDay(day, combinedState).forEach((meal) => {
+        slotEntries(slots?.[day.id]?.[meal]).forEach((entry) => {
+          const groceryRecipe = groceryRecipeForSlot(entry);
+          if (groceryRecipe) {
+            normalizeIngredients(groceryRecipe.ingredients)
+              .map((ingredient) => ingredientToGroceryRow({
+                ...ingredient,
+                amount: scaleIngredientAmount(ingredient.amount, groceryRecipe.groceryMealServings)
+              }, groceryRecipe))
+              .filter((row) => row.item)
+              .forEach((row) => rows.push(row));
+            return;
+          }
+          const recipe = recipeForSlot(entry);
+          if (!recipe) return;
+          const scale = LiveMealPlanServings.scalingFactor(entry, recipe);
+          normalizeIngredients(recipe.ingredients)
+            .map((ingredient) => ingredientToGroceryRow({
+              ...ingredient,
+              amount: scaleIngredientAmount(ingredient.amount, scale)
+            }, recipe))
+            .filter((row) => row.item)
+            .forEach((row) => rows.push(row));
+        });
+      });
+    });
+  });
+  return rows;
+}
+
+function initGroceryRange(force = false) {
+  if (!force && groceryRangeStart && groceryRangeEnd) return;
+  const key = selectedGroceryWeekKey || weekKey();
+  const weekStart = dateFromWeekKey(key);
+  const endDate = new Date(weekStart);
+  endDate.setDate(weekStart.getDate() + 7);
+  groceryRangeStart = dateKeyFromDate(weekStart);
+  groceryRangeEnd = dateKeyFromDate(endDate);
+  syncGroceryRangeInputs();
+}
+
+function syncGroceryRangeInputs() {
+  const startBtn = document.getElementById("groceryRangeStartBtn");
+  const endBtn = document.getElementById("groceryRangeEndBtn");
+  if (startBtn) startBtn.textContent = groceryRangeStart ? formatRangeDate(groceryRangeStart) : "—";
+  if (endBtn) endBtn.textContent = groceryRangeEnd ? formatRangeDate(groceryRangeEnd) : "—";
+  if (activeAppArea === "shop") {
+    const label = groceryRangeStart && groceryRangeEnd
+      ? `${formatShortDate(groceryRangeStart)} – ${formatShortDate(groceryRangeEnd)}`
+      : "";
+    if (elements.weekLabel) elements.weekLabel.textContent = label;
+  }
+}
+
+function formatRangeDate(iso) {
+  const d = new Date(iso + "T12:00:00");
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
+function toggleGroceryRangeMenu(which) {
+  const menuId = which === "start" ? "groceryRangeStartMenu" : "groceryRangeEndMenu";
+  const btnId = which === "start" ? "groceryRangeStartBtn" : "groceryRangeEndBtn";
+  const menu = document.getElementById(menuId);
+  const btn = document.getElementById(btnId);
+  if (!menu || !btn) return;
+  const willOpen = menu.hidden;
+  closeFloatingMenus();
+  if (!willOpen) return;
+  renderGroceryRangeMenu(which, menu);
+  menu.hidden = false;
+  btn.setAttribute("aria-expanded", "true");
+  requestAnimationFrame(() => {
+    const selected = menu.querySelector(".grocery-range-option.is-selected");
+    if (selected) selected.scrollIntoView({ block: "center" });
+  });
+}
+
+function closeGroceryRangeMenus() {
+  ["groceryRangeStartMenu", "groceryRangeEndMenu"].forEach((id) => {
+    const menu = document.getElementById(id);
+    if (menu) menu.hidden = true;
+  });
+  document.getElementById("groceryRangeStartBtn")?.setAttribute("aria-expanded", "false");
+  document.getElementById("groceryRangeEndBtn")?.setAttribute("aria-expanded", "false");
+}
+
+function renderGroceryRangeMenu(which, menu) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const todayISO = dateKeyFromDate(today);
+
+  // Start: 1 week back → 4 weeks out. End: chosen start → start + 4 weeks.
+  let cursor;
+  let count;
+  if (which === "start") {
+    cursor = new Date(today); cursor.setDate(today.getDate() - 7);
+    count = 36;
+  } else {
+    const anchor = groceryRangeStart ? new Date(groceryRangeStart + "T00:00:00") : today;
+    cursor = new Date(anchor);
+    count = 29;
+  }
+
+  const currentISO = which === "start" ? groceryRangeStart : groceryRangeEnd;
+  const rows = [];
+
+  for (let i = 0; i < count; i++) {
+    const iso = dateKeyFromDate(cursor);
+    const isSelected = iso === currentISO;
+    const label = cursor.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    rows.push(`<button type="button" class="grocery-range-option${isSelected ? " is-selected" : ""}" data-range-pick="${escapeHtml(iso)}" data-range-which="${which}">${escapeHtml(label)}</button>`);
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  menu.innerHTML = `<div class="grocery-range-menu-inner">${rows.join("")}</div>`;
+  menu.addEventListener("click", handleGroceryRangePick, { once: true });
+}
+
+function weekLabelForDate(date) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((date - today) / 86400000);
+  if (diffDays < -7) return "Earlier";
+  if (diffDays < 0) return "Last week";
+  if (diffDays < 7) return "This week";
+  if (diffDays < 14) return "Next week";
+  if (diffDays < 21) return "In 2 weeks";
+  if (diffDays < 28) return "In 3 weeks";
+  return "In 4 weeks";
+}
+
+function handleGroceryRangePick(event) {
+  const btn = event.target.closest("[data-range-pick]");
+  if (!btn) {
+    // re-attach if user clicked non-option area
+    event.currentTarget.addEventListener("click", handleGroceryRangePick, { once: true });
+    return;
+  }
+  const iso = btn.dataset.rangePick;
+  const which = btn.dataset.rangeWhich;
+  if (which === "start") {
+    groceryRangeStart = iso;
+    if (groceryRangeEnd < groceryRangeStart) groceryRangeEnd = groceryRangeStart;
+  } else {
+    groceryRangeEnd = iso;
+    if (groceryRangeStart > groceryRangeEnd) groceryRangeStart = groceryRangeEnd;
+  }
+  closeGroceryRangeMenus();
+  syncGroceryRangeInputs();
+  renderGroceries();
+}
+
+function formatShortDate(iso) {
+  const d = new Date(iso + "T12:00:00");
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function shiftGroceryRange(days) {
+  if (!groceryRangeStart || !groceryRangeEnd) initGroceryRange();
+  const start = new Date(groceryRangeStart + "T00:00:00");
+  const end = new Date(groceryRangeEnd + "T00:00:00");
+  start.setDate(start.getDate() + days);
+  end.setDate(end.getDate() + days);
+  groceryRangeStart = dateKeyFromDate(start);
+  groceryRangeEnd = dateKeyFromDate(end);
+  syncGroceryRangeInputs();
+  renderGroceries();
+}
+
 function mealPlanNutritionTotals(week = weekState()) {
   const entries = [];
   const slots = mealSlotsForWeek(week);
@@ -21440,7 +22776,7 @@ function mealPlanNutritionTotals(week = weekState()) {
       if (recipe && !recipe.virtualGroceryRecipe) entries.push(entry);
     });
   }));
-  return mealPlanServingsDomain().sumMealPlanNutrition(
+  return LiveMealPlanServings.sumMealPlanNutrition(
     entries,
     (recipeId) => activeRecipes().find((recipe) => recipe.id === recipeId)
   );
@@ -21532,7 +22868,7 @@ function manualGroceryRow(value) {
 }
 
 function aggregateGroceryRows(rows) {
-  return groceryCatalog().mergeGroceryRows(rows, {
+  return LiveGroceryCatalog.mergeGroceryRows(rows, {
     aliases: groceryAliases(),
     splitPreferences: grocerySplitPreferences()
   })
@@ -21627,7 +22963,7 @@ function groceryRowKey(item) {
 }
 
 function normalizeGroceryItemName(item) {
-  return groceryCatalog().normalizeGroceryItemName(item, {
+  return LiveGroceryCatalog.normalizeGroceryItemName(item, {
     aliases: state?.groceryAliases || {},
     splitPreferences: state?.grocerySplitPreferences || {}
   });
@@ -21638,11 +22974,11 @@ function canonicalGroceryItemKey(item) {
 }
 
 function baseGroceryItemKey(item) {
-  return groceryCatalog().normalizeGroceryItemName(item).canonicalName;
+  return LiveGroceryCatalog.normalizeGroceryItemName(item).canonicalName;
 }
 
 function canonicalGroceryWord(word) {
-  return groceryCatalog().singularizeWord(word);
+  return LiveGroceryCatalog.singularizeWord(word);
 }
 
 function preferGroceryDisplayItem(candidate, current) {
@@ -21916,6 +23252,8 @@ function renderWatchPlanner() {
     <div class="watch-category-bar">
       <div class="watch-category-tabs" role="tablist" aria-label="Watch categories">
         <button class="watch-category-tab${activeWatchCategory === "all" ? " is-active" : ""}" type="button" role="tab" aria-selected="${activeWatchCategory === "all"}" data-watch-category="all">All</button>
+        <button class="watch-category-tab${activeWatchCategory === "__upcoming" ? " is-active" : ""}" type="button" role="tab" aria-selected="${activeWatchCategory === "__upcoming"}" data-watch-category="__upcoming">Upcoming</button>
+        <button class="watch-category-tab${activeWatchCategory === "__in-theaters" ? " is-active" : ""}" type="button" role="tab" aria-selected="${activeWatchCategory === "__in-theaters"}" data-watch-category="__in-theaters">In Theaters</button>
         ${categories.map((c) => `
           <button class="watch-category-tab${activeWatchCategory === c.id ? " is-active" : ""}" type="button" role="tab" aria-selected="${activeWatchCategory === c.id}" data-watch-category="${escapeHtml(c.id)}">${escapeHtml(c.name)}</button>
         `).join("")}
@@ -22066,7 +23404,11 @@ function watchScheduledItemTemplate(item, dayId) {
 
 function watchListTemplate() {
   let items = watchItemsList().filter((i) => i.status !== "watched");
-  if (activeWatchCategory !== "all") {
+  if (activeWatchCategory === "__upcoming") {
+    items = items.filter((i) => i.theatricalReleaseDate && !i.inTheaters);
+  } else if (activeWatchCategory === "__in-theaters") {
+    items = items.filter((i) => i.inTheaters === true);
+  } else if (activeWatchCategory !== "all") {
     items = items.filter((i) => Array.isArray(i.categories) && i.categories.includes(activeWatchCategory));
   }
   const movies = items.filter((i) => i.type === "movie");
@@ -22143,7 +23485,7 @@ function watchProviderOrShowtimesHtml(item) {
   const justWatchUrl = providers?.link || null;
   if (freeOptions.length) {
     return `<div class="watch-providers">
-      <span class="watch-providers-label">Stream free:</span>
+      <span class="watch-providers-label">Stream:</span>
       ${freeOptions.slice(0, 4).map((p) => `<a class="watch-provider-link" href="${escapeHtml(streamingProviderUrl(p, item.title, justWatchUrl))}" target="_blank" rel="noopener noreferrer">${escapeHtml(p.provider_name)}</a>`).join("")}
     </div>`;
   }
@@ -22345,7 +23687,7 @@ function watchSeasonTemplate(item, seasonNum, seasonData) {
   const watchedEps = seasonData?.episodes || {};
   const totalEps = episodes.length || Object.keys(watchedEps).length || 0;
   const watchedCount = Object.values(watchedEps).filter(Boolean).length;
-  const allWatched = totalEps > 0 && watchedCount >= totalEps;
+  const allWatched = seasonData?.watched || (totalEps > 0 && watchedCount >= totalEps);
   const isExpanded = seasonData?.__expanded || false;
 
   return `
@@ -22627,6 +23969,7 @@ function addWatchItem(title, type) {
 }
 
 function deleteWatchItem(id) {
+  recordDeletion("watchItems", id);
   state.watchItems = watchItemsList().filter((item) => item.id !== id);
   if (state.watchPlans) {
     Object.values(state.watchPlans).forEach((week) => {
@@ -22869,7 +24212,7 @@ function watchArchiveItemTemplate(item) {
 
   const providerHtml = freeOptions.length
     ? `<div class="watch-providers">
-        <span class="watch-providers-label">Stream free:</span>
+        <span class="watch-providers-label">Stream:</span>
         ${freeOptions.slice(0, 4).map((p) => `<a class="watch-provider-link" href="${escapeHtml(streamingProviderUrl(p, item.title, justWatchUrl))}" target="_blank" rel="noopener noreferrer">${escapeHtml(p.provider_name)}</a>`).join("")}
       </div>`
     : rentOptions.length
@@ -23040,11 +24383,12 @@ function handleWatchCategoryDrop(event, targetCategoryId) {
   const item = watchItemById(id);
   if (!item) return;
   if (!Array.isArray(item.categories)) item.categories = [];
-  if (targetCategoryId === "all") {
-    item.categories = [];
+  const isSystemTab = (id) => id === "all" || id === "__upcoming" || id === "__in-theaters";
+  if (isSystemTab(targetCategoryId)) {
+    // System tabs filter by item data — don't modify user category assignments
   } else {
-    // If dragging from a specific tab, remove that category (move semantics)
-    if (activeWatchCategory !== "all" && activeWatchCategory !== targetCategoryId) {
+    // If dragging from a user tab, remove that category (move semantics)
+    if (!isSystemTab(activeWatchCategory) && activeWatchCategory !== targetCategoryId) {
       item.categories = item.categories.filter((c) => c !== activeWatchCategory);
     }
     if (!item.categories.includes(targetCategoryId)) {
@@ -23077,6 +24421,7 @@ async function fetchWatchSearchResults(query, root, addForm) {
   if (!resultsEl) return;
   resultsEl.innerHTML = `<div class="watch-search-loading">Searching...</div>`;
   resultsEl.hidden = false;
+  trackUsage("tmdb_search");
   try {
     const response = await fetch(tmdbSearchUrl(query), { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
     const data = await response.json();
@@ -23154,7 +24499,7 @@ function addWatchItemFromTmdb(tmdbResult) {
     watchNotes: null,
     seasonProgress: {},
     episodeData: {},
-    categories: activeWatchCategory !== "all" ? [activeWatchCategory] : [],
+    categories: (activeWatchCategory !== "all" && activeWatchCategory !== "__upcoming" && activeWatchCategory !== "__in-theaters") ? [activeWatchCategory] : [],
     createdAt: new Date().toISOString()
   };
   watchItemsList().push(item);
@@ -23514,6 +24859,7 @@ function bindPianoControls() {
     if (editBtn) { openPianoSongEdit(editBtn.dataset.pianoSongEdit); return; }
     const delBtn = e.target.closest("[data-piano-song-delete]");
     if (delBtn) {
+      recordDeletion("pianoSongs", delBtn.dataset.pianoSongDelete);
       state.pianoSongs = (state.pianoSongs || []).filter((s) => s.id !== delBtn.dataset.pianoSongDelete);
       persist();
       renderPianoSongsList();
@@ -23974,6 +25320,7 @@ function saveSailLogEntry() {
 }
 
 function deleteSailLogEntry(id) {
+  recordDeletion("sailingLog", id);
   state.sailingLog = sailingLogList().filter((e) => e.id !== id);
   persist();
   renderRecreatePage();
@@ -24440,6 +25787,7 @@ function savePlanEvent() {
 
 function deletePlanEvent() {
   if (!editingPlanEventId) return;
+  recordDeletion("planEvents", editingPlanEventId);
   state.planEvents = (state.planEvents || []).filter((e) => e.id !== editingPlanEventId);
   persist();
   elements.planEventDialog.close();
@@ -24456,6 +25804,83 @@ function openAddPlanCalDialog() {
   elements.planNewCalName.value = "";
   elements.planNewCalUrl.value = "";
   elements.planAddCalDialog.showModal();
+}
+
+function initPlanCalListDelegation() {
+  const list = elements.planCalList;
+  if (!list) return;
+
+  list.addEventListener("click", (e) => {
+    if (e.target.closest("[data-new-native-cal]")) {
+      const form = document.getElementById("planNewCalForm");
+      const name = document.getElementById("planNewCalName");
+      const colors = document.getElementById("planNewCalColors");
+      if (form) form.hidden = false;
+      if (name) { name.value = ""; }
+      if (colors) renderPlanColorPicker(colors, PLAN_COLORS[0], "planNewNativeCalColor");
+      name?.focus();
+      return;
+    }
+    if (e.target.closest("[data-cancel-native-cal]")) {
+      const form = document.getElementById("planNewCalForm");
+      if (form) form.hidden = true;
+      return;
+    }
+    if (e.target.closest("[data-save-native-cal]")) {
+      const name = document.getElementById("planNewCalName")?.value.trim() || "My Calendar";
+      const color = document.getElementById("planNewCalColors")?.querySelector("input:checked")?.value || PLAN_COLORS[0];
+      state.planCalendars = [...(state.planCalendars || []), { id: createId("plan-cal"), name, url: "", color, enabled: true, lastFetched: null }];
+      persist();
+      renderPlanCalList();
+      if (activeAppArea === "plan") renderPlanPage();
+      return;
+    }
+    if (e.target.closest("[data-add-ics-cal]")) { openAddPlanCalDialog(); return; }
+
+    const editBtn = e.target.closest("[data-cal-edit]");
+    if (editBtn) { openPlanCalEditMode(editBtn.dataset.calEdit); return; }
+
+    const delBtn = e.target.closest("[data-cal-delete]");
+    if (delBtn) {
+      const id = delBtn.dataset.calDelete;
+      const calName = (state.planCalendars || []).find((c) => c.id === id)?.name || "this calendar";
+      if (!confirm(`Remove "${calName}"?`)) return;
+      recordDeletion("planCalendars", id);
+      state.planCalendars = (state.planCalendars || []).filter((c) => c.id !== id);
+      delete planCalendarCache[id];
+      persist();
+      renderPlanCalList();
+      if (activeAppArea === "plan") renderPlanPage();
+      return;
+    }
+
+    const saveEdit = e.target.closest("[data-save-cal-edit]");
+    if (saveEdit) {
+      const id = saveEdit.dataset.saveCalEdit;
+      const newName = document.getElementById(`cal-edit-name-${id}`)?.value.trim();
+      const newColor = document.getElementById(`cal-edit-color-${id}`)?.querySelector("input:checked")?.value;
+      const cal = (state.planCalendars || []).find((c) => c.id === id);
+      if (!cal) return;
+      state.planCalendars = (state.planCalendars || []).map((c) =>
+        c.id === id ? { ...c, name: newName || cal.name, color: newColor || cal.color } : c
+      );
+      persist();
+      renderPlanCalList();
+      if (activeAppArea === "plan") renderPlanPage();
+      return;
+    }
+
+    if (e.target.closest("[data-cancel-cal-edit]")) { renderPlanCalList(); return; }
+  });
+
+  list.addEventListener("change", (e) => {
+    const toggle = e.target.closest("[data-cal-toggle]");
+    if (!toggle) return;
+    const id = toggle.dataset.calToggle;
+    state.planCalendars = (state.planCalendars || []).map((c) => c.id === id ? { ...c, enabled: toggle.checked } : c);
+    persist();
+    if (activeAppArea === "plan") renderPlanPage();
+  });
 }
 
 function renderPlanCalList() {
@@ -24492,53 +25917,7 @@ function renderPlanCalList() {
     </div>
   `;
 
-  const newCalForm = document.getElementById("planNewCalForm");
-  const newCalColors = document.getElementById("planNewCalColors");
-  const newCalName = document.getElementById("planNewCalName");
-
-  renderPlanColorPicker(newCalColors, PLAN_COLORS[0], "planNewNativeCalColor");
-
-  elements.planCalList.querySelector("[data-new-native-cal]")?.addEventListener("click", () => {
-    newCalForm.hidden = false;
-    newCalName.value = "";
-    renderPlanColorPicker(newCalColors, PLAN_COLORS[0], "planNewNativeCalColor");
-    newCalName.focus();
-  });
-  elements.planCalList.querySelector("[data-save-native-cal]")?.addEventListener("click", () => {
-    const name = newCalName.value.trim() || "My Calendar";
-    const color = newCalColors.querySelector("input:checked")?.value || PLAN_COLORS[0];
-    state.planCalendars = [...(state.planCalendars || []), { id: createId("plan-cal"), name, url: "", color, enabled: true, lastFetched: null }];
-    persist();
-    renderPlanCalList();
-    if (activeAppArea === "plan") renderPlanPage();
-  });
-  elements.planCalList.querySelector("[data-cancel-native-cal]")?.addEventListener("click", () => {
-    newCalForm.hidden = true;
-  });
-  elements.planCalList.querySelector("[data-add-ics-cal]")?.addEventListener("click", openAddPlanCalDialog);
-
-  elements.planCalList.querySelectorAll("[data-cal-edit]").forEach((btn) => {
-    btn.addEventListener("click", () => openPlanCalEditMode(btn.dataset.calEdit));
-  });
-  elements.planCalList.querySelectorAll("[data-cal-toggle]").forEach((input) => {
-    input.addEventListener("change", () => {
-      const id = input.dataset.calToggle;
-      state.planCalendars = (state.planCalendars || []).map((c) => c.id === id ? { ...c, enabled: input.checked } : c);
-      persist();
-      if (activeAppArea === "plan") renderPlanPage();
-    });
-  });
-  elements.planCalList.querySelectorAll("[data-cal-delete]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      if (!confirm(`Remove "${(state.planCalendars || []).find((c) => c.id === btn.dataset.calDelete)?.name || "this calendar"}"?`)) return;
-      const id = btn.dataset.calDelete;
-      state.planCalendars = (state.planCalendars || []).filter((c) => c.id !== id);
-      delete planCalendarCache[id];
-      persist();
-      renderPlanCalList();
-      if (activeAppArea === "plan") renderPlanPage();
-    });
-  });
+  renderPlanColorPicker(document.getElementById("planNewCalColors"), PLAN_COLORS[0], "planNewNativeCalColor");
 }
 
 function planCalRowHtml(cal) {
@@ -24579,17 +25958,7 @@ function openPlanCalEditMode(id) {
       </div>
     </div>
   `;
-  const colorContainer = document.getElementById(colorPickerId);
-  renderPlanColorPicker(colorContainer, cal.color, `calEditColor-${id}`);
-  row.querySelector(`[data-save-cal-edit]`)?.addEventListener("click", () => {
-    const newName = document.getElementById(nameId)?.value.trim() || cal.name;
-    const newColor = colorContainer?.querySelector("input:checked")?.value || cal.color;
-    state.planCalendars = (state.planCalendars || []).map((c) => c.id === id ? { ...c, name: newName, color: newColor } : c);
-    persist();
-    renderPlanCalList();
-    if (activeAppArea === "plan") renderPlanPage();
-  });
-  row.querySelector(`[data-cancel-cal-edit]`)?.addEventListener("click", () => renderPlanCalList());
+  renderPlanColorPicker(document.getElementById(colorPickerId), cal.color, `calEditColor-${id}`);
   document.getElementById(nameId)?.focus();
 }
 
@@ -25021,6 +26390,9 @@ function deleteInventoryBoxDeep(boxId) {
     inventoryBoxChildren(id).forEach((c) => collect(c.id));
   }
   collect(boxId);
+  recordDeletions("inventoryBoxes", [...toDelete]);
+  const removedItems = inventoryItemList().filter(i => toDelete.has(i.boxId));
+  recordDeletions("inventoryItems", removedItems.map(i => i.id));
   state.inventoryBoxes = inventoryBoxList().filter((b) => !toDelete.has(b.id));
   state.inventoryItems = inventoryItemList().filter((i) => !toDelete.has(i.boxId));
   toDelete.forEach((id) => inventoryCollapsedBoxes.delete(id));
@@ -25065,8 +26437,8 @@ function openInventoryItemMenu(event) {
 
   const delBtn = menu.querySelector("[data-inv-ctx-delete-item]");
   if (delBtn) {
-    delBtn.addEventListener("pointerdown", handle(() => { state.inventoryItems = inventoryItemList().filter((i) => i.id !== itemId); persist(); renderInventoryPage(); }));
-    delBtn.addEventListener("click", handle(() => { state.inventoryItems = inventoryItemList().filter((i) => i.id !== itemId); persist(); renderInventoryPage(); }));
+    delBtn.addEventListener("pointerdown", handle(() => { recordDeletion("inventoryItems", itemId); state.inventoryItems = inventoryItemList().filter((i) => i.id !== itemId); persist(); renderInventoryPage(); }));
+    delBtn.addEventListener("click", handle(() => { recordDeletion("inventoryItems", itemId); state.inventoryItems = inventoryItemList().filter((i) => i.id !== itemId); persist(); renderInventoryPage(); }));
   }
 }
 
@@ -25127,84 +26499,74 @@ function getReadPublications() {
   return Array.isArray(pubs) && pubs.length > 0 ? pubs : defaultReadPublications();
 }
 
-function pubTabButton(key, label, activeTab, attr) {
+function pubTabButton(key, label, activeTab, attr, logoUrl) {
   const active = activeTab === key;
-  const icon = key === "all"
-    ? `<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>`
-    : key === "other"
-      ? `<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>`
-      : `<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h10M7 12h10M7 17h6"/>`;
-  return `<button class="article-sidebar-tab${active ? " is-active" : ""}" type="button" data-${attr}="${escapeHtml(key)}" role="tab" aria-selected="${active}"><svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true">${icon}</svg><span>${escapeHtml(label)}</span></button>`;
+  let iconHtml;
+  if (key === "all") {
+    iconHtml = `<svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`;
+  } else if (key === "other") {
+    iconHtml = `<svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`;
+  } else if (key === "email") {
+    iconHtml = `<svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg>`;
+  } else if (logoUrl) {
+    const fallbackSvg = `<svg viewBox='0 0 24 24' class='article-sidebar-icon' aria-hidden='true'><rect x='3' y='3' width='18' height='18' rx='2'/><path d='M7 7h10M7 12h10M7 17h6'/></svg>`;
+    iconHtml = `<img class="article-sidebar-logo" src="${escapeHtml(logoUrl)}" alt="" loading="lazy" onerror="this.outerHTML='${fallbackSvg}'">`;
+  } else {
+    iconHtml = `<svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h10M7 12h10M7 17h6"/></svg>`;
+  }
+  return `<button class="article-sidebar-tab${active ? " is-active" : ""}" type="button" data-${attr}="${escapeHtml(key)}" role="tab" aria-selected="${active}">${iconHtml}<span>${escapeHtml(label)}</span></button>`;
 }
 
 function allPubTabEntries() {
-  return [{ key: "all", label: "All" }, ...getReadPublications(), { key: "other", label: "Other" }];
+  return [{ key: "all", label: "All" }, { key: "email", label: "Email" }, ...getReadPublications(), { key: "other", label: "Other" }];
 }
 
-function renderArticlePubTabs() {
-  const container = document.getElementById("articlePubTabs");
-  if (!container) return;
-  container.innerHTML = allPubTabEntries()
-    .map(p => pubTabButton(p.key, p.label, activeArticleTab, "article-tab")).join("");
-  container.querySelectorAll("[data-article-tab]").forEach((btn) => {
-    btn.addEventListener("click", () => switchArticleTab(btn.dataset.articleTab));
-  });
-}
-
-function renderListenPubTabs() {
-  const container = document.getElementById("listenPubTabs");
-  if (!container) return;
-  container.innerHTML = allPubTabEntries()
-    .map(p => pubTabButton(p.key, p.label, activeListenTab, "listen-tab")).join("");
-  container.querySelectorAll("[data-listen-tab]").forEach((btn) => {
-    btn.addEventListener("click", () => switchListenTab(btn.dataset.listenTab));
-  });
-}
 
 function removePublication(key) {
   if (!Array.isArray(state.readPublications)) state.readPublications = defaultReadPublications();
   state.readPublications = state.readPublications.filter(p => p.key !== key);
   persist();
-  renderArticlePubTabs();
-  renderListenPubTabs();
-  if (activeArticleTab === key) switchArticleTab("all");
-  if (activeListenTab === key) switchListenTab("all");
+  renderMediaPubTabs();
+  if (activeMediaTab === key) switchMediaTab("all");
 }
 
-let activeArticleTab = "books";
+let activeMediaTab = "podcasts";
 let openArticleId = null;
-let articleReadTabsWired = false;
+let mediaTabsWired = false;
+let articleViewMode = "unread";
 
-function initArticleReadPage() {
-  renderArticlePubTabs();
-  wireArticleReadTabs();
-  switchArticleTab(activeArticleTab);
+function initMediaPage() {
+  renderMediaPubTabs();
+  wireMediaTabs();
+  switchMediaTab(activeMediaTab);
   maybeAutoSync("read");
 }
 
-function wireArticleReadTabs() {
-  if (articleReadTabsWired) return;
-  articleReadTabsWired = true;
+function wireMediaTabs() {
+  if (mediaTabsWired) return;
+  mediaTabsWired = true;
 
-  const sidebar = document.getElementById("articleReadSidebar");
+  const sidebar = document.getElementById("mediaSidebar");
   if (sidebar) {
-    sidebar.querySelectorAll("[data-article-tab]").forEach((btn) => {
-      if (btn.closest("#articlePubTabs")) return;
-      btn.addEventListener("click", () => switchArticleTab(btn.dataset.articleTab));
+    sidebar.querySelectorAll("[data-media-tab]").forEach((btn) => {
+      if (btn.closest("#mediaPubTabs")) return;
+      btn.addEventListener("click", () => switchMediaTab(btn.dataset.mediaTab));
     });
   }
 
+  document.getElementById("mediaSidebarToggle")?.addEventListener("click", () => {
+    document.getElementById("mediaSidebar")?.classList.toggle("is-expanded");
+  });
+
   document.getElementById("articleReaderCloseBtn")?.addEventListener("click", closeArticleReader);
   document.getElementById("articleReaderDeleteBtn")?.addEventListener("click", deleteOpenArticle);
-  document.getElementById("articleReaderListenBtn")?.addEventListener("click", () => {
-    if (openArticleId) listenToArticle(openArticleId);
-  });
   document.getElementById("articleAddBtn")?.addEventListener("click", openArticleSaveDialog);
   document.getElementById("articleSyncBtn")?.addEventListener("click", () => syncSavedArticles("read"));
   document.getElementById("articleSyncSettingsBtn")?.addEventListener("click", () => openSyncSettingsDialog("read"));
-  document.getElementById("readPageListenBtn")?.addEventListener("click", () => {
-    switchListenTab(activeArticleTab === "books" ? "all" : activeArticleTab);
-    showListenApp();
+  document.getElementById("listenPlayPauseBtn")?.addEventListener("click", toggleListenPlayPause);
+  document.getElementById("listenStopBtn")?.addEventListener("click", stopListen);
+  document.getElementById("listenSpeedSelect")?.addEventListener("change", (e) => {
+    if (listenAudio) listenAudio.playbackRate = parseFloat(e.target.value);
   });
   document.getElementById("closeArticleSaveBtn")?.addEventListener("click", closeArticleSaveDialog);
   document.getElementById("cancelArticleSaveBtn")?.addEventListener("click", closeArticleSaveDialog);
@@ -25214,12 +26576,17 @@ function wireArticleReadTabs() {
   });
 }
 
-function switchArticleTab(tab) {
-  activeArticleTab = tab;
-  const sidebar = document.getElementById("articleReadSidebar");
+const MEDIA_SERVICE_TABS = ["books", "books-audible", "books-libby", "books-kindle", "podcasts"];
+
+function switchMediaTab(tab) {
+  activeMediaTab = tab;
+  if (window.innerWidth <= 680) {
+    document.getElementById("mediaSidebar")?.classList.remove("is-expanded");
+  }
+  const sidebar = document.getElementById("mediaSidebar");
   if (sidebar) {
-    sidebar.querySelectorAll("[data-article-tab]").forEach((btn) => {
-      const active = btn.dataset.articleTab === tab;
+    sidebar.querySelectorAll("[data-media-tab]").forEach((btn) => {
+      const active = btn.dataset.mediaTab === tab;
       btn.classList.toggle("is-active", active);
       btn.setAttribute("aria-selected", String(active));
     });
@@ -25229,50 +26596,2332 @@ function switchArticleTab(tab) {
   const readerPanel = document.getElementById("articleReaderPanel");
   const syncBtn = document.getElementById("articleSyncBtn");
   const syncSettingsBtn = document.getElementById("articleSyncSettingsBtn");
-  const isArticleTab = getReadPublications().some(p => p.key === tab);
+  const audiblePanel = document.getElementById("mediaAudiblePanel");
+  const libbyPanel = document.getElementById("mediaLibbyPanel");
+  const kindlePanel = document.getElementById("mediaKindlePanel");
+  const podcastsPanel = document.getElementById("mediaPodcastsPanel");
+
+  if (booksPanel) booksPanel.hidden = true;
+  if (listPanel) listPanel.hidden = true;
+  if (readerPanel) readerPanel.hidden = true;
+  if (audiblePanel) audiblePanel.hidden = true;
+  if (libbyPanel) libbyPanel.hidden = true;
+  if (kindlePanel) kindlePanel.hidden = true;
+  if (podcastsPanel) podcastsPanel.hidden = true;
+  if (syncBtn) syncBtn.hidden = true;
+  if (syncSettingsBtn) syncSettingsBtn.hidden = true;
+  openArticleId = null;
+
   if (tab === "books") {
     if (booksPanel) booksPanel.hidden = false;
-    if (listPanel) listPanel.hidden = true;
-    if (readerPanel) readerPanel.hidden = true;
-    if (syncBtn) syncBtn.hidden = true;
-    if (syncSettingsBtn) syncSettingsBtn.hidden = true;
     renderReadingPlanner();
+  } else if (tab === "books-audible") {
+    if (audiblePanel) { audiblePanel.hidden = false; renderReadingPlanner("audiobook"); }
+  } else if (tab === "books-libby") {
+    if (libbyPanel) { libbyPanel.hidden = false; renderReadingPlanner("libby"); }
+  } else if (tab === "books-kindle") {
+    if (kindlePanel) { kindlePanel.hidden = false; renderReadingPlanner("ebook"); }
+  } else if (tab === "podcasts") {
+    if (podcastsPanel) podcastsPanel.hidden = false;
+    initPodcastPanel();
   } else {
-    if (booksPanel) booksPanel.hidden = true;
+    const isArticleTab = getReadPublications().some(p => p.key === tab);
     if (listPanel) listPanel.hidden = false;
-    if (readerPanel) readerPanel.hidden = true;
     if (syncBtn) syncBtn.hidden = !isArticleTab || !hasSyncCookies();
     if (syncSettingsBtn) syncSettingsBtn.hidden = !isArticleTab;
-    openArticleId = null;
     renderArticleList("articleList", tab);
   }
+}
+
+function renderMediaPubTabs() {
+  const container = document.getElementById("mediaPubTabs");
+  if (!container) return;
+  const pubs = getReadPublications();
+  container.innerHTML = allPubTabEntries()
+    .map(p => {
+      const pubInfo = pubs.find(pub => pub.key === p.key);
+      const logoUrl = pubInfo?.domain ? publicationLogoUrl(pubInfo.domain) : null;
+      return pubTabButton(p.key, p.label, activeMediaTab, "media-tab", logoUrl);
+    }).join("");
+  container.querySelectorAll("[data-media-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => switchMediaTab(btn.dataset.mediaTab));
+  });
+}
+
+// ─── Podcasts ─────────────────────────────────────────────────────────────────
+
+let activePodcastShowId = null;
+let activePodcastTab = "playlist";
+let activePodcastSavedCategory = "all";
+let podcastSavedCatInputActive = false;
+let podcastTabInputActive = false;
+let recentEpisodesWindow = "week";
+let openPodcastEpisodeId = null;
+let podcastPanelWired = false;
+let podcastAudio = null;
+let podcastSaveTimer = null;
+
+function initPodcastPanel() {
+  wirePodcastPanel();
+  renderPodcastPlaylistBar();
+  renderPodcastQueueEpisodes();
+}
+
+function wirePodcastPanel() {
+  if (podcastPanelWired) return;
+  podcastPanelWired = true;
+  document.getElementById("closePodcastAddBtn")?.addEventListener("click", closePodcastAddDialog);
+  document.getElementById("cancelPodcastAddBtn")?.addEventListener("click", closePodcastAddDialog);
+  document.getElementById("confirmPodcastAddBtn")?.addEventListener("click", confirmAddPodcast);
+  document.getElementById("podcastFeedUrlInput")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") confirmAddPodcast();
+  });
+  document.getElementById("podcastModeToggleBtn")?.addEventListener("click", togglePodcastAddMode);
+  const searchInput = document.getElementById("podcastSearchInput");
+  searchInput?.addEventListener("input", () => debouncePodcastSearch(searchInput.value.trim()));
+  searchInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { closePodcastAddDialog(); }
+  });
+  document.getElementById("podcastPlayerCloseBtn")?.addEventListener("click", closePodcastPlayer);
+  document.getElementById("podcastPlayPauseBtn")?.addEventListener("click", togglePodcastPlayPause);
+  document.getElementById("podcastSkipBackBtn")?.addEventListener("click", () => skipPodcast(-15));
+  document.getElementById("podcastSkipFwdBtn")?.addEventListener("click", () => skipPodcast(30));
+  document.getElementById("podcastMarkPlayedBtn")?.addEventListener("click", toggleOpenEpisodePlayed);
+  document.getElementById("podcastSpeedSelect")?.addEventListener("change", (e) => {
+    if (podcastAudio) podcastAudio.playbackRate = parseFloat(e.target.value);
+  });
+  const skipAdsToggle = document.getElementById("podcastSkipAdsToggle");
+  if (skipAdsToggle) {
+    skipAdsToggle.checked = !!state.podcastSkipAds;
+    skipAdsToggle.addEventListener("change", (e) => {
+      state.podcastSkipAds = e.target.checked;
+      persist();
+      if (e.target.checked) scheduleAdSkips(podcastCurrentChapters, podcastAudio);
+      else clearAdSkipTimers();
+    });
+  }
+  document.getElementById("podcastSeekBar")?.addEventListener("input", (e) => {
+    if (podcastAudio && podcastAudio.duration) {
+      podcastAudio.currentTime = (parseFloat(e.target.value) / 100) * podcastAudio.duration;
+    }
+  });
+}
+
+// ── Playlist tabs ─────────────────────────────────────────────────────────────
+
+function renderPodcastPlaylistBar() {
+  const bar = document.getElementById("podcastPlaylistBar");
+  if (!bar) return;
+  const playlists = state.podcastPlaylists || [];
+  bar.innerHTML = `
+    <div class="watch-category-tabs" role="tablist" aria-label="Podcast tabs">
+      <button class="watch-category-tab${activePodcastTab === "playlist" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="playlist">Playlist</button>
+      <button class="watch-category-tab${activePodcastTab === "recent" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="recent">Recent</button>
+      <button class="watch-category-tab${activePodcastTab === "shows" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="shows">Shows</button>
+      <button class="watch-category-tab${activePodcastTab === "saved" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="saved">Saved</button>
+      <button class="watch-category-tab${activePodcastTab === "search" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="search">Search</button>
+      <button class="watch-category-tab${activePodcastTab === "history" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="history">History</button>
+      ${playlists.map(pl => `
+        <button class="watch-category-tab${activePodcastTab === pl.id ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="${escapeHtml(pl.id)}">${escapeHtml(pl.name)}</button>
+      `).join("")}
+      ${podcastTabInputActive
+        ? `<form class="watch-category-new-form" id="podcastPlaylistInlineForm">
+             <input class="watch-category-new-input" id="podcastPlaylistInlineInput" type="text" placeholder="Playlist name" autocomplete="off" maxlength="32" />
+           </form>`
+        : `<button class="watch-category-tab watch-category-add-tab" type="button" id="podcastPlaylistAddBtn" title="Add playlist">+</button>`
+      }
+    </div>`;
+
+  bar.querySelectorAll("[data-podcast-tab]").forEach(btn => {
+    btn.addEventListener("click", () => switchPodcastTab(btn.dataset.podcastTab));
+    btn.addEventListener("contextmenu", (e) => {
+      if (["playlist","recent","shows","saved","search","history"].includes(btn.dataset.podcastTab)) return;
+      e.preventDefault();
+      showPodcastPlaylistTabMenu(btn.dataset.podcastTab, btn);
+    });
+  });
+
+  const addBtn = bar.querySelector("#podcastPlaylistAddBtn");
+  if (addBtn) {
+    addBtn.addEventListener("click", () => {
+      podcastTabInputActive = true;
+      renderPodcastPlaylistBar();
+      bar.querySelector("#podcastPlaylistInlineInput")?.focus();
+    });
+  }
+
+  const inlineForm = bar.querySelector("#podcastPlaylistInlineForm");
+  const inlineInput = bar.querySelector("#podcastPlaylistInlineInput");
+  if (inlineForm && inlineInput) {
+    inlineInput.focus();
+    inlineForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const name = inlineInput.value.trim();
+      if (name) {
+        if (!Array.isArray(state.podcastPlaylists)) state.podcastPlaylists = [];
+        const newPl = { id: createId("ppl"), name };
+        state.podcastPlaylists.push(newPl);
+        activePodcastTab = newPl.id;
+        persist();
+      }
+      podcastTabInputActive = false;
+      renderPodcastPlaylistBar();
+      renderPodcastPlaylistEpisodes(activePodcastTab);
+    });
+    inlineInput.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { podcastTabInputActive = false; renderPodcastPlaylistBar(); }
+    });
+    inlineInput.addEventListener("blur", () => {
+      setTimeout(() => { if (podcastTabInputActive) { podcastTabInputActive = false; renderPodcastPlaylistBar(); } }, 120);
+    });
+  }
+
+}
+
+function switchPodcastTab(tabId) {
+  activePodcastTab = tabId;
+  podcastTabInputActive = false;
+  renderPodcastPlaylistBar();
+  if (tabId === "playlist") {
+    renderPodcastQueueEpisodes();
+  } else if (tabId === "recent") {
+    renderRecentEpisodes();
+  } else if (tabId === "shows") {
+    activePodcastShowId = null;
+    renderPodcastShowsGrid();
+  } else if (tabId === "saved") {
+    renderPodcastSavedEpisodes();
+  } else if (tabId === "search") {
+    renderPodcastSearchTab();
+  } else if (tabId === "history") {
+    renderPodcastHistoryTab();
+  } else {
+    renderPodcastPlaylistEpisodes(tabId);
+  }
+}
+
+function showPodcastPlaylistTabMenu(playlistId, anchorBtn) {
+  document.getElementById("podcastPlaylistTabMenu")?.remove();
+  const menu = document.createElement("div");
+  menu.id = "podcastPlaylistTabMenu";
+  menu.className = "podcast-playlist-tab-menu";
+  menu.innerHTML = `<button class="podcast-playlist-tab-menu-item" type="button" data-action="delete">Delete playlist</button>`;
+  menu.querySelector("[data-action='delete']").addEventListener("click", () => {
+    menu.remove();
+    deletePodcastPlaylist(playlistId);
+  });
+  anchorBtn.parentElement.appendChild(menu);
+  const rect = anchorBtn.getBoundingClientRect();
+  menu.style.top = (rect.bottom + 4) + "px";
+  menu.style.left = rect.left + "px";
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener("click", () => menu.remove(), { once: true }), 0);
+}
+
+function deletePodcastPlaylist(playlistId) {
+  state.podcastPlaylists = (state.podcastPlaylists || []).filter(pl => pl.id !== playlistId);
+  if (state.podcastPlaylistItems) delete state.podcastPlaylistItems[playlistId];
+  if (activePodcastTab === playlistId) activePodcastTab = "playlist";
+  persist();
+  renderPodcastPlaylistBar();
+  if (activePodcastTab === "playlist") renderPodcastQueueEpisodes();
+}
+
+function renderPodcastPlaylistEpisodes(playlistId) {
+  const listEl = document.getElementById("podcastEpisodeList");
+  if (!listEl) return;
+  const items = (state.podcastPlaylistItems || {})[playlistId] || [];
+
+  if (!items.length) {
+    listEl.innerHTML = `<div class="article-empty"><p>This playlist is empty.</p><p>Switch to <strong>Shows</strong> and use the playlist button on any episode to add it here.</p></div>`;
+    return;
+  }
+
+  const episodes = [];
+  for (const episodeId of items) {
+    const { episode, show } = findPodcastEpisode(episodeId);
+    if (episode && show) episodes.push({ ...episode, showId: show.id, showTitle: show.title, showArt: show.art });
+  }
+
+  const progress = state.podcastProgress || {};
+  listEl.innerHTML = episodes.map(e => {
+    const ep = progress[e.id] || {};
+    const played = !!ep.played;
+    const pos = ep.position || 0;
+    const dur = e.duration || ep.duration || 0;
+    const pct = (dur && pos && !played) ? Math.min(100, Math.round((pos / dur) * 100)) : 0;
+    const isOpen = e.id === openPodcastEpisodeId;
+    return `
+    <div class="article-row podcast-episode-row${played ? " article-row--read" : ""}${isOpen ? " article-row--active" : ""}" data-episode-id="${escapeHtml(e.id)}" role="button" tabindex="0">
+      <div class="article-row-main">
+        <div class="article-row-title">${escapeHtml(e.title)}</div>
+        <div class="article-row-meta">
+          <span class="article-row-pub">${escapeHtml(e.showTitle)}</span>
+          <span class="article-row-date">${escapeHtml(formatArticleDate(e.pubDate))}</span>
+          ${dur ? `<span class="article-row-date">${formatPodcastDuration(dur)}</span>` : ""}
+        </div>
+        ${pct > 0 ? `<div class="podcast-progress-bar"><div class="podcast-progress-fill" style="width:${pct}%"></div></div>` : ""}
+      </div>
+      ${played ? `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Played"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
+      <div class="article-row-actions">
+        <button class="article-row-action-btn" type="button" title="Remove from playlist" aria-label="Remove from playlist" data-episode-remove="${escapeHtml(e.id)}">
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+    </div>`;
+  }).join("");
+
+  listEl.querySelectorAll(".podcast-episode-row").forEach(row => {
+    const id = row.dataset.episodeId;
+    row.addEventListener("click", (ev) => { if (ev.target.closest(".article-row-actions")) return; openPodcastEpisode(id); });
+    row.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openPodcastEpisode(id); } });
+    row.querySelector("[data-episode-remove]")?.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      removeEpisodeFromPlaylist(id, playlistId);
+    });
+  });
+}
+
+function toggleEpisodeInPlaylist(episodeId, playlistId) {
+  if (!state.podcastPlaylistItems) state.podcastPlaylistItems = {};
+  const list = state.podcastPlaylistItems[playlistId] || [];
+  const idx = list.indexOf(episodeId);
+  if (idx >= 0) list.splice(idx, 1); else list.push(episodeId);
+  state.podcastPlaylistItems[playlistId] = list;
+  persist();
+}
+
+function removeEpisodeFromPlaylist(episodeId, playlistId) {
+  if (!state.podcastPlaylistItems) state.podcastPlaylistItems = {};
+  const list = state.podcastPlaylistItems[playlistId] || [];
+  state.podcastPlaylistItems[playlistId] = list.filter(id => id !== episodeId);
+  persist();
+  renderPodcastPlaylistEpisodes(playlistId);
+}
+
+function showEpisodePlaylistMenu(episodeId, btn) {
+  document.getElementById("episodePlaylistMenu")?.remove();
+  const playlists = state.podcastPlaylists || [];
+  if (!playlists.length) return;
+  const items = state.podcastPlaylistItems || {};
+  const menu = document.createElement("div");
+  menu.id = "episodePlaylistMenu";
+  menu.className = "podcast-playlist-menu";
+  menu.innerHTML = playlists.map(pl => {
+    const inPl = (items[pl.id] || []).includes(episodeId);
+    return `<button class="podcast-playlist-option${inPl ? " is-checked" : ""}" type="button" data-playlist-id="${escapeHtml(pl.id)}">
+      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">${inPl ? `<polyline points="20 6 9 17 4 12"/>` : ""}</svg>
+      ${escapeHtml(pl.name)}
+    </button>`;
+  }).join("");
+  menu.addEventListener("click", (e) => {
+    const opt = e.target.closest("[data-playlist-id]");
+    if (!opt) return;
+    toggleEpisodeInPlaylist(episodeId, opt.dataset.playlistId);
+    menu.remove();
+  });
+  document.body.appendChild(menu);
+  const rect = btn.getBoundingClientRect();
+  menu.style.top = (rect.bottom + 4) + "px";
+  menu.style.right = (window.innerWidth - rect.right) + "px";
+  setTimeout(() => document.addEventListener("click", () => menu.remove(), { once: true }), 0);
+}
+
+// ── Shows grid ───────────────────────────────────────────────────────────────
+
+function renderPodcastShowsGrid() {
+  const listEl = document.getElementById("podcastEpisodeList");
+  if (!listEl) return;
+  const podcasts = state.podcasts || [];
+  const addCard = `
+    <button class="podcast-show-card podcast-show-card-add" type="button" id="podcastShowAddCard">
+      <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      <span>Add show</span>
+    </button>`;
+
+  if (!podcasts.length) {
+    listEl.innerHTML = `<div class="podcast-shows-grid">${addCard}</div>`;
+    listEl.querySelector("#podcastShowAddCard")?.addEventListener("click", openPodcastAddDialog);
+    return;
+  }
+
+  listEl.innerHTML = `<div class="podcast-shows-grid">
+    ${podcasts.map(p => `
+      <button class="podcast-show-card" type="button" data-show-id="${escapeHtml(p.id)}">
+        ${p.art
+          ? `<img class="podcast-show-card-art" src="${escapeHtml(p.art)}" alt="${escapeHtml(p.title)}" loading="lazy">`
+          : `<div class="podcast-show-card-art podcast-show-card-art--placeholder"><svg viewBox="0 0 24 24" aria-hidden="true" width="32" height="32"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div>`}
+        <div class="podcast-show-card-title">${escapeHtml(p.title)}</div>
+        <div class="podcast-show-card-meta">${p.episodes?.length || 0} episode${p.episodes?.length === 1 ? "" : "s"}</div>
+      </button>
+    `).join("")}
+    ${addCard}
+  </div>`;
+
+  listEl.querySelectorAll("[data-show-id]").forEach(btn => {
+    btn.addEventListener("click", () => openPodcastShow(btn.dataset.showId));
+  });
+  listEl.querySelector("#podcastShowAddCard")?.addEventListener("click", openPodcastAddDialog);
+}
+
+function openPodcastShow(showId) {
+  activePodcastShowId = showId;
+  renderPodcastShowEpisodes(showId);
+}
+
+// ── Episodes ─────────────────────────────────────────────────────────────────
+
+function podcastEpisodeRowHtml(e, { showShowTitle = false, hasPlaylists = false } = {}) {
+  const ep = (state.podcastProgress || {})[e.id] || {};
+  const played = !!ep.played;
+  const pos = ep.position || 0;
+  const dur = e.duration || ep.duration || 0;
+  const pct = (dur && pos && !played) ? Math.min(100, Math.round((pos / dur) * 100)) : 0;
+  const isOpen = e.id === openPodcastEpisodeId;
+  const isSaved = (state.podcastSaved || []).includes(e.id);
+  const isQueued = (state.podcastQueue || []).includes(e.id);
+  const plIcon = `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`;
+  return `
+  <div class="article-row podcast-episode-row${played ? " article-row--read" : ""}${isOpen ? " article-row--active" : ""}" data-episode-id="${escapeHtml(e.id)}" role="button" tabindex="0">
+    <div class="article-row-main">
+      <div class="article-row-title">${escapeHtml(e.title)}</div>
+      <div class="article-row-meta">
+        ${showShowTitle ? `<span class="article-row-pub">${escapeHtml(e.showTitle)}</span>` : ""}
+        <span class="article-row-date">${escapeHtml(formatArticleDate(e.pubDate))}</span>
+        ${dur ? `<span class="article-row-date">${formatPodcastDuration(dur)}</span>` : ""}
+      </div>
+      ${pct > 0 ? `<div class="podcast-progress-bar"><div class="podcast-progress-fill" style="width:${pct}%"></div></div>` : ""}
+    </div>
+    ${played ? `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Played"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
+    <div class="article-row-actions">
+      <button class="article-row-action-btn${isSaved ? " is-active" : ""}" type="button" title="${isSaved ? "Unsave" : "Save episode"}" aria-label="${isSaved ? "Unsave" : "Save episode"}" data-episode-save="${escapeHtml(e.id)}">
+        <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" fill="${isSaved ? "currentColor" : "none"}"/></svg>
+      </button>
+      <button class="article-row-action-btn${isQueued ? " is-active" : ""}" type="button" title="${isQueued ? "Remove from playlist" : "Add to playlist"}" aria-label="${isQueued ? "Remove from playlist" : "Add to playlist"}" data-episode-queue="${escapeHtml(e.id)}">
+        <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><circle cx="12" cy="12" r="10" fill="${isQueued ? "currentColor" : "none"}"/><polyline points="12 6 12 12 16 14" stroke="${isQueued ? "var(--surface, #fff)" : "currentColor"}" stroke-width="2" fill="none"/></svg>
+      </button>
+      ${hasPlaylists ? `<button class="article-row-action-btn" type="button" title="Add to custom playlist" aria-label="Add to custom playlist" data-episode-playlist="${escapeHtml(e.id)}">${plIcon}</button>` : ""}
+      <button class="article-row-action-btn" type="button" title="${played ? "Mark as unplayed" : "Mark as played"}" aria-label="${played ? "Mark as unplayed" : "Mark as played"}" data-episode-mark="${played ? "unmark" : "mark"}">
+        ${played
+          ? `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/><line x1="3" y1="3" x2="21" y2="21" stroke-width="2"/></svg>`
+          : `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/></svg>`}
+      </button>
+    </div>
+  </div>`;
+}
+
+function wirePodcastEpisodeRows(listEl) {
+  listEl.querySelectorAll(".podcast-episode-row").forEach(row => {
+    const id = row.dataset.episodeId;
+    row.addEventListener("click", (ev) => { if (ev.target.closest(".article-row-actions")) return; openPodcastEpisode(id); });
+    row.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openPodcastEpisode(id); } });
+    row.querySelector("[data-episode-save]")?.addEventListener("click", (ev) => { ev.stopPropagation(); toggleEpisodeSaved(id); });
+    row.querySelector("[data-episode-queue]")?.addEventListener("click", (ev) => { ev.stopPropagation(); toggleEpisodeInQueue(id); });
+    row.querySelector("[data-episode-playlist]")?.addEventListener("click", (ev) => { ev.stopPropagation(); showEpisodePlaylistMenu(id, ev.currentTarget); });
+    row.querySelector("[data-episode-mark]")?.addEventListener("click", (ev) => { ev.stopPropagation(); setPodcastEpisodePlayed(id, ev.currentTarget.dataset.episodeMark === "mark"); });
+  });
+}
+
+function toggleEpisodeSaved(episodeId) {
+  if (!Array.isArray(state.podcastSaved)) state.podcastSaved = [];
+  const idx = state.podcastSaved.indexOf(episodeId);
+  if (idx >= 0) {
+    state.podcastSaved.splice(idx, 1);
+    if (state.podcastSavedEpisodeCategories) delete state.podcastSavedEpisodeCategories[episodeId];
+  } else {
+    state.podcastSaved.push(episodeId);
+  }
+  persist();
+  if (activePodcastTab === "saved") renderPodcastSavedEpisodes();
+  else {
+    const btn = document.querySelector(`[data-episode-save="${CSS.escape(episodeId)}"]`);
+    if (btn) {
+      const isSaved = state.podcastSaved.includes(episodeId);
+      btn.title = isSaved ? "Unsave" : "Save episode";
+      btn.classList.toggle("is-active", isSaved);
+      btn.querySelector("path")?.setAttribute("fill", isSaved ? "currentColor" : "none");
+    }
+  }
+}
+
+function toggleEpisodeInQueue(episodeId) {
+  if (!Array.isArray(state.podcastQueue)) state.podcastQueue = [];
+  const idx = state.podcastQueue.indexOf(episodeId);
+  if (idx >= 0) state.podcastQueue.splice(idx, 1); else state.podcastQueue.push(episodeId);
+  persist();
+  if (activePodcastTab === "playlist") renderPodcastQueueEpisodes();
+  else {
+    const btn = document.querySelector(`[data-episode-queue="${CSS.escape(episodeId)}"]`);
+    if (btn) {
+      const isQueued = state.podcastQueue.includes(episodeId);
+      btn.title = isQueued ? "Remove from playlist" : "Add to playlist";
+      btn.classList.toggle("is-active", isQueued);
+      const circle = btn.querySelector("circle");
+      const poly = btn.querySelector("polyline");
+      if (circle) circle.setAttribute("fill", isQueued ? "currentColor" : "none");
+      if (poly) poly.setAttribute("stroke", isQueued ? "var(--surface, #fff)" : "currentColor");
+    }
+  }
+}
+
+// ── Prioritization Hierarchy ──────────────────────────────────────────────────
+
+function showPodcastPriorityModal() {
+  document.getElementById("podcastPriorityOverlay")?.remove();
+
+  // Local modal state — changes here don't touch app state until Save
+  const ms = {
+    tierCount: state.podcastTierCount ?? 3,
+    sortOrder: state.podcastPrioritySort ?? "oldest",
+    playlistWindow: state.podcastPlaylistWindow ?? "month",
+    showTiers: { ...(state.podcastShowTiers || {}) },
+    publicationTiers: { ...(state.publicationTiers || {}) },
+  };
+
+  const overlay = document.createElement("div");
+  overlay.id = "podcastPriorityOverlay";
+  overlay.className = "priority-overlay";
+  overlay.innerHTML = `
+    <div class="priority-modal" role="dialog" aria-modal="true" aria-label="Prioritization Hierarchy">
+      <div class="priority-modal-header">
+        <h2 class="priority-modal-title">Prioritization Hierarchy</h2>
+        <button class="icon-btn" type="button" id="closePodcastPriorityBtn" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="priority-sort-row">
+        <span class="priority-sort-label">Episode order within each tier</span>
+        <div class="priority-sort-toggle" id="prioritySortToggle">
+          <button class="priority-sort-btn${ms.sortOrder === "oldest" ? " is-active" : ""}" type="button" data-sort="oldest">Oldest first</button>
+          <button class="priority-sort-btn${ms.sortOrder === "newest" ? " is-active" : ""}" type="button" data-sort="newest">Newest first</button>
+        </div>
+      </div>
+      <div class="priority-sort-row">
+        <span class="priority-sort-label">Pull episodes from</span>
+        <select class="recent-window-select" id="priorityWindowSelect">
+          ${RECENT_WINDOW_OPTIONS.map(o => `<option value="${o.value}"${o.value === ms.playlistWindow ? " selected" : ""}>${o.label}</option>`).join("")}
+        </select>
+      </div>
+      <div class="priority-tiers-body" id="priorityTiersBody"></div>
+      <div class="priority-modal-footer">
+        <button class="secondary-btn" type="button" id="cancelPodcastPriorityBtn">Cancel</button>
+        <button class="primary-btn" type="button" id="savePodcastPriorityBtn">Save</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  let dragItemId = null;
+  let dragItemKind = null; // "show" | "pub"
+
+  function readCurrentAssignments() {
+    overlay.querySelectorAll(".priority-drop-zone[data-tier]").forEach(zone => {
+      const tier = parseInt(zone.dataset.tier, 10);
+      zone.querySelectorAll(".priority-show-card[data-show-id]").forEach(card => {
+        if (tier === 0) delete ms.showTiers[card.dataset.showId];
+        else ms.showTiers[card.dataset.showId] = tier;
+      });
+      zone.querySelectorAll(".priority-show-card[data-pub-key]").forEach(card => {
+        if (tier === 0) delete ms.publicationTiers[card.dataset.pubKey];
+        else ms.publicationTiers[card.dataset.pubKey] = tier;
+      });
+    });
+  }
+
+  function showCard(show) {
+    const d = document.createElement("div");
+    d.className = "priority-show-card";
+    d.draggable = true;
+    d.dataset.showId = show.id;
+    d.innerHTML = show.art
+      ? `<img class="priority-show-art" src="${escapeHtml(show.art)}" alt="" loading="lazy"><span class="priority-show-name">${escapeHtml(show.title)}</span>`
+      : `<div class="priority-show-art priority-show-art--placeholder"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div><span class="priority-show-name">${escapeHtml(show.title)}</span>`;
+    d.addEventListener("dragstart", (e) => { dragItemId = show.id; dragItemKind = "show"; d.classList.add("is-dragging"); e.dataTransfer.effectAllowed = "move"; });
+    d.addEventListener("dragend", () => { dragItemId = null; dragItemKind = null; d.classList.remove("is-dragging"); overlay.querySelectorAll(".priority-drop-zone").forEach(z => z.classList.remove("drag-over")); });
+    return d;
+  }
+
+  function pubCard(pub) {
+    const d = document.createElement("div");
+    d.className = "priority-show-card";
+    d.draggable = true;
+    d.dataset.pubKey = pub.key;
+    const logoUrl = pub.domain ? publicationLogoUrl(pub.domain) : null;
+    d.innerHTML = logoUrl
+      ? `<img class="priority-show-art" src="${escapeHtml(logoUrl)}" alt="" loading="lazy" onerror="this.style.display='none'"><span class="priority-show-name">${escapeHtml(pub.label)}</span><span class="priority-show-badge">Article</span>`
+      : `<div class="priority-show-art priority-show-art--placeholder"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></div><span class="priority-show-name">${escapeHtml(pub.label)}</span><span class="priority-show-badge">Article</span>`;
+    d.addEventListener("dragstart", (e) => { dragItemId = pub.key; dragItemKind = "pub"; d.classList.add("is-dragging"); e.dataTransfer.effectAllowed = "move"; });
+    d.addEventListener("dragend", () => { dragItemId = null; dragItemKind = null; d.classList.remove("is-dragging"); overlay.querySelectorAll(".priority-drop-zone").forEach(z => z.classList.remove("drag-over")); });
+    return d;
+  }
+
+  function wireZone(zone) {
+    zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("drag-over"); });
+    zone.addEventListener("dragleave", () => zone.classList.remove("drag-over"));
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      zone.classList.remove("drag-over");
+      if (!dragItemId) return;
+      const selector = dragItemKind === "pub"
+        ? `.priority-show-card[data-pub-key="${CSS.escape(dragItemId)}"]`
+        : `.priority-show-card[data-show-id="${CSS.escape(dragItemId)}"]`;
+      const card = overlay.querySelector(selector);
+      if (!card) return;
+      zone.querySelector(".priority-drop-hint")?.remove();
+      zone.appendChild(card);
+      overlay.querySelectorAll(".priority-drop-zone").forEach(z => {
+        if (!z.querySelector(".priority-show-card") && !z.querySelector(".priority-drop-hint")) {
+          z.insertAdjacentHTML("beforeend", `<div class="priority-drop-hint">${z.dataset.tier === "0" ? "All items assigned to tiers" : "Drop shows or publications here"}</div>`);
+        }
+      });
+    });
+  }
+
+  function renderTiers() {
+    const body = overlay.querySelector("#priorityTiersBody");
+    readCurrentAssignments();
+
+    const shows = state.podcasts || [];
+    const showsByTier = {};
+    for (let t = 0; t <= ms.tierCount; t++) showsByTier[t] = [];
+    for (const show of shows) {
+      const t = ms.showTiers[show.id] ?? 0;
+      showsByTier[(t > 0 && t <= ms.tierCount) ? t : 0].push(show);
+    }
+
+    const publications = getReadPublications();
+    const pubsByTier = {};
+    for (let t = 0; t <= ms.tierCount; t++) pubsByTier[t] = [];
+    for (const pub of publications) {
+      const t = ms.publicationTiers[pub.key] ?? 0;
+      pubsByTier[(t > 0 && t <= ms.tierCount) ? t : 0].push(pub);
+    }
+
+    const zoneIsEmpty = (n) => !showsByTier[n].length && !pubsByTier[n].length;
+
+    const tiersRow = document.createElement("div");
+    tiersRow.className = "priority-tiers-row";
+    for (let n = 1; n <= ms.tierCount; n++) {
+      const col = document.createElement("div");
+      col.className = "priority-tier-col";
+      col.innerHTML = `
+        <div class="priority-tier-heading">
+          <span class="priority-tier-badge tier-n" style="background:hsl(${(n-1)*60},60%,88%);color:hsl(${(n-1)*60},50%,30%)">${n}</span>
+          <span class="priority-tier-label-text">Tier ${n}</span>
+          ${n === 1 ? `<span class="priority-tier-sub">Plays first</span>` : ""}
+          ${n === ms.tierCount && ms.tierCount > 1 ? `<span class="priority-tier-sub">Plays last</span>` : ""}
+          <button class="priority-tier-remove-btn" type="button" data-remove-tier="${n}" title="Remove tier" aria-label="Remove tier ${n}">×</button>
+        </div>
+        <div class="priority-drop-zone" data-tier="${n}"></div>`;
+      const zone = col.querySelector(".priority-drop-zone");
+      for (const show of showsByTier[n]) zone.appendChild(showCard(show));
+      for (const pub of pubsByTier[n]) zone.appendChild(pubCard(pub));
+      if (zoneIsEmpty(n)) zone.innerHTML = `<div class="priority-drop-hint">Drop shows or publications here</div>`;
+      wireZone(zone);
+      col.querySelector("[data-remove-tier]").addEventListener("click", () => {
+        readCurrentAssignments();
+        const removeNum = parseInt(col.querySelector("[data-remove-tier]").dataset.removeTier, 10);
+        for (const [showId, t] of Object.entries(ms.showTiers)) {
+          if (t === removeNum) delete ms.showTiers[showId];
+          else if (t > removeNum) ms.showTiers[showId] = t - 1;
+        }
+        for (const [pubKey, t] of Object.entries(ms.publicationTiers)) {
+          if (t === removeNum) delete ms.publicationTiers[pubKey];
+          else if (t > removeNum) ms.publicationTiers[pubKey] = t - 1;
+        }
+        ms.tierCount = Math.max(1, ms.tierCount - 1);
+        renderTiers();
+      });
+      tiersRow.appendChild(col);
+    }
+
+    const addBtn = document.createElement("button");
+    addBtn.className = "priority-add-tier-btn";
+    addBtn.type = "button";
+    addBtn.textContent = "+ Add tier";
+    addBtn.addEventListener("click", () => { readCurrentAssignments(); ms.tierCount++; renderTiers(); });
+    tiersRow.appendChild(addBtn);
+
+    const untieredSection = document.createElement("div");
+    untieredSection.className = "priority-untiered-section";
+    untieredSection.innerHTML = `
+      <div class="priority-tier-heading">
+        <span class="priority-tier-label-text">Untiered</span>
+        <span class="priority-tier-sub">After all tiers</span>
+      </div>
+      <div class="priority-drop-zone priority-untiered-drop" data-tier="0"></div>`;
+    const untieredZone = untieredSection.querySelector(".priority-drop-zone");
+    for (const show of showsByTier[0]) untieredZone.appendChild(showCard(show));
+    for (const pub of pubsByTier[0]) untieredZone.appendChild(pubCard(pub));
+    if (zoneIsEmpty(0)) untieredZone.innerHTML = `<div class="priority-drop-hint">All items assigned to tiers</div>`;
+    wireZone(untieredZone);
+
+    body.innerHTML = "";
+    body.appendChild(tiersRow);
+    body.appendChild(untieredSection);
+  }
+
+  renderTiers();
+
+  // Sort toggle
+  overlay.querySelector("#prioritySortToggle").addEventListener("click", (e) => {
+    const btn = e.target.closest(".priority-sort-btn");
+    if (!btn) return;
+    ms.sortOrder = btn.dataset.sort;
+    overlay.querySelectorAll(".priority-sort-btn").forEach(b => b.classList.toggle("is-active", b.dataset.sort === ms.sortOrder));
+  });
+
+  // Window dropdown
+  overlay.querySelector("#priorityWindowSelect").addEventListener("change", (e) => {
+    ms.playlistWindow = e.target.value;
+  });
+
+  overlay.querySelector("#closePodcastPriorityBtn").addEventListener("click", () => overlay.remove());
+  overlay.querySelector("#cancelPodcastPriorityBtn").addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+
+  overlay.querySelector("#savePodcastPriorityBtn").addEventListener("click", () => {
+    readCurrentAssignments();
+    state.podcastShowTiers = { ...ms.showTiers };
+    state.podcastTierCount = ms.tierCount;
+    state.podcastPrioritySort = ms.sortOrder;
+    state.podcastPlaylistWindow = ms.playlistWindow;
+    state.publicationTiers = { ...ms.publicationTiers };
+    persist();
+    overlay.remove();
+    if (activePodcastTab === "playlist") renderPodcastQueueEpisodes();
+  });
+}
+
+function showPublicationsModal() {
+  document.getElementById("publicationsOverlay")?.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "publicationsOverlay";
+  overlay.className = "priority-overlay";
+
+  function buildHtml() {
+    const pubs = getReadPublications();
+    const rows = pubs.map(p => `
+      <div class="pub-mgr-row" data-pub-key="${escapeHtml(p.key)}">
+        <div class="pub-mgr-info">
+          <span class="pub-mgr-name">${escapeHtml(p.label)}</span>
+          <span class="pub-mgr-domain">${escapeHtml(p.domain)}</span>
+        </div>
+        <button class="icon-btn pub-mgr-remove" type="button" data-remove-pub="${escapeHtml(p.key)}" aria-label="Remove ${escapeHtml(p.label)}">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>`).join("");
+
+    return `
+      <div class="priority-modal" role="dialog" aria-modal="true" aria-label="Publications">
+        <div class="priority-modal-header">
+          <h2 class="priority-modal-title">Publications</h2>
+          <button class="icon-btn" type="button" id="closePublicationsBtn" aria-label="Close">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <p class="pub-mgr-hint">Articles saved from a publication's domain are automatically routed to its tab in the sidebar.</p>
+        <div class="pub-mgr-list">${rows || '<p class="pub-mgr-empty">No publications added yet.</p>'}</div>
+        <form class="pub-mgr-add-form" id="pubMgrAddForm" autocomplete="off">
+          <div class="pub-mgr-add-row">
+            <input class="pub-mgr-input" type="text" id="pubMgrNameInput" placeholder="Name (e.g. The Atlantic)" required>
+            <input class="pub-mgr-input" type="text" id="pubMgrDomainInput" placeholder="Domain (e.g. theatlantic.com)" required>
+            <button class="primary-btn" type="submit">Add</button>
+          </div>
+        </form>
+        <div class="pub-mgr-section-label">Library</div>
+        <p class="pub-mgr-hint" style="margin-top:0">Used for "Find at library" and "Borrow in Libby" links on book cards. Enter your library's short key — for Hennepin County it's <strong>hclib</strong>. Find yours as the subdomain of your library's catalog (e.g. <em>hclib</em>.bibliocommons.com).</p>
+        <div class="pub-mgr-library-row">
+          <input class="pub-mgr-input" type="text" id="pubMgrLibraryKeyInput" placeholder="e.g. hclib" value="${escapeHtml(getLibraryKey())}">
+          <button class="primary-btn" type="button" id="pubMgrLibraryKeySave">Save</button>
+        </div>
+        <div class="priority-modal-footer">
+          <button class="primary-btn" type="button" id="donePublicationsBtn">Done</button>
+        </div>
+      </div>`;
+  }
+
+  function render() {
+    overlay.innerHTML = buildHtml();
+
+    overlay.querySelector("#closePublicationsBtn").addEventListener("click", () => overlay.remove());
+    overlay.querySelector("#donePublicationsBtn").addEventListener("click", () => overlay.remove());
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+
+    overlay.querySelectorAll("[data-remove-pub]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        removePublication(btn.dataset.removePub);
+        render();
+      });
+    });
+
+    overlay.querySelector("#pubMgrAddForm").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const nameInput = overlay.querySelector("#pubMgrNameInput");
+      const domainInput = overlay.querySelector("#pubMgrDomainInput");
+      const name = nameInput.value.trim();
+      const rawDomain = domainInput.value.trim();
+      const domain = rawDomain.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase();
+      if (!name || !domain) return;
+      const key = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+      if (!key) return;
+      const existing = getReadPublications();
+      if (!existing.find(p => p.key === key || p.domain === domain)) {
+        if (!Array.isArray(state.readPublications)) state.readPublications = defaultReadPublications();
+        state.readPublications.push({ key, label: name, domain });
+        persist();
+        renderMediaPubTabs();
+      }
+      render();
+    });
+
+    overlay.querySelector("#pubMgrLibraryKeySave")?.addEventListener("click", () => {
+      const val = overlay.querySelector("#pubMgrLibraryKeyInput")?.value.trim().toLowerCase();
+      if (!val) return;
+      state.libraryKey = val;
+      persist();
+      hclAvailabilityCache.clear();
+    });
+  }
+
+  document.body.appendChild(overlay);
+  render();
+}
+
+function getAutoPlaylist() {
+  const tiers = state.podcastShowTiers || {};
+  const epTiers = state.podcastEpisodeTiers || {};
+  const pubTiers = state.publicationTiers || {};
+  const progress = state.podcastProgress || {};
+
+  const windowOpt = RECENT_WINDOW_OPTIONS.find(o => o.value === (state.podcastPlaylistWindow ?? "month")) || RECENT_WINDOW_OPTIONS[4];
+  const cutoff = Date.now() - windowOpt.ms;
+
+  const skipped = new Set(state.podcastAutoSkipped || []);
+  const episodes = (state.podcasts || []).flatMap(p =>
+    (p.episodes || [])
+      .filter(e => !progress[e.id]?.played && !skipped.has(e.id) && e.pubDate && new Date(e.pubDate).getTime() >= cutoff)
+      .map(e => ({ ...e, showId: p.id, showTitle: p.title, showArt: p.art }))
+  );
+
+  let items = [...episodes];
+
+  if (state.podcastPlaylistIncludeArticles) {
+    const readIds = new Set(state.readArticleIds || []);
+    const articleItems = (state.savedArticles || [])
+      .filter(a => !readIds.has(a.id) && a.url)
+      .map(a => {
+        const pubInfo = getReadPublications().find(p => p.key === a.publication);
+        return {
+          ...a,
+          type: "article",
+          showId: a.publication,
+          showTitle: pubInfo?.label || a.publication || "Article",
+          showArt: pubInfo?.domain ? publicationLogoUrl(pubInfo.domain) : null,
+          pubDate: getArticleSortDate(a),
+        };
+      });
+    items = [...items, ...articleItems];
+  }
+
+  const effectiveTier = (e) => {
+    if (e.type === "article") return pubTiers[e.publication] ?? 4;
+    return epTiers[e.id] ?? tiers[e.showId] ?? 4;
+  };
+  const newestFirst = (state.podcastPrioritySort ?? "oldest") === "newest";
+
+  return items.sort((a, b) => {
+    const ta = effectiveTier(a), tb = effectiveTier(b);
+    if (ta !== tb) return ta - tb;
+    const dateA = new Date(a.pubDate), dateB = new Date(b.pubDate);
+    return newestFirst ? dateB - dateA : dateA - dateB;
+  });
+}
+
+// ── Playlist (queue) ──────────────────────────────────────────────────────────
+
+function initPodcastEpisodeListDelegation() {
+  const listEl = document.getElementById("podcastEpisodeList");
+  if (!listEl) return;
+
+  listEl.addEventListener("click", (e) => {
+    // Auto-playlist: strip ads / include articles toggles handled by change event below
+
+    // Notes button (auto-playlist episode rows)
+    const notesBtn = e.target.closest("[data-episode-notes]");
+    if (notesBtn) { e.stopPropagation(); showEpisodeNotesModal(notesBtn.dataset.episodeNotes); return; }
+
+    // Show title button
+    const showBtn = e.target.closest("[data-open-show]");
+    if (showBtn) {
+      e.stopPropagation();
+      const showId = showBtn.dataset.openShow;
+      if (!showId) return;
+      activePodcastTab = "shows";
+      renderPodcastPlaylistBar();
+      openPodcastShow(showId);
+      return;
+    }
+
+    // Open article button
+    const articleBtn = e.target.closest("[data-open-article]");
+    if (articleBtn) { e.stopPropagation(); openArticle(articleBtn.dataset.openArticle, "articleList"); return; }
+
+    // Mark played / unplayed button
+    const markBtn = e.target.closest("[data-episode-mark]");
+    if (markBtn) {
+      e.stopPropagation();
+      const row = markBtn.closest(".podcast-episode-row, .podcast-draggable-row");
+      const episodeId = row?.dataset.episodeId;
+      if (episodeId) {
+        const markAsPlayed = markBtn.dataset.episodeMark === "mark";
+        setPodcastEpisodePlayed(episodeId, markAsPlayed);
+        if (!markAsPlayed) renderPodcastQueueEpisodes(); // auto-playlist skip view also uses this
+      }
+      return;
+    }
+
+    // Remove from queue button
+    const queueRemove = e.target.closest("[data-episode-queue-remove]");
+    if (queueRemove) {
+      e.stopPropagation();
+      const episodeId = queueRemove.dataset.episodeQueueRemove;
+      state.podcastQueue = (state.podcastQueue || []).filter(eid => eid !== episodeId);
+      persist();
+      renderPodcastQueueEpisodes();
+      return;
+    }
+
+    // Skip from auto-playlist button
+    const skipBtn = e.target.closest("[data-episode-skip]");
+    if (skipBtn) {
+      e.stopPropagation();
+      const episodeId = skipBtn.dataset.episodeSkip;
+      if (!state.podcastAutoSkipped) state.podcastAutoSkipped = [];
+      if (!state.podcastAutoSkipped.includes(episodeId)) state.podcastAutoSkipped.push(episodeId);
+      persist();
+      renderPodcastQueueEpisodes();
+      return;
+    }
+
+    // Row click: open episode or article
+    const row = e.target.closest(".podcast-episode-row, .podcast-draggable-row");
+    if (!row) return;
+    if (e.target.closest(".article-row-actions, .playlist-drag-handle, .playlist-ep-title-btn, .playlist-show-title-btn")) return;
+    const episodeId = row.dataset.episodeId;
+    const articleId = row.dataset.articleId;
+    if (articleId) playArticleFromPlaylist(articleId);
+    else if (episodeId) openPodcastEpisode(episodeId);
+  });
+
+  listEl.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const row = e.target.closest(".podcast-episode-row, .podcast-draggable-row");
+    if (!row) return;
+    e.preventDefault();
+    const episodeId = row.dataset.episodeId;
+    const articleId = row.dataset.articleId;
+    if (articleId) playArticleFromPlaylist(articleId);
+    else if (episodeId) openPodcastEpisode(episodeId);
+  });
+
+  listEl.addEventListener("change", (e) => {
+    if (e.target.id === "playlistStripAdsCheck") {
+      state.podcastSkipAds = e.target.checked;
+      persist();
+      const playerToggle = document.getElementById("podcastSkipAdsToggle");
+      if (playerToggle) playerToggle.checked = e.target.checked;
+      if (e.target.checked) scheduleAdSkips(podcastCurrentChapters, podcastAudio);
+      else clearAdSkipTimers();
+      return;
+    }
+    if (e.target.id === "playlistIncludeArticlesCheck") {
+      state.podcastPlaylistIncludeArticles = e.target.checked;
+      persist();
+      renderPodcastQueueEpisodes();
+    }
+  });
+
+  let dragItem = null;
+
+  listEl.addEventListener("dragstart", (e) => {
+    const row = e.target.closest(".podcast-draggable-row");
+    if (!row) return;
+    const episodeId = row.dataset.episodeId;
+    const articleId = row.dataset.articleId;
+    const pubKey = row.dataset.pubKey;
+    const rowId = episodeId || articleId;
+    dragItem = articleId ? { id: rowId, kind: "article", pubKey } : { id: rowId, kind: "episode" };
+    row.classList.add("is-dragging");
+    e.dataTransfer.effectAllowed = "move";
+  });
+
+  listEl.addEventListener("dragend", (e) => {
+    const row = e.target.closest(".podcast-draggable-row");
+    dragItem = null;
+    if (row) row.classList.remove("is-dragging");
+    listEl.querySelectorAll(".drag-drop-target").forEach(r => r.classList.remove("drag-drop-target"));
+  });
+
+  listEl.addEventListener("dragover", (e) => {
+    const row = e.target.closest(".podcast-draggable-row");
+    if (!row) return;
+    const rowId = row.dataset.episodeId || row.dataset.articleId;
+    if (!dragItem || dragItem.id === rowId) return;
+    e.preventDefault();
+    listEl.querySelectorAll(".drag-drop-target").forEach(r => r.classList.remove("drag-drop-target"));
+    row.classList.add("drag-drop-target");
+  });
+
+  listEl.addEventListener("drop", (e) => {
+    const row = e.target.closest(".podcast-draggable-row");
+    if (!row) return;
+    e.preventDefault();
+    const rowId = row.dataset.episodeId || row.dataset.articleId;
+    if (!dragItem || dragItem.id === rowId) return;
+    const targetTier = parseInt(row.dataset.tier, 10);
+    if (dragItem.kind === "article") {
+      if (!state.publicationTiers) state.publicationTiers = {};
+      if (targetTier === 4) delete state.publicationTiers[dragItem.pubKey];
+      else state.publicationTiers[dragItem.pubKey] = targetTier;
+    } else {
+      if (!state.podcastEpisodeTiers) state.podcastEpisodeTiers = {};
+      if (targetTier === 4) delete state.podcastEpisodeTiers[dragItem.id];
+      else state.podcastEpisodeTiers[dragItem.id] = targetTier;
+    }
+    persist();
+    renderPodcastQueueEpisodes();
+  });
+}
+
+function renderPodcastQueueEpisodes() {
+  const listEl = document.getElementById("podcastEpisodeList");
+  if (!listEl) return;
+
+  const auto = getAutoPlaylist();
+  if (auto) {
+    const checked = state.podcastPlaylistIncludeArticles ? "checked" : "";
+    const adsChecked = state.podcastSkipAds ? "checked" : "";
+    listEl.innerHTML = `
+      <div class="playlist-include-articles-bar">
+        <label class="playlist-include-articles-label">
+          <input type="checkbox" id="playlistStripAdsCheck" ${adsChecked}>
+          <span class="playlist-articles-toggle-track"><span class="playlist-articles-toggle-thumb"></span></span>
+          Ad-Block
+        </label>
+        <label class="playlist-include-articles-label">
+          <input type="checkbox" id="playlistIncludeArticlesCheck" ${checked}>
+          <span class="playlist-articles-toggle-track"><span class="playlist-articles-toggle-thumb"></span></span>
+          Articles
+        </label>
+      </div>
+      <div id="podcastAutoList"></div>`;
+    renderAutoPlaylist(document.getElementById("podcastAutoList"), auto);
+    return;
+  }
+
+  const queue = state.podcastQueue || [];
+
+  if (!queue.length) {
+    listEl.innerHTML = `<div class="article-empty"><p>Your playlist is empty.</p><p>Tap the <strong>clock</strong> icon on any episode to add it here.</p></div>`;
+    return;
+  }
+
+  const episodes = [];
+  for (const episodeId of queue) {
+    const { episode, show } = findPodcastEpisode(episodeId);
+    if (episode && show) episodes.push({ ...episode, showId: show.id, showTitle: show.title, showArt: show.art });
+  }
+
+  const progress = state.podcastProgress || {};
+  listEl.innerHTML = episodes.map((e, i) => {
+    const ep = progress[e.id] || {};
+    const played = !!ep.played;
+    const dur = e.duration || ep.duration || 0;
+    const isOpen = e.id === openPodcastEpisodeId;
+    return `
+    <div class="article-row podcast-episode-row${played ? " article-row--read" : ""}${isOpen ? " article-row--active" : ""}" data-episode-id="${escapeHtml(e.id)}" role="button" tabindex="0">
+      <span class="podcast-queue-num">${i + 1}</span>
+      <div class="article-row-main">
+        <div class="article-row-title">${escapeHtml(e.title)}</div>
+        <div class="article-row-meta">
+          <span class="article-row-pub">${escapeHtml(e.showTitle)}</span>
+          <span class="article-row-date">${escapeHtml(formatArticleDate(e.pubDate))}</span>
+          ${dur ? `<span class="article-row-date">${formatPodcastDuration(dur)}</span>` : ""}
+        </div>
+      </div>
+      ${played ? `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Played"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
+      <div class="article-row-actions">
+        <button class="article-row-action-btn" type="button" title="${played ? "Mark as unplayed" : "Mark as played"}" aria-label="${played ? "Mark as unplayed" : "Mark as played"}" data-episode-mark="${played ? "unmark" : "mark"}">
+          ${played
+            ? `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/><line x1="3" y1="3" x2="21" y2="21" stroke-width="2"/></svg>`
+            : `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/></svg>`}
+        </button>
+        <button class="article-row-action-btn" type="button" title="Remove from playlist" aria-label="Remove from playlist" data-episode-queue-remove="${escapeHtml(e.id)}">
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+    </div>`;
+  }).join("");
+
+}
+
+function renderAutoPlaylist(listEl, items) {
+  const tiers = state.podcastShowTiers || {};
+  const epTiers = state.podcastEpisodeTiers || {};
+  const pubTiers = state.publicationTiers || {};
+  const progress = state.podcastProgress || {};
+  const effectiveTier = (e) => {
+    if (e.type === "article") return pubTiers[e.publication] ?? 4;
+    return epTiers[e.id] ?? tiers[e.showId] ?? 4;
+  };
+  const tierLabel = (t) => t <= (state.podcastTierCount ?? 3) ? `Tier ${t}` : "Untiered";
+
+  if (!items.length) {
+    const hasArticles = state.podcastPlaylistIncludeArticles;
+    listEl.innerHTML = `<div class="article-empty"><p>No unplayed ${hasArticles ? "items" : "episodes"}.</p><p>Subscribe to shows on the <strong>Shows</strong> tab${hasArticles ? " or save articles" : ""}.</p></div>`;
+    return;
+  }
+
+  let html = "";
+  let lastTier = null;
+
+  items.forEach((e) => {
+    const t = effectiveTier(e);
+    if (t !== lastTier) {
+      html += `<div class="playlist-tier-divider" data-tier="${t}">${tierLabel(t)}</div>`;
+      lastTier = t;
+    }
+    if (e.type === "article") {
+      html += `
+      <div class="article-row podcast-episode-row podcast-draggable-row playlist-article-row"
+           data-article-id="${escapeHtml(e.id)}" data-pub-key="${escapeHtml(e.publication || "")}" data-tier="${t}" draggable="true" role="button" tabindex="0">
+        <span class="playlist-drag-handle" title="Drag to reprioritize" aria-label="Drag to reorder">
+          <svg viewBox="0 0 10 16" width="10" height="16" fill="currentColor" aria-hidden="true">
+            <circle cx="3" cy="2.5" r="1.5"/><circle cx="7" cy="2.5" r="1.5"/>
+            <circle cx="3" cy="8" r="1.5"/><circle cx="7" cy="8" r="1.5"/>
+            <circle cx="3" cy="13.5" r="1.5"/><circle cx="7" cy="13.5" r="1.5"/>
+          </svg>
+        </span>
+        <div class="article-row-main">
+          ${e.showArt ? `<img class="playlist-article-logo" src="${escapeHtml(e.showArt)}" alt="" loading="lazy" onerror="this.style.display='none'">` : ""}
+          <div class="article-row-title">${escapeHtml(e.title)}</div>
+          <div class="article-row-meta">
+            <span class="article-row-pub">${escapeHtml(e.showTitle)}</span>
+            <span class="article-row-date">${escapeHtml(formatArticleDate(e.pubDate))}</span>
+            <span class="playlist-article-badge">Article</span>
+          </div>
+        </div>
+        <div class="article-row-actions">
+          <button class="article-row-action-btn" type="button" title="Open article" aria-label="Open article" data-open-article="${escapeHtml(e.id)}">
+            <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          </button>
+        </div>
+      </div>`;
+    } else {
+      const ep = progress[e.id] || {};
+      const dur = e.duration || ep.duration || 0;
+      const isOpen = e.id === openPodcastEpisodeId;
+      html += `
+      <div class="article-row podcast-episode-row podcast-draggable-row${isOpen ? " article-row--active" : ""}"
+           data-episode-id="${escapeHtml(e.id)}" data-show-id="${escapeHtml(e.showId || "")}" data-tier="${t}" draggable="true" role="button" tabindex="0">
+        <span class="playlist-drag-handle" title="Drag to reprioritize" aria-label="Drag to reorder">
+          <svg viewBox="0 0 10 16" width="10" height="16" fill="currentColor" aria-hidden="true">
+            <circle cx="3" cy="2.5" r="1.5"/><circle cx="7" cy="2.5" r="1.5"/>
+            <circle cx="3" cy="8" r="1.5"/><circle cx="7" cy="8" r="1.5"/>
+            <circle cx="3" cy="13.5" r="1.5"/><circle cx="7" cy="13.5" r="1.5"/>
+          </svg>
+        </span>
+        <div class="article-row-main">
+          <button class="playlist-ep-title-btn" type="button" data-episode-notes="${escapeHtml(e.id)}">${escapeHtml(e.title)}</button>
+          <div class="article-row-meta">
+            <button class="playlist-show-title-btn" type="button" data-open-show="${escapeHtml(e.showId || "")}">${escapeHtml(e.showTitle)}</button>
+            <span class="article-row-date">${escapeHtml(formatArticleDate(e.pubDate))}</span>
+            ${dur ? `<span class="article-row-date">${formatPodcastDuration(dur)}</span>` : ""}
+          </div>
+        </div>
+        <div class="article-row-actions">
+          <button class="article-row-action-btn" type="button" title="Mark as played" aria-label="Mark as played" data-episode-mark="mark">
+            <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/></svg>
+          </button>
+          <button class="article-row-action-btn" type="button" title="Remove from playlist" aria-label="Remove from playlist" data-episode-skip="${escapeHtml(e.id)}">
+            <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>`;
+    }
+  });
+
+  listEl.innerHTML = html;
+  // All row interactions are handled by initPodcastEpisodeListDelegation()
+}
+
+function showEpisodeNotesModal(episodeId) {
+  document.getElementById("episodeNotesOverlay")?.remove();
+  const { episode, show } = findPodcastEpisode(episodeId);
+  if (!episode) return;
+
+  const overlay = document.createElement("div");
+  overlay.id = "episodeNotesOverlay";
+  overlay.className = "priority-overlay";
+
+  const desc = episode.description || "";
+  const hasHtml = /<[a-z][\s\S]*>/i.test(desc);
+  const bodyContent = desc
+    ? (hasHtml
+        ? `<div class="episode-notes-html">${desc}</div>`
+        : `<div class="episode-notes-plain">${escapeHtml(desc).replace(/\n/g, "<br>")}</div>`)
+    : `<p style="color:var(--ink-faint);margin:0">No show notes available for this episode.</p>`;
+
+  overlay.innerHTML = `
+    <div class="priority-modal episode-notes-modal" role="dialog" aria-modal="true" aria-label="Episode Notes">
+      <div class="priority-modal-header">
+        <div class="episode-notes-header-text">
+          <div class="episode-notes-title">${escapeHtml(episode.title || "")}</div>
+          ${show ? `<div class="episode-notes-show">${escapeHtml(show.title)}</div>` : ""}
+        </div>
+        <button class="icon-btn" type="button" id="closeEpisodeNotesBtn" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="episode-notes-body">${bodyContent}</div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+  overlay.querySelector("#closeEpisodeNotesBtn").addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+}
+
+function renderPodcastSavedEpisodes() {
+  const listEl = document.getElementById("podcastEpisodeList");
+  if (!listEl) return;
+  let saved = state.podcastSaved || [];
+  const categories = state.podcastSavedCategories || [];
+  const epCats = state.podcastSavedEpisodeCategories || {};
+  const hasCats = categories.length > 0;
+
+  // Remove episode IDs that can no longer be found (show was unsubscribed).
+  const orphanIds = saved.filter(eid => !findPodcastEpisode(eid).episode);
+  if (orphanIds.length) {
+    state.podcastSaved = saved.filter(eid => !orphanIds.includes(eid));
+    orphanIds.forEach(eid => { if (state.podcastSavedEpisodeCategories) delete state.podcastSavedEpisodeCategories[eid]; });
+    saved = state.podcastSaved;
+    persist();
+  }
+
+  const subTabsHtml = `
+    <div class="watch-category-tabs podcast-saved-sub-tabs" role="tablist" aria-label="Saved tabs">
+      <button class="watch-category-tab${activePodcastSavedCategory === "all" ? " is-active" : ""}" type="button" role="tab" data-podcast-saved-tab="all">All</button>
+      ${categories.map(c => `
+        <button class="watch-category-tab${activePodcastSavedCategory === c.id ? " is-active" : ""}" type="button" role="tab" data-podcast-saved-tab="${escapeHtml(c.id)}">${escapeHtml(c.name)}</button>
+      `).join("")}
+      ${podcastSavedCatInputActive
+        ? `<form class="watch-category-new-form" id="podcastSavedCatInlineForm">
+             <input class="watch-category-new-input" id="podcastSavedCatInlineInput" type="text" placeholder="Tab name" autocomplete="off" maxlength="32" />
+           </form>`
+        : `<button class="watch-category-tab watch-category-add-tab" type="button" id="podcastSavedCatAddBtn" title="Add tab">+</button>`
+      }
+    </div>`;
+
+  let filteredSaved = [...saved].reverse();
+  if (activePodcastSavedCategory !== "all") {
+    filteredSaved = filteredSaved.filter(eid => (epCats[eid] || []).includes(activePodcastSavedCategory));
+  }
+
+  let contentHtml;
+  if (!saved.length) {
+    contentHtml = `<div class="article-empty"><p>No saved episodes yet.</p><p>Tap the <strong>bookmark</strong> icon on any episode to save it here.</p></div>`;
+  } else if (!filteredSaved.length) {
+    contentHtml = `<div class="article-empty"><p>No episodes in this tab yet.</p><p>Use the <strong>tag</strong> icon on any saved episode to assign it here.</p></div>`;
+  } else {
+    const episodes = [];
+    for (const episodeId of filteredSaved) {
+      const { episode, show } = findPodcastEpisode(episodeId);
+      if (episode && show) episodes.push({ ...episode, showId: show.id, showTitle: show.title, showArt: show.art });
+    }
+    const progress = state.podcastProgress || {};
+    const isQueued = (id) => (state.podcastQueue || []).includes(id);
+    contentHtml = episodes.map(e => {
+      const ep = progress[e.id] || {};
+      const played = !!ep.played;
+      const dur = e.duration || ep.duration || 0;
+      const inQueue = isQueued(e.id);
+      const isOpen = e.id === openPodcastEpisodeId;
+      const assigned = epCats[e.id] || [];
+      const catTags = activePodcastSavedCategory === "all" && assigned.length
+        ? assigned.map(cid => { const c = categories.find(x => x.id === cid); return c ? `<span class="podcast-saved-cat-tag">${escapeHtml(c.name)}</span>` : ""; }).join("")
+        : "";
+      return `
+      <div class="article-row podcast-episode-row${played ? " article-row--read" : ""}${isOpen ? " article-row--active" : ""}" data-episode-id="${escapeHtml(e.id)}" role="button" tabindex="0">
+        <div class="article-row-main">
+          <div class="article-row-title">${escapeHtml(e.title)}</div>
+          <div class="article-row-meta">
+            <span class="article-row-pub">${escapeHtml(e.showTitle)}</span>
+            <span class="article-row-date">${escapeHtml(formatArticleDate(e.pubDate))}</span>
+            ${dur ? `<span class="article-row-date">${formatPodcastDuration(dur)}</span>` : ""}
+            ${catTags}
+          </div>
+        </div>
+        ${played ? `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Played"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
+        <div class="article-row-actions">
+          <button class="article-row-action-btn${inQueue ? " is-active" : ""}" type="button" title="${inQueue ? "Remove from playlist" : "Add to playlist"}" aria-label="${inQueue ? "Remove from playlist" : "Add to playlist"}" data-episode-queue="${escapeHtml(e.id)}">
+            <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><circle cx="12" cy="12" r="10" fill="${inQueue ? "currentColor" : "none"}"/><polyline points="12 6 12 12 16 14" stroke="${inQueue ? "var(--surface, #fff)" : "currentColor"}" stroke-width="2" fill="none"/></svg>
+          </button>
+          <button class="article-row-action-btn" type="button" title="${played ? "Mark as unplayed" : "Mark as played"}" aria-label="${played ? "Mark as unplayed" : "Mark as played"}" data-episode-mark="${played ? "unmark" : "mark"}">
+            ${played
+              ? `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/><line x1="3" y1="3" x2="21" y2="21" stroke-width="2"/></svg>`
+              : `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/></svg>`}
+          </button>
+          ${hasCats ? `<button class="article-row-action-btn${assigned.length ? " is-active" : ""}" type="button" title="Assign to tab" aria-label="Assign to tab" data-episode-saved-tag="${escapeHtml(e.id)}">
+            <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+          </button>` : ""}
+          <button class="article-row-action-btn" type="button" title="Remove from saved" aria-label="Remove from saved" data-episode-saved-remove="${escapeHtml(e.id)}">
+            <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  listEl.innerHTML = subTabsHtml + contentHtml;
+
+  // Wire sub-tabs
+  listEl.querySelectorAll("[data-podcast-saved-tab]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      activePodcastSavedCategory = btn.dataset.podcastSavedTab;
+      podcastSavedCatInputActive = false;
+      renderPodcastSavedEpisodes();
+    });
+    if (btn.dataset.podcastSavedTab !== "all") {
+      btn.addEventListener("contextmenu", (e) => { e.preventDefault(); showPodcastSavedCategoryMenu(btn.dataset.podcastSavedTab, btn); });
+    }
+  });
+
+  const addBtn = listEl.querySelector("#podcastSavedCatAddBtn");
+  addBtn?.addEventListener("click", () => {
+    podcastSavedCatInputActive = true;
+    renderPodcastSavedEpisodes();
+    listEl.querySelector("#podcastSavedCatInlineInput")?.focus();
+  });
+
+  const inlineForm = listEl.querySelector("#podcastSavedCatInlineForm");
+  const inlineInput = listEl.querySelector("#podcastSavedCatInlineInput");
+  if (inlineForm && inlineInput) {
+    inlineInput.focus();
+    inlineForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const name = inlineInput.value.trim();
+      if (name) {
+        if (!Array.isArray(state.podcastSavedCategories)) state.podcastSavedCategories = [];
+        const newCat = { id: createId("pscat"), name };
+        state.podcastSavedCategories.push(newCat);
+        activePodcastSavedCategory = newCat.id;
+        persist();
+      }
+      podcastSavedCatInputActive = false;
+      renderPodcastSavedEpisodes();
+    });
+    inlineInput.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { podcastSavedCatInputActive = false; renderPodcastSavedEpisodes(); }
+    });
+    inlineInput.addEventListener("blur", () => {
+      setTimeout(() => { podcastSavedCatInputActive = false; renderPodcastSavedEpisodes(); }, 120);
+    });
+  }
+
+  // Wire episode rows
+  listEl.querySelectorAll(".podcast-episode-row").forEach(row => {
+    const id = row.dataset.episodeId;
+    row.addEventListener("click", (ev) => { if (ev.target.closest(".article-row-actions")) return; openPodcastEpisode(id); });
+    row.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openPodcastEpisode(id); } });
+    row.querySelector("[data-episode-queue]")?.addEventListener("click", (ev) => { ev.stopPropagation(); toggleEpisodeInQueue(id); });
+    row.querySelector("[data-episode-mark]")?.addEventListener("click", (ev) => { ev.stopPropagation(); setPodcastEpisodePlayed(id, ev.currentTarget.dataset.episodeMark === "mark"); });
+    row.querySelector("[data-episode-saved-tag]")?.addEventListener("click", (ev) => { ev.stopPropagation(); showPodcastSavedEpisodeCategoryMenu(id, ev.currentTarget); });
+    row.querySelector("[data-episode-saved-remove]")?.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      state.podcastSaved = (state.podcastSaved || []).filter(eid => eid !== id);
+      if (state.podcastSavedEpisodeCategories) delete state.podcastSavedEpisodeCategories[id];
+      persist();
+      renderPodcastSavedEpisodes();
+    });
+  });
+}
+
+function showPodcastSavedCategoryMenu(categoryId, anchorBtn) {
+  document.getElementById("podcastSavedCatMenu")?.remove();
+  const menu = document.createElement("div");
+  menu.id = "podcastSavedCatMenu";
+  menu.className = "podcast-playlist-tab-menu";
+  menu.innerHTML = `<button class="podcast-playlist-tab-menu-item" type="button">Delete tab</button>`;
+  menu.querySelector("button").addEventListener("click", () => {
+    menu.remove();
+    deletePodcastSavedCategory(categoryId);
+  });
+  document.body.appendChild(menu);
+  const rect = anchorBtn.getBoundingClientRect();
+  menu.style.top = (rect.bottom + 4) + "px";
+  menu.style.left = rect.left + "px";
+  setTimeout(() => document.addEventListener("click", () => menu.remove(), { once: true }), 0);
+}
+
+function deletePodcastSavedCategory(categoryId) {
+  recordDeletion("podcastSavedCategories", categoryId);
+  state.podcastSavedCategories = (state.podcastSavedCategories || []).filter(c => c.id !== categoryId);
+  if (state.podcastSavedEpisodeCategories) {
+    for (const epId of Object.keys(state.podcastSavedEpisodeCategories)) {
+      state.podcastSavedEpisodeCategories[epId] = (state.podcastSavedEpisodeCategories[epId] || []).filter(cid => cid !== categoryId);
+    }
+  }
+  if (activePodcastSavedCategory === categoryId) activePodcastSavedCategory = "all";
+  persist();
+  renderPodcastSavedEpisodes();
+}
+
+function showPodcastSavedEpisodeCategoryMenu(episodeId, anchorBtn) {
+  document.getElementById("podcastSavedEpCatMenu")?.remove();
+  const categories = state.podcastSavedCategories || [];
+  if (!categories.length) return;
+  const assigned = (state.podcastSavedEpisodeCategories || {})[episodeId] || [];
+  const menu = document.createElement("div");
+  menu.id = "podcastSavedEpCatMenu";
+  menu.className = "podcast-saved-ep-cat-menu";
+  menu.innerHTML = categories.map(c => `
+    <button class="podcast-saved-ep-cat-item${assigned.includes(c.id) ? " is-checked" : ""}" type="button" data-cat-id="${escapeHtml(c.id)}">
+      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+      ${escapeHtml(c.name)}
+    </button>`).join("");
+  menu.querySelectorAll("[data-cat-id]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (!state.podcastSavedEpisodeCategories) state.podcastSavedEpisodeCategories = {};
+      if (!Array.isArray(state.podcastSavedEpisodeCategories[episodeId])) state.podcastSavedEpisodeCategories[episodeId] = [];
+      const cats = state.podcastSavedEpisodeCategories[episodeId];
+      const idx = cats.indexOf(btn.dataset.catId);
+      if (idx >= 0) cats.splice(idx, 1); else cats.push(btn.dataset.catId);
+      persist();
+      menu.remove();
+      renderPodcastSavedEpisodes();
+    });
+  });
+  document.body.appendChild(menu);
+  const rect = anchorBtn.getBoundingClientRect();
+  menu.style.top = (rect.bottom + 4) + "px";
+  menu.style.right = (window.innerWidth - rect.right) + "px";
+  setTimeout(() => document.addEventListener("click", () => menu.remove(), { once: true }), 0);
+}
+
+const RECENT_WINDOW_OPTIONS = [
+  { value: "day",      label: "Past day",      ms: 1 * 24 * 60 * 60 * 1000 },
+  { value: "week",     label: "Past week",     ms: 7 * 24 * 60 * 60 * 1000 },
+  { value: "2weeks",   label: "Past 2 weeks",  ms: 14 * 24 * 60 * 60 * 1000 },
+  { value: "3weeks",   label: "Past 3 weeks",  ms: 21 * 24 * 60 * 60 * 1000 },
+  { value: "month",    label: "Past month",    ms: 30 * 24 * 60 * 60 * 1000 },
+  { value: "2months",  label: "Past 2 months", ms: 60 * 24 * 60 * 60 * 1000 },
+  { value: "3months",  label: "Past 3 months", ms: 90 * 24 * 60 * 60 * 1000 },
+];
+
+function renderRecentEpisodes() {
+  const listEl = document.getElementById("podcastEpisodeList");
+  if (!listEl) return;
+
+  const windowOpt = RECENT_WINDOW_OPTIONS.find(o => o.value === recentEpisodesWindow) || RECENT_WINDOW_OPTIONS[1];
+  const cutoff = Date.now() - windowOpt.ms;
+
+  const podcasts = state.podcasts || [];
+  let episodes = podcasts.flatMap(p => p.episodes.map(e => ({ ...e, showId: p.id, showTitle: p.title, showArt: p.art })));
+  episodes = episodes.filter(e => e.pubDate && new Date(e.pubDate).getTime() >= cutoff);
+  episodes.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+
+  const hasPlaylists = (state.podcastPlaylists || []).length > 0;
+
+  const selectHtml = `
+    <div class="recent-window-bar">
+      <select class="recent-window-select" id="recentWindowSelect" aria-label="Show episodes from">
+        ${RECENT_WINDOW_OPTIONS.map(o => `<option value="${o.value}"${o.value === recentEpisodesWindow ? " selected" : ""}>${o.label}</option>`).join("")}
+      </select>
+      <span class="recent-window-count">${episodes.length} episode${episodes.length !== 1 ? "s" : ""}</span>
+    </div>`;
+
+  if (!episodes.length) {
+    listEl.innerHTML = selectHtml + `<div class="article-empty"><p>No episodes in this time range.</p></div>`;
+  } else {
+    listEl.innerHTML = selectHtml + episodes.map(e => podcastEpisodeRowHtml(e, { showShowTitle: true, hasPlaylists })).join("");
+    wirePodcastEpisodeRows(listEl);
+  }
+
+  listEl.querySelector("#recentWindowSelect").addEventListener("change", (ev) => {
+    recentEpisodesWindow = ev.target.value;
+    renderRecentEpisodes();
+  });
+}
+
+function renderPodcastShowEpisodes(showId) {
+  const listEl = document.getElementById("podcastEpisodeList");
+  if (!listEl) return;
+  const show = (state.podcasts || []).find(p => p.id === showId);
+  if (!show) { activePodcastShowId = null; renderPodcastShowsGrid(); return; }
+
+  const episodes = show.episodes.map(e => ({ ...e, showId: show.id, showTitle: show.title, showArt: show.art }));
+  const hasPlaylists = (state.podcastPlaylists || []).length > 0;
+
+  listEl.innerHTML = `
+    <div class="podcast-show-episodes-header">
+      <button class="icon-btn" type="button" id="podcastShowBackBtn" aria-label="Back to shows">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5"/><path d="m12 5-7 7 7 7"/></svg>
+      </button>
+      <span class="podcast-show-episodes-title">${escapeHtml(show.title)}</span>
+    </div>
+    ${episodes.map(e => podcastEpisodeRowHtml(e, { showShowTitle: false, hasPlaylists })).join("")}`;
+
+  listEl.querySelector("#podcastShowBackBtn")?.addEventListener("click", () => {
+    activePodcastShowId = null;
+    renderPodcastShowsGrid();
+  });
+  wirePodcastEpisodeRows(listEl);
+}
+
+// ── Player ────────────────────────────────────────────────────────────────────
+
+function openPodcastEpisode(episodeId) {
+  const { episode, show } = findPodcastEpisode(episodeId);
+  if (!episode) return;
+
+  openPodcastEpisodeId = episodeId;
+
+  const panel = document.getElementById("podcastPlayerPanel");
+  if (panel) panel.hidden = false;
+
+  document.getElementById("podcastPlayerTitle").textContent = episode.title;
+  document.getElementById("podcastPlayerShow").textContent = show?.title || "";
+  document.getElementById("podcastPlayerDate").textContent = formatArticleDate(episode.pubDate);
+
+  const art = episode.art || show?.art || "";
+  const artEl = document.getElementById("podcastPlayerArt");
+  if (artEl) { artEl.src = art; artEl.hidden = !art; }
+
+  const descEl = document.getElementById("podcastPlayerDesc");
+  if (descEl) {
+    const raw = episode.description || "";
+    const stripped = raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    descEl.textContent = stripped;
+  }
+
+  document.querySelectorAll(".podcast-episode-row").forEach(r => {
+    r.classList.toggle("article-row--active", r.dataset.episodeId === episodeId);
+  });
+
+  startPodcastPlayback(episode, show);
+  updatePodcastMarkBtn();
+}
+
+function findPodcastEpisode(episodeId) {
+  for (const show of (state.podcasts || [])) {
+    const episode = show.episodes.find(e => e.id === episodeId);
+    if (episode) return { episode, show };
+  }
+  const cached = podcastTabEpisodeMap.get(episodeId);
+  if (cached) return { episode: cached, show: null };
+  return { episode: null, show: null };
+}
+
+const podcastChaptersCache = new Map(); // episodeId → chapters array | null
+let podcastCurrentChapters = null;
+let adSkipToastTimer = null;
+let adSkipTimers = [];
+
+function clearAdSkipTimers() {
+  adSkipTimers.forEach(clearTimeout);
+  adSkipTimers = [];
+}
+
+function scheduleAdSkips(chapters, audio) {
+  clearAdSkipTimers();
+  if (!state.podcastSkipAds || !chapters?.length || !audio || audio.paused) return;
+  const now = audio.currentTime;
+  const dur = isFinite(audio.duration) ? audio.duration : Infinity;
+  const rate = audio.playbackRate || 1;
+  for (const ch of chapters) {
+    if (!isAdChapter(ch.title)) continue;
+    const delay = (ch.startTime - now) * 1000 / rate;
+    if (delay < 0) continue;
+    const end = isFinite(ch.endTime) ? Math.min(ch.endTime, dur - 0.5) : dur - 0.5;
+    adSkipTimers.push(setTimeout(() => {
+      if (podcastAudio !== audio || !state.podcastSkipAds || audio.paused) return;
+      if (audio.currentTime >= ch.startTime - 0.5 && audio.currentTime < end) {
+        audio.currentTime = end;
+        showAdSkippedToast();
+      }
+    }, Math.max(0, delay)));
+  }
+}
+
+const AD_CHAPTER_RE = /\b(sponsor|ad|advertisement|promo|promotion|paid|partner|underwriter|brought to you|message from)\b/i;
+
+function isAdChapter(title) {
+  return AD_CHAPTER_RE.test(title || "");
+}
+
+async function loadEpisodeChapters(episode) {
+  if (!episode.chaptersUrl) return null;
+  if (podcastChaptersCache.has(episode.id)) return podcastChaptersCache.get(episode.id);
+  try {
+    const res = await fetch(episode.chaptersUrl);
+    if (!res.ok) { podcastChaptersCache.set(episode.id, null); return null; }
+    const data = await res.json();
+    const raw = Array.isArray(data.chapters) ? data.chapters : [];
+    const chapters = raw.map((ch, i) => ({
+      title: String(ch.title || ""),
+      startTime: Number(ch.startTime) || 0,
+      endTime: raw[i + 1] ? Number(raw[i + 1].startTime) || Infinity : Infinity
+    }));
+    podcastChaptersCache.set(episode.id, chapters);
+    return chapters;
+  } catch {
+    podcastChaptersCache.set(episode.id, null);
+    return null;
+  }
+}
+
+function showAdSkippedToast() {
+  const toast = document.getElementById("adSkippedToast");
+  if (!toast) return;
+  toast.textContent = "Ad skipped";
+  toast.classList.add("ad-skipped-toast--visible");
+  clearTimeout(adSkipToastTimer);
+  adSkipToastTimer = setTimeout(() => toast.classList.remove("ad-skipped-toast--visible"), 2000);
+}
+
+function startPodcastPlayback(episode, show) {
+  stopPodcastAudio();
+
+  const progress = (state.podcastProgress || {})[episode.id] || {};
+  const startPos = progress.played ? 0 : (progress.position || 0);
+
+  podcastCurrentChapters = null;
+  podcastAudio = new Audio(episode.audioUrl);
+  podcastAudio.playbackRate = parseFloat(document.getElementById("podcastSpeedSelect")?.value || "1");
+  if (startPos > 10) podcastAudio.currentTime = startPos;
+
+  const audio = podcastAudio;
+
+  if (episode.chaptersUrl) {
+    loadEpisodeChapters(episode).then(ch => {
+      if (podcastAudio !== audio) return; // episode changed before chapters resolved
+      podcastCurrentChapters = ch;
+      scheduleAdSkips(ch, audio);
+    });
+  }
+
+  podcastAudio.addEventListener("loadedmetadata", () => updatePodcastProgressUI(episode));
+  podcastAudio.addEventListener("error", () => showVoiceToast("Audio failed to load — check your connection and try again"));
+  podcastAudio.addEventListener("timeupdate", () => {
+    updatePodcastProgressUI(episode);
+    updateMiniPlayerProgress();
+    schedulePodcastPositionSave(episode);
+  });
+  podcastAudio.addEventListener("seeked", () => scheduleAdSkips(podcastCurrentChapters, audio));
+  podcastAudio.addEventListener("ratechange", () => scheduleAdSkips(podcastCurrentChapters, audio));
+  podcastAudio.addEventListener("ended", () => {
+    clearAdSkipTimers();
+    setPodcastEpisodePlayed(episode.id, true);
+    updatePodcastPlayBtn();
+    updateMiniPlayerPlayBtn();
+  });
+  podcastAudio.addEventListener("play", () => {
+    updatePodcastPlayBtn();
+    updateMiniPlayerPlayBtn();
+    scheduleAdSkips(podcastCurrentChapters, audio);
+  });
+  podcastAudio.addEventListener("pause", () => {
+    updatePodcastPlayBtn();
+    updateMiniPlayerPlayBtn();
+    clearAdSkipTimers();
+  });
+
+  showMiniPlayer(episode, show);
+
+  podcastAudio.play().catch(() => {});
+
+  const podcastArt = episode.art || show?.art || "";
+  if ("mediaSession" in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: episode.title,
+      artist: show?.title || "Podcast",
+      album: "Live",
+      artwork: podcastArt ? [{ src: podcastArt }] : undefined
+    });
+    navigator.mediaSession.setActionHandler("play", () => podcastAudio?.play().catch(() => {}));
+    navigator.mediaSession.setActionHandler("pause", () => podcastAudio?.pause());
+    navigator.mediaSession.setActionHandler("seekbackward", () => skipPodcast(-15));
+    navigator.mediaSession.setActionHandler("seekforward", () => skipPodcast(30));
+  }
+
+  updatePodcastPlayBtn();
+}
+
+function updatePodcastProgressUI(episode) {
+  if (!podcastAudio) return;
+  const cur = podcastAudio.currentTime || 0;
+  const dur = podcastAudio.duration || episode.duration || 0;
+  const curEl = document.getElementById("podcastCurrentTime");
+  const durEl = document.getElementById("podcastDuration");
+  const seekBar = document.getElementById("podcastSeekBar");
+  if (curEl) curEl.textContent = formatPodcastDuration(Math.floor(cur));
+  if (durEl) durEl.textContent = formatPodcastDuration(Math.floor(dur));
+  if (seekBar && dur) seekBar.value = Math.round((cur / dur) * 100);
+}
+
+function schedulePodcastPositionSave(episode) {
+  if (podcastSaveTimer) return;
+  podcastSaveTimer = setTimeout(() => {
+    podcastSaveTimer = null;
+    if (!podcastAudio) return;
+    if (!state.podcastProgress) state.podcastProgress = {};
+    state.podcastProgress[episode.id] = {
+      ...(state.podcastProgress[episode.id] || {}),
+      position: Math.floor(podcastAudio.currentTime),
+      duration: Math.floor(podcastAudio.duration || episode.duration || 0)
+    };
+    persist();
+  }, 5000);
+}
+
+function updatePodcastPlayBtn() {
+  const icon = document.getElementById("podcastBtnIcon");
+  const btn = document.getElementById("podcastPlayPauseBtn");
+  if (!icon || !btn) return;
+  const playing = podcastAudio && !podcastAudio.paused && !podcastAudio.ended;
+  btn.setAttribute("aria-label", playing ? "Pause" : "Play");
+  icon.innerHTML = playing
+    ? `<rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/>`
+    : `<polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>`;
+}
+
+function updatePodcastMarkBtn() {
+  const btn = document.getElementById("podcastMarkPlayedBtn");
+  if (!btn || !openPodcastEpisodeId) return;
+  const played = !!((state.podcastProgress || {})[openPodcastEpisodeId]?.played);
+  btn.title = played ? "Mark as unplayed" : "Mark as played";
+  btn.setAttribute("aria-label", btn.title);
+}
+
+function togglePodcastPlayPause() {
+  if (!podcastAudio) return;
+  if (podcastAudio.paused) { podcastAudio.play().catch(() => {}); }
+  else { podcastAudio.pause(); }
+}
+
+function skipPodcast(seconds) {
+  if (!podcastAudio) return;
+  podcastAudio.currentTime = Math.max(0, Math.min(podcastAudio.currentTime + seconds, podcastAudio.duration || Infinity));
+}
+
+function stopPodcastAudio() {
+  clearAdSkipTimers();
+  if (podcastSaveTimer) { clearTimeout(podcastSaveTimer); podcastSaveTimer = null; }
+  if (podcastAudio) { podcastAudio.pause(); podcastAudio = null; }
+  hideMiniPlayer();
+}
+
+// ── Mini-player ───────────────────────────────────────────────────────────────
+
+function showMiniPlayer(episode, show) {
+  const el = document.getElementById("miniPlayer");
+  if (!el) return;
+
+  const title = document.getElementById("miniPlayerTitle");
+  const showEl = document.getElementById("miniPlayerShow");
+  const artEl = document.getElementById("miniPlayerArt");
+  if (title) title.textContent = episode.title || "";
+  if (showEl) showEl.textContent = show?.title || "";
+  const art = episode.art || show?.art || "";
+  if (artEl) { artEl.src = art; artEl.hidden = !art; }
+
+  el.hidden = false;
+  document.body.classList.add("has-mini-player");
+  updateMiniPlayerPlayBtn();
+}
+
+function hideMiniPlayer() {
+  const el = document.getElementById("miniPlayer");
+  if (el) el.hidden = true;
+  document.body.classList.remove("has-mini-player");
+  const track = document.getElementById("miniPlayerTrack");
+  if (track) track.style.width = "0%";
+}
+
+function updateMiniPlayerPlayBtn() {
+  const icon = document.getElementById("miniPlayerBtnIcon");
+  const btn = document.getElementById("miniPlayerPlayPause");
+  if (!icon || !btn) return;
+  const playing = podcastAudio && !podcastAudio.paused && !podcastAudio.ended;
+  btn.setAttribute("aria-label", playing ? "Pause" : "Play");
+  icon.innerHTML = playing
+    ? `<rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/>`
+    : `<polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>`;
+}
+
+function updateMiniPlayerProgress() {
+  if (!podcastAudio || !podcastAudio.duration) return;
+  const pct = (podcastAudio.currentTime / podcastAudio.duration) * 100;
+  const track = document.getElementById("miniPlayerTrack");
+  if (track) track.style.width = `${pct.toFixed(1)}%`;
+}
+
+function wireMiniPlayer() {
+  document.getElementById("miniPlayerPlayPause")?.addEventListener("click", togglePodcastPlayPause);
+  document.getElementById("miniPlayerSkipBack")?.addEventListener("click", () => skipPodcast(-15));
+  document.getElementById("miniPlayerSkipFwd")?.addEventListener("click", () => skipPodcast(30));
+  document.getElementById("miniPlayerInfoBtn")?.addEventListener("click", goToOpenEpisode);
+}
+
+function goToOpenEpisode() {
+  if (!openPodcastEpisodeId) return;
+  showMediaApp();
+  switchMediaTab("podcasts");
+  requestAnimationFrame(() => {
+    const panel = document.getElementById("podcastPlayerPanel");
+    if (panel) panel.hidden = false;
+    document.querySelectorAll(".podcast-episode-row").forEach(r => {
+      r.classList.toggle("article-row--active", r.dataset.episodeId === openPodcastEpisodeId);
+    });
+  });
+}
+
+function closePodcastPlayer() {
+  const panel = document.getElementById("podcastPlayerPanel");
+  if (panel) panel.hidden = true;
+  stopPodcastAudio();
+  openPodcastEpisodeId = null;
+  document.querySelectorAll(".podcast-episode-row").forEach(r => r.classList.remove("article-row--active"));
+}
+
+function setPodcastEpisodePlayed(episodeId, played) {
+  if (!state.podcastProgress) state.podcastProgress = {};
+  const prev = state.podcastProgress[episodeId] || {};
+  state.podcastProgress[episodeId] = {
+    ...prev,
+    played,
+    ...(played && !prev.playedAt ? { playedAt: new Date().toISOString() } : {}),
+    ...(!played ? { playedAt: null } : {}),
+  };
+  persist();
+  document.querySelectorAll(`.podcast-episode-row[data-episode-id="${CSS.escape(episodeId)}"]`).forEach(row => {
+    row.classList.toggle("article-row--read", played);
+    const check = row.querySelector(".article-row-check");
+    if (played && !check) {
+      row.insertAdjacentHTML("beforeend", `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Played"><polyline points="20 6 9 17 4 12"/></svg>`);
+    } else if (!played && check) {
+      check.remove();
+    }
+    const markBtn = row.querySelector("[data-episode-mark]");
+    if (markBtn) {
+      markBtn.dataset.episodeMark = played ? "unmark" : "mark";
+      markBtn.title = played ? "Mark as unplayed" : "Mark as played";
+      markBtn.setAttribute("aria-label", markBtn.title);
+      markBtn.innerHTML = played
+        ? `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/><line x1="3" y1="3" x2="21" y2="21" stroke-width="2"/></svg>`
+        : `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/></svg>`;
+    }
+  });
+  if (episodeId === openPodcastEpisodeId) updatePodcastMarkBtn();
+}
+
+function toggleOpenEpisodePlayed() {
+  if (!openPodcastEpisodeId) return;
+  const played = !!((state.podcastProgress || {})[openPodcastEpisodeId]?.played);
+  setPodcastEpisodePlayed(openPodcastEpisodeId, !played);
+}
+
+// ── Add podcast dialog ────────────────────────────────────────────────────────
+
+let podcastSearchDebounceTimer = null;
+let podcastAddMode = "search"; // "search" | "url"
+
+function openPodcastAddDialog() {
+  const dialog = document.getElementById("podcastAddDialog");
+  if (!dialog) return;
+  podcastAddMode = "search";
+  setPodcastAddMode("search");
+  document.getElementById("podcastSearchInput").value = "";
+  document.getElementById("podcastSearchResults").hidden = true;
+  document.getElementById("podcastSearchResults").innerHTML = "";
+  dialog.showModal();
+  requestAnimationFrame(() => document.getElementById("podcastSearchInput")?.focus());
+}
+
+function closePodcastAddDialog() {
+  document.getElementById("podcastAddDialog")?.close();
+}
+
+function togglePodcastAddMode() {
+  setPodcastAddMode(podcastAddMode === "search" ? "url" : "search");
+}
+
+function setPodcastAddMode(mode) {
+  podcastAddMode = mode;
+  const searchMode = document.getElementById("podcastSearchMode");
+  const urlMode = document.getElementById("podcastUrlMode");
+  const urlActions = document.getElementById("podcastUrlActions");
+  const toggleBtn = document.getElementById("podcastModeToggleBtn");
+  const status = document.getElementById("podcastAddStatus");
+  const urlInput = document.getElementById("podcastFeedUrlInput");
+  if (mode === "search") {
+    if (searchMode) searchMode.hidden = false;
+    if (urlMode) urlMode.hidden = true;
+    if (urlActions) urlActions.hidden = true;
+    if (toggleBtn) toggleBtn.textContent = "Paste RSS URL instead";
+    requestAnimationFrame(() => document.getElementById("podcastSearchInput")?.focus());
+  } else {
+    if (searchMode) searchMode.hidden = true;
+    if (urlMode) urlMode.hidden = false;
+    if (urlActions) urlActions.hidden = false;
+    if (toggleBtn) toggleBtn.textContent = "Search by name instead";
+    if (status) { status.textContent = ""; status.classList.remove("is-error"); }
+    if (urlInput) urlInput.value = "";
+    requestAnimationFrame(() => urlInput?.focus());
+  }
+}
+
+// ── History tab ───────────────────────────────────────────────────────────────
+
+function renderPodcastHistoryTab() {
+  const listEl = document.getElementById("podcastEpisodeList");
+  if (!listEl) return;
+
+  const progress = state.podcastProgress || {};
+  const hasPlaylists = (state.podcastPlaylists || []).length > 0;
+
+  const played = (state.podcasts || []).flatMap(p =>
+    (p.episodes || [])
+      .filter(e => progress[e.id]?.played)
+      .map(e => ({ ...e, showId: p.id, showTitle: p.title, showArt: p.art, playedAt: progress[e.id]?.playedAt || null }))
+  ).sort((a, b) => {
+    if (a.playedAt && b.playedAt) return new Date(b.playedAt) - new Date(a.playedAt);
+    if (a.playedAt) return -1;
+    if (b.playedAt) return 1;
+    return new Date(b.pubDate) - new Date(a.pubDate);
+  });
+
+  if (!played.length) {
+    listEl.innerHTML = `<div class="article-empty"><p>No played episodes yet.</p><p>Episodes you finish will appear here.</p></div>`;
+    return;
+  }
+
+  listEl.innerHTML = played.map(e => {
+    const whenPlayed = e.playedAt
+      ? `<span class="article-row-date">Played ${formatArticleDate(e.playedAt)}</span>`
+      : "";
+    const dur = e.duration || progress[e.id]?.duration || 0;
+    return `
+    <div class="article-row podcast-episode-row article-row--read" data-episode-id="${escapeHtml(e.id)}" role="button" tabindex="0">
+      <svg class="article-row-check" viewBox="0 0 24 24" aria-label="Played"><polyline points="20 6 9 17 4 12"/></svg>
+      <div class="article-row-main">
+        <div class="article-row-title">${escapeHtml(e.title)}</div>
+        <div class="article-row-meta">
+          <span class="article-row-pub">${escapeHtml(e.showTitle)}</span>
+          <span class="article-row-date">${escapeHtml(formatArticleDate(e.pubDate))}</span>
+          ${dur ? `<span class="article-row-date">${formatPodcastDuration(dur)}</span>` : ""}
+          ${whenPlayed}
+        </div>
+      </div>
+      <div class="article-row-actions">
+        <button class="article-row-action-btn" type="button" title="Mark as unplayed" aria-label="Mark as unplayed" data-episode-mark="unmark">
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/><line x1="3" y1="3" x2="21" y2="21" stroke-width="2"/></svg>
+        </button>
+      </div>
+    </div>`;
+  }).join("");
+
+  listEl.querySelectorAll(".podcast-episode-row").forEach(row => {
+    const id = row.dataset.episodeId;
+    row.addEventListener("click", (ev) => { if (ev.target.closest(".article-row-actions")) return; openPodcastEpisode(id); });
+    row.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openPodcastEpisode(id); } });
+    row.querySelector("[data-episode-mark='unmark']")?.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      setPodcastEpisodePlayed(id, false);
+      renderPodcastHistoryTab();
+    });
+  });
+}
+
+// ── Search tab ────────────────────────────────────────────────────────────────
+
+let podcastTabSearchTimer = null;
+let podcastTabSearchQuery = "";
+let podcastTabSearchMode = "podcasts";
+let podcastTabSearchCache = { shows: [], episodes: [] };
+let podcastTabEpisodeMap = new Map(); // id → episode obj for iTunes results not in state.podcasts
+
+function renderPodcastSearchTab() {
+  const listEl = document.getElementById("podcastEpisodeList");
+  if (!listEl) return;
+  const emptyMsg = podcastTabSearchQuery.length >= 2 ? "Searching…"
+    : podcastTabSearchMode === "podcasts" ? "Search for podcasts to subscribe to."
+    : "Search for episodes within your subscribed shows.";
+  listEl.innerHTML = `
+    <div class="podcast-tab-search">
+      <div class="podcast-tab-search-bar">
+        <svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input class="podcast-tab-search-input" id="podcastTabSearchInput" type="search"
+               placeholder="${podcastTabSearchMode === "podcasts" ? "Search podcasts…" : "Search episodes…"}" autocomplete="off"
+               value="${escapeHtml(podcastTabSearchQuery)}" />
+      </div>
+      <div class="podcast-search-mode-toggle">
+        <button class="podcast-search-mode-btn${podcastTabSearchMode === "podcasts" ? " is-active" : ""}" data-mode="podcasts">Podcasts</button>
+        <button class="podcast-search-mode-btn${podcastTabSearchMode === "episodes" ? " is-active" : ""}" data-mode="episodes">Episodes</button>
+      </div>
+      <div id="podcastTabSearchResults">
+        <div class="podcast-search-empty">${emptyMsg}</div>
+      </div>
+    </div>`;
+
+  const input = listEl.querySelector("#podcastTabSearchInput");
+  input?.addEventListener("input", () => {
+    podcastTabSearchQuery = input.value.trim();
+    debounceTabSearch(podcastTabSearchQuery);
+  });
+
+  listEl.querySelectorAll(".podcast-search-mode-btn").forEach(btn => {
+    btn.addEventListener("click", () => switchPodcastSearchMode(btn.dataset.mode));
+  });
+
+  requestAnimationFrame(() => input?.focus());
+  if (podcastTabSearchQuery.length >= 2) runPodcastTabSearch(podcastTabSearchQuery);
+  else if (podcastTabSearchCache.shows.length || podcastTabSearchCache.episodes.length) {
+    renderPodcastTabSearchResults(podcastTabSearchCache.shows, podcastTabSearchCache.episodes);
+  }
+}
+
+function switchPodcastSearchMode(mode) {
+  podcastTabSearchMode = mode;
+  document.querySelectorAll(".podcast-search-mode-btn").forEach(b =>
+    b.classList.toggle("is-active", b.dataset.mode === mode)
+  );
+  const input = document.getElementById("podcastTabSearchInput");
+  if (input) input.placeholder = mode === "podcasts" ? "Search podcasts…" : "Search episodes…";
+  renderPodcastTabSearchResults(podcastTabSearchCache.shows, podcastTabSearchCache.episodes);
+}
+
+function debounceTabSearch(query) {
+  clearTimeout(podcastTabSearchTimer);
+  const resultsEl = document.getElementById("podcastTabSearchResults");
+  if (query.length < 2) {
+    podcastTabSearchCache = { shows: [], episodes: [] };
+    const emptyMsg = podcastTabSearchMode === "podcasts" ? "Search for podcasts to subscribe to." : "Search for episodes within your subscribed shows.";
+    if (resultsEl) resultsEl.innerHTML = `<div class="podcast-search-empty">${emptyMsg}</div>`;
+    return;
+  }
+  if (resultsEl) resultsEl.innerHTML = `<div class="podcast-search-empty">Searching…</div>`;
+  podcastTabSearchTimer = setTimeout(() => runPodcastTabSearch(query), 320);
+}
+
+async function runPodcastTabSearch(query) {
+  const term = encodeURIComponent(query);
+  const [showRes, episodeRes] = await Promise.allSettled([
+    fetch(`https://itunes.apple.com/search?term=${term}&entity=podcast&limit=10`),
+    fetch(`https://itunes.apple.com/search?term=${term}&media=podcast&entity=podcastEpisode&limit=25`)
+  ]);
+
+  if (!document.getElementById("podcastTabSearchResults")) return;
+
+  let showResults = [];
+  if (showRes.status === "fulfilled" && showRes.value.ok) {
+    showResults = (await showRes.value.json()).results || [];
+  }
+
+  let episodeResults = [];
+  if (episodeRes.status === "fulfilled" && episodeRes.value.ok) {
+    const raw = (await episodeRes.value.json()).results || [];
+    episodeResults = raw.map(r => {
+      const id = `itunes-ep-${r.trackId}`;
+      const ep = {
+        id,
+        title: r.trackName || "",
+        showTitle: r.collectionName || "",
+        pubDate: r.releaseDate || "",
+        duration: r.trackTimeMillis ? Math.round(r.trackTimeMillis / 1000) : 0,
+        description: r.description || r.shortDescription || "",
+        audioUrl: r.episodeUrl || r.previewUrl || "",
+        art: r.artworkUrl600 || r.artworkUrl100 || "",
+      };
+      podcastTabEpisodeMap.set(id, ep);
+      return ep;
+    });
+  }
+
+  podcastTabSearchCache = { shows: showResults, episodes: episodeResults };
+  renderPodcastTabSearchResults(showResults, episodeResults);
+}
+
+function renderPodcastTabSearchResults(shows, episodes) {
+  const resultsEl = document.getElementById("podcastTabSearchResults");
+  if (!resultsEl) return;
+
+  const showingPodcasts = podcastTabSearchMode === "podcasts";
+  const active = showingPodcasts ? shows : episodes;
+
+  if (!active.length) {
+    const emptyMsg = (shows.length === 0 && episodes.length === 0)
+      ? "No results found."
+      : showingPodcasts ? "No podcasts found. Try Episodes." : "No episodes found in your subscribed shows.";
+    resultsEl.innerHTML = `<div class="podcast-search-empty">${emptyMsg}</div>`;
+    return;
+  }
+
+  const addedUrls = new Set((state.podcasts || []).map(p => p.url));
+  const hasPlaylists = (state.podcastPlaylists || []).length > 0;
+  let html = "";
+
+  if (showingPodcasts) {
+    html += shows.map((r, i) => {
+      const art = (r.artworkUrl100 || "").replace("100x100", "300x300");
+      const added = addedUrls.has(r.feedUrl);
+      return `
+      <button class="podcast-search-result${added ? " is-added" : ""}" type="button" data-show-result="${i}" ${added ? 'aria-disabled="true"' : ""}>
+        ${art
+          ? `<img class="podcast-result-art" src="${escapeHtml(art)}" alt="" loading="lazy">`
+          : `<div class="podcast-result-art podcast-result-art-placeholder"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div>`}
+        <div class="podcast-result-info">
+          <div class="podcast-result-name">${escapeHtml(r.collectionName || "")}</div>
+          <div class="podcast-result-meta">${escapeHtml(r.artistName || "")}${r.primaryGenreName ? ` · ${escapeHtml(r.primaryGenreName)}` : ""}</div>
+        </div>
+        <span class="podcast-result-action">${added ? "Subscribed" : "Subscribe"}</span>
+      </button>`;
+    }).join("");
+  } else {
+    html += episodes.map(e => podcastEpisodeRowHtml(e, { showShowTitle: true, hasPlaylists })).join("");
+  }
+
+  resultsEl.innerHTML = html;
+
+  if (showingPodcasts) {
+    resultsEl.querySelectorAll("[data-show-result]:not(.is-added)").forEach(btn => {
+      const idx = parseInt(btn.dataset.showResult, 10);
+      btn.addEventListener("click", () => subscribeFromTabSearch(shows[idx], btn));
+    });
+  } else {
+    wirePodcastEpisodeRows(resultsEl);
+  }
+}
+
+async function subscribeFromTabSearch(result, btn) {
+  const feedUrl = result.feedUrl;
+  if (!feedUrl || (state.podcasts || []).find(p => p.url === feedUrl)) return;
+  if (!Array.isArray(state.podcasts)) state.podcasts = [];
+
+  btn.classList.add("is-loading");
+  const actionEl = btn.querySelector(".podcast-result-action");
+  if (actionEl) actionEl.textContent = "Loading…";
+
+  try {
+    const fetched = await callNetlifyFunction("fetch-podcast", { url: feedUrl });
+    if (fetched.error) { if (actionEl) actionEl.textContent = "Failed"; btn.classList.remove("is-loading"); return; }
+    const id = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `pod_${Date.now()}`;
+    state.podcasts.push({
+      id, url: feedUrl,
+      title: fetched.title || result.collectionName,
+      description: fetched.description || "",
+      art: fetched.art || result.artworkUrl100 || "",
+      episodes: fetched.episodes,
+      lastFetched: new Date().toISOString()
+    });
+    persist();
+    btn.classList.remove("is-loading");
+    btn.classList.add("is-added");
+    btn.setAttribute("aria-disabled", "true");
+    if (actionEl) actionEl.textContent = "Subscribed ✓";
+  } catch {
+    if (actionEl) actionEl.textContent = "Failed";
+    btn.classList.remove("is-loading");
+  }
+}
+
+// ── Add podcast dialog search ─────────────────────────────────────────────────
+
+function debouncePodcastSearch(query) {
+  clearTimeout(podcastSearchDebounceTimer);
+  const resultsEl = document.getElementById("podcastSearchResults");
+  if (query.length < 2) {
+    if (resultsEl) resultsEl.hidden = true;
+    return;
+  }
+  podcastSearchDebounceTimer = setTimeout(() => runPodcastSearch(query), 320);
+}
+
+async function runPodcastSearch(query) {
+  const resultsEl = document.getElementById("podcastSearchResults");
+  if (!resultsEl) return;
+  resultsEl.hidden = false;
+  resultsEl.innerHTML = `<div class="podcast-search-empty">Searching…</div>`;
+  try {
+    const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=podcast&limit=15`);
+    if (!res.ok) throw new Error("Search failed");
+    const data = await res.json();
+    renderPodcastSearchResults(data.results || []);
+  } catch {
+    resultsEl.innerHTML = `<div class="podcast-search-empty">Search failed — check your connection.</div>`;
+  }
+}
+
+function renderPodcastSearchResults(results) {
+  const resultsEl = document.getElementById("podcastSearchResults");
+  if (!resultsEl) return;
+  const addedUrls = new Set((state.podcasts || []).map(p => p.url));
+  if (!results.length) {
+    resultsEl.innerHTML = `<div class="podcast-search-empty">No podcasts found.</div>`;
+    return;
+  }
+  resultsEl.innerHTML = results.map((r, i) => {
+    const art = (r.artworkUrl100 || "").replace("100x100", "300x300");
+    const added = addedUrls.has(r.feedUrl);
+    return `
+    <button class="podcast-search-result${added ? " is-added" : ""}" type="button" data-result-index="${i}" ${added ? 'aria-disabled="true"' : ""}>
+      ${art
+        ? `<img class="podcast-result-art" src="${escapeHtml(art)}" alt="" loading="lazy">`
+        : `<div class="podcast-result-art podcast-result-art-placeholder"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div>`}
+      <div class="podcast-result-info">
+        <div class="podcast-result-name">${escapeHtml(r.collectionName || "")}</div>
+        <div class="podcast-result-meta">${escapeHtml(r.artistName || "")}${r.primaryGenreName ? ` · ${escapeHtml(r.primaryGenreName)}` : ""}</div>
+      </div>
+      <span class="podcast-result-action">${added ? "Added" : "Add"}</span>
+    </button>`;
+  }).join("");
+
+  resultsEl.querySelectorAll(".podcast-search-result:not(.is-added)").forEach(btn => {
+    const idx = parseInt(btn.dataset.resultIndex, 10);
+    btn.addEventListener("click", () => addPodcastFromSearchResult(results[idx], btn));
+  });
+}
+
+async function addPodcastFromSearchResult(result, btn) {
+  const feedUrl = result.feedUrl;
+  if (!feedUrl) return;
+  if (!Array.isArray(state.podcasts)) state.podcasts = [];
+  if (state.podcasts.find(p => p.url === feedUrl)) return;
+
+  btn.classList.add("is-loading");
+  const actionEl = btn.querySelector(".podcast-result-action");
+  if (actionEl) actionEl.textContent = "Loading…";
+
+  try {
+    const fetched = await callNetlifyFunction("fetch-podcast", { url: feedUrl });
+    if (fetched.error) {
+      if (actionEl) actionEl.textContent = "Failed";
+      btn.classList.remove("is-loading");
+      return;
+    }
+    const id = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `pod_${Date.now()}`;
+    state.podcasts.push({
+      id, url: feedUrl,
+      title: fetched.title || result.collectionName,
+      description: fetched.description || "",
+      art: fetched.art || result.artworkUrl100 || "",
+      episodes: fetched.episodes,
+      lastFetched: new Date().toISOString()
+    });
+    persist();
+    closePodcastAddDialog();
+    switchPodcastTab("shows");
+    openPodcastShow(id);
+  } catch {
+    if (actionEl) actionEl.textContent = "Failed";
+    btn.classList.remove("is-loading");
+  }
+}
+
+async function confirmAddPodcast() {
+  const input = document.getElementById("podcastFeedUrlInput");
+  const status = document.getElementById("podcastAddStatus");
+  const btn = document.getElementById("confirmPodcastAddBtn");
+  const url = input?.value.trim();
+  if (!url) return;
+
+  if (!Array.isArray(state.podcasts)) state.podcasts = [];
+  if (state.podcasts.find(p => p.url === url)) {
+    if (status) { status.textContent = "This feed is already added."; status.classList.add("is-error"); }
+    return;
+  }
+
+  if (btn) { btn.disabled = true; btn.textContent = "Loading…"; }
+  if (status) { status.textContent = "Fetching feed…"; status.classList.remove("is-error"); }
+
+  try {
+    const result = await callNetlifyFunction("fetch-podcast", { url });
+    if (result.error) {
+      if (status) { status.textContent = result.error; status.classList.add("is-error"); }
+      return;
+    }
+    const id = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `pod_${Date.now()}`;
+    state.podcasts.push({ id, url, title: result.title, description: result.description, art: result.art, episodes: result.episodes, lastFetched: new Date().toISOString() });
+    persist();
+    closePodcastAddDialog();
+    switchPodcastTab("shows");
+    openPodcastShow(id);
+  } catch {
+    if (status) { status.textContent = "Failed to load feed. Check the URL and try again."; status.classList.add("is-error"); }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Add Podcast"; }
+  }
+}
+
+function formatPodcastDuration(seconds) {
+  if (!seconds || isNaN(seconds)) return "0:00";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 function renderArticleList(containerId, pub) {
   const listEl = document.getElementById(containerId);
   if (!listEl) return;
-  const articles = getFilteredSortedArticles(pub);
+  const allArticles = getFilteredSortedArticles(pub);
   const readIds = new Set(state.readArticleIds || []);
+  const readDates = state.articleReadDates || {};
   const sortOrder = state.articleSortOrder || "newest";
+
+  const articles = articleViewMode === "archive"
+    ? allArticles.filter(a => readIds.has(a.id)).sort((a, b) => {
+        const da = readDates[a.id] || a.savedAt || "";
+        const db = readDates[b.id] || b.savedAt || "";
+        return db.localeCompare(da);
+      })
+    : allArticles.filter(a => !readIds.has(a.id));
 
   if (!articles.length) {
     const pubEntry = getReadPublications().find(p => p.key === pub);
-    const pubName = pub === "all" ? "saved" : pub === "other" ? "Other" : (pubEntry?.label || pub);
+    const pubName = pub === "all" ? "saved" : pub === "other" ? "Other" : pub === "email" ? "email" : (pubEntry?.label || pub);
     const hasCookies = hasSyncCookies();
     const isPub = !!pubEntry;
-    const syncHint = hasCookies && isPub
-      ? `<p>Click the <strong>sync</strong> button above to import your saved articles, or click <strong>+</strong> to paste a URL.</p>`
-      : `<p>Click <strong>+</strong> to paste an article URL${isPub ? ", or configure sync in <strong>Settings → Read &amp; Listen</strong>" : ""}.</p>`;
+    const syncHint = pub === "email"
+      ? `<p>Emails saved from Gmail will appear here.</p>`
+      : hasCookies && isPub
+        ? `<p>Click the <strong>sync</strong> button above to import your saved articles, or click <strong>+</strong> to paste a URL.</p>`
+        : `<p>Click <strong>+</strong> to paste an article URL${isPub ? ", or configure sync in <strong>Settings → Read &amp; Listen</strong>" : ""}.</p>`;
     listEl.innerHTML = `<div class="article-empty"><p>No ${pubName} articles yet.</p>${syncHint}</div>`;
     return;
   }
 
-  const sortBar = pub === "all" ? `
+  const sortBar = `
     <div class="article-sort-bar">
-      <button type="button" class="sort-btn${sortOrder === "newest" ? " is-active" : ""}" data-sort="newest">Newest first</button>
-      <button type="button" class="sort-btn${sortOrder === "oldest" ? " is-active" : ""}" data-sort="oldest">Oldest first</button>
+      <div class="article-view-toggle">
+        <button type="button" class="sort-btn${articleViewMode === "unread" ? " is-active" : ""}" data-article-view="unread">Unread</button>
+        <button type="button" class="sort-btn${articleViewMode === "archive" ? " is-active" : ""}" data-article-view="archive">Archive</button>
+      </div>
+      ${articleViewMode === "unread" && pub === "all" ? `
+        <button type="button" class="sort-btn${sortOrder === "newest" ? " is-active" : ""}" data-sort="newest">Newest</button>
+        <button type="button" class="sort-btn${sortOrder === "oldest" ? " is-active" : ""}" data-sort="oldest">Oldest</button>
+      ` : ""}
     </div>
-  ` : "";
+  `;
+
+  const markLabel = "Mark as read";
+  const unmarkLabel = "Mark as unread";
+  const checkIcon = `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
+  const unmarkIcon = `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/><line x1="3" y1="3" x2="21" y2="21" stroke-width="2"/></svg>`;
+  const trashIcon = `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
 
   listEl.innerHTML = sortBar + articles.map((a) => {
     const isRead = readIds.has(a.id);
@@ -25288,9 +28937,18 @@ function renderArticleList(containerId, pub) {
           ${a.author ? `<span class="article-row-author">${escapeHtml(a.author)}</span>` : ""}
           ${pubLabel ? `<span class="article-row-pub">${escapeHtml(pubLabel)}</span>` : ""}
           <span class="article-row-date">${escapeHtml(formatArticleDate(a.savedAt))}</span>
+          ${articleViewMode === "archive" && readDates[a.id] ? `<span class="article-row-date">Read ${escapeHtml(formatArticleDate(readDates[a.id]))}</span>` : ""}
         </div>
       </div>
       ${isRead ? `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Read"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
+      <div class="article-row-actions">
+        <button class="article-row-action-btn" type="button" data-article-action="${isRead ? "unmark" : "mark"}" title="${isRead ? unmarkLabel : markLabel}" aria-label="${isRead ? unmarkLabel : markLabel}">
+          ${isRead ? unmarkIcon : checkIcon}
+        </button>
+        <button class="article-row-action-btn" type="button" data-article-action="delete" title="Delete" aria-label="Delete">
+          ${trashIcon}
+        </button>
+      </div>
     </div>`;
   }).join("");
 
@@ -25301,9 +28959,41 @@ function renderArticleList(containerId, pub) {
       renderArticleList(containerId, pub);
     });
   });
+
+  listEl.querySelectorAll("[data-article-view]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      articleViewMode = btn.dataset.articleView;
+      renderArticleList(containerId, pub);
+    });
+  });
   listEl.querySelectorAll(".article-row").forEach((row) => {
-    row.addEventListener("click", () => openArticle(row.dataset.articleId, containerId));
-    row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") openArticle(row.dataset.articleId, containerId); });
+    const id = row.dataset.articleId;
+    row.addEventListener("click", (e) => {
+      if (e.target.closest(".article-row-actions")) return;
+      openArticle(id, containerId);
+    });
+    row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") openArticle(id, containerId); });
+    row.querySelector(".article-row-actions").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const btn = e.target.closest("[data-article-action]");
+      if (!btn) return;
+      const action = btn.dataset.articleAction;
+      if (action === "mark") {
+        markArticleRead(id);
+        btn.dataset.articleAction = "unmark";
+        btn.title = unmarkLabel;
+        btn.setAttribute("aria-label", unmarkLabel);
+        btn.innerHTML = unmarkIcon;
+      } else if (action === "unmark") {
+        markArticleUnread(id);
+        btn.dataset.articleAction = "mark";
+        btn.title = markLabel;
+        btn.setAttribute("aria-label", markLabel);
+        btn.innerHTML = checkIcon;
+      } else if (action === "delete") {
+        deleteArticle(id);
+      }
+    });
   });
 }
 
@@ -25324,6 +29014,8 @@ function markArticleRead(id) {
   if (!Array.isArray(state.readArticleIds)) state.readArticleIds = [];
   if (!state.readArticleIds.includes(id)) {
     state.readArticleIds.push(id);
+    if (!state.articleReadDates) state.articleReadDates = {};
+    if (!state.articleReadDates[id]) state.articleReadDates[id] = new Date().toISOString();
     persist();
   }
   document.querySelectorAll(`[data-article-id="${id}"]`).forEach((row) => {
@@ -25338,18 +29030,17 @@ function openArticle(id, fromListId) {
   const article = (state.savedArticles || []).find((a) => a.id === id);
   if (!article) return;
   openArticleId = id;
+  markArticleRead(id);
 
-  const isReadPage = fromListId === "articleList";
-  if (isReadPage) markArticleRead(id);
-  const readerPanel = isReadPage ? document.getElementById("articleReaderPanel") : document.getElementById("listenPlayerPanel");
-  const listPanel = isReadPage ? document.getElementById("articleListPanel") : document.getElementById("listenListPanel");
+  const readerPanel = document.getElementById("articleReaderPanel");
+  const listPanel = document.getElementById("articleListPanel");
   if (!readerPanel) return;
 
   readerPanel.hidden = false;
 
-  const titleEl = readerPanel.querySelector(isReadPage ? "#articleReaderTitle" : "#listenPlayerTitle");
-  const metaEl = readerPanel.querySelector(isReadPage ? "#articleReaderMeta" : "#listenPlayerMeta");
-  const textEl = readerPanel.querySelector(isReadPage ? "#articleReaderText" : "#listenPlayerText");
+  const titleEl = document.getElementById("articleReaderTitle");
+  const metaEl = document.getElementById("articleReaderMeta");
+  const textEl = document.getElementById("articleReaderText");
 
   if (titleEl) titleEl.textContent = article.title || article.url;
   if (metaEl) {
@@ -25373,25 +29064,40 @@ function openArticle(id, fromListId) {
 function closeArticleReader() {
   const readerPanel = document.getElementById("articleReaderPanel");
   if (readerPanel) readerPanel.hidden = true;
+  stopListen();
   openArticleId = null;
   document.querySelectorAll(".article-row--active").forEach((r) => r.classList.remove("article-row--active"));
 }
 
+function markArticleUnread(id) {
+  state.readArticleIds = (state.readArticleIds || []).filter((rid) => rid !== id);
+  persist();
+  document.querySelectorAll(`[data-article-id="${CSS.escape(id)}"]`).forEach((row) => {
+    row.classList.remove("article-row--read");
+    row.querySelector(".article-row-check")?.remove();
+  });
+}
+
+function deleteArticle(id) {
+  recordDeletion("savedArticles", id);
+  state.savedArticles = (state.savedArticles || []).filter((a) => a.id !== id);
+  state.readArticleIds = (state.readArticleIds || []).filter((rid) => rid !== id);
+  persist();
+  if (openArticleId === id) closeArticleReader();
+  if (activeAppArea === "media" && !MEDIA_SERVICE_TABS.includes(activeMediaTab)) {
+    renderArticleList("articleList", activeMediaTab);
+  }
+}
+
 function deleteOpenArticle() {
   if (!openArticleId) return;
-  if (!confirm("Remove this article?")) return;
-  const deletedId = openArticleId;
-  state.savedArticles = (state.savedArticles || []).filter((a) => a.id !== deletedId);
-  state.readArticleIds = (state.readArticleIds || []).filter((id) => id !== deletedId);
-  persist();
-  closeArticleReader();
-  renderArticleList("articleList", activeArticleTab);
+  deleteArticle(openArticleId);
 }
 
 async function fetchArticleText(id) {
   const article = (state.savedArticles || []).find((a) => a.id === id);
   if (!article) return;
-  const textEl = document.getElementById("articleReaderText") || document.getElementById("listenPlayerText");
+  const textEl = document.getElementById("articleReaderText");
   if (textEl) textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
   try {
     const res = await callNetlifyFunction("fetch-article", { url: article.url, publication: article.publication });
@@ -25401,8 +29107,7 @@ async function fetchArticleText(id) {
       if (res.author) article.author = res.author;
       if (res.date) article.date = res.date;
       persist();
-      const fromList = activeAppArea === "listen" ? "listenList" : "articleList";
-      openArticle(id, fromList);
+      openArticle(id, "articleList");
     } else {
       const msg = res?.error || "Could not extract article text.";
       if (textEl) textEl.innerHTML = `<div class="article-fetch-prompt"><p class="article-fetch-hint">${escapeHtml(msg)}</p><a href="${escapeHtml(article.url)}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`;
@@ -25439,11 +29144,7 @@ function saveArticleUrl(url) {
   if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
   state.savedArticles.push({ id, url, title: url, publication: pub, savedAt: new Date().toISOString(), author: null, date: null, text: null });
   persist();
-  if (activeAppArea === "read") {
-    switchArticleTab(pub);
-  } else if (activeAppArea === "listen") {
-    switchListenTab(pub);
-  }
+  if (activeAppArea === "media") switchMediaTab(pub);
 }
 
 // Called by the Chrome extension after it saves an article to Supabase, so the
@@ -25454,10 +29155,8 @@ window._liveAddArticle = function(article) {
   if (state.savedArticles.find(a => a.url === article.url)) return;
   state.savedArticles.push(article);
   persist();
-  if (activeAppArea === "read" && activeArticleTab !== "books") {
-    renderArticleList("articleList", activeArticleTab);
-  } else if (activeAppArea === "listen") {
-    renderArticleList("listenList", activeListenTab);
+  if (activeAppArea === "media" && !MEDIA_SERVICE_TABS.includes(activeMediaTab)) {
+    renderArticleList("articleList", activeMediaTab);
   }
 };
 
@@ -25474,6 +29173,62 @@ function detectArticlePublication(url) {
 function formatArticleDate(isoStr) {
   if (!isoStr) return "";
   try { return new Date(isoStr).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); } catch { return ""; }
+}
+
+const hclAvailabilityCache = new Map();
+
+function getLibraryKey() { return state.libraryKey || "hclib"; }
+
+function hclCatalogUrl(title, authors) {
+  const q = [title, ...(authors || []).slice(0, 1)].filter(Boolean).join(" ");
+  return `https://${getLibraryKey()}.bibliocommons.com/v2/search?query=${encodeURIComponent(q)}&searchType=smart`;
+}
+
+function libbySearchUrl(title) {
+  return `https://libbyapp.com/library/${getLibraryKey()}/search/query-${encodeURIComponent(title)}`;
+}
+
+function audibleSearchUrl(title, authors) {
+  const q = [title, ...(authors || []).slice(0, 1)].filter(Boolean).join(" ");
+  return `https://www.audible.com/search?keywords=${encodeURIComponent(q)}`;
+}
+
+async function loadHclAvailability(itemId, title, authors) {
+  if (hclAvailabilityCache.has(itemId)) return hclAvailabilityCache.get(itemId);
+  hclAvailabilityCache.set(itemId, null); // mark in-flight
+  try {
+    const res = await callNetlifyFunction("check-hcl", { title, authors: authors || [], libraryKey: getLibraryKey() });
+    hclAvailabilityCache.set(itemId, res);
+    return res;
+  } catch {
+    hclAvailabilityCache.set(itemId, { status: "error" });
+    return null;
+  }
+}
+
+function publicationLogoUrl(domain) {
+  if (!domain) return null;
+  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain.replace(/^www\./, ""))}&sz=64`;
+}
+
+function getArticleSortDate(article) {
+  if (article.date) {
+    const d = new Date(article.date);
+    if (!isNaN(d.getTime())) return d.toISOString();
+  }
+  return article.savedAt || new Date(0).toISOString();
+}
+
+async function playArticleFromPlaylist(articleId) {
+  let article = (state.savedArticles || []).find(a => a.id === articleId);
+  if (!article) return;
+  if (!article.text) {
+    await fetchArticleText(articleId);
+    article = (state.savedArticles || []).find(a => a.id === articleId);
+    if (!article?.text) { alert("Could not load article text for playback."); return; }
+  }
+  stopListen();
+  startListenTTS(article);
 }
 
 // ─── Article sync ─────────────────────────────────────────────────────────────
@@ -25494,11 +29249,9 @@ function maybeAutoSync(source) {
 async function syncSavedArticles(source, silent = false) {
   const syncBtn = source === "read"
     ? document.getElementById("articleSyncBtn")
-    : source === "listen"
-      ? document.getElementById("listenSyncBtn")
-      : source === "dialog"
-        ? document.getElementById("dialogSyncNowBtn")
-        : document.getElementById("syncArticlesSettingsBtn");
+    : source === "dialog"
+      ? document.getElementById("dialogSyncNowBtn")
+      : document.getElementById("syncArticlesSettingsBtn");
   const statusElId = source === "dialog" ? "dialogSyncStatus" : "articleSyncStatus";
   const setStatus = (msg) => {
     const el = document.getElementById(statusElId);
@@ -25527,11 +29280,9 @@ async function syncSavedArticles(source, silent = false) {
       if (!state.articleSync) state.articleSync = {};
       state.articleSync.lastSyncedAt = new Date().toISOString();
       persist();
-      const allPubKeys = ["all", "other", ...getReadPublications().map(p => p.key)];
-      if (source === "read" && allPubKeys.includes(activeArticleTab)) {
-        renderArticleList("articleList", activeArticleTab);
-      } else if (source === "listen" && allPubKeys.includes(activeListenTab)) {
-        renderArticleList("listenList", activeListenTab);
+      const allPubKeys = ["all", "other", "email", ...getReadPublications().map(p => p.key)];
+      if (activeAppArea === "media" && allPubKeys.includes(activeMediaTab)) {
+        renderArticleList("articleList", activeMediaTab);
       }
       if (!silent) {
         const errors = [res.nytError, res.economistError].filter(Boolean);
@@ -25609,13 +29360,8 @@ function saveDialogEconomistCookie() {
 
 function updateSyncButtons(source) {
   const pubs = getReadPublications();
-  if (source === "read") {
-    const syncBtn = document.getElementById("articleSyncBtn");
-    if (syncBtn) syncBtn.hidden = !pubs.some(p => p.key === activeArticleTab) || !hasSyncCookies();
-  } else if (source === "listen") {
-    const syncBtn = document.getElementById("listenSyncBtn");
-    if (syncBtn) syncBtn.hidden = !pubs.some(p => p.key === activeListenTab) || !hasSyncCookies();
-  }
+  const syncBtn = document.getElementById("articleSyncBtn");
+  if (syncBtn) syncBtn.hidden = !pubs.some(p => p.key === activeMediaTab) || !hasSyncCookies();
 }
 
 function initReadListenSettings() {
@@ -25657,76 +29403,13 @@ function populateReadListenSettings() {
   if (econInput && state.articleSync?.economistCookie) econInput.placeholder = "blaize_session cookie set ✓";
 }
 
-// ─── Listen page ──────────────────────────────────────────────────────────────
+// ─── TTS audio ────────────────────────────────────────────────────────────────
 
-let activeListenTab = "all";
-let listenTabsWired = false;
-let listenUtterance = null;
+let listenAudio = null;
+let listenAudioQueue = [];
 let listenSpeaking = false;
-
-function initListenPage() {
-  renderListenPubTabs();
-  wireListenTabs();
-  switchListenTab(activeListenTab);
-  maybeAutoSync("listen");
-}
-
-function wireListenTabs() {
-  if (listenTabsWired) return;
-  listenTabsWired = true;
-
-  const sidebar = document.getElementById("listenSidebar");
-  if (sidebar) {
-    sidebar.querySelectorAll("[data-listen-tab]").forEach((btn) => {
-      if (btn.closest("#listenPubTabs")) return;
-      btn.addEventListener("click", () => switchListenTab(btn.dataset.listenTab));
-    });
-  }
-
-  document.getElementById("listenPlayerCloseBtn")?.addEventListener("click", closeListenPlayer);
-  document.getElementById("listenAddBtn")?.addEventListener("click", openArticleSaveDialog);
-  document.getElementById("listenSyncBtn")?.addEventListener("click", () => syncSavedArticles("listen"));
-  document.getElementById("listenSyncSettingsBtn")?.addEventListener("click", () => openSyncSettingsDialog("listen"));
-  document.getElementById("listenPageReadBtn")?.addEventListener("click", () => {
-    switchArticleTab(["all", "other", ...getReadPublications().map(p => p.key)].includes(activeListenTab) ? activeListenTab : "all");
-    showReadingApp();
-  });
-  document.getElementById("listenPlayPauseBtn")?.addEventListener("click", toggleListenPlayPause);
-  document.getElementById("listenStopBtn")?.addEventListener("click", stopListen);
-  document.getElementById("listenSpeedSelect")?.addEventListener("change", (e) => {
-    if (listenUtterance) listenUtterance.rate = parseFloat(e.target.value);
-  });
-}
-
-function switchListenTab(tab) {
-  activeListenTab = tab;
-  const sidebar = document.getElementById("listenSidebar");
-  if (sidebar) {
-    sidebar.querySelectorAll("[data-listen-tab]").forEach((btn) => {
-      const active = btn.dataset.listenTab === tab;
-      btn.classList.toggle("is-active", active);
-      btn.setAttribute("aria-selected", String(active));
-    });
-  }
-  const listEl = document.getElementById("listenList");
-  if (!listEl) return;
-
-  const listenSyncBtn = document.getElementById("listenSyncBtn");
-  const listenSyncSettingsBtn = document.getElementById("listenSyncSettingsBtn");
-  const isListenArticleTab = getReadPublications().some(p => p.key === tab);
-  if (listenSyncBtn) listenSyncBtn.hidden = !isListenArticleTab || !hasSyncCookies();
-  if (listenSyncSettingsBtn) listenSyncSettingsBtn.hidden = !isListenArticleTab;
-
-  if (["all", "other", ...getReadPublications().map(p => p.key)].includes(tab)) {
-    renderArticleList("listenList", tab);
-  } else if (tab === "podcasts") {
-    listEl.innerHTML = `<div class="article-empty"><p>Podcast support coming soon.</p><p>You'll be able to add podcast RSS feeds here.</p></div>`;
-  } else if (tab === "librivox") {
-    listEl.innerHTML = `<div class="article-empty"><p>LibriVox audiobooks coming soon.</p><p>Browse and listen to thousands of free public-domain books.</p></div>`;
-  } else if (tab === "audiobooks") {
-    listEl.innerHTML = `<div class="article-empty"><p>My Audiobooks coming soon.</p></div>`;
-  }
-}
+let listenLoading = false;
+let listenGenId = 0;
 
 function listenToArticle(id) {
   const article = (state.savedArticles || []).find((a) => a.id === id);
@@ -25735,41 +29418,75 @@ function listenToArticle(id) {
     alert("Fetch the article text first before listening.");
     return;
   }
-  if (activeAppArea !== "listen") {
-    switchListenTab(article.publication);
-    showListenApp();
-  }
+  if (activeAppArea !== "media") showMediaApp();
   stopListen();
-  openArticle(id, "listenList");
+  openArticle(id, "articleList");
   startListenTTS(article);
 }
 
-function startListenTTS(article) {
-  if (!window.speechSynthesis) { alert("Text-to-speech is not supported in this browser."); return; }
+async function startListenTTS(article) {
+  stopListen();
   const text = article.text?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || "";
   if (!text) return;
-  listenUtterance = new SpeechSynthesisUtterance(text);
-  const speedSelect = document.getElementById("listenSpeedSelect");
-  listenUtterance.rate = speedSelect ? parseFloat(speedSelect.value) : 1;
-  listenUtterance.onstart = () => { listenSpeaking = true; updateListenPlayBtn(); };
-  listenUtterance.onerror = () => { listenSpeaking = false; listenUtterance = null; updateListenPlayBtn(); };
-  listenUtterance.onend = () => {
+  trackUsage("google_tts");
+  listenLoading = true;
+  const myGenId = ++listenGenId;
+  updateListenPlayBtn();
+
+  const result = await callNetlifyFunction("generate-tts", { articleId: article.id, text });
+  if (myGenId !== listenGenId) return;
+
+  listenLoading = false;
+  if (result.error || !Array.isArray(result.urls) || !result.urls.length) {
+    updateListenPlayBtn();
+    alert("Could not generate audio: " + (result.error || "Unknown error"));
+    return;
+  }
+
+  listenAudioQueue = [...result.urls];
+  playNextAudioChunk(article);
+}
+
+function playNextAudioChunk(article) {
+  if (!listenAudioQueue.length) {
     listenSpeaking = false;
-    listenUtterance = null;
+    listenAudio = null;
     updateListenPlayBtn();
     markArticleRead(article.id);
     advanceListenArticle();
-  };
-  window.speechSynthesis.speak(listenUtterance);
+    return;
+  }
+  const url = listenAudioQueue.shift();
+  if (listenAudio) { listenAudio.onended = null; listenAudio.onpause = null; }
+  listenAudio = new Audio(url);
+  const speedSelect = document.getElementById("listenSpeedSelect");
+  listenAudio.playbackRate = speedSelect ? parseFloat(speedSelect.value) : 1;
+  listenAudio.onplay = () => { listenSpeaking = true; updateListenPlayBtn(); };
+  listenAudio.onpause = () => { if (!listenAudio.ended) { listenSpeaking = false; updateListenPlayBtn(); } };
+  listenAudio.onerror = () => { listenSpeaking = false; listenAudio = null; updateListenPlayBtn(); };
+  listenAudio.onended = () => playNextAudioChunk(article);
+  listenAudio.play().catch(() => {});
+
+  if ("mediaSession" in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: article.title || "Article",
+      artist: article.publication || "Live",
+      album: "Live"
+    });
+    navigator.mediaSession.setActionHandler("play", () => { listenAudio?.play(); });
+    navigator.mediaSession.setActionHandler("pause", () => { listenAudio?.pause(); });
+    navigator.mediaSession.setActionHandler("stop", stopListen);
+    navigator.mediaSession.setActionHandler("nexttrack", advanceListenArticle);
+  }
 }
 
 function advanceListenArticle() {
-  const articles = getFilteredSortedArticles(activeListenTab);
+  const articles = getFilteredSortedArticles(activeMediaTab);
   const currentIndex = articles.findIndex(a => a.id === openArticleId);
   if (currentIndex === -1) return;
   for (let i = currentIndex + 1; i < articles.length; i++) {
     if (articles[i].text) {
-      openArticle(articles[i].id, "listenList");
+      openArticle(articles[i].id, "articleList");
       startListenTTS(articles[i]);
       return;
     }
@@ -25777,28 +29494,35 @@ function advanceListenArticle() {
 }
 
 function toggleListenPlayPause() {
-  if (!listenSpeaking) {
+  if (!listenAudio && !listenLoading) {
     if (openArticleId) {
       const article = (state.savedArticles || []).find((a) => a.id === openArticleId);
       if (article) startListenTTS(article);
     }
     return;
   }
-  if (window.speechSynthesis.paused) {
-    window.speechSynthesis.resume();
+  if (!listenAudio) return;
+  if (listenAudio.paused) {
+    listenAudio.play().catch(() => {});
     listenSpeaking = true;
   } else {
-    window.speechSynthesis.pause();
+    listenAudio.pause();
     listenSpeaking = false;
   }
   updateListenPlayBtn();
 }
 
 function stopListen() {
-  if (listenUtterance) listenUtterance.onend = null;
-  window.speechSynthesis?.cancel();
+  listenGenId++;
+  if (listenAudio) {
+    listenAudio.onended = null;
+    listenAudio.onpause = null;
+    listenAudio.pause();
+    listenAudio = null;
+  }
+  listenAudioQueue = [];
   listenSpeaking = false;
-  listenUtterance = null;
+  listenLoading = false;
   updateListenPlayBtn();
 }
 
@@ -25807,21 +29531,20 @@ function updateListenPlayBtn() {
   const label = document.getElementById("listenBtnLabel");
   const icon = document.getElementById("listenBtnIcon");
   if (!btn) return;
-  const paused = window.speechSynthesis?.paused;
-  const playing = listenSpeaking && !paused;
+  if (listenLoading) {
+    if (label) label.textContent = "Loading…";
+    if (icon) icon.innerHTML = `<circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="28" stroke-dashoffset="10"/>`;
+    btn.disabled = true;
+    return;
+  }
+  btn.disabled = false;
+  const playing = listenSpeaking && listenAudio && !listenAudio.paused;
   if (label) label.textContent = playing ? "Pause" : "Play";
   if (icon) icon.innerHTML = playing
     ? `<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>`
     : `<polygon points="5 3 19 12 5 21 5 3"/>`;
 }
 
-function closeListenPlayer() {
-  const panel = document.getElementById("listenPlayerPanel");
-  if (panel) panel.hidden = true;
-  stopListen();
-  openArticleId = null;
-  document.querySelectorAll(".article-row--active").forEach((r) => r.classList.remove("article-row--active"));
-}
 
 async function callNetlifyFunction(name, body) {
   const session = supabaseClient ? await supabaseClient.auth.getSession() : null;
@@ -25837,7 +29560,57 @@ async function callNetlifyFunction(name, body) {
   } catch (e) { return { error: String(e) }; }
 }
 
-function renderReadingPlanner() {
+function renderBookFormatPanel(gridEl, formatFilter) {
+  const FORMAT_LABELS = { audiobook: "Audiobook", ebook: "eBook", libby: "Library" };
+  const filterFn = formatFilter === "libby"
+    ? () => true
+    : (i) => i.format === formatFilter;
+
+  const allItems = readingItemsList().filter(filterFn);
+  const active = allItems.filter(i => i.status !== "read");
+  const reading = active.filter(i => i.status === "reading");
+  const want = active.filter(i => i.status === "want");
+  const finished = allItems.filter(i => i.status === "read")
+    .sort((a, b) => (b.readDate || "").localeCompare(a.readDate || ""));
+
+  const section = (label, items) => items.length === 0 ? "" : `
+    <div class="watch-section">
+      <button class="watch-section-head" type="button">
+        <svg class="watch-section-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        <span>${label}</span>
+      </button>
+      <div class="watch-item-list">${items.map(item => readingItemTemplate(item)).join("")}</div>
+    </div>`;
+
+  gridEl.innerHTML = `
+    <section class="day-column planner-day-panel do-backlog-panel watch-list-panel" aria-label="${FORMAT_LABELS[formatFilter] || "Books"}">
+      <div class="do-board">
+        <div class="watch-sections">
+          ${reading.length === 0 && want.length === 0 && finished.length === 0
+            ? `<div class="article-empty"><p>No ${FORMAT_LABELS[formatFilter] || "books"} tracked yet.</p><p>Add books via the <strong>Reading List</strong> tab and set their format.</p></div>`
+            : section("Currently Reading", reading) + section("Want to Read", want) + section("Finished", finished)
+          }
+        </div>
+      </div>
+      <footer class="watch-archive-footer">
+        <button class="watch-archive-open-btn" type="button" data-open-reading-archive>Archive</button>
+        <button class="primary-btn icon-primary-btn" type="button" data-open-reading-search title="Add book" aria-label="Add book"><span aria-hidden="true">+</span></button>
+      </footer>
+    </section>`;
+
+  bindReadingControls(gridEl);
+  gridEl.querySelector("[data-open-reading-archive]")?.addEventListener("click", openReadingArchive);
+  gridEl.querySelector("[data-open-reading-search]")?.addEventListener("click", openReadingSearchDialog);
+}
+
+function renderReadingPlanner(formatFilter) {
+  const gridId = formatFilter === "audiobook" ? "audiblePlannerGrid"
+               : formatFilter === "ebook"     ? "kindlePlannerGrid"
+               : formatFilter === "libby"     ? "libbyPlannerGrid"
+               : null;
+  const gridEl = gridId ? document.getElementById(gridId) : elements.readingPlannerGrid;
+  if (!gridEl) return;
+  if (gridId) { renderBookFormatPanel(gridEl, formatFilter); return; }
   if (!elements.readingPlannerGrid) return;
   const categories = state.readingSettings?.categories || [];
   elements.readingPlannerGrid.innerHTML = `
@@ -25989,6 +29762,11 @@ function readingItemTemplate(item) {
     ? `<span class="reading-format-badge reading-format-${escapeHtml(item.format)}">${escapeHtml(formatLabels[item.format] || item.format)}</span>`
     : "";
 
+  const libKey = getLibraryKey();
+  const catalogUrl = hclCatalogUrl(item.title, item.authors);
+  const libbyUrl = libbySearchUrl(item.title);
+  const audibleUrl = audibleSearchUrl(item.title, item.authors);
+
   return `
     <article class="do-task-item watch-item reading-item" data-reading-item="${escapeHtml(item.id)}">
       <div class="watch-item-layout">
@@ -26000,7 +29778,22 @@ function readingItemTemplate(item) {
           </div>
           ${authorsHtml}
           ${metaHtml}
+          <div class="reading-item-avail" id="avail-${escapeHtml(item.id)}"></div>
         </div>
+      </div>
+      <div class="reading-item-library-row">
+        <a class="reading-library-btn" href="${escapeHtml(catalogUrl)}" target="_blank" rel="noopener noreferrer" title="Find at ${escapeHtml(libKey.toUpperCase())} library catalog">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          Find at library
+        </a>
+        <a class="reading-library-btn reading-library-btn--libby" href="${escapeHtml(libbyUrl)}" target="_blank" rel="noopener noreferrer" title="Borrow in Libby">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+          Borrow in Libby
+        </a>
+        <a class="reading-library-btn reading-library-btn--audible" href="${escapeHtml(audibleUrl)}" target="_blank" rel="noopener noreferrer" title="Find on Audible">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+          Listen on Audible
+        </a>
       </div>
     </article>
   `;
@@ -26009,7 +29802,31 @@ function readingItemTemplate(item) {
 function bindReadingControls(root = document) {
   root.querySelectorAll("[data-reading-item]").forEach((article) => {
     article.addEventListener("contextmenu", openReadingItemMenu);
+    article.addEventListener("mouseenter", () => {
+      const itemId = article.dataset.readingItem;
+      const item = readingItemById(itemId);
+      if (!item || hclAvailabilityCache.has(itemId)) return;
+      const availEl = article.querySelector(`#avail-${CSS.escape(itemId)}`);
+      if (!availEl) return;
+      availEl.textContent = "Checking library…";
+      loadHclAvailability(itemId, item.title, item.authors).then(res => renderHclAvailability(availEl, res));
+    }, { once: true });
   });
+}
+
+function renderHclAvailability(el, res) {
+  if (!el) return;
+  if (!res || res.status === "unconfigured" || res.status === "error") { el.textContent = ""; return; }
+  if (res.status === "not_found") { el.innerHTML = `<span class="hcl-avail hcl-avail--none">Not in library catalog</span>`; return; }
+  if (res.status === "found") {
+    const copies = res.copiesAvailable ?? 0;
+    const holds = res.numberOfHolds ?? 0;
+    const cls = copies > 0 ? "hcl-avail--available" : "hcl-avail--holds";
+    const label = copies > 0
+      ? `${copies} cop${copies === 1 ? "y" : "ies"} available`
+      : holds > 0 ? `${holds} hold${holds === 1 ? "" : "s"}` : "All copies checked out";
+    el.innerHTML = `<span class="hcl-avail ${cls}">${label}</span>`;
+  }
 }
 
 function openReadingSearchDialog() {
@@ -26222,6 +30039,7 @@ function openReadingItemMenu(event) {
   const delBtn = menu.querySelector("[data-reading-ctx-delete]");
   if (delBtn) {
     const h = handle(() => {
+      recordDeletion("readingItems", itemId);
       state.readingItems = readingItemsList().filter((i) => i.id !== itemId);
       persist();
       renderReadingPlanner();
@@ -26423,6 +30241,7 @@ function openReadingArchiveItemMenu(event) {
   const delBtn = menu.querySelector("[data-reading-ctx-delete-archive]");
   if (delBtn) {
     const h = handle(() => {
+      recordDeletion("readingItems", itemId);
       state.readingItems = readingItemsList().filter((i) => i.id !== itemId);
       persist();
       openReadingArchive();
@@ -26487,82 +30306,12 @@ function updateVoiceSetupPreview() {
   shortcut.removeAttribute("hidden");
 }
 
-// ── Voice command ──────────────────────────────────────────────────────────────
+// ── Voice command (Siri / Alexa external path) ─────────────────────────────────
 
-let voiceState = "idle"; // idle | listening | processing
 let voiceToastTimer = null;
 
-function initVoiceCommand() {
-  const btn = elements.voiceMicBtn;
-  if (!btn) return;
-
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    btn.hidden = true;
-    return;
-  }
-
-  const recognition = new SpeechRecognition();
-  recognition.continuous = false;
-  recognition.interimResults = false;
-  recognition.lang = "en-US";
-
-  recognition.onresult = (event) => {
-    const transcript = event.results[0]?.[0]?.transcript || "";
-    console.log("[voice] transcript:", transcript);
-    if (!transcript) { setVoiceState("idle"); return; }
-    setVoiceState("processing");
-    sendVoiceCommand(transcript).catch((err) => {
-      console.error("[voice] sendVoiceCommand failed:", err);
-      setVoiceState("idle");
-      showVoiceToast("Something went wrong. Check the console for details.");
-    });
-  };
-
-  recognition.onerror = (event) => {
-    console.error("[voice] SpeechRecognition error:", event.error);
-    setVoiceState("idle");
-    if (event.error !== "no-speech" && event.error !== "aborted") {
-      showVoiceToast("Mic error: " + event.error);
-    }
-  };
-
-  recognition.onend = () => {
-    if (voiceState === "listening") setVoiceState("idle");
-  };
-
-  btn.addEventListener("click", () => {
-    if (voiceState === "idle") {
-      setVoiceState("listening");
-      try { recognition.start(); } catch { setVoiceState("idle"); }
-    } else if (voiceState === "listening") {
-      recognition.stop();
-      setVoiceState("idle");
-    }
-  });
-}
-
-function setVoiceState(newState) {
-  voiceState = newState;
-  const btn = elements.voiceMicBtn;
-  if (!btn) return;
-  btn.dataset.voiceState = newState;
-  if (newState === "idle") {
-    btn.title = "Voice command";
-    btn.setAttribute("aria-label", "Voice command");
-    btn.disabled = false;
-  } else if (newState === "listening") {
-    btn.title = "Listening… click to cancel";
-    btn.setAttribute("aria-label", "Listening… click to cancel");
-    btn.disabled = false;
-  } else {
-    btn.title = "Processing…";
-    btn.setAttribute("aria-label", "Processing…");
-    btn.disabled = true;
-  }
-}
-
 async function sendVoiceCommand(transcript) {
+  trackUsage("claude_voice");
   // Resolve today to a concrete prepDay id + week key
   const todayDate = new Date();
   todayDate.setHours(0, 0, 0, 0);
@@ -26675,4 +30424,1689 @@ function showVoiceToast(message, duration = 4500) {
     toast.classList.remove("is-visible");
     voiceToastTimer = window.setTimeout(() => toast.setAttribute("hidden", ""), 300);
   }, duration);
+}
+
+// ── AI Chat Panel ──────────────────────────────────────────────────────────────
+
+let recipeTimer = null; // { totalSecs, remainingSecs, paused, intervalId }
+let chatMessages = [];       // full conversation history (role + content)
+let chatContextSent = false; // true after context injected for current section
+let chatLastSection = null;  // re-inject context when section changes
+let chatIsLoading = false;
+let chatAbortController = null;
+let chatVoiceRecognition = null;
+let chatVoiceState = "idle"; // idle | listening
+
+// ── AI Recipe Toolbar ────────────────────────────────────────────────────────
+
+let pendingAiRecipeResult = null;
+
+function initAiRecipeToolbar() {
+  document.getElementById("recipeDialog")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-ai-recipe-mode]");
+    if (btn) { e.preventDefault(); runAiRecipeCleanup(btn.dataset.aiRecipeMode); }
+  });
+  document.getElementById("closeAiRecipeReviewBtn")?.addEventListener("click", closeAiRecipeReview);
+  document.getElementById("cancelAiRecipeReviewBtn")?.addEventListener("click", closeAiRecipeReview);
+  document.getElementById("applyAiRecipeReviewBtn")?.addEventListener("click", applyAiRecipeReview);
+}
+
+async function runAiRecipeCleanup(mode) {
+  const statusEl = document.getElementById("recipeAiStatus");
+  const setStatus = (msg, hidden = false) => {
+    if (!statusEl) return;
+    statusEl.textContent = msg;
+    statusEl.hidden = hidden;
+  };
+  setStatus("Analysing recipe with AI…");
+
+  const ingredients = collectIngredientRows().map((i) =>
+    [i.amount, i.quantity, i.item, i.prep].filter(Boolean).join(" ")
+  );
+  const steps = collectStepRows();
+  const recipe = {
+    name: elements.recipeName?.value?.trim() || "",
+    ingredients,
+    steps
+  };
+  const existingTags = recipeTags();
+  const ingredientItems = (state.ingredientOptions?.items || []).filter(Boolean);
+
+  const url = (() => {
+    if (canUseLocalBackend()) return "/api/clean-recipe";
+    if (window.location.protocol.startsWith("http")) return "/.netlify/functions/clean-recipe";
+    return "";
+  })();
+  if (!url) { setStatus("AI recipe cleanup requires the live app."); return; }
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` },
+      body: JSON.stringify({ recipe, mode, existingTags, ingredientItems })
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || `Request failed (${res.status})`);
+    pendingAiRecipeResult = payload.result;
+    setStatus("", true);
+    openAiRecipeReview(mode, payload.result);
+    trackUsage("claude_recipe_import");
+  } catch (err) {
+    setStatus(err.message || "AI request failed.");
+  }
+}
+
+function openAiRecipeReview(mode, result) {
+  const body = document.getElementById("aiReviewBody");
+  if (!body) return;
+
+  const sections = [];
+
+  if (result.structure) {
+    const { ingredients, steps } = result.structure;
+    const ingredientRows = ingredients.map((i, idx) => `
+      <label class="ai-review-row">
+        <input type="checkbox" class="ai-review-check" data-review-type="ingredient" data-review-index="${idx}" checked />
+        <span class="ai-review-main">${escapeHtml([i.amount, i.quantity, i.item].filter(Boolean).join(" "))}${i.prep ? ` <em>(${escapeHtml(i.prep)})</em>` : ""}</span>
+      </label>`).join("");
+    const stepRows = steps.map((s, idx) => `
+      <label class="ai-review-row">
+        <input type="checkbox" class="ai-review-check" data-review-type="step" data-review-index="${idx}" checked />
+        <span class="ai-review-main">${escapeHtml(s)}</span>
+      </label>`).join("");
+    sections.push(`
+      <section class="ai-review-section">
+        <h3>Ingredients <span class="ai-review-count">${ingredients.length}</span></h3>
+        <div class="ai-review-rows">${ingredientRows || "<p class='muted-label'>No ingredients returned.</p>"}</div>
+      </section>
+      <section class="ai-review-section">
+        <h3>Steps <span class="ai-review-count">${steps.length}</span></h3>
+        <div class="ai-review-rows">${stepRows || "<p class='muted-label'>No steps returned.</p>"}</div>
+      </section>`);
+  }
+
+  if (result.tags) {
+    const { existing, new: newTags } = result.tags;
+    const allTagRows = [
+      ...existing.map((t, idx) => `
+        <label class="ai-review-row">
+          <input type="checkbox" class="ai-review-check" data-review-type="tag-existing" data-review-index="${idx}" checked />
+          <span class="ai-review-main">${escapeHtml(t)}</span>
+        </label>`),
+      ...newTags.map((t, idx) => `
+        <label class="ai-review-row">
+          <input type="checkbox" class="ai-review-check" data-review-type="tag-new" data-review-index="${idx}" checked />
+          <span class="ai-review-main">${escapeHtml(t)}</span>
+          <span class="ai-review-badge">New tag</span>
+        </label>`)
+    ].join("");
+    sections.push(`
+      <section class="ai-review-section">
+        <h3>Tags</h3>
+        <div class="ai-review-rows">${allTagRows || "<p class='muted-label'>No tags suggested.</p>"}</div>
+      </section>`);
+  }
+
+  if (result.newIngredientItems?.length) {
+    sections.push(`
+      <section class="ai-review-section ai-review-section--notice">
+        <h3>New ingredients</h3>
+        <p class="muted-label" style="margin-bottom:8px">These items weren't in your ingredient library. After saving, visit your grocery daily dozen tags to assign any daily dozen categories.</p>
+        <ul class="ai-review-new-items">${result.newIngredientItems.map((i) => `<li>${escapeHtml(i)}</li>`).join("")}</ul>
+      </section>`);
+  }
+
+  body.innerHTML = sections.join("") || "<p class='muted-label' style='padding:16px'>No suggestions returned.</p>";
+
+  const dialog = document.getElementById("aiRecipeReviewDialog");
+  if (dialog && !dialog.open) dialog.showModal();
+}
+
+function closeAiRecipeReview() {
+  document.getElementById("aiRecipeReviewDialog")?.close();
+  pendingAiRecipeResult = null;
+}
+
+function applyAiRecipeReview() {
+  const result = pendingAiRecipeResult;
+  if (!result) return;
+
+  const checked = (type) => [...document.querySelectorAll(
+    `#aiReviewBody .ai-review-check[data-review-type="${type}"]:checked`
+  )].map((el) => parseInt(el.dataset.reviewIndex, 10));
+
+  if (result.structure) {
+    const { ingredients, steps } = result.structure;
+    const selectedIngredients = checked("ingredient").map((i) => ingredients[i]).filter(Boolean);
+    if (selectedIngredients.length) renderIngredientRows(selectedIngredients);
+    const selectedSteps = checked("step").map((i) => steps[i]).filter(Boolean);
+    if (selectedSteps.length) renderStepRows(selectedSteps);
+  }
+
+  if (result.tags) {
+    const { existing, new: newTags } = result.tags;
+    const selectedExisting = checked("tag-existing").map((i) => existing[i]).filter(Boolean);
+    const selectedNew = checked("tag-new").map((i) => newTags[i]).filter(Boolean);
+    const allSelected = [...selectedExisting, ...selectedNew];
+    if (allSelected.length) {
+      // Add any new tags to the global tag library
+      selectedNew.forEach((tag) => {
+        if (!state.recipeTags.includes(tag)) state.recipeTags.push(tag);
+      });
+      state.recipeTags = normalizeRecipeTags(state.recipeTags);
+      // Re-render tag choices with all new tags selected
+      const currentChecked = new Set(
+        [...elements.recipeTagList.querySelectorAll("input:checked")].map((el) => el.value.toLowerCase())
+      );
+      allSelected.forEach((t) => currentChecked.add(t.toLowerCase()));
+      renderRecipeTagChoices([...currentChecked]);
+    }
+  }
+
+  closeAiRecipeReview();
+}
+
+// ── Recipe timer ─────────────────────────────────────────────────────────────
+
+const TIMER_RE = /\b((?:about|approximately|around)\s+)?(\d+(?:\.\d+)?)(\s*(?:to|-|or)\s*(\d+(?:\.\d+)?))?(\s*(?:minutes?|mins?|hours?|hrs?|seconds?|secs?))\b/gi;
+
+function parseTimerSeconds(n1str, n2str, unitStr) {
+  const n1 = parseFloat(n1str);
+  const n2 = n2str ? parseFloat(n2str) : null;
+  const avg = n2 != null ? (n1 + n2) / 2 : n1;
+  const u = unitStr.trim().toLowerCase();
+  if (u.startsWith("h")) return Math.round(avg * 3600);
+  if (u.startsWith("s")) return Math.round(avg);
+  return Math.round(avg * 60);
+}
+
+function linkTimerMentions(escapedHtml) {
+  return escapedHtml.replace(TIMER_RE, (match, prefix, n1, _range, n2, unit) => {
+    const secs = parseTimerSeconds(n1, n2, unit);
+    if (secs <= 0) return match;
+    const p = prefix || "";
+    const label = match.slice(p.length);
+    return `${p}<button type="button" class="timer-chip" data-timer-seconds="${secs}">${label}</button>`;
+  });
+}
+
+function stepTimerButtons(rawStep) {
+  const timers = [];
+  const re = new RegExp(TIMER_RE.source, "gi");
+  let m;
+  while ((m = re.exec(rawStep)) !== null) {
+    const secs = parseTimerSeconds(m[2], m[4], m[5]);
+    if (secs > 0) timers.push({ label: m[0].trim(), secs });
+  }
+  if (!timers.length) return "";
+  return `<div class="step-timer-row">${timers.map((t) =>
+    `<button type="button" class="timer-chip" data-timer-seconds="${t.secs}">
+      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 15"/></svg>
+      ${escapeHtml(t.label)}
+    </button>`
+  ).join("")}</div>`;
+}
+
+function startRecipeTimer(totalSecs) {
+  if (recipeTimer?.intervalId) clearInterval(recipeTimer.intervalId);
+  recipeTimer = { totalSecs, remainingSecs: totalSecs, paused: false, intervalId: null };
+  const widget = document.getElementById("recipeTimerWidget");
+  if (widget) widget.hidden = false;
+  updateRecipeTimerWidget();
+  recipeTimer.intervalId = setInterval(tickRecipeTimer, 1000);
+}
+
+function tickRecipeTimer() {
+  if (!recipeTimer || recipeTimer.paused) return;
+  recipeTimer.remainingSecs = Math.max(0, recipeTimer.remainingSecs - 1);
+  updateRecipeTimerWidget();
+  if (recipeTimer.remainingSecs <= 0) {
+    clearInterval(recipeTimer.intervalId);
+    recipeTimer.intervalId = null;
+    fireTimerDone();
+  }
+}
+
+function updateRecipeTimerWidget() {
+  if (!recipeTimer) return;
+  const { totalSecs, remainingSecs, paused } = recipeTimer;
+  const m = Math.floor(remainingSecs / 60);
+  const s = remainingSecs % 60;
+  const isDone = remainingSecs <= 0 && !recipeTimer.intervalId;
+
+  const countdown = document.getElementById("timerCountdown");
+  if (countdown) countdown.textContent = isDone ? "Done!" : `${m}:${String(s).padStart(2, "0")}`;
+
+  const circ = 2 * Math.PI * 42;
+  const progress = totalSecs > 0 ? remainingSecs / totalSecs : 0;
+  const ring = document.getElementById("timerRingProgress");
+  if (ring) {
+    ring.style.strokeDasharray = `${circ}`;
+    ring.style.strokeDashoffset = `${circ * (1 - progress)}`;
+  }
+
+  const pauseBtn = document.getElementById("timerPauseBtn");
+  if (pauseBtn) {
+    pauseBtn.textContent = isDone ? "" : (paused ? "Resume" : "Pause");
+    pauseBtn.hidden = isDone;
+  }
+
+  const widget = document.getElementById("recipeTimerWidget");
+  if (widget) widget.classList.toggle("timer-done", isDone);
+}
+
+function fireTimerDone() {
+  updateRecipeTimerWidget();
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [0, 0.3, 0.6].forEach((delay) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.25, ctx.currentTime + delay);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.4);
+      osc.start(ctx.currentTime + delay);
+      osc.stop(ctx.currentTime + delay + 0.4);
+    });
+  } catch {}
+}
+
+function closeRecipeTimer() {
+  if (recipeTimer?.intervalId) clearInterval(recipeTimer.intervalId);
+  recipeTimer = null;
+  const widget = document.getElementById("recipeTimerWidget");
+  if (widget) { widget.hidden = true; widget.classList.remove("timer-done"); }
+}
+
+function initRecipeTimer() {
+  document.getElementById("timerPauseBtn")?.addEventListener("click", () => {
+    if (!recipeTimer) return;
+    recipeTimer.paused = !recipeTimer.paused;
+    if (!recipeTimer.paused && recipeTimer.remainingSecs > 0 && !recipeTimer.intervalId) {
+      recipeTimer.intervalId = setInterval(tickRecipeTimer, 1000);
+    }
+    updateRecipeTimerWidget();
+  });
+  document.getElementById("timerCancelBtn")?.addEventListener("click", closeRecipeTimer);
+
+  document.addEventListener("click", (e) => {
+    const chip = e.target.closest(".timer-chip");
+    if (!chip) return;
+    const secs = parseInt(chip.dataset.timerSeconds, 10);
+    if (secs > 0) startRecipeTimer(secs);
+  });
+}
+
+function openAiPanel(autoListen = false) {
+  const panel = document.getElementById("aiChatPanel");
+  if (!panel) return;
+  panel.removeAttribute("hidden");
+  const briefingBtn = document.getElementById("aiChatBriefingBtn");
+  if (briefingBtn) briefingBtn.hidden = state.aiSettings?.dailyBriefingEnabled === false;
+  requestAnimationFrame(() => panel.classList.add("is-open"));
+  if (autoListen) {
+    setTimeout(() => startChatVoice(), 150);
+  } else {
+    document.getElementById("aiChatInput")?.focus();
+  }
+}
+
+function closeAiPanel() {
+  const panel = document.getElementById("aiChatPanel");
+  if (!panel) return;
+  panel.classList.remove("is-open");
+  stopChatVoice();
+  setTimeout(() => panel.setAttribute("hidden", ""), 290);
+}
+
+function renderMarkdown(text) {
+  // Escape HTML first, then apply minimal markdown patterns
+  let h = text
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // Bold **text**
+  h = h.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  // Italic *text* — lookbehind-free so it works on older iOS Safari
+  h = h.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
+  // Headings: # / ## / ### at start of line
+  h = h.replace(/^#{1,3}\s+(.+)$/gm, "<strong>$1</strong>");
+  // Bullet lists: - item or • item
+  h = h.replace(/^[-•]\s+(.+)$/gm, "<li>$1</li>");
+  // Wrap consecutive <li> runs in <ul>
+  h = h.replace(/(<li>[\s\S]*?<\/li>)(\n<li>[\s\S]*?<\/li>)*/g, (m) => `<ul>${m}</ul>`);
+  // Paragraphs: double newline → break; single newline → <br>
+  h = h.replace(/\n\n+/g, "<br><br>").replace(/\n/g, "<br>");
+  return h;
+}
+
+function appendChatBubble(role, text) {
+  const container = document.getElementById("aiChatMessages");
+  if (!container) return null;
+  const el = document.createElement("div");
+  el.className = `ai-chat-msg ai-chat-msg--${role}`;
+  if (role === "assistant" || role === "tool") {
+    el.innerHTML = renderMarkdown(text);
+  } else {
+    el.textContent = text;
+  }
+  container.appendChild(el);
+  container.scrollTop = container.scrollHeight;
+  return el;
+}
+
+function setChatLoading(loading) {
+  chatIsLoading = loading;
+  const sendBtn = document.getElementById("aiChatSendBtn");
+  const stopBtn = document.getElementById("aiChatStopBtn");
+  if (sendBtn) sendBtn.disabled = loading;
+  if (stopBtn) stopBtn.hidden = !loading;
+  if (!loading) { chatAbortController = null; }
+}
+
+const CHAT_STORAGE_KEY = "live-chat-history";
+const CHAT_MAX_HISTORY = 30; // messages kept in memory + localStorage
+const CHAT_MAX_STORED = 20;  // messages persisted to localStorage
+
+function saveChatHistory() {
+  try {
+    // Only store plain text turns (not tool_use/tool_result objects)
+    const storable = chatMessages
+      .filter((m) => typeof m.content === "string")
+      .slice(-CHAT_MAX_STORED);
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(storable));
+  } catch { /* storage full or unavailable */ }
+}
+
+function loadChatHistory() {
+  try {
+    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+    if (!raw) return;
+    const stored = JSON.parse(raw);
+    if (!Array.isArray(stored) || !stored.length) return;
+    chatMessages = stored;
+    chatContextSent = true; // context was sent in a previous session
+    const container = document.getElementById("aiChatMessages");
+    if (!container) return;
+    stored.forEach((m) => {
+      if (typeof m.content !== "string") return;
+      // Display user messages as-is; strip the CURRENT CONTEXT preamble for display
+      const displayText = m.role === "user" && m.content.startsWith("CURRENT CONTEXT:")
+        ? (m.content.split("\n\n---\n\n")[1] || m.content)
+        : m.content;
+      appendChatBubble(m.role, displayText);
+    });
+    container.scrollTop = container.scrollHeight;
+  } catch { /* corrupted storage — ignore */ }
+}
+
+async function sendChatMessage(text) {
+  text = text.trim();
+  if (!text || chatIsLoading) return;
+  trackUsage("claude_chat");
+  const input = document.getElementById("aiChatInput");
+  if (input) { input.value = ""; input.style.height = "auto"; }
+
+  const section = location.hash.replace("#", "") || "home";
+  let userContent = text;
+  if (!chatContextSent || section !== chatLastSection) {
+    const ctx = buildChatContext(section);
+    if (ctx) userContent = `CURRENT CONTEXT:\n${ctx}\n\n---\n\n${text}`;
+    chatContextSent = true;
+    chatLastSection = section;
+  }
+
+  chatMessages.push({ role: "user", content: userContent });
+  appendChatBubble("user", text);
+
+  // Trim conversation to prevent unbounded token growth.
+  // Keep first message (context injection) + most recent messages.
+  if (chatMessages.length > CHAT_MAX_HISTORY) {
+    chatMessages = [chatMessages[0], ...chatMessages.slice(-(CHAT_MAX_HISTORY - 1))];
+  }
+
+  await runChatTurn();
+}
+
+async function runChatTurn(depth = 0) {
+  if (depth >= 5) {
+    appendChatBubble("assistant", "I ran into a loop trying to complete that. Could you rephrase or try a simpler request?");
+    setChatLoading(false);
+    return;
+  }
+
+  setChatLoading(true);
+  chatAbortController = new AbortController();
+  const thinkingEl = appendChatBubble("thinking", "thinking…");
+
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Authorization: `Bearer ${authSession?.access_token || ""}`
+      },
+      body: JSON.stringify({ messages: chatMessages }),
+      signal: chatAbortController.signal
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Request failed (${res.status})`);
+    }
+
+    const contentType = res.headers.get("content-type") || "";
+
+    if (contentType.includes("text/event-stream")) {
+      // ── Streaming path ────────────────────────────────────────────────────────
+      thinkingEl.remove();
+      const container = document.getElementById("aiChatMessages");
+      let streamBubble = null;
+      let accumulated = "";
+      let pendingToolCall = null;
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let complete = false;
+
+      while (!complete) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const raw = line.slice(6).trim();
+          if (!raw) continue;
+          let ev;
+          try { ev = JSON.parse(raw); } catch { continue; }
+
+          if (ev.type === "text") {
+            accumulated += ev.text;
+            if (!streamBubble) {
+              streamBubble = document.createElement("div");
+              streamBubble.className = "ai-chat-msg ai-chat-msg--assistant ai-chat-msg--streaming";
+              container.appendChild(streamBubble);
+            }
+            streamBubble.textContent = accumulated;
+            container.scrollTop = container.scrollHeight;
+
+          } else if (ev.type === "tool_calls") {
+            pendingToolCall = ev;
+
+          } else if (ev.type === "error") {
+            if (streamBubble) streamBubble.remove();
+            appendChatBubble("assistant", `Something went wrong: ${ev.message}`);
+            setChatLoading(false);
+            complete = true;
+            break;
+
+          } else if (ev.type === "done") {
+            if (pendingToolCall) {
+              // Finalize any preamble bubble
+              if (streamBubble) {
+                if (accumulated) {
+                  streamBubble.classList.remove("ai-chat-msg--streaming");
+                  streamBubble.innerHTML = renderMarkdown(accumulated);
+                } else {
+                  streamBubble.remove();
+                }
+              }
+
+              const { calls, preamble } = pendingToolCall;
+              const assistantContent = [];
+              if (preamble) assistantContent.push({ type: "text", text: preamble });
+              const toolResults = [];
+              for (const { tool_use_id, name, input } of calls) {
+                assistantContent.push({ type: "tool_use", id: tool_use_id, name, input });
+                const resultText = await executeChatTool(name, input);
+                logAiAction(name, input, resultText);
+                appendChatBubble("tool", `✓ ${resultText}`);
+                toolResults.push({ type: "tool_result", tool_use_id, content: resultText });
+              }
+              chatMessages.push({ role: "assistant", content: assistantContent });
+              chatMessages.push({ role: "user", content: toolResults });
+
+              saveChatHistory();
+              setChatLoading(false);
+              await runChatTurn(depth + 1);
+            } else {
+              // Text response complete — apply markdown rendering
+              if (streamBubble) {
+                streamBubble.classList.remove("ai-chat-msg--streaming");
+                streamBubble.innerHTML = renderMarkdown(accumulated);
+                container.scrollTop = container.scrollHeight;
+              }
+              if (ev.stop_reason === "max_tokens") {
+                appendChatBubble("tool", "⚠ Response was cut off — try asking for a shorter answer.");
+              }
+              chatMessages.push({ role: "assistant", content: accumulated });
+              saveChatHistory();
+              setChatLoading(false);
+            }
+            complete = true;
+            break;
+          }
+        }
+      }
+    } else {
+      // ── Non-streaming fallback (plain JSON) ───────────────────────────────────
+      const data = await res.json();
+      thinkingEl.remove();
+
+      if (data.type === "tool_calls") {
+        if (data.preamble) appendChatBubble("assistant", data.preamble);
+        const assistantContent = data.preamble ? [{ type: "text", text: data.preamble }] : [];
+        const toolResults = [];
+        for (const { tool_use_id, name, input } of (data.calls || [])) {
+          assistantContent.push({ type: "tool_use", id: tool_use_id, name, input });
+          const resultText = await executeChatTool(name, input);
+          logAiAction(name, input, resultText);
+          appendChatBubble("tool", `✓ ${resultText}`);
+          toolResults.push({ type: "tool_result", tool_use_id, content: resultText });
+        }
+        chatMessages.push({ role: "assistant", content: assistantContent });
+        chatMessages.push({ role: "user", content: toolResults });
+        saveChatHistory();
+        setChatLoading(false);
+        await runChatTurn(depth + 1);
+      } else {
+        chatMessages.push({ role: "assistant", content: data.content });
+        appendChatBubble("assistant", data.content);
+        saveChatHistory();
+        setChatLoading(false);
+      }
+    }
+  } catch (err) {
+    thinkingEl?.remove();
+    if (err.name !== "AbortError") {
+      appendChatBubble("assistant", `Something went wrong: ${err.message}`);
+    }
+    setChatLoading(false);
+  }
+}
+
+function logAiAction(name, input, result) {
+  if (!Array.isArray(state.aiActionLog)) state.aiActionLog = [];
+  state.aiActionLog.unshift({
+    id: createId("ai-action"),
+    tool: name,
+    input,
+    result,
+    ts: new Date().toISOString()
+  });
+  if (state.aiActionLog.length > 100) state.aiActionLog.length = 100;
+  persist(); // tool handler already persisted its mutation; this saves the log entry
+}
+
+async function executeChatTool(name, input) {
+  try {
+    switch (name) {
+      case "add_task": {
+        const title = String(input.title || "").trim();
+        if (!title) return "No task title provided.";
+        const dayId = String(input.day_id || "backlog");
+        const validDay = doPrepDays.find((d) => d.id === dayId);
+        if (validDay) {
+          rawDoTasksForDay(dayId, weekKey()).push({
+            id: createId("task"), title, done: false, createdAt: new Date().toISOString()
+          });
+          persist();
+          renderDoPlanner();
+          return `Task added to ${validDay.name}: "${title}"`;
+        } else {
+          doBacklogTasks().push({
+            id: createId("task"), title, done: false, weekKey: weekKey(), createdAt: new Date().toISOString()
+          });
+          persist();
+          renderDoPlanner();
+          return `Task added to backlog: "${title}"`;
+        }
+      }
+
+      case "complete_task": {
+        const target = String(input.title || "").toLowerCase().trim();
+        const backlogTask = doBacklogTasks().find((t) => !t.done && t.title.toLowerCase().includes(target));
+        if (backlogTask) {
+          backlogTask.done = true;
+          persist();
+          renderDoPlanner();
+          return `Marked done: "${backlogTask.title}"`;
+        }
+        const wk = weekKey();
+        const weekPlans = state.doPlans?.[wk] || {};
+        for (const dayId of Object.keys(weekPlans)) {
+          for (const task of (weekPlans[dayId] || [])) {
+            if (!task.done && task.title.toLowerCase().includes(target)) {
+              task.done = true;
+              persist();
+              renderDoPlanner();
+              return `Marked done: "${task.title}"`;
+            }
+          }
+        }
+        return `No active task found matching "${input.title}".`;
+      }
+
+      case "add_grocery_item": {
+        const item = String(input.item || "").trim();
+        if (!item) return "No item name provided.";
+        if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
+        if (!state.persistentManualGroceries.some((e) => normalize(e) === normalize(item))) {
+          state.persistentManualGroceries.push(item);
+          state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
+          persist();
+          renderGroceries();
+        }
+        return `Added to grocery list: "${item}"`;
+      }
+
+      case "remove_grocery_item": {
+        const item = String(input.item || "").trim();
+        const before = state.persistentManualGroceries?.length || 0;
+        state.persistentManualGroceries = (state.persistentManualGroceries || [])
+          .filter((e) => normalize(e) !== normalize(item));
+        if ((state.persistentManualGroceries?.length || 0) < before) {
+          persist();
+          renderGroceries();
+          return `Removed "${item}" from grocery list.`;
+        }
+        return `"${item}" was not on the grocery list.`;
+      }
+
+      case "set_meal": {
+        applyVoiceActions([{
+          action: "setMeal",
+          dayId: input.day_id,
+          mealType: input.meal_type,
+          recipeName: input.recipe_name
+        }], "");
+        return `Added ${input.recipe_name} to ${input.day_id} ${input.meal_type}.`;
+      }
+
+      case "add_to_watchlist": {
+        const title = String(input.title || "").trim();
+        const type = input.type === "tv" ? "tv" : "movie";
+        if (!Array.isArray(state.watchItems)) state.watchItems = [];
+        state.watchItems.push({
+          id: createId("watch"), type, title, status: "want",
+          tmdbId: null, posterPath: null, year: null, overview: null,
+          streamingProviders: null, providersUpdatedAt: null,
+          totalSeasons: null, totalEpisodes: null, runtime: null, avgEpisodeRuntime: null,
+          watchedDate: null, rating: null, watchNotes: null,
+          seasonProgress: {}, episodeData: {}, categories: [],
+          createdAt: new Date().toISOString()
+        });
+        persist();
+        return `Added ${type === "tv" ? "TV show" : "movie"} "${title}" to watchlist.`;
+      }
+
+      case "add_book": {
+        const title = String(input.title || "").trim();
+        const authors = Array.isArray(input.authors) ? input.authors.map(String).filter(Boolean) : [];
+        if (!Array.isArray(state.readingItems)) state.readingItems = [];
+        state.readingItems.push({
+          id: createId("book"), title, authors, status: "want",
+          googleBooksId: null, coverUrl: null, year: null, pageCount: null,
+          overview: null, format: null, readDate: null, rating: null,
+          readNotes: null, categories: [], createdAt: new Date().toISOString()
+        });
+        persist();
+        return `Added "${title}" to reading list.`;
+      }
+
+      case "mark_watched": {
+        const target = String(input.title || "").toLowerCase().trim();
+        const item = (state.watchItems || []).find((i) =>
+          i.title.toLowerCase().includes(target) || target.includes(i.title.toLowerCase())
+        );
+        if (!item) return `No watchlist item found matching "${input.title}".`;
+        item.status = "watched";
+        if (!item.watchedDate) item.watchedDate = new Date().toISOString().slice(0, 10);
+        persist();
+        return `Marked "${item.title}" as watched.`;
+      }
+
+      case "update_book_status": {
+        const target = String(input.title || "").toLowerCase().trim();
+        const validStatus = ["want", "reading", "read"];
+        const newStatus = validStatus.includes(input.status) ? input.status : null;
+        if (!newStatus) return `Invalid status "${input.status}". Use: want, reading, or read.`;
+        const book = (state.readingItems || []).find((i) =>
+          i.title.toLowerCase().includes(target) || target.includes(i.title.toLowerCase())
+        );
+        if (!book) return `No book found matching "${input.title}".`;
+        book.status = newStatus;
+        if (newStatus === "read" && !book.readDate) book.readDate = new Date().toISOString().slice(0, 10);
+        persist();
+        const label = newStatus === "read" ? "finished" : newStatus === "reading" ? "currently reading" : "want to read";
+        return `Marked "${book.title}" as ${label}.`;
+      }
+
+      case "log_meal": {
+        const displayName = String(input.name || "").trim();
+        if (!displayName) return "No meal name provided.";
+        const mealType = ["breakfast", "lunch", "dinner", "snack"].includes(input.meal_type)
+          ? input.meal_type : "snack";
+        const date = /^\d{4}-\d{2}-\d{2}$/.test(input.date || "")
+          ? input.date
+          : dateKeyFromDate(new Date());
+        const members = familyMembers();
+        const memberId = members.find((m) =>
+          m.name?.toLowerCase().includes("luke")
+        )?.id || members[0]?.id || "";
+        if (!memberId) return "No family member found to log meal for.";
+        if (!Array.isArray(state.foodLogEntries)) state.foodLogEntries = [];
+        state.foodLogEntries.push({
+          id: createId("food-log"), familyMemberId: memberId,
+          date, sourceType: "manual", sourceId: "", displayName,
+          servingMultiplier: 1, mealType, notes: "", leftovers: false,
+          nutritionSnapshot: {}, checklistContributions: []
+        });
+        persist();
+        if (elements.dailyDozenPageDialog?.open) renderDailyDozen();
+        return `Logged "${displayName}" as ${mealType} on ${date}.`;
+      }
+
+      case "log_checklist_entry": {
+        const catName = String(input.category || "").toLowerCase().trim();
+        const servings = Math.max(0.5, Number(input.servings) || 1);
+        const date = /^\d{4}-\d{2}-\d{2}$/.test(input.date || "")
+          ? input.date : dateKeyFromDate(new Date());
+        const members = familyMembers();
+        const memberId = members.find((m) => m.name?.toLowerCase().includes("luke"))?.id || members[0]?.id || "";
+        if (!memberId) return "No family member found.";
+        const cats = dailyDozenCategories();
+        const cat = cats.find((c) =>
+          c.name.toLowerCase().includes(catName) || catName.includes(c.name.toLowerCase())
+        );
+        if (!cat) return `No daily dozen category matching "${input.category}". Categories: ${cats.map((c) => c.name).join(", ")}.`;
+        const itemId = `daily-dozen:${cat.id}`;
+        if (!Array.isArray(state.dailyChecklistEntries)) state.dailyChecklistEntries = [];
+        state.dailyChecklistEntries.push({
+          id: createId("dd-entry"), personId: memberId,
+          checklistItemId: itemId, date,
+          completedAmount: servings, notes: "", sourceType: "manual", sourceId: ""
+        });
+        persist();
+        if (elements.dailyDozenPageDialog?.open) renderDailyDozen();
+        return `Logged ${servings} serving${servings === 1 ? "" : "s"} of ${cat.name} for ${date}.`;
+      }
+
+      case "add_event": {
+        const title = String(input.title || "").trim();
+        const date = String(input.date || "").trim();
+        if (!title) return "Event title is required.";
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return `Invalid date "${input.date}" — use YYYY-MM-DD format.`;
+        const allDay = input.start_time ? false : true;
+        const startTime = !allDay ? String(input.start_time || "").trim() : null;
+        const endTime = !allDay && input.end_time ? String(input.end_time).trim() : null;
+        const notes = String(input.notes || "").trim();
+        state.planEvents = [...(state.planEvents || []), {
+          id: createId("plan-evt"), createdAt: new Date().toISOString(),
+          title, date, allDay, startTime, endTime, notes,
+          color: "#4285f4", calendarId: null
+        }];
+        persist();
+        if (activeAppArea === "plan") renderPlanPage();
+        const timeStr = startTime ? ` at ${startTime}` : "";
+        return `Added event "${title}" on ${date}${timeStr}.`;
+      }
+
+      case "log_workout": {
+        const workoutQuery = String(input.workout_name || "").toLowerCase().trim();
+        if (!workoutQuery) return "No workout name provided.";
+        state.workouts = normalizeWorkouts(state.workouts);
+        const workout = state.workouts.find((w) => w.title.toLowerCase() === workoutQuery)
+          || state.workouts.find((w) => w.title.toLowerCase().includes(workoutQuery));
+        if (!workout) {
+          const names = state.workouts.slice(0, 10).map((w) => w.title).join(", ");
+          return `No workout found matching "${input.workout_name}". Your library: ${names || "empty"}.`;
+        }
+        const logDate = /^\d{4}-\d{2}-\d{2}$/.test(input.date || "") ? input.date : dateKeyFromDate(new Date());
+        const log = {
+          id: createId("workout-log"),
+          date: logDate,
+          createdAt: new Date().toISOString(),
+          gameNotes: String(input.notes || "").trim(),
+          distanceUnit: input.distance_unit === "mi" ? "mi" : "km"
+        };
+        if (input.duration_minutes) {
+          const total = Math.round(Number(input.duration_minutes));
+          log.timedHours = String(Math.floor(total / 60) || "");
+          log.timedMinutes = String(total % 60 || "");
+          log.timedSeconds = "";
+        }
+        if (input.distance) {
+          const [whole, dec] = String(Number(input.distance).toFixed(2)).split(".");
+          log.distanceWhole = whole;
+          log.distanceDecimal = dec || "";
+        }
+        workout.logs = normalizeWorkoutLogs([...(workout.logs || []), log]);
+        persist();
+        if (activeAppArea === "sweat") render();
+        const parts = [`Logged "${workout.title}" on ${logDate}`];
+        if (input.duration_minutes) parts.push(`${Math.round(Number(input.duration_minutes))} min`);
+        if (input.distance) parts.push(`${input.distance} ${log.distanceUnit}`);
+        if (input.notes) parts.push(`— ${input.notes}`);
+        return parts.join(" · ") + ".";
+      }
+
+      case "update_task": {
+        const query = String(input.title || "").toLowerCase().trim();
+        if (!query) return "No task title provided.";
+        const wk = weekKey();
+        let found = null;
+        let foundDay = null;
+        // Search day tasks then backlog
+        for (const day of doPrepDays) {
+          const t = rawDoTasksForDay(day.id, wk).find((t) => t.title?.toLowerCase().includes(query));
+          if (t) { found = t; foundDay = day.id; break; }
+        }
+        if (!found) {
+          found = doBacklogTasks().find((t) => t.title?.toLowerCase().includes(query));
+          if (found) foundDay = "backlog";
+        }
+        if (!found) return `No task found matching "${input.title}".`;
+        const changes = [];
+        if (input.new_title !== undefined) { found.title = String(input.new_title).trim(); changes.push("renamed"); }
+        if (input.done !== undefined) { found.done = Boolean(input.done); changes.push(found.done ? "marked done" : "marked not done"); }
+        // Move to different day
+        const targetDay = input.day_id !== undefined ? String(input.day_id).trim() : null;
+        if (targetDay && targetDay !== foundDay) {
+          const validDay = doPrepDays.find((d) => d.id === targetDay);
+          const isBacklog = targetDay === "backlog";
+          if (!validDay && !isBacklog) return `Invalid day "${targetDay}".`;
+          // Remove from current location
+          if (foundDay === "backlog") {
+            state.doBacklog = doBacklogTasks().filter((t) => t.id !== found.id);
+          } else {
+            const arr = rawDoTasksForDay(foundDay, wk);
+            state.doPlans[wk][foundDay] = arr.filter((t) => t.id !== found.id);
+          }
+          // Add to target location
+          if (isBacklog) {
+            doBacklogTasks().push(found);
+          } else {
+            rawDoTasksForDay(targetDay, wk).push(found);
+          }
+          changes.push(`moved to ${validDay?.name || "backlog"}`);
+        }
+        if (!changes.length) return "No changes specified.";
+        persist();
+        renderDoPlanner();
+        return `Task "${found.title}": ${changes.join(", ")}.`;
+      }
+
+      case "delete_task": {
+        const query = String(input.title || "").toLowerCase().trim();
+        if (!query) return "No task title provided.";
+        const wk = weekKey();
+        let deleted = null;
+        for (const day of doPrepDays) {
+          const arr = rawDoTasksForDay(day.id, wk);
+          const idx = arr.findIndex((t) => t.title?.toLowerCase().includes(query));
+          if (idx >= 0) {
+            deleted = arr[idx];
+            recordDeletion("doPlanTasks", deleted.id);
+            state.doPlans[wk][day.id] = arr.filter((_, i) => i !== idx);
+            break;
+          }
+        }
+        if (!deleted) {
+          const backlog = doBacklogTasks();
+          const idx = backlog.findIndex((t) => t.title?.toLowerCase().includes(query));
+          if (idx >= 0) {
+            deleted = backlog[idx];
+            recordDeletion("doPlanTasks", deleted.id);
+            state.doBacklog = backlog.filter((_, i) => i !== idx);
+          }
+        }
+        if (!deleted) return `No task found matching "${input.title}".`;
+        persist();
+        renderDoPlanner();
+        return `Deleted task "${deleted.title}".`;
+      }
+
+      case "update_event": {
+        const query = String(input.title || "").toLowerCase().trim();
+        if (!query) return "No event title provided.";
+        const evt = (state.planEvents || []).find((e) => e.title?.toLowerCase().includes(query));
+        if (!evt) return `No event found matching "${input.title}". Note: only events added through the app can be edited, not synced calendar events.`;
+        const changes = [];
+        if (input.new_title !== undefined) { evt.title = String(input.new_title).trim(); changes.push("title updated"); }
+        if (input.date !== undefined) {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) return `Invalid date "${input.date}" — use YYYY-MM-DD.`;
+          evt.date = input.date; changes.push(`date → ${input.date}`);
+        }
+        if (input.start_time !== undefined) { evt.startTime = String(input.start_time).trim() || null; evt.allDay = !evt.startTime; changes.push("time updated"); }
+        if (input.end_time !== undefined) { evt.endTime = String(input.end_time).trim() || null; changes.push("end time updated"); }
+        if (input.notes !== undefined) { evt.notes = String(input.notes).trim(); changes.push("notes updated"); }
+        if (!changes.length) return "No changes specified.";
+        persist();
+        if (activeAppArea === "plan") renderPlanPage();
+        return `Event "${evt.title}": ${changes.join(", ")}.`;
+      }
+
+      case "delete_event": {
+        const query = String(input.title || "").toLowerCase().trim();
+        if (!query) return "No event title provided.";
+        const idx = (state.planEvents || []).findIndex((e) => e.title?.toLowerCase().includes(query));
+        if (idx < 0) return `No event found matching "${input.title}". Note: only events added through the app can be deleted, not synced calendar events.`;
+        const deleted = state.planEvents[idx];
+        state.planEvents = state.planEvents.filter((_, i) => i !== idx);
+        persist();
+        if (activeAppArea === "plan") renderPlanPage();
+        return `Deleted event "${deleted.title}" on ${deleted.date}.`;
+      }
+
+      case "remove_from_list": {
+        const query = String(input.title || "").toLowerCase().trim();
+        const list = String(input.list || "").trim();
+        if (!query) return "No title provided.";
+        if (list === "watchlist") {
+          const idx = watchItemsList().findIndex((i) => i.title?.toLowerCase().includes(query));
+          if (idx < 0) return `"${input.title}" not found in watchlist.`;
+          const removed = watchItemsList()[idx];
+          state.watchItems = watchItemsList().filter((_, i) => i !== idx);
+          persist();
+          if (activeAppArea === "watch") render();
+          return `Removed "${removed.title}" from watchlist.`;
+        }
+        if (list === "reading") {
+          const idx = readingItemsList().findIndex((i) => i.title?.toLowerCase().includes(query));
+          if (idx < 0) return `"${input.title}" not found in reading list.`;
+          const removed = readingItemsList()[idx];
+          state.readingItems = readingItemsList().filter((_, i) => i !== idx);
+          persist();
+          if (activeAppArea === "media") render();
+          return `Removed "${removed.title}" from reading list.`;
+        }
+        return `Unknown list "${list}". Use "watchlist" or "reading".`;
+      }
+
+      case "search_recipes": {
+        const query = String(input.query || "").toLowerCase().trim();
+        const tagFilter = String(input.tag || "").toLowerCase().trim();
+        const ingredientFilter = String(input.ingredient || "").toLowerCase().trim();
+        const limit = Math.min(30, Math.max(1, Number(input.limit) || 10));
+        const all = activeRecipes();
+        const matches = all.filter((r) => {
+          const name = (r.name || "").toLowerCase();
+          const tags = (r.tags || []).map((t) => t.toLowerCase());
+          const items = normalizeIngredients(r.ingredients).map((i) => (i.item || "").toLowerCase());
+          if (tagFilter && !tags.includes(tagFilter)) return false;
+          if (ingredientFilter && !items.some((i) => i.includes(ingredientFilter))) return false;
+          if (query) {
+            return name.includes(query)
+              || tags.some((t) => t.includes(query))
+              || items.some((i) => i.includes(query));
+          }
+          return true;
+        }).slice(0, limit);
+        if (!matches.length) return "No recipes found matching those criteria.";
+        const lines = [`Found ${matches.length} recipe${matches.length !== 1 ? "s" : ""}:`];
+        matches.forEach((r) => {
+          const tags = r.tags?.length ? ` [${r.tags.join(", ")}]` : "";
+          const servings = r.servings ? ` · ${r.servings} servings` : "";
+          const ings = normalizeIngredients(r.ingredients)
+            .map((i) => [i.amount, i.quantity, i.item, i.prep].filter(Boolean).join(" "))
+            .join(", ");
+          lines.push(`\n${r.name}${tags}${servings}`);
+          if (ings) lines.push(`  Ingredients: ${ings}`);
+        });
+        return lines.join("\n");
+      }
+
+      case "get_recipe": {
+        const nameQuery = String(input.name || "").toLowerCase().trim();
+        if (!nameQuery) return "No recipe name provided.";
+        const all = activeRecipes();
+        const recipe = all.find((r) => (r.name || "").toLowerCase() === nameQuery)
+          || all.find((r) => (r.name || "").toLowerCase().includes(nameQuery));
+        if (!recipe) return `No recipe found matching "${input.name}".`;
+        const lines = [`RECIPE: ${recipe.name}`];
+        if (recipe.tags?.length) lines.push(`Tags: ${recipe.tags.join(", ")}`);
+        const servings = Math.max(1, Number(recipe.servings) || 1);
+        lines.push(`Servings: ${servings}`);
+        if (recipe.prepTime || recipe.cookTime) {
+          lines.push(`Time: ${[recipe.prepTime, recipe.cookTime].filter(Boolean).join(" prep + ") || recipe.time || ""}`);
+        }
+        const ings = normalizeIngredients(recipe.ingredients);
+        if (ings.length) {
+          lines.push("\nIngredients:");
+          ings.forEach((i) => {
+            const parts = [i.amount, i.quantity, i.item, i.prep].filter(Boolean).join(" ");
+            lines.push(`  - ${parts}`);
+          });
+        }
+        const steps = normalizeInstructionSteps(recipe.steps);
+        if (steps.length) {
+          lines.push("\nInstructions:");
+          steps.forEach((s, idx) => lines.push(`  ${idx + 1}. ${s}`));
+        }
+        const ne = recipe.nutritionEstimate;
+        if (ne && !ne.stale) {
+          const kcal = ne.calories ?? ne.energy;
+          if (kcal) lines.push(`\nNutrition per serving (~${Math.round(kcal / servings)} cal)`);
+        }
+        return lines.join("\n");
+      }
+
+      case "write_note": {
+        const validCategories = ["userPreferences", "appGaps", "suggestions", "patterns"];
+        const category = String(input.category || "").trim();
+        const noteText = String(input.note || "").trim();
+        if (!validCategories.includes(category)) return `Invalid category "${category}". Use one of: ${validCategories.join(", ")}`;
+        if (!noteText) return "No note text provided.";
+        if (!state.aiNotes || typeof state.aiNotes !== "object") {
+          state.aiNotes = { userPreferences: [], appGaps: [], suggestions: [], patterns: [] };
+        }
+        if (!Array.isArray(state.aiNotes[category])) state.aiNotes[category] = [];
+        state.aiNotes[category].push({ id: createId("note"), text: noteText, timestamp: new Date().toISOString() });
+        persist();
+        return `Note saved to ${category}.`;
+      }
+
+      default:
+        return `Unknown tool: ${name}`;
+    }
+  } catch (err) {
+    return `Error: ${err.message}`;
+  }
+}
+
+// ── Chat context serializers ───────────────────────────────────────────────────
+
+function buildAiNotesContext() {
+  const notes = state.aiNotes;
+  if (!notes) return "";
+  const labels = { userPreferences: "USER PREFERENCES", appGaps: "APP GAPS", suggestions: "IMPROVEMENT SUGGESTIONS", patterns: "USAGE PATTERNS" };
+  const lines = [];
+  for (const [key, label] of Object.entries(labels)) {
+    const entries = Array.isArray(notes[key]) ? notes[key] : [];
+    if (!entries.length) continue;
+    lines.push(`${label}:`);
+    entries.forEach((n) => lines.push(`  - ${n.text}`));
+  }
+  return lines.length ? `ASSISTANT MEMORY (from previous conversations):\n${lines.join("\n")}` : "";
+}
+
+// ── Push notifications ─────────────────────────────────────────────────────────
+
+const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY || "";
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+async function enablePushNotifications() {
+  if (!VAPID_PUBLIC_KEY) { alert("Push notifications are not configured yet."); return; }
+  if (!("PushManager" in window)) { alert("Your browser doesn't support push notifications."); return; }
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") { alert("Notification permission was not granted."); return; }
+    const reg = await navigator.serviceWorker.ready;
+    const subscription = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+    });
+    const res = await fetch("/api/push-subscribe", {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` },
+      body: JSON.stringify({ subscription: subscription.toJSON() })
+    });
+    if (!res.ok) throw new Error("Server failed to save subscription.");
+    localStorage.setItem("live_push_subscribed", "1");
+  } catch (err) {
+    alert(`Could not enable push notifications: ${err.message}`);
+  }
+}
+
+async function disablePushNotifications() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const subscription = await reg.pushManager.getSubscription();
+    if (subscription) {
+      await fetch("/api/push-subscribe", {
+        method: "DELETE",
+        headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` },
+        body: JSON.stringify({ endpoint: subscription.endpoint })
+      });
+      await subscription.unsubscribe();
+    }
+    localStorage.removeItem("live_push_subscribed");
+  } catch (err) {
+    alert(`Could not disable push notifications: ${err.message}`);
+  }
+}
+
+function buildBriefingContext() {
+  const today = new Date().toLocaleDateString("en-US", {
+    weekday: "long", month: "long", day: "numeric", year: "numeric"
+  });
+  const parts = [`Today: ${today}`];
+  const notesCtx = buildAiNotesContext();
+  if (notesCtx) parts.push(notesCtx);
+  try { parts.push(buildChatEatContext()); }   catch { /* skip */ }
+  try { parts.push(buildChatDoContext()); }    catch { /* skip */ }
+  try { parts.push(buildChatPlanContext()); }  catch { /* skip */ }
+  try { parts.push(buildChatHealthContext()); } catch { /* skip */ }
+  try { parts.push(buildChatShopContext()); }  catch { /* skip */ }
+  try { parts.push(buildChatSweatContext()); } catch { /* skip */ }
+  return parts.filter(Boolean).join("\n\n");
+}
+
+async function sendDailyBriefing() {
+  if (chatIsLoading) return;
+  trackUsage("claude_chat");
+  const input = document.getElementById("aiChatInput");
+  if (input) { input.value = ""; input.style.height = "auto"; }
+
+  const ctx = buildBriefingContext();
+  const prompt = "Give me a morning briefing. Summarise what I need to know today: any tasks due or overdue, tonight's dinner, upcoming calendar events in the next day or two, and my daily dozen progress. Keep it tight — 4 to 6 bullets, most actionable first.";
+  const userContent = `CURRENT CONTEXT:\n${ctx}\n\n---\n\n${prompt}`;
+
+  // Reset conversation so the full briefing context leads it
+  chatMessages = [];
+  chatContextSent = true;
+  chatLastSection = location.hash.replace("#", "") || "home";
+
+  chatMessages.push({ role: "user", content: userContent });
+  appendChatBubble("user", "Daily briefing");
+  await runChatTurn();
+}
+
+function buildChatContext(section) {
+  const today = new Date().toLocaleDateString("en-US", {
+    weekday: "long", month: "long", day: "numeric", year: "numeric"
+  });
+  let ctx = `Today: ${today}\nSection open: ${section || "home"}\n\n`;
+  const notesCtx = buildAiNotesContext();
+  if (notesCtx) ctx += notesCtx + "\n\n";
+  try {
+    switch (section) {
+      case "eat":      ctx += buildChatEatContext();      break;
+      case "shop":     ctx += buildChatShopContext();     break;
+      case "do":       ctx += buildChatDoContext();       break;
+      case "watch":    ctx += buildChatWatchContext();    break;
+      case "media":    ctx += buildChatMediaContext() + "\n\n" + buildChatPodcastContext(); break;
+      case "sweat":    ctx += buildChatSweatContext() + "\n\n" + buildChatHealthContext(); break;
+      case "schedule": ctx += buildChatPlanContext();     break;
+      case "stock":    ctx += buildChatStockContext();    break;
+      default:         ctx += buildChatGeneralContext();  break;
+    }
+  } catch (e) { console.error("[chat context]", e); }
+  return ctx;
+}
+
+function buildChatEatContext() {
+  const lines = [];
+  const wk = weekKey();
+  const plan = state.plans?.[wk];
+  if (plan?.slots) {
+    lines.push("THIS WEEK'S MEAL PLAN:");
+    for (const day of prepDays) {
+      if (day.id === "friday-finish") continue;
+      const daySlots = plan.slots[day.id];
+      if (!daySlots) continue;
+      const meals = Object.entries(daySlots)
+        .map(([, val]) => (Array.isArray(val) ? val : [val]).filter(Boolean).join(", "))
+        .filter(Boolean);
+      if (meals.length) lines.push(`  ${day.name}: ${meals.join(" | ")}`);
+    }
+  } else {
+    lines.push("No meal plan set for this week.");
+  }
+  // Full ingredient details for recipes in this week's plan (so AI can answer questions about them)
+  if (plan?.slots) {
+    const plannedNames = new Set();
+    for (const day of prepDays) {
+      const slots = plan.slots[day.id];
+      if (!slots) continue;
+      for (const val of Object.values(slots)) {
+        (Array.isArray(val) ? val : [val]).forEach((v) => { if (v) plannedNames.add(String(v).toLowerCase()); });
+      }
+    }
+    const plannedRecipes = activeRecipes().filter((r) => plannedNames.has((r.name || "").toLowerCase()));
+    if (plannedRecipes.length) {
+      lines.push("\nPLANNED RECIPE DETAILS:");
+      plannedRecipes.forEach((r) => {
+        const servings = Math.max(1, Number(r.servings) || 1);
+        const tags = r.tags?.length ? ` [${r.tags.join(", ")}]` : "";
+        lines.push(`  ${r.name} (${servings} servings)${tags}`);
+        const ings = normalizeIngredients(r.ingredients);
+        ings.forEach((i) => {
+          const parts = [i.amount, i.quantity, i.item, i.prep].filter(Boolean).join(" ");
+          lines.push(`    · ${parts}`);
+        });
+      });
+    }
+  }
+
+  const recipes = activeRecipes();
+  lines.push(`\nALL RECIPES (${recipes.length} total — use search_recipes tool for filtered lookups):`);
+  recipes.slice(0, 60).forEach((r) => {
+    const tags = r.tags?.length ? ` [${r.tags.join(", ")}]` : "";
+    lines.push(`  - ${r.name}${tags}`);
+  });
+  if (recipes.length > 60) lines.push(`  … and ${recipes.length - 60} more`);
+
+  // Today's food log
+  const todayKey = dateKeyFromDate(new Date());
+  const todayLogs = foodLogEntries().filter((e) => e.date === todayKey);
+  if (todayLogs.length) {
+    lines.push("\nTODAY'S FOOD LOG:");
+    todayLogs.forEach((e) => lines.push(`  ${e.mealType}: ${e.displayName}`));
+  } else {
+    lines.push("\nTODAY'S FOOD LOG: Nothing logged yet today.");
+  }
+
+  // Daily dozen progress for today — Luke's entries only
+  const ddCategories = state.dailyDozenCategories || [];
+  const lukeEatId = familyMembers().find((m) => m.name?.toLowerCase().includes("luke"))?.id || familyMembers()[0]?.id || "";
+  const todayDD = (state.dailyDozenEntries || []).filter((e) => e.date === todayKey && e.personId === lukeEatId);
+  if (ddCategories.length) {
+    const progress = {};
+    todayDD.forEach((e) => { progress[e.checklistItemId] = (progress[e.checklistItemId] || 0) + (e.completedAmount || 0); });
+    const totalDone = Object.values(progress).reduce((s, v) => s + v, 0);
+    const totalTarget = ddCategories.reduce((s, c) => s + (Number(c.dailyTargetServings) || 1), 0);
+    lines.push(`\nDAILY DOZEN TODAY: ${Math.round(totalDone * 10) / 10}/${totalTarget} servings`);
+    lines.push(`Valid log_checklist_entry categories: ${ddCategories.map((c) => c.name).join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
+function buildChatShopContext() {
+  const manual = state.persistentManualGroceries || [];
+  const lines = [`GROCERY LIST (${manual.length} items):`];
+  manual.slice(0, 40).forEach((item) => lines.push(`  - ${item}`));
+  if (manual.length > 40) lines.push(`  … and ${manual.length - 40} more`);
+
+  const pantry = state.pantry || [];
+  if (pantry.length) {
+    lines.push(`\nIN PANTRY (${pantry.length} items already at home):`);
+    pantry.slice(0, 30).forEach((item) => lines.push(`  - ${item}`));
+    if (pantry.length > 30) lines.push(`  … and ${pantry.length - 30} more`);
+  }
+  return lines.join("\n");
+}
+
+function buildChatDoContext() {
+  const lines = [];
+  const wk = weekKey();
+  lines.push("TASKS THIS WEEK:");
+  for (const day of doPrepDays) {
+    const tasks = rawDoTasksForDay(day.id, wk).filter((t) => !t.done);
+    if (tasks.length) lines.push(`  ${day.name}: ${tasks.map((t) => t.title).join(", ")}`);
+  }
+  const backlog = doBacklogTasks().filter((t) => !t.done);
+  if (backlog.length) {
+    lines.push(`\nBACKLOG (${backlog.length} tasks):`);
+    backlog.slice(0, 12).forEach((t) => lines.push(`  - ${t.title}`));
+    if (backlog.length > 12) lines.push(`  … and ${backlog.length - 12} more`);
+  }
+  return lines.join("\n") || "No tasks this week.";
+}
+
+function buildChatWatchContext() {
+  const items = state.watchItems || [];
+  const watching = items.filter((i) => i.status === "watching");
+  const want = items.filter((i) => i.status === "want");
+  const recentWatched = items
+    .filter((i) => i.status === "watched")
+    .sort((a, b) => (b.watchedDate || "").localeCompare(a.watchedDate || ""))
+    .slice(0, 5);
+  const lines = [];
+  if (watching.length) lines.push(`CURRENTLY WATCHING: ${watching.map((i) => i.title).join(", ")}`);
+  if (want.length) {
+    lines.push(`\nWATCHLIST — want to watch (${want.length}):`);
+    want.slice(0, 15).forEach((i) => lines.push(`  - ${i.title} [${i.type}]`));
+    if (want.length > 15) lines.push(`  … and ${want.length - 15} more`);
+  }
+  if (recentWatched.length) {
+    lines.push(`\nRECENTLY WATCHED: ${recentWatched.map((i) => i.title).join(", ")}`);
+  }
+  return lines.join("\n") || "No watchlist data.";
+}
+
+function buildChatMediaContext() {
+  const items = state.readingItems || [];
+  const reading = items.filter((i) => i.status === "reading");
+  const want = items.filter((i) => i.status === "want");
+  const recentRead = items
+    .filter((i) => i.status === "read")
+    .sort((a, b) => (b.readDate || "").localeCompare(a.readDate || ""))
+    .slice(0, 5);
+  const lines = [];
+  if (reading.length) lines.push(`CURRENTLY READING: ${reading.map((i) => i.title).join(", ")}`);
+  if (want.length) {
+    lines.push(`\nREADING LIST — want to read (${want.length}):`);
+    want.slice(0, 15).forEach((i) => {
+      const by = i.authors?.length ? ` by ${i.authors.join(", ")}` : "";
+      lines.push(`  - ${i.title}${by}`);
+    });
+    if (want.length > 15) lines.push(`  … and ${want.length - 15} more`);
+  }
+  if (recentRead.length) lines.push(`\nRECENTLY READ: ${recentRead.map((i) => i.title).join(", ")}`);
+  return lines.join("\n") || "No reading list data.";
+}
+
+function buildChatSweatContext() {
+  const workouts = normalizeWorkouts(state.workouts);
+  const logs = workouts.flatMap((w) =>
+    (w.logs || []).map((l) => ({ title: w.title, type: w.type, date: l.date || l.createdAt || "", log: l }))
+  ).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
+
+  const lines = [`WORKOUT LIBRARY (${workouts.length} workouts — use exact names with log_workout tool):`];
+  workouts.forEach((w) => {
+    const type = w.type === "reps" ? "strength" : w.type === "game" ? "game" : "timed";
+    const count = w.logs?.length || 0;
+    lines.push(`  - ${w.title} [${type}]${count ? ` · ${count} session${count !== 1 ? "s" : ""}` : ""}`);
+  });
+
+  if (logs.length) {
+    lines.push("\nRECENT SESSIONS:");
+    logs.forEach(({ title, date, log }) => {
+      const d = date?.slice(0, 10) || "unknown date";
+      const parts = [title, d];
+      if (log.timedMinutes || log.timedHours) {
+        const h = Number(log.timedHours || 0);
+        const m = Number(log.timedMinutes || 0);
+        parts.push(h ? `${h}h ${m}m` : `${m} min`);
+      }
+      if (log.distanceWhole) parts.push(`${log.distanceWhole}${log.distanceDecimal ? `.${log.distanceDecimal}` : ""} ${log.distanceUnit || "km"}`);
+      lines.push(`  - ${parts.join(" · ")}`);
+    });
+  }
+  return lines.join("\n") || "No workout data.";
+}
+
+function buildChatPlanContext() {
+  const lines = [];
+  const todayKey = dateKeyFromDate(new Date());
+  const twoWeeksOut = dateKeyFromDate(addDays(new Date(), 14));
+
+  // Manual plan events
+  const upcoming = (state.planEvents || [])
+    .filter((e) => e.date >= todayKey && e.date <= twoWeeksOut)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (upcoming.length) {
+    lines.push("UPCOMING EVENTS:");
+    upcoming.forEach((e) => {
+      const time = !e.allDay && e.startTime ? ` at ${e.startTime}` : "";
+      const note = e.notes ? ` — ${e.notes}` : "";
+      lines.push(`  ${e.date}: ${e.title}${time}${note}`);
+    });
+  } else {
+    lines.push("No upcoming manual events in the next 2 weeks.");
+  }
+
+  // Synced Google Calendar events
+  const ws = startOfPrepWindow(new Date());
+  const synced = calendarEventsForWeek(ws).filter((e) => e.summary);
+  if (synced.length) {
+    lines.push(`\nSYNCED CALENDAR (${synced.length} events this week):`);
+    synced.slice(0, 10).forEach((e) => lines.push(`  - ${e.summary}`));
+  }
+
+  return lines.join("\n") || "No calendar data.";
+}
+
+function buildChatStockContext() {
+  const items = state.inventoryItems || [];
+  if (!items.length) return "No inventory data.";
+  const lines = [`INVENTORY (${items.length} items):`];
+  items.slice(0, 20).forEach((i) => lines.push(`  - ${i.name || i.title || i}`));
+  if (items.length > 20) lines.push(`  … and ${items.length - 20} more`);
+  return lines.join("\n");
+}
+
+function buildChatHealthContext() {
+  const lines = [];
+  const todayKey = dateKeyFromDate(new Date());
+  const members = familyMembers();
+  const lukeId = members.find((m) => m.name?.toLowerCase().includes("luke"))?.id || members[0]?.id || "";
+
+  // Daily dozen progress for today — Luke's entries only
+  const categories = state.dailyDozenCategories || [];
+  const todayEntries = (state.dailyDozenEntries || []).filter((e) => e.date === todayKey && e.personId === lukeId);
+  if (categories.length) {
+    const progress = {};
+    todayEntries.forEach((e) => {
+      progress[e.checklistItemId] = (progress[e.checklistItemId] || 0) + (e.completedAmount || 0);
+    });
+    const items = categories.map((cat) => {
+      // entries may use prefixed "daily-dozen:id" or bare "id" depending on migration state
+      const served = progress[`daily-dozen:${cat.id}`] ?? progress[cat.id] ?? 0;
+      const done = Math.round(served * 10) / 10;
+      const target = Number(cat.dailyTargetServings) || 1;
+      return `  ${cat.name}: ${done}/${target}`;
+    });
+    lines.push(`DAILY DOZEN — TODAY (${todayKey}):`);
+    lines.push(...items);
+    lines.push(`\nValid log_checklist_entry categories: ${categories.map((c) => c.name).join(", ")}`);
+  }
+
+  // Recent food log (last 3 days) — Luke's entries only
+  const threeDaysAgo = dateKeyFromDate(addDays(new Date(), -3));
+  const recentLogs = foodLogEntries()
+    .filter((e) => e.date >= threeDaysAgo && e.familyMemberId === lukeId)
+    .sort((a, b) => b.date.localeCompare(a.date));
+  if (recentLogs.length) {
+    lines.push("\nRECENT FOOD LOG:");
+    let lastDate = "";
+    recentLogs.slice(0, 15).forEach((e) => {
+      if (e.date !== lastDate) { lines.push(`  ${e.date}:`); lastDate = e.date; }
+      lines.push(`    ${e.mealType}: ${e.displayName}`);
+    });
+  }
+
+  return lines.join("\n") || "No health data.";
+}
+
+function buildChatPodcastContext() {
+  const shows = state.podcasts || [];
+  const queue = state.podcastQueue || [];
+  const saved = state.podcastSaved || [];
+  if (!shows.length) return "No podcast data.";
+  const lines = [`PODCASTS: ${shows.length} shows subscribed`];
+  shows.slice(0, 10).forEach((s) => lines.push(`  - ${s.title || s.feedTitle || s.id}`));
+  if (shows.length > 10) lines.push(`  … and ${shows.length - 10} more`);
+
+  if (queue.length) {
+    lines.push(`\nQUEUE (${queue.length} episodes):`);
+    queue.slice(0, 8).forEach((id) => {
+      const { episode, show } = findPodcastEpisode(id);
+      if (episode) lines.push(`  - "${episode.title}" — ${show?.title || "unknown show"}`);
+    });
+    if (queue.length > 8) lines.push(`  … and ${queue.length - 8} more`);
+  }
+  if (saved.length) {
+    lines.push(`\nSAVED (${saved.length} episodes):`);
+    saved.slice(0, 5).forEach((id) => {
+      const { episode, show } = findPodcastEpisode(id);
+      if (episode) lines.push(`  - "${episode.title}" — ${show?.title || "unknown show"}`);
+    });
+    if (saved.length > 5) lines.push(`  … and ${saved.length - 5} more`);
+  }
+  return lines.join("\n");
+}
+
+function buildChatGeneralContext() {
+  const lines = [];
+  const wk = weekKey();
+  const pending = doPrepDays.flatMap((d) => rawDoTasksForDay(d.id, wk).filter((t) => !t.done));
+  const backlog = doBacklogTasks().filter((t) => !t.done);
+  if (pending.length || backlog.length) {
+    lines.push(`TASKS: ${pending.length} active this week, ${backlog.length} in backlog`);
+    if (pending.length) {
+      pending.slice(0, 5).forEach((t) => lines.push(`  - ${t.title}`));
+    }
+  }
+  const groceries = state.persistentManualGroceries || [];
+  if (groceries.length) lines.push(`GROCERY LIST: ${groceries.length} items`);
+  const recipeCount = activeRecipes().length;
+  if (recipeCount) lines.push(`RECIPES: ${recipeCount} saved (use search_recipes tool to filter by name, tag, or ingredient)`);
+  const wantWatch = (state.watchItems || []).filter((i) => i.status === "want");
+  if (wantWatch.length) lines.push(`WATCHLIST: ${wantWatch.length} titles to watch`);
+  const reading = (state.readingItems || []).filter((i) => i.status === "reading");
+  if (reading.length) lines.push(`READING: ${reading.map((i) => i.title).join(", ")}`);
+
+  // Daily dozen snapshot — Luke's entries only
+  const todayKey2 = dateKeyFromDate(new Date());
+  const lukeId2 = familyMembers().find((m) => m.name?.toLowerCase().includes("luke"))?.id || familyMembers()[0]?.id || "";
+  const todayDDEntries = (state.dailyDozenEntries || []).filter((e) => e.date === todayKey2 && e.personId === lukeId2);
+  const totalDDServings = todayDDEntries.reduce((sum, e) => sum + (e.completedAmount || 0), 0);
+  const totalDDTarget = (state.dailyDozenCategories || []).reduce((sum, c) => sum + (Number(c.dailyTargetServings) || 1), 0);
+  if (totalDDTarget > 0) lines.push(`DAILY DOZEN: ${Math.round(totalDDServings)}/${totalDDTarget} servings today`);
+
+  const wk2 = weekKey();
+  const plan = state.plans?.[wk2];
+  if (plan?.slots) {
+    const today = new Date();
+    const todayKey = doPrepDays.find((d) => {
+      const ws = startOfPrepWindow(today);
+      const dd = addDays(ws, d.offset);
+      dd.setHours(0, 0, 0, 0);
+      const t2 = new Date(today); t2.setHours(0, 0, 0, 0);
+      return dd.getTime() === t2.getTime();
+    });
+    if (todayKey) {
+      const todaySlots = plan.slots[todayKey.id];
+      if (todaySlots) {
+        const meals = Object.values(todaySlots).flat().filter(Boolean);
+        if (meals.length) lines.push(`TODAY'S MEALS: ${meals.join(", ")}`);
+      }
+    }
+  }
+  return lines.join("\n") || "";
+}
+
+// ── Chat voice input ───────────────────────────────────────────────────────────
+
+function toggleChatVoice() {
+  if (chatVoiceState === "idle") startChatVoice();
+  else stopChatVoice();
+}
+
+function startChatVoice() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { showVoiceToast("Speech recognition not supported in this browser."); return; }
+  chatVoiceRecognition = new SR();
+  chatVoiceRecognition.continuous = false;
+  chatVoiceRecognition.interimResults = false;
+  chatVoiceRecognition.lang = "en-US";
+  chatVoiceRecognition.onresult = (event) => {
+    const transcript = event.results[0]?.[0]?.transcript || "";
+    setChatVoiceState("idle");
+    if (transcript) sendChatMessage(transcript);
+  };
+  chatVoiceRecognition.onerror = () => setChatVoiceState("idle");
+  chatVoiceRecognition.onend = () => setChatVoiceState("idle");
+  try {
+    chatVoiceRecognition.start();
+    setChatVoiceState("listening");
+  } catch { setChatVoiceState("idle"); }
+}
+
+function stopChatVoice() {
+  chatVoiceRecognition?.stop();
+  setChatVoiceState("idle");
+}
+
+function setChatVoiceState(s) {
+  chatVoiceState = s;
+  const btn = document.getElementById("aiChatMicBtn");
+  if (btn) btn.dataset.voiceState = s;
+}
+
+// ── Chat panel init ────────────────────────────────────────────────────────────
+
+function initAiChatPanel() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  loadChatHistory();
+
+  // Tap = open text chat; press-and-hold = open with voice
+  const micBtn = elements.voiceMicBtn;
+  if (micBtn) {
+    micBtn.hidden = false;
+    let holdTimer = null;
+    let didLongPress = false;
+    micBtn.addEventListener("pointerdown", (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      didLongPress = false;
+      holdTimer = setTimeout(() => {
+        didLongPress = true;
+        micBtn.classList.add("is-holding");
+        openAiPanel(!!SR);
+      }, 500);
+    });
+    micBtn.addEventListener("pointerup", () => {
+      clearTimeout(holdTimer);
+      micBtn.classList.remove("is-holding");
+      if (!didLongPress) openAiPanel(false);
+    });
+    micBtn.addEventListener("pointercancel", () => {
+      clearTimeout(holdTimer);
+      micBtn.classList.remove("is-holding");
+      didLongPress = false;
+    });
+    micBtn.addEventListener("contextmenu", (e) => e.preventDefault());
+  }
+
+  document.getElementById("aiChatCloseBtn")?.addEventListener("click", closeAiPanel);
+  document.querySelector(".ai-chat-backdrop")?.addEventListener("click", closeAiPanel);
+
+  document.getElementById("aiChatBriefingBtn")?.addEventListener("click", () => {
+    sendDailyBriefing();
+  });
+
+  document.getElementById("aiChatClearBtn")?.addEventListener("click", () => {
+    if (!confirm("Clear conversation history?")) return;
+    chatMessages = [];
+    chatContextSent = false;
+    chatLastSection = "";
+    try { localStorage.removeItem(CHAT_STORAGE_KEY); } catch { /* ignore */ }
+    const container = document.getElementById("aiChatMessages");
+    if (container) container.innerHTML = "";
+  });
+
+  document.getElementById("aiChatMicBtn")?.addEventListener("click", toggleChatVoice);
+  if (!SR) document.getElementById("aiChatMicBtn")?.setAttribute("hidden", "");
+
+  document.getElementById("aiChatStopBtn")?.addEventListener("click", () => {
+    chatAbortController?.abort();
+  });
+
+  const sendBtn = document.getElementById("aiChatSendBtn");
+  const input = document.getElementById("aiChatInput");
+
+  sendBtn?.addEventListener("click", () => sendChatMessage(input?.value || ""));
+
+  input?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage(input.value);
+    }
+  });
+
+  input?.addEventListener("input", () => {
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      const panel = document.getElementById("aiChatPanel");
+      if (panel && !panel.hidden && panel.classList.contains("is-open")) closeAiPanel();
+    }
+  });
 }

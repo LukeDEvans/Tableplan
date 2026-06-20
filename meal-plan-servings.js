@@ -1,8 +1,3 @@
-(function mealPlanServingsFactory(root, factory) {
-  const api = factory();
-  if (typeof module !== "undefined" && module.exports) module.exports = api;
-  if (root) root.LiveMealPlanServings = api;
-}(typeof globalThis !== "undefined" ? globalThis : this, function createMealPlanServings() {
 "use strict";
 
 const nutrientKeys = ["calories", "protein", "carbs", "fat", "fiber", "sugar", "sodium", "saturatedFat"];
@@ -13,7 +8,7 @@ function recipeDefaultServings(recipe) {
 
 function createMealPlanRecipe(recipe, overrides = {}) {
   const defaultServings = recipeDefaultServings(recipe);
-  return {
+return {
     id: String(overrides.id || `meal-plan-recipe-${Date.now()}`),
     recipeId: String(recipe?.id || overrides.recipeId || ""),
     date: String(overrides.date || ""),
@@ -30,7 +25,7 @@ function isMealPlanRecipe(entry) {
 function normalizeMealPlanRecipe(entry, recipe = null) {
   if (!isMealPlanRecipe(entry)) return entry;
   const defaultServings = recipeDefaultServings(recipe);
-  return {
+return {
     id: String(entry.id || `meal-plan-recipe-${Date.now()}`),
     recipeId: String(entry.recipeId || ""),
     date: String(entry.date || ""),
@@ -53,7 +48,7 @@ function scalingFactor(entry, recipe) {
 function scaleIngredient(ingredient, entry, recipe) {
   const factor = scalingFactor(entry, recipe);
   const amount = Number(ingredient?.amount);
-  return {
+return {
     ...ingredient,
     amount: Number.isFinite(amount) ? amount * factor : ingredient?.amount
   };
@@ -79,7 +74,7 @@ function sumMealPlanNutrition(entries, recipeLookup) {
   return totals;
 }
 
-return {
+export {
   nutrientKeys,
   recipeDefaultServings,
   createMealPlanRecipe,
@@ -91,4 +86,3 @@ return {
   scaleNutritionForPlan,
   sumMealPlanNutrition
 };
-}));

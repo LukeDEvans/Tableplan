@@ -1,8 +1,3 @@
-(function foodHealthChecklistFactory(root, factory) {
-  const api = factory();
-  if (typeof module !== "undefined" && module.exports) module.exports = api;
-  if (root) root.LiveFoodHealthChecklists = api;
-}(typeof globalThis !== "undefined" ? globalThis : this, function createFoodHealthChecklists() {
 "use strict";
 
 const placeholderTemplates = [
@@ -54,5 +49,4 @@ const placeholderTemplates = [
   }
 ];
 
-return { placeholderTemplates };
-}));
+export { placeholderTemplates };

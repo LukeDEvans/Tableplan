@@ -1,0 +1,15 @@
+{
+  "name": "live",
+  "private": true,
+  "scripts": {
+    "dev": "netlify dev --context production",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}

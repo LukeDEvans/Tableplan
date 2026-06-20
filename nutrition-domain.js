@@ -1,8 +1,3 @@
-(function nutritionDomainFactory(root, factory) {
-  const api = factory();
-  if (typeof module !== "undefined" && module.exports) module.exports = api;
-  if (root) root.NutritionDomain = api;
-}(typeof globalThis !== "undefined" ? globalThis : this, function createNutritionDomain() {
 "use strict";
 
 const nutrientDefinitions = [
@@ -84,7 +79,7 @@ function structureIngredient(ingredient) {
   const item = typeof ingredient === "string" ? rawLine : String(ingredient?.item || ingredient?.name || "").trim();
   const preparationNote = typeof ingredient === "string" ? "" : String(ingredient?.prep || ingredient?.preparationNote || "").trim();
   const optional = /\boptional\b/i.test(`${rawLine} ${preparationNote}`);
-  return {
+return {
     rawLine,
     ingredientName: item,
     normalizedName: normalizeIngredientName(item),
@@ -99,7 +94,7 @@ function structureIngredient(ingredient) {
 function convertToGrams(quantity, unit, food = {}) {
   const amount = Number(quantity);
   if (!Number.isFinite(amount) || amount <= 0) {
-    return { grams: null, confidenceScore: 0.2, note: "Quantity could not be converted." };
+return { grams: null, confidenceScore: 0.2, note: "Quantity could not be converted." };
   }
   const normalizedUnit = normalizeUnit(unit);
   const exact = {
@@ -109,7 +104,7 @@ function convertToGrams(quantity, unit, food = {}) {
     lb: 453.59237
   };
   if (exact[normalizedUnit]) {
-    return { grams: amount * exact[normalizedUnit], confidenceScore: 1, note: "" };
+return { grams: amount * exact[normalizedUnit], confidenceScore: 1, note: "" };
   }
 
   const servingSize = Number(food.servingSize);
@@ -117,22 +112,22 @@ function convertToGrams(quantity, unit, food = {}) {
   if (Number.isFinite(servingSize) && servingSize > 0 && servingUnit === "g") {
     const household = String(food.householdServingFullText || "").toLowerCase();
     if (normalizedUnit === "each" || household.includes(normalizedUnit)) {
-      return { grams: amount * servingSize, confidenceScore: 0.82, note: "Converted using the USDA serving size." };
+return { grams: amount * servingSize, confidenceScore: 0.82, note: "Converted using the USDA serving size." };
     }
   }
 
   const volumeFallback = { tsp: 5, tbsp: 15, cup: 240, each: 100 };
   if (volumeFallback[normalizedUnit]) {
-    return {
+return {
       grams: amount * volumeFallback[normalizedUnit],
       confidenceScore: normalizedUnit === "each" ? 0.35 : 0.45,
       note: "Estimated with a general volume or item conversion; review this match."
     };
   }
   if (!normalizedUnit) {
-    return { grams: amount * 100, confidenceScore: 0.25, note: "No unit was provided; estimated as 100 g per item." };
+return { grams: amount * 100, confidenceScore: 0.25, note: "No unit was provided; estimated as 100 g per item." };
   }
-  return { grams: null, confidenceScore: 0.15, note: `The unit "${normalizedUnit}" could not be converted to grams.` };
+return { grams: null, confidenceScore: 0.15, note: `The unit "${normalizedUnit}" could not be converted to grams.` };
 }
 
 function foodNutrientsPer100g(food = {}) {
@@ -155,7 +150,7 @@ function calculateIngredientNutrition(structuredIngredient, food) {
   nutrientDefinitions.forEach(({ key }) => {
     nutrients[key] = per100g[key] * multiplier;
   });
-  return {
+return {
     ...structuredIngredient,
     fdcId: String(food.fdcId || ""),
     matchedFood: food.description || food.matchedFood || "",
@@ -183,7 +178,7 @@ function sumNutrition(matches, servings = 1) {
   nutrientDefinitions.forEach(({ key }) => {
     perServing[key] = totals[key] / servingCount;
   });
-  return { totals, perServing, servings: servingCount };
+return { totals, perServing, servings: servingCount };
 }
 
 function nutritionFactsFromEstimate(estimate) {
@@ -208,7 +203,7 @@ function applySavedCorrection(ingredient, corrections = {}) {
   return corrections[correctionKey(ingredient.normalizedName || ingredient.ingredientName)] || null;
 }
 
-return {
+export {
   nutrientDefinitions,
   parseAmount,
   normalizeUnit,
@@ -222,4 +217,3 @@ return {
   correctionKey,
   applySavedCorrection
 };
-}));

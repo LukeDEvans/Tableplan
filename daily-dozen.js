@@ -1,8 +1,3 @@
-(function dailyDozenFactory(root, factory) {
-  const api = factory();
-  if (typeof module !== "undefined" && module.exports) module.exports = api;
-  if (root) root.LiveDailyDozen = api;
-}(typeof globalThis !== "undefined" ? globalThis : this, function createDailyDozen() {
 "use strict";
 
 const categories = [
@@ -472,7 +467,7 @@ function recipeSuggestions(ingredients, tagMap, normalizeItemName = (value) => S
   }));
 }
 
-return {
+export {
   categories,
   familyMembers,
   seededTags,
@@ -485,4 +480,3 @@ return {
   progressFor,
   recipeSuggestions
 };
-}));

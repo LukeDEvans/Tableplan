@@ -5,3 +5,4 @@ window.TABLEPLAN_SUPABASE = {
   anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5veW9jamNsdHJlbndkb3ZxcnFsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzMjk5MjUsImV4cCI6MjA5MzkwNTkyNX0.UFs3GHdG2yuqOvPGXr6D8DjbvnTLzgC5-KGilg4Oc94",
   stateId: "personal"
 };
+export {};

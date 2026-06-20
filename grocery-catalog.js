@@ -1,8 +1,3 @@
-(function groceryCatalogFactory(root, factory) {
-  const api = factory();
-  if (typeof module !== "undefined" && module.exports) module.exports = api;
-  if (root) root.LiveGroceryCatalog = api;
-}(typeof globalThis !== "undefined" ? globalThis : this, function createGroceryCatalog() {
 "use strict";
 
 const prepPhrases = [
@@ -234,7 +229,7 @@ function normalizeBaseName(rawName) {
   if (words.length) words[words.length - 1] = singularizeWord(words[words.length - 1]);
   const normalizedName = words.join(" ");
   const canonicalName = synonymEntries[normalizedName] || normalizedName;
-  return { normalizedName, canonicalName, notes: [...new Set(notes)] };
+return { normalizedName, canonicalName, notes: [...new Set(notes)] };
 }
 
 function normalizeGroceryItemName(rawName, options = {}) {
@@ -256,7 +251,7 @@ function normalizeGroceryItemName(rawName, options = {}) {
   }
   if (!splitPreferences[splitKey]) canonicalName = synonymEntries[canonicalName] || canonicalName;
   const catalog = catalogByCanonical.get(canonicalName);
-  return {
+return {
     rawName: raw,
     normalizedName: base.normalizedName,
     canonicalName,
@@ -332,7 +327,7 @@ function mergeGroceryRows(rows, options = {}) {
       .filter(Boolean);
     const loose = [...new Set(group.looseQuantities.filter(Boolean))];
     const manualValues = [...new Set(group.manualValues)];
-    return {
+return {
       key: group.canonicalName,
       item: group.displayName,
       displayName: group.displayName,
@@ -352,9 +347,9 @@ function mergeGroceryRows(rows, options = {}) {
   });
 }
 
-return {
+export {
   prepPhrases,
-  synonyms: synonymEntries,
+  synonymEntries as synonyms,
   catalogGroups,
   catalogEntries,
   singularizeWord,
@@ -364,4 +359,3 @@ return {
   formatQuantity,
   mergeGroceryRows
 };
-}));

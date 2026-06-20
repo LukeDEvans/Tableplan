@@ -4,9 +4,11 @@
   "description": "Personal life management",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#FFFDF6",
-  "theme_color": "#32B496",
+  "background_color": "#7BA98B",
+  "theme_color": "#7BA98B",
   "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
     { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
   ]
 }

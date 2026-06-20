@@ -1,8 +1,3 @@
-(function foodHealthFactory(root, factory) {
-  const api = factory();
-  if (typeof module !== "undefined" && module.exports) module.exports = api;
-  if (root) root.LiveFoodHealth = api;
-}(typeof globalThis !== "undefined" ? globalThis : this, function createFoodHealth() {
 "use strict";
 
 const nutrientKeys = ["calories", "protein", "carbs", "fat", "fiber", "sugar", "sodium", "saturatedFat"];
@@ -171,7 +166,7 @@ function normalizeFoodLogEntries(entries, memberIds = []) {
   const validMembers = new Set(memberIds);
   return (Array.isArray(entries) ? entries : []).map((entry) => {
     const id = String(entry?.id || "").trim();
-    return {
+return {
       id,
       familyMemberId: String(entry?.familyMemberId || "").trim(),
       date: String(entry?.date || "").slice(0, 10),
@@ -254,12 +249,12 @@ function checklistProgress({ template, settings, manualEntries, foodLogEntries, 
   return (template?.items || []).filter((item) => !hidden.has(item.id)).map((item) => {
     const target = Number(customTargets[item.id]) || item.targetFrequency;
     const completed = totals[item.id] || 0;
-    return { ...item, targetFrequency: target, completedAmount: completed, percent: Math.min(100, completed / target * 100) };
+return { ...item, targetFrequency: target, completedAmount: completed, percent: Math.min(100, completed / target * 100) };
   });
 }
 
 function copyFoodLogEntry(entry, nextPersonId, nextId) {
-  return {
+return {
     ...entry,
     id: nextId,
     familyMemberId: nextPersonId,
@@ -273,7 +268,7 @@ function clamp(value, min, max, fallback) {
   return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
 }
 
-return {
+export {
   nutrientKeys,
   mealTypes,
   builtInTemplates,
@@ -292,4 +287,3 @@ return {
   checklistProgress,
   copyFoodLogEntry
 };
-}));

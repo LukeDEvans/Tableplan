@@ -1,4 +1,4 @@
-const CACHE = "live-v3";
+const CACHE = "live-v4";
 const PRECACHE = ["/", "/favicon.svg"];
 const SKIP_HOSTS = ["supabase.co", "googleapis.com", "gstatic.com"];
 
@@ -51,6 +51,42 @@ self.addEventListener("fetch", (event) => {
         return cached;
       }
       return fetchAndCache;
+    })
+  );
+});
+
+// ── Push notifications ────────────────────────────────────────────────────────
+
+self.addEventListener("push", (event) => {
+  let data = {};
+  try { data = event.data?.json() ?? {}; } catch { data = { title: "Live", body: event.data?.text() ?? "" }; }
+
+  const title = data.title || "Live";
+  const options = {
+    body: data.body || "",
+    icon: data.icon || "/favicon.svg",
+    badge: "/favicon.svg",
+    tag: data.tag || "live-notification",
+    data: { url: data.url || "/" },
+    requireInteraction: false
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url || "/";
+  event.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((windowClients) => {
+      // Focus existing window if open
+      for (const client of windowClients) {
+        if (client.url.includes(self.location.origin) && "focus" in client) {
+          return client.focus();
+        }
+      }
+      // Otherwise open a new window
+      if (clients.openWindow) return clients.openWindow(url);
     })
   );
 });

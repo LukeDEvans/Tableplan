@@ -156,6 +156,14 @@ const server = http.createServer(async (request, response) => {
       await handleNetlifyFunction("./netlify/functions/gmail-callback", request, response, url);
       return;
     }
+    if (url.pathname === "/.netlify/functions/generate-tts") {
+      await handleNetlifyFunction("./netlify/functions/generate-tts", request, response);
+      return;
+    }
+    if (url.pathname === "/.netlify/functions/fetch-podcast") {
+      await handleNetlifyFunction("./netlify/functions/fetch-podcast", request, response);
+      return;
+    }
 
     await serveStatic(url.pathname, request, response);
   } catch (error) {
@@ -621,12 +629,12 @@ Do not include the Q&A themselves. No preamble, no explanation — just the mark
   }
 }
 
-async function claudeCall(apiKey, { system, user, maxTokens = 1024 }) {
+async function claudeCall(apiKey, { system, user, maxTokens = 1024, model = "claude-haiku-4-5-20251001" }) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
     body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
+      model,
       max_tokens: maxTokens,
       system,
       messages: [{ role: "user", content: user }]
@@ -898,6 +906,7 @@ async function generateEmailWithClaude(context, apiKey, prefs = "") {
     : "";
   return await claudeCall(apiKey, {
     maxTokens: 2048,
+    model: "claude-sonnet-4-6",
     system: `You are a personal assistant writing a weekly digest email for a life-management app called "Live". The user is Luke.
 Write a warm, personal, helpful email in clean HTML with inline styles (for email client compatibility).
 Style: body background #FFFDF6, font Arial/sans-serif, max-width 600px centered, headings color #92400E, body text #1C1917.

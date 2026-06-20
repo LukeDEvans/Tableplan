@@ -1,8 +1,3 @@
-(function initReceiptDomain(root, factory) {
-  const api = factory();
-  if (typeof module === "object" && module.exports) module.exports = api;
-  if (root) root.LiveReceiptDomain = api;
-})(typeof globalThis !== "undefined" ? globalThis : this, function receiptDomainFactory() {
   function text(value) {
     return String(value || "").trim();
   }
@@ -31,7 +26,7 @@
     const lineItems = (Array.isArray(receipt?.lineItems) ? receipt.lineItems : [])
       .map((line) => normalizeReceiptLineItem(line, receiptId, createId))
       .filter((line) => line.rawText || line.normalizedName);
-    return {
+return {
       id: receiptId,
       storeName: text(receipt?.storeName || receipt?.store),
       storeId: text(receipt?.storeId),
@@ -52,7 +47,7 @@
     const quantity = Math.max(0, number(line?.quantity, 1));
     const totalPrice = number(line?.totalPrice ?? line?.price);
     const unitPrice = number(line?.unitPrice, quantity > 0 ? totalPrice / quantity : totalPrice);
-    return {
+return {
       id: text(line?.id) || createId("receipt-line"),
       receiptId,
       rawText: text(line?.rawText || line?.text || line?.name),
@@ -84,12 +79,12 @@
 
   function applyReceiptMappings(receipt, mappings) {
     const normalizedMappings = normalizeMappings(mappings);
-    return {
+return {
       ...receipt,
       lineItems: receipt.lineItems.map((line) => {
         const mapping = normalizedMappings[normalizedName(line.rawText)];
         if (!mapping) return line;
-        return {
+return {
           ...line,
           normalizedName: mapping.normalizedName,
           category: mapping.category || line.category
@@ -157,7 +152,7 @@
         .map((storeId) => estimateFromHistory(history, item.name || item.item, storeId))
         .filter(Boolean)
         .sort((a, b) => a.packagePrice - b.packagePrice);
-      return {
+return {
         ...item,
         estimates,
         bestEstimate: estimates[0] || null
@@ -169,7 +164,7 @@
     return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
 
-  return {
+export {
     normalizeReceipt,
     normalizeReceiptLineItem,
     normalizeMappings,
@@ -181,4 +176,3 @@
     trendForItem,
     normalizedName
   };
-});

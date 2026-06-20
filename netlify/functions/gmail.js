@@ -52,8 +52,9 @@ exports.handler = async (event) => {
         return {
           id: d.id,
           threadId: d.threadId,
-          snippet: d.snippet,
+          snippet: cleanSnippet(d.snippet),
           unread: (d.labelIds || []).includes("UNREAD"),
+          starred: (d.labelIds || []).includes("STARRED"),
           from: hdrs.from || "",
           subject: hdrs.subject || "(no subject)",
           date: hdrs.date || "",
@@ -173,7 +174,7 @@ function normalizeMessage(msg) {
     subject: hdrs.subject || "(no subject)",
     date: hdrs.date || "",
     internalDate: msg.internalDate,
-    snippet: msg.snippet,
+    snippet: cleanSnippet(msg.snippet),
     unread: (msg.labelIds || []).includes("UNREAD"),
     body: extractBody(msg.payload),
     messageId: hdrs["message-id"] || "",
@@ -187,10 +188,10 @@ function extractBody(payload) {
     if (payload.mimeType === "text/plain" || payload.mimeType === "text/html") return decodeB64(payload.body.data);
   }
   if (payload.parts) {
-    const plain = payload.parts.find((p) => p.mimeType === "text/plain");
-    if (plain?.body?.data) return decodeB64(plain.body.data);
     const html = payload.parts.find((p) => p.mimeType === "text/html");
     if (html?.body?.data) return decodeB64(html.body.data);
+    const plain = payload.parts.find((p) => p.mimeType === "text/plain");
+    if (plain?.body?.data) return decodeB64(plain.body.data);
     for (const part of payload.parts) { const t = extractBody(part); if (t) return t; }
   }
   return "";
@@ -265,6 +266,16 @@ async function getUserId(accessToken, serviceKey) {
     const user = await res.json();
     return user.id || null;
   } catch { return null; }
+}
+
+function cleanSnippet(raw) {
+  if (!raw) return "";
+  return raw
+    .replace(/&(zwnj|zwj|lrm|rlm|shy|#8203|#8204|#8205|#xfeff|#x200[bcdef]);/gi, "")
+    .replace(/[​‌‍‎‏﻿­]/g, "")
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function json(statusCode, body) {

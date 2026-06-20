@@ -229,11 +229,21 @@ function parseRecipeText(text, sourceUrl = "", fallbackName = "") {
   };
 }
 
+function isStepHeaderOnly(line) {
+  return /^(step\s*)?\d+[\s.):–\-]*$/i.test(line.trim());
+}
+
+function stripStepPrefix(step) {
+  return String(step || "").trim().replace(/^(step\s*)?\d+[\).:\-]\s*/i, "").trim();
+}
+
 function instructionsToText(instructions) {
   return arrayValue(instructions).map((step) => {
-    if (typeof step === "string") return step;
-    return step.text || step.name || "";
-  }).filter(Boolean).join("\n");
+    const text = typeof step === "string" ? step : (step.text || step.name || "");
+    return text.trim();
+  }).filter((text) => text && !isStepHeaderOnly(text))
+    .map(stripStepPrefix)
+    .filter(Boolean).join("\n");
 }
 
 function findPlainTextRecipeName(lines, ingredientsStart) {
@@ -241,34 +251,33 @@ function findPlainTextRecipeName(lines, ingredientsStart) {
   return nameCandidates.find((line) => !/^(prep|cook|total) time:/i.test(line) && !/^servings?:/i.test(line)) || lines[0] || "";
 }
 
+const IMPORT_AMOUNT_OPTIONS = ["pinch", "1/8", "1/4", "1/3", "1/2", "2/3", "3/4", "1", "1 1/4", "1 1/2", "1 3/4", "2", "2 1/4", "2 1/2", "2 3/4", "3", "3 1/4", "3 1/2", "3 3/4", "4", "4 1/4", "4 1/2", "4 3/4", "5", "5 1/4", "5 1/2", "5 3/4", "6", "6 1/4", "6 1/2", "6 3/4", "7", "7 1/4", "7 1/2", "7 3/4", "8", "8 1/4", "8 1/2", "8 3/4", "9", "9 1/4", "9 1/2", "9 3/4", "10", "10 1/4", "10 1/2", "10 3/4", "11", "11 1/4", "11 1/2", "11 3/4", "12", "12 1/4", "12 1/2", "12 3/4", "13", "13 1/4", "13 1/2", "13 3/4", "14", "14 1/4", "14 1/2", "14 3/4", "15", "15 1/4", "15 1/2", "15 3/4", "16"];
+const IMPORT_PREP_OPTIONS = ["beaten", "blanched", "boiled", "chopped", "coarsely chopped", "finely chopped", "roughly chopped", "cold", "cooked", "cooled", "cored", "crumbled", "crushed", "cubed", "deveined", "diced", "finely diced", "dissolved", "drained", "dried", "divided", "finely grated", "freshly grated", "grated", "ground", "halved", "juiced", "melted", "minced", "optional", "patted dry", "peeled", "pitted", "quartered", "refrigerated", "rinsed", "roasted", "room temperature", "seeded", "shredded", "sifted", "sliced", "thinly sliced", "roughly sliced", "softened", "squeezed", "steamed", "strained", "thawed", "toasted", "trimmed", "uncooked", "zested"];
+const IMPORT_UNIT_MAP = { c: "C", cup: "C", cups: "C", tablespoon: "Tbsp", tablespoons: "Tbsp", tbsp: "Tbsp", teaspoon: "tsp", teaspoons: "tsp", tsp: "tsp", pound: "lb", pounds: "lb", lb: "lb", ounce: "oz", ounces: "oz", oz: "oz", cans: "can", can: "can", cloves: "clove", clove: "clove", slices: "slice", slice: "slice", bunch: "bunch", bunches: "bunch", package: "package", packages: "package", pkg: "package", g: "g", gram: "g", grams: "g", kg: "kg", ml: "ml", l: "L", liter: "L", liters: "L", qt: "qt", quart: "qt", pt: "pt", pint: "pt", stick: "stick", sticks: "stick", sprig: "sprig", sprigs: "sprig", head: "head", heads: "head", stalk: "stalk", stalks: "stalk" };
+
 function parseIngredientLine(line) {
-  const normalizedLine = line.trim()
-    .replace(/^[-*]\s*/, "")
-    .replace(/⅛/g, "1/8")
-    .replace(/¼/g, "1/4")
-    .replace(/⅓/g, "1/3")
-    .replace(/½/g, "1/2")
-    .replace(/⅔/g, "2/3")
-    .replace(/¾/g, "3/4");
+  let normalizedLine = line.trim()
+    .replace(/^[-*•]\s*/, "")
+    .replace(/⅛/g, "1/8").replace(/¼/g, "1/4").replace(/⅓/g, "1/3")
+    .replace(/½/g, "1/2").replace(/⅔/g, "2/3").replace(/¾/g, "3/4");
+
+  normalizedLine = normalizedLine.replace(/^(\d[\d\s/]*)\s*\([\d.\s–\-]+\s*oz\)/i, "$1");
+
   const prepMatch = normalizedLine.match(/\(([^)]+)\)$/);
-  const prepText = prepMatch ? prepMatch[1].toLowerCase() : "";
-  const lineWithoutPrep = prepMatch ? normalizedLine.slice(0, prepMatch.index).trim() : normalizedLine;
-  const parts = lineWithoutPrep.split(/\s+/);
-  const amountOptions = ["pinch", "1/8", "1/4", "1/3", "1/2", "2/3", "3/4", "1", "1 1/4", "1 1/2", "1 3/4", "2", "2 1/4", "2 1/2", "2 3/4", "3", "3 1/4", "3 1/2", "3 3/4", "4", "4 1/4", "4 1/2", "4 3/4", "5", "5 1/4", "5 1/2", "5 3/4", "6", "6 1/4", "6 1/2", "6 3/4", "7", "7 1/4", "7 1/2", "7 3/4", "8", "8 1/4", "8 1/2", "8 3/4", "9", "9 1/4", "9 1/2", "9 3/4", "10", "10 1/4", "10 1/2", "10 3/4", "11", "11 1/4", "11 1/2", "11 3/4", "12", "12 1/4", "12 1/2", "12 3/4", "13", "13 1/4", "13 1/2", "13 3/4", "14", "14 1/4", "14 1/2", "14 3/4", "15", "15 1/4", "15 1/2", "15 3/4", "16"];
-  const amount = takeIngredientAmount(parts, amountOptions);
+  const prepText = prepMatch ? prepMatch[1].toLowerCase().trim() : "";
+  const lineWithoutTrailingPrep = prepMatch ? normalizedLine.slice(0, prepMatch.index).trim() : normalizedLine;
+  const parts = lineWithoutTrailingPrep.split(/\s+/);
+  const amount = takeIngredientAmount(parts, IMPORT_AMOUNT_OPTIONS);
   let quantity = "";
   const rawUnit = parts[0] || "";
-  const unit = rawUnit.toLowerCase();
-  const unitMap = { c: "C", cup: "C", cups: "C", t: "tsp", tablespoon: "Tbsp", tablespoons: "Tbsp", tbsp: "Tbsp", teaspoon: "tsp", teaspoons: "tsp", tsp: "tsp", pound: "lb", pounds: "lb", lb: "lb", ounce: "oz", ounces: "oz", oz: "oz", cans: "can", can: "can", cloves: "clove", clove: "clove", slices: "slice", slice: "slice" };
-  const mappedUnit = rawUnit === "T" ? "Tbsp" : rawUnit === "t" ? "tsp" : unitMap[unit];
-  if (mappedUnit) {
-    quantity = mappedUnit;
-    parts.shift();
-  }
-  const prepOptions = ["chopped", "diced", "minced", "sliced", "grated", "zested", "juiced", "peeled", "crushed", "rinsed", "drained", "cooked", "uncooked", "melted", "softened"];
-  const trailingPrep = prepOptions.includes(parts.at(-1)?.toLowerCase()) ? parts.pop().toLowerCase() : "";
-  const prep = prepOptions.includes(prepText) ? prepText : trailingPrep;
-  const item = prep && prepMatch ? parts.join(" ") : [parts.join(" "), prepText && !prep ? `(${prepText})` : ""].filter(Boolean).join(" ");
+  const mappedUnit = rawUnit === "T" ? "Tbsp" : rawUnit === "t" ? "tsp" : IMPORT_UNIT_MAP[rawUnit.toLowerCase()];
+  if (mappedUnit) { quantity = mappedUnit; parts.shift(); }
+
+  const trailingPrep = IMPORT_PREP_OPTIONS.includes(parts.at(-1)?.toLowerCase()) ? parts.pop().toLowerCase() : "";
+  const prep = IMPORT_PREP_OPTIONS.includes(prepText) ? prepText : trailingPrep;
+  const itemParts = parts.join(" ");
+  const leftoverPrep = prepText && !prep ? `(${prepText})` : "";
+  const item = [itemParts, leftoverPrep].filter(Boolean).join(" ");
   return { amount, quantity, item, prep };
 }
 

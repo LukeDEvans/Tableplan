@@ -6,11 +6,20 @@ Run `supabase-auth-migration.sql` in the Supabase SQL Editor. This removes anony
 
 ## 2. Deploy to Netlify
 
+The project now uses Vite as a build step. You must build before deploying.
+
+```bash
+npm install        # first time only
+npm run build      # produces dist/
+```
+
+Then:
+
 1. Go to https://app.netlify.com/drop
-2. Drag this project folder into the Netlify drop area.
+2. Drag the **`dist/`** folder into the Netlify drop area.
 3. Open the Netlify site URL after the deploy finishes.
 
-Netlify will serve `index.html`, `styles.css`, `app.js`, and `supabase-config.js`. The local helper files are blocked by `netlify.toml`.
+If the Netlify site is connected to the GitHub repo, Netlify will run `npm run build` automatically on each push (configured in `netlify.toml`).
 
 ## 3. Add the deployed URL to Supabase Auth
 

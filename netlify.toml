@@ -1,11 +1,22 @@
 [build]
-  publish = "."
+  command = "npm run build"
+  publish = "dist"
+
+[dev]
+  command = "vite --port 5174"
+  targetPort = 5174
+  port = 5173
+  autoLaunch = false
+  context = "production"
 
 [functions]
   directory = "netlify/functions"
 
 [functions."scheduled-email"]
   schedule = "*/15 * * * *"
+
+[functions."daily-briefing"]
+  schedule = "0 13 * * *"
 
 [[headers]]
   for = "/*"
@@ -14,6 +25,16 @@
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
     Strict-Transport-Security = "max-age=31536000"
+
+[[redirects]]
+  from = "/api/push-subscribe"
+  to = "/.netlify/functions/push-subscribe"
+  status = 200
+
+[[redirects]]
+  from = "/api/check-hcl"
+  to = "/.netlify/functions/check-hcl"
+  status = 200
 
 [[redirects]]
   from = "/api/voice-command"
