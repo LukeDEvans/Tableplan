@@ -32329,24 +32329,28 @@ function showTravelNewTripDialog() {
   });
   d.querySelector("#tnCancel").addEventListener("click", function() { d.remove(); });
   d.querySelector("#tnCreate").addEventListener("click", function() {
-    const name = d.querySelector("#tnTripName").value.trim();
-    if (!name) { d.querySelector("#tnTripName").focus(); return; }
-    const party = Array.from(d.querySelectorAll(".travel-party-chip.is-selected")).map(function(b) { return b.dataset.party; });
-    const trip = defaultTrip({
-      name,
-      destination: d.querySelector("#tnDest").value.trim(),
-      status: d.querySelector("#tnStatus").value,
-      startDate: d.querySelector("#tnStart").value || "",
-      endDate: d.querySelector("#tnEnd").value || "",
-      party
-    });
-    if (!Array.isArray(state.trips)) state.trips = [];
-    state.trips.push(trip);
-    persist();
-    syncTripToCalendar(trip);
-    d.remove();
-    renderTravelSidebar();
-    openTravelItem(trip.id);
+    try {
+      const name = d.querySelector("#tnTripName").value.trim();
+      if (!name) { alert("Please enter a trip name."); return; }
+      const party = Array.from(d.querySelectorAll(".travel-party-chip.is-selected")).map(function(b) { return b.dataset.party; });
+      const trip = defaultTrip({
+        name,
+        destination: d.querySelector("#tnDest").value.trim(),
+        status: d.querySelector("#tnStatus").value,
+        startDate: d.querySelector("#tnStart").value || "",
+        endDate: d.querySelector("#tnEnd").value || "",
+        party
+      });
+      if (!Array.isArray(state.trips)) state.trips = [];
+      state.trips.push(trip);
+      persist();
+      syncTripToCalendar(trip);
+      d.remove();
+      renderTravelSidebar();
+      openTravelItem(trip.id);
+    } catch (err) {
+      alert("Error creating trip: " + err.message);
+    }
   });
 }
 
