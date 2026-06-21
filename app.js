@@ -7,6 +7,10 @@ import * as LiveReceiptDomain from './receipt-domain.js';
 import * as NutritionDomain from './nutrition-domain.js';
 
 const STORAGE_KEY = "tableplan-state-v1";
+const TRAVEL_LOGISTIC_ICONS = { flight: "✈️", hotel: "🏨", car: "🚗", train: "🚆", ferry: "⛴️", other: "📌" };
+const TRAVEL_BUDGET_CATS = ["flights", "accommodation", "food", "activities", "transport", "other"];
+const TRAVEL_PACKING_CATS = ["documents", "clothing", "electronics", "health", "toiletries", "other"];
+const TRAVEL_PARTY_OPTIONS = ["Luke", "MJ", "Sophia", "Friends", "Family"];
 const _tabIndInit = new WeakSet();
 const CALENDAR_CACHE_KEY = "eat-calendars-v1";
 const HOLIDAY_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
@@ -31738,12 +31742,6 @@ function buildBriefingContext() {
 let travelOpenId = null;
 let travelOpenTab = "itinerary";
 
-const TRAVEL_LOGISTIC_ICONS = {
-  flight: "✈️", hotel: "🏨", car: "🚗", train: "🚆", ferry: "⛴️", other: "📌"
-};
-const TRAVEL_BUDGET_CATS = ["flights", "accommodation", "food", "activities", "transport", "other"];
-const TRAVEL_PACKING_CATS = ["documents", "clothing", "electronics", "health", "toiletries", "other"];
-const TRAVEL_PARTY_OPTIONS = ["Luke", "MJ", "Sophia", "Friends", "Family"];
 
 function travelTrips() { return state.trips || []; }
 function travelIdeas() { return state.travelIdeas || []; }
