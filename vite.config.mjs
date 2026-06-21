@@ -47,6 +47,8 @@ function serveRootStaticPlugin() {
   };
 }
 
+const API_PORT = process.env.API_PORT ? parseInt(process.env.API_PORT) : 4175;
+
 export default defineConfig({
   build: {
     outDir: 'dist',
@@ -54,6 +56,12 @@ export default defineConfig({
   },
   server: {
     host: true,
+    port: 4174,
+    strictPort: true,
+    proxy: {
+      '/api': { target: `http://localhost:${API_PORT}`, changeOrigin: false },
+      '/.netlify/functions': { target: `http://localhost:${API_PORT}`, changeOrigin: false },
+    },
   },
   plugins: [copyRootFilesPlugin(), serveRootStaticPlugin()],
 });

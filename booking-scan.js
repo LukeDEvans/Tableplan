@@ -124,7 +124,7 @@ function parseBookingJson(text) {
         departTime: /^\d{2}:\d{2}$/.test(s.departTime) ? s.departTime : "",
         arriveDate: /^\d{4}-\d{2}-\d{2}$/.test(s.arriveDate) ? s.arriveDate : "",
         arriveTime: /^\d{2}:\d{2}$/.test(s.arriveTime) ? s.arriveTime : ""
-      })).filter(s => s.from && s.to)
+      })).filter(s => (s.from || s.fromName) && (s.to || s.toName) && s.departDate)
     : [];
   return {
     type,

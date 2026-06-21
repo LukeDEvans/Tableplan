@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "netlify dev --context production",
+    "dev:local": "bash dev.sh",
     "build": "vite build",
     "preview": "vite preview"
   },

@@ -2304,9 +2304,25 @@ function loadState() {
   }
 }
 
+const TRIP_BACKUP_KEY = "tableplan-trips-v1";
+function saveTripBackup() {
+  try {
+    localStorage.setItem(TRIP_BACKUP_KEY, JSON.stringify({
+      trips: state.trips || [],
+      travelIdeas: state.travelIdeas || [],
+      tombstones: (state.tombstones?.trips || []),
+      savedAt: state.stateUpdatedAt
+    }));
+  } catch {}
+}
+function loadTripBackup() {
+  try { return JSON.parse(localStorage.getItem(TRIP_BACKUP_KEY) || "null"); } catch { return null; }
+}
+
 function persist() {
   state.stateUpdatedAt = new Date().toISOString();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  saveTripBackup();
   saveStateToSharedStorage();
   scheduleLocalBackup();
 }
@@ -4686,6 +4702,26 @@ function applyStoredState(storedState) {
   Object.keys(state).forEach((key) => delete state[key]);
   Object.assign(state, normalizeState(storedState));
   state.collapsedSections = currentCollapsedSections || state.collapsedSections || defaultCollapsedSections();
+  // If the incoming state has no trips but the local trip backup has non-tombstoned trips,
+  // restore them. This catches accidental syncs that wipe travel data.
+  // Explicitly deleted trips are tombstoned by the delete handler, so they won't come back.
+  if (!state.trips?.length) {
+    const tripBackup = loadTripBackup();
+    if (tripBackup?.trips?.length) {
+      const tombstonedIds = new Set([
+        ...(state.tombstones?.trips || []).map(String),
+        ...(tripBackup.tombstones || []).map(String)
+      ]);
+      const survivingTrips = tripBackup.trips.filter(t => t?.id != null && !tombstonedIds.has(String(t.id)));
+      if (survivingTrips.length) {
+        console.warn("[travel] Trips missing after sync — restoring from local trip backup.");
+        state.trips = survivingTrips;
+        if (tripBackup.travelIdeas?.length && !state.travelIdeas?.length) {
+          state.travelIdeas = tripBackup.travelIdeas;
+        }
+      }
+    }
+  }
   Object.assign(showtimesCache, state.watchShowtimesData || {});
   applyThemeMode();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -31979,6 +32015,9 @@ function renderTravelTripDetail(trip) {
   });
   document.getElementById("travelDeleteBtn").onclick = () => {
     if (!confirm(`Delete trip "${trip.name}"?`)) return;
+    if (!state.tombstones) state.tombstones = {};
+    if (!Array.isArray(state.tombstones.trips)) state.tombstones.trips = [];
+    state.tombstones.trips.push(String(trip.id));
     state.trips = (state.trips || []).filter(t => t.id !== trip.id);
     persist();
     travelOpenId = null;
@@ -32206,7 +32245,7 @@ function renderTravelLogistics(trip) {
   el.querySelectorAll("[data-log-sync]").forEach(btn => btn.addEventListener("click", function() {
     const entry = trip.logistics[+btn.dataset.logSync];
     if (!entry) return;
-    const result = syncLogisticToItinerary(trip, entry, null);
+    const result = syncLogisticToItinerary(trip, entry, entry.segments?.length ? entry : null);
     persist();
     const msg = [result.added ? result.added + " item" + (result.added !== 1 ? "s" : "") + " added" : "", result.updated ? result.updated + " day" + (result.updated !== 1 ? "s" : "") + " updated" : ""].filter(Boolean).join(", ");
     btn.textContent = msg ? "✓ " + msg : "✓ Done";
@@ -32490,20 +32529,25 @@ function syncLogisticToItinerary(trip, entry, booking) {
       segments.forEach(function(seg) {
         if (!seg.departDate) return;
         var day = getOrCreateItineraryDay(trip, seg.departDate);
-        var title = "✈️ " + (seg.from || "?") + " → " + (seg.to || "?");
-        var notes = "";
-        if (seg.arriveTime) notes += "Arrives " + seg.arriveTime;
-        if (seg.arriveDate && seg.arriveDate !== seg.departDate) notes += (notes ? " " : "") + "(" + formatTravelDate(seg.arriveDate) + ")";
-        if (seg.flightNumber) notes += (notes ? " · " : "") + seg.flightNumber;
+        var fromLabel = seg.fromName || seg.from || "?";
+        var toLabel = seg.toName || seg.to || "?";
+        var title = "✈️ " + fromLabel + " → " + toLabel;
+        var notesParts = [];
+        if (seg.flightNumber) notesParts.push(seg.flightNumber);
+        if (seg.arriveTime) {
+          var arr = "Arrives " + seg.arriveTime;
+          if (seg.arriveDate && seg.arriveDate !== seg.departDate) arr += " (" + formatTravelDate(seg.arriveDate) + ")";
+          notesParts.push(arr);
+        }
         day.activities.push({
           id: createId("tact"), time: seg.departTime || "", title: title,
-          type: "flight", location: seg.fromName || seg.from || "", notes: notes, estimatedCost: 0
+          type: "flight", location: seg.fromName || seg.from || "", notes: notesParts.join(" · "), estimatedCost: 0
         });
-        if (!day.location && seg.fromName) day.location = seg.fromName;
+        if (!day.location && (seg.fromName || seg.from)) day.location = seg.fromName || seg.from;
         // Set arrival day location if overnight leg
-        if (seg.arriveDate && seg.arriveDate !== seg.departDate && seg.toName) {
+        if (seg.arriveDate && seg.arriveDate !== seg.departDate && (seg.toName || seg.to)) {
           var arrDay = getOrCreateItineraryDay(trip, seg.arriveDate);
-          if (!arrDay.location) { arrDay.location = seg.toName; updated++; }
+          if (!arrDay.location) { arrDay.location = seg.toName || seg.to; updated++; }
         }
         added++;
       });
@@ -32881,7 +32925,8 @@ function showTravelBookingReviewDialog(trip, booking) {
         dropoffLocation: d.querySelector("#tbrDropoffLoc")?.value.trim() || "",
         vehicleType: d.querySelector("#tbrVehicleType")?.value.trim() || "",
         mileage: d.querySelector("#tbrMileage")?.value.trim() || ""
-      } : {})
+      } : {}),
+      ...(savedType === "flight" && booking.segments?.length ? { segments: booking.segments } : {})
     };
     trip.logistics.push(entry);
 
