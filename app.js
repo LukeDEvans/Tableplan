@@ -32164,11 +32164,17 @@ function renderTravelLogistics(trip) {
     return '<div class="travel-logistic-card">' +
       '<span class="travel-logistic-icon">' + (TRAVEL_LOGISTIC_ICONS[l.type] || '📌') + '</span>' +
       '<div class="travel-logistic-body">' +
-      '<input class="travel-logistic-title" value="' + escapeHtml(l.title || '') + '" placeholder="Title" data-log-title="' + i + '" />' +
-      '<input class="travel-logistic-location" placeholder="📍 Address / location" value="' + escapeHtml(l.location || '') + '" data-log-loc="' + i + '" />' +
+      '<input class="travel-logistic-title" value="' + escapeHtml(l.title || '') + '" placeholder="' + (l.type === 'car' ? 'Rental company' : 'Title') + '" data-log-title="' + i + '" />' +
+      (l.type === 'car'
+        ? '<input class="travel-logistic-location" placeholder="📍 Pick-up location" value="' + escapeHtml(l.pickupLocation || l.location || '') + '" data-log-pickup-loc="' + i + '" />' +
+          '<input class="travel-logistic-location" placeholder="📍 Drop-off location (if different)" value="' + escapeHtml(l.dropoffLocation || '') + '" data-log-dropoff-loc="' + i + '" />'
+        : '<input class="travel-logistic-location" placeholder="📍 Address / location" value="' + escapeHtml(l.location || '') + '" data-log-loc="' + i + '" />') +
       '<div class="travel-logistic-meta">' +
       '<select class="travel-logistic-field" data-log-type="' + i + '" style="min-width:70px">' + optionsHtml + '</select>' +
-      '<input class="travel-logistic-field" type="date" value="' + (l.startDate || '') + '" placeholder="Date" data-log-date="' + i + '" />' +
+      '<input class="travel-logistic-field" type="date" value="' + (l.startDate || '') + '" placeholder="' + (l.type === 'car' ? 'Pick-up' : 'Date') + '" data-log-date="' + i + '" />' +
+      (l.type === 'car' ? '<input class="travel-logistic-field" type="date" value="' + (l.endDate || '') + '" placeholder="Drop-off" data-log-enddate="' + i + '" />' : '') +
+      (l.type === 'car' ? '<input class="travel-logistic-field" placeholder="Vehicle type" value="' + escapeHtml(l.vehicleType || '') + '" data-log-vehicle-type="' + i + '" style="min-width:90px" />' : '') +
+      (l.type === 'car' ? '<input class="travel-logistic-field" placeholder="Mileage" value="' + escapeHtml(l.mileage || '') + '" data-log-mileage="' + i + '" style="min-width:80px" />' : '') +
       '<input class="travel-logistic-field" placeholder="Confirmation #" value="' + escapeHtml(l.confirmation || '') + '" data-log-conf="' + i + '" style="min-width:100px" />' +
       '<input class="travel-logistic-field" placeholder="Notes" value="' + escapeHtml(l.notes || '') + '" data-log-notes="' + i + '" style="min-width:80px" />' +
       '</div></div>' +
@@ -32186,6 +32192,11 @@ function renderTravelLogistics(trip) {
 
   el.querySelectorAll("[data-log-title]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logTitle].title = e.target.value; persist(); }));
   el.querySelectorAll("[data-log-loc]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logLoc].location = e.target.value; persist(); }));
+  el.querySelectorAll("[data-log-pickup-loc]").forEach(inp => inp.addEventListener("change", e => { const l = trip.logistics[+e.target.dataset.logPickupLoc]; l.pickupLocation = e.target.value; l.location = e.target.value; persist(); }));
+  el.querySelectorAll("[data-log-dropoff-loc]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logDropoffLoc].dropoffLocation = e.target.value; persist(); }));
+  el.querySelectorAll("[data-log-enddate]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logEnddate].endDate = e.target.value; persist(); }));
+  el.querySelectorAll("[data-log-vehicle-type]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logVehicleType].vehicleType = e.target.value; persist(); }));
+  el.querySelectorAll("[data-log-mileage]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logMileage].mileage = e.target.value; persist(); }));
   el.querySelectorAll("[data-log-type]").forEach(sel => sel.addEventListener("change", e => { trip.logistics[+e.target.dataset.logType].type = e.target.value; renderTravelLogistics(trip); persist(); }));
   el.querySelectorAll("[data-log-date]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logDate].startDate = e.target.value; persist(); }));
   el.querySelectorAll("[data-log-conf]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logConf].confirmation = e.target.value; persist(); }));
@@ -32517,6 +32528,22 @@ function syncLogisticToItinerary(trip, entry, booking) {
         if (!day.location) { day.location = loc; updated++; }
       }
     }
+  } else if (entry.type === "car" && entry.startDate) {
+    var pickupDay = getOrCreateItineraryDay(trip, entry.startDate);
+    var carMeta = [entry.vehicleType, entry.mileage ? "Mileage: " + entry.mileage : ""].filter(Boolean).join(" · ");
+    pickupDay.activities.push({
+      id: createId("tact"), time: "", title: "🚗 Pick up: " + (entry.title || "Rental car"),
+      type: "activity", location: entry.pickupLocation || entry.location || "", notes: carMeta || entry.notes || "", estimatedCost: 0
+    });
+    added++;
+    if (entry.endDate && entry.endDate !== entry.startDate) {
+      var dropoffDay = getOrCreateItineraryDay(trip, entry.endDate);
+      dropoffDay.activities.push({
+        id: createId("tact"), time: "", title: "🚗 Return: " + (entry.title || "Rental car"),
+        type: "activity", location: entry.dropoffLocation || entry.pickupLocation || entry.location || "", notes: "", estimatedCost: 0
+      });
+      added++;
+    }
   } else if (entry.startDate) {
     var icon = TRAVEL_LOGISTIC_ICONS[entry.type] || "📌";
     var day = getOrCreateItineraryDay(trip, entry.startDate);
@@ -32773,18 +32800,31 @@ function showTravelBookingReviewDialog(trip, booking) {
 
   const d = document.createElement("dialog");
   d.className = "recipe-dialog auth-dialog";
+  const isCar = booking.type === 'car';
   d.innerHTML =
     '<div class="recipe-form">' +
     '<h3 style="margin:0 0 4px">Review Booking</h3>' +
     '<p style="margin:0 0 14px;font-size:0.85rem;color:var(--text-muted)">Edit anything before saving to your trip.</p>' +
     '<div class="travel-dialog-field"><label>Type</label><select id="tbrType" class="text-input">' + optionsHtml + '</select></div>' +
-    '<div class="travel-dialog-field"><label>Title</label><input id="tbrTitle" class="text-input" value="' + escapeHtml(booking.title) + '" /></div>' +
+    '<div class="travel-dialog-field"><label>' + (isCar ? 'Rental Company' : 'Title') + '</label><input id="tbrTitle" class="text-input" value="' + escapeHtml(booking.title) + '" /></div>' +
     '<div class="travel-dialog-field"><label>Confirmation #</label><input id="tbrConf" class="text-input" value="' + escapeHtml(booking.confirmation) + '" /></div>' +
-    '<div style="display:flex;gap:8px">' +
-    '<div class="travel-dialog-field" style="flex:1"><label>Date</label><input id="tbrStart" type="date" class="text-input" value="' + (booking.startDate || '') + '" /></div>' +
-    '<div class="travel-dialog-field" style="flex:1"><label>Cost ($)</label><input id="tbrCost" type="number" min="0" class="text-input" value="' + (booking.cost || 0) + '" /></div>' +
-    '</div>' +
-    '<div class="travel-dialog-field"><label>Location / Address</label><input id="tbrLocation" class="text-input" value="' + escapeHtml(booking.location || '') + '" placeholder="e.g. 123 Main St, Tokyo" /></div>' +
+    (isCar
+      ? '<div style="display:flex;gap:8px">' +
+        '<div class="travel-dialog-field" style="flex:1"><label>Pick-up Date</label><input id="tbrStart" type="date" class="text-input" value="' + (booking.startDate || '') + '" /></div>' +
+        '<div class="travel-dialog-field" style="flex:1"><label>Drop-off Date</label><input id="tbrEnd" type="date" class="text-input" value="' + (booking.endDate || '') + '" /></div>' +
+        '</div>' +
+        '<div class="travel-dialog-field"><label>Pick-up Location</label><input id="tbrPickupLoc" class="text-input" value="' + escapeHtml(booking.pickupLocation || booking.location || '') + '" placeholder="e.g. LAX Airport, Terminal 2" /></div>' +
+        '<div class="travel-dialog-field"><label>Drop-off Location</label><input id="tbrDropoffLoc" class="text-input" value="' + escapeHtml(booking.dropoffLocation || '') + '" placeholder="If different from pick-up" /></div>' +
+        '<div style="display:flex;gap:8px">' +
+        '<div class="travel-dialog-field" style="flex:1"><label>Vehicle Type</label><input id="tbrVehicleType" class="text-input" value="' + escapeHtml(booking.vehicleType || '') + '" placeholder="e.g. Compact SUV" /></div>' +
+        '<div class="travel-dialog-field" style="flex:1"><label>Mileage</label><input id="tbrMileage" class="text-input" value="' + escapeHtml(booking.mileage || '') + '" placeholder="e.g. Unlimited" /></div>' +
+        '</div>' +
+        '<div class="travel-dialog-field"><label>Total Cost ($)</label><input id="tbrCost" type="number" min="0" class="text-input" value="' + (booking.cost || 0) + '" /></div>'
+      : '<div style="display:flex;gap:8px">' +
+        '<div class="travel-dialog-field" style="flex:1"><label>Date</label><input id="tbrStart" type="date" class="text-input" value="' + (booking.startDate || '') + '" /></div>' +
+        '<div class="travel-dialog-field" style="flex:1"><label>Cost ($)</label><input id="tbrCost" type="number" min="0" class="text-input" value="' + (booking.cost || 0) + '" /></div>' +
+        '</div>' +
+        '<div class="travel-dialog-field"><label>Location / Address</label><input id="tbrLocation" class="text-input" value="' + escapeHtml(booking.location || '') + '" placeholder="e.g. 123 Main St, Tokyo" /></div>') +
     '<div class="travel-dialog-field"><label>Notes</label><input id="tbrNotes" class="text-input" value="' + escapeHtml(booking.notes) + '" /></div>' +
     (booking.segments && booking.segments.length
       ? '<div style="margin-top:12px"><div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:6px">Flight segments</div>' +
@@ -32807,7 +32847,9 @@ function showTravelBookingReviewDialog(trip, booking) {
       ? 'Add each flight leg to itinerary'
       : booking.type === 'hotel'
         ? 'Set hotel location on itinerary days'
-        : 'Add to itinerary') +
+        : booking.type === 'car'
+          ? 'Add pick-up & drop-off to itinerary'
+          : 'Add to itinerary') +
     '</label>' +
     '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
     '<button type="button" class="secondary-btn" id="tbrCancel">Cancel</button>' +
@@ -32820,15 +32862,26 @@ function showTravelBookingReviewDialog(trip, booking) {
   d.querySelector("#tbrCancel").addEventListener("click", () => d.remove());
   d.querySelector("#tbrSave").addEventListener("click", () => {
     if (!Array.isArray(trip.logistics)) trip.logistics = [];
+    const savedType = d.querySelector("#tbrType").value;
+    const savedIsCar = savedType === "car";
     const entry = {
       id: createId("tlog"),
-      type: d.querySelector("#tbrType").value,
+      type: savedType,
       title: d.querySelector("#tbrTitle").value.trim(),
       confirmation: d.querySelector("#tbrConf").value.trim(),
-      startDate: d.querySelector("#tbrStart").value,
+      startDate: d.querySelector("#tbrStart")?.value || "",
+      endDate: d.querySelector("#tbrEnd")?.value || booking.endDate || "",
       cost: parseFloat(d.querySelector("#tbrCost").value) || 0,
-      location: d.querySelector("#tbrLocation").value.trim(),
-      notes: d.querySelector("#tbrNotes").value.trim()
+      location: savedIsCar
+        ? (d.querySelector("#tbrPickupLoc")?.value.trim() || "")
+        : (d.querySelector("#tbrLocation")?.value.trim() || ""),
+      notes: d.querySelector("#tbrNotes").value.trim(),
+      ...(savedIsCar ? {
+        pickupLocation: d.querySelector("#tbrPickupLoc")?.value.trim() || "",
+        dropoffLocation: d.querySelector("#tbrDropoffLoc")?.value.trim() || "",
+        vehicleType: d.querySelector("#tbrVehicleType")?.value.trim() || "",
+        mileage: d.querySelector("#tbrMileage")?.value.trim() || ""
+      } : {})
     };
     trip.logistics.push(entry);
 
@@ -32838,7 +32891,7 @@ function showTravelBookingReviewDialog(trip, booking) {
         trip.startDate = entry.startDate;
         syncTripToCalendar(trip);
       }
-      const endDate = booking.endDate;
+      const endDate = entry.endDate || booking.endDate;
       if (endDate && (!trip.endDate || endDate > trip.endDate)) {
         trip.endDate = endDate;
         syncTripToCalendar(trip);

@@ -64,8 +64,16 @@ function bookingScanPrompt() {
     '  "startDate": first departure or check-in date in YYYY-MM-DD format, or ""',
     '  "endDate": final arrival or check-out date in YYYY-MM-DD format, or ""',
     '  "cost": total cost as a number (no currency symbol), or 0',
-    '  "location": address or place name for Google Maps (hotel address, departure airport, station), or ""',
-    '  "notes": one concise line with key details (seat numbers, check-in/out times, terminal, gate, etc.)',
+    '  "location": address or place name for Google Maps (hotel address, departure airport, station, pickup address), or ""',
+    '  "notes": one concise line with remaining key details (seat numbers, terminal, gate, check-in/out times, etc.)',
+    "",
+    "For type=car ONLY, also include:",
+    '  "pickupLocation": full address or place name of the rental pickup location',
+    '  "dropoffLocation": full address or place name of the drop-off location (repeat pickup address if same location)',
+    '  "vehicleType": class or type of vehicle (e.g. "Economy", "Compact SUV", "Full-size", "Minivan")',
+    '  "mileage": mileage/kilometre policy as a string (e.g. "Unlimited", "200 miles/day", "250 km/day")',
+    '  "endDate": drop-off date in YYYY-MM-DD format',
+    '  For non-car types, omit these fields or set them to "".',
     "",
     "For type=flight ONLY, also include:",
     '  "segments": array of every individual flight leg, each with:',
@@ -127,7 +135,11 @@ function parseBookingJson(text) {
     cost: typeof parsed.cost === "number" ? parsed.cost : parseFloat(parsed.cost) || 0,
     location: String(parsed.location || "").trim(),
     notes: String(parsed.notes || "").trim(),
-    segments
+    segments,
+    pickupLocation: type === "car" ? String(parsed.pickupLocation || "").trim() : "",
+    dropoffLocation: type === "car" ? String(parsed.dropoffLocation || "").trim() : "",
+    vehicleType: type === "car" ? String(parsed.vehicleType || "").trim() : "",
+    mileage: type === "car" ? String(parsed.mileage || "").trim() : ""
   };
 }
 
