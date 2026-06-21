@@ -32287,44 +32287,37 @@ function renderTravelNotes(trip) {
 function showTravelNewTripDialog() {
   const d = document.createElement("dialog");
   d.className = "recipe-dialog auth-dialog";
-  d.innerHTML = `
-    <div class="recipe-form"><form method="dialog" style="display:contents">
-      <h3 style="margin:0 0 14px">New Trip</h3>
-      <div class="travel-dialog-field"><label>Trip name</label><input id="tnTripName" class="text-input" placeholder="e.g. Japan Spring 2027" /></div>
-      <div class="travel-dialog-field"><label>Destination</label><input id="tnDest" class="text-input" placeholder="e.g. Tokyo, Kyoto, Osaka" /></div>
-      <div class="travel-dialog-field">
-        <label>Status</label>
-        <select id="tnStatus" class="text-input">
-          <option value="planning">Planning</option>
-          <option value="booked">Booked</option>
-          <option value="idea">Idea</option>
-        </select>
-      </div>
-      <div style="display:flex;gap:8px">
-        <div class="travel-dialog-field" style="flex:1"><label>Start date</label><input id="tnStart" type="date" class="text-input" /></div>
-        <div class="travel-dialog-field" style="flex:1"><label>End date</label><input id="tnEnd" type="date" class="text-input" /></div>
-      </div>
-      <div class="travel-dialog-field">
-        <label>Who's coming?</label>
-        <div class="travel-party-chips" id="tnPartyChips">
-          ${TRAVEL_PARTY_OPTIONS.map(p => `<button type="button" class="travel-party-chip${p==="Luke"?" is-selected":""}" data-party="${p}">${p}</button>`).join("")}
-        </div>
-      </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-        <button type="button" class="secondary-btn" id="tnCancel">Cancel</button>
-        <button type="button" class="primary-btn" id="tnCreate">Create</button>
-      </div>
-    </form></div>`;
+  const partyOptions = ["Luke", "MJ", "Sophia", "Friends", "Family"];
+  const partyChipsHtml = partyOptions.map(function(p) {
+    const sel = p === "Luke" ? " is-selected" : "";
+    return '<button type="button" class="travel-party-chip' + sel + '" data-party="' + p + '">' + p + '</button>';
+  }).join("");
+  d.innerHTML =
+    '<div class="recipe-form">' +
+    '<h3 style="margin:0 0 14px">New Trip</h3>' +
+    '<div class="travel-dialog-field"><label>Trip name</label><input id="tnTripName" class="text-input" placeholder="e.g. Japan Spring 2027" /></div>' +
+    '<div class="travel-dialog-field"><label>Destination</label><input id="tnDest" class="text-input" placeholder="e.g. Tokyo, Kyoto, Osaka" /></div>' +
+    '<div class="travel-dialog-field"><label>Status</label><select id="tnStatus" class="text-input"><option value="planning">Planning</option><option value="booked">Booked</option><option value="idea">Idea</option></select></div>' +
+    '<div style="display:flex;gap:8px">' +
+    '<div class="travel-dialog-field" style="flex:1"><label>Start date</label><input id="tnStart" type="date" class="text-input" /></div>' +
+    '<div class="travel-dialog-field" style="flex:1"><label>End date</label><input id="tnEnd" type="date" class="text-input" /></div>' +
+    '</div>' +
+    '<div class="travel-dialog-field"><label>Who\'s coming?</label><div class="travel-party-chips" id="tnPartyChips">' + partyChipsHtml + '</div></div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
+    '<button type="button" class="secondary-btn" id="tnCancel">Cancel</button>' +
+    '<button type="button" class="primary-btn" id="tnCreate">Create</button>' +
+    '</div>' +
+    '</div>';
   document.body.appendChild(d);
   d.showModal();
-  d.querySelectorAll(".travel-party-chip").forEach(btn => {
-    btn.addEventListener("click", () => btn.classList.toggle("is-selected"));
+  d.querySelectorAll(".travel-party-chip").forEach(function(btn) {
+    btn.addEventListener("click", function() { btn.classList.toggle("is-selected"); });
   });
-  d.querySelector("#tnCancel").addEventListener("click", () => d.remove());
-  d.querySelector("#tnCreate").addEventListener("click", () => {
+  d.querySelector("#tnCancel").addEventListener("click", function() { d.remove(); });
+  d.querySelector("#tnCreate").addEventListener("click", function() {
     const name = d.querySelector("#tnTripName").value.trim();
     if (!name) { d.querySelector("#tnTripName").focus(); return; }
-    const party = [...d.querySelectorAll(".travel-party-chip.is-selected")].map(b => b.dataset.party);
+    const party = Array.from(d.querySelectorAll(".travel-party-chip.is-selected")).map(function(b) { return b.dataset.party; });
     const trip = defaultTrip({
       name,
       destination: d.querySelector("#tnDest").value.trim(),
@@ -32406,23 +32399,26 @@ function showTravelEditDatesDialog(trip) {
 function showTravelEditPartyDialog(trip) {
   const d = document.createElement("dialog");
   d.className = "recipe-dialog auth-dialog";
-  d.innerHTML = `
-    <div class="recipe-form"><form method="dialog" style="display:contents">
-      <h3 style="margin:0 0 14px">Who's Coming?</h3>
-      <div class="travel-party-chips" id="tepChips">
-        ${TRAVEL_PARTY_OPTIONS.map(p => `<button type="button" class="travel-party-chip${(trip.party||[]).includes(p)?" is-selected":""}" data-party="${p}">${p}</button>`).join("")}
-      </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
-        <button type="button" class="secondary-btn" id="tepCancel">Cancel</button>
-        <button type="button" class="primary-btn" id="tepSave">Save</button>
-      </div>
-    </form></div>`;
+  const partyOptions = ["Luke", "MJ", "Sophia", "Friends", "Family"];
+  const chipsHtml = partyOptions.map(function(p) {
+    const sel = (trip.party || []).includes(p) ? " is-selected" : "";
+    return '<button type="button" class="travel-party-chip' + sel + '" data-party="' + p + '">' + p + '</button>';
+  }).join("");
+  d.innerHTML =
+    '<div class="recipe-form">' +
+    '<h3 style="margin:0 0 14px">Who\'s Coming?</h3>' +
+    '<div class="travel-party-chips" id="tepChips">' + chipsHtml + '</div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">' +
+    '<button type="button" class="secondary-btn" id="tepCancel">Cancel</button>' +
+    '<button type="button" class="primary-btn" id="tepSave">Save</button>' +
+    '</div>' +
+    '</div>';
   document.body.appendChild(d);
   d.showModal();
-  d.querySelectorAll(".travel-party-chip").forEach(btn => btn.addEventListener("click", () => btn.classList.toggle("is-selected")));
-  d.querySelector("#tepCancel").addEventListener("click", () => d.remove());
-  d.querySelector("#tepSave").addEventListener("click", () => {
-    trip.party = [...d.querySelectorAll(".travel-party-chip.is-selected")].map(b => b.dataset.party);
+  d.querySelectorAll(".travel-party-chip").forEach(function(btn) { btn.addEventListener("click", function() { btn.classList.toggle("is-selected"); }); });
+  d.querySelector("#tepCancel").addEventListener("click", function() { d.remove(); });
+  d.querySelector("#tepSave").addEventListener("click", function() {
+    trip.party = Array.from(d.querySelectorAll(".travel-party-chip.is-selected")).map(function(b) { return b.dataset.party; });
     trip.updatedAt = new Date().toISOString(); persist();
     d.remove(); renderTravelTripDetail(trip);
   });
