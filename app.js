@@ -32174,6 +32174,7 @@ function renderTravelLogistics(trip) {
       '</div></div>' +
       '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">' +
       '<div class="travel-logistic-cost">$<input class="travel-budget-amount" type="number" min="0" value="' + (l.cost || 0) + '" data-log-cost="' + i + '" style="width:55px" /></div>' +
+      '<button class="travel-logistic-sync-btn" type="button" data-log-sync="' + i + '" title="Add to itinerary">→ Itinerary</button>' +
       '<button class="travel-logistic-remove" type="button" data-log-remove="' + i + '">✕</button>' +
       '</div></div>';
   }).join('');
@@ -32191,6 +32192,16 @@ function renderTravelLogistics(trip) {
   el.querySelectorAll("[data-log-notes]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logNotes].notes = e.target.value; persist(); }));
   el.querySelectorAll("[data-log-cost]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logCost].cost = parseFloat(e.target.value) || 0; trip.updatedAt = new Date().toISOString(); persist(); renderTravelBudget(trip); }));
   el.querySelectorAll("[data-log-remove]").forEach(btn => btn.addEventListener("click", () => { trip.logistics.splice(+btn.dataset.logRemove, 1); persist(); renderTravelLogistics(trip); }));
+  el.querySelectorAll("[data-log-sync]").forEach(btn => btn.addEventListener("click", function() {
+    const entry = trip.logistics[+btn.dataset.logSync];
+    if (!entry) return;
+    const result = syncLogisticToItinerary(trip, entry, null);
+    persist();
+    const msg = [result.added ? result.added + " item" + (result.added !== 1 ? "s" : "") + " added" : "", result.updated ? result.updated + " day" + (result.updated !== 1 ? "s" : "") + " updated" : ""].filter(Boolean).join(", ");
+    btn.textContent = msg ? "✓ " + msg : "✓ Done";
+    btn.disabled = true;
+    if (result.added > 0 || result.updated > 0) setTimeout(() => switchTravelTab("itinerary", trip), 800);
+  }));
   document.getElementById("travelAddLogisticBtn").addEventListener("click", () => {
     if (!Array.isArray(trip.logistics)) trip.logistics = [];
     trip.logistics.push({ id: createId("tlog"), type: "flight", title: "", startDate: "", confirmation: "", cost: 0, notes: "" });
@@ -32443,6 +32454,82 @@ async function renderTravelMap(trip) {
       wrap.innerHTML = '<div class="travel-map-error">Map unavailable.</div>';
     }
   }
+}
+
+// ── Logistics → Itinerary sync ──────────────────────────────────────────────────
+
+function getOrCreateItineraryDay(trip, dateKey) {
+  if (!Array.isArray(trip.itinerary)) trip.itinerary = [];
+  var day = trip.itinerary.find(function(d) { return d.date === dateKey; });
+  if (!day) {
+    day = { date: dateKey, location: "", activities: [] };
+    trip.itinerary.push(day);
+  }
+  if (!Array.isArray(day.activities)) day.activities = [];
+  return day;
+}
+
+function syncLogisticToItinerary(trip, entry, booking) {
+  var added = 0;
+  var updated = 0;
+
+  if (entry.type === "flight") {
+    var segments = booking && booking.segments && booking.segments.length ? booking.segments : null;
+    if (segments) {
+      segments.forEach(function(seg) {
+        if (!seg.departDate) return;
+        var day = getOrCreateItineraryDay(trip, seg.departDate);
+        var title = "✈️ " + (seg.from || "?") + " → " + (seg.to || "?");
+        var notes = "";
+        if (seg.arriveTime) notes += "Arrives " + seg.arriveTime;
+        if (seg.arriveDate && seg.arriveDate !== seg.departDate) notes += (notes ? " " : "") + "(" + formatTravelDate(seg.arriveDate) + ")";
+        if (seg.flightNumber) notes += (notes ? " · " : "") + seg.flightNumber;
+        day.activities.push({
+          id: createId("tact"), time: seg.departTime || "", title: title,
+          type: "flight", location: seg.fromName || seg.from || "", notes: notes, estimatedCost: 0
+        });
+        if (!day.location && seg.fromName) day.location = seg.fromName;
+        // Set arrival day location if overnight leg
+        if (seg.arriveDate && seg.arriveDate !== seg.departDate && seg.toName) {
+          var arrDay = getOrCreateItineraryDay(trip, seg.arriveDate);
+          if (!arrDay.location) { arrDay.location = seg.toName; updated++; }
+        }
+        added++;
+      });
+    } else if (entry.startDate) {
+      var day = getOrCreateItineraryDay(trip, entry.startDate);
+      day.activities.push({
+        id: createId("tact"), time: "", title: "✈️ " + (entry.title || "Flight"),
+        type: "flight", location: entry.location || "", notes: entry.notes || "", estimatedCost: 0
+      });
+      added++;
+    }
+  } else if (entry.type === "hotel") {
+    var loc = entry.location || entry.title || "";
+    if (entry.startDate && loc) {
+      var start = new Date(entry.startDate + "T12:00:00");
+      var end = entry.endDate ? new Date(entry.endDate + "T12:00:00") : start;
+      var nights = Math.max(Math.round((end - start) / 86400000), 1);
+      for (var i = 0; i < nights; i++) {
+        var d = new Date(start);
+        d.setDate(d.getDate() + i);
+        var day = getOrCreateItineraryDay(trip, dateKeyFromDate(d));
+        if (!day.location) { day.location = loc; updated++; }
+      }
+    }
+  } else if (entry.startDate) {
+    var icon = TRAVEL_LOGISTIC_ICONS[entry.type] || "📌";
+    var day = getOrCreateItineraryDay(trip, entry.startDate);
+    day.activities.push({
+      id: createId("tact"), time: "", title: icon + " " + (entry.title || entry.type),
+      type: "activity", location: entry.location || "", notes: entry.notes || "", estimatedCost: 0
+    });
+    added++;
+  }
+
+  trip.itinerary.sort(function(a, b) { return (a.date || "").localeCompare(b.date || ""); });
+  trip.updatedAt = new Date().toISOString();
+  return { added: added, updated: updated };
 }
 
 // ── Dialogs ──────────────────────────────────────────────────────────────────────
@@ -32699,6 +32786,29 @@ function showTravelBookingReviewDialog(trip, booking) {
     '</div>' +
     '<div class="travel-dialog-field"><label>Location / Address</label><input id="tbrLocation" class="text-input" value="' + escapeHtml(booking.location || '') + '" placeholder="e.g. 123 Main St, Tokyo" /></div>' +
     '<div class="travel-dialog-field"><label>Notes</label><input id="tbrNotes" class="text-input" value="' + escapeHtml(booking.notes) + '" /></div>' +
+    (booking.segments && booking.segments.length
+      ? '<div style="margin-top:12px"><div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:6px">Flight segments</div>' +
+        '<div style="font-size:0.82rem;line-height:1.8;color:var(--text)">' +
+        booking.segments.map(function(s) {
+          var line = '✈️ ' + escapeHtml(s.from) + ' → ' + escapeHtml(s.to);
+          if (s.fromName || s.toName) line += ' <span style="color:var(--text-muted)">(' + escapeHtml(s.fromName || s.from) + ' → ' + escapeHtml(s.toName || s.to) + ')</span>';
+          if (s.departDate) line += ' &nbsp;' + escapeHtml(formatTravelDate(s.departDate));
+          if (s.departTime) line += ' ' + escapeHtml(s.departTime);
+          if (s.arriveTime) line += ' → ' + escapeHtml(s.arriveTime);
+          if (s.arriveDate && s.arriveDate !== s.departDate) line += ' <span style="color:var(--text-muted)">(' + escapeHtml(formatTravelDate(s.arriveDate)) + ')</span>';
+          if (s.flightNumber) line += ' &nbsp;<span style="color:var(--text-muted)">' + escapeHtml(s.flightNumber) + '</span>';
+          return '<div>' + line + '</div>';
+        }).join('') +
+        '</div></div>'
+      : '') +
+    '<label style="display:flex;align-items:center;gap:8px;font-size:0.88rem;margin-top:14px;cursor:pointer">' +
+    '<input type="checkbox" id="tbrSyncItinerary" checked style="width:15px;height:15px;accent-color:var(--accent)" />' +
+    (booking.segments && booking.segments.length
+      ? 'Add each flight leg to itinerary'
+      : booking.type === 'hotel'
+        ? 'Set hotel location on itinerary days'
+        : 'Add to itinerary') +
+    '</label>' +
     '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
     '<button type="button" class="secondary-btn" id="tbrCancel">Cancel</button>' +
     '<button type="button" class="primary-btn" id="tbrSave">Add to trip</button>' +
@@ -32748,11 +32858,18 @@ function showTravelBookingReviewDialog(trip, booking) {
       });
     }
 
+    // Sync to itinerary if requested
+    var syncResult = null;
+    if (d.querySelector("#tbrSyncItinerary")?.checked) {
+      syncResult = syncLogisticToItinerary(trip, entry, booking);
+    }
+
     trip.updatedAt = new Date().toISOString();
     persist();
     d.remove();
     renderTravelTripDetail(trip);
-    switchTravelTab("logistics", trip);
+    // Switch to itinerary if we added things there, otherwise stay on logistics
+    switchTravelTab(syncResult && (syncResult.added > 0 || syncResult.updated > 0) ? "itinerary" : "logistics", trip);
   });
 }
 

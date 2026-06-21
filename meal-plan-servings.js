@@ -74,7 +74,7 @@ function sumMealPlanNutrition(entries, recipeLookup) {
   return totals;
 }
 
-export {
+module.exports = {
   nutrientKeys,
   recipeDefaultServings,
   createMealPlanRecipe,

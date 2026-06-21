@@ -203,7 +203,7 @@ function applySavedCorrection(ingredient, corrections = {}) {
   return corrections[correctionKey(ingredient.normalizedName || ingredient.ingredientName)] || null;
 }
 
-export {
+module.exports = {
   nutrientDefinitions,
   parseAmount,
   normalizeUnit,

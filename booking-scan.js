@@ -14,7 +14,7 @@ async function scanBookingFromImages(files, options = {}) {
     },
     body: JSON.stringify({
       model: options.model || DEFAULT_SCAN_MODEL,
-      max_tokens: 1024,
+      max_tokens: 2048,
       temperature: 0,
       messages: [{
         role: "user",
@@ -57,15 +57,30 @@ function bookingScanPrompt() {
   return [
     "Extract travel booking details from this confirmation document or image.",
     "Return ONLY valid JSON with no markdown or explanation.",
-    "The JSON must have exactly these fields:",
+    "The JSON must have these top-level fields:",
     '  "type": one of "flight", "hotel", "car", "train", "ferry", "other"',
-    '  "title": descriptive name (e.g. "United Airlines UA 123", "Marriott Tokyo", "Hertz Economy")',
+    '  "title": descriptive name (e.g. "United UA 400 + UA 236 via LAX", "Marriott Tokyo", "Hertz Economy")',
     '  "confirmation": booking/confirmation/reference number as a string',
-    '  "startDate": departure or check-in date in YYYY-MM-DD format, or "" if not found',
-    '  "endDate": arrival or check-out date in YYYY-MM-DD format, or "" if not found',
-    '  "cost": total cost as a number (no currency symbol), or 0 if not found',
-    '  "location": full address or place name for use in Google Maps (hotel address, airport name, train station, etc.), or "" if not applicable',
-    '  "notes": one concise line with key details (times, seat numbers, check-in/out times, terminal, gate, etc.)',
+    '  "startDate": first departure or check-in date in YYYY-MM-DD format, or ""',
+    '  "endDate": final arrival or check-out date in YYYY-MM-DD format, or ""',
+    '  "cost": total cost as a number (no currency symbol), or 0',
+    '  "location": address or place name for Google Maps (hotel address, departure airport, station), or ""',
+    '  "notes": one concise line with key details (seat numbers, check-in/out times, terminal, gate, etc.)',
+    "",
+    "For type=flight ONLY, also include:",
+    '  "segments": array of every individual flight leg, each with:',
+    '    "flightNumber": e.g. "UA 400" or ""',
+    '    "from": IATA airport code e.g. "JFK"',
+    '    "fromName": airport or city name e.g. "New York (JFK)"',
+    '    "to": IATA airport code e.g. "LAX"',
+    '    "toName": airport or city name e.g. "Los Angeles (LAX)"',
+    '    "departDate": YYYY-MM-DD',
+    '    "departTime": HH:MM (24h) or ""',
+    '    "arriveDate": YYYY-MM-DD',
+    '    "arriveTime": HH:MM (24h) or ""',
+    "  Include every leg including layover connections. Order chronologically.",
+    '  For non-flight types, omit "segments" or set it to [].',
+    "",
     "If a field cannot be determined, use an empty string or 0.",
     "Do not invent values. Extract only what is clearly visible."
   ].join("\n");
@@ -89,15 +104,30 @@ function parseBookingJson(text) {
     throw new Error("Could not read booking data from document.");
   }
   const validTypes = ["flight", "hotel", "car", "train", "ferry", "other"];
+  const type = validTypes.includes(parsed.type) ? parsed.type : "other";
+  const segments = type === "flight" && Array.isArray(parsed.segments)
+    ? parsed.segments.map(s => ({
+        flightNumber: String(s.flightNumber || "").trim(),
+        from: String(s.from || "").trim().toUpperCase(),
+        fromName: String(s.fromName || "").trim(),
+        to: String(s.to || "").trim().toUpperCase(),
+        toName: String(s.toName || "").trim(),
+        departDate: /^\d{4}-\d{2}-\d{2}$/.test(s.departDate) ? s.departDate : "",
+        departTime: /^\d{2}:\d{2}$/.test(s.departTime) ? s.departTime : "",
+        arriveDate: /^\d{4}-\d{2}-\d{2}$/.test(s.arriveDate) ? s.arriveDate : "",
+        arriveTime: /^\d{2}:\d{2}$/.test(s.arriveTime) ? s.arriveTime : ""
+      })).filter(s => s.from && s.to)
+    : [];
   return {
-    type: validTypes.includes(parsed.type) ? parsed.type : "other",
+    type,
     title: String(parsed.title || "").trim(),
     confirmation: String(parsed.confirmation || "").trim(),
     startDate: /^\d{4}-\d{2}-\d{2}$/.test(parsed.startDate) ? parsed.startDate : "",
     endDate: /^\d{4}-\d{2}-\d{2}$/.test(parsed.endDate) ? parsed.endDate : "",
     cost: typeof parsed.cost === "number" ? parsed.cost : parseFloat(parsed.cost) || 0,
     location: String(parsed.location || "").trim(),
-    notes: String(parsed.notes || "").trim()
+    notes: String(parsed.notes || "").trim(),
+    segments
   };
 }
 

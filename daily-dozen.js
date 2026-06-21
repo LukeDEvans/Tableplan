@@ -467,7 +467,7 @@ function recipeSuggestions(ingredients, tagMap, normalizeItemName = (value) => S
   }));
 }
 
-export {
+module.exports = {
   categories,
   familyMembers,
   seededTags,
