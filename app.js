@@ -32500,15 +32500,19 @@ function showTravelScanBookingDialog(trip) {
   const scanBtn = d.querySelector("#tsbScan");
   let selectedFile = null;
 
+  function fileIsPdf(file) {
+    return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+  }
+
   uploadArea.addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", () => {
     selectedFile = fileInput.files[0] || null;
     if (!selectedFile) return;
-    uploadLabel.textContent = selectedFile.name;
-    if (selectedFile.type === "application/pdf") {
+    if (fileIsPdf(selectedFile)) {
       preview.style.display = "none";
       uploadLabel.textContent = "📄 " + selectedFile.name;
     } else {
+      uploadLabel.textContent = selectedFile.name;
       const reader = new FileReader();
       reader.onload = e => { preview.src = e.target.result; preview.style.display = "block"; };
       reader.readAsDataURL(selectedFile);
@@ -32525,9 +32529,14 @@ function showTravelScanBookingDialog(trip) {
     scanBtn.disabled = true;
     statusEl.textContent = "Scanning… this takes a few seconds.";
     try {
-      const dataUrl = selectedFile.type === "application/pdf"
-        ? await fileToDataUrl(selectedFile)
-        : await fileToDataUrl(await prepareScanImage(selectedFile, {}, { maxDimension: 1600, quality: 0.82 }));
+      let dataUrl;
+      if (fileIsPdf(selectedFile)) {
+        const raw = await fileToDataUrl(selectedFile);
+        // Normalize to application/pdf regardless of what the browser reports
+        dataUrl = raw.replace(/^data:[^;]*;base64,/, "data:application/pdf;base64,");
+      } else {
+        dataUrl = await fileToDataUrl(await prepareScanImage(selectedFile, {}, { maxDimension: 1600, quality: 0.82 }));
+      }
       const res = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json", Authorization: "Bearer " + (authSession?.access_token || "") },
