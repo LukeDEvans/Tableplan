@@ -7,6 +7,7 @@ const path = require("node:path");
 const tls = require("node:tls");
 const { scanRecipeFromImages } = require("./recipe-scan");
 const { scanReceiptFromImages } = require("./receipt-scan");
+const { scanBookingFromImages } = require("./booking-scan");
 const { estimateRecipeNutrition } = require("./nutrition-provider");
 
 // Load .env file if present (for local development)
@@ -78,6 +79,10 @@ const server = http.createServer(async (request, response) => {
     }
     if (url.pathname === "/api/scan-receipt") {
       await handleReceiptScan(request, response);
+      return;
+    }
+    if (url.pathname === "/api/scan-booking") {
+      await handleBookingScan(request, response);
       return;
     }
     if (url.pathname === "/api/estimate-nutrition") {
@@ -250,6 +255,17 @@ async function handleRecipeScan(request, response) {
     sendJson(response, 200, { recipe });
   } catch (error) {
     sendJson(response, 500, { error: error.message || "Recipe scan failed." });
+  }
+}
+
+async function handleBookingScan(request, response) {
+  if (request.method !== "POST") { sendJson(response, 405, { error: "Method not allowed." }); return; }
+  let parsed;
+  try { parsed = JSON.parse(await readRequestBody(request)); } catch { sendJson(response, 400, { error: "Invalid JSON body." }); return; }
+  try {
+    sendJson(response, 200, { booking: await scanBookingFromImages(parsed.images || []) });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "Booking scan failed." });
   }
 }
 

@@ -31965,10 +31965,16 @@ function renderTravelTripDetail(trip) {
   document.getElementById("travelDetailMeta").innerHTML =
     '<span class="travel-meta-chip" id="travelEditDatesBtn" title="Edit dates">📅 ' + escapeHtml(dateStr) + nightsStr + '</span>' +
     '<span class="travel-meta-chip" id="travelEditPartyBtn" title="Edit party">👥 ' + escapeHtml(partyStr) + '</span>' +
-    destChip;
+    destChip +
+    '<button class="travel-ai-btn" id="travelAskAiBtn" type="button" title="Plan with AI">✨ Ask AI</button>';
   document.getElementById("travelEditDatesBtn")?.addEventListener("click", () => showTravelEditDatesDialog(trip));
   document.getElementById("travelEditPartyBtn")?.addEventListener("click", () => showTravelEditPartyDialog(trip));
   document.getElementById("travelEditDestBtn")?.addEventListener("click", () => showTravelEditDestDialog(trip));
+  document.getElementById("travelAskAiBtn")?.addEventListener("click", () => {
+    openAiPanel();
+    const dest = trip.destination ? ' to ' + trip.destination : '';
+    sendChatMessage('I\'m planning my trip "' + trip.name + '"' + dest + '. What should I know? Help me with itinerary ideas, things to do, local tips, and anything else useful. Use my trip data for context.');
+  });
   document.getElementById("travelDeleteBtn").onclick = () => {
     if (!confirm(`Delete trip "${trip.name}"?`)) return;
     state.trips = (state.trips || []).filter(t => t.id !== trip.id);
@@ -32143,7 +32149,10 @@ function renderTravelLogistics(trip) {
   }).join('');
   el.innerHTML =
     '<div class="travel-logistics-list" id="travelLogisticsList">' + logCardsHtml + '</div>' +
-    '<button class="travel-add-day-btn" type="button" id="travelAddLogisticBtn">+ Add flight / hotel / car</button>';
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">' +
+    '<button class="travel-add-day-btn" type="button" id="travelAddLogisticBtn">+ Add manually</button>' +
+    '<button class="secondary-btn" type="button" id="travelScanBookingBtn" style="font-size:0.82rem">📷 Scan confirmation</button>' +
+    '</div>';
 
   el.querySelectorAll("[data-log-title]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logTitle].title = e.target.value; persist(); }));
   el.querySelectorAll("[data-log-type]").forEach(sel => sel.addEventListener("change", e => { trip.logistics[+e.target.dataset.logType].type = e.target.value; renderTravelLogistics(trip); persist(); }));
@@ -32158,6 +32167,7 @@ function renderTravelLogistics(trip) {
     trip.updatedAt = new Date().toISOString(); persist();
     renderTravelLogistics(trip);
   });
+  document.getElementById("travelScanBookingBtn").addEventListener("click", () => showTravelScanBookingDialog(trip));
 }
 
 // ── Budget ──────────────────────────────────────────────────────────────────────
@@ -32435,6 +32445,154 @@ function showTravelEditPartyDialog(trip) {
     trip.party = Array.from(d.querySelectorAll(".travel-party-chip.is-selected")).map(function(b) { return b.dataset.party; });
     trip.updatedAt = new Date().toISOString(); persist();
     d.remove(); renderTravelTripDetail(trip);
+  });
+}
+
+function bookingScanHelperUrl() {
+  if (canUseLocalBackend()) return "/api/scan-booking";
+  if (window.location.protocol.startsWith("http")) return "/.netlify/functions/scan-booking";
+  return "";
+}
+
+function showTravelScanBookingDialog(trip) {
+  const d = document.createElement("dialog");
+  d.className = "recipe-dialog auth-dialog";
+  d.innerHTML =
+    '<div class="recipe-form">' +
+    '<h3 style="margin:0 0 4px">Scan Booking Confirmation</h3>' +
+    '<p style="margin:0 0 14px;font-size:0.85rem;color:var(--text-muted)">Upload a screenshot or photo of a flight, hotel, rental, or any booking confirmation.</p>' +
+    '<label class="travel-scan-upload-area" id="tsbUploadArea">' +
+    '<input type="file" id="tsbFileInput" accept="image/*" style="display:none" />' +
+    '<span id="tsbUploadLabel">📷 Choose image</span>' +
+    '</label>' +
+    '<img id="tsbPreview" style="display:none;max-width:100%;max-height:180px;object-fit:contain;border-radius:8px;margin-top:10px" />' +
+    '<div id="tsbStatus" style="font-size:0.85rem;color:var(--text-muted);min-height:1.2em;margin-top:8px"></div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
+    '<button type="button" class="secondary-btn" id="tsbCancel">Cancel</button>' +
+    '<button type="button" class="primary-btn" id="tsbScan" disabled>Scan</button>' +
+    '</div>' +
+    '</div>';
+  document.body.appendChild(d);
+  d.showModal();
+
+  const fileInput = d.querySelector("#tsbFileInput");
+  const uploadArea = d.querySelector("#tsbUploadArea");
+  const uploadLabel = d.querySelector("#tsbUploadLabel");
+  const preview = d.querySelector("#tsbPreview");
+  const statusEl = d.querySelector("#tsbStatus");
+  const scanBtn = d.querySelector("#tsbScan");
+  let selectedFile = null;
+
+  uploadArea.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => {
+    selectedFile = fileInput.files[0] || null;
+    if (!selectedFile) return;
+    uploadLabel.textContent = selectedFile.name;
+    const reader = new FileReader();
+    reader.onload = e => { preview.src = e.target.result; preview.style.display = "block"; };
+    reader.readAsDataURL(selectedFile);
+    scanBtn.disabled = false;
+    statusEl.textContent = "";
+  });
+
+  d.querySelector("#tsbCancel").addEventListener("click", () => d.remove());
+  scanBtn.addEventListener("click", async () => {
+    if (!selectedFile) return;
+    const url = bookingScanHelperUrl();
+    if (!url) { statusEl.textContent = "Scanning not available here."; return; }
+    scanBtn.disabled = true;
+    statusEl.textContent = "Scanning… this takes a few seconds.";
+    try {
+      const dataUrl = await fileToDataUrl(await prepareScanImage(selectedFile, {}, { maxDimension: 1600, quality: 0.82 }));
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: "Bearer " + (authSession?.access_token || "") },
+        body: JSON.stringify({ images: [dataUrl] })
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.error || "Scan failed.");
+      d.remove();
+      showTravelBookingReviewDialog(trip, payload.booking);
+    } catch (err) {
+      statusEl.textContent = err.message || "Scan failed. Try a clearer image.";
+      scanBtn.disabled = false;
+    }
+  });
+}
+
+function showTravelBookingReviewDialog(trip, booking) {
+  const logTypes = ["flight", "hotel", "car", "train", "ferry", "other"];
+  const optionsHtml = logTypes.map(function(t) {
+    return '<option value="' + t + '"' + (booking.type === t ? ' selected' : '') + '>' + t.charAt(0).toUpperCase() + t.slice(1) + '</option>';
+  }).join('');
+
+  const d = document.createElement("dialog");
+  d.className = "recipe-dialog auth-dialog";
+  d.innerHTML =
+    '<div class="recipe-form">' +
+    '<h3 style="margin:0 0 4px">Review Booking</h3>' +
+    '<p style="margin:0 0 14px;font-size:0.85rem;color:var(--text-muted)">Edit anything before saving to your trip.</p>' +
+    '<div class="travel-dialog-field"><label>Type</label><select id="tbrType" class="text-input">' + optionsHtml + '</select></div>' +
+    '<div class="travel-dialog-field"><label>Title</label><input id="tbrTitle" class="text-input" value="' + escapeHtml(booking.title) + '" /></div>' +
+    '<div class="travel-dialog-field"><label>Confirmation #</label><input id="tbrConf" class="text-input" value="' + escapeHtml(booking.confirmation) + '" /></div>' +
+    '<div style="display:flex;gap:8px">' +
+    '<div class="travel-dialog-field" style="flex:1"><label>Date</label><input id="tbrStart" type="date" class="text-input" value="' + (booking.startDate || '') + '" /></div>' +
+    '<div class="travel-dialog-field" style="flex:1"><label>Cost ($)</label><input id="tbrCost" type="number" min="0" class="text-input" value="' + (booking.cost || 0) + '" /></div>' +
+    '</div>' +
+    '<div class="travel-dialog-field"><label>Notes</label><input id="tbrNotes" class="text-input" value="' + escapeHtml(booking.notes) + '" /></div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
+    '<button type="button" class="secondary-btn" id="tbrCancel">Cancel</button>' +
+    '<button type="button" class="primary-btn" id="tbrSave">Add to trip</button>' +
+    '</div>' +
+    '</div>';
+  document.body.appendChild(d);
+  d.showModal();
+
+  d.querySelector("#tbrCancel").addEventListener("click", () => d.remove());
+  d.querySelector("#tbrSave").addEventListener("click", () => {
+    if (!Array.isArray(trip.logistics)) trip.logistics = [];
+    const entry = {
+      id: createId("tlog"),
+      type: d.querySelector("#tbrType").value,
+      title: d.querySelector("#tbrTitle").value.trim(),
+      confirmation: d.querySelector("#tbrConf").value.trim(),
+      startDate: d.querySelector("#tbrStart").value,
+      cost: parseFloat(d.querySelector("#tbrCost").value) || 0,
+      notes: d.querySelector("#tbrNotes").value.trim()
+    };
+    trip.logistics.push(entry);
+
+    // Auto-update trip dates if blank and booking has a start date
+    if (entry.startDate) {
+      if (!trip.startDate || entry.startDate < trip.startDate) {
+        trip.startDate = entry.startDate;
+        syncTripToCalendar(trip);
+      }
+      const endDate = booking.endDate;
+      if (endDate && (!trip.endDate || endDate > trip.endDate)) {
+        trip.endDate = endDate;
+        syncTripToCalendar(trip);
+      }
+    }
+
+    // Auto-add expense if cost > 0
+    if (entry.cost > 0) {
+      if (!Array.isArray(trip.expenses)) trip.expenses = [];
+      const catMap = { flight: "flights", hotel: "accommodation", car: "transport", train: "transport", ferry: "transport", other: "other" };
+      trip.expenses.push({
+        id: createId("texp"),
+        description: entry.title || entry.type,
+        amount: entry.cost,
+        category: catMap[entry.type] || "other",
+        date: entry.startDate || dateKeyFromDate(new Date())
+      });
+    }
+
+    trip.updatedAt = new Date().toISOString();
+    persist();
+    d.remove();
+    renderTravelTripDetail(trip);
+    switchTravelTab("logistics", trip);
   });
 }
 
