@@ -1,5 +1,9 @@
 const DEFAULT_SCAN_MODEL = "claude-haiku-4-5-20251001";
-const { normalizeReceipt } = require("./receipt-domain");
+let _receiptDomain = null;
+async function getReceiptDomain() {
+  if (!_receiptDomain) _receiptDomain = await import("./receipt-domain.js");
+  return _receiptDomain;
+}
 
 async function scanReceiptFromImages(images, options = {}) {
   const apiKey = options.apiKey || process.env.ANTHROPIC_API_KEY;
@@ -30,6 +34,7 @@ async function scanReceiptFromImages(images, options = {}) {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error?.message || `Receipt scan failed with status ${response.status}`);
+  const { normalizeReceipt } = await getReceiptDomain();
   return normalizeReceipt(parseReceiptJson(outputText(payload)));
 }
 

@@ -347,9 +347,9 @@ return {
   });
 }
 
-module.exports = {
+export {
   prepPhrases,
-  synonyms: synonymEntries,
+  synonymEntries as synonyms,
   catalogGroups,
   catalogEntries,
   singularizeWord,

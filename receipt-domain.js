@@ -164,7 +164,7 @@ return {
     return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
 
-module.exports = {
+export {
     normalizeReceipt,
     normalizeReceiptLineItem,
     normalizeMappings,

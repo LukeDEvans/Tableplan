@@ -1,15 +1,15 @@
 "use strict";
 
-const {
-  structureIngredient,
-  calculateIngredientNutrition,
-  sumNutrition,
-  applySavedCorrection
-} = require("./nutrition-domain");
+let _nutritionDomain = null;
+async function getNutritionDomain() {
+  if (!_nutritionDomain) _nutritionDomain = await import("./nutrition-domain.js");
+  return _nutritionDomain;
+}
 
 const USDA_BASE_URL = "https://api.nal.usda.gov/fdc/v1";
 
 async function estimateRecipeNutrition(payload = {}, options = {}) {
+  const { structureIngredient, calculateIngredientNutrition, sumNutrition, applySavedCorrection } = await getNutritionDomain();
   const apiKey = options.apiKey || process.env.USDA_FDC_API_KEY || process.env.USDA_API_KEY || "";
   const ingredients = (Array.isArray(payload.ingredients) ? payload.ingredients : []).map(structureIngredient);
   const corrections = payload.corrections && typeof payload.corrections === "object" ? payload.corrections : {};

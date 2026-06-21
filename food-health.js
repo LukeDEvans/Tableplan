@@ -268,7 +268,7 @@ function clamp(value, min, max, fallback) {
   return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
 }
 
-module.exports = {
+export {
   nutrientKeys,
   mealTypes,
   builtInTemplates,
