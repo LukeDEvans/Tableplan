@@ -31845,11 +31845,12 @@ function renderTravelSidebar() {
     const statusLabel = { idea: "Idea", planning: "Planning", booked: "Booked", current: "Now", completed: "Past" }[status] || status;
     const isActive = item.id === travelOpenId;
     const icon = isIdea ? "💡" : (status === "current" ? "🌍" : status === "booked" ? "✅" : "✈️");
-    return `<button class="travel-sidebar-row${isActive ? " is-active" : ""}" type="button" data-travel-id="${escapeHtml(item.id)}">
-      <span class="travel-sidebar-row-icon">${icon}</span>
-      <span class="travel-sidebar-row-name">${escapeHtml(isIdea ? item.destination : item.name)}</span>
-      ${!isIdea ? `<span class="travel-sidebar-row-status status-${status}">${statusLabel}</span>` : ""}
-    </button>`;
+    const statusChip = !isIdea ? '<span class="travel-sidebar-row-status status-' + status + '">' + statusLabel + '</span>' : '';
+    return '<button class="travel-sidebar-row' + (isActive ? ' is-active' : '') + '" type="button" data-travel-id="' + escapeHtml(item.id) + '">' +
+      '<span class="travel-sidebar-row-icon">' + icon + '</span>' +
+      '<span class="travel-sidebar-row-name">' + escapeHtml(isIdea ? item.destination : item.name) + '</span>' +
+      statusChip +
+      '</button>';
   }
 
   document.getElementById("travelIdeasList").innerHTML =
@@ -31888,8 +31889,8 @@ function renderTravelIdeaDetail(idea) {
   document.getElementById("travelStatusSelect").value = "idea";
   document.getElementById("travelStatusSelect").disabled = true;
   document.getElementById("travelDetailMeta").innerHTML =
-    `<span class="travel-meta-chip">💡 Travel idea</span>
-     ${idea.description ? `<span>${escapeHtml(idea.description)}</span>` : ""}`;
+    '<span class="travel-meta-chip">💡 Travel idea</span>' +
+    (idea.description ? '<span>' + escapeHtml(idea.description) + '</span>' : '');
 
   // Hide trip-only tabs, show notes only
   detail.querySelectorAll(".travel-tab").forEach(t => {
@@ -31961,11 +31962,14 @@ function renderTravelTripDetail(trip) {
     ? Math.round((new Date(trip.endDate) - new Date(trip.startDate)) / 86400000)
     : null;
   const partyStr = (trip.party || []).join(", ") || "Solo";
-  document.getElementById("travelDetailMeta").innerHTML = `
-    <span class="travel-meta-chip" id="travelEditDatesBtn" title="Edit dates">📅 ${escapeHtml(dateStr)}${nights ? ` (${nights}n)` : ""}</span>
-    <span class="travel-meta-chip" id="travelEditPartyBtn" title="Edit party">👥 ${escapeHtml(partyStr)}</span>
-    ${trip.destination ? `<span class="travel-meta-chip">📍 ${escapeHtml(trip.destination)}</span>` : `<span class="travel-meta-chip" id="travelEditDestBtn" title="Edit destination">📍 Add destination</span>`}
-  `;
+  const nightsStr = nights ? ' (' + nights + 'n)' : '';
+  const destChip = trip.destination
+    ? '<span class="travel-meta-chip">📍 ' + escapeHtml(trip.destination) + '</span>'
+    : '<span class="travel-meta-chip" id="travelEditDestBtn" title="Edit destination">📍 Add destination</span>';
+  document.getElementById("travelDetailMeta").innerHTML =
+    '<span class="travel-meta-chip" id="travelEditDatesBtn" title="Edit dates">📅 ' + escapeHtml(dateStr) + nightsStr + '</span>' +
+    '<span class="travel-meta-chip" id="travelEditPartyBtn" title="Edit party">👥 ' + escapeHtml(partyStr) + '</span>' +
+    destChip;
   document.getElementById("travelEditDatesBtn")?.addEventListener("click", () => showTravelEditDatesDialog(trip));
   document.getElementById("travelEditPartyBtn")?.addEventListener("click", () => showTravelEditPartyDialog(trip));
   document.getElementById("travelEditDestBtn")?.addEventListener("click", () => showTravelEditDestDialog(trip));
@@ -32014,25 +32018,32 @@ function renderTravelItinerary(trip) {
     return;
   }
 
-  el.innerHTML = trip.itinerary.map((day, di) => `
-    <div class="travel-day-card" data-day-index="${di}">
-      <div class="travel-day-header">
-        <span class="travel-day-date">${day.date ? formatTravelDate(day.date) : `Day ${di + 1}`}</span>
-        <input class="travel-day-location" placeholder="Location" value="${escapeHtml(day.location || "")}" data-day-location="${di}" />
-        <button class="travel-day-add-btn" type="button" data-day-add="${di}">+ Activity</button>
-        <button class="travel-activity-remove" type="button" data-day-remove="${di}" title="Remove day">✕</button>
-      </div>
-      ${(day.activities || []).map((act, ai) => `
-        <div class="travel-activity" data-act-index="${ai}">
-          <input class="travel-activity-time" placeholder="Time" value="${escapeHtml(act.time || "")}" data-act-time="${di}-${ai}" />
-          <span class="travel-activity-type-dot travel-activity-dot-${act.type || "activity"}"></span>
-          <div style="flex:1;min-width:0">
-            <input class="travel-activity-title" placeholder="Activity" value="${escapeHtml(act.title || "")}" data-act-title="${di}-${ai}" />
-            ${act.notes !== undefined ? `<input class="travel-activity-notes" placeholder="Notes" value="${escapeHtml(act.notes || "")}" data-act-notes="${di}-${ai}" />` : ""}
-          </div>
-          <button class="travel-activity-remove" type="button" data-act-remove="${di}-${ai}" title="Remove">✕</button>
-        </div>`).join("")}
-    </div>`).join("") + `<button class="travel-add-day-btn" type="button" id="travelAddDayBtn">+ Add day</button>`;
+  el.innerHTML = trip.itinerary.map(function(day, di) {
+    const dateLabel = day.date ? formatTravelDate(day.date) : 'Day ' + (di + 1);
+    const activitiesHtml = (day.activities || []).map(function(act, ai) {
+      const notesInput = act.notes !== undefined
+        ? '<input class="travel-activity-notes" placeholder="Notes" value="' + escapeHtml(act.notes || '') + '" data-act-notes="' + di + '-' + ai + '" />'
+        : '';
+      return '<div class="travel-activity" data-act-index="' + ai + '">' +
+        '<input class="travel-activity-time" placeholder="Time" value="' + escapeHtml(act.time || '') + '" data-act-time="' + di + '-' + ai + '" />' +
+        '<span class="travel-activity-type-dot travel-activity-dot-' + (act.type || 'activity') + '"></span>' +
+        '<div style="flex:1;min-width:0">' +
+        '<input class="travel-activity-title" placeholder="Activity" value="' + escapeHtml(act.title || '') + '" data-act-title="' + di + '-' + ai + '" />' +
+        notesInput +
+        '</div>' +
+        '<button class="travel-activity-remove" type="button" data-act-remove="' + di + '-' + ai + '" title="Remove">✕</button>' +
+        '</div>';
+    }).join('');
+    return '<div class="travel-day-card" data-day-index="' + di + '">' +
+      '<div class="travel-day-header">' +
+      '<span class="travel-day-date">' + dateLabel + '</span>' +
+      '<input class="travel-day-location" placeholder="Location" value="' + escapeHtml(day.location || '') + '" data-day-location="' + di + '" />' +
+      '<button class="travel-day-add-btn" type="button" data-day-add="' + di + '">+ Activity</button>' +
+      '<button class="travel-activity-remove" type="button" data-day-remove="' + di + '" title="Remove day">✕</button>' +
+      '</div>' +
+      activitiesHtml +
+      '</div>';
+  }).join('') + '<button class="travel-add-day-btn" type="button" id="travelAddDayBtn">+ Add day</button>';
 
   el.querySelectorAll("[data-day-location]").forEach(inp => {
     inp.addEventListener("change", e => {
@@ -32114,29 +32125,29 @@ function renderTravelLogistics(trip) {
   const el = document.getElementById("travelTabLogistics");
   const items = trip.logistics || [];
 
-  el.innerHTML = `
-    <div class="travel-logistics-list" id="travelLogisticsList">
-      ${items.map((l, i) => `
-        <div class="travel-logistic-card">
-          <span class="travel-logistic-icon">${TRAVEL_LOGISTIC_ICONS[l.type] || "📌"}</span>
-          <div class="travel-logistic-body">
-            <input class="travel-logistic-title" value="${escapeHtml(l.title || "")}" placeholder="Title" data-log-title="${i}" />
-            <div class="travel-logistic-meta">
-              <select class="travel-logistic-field" data-log-type="${i}" style="min-width:70px">
-                ${["flight","hotel","car","train","ferry","other"].map(t => `<option value="${t}"${l.type===t?" selected":""}>${t.charAt(0).toUpperCase()+t.slice(1)}</option>`).join("")}
-              </select>
-              <input class="travel-logistic-field" type="date" value="${l.startDate||""}" placeholder="Date" data-log-date="${i}" />
-              <input class="travel-logistic-field" placeholder="Confirmation #" value="${escapeHtml(l.confirmation||"")}" data-log-conf="${i}" style="min-width:100px" />
-              <input class="travel-logistic-field" placeholder="Notes" value="${escapeHtml(l.notes||"")}" data-log-notes="${i}" style="min-width:80px" />
-            </div>
-          </div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
-            <div class="travel-logistic-cost">$<input class="travel-budget-amount" type="number" min="0" value="${l.cost||0}" data-log-cost="${i}" style="width:55px" /></div>
-            <button class="travel-logistic-remove" type="button" data-log-remove="${i}">✕</button>
-          </div>
-        </div>`).join("")}
-    </div>
-    <button class="travel-add-day-btn" type="button" id="travelAddLogisticBtn">+ Add flight / hotel / car</button>`;
+  const logTypes = ["flight","hotel","car","train","ferry","other"];
+  const logCardsHtml = items.map(function(l, i) {
+    const optionsHtml = logTypes.map(function(t) {
+      return '<option value="' + t + '"' + (l.type === t ? ' selected' : '') + '>' + t.charAt(0).toUpperCase() + t.slice(1) + '</option>';
+    }).join('');
+    return '<div class="travel-logistic-card">' +
+      '<span class="travel-logistic-icon">' + (TRAVEL_LOGISTIC_ICONS[l.type] || '📌') + '</span>' +
+      '<div class="travel-logistic-body">' +
+      '<input class="travel-logistic-title" value="' + escapeHtml(l.title || '') + '" placeholder="Title" data-log-title="' + i + '" />' +
+      '<div class="travel-logistic-meta">' +
+      '<select class="travel-logistic-field" data-log-type="' + i + '" style="min-width:70px">' + optionsHtml + '</select>' +
+      '<input class="travel-logistic-field" type="date" value="' + (l.startDate || '') + '" placeholder="Date" data-log-date="' + i + '" />' +
+      '<input class="travel-logistic-field" placeholder="Confirmation #" value="' + escapeHtml(l.confirmation || '') + '" data-log-conf="' + i + '" style="min-width:100px" />' +
+      '<input class="travel-logistic-field" placeholder="Notes" value="' + escapeHtml(l.notes || '') + '" data-log-notes="' + i + '" style="min-width:80px" />' +
+      '</div></div>' +
+      '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">' +
+      '<div class="travel-logistic-cost">$<input class="travel-budget-amount" type="number" min="0" value="' + (l.cost || 0) + '" data-log-cost="' + i + '" style="width:55px" /></div>' +
+      '<button class="travel-logistic-remove" type="button" data-log-remove="' + i + '">✕</button>' +
+      '</div></div>';
+  }).join('');
+  el.innerHTML =
+    '<div class="travel-logistics-list" id="travelLogisticsList">' + logCardsHtml + '</div>' +
+    '<button class="travel-add-day-btn" type="button" id="travelAddLogisticBtn">+ Add flight / hotel / car</button>';
 
   el.querySelectorAll("[data-log-title]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logTitle].title = e.target.value; persist(); }));
   el.querySelectorAll("[data-log-type]").forEach(sel => sel.addEventListener("change", e => { trip.logistics[+e.target.dataset.logType].type = e.target.value; renderTravelLogistics(trip); persist(); }));
@@ -32245,13 +32256,16 @@ function renderTravelPacking(trip) {
     </div>`;
   }).join("");
 
-  el.innerHTML = `
-    ${items.length ? `<div class="travel-packing-progress">${packed} / ${items.length} packed</div>` : ""}
-    <div class="travel-packing-categories">${catHtml || "<p style='color:var(--text-muted);font-size:0.875rem'>No packing list yet. Add items or ask the AI to generate one.</p>"}</div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-      <button class="travel-add-day-btn" type="button" id="travelAddPackingBtn">+ Add item</button>
-      ${!items.length ? `<button class="secondary-btn" type="button" id="travelGenPackingBtn" style="font-size:0.82rem">Generate with AI</button>` : ""}
-    </div>`;
+  const progressHtml = items.length ? '<div class="travel-packing-progress">' + packed + ' / ' + items.length + ' packed</div>' : '';
+  const genBtnHtml = !items.length ? '<button class="secondary-btn" type="button" id="travelGenPackingBtn" style="font-size:0.82rem">Generate with AI</button>' : '';
+  const emptyCatsHtml = catHtml || "<p style='color:var(--text-muted);font-size:0.875rem'>No packing list yet. Add items or ask the AI to generate one.</p>";
+  el.innerHTML =
+    progressHtml +
+    '<div class="travel-packing-categories">' + emptyCatsHtml + '</div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">' +
+    '<button class="travel-add-day-btn" type="button" id="travelAddPackingBtn">+ Add item</button>' +
+    genBtnHtml +
+    '</div>';
 
   el.querySelectorAll("[data-pack-check]").forEach(cb => {
     cb.addEventListener("change", e => {
