@@ -64,7 +64,8 @@ function bookingScanPrompt() {
     '  "startDate": departure or check-in date in YYYY-MM-DD format, or "" if not found',
     '  "endDate": arrival or check-out date in YYYY-MM-DD format, or "" if not found',
     '  "cost": total cost as a number (no currency symbol), or 0 if not found',
-    '  "notes": one concise line with key details (times, addresses, seat numbers, check-in/out times, etc.)',
+    '  "location": full address or place name for use in Google Maps (hotel address, airport name, train station, etc.), or "" if not applicable',
+    '  "notes": one concise line with key details (times, seat numbers, check-in/out times, terminal, gate, etc.)',
     "If a field cannot be determined, use an empty string or 0.",
     "Do not invent values. Extract only what is clearly visible."
   ].join("\n");
@@ -95,6 +96,7 @@ function parseBookingJson(text) {
     startDate: /^\d{4}-\d{2}-\d{2}$/.test(parsed.startDate) ? parsed.startDate : "",
     endDate: /^\d{4}-\d{2}-\d{2}$/.test(parsed.endDate) ? parsed.endDate : "",
     cost: typeof parsed.cost === "number" ? parsed.cost : parseFloat(parsed.cost) || 0,
+    location: String(parsed.location || "").trim(),
     notes: String(parsed.notes || "").trim()
   };
 }

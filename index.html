@@ -433,6 +433,7 @@
                       <option value="booked">Booked</option>
                       <option value="completed">Completed</option>
                     </select>
+                    <button class="icon-btn" type="button" id="travelScanBookingBtn" title="Scan booking confirmation">📷</button>
                     <button class="icon-btn travel-delete-btn" type="button" id="travelDeleteBtn" title="Delete trip">
                       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
                     </button>
@@ -445,6 +446,7 @@
                   <button class="travel-tab" type="button" data-travel-tab="budget">Budget</button>
                   <button class="travel-tab" type="button" data-travel-tab="packing">Packing</button>
                   <button class="travel-tab" type="button" data-travel-tab="notes">Notes</button>
+                  <button class="travel-tab" type="button" data-travel-tab="map">Map</button>
                 </nav>
               </div>
               <div class="travel-detail-body">
@@ -453,6 +455,7 @@
                 <div class="travel-tab-panel" id="travelTabBudget" hidden></div>
                 <div class="travel-tab-panel" id="travelTabPacking" hidden></div>
                 <div class="travel-tab-panel" id="travelTabNotes" hidden></div>
+                <div class="travel-tab-panel" id="travelTabMap" hidden></div>
               </div>
             </div>
             <div class="travel-empty" id="travelEmpty">

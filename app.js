@@ -31984,6 +31984,7 @@ function renderTravelTripDetail(trip) {
     travelOpenId = null;
     renderTravelPage();
   };
+  document.getElementById("travelScanBookingBtn").onclick = () => showTravelScanBookingDialog(trip);
 
   // Show all tabs
   detail.querySelectorAll(".travel-tab").forEach(t => { t.hidden = false; });
@@ -31998,7 +31999,7 @@ function switchTravelTab(tab, trip) {
   travelOpenTab = tab;
   document.querySelectorAll(".travel-tab").forEach(b => b.classList.toggle("is-active", b.dataset.travelTab === tab));
   document.querySelectorAll(".travel-tab-panel").forEach(p => p.hidden = true);
-  const panelId = { itinerary: "travelTabItinerary", logistics: "travelTabLogistics", budget: "travelTabBudget", packing: "travelTabPacking", notes: "travelTabNotes" }[tab];
+  const panelId = { itinerary: "travelTabItinerary", logistics: "travelTabLogistics", budget: "travelTabBudget", packing: "travelTabPacking", notes: "travelTabNotes", map: "travelTabMap" }[tab];
   if (!panelId) return;
   document.getElementById(panelId).hidden = false;
   switch (tab) {
@@ -32007,6 +32008,7 @@ function switchTravelTab(tab, trip) {
     case "budget":     renderTravelBudget(trip); break;
     case "packing":    renderTravelPacking(trip); break;
     case "notes":      renderTravelNotes(trip); break;
+    case "map":        renderTravelMap(trip); break;
   }
 }
 
@@ -32050,6 +32052,7 @@ function renderTravelItinerary(trip) {
         '<span class="travel-activity-type-dot travel-activity-dot-' + (act.type || 'activity') + '"></span>' +
         '<div style="flex:1;min-width:0">' +
         '<input class="travel-activity-title" placeholder="Activity" value="' + escapeHtml(act.title || '') + '" data-act-title="' + di + '-' + ai + '" />' +
+        '<input class="travel-activity-location" placeholder="📍 Location (optional)" value="' + escapeHtml(act.location || '') + '" data-act-loc="' + di + '-' + ai + '" />' +
         notesInput +
         '</div>' +
         '<button class="travel-activity-remove" type="button" data-act-remove="' + di + '-' + ai + '" title="Remove">✕</button>' +
@@ -32090,6 +32093,13 @@ function renderTravelItinerary(trip) {
     inp.addEventListener("change", e => {
       const [di, ai] = e.target.dataset.actNotes.split("-").map(Number);
       trip.itinerary[di].activities[ai].notes = e.target.value;
+      trip.updatedAt = new Date().toISOString(); persist();
+    });
+  });
+  el.querySelectorAll("[data-act-loc]").forEach(inp => {
+    inp.addEventListener("change", e => {
+      const [di, ai] = e.target.dataset.actLoc.split("-").map(Number);
+      trip.itinerary[di].activities[ai].location = e.target.value;
       trip.updatedAt = new Date().toISOString(); persist();
     });
   });
@@ -32155,6 +32165,7 @@ function renderTravelLogistics(trip) {
       '<span class="travel-logistic-icon">' + (TRAVEL_LOGISTIC_ICONS[l.type] || '📌') + '</span>' +
       '<div class="travel-logistic-body">' +
       '<input class="travel-logistic-title" value="' + escapeHtml(l.title || '') + '" placeholder="Title" data-log-title="' + i + '" />' +
+      '<input class="travel-logistic-location" placeholder="📍 Address / location" value="' + escapeHtml(l.location || '') + '" data-log-loc="' + i + '" />' +
       '<div class="travel-logistic-meta">' +
       '<select class="travel-logistic-field" data-log-type="' + i + '" style="min-width:70px">' + optionsHtml + '</select>' +
       '<input class="travel-logistic-field" type="date" value="' + (l.startDate || '') + '" placeholder="Date" data-log-date="' + i + '" />' +
@@ -32170,10 +32181,10 @@ function renderTravelLogistics(trip) {
     '<div class="travel-logistics-list" id="travelLogisticsList">' + logCardsHtml + '</div>' +
     '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">' +
     '<button class="travel-add-day-btn" type="button" id="travelAddLogisticBtn">+ Add manually</button>' +
-    '<button class="secondary-btn" type="button" id="travelScanBookingBtn" style="font-size:0.82rem">📷 Scan confirmation</button>' +
     '</div>';
 
   el.querySelectorAll("[data-log-title]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logTitle].title = e.target.value; persist(); }));
+  el.querySelectorAll("[data-log-loc]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logLoc].location = e.target.value; persist(); }));
   el.querySelectorAll("[data-log-type]").forEach(sel => sel.addEventListener("change", e => { trip.logistics[+e.target.dataset.logType].type = e.target.value; renderTravelLogistics(trip); persist(); }));
   el.querySelectorAll("[data-log-date]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logDate].startDate = e.target.value; persist(); }));
   el.querySelectorAll("[data-log-conf]").forEach(inp => inp.addEventListener("change", e => { trip.logistics[+e.target.dataset.logConf].confirmation = e.target.value; persist(); }));
@@ -32186,7 +32197,6 @@ function renderTravelLogistics(trip) {
     trip.updatedAt = new Date().toISOString(); persist();
     renderTravelLogistics(trip);
   });
-  document.getElementById("travelScanBookingBtn").addEventListener("click", () => showTravelScanBookingDialog(trip));
 }
 
 // ── Budget ──────────────────────────────────────────────────────────────────────
@@ -32319,6 +32329,120 @@ function renderTravelNotes(trip) {
     trip.updatedAt = new Date().toISOString();
     persist();
   });
+}
+
+// ── Map ──────────────────────────────────────────────────────────────────────────
+
+function travelMapHelperUrl() {
+  if (canUseLocalBackend()) return "/api/travel-map-url";
+  if (window.location.protocol.startsWith("http")) return "/.netlify/functions/travel-map-url";
+  return "";
+}
+
+async function fetchTravelMapUrl(params) {
+  const helperUrl = travelMapHelperUrl();
+  if (!helperUrl) return null;
+  try {
+    const res = await fetch(helperUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: "Bearer " + (authSession?.access_token || "") },
+      body: JSON.stringify(params)
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.url || null;
+  } catch { return null; }
+}
+
+async function renderTravelMap(trip) {
+  const el = document.getElementById("travelTabMap");
+  if (!el) return;
+
+  const sections = [];
+
+  // Overview — trip destination
+  if (trip.destination) {
+    sections.push({
+      title: trip.destination,
+      params: { type: "search", query: trip.destination },
+      mapsLink: "https://maps.google.com/?q=" + encodeURIComponent(trip.destination)
+    });
+  }
+
+  // Lodging pins from logistics
+  (trip.logistics || []).forEach(function(l) {
+    if (l.location && (l.type === "hotel" || l.type === "other")) {
+      sections.push({
+        title: (TRAVEL_LOGISTIC_ICONS[l.type] || "📌") + " " + (l.title || l.location),
+        params: { type: "place", query: l.location },
+        mapsLink: "https://maps.google.com/?q=" + encodeURIComponent(l.location)
+      });
+    }
+  });
+
+  // Per-day route maps
+  (trip.itinerary || []).forEach(function(day) {
+    var locs = [];
+    if (day.location) locs.push(day.location);
+    (day.activities || []).forEach(function(a) { if (a.location) locs.push(a.location); });
+    if (!locs.length) return;
+
+    var label = day.date ? formatTravelDate(day.date) : "";
+    var dayTitle = label + (day.location ? (label ? " — " : "") + day.location : "");
+
+    if (locs.length === 1) {
+      sections.push({
+        title: dayTitle || locs[0],
+        params: { type: "place", query: locs[0] },
+        mapsLink: "https://maps.google.com/?q=" + encodeURIComponent(locs[0])
+      });
+    } else {
+      var origin = locs[0];
+      var destination = locs[locs.length - 1];
+      var waypoints = locs.slice(1, -1);
+      sections.push({
+        title: dayTitle || label,
+        params: { type: "directions", origin: origin, destination: destination, waypoints: waypoints, mode: "walking" },
+        mapsLink: "https://www.google.com/maps/dir/" + locs.map(encodeURIComponent).join("/")
+      });
+    }
+  });
+
+  if (!sections.length) {
+    el.innerHTML =
+      '<div class="travel-map-empty">' +
+      '<p style="margin:0 0 8px;font-weight:600">No locations yet</p>' +
+      '<p style="margin:0;font-size:0.82rem">Add a destination to the trip, an address to a logistics entry, or a location to itinerary activities to see maps here.</p>' +
+      '</div>';
+    return;
+  }
+
+  // Render skeleton with loading placeholders
+  el.innerHTML = sections.map(function(s, i) {
+    return '<div class="travel-map-section" id="travelMapSection' + i + '">' +
+      '<div class="travel-map-section-header">' +
+      '<span class="travel-map-section-title">' + escapeHtml(s.title) + '</span>' +
+      '<a href="' + s.mapsLink + '" target="_blank" rel="noopener" class="travel-map-link">Open in Maps ↗</a>' +
+      '</div>' +
+      '<div class="travel-map-iframe-wrap"><div class="travel-map-loading">Loading map…</div></div>' +
+      '</div>';
+  }).join('');
+
+  // Fetch and inject each iframe
+  for (var i = 0; i < sections.length; i++) {
+    var wrap = el.querySelector('#travelMapSection' + i + ' .travel-map-iframe-wrap');
+    if (!wrap) continue;
+    try {
+      var mapUrl = await fetchTravelMapUrl(sections[i].params);
+      if (mapUrl) {
+        wrap.innerHTML = '<iframe class="travel-map-iframe" src="' + mapUrl + '" allowfullscreen loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>';
+      } else {
+        wrap.innerHTML = '<div class="travel-map-error">Map unavailable — check Google Maps API key.</div>';
+      }
+    } catch (err) {
+      wrap.innerHTML = '<div class="travel-map-error">Map unavailable.</div>';
+    }
+  }
 }
 
 // ── Dialogs ──────────────────────────────────────────────────────────────────────
@@ -32506,7 +32630,6 @@ function showTravelScanBookingDialog(trip) {
     return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
   }
 
-  uploadArea.addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", () => {
     selectedFile = fileInput.files[0] || null;
     if (!selectedFile) return;
@@ -32574,6 +32697,7 @@ function showTravelBookingReviewDialog(trip, booking) {
     '<div class="travel-dialog-field" style="flex:1"><label>Date</label><input id="tbrStart" type="date" class="text-input" value="' + (booking.startDate || '') + '" /></div>' +
     '<div class="travel-dialog-field" style="flex:1"><label>Cost ($)</label><input id="tbrCost" type="number" min="0" class="text-input" value="' + (booking.cost || 0) + '" /></div>' +
     '</div>' +
+    '<div class="travel-dialog-field"><label>Location / Address</label><input id="tbrLocation" class="text-input" value="' + escapeHtml(booking.location || '') + '" placeholder="e.g. 123 Main St, Tokyo" /></div>' +
     '<div class="travel-dialog-field"><label>Notes</label><input id="tbrNotes" class="text-input" value="' + escapeHtml(booking.notes) + '" /></div>' +
     '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
     '<button type="button" class="secondary-btn" id="tbrCancel">Cancel</button>' +
@@ -32593,6 +32717,7 @@ function showTravelBookingReviewDialog(trip, booking) {
       confirmation: d.querySelector("#tbrConf").value.trim(),
       startDate: d.querySelector("#tbrStart").value,
       cost: parseFloat(d.querySelector("#tbrCost").value) || 0,
+      location: d.querySelector("#tbrLocation").value.trim(),
       notes: d.querySelector("#tbrNotes").value.trim()
     };
     trip.logistics.push(entry);
