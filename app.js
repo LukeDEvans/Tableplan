@@ -32013,11 +32013,28 @@ function switchTravelTab(tab, trip) {
 function renderTravelItinerary(trip) {
   const el = document.getElementById("travelTabItinerary");
   if (!trip.itinerary?.length) {
-    el.innerHTML = `
-      <p style="color:var(--text-muted);font-size:0.875rem">No itinerary yet. Add days manually or ask the AI to generate one.</p>
-      <button class="travel-add-day-btn" type="button" id="travelAddDayBtn">+ Add day</button>`;
-    document.getElementById("travelAddDayBtn").addEventListener("click", () => addTravelDay(trip));
-    return;
+    if (trip.startDate && trip.endDate) {
+      const start = new Date(trip.startDate + "T12:00:00");
+      const end = new Date(trip.endDate + "T12:00:00");
+      const numDays = Math.round((end - start) / 86400000) + 1;
+      if (numDays > 0 && numDays <= 60) {
+        trip.itinerary = [];
+        for (let i = 0; i < numDays; i++) {
+          const d = new Date(start);
+          d.setDate(d.getDate() + i);
+          trip.itinerary.push({ date: dateKeyFromDate(d), location: "", activities: [] });
+        }
+        trip.updatedAt = new Date().toISOString();
+        persist();
+      }
+    }
+    if (!trip.itinerary?.length) {
+      el.innerHTML =
+        '<p style="color:var(--text-muted);font-size:0.875rem">No itinerary yet. Add trip dates to auto-populate days, or add manually.</p>' +
+        '<button class="travel-add-day-btn" type="button" id="travelAddDayBtn">+ Add day</button>';
+      document.getElementById("travelAddDayBtn").addEventListener("click", () => addTravelDay(trip));
+      return;
+    }
   }
 
   el.innerHTML = trip.itinerary.map(function(day, di) {
