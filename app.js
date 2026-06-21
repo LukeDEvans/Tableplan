@@ -4203,6 +4203,8 @@ function mergeStates(newer, older) {
     "savedArticles",
     // Podcast saved tabs
     "podcastSavedCategories",
+    // Travel
+    "trips", "travelIdeas",
   ]) {
     merged[key] = unionById(newer[key], older[key], key);
   }
