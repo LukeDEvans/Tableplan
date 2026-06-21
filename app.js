@@ -32479,8 +32479,8 @@ function showTravelScanBookingDialog(trip) {
     '<h3 style="margin:0 0 4px">Scan Booking Confirmation</h3>' +
     '<p style="margin:0 0 14px;font-size:0.85rem;color:var(--text-muted)">Upload a screenshot or photo of a flight, hotel, rental, or any booking confirmation.</p>' +
     '<label class="travel-scan-upload-area" id="tsbUploadArea">' +
-    '<input type="file" id="tsbFileInput" accept="image/*" style="display:none" />' +
-    '<span id="tsbUploadLabel">📷 Choose image</span>' +
+    '<input type="file" id="tsbFileInput" accept="image/*,.pdf,application/pdf" style="display:none" />' +
+    '<span id="tsbUploadLabel">📷 Choose image or PDF</span>' +
     '</label>' +
     '<img id="tsbPreview" style="display:none;max-width:100%;max-height:180px;object-fit:contain;border-radius:8px;margin-top:10px" />' +
     '<div id="tsbStatus" style="font-size:0.85rem;color:var(--text-muted);min-height:1.2em;margin-top:8px"></div>' +
@@ -32505,9 +32505,14 @@ function showTravelScanBookingDialog(trip) {
     selectedFile = fileInput.files[0] || null;
     if (!selectedFile) return;
     uploadLabel.textContent = selectedFile.name;
-    const reader = new FileReader();
-    reader.onload = e => { preview.src = e.target.result; preview.style.display = "block"; };
-    reader.readAsDataURL(selectedFile);
+    if (selectedFile.type === "application/pdf") {
+      preview.style.display = "none";
+      uploadLabel.textContent = "📄 " + selectedFile.name;
+    } else {
+      const reader = new FileReader();
+      reader.onload = e => { preview.src = e.target.result; preview.style.display = "block"; };
+      reader.readAsDataURL(selectedFile);
+    }
     scanBtn.disabled = false;
     statusEl.textContent = "";
   });
@@ -32520,7 +32525,9 @@ function showTravelScanBookingDialog(trip) {
     scanBtn.disabled = true;
     statusEl.textContent = "Scanning… this takes a few seconds.";
     try {
-      const dataUrl = await fileToDataUrl(await prepareScanImage(selectedFile, {}, { maxDimension: 1600, quality: 0.82 }));
+      const dataUrl = selectedFile.type === "application/pdf"
+        ? await fileToDataUrl(selectedFile)
+        : await fileToDataUrl(await prepareScanImage(selectedFile, {}, { maxDimension: 1600, quality: 0.82 }));
       const res = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json", Authorization: "Bearer " + (authSession?.access_token || "") },

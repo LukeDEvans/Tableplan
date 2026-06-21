@@ -1,14 +1,15 @@
 const DEFAULT_SCAN_MODEL = "claude-haiku-4-5-20251001";
 
-async function scanBookingFromImages(images, options = {}) {
+async function scanBookingFromImages(files, options = {}) {
   const apiKey = options.apiKey || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("Booking scan needs ANTHROPIC_API_KEY set on the server.");
-  const cleanImages = validateImages(images);
+  const contentBlocks = validateAndBuildBlocks(files);
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
+      "anthropic-beta": "pdfs-2024-09-25",
       "content-type": "application/json"
     },
     body: JSON.stringify({
@@ -19,10 +20,7 @@ async function scanBookingFromImages(images, options = {}) {
         role: "user",
         content: [
           { type: "text", text: bookingScanPrompt() },
-          ...cleanImages.map((image) => {
-            const { media_type, data } = parseDataUrl(image);
-            return { type: "image", source: { type: "base64", media_type, data } };
-          })
+          ...contentBlocks
         ]
       }]
     })
@@ -33,26 +31,31 @@ async function scanBookingFromImages(images, options = {}) {
 }
 
 function parseDataUrl(dataUrl) {
-  const match = dataUrl.match(/^data:(image\/[a-z+]+);base64,(.+)$/i);
-  if (!match) throw new Error("Invalid image data URL.");
+  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/i);
+  if (!match) throw new Error("Invalid file data URL.");
   return { media_type: match[1].toLowerCase(), data: match[2] };
 }
 
-function validateImages(images) {
-  if (!Array.isArray(images) || !images.length) throw new Error("At least one image is required.");
-  if (images.length > 3) throw new Error("Use up to 3 images per booking confirmation.");
-  return images.map((image) => {
-    const value = String(image || "");
-    if (!/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(value)) {
-      throw new Error("Images must be PNG, JPEG, WEBP, or GIF data URLs.");
-    }
-    return value;
-  });
+function buildContentBlock(dataUrl) {
+  const { media_type, data } = parseDataUrl(dataUrl);
+  if (media_type === "application/pdf") {
+    return { type: "document", source: { type: "base64", media_type: "application/pdf", data } };
+  }
+  if (/^image\/(png|jpe?g|webp|gif)$/.test(media_type)) {
+    return { type: "image", source: { type: "base64", media_type, data } };
+  }
+  throw new Error("Files must be images (PNG/JPEG/WEBP/GIF) or PDFs.");
+}
+
+function validateAndBuildBlocks(files) {
+  if (!Array.isArray(files) || !files.length) throw new Error("At least one file is required.");
+  if (files.length > 3) throw new Error("Use up to 3 files per scan.");
+  return files.map((f) => buildContentBlock(String(f || "")));
 }
 
 function bookingScanPrompt() {
   return [
-    "Extract travel booking details from this confirmation image.",
+    "Extract travel booking details from this confirmation document or image.",
     "Return ONLY valid JSON with no markdown or explanation.",
     "The JSON must have exactly these fields:",
     '  "type": one of "flight", "hotel", "car", "train", "ferry", "other"',
@@ -77,12 +80,12 @@ function outputText(payload) {
 
 function parseBookingJson(text) {
   const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("No booking data found in image.");
+  if (!jsonMatch) throw new Error("No booking data found in document.");
   let parsed;
   try {
     parsed = JSON.parse(jsonMatch[0]);
   } catch {
-    throw new Error("Could not read booking data from image.");
+    throw new Error("Could not read booking data from document.");
   }
   const validTypes = ["flight", "hotel", "car", "train", "ferry", "other"];
   return {
