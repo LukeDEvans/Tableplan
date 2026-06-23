@@ -89,6 +89,10 @@ const server = http.createServer(async (request, response) => {
       await handleTravelMapUrl(request, response);
       return;
     }
+    if (url.pathname === "/api/travel-time") {
+      await handleTravelTime(url, response);
+      return;
+    }
     if (url.pathname === "/api/estimate-nutrition") {
       await handleNutritionEstimate(request, response);
       return;
@@ -271,6 +275,34 @@ async function handleBookingScan(request, response) {
   } catch (error) {
     sendJson(response, 500, { error: error.message || "Booking scan failed." });
   }
+}
+
+async function handleTravelTime(url, response) {
+  const apiKey = String(process.env.GOOGLE_MAPS_API_KEY || process.env.Google_Maps || "").trim();
+  if (!apiKey) { sendJson(response, 503, { error: "Google Maps is not configured." }); return; }
+  const origin = url.searchParams.get("origin");
+  const destination = url.searchParams.get("destination");
+  if (!origin || !destination) { sendJson(response, 400, { error: "origin and destination are required." }); return; }
+  try {
+    sendJson(response, 200, { times: await lookupTravelTimes(origin, destination, apiKey) });
+  } catch (err) {
+    sendJson(response, 500, { error: err.message || "Travel time lookup failed." });
+  }
+}
+
+async function lookupTravelTimes(origin, destination, apiKey) {
+  async function oneMode(mode) {
+    const res = await fetch("https://maps.googleapis.com/maps/api/distancematrix/json?" +
+      new URLSearchParams({ origins: origin, destinations: destination, mode, key: apiKey }));
+    const data = await res.json();
+    const el = data?.rows?.[0]?.elements?.[0];
+    if (el?.status !== "OK") return null;
+    return { durationMin: Math.ceil(el.duration.value / 60), label: el.duration.text, distance: el.distance?.text || "" };
+  }
+  const [walk, drive, transit] = await Promise.all([
+    oneMode("walking"), oneMode("driving"), oneMode("transit")
+  ]);
+  return { walk, drive, transit };
 }
 
 async function handleTravelMapUrl(request, response) {
