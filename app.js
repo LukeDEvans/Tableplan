@@ -46,6 +46,25 @@ const mealPlanCustomOptions = ["n/a", "out", "leftovers"];
 const groceryMealPrefix = "grocery-item::";
 const specialMealPrefix = "special-meal::";
 const recipePhotoBucket = "recipe-photos";
+
+function recipePhotoProxyUrl(pathOrUrl) {
+  if (!pathOrUrl) return "";
+  // Non-Supabase URL (user-entered external link) — use as-is
+  if (pathOrUrl.startsWith("http") && !pathOrUrl.includes(".supabase.co")) return pathOrUrl;
+  // Extract storage path from full Supabase public or signed URL
+  const pub  = "/storage/v1/object/public/"  + recipePhotoBucket + "/";
+  const sign = "/storage/v1/object/sign/"    + recipePhotoBucket + "/";
+  let path = pathOrUrl;
+  const pi = pathOrUrl.indexOf(pub);
+  if (pi !== -1) path = pathOrUrl.slice(pi + pub.length);
+  else {
+    const si = pathOrUrl.indexOf(sign);
+    if (si !== -1) path = pathOrUrl.slice(si + sign.length).split("?")[0];
+  }
+  const token = authSession?.access_token || "";
+  return "/.netlify/functions/recipe-photo?path=" + encodeURIComponent(path) +
+    (token ? "&_token=" + encodeURIComponent(token) : "");
+}
 const autoRuleBlankSlotValue = "__blank_auto_rule_slot__";
 const defaultMealEntries = [
   { meal: "Luke Breakfast", index: 0, value: "Tofu Scramble" },
@@ -10399,7 +10418,7 @@ function activeCookingTemplate(item) {
   return `
     <article class="active-cooking-card">
       <button class="active-cooking-thumb" type="button" data-view-active-recipe="${escapeHtml(item.id)}">
-        ${recipe.photoUrl ? `<img class="active-cooking-photo" src="${escapeHtml(recipe.photoUrl)}" alt="" />` : ""}
+        ${recipe.photoUrl ? `<img class="active-cooking-photo" src="${escapeHtml(recipePhotoProxyUrl(recipe.photoUrl))}" alt="" />` : ""}
         <span class="active-cooking-title">${escapeHtml(recipe.name)}</span>
         <div class="active-cooking-status">
           <span class="active-cooking-servings">${escapeHtml(formatServingsLabel(item.servings))}</span>
@@ -20515,7 +20534,7 @@ function recipeViewTemplate(recipe, requestedIngredientScale = 1) {
     ? (Number(recipe.groceryMealServings || 1) || 1) / baseServings
     : requestedIngredientScale;
   return `
-    ${recipe.photoUrl ? `<img class="recipe-view-photo" src="${escapeHtml(recipe.photoUrl)}" alt="${escapeHtml(recipe.name)}" />` : ""}
+    ${recipe.photoUrl ? `<img class="recipe-view-photo" src="${escapeHtml(recipePhotoProxyUrl(recipe.photoUrl))}" alt="${escapeHtml(recipe.name)}" />` : ""}
     <div class="recipe-view-meta">
       ${recipeTimePillsTemplate(recipe, "Flexible")}
       ${tags.map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join("")}
@@ -20581,7 +20600,7 @@ function activeRecipeViewTemplate(recipe, cookingItem) {
   const completedSteps = Array.isArray(cookingItem.completedSteps) ? cookingItem.completedSteps : [];
   const checkedIngredients = Array.isArray(cookingItem.checkedIngredients) ? cookingItem.checkedIngredients : [];
   return `
-    ${recipe.photoUrl ? `<img class="recipe-view-photo" src="${escapeHtml(recipe.photoUrl)}" alt="${escapeHtml(recipe.name)}" />` : ""}
+    ${recipe.photoUrl ? `<img class="recipe-view-photo" src="${escapeHtml(recipePhotoProxyUrl(recipe.photoUrl))}" alt="${escapeHtml(recipe.name)}" />` : ""}
     <div class="recipe-view-meta">
       ${recipeTimePillsTemplate(recipe, "Flexible")}
       <span class="serving-adjuster serving-static"><span>Servings</span><strong>${escapeHtml(String(servings))}</strong></span>
@@ -20650,7 +20669,7 @@ function cookLogTemplate(cookLog) {
 function cookLogPhotoTemplate(photoUrl) {
   return `
     <div class="cook-log-photo-wrap">
-      <img class="cook-log-photo" src="${escapeHtml(photoUrl)}" alt="Cooked dish" />
+      <img class="cook-log-photo" src="${escapeHtml(recipePhotoProxyUrl(photoUrl))}" alt="Cooked dish" />
       <button class="secondary-btn compact-btn" type="button" data-use-log-photo="${escapeHtml(photoUrl)}">Use as recipe photo</button>
     </div>
   `;
@@ -20870,7 +20889,7 @@ function removeRecipePhotoSelection() {
 
 function updateRecipePhotoPreview(photoUrl, file = null) {
   if (!elements.recipePhotoPreview) return;
-  const previewUrl = file ? URL.createObjectURL(file) : photoUrl;
+  const previewUrl = file ? URL.createObjectURL(file) : recipePhotoProxyUrl(photoUrl);
   elements.recipePhotoPreview.innerHTML = previewUrl
     ? `<img src="${escapeHtml(previewUrl)}" alt="Dish photo preview" />`
     : "No photo selected.";
@@ -21830,8 +21849,7 @@ async function uploadRecipePhoto(file, recipeId, kind = "recipe") {
       upsert: false
     });
   if (error) throw new Error(`${error.message}. Run supabase-photo-storage.sql if the photo bucket is not set up yet.`);
-  const { data } = supabaseClient.storage.from(recipePhotoBucket).getPublicUrl(path);
-  return data?.publicUrl || "";
+  return path;
 }
 
 async function resizeRecipePhoto(file) {
