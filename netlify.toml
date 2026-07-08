@@ -2,6 +2,11 @@
   command = "npm run build"
   publish = "dist"
 
+[build.environment]
+  # VAPID_CONTACT_EMAIL is a contact address, not a credential — it is embedded
+  # in every web-push request's claims and appears in reference SQL in the repo.
+  SECRETS_SCAN_OMIT_KEYS = "VAPID_CONTACT_EMAIL,WEEKLY_REVIEW_TO"
+
 [dev]
   command = "vite --port 5174"
   targetPort = 5174
@@ -17,6 +22,9 @@
 
 [functions."daily-briefing"]
   schedule = "0 13 * * *"
+
+[functions."gmail-watch-rearm"]
+  schedule = "0 11 * * *"
 
 [[headers]]
   for = "/*"

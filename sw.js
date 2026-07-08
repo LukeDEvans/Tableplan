@@ -1,4 +1,4 @@
-const CACHE = "live-v6";
+const CACHE = "live-v8";
 const PRECACHE = ["/", "/favicon.svg"];
 const SKIP_HOSTS = ["supabase.co", "googleapis.com", "gstatic.com"];
 
@@ -24,6 +24,10 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
   if (SKIP_HOSTS.some((h) => url.hostname.includes(h))) return;
+
+  // API calls must always hit the network — caching them serves stale
+  // responses (e.g. expired OAuth URLs) and masks server errors
+  if (url.pathname.startsWith("/.netlify/functions/") || url.pathname.startsWith("/api/")) return;
 
   // Navigation: network-first, fall back to cached shell
   if (request.mode === "navigate") {

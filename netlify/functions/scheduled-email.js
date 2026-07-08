@@ -1,13 +1,13 @@
 // Netlify Scheduled Function — runs every 15 minutes.
 // Checks if the user's email schedule matches the current time, then sends
 // the weekly email via Resend if it does. Requires SUPABASE_SERVICE_ROLE_KEY,
-// ANTHROPIC_API_KEY, RESEND_API_KEY, and optionally WEEKLY_REVIEW_TO /
-// WEEKLY_REVIEW_FROM to be set in Netlify environment variables.
+// ANTHROPIC_API_KEY and RESEND_API_KEY in Netlify environment variables.
+// Recipient comes from the app owner's auth account (see _recipient.js).
 
 const { buildWeeklyContext } = require("./build-weekly-context");
 const { claudeCall } = require("./_claude");
+const { resolveRecipientEmail } = require("./_recipient");
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
-const DEFAULT_TO_EMAIL = "mrlukedevans@gmail.com";
 const DEFAULT_FROM_EMAIL = "Live App <onboarding@resend.dev>";
 
 exports.handler = async () => {
@@ -35,8 +35,9 @@ exports.handler = async () => {
 
   console.log("[scheduled-email] Sending email…");
   try {
+    const to = await resolveRecipientEmail(serviceKey);
+    if (!to) { console.log("[scheduled-email] No recipient email could be determined"); return ok(); }
     const html = await generateEmailHtml(anthropicKey, appState);
-    const to = process.env.WEEKLY_REVIEW_TO || DEFAULT_TO_EMAIL;
     const from = process.env.WEEKLY_REVIEW_FROM || DEFAULT_FROM_EMAIL;
     const subject = `Your Weekly Review – ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}`;
     await sendResendEmail({ resendKey, from, to, subject, html });
@@ -80,7 +81,10 @@ async function loadLatestState(serviceKey) {
     { headers }
   );
   if (!res.ok) throw new Error(`Supabase load failed: ${res.status}`);
-  const rows = await res.json();
+  const allRows = await res.json();
+  // Ignore infrastructure rows (Gmail tokens, mail suggestions, logs) — they
+  // update frequently and must not be mistaken for the app state
+  const rows = allRows.filter(r => !/^(gmail_|mailsugg_|email_schedule_log|push_schedule_log)/.test(r.id));
   if (!rows.length) return null;
 
   // Sort by inner stateUpdatedAt to find the most current base state

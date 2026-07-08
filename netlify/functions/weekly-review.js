@@ -2,8 +2,8 @@ exports.config = {
   schedule: "0 14 * * 4"
 };
 
+const { resolveRecipientEmail } = require("./_recipient");
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
-const DEFAULT_TO_EMAIL = "mrlukedevans@gmail.com";
 const DEFAULT_FROM_EMAIL = "Live App <onboarding@resend.dev>";
 
 exports.handler = async (event) => {
@@ -39,7 +39,8 @@ Output ONLY the HTML body content (start with a <div> or <table>, no doctype/htm
       user: context
     });
 
-    const to = process.env.WEEKLY_REVIEW_TO || DEFAULT_TO_EMAIL;
+    const to = await resolveRecipientEmail(serviceKey);
+    if (!to) return jsonResponse(500, { error: "No recipient email could be determined." });
     const from = process.env.WEEKLY_REVIEW_FROM || DEFAULT_FROM_EMAIL;
     const subject = `Your Weekly Review – ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}`;
 
@@ -50,13 +51,40 @@ Output ONLY the HTML body content (start with a <div> or <table>, no doctype/htm
   }
 };
 
+const SECTION_NAMES = ["eat", "grocery", "do", "play", "watch", "media", "plan", "health", "inventory", "recreate", "config"];
+
 async function loadStateFromSupabase(serviceKey) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.personal&select=state`, {
-    headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" }
-  });
+  const headers = { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" };
+  const stateId = "personal";
+  const sectionIds = SECTION_NAMES.map(s => `${stateId}:${s}`).join(",");
+
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/tableplan_states?id=in.(${sectionIds})&select=id,state`,
+    { headers }
+  );
   if (!res.ok) throw new Error(`Supabase load failed: ${res.status}`);
   const rows = await res.json();
-  return rows[0]?.state || null;
+
+  if (rows.length > 0) {
+    const assembled = {};
+    let latestTs = "";
+    for (const row of rows) {
+      const { stateUpdatedAt, ...data } = row.state || {};
+      Object.assign(assembled, data);
+      if (stateUpdatedAt && stateUpdatedAt > latestTs) latestTs = stateUpdatedAt;
+    }
+    if (latestTs) assembled.stateUpdatedAt = latestTs;
+    return assembled;
+  }
+
+  // Migration fallback: load old unified row
+  const fallback = await fetch(
+    `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.personal&select=state`,
+    { headers }
+  );
+  if (!fallback.ok) throw new Error(`Supabase load failed: ${fallback.status}`);
+  const fallbackRows = await fallback.json();
+  return fallbackRows[0]?.state || null;
 }
 
 async function sendResendEmail({ resendKey, from, to, subject, html }) {

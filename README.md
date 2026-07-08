@@ -114,7 +114,7 @@ Before treating the live app as private, run:
 supabase-privacy-rls-hardening.sql
 ```
 
-That migration removes anonymous table access and restricts the app tables to `mrlukedevans@gmail.com` through Supabase Row Level Security.
+That migration removes anonymous table access and restricts the app tables to the owner account through Supabase Row Level Security.
 
 Recipe rows include `tags`, `nutrition`, and `cook_log` JSON columns. If setting up a new Supabase project, run the recipe metadata migration:
 
@@ -228,9 +228,7 @@ Google_Maps
 
 The existing `SUPABASE_SERVICE_ROLE_KEY` is also used by the Netlify function to verify the signed-in user before making Google Places requests. Store search is restricted to:
 
-```text
-mrlukedevans@gmail.com
-```
+the owner account (set via `WEEKLY_REVIEW_TO` environment variable)
 
 That can be overridden with:
 

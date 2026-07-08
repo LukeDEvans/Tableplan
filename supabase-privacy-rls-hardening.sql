@@ -47,7 +47,7 @@ for select
 to authenticated
 using (
   id = 'personal'
-  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com'
+  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com'
 );
 
 create policy "Only Luke can create tableplan state"
@@ -56,7 +56,7 @@ for insert
 to authenticated
 with check (
   id = 'personal'
-  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com'
+  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com'
 );
 
 create policy "Only Luke can update tableplan state"
@@ -65,59 +65,59 @@ for update
 to authenticated
 using (
   id = 'personal'
-  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com'
+  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com'
 )
 with check (
   id = 'personal'
-  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com'
+  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com'
 );
 
 create policy "Only Luke can read folders"
 on public.eat_folders
 for select
 to authenticated
-using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com');
+using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com');
 
 create policy "Only Luke can create folders"
 on public.eat_folders
 for insert
 to authenticated
-with check (lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com');
+with check (lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com');
 
 create policy "Only Luke can update folders"
 on public.eat_folders
 for update
 to authenticated
-using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com')
-with check (lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com');
+using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com')
+with check (lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com');
 
 create policy "Only Luke can delete folders"
 on public.eat_folders
 for delete
 to authenticated
-using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com');
+using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com');
 
 create policy "Only Luke can read recipes"
 on public.eat_recipes
 for select
 to authenticated
-using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com');
+using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com');
 
 create policy "Only Luke can create recipes"
 on public.eat_recipes
 for insert
 to authenticated
-with check (lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com');
+with check (lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com');
 
 create policy "Only Luke can update recipes"
 on public.eat_recipes
 for update
 to authenticated
-using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com')
-with check (lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com');
+using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com')
+with check (lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com');
 
 create policy "Only Luke can delete recipes"
 on public.eat_recipes
 for delete
 to authenticated
-using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com');
+using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com');

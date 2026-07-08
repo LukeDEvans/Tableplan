@@ -28,7 +28,7 @@ for insert
 to authenticated
 with check (
   bucket_id = 'recipe-photos'
-  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com'
+  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com'
 );
 
 create policy "Luke can update recipe photos"
@@ -37,11 +37,11 @@ for update
 to authenticated
 using (
   bucket_id = 'recipe-photos'
-  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com'
+  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com'
 )
 with check (
   bucket_id = 'recipe-photos'
-  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com'
+  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com'
 );
 
 create policy "Luke can delete recipe photos"
@@ -50,5 +50,5 @@ for delete
 to authenticated
 using (
   bucket_id = 'recipe-photos'
-  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com'
+  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com'
 );

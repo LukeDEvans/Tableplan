@@ -143,4 +143,40 @@ function parseBookingJson(text) {
   };
 }
 
-module.exports = { scanBookingFromImages };
+async function scanBookingFromEmailText(emailText, options = {}) {
+  const apiKey = options.apiKey || process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("Booking scan needs ANTHROPIC_API_KEY set on the server.");
+  const prompt = [
+    "The text below is an email. If it is a confirmation of a travel booking (lodging, flight, rental car, train, ferry, etc.), extract the booking details.",
+    'If it is NOT an actual booking confirmation — marketing, promotions, trip reminders, cancellations, reviews, receipts for something already extracted elsewhere, or anything without confirmed reservation details — return exactly {"type": "none"}.',
+    "",
+    bookingScanPrompt(),
+    "",
+    "--- EMAIL ---",
+    emailText.slice(0, 16000)
+  ].join("\n");
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      model: options.model || DEFAULT_SCAN_MODEL,
+      max_tokens: 2048,
+      temperature: 0,
+      messages: [{ role: "user", content: prompt }]
+    })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error?.message || `Booking scan failed with status ${response.status}`);
+  const text = outputText(payload);
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try { if (JSON.parse(jsonMatch[0]).type === "none") return null; } catch {}
+  }
+  return parseBookingJson(text);
+}
+
+module.exports = { scanBookingFromImages, scanBookingFromEmailText };

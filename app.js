@@ -5850,8 +5850,130 @@ async function initMailPage(hashParams) {
   if (mailGmailConnected) {
     await loadMailLabels();
     loadMailList(currentMailbox);
+    loadMailSuggestionsPanel();
   }
   warmMailStatus(); // re-arm for next visit
+}
+
+async function loadMailSuggestionsPanel() {
+  const data = await callGmailApi({ action: "suggestions" });
+  renderMailSuggestions(data?.suggestions || []);
+}
+
+function renderMailSuggestions(suggestions) {
+  const panel = document.getElementById("mailSuggestions");
+  if (!panel) return;
+  const pending = suggestions.filter(s => s.status === "pending");
+  panel.hidden = false;
+
+  const KIND_ICONS = { add_todo: "✅", add_booking: "🧳" };
+  panel.innerHTML =
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px 4px">' +
+    '<span style="font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted)">Suggested actions' +
+    (pending.length ? ' (' + pending.length + ')' : '') + '</span>' +
+    '<button type="button" class="secondary-btn" id="mailSuggCheckNow" style="font-size:0.78rem;padding:3px 10px">Check now</button>' +
+    '</div>' +
+    (pending.length
+      ? '<div style="display:flex;flex-direction:column;gap:8px;padding:6px 12px 12px">' +
+        pending.map(s => {
+          return '<div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;border:1px solid var(--border, rgba(128,128,128,0.25));border-radius:10px;padding:10px 12px">' +
+            '<div style="min-width:0">' +
+            '<div style="font-size:0.88rem;font-weight:600">' + (KIND_ICONS[s.kind] || "💡") + ' ' + escapeHtml(s.title) +
+            (s.dueDate ? ' <span style="font-weight:400;color:var(--text-muted)">· due ' + escapeHtml(s.dueDate) + '</span>' : '') + '</div>' +
+            (s.details ? '<div style="font-size:0.8rem;color:var(--text-muted);margin-top:2px">' + escapeHtml(s.details) + '</div>' : '') +
+            '<div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px">From: ' + escapeHtml(s.emailSubject || "") + '</div>' +
+            '</div>' +
+            '<div style="display:flex;gap:6px;flex-shrink:0">' +
+            '<button type="button" class="primary-btn mail-sugg-approve" data-id="' + escapeHtml(s.id) + '" style="font-size:0.78rem;padding:4px 10px">' +
+            (s.kind === "add_booking" ? 'Review & add' : 'Approve') + '</button>' +
+            '<button type="button" class="secondary-btn mail-sugg-dismiss" data-id="' + escapeHtml(s.id) + '" style="font-size:0.78rem;padding:4px 10px">Dismiss</button>' +
+            '</div></div>';
+        }).join('') +
+        '</div>'
+      : '<div style="padding:4px 12px 12px;font-size:0.8rem;color:var(--text-muted)">No pending suggestions. New email is triaged automatically.</div>');
+
+  const bySugg = id => suggestions.find(s => s.id === id);
+
+  panel.querySelector("#mailSuggCheckNow").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = "Checking…";
+    const data = await callGmailApi({ action: "checkInboxNow" });
+    if (!data) {
+      btn.textContent = lastGmailApiError ? "Failed" : "Check now";
+      btn.title = lastGmailApiError || "";
+      btn.disabled = false;
+      return;
+    }
+    renderMailSuggestions(data.suggestions || []);
+  });
+
+  panel.querySelectorAll(".mail-sugg-dismiss").forEach(btn => btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    await callGmailApi({ action: "resolveSuggestion", suggestionId: btn.dataset.id, status: "dismissed" });
+    renderMailSuggestions(suggestions.filter(s => s.id !== btn.dataset.id));
+  }));
+
+  panel.querySelectorAll(".mail-sugg-approve").forEach(btn => btn.addEventListener("click", async () => {
+    const s = bySugg(btn.dataset.id);
+    if (!s) return;
+    btn.disabled = true;
+
+    const resolveAndRemove = async () => {
+      await callGmailApi({ action: "resolveSuggestion", suggestionId: s.id, status: "approved" });
+      renderMailSuggestions(suggestions.filter(x => x.id !== s.id));
+    };
+
+    if (s.kind === "add_todo") {
+      const title = s.dueDate ? s.title + " (due " + s.dueDate + ")" : s.title;
+      doBacklogTasks().push({ id: createId("task"), title, done: false, weekKey: weekKey(), createdAt: new Date().toISOString() });
+      persist();
+      await resolveAndRemove();
+      return;
+    }
+
+    if (s.kind === "add_booking" && s.booking) {
+      if (!Array.isArray(state.trips)) state.trips = [];
+      const trip = matchTripForBooking(s.booking);
+      if (!trip) {
+        alert("No trip found in Explore to attach this booking to. Create the trip first, then approve the suggestion.");
+        btn.disabled = false;
+        return;
+      }
+      // Only resolve once the booking is actually saved; cancelling the
+      // review dialog leaves the suggestion pending.
+      btn.textContent = "Reviewing…";
+      showTravelBookingReviewDialog(trip, s.booking, resolveAndRemove);
+      return;
+    }
+
+    btn.disabled = false;
+  }));
+}
+
+function matchTripForBooking(booking) {
+  const trips = state.trips || [];
+  if (!trips.length) return null;
+  const bStart = booking.startDate || "";
+  if (bStart) {
+    // Prefer a trip whose date range contains the booking (with 3 days of slack)
+    const pad = (dateKey, days) => {
+      const d = new Date(dateKey + "T00:00:00");
+      d.setDate(d.getDate() + days);
+      return d.toISOString().slice(0, 10);
+    };
+    const containing = trips.find(t => t.startDate && t.endDate &&
+      bStart >= pad(t.startDate, -3) && bStart <= pad(t.endDate, 3));
+    if (containing) return containing;
+    // Otherwise the trip whose start date is closest to the booking date
+    const dated = trips.filter(t => t.startDate);
+    if (dated.length) {
+      return dated.reduce((best, t) =>
+        Math.abs(new Date(t.startDate) - new Date(bStart)) < Math.abs(new Date(best.startDate) - new Date(bStart)) ? t : best);
+    }
+  }
+  // No booking date or no dated trips: fall back to the most recently updated trip
+  return trips.slice().sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""))[0] || null;
 }
 
 function renderMailConnectState() {
@@ -5921,7 +6043,8 @@ async function loadMailList(labelId, q = "", append = false) {
     pageToken: append ? mailNextPageToken : undefined
   });
   if (!data) {
-    if (!append) elements.mailList.innerHTML = `<div class="mail-empty">Failed to load mail.</div>`;
+    const detail = lastGmailApiError ? ` ${escapeHtml(lastGmailApiError)}` : "";
+    if (!append) elements.mailList.innerHTML = `<div class="mail-empty">Failed to load mail.${detail}</div>`;
     return;
   }
   mailNextPageToken = data.nextPageToken || null;
@@ -6757,19 +6880,29 @@ function sanitizeMailHtml(html) {
   return div.innerHTML;
 }
 
+let lastGmailApiError = null;
+
 async function callGmailApi(body) {
+  lastGmailApiError = null;
   const session = supabaseClient ? await supabaseClient.auth.getSession() : null;
   const token = session?.data?.session?.access_token;
-  if (!token) return null;
+  if (!token) { lastGmailApiError = "Not signed in."; return null; }
   try {
     const res = await fetch("/.netlify/functions/gmail", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
       body: JSON.stringify(body)
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      lastGmailApiError = data.error || `Server error (${res.status}).`;
+      return null;
+    }
     return await res.json();
-  } catch { return null; }
+  } catch (e) {
+    lastGmailApiError = e.message;
+    return null;
+  }
 }
 
 async function callGmailAuthApi() {
@@ -32031,6 +32164,7 @@ function openExploreTrip(tripId) {
     sendChatMessage(`I'm planning my trip "${trip.name}"${dest}. What should I know? Help me with itinerary ideas, things to do, local tips, and anything else useful. Use my trip data for context.`);
   });
   document.getElementById("exploreScanBookingBtn").onclick = () => showTravelScanBookingDialog(trip);
+  document.getElementById("exploreScanEmailBtn").onclick = () => showTravelEmailScanDialog(trip);
   document.getElementById("explorePrintBtn").onclick = () => printTripItinerary(trip);
 
   // Reset to overview tab and render it
@@ -34678,7 +34812,110 @@ function showTravelScanBookingDialog(trip) {
   });
 }
 
-function showTravelBookingReviewDialog(trip, booking) {
+async function showTravelEmailScanDialog(trip) {
+  const d = document.createElement("dialog");
+  d.className = "recipe-dialog auth-dialog";
+  d.innerHTML =
+    '<div class="recipe-form">' +
+    '<h3 style="margin:0 0 4px">Scan Email for Bookings</h3>' +
+    '<p style="margin:0 0 14px;font-size:0.85rem;color:var(--text-muted)">Searches your Gmail for lodging, flight, rental car and other booking confirmations from the last 6 months.</p>' +
+    '<div id="tesBody"><div class="mail-loading">Searching your inbox…</div></div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
+    '<button type="button" class="secondary-btn" id="tesClose">Close</button>' +
+    '<button type="button" class="primary-btn" id="tesScan" style="display:none">Scan selected</button>' +
+    '</div></div>';
+  document.body.appendChild(d);
+  d.showModal();
+  d.querySelector("#tesClose").addEventListener("click", () => d.remove());
+
+  const bodyEl = d.querySelector("#tesBody");
+  const scanBtn = d.querySelector("#tesScan");
+  const knownConfs = new Set(
+    [...(trip.logistics || []), ...(trip.stays || [])]
+      .map(l => (l.confirmation || "").trim())
+      .filter(Boolean)
+  );
+
+  const data = await callGmailApi({ action: "listBookingEmails", monthsBack: 6 });
+  if (!d.isConnected) return; // dialog was closed while searching
+  if (!data) {
+    bodyEl.innerHTML = '<div class="mail-empty">' +
+      escapeHtml(lastGmailApiError || "Could not search Gmail. Connect Gmail on the Mail page first.") + '</div>';
+    return;
+  }
+  const emails = data.messages || [];
+  if (!emails.length) {
+    bodyEl.innerHTML = '<div class="mail-empty">No booking emails found in the last 6 months.</div>';
+    return;
+  }
+
+  bodyEl.innerHTML =
+    '<div style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:8px">' +
+    emails.map((m, i) => {
+      const sender = m.from.replace(/<[^>]*>/g, "").replace(/"/g, "").trim();
+      const when = m.internalDate ? new Date(Number(m.internalDate)).toLocaleDateString() : "";
+      return '<label style="display:flex;gap:8px;align-items:flex-start;font-size:0.85rem;cursor:pointer">' +
+        '<input type="checkbox" class="tes-check" data-idx="' + i + '" checked style="width:15px;height:15px;margin-top:2px;flex-shrink:0;accent-color:var(--accent)" />' +
+        '<span><strong>' + escapeHtml(m.subject) + '</strong><br>' +
+        '<span style="color:var(--text-muted)">' + escapeHtml(sender) + (when ? ' · ' + escapeHtml(when) : '') + '</span></span>' +
+        '</label>';
+    }).join('') +
+    '</div>';
+  scanBtn.style.display = "";
+
+  scanBtn.addEventListener("click", async () => {
+    const selected = [...d.querySelectorAll(".tes-check:checked")].map(c => emails[Number(c.dataset.idx)]);
+    if (!selected.length) return;
+    scanBtn.disabled = true;
+    scanBtn.style.display = "none";
+    const results = [];
+    let failures = 0;
+    for (let i = 0; i < selected.length; i++) {
+      if (!d.isConnected) return;
+      bodyEl.innerHTML = '<div class="mail-loading">Scanning ' + (i + 1) + ' of ' + selected.length + '…<br>' +
+        '<span style="color:var(--text-muted);font-size:0.8rem">' + escapeHtml(selected[i].subject) + '</span></div>';
+      const res = await callGmailApi({ action: "scanBookingEmail", messageId: selected[i].id });
+      if (res) {
+        if (res.booking) results.push(res.booking);
+      } else {
+        failures++;
+      }
+    }
+
+    if (!results.length) {
+      bodyEl.innerHTML = '<div class="mail-empty">No bookings found in the selected emails.' +
+        (failures ? ' (' + failures + ' could not be scanned.)' : '') + '</div>';
+      return;
+    }
+    const ICONS = { flight: "✈️", hotel: "🏨", car: "🚗", train: "🚆", ferry: "⛴️", other: "📌" };
+    bodyEl.innerHTML =
+      '<p style="margin:0 0 8px;font-size:0.85rem;color:var(--text-muted)">Found ' + results.length + ' booking' + (results.length === 1 ? '' : 's') +
+      (failures ? ' (' + failures + ' email' + (failures === 1 ? '' : 's') + ' could not be scanned)' : '') +
+      '. Review each before it’s added to the trip.</p>' +
+      '<div style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:8px">' +
+      results.map((b, i) => {
+        const dup = b.confirmation && knownConfs.has(b.confirmation.trim());
+        const dates = b.startDate
+          ? escapeHtml(formatTravelDate(b.startDate)) + (b.endDate && b.endDate !== b.startDate ? ' → ' + escapeHtml(formatTravelDate(b.endDate)) : '')
+          : '';
+        return '<div style="display:flex;gap:8px;align-items:center;justify-content:space-between">' +
+          '<span style="font-size:0.85rem">' + (ICONS[b.type] || "📌") + ' <strong>' + escapeHtml(b.title || b.type) + '</strong>' +
+          (dates ? '<br><span style="color:var(--text-muted)">' + dates + '</span>' : '') +
+          (dup ? '<br><span style="color:var(--text-muted)">Already in this trip</span>' : '') +
+          '</span>' +
+          '<button type="button" class="secondary-btn tes-add" data-idx="' + i + '" style="flex-shrink:0">' + (dup ? 'Add anyway' : 'Review & add') + '</button>' +
+          '</div>';
+      }).join('') +
+      '</div>';
+    bodyEl.querySelectorAll(".tes-add").forEach(btn => btn.addEventListener("click", () => {
+      showTravelBookingReviewDialog(trip, results[Number(btn.dataset.idx)]);
+      btn.disabled = true;
+      btn.textContent = "Opened";
+    }));
+  });
+}
+
+function showTravelBookingReviewDialog(trip, booking, onSaved) {
   const logTypes = ["flight", "hotel", "car", "train", "ferry", "other"];
   const optionsHtml = logTypes.map(function(t) {
     return '<option value="' + t + '"' + (booking.type === t ? ' selected' : '') + '>' + t.charAt(0).toUpperCase() + t.slice(1) + '</option>';
@@ -34838,6 +35075,7 @@ function showTravelBookingReviewDialog(trip, booking) {
     trip.updatedAt = new Date().toISOString();
     persist();
     d.remove();
+    if (typeof onSaved === "function") onSaved();
     if (activeAppArea === "explore") openExploreTrip(trip.id);
   });
 }

@@ -1,5 +1,30 @@
-const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
-const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
+const { scanBookingFromEmailText } = require("../../booking-scan");
+const {
+  loadUserGmailTokens, saveUserGmailTokens, deleteUserGmailTokens,
+  getUserId, getValidAccessToken, gFetch, headersMap, extractBody,
+  htmlToText, cleanSnippet, loadMailSuggestions, saveMailSuggestions, runInboxSweep
+} = require("./_gmail-shared");
+
+// Domains that send travel booking confirmations, used by listBookingEmails
+const TRAVEL_SENDERS = [
+  // Lodging
+  "airbnb.com", "booking.com", "hotels.com", "expedia.com", "vrbo.com", "agoda.com",
+  "priceline.com", "hostelworld.com", "marriott.com", "hilton.com", "hyatt.com", "ihg.com",
+  // Airlines
+  "delta.com", "united.com", "aa.com", "southwest.com", "jetblue.com", "alaskaair.com",
+  "spirit.com", "flyfrontier.com", "hawaiianair.com", "britishairways.com", "lufthansa.com",
+  "airfrance.com", "klm.com", "aerlingus.com", "ryanair.com", "easyjet.com",
+  // Rental cars
+  "hertz.com", "enterprise.com", "avis.com", "budget.com", "nationalcar.com", "alamo.com",
+  "thrifty.com", "dollar.com", "turo.com", "sixt.com",
+  // Rail / other
+  "amtrak.com", "trainline.com"
+];
+
+function buildBookingSearchQuery(monthsBack) {
+  const fromQ = TRAVEL_SENDERS.map((d) => `from:${d}`).join(" OR ");
+  return `(${fromQ}) (confirmation OR confirmed OR reservation OR itinerary OR "e-ticket" OR booking) newer_than:${monthsBack}m`;
+}
 
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return json(405, { error: "Method not allowed" });
@@ -26,10 +51,31 @@ exports.handler = async (event) => {
     return json(200, { ok: true });
   }
 
+  if (action === "suggestions") {
+    const data = await loadMailSuggestions(serviceKey, userId);
+    return json(200, { suggestions: data.suggestions });
+  }
+
+  if (action === "resolveSuggestion") {
+    const { suggestionId, status } = body;
+    if (!suggestionId || !["approved", "dismissed"].includes(status)) {
+      return json(400, { error: "suggestionId and status (approved|dismissed) required" });
+    }
+    const data = await loadMailSuggestions(serviceKey, userId);
+    const s = data.suggestions.find((x) => x.id === suggestionId);
+    if (s) {
+      s.status = status;
+      s.resolvedAt = new Date().toISOString();
+      await saveMailSuggestions(serviceKey, userId, data);
+    }
+    return json(200, { ok: true });
+  }
+
   const tokens = await loadUserGmailTokens(serviceKey, userId);
   if (!tokens?.refreshToken) return json(400, { error: "Gmail not connected." });
 
-  const gToken = await getValidAccessToken(tokens, serviceKey, userId);
+  const { token: gToken, invalidGrant } = await getValidAccessToken(tokens, serviceKey, userId);
+  if (invalidGrant) return json(401, { error: "Gmail connection expired — please reconnect." });
   if (!gToken) return json(503, { error: "Could not get Gmail access token." });
 
   if (action === "list") {
@@ -40,7 +86,11 @@ exports.handler = async (event) => {
     labelIds.forEach((l) => params.append("labelIds", l));
 
     const listRes = await gFetch(gToken, `/messages?${params}`);
-    if (!listRes.ok) return json(502, { error: "Gmail list failed." });
+    if (!listRes.ok) {
+      const e = await listRes.json().catch(() => ({}));
+      console.error("Gmail list failed:", listRes.status, JSON.stringify(e));
+      return json(502, { error: e.error?.message || `Gmail list failed (${listRes.status}).` });
+    }
     const listData = await listRes.json();
 
     const messages = (await Promise.all(
@@ -64,6 +114,67 @@ exports.handler = async (event) => {
     )).filter(Boolean);
 
     return json(200, { messages, nextPageToken: listData.nextPageToken || null });
+  }
+
+  if (action === "checkInboxNow") {
+    const anthropicKey = (process.env.ANTHROPIC_API_KEY || "").trim();
+    try {
+      const result = await runInboxSweep(tokens, serviceKey, userId, { anthropicKey });
+      const data = await loadMailSuggestions(serviceKey, userId);
+      return json(200, { ...result, suggestions: data.suggestions });
+    } catch (e) {
+      console.error("checkInboxNow failed:", e.message);
+      return json(502, { error: e.message || "Inbox check failed." });
+    }
+  }
+
+  if (action === "listBookingEmails") {
+    const monthsBack = Math.min(Math.max(parseInt(body.monthsBack) || 6, 1), 24);
+    const params = new URLSearchParams({ maxResults: "20", q: buildBookingSearchQuery(monthsBack) });
+    const listRes = await gFetch(gToken, `/messages?${params}`);
+    if (!listRes.ok) {
+      const e = await listRes.json().catch(() => ({}));
+      console.error("Booking email search failed:", listRes.status, JSON.stringify(e));
+      return json(502, { error: e.error?.message || `Gmail search failed (${listRes.status}).` });
+    }
+    const listData = await listRes.json();
+    const messages = (await Promise.all(
+      (listData.messages || []).map(async (m) => {
+        const r = await gFetch(gToken, `/messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`);
+        if (!r.ok) return null;
+        const d = await r.json();
+        const hdrs = headersMap(d.payload?.headers);
+        return {
+          id: d.id,
+          from: hdrs.from || "",
+          subject: hdrs.subject || "(no subject)",
+          date: hdrs.date || "",
+          internalDate: d.internalDate,
+          snippet: cleanSnippet(d.snippet)
+        };
+      })
+    )).filter(Boolean);
+    messages.sort((a, b) => Number(b.internalDate) - Number(a.internalDate));
+    return json(200, { messages });
+  }
+
+  if (action === "scanBookingEmail") {
+    const { messageId } = body;
+    if (!messageId) return json(400, { error: "messageId required" });
+    const anthropicKey = (process.env.ANTHROPIC_API_KEY || "").trim();
+    if (!anthropicKey) return json(503, { error: "ANTHROPIC_API_KEY not configured." });
+    const r = await gFetch(gToken, `/messages/${messageId}?format=full`);
+    if (!r.ok) return json(502, { error: "Gmail message fetch failed." });
+    const msg = await r.json();
+    const hdrs = headersMap(msg.payload?.headers);
+    const emailText = `Subject: ${hdrs.subject || ""}\nFrom: ${hdrs.from || ""}\nDate: ${hdrs.date || ""}\n\n${htmlToText(extractBody(msg.payload))}`;
+    try {
+      const booking = await scanBookingFromEmailText(emailText, { apiKey: anthropicKey });
+      return json(200, { booking }); // booking is null when the email isn't a confirmation
+    } catch (e) {
+      console.error("Booking email scan failed:", e.message);
+      return json(502, { error: e.message || "Scan failed." });
+    }
   }
 
   if (action === "get") {
@@ -126,39 +237,7 @@ exports.handler = async (event) => {
   return json(400, { error: `Unknown action: ${action}` });
 };
 
-// ─── Token management ─────────────────────────────────────────────────────────
-
-async function getValidAccessToken(tokens, serviceKey, userId) {
-  if (tokens.accessToken && tokens.expiresAt > Date.now() + 60000) return tokens.accessToken;
-
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return null;
-
-  const res = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ refresh_token: tokens.refreshToken, client_id: clientId, client_secret: clientSecret, grant_type: "refresh_token" })
-  });
-  if (!res.ok) return null;
-  const data = await res.json();
-  tokens.accessToken = data.access_token;
-  tokens.expiresAt = Date.now() + (data.expires_in || 3600) * 1000;
-  await saveUserGmailTokens(serviceKey, userId, tokens);
-  return data.access_token;
-}
-
-// ─── Gmail API helpers ────────────────────────────────────────────────────────
-
-function gFetch(token, path, method = "GET", body) {
-  const opts = { method, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } };
-  if (body) opts.body = JSON.stringify(body);
-  return fetch(`${GMAIL_BASE}${path}`, opts);
-}
-
-function headersMap(headers = []) {
-  return Object.fromEntries(headers.map((h) => [h.name.toLowerCase(), h.value]));
-}
+// ─── Response shaping ─────────────────────────────────────────────────────────
 
 function normalizeThread(thread) {
   return { id: thread.id, messages: (thread.messages || []).map(normalizeMessage) };
@@ -180,25 +259,6 @@ function normalizeMessage(msg) {
     messageId: hdrs["message-id"] || "",
     references: hdrs.references || ""
   };
-}
-
-function extractBody(payload) {
-  if (!payload) return "";
-  if (payload.body?.data) {
-    if (payload.mimeType === "text/plain" || payload.mimeType === "text/html") return decodeB64(payload.body.data);
-  }
-  if (payload.parts) {
-    const html = payload.parts.find((p) => p.mimeType === "text/html");
-    if (html?.body?.data) return decodeB64(html.body.data);
-    const plain = payload.parts.find((p) => p.mimeType === "text/plain");
-    if (plain?.body?.data) return decodeB64(plain.body.data);
-    for (const part of payload.parts) { const t = extractBody(part); if (t) return t; }
-  }
-  return "";
-}
-
-function decodeB64(encoded) {
-  return Buffer.from(encoded.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8");
 }
 
 function buildRaw({ from, to, subject, body, inReplyTo, references }) {
@@ -225,57 +285,6 @@ async function claudeDraft(apiKey, emailContext, instruction, myEmail) {
   if (!res.ok) throw new Error("Claude draft failed");
   const data = await res.json();
   return data.content?.[0]?.text || "";
-}
-
-// ─── Supabase helpers ─────────────────────────────────────────────────────────
-
-async function loadUserGmailTokens(serviceKey, userId) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.gmail_${userId}&select=state`, {
-    headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" }
-  });
-  const rows = await res.json().catch(() => []);
-  return rows[0]?.state || null;
-}
-
-async function saveUserGmailTokens(serviceKey, userId, tokens) {
-  await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states`, {
-    method: "POST",
-    headers: {
-      apikey: serviceKey,
-      authorization: `Bearer ${serviceKey}`,
-      "content-type": "application/json",
-      prefer: "resolution=merge-duplicates,return=minimal"
-    },
-    body: JSON.stringify({ id: `gmail_${userId}`, state: tokens })
-  });
-}
-
-async function deleteUserGmailTokens(serviceKey, userId) {
-  await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.gmail_${userId}`, {
-    method: "DELETE",
-    headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}` }
-  });
-}
-
-async function getUserId(accessToken, serviceKey) {
-  try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-      headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
-    });
-    if (!res.ok) return null;
-    const user = await res.json();
-    return user.id || null;
-  } catch { return null; }
-}
-
-function cleanSnippet(raw) {
-  if (!raw) return "";
-  return raw
-    .replace(/&(zwnj|zwj|lrm|rlm|shy|#8203|#8204|#8205|#xfeff|#x200[bcdef]);/gi, "")
-    .replace(/[​‌‍‎‏﻿­]/g, "")
-    .replace(/https?:\/\/\S+/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 function json(statusCode, body) {

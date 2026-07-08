@@ -57,51 +57,51 @@ create policy "Signed-in users can read folders"
 on public.eat_folders
 for select
 to authenticated
-using ((auth.jwt() ->> 'email') = 'mrlukedevans@gmail.com');
+using ((auth.jwt() ->> 'email') = 'YOUR-EMAIL@example.com');
 
 create policy "Signed-in users can create folders"
 on public.eat_folders
 for insert
 to authenticated
-with check ((auth.jwt() ->> 'email') = 'mrlukedevans@gmail.com');
+with check ((auth.jwt() ->> 'email') = 'YOUR-EMAIL@example.com');
 
 create policy "Signed-in users can update folders"
 on public.eat_folders
 for update
 to authenticated
-using ((auth.jwt() ->> 'email') = 'mrlukedevans@gmail.com')
-with check ((auth.jwt() ->> 'email') = 'mrlukedevans@gmail.com');
+using ((auth.jwt() ->> 'email') = 'YOUR-EMAIL@example.com')
+with check ((auth.jwt() ->> 'email') = 'YOUR-EMAIL@example.com');
 
 create policy "Signed-in users can delete folders"
 on public.eat_folders
 for delete
 to authenticated
-using ((auth.jwt() ->> 'email') = 'mrlukedevans@gmail.com');
+using ((auth.jwt() ->> 'email') = 'YOUR-EMAIL@example.com');
 
 create policy "Signed-in users can read recipes"
 on public.eat_recipes
 for select
 to authenticated
-using ((auth.jwt() ->> 'email') = 'mrlukedevans@gmail.com');
+using ((auth.jwt() ->> 'email') = 'YOUR-EMAIL@example.com');
 
 create policy "Signed-in users can create recipes"
 on public.eat_recipes
 for insert
 to authenticated
-with check ((auth.jwt() ->> 'email') = 'mrlukedevans@gmail.com');
+with check ((auth.jwt() ->> 'email') = 'YOUR-EMAIL@example.com');
 
 create policy "Signed-in users can update recipes"
 on public.eat_recipes
 for update
 to authenticated
-using ((auth.jwt() ->> 'email') = 'mrlukedevans@gmail.com')
-with check ((auth.jwt() ->> 'email') = 'mrlukedevans@gmail.com');
+using ((auth.jwt() ->> 'email') = 'YOUR-EMAIL@example.com')
+with check ((auth.jwt() ->> 'email') = 'YOUR-EMAIL@example.com');
 
 create policy "Signed-in users can delete recipes"
 on public.eat_recipes
 for delete
 to authenticated
-using ((auth.jwt() ->> 'email') = 'mrlukedevans@gmail.com');
+using ((auth.jwt() ->> 'email') = 'YOUR-EMAIL@example.com');
 
 insert into public.eat_folders (id, name, sort_order)
 select

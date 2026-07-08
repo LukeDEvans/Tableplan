@@ -169,6 +169,14 @@ const server = http.createServer(async (request, response) => {
       await handleNetlifyFunction("./netlify/functions/gmail-callback", request, response, url);
       return;
     }
+    if (url.pathname === "/.netlify/functions/gmail-webhook") {
+      await handleNetlifyFunction("./netlify/functions/gmail-webhook", request, response, url);
+      return;
+    }
+    if (url.pathname === "/.netlify/functions/gmail-watch-rearm") {
+      await handleNetlifyFunction("./netlify/functions/gmail-watch-rearm", request, response);
+      return;
+    }
     if (url.pathname === "/.netlify/functions/generate-tts") {
       await handleNetlifyFunction("./netlify/functions/generate-tts", request, response);
       return;

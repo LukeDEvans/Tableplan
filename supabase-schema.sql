@@ -12,7 +12,7 @@ for select
 to authenticated
 using (
   id = 'personal'
-  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com'
+  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com'
 );
 
 create policy "Only Luke can create tableplan state"
@@ -21,7 +21,7 @@ for insert
 to authenticated
 with check (
   id = 'personal'
-  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com'
+  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com'
 );
 
 create policy "Only Luke can update tableplan state"
@@ -30,9 +30,9 @@ for update
 to authenticated
 using (
   id = 'personal'
-  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com'
+  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com'
 )
 with check (
   id = 'personal'
-  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'mrlukedevans@gmail.com'
+  and lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com'
 );

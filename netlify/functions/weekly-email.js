@@ -1,7 +1,7 @@
 const { buildWeeklyContext } = require("./build-weekly-context");
 const { claudeCall } = require("./_claude");
+const { resolveRecipientEmail } = require("./_recipient");
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
-const DEFAULT_TO_EMAIL = "mrlukedevans@gmail.com";
 const DEFAULT_FROM_EMAIL = "Live App <onboarding@resend.dev>";
 
 exports.handler = async (event) => {
@@ -16,11 +16,12 @@ exports.handler = async (event) => {
   if (!await verifySession(accessToken, serviceKey)) return jsonResponse(401, { error: "Invalid session." });
 
   if (event.httpMethod === "GET") {
+    const emailTo = await resolveRecipientEmail(serviceKey, accessToken);
     return jsonResponse(200, {
       hasAnthropicKey: Boolean(process.env.ANTHROPIC_API_KEY?.trim()),
       hasResendKey: Boolean(process.env.RESEND_API_KEY?.trim()),
-      hasEmailTo: true,
-      emailTo: process.env.WEEKLY_REVIEW_TO || DEFAULT_TO_EMAIL
+      hasEmailTo: Boolean(emailTo),
+      emailTo
     });
   }
 
@@ -63,7 +64,8 @@ Output ONLY the HTML body content (start with a <div> or <table>, no doctype/htm
   const resendKey = (process.env.RESEND_API_KEY || "").trim();
   if (!resendKey) return jsonResponse(503, { error: "RESEND_API_KEY not configured in Netlify." });
 
-  const to = process.env.WEEKLY_REVIEW_TO || DEFAULT_TO_EMAIL;
+  const to = await resolveRecipientEmail(serviceKey, accessToken);
+  if (!to) return jsonResponse(503, { error: "No recipient email could be determined." });
   const from = process.env.WEEKLY_REVIEW_FROM || DEFAULT_FROM_EMAIL;
   const subject = `Your Weekly Review – ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}`;
 

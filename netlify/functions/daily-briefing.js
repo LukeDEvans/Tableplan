@@ -93,7 +93,10 @@ async function loadState(serviceKey) {
     { headers }
   );
   if (!listRes.ok) throw new Error(`Supabase list failed: ${listRes.status}`);
-  const rows = await listRes.json();
+  const allRows = await listRes.json();
+  // Ignore infrastructure rows (Gmail tokens, mail suggestions) — they update
+  // frequently and must not be mistaken for the app state
+  const rows = allRows.filter(r => !/^(gmail_|mailsugg_)/.test(r.id));
   if (!rows.length) return null;
 
   // Find base stateId (strip :section suffix)

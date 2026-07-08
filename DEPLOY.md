@@ -47,7 +47,7 @@ RESEND_API_KEY
 Optional:
 
 ```text
-WEEKLY_REVIEW_TO=mrlukedevans@gmail.com
+WEEKLY_REVIEW_TO=your-email@example.com
 WEEKLY_REVIEW_FROM=Eat <onboarding@resend.dev>
 EAT_APP_URL=https://effervescent-malabi-e0af55.netlify.app/
 WEEKLY_REVIEW_TRIGGER_SECRET=choose-a-private-test-secret
@@ -57,4 +57,4 @@ The function is scheduled for Thursdays at 14:00 UTC. One weekly function run is
 
 ## 6. Optional recipe photos
 
-Run `supabase-photo-storage.sql` in the Supabase SQL Editor before using recipe photo uploads. This creates the `recipe-photos` Storage bucket and allows only `mrlukedevans@gmail.com` to upload, update, or delete photo objects.
+Run `supabase-photo-storage.sql` in the Supabase SQL Editor before using recipe photo uploads. This creates the `recipe-photos` Storage bucket and restricts upload/update/delete to the owner account.
