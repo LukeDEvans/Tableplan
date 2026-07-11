@@ -44,6 +44,15 @@ exports.handler = async (event) => {
   if (!inviteRes.ok) return jsonResponse(500, { error: "Could not create invite." });
   const [invite] = await inviteRes.json();
 
+  // Pre-create the auth account (admin API) — public sign-ups are disabled,
+  // so sending an invite is the explicit owner approval that creates the
+  // profile. Returns 422 if the user already exists, which is fine.
+  await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
+    method: "POST",
+    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "content-type": "application/json" },
+    body: JSON.stringify({ email, email_confirm: true })
+  }).catch(() => {});
+
   const appUrl = (process.env.APP_URL || process.env.URL || "").replace(/\/$/, "");
   const inviteUrl = `${appUrl}/?invite=${invite.id}`;
   await sendEmail({ resendKey, from: DEFAULT_FROM_EMAIL, to: email, subject: "You've been invited to Live",

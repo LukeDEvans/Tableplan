@@ -1,4 +1,4 @@
-const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
+const { getUserIdFromToken, getUserGroupId, updateSection } = require("./_state-sections.js");
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return cors(json(200, {}));
@@ -9,7 +9,7 @@ exports.handler = async (event) => {
   const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
   if (!accessToken) return cors(json(401, { error: "Not authenticated." }));
 
-  const userId = await getUserId(accessToken, serviceKey);
+  const userId = await getUserIdFromToken(accessToken, serviceKey);
   if (!userId) return cors(json(401, { error: "Invalid session." }));
 
   let body = {};
@@ -19,70 +19,22 @@ exports.handler = async (event) => {
   if (!["nyt", "economist"].includes(publication)) return cors(json(400, { error: "Invalid publication." }));
   if (!cookieValue || typeof cookieValue !== "string") return cors(json(400, { error: "Missing cookie value." }));
 
-  const stateId = await getUserStateId(serviceKey, userId);
-  if (!stateId) return cors(json(404, { error: "User group not found." }));
+  const groupId = await getUserGroupId(serviceKey, userId);
+  if (!groupId) return cors(json(404, { error: "User group not found." }));
 
-  const currentState = await loadState(serviceKey, stateId);
-  const articleSync = { ...(currentState?.articleSync || {}) };
-
-  if (publication === "nyt") articleSync.nytCookie = cookieValue.trim();
-  if (publication === "economist") articleSync.economistCookie = cookieValue.trim();
-
-  const newState = {
-    ...(currentState || {}),
-    articleSync,
-    stateUpdatedAt: new Date().toISOString()
-  };
-  await saveState(serviceKey, stateId, newState);
+  try {
+    await updateSection(serviceKey, groupId, "media", (state) => {
+      const articleSync = { ...(state.articleSync || {}) };
+      if (publication === "nyt") articleSync.nytCookie = cookieValue.trim();
+      if (publication === "economist") articleSync.economistCookie = cookieValue.trim();
+      return { ...state, articleSync };
+    });
+  } catch (err) {
+    return cors(json(500, { error: "Could not save the cookie: " + err.message }));
+  }
 
   return cors(json(200, { ok: true, publication }));
 };
-
-async function getUserId(accessToken, serviceKey) {
-  try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-      headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
-    });
-    if (!res.ok) return null;
-    const user = await res.json();
-    return user.id || null;
-  } catch { return null; }
-}
-
-async function getUserStateId(serviceKey, userId) {
-  try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(userId)}&select=group_id&limit=1`,
-      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, accept: "application/json" } }
-    );
-    if (!res.ok) return null;
-    const rows = await res.json();
-    return rows[0]?.group_id || null;
-  } catch { return null; }
-}
-
-async function loadState(serviceKey, stateId) {
-  const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(stateId)}&select=state`,
-    { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, accept: "application/json" }, cache: "no-store" }
-  );
-  if (!res.ok) return null;
-  const rows = await res.json();
-  return rows[0]?.state || null;
-}
-
-async function saveState(serviceKey, stateId, newState) {
-  await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
-    method: "POST",
-    headers: {
-      apikey: serviceKey,
-      Authorization: `Bearer ${serviceKey}`,
-      "content-type": "application/json",
-      prefer: "resolution=merge-duplicates,return=minimal"
-    },
-    body: JSON.stringify({ id: stateId, state: newState, updated_at: new Date().toISOString() })
-  });
-}
 
 function json(statusCode, body) {
   return {

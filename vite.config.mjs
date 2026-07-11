@@ -58,6 +58,9 @@ export default defineConfig({
     host: true,
     port: 4174,
     strictPort: true,
+    // Dev must never serve stale assets: styles.css is a plain <link> (no
+    // hashed name in dev), and browsers heuristically cache it without this.
+    headers: { "Cache-Control": "no-store" },
     proxy: {
       '/api': { target: `http://localhost:${API_PORT}`, changeOrigin: false },
       '/.netlify/functions': { target: `http://localhost:${API_PORT}`, changeOrigin: false },

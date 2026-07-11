@@ -4,6 +4,8 @@ const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 const { scanBookingFromEmailText } = require("../../booking-scan");
 const { claudeCall } = require("./_claude");
+const { recipeSourceForSender, extractRecipes, appendPendingRecipes, aiTrashTestMode, findAiTrashLabelId, disposeProcessedEmail, enabledRecipeSources } = require("./_recipe-digest");
+const { newsSourceForMessage, convertNewsEmailToArticle, saveArticleToMediaSection } = require("./_news-articles");
 
 // ─── Token storage (Supabase tableplan_states, id = gmail_<userId>) ──────────
 
@@ -167,6 +169,7 @@ async function loadMailSuggestions(serviceKey, userId) {
     lastHistoryId: state.lastHistoryId || "",
     watchExpiration: state.watchExpiration || 0,
     processedIds: Array.isArray(state.processedIds) ? state.processedIds : [],
+    retryIds: Array.isArray(state.retryIds) ? state.retryIds : [],
     suggestions: Array.isArray(state.suggestions) ? state.suggestions : []
   };
 }
@@ -276,19 +279,76 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
     newHistoryId = String(prof.historyId || "");
   }
 
+  // Messages that previously failed conversion re-enter the sweep here —
+  // the history checkpoint has moved past them, so this is their only way back
+  messageIds = [...new Set([...(sugg.retryIds || []), ...messageIds])];
+
   const processed = new Set(sugg.processedIds);
   const fresh = messageIds.filter((id) => !processed.has(id)).slice(0, 10);
 
+  // Mail AI feature flags (config state section)
+  const appCfg = await loadAppConfig(serviceKey);
+  const mailAi = appCfg?.mailAiSettings || {};
+  const testMode = aiTrashTestMode(mailAi);
+  const aiTrashLabelId = (enabledRecipeSources(mailAi).length && testMode)
+    ? await findAiTrashLabelId(gFetch, gToken)
+    : null;
+
   // Messages are processed in parallel so the sweep stays within the Netlify
-  // function time limit even at the 10-message cap.
+  // function time limit even at the 10-message cap. Each returns
+  // { suggestions, retry? } — retry leaves the message unprocessed so the
+  // next sweep tries again (e.g. a transient conversion failure).
   const perMessage = await Promise.all(fresh.map(async (messageId) => {
     const r = await gFetch(gToken, `/messages/${messageId}?format=full`);
-    if (!r.ok) return [];
+    if (!r.ok) return { suggestions: [], retry: true };
     const msg = await r.json();
     const hdrs = headersMap(msg.payload?.headers);
     const fromSelf = tokens.email && (hdrs.from || "").toLowerCase().includes(tokens.email.toLowerCase());
-    if (fromSelf) return [];
-    const bodyText = htmlToText(extractBody(msg.payload));
+    if (fromSelf) return { suggestions: [] };
+    const rawBody = extractBody(msg.payload) || "";
+
+    // Recipe digests: collect recipe links and file the email away right away
+    // (the collection is persisted before disposal, so nothing can be lost)
+    const recipeSource = recipeSourceForSender(hdrs.from, mailAi);
+    if (recipeSource) {
+      const recipes = await extractRecipes(rawBody, recipeSource);
+      if (recipes.length) {
+        await appendPendingRecipes(serviceKey, userId, recipes);
+        await disposeProcessedEmail(gFetch, gToken, messageId, { testMode, aiTrashLabelId });
+        console.log(`[recipe-digest] ${recipeSource.name}: collected ${recipes.length} link(s) from message ${messageId} (${testMode ? "AI trash" : "trash"})`);
+        return { suggestions: [] };
+      }
+    }
+
+    // News → listenable article (The Morning, The world in brief). The
+    // article is saved into the media section BEFORE the email is filed away.
+    const newsSource = newsSourceForMessage(hdrs.from, hdrs.subject, mailAi);
+    if (newsSource) {
+      try {
+        const articleHtml = await convertNewsEmailToArticle(anthropicKey, newsSource, {
+          subject: hdrs.subject || "", date: hdrs.date || "", html: rawBody
+        });
+        const article = {
+          id: "news-" + messageId,
+          url: null,
+          title: hdrs.subject || newsSource.name,
+          author: newsSource.publication,
+          date: hdrs.date ? new Date(hdrs.date).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "",
+          publication: "email",
+          savedAt: new Date().toISOString(),
+          text: articleHtml
+        };
+        await saveArticleToMediaSection(serviceKey, userId, article);
+        await disposeProcessedEmail(gFetch, gToken, messageId, { testMode, aiTrashLabelId });
+        console.log(`[news-article] ${newsSource.name}: saved "${article.title}" (${testMode ? "AI trash" : "trash"})`);
+        return { suggestions: [] };
+      } catch (e) {
+        console.error(`[news-article] ${newsSource.name} failed — email left in place for retry:`, e.message);
+        return { suggestions: [], retry: true };
+      }
+    }
+
+    const bodyText = htmlToText(rawBody);
     const emailMeta = { subject: hdrs.subject || "(no subject)", from: hdrs.from || "", date: hdrs.date || "" };
 
     let ideas = [];
@@ -296,7 +356,7 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
       ideas = await triageEmail(anthropicKey, { ...emailMeta, bodyText });
     } catch (e) {
       console.error("Triage failed for message", messageId, e.message);
-      return [];
+      return { suggestions: [], retry: true };
     }
 
     const out = [];
@@ -328,20 +388,32 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
       }
       out.push(suggestion);
     }
-    return out;
+    return { suggestions: out };
   }));
-  const added = perMessage.flat();
+  const added = perMessage.flatMap((r) => r.suggestions);
+  // Messages flagged retry stay out of processedIds so the next sweep retries them
+  const processedNow = fresh.filter((_, i) => !perMessage[i].retry);
 
   const existingIds = new Set(sugg.suggestions.map((s) => s.id));
   const merged = [...added.filter((s) => !existingIds.has(s.id)), ...sugg.suggestions].slice(0, 100);
   await saveMailSuggestions(serviceKey, userId, {
     lastHistoryId: newHistoryId || sugg.lastHistoryId,
     watchExpiration: sugg.watchExpiration,
-    processedIds: [...fresh, ...sugg.processedIds].slice(0, 300),
+    processedIds: [...processedNow, ...sugg.processedIds].slice(0, 300),
+    retryIds: fresh.filter((_, i) => perMessage[i].retry).slice(0, 20),
     suggestions: merged
   });
 
   return { scanned: fresh.length, added: added.length };
+}
+
+// App config (the "personal:config" state section — feature flags etc.)
+async function loadAppConfig(serviceKey) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.personal:config&select=state`, {
+    headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" }
+  });
+  const rows = await res.json().catch(() => []);
+  return rows[0]?.state || null;
 }
 
 // ─── Watch (Pub/Sub push subscription) ───────────────────────────────────────

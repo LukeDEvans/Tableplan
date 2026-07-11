@@ -196,14 +196,62 @@ exports.handler = async (event) => {
   }
 
   if (action === "send") {
-    const { to, subject, body: emailBody, inReplyTo, references, threadId } = body;
-    if (!to || !emailBody) return json(400, { error: "to and body required" });
-    const raw = buildRaw({ from: tokens.email, to, subject, body: emailBody, inReplyTo, references });
-    const payload = { raw };
-    if (threadId) payload.threadId = threadId;
-    const r = await gFetch(gToken, `/messages/send`, "POST", payload);
+    const { to, subject, body: emailBody, html, inReplyTo, references, threadId, forwardFrom } = body;
+    if (!to || (!emailBody && !html)) return json(400, { error: "to and body required" });
+
+    // Forwarding: fetch the original message's attachments (regular + inline
+    // cid images) up to a total cap; anything skipped is named in the message.
+    let attachments = [];
+    let skipped = [];
+    if (forwardFrom) {
+      const CAP_BYTES = 8 * 1024 * 1024;
+      const msgRes = await gFetch(gToken, `/messages/${forwardFrom}?format=full`);
+      if (msgRes.ok) {
+        const msg = await msgRes.json();
+        const parts = collectAttachmentParts(msg.payload);
+        let used = 0;
+        for (const p of parts) {
+          if (used + (p.size || 0) > CAP_BYTES) { skipped.push(p.filename || "inline image"); continue; }
+          const aRes = await gFetch(gToken, `/messages/${forwardFrom}/attachments/${p.attachmentId}`);
+          if (!aRes.ok) { skipped.push(p.filename || "inline image"); continue; }
+          const aData = await aRes.json();
+          attachments.push({ ...p, data: aData.data });
+          used += p.size || 0;
+        }
+      } else {
+        skipped.push("(original message unavailable — no attachments included)");
+      }
+    }
+
+    let finalBody = emailBody;
+    let finalHtml = html;
+    const namedSkips = skipped.filter((s) => s && !s.startsWith("("));
+    if (skipped.length) {
+      const note = namedSkips.length
+        ? `Attachments not included (too large or unavailable): ${namedSkips.join(", ")}`
+        : skipped[0];
+      finalBody = `${emailBody || ""}\n\n[${note}]`;
+      if (finalHtml) finalHtml += `<br><p style="color:#5f6368;font-size:12px">[${note}]</p>`;
+    }
+
+    const mimeOpts = { from: tokens.email, to, subject, body: finalBody, html: finalHtml, inReplyTo, references, attachments };
+
+    let r;
+    if (attachments.length) {
+      // Attachment-bearing mail goes through the media upload endpoint, which
+      // accepts far larger messages than the JSON raw field.
+      r = await fetch("https://gmail.googleapis.com/upload/gmail/v1/users/me/messages/send?uploadType=media", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${gToken}`, "Content-Type": "message/rfc822" },
+        body: buildMimeMessage(mimeOpts)
+      });
+    } else {
+      const payload = { raw: buildRaw(mimeOpts) };
+      if (threadId) payload.threadId = threadId;
+      r = await gFetch(gToken, `/messages/send`, "POST", payload);
+    }
     if (!r.ok) { const e = await r.json().catch(() => ({})); return json(502, { error: e.error?.message || "Send failed." }); }
-    return json(200, { ok: true });
+    return json(200, { ok: true, attached: attachments.length, skipped: namedSkips });
   }
 
   if (action === "labels") {
@@ -211,6 +259,34 @@ exports.handler = async (event) => {
     if (!r.ok) return json(502, { error: "Labels fetch failed." });
     const data = await r.json();
     return json(200, { labels: data.labels || [] });
+  }
+
+  if (action === "createLabel") {
+    const name = String(body.name || "").trim();
+    if (!name) return json(400, { error: "name required" });
+    const r = await gFetch(gToken, "/labels", "POST", { name, labelListVisibility: "labelShow", messageListVisibility: "show" });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) return json(502, { error: data.error?.message || "Could not create folder." });
+    return json(200, { label: data });
+  }
+
+  if (action === "renameLabel") {
+    const name = String(body.name || "").trim();
+    if (!body.labelId || !name) return json(400, { error: "labelId and name required" });
+    const r = await gFetch(gToken, `/labels/${body.labelId}`, "PATCH", { name });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) return json(502, { error: data.error?.message || "Could not rename folder." });
+    return json(200, { label: data });
+  }
+
+  if (action === "deleteLabel") {
+    if (!body.labelId) return json(400, { error: "labelId required" });
+    const r = await gFetch(gToken, `/labels/${body.labelId}`, "DELETE");
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      return json(502, { error: data.error?.message || "Could not delete folder." });
+    }
+    return json(200, { ok: true });
   }
 
   if (action === "move") {
@@ -257,16 +333,104 @@ function normalizeMessage(msg) {
     unread: (msg.labelIds || []).includes("UNREAD"),
     body: extractBody(msg.payload),
     messageId: hdrs["message-id"] || "",
-    references: hdrs.references || ""
+    references: hdrs.references || "",
+    attachments: collectAttachmentParts(msg.payload).map(({ attachmentId, ...meta }) => meta)
   };
 }
 
-function buildRaw({ from, to, subject, body, inReplyTo, references }) {
-  const lines = [`From: ${from}`, `To: ${to}`, `Subject: ${subject}`, `Content-Type: text/plain; charset=UTF-8`, `MIME-Version: 1.0`];
-  if (inReplyTo) lines.push(`In-Reply-To: ${inReplyTo}`);
-  if (references) lines.push(`References: ${references}`);
-  lines.push("", body);
-  return Buffer.from(lines.join("\r\n")).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+// Walks a message payload tree collecting every attachment part —
+// both regular attachments and inline (cid-referenced) images.
+function collectAttachmentParts(payload, out = []) {
+  if (!payload) return out;
+  if (payload.body?.attachmentId) {
+    const h = headersMap(payload.headers || []);
+    const contentId = (h["content-id"] || "").replace(/[<>]/g, "");
+    out.push({
+      attachmentId: payload.body.attachmentId,
+      filename: payload.filename || "",
+      mimeType: payload.mimeType || "application/octet-stream",
+      size: payload.body.size || 0,
+      contentId,
+      inline: /inline/i.test(h["content-disposition"] || "") || (!!contentId && !payload.filename)
+    });
+  }
+  (payload.parts || []).forEach((p) => collectAttachmentParts(p, out));
+  return out;
+}
+
+// Builds a complete RFC 822 message. Structure adapts to content:
+//   plain text only            → text/plain
+//   + html                     → multipart/alternative
+//   + inline (cid) images      → multipart/related wrapping the alternative
+//   + regular attachments      → multipart/mixed wrapping everything
+function buildMimeMessage({ from, to, subject, body, html, inReplyTo, references, attachments = [] }) {
+  const CRLF = "\r\n";
+  const bnd = (p) => `live-${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const b64Std = (b64url) => String(b64url || "").replace(/-/g, "+").replace(/_/g, "/");
+  const wrap76 = (s) => s.replace(/(.{76})/g, `$1${CRLF}`);
+  const safeName = (n) => String(n || "attachment").replace(/["\r\n]/g, "");
+
+  const topHeaders = [`From: ${from}`, `To: ${to}`, `Subject: ${subject}`, `MIME-Version: 1.0`];
+  if (inReplyTo) topHeaders.push(`In-Reply-To: ${inReplyTo}`);
+  if (references) topHeaders.push(`References: ${references}`);
+
+  const attachmentPart = (a, disposition) => [
+    `Content-Type: ${a.mimeType}; name="${safeName(a.filename)}"`,
+    `Content-Transfer-Encoding: base64`,
+    ...(a.contentId ? [`Content-ID: <${a.contentId}>`] : []),
+    `Content-Disposition: ${disposition}; filename="${safeName(a.filename)}"`,
+    "",
+    wrap76(b64Std(a.data))
+  ].join(CRLF);
+
+  // Innermost block: the readable message
+  let core;
+  if (html) {
+    const b = bnd("alt");
+    core = {
+      headers: [`Content-Type: multipart/alternative; boundary="${b}"`],
+      body: [
+        `--${b}`, `Content-Type: text/plain; charset=UTF-8`, "", body || "", "",
+        `--${b}`, `Content-Type: text/html; charset=UTF-8`, "", html, "",
+        `--${b}--`
+      ].join(CRLF)
+    };
+  } else {
+    core = { headers: [`Content-Type: text/plain; charset=UTF-8`], body: body || "" };
+  }
+
+  const inline = attachments.filter((a) => a.inline && a.contentId && a.data);
+  const regular = attachments.filter((a) => !(a.inline && a.contentId) && a.data);
+
+  if (inline.length) {
+    const b = bnd("rel");
+    core = {
+      headers: [`Content-Type: multipart/related; boundary="${b}"`],
+      body: [
+        `--${b}`, ...core.headers, "", core.body, "",
+        ...inline.flatMap((a) => [`--${b}`, attachmentPart(a, "inline"), ""]),
+        `--${b}--`
+      ].join(CRLF)
+    };
+  }
+
+  if (regular.length) {
+    const b = bnd("mix");
+    core = {
+      headers: [`Content-Type: multipart/mixed; boundary="${b}"`],
+      body: [
+        `--${b}`, ...core.headers, "", core.body, "",
+        ...regular.flatMap((a) => [`--${b}`, attachmentPart(a, "attachment"), ""]),
+        `--${b}--`
+      ].join(CRLF)
+    };
+  }
+
+  return [...topHeaders, ...core.headers, "", core.body].join(CRLF);
+}
+
+function buildRaw(opts) {
+  return Buffer.from(buildMimeMessage(opts)).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 // ─── AI draft ─────────────────────────────────────────────────────────────────

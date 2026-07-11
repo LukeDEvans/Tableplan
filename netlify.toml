@@ -26,6 +26,9 @@
 [functions."gmail-watch-rearm"]
   schedule = "0 11 * * *"
 
+[functions."recipe-digest"]
+  schedule = "0 15 * * 0"
+
 [[headers]]
   for = "/*"
   [headers.values]

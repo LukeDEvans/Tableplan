@@ -10,8 +10,14 @@ const STORAGE_KEY = "tableplan-state-v1";
 const TRAVEL_LOGISTIC_ICONS = { flight: "✈️", hotel: "🏨", car: "🚗", train: "🚆", ferry: "⛴️", other: "📌" };
 const TRAVEL_BUDGET_CATS = ["flights", "accommodation", "food", "activities", "transport", "other"];
 const TRAVEL_PACKING_CATS = ["documents", "clothing", "electronics", "health", "toiletries", "other"];
-const TRAVEL_PARTY_OPTIONS = ["Luke", "MJ", "Sophia", "Friends", "Family"];
+// Travel party choices come from the household (plus generic groups) — no
+// hardcoded personal names anywhere in the app.
+function travelPartyOptions() {
+  const members = normalizeMealPlanConfig(state.mealPlanConfig).members.map((m) => m.label).filter(Boolean);
+  return [...members, "Friends", "Family"];
+}
 let exploreOpenTripId = null;
+let exploreActiveDayKey = ""; // selected day in the trip day tabs
 let travelStayEditingIdx = new Set();
 let travelMovementEditingIdx = new Set();
 let travelActivitiesEditingIdx = new Set();
@@ -197,13 +203,13 @@ const STATE_SECTIONS = {
   do:        ["doTasks", "doPlans", "doBacklog", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder"],
   plan:      ["calendars", "planEvents", "planCalendars"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "pianoSongs", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
-  config:    ["weeklyEmailSettings", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
+  config:    ["weeklyEmailSettings", "mailAiSettings", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
 // JSON snapshot of each section as of the last successful Supabase write.
@@ -1136,6 +1142,7 @@ function bindEvents() {
   }
   elements.closeAuthBtn.addEventListener("click", () => elements.authDialog.close());
   elements.cancelAuthBtn.addEventListener("click", () => elements.authDialog.close());
+  document.getElementById("lockSignInBtn")?.addEventListener("click", () => elements.authDialog.showModal());
   elements.appMenuBtn.addEventListener("click", handleAppMenuButtonClick);
   elements.appMenu.addEventListener("click", (event) => event.stopPropagation());
   elements.pageTitleBtn.addEventListener("click", togglePageTitleMenu);
@@ -1170,9 +1177,21 @@ function bindEvents() {
   elements.titleMailBtn?.addEventListener("click", showMailApp);
   elements.mailConnectBtn?.addEventListener("click", connectGmail);
   elements.mailComposeBtn?.addEventListener("click", showMailCompose);
-  elements.mailRefreshBtn?.addEventListener("click", () => loadMailList(currentMailbox));
+  document.getElementById("mailSuggCheckNow")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.classList.add("is-checking");
+    const data = await callGmailApi({ action: "checkInboxNow" });
+    btn.disabled = false;
+    btn.classList.remove("is-checking");
+    if (!data) {
+      btn.title = lastGmailApiError || "Check failed";
+      return;
+    }
+    btn.title = "AI-flagged actions from your email — click to check now";
+    renderMailSuggestions(data.suggestions || []);
+  });
   elements.mailSearchInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") loadMailList(currentMailbox, e.target.value); });
-  document.getElementById("mailDisconnectBtn")?.addEventListener("click", disconnectGmail);
   document.getElementById("mailSidebarToggle")?.addEventListener("click", () => {
     const sidebar = document.getElementById("mailSidebar");
     if (!sidebar) return;
@@ -1182,13 +1201,18 @@ function bindEvents() {
       sidebar.classList.toggle("is-collapsed");
     }
   });
-  document.getElementById("exploreSidebarToggle")?.addEventListener("click", () => {
+  document.getElementById("exploreTripMenuBtn")?.addEventListener("click", () => {
     const sidebar = document.getElementById("exMediaSidebar");
     if (!sidebar) return;
-    const collapsed = sidebar.classList.toggle("is-collapsed");
-    const btn = document.getElementById("exploreSidebarToggle");
-    btn?.setAttribute("title", collapsed ? "Expand sidebar" : "Collapse sidebar");
-    btn?.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
+    if (window.innerWidth <= 680) {
+      // Mobile: slide-over overlay (is-collapsed outranks it in specificity — clear it)
+      sidebar.classList.remove("is-collapsed");
+      sidebar.classList.toggle("is-expanded");
+    } else {
+      // Desktop: collapse/expand the docked sidebar
+      sidebar.classList.remove("is-expanded");
+      sidebar.classList.toggle("is-collapsed");
+    }
   });
   // Travel page buttons
   document.getElementById("travelNewTripBtn")?.addEventListener("click", showTravelNewTripDialog);
@@ -1778,15 +1802,25 @@ async function initializeSupabaseAuth() {
   supabaseClient = window.supabase.createClient(supabaseBaseUrl(), supabaseConfig().anonKey);
   const { data, error } = await supabaseClient.auth.getSession();
   if (error) {
+    authCheckCompleted = true;
+    updateAppLockState(); // reveal the sign-in button rather than sticking on "Checking…"
     updateAuthUi("Could not check sign-in.");
     return;
   }
 
   authSession = data.session;
+  authCheckCompleted = true;
+  updateAppLockState();
   if (authSession?.access_token) warmMailStatus();
   supabaseClient.auth.onAuthStateChange(async (_event, session) => {
+    const hadSession = !!authSession?.access_token;
     authSession = session;
+    updateAppLockState();
     updateAuthUi();
+    // Only a fresh sign-in needs the full reload below. Routine TOKEN_REFRESHED
+    // events (~hourly) also land here, and re-hydrating on them re-rendered the
+    // app mid-use — views jumped and unsaved UI state was lost.
+    if (session?.access_token && hadSession) return;
     if (session?.access_token) {
       // Cancel any pending debounced write — the re-hydration below will write back
       // if needed. We intentionally do NOT flush here: flushing stale in-memory state
@@ -1810,6 +1844,23 @@ async function initializeSupabaseAuth() {
 function updateAuthUi() {
   updateGroupSettingsSection();
   if (elements.authButton) elements.authButton.hidden = false;
+}
+
+// The app is unusable signed-out: a full-screen gate covers everything until
+// a Supabase session exists. The gate div is visible by default in the HTML,
+// so even with JS disabled or before boot, nothing is reachable. Until the
+// first session check completes it shows a neutral "checking" state, so a
+// signed-in user reloading never sees a misleading sign-in prompt.
+let authCheckCompleted = false;
+
+function updateAppLockState() {
+  document.body.classList.toggle("app-authed", !!authSession?.access_token);
+  if (authCheckCompleted && !authSession?.access_token) {
+    const status = document.getElementById("lockStatus");
+    if (status) status.textContent = "This is a private app. Sign in to continue.";
+    const btn = document.getElementById("lockSignInBtn");
+    if (btn) btn.hidden = false;
+  }
 }
 
 function openProfileDialog() {
@@ -1922,12 +1973,16 @@ async function sendSignInCode() {
   elements.authMessage.textContent = "Sending code...";
   elements.sendLoginBtn.disabled = true;
 
-  const { error } = await supabaseClient.auth.signInWithOtp({ email });
+  // shouldCreateUser: false — signing in must never create a profile.
+  // New profiles exist only through owner-sent invites.
+  const { error } = await supabaseClient.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
 
   elements.sendLoginBtn.disabled = false;
 
   if (error) {
-    elements.authMessage.textContent = error.message;
+    elements.authMessage.textContent = /signup|not allowed|not found/i.test(error.message)
+      ? "No account exists for this email. Access is invite-only."
+      : error.message;
     return;
   }
 
@@ -2230,9 +2285,9 @@ function renderGroupSettingsSection() {
       <p class="settings-subheading">Members can access</p>
       ${pages.map((p) => `
         <label class="group-page-toggle-row">
-          ${escapeHtml(p.label)}
           <input type="checkbox" data-group-page="${escapeHtml(p.key)}"
             ${!(userGroup.disabled_pages || []).includes(p.key) ? "checked" : ""} />
+          ${escapeHtml(p.label)}
         </label>
       `).join("")}
     </div>
@@ -2481,6 +2536,7 @@ function defaultState() {
     podcastPlaylistWindow: "month",
     libraryKey: "hclib",
     podcastPlaylistIncludeArticles: false,
+    mediaAllPinnedOrder: [],
     podcastAutoSkipped: [],
     podcastSkipAds: false,
     publicationTiers: {},
@@ -2529,6 +2585,7 @@ function defaultState() {
     groceryReviewDismissed: {},
     activeCooking: [],
     weeklyEmailSettings: defaultWeeklyEmailSettings(),
+    mailAiSettings: {},
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -2636,6 +2693,7 @@ function normalizeState(parsed) {
     groceryReviewDismissed: parsed?.groceryReviewDismissed || {},
     activeCooking: normalizeActiveCooking(parsed?.activeCooking),
     weeklyEmailSettings: normalizeWeeklyEmailSettings(parsed?.weeklyEmailSettings),
+    mailAiSettings: (parsed?.mailAiSettings && typeof parsed.mailAiSettings === "object") ? parsed.mailAiSettings : {},
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
     locationSharingEnabled: Boolean(parsed?.locationSharingEnabled),
@@ -2663,6 +2721,7 @@ function normalizeState(parsed) {
     podcastShowTiers: (parsed?.podcastShowTiers !== null && typeof parsed?.podcastShowTiers === "object" && !Array.isArray(parsed?.podcastShowTiers)) ? parsed.podcastShowTiers : {},
     podcastEpisodeTiers: (parsed?.podcastEpisodeTiers !== null && typeof parsed?.podcastEpisodeTiers === "object" && !Array.isArray(parsed?.podcastEpisodeTiers)) ? parsed.podcastEpisodeTiers : {},
     podcastSkipAds: Boolean(parsed?.podcastSkipAds),
+    mediaAllPinnedOrder: Array.isArray(parsed?.mediaAllPinnedOrder) ? parsed.mediaAllPinnedOrder : [],
     podcastTierCount: Number.isInteger(parsed?.podcastTierCount) ? parsed.podcastTierCount : 3,
     podcastPrioritySort: parsed?.podcastPrioritySort === "newest" ? "newest" : "oldest"
   };
@@ -4239,17 +4298,24 @@ function mergeStates(newer, older) {
     "workouts",
     // Health & food
     "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries",
-    "checklistTemplates",
+    "checklistTemplates", "familyMembers",
     // Linked calendars
     "calendars",
     // Saved articles (Read/Listen)
     "savedArticles",
-    // Podcast saved tabs
-    "podcastSavedCategories",
+    // Podcasts: subscribed shows, playlists, saved tabs
+    "podcasts", "podcastPlaylists", "podcastSavedCategories",
     // Travel
     "trips", "travelIdeas",
   ]) {
     merged[key] = unionById(newer[key], older[key], key);
+  }
+
+  // Publications are keyed by "key", not "id"
+  {
+    const map = new Map((older.readPublications || []).filter((p) => p?.key).map((p) => [p.key, p]));
+    (newer.readPublications || []).filter((p) => p?.key).forEach((p) => map.set(p.key, p));
+    merged.readPublications = [...map.values()];
   }
 
   // ── String-set arrays: additive ───────────────────────────────────────────
@@ -4257,6 +4323,9 @@ function mergeStates(newer, older) {
   merged.persistentManualGroceries = unionStrings(newer.persistentManualGroceries, older.persistentManualGroceries);
   merged.recipeTags = unionStrings(newer.recipeTags, older.recipeTags);
   merged.readArticleIds = unionStrings(newer.readArticleIds, older.readArticleIds);
+  merged.podcastSaved = unionStrings(newer.podcastSaved, older.podcastSaved);
+  merged.podcastQueue = unionStrings(newer.podcastQueue, older.podcastQueue);
+  merged.podcastAutoSkipped = unionStrings(newer.podcastAutoSkipped, older.podcastAutoSkipped);
 
   // ── Flat keyed maps: union keys, newer wins on conflict ───────────────────
   for (const key of [
@@ -4267,12 +4336,15 @@ function mergeStates(newer, older) {
     "groceryReviewDismissed", "collapsedDays",
     "personChecklistSettings",
     "podcastSavedEpisodeCategories",
+    "podcastProgress", "podcastShowTiers", "podcastEpisodeTiers",
+    "podcastPlaylistItems", "articleReadDates", "publicationTiers",
   ]) {
     merged[key] = unionByKey(newer[key], older[key]);
   }
 
   // ── Shallow object merges: older provides base, newer keys win ────────────
   merged.recreateHobbies = { ...(older.recreateHobbies || {}), ...(newer.recreateHobbies || {}) };
+  merged.articleSync = { ...(older.articleSync || {}), ...(newer.articleSync || {}) };
   merged.groceryPricingSettings = { ...(older.groceryPricingSettings || {}), ...(newer.groceryPricingSettings || {}) };
   merged.collapsedSections = { ...(older.collapsedSections || {}), ...(newer.collapsedSections || {}) };
 
@@ -4354,19 +4426,17 @@ function mergeMealPlanConfig(newer, older) {
   if (!newer && !older) return undefined;
   if (!newer) return older;
   if (!older) return newer;
-  const defaults = defaultMealPlanConfig();
-  const defaultLabels = new Set(defaults.members.map((m) => m.label));
-  const oById = new Map((older.members || []).map((m) => [m.id, m]));
-  const nById = new Map((newer.members || []).map((m) => [m.id, m]));
-  // Use newer's member list as authoritative — don't resurrect members deleted in newer
-  const members = [...nById.keys()].map((id) => {
-    const n = nById.get(id);
-    const o = oById.get(id);
-    if (!o) return n;
-    const nIsDefault = defaultLabels.has(n.label);
-    const oIsDefault = defaultLabels.has(o.label);
-    if (nIsDefault && !oIsDefault) return { ...n, ...o, label: o.label };
-    return { ...o, ...n };
+  const nMembers = newer.members || [];
+  const oMembers = older.members || [];
+  // A completely empty newer household must never erase a saved one — a fresh
+  // device starts with zero members and is not an intentional "delete all".
+  // When newer HAS members, its list is authoritative (deletes respected),
+  // with newer's fields winning per member.
+  const authoritative = nMembers.length ? nMembers : oMembers;
+  const oById = new Map(oMembers.map((m) => [m.id, m]));
+  const members = authoritative.map((n) => {
+    const o = oById.get(n.id);
+    return o ? { ...o, ...n } : n;
   });
   const oTypeById = new Map((older.mealTypes || []).map((t) => [t.id, t]));
   const nTypeById = new Map((newer.mealTypes || []).map((t) => [t.id, t]));
@@ -4479,6 +4549,8 @@ function stripAnonymousChanges(localState, cloudState) {
   };
 }
 
+let hydrateRetryCount = 0;
+
 async function hydrateStateFromSharedStorage() {
   const providers = sharedStorageProviders();
   if (!providers.length) return;
@@ -4528,19 +4600,24 @@ async function hydrateStateFromSharedStorage() {
       else await provider.write();
       localStorage.removeItem("live_signed_out_explicitly"); // clear on any successful sync
       sharedStorageReady = true;
+      hydrateRetryCount = 0;
       return;
     } catch (error) {
       console.warn(`${provider.label} storage unavailable; trying the next option.`, error);
     }
   }
 
-  try {
-    activeSharedStorageProvider = providers[0];
-    await activeSharedStorageProvider.write();
-    sharedStorageReady = true;
-  } catch (error) {
-    console.warn("Shared storage unavailable; using browser storage.", error);
-  }
+  // Every provider failed to LOAD. Never push local state blindly here — a
+  // failed load followed by a wholesale write is exactly how entire sections
+  // were wiped (a fresh/stale device overwrote the cloud with near-empty
+  // state). Stay not-ready and retry hydration with backoff instead; local
+  // changes keep accumulating in localStorage and sync after a good load.
+  activeSharedStorageProvider = null;
+  updateSyncStatus("failed");
+  const retryDelay = Math.min(30000 * 2 ** hydrateRetryCount, 5 * 60 * 1000);
+  hydrateRetryCount++;
+  console.warn(`Shared storage unavailable; retrying hydration in ${Math.round(retryDelay / 1000)}s (no blind write).`);
+  window.setTimeout(() => { hydrateStateFromSharedStorage(); }, retryDelay);
 }
 
 function saveStateToSharedStorage() {
@@ -4578,6 +4655,17 @@ async function writeStateToSharedStorage() {
 
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
+
+  // No service worker in local dev (unless explicitly opted in for push testing
+  // via localStorage "live-dev-sw" = "on"). A cached shell served over a dead
+  // dev server produces a zombie page where nothing responds to clicks.
+  const isLocalDev = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+  if (isLocalDev && localStorage.getItem("live-dev-sw") !== "on") {
+    navigator.serviceWorker.getRegistrations().then((regs) => regs.forEach((r) => r.unregister()));
+    if (window.caches?.keys) caches.keys().then((keys) => keys.forEach((k) => caches.delete(k)));
+    return;
+  }
+
   navigator.serviceWorker.register("/sw.js").catch((e) => console.warn("SW registration failed:", e));
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     window.location.replace(window.location.pathname);
@@ -4586,17 +4674,15 @@ function registerServiceWorker() {
 
 async function handleCameOnline() {
   if (!canUseCloudStorage() || !authSession?.access_token || !userGroup?.id) return;
-  if (!activeSharedStorageProvider) {
-    activeSharedStorageProvider = { label: "Supabase", load: loadStateFromSupabase, write: writeStateToSupabase };
-  }
+  // Hydrate-and-merge instead of blind-flushing: a device that was offline for
+  // a while must fold the cloud's changes in before its own state goes up,
+  // or it overwrites everything other devices wrote in the meantime.
   try {
-    await writeStateToSupabase();
-    sharedStorageReady = true;
+    await hydrateStateFromSharedStorage();
     sharedStorageRetryCount = 0;
     window.clearTimeout(sharedStorageRetryTimer);
-    updateSyncStatus("saved");
   } catch (e) {
-    console.warn("[reconnect] flush failed:", e);
+    console.warn("[reconnect] hydrate failed:", e);
   }
 }
 
@@ -4840,17 +4926,23 @@ function assembleSectionRows(rows) {
   return assembled;
 }
 
+// Per-section-row optimistic-locking stamps: the server updated_at we last saw
+// for each row. Writes are conditional on this; a mismatch means another
+// writer got there first and we merge before retrying.
+const lastSeenSectionStamp = {};
+
 async function loadStateFromSupabase() {
   const config = supabaseConfig();
   const stateId = config.stateId;
   const sectionIds = Object.keys(STATE_SECTIONS).map(s => `${stateId}:${s}`).join(",");
 
   const res = await fetch(
-    `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=in.(${sectionIds})&select=id,state`,
+    `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=in.(${sectionIds})&select=id,state,updated_at`,
     { headers: supabaseHeaders(), cache: "no-store" }
   );
   if (!res.ok) throw new Error(`Supabase state load failed with status ${res.status}`);
   const rows = await res.json();
+  rows.forEach((r) => { lastSeenSectionStamp[r.id] = r.updated_at; });
 
   if (rows.length > 0) return assembleSectionRows(rows);
 
@@ -4867,33 +4959,91 @@ async function loadStateFromSupabase() {
 async function writeStateToSupabase() {
   const config = supabaseConfig();
   const stateId = config.stateId;
-  const now = new Date().toISOString();
 
   const sectionsToWrite = [];
   for (const [section, keys] of Object.entries(STATE_SECTIONS)) {
     const currentJson = JSON.stringify(extractSectionData(keys));
     if (!lastWrittenSections || lastWrittenSections[section] !== currentJson) {
-      sectionsToWrite.push({ section, data: JSON.parse(currentJson) });
+      sectionsToWrite.push({ section, keys });
     }
   }
 
   if (sectionsToWrite.length === 0) return;
 
-  await Promise.all(
-    sectionsToWrite.map(({ section, data }) =>
-      fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?on_conflict=id`, {
-        method: "POST",
-        headers: { ...supabaseHeaders(), Prefer: "resolution=merge-duplicates,return=minimal" },
-        body: JSON.stringify({
-          id: `${stateId}:${section}`,
-          state: { ...data, stateUpdatedAt: state.stateUpdatedAt },
-          updated_at: now
-        })
-      }).then(r => { if (!r.ok) throw new Error(`Supabase section "${section}" save failed: ${r.status}`); })
-    )
-  );
+  await Promise.all(sectionsToWrite.map(({ section, keys }) => writeSectionWithMerge(stateId, section, keys)));
 
   updateLastWrittenSections();
+}
+
+// Writes one section row with optimistic locking. If another writer (other
+// device, server function) changed the row since we last saw it, the remote
+// data is fetched and key-level merged into local state first, then the write
+// retries. A stale device can therefore never erase another device's changes.
+async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
+  const rowId = `${stateId}:${section}`;
+  const now = new Date().toISOString();
+  const payload = {
+    state: { ...extractSectionData(keys), stateUpdatedAt: state.stateUpdatedAt },
+    updated_at: now
+  };
+  const seen = lastSeenSectionStamp[rowId];
+
+  if (seen) {
+    const res = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&updated_at=eq.${encodeURIComponent(seen)}`,
+      { method: "PATCH", headers: { ...supabaseHeaders(), Prefer: "return=representation" }, body: JSON.stringify(payload) }
+    );
+    if (!res.ok) throw new Error(`Supabase section "${section}" save failed: ${res.status}`);
+    const rows = await res.json();
+    if (rows.length) { lastSeenSectionStamp[rowId] = rows[0].updated_at || now; return; }
+    // 0 rows matched → conflict: the row moved on since we last saw it
+  } else {
+    // No stamp — check whether the row exists at all before creating it
+    const probe = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&select=id&limit=1`,
+      { headers: supabaseHeaders(), cache: "no-store" }
+    );
+    if (!probe.ok) throw new Error(`Supabase section "${section}" probe failed: ${probe.status}`);
+    const probeRows = await probe.json();
+    if (!probeRows.length) {
+      const ins = await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?on_conflict=id`, {
+        method: "POST",
+        headers: { ...supabaseHeaders(), Prefer: "resolution=merge-duplicates,return=representation" },
+        body: JSON.stringify({ id: rowId, ...payload })
+      });
+      if (!ins.ok) throw new Error(`Supabase section "${section}" save failed: ${ins.status}`);
+      const insRows = await ins.json().catch(() => []);
+      lastSeenSectionStamp[rowId] = insRows[0]?.updated_at || now;
+      return;
+    }
+    // Row exists but we never hydrated it — merge before writing over it
+  }
+
+  if (attempt >= 2) throw new Error(`Supabase section "${section}" kept conflicting — will retry via the normal save loop`);
+
+  const cur = await fetch(
+    `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&select=state,updated_at`,
+    { headers: supabaseHeaders(), cache: "no-store" }
+  );
+  if (!cur.ok) throw new Error(`Supabase section "${section}" conflict fetch failed: ${cur.status}`);
+  const curRows = await cur.json();
+  if (curRows.length) {
+    const { stateUpdatedAt: remoteTs, ...remoteData } = curRows[0].state || {};
+    const localTs = state.stateUpdatedAt || "";
+    const localFrag  = { ...extractSectionData(keys), tombstones: state.tombstones, stateUpdatedAt: localTs };
+    const remoteFrag = { ...remoteData, tombstones: remoteData.tombstones || state.tombstones, stateUpdatedAt: remoteTs || "" };
+    const merged = localTs >= (remoteTs || "")
+      ? mergeStates(localFrag, remoteFrag)
+      : mergeStates(remoteFrag, localFrag);
+    for (const key of keys) {
+      if (merged[key] !== undefined) state[key] = merged[key];
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    lastSeenSectionStamp[rowId] = curRows[0].updated_at;
+  } else {
+    delete lastSeenSectionStamp[rowId]; // row vanished — recreate on retry
+  }
+  return writeSectionWithMerge(stateId, section, keys, attempt + 1);
 }
 
 async function hydrateRecipeRowsFromSupabase() {
@@ -5187,11 +5337,9 @@ function createId(prefix = "id") {
 
 function defaultMealPlanConfig() {
   return {
-    members: [
-      { id: "member-mj", label: "MJ" },
-      { id: "member-luke", label: "Luke" },
-      { id: "member-sophia", label: "Sophia" }
-    ],
+    // No seeded household — a fresh account starts with just the signed-in
+    // user (offered automatically in Household settings from their profile).
+    members: [],
     mealTypes: [
       { id: "mealtype-breakfast", label: "Breakfast" },
       { id: "mealtype-lunch", label: "Lunch" },
@@ -5484,10 +5632,11 @@ function planWeekStart(date) {
   return d;
 }
 
-function activateEatShell() {
-  activeAppArea = "eat";
+// Hides every page section. Each showXxxApp switcher calls this and then
+// un-hides its own page — new pages only need a line here, not in every switcher.
+function hideAllPages() {
   elements.homeMainPage.hidden = true;
-  document.querySelector("[data-section='mealPrep']").hidden = false;
+  document.querySelector("[data-section='mealPrep']").hidden = true;
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.watchMainPage.hidden = true;
@@ -5499,6 +5648,12 @@ function activateEatShell() {
   elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
   document.getElementById("exploreMainPage").hidden = true;
+}
+
+function activateEatShell() {
+  activeAppArea = "eat";
+  hideAllPages();
+  document.querySelector("[data-section='mealPrep']").hidden = false;
   setWeekToolsMode("week");
   renderActiveCooking();
   renderPlanner();
@@ -5511,19 +5666,8 @@ function showDoApp(event) {
     return;
   }
   activeAppArea = "do";
-  elements.homeMainPage.hidden = true;
-  document.querySelector("[data-section='mealPrep']").hidden = true;
+  hideAllPages();
   elements.doMainPage.hidden = false;
-  elements.playMainPage.hidden = true;
-  elements.watchMainPage.hidden = true;
-  elements.mediaMainPage.hidden = true;
-  elements.shopMainPage.hidden = true;
-  elements.inventoryMainPage.hidden = true;
-  elements.recreateMainPage.hidden = true;
-  elements.planMainPage.hidden = true;
-  elements.settingsMainPage.hidden = true;
-  elements.mailMainPage.hidden = true;
-  document.getElementById("exploreMainPage").hidden = true;
   setWeekToolsMode("week");
   elements.activeCookingSection.hidden = true;
   setPageTitle("To-Do");
@@ -5540,19 +5684,8 @@ function showPlayApp(event) {
     return;
   }
   activeAppArea = "play";
-  elements.homeMainPage.hidden = true;
-  document.querySelector("[data-section='mealPrep']").hidden = true;
-  elements.doMainPage.hidden = true;
+  hideAllPages();
   elements.playMainPage.hidden = false;
-  elements.watchMainPage.hidden = true;
-  elements.mediaMainPage.hidden = true;
-  elements.shopMainPage.hidden = true;
-  elements.inventoryMainPage.hidden = true;
-  elements.recreateMainPage.hidden = true;
-  elements.planMainPage.hidden = true;
-  elements.settingsMainPage.hidden = true;
-  elements.mailMainPage.hidden = true;
-  document.getElementById("exploreMainPage").hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Exercise");
@@ -5569,19 +5702,8 @@ function showWatchApp(event) {
     return;
   }
   activeAppArea = "watch";
-  elements.homeMainPage.hidden = true;
-  document.querySelector("[data-section='mealPrep']").hidden = true;
-  elements.doMainPage.hidden = true;
-  elements.playMainPage.hidden = true;
+  hideAllPages();
   elements.watchMainPage.hidden = false;
-  elements.mediaMainPage.hidden = true;
-  elements.shopMainPage.hidden = true;
-  elements.inventoryMainPage.hidden = true;
-  elements.recreateMainPage.hidden = true;
-  elements.planMainPage.hidden = true;
-  elements.settingsMainPage.hidden = true;
-  elements.mailMainPage.hidden = true;
-  document.getElementById("exploreMainPage").hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Watch");
@@ -5595,18 +5717,8 @@ function showRecreateApp(event) {
   event?.stopPropagation();
   if (!isPageEnabled("recreate")) { showHomeApp(); return; }
   activeAppArea = "recreate";
-  elements.homeMainPage.hidden = true;
-  document.querySelector("[data-section='mealPrep']").hidden = true;
-  elements.doMainPage.hidden = true;
-  elements.playMainPage.hidden = true;
-  elements.watchMainPage.hidden = true;
-  elements.mediaMainPage.hidden = true;
-  elements.shopMainPage.hidden = true;
+  hideAllPages();
   elements.recreateMainPage.hidden = false;
-  elements.planMainPage.hidden = true;
-  elements.settingsMainPage.hidden = true;
-  elements.mailMainPage.hidden = true;
-  document.getElementById("exploreMainPage").hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Recreate");
@@ -5620,19 +5732,8 @@ function showPlanApp(event) {
   event?.stopPropagation();
   if (!isPageEnabled("plan")) { showHomeApp(); return; }
   activeAppArea = "plan";
-  elements.homeMainPage.hidden = true;
-  document.querySelector("[data-section='mealPrep']").hidden = true;
-  elements.doMainPage.hidden = true;
-  elements.playMainPage.hidden = true;
-  elements.watchMainPage.hidden = true;
-  elements.mediaMainPage.hidden = true;
-  elements.shopMainPage.hidden = true;
-  elements.inventoryMainPage.hidden = true;
-  elements.recreateMainPage.hidden = true;
+  hideAllPages();
   elements.planMainPage.hidden = false;
-  elements.settingsMainPage.hidden = true;
-  elements.mailMainPage.hidden = true;
-  document.getElementById("exploreMainPage").hidden = true;
   setWeekToolsMode("plan");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Calendar");
@@ -5646,19 +5747,8 @@ function showPlanApp(event) {
 function showSettingsApp(event) {
   event?.stopPropagation();
   activeAppArea = "settings";
-  elements.homeMainPage.hidden = true;
-  document.querySelector("[data-section='mealPrep']").hidden = true;
-  elements.doMainPage.hidden = true;
-  elements.playMainPage.hidden = true;
-  elements.watchMainPage.hidden = true;
-  elements.mediaMainPage.hidden = true;
-  elements.shopMainPage.hidden = true;
-  elements.inventoryMainPage.hidden = true;
-  elements.recreateMainPage.hidden = true;
-  elements.planMainPage.hidden = true;
+  hideAllPages();
   elements.settingsMainPage.hidden = false;
-  elements.mailMainPage.hidden = true;
-  document.getElementById("exploreMainPage").hidden = true;
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
   setPageTitle("Settings");
@@ -5671,19 +5761,8 @@ function showSettingsApp(event) {
 function showHomeApp(event) {
   event?.stopPropagation();
   activeAppArea = "home";
+  hideAllPages();
   elements.homeMainPage.hidden = false;
-  document.querySelector("[data-section='mealPrep']").hidden = true;
-  elements.doMainPage.hidden = true;
-  elements.playMainPage.hidden = true;
-  elements.watchMainPage.hidden = true;
-  elements.mediaMainPage.hidden = true;
-  elements.shopMainPage.hidden = true;
-  elements.inventoryMainPage.hidden = true;
-  elements.recreateMainPage.hidden = true;
-  elements.planMainPage.hidden = true;
-  elements.settingsMainPage.hidden = true;
-  elements.mailMainPage.hidden = true;
-  document.getElementById("exploreMainPage").hidden = true;
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
   setPageTitle(getAppName());
@@ -5697,19 +5776,8 @@ function showMediaApp(event) {
   event?.stopPropagation();
   if (!isPageEnabled("read")) { showHomeApp(); return; }
   activeAppArea = "media";
-  elements.homeMainPage.hidden = true;
-  document.querySelector("[data-section='mealPrep']").hidden = true;
-  elements.doMainPage.hidden = true;
-  elements.playMainPage.hidden = true;
-  elements.watchMainPage.hidden = true;
+  hideAllPages();
   elements.mediaMainPage.hidden = false;
-  elements.shopMainPage.hidden = true;
-  elements.inventoryMainPage.hidden = true;
-  elements.recreateMainPage.hidden = true;
-  elements.planMainPage.hidden = true;
-  elements.settingsMainPage.hidden = true;
-  elements.mailMainPage.hidden = true;
-  document.getElementById("exploreMainPage").hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Media");
@@ -5725,19 +5793,8 @@ function showInventoryApp(event) {
   event?.stopPropagation();
   if (!isPageEnabled("inventory")) { showHomeApp(); return; }
   activeAppArea = "inventory";
-  elements.homeMainPage.hidden = true;
-  document.querySelector("[data-section='mealPrep']").hidden = true;
-  elements.doMainPage.hidden = true;
-  elements.playMainPage.hidden = true;
-  elements.watchMainPage.hidden = true;
-  elements.mediaMainPage.hidden = true;
-  elements.shopMainPage.hidden = true;
+  hideAllPages();
   elements.inventoryMainPage.hidden = false;
-  elements.recreateMainPage.hidden = true;
-  elements.planMainPage.hidden = true;
-  elements.settingsMainPage.hidden = true;
-  elements.mailMainPage.hidden = true;
-  document.getElementById("exploreMainPage").hidden = true;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Stock");
@@ -5754,19 +5811,8 @@ function showShopApp(event) {
     return;
   }
   activeAppArea = "shop";
-  elements.homeMainPage.hidden = true;
-  document.querySelector("[data-section='mealPrep']").hidden = true;
-  elements.doMainPage.hidden = true;
-  elements.playMainPage.hidden = true;
-  elements.watchMainPage.hidden = true;
-  elements.mediaMainPage.hidden = true;
+  hideAllPages();
   elements.shopMainPage.hidden = false;
-  elements.inventoryMainPage.hidden = true;
-  elements.recreateMainPage.hidden = true;
-  elements.planMainPage.hidden = true;
-  elements.settingsMainPage.hidden = true;
-  elements.mailMainPage.hidden = true;
-  document.getElementById("exploreMainPage").hidden = true;
   setWeekToolsMode("shop");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Shop");
@@ -5780,17 +5826,7 @@ function showShopApp(event) {
 function showMailApp(event, hashParams) {
   event?.stopPropagation();
   activeAppArea = "mail";
-  elements.homeMainPage.hidden = true;
-  document.querySelector("[data-section='mealPrep']").hidden = true;
-  elements.doMainPage.hidden = true;
-  elements.playMainPage.hidden = true;
-  elements.watchMainPage.hidden = true;
-  elements.mediaMainPage.hidden = true;
-  elements.shopMainPage.hidden = true;
-  elements.inventoryMainPage.hidden = true;
-  elements.recreateMainPage.hidden = true;
-  elements.planMainPage.hidden = true;
-  elements.settingsMainPage.hidden = true;
+  hideAllPages();
   elements.mailMainPage.hidden = false;
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
@@ -5862,51 +5898,41 @@ async function loadMailSuggestionsPanel() {
 
 function renderMailSuggestions(suggestions) {
   const panel = document.getElementById("mailSuggestions");
-  if (!panel) return;
   const pending = suggestions.filter(s => s.status === "pending");
+
+  // Topbar bell: red badge with the pending count (no badge when zero)
+  const notifBtn = document.getElementById("mailSuggCheckNow");
+  const badge = document.getElementById("mailNotifBadge");
+  if (notifBtn) notifBtn.hidden = false;
+  if (badge) {
+    badge.hidden = pending.length === 0;
+    badge.textContent = pending.length > 9 ? "9+" : String(pending.length);
+  }
+
+  if (!panel) return;
+  if (!pending.length) { panel.hidden = true; panel.innerHTML = ""; return; }
   panel.hidden = false;
 
   const KIND_ICONS = { add_todo: "✅", add_booking: "🧳" };
   panel.innerHTML =
-    '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px 4px">' +
-    '<span style="font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted)">Suggested actions' +
-    (pending.length ? ' (' + pending.length + ')' : '') + '</span>' +
-    '<button type="button" class="secondary-btn" id="mailSuggCheckNow" style="font-size:0.78rem;padding:3px 10px">Check now</button>' +
-    '</div>' +
-    (pending.length
-      ? '<div style="display:flex;flex-direction:column;gap:8px;padding:6px 12px 12px">' +
-        pending.map(s => {
-          return '<div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;border:1px solid var(--border, rgba(128,128,128,0.25));border-radius:10px;padding:10px 12px">' +
-            '<div style="min-width:0">' +
-            '<div style="font-size:0.88rem;font-weight:600">' + (KIND_ICONS[s.kind] || "💡") + ' ' + escapeHtml(s.title) +
-            (s.dueDate ? ' <span style="font-weight:400;color:var(--text-muted)">· due ' + escapeHtml(s.dueDate) + '</span>' : '') + '</div>' +
-            (s.details ? '<div style="font-size:0.8rem;color:var(--text-muted);margin-top:2px">' + escapeHtml(s.details) + '</div>' : '') +
-            '<div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px">From: ' + escapeHtml(s.emailSubject || "") + '</div>' +
-            '</div>' +
-            '<div style="display:flex;gap:6px;flex-shrink:0">' +
-            '<button type="button" class="primary-btn mail-sugg-approve" data-id="' + escapeHtml(s.id) + '" style="font-size:0.78rem;padding:4px 10px">' +
-            (s.kind === "add_booking" ? 'Review & add' : 'Approve') + '</button>' +
-            '<button type="button" class="secondary-btn mail-sugg-dismiss" data-id="' + escapeHtml(s.id) + '" style="font-size:0.78rem;padding:4px 10px">Dismiss</button>' +
-            '</div></div>';
-        }).join('') +
-        '</div>'
-      : '<div style="padding:4px 12px 12px;font-size:0.8rem;color:var(--text-muted)">No pending suggestions. New email is triaged automatically.</div>');
+    '<div style="display:flex;flex-direction:column;gap:8px;padding:10px 12px">' +
+    pending.map(s => {
+      return '<div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;border:1px solid var(--border, rgba(128,128,128,0.25));border-radius:10px;padding:10px 12px">' +
+        '<div style="min-width:0">' +
+        '<div style="font-size:0.88rem;font-weight:600">' + (KIND_ICONS[s.kind] || "💡") + ' ' + escapeHtml(s.title) +
+        (s.dueDate ? ' <span style="font-weight:400;color:var(--text-muted)">· due ' + escapeHtml(s.dueDate) + '</span>' : '') + '</div>' +
+        (s.details ? '<div style="font-size:0.8rem;color:var(--text-muted);margin-top:2px">' + escapeHtml(s.details) + '</div>' : '') +
+        '<div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px">From: ' + escapeHtml(s.emailSubject || "") + '</div>' +
+        '</div>' +
+        '<div style="display:flex;gap:6px;flex-shrink:0">' +
+        '<button type="button" class="primary-btn mail-sugg-approve" data-id="' + escapeHtml(s.id) + '" style="font-size:0.78rem;padding:4px 10px">' +
+        (s.kind === "add_booking" ? 'Review & add' : 'Approve') + '</button>' +
+        '<button type="button" class="secondary-btn mail-sugg-dismiss" data-id="' + escapeHtml(s.id) + '" style="font-size:0.78rem;padding:4px 10px">Dismiss</button>' +
+        '</div></div>';
+    }).join('') +
+    '</div>';
 
   const bySugg = id => suggestions.find(s => s.id === id);
-
-  panel.querySelector("#mailSuggCheckNow").addEventListener("click", async (e) => {
-    const btn = e.currentTarget;
-    btn.disabled = true;
-    btn.textContent = "Checking…";
-    const data = await callGmailApi({ action: "checkInboxNow" });
-    if (!data) {
-      btn.textContent = lastGmailApiError ? "Failed" : "Check now";
-      btn.title = lastGmailApiError || "";
-      btn.disabled = false;
-      return;
-    }
-    renderMailSuggestions(data.suggestions || []);
-  });
 
   panel.querySelectorAll(".mail-sugg-dismiss").forEach(btn => btn.addEventListener("click", async () => {
     btn.disabled = true;
@@ -6264,7 +6290,7 @@ function renderMailLabelTabs() {
     const expanded = mailFolderExpanded.has(node.fullPath);
     const indent = depth * 16;
     if (!node.children.length) {
-      return `<button class="mail-label-item${active ? " is-active" : ""}" type="button" data-mailbox="${escapeHtml(node.id || "")}" role="tab" aria-selected="${active}" style="padding-left: calc(26px + ${indent}px)">
+      return `<button class="mail-label-item${active ? " is-active" : ""}" type="button" data-mailbox="${escapeHtml(node.id || "")}" ${node.id ? `data-user-label="1" data-label-name="${escapeHtml(node.fullPath)}"` : ""} role="tab" aria-selected="${active}" style="padding-left: calc(26px + ${indent}px)">
         ${mailLabelIcon(node.id, "user")}<span>${escapeHtml(node.displayName)}</span>
       </button>`;
     }
@@ -6274,7 +6300,7 @@ function renderMailLabelTabs() {
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
         </button>
         ${node.id
-          ? `<button class="mail-label-item mail-label-folder-label${active ? " is-active" : ""}" type="button" data-mailbox="${escapeHtml(node.id)}" role="tab" aria-selected="${active}">
+          ? `<button class="mail-label-item mail-label-folder-label${active ? " is-active" : ""}" type="button" data-mailbox="${escapeHtml(node.id)}" data-user-label="1" data-label-name="${escapeHtml(node.fullPath)}" role="tab" aria-selected="${active}">
               ${mailLabelIcon(node.id, "user")}<span>${escapeHtml(node.displayName)}</span>
             </button>`
           : `<span class="mail-label-folder-label mail-label-virtual">${mailLabelIcon("", "user")}<span>${escapeHtml(node.displayName)}</span></span>`
@@ -6293,17 +6319,49 @@ function renderMailLabelTabs() {
   }).join("");
 
   const userHtml = roots.map((n) => renderNode(n, 0)).join("");
-  const divider = system.length && user.length ? `<div class="mail-label-divider"></div>` : "";
+  const divider = system.length ? `<div class="mail-label-divider"></div>` : "";
+  const newFolderHtml = `<button class="mail-label-item mail-new-folder-btn" type="button" id="mailNewFolderBtn">
+    <svg viewBox="0 0 24 24" class="mail-label-icon" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg><span>New folder</span>
+  </button>`;
 
-  navEl.innerHTML = systemHtml + divider + userHtml;
+  navEl.innerHTML = systemHtml + divider + newFolderHtml + userHtml;
 
   navEl.querySelectorAll(".mail-label-item").forEach((btn) => {
     btn.addEventListener("click", () => {
+      if (!btn.dataset.mailbox) return; // e.g. the New-folder button
+      if (btn.dataset.lpFired) { delete btn.dataset.lpFired; return; } // long-press already handled
       navEl.querySelectorAll(".mail-label-item").forEach((b) => { b.classList.remove("is-active"); b.setAttribute("aria-selected", "false"); });
       btn.classList.add("is-active");
       btn.setAttribute("aria-selected", "true");
       loadMailList(btn.dataset.mailbox);
     });
+  });
+
+  document.getElementById("mailNewFolderBtn")?.addEventListener("click", async () => {
+    const name = prompt('New folder name (use "Parent/Child" to nest)');
+    if (!name?.trim()) return;
+    const res = await callGmailApi({ action: "createLabel", name: name.trim() });
+    if (!res) { alert("Could not create folder: " + (lastGmailApiError || "unknown error")); return; }
+    await loadMailLabels();
+  });
+
+  // Rename/delete on user folders: right-click on desktop, long-press on touch
+  navEl.querySelectorAll("[data-user-label]").forEach((btn) => {
+    const label = { id: btn.dataset.mailbox, name: btn.dataset.labelName };
+    btn.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      showMailFolderMenu(e.clientX, e.clientY, label);
+    });
+    let lpTimer = null;
+    btn.addEventListener("touchstart", (e) => {
+      const t = e.touches[0];
+      lpTimer = setTimeout(() => {
+        btn.dataset.lpFired = "1";
+        showMailFolderMenu(t.clientX, t.clientY, label);
+      }, 550);
+    }, { passive: true });
+    ["touchend", "touchmove", "touchcancel"].forEach((ev) =>
+      btn.addEventListener(ev, () => clearTimeout(lpTimer), { passive: true }));
   });
 
   navEl.querySelectorAll("[data-folder-toggle]").forEach((btn) => {
@@ -6314,6 +6372,38 @@ function renderMailLabelTabs() {
       renderMailLabelTabs();
     });
   });
+}
+
+function showMailFolderMenu(x, y, label) {
+  document.getElementById("mailFolderMenu")?.remove();
+  const menu = document.createElement("div");
+  menu.id = "mailFolderMenu";
+  menu.className = "mail-more-menu mail-folder-menu";
+  menu.style.left = Math.min(x, window.innerWidth - 190) + "px";
+  menu.style.top = Math.min(y, window.innerHeight - 110) + "px";
+  menu.innerHTML = `
+    <button class="mail-more-option" type="button" data-folder-menu="rename">Rename folder</button>
+    <button class="mail-more-option" type="button" data-folder-menu="delete">Delete folder</button>`;
+  document.body.appendChild(menu);
+
+  menu.addEventListener("click", async (e) => {
+    const act = e.target.closest("[data-folder-menu]")?.dataset.folderMenu;
+    menu.remove();
+    if (act === "rename") {
+      const newName = prompt("Rename folder (nested folders use Parent/Child)", label.name);
+      if (!newName?.trim() || newName.trim() === label.name) return;
+      const res = await callGmailApi({ action: "renameLabel", labelId: label.id, name: newName.trim() });
+      if (!res) { alert("Rename failed: " + (lastGmailApiError || "unknown error")); return; }
+      await loadMailLabels();
+    } else if (act === "delete") {
+      if (!confirm(`Delete the folder "${label.name}"?\n\nEmails inside are not deleted — they stay in All Mail and keep any other labels.`)) return;
+      const res = await callGmailApi({ action: "deleteLabel", labelId: label.id });
+      if (!res) { alert("Delete failed: " + (lastGmailApiError || "unknown error")); return; }
+      if (currentMailbox === label.id) loadMailList("INBOX");
+      await loadMailLabels();
+    }
+  });
+  setTimeout(() => document.addEventListener("click", () => menu.remove(), { once: true }), 0);
 }
 
 function mailLabelIcon(id, type) {
@@ -6421,6 +6511,8 @@ async function openMailThread(threadId) {
 function renderMailThread(thread) {
   const messages = thread.messages || [];
   const last = messages[messages.length - 1];
+  // Newest message first in the thread view; replies/forwards still target `last` (the actual latest)
+  const displayOrder = [...messages].reverse();
   const subject = last?.subject || "(no subject)";
   const html = `
     <div class="mail-thread-toolbar">
@@ -6428,6 +6520,13 @@ function renderMailThread(thread) {
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5"/><path d="m12 5-7 7 7 7"/></svg>
       </button>
       <div class="mail-thread-actions">
+        <button class="icon-btn mail-action-btn" type="button" id="mailReplyBtn" title="Reply" aria-label="Reply">
+          <svg viewBox="0 0 24 24" aria-hidden="true" style="fill:currentColor;stroke:none"><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/></svg>
+        </button>
+        <button class="icon-btn mail-action-btn" type="button" id="mailForwardBtn" title="Forward" aria-label="Forward">
+          <svg viewBox="0 0 24 24" aria-hidden="true" style="fill:currentColor;stroke:none"><path d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
+        </button>
+        <div class="mail-action-divider"></div>
         <button class="icon-btn mail-action-btn" type="button" id="mailArchiveBtn" title="Archive">
           <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
         </button>
@@ -6459,21 +6558,22 @@ function renderMailThread(thread) {
         <h2 class="mail-thread-subject">${escapeHtml(subject)}</h2>
       </div>
       <div class="mail-thread-messages">
-        ${messages.map((m) => renderMailMessage(m)).join("")}
+        ${displayOrder.map((m, i) => renderMailMessage(m, i)).join("")}
       </div>
       <div class="mail-reply-area" id="mailReplyArea">
-        <div class="mail-reply-controls">
-          <button class="secondary-btn mail-ai-draft-btn" type="button" id="mailAiDraftBtn">✦ Draft reply</button>
-          <button class="secondary-btn" type="button" id="mailReplyOpenBtn">Reply</button>
-        </div>
         <div class="mail-reply-compose" id="mailReplyCompose" hidden>
-          <div class="mail-reply-to">To: <span>${escapeHtml(last?.from || "")}</span></div>
+          <div class="mail-reply-to">To:
+            <span id="mailReplyToSpan">${escapeHtml(last?.from || "")}</span>
+            <input class="mail-reply-to-input" id="mailReplyToInput" type="email" placeholder="recipient@example.com" hidden />
+          </div>
           <div class="mail-ai-instruction-row" id="mailAiInstructionRow" hidden>
             <input class="mail-ai-instruction" id="mailAiInstruction" placeholder="Optional: tone or focus (e.g. 'be brief', 'ask about Thursday')" />
             <button class="secondary-btn" type="button" id="mailAiGenerateBtn">Generate</button>
           </div>
           <textarea class="mail-reply-body" id="mailReplyBody" rows="8" placeholder="Write your reply…"></textarea>
+          <div class="mail-forward-note" id="mailForwardNote" hidden>📎 The original email is included below your note, formatting intact.</div>
           <div class="mail-reply-actions">
+            <button class="secondary-btn mail-ai-draft-btn" type="button" id="mailAiDraftBtn" style="margin-right:auto">✦ Draft with AI</button>
             <button class="secondary-btn" type="button" id="mailReplyCancelBtn">Cancel</button>
             <button class="primary-btn" type="button" id="mailReplySendBtn">Send</button>
           </div>
@@ -6481,6 +6581,19 @@ function renderMailThread(thread) {
       </div>
     </div>`;
   elements.mailThread.innerHTML = html;
+  mountMailMessageFrames(elements.mailThread, displayOrder);
+  // Collapsed messages expand (and lazily mount their body) on header click
+  elements.mailThread.querySelectorAll("[data-msg-toggle]").forEach((metaEl) => {
+    metaEl.addEventListener("click", () => {
+      const wrap = metaEl.closest(".mail-msg");
+      const holder = wrap?.querySelector("[data-msg-idx]");
+      if (!wrap || !holder) return;
+      const nowCollapsed = wrap.classList.toggle("mail-msg--collapsed");
+      holder.hidden = nowCollapsed;
+      metaEl.title = nowCollapsed ? "Expand" : "Collapse";
+      if (!nowCollapsed) mountMailMessageFrames(elements.mailThread, displayOrder);
+    });
+  });
 
   document.getElementById("mailBackBtn").addEventListener("click", () => { elements.mailThread.hidden = true; mailOpenThreadId = null; });
   const mailRows = [...elements.mailList.querySelectorAll(".mail-row[data-thread-id]")];
@@ -6504,15 +6617,52 @@ function renderMailThread(thread) {
   document.getElementById("mailUnreadBtn").addEventListener("click", () => markMailUnread(thread));
   document.getElementById("mailMoveBtn").addEventListener("click", (e) => { e.stopPropagation(); showMailMovePicker(thread); });
   document.getElementById("mailMoreBtn").addEventListener("click", (e) => { e.stopPropagation(); showMailMoreMenu(thread, last); });
-  document.getElementById("mailReplyOpenBtn").addEventListener("click", () => {
+  const openMailComposeArea = (mode) => {
+    mailComposeMode = mode;
     document.getElementById("mailReplyCompose").hidden = false;
     document.getElementById("mailAiInstructionRow").hidden = true;
-    document.getElementById("mailReplyBody").focus();
-  });
+    const toSpan = document.getElementById("mailReplyToSpan");
+    const toInput = document.getElementById("mailReplyToInput");
+    const bodyEl = document.getElementById("mailReplyBody");
+    const fwdNote = document.getElementById("mailForwardNote");
+    if (mode === "forward") {
+      toSpan.hidden = true;
+      toInput.hidden = false;
+      if (fwdNote) {
+        fwdNote.hidden = false;
+        const files = (last?.attachments || []).filter(a => !a.inline && a.filename);
+        const inlineCount = (last?.attachments || []).filter(a => a.inline).length;
+        const parts = ["📎 The original email is included below your note, formatting intact."];
+        if (files.length) parts.push(`Attachments carried over: ${files.map(f => f.filename).join(", ")}.`);
+        if (inlineCount) parts.push(`${inlineCount} inline image${inlineCount === 1 ? "" : "s"} preserved.`);
+        fwdNote.textContent = parts.join(" ");
+      }
+      // The textarea holds only the user's note — the original message is
+      // attached below it at send time, with formatting preserved.
+      mailForwardOriginal = {
+        from: last?.from || "",
+        date: last?.date || "",
+        subject: last?.subject || "",
+        html: last?.body?.includes("<") ? sanitizeMailFrameHtml(last.body) : escapeHtml(last?.body || "").replace(/\n/g, "<br>"),
+        text: (last?.body || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+      };
+      bodyEl.value = "";
+      bodyEl.placeholder = "Add a note (optional) — the original email is included below";
+      toInput.focus();
+    } else {
+      toSpan.hidden = false;
+      toInput.hidden = true;
+      if (fwdNote) fwdNote.hidden = true;
+      bodyEl.placeholder = "Write your reply…";
+      bodyEl.focus();
+    }
+    document.getElementById("mailReplyArea").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  };
+  document.getElementById("mailReplyBtn").addEventListener("click", () => openMailComposeArea("reply"));
+  document.getElementById("mailForwardBtn").addEventListener("click", () => openMailComposeArea("forward"));
   document.getElementById("mailAiDraftBtn").addEventListener("click", () => {
-    document.getElementById("mailReplyCompose").hidden = false;
     document.getElementById("mailAiInstructionRow").hidden = false;
-    document.getElementById("mailReplyBody").value = "";
+    document.getElementById("mailAiInstruction").focus();
   });
   document.getElementById("mailAiGenerateBtn").addEventListener("click", () => generateAiDraft(thread));
   document.getElementById("mailReplyCancelBtn").addEventListener("click", () => { document.getElementById("mailReplyCompose").hidden = true; });
@@ -6604,11 +6754,110 @@ function createEventFromEmail(subject) {
   elements.planEventTitle.value = subject;
 }
 
+// Reader-mode extraction for emails saved as articles: pulls headings, prose,
+// lists and content images out of the newsletter layout scaffolding, and drops
+// boilerplate (unsubscribe blocks, nav link rows, tracking pixels, legalese).
+// Optimized for clean read-aloud: what survives is what should be spoken.
+function emailToReaderHtml(html) {
+  const root = document.createElement("div");
+  root.innerHTML = html;
+  root.querySelectorAll("script,style,link,meta,title,form,iframe,object,embed,svg").forEach((e) => e.remove());
+  root.querySelectorAll("*").forEach((el) => {
+    const st = (el.getAttribute("style") || "").toLowerCase();
+    if (/display\s*:\s*none|visibility\s*:\s*hidden|max-height\s*:\s*0(px|;|$)|font-size\s*:\s*0/.test(st)) el.remove();
+  });
+  root.querySelectorAll("img").forEach((img) => {
+    const w = parseInt(img.getAttribute("width") || "", 10) || 0;
+    const h = parseInt(img.getAttribute("height") || "", 10) || 0;
+    if ((w && w <= 4) || (h && h <= 4)) img.remove(); // tracking pixels / spacers
+  });
+
+  const BOILER = /unsubscribe|view (this email )?in (your )?browser|manage (your )?preferences|email preferences|privacy policy|terms of (use|service)|why did i get this|no longer wish to receive|update your profile|add us to your address book|all rights reserved|you('re| are) receiving this|this email was sent|advertisement|^\s*ad\s*$|follow us|download (the|our) app|©|&copy;/i;
+  const INLINE = new Set(["A","SPAN","B","STRONG","I","EM","U","BR","IMG","SMALL","SUP","SUB","FONT","ABBR","CODE","WBR","S","MARK"]);
+
+  const out = [];
+  const seen = new Set();
+  let imgCount = 0;
+
+  const inlineHtml = (el) => {
+    let s = "";
+    el.childNodes.forEach((n) => {
+      if (n.nodeType === Node.TEXT_NODE) { s += escapeHtml(n.textContent); return; }
+      if (n.nodeType !== Node.ELEMENT_NODE) return;
+      const tag = n.tagName;
+      if (tag === "BR") { s += "<br>"; return; }
+      if (tag === "IMG") return; // inline images handled at block level
+      if (tag === "A" && n.getAttribute("href") && !n.getAttribute("href").toLowerCase().startsWith("javascript:")) {
+        s += '<a href="' + escapeHtml(n.getAttribute("href")) + '" target="_blank" rel="noopener noreferrer">' + inlineHtml(n) + "</a>";
+      } else if (tag === "B" || tag === "STRONG") {
+        s += "<strong>" + inlineHtml(n) + "</strong>";
+      } else if (tag === "I" || tag === "EM") {
+        s += "<em>" + inlineHtml(n) + "</em>";
+      } else {
+        s += inlineHtml(n);
+      }
+    });
+    return s;
+  };
+
+  const pushBlock = (tag, el) => {
+    const text = el.textContent.replace(/\s+/g, " ").trim();
+    if (!text) return;
+    if (BOILER.test(text) && text.length < 400) return;
+    const links = el.querySelectorAll("a");
+    const linkLen = [...links].reduce((s, a) => s + a.textContent.length, 0);
+    if (links.length >= 3 && text.length < 160 && linkLen / text.length > 0.8) return; // nav link row
+    const key = tag + "|" + text;
+    if (seen.has(key)) return; // duplicated preview/preheader text
+    seen.add(key);
+    out.push("<" + tag + ">" + inlineHtml(el) + "</" + tag + ">");
+  };
+
+  const pushImg = (img) => {
+    const src = img.getAttribute("src") || "";
+    if (!src || src.toLowerCase().startsWith("javascript:") || imgCount >= 20) return;
+    imgCount++;
+    out.push('<img src="' + escapeHtml(src) + '" alt="' + escapeHtml(img.getAttribute("alt") || "") + '" style="max-width:100%;height:auto" />');
+  };
+
+  const walk = (el) => {
+    for (const n of el.children ? [...el.children] : []) {
+      const tag = n.tagName;
+      if (/^H[1-6]$/.test(tag)) { pushBlock(tag === "H1" ? "h2" : tag.toLowerCase(), n); continue; }
+      if (tag === "P" || tag === "BLOCKQUOTE") {
+        pushBlock(tag === "BLOCKQUOTE" ? "blockquote" : "p", n);
+        n.querySelectorAll("img").forEach(pushImg);
+        continue;
+      }
+      if (tag === "LI") { pushBlock("p", n); continue; }
+      if (tag === "IMG") { pushImg(n); continue; }
+      if (INLINE.has(tag)) continue;
+      // Element whose children are only inline content → treat as a paragraph
+      const hasBlockChild = [...n.children].some((c) => !INLINE.has(c.tagName));
+      const hasText = n.textContent.replace(/\s+/g, "").length > 0;
+      if (!hasBlockChild && hasText) {
+        pushBlock("p", n);
+        n.querySelectorAll("img").forEach(pushImg);
+      } else {
+        if (!hasBlockChild) n.querySelectorAll("img").forEach(pushImg);
+        walk(n);
+      }
+    }
+  };
+  walk(root);
+
+  const result = out.join("\n");
+  // Over-stripped? Fall back to the structural sanitizer rather than lose content
+  const div = document.createElement("div");
+  div.innerHTML = result;
+  return div.textContent.trim().length >= 200 ? result : sanitizeMailHtml(html);
+}
+
 function saveMailAsArticle(thread, lastMsg) {
   if (!lastMsg) return;
   const id = "email-" + thread.id;
   const sanitized = lastMsg.body?.includes("<")
-    ? sanitizeMailHtml(lastMsg.body)
+    ? emailToReaderHtml(lastMsg.body)
     : `<pre style="white-space:pre-wrap;font-family:inherit">${escapeHtml(lastMsg.body || "")}</pre>`;
   if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
   state.savedArticles = state.savedArticles.filter((a) => a.id !== id);
@@ -6769,17 +7018,110 @@ function showBulkMoreMenu() {
   setTimeout(() => document.addEventListener("click", () => document.getElementById("mailBulkMoreMenu")?.remove(), { once: true }), 0);
 }
 
-function renderMailMessage(msg) {
+function renderMailMessage(msg, idx) {
   const from = parseDisplayName(msg.from);
   const date = msg.date ? new Date(msg.date).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
-  const bodyHtml = msg.body?.includes("<") ? sanitizeMailHtml(msg.body) : `<pre class="mail-msg-pre">${escapeHtml(msg.body || "")}</pre>`;
-  return `<div class="mail-msg">
-    <div class="mail-msg-meta">
+  const collapsed = idx !== 0; // newest (first in display order) starts expanded
+  return `<div class="mail-msg${collapsed ? " mail-msg--collapsed" : ""}">
+    <div class="mail-msg-meta" data-msg-toggle="${idx}" role="button" tabindex="0" title="${collapsed ? "Expand" : "Collapse"}">
       <span class="mail-msg-from">${escapeHtml(from)}</span>
+      <span class="mail-msg-snippet">${escapeHtml(msg.snippet || "")}</span>
       <span class="mail-msg-date">${escapeHtml(date)}</span>
     </div>
-    <div class="mail-msg-body">${bodyHtml}</div>
+    <div class="mail-msg-body" data-msg-idx="${idx}"${collapsed ? " hidden" : ""}></div>
   </div>`;
+}
+
+// Renders each message body the way Gmail does: HTML mail goes into a
+// sandboxed iframe (scripts blocked by the sandbox) with the email's own
+// <style> blocks preserved, isolated from the app's CSS and the app from the
+// email's. Plain-text mail renders as <pre>.
+function mountMailMessageFrames(container, messages) {
+  container.querySelectorAll("[data-msg-idx]").forEach((holder) => {
+    if (holder.hidden || holder.dataset.mounted) return; // collapsed bodies mount lazily on expand
+    const msg = messages[Number(holder.dataset.msgIdx)];
+    if (!msg) return;
+    holder.dataset.mounted = "1";
+    if (msg.body?.includes("<")) {
+      holder.appendChild(buildMailBodyFrame(msg.body));
+    } else {
+      const pre = document.createElement("pre");
+      pre.className = "mail-msg-pre";
+      pre.textContent = msg.body || "";
+      holder.appendChild(pre);
+    }
+  });
+}
+
+function buildMailBodyFrame(html) {
+  const iframe = document.createElement("iframe");
+  iframe.className = "mail-msg-frame";
+  // No allow-scripts: any scripting in the email is inert. allow-same-origin
+  // lets the app measure the content height for auto-sizing.
+  iframe.setAttribute("sandbox", "allow-same-origin allow-popups allow-popups-to-escape-sandbox");
+  iframe.setAttribute("referrerpolicy", "no-referrer");
+  iframe.srcdoc =
+    '<!doctype html><html><head><meta charset="utf-8"><base target="_blank">' +
+    '<style>html,body{margin:0;padding:0}' +
+    'body{font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#202124;background:#fff;word-break:break-word}' +
+    'img{max-width:100%;height:auto}table{max-width:100%}</style></head><body>' +
+    sanitizeMailFrameHtml(html) +
+    "</body></html>";
+
+  // Scale the email to fill the pane: fixed-width designs (newsletters are
+  // typically ~600px) zoom up to the available width; overflowing ones zoom
+  // down to fit. Height then tracks the scaled content.
+  const fitAndSize = () => {
+    try {
+      const doc = iframe.contentDocument;
+      const b = doc?.body;
+      if (!b) return;
+      b.style.zoom = "";
+      const avail = iframe.clientWidth || 1;
+      let z = 1;
+      let design = 0;
+      doc.querySelectorAll("table[width],td[width],table[style*='width'],div[style*='width']").forEach((el) => {
+        const r = el.getBoundingClientRect().width;
+        if (r >= 280 && r <= avail + 40) design = Math.max(design, r);
+      });
+      if (b.scrollWidth > avail + 4) z = avail / b.scrollWidth;
+      else if (design && design < avail - 8) z = Math.min(avail / design, 1.75);
+      if (Math.abs(z - 1) > 0.03) b.style.zoom = z;
+      iframe.style.height = Math.min(Math.max(doc.documentElement.scrollHeight, 40), 30000) + "px";
+    } catch {}
+  };
+  iframe.addEventListener("load", () => {
+    fitAndSize();
+    try {
+      iframe.contentDocument.querySelectorAll("img").forEach((img) => img.addEventListener("load", fitAndSize));
+    } catch {}
+    // Remote images and web fonts settle late — re-measure briefly
+    let n = 0;
+    const t = setInterval(() => { fitAndSize(); if (++n >= 10) clearInterval(t); }, 400);
+    // Refit when the pane width changes (sidebar toggle, window resize)
+    let lastW = iframe.clientWidth;
+    new ResizeObserver(() => {
+      if (iframe.clientWidth !== lastW) { lastW = iframe.clientWidth; fitAndSize(); }
+    }).observe(iframe);
+  });
+  return iframe;
+}
+
+// Lighter sanitizer for iframe rendering: keeps <style> (email layouts depend
+// on it) and strips active content. Scripts are additionally blocked by the
+// iframe sandbox.
+function sanitizeMailFrameHtml(html) {
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  div.querySelectorAll("script,iframe,object,embed,form,link,meta").forEach((el) => el.remove());
+  div.querySelectorAll("*").forEach((el) => {
+    [...el.attributes].forEach((attr) => {
+      if (attr.name.toLowerCase().startsWith("on")) el.removeAttribute(attr.name);
+      else if ((attr.name === "href" || attr.name === "src" || attr.name === "action") &&
+               attr.value.trim().toLowerCase().startsWith("javascript:")) el.removeAttribute(attr.name);
+    });
+  });
+  return div.innerHTML;
 }
 
 async function generateAiDraft(thread) {
@@ -6799,29 +7141,56 @@ async function generateAiDraft(thread) {
   if (data?.draft) { bodyEl.value = data.draft; bodyEl.focus(); }
 }
 
+let mailComposeMode = "reply";
+let mailForwardOriginal = null;
+
 async function sendMailReply(thread, lastMsg) {
-  const body = document.getElementById("mailReplyBody")?.value?.trim();
-  if (!body) return;
+  const note = document.getElementById("mailReplyBody")?.value?.trim() || "";
+  if (!note && mailComposeMode !== "forward") return;
+  const body = note;
   const sendBtn = document.getElementById("mailReplySendBtn");
+
+  let payload;
+  if (mailComposeMode === "forward") {
+    const toInput = document.getElementById("mailReplyToInput");
+    const to = toInput?.value?.trim();
+    if (!to) { toInput?.focus(); return; }
+    const subject = lastMsg?.subject?.startsWith("Fwd:") ? lastMsg.subject : `Fwd: ${lastMsg?.subject || ""}`;
+    const orig = mailForwardOriginal || {};
+    const headerLine = `---------- Forwarded message ----------`;
+    const html =
+      (note ? `<div>${escapeHtml(note).replace(/\n/g, "<br>")}</div><br>` : "") +
+      `<div style="color:#5f6368;font-size:13px">${headerLine}<br>` +
+      `From: ${escapeHtml(orig.from || "")}<br>` +
+      `Date: ${escapeHtml(orig.date || "")}<br>` +
+      `Subject: ${escapeHtml(orig.subject || "")}</div><br>` +
+      `<blockquote style="margin:0 0 0 8px;padding-left:12px;border-left:2px solid #ccc">${orig.html || ""}</blockquote>`;
+    const plain = `${note ? note + "\n\n" : ""}${headerLine}\nFrom: ${orig.from || ""}\nDate: ${orig.date || ""}\nSubject: ${orig.subject || ""}\n\n${orig.text || ""}`;
+    payload = { action: "send", to, subject, body: plain, html, forwardFrom: lastMsg?.id };
+  } else {
+    const subject = lastMsg?.subject?.startsWith("Re:") ? lastMsg.subject : `Re: ${lastMsg?.subject || ""}`;
+    payload = {
+      action: "send",
+      to: lastMsg?.from || "",
+      subject,
+      body,
+      inReplyTo: lastMsg?.messageId,
+      references: [lastMsg?.references, lastMsg?.messageId].filter(Boolean).join(" "),
+      threadId: thread.id
+    };
+  }
+
   sendBtn.disabled = true;
   sendBtn.textContent = "Sending…";
-  const replyTo = lastMsg?.from || "";
-  const subject = lastMsg?.subject?.startsWith("Re:") ? lastMsg.subject : `Re: ${lastMsg?.subject || ""}`;
-  const data = await callGmailApi({
-    action: "send",
-    to: replyTo,
-    subject,
-    body,
-    inReplyTo: lastMsg?.messageId,
-    references: [lastMsg?.references, lastMsg?.messageId].filter(Boolean).join(" "),
-    threadId: thread.id
-  });
+  const data = await callGmailApi(payload);
   sendBtn.disabled = false;
   sendBtn.textContent = "Send";
   if (data?.ok) {
     document.getElementById("mailReplyCompose").hidden = true;
     document.getElementById("mailReplyBody").value = "";
     openMailThread(thread.id);
+  } else {
+    alert("Send failed: " + (lastGmailApiError || "unknown error"));
   }
 }
 
@@ -11775,6 +12144,44 @@ function openContextSettingsDialog(kind) {
   elements.contextSettingsDialog.showModal();
 }
 
+// Registry of AI email-processing features. Every new AI mail feature gets an
+// entry here (one line) and an on/off toggle appears in Settings → Mail AI.
+// The server-side function for each feature must check its flag in
+// state.mailAiSettings before acting.
+const MAIL_AI_FEATURES = [
+  {
+    key: "nytCookingDigest",
+    label: "NYT Cooking recipe digest",
+    desc: "As NYT Cooking emails arrive: collects their recipe links and files each email away immediately. Every Sunday: one email with the week's recipes, duplicates removed."
+  },
+  {
+    key: "bonAppetitDigest",
+    label: "Bon Appétit recipe digest",
+    desc: "Same treatment for Bon Appétit emails — their recipes join the same weekly digest email, in their own section."
+  },
+  {
+    key: "nutritionFactsDigest",
+    label: "Dr. Greger / NutritionFacts digest",
+    desc: "Collects article and video links from NutritionFacts.org emails into a separate “Health” section of the same weekly digest."
+  },
+  {
+    key: "nytMorningToArticle",
+    label: "“The Morning” → article",
+    desc: "Converts NYT's daily The Morning email into a clean article you can read or listen to on the Media page, then files the email away."
+  },
+  {
+    key: "economistBriefToArticle",
+    label: "“The world in brief” → article",
+    desc: "Same for The Economist's daily briefing — saved as a listenable article on the Media page, email filed away."
+  },
+  {
+    key: "aiTrashTestMode",
+    label: "Testing: file to “AI trash”",
+    desc: "While on, processed emails move to your Apps/AI trash Gmail folder instead of the Trash, so you can verify everything. Turn off to use the regular Trash.",
+    defaultOn: true
+  },
+];
+
 function renderContextSettingsDialog(kind) {
   const titles = {
     general: "Settings",
@@ -11789,7 +12196,8 @@ function renderContextSettingsDialog(kind) {
     "admin-pages": "Global Pages",
     "read-sync": "Sync Settings",
     "api-usage": "API Usage",
-    "ai-notes": "AI Notes"
+    "ai-notes": "AI Notes",
+    "mail-ai": "Mail AI"
   };
   const isSubPanel = !["general", "eat", "do", "play", "watch", "recreate", "read-sync"].includes(kind);
   elements.contextSettingsBackBtn.hidden = !isSubPanel;
@@ -11801,6 +12209,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="pages">Pages</button>
         <button type="button" data-context-settings-action="location-services">Location Services</button>
         <button type="button" data-context-settings-action="weekly-email">Email</button>
+        <button type="button" data-context-settings-action="mail-ai">Mail AI</button>
         <button type="button" data-context-settings-action="family">Household</button>
         <button type="button" data-context-settings-action="voice-commands">Voice Commands</button>
         <button type="button" data-context-settings-action="ai-log">AI Action Log</button>
@@ -11820,6 +12229,33 @@ function renderContextSettingsDialog(kind) {
         </div>
       ` : ""}
     `;
+    return;
+  }
+
+  if (kind === "mail-ai") {
+    if (!state.mailAiSettings || typeof state.mailAiSettings !== "object") state.mailAiSettings = {};
+    elements.contextSettingsBody.innerHTML = `
+      <p class="settings-hint">AI features that process your email. Each runs automatically only while switched on.</p>
+      <div class="mail-ai-feature-list">
+        ${MAIL_AI_FEATURES.map((f) => `
+          <div class="mail-ai-feature-row">
+            <div class="mail-ai-feature-text">
+              <span class="mail-ai-feature-label">${escapeHtml(f.label)}</span>
+              <span class="mail-ai-feature-desc">${escapeHtml(f.desc)}</span>
+            </div>
+            <label class="toggle-switch" aria-label="${escapeHtml(f.label)}">
+              <input type="checkbox" data-mail-ai-key="${escapeHtml(f.key)}" ${(f.defaultOn ? state.mailAiSettings[f.key] !== false : Boolean(state.mailAiSettings[f.key])) ? "checked" : ""}>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        `).join("")}
+      </div>`;
+    elements.contextSettingsBody.querySelectorAll("[data-mail-ai-key]").forEach((input) => {
+      input.addEventListener("change", () => {
+        state.mailAiSettings[input.dataset.mailAiKey] = input.checked;
+        persist();
+      });
+    });
     return;
   }
 
@@ -12152,6 +12588,17 @@ function renderContextSettingsDialog(kind) {
     const pubs = getReadPublications();
     elements.contextSettingsBody.innerHTML = `
       <div class="sync-context-settings">
+        <div class="sync-context-field">
+          <div class="sync-context-field-header">
+            <span class="sync-context-label">Podcast Ad-Block</span>
+            <label class="toggle-switch" aria-label="Podcast Ad-Block">
+              <input type="checkbox" id="ctxPodcastAdBlock" ${state.podcastSkipAds ? "checked" : ""}>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <p class="sync-context-hint" style="margin:6px 0 0">Automatically skips sponsor segments in podcast episodes when chapter data is available.</p>
+        </div>
+        <div class="sync-context-divider"></div>
         <p class="sync-context-hint">Connect your accounts to sync saved articles automatically. The easiest way is to use the <strong>Live Chrome Extension</strong> — open it while signed in to the publication and click the connect button.</p>
         <div class="sync-context-field">
           <div class="sync-context-field-header">
@@ -12207,6 +12654,14 @@ function renderContextSettingsDialog(kind) {
         </div>
       </div>
     `;
+    document.getElementById("ctxPodcastAdBlock")?.addEventListener("change", (e) => {
+      state.podcastSkipAds = e.target.checked;
+      persist();
+      const playerToggle = document.getElementById("podcastSkipAdsToggle");
+      if (playerToggle) playerToggle.checked = e.target.checked;
+      if (e.target.checked) scheduleAdSkips(podcastCurrentChapters, podcastAudio);
+      else clearAdSkipTimers();
+    });
     elements.contextSettingsBody.querySelectorAll("[data-remove-pub]").forEach((btn) => {
       btn.addEventListener("click", () => {
         removePublication(btn.dataset.removePub);
@@ -12353,9 +12808,9 @@ function renderContextSettingsDialog(kind) {
               <p class="settings-subheading">Members can access</p>
               ${pages.map((p) => `
                 <label class="group-page-toggle-row">
-                  ${escapeHtml(p.label)}
                   <input type="checkbox" data-group-page="${escapeHtml(p.key)}"
                     ${!(userGroup.disabled_pages || []).includes(p.key) ? "checked" : ""} />
+                  ${escapeHtml(p.label)}
                 </label>
               `).join("")}
             </div>
@@ -12532,6 +12987,7 @@ function handleContextSettingsAction(event) {
   const actions = {
     "calendars": () => closeAndRun(openPlanCalDialog),
     "weekly-email": () => closeAndRun(openWeeklyEmailDialog),
+    "mail-ai": () => renderContextSettingsDialog("mail-ai"),
     "backup-health": () => closeAndRun(openBackupHealthDialog),
     "restore-backup": () => closeAndRun(openRestoreDialog),
     "admin-pages": () => renderContextSettingsDialog("admin-pages"),
@@ -26831,6 +27287,51 @@ function initMediaPage() {
   wireMediaTabs();
   switchMediaTab(activeMediaTab);
   maybeAutoSync("read");
+  refreshStalePodcastFeeds(); // stale views render immediately, then update in place
+}
+
+// Podcast feeds were historically fetched only when a show was subscribed —
+// episode lists silently decayed forever after. This refreshes any feed older
+// than the TTL and re-renders whichever episode-driven view is on screen.
+const PODCAST_FEED_TTL_MS = 6 * 60 * 60 * 1000;
+let podcastFeedRefreshInFlight = null;
+
+function refreshStalePodcastFeeds() {
+  if (podcastFeedRefreshInFlight) return podcastFeedRefreshInFlight;
+  const stale = (state.podcasts || []).filter((p) =>
+    p.url && (!p.lastFetched || Date.now() - Date.parse(p.lastFetched) > PODCAST_FEED_TTL_MS));
+  if (!stale.length) return Promise.resolve(false);
+
+  podcastFeedRefreshInFlight = (async () => {
+    let updated = false;
+    const batchSize = 4;
+    for (let i = 0; i < stale.length; i += batchSize) {
+      await Promise.all(stale.slice(i, i + batchSize).map(async (p) => {
+        try {
+          const fetched = await callNetlifyFunction("fetch-podcast", { url: p.url });
+          if (fetched?.error || !Array.isArray(fetched?.episodes)) return;
+          p.episodes = fetched.episodes;
+          if (fetched.title) p.title = fetched.title;
+          if (fetched.art) p.art = fetched.art;
+          p.lastFetched = new Date().toISOString();
+          updated = true;
+        } catch { /* keep the stale copy — still browsable */ }
+      }));
+    }
+    podcastFeedRefreshInFlight = null;
+    if (updated) {
+      persist();
+      if (activeAppArea === "media") {
+        if (activeMediaTab === "all") renderMediaAllList();
+        else if (activeMediaTab === "podcasts") {
+          if (activePodcastTab === "recent") renderRecentEpisodes();
+          else if (activePodcastTab === "playlist") renderPodcastQueueEpisodes();
+        }
+      }
+    }
+    return updated;
+  })();
+  return podcastFeedRefreshInFlight;
 }
 
 function wireMediaTabs() {
@@ -26847,6 +27348,12 @@ function wireMediaTabs() {
 
   document.getElementById("mediaSidebarToggle")?.addEventListener("click", () => {
     document.getElementById("mediaSidebar")?.classList.toggle("is-expanded");
+  });
+
+  document.getElementById("mediaAllResetBtn")?.addEventListener("click", () => {
+    state.mediaAllPinnedOrder = [];
+    persist();
+    renderMediaAllList();
   });
 
   document.getElementById("articleReaderCloseBtn")?.addEventListener("click", closeArticleReader);
@@ -26891,6 +27398,8 @@ function switchMediaTab(tab) {
   const libbyPanel = document.getElementById("mediaLibbyPanel");
   const kindlePanel = document.getElementById("mediaKindlePanel");
   const podcastsPanel = document.getElementById("mediaPodcastsPanel");
+  const allPanel = document.getElementById("mediaAllPanel");
+  const archivePanel = document.getElementById("mediaArchivePanel");
 
   if (booksPanel) booksPanel.hidden = true;
   if (listPanel) listPanel.hidden = true;
@@ -26899,11 +27408,17 @@ function switchMediaTab(tab) {
   if (libbyPanel) libbyPanel.hidden = true;
   if (kindlePanel) kindlePanel.hidden = true;
   if (podcastsPanel) podcastsPanel.hidden = true;
+  if (allPanel) allPanel.hidden = true;
+  if (archivePanel) archivePanel.hidden = true;
   if (syncBtn) syncBtn.hidden = true;
   if (syncSettingsBtn) syncSettingsBtn.hidden = true;
   openArticleId = null;
 
-  if (tab === "books") {
+  if (tab === "all") {
+    if (allPanel) { allPanel.hidden = false; renderMediaAllList(); }
+  } else if (tab === "archive") {
+    if (archivePanel) { archivePanel.hidden = false; renderMediaArchive(); }
+  } else if (tab === "books") {
     if (booksPanel) booksPanel.hidden = false;
     renderReadingPlanner();
   } else if (tab === "books-audible") {
@@ -27011,7 +27526,7 @@ function renderPodcastPlaylistBar() {
       <button class="watch-category-tab${activePodcastTab === "shows" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="shows">Shows</button>
       <button class="watch-category-tab${activePodcastTab === "saved" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="saved">Saved</button>
       <button class="watch-category-tab${activePodcastTab === "search" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="search">Search</button>
-      <button class="watch-category-tab${activePodcastTab === "history" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="history">History</button>
+      <button class="watch-category-tab${activePodcastTab === "history" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="history">Archive</button>
       ${playlists.map(pl => `
         <button class="watch-category-tab${activePodcastTab === pl.id ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="${escapeHtml(pl.id)}">${escapeHtml(pl.name)}</button>
       `).join("")}
@@ -27077,6 +27592,7 @@ function switchPodcastTab(tabId) {
     renderPodcastQueueEpisodes();
   } else if (tabId === "recent") {
     renderRecentEpisodes();
+    refreshStalePodcastFeeds(); // re-renders the list when fresh episodes land
   } else if (tabId === "shows") {
     activePodcastShowId = null;
     renderPodcastShowsGrid();
@@ -27110,6 +27626,7 @@ function showPodcastPlaylistTabMenu(playlistId, anchorBtn) {
 }
 
 function deletePodcastPlaylist(playlistId) {
+  recordDeletion("podcastPlaylists", playlistId);
   state.podcastPlaylists = (state.podcastPlaylists || []).filter(pl => pl.id !== playlistId);
   if (state.podcastPlaylistItems) delete state.podcastPlaylistItems[playlistId];
   if (activePodcastTab === playlistId) activePodcastTab = "playlist";
@@ -27262,6 +27779,14 @@ function openPodcastShow(showId) {
 
 // ── Episodes ─────────────────────────────────────────────────────────────────
 
+// The Media-wide row art: 38px square to the left of the two text lines —
+// the queue's look, used by every list on the Media page.
+function mediaRowArt(url, icon) {
+  return url
+    ? `<img class="media-all-art" src="${escapeHtml(url)}" alt="" width="38" height="38" loading="lazy" onerror="this.style.display='none'">`
+    : `<span class="media-all-art media-all-art--icon">${icon}</span>`;
+}
+
 function podcastEpisodeRowHtml(e, { showShowTitle = false, hasPlaylists = false } = {}) {
   const ep = (state.podcastProgress || {})[e.id] || {};
   const played = !!ep.played;
@@ -27274,6 +27799,7 @@ function podcastEpisodeRowHtml(e, { showShowTitle = false, hasPlaylists = false 
   const plIcon = `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`;
   return `
   <div class="article-row podcast-episode-row${played ? " article-row--read" : ""}${isOpen ? " article-row--active" : ""}" data-episode-id="${escapeHtml(e.id)}" role="button" tabindex="0">
+    ${mediaRowArt(e.art || e.showArt, "🎧")}
     <div class="article-row-main">
       <div class="article-row-title">${escapeHtml(e.title)}</div>
       <div class="article-row-meta">
@@ -27680,7 +28206,7 @@ function showPublicationsModal() {
   render();
 }
 
-function getAutoPlaylist() {
+function getAutoPlaylist(forceIncludeArticles = false) {
   const tiers = state.podcastShowTiers || {};
   const epTiers = state.podcastEpisodeTiers || {};
   const pubTiers = state.publicationTiers || {};
@@ -27698,10 +28224,10 @@ function getAutoPlaylist() {
 
   let items = [...episodes];
 
-  if (state.podcastPlaylistIncludeArticles) {
+  if (forceIncludeArticles) {
     const readIds = new Set(state.readArticleIds || []);
     const articleItems = (state.savedArticles || [])
-      .filter(a => !readIds.has(a.id) && a.url)
+      .filter(a => !readIds.has(a.id) && (a.url || a.text)) // email-converted articles have text but no url
       .map(a => {
         const pubInfo = getReadPublications().find(p => p.key === a.publication);
         return {
@@ -27728,6 +28254,326 @@ function getAutoPlaylist() {
     const dateA = new Date(a.pubDate), dateB = new Date(b.pubDate);
     return newestFirst ? dateB - dateA : dateA - dateB;
   });
+}
+
+// ── "All" blended listen list ────────────────────────────────────────────────
+// Podcasts + saved articles from the auto playlist (tiers, window, sort),
+// plus unfinished books as tap-to-open entries. Manual drag ordering is
+// pinned in state.mediaAllPinnedOrder and holds until items are played.
+
+let mediaAllQueueId = null;   // id of the item currently playing from the All queue
+let mediaAllQueueRest = [];   // ordered ids remaining after the current item
+
+function getAllListenList() {
+  const items = getAutoPlaylist(true).map((e) => (e.type === "article" ? e : { ...e, type: e.type || "podcast" }));
+  (state.readingItems || [])
+    .filter((b) => b.status && b.status !== "finished")
+    .forEach((b) => items.push({
+      id: b.id,
+      type: "book",
+      title: b.title || "Book",
+      showTitle: (b.authors || []).join(", ") || (b.format === "audiobook" ? "Audiobook" : "Book"),
+      format: b.format || "book",
+      pubDate: b.createdAt || ""
+    }));
+
+  const pinned = state.mediaAllPinnedOrder || [];
+  if (!pinned.length) return items;
+  const pos = new Map(pinned.map((id, i) => [id, i]));
+  const inPinned = items.filter((i) => pos.has(i.id)).sort((a, b) => pos.get(a.id) - pos.get(b.id));
+  const rest = items.filter((i) => !pos.has(i.id));
+  return [...inPinned, ...rest];
+}
+
+function renderMediaAllList() {
+  const listEl = document.getElementById("mediaAllList");
+  if (!listEl) return;
+  const items = getAllListenList();
+  document.getElementById("mediaAllResetBtn").hidden = !(state.mediaAllPinnedOrder || []).length;
+
+  if (!items.length) {
+    listEl.innerHTML = `<div class="article-empty"><p>Nothing to listen to right now.</p><p>Subscribe to podcasts, save articles, or add books — they all blend here.</p></div>`;
+    return;
+  }
+
+  // Same look as the podcast queue: article-row markup, tier dividers (only
+  // while the order is pure auto — a manual arrangement interleaves tiers),
+  // drag handles, logos and type badges.
+  const tiers = state.podcastShowTiers || {};
+  const epTiers = state.podcastEpisodeTiers || {};
+  const pubTiers = state.publicationTiers || {};
+  const progress = state.podcastProgress || {};
+  const effectiveTier = (e) =>
+    e.type === "article" ? (pubTiers[e.publication] ?? 4)
+    : e.type === "book" ? 99
+    : (epTiers[e.id] ?? tiers[e.showId] ?? 4);
+  const tierLabel = (t) => t === 99 ? "Books" : (t <= (state.podcastTierCount ?? 3) ? `Tier ${t}` : "Untiered");
+  const showDividers = !(state.mediaAllPinnedOrder || []).length;
+
+  let html = "";
+  let lastTier = null;
+  items.forEach((e) => {
+    if (showDividers) {
+      const t = effectiveTier(e);
+      if (t !== lastTier) {
+        html += `<div class="playlist-tier-divider" data-tier="${t}">${tierLabel(t)}</div>`;
+        lastTier = t;
+      }
+    }
+    const badge = e.type === "article" ? "Article" : e.type === "book" ? "Book" : "";
+    const dur = e.type !== "article" && e.type !== "book" ? (e.duration || progress[e.id]?.duration || 0) : 0;
+    const art = e.showArt
+      ? `<img class="media-all-art" src="${escapeHtml(e.showArt)}" alt="" width="38" height="38" loading="lazy" onerror="this.style.display='none'">`
+      : `<span class="media-all-art media-all-art--icon">${e.type === "book" ? "📚" : e.type === "article" ? "📰" : "🎧"}</span>`;
+    html += `
+    <div class="article-row podcast-episode-row podcast-draggable-row${e.id === mediaAllQueueId ? " article-row--active" : ""}" data-all-id="${escapeHtml(e.id)}" data-all-type="${escapeHtml(e.type)}" draggable="true" role="button" tabindex="0">
+      <span class="playlist-drag-handle" title="Drag to reorder" aria-label="Drag to reorder">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
+      </span>
+      ${art}
+      <div class="article-row-main">
+        <div class="article-row-title">${escapeHtml(e.title || "")}</div>
+        <div class="article-row-meta">
+          <span class="article-row-pub">${escapeHtml(e.showTitle || "")}</span>
+          ${e.pubDate ? `<span class="article-row-date">${escapeHtml(formatArticleDate(e.pubDate))}</span>` : ""}
+          ${dur ? `<span class="article-row-date">${formatPodcastDuration(dur)}</span>` : ""}
+          ${badge ? `<span class="playlist-article-badge">${badge}</span>` : ""}
+        </div>
+      </div>
+      <div class="article-row-actions">
+        ${e.type === "book"
+          ? `<button class="article-row-action-btn" type="button" title="Open" aria-label="Open" data-all-open="${escapeHtml(e.id)}"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>`
+          : `
+          <button class="article-row-action-btn" type="button" title="Mark as played" aria-label="Mark as played" data-all-played="${escapeHtml(e.id)}">
+            <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+          </button>
+          <button class="article-row-action-btn" type="button" title="Remove from playlist" aria-label="Remove from playlist" data-all-remove="${escapeHtml(e.id)}">
+            <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+          <button class="article-row-action-btn" type="button" title="Play from here" aria-label="Play from here" data-all-play="${escapeHtml(e.id)}">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+          </button>`}
+      </div>
+    </div>`;
+  });
+  listEl.innerHTML = html;
+
+  listEl.querySelectorAll("[data-all-id]").forEach((row) => {
+    row.addEventListener("click", (ev) => {
+      if (ev.target.closest(".article-row-actions, .playlist-drag-handle")) return;
+      if (row.dataset.allType === "book") openMediaAllBook(row.dataset.allId);
+      else playAllQueueFrom(row.dataset.allId);
+    });
+  });
+  listEl.querySelectorAll("[data-all-play]").forEach((b) =>
+    b.addEventListener("click", (ev) => { ev.stopPropagation(); playAllQueueFrom(b.dataset.allPlay); }));
+  listEl.querySelectorAll("[data-all-open]").forEach((b) =>
+    b.addEventListener("click", (ev) => { ev.stopPropagation(); openMediaAllBook(b.dataset.allOpen); }));
+  listEl.querySelectorAll("[data-all-played]").forEach((b) =>
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const id = b.dataset.allPlayed;
+      const type = b.closest("[data-all-type]")?.dataset.allType;
+      if (type === "article") markArticleRead(id);
+      else setPodcastEpisodePlayed(id, true);
+      renderMediaAllList();
+    }));
+  listEl.querySelectorAll("[data-all-remove]").forEach((b) =>
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const id = b.dataset.allRemove;
+      const type = b.closest("[data-all-type]")?.dataset.allType;
+      if (type === "article") {
+        markArticleRead(id);
+      } else {
+        if (!state.podcastAutoSkipped) state.podcastAutoSkipped = [];
+        if (!state.podcastAutoSkipped.includes(id)) state.podcastAutoSkipped.push(id);
+        persist();
+      }
+      renderMediaAllList();
+    }));
+
+  setupMediaAllDrag(listEl, items);
+}
+
+// Unified Archive: everything finished across the Media page — played podcast
+// episodes, read articles, finished books — with restore actions.
+function renderMediaArchive() {
+  const listEl = document.getElementById("mediaArchiveList");
+  if (!listEl) return;
+
+  const progress = state.podcastProgress || {};
+  const playedEpisodes = (state.podcasts || []).flatMap((p) =>
+    (p.episodes || [])
+      .filter((e) => progress[e.id]?.played)
+      .map((e) => ({ id: e.id, type: "podcast", title: e.title, showTitle: p.title, showArt: p.art, when: progress[e.id]?.playedAt || e.pubDate || "" }))
+  ).sort((a, b) => new Date(b.when || 0) - new Date(a.when || 0)).slice(0, 50);
+
+  const readIds = new Set(state.readArticleIds || []);
+  const readDates = state.articleReadDates || {};
+  const readArticles = (state.savedArticles || [])
+    .filter((a) => readIds.has(a.id))
+    .map((a) => {
+      const pubInfo = getReadPublications().find((p) => p.key === a.publication);
+      return { id: a.id, type: "article", title: a.title, showTitle: pubInfo?.label || a.author || a.publication || "Article", showArt: pubInfo?.domain ? publicationLogoUrl(pubInfo.domain) : null, when: readDates[a.id] || a.savedAt || "" };
+    })
+    .sort((a, b) => new Date(b.when || 0) - new Date(a.when || 0)).slice(0, 50);
+
+  const finishedBooks = (state.readingItems || [])
+    .filter((b) => b.status === "finished")
+    .map((b) => ({ id: b.id, type: "book", title: b.title, showTitle: (b.authors || []).join(", ") || "Book", showArt: b.coverUrl || null, when: b.readDate || b.createdAt || "" }))
+    .sort((a, b) => new Date(b.when || 0) - new Date(a.when || 0)).slice(0, 50);
+
+  const groups = [
+    ["Podcasts", playedEpisodes],
+    ["Saved Articles", readArticles],
+    ["Books", finishedBooks],
+  ].filter(([, items]) => items.length);
+
+  if (!groups.length) {
+    listEl.innerHTML = `<div class="article-empty"><p>Nothing archived yet.</p><p>Played episodes, read articles, and finished books collect here.</p></div>`;
+    return;
+  }
+
+  listEl.innerHTML = groups.map(([label, items]) =>
+    `<div class="playlist-tier-divider">${label}</div>` +
+    items.map((e) => `
+    <div class="article-row podcast-episode-row article-row--read" data-archive-id="${escapeHtml(e.id)}" data-archive-type="${escapeHtml(e.type)}" role="button" tabindex="0">
+      ${e.showArt
+        ? `<img class="media-all-art" src="${escapeHtml(e.showArt)}" alt="" width="38" height="38" loading="lazy" onerror="this.style.display='none'">`
+        : `<span class="media-all-art media-all-art--icon">${e.type === "book" ? "📚" : e.type === "article" ? "📰" : "🎧"}</span>`}
+      <div class="article-row-main">
+        <div class="article-row-title">${escapeHtml(e.title || "")}</div>
+        <div class="article-row-meta">
+          <span class="article-row-pub">${escapeHtml(e.showTitle || "")}</span>
+          ${e.when ? `<span class="article-row-date">${escapeHtml(formatArticleDate(e.when))}</span>` : ""}
+        </div>
+      </div>
+      <div class="article-row-actions">
+        ${e.type === "book" ? "" : `
+        <button class="article-row-action-btn" type="button" title="${e.type === "article" ? "Mark as unread" : "Mark as unplayed"}" aria-label="Restore" data-archive-restore="${escapeHtml(e.id)}">
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+        </button>`}
+      </div>
+    </div>`).join("")
+  ).join("");
+
+  listEl.querySelectorAll("[data-archive-id]").forEach((row) => {
+    row.addEventListener("click", (ev) => {
+      if (ev.target.closest(".article-row-actions")) return;
+      const id = row.dataset.archiveId;
+      const type = row.dataset.archiveType;
+      if (type === "article") openArticle(id, "articleList");
+      else if (type === "podcast") openPodcastEpisode(id);
+      else openMediaAllBook(id);
+    });
+  });
+  listEl.querySelectorAll("[data-archive-restore]").forEach((b) =>
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const id = b.dataset.archiveRestore;
+      const type = b.closest("[data-archive-type]")?.dataset.archiveType;
+      if (type === "article") {
+        state.readArticleIds = (state.readArticleIds || []).filter((x) => x !== id);
+        if (state.articleReadDates) delete state.articleReadDates[id];
+        persist();
+      } else {
+        setPodcastEpisodePlayed(id, false);
+      }
+      renderMediaArchive();
+    }));
+}
+
+function openMediaAllBook(id) {
+  const book = (state.readingItems || []).find((b) => b.id === id);
+  const tab = book?.format === "audiobook" ? "books-audible"
+    : book?.format === "libby" ? "books-libby"
+    : book?.format === "kindle" ? "books-kindle" : "books";
+  switchMediaTab(tab);
+}
+
+function setupMediaAllDrag(listEl, items) {
+  let dragSrc = null;
+  listEl.querySelectorAll("[data-all-id]").forEach((row) => {
+    row.addEventListener("dragstart", (e) => {
+      dragSrc = row;
+      e.dataTransfer.effectAllowed = "move";
+      row.classList.add("is-dragging");
+    });
+    row.addEventListener("dragend", () => {
+      row.classList.remove("is-dragging");
+      listEl.querySelectorAll(".is-drag-over").forEach((r) => r.classList.remove("is-drag-over"));
+      dragSrc = null;
+    });
+  });
+  listEl.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    const target = e.target.closest("[data-all-id]");
+    if (!target || target === dragSrc) return;
+    listEl.querySelectorAll(".is-drag-over").forEach((r) => r.classList.remove("is-drag-over"));
+    target.classList.add("is-drag-over");
+  });
+  listEl.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const target = e.target.closest("[data-all-id]");
+    if (!target || !dragSrc || target === dragSrc) return;
+    const ids = items.map((i) => i.id);
+    const from = ids.indexOf(dragSrc.dataset.allId);
+    const to = ids.indexOf(target.dataset.allId);
+    if (from < 0 || to < 0) return;
+    const [moved] = ids.splice(from, 1);
+    ids.splice(from < to ? to - 1 : to, 0, moved);
+    // Materialize the whole current arrangement as the pinned order
+    state.mediaAllPinnedOrder = ids;
+    persist();
+    renderMediaAllList();
+  });
+}
+
+function playAllQueueFrom(id) {
+  const items = getAllListenList();
+  const start = items.findIndex((i) => i.id === id);
+  for (let j = Math.max(start, 0); j < items.length; j++) {
+    if (items[j].type === "book") continue; // books are visible but not playable
+    mediaAllQueueId = items[j].id;
+    mediaAllQueueRest = items.slice(j + 1).map((i) => i.id);
+    playMediaAllItem(items[j]);
+    renderMediaAllList();
+    return;
+  }
+}
+
+function playMediaAllItem(item) {
+  if (item.type === "article") {
+    const article = (state.savedArticles || []).find((a) => a.id === item.id);
+    if (article) { openArticle(article.id, "articleList"); startListenTTS(article); }
+  } else {
+    const show = (state.podcasts || []).find((p) => p.id === item.showId);
+    playPodcastEpisode(item, show);
+  }
+  // Warm up the next item's audio while this one plays
+  prefetchNextQueueAudio();
+}
+
+// Called when a queue item finishes: step to the next playable item in the
+// order that was on screen when playback started (refreshed for availability).
+function advanceMediaAllQueue(finishedId) {
+  if (!mediaAllQueueId || mediaAllQueueId !== finishedId) return false;
+  const current = getAllListenList();
+  const byId = new Map(current.map((i) => [i.id, i]));
+  while (mediaAllQueueRest.length) {
+    const nextId = mediaAllQueueRest.shift();
+    const item = byId.get(nextId);
+    if (item && item.type !== "book") {
+      mediaAllQueueId = item.id;
+      playMediaAllItem(item);
+      if (activeMediaTab === "all") renderMediaAllList();
+      return true;
+    }
+  }
+  mediaAllQueueId = null;
+  if (activeMediaTab === "all") renderMediaAllList();
+  return true;
 }
 
 // ── Playlist (queue) ──────────────────────────────────────────────────────────
@@ -27817,23 +28663,6 @@ function initPodcastEpisodeListDelegation() {
     else if (episodeId) openPodcastEpisode(episodeId);
   });
 
-  listEl.addEventListener("change", (e) => {
-    if (e.target.id === "playlistStripAdsCheck") {
-      state.podcastSkipAds = e.target.checked;
-      persist();
-      const playerToggle = document.getElementById("podcastSkipAdsToggle");
-      if (playerToggle) playerToggle.checked = e.target.checked;
-      if (e.target.checked) scheduleAdSkips(podcastCurrentChapters, podcastAudio);
-      else clearAdSkipTimers();
-      return;
-    }
-    if (e.target.id === "playlistIncludeArticlesCheck") {
-      state.podcastPlaylistIncludeArticles = e.target.checked;
-      persist();
-      renderPodcastQueueEpisodes();
-    }
-  });
-
   let dragItem = null;
 
   listEl.addEventListener("dragstart", (e) => {
@@ -27890,24 +28719,11 @@ function renderPodcastQueueEpisodes() {
   const listEl = document.getElementById("podcastEpisodeList");
   if (!listEl) return;
 
+  // Podcasts-only here — the blended podcasts+articles list lives in the
+  // "All" tab. Ad-Block moved to Media settings.
   const auto = getAutoPlaylist();
   if (auto) {
-    const checked = state.podcastPlaylistIncludeArticles ? "checked" : "";
-    const adsChecked = state.podcastSkipAds ? "checked" : "";
-    listEl.innerHTML = `
-      <div class="playlist-include-articles-bar">
-        <label class="playlist-include-articles-label">
-          <input type="checkbox" id="playlistStripAdsCheck" ${adsChecked}>
-          <span class="playlist-articles-toggle-track"><span class="playlist-articles-toggle-thumb"></span></span>
-          Ad-Block
-        </label>
-        <label class="playlist-include-articles-label">
-          <input type="checkbox" id="playlistIncludeArticlesCheck" ${checked}>
-          <span class="playlist-articles-toggle-track"><span class="playlist-articles-toggle-thumb"></span></span>
-          Articles
-        </label>
-      </div>
-      <div id="podcastAutoList"></div>`;
+    listEl.innerHTML = `<div id="podcastAutoList"></div>`;
     renderAutoPlaylist(document.getElementById("podcastAutoList"), auto);
     return;
   }
@@ -27933,7 +28749,7 @@ function renderPodcastQueueEpisodes() {
     const isOpen = e.id === openPodcastEpisodeId;
     return `
     <div class="article-row podcast-episode-row${played ? " article-row--read" : ""}${isOpen ? " article-row--active" : ""}" data-episode-id="${escapeHtml(e.id)}" role="button" tabindex="0">
-      <span class="podcast-queue-num">${i + 1}</span>
+      ${mediaRowArt(e.showArt, "🎧")}
       <div class="article-row-main">
         <div class="article-row-title">${escapeHtml(e.title)}</div>
         <div class="article-row-meta">
@@ -27970,8 +28786,7 @@ function renderAutoPlaylist(listEl, items) {
   const tierLabel = (t) => t <= (state.podcastTierCount ?? 3) ? `Tier ${t}` : "Untiered";
 
   if (!items.length) {
-    const hasArticles = state.podcastPlaylistIncludeArticles;
-    listEl.innerHTML = `<div class="article-empty"><p>No unplayed ${hasArticles ? "items" : "episodes"}.</p><p>Subscribe to shows on the <strong>Shows</strong> tab${hasArticles ? " or save articles" : ""}.</p></div>`;
+    listEl.innerHTML = `<div class="article-empty"><p>No unplayed episodes.</p><p>Subscribe to shows on the <strong>Shows</strong> tab.</p></div>`;
     return;
   }
 
@@ -27989,14 +28804,10 @@ function renderAutoPlaylist(listEl, items) {
       <div class="article-row podcast-episode-row podcast-draggable-row playlist-article-row"
            data-article-id="${escapeHtml(e.id)}" data-pub-key="${escapeHtml(e.publication || "")}" data-tier="${t}" draggable="true" role="button" tabindex="0">
         <span class="playlist-drag-handle" title="Drag to reprioritize" aria-label="Drag to reorder">
-          <svg viewBox="0 0 10 16" width="10" height="16" fill="currentColor" aria-hidden="true">
-            <circle cx="3" cy="2.5" r="1.5"/><circle cx="7" cy="2.5" r="1.5"/>
-            <circle cx="3" cy="8" r="1.5"/><circle cx="7" cy="8" r="1.5"/>
-            <circle cx="3" cy="13.5" r="1.5"/><circle cx="7" cy="13.5" r="1.5"/>
-          </svg>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
         </span>
+        ${mediaRowArt(e.showArt, "📰")}
         <div class="article-row-main">
-          ${e.showArt ? `<img class="playlist-article-logo" src="${escapeHtml(e.showArt)}" alt="" loading="lazy" onerror="this.style.display='none'">` : ""}
           <div class="article-row-title">${escapeHtml(e.title)}</div>
           <div class="article-row-meta">
             <span class="article-row-pub">${escapeHtml(e.showTitle)}</span>
@@ -28018,12 +28829,9 @@ function renderAutoPlaylist(listEl, items) {
       <div class="article-row podcast-episode-row podcast-draggable-row${isOpen ? " article-row--active" : ""}"
            data-episode-id="${escapeHtml(e.id)}" data-show-id="${escapeHtml(e.showId || "")}" data-tier="${t}" draggable="true" role="button" tabindex="0">
         <span class="playlist-drag-handle" title="Drag to reprioritize" aria-label="Drag to reorder">
-          <svg viewBox="0 0 10 16" width="10" height="16" fill="currentColor" aria-hidden="true">
-            <circle cx="3" cy="2.5" r="1.5"/><circle cx="7" cy="2.5" r="1.5"/>
-            <circle cx="3" cy="8" r="1.5"/><circle cx="7" cy="8" r="1.5"/>
-            <circle cx="3" cy="13.5" r="1.5"/><circle cx="7" cy="13.5" r="1.5"/>
-          </svg>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
         </span>
+        ${mediaRowArt(e.art || e.showArt, "🎧")}
         <div class="article-row-main">
           <button class="playlist-ep-title-btn" type="button" data-episode-notes="${escapeHtml(e.id)}">${escapeHtml(e.title)}</button>
           <div class="article-row-meta">
@@ -28517,6 +29325,7 @@ function startPodcastPlayback(episode, show) {
     setPodcastEpisodePlayed(episode.id, true);
     updatePodcastPlayBtn();
     updateMiniPlayerPlayBtn();
+    advanceMediaAllQueue(episode.id); // seamless hand-off when playing the All queue
   });
   podcastAudio.addEventListener("play", () => {
     updatePodcastPlayBtn();
@@ -28806,7 +29615,7 @@ function renderPodcastHistoryTab() {
     const dur = e.duration || progress[e.id]?.duration || 0;
     return `
     <div class="article-row podcast-episode-row article-row--read" data-episode-id="${escapeHtml(e.id)}" role="button" tabindex="0">
-      <svg class="article-row-check" viewBox="0 0 24 24" aria-label="Played"><polyline points="20 6 9 17 4 12"/></svg>
+      ${mediaRowArt(e.showArt, "🎧")}
       <div class="article-row-main">
         <div class="article-row-title">${escapeHtml(e.title)}</div>
         <div class="article-row-meta">
@@ -29216,12 +30025,14 @@ function renderArticleList(containerId, pub) {
 
   listEl.innerHTML = sortBar + articles.map((a) => {
     const isRead = readIds.has(a.id);
-    const pubLabel = pub === "all" ? (() => {
-      const entry = getReadPublications().find(p => p.key === a.publication);
-      return entry?.label || (a.publication === "other" ? "Other" : a.publication);
-    })() : "";
+    const pubEntry = getReadPublications().find(p => p.key === a.publication);
+    const pubLabel = pub === "all"
+      ? (pubEntry?.label || (a.publication === "other" ? "Other" : a.publication))
+      : "";
+    const artUrl = pubEntry?.domain ? publicationLogoUrl(pubEntry.domain) : "";
     return `
     <div class="article-row${isRead ? " article-row--read" : ""}" data-article-id="${escapeHtml(a.id)}" role="button" tabindex="0">
+      ${mediaRowArt(artUrl, "📰")}
       <div class="article-row-main">
         <div class="article-row-title">${escapeHtml(a.title || a.url)}</div>
         <div class="article-row-meta">
@@ -29715,26 +30526,72 @@ function listenToArticle(id) {
   startListenTTS(article);
 }
 
+// Fetches (or generates) the TTS chunk URLs for an article. The server caches
+// generated audio per article, so repeated calls are cheap.
+async function generateTtsUrls(article) {
+  const text = article.text?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || "";
+  if (!text) return null;
+  trackUsage("google_tts");
+  const result = await callNetlifyFunction("generate-tts", { articleId: article.id, text });
+  if (result.error || !Array.isArray(result.urls) || !result.urls.length) {
+    throw new Error(result.error || "Unknown error");
+  }
+  return result.urls;
+}
+
+// Audio prefetched for upcoming All-queue items: articleId → Promise<urls>
+const ttsPrefetchCache = new Map();
+
+// While something is playing, generate the NEXT queue article's audio in the
+// background so the hand-off between items is gapless.
+function prefetchNextQueueAudio() {
+  const byId = new Map(getAllListenList().map((i) => [i.id, i]));
+  for (const id of mediaAllQueueRest) {
+    const item = byId.get(id);
+    if (!item || item.type === "book") continue;
+    if (item.type === "article" && !ttsPrefetchCache.has(id)) {
+      const article = (state.savedArticles || []).find((a) => a.id === id);
+      if (article) {
+        ttsPrefetchCache.set(id, generateTtsUrls(article).catch((e) => {
+          ttsPrefetchCache.delete(id); // failed prefetch → regenerate on demand
+          console.warn("TTS prefetch failed:", e.message);
+          return null;
+        }));
+      }
+    }
+    return; // only look at the immediate next playable item
+  }
+}
+
 async function startListenTTS(article) {
   stopListen();
-  const text = article.text?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || "";
-  if (!text) return;
-  trackUsage("google_tts");
   listenLoading = true;
   const myGenId = ++listenGenId;
   updateListenPlayBtn();
 
-  const result = await callNetlifyFunction("generate-tts", { articleId: article.id, text });
-  if (myGenId !== listenGenId) return;
+  let urls = null;
+  const prefetched = ttsPrefetchCache.get(article.id);
+  if (prefetched) {
+    urls = await prefetched;
+    ttsPrefetchCache.delete(article.id);
+    if (myGenId !== listenGenId) return;
+  }
+  if (!urls) {
+    try {
+      urls = await generateTtsUrls(article);
+    } catch (e) {
+      if (myGenId !== listenGenId) return;
+      listenLoading = false;
+      updateListenPlayBtn();
+      alert("Could not generate audio: " + e.message);
+      return;
+    }
+    if (myGenId !== listenGenId) return;
+  }
+  if (!urls) { listenLoading = false; updateListenPlayBtn(); return; }
 
   listenLoading = false;
-  if (result.error || !Array.isArray(result.urls) || !result.urls.length) {
-    updateListenPlayBtn();
-    alert("Could not generate audio: " + (result.error || "Unknown error"));
-    return;
-  }
-
-  listenAudioQueue = [...result.urls];
+  listenAudioQueue = [...urls];
   playNextAudioChunk(article);
 }
 
@@ -29744,7 +30601,8 @@ function playNextAudioChunk(article) {
     listenAudio = null;
     updateListenPlayBtn();
     markArticleRead(article.id);
-    advanceListenArticle();
+    // All-queue hand-off takes priority; otherwise the per-tab article advance
+    if (!advanceMediaAllQueue(article.id)) advanceListenArticle();
     return;
   }
   const url = listenAudioQueue.shift();
@@ -32044,18 +32902,7 @@ function formatTravelCurrency(trip, amount) {
 function showExploreApp(event) {
   event?.stopPropagation();
   activeAppArea = "explore";
-  elements.homeMainPage.hidden = true;
-  document.querySelector("[data-section='mealPrep']").hidden = true;
-  elements.doMainPage.hidden = true;
-  elements.playMainPage.hidden = true;
-  elements.watchMainPage.hidden = true;
-  elements.mediaMainPage.hidden = true;
-  elements.shopMainPage.hidden = true;
-  elements.inventoryMainPage.hidden = true;
-  elements.recreateMainPage.hidden = true;
-  elements.planMainPage.hidden = true;
-  elements.settingsMainPage.hidden = true;
-  elements.mailMainPage.hidden = true;
+  hideAllPages();
   document.getElementById("exploreMainPage").hidden = false;
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
@@ -32064,7 +32911,8 @@ function showExploreApp(event) {
   closePageTitleMenu();
   closeAppMenu();
   wireExploreTabs();
-  renderExploreSidebar(exploreOpenTripId);
+  // Reopen the most recently viewed trip (survives reloads via localStorage)
+  renderExploreSidebar(exploreOpenTripId || localStorage.getItem("live-explore-last-trip"));
 }
 
 function renderExploreSidebar(preserveSelectedId) {
@@ -32100,12 +32948,23 @@ function showExploreTripEmpty() {
   exploreOpenTripId = null;
   document.getElementById("exploreTripEmpty").hidden = false;
   document.getElementById("exploreTripView").hidden = true;
+  // No hamburger exists without an open trip — make sure the trips list is reachable
+  const sidebar = document.getElementById("exMediaSidebar");
+  sidebar?.classList.remove("is-collapsed");
+  if (window.innerWidth <= 680) sidebar?.classList.add("is-expanded");
 }
 
 function openExploreTrip(tripId) {
   const trip = (state.trips || []).find(t => t.id === tripId);
   if (!trip) return;
+  if (exploreOpenTripId !== tripId) exploreActiveDayKey = ""; // new trip starts on Day 1
   exploreOpenTripId = tripId;
+  localStorage.setItem("live-explore-last-trip", tripId); // reopen this trip on next visit
+  // Selecting a trip hides the trips menu: slide-over closes on mobile,
+  // docked sidebar collapses on desktop (hamburger next to the title reopens it)
+  const tripSidebar = document.getElementById("exMediaSidebar");
+  tripSidebar?.classList.remove("is-expanded");
+  if (window.innerWidth > 680) tripSidebar?.classList.add("is-collapsed");
   document.getElementById("exploreTripEmpty").hidden = true;
   document.getElementById("exploreTripView").hidden = false;
 
@@ -32215,7 +33074,7 @@ function openExploreTripMenu(event, tripId) {
 function showTravelEditTripDialog(tripId) {
   const trip = (state.trips || []).find(t => t.id === tripId);
   if (!trip) return;
-  const partyOptions = ["Luke", "MJ", "Sophia", "Friends", "Family"];
+  const partyOptions = [...new Set([...travelPartyOptions(), ...(trip.party || [])])];
   const partyChipsHtml = partyOptions.map(p => {
     const sel = (trip.party || []).includes(p) ? " is-selected" : "";
     return `<button type="button" class="travel-party-chip${sel}" data-party="${p}">${p}</button>`;
@@ -32380,6 +33239,61 @@ function setupDragReorder(itemList, items, timeField, onReorder) {
   });
 }
 
+// Cross-category drag-reorder for a day's untimed cards. `entries` is
+// [{ el, item }] in rendered order — items may come from different section
+// arrays (activities, food, travel, lodging). Order is persisted as
+// item.dayOrder, which the renderer sorts by, so the arrangement holds
+// across the Overview and the per-category tabs alike.
+function setupDayDragReorder(itemList, entries, onReorder) {
+  let dragSrc = null;
+
+  entries.forEach(({ el, item }) => {
+    el.draggable = true;
+    el.classList.add("trip-item-card--draggable");
+
+    const handle = document.createElement("span");
+    handle.className = "trip-drag-handle";
+    handle.setAttribute("aria-hidden", "true");
+    const header = el.querySelector(".trip-item-header");
+    if (header) header.insertBefore(handle, header.firstChild);
+
+    el.addEventListener("dragstart", e => {
+      dragSrc = el;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", item.id);
+      requestAnimationFrame(() => el.classList.add("trip-item-card--dragging"));
+    });
+
+    el.addEventListener("dragend", () => {
+      el.classList.remove("trip-item-card--dragging");
+      itemList.querySelectorAll(".trip-item-card--drag-over").forEach(c => c.classList.remove("trip-item-card--drag-over"));
+      dragSrc = null;
+    });
+  });
+
+  itemList.addEventListener("dragover", e => {
+    e.preventDefault();
+    const target = e.target.closest(".trip-item-card--draggable");
+    if (!target || target === dragSrc) return;
+    itemList.querySelectorAll(".trip-item-card--drag-over").forEach(c => c.classList.remove("trip-item-card--drag-over"));
+    target.classList.add("trip-item-card--drag-over");
+  });
+
+  itemList.addEventListener("drop", e => {
+    e.preventDefault();
+    const target = e.target.closest(".trip-item-card--draggable");
+    if (!target || !dragSrc || target === dragSrc) return;
+    const srcIdx = entries.findIndex(en => en.el === dragSrc);
+    const dstIdx = entries.findIndex(en => en.el === target);
+    if (srcIdx < 0 || dstIdx < 0) return;
+    const [moved] = entries.splice(srcIdx, 1);
+    entries.splice(srcIdx < dstIdx ? dstIdx - 1 : dstIdx, 0, moved);
+    entries.forEach((en, i) => { en.item.dayOrder = i; });
+    persist();
+    onReorder();
+  });
+}
+
 function formatHour(h) {
   if (h === 0) return "12 AM";
   if (h < 12) return h + " AM";
@@ -32431,10 +33345,10 @@ function showItemDetailView(type, item, trip, ownerDateKey, onEdit) {
   let icon = "📋", title = "Details", subtitle = "", bodyHtml = "";
 
   if (type === "travel") {
-    const MI = { airplane:"✈️", train:"🚂", bus:"🚌", automobile:"🚗", "car-own":"🚗", "car-rental":"🚙", walk:"🚶", other:"🔀" };
+    const MI = { airplane:"✈️", train:"🚂", bus:"🚌", automobile:"🚗", "car-own":"🚗", "car-rental":"🚙", walk:"🚶", bike:"🚲", other:"🔀" };
     icon = MI[item.mode] || "🚀";
     title = [item.from, item.to].filter(Boolean).join(" → ") || "Travel leg";
-    const MODE_LABELS = { airplane:"Flight", train:"Train", bus:"Bus", automobile:"Car", "car-own":"Car", "car-rental":"Car Rental", walk:"Walking", other:"Transit" };
+    const MODE_LABELS = { airplane:"Flight", train:"Train", bus:"Bus", automobile:"Car", "car-own":"Car", "car-rental":"Car Rental", walk:"Walking", bike:"Bike", other:"Transit" };
     subtitle = item.flightNumber || MODE_LABELS[item.mode] || "";
     const rows = [];
     const dep = [item.departDate ? fmtDate(item.departDate) : null, item.departTime].filter(Boolean).join("  ·  ");
@@ -32463,6 +33377,21 @@ function showItemDetailView(type, item, trip, ownerDateKey, onEdit) {
     if (item.notes) rows.push(row("Notes", item.notes));
     bodyHtml = rows.join("");
 
+  } else if (type === "carBooking") {
+    icon = "🚙";
+    title = item.title || "Rental car";
+    subtitle = item.vehicleType || "Car rental";
+    const rows = [];
+    if (item.startDate || item.pickupLocation)
+      rows.push(row("Pick-up", [item.startDate ? fmtDate(item.startDate) : null, item.pickupLocation || item.location].filter(Boolean).join("  ·  ")));
+    if (item.endDate || item.dropoffLocation)
+      rows.push(row("Drop-off", [item.endDate ? fmtDate(item.endDate) : null, item.dropoffLocation].filter(Boolean).join("  ·  ")));
+    if (item.mileage) rows.push(row("Mileage", item.mileage));
+    if (item.confirmation) rows.push(row("Conf #", item.confirmation));
+    if (item.cost) rows.push(row("Cost", "$" + item.cost));
+    if (item.notes) rows.push(row("Notes", item.notes));
+    bodyHtml = rows.join("");
+
   } else if (type === "activity") {
     const AI = { sightseeing:"🏛️", museum:"🎨", tour:"🗺️", adventure:"🏄", entertainment:"🎭", other:"⭐" };
     icon = AI[item.activityType] || "⭐";
@@ -32476,6 +33405,7 @@ function showItemDetailView(type, item, trip, ownerDateKey, onEdit) {
     const locStr = [loc, endLoc].filter(Boolean).join(" → ");
     const locLink = loc ? "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(loc) : "";
     if (locStr) rows.push(row("Location", locStr, locLink || undefined));
+    if (item.website) rows.push(row("Website", item.website.replace(/^https?:\/\//i, ""), item.website));
     if (item.confirmationNo) rows.push(row("Booking #", item.confirmationNo));
     if (item.notes) rows.push(row("Notes", item.notes));
     bodyHtml = rows.join("");
@@ -32518,6 +33448,89 @@ function showItemDetailView(type, item, trip, ownerDateKey, onEdit) {
   dlg.addEventListener("close", () => dlg.remove());
 }
 
+// ── Travel-time suggestions (Google Distance Matrix via travel-time fn) ──────
+const travelTimesCache = new Map(); // "origin|destination" → Promise<times|null>
+
+function fetchTravelTimes(origin, destination) {
+  const key = origin + "|" + destination;
+  if (travelTimesCache.has(key)) return travelTimesCache.get(key);
+  const url = (canUseLocalBackend() ? "/api/travel-time" : "/.netlify/functions/travel-time") +
+    "?" + new URLSearchParams({ origin, destination });
+  const p = fetch(url, { headers: { authorization: "Bearer " + (authSession?.access_token || "") } })
+    .then(r => (r.ok ? r.json() : null))
+    .then(d => d?.times || null)
+    .catch(() => null);
+  travelTimesCache.set(key, p);
+  return p;
+}
+
+// Which mode makes the most sense: short hops are walks; with a car available,
+// drive; otherwise transit unless it is far slower than driving.
+function pickSuggestedTravelMode(times, hasCar) {
+  const w = times.walk?.durationMin, d = times.drive?.durationMin, t = times.transit?.durationMin;
+  if (w != null && w <= 18) return "walk";
+  if (hasCar && d != null) return "drive";
+  if (t != null && d != null) return t <= d * 1.5 ? "transit" : "drive";
+  if (t != null) return "transit";
+  if (d != null) return "drive";
+  return w != null ? "walk" : null;
+}
+
+// Google-Maps-style route chooser for a connection: shows the best route
+// duration for drive / transit / walk / bike, and creates the travel leg
+// with the picked mode.
+function showConnectionRouteDialog(trip, dateKey, a, b, hasCar, onSave) {
+  const d = document.createElement("dialog");
+  d.className = "recipe-dialog auth-dialog";
+  d.innerHTML =
+    '<div class="recipe-form">' +
+    '<div class="dialog-head"><div><p class="muted-label">Plan connection</p><h2>' + escapeHtml(a.label) + ' → ' + escapeHtml(b.label) + '</h2></div>' +
+    '<button class="icon-btn" id="crdClose" type="button" title="Close" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>' +
+    '<div id="crdOptions" class="conn-route-options"><p class="muted-label" style="margin:8px 0">Loading routes…</p></div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">' +
+    '<button type="button" class="secondary-btn" id="crdCustom">Custom…</button>' +
+    '</div></div>';
+  document.body.appendChild(d);
+  d.showModal();
+
+  const openLeg = (mode) => {
+    d.remove();
+    showTravelLegDialog(trip, dateKey, "travel", onSave, null, { from: a.loc, to: b.loc, ...(mode ? { mode } : {}) });
+  };
+  d.querySelector("#crdClose").addEventListener("click", () => d.remove());
+  d.querySelector("#crdCustom").addEventListener("click", () => openLeg(null));
+
+  fetchTravelTimes(a.loc, b.loc).then(times => {
+    const box = d.querySelector("#crdOptions");
+    if (!box || !box.isConnected) return;
+    if (!times || (!times.walk && !times.drive && !times.transit && !times.bike)) {
+      box.innerHTML = '<p class="muted-label" style="margin:8px 0">Google Maps could not find routes for these locations — use Custom.</p>';
+      return;
+    }
+    const best = pickSuggestedTravelMode(times, hasCar);
+    const OPTIONS = [
+      { key: "drive",   legMode: "automobile", icon: "🚗", label: "Drive",   t: times.drive },
+      { key: "transit", legMode: "bus",        icon: "🚌", label: "Transit", t: times.transit },
+      { key: "walk",    legMode: "walk",       icon: "🚶", label: "Walk",    t: times.walk },
+      { key: "bike",    legMode: "bike",       icon: "🚲", label: "Bike",    t: times.bike },
+    ];
+    const fmt = t => t.durationMin >= 60
+      ? Math.floor(t.durationMin / 60) + " hr" + (t.durationMin % 60 ? " " + (t.durationMin % 60) + " min" : "")
+      : t.durationMin + " min";
+    box.innerHTML = OPTIONS.map(o =>
+      '<button type="button" class="conn-route-option' + (o.key === best ? ' is-suggested' : '') + '" data-leg-mode="' + o.legMode + '"' + (o.t ? '' : ' disabled') + '>' +
+      '<span class="conn-route-option-icon">' + o.icon + '</span>' +
+      '<span class="conn-route-option-label">' + o.label + (o.key === best ? ' <span class="conn-route-suggested-chip">Suggested</span>' : '') + '</span>' +
+      '<span class="conn-route-option-time">' + (o.t
+        ? escapeHtml(fmt(o.t)) + (o.t.distance ? '<span class="conn-route-option-dist">' + escapeHtml(o.t.distance) + '</span>' : '')
+        : '—') + '</span>' +
+      '</button>'
+    ).join("");
+    box.querySelectorAll(".conn-route-option:not([disabled])").forEach(btn =>
+      btn.addEventListener("click", () => openLeg(btn.dataset.legMode)));
+  });
+}
+
 function renderExploreTripPanel(tab, trip) {
   const panel = document.getElementById("exploreTripPanel");
   if (!panel) return;
@@ -32545,10 +33558,43 @@ function renderExploreTripPanel(tab, trip) {
 
   const editable = tab !== "overview";
 
-  panel.innerHTML = `<div class="trip-overview-scroll" id="tripOverviewScroll"></div>`;
+  // One day shown at a time: day tabs across the top (like the meal plan),
+  // swipe left/right on touch devices to change days.
+  const dayKeys = tripDays.map(d => d.toISOString().slice(0, 10));
+  const activeDayIdx = Math.max(0, dayKeys.indexOf(exploreActiveDayKey));
+
+  const tabsHtml = tripDays.map((d, i) => {
+    const dateLabel = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return `<button class="day-tab trip-day-tab ${i === activeDayIdx ? "is-active" : ""}" type="button" role="tab" aria-selected="${i === activeDayIdx}" data-trip-day-idx="${i}">` +
+      `<span class="day-tab-day">Day ${i + 1}</span>` +
+      `<strong class="day-tab-date">${escapeHtml(dateLabel)}</strong>` +
+      `</button>`;
+  }).join("");
+
+  panel.innerHTML =
+    `<div class="day-tabs trip-day-tabs" role="tablist" aria-label="Trip days">${tabsHtml}</div>` +
+    `<div class="trip-overview-scroll" id="tripOverviewScroll"></div>`;
   const scroll = panel.querySelector("#tripOverviewScroll");
 
-  tripDays.forEach((d, i) => {
+  const setActiveDay = (idx) => {
+    const clamped = Math.max(0, Math.min(tripDays.length - 1, idx));
+    if (clamped === activeDayIdx) return;
+    exploreActiveDayKey = dayKeys[clamped];
+    renderExploreTripPanel(tab, trip);
+  };
+  panel.querySelectorAll("[data-trip-day-idx]").forEach(btn =>
+    btn.addEventListener("click", () => setActiveDay(Number(btn.dataset.tripDayIdx))));
+  panel.querySelector(".trip-day-tabs .is-active")?.scrollIntoView({ inline: "center", block: "nearest" });
+
+  let tsX = 0, tsY = 0;
+  scroll.addEventListener("touchstart", (e) => { tsX = e.touches[0].clientX; tsY = e.touches[0].clientY; }, { passive: true });
+  scroll.addEventListener("touchend", (e) => {
+    const dx = e.changedTouches[0].clientX - tsX;
+    const dy = e.changedTouches[0].clientY - tsY;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) setActiveDay(activeDayIdx + (dx < 0 ? 1 : -1));
+  }, { passive: true });
+
+  const buildDayCard = (d, i) => {
     const dateKey   = d.toISOString().slice(0, 10);
     const dayNum    = `Day ${i + 1}`;
     const dateLabel = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
@@ -32586,8 +33632,8 @@ function renderExploreTripPanel(tab, trip) {
     const LODGING_ICONS_D  = { hotel:"🏨", airbnb:"🏠", hostel:"🛏️", resort:"🌴", camping:"⛺", other:"🏠" };
     const ACTIVITY_ICONS_D = { sightseeing:"🏛️", museum:"🎨", tour:"🗺️", adventure:"🏄", entertainment:"🎭", other:"⭐" };
     const FOOD_ICONS_D     = { breakfast:"🍳", lunch:"🥗", dinner:"🍽️", snack:"☕" };
-    const LEG_MODE_ICONS_D = { airplane:"✈️", train:"🚂", bus:"🚌", automobile:"🚗", "car-own":"🚗", "car-rental":"🚙", walk:"🚶", other:"🔀" };
-    const LEG_MAPS_MODE_D  = { airplane:null, train:"transit", bus:"transit", automobile:"driving", "car-own":"driving", "car-rental":"driving", walk:"walking", other:null };
+    const LEG_MODE_ICONS_D = { airplane:"✈️", train:"🚂", bus:"🚌", automobile:"🚗", "car-own":"🚗", "car-rental":"🚙", walk:"🚶", bike:"🚲", other:"🔀" };
+    const LEG_MAPS_MODE_D  = { airplane:null, train:"transit", bus:"transit", automobile:"driving", "car-own":"driving", "car-rental":"driving", walk:"walking", bike:"bicycling", other:null };
 
     const card = document.createElement("div");
     card.className = "trip-day-card" + (editable ? " trip-day-card--edit" : "");
@@ -32627,6 +33673,7 @@ function renderExploreTripPanel(tab, trip) {
         const el = document.createElement("div");
         el.className = "trip-item-card trip-item-card--leg" +
           (arriving === "spanning" ? " trip-item-card--spanning" : arriving ? " trip-item-card--arriving" : "");
+        if (item.id) el.dataset.itemId = item.id;
         el.innerHTML =
           (arriving === "spanning" ? '<div class="trip-item-arriving-badge trip-item-spanning-badge">Continuing</div>' :
            arriving ? '<div class="trip-item-arriving-badge">Arrives</div>' : '') +
@@ -32667,6 +33714,8 @@ function renderExploreTripPanel(tab, trip) {
         const mapsHref = item.address ? "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(item.address) : "";
         const fmtDate  = ds => new Date(ds + "T12:00:00").toLocaleDateString(undefined, { month:"short", day:"numeric" });
         const canDelete = mode === false && editable;
+        // On the Lodging tab the card itself shows every detail; elsewhere it stays compact
+        const fullDetail = tab === "lodging";
         let sub = "";
         if (mode === "checkout") {
           sub = "Check-out" + (item.checkOutTime ? " " + item.checkOutTime : "");
@@ -32678,23 +33727,44 @@ function renderExploreTripPanel(tab, trip) {
         } else if (item.checkInTime) {
           sub = "Check-in " + item.checkInTime;
         }
+        let detailHtml = "";
+        if (fullDetail) {
+          const detailRow = (label, value, href) =>
+            '<div class="trip-lodging-detail-row"><span class="trip-lodging-detail-label">' + label + '</span>' +
+            (href
+              ? '<a href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(value) + '</a>'
+              : '<span>' + escapeHtml(value) + '</span>') +
+            '</div>';
+          const rows = [];
+          if (item.lodgingType) rows.push(detailRow("Type", item.lodgingType.charAt(0).toUpperCase() + item.lodgingType.slice(1)));
+          if (item.checkInDate || item.checkInTime)
+            rows.push(detailRow("Check-in", [item.checkInDate ? fmtDate(item.checkInDate) : null, item.checkInTime].filter(Boolean).join(" · ")));
+          if (item.checkOutDate || item.checkOutTime)
+            rows.push(detailRow("Check-out", [item.checkOutDate ? fmtDate(item.checkOutDate) : null, item.checkOutTime].filter(Boolean).join(" · ")));
+          if (item.address) rows.push(detailRow("Address", item.address, mapsHref));
+          if (item.confirmationNo) rows.push(detailRow("Conf #", item.confirmationNo));
+          if (item.notes) rows.push(detailRow("Notes", item.notes));
+          if (rows.length) detailHtml = '<div class="trip-lodging-details">' + rows.join("") + '</div>';
+        }
         const el = document.createElement("div");
         el.className = "trip-item-card trip-item-card--leg" + (mode === "checkout" || mode === true ? " trip-item-card--arriving" : "");
+        if (item.id && mode === false) el.dataset.itemId = item.id;
         el.innerHTML =
           (mode === "checkout" ? '<div class="trip-item-arriving-badge">Check-out</div>' :
            mode === true ? '<div class="trip-item-arriving-badge">Staying</div>' : '') +
           '<div class="trip-item-header">' +
           '<span class="trip-item-leg-mode">' + icon + '</span>' +
           '<div class="trip-item-leg-route">' + escapeHtml(item.name || item.title || "") +
-          (sub ? '<br><span style="font-weight:400;color:var(--muted);font-size:0.72rem">' + escapeHtml(sub) + '</span>' : '') +
+          (!fullDetail && sub ? '<br><span style="font-weight:400;color:var(--muted);font-size:0.72rem">' + escapeHtml(sub) + '</span>' : '') +
           '</div>' +
           (mapsHref ? '<a class="trip-item-leg-map-btn" href="' + escapeHtml(mapsHref) + '" target="_blank" rel="noopener noreferrer">📍 Maps</a>' : '') +
           attBtn(item, true) +
           '<button class="trip-item-edit-leg" type="button" title="Edit" aria-label="Edit">✏</button>' +
           (canDelete ? '<button class="trip-item-delete" type="button" title="Remove" aria-label="Remove">×</button>' : '') +
           '</div>' +
-          (item.confirmationNo ? '<div class="trip-item-notes" style="padding:4px 8px 6px;border-top:1px solid color-mix(in srgb,var(--accent) 15%,transparent);font-size:0.72rem;color:var(--muted)">Conf: ' + escapeHtml(item.confirmationNo) + '</div>' : '') +
-          (item.notes ? '<div class="trip-item-notes" style="padding:4px 8px 6px;border-top:1px solid color-mix(in srgb,var(--accent) 15%,transparent);font-size:0.72rem;color:var(--muted)">' + escapeHtml(item.notes) + '</div>' : '');
+          detailHtml +
+          (!fullDetail && item.confirmationNo ? '<div class="trip-item-notes" style="padding:4px 8px 6px;border-top:1px solid color-mix(in srgb,var(--accent) 15%,transparent);font-size:0.72rem;color:var(--muted)">Conf: ' + escapeHtml(item.confirmationNo) + '</div>' : '') +
+          (!fullDetail && item.notes ? '<div class="trip-item-notes" style="padding:4px 8px 6px;border-top:1px solid color-mix(in srgb,var(--accent) 15%,transparent);font-size:0.72rem;color:var(--muted)">' + escapeHtml(item.notes) + '</div>' : '');
         const attBtnEl = el.querySelector(".trip-item-attach-btn");
         if (attBtnEl) attBtnEl.addEventListener("click", () => showAttachmentsDialog(trip, item, renderDay, false));
         el.querySelector(".trip-item-edit-leg").addEventListener("click", () => showLodgingDialog(trip, ownerDateKey, "lodging", renderDay, item));
@@ -32731,6 +33801,7 @@ function renderExploreTripPanel(tab, trip) {
           (sub ? '<br><span style="font-weight:400;color:var(--muted);font-size:0.72rem">' + escapeHtml(sub) + '</span>' : '') +
           '</div>' +
           (mapsHref ? '<a class="trip-item-leg-map-btn" href="' + escapeHtml(mapsHref) + '" target="_blank" rel="noopener noreferrer">' + mapsLabel + '</a>' : '') +
+          (item.website ? '<a class="trip-item-leg-map-btn" href="' + escapeHtml(item.website) + '" target="_blank" rel="noopener noreferrer" title="Website">🔗</a>' : '') +
           attBtn(item, true) +
           '<button class="trip-item-edit-leg" type="button" title="Edit" aria-label="Edit">✏</button>' +
           '<button class="trip-item-delete" type="button" title="Remove" aria-label="Remove">×</button></div>' +
@@ -32787,13 +33858,15 @@ function renderExploreTripPanel(tab, trip) {
         return el;
       }
 
-      // Collect timed and untimed items for the hourly grid
+      // Collect timed and untimed cards. Untimed entries carry their item when
+      // the card is the item's own-day primary (drag-reorderable); copies from
+      // other days (arriving legs, check-out stays) carry none.
       const gridItems    = []; // { time:"HH:MM", el }
-      const untimedItems = []; // { el }
+      const untimedItems = []; // { el, item|null }
 
-      const pushItem = (time, el) => {
+      const pushItem = (time, el, item = null) => {
         if (time) gridItems.push({ time, el });
-        else untimedItems.push({ el });
+        else untimedItems.push({ el, item });
       };
 
       sections.forEach(s => {
@@ -32811,46 +33884,130 @@ function renderExploreTripPanel(tab, trip) {
           });
           items.forEach(item => {
             if (item.mode || item.from || item.to)
-              pushItem(item.departTime || null, buildLegCard(item, dateKey, false));
+              pushItem(item.departTime || null, buildLegCard(item, dateKey, false), item);
           });
         } else if (s.key === "lodging") {
+          // On the Lodging tab, stays are plain cards — check-in/out times are
+          // shown on the card, not plotted on an hourly day grid
+          const lodgingTime = t => (tab === "lodging" ? null : (t || null));
           items.forEach(item => {
             if (item.itemType === "lodging")
-              pushItem(item.checkInTime || null, buildLodgingCard(item, dateKey, false));
+              pushItem(lodgingTime(item.checkInTime), buildLodgingCard(item, dateKey, false), item);
           });
           tripDays.forEach(od => {
             const ok = od.toISOString().slice(0, 10);
             if (ok === dateKey) return;
             tripDayItems(trip, ok, "lodging").forEach(lo => {
               if (lo.checkOutDate === dateKey)
-                pushItem(lo.checkOutTime || null, buildLodgingCard(lo, ok, "checkout"));
-              // Stable (spanning) stays: NOT on grid — shown in day header badge
+                pushItem(lodgingTime(lo.checkOutTime), buildLodgingCard(lo, ok, "checkout"));
+              // Mid-stay days: full "Staying" card on the Lodging tab; elsewhere
+              // spanning stays appear only in the day header badge
+              else if (tab === "lodging" && lo.itemType === "lodging" &&
+                       lo.checkInDate && lo.checkOutDate &&
+                       lo.checkInDate < dateKey && lo.checkOutDate > dateKey)
+                pushItem(null, buildLodgingCard(lo, ok, true));
             });
           });
         } else if (s.key === "activities") {
           items.forEach(item => {
             if (item.itemType === "activity")
-              pushItem(item.activityTime || null, buildActivityCard(item, dateKey));
+              pushItem(item.activityTime || null, buildActivityCard(item, dateKey), item);
           });
         } else if (s.key === "food") {
           items.forEach(item => {
             if (item.itemType === "food")
-              pushItem(item.reservationTime || null, buildFoodCard(item, dateKey));
+              pushItem(item.reservationTime || null, buildFoodCard(item, dateKey), item);
           });
         }
       });
 
-      if (gridItems.length)    card.appendChild(buildHourlyGrid(gridItems));
-      if (untimedItems.length) {
-        const untimedSec = document.createElement("div");
-        untimedSec.className = "trip-untimed-section";
-        untimedItems.forEach(({ el }) => untimedSec.appendChild(el));
-        card.appendChild(untimedSec);
-        if (editable) {
-          if (sections.some(s => s.key === "activities"))
-            setupDragReorder(untimedSec, tripDayItems(trip, dateKey, "activities"), "activityTime", renderDay);
-          if (sections.some(s => s.key === "food"))
-            setupDragReorder(untimedSec, tripDayItems(trip, dateKey, "food"), "reservationTime", renderDay);
+      // All cards render as a single stacked list — timed items first in
+      // chronological order (the time shows on the card), then untimed items
+      // in their user-arranged order (item.dayOrder). No hourly grid.
+      if (gridItems.length || untimedItems.length) {
+        const listSec = document.createElement("div");
+        listSec.className = "trip-untimed-section";
+        [...gridItems].sort((a, b) => a.time.localeCompare(b.time)).forEach(({ el }) => listSec.appendChild(el));
+        const ord = en => (en.item && Number.isFinite(en.item.dayOrder)) ? en.item.dayOrder : Number.MAX_SAFE_INTEGER;
+        untimedItems.sort((a, b) => ord(a) - ord(b));
+        untimedItems.forEach(({ el }) => listSec.appendChild(el));
+        card.appendChild(listSec);
+        // Untimed cards of every type drag-reorder freely — across categories
+        // too (activity ↔ food ↔ leg ↔ stay), so the Overview can express the
+        // day's chronology. Timed cards stay pinned by their times.
+        setupDayDragReorder(listSec, untimedItems.filter(en => en.item?.id), renderDay);
+      }
+
+      // Transportation tab: connections between the day's waypoints
+      // (lodging → activity → activity → lodging) that still need a plan
+      if (tab === "travel") {
+        const wakeStay  = outgoingLodging || stableLodging;
+        const sleepStay = incomingLodging || stableLodging;
+        const waypoint = (label, loc) => ({ label, loc: loc || label });
+        const chain = [];
+        if (wakeStay) chain.push(waypoint(wakeStay.name || wakeStay.title || "Lodging", wakeStay.address));
+        tripDayItems(trip, dateKey, "activities")
+          .filter(a => a.itemType === "activity")
+          .slice()
+          .sort((a, b) => {
+            const t = (a.activityTime || "99:99").localeCompare(b.activityTime || "99:99");
+            if (t) return t;
+            const oa = Number.isFinite(a.dayOrder) ? a.dayOrder : Number.MAX_SAFE_INTEGER;
+            const ob = Number.isFinite(b.dayOrder) ? b.dayOrder : Number.MAX_SAFE_INTEGER;
+            return oa - ob;
+          })
+          .forEach(a => chain.push(waypoint(a.name || a.title || "Activity", a.startLocation || a.location)));
+        if (sleepStay) chain.push(waypoint(sleepStay.name || sleepStay.title || "Lodging", sleepStay.address));
+
+        if (chain.length >= 2 && chain.length > (wakeStay && sleepStay ? 2 : 1)) {
+          const norm = s => String(s || "").trim().toLowerCase();
+          const dayLegs = tripDayItems(trip, dateKey, "travel").filter(l => l.from && l.to);
+          const matches = (legVal, wpLoc) => {
+            const a = norm(legVal), b = norm(wpLoc);
+            return a && b && (a === b || a.includes(b) || b.includes(a));
+          };
+          const sec = document.createElement("div");
+          sec.className = "trip-connections-section";
+          sec.innerHTML = '<div class="trip-connections-title">Connections</div>';
+          for (let ci = 0; ci < chain.length - 1; ci++) {
+            const a = chain[ci], b = chain[ci + 1];
+            if (norm(a.loc) === norm(b.loc)) continue; // same place — nothing to plan
+            const plannedLeg = dayLegs.find(l => matches(l.from, a.loc) && matches(l.to, b.loc));
+            const rowEl = document.createElement("div");
+            rowEl.className = "trip-connection-row" + (plannedLeg ? " is-planned" : "");
+            rowEl.innerHTML =
+              '<div class="trip-connection-main"><span class="trip-connection-route">' + (plannedLeg ? "✓ " : "") +
+              escapeHtml(a.label) + ' <span class="trip-connection-arrow">→</span> ' + escapeHtml(b.label) + '</span></div>' +
+              (plannedLeg
+                ? '<span class="trip-connection-mode">' + (LEG_MODE_ICONS_D[plannedLeg.mode] || "🔀") + '</span>'
+                : '<button class="secondary-btn trip-connection-plan-btn" type="button">+ Plan</button>');
+            if (!plannedLeg) {
+              // + Plan opens a Google-Maps-style route chooser
+              rowEl.querySelector("button").addEventListener("click", () =>
+                showConnectionRouteDialog(trip, dateKey, a, b, carsToday.length > 0, renderDay));
+
+              // Inline preview of durations, with the most sensible mode bolded
+              const sugEl = document.createElement("span");
+              sugEl.className = "trip-connection-suggest";
+              sugEl.textContent = "⏱ …";
+              rowEl.querySelector(".trip-connection-main").appendChild(sugEl);
+              fetchTravelTimes(a.loc, b.loc).then(times => {
+                if (!sugEl.isConnected) return;
+                if (!times || (!times.walk && !times.drive && !times.transit && !times.bike)) { sugEl.remove(); return; }
+                const best = pickSuggestedTravelMode(times, carsToday.length > 0);
+                const fmt = t => t.durationMin >= 60
+                  ? Math.floor(t.durationMin / 60) + "h" + (t.durationMin % 60 ? " " + (t.durationMin % 60) + "m" : "")
+                  : t.durationMin + " min";
+                const seg = (icon, key, t) => t
+                  ? (key === best ? "<strong>" : "") + icon + " " + escapeHtml(fmt(t)) + (key === best ? "</strong>" : "")
+                  : null;
+                sugEl.innerHTML = [seg("🚶", "walk", times.walk), seg("🚗", "drive", times.drive), seg("🚌", "transit", times.transit), seg("🚲", "bike", times.bike)]
+                  .filter(Boolean).join(" · ");
+              });
+            }
+            sec.appendChild(rowEl);
+          }
+          if (sec.children.length > 1) card.appendChild(sec);
         }
       }
     };
@@ -32878,6 +34035,42 @@ function renderExploreTripPanel(tab, trip) {
           showLodgingDialog(trip, badgeKey, "lodging", renderDay, badgeLodging)));
       dayHead.appendChild(badge);
     }
+
+    // Car badge — a vehicle (own or rental) is available this day
+    const carsToday = [];
+    tripDays.forEach(od => {
+      const ok = od.toISOString().slice(0, 10);
+      tripDayItems(trip, ok, "travel").forEach(item => {
+        if (item.mode !== "car-own" && item.mode !== "car-rental") return;
+        const from = item.departDate || ok;
+        const to   = item.arriveDate || from;
+        if (from <= dateKey && dateKey <= to) carsToday.push({ kind: "leg", item, ownerKey: ok });
+      });
+    });
+    (trip.logistics || []).forEach(l => {
+      if (l.type === "car" && l.startDate && l.endDate && l.startDate <= dateKey && dateKey <= l.endDate)
+        carsToday.push({ kind: "booking", item: l });
+    });
+    carsToday.forEach(({ kind, item }) => {
+      const carBadge = document.createElement("button");
+      carBadge.type = "button";
+      carBadge.className = "trip-day-lodging-badge trip-day-car-badge";
+      carBadge.textContent = (kind === "booking" || item.mode === "car-rental") ? "🚙" : "🚗";
+      carBadge.title = kind === "booking"
+        ? [item.title, item.vehicleType].filter(Boolean).join(" · ") || "Rental car"
+        : (item.mode === "car-rental" ? "Rental car" : "Own car");
+      carBadge.setAttribute("aria-label", carBadge.title);
+      carBadge.addEventListener("click", () => {
+        if (kind === "booking") {
+          showItemDetailView("carBooking", item, trip, dateKey, () =>
+            showEditLogisticDialog(trip, trip.logistics.indexOf(item)));
+        } else {
+          showItemDetailView("travel", item, trip, dateKey, () =>
+            showTravelLegDialog(trip, dateKey, "travel", renderDay, item));
+        }
+      });
+      dayHead.appendChild(carBadge);
+    });
 
     if (editable) {
       const actions = document.createElement("div");
@@ -32911,11 +34104,17 @@ function renderExploreTripPanel(tab, trip) {
     renderDay();
 
     const hasLodgingBadge = outgoingLodging || incomingLodging || stableLodging;
-    if (!editable && card.children.length <= 1 && !hasLodgingBadge) return;
-
+    if (!editable && card.children.length <= 1 && !hasLodgingBadge) {
+      card.appendChild(Object.assign(document.createElement("p"), {
+        className: "trip-day-empty-note",
+        textContent: "Nothing planned this day."
+      }));
+    }
 
     scroll.appendChild(card);
-  });
+  };
+
+  buildDayCard(tripDays[activeDayIdx], activeDayIdx);
 }
 
 
@@ -33446,7 +34645,7 @@ function printTripItinerary(trip) {
   const tripDays = [];
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) tripDays.push(new Date(d));
 
-  const MODES  = { airplane:"✈", train:"🚂", bus:"🚌", automobile:"🚗", "car-own":"🚗", "car-rental":"🚙", walk:"🚶", other:"🔀", ferry:"⛴" };
+  const MODES  = { airplane:"✈", train:"🚂", bus:"🚌", automobile:"🚗", "car-own":"🚗", "car-rental":"🚙", walk:"🚶", bike:"🚲", other:"🔀", ferry:"⛴" };
   const LODGES = { hotel:"🏨", airbnb:"🏠", hostel:"🛏", resort:"🌴", camping:"⛺", other:"🏠" };
   const ACTS   = { sightseeing:"🏛", museum:"🎨", tour:"🗺", adventure:"🏄", entertainment:"🎭", other:"⭐" };
   const FOODS  = { breakfast:"🍳", lunch:"🥗", dinner:"🍽", snack:"☕" };
@@ -33845,39 +35044,28 @@ function showLodgingDialog(trip, dateKey, sectionKey, onSave, existingItem = nul
 }
 
 function showActivityDialog(trip, dateKey, sectionKey, onSave, existingItem = null) {
-  const TYPES = [
-    { key: "sightseeing",   label: "Sightseeing"   },
-    { key: "museum",        label: "Museum"         },
-    { key: "tour",          label: "Tour"           },
-    { key: "adventure",     label: "Adventure"      },
-    { key: "entertainment", label: "Entertainment"  },
-    { key: "other",         label: "Other"          },
-  ];
   const isEdit   = !!existingItem;
-  const initType = existingItem?.activityType || "sightseeing";
   const d = document.createElement("dialog");
   d.className = "recipe-dialog auth-dialog";
   d.innerHTML =
     '<div class="recipe-form">' +
     '<div class="dialog-head"><div><p class="muted-label">Activities</p><h2>' + (isEdit ? "Edit Activity" : "Add Activity") + '</h2></div>' +
     '<button class="icon-btn" id="actClose" type="button" title="Close" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>' +
-    '<div class="travel-leg-mode-picker">' +
-    TYPES.map(t => '<label class="travel-leg-mode-radio"><input type="radio" name="actType" value="' + t.key + '"' + (t.key === initType ? ' checked' : '') + '>' + t.label + '</label>').join("") +
-    '</div>' +
     '<div class="travel-dialog-field"><label>Name</label>' +
     '<input id="actName" class="text-input" placeholder="e.g. Tokyo Skytree" autocomplete="off" value="' + escapeHtml(existingItem?.name || "") + '" /></div>' +
-    '<div class="travel-dialog-field"><label>Starting location (optional)</label>' +
-    '<input id="actLocation" class="text-input" placeholder="Address or area" autocomplete="off" value="' + escapeHtml(existingItem?.startLocation || existingItem?.location || "") + '" /></div>' +
-    '<div class="travel-dialog-field"><label>Ending location (optional)</label>' +
+    '<div class="travel-dialog-field"><label>Location</label>' +
+    '<input id="actLocation" class="text-input" placeholder="Address or area" autocomplete="off" value="' + escapeHtml(existingItem?.startLocation || existingItem?.location || "") + '" />' +
+    '<label class="act-endloc-toggle"><input type="checkbox" id="actHasEnd"' + (existingItem?.endLocation ? ' checked' : '') + ' /> Ending location is different</label></div>' +
+    '<div class="travel-dialog-field" id="actEndField"' + (existingItem?.endLocation ? '' : ' hidden') + '><label>Ending location</label>' +
     '<input id="actEndLocation" class="text-input" placeholder="Address or area" autocomplete="off" value="' + escapeHtml(existingItem?.endLocation || "") + '" /></div>' +
     '<div id="actMapsRow" style="display:none;margin-bottom:14px"><a class="travel-leg-maps-link" id="actMapsLink" target="_blank" rel="noopener noreferrer">📍  View in Google Maps</a></div>' +
     '<div style="display:flex;gap:8px">' +
     '<div class="travel-dialog-field" style="flex:1"><label>Time</label><input id="actTime" type="time" class="text-input" value="' + (existingItem?.activityTime || "") + '" /></div>' +
     '<div class="travel-dialog-field" style="flex:1"><label>Duration</label><input id="actDuration" class="text-input" placeholder="e.g. 2 hours" autocomplete="off" value="' + escapeHtml(existingItem?.duration || "") + '" /></div>' +
     '</div>' +
-    '<div class="travel-dialog-field"><label>Booking / confirmation # (optional)</label>' +
-    '<input id="actConf" class="text-input" placeholder="e.g. TKT-123456" autocomplete="off" value="' + escapeHtml(existingItem?.confirmationNo || "") + '" /></div>' +
-    '<div class="travel-dialog-field"><label>Notes (optional)</label>' +
+    '<div class="travel-dialog-field"><label>Website</label>' +
+    '<input id="actWebsite" class="text-input" type="url" placeholder="https://…" autocomplete="off" value="' + escapeHtml(existingItem?.website || "") + '" /></div>' +
+    '<div class="travel-dialog-field"><label>Notes</label>' +
     '<textarea id="actNotes" class="text-input" rows="2" placeholder="Dress code, entrance fee, what to bring…">' + escapeHtml(existingItem?.notes || "") + '</textarea></div>' +
     '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">' +
     '<button type="button" class="secondary-btn" id="actCancel">Cancel</button>' +
@@ -33888,11 +35076,18 @@ function showActivityDialog(trip, dateKey, sectionKey, onSave, existingItem = nu
   const nameInput        = d.querySelector("#actName");
   const locationInput    = d.querySelector("#actLocation");
   const endLocationInput = d.querySelector("#actEndLocation");
+  const hasEndCheckbox   = d.querySelector("#actHasEnd");
+  const endField         = d.querySelector("#actEndField");
   const mapsRow          = d.querySelector("#actMapsRow");
   const mapsLink         = d.querySelector("#actMapsLink");
+  hasEndCheckbox.addEventListener("change", () => {
+    endField.hidden = !hasEndCheckbox.checked;
+    if (hasEndCheckbox.checked) endLocationInput.focus();
+    updateMapsLink();
+  });
   function updateMapsLink() {
     const start = locationInput.value.trim();
-    const end   = endLocationInput.value.trim();
+    const end   = hasEndCheckbox.checked ? endLocationInput.value.trim() : "";
     if (!start && !end) { mapsRow.style.display = "none"; return; }
     mapsRow.style.display = "";
     if (start && end) {
@@ -33911,14 +35106,18 @@ function showActivityDialog(trip, dateKey, sectionKey, onSave, existingItem = nu
   d.querySelector("#actSave").addEventListener("click", () => {
     const name = nameInput.value.trim();
     if (!name) { nameInput.focus(); return; }
-    const activityType   = d.querySelector('input[name="actType"]:checked')?.value || "sightseeing";
+    // Type picker removed from the dialog — items keep whatever type they had
+    const activityType   = existingItem?.activityType || "";
     const startLocation  = locationInput.value.trim();
-    const endLocation    = endLocationInput.value.trim();
+    const endLocation    = hasEndCheckbox.checked ? endLocationInput.value.trim() : "";
     const activityTime   = d.querySelector("#actTime").value;
     const duration       = d.querySelector("#actDuration").value.trim();
-    const confirmationNo = d.querySelector("#actConf").value.trim();
+    // Confirmation field removed from the dialog — legacy items keep their value
+    const confirmationNo = existingItem?.confirmationNo || "";
+    let website          = d.querySelector("#actWebsite").value.trim();
+    if (website && !/^https?:\/\//i.test(website)) website = "https://" + website;
     const notes          = d.querySelector("#actNotes").value.trim();
-    const fields = { itemType:"activity", title:name, name, activityType, startLocation, endLocation, activityTime, duration, confirmationNo, notes };
+    const fields = { itemType:"activity", title:name, name, activityType, startLocation, endLocation, activityTime, duration, confirmationNo, website, notes };
     if (isEdit) { Object.assign(existingItem, fields); }
     else { tripDayItems(trip, dateKey, sectionKey).push(Object.assign({ id: createId("ti") }, fields)); }
     persist(); d.remove(); onSave();
@@ -34381,19 +35580,20 @@ function calcFlightDuration(departDate, departTime, departTz, arriveDate, arrive
   } catch { return null; }
 }
 
-function showTravelLegDialog(trip, dateKey, sectionKey, onSave, existingItem = null) {
+function showTravelLegDialog(trip, dateKey, sectionKey, onSave, existingItem = null, prefill = null) {
   const MODES = [
     { key: "airplane",    label: "Airplane" },
     { key: "train",       label: "Train" },
     { key: "bus",         label: "Bus" },
     { key: "automobile",  label: "Automobile" },
     { key: "walk",        label: "Walk" },
+    { key: "bike",        label: "Bike" },
     { key: "other",       label: "Other" },
   ];
-  const MAPS_MODE = { airplane: null, train: "transit", bus: "transit", automobile: "driving", "car-own": "driving", "car-rental": "driving", walk: "walking", other: null };
+  const MAPS_MODE = { airplane: null, train: "transit", bus: "transit", automobile: "driving", "car-own": "driving", "car-rental": "driving", walk: "walking", bike: "bicycling", other: null };
   const isEdit = !!existingItem;
   // car-own / car-rental are legacy mode values — map them to "automobile" for the picker
-  const rawMode = existingItem?.mode || "airplane";
+  const rawMode = existingItem?.mode || prefill?.mode || "airplane";
   const initMode = (rawMode === "car-own" || rawMode === "car-rental") ? "automobile" : rawMode;
   const initCarRental = rawMode === "car-rental";
 
@@ -34422,10 +35622,10 @@ function showTravelLegDialog(trip, dateKey, sectionKey, onSave, existingItem = n
     '<span>Rental</span>' +
     '</div>' +
     '<div class="travel-dialog-field"><label>From</label><div class="ap-wrap">' +
-    '<input id="tlgFrom" class="text-input" autocomplete="off" placeholder="City or airport code" value="' + escapeHtml(existingItem?.from || "") + '" />' +
+    '<input id="tlgFrom" class="text-input" autocomplete="off" placeholder="City or airport code" value="' + escapeHtml(existingItem?.from || prefill?.from || "") + '" />' +
     '<div id="tlgFromDrop" class="ap-drop" hidden></div></div></div>' +
     '<div class="travel-dialog-field"><label>To</label><div class="ap-wrap">' +
-    '<input id="tlgTo" class="text-input" autocomplete="off" placeholder="City or airport code" value="' + escapeHtml(existingItem?.to || "") + '" />' +
+    '<input id="tlgTo" class="text-input" autocomplete="off" placeholder="City or airport code" value="' + escapeHtml(existingItem?.to || prefill?.to || "") + '" />' +
     '<div id="tlgToDrop" class="ap-drop" hidden></div></div></div>' +
     '<div id="tlgDuration" class="travel-dialog-duration" hidden></div>' +
     '<div style="display:flex;gap:8px">' +
@@ -34587,9 +35787,10 @@ function showTravelLegDialog(trip, dateKey, sectionKey, onSave, existingItem = n
 function showTravelNewTripDialog() {
   const d = document.createElement("dialog");
   d.className = "recipe-dialog auth-dialog";
-  const partyOptions = ["Luke", "MJ", "Sophia", "Friends", "Family"];
+  const partyOptions = travelPartyOptions();
+  const selfLabel = getCurrentProfileMember()?.label || "";
   const partyChipsHtml = partyOptions.map(function(p) {
-    const sel = p === "Luke" ? " is-selected" : "";
+    const sel = p === selfLabel ? " is-selected" : "";
     return '<button type="button" class="travel-party-chip' + sel + '" data-party="' + p + '">' + p + '</button>';
   }).join("");
   d.innerHTML =
@@ -34699,7 +35900,7 @@ function showTravelEditDatesDialog(trip) {
 function showTravelEditPartyDialog(trip) {
   const d = document.createElement("dialog");
   d.className = "recipe-dialog auth-dialog";
-  const partyOptions = ["Luke", "MJ", "Sophia", "Friends", "Family"];
+  const partyOptions = [...new Set([...travelPartyOptions(), ...(trip.party || [])])];
   const chipsHtml = partyOptions.map(function(p) {
     const sel = (trip.party || []).includes(p) ? " is-selected" : "";
     return '<button type="button" class="travel-party-chip' + sel + '" data-party="' + p + '">' + p + '</button>';

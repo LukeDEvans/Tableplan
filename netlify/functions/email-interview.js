@@ -1,4 +1,4 @@
-const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
+const { getUserIdFromToken, getUserGroupId, loadSection } = require("./_state-sections.js");
 
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return jsonResponse(405, { error: "Method not allowed." });
@@ -9,7 +9,8 @@ exports.handler = async (event) => {
   const authHeader = event.headers.authorization || event.headers.Authorization || "";
   const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
   if (!accessToken) return jsonResponse(401, { error: "Not authenticated." });
-  if (!await verifySession(accessToken, serviceKey)) return jsonResponse(401, { error: "Invalid session." });
+  const userId = await getUserIdFromToken(accessToken, serviceKey);
+  if (!userId) return jsonResponse(401, { error: "Invalid session." });
 
   let body;
   try { body = JSON.parse(event.body || "{}"); } catch { return jsonResponse(400, { error: "Invalid JSON." }); }
@@ -18,8 +19,7 @@ exports.handler = async (event) => {
   if (!anthropicKey) return jsonResponse(503, { error: "ANTHROPIC_API_KEY not configured." });
 
   if (body.step === "questions") {
-    const appState = await loadStateFromSupabase(serviceKey).catch(() => null);
-    const currentPrefs = String(appState?.emailPrefs || "").trim();
+    const currentPrefs = await loadEmailPrefs(serviceKey, userId);
     const raw = await claudeCall(anthropicKey, {
       system: `You help Luke configure a personal weekly email digest from his life-management app.
 The email covers: recipes added, meal plan, exercise logs, to-do progress, watch list, calendar events.
@@ -34,8 +34,7 @@ Return ONLY a valid JSON array of 6 strings — no explanation, no markdown fenc
 
   } else if (body.step === "update") {
     const qa = (body.questions || []).map((q, i) => `Q: ${q}\nA: ${(body.answers || [])[i] || "(no answer)"}`).join("\n\n");
-    const appState = await loadStateFromSupabase(serviceKey).catch(() => null);
-    const currentPrefs = String(appState?.emailPrefs || "").trim();
+    const currentPrefs = await loadEmailPrefs(serviceKey, userId);
     const newPrefs = await claudeCall(anthropicKey, {
       system: `You are rewriting a personal email-preferences file for Luke's weekly digest.
 Output ONLY clean markdown — a short intro comment line starting with #, then bullet points.
@@ -51,13 +50,13 @@ Do not include the Q&A themselves. No preamble, no explanation — just the mark
   }
 };
 
-async function loadStateFromSupabase(serviceKey) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.personal&select=state`, {
-    headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" }
-  });
-  if (!res.ok) throw new Error(`Supabase load failed: ${res.status}`);
-  const rows = await res.json();
-  return rows[0]?.state || null;
+async function loadEmailPrefs(serviceKey, userId) {
+  try {
+    const groupId = await getUserGroupId(serviceKey, userId);
+    if (!groupId) return "";
+    const row = await loadSection(serviceKey, groupId, "config");
+    return String(row?.state?.emailPrefs || "").trim();
+  } catch { return ""; }
 }
 
 async function claudeCall(apiKey, { system, user, maxTokens = 1024 }) {
@@ -80,11 +79,3 @@ function jsonResponse(statusCode, body) {
   return { statusCode, headers: { "content-type": "application/json; charset=utf-8" }, body: JSON.stringify(body) };
 }
 
-async function verifySession(accessToken, serviceKey) {
-  try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-      headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
-    });
-    return res.ok;
-  } catch { return false; }
-}

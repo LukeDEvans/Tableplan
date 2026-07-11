@@ -1,4 +1,17 @@
-const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
+const { SUPABASE_URL, loadSection, updateSection } = require("./_state-sections.js");
+
+// Which state section each voice action's data lives in (id = "<groupId>:<section>")
+const ACTION_SECTIONS = {
+  addTask: "do", completeTask: "do",
+  addGrocery: "grocery", removeGrocery: "grocery",
+  addBook: "media", markBookStatus: "media",
+  addWatch: "watch", markWatched: "watch",
+  addWorkout: "play",
+  addEvent: "plan",
+  logMeal: "health",
+  addPianoSong: "recreate",
+  setMeal: "eat",
+};
 
 const prepDays = [
   { id: "friday-start",  name: "Friday",    offset: 0 },
@@ -60,25 +73,41 @@ exports.handler = async (event) => {
     return jsonResponse(200, { message: unknown?.message || "I didn't understand that command." }, corsHeaders());
   }
 
-  // Apply mutations to Supabase state (secret validated inside)
-  let mutatedState;
+  // Validate the passphrase against the app's config section
   try {
-    mutatedState = await applyToSupabase(real, householdId, providedSecret, serviceKey, currentWeekKey);
+    const configRow = await loadSection(serviceKey, householdId, "config");
+    const storedSecret = String(configRow?.state?.voiceCommandSecret || "");
+    if (!storedSecret || storedSecret !== providedSecret) {
+      return jsonResponse(401, { error: "Invalid passphrase." }, corsHeaders());
+    }
   } catch (err) {
-    console.log("VOICE: applyToSupabase error:", err.message);
-    if (err.message === "UNAUTHORIZED") return jsonResponse(401, { error: "Invalid passphrase." }, corsHeaders());
+    console.log("VOICE: config load error:", err.message);
+    return jsonResponse(500, { error: "Failed to check passphrase: " + err.message }, corsHeaders());
+  }
+
+  // Apply each section's actions with an optimistically-locked write, so a
+  // concurrently syncing device can never be clobbered (and vice versa).
+  const bySections = new Map();
+  for (const action of real) {
+    const section = ACTION_SECTIONS[action.action];
+    if (!section) continue;
+    if (!bySections.has(section)) bySections.set(section, []);
+    bySections.get(section).push(action);
+  }
+
+  try {
+    for (const [section, sectionActions] of bySections) {
+      await updateSection(serviceKey, householdId, section, (state) =>
+        applyActions(state, sectionActions, currentWeekKey)
+      );
+    }
+  } catch (err) {
+    console.log("VOICE: section update error:", err.message);
     return jsonResponse(500, { error: "Failed to update: " + err.message }, corsHeaders());
   }
 
   const confirmation = real.map((a) => describeAction(a)).join(". ");
-  logVoiceCommands(mutatedState, transcript, real, confirmation);
-
-  try {
-    await writeStateToSupabase(mutatedState, householdId, serviceKey);
-  } catch (err) {
-    console.log("VOICE: writeStateToSupabase error:", err.message);
-    return jsonResponse(500, { error: "Failed to save: " + err.message }, corsHeaders());
-  }
+  await logVoiceCommands(serviceKey, householdId, transcript, real, confirmation);
 
   console.log("VOICE: success:", confirmation);
   return jsonResponse(200, { message: confirmation + ".", actions: real }, corsHeaders());
@@ -164,21 +193,9 @@ Multiple commands in one sentence → multiple actions.`,
   return Array.isArray(parsed) ? parsed : [parsed];
 }
 
-async function applyToSupabase(actions, householdId, providedSecret, serviceKey, currentWeekKey) {
-  // Load current state
-  const loadRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(householdId)}&select=state`,
-    { headers: serviceHeaders(serviceKey), cache: "no-store" }
-  );
-  if (!loadRes.ok) throw new Error(`State load failed (${loadRes.status})`);
-  const rows = await loadRes.json();
-  const state = rows[0]?.state;
-  if (!state) throw new Error("No state found for this household.");
-
-  // Validate passphrase against the value stored in the app's own state
-  const storedSecret = String(state.voiceCommandSecret || "");
-  if (!storedSecret || storedSecret !== providedSecret) throw new Error("UNAUTHORIZED");
-
+// Applies actions to one section's state object (called inside updateSection's
+// locked read-modify-write loop, so it must stay pure — no fetches).
+function applyActions(state, actions, currentWeekKey) {
   for (const action of actions) {
     if (action.action === "addTask") {
       const dayId = String(action.dayId || "backlog");
@@ -347,31 +364,33 @@ async function applyToSupabase(actions, householdId, providedSecret, serviceKey,
     }
   }
 
-  state.stateUpdatedAt = new Date().toISOString();
-
   return state;
 }
 
-function logVoiceCommands(state, transcript, actions, confirmation) {
-  if (!Array.isArray(state.voiceCommandLog)) state.voiceCommandLog = [];
-  state.voiceCommandLog.push({
-    id: newId(),
-    timestamp: new Date().toISOString(),
-    transcript,
-    description: confirmation,
-    actions,
-  });
-  const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
-  state.voiceCommandLog = state.voiceCommandLog.filter((e) => e.timestamp >= cutoff);
-}
-
-async function writeStateToSupabase(state, householdId, serviceKey) {
-  const writeRes = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
-    method: "POST",
-    headers: { ...serviceHeaders(serviceKey), Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify({ id: householdId, state, updated_at: new Date().toISOString() }),
-  });
-  if (!writeRes.ok) throw new Error(`State write failed (${writeRes.status})`);
+// Keeps a 30-day command history in its own row ("<groupId>:voicelog"), outside
+// the synced sections so it never contends with device writes. Best-effort.
+async function logVoiceCommands(serviceKey, householdId, transcript, actions, confirmation) {
+  try {
+    const rowId = `${householdId}:voicelog`;
+    const existing = await loadSection(serviceKey, householdId, "voicelog").catch(() => null);
+    const log = Array.isArray(existing?.state?.entries) ? existing.state.entries : [];
+    log.push({
+      id: newId(),
+      timestamp: new Date().toISOString(),
+      transcript,
+      description: confirmation,
+      actions,
+    });
+    const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+    const entries = log.filter((e) => e.timestamp >= cutoff);
+    await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
+      method: "POST",
+      headers: { ...serviceHeaders(serviceKey), Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({ id: rowId, state: { entries }, updated_at: new Date().toISOString() }),
+    });
+  } catch (err) {
+    console.log("VOICE: log write failed:", err.message);
+  }
 }
 
 function describeAction(action) {

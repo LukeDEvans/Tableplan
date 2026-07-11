@@ -74,6 +74,8 @@ body {
   min-height: 100vh;
   background: var(--sun-soft);
   color: var(--ink);
+  /* Blocks pinch-zoom on iOS, which ignores user-scalable=no in the viewport meta */
+  touch-action: pan-x pan-y;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -1866,8 +1868,8 @@ select:focus {
 .group-page-access .group-page-toggle-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  justify-content: flex-start;
+  gap: 10px;
   padding: 6px 0;
   font-size: 0.875rem;
   font-weight: 600;
@@ -1876,6 +1878,12 @@ select:focus {
   border-bottom: 1px solid color-mix(in srgb, var(--ink) 6%, transparent);
 }
 .group-page-access .group-page-toggle-row:last-child { border-bottom: none; }
+/* ── House toggle switch ─────────────────────────────────────────────────────
+   THE default toggle for the whole app. For any new on/off control, use:
+     <input type="checkbox" class="live-toggle">
+   (If it sits inside a .recipe-form dialog, put it in a label excluded from
+   the generic label-grid rule, or wrap in a flex row.) */
+input.live-toggle,
 .group-page-access .group-page-toggle-row input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
@@ -1893,6 +1901,7 @@ select:focus {
   flex-shrink: 0;
   transition: background 0.18s, border-color 0.18s;
 }
+input.live-toggle::before,
 .group-page-access .group-page-toggle-row input[type="checkbox"]::before {
   content: "";
   position: absolute;
@@ -1905,10 +1914,12 @@ select:focus {
   box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   transition: transform 0.18s;
 }
+input.live-toggle:checked,
 .group-page-access .group-page-toggle-row input[type="checkbox"]:checked {
   background: var(--accent);
   border-color: var(--accent-dark);
 }
+input.live-toggle:checked::before,
 .group-page-access .group-page-toggle-row input[type="checkbox"]:checked::before {
   transform: translateX(16px);
 }
@@ -6573,7 +6584,7 @@ textarea {
   text-align: center;
 }
 
-.recipe-form label:not(.travel-leg-mode-radio):not(.toggle-switch) {
+.recipe-form label:not(.travel-leg-mode-radio):not(.toggle-switch):not(.act-endloc-toggle):not(.group-page-toggle-row) {
   display: grid;
   gap: 6px;
   color: #4f493f;
@@ -11765,7 +11776,6 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 .mail-sidebar-toggle svg { stroke: var(--ink); stroke-width: 1.5; fill: none; }
 .mail-search-wrap {
   flex: 1;
-  max-width: 680px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -11875,7 +11885,17 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 .mail-content:has(.mail-thread-panel:not([hidden])) .mail-list-panel { display: none; }
 
 /* Thread panel — this is the scroll container for email content */
-.mail-thread-panel { flex: 1; overflow-y: auto; overflow-x: hidden; }
+/* White reading surface — matches the white canvas emails are designed for.
+   Text vars pinned dark so dark theme stays readable on the white surface. */
+.mail-thread-panel {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: #fff;
+  --ink: #1c1917;
+  --text-muted: #6b6459;
+  --muted: #6b6459;
+}
 
 /* Thread toolbar */
 .mail-thread-toolbar {
@@ -12041,10 +12061,9 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   padding: 0;
   transition: background 0.12s, color 0.12s, opacity 0.12s;
 }
-.mail-row-check, .mail-row-label-btn { opacity: 0; }
-.mail-row:hover .mail-row-check,
-.mail-row:hover .mail-row-label-btn,
-.mail-row--selected .mail-row-check { opacity: 1; }
+/* Checkboxes always visible, Gmail-style; label button appears on hover */
+.mail-row-label-btn { opacity: 0; }
+.mail-row:hover .mail-row-label-btn { opacity: 1; }
 .mail-row-check:hover, .mail-row-star:hover, .mail-row-label-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .mail-row-check svg, .mail-row-star svg, .mail-row-label-btn svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.5; fill: none; }
 .mail-row-star.is-starred { color: #f59e0b; }
@@ -12116,7 +12135,20 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 .mail-thread-subject { font-size: 1.2rem; font-weight: 400; margin: 0; flex: 1; line-height: 1.35; }
 .mail-thread-messages { display: flex; flex-direction: column; gap: 0; }
 .mail-msg { padding: 16px 0; border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); }
-.mail-msg-meta { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+.mail-msg-meta { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 10px; cursor: pointer; }
+.mail-msg-snippet {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  color: var(--text-muted, #888);
+  display: none;
+}
+.mail-msg--collapsed .mail-msg-snippet { display: block; }
+.mail-msg--collapsed { padding: 10px 0; }
+.mail-msg--collapsed .mail-msg-meta { margin-bottom: 0; opacity: 0.75; }
 .mail-msg-from { font-size: 0.9rem; font-weight: 600; }
 .mail-msg-date { font-size: 0.78rem; color: var(--text-muted, #888); flex-shrink: 0; }
 .mail-msg-body { font-size: 0.875rem; line-height: 1.65; color: var(--ink); overflow-x: hidden; }
@@ -12204,6 +12236,15 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 .article-read-page, .listen-page { display: flex; flex-direction: column; }
 .article-page-inner { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .article-layout { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+
+/* Media page: lock the page to the viewport (same mechanism as Mail) so the
+   title bar and folder sidebar stay put and only the content pane scrolls */
+body:has(#mediaMainPage:not([hidden])) { overflow: hidden; height: 100dvh; }
+body:has(#mediaMainPage:not([hidden])) .app-shell { height: 100%; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; }
+body:has(#mediaMainPage:not([hidden])) .workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* The All and Archive lists scroll within their panels, like .article-list */
+#mediaAllList, #mediaArchiveList { flex: 1; min-height: 0; overflow-y: auto; }
 
 /* Shared sidebar */
 .article-sidebar, .listen-sidebar {
@@ -13761,36 +13802,42 @@ body.has-mini-player .mail-list { padding-bottom: 76px; }
 .ai-settings-row > div { flex: 1; }
 
 /* Toggle switch */
+/* Legacy .toggle-switch markup, restyled to render identically to the house
+   toggle (input.live-toggle). One look everywhere. */
 .toggle-switch {
   position: relative;
   display: inline-block;
-  width: 42px;
-  height: 24px;
+  width: 36px;
+  height: 20px;
   flex-shrink: 0;
-  margin-top: 2px;
 }
 .toggle-switch input { opacity: 0; width: 0; height: 0; }
 .toggle-slider {
   position: absolute;
   inset: 0;
-  background: var(--border-subtle, #d1d5db);
-  border-radius: 24px;
+  background: color-mix(in srgb, var(--sun-pale) 74%, #ffffff);
+  border: 1px solid color-mix(in srgb, var(--sun) 55%, var(--line));
+  border-radius: 10px;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background 0.18s, border-color 0.18s;
 }
 .toggle-slider::before {
   content: "";
   position: absolute;
-  width: 18px;
-  height: 18px;
-  left: 3px;
-  top: 3px;
+  width: 14px;
+  height: 14px;
+  left: 2px;
+  top: 2px;
   background: #fff;
   border-radius: 50%;
-  transition: transform 0.2s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+  transition: transform 0.18s;
 }
-.toggle-switch input:checked + .toggle-slider { background: var(--accent-dark, #5b8a7c); }
-.toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
+.toggle-switch input:checked + .toggle-slider {
+  background: var(--accent);
+  border-color: var(--accent-dark);
+}
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(16px); }
 
 /* ── Explore page ────────────────────────────────────────────────────────── */
 body:has(#exploreMainPage:not([hidden])) .app-shell {
@@ -13820,14 +13867,7 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
   align-items: center;
   padding-right: 12px;
 }
-.explore-content-topbar {
-  display: flex;
-  align-items: center;
-  padding: 2px 4px;
-  flex-shrink: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--ink) 6%, transparent);
-}
-.explore-sidebar-toggle-btn svg { stroke: var(--ink); stroke-width: 1.5; fill: none; }
+.explore-trip-menu-btn svg { stroke: var(--ink); stroke-width: 1.5; fill: none; }
 #exMediaSidebar {
   transition: width 0.22s ease;
 }
@@ -13837,6 +13877,10 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
   overflow: hidden;
 }
 .explore-sidebar-empty { font-size: 0.78rem; color: var(--muted); padding: 4px 20px; margin: 0; }
+/* Trips-menu hamburger: inline with the trip title at every width.
+   Mobile: slide-over overlay. Desktop: collapses the docked sidebar.
+   With no trip open, the trips list auto-shows instead (showExploreTripEmpty). */
+.explore-trip-menu-btn { flex-shrink: 0; }
 
 .explore-trip-view {
   display: flex;
@@ -13868,6 +13912,185 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
   padding: 8px 8px 16px;
   scrollbar-width: thin;
 }
+.trip-day-tabs { flex-shrink: 0; margin: 0 8px; }
+.trip-lodging-details {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 10px 8px;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.trip-lodging-detail-row { display: flex; gap: 8px; font-size: 0.78rem; line-height: 1.4; }
+.trip-lodging-detail-label { color: var(--muted); min-width: 74px; flex-shrink: 0; font-weight: 600; }
+.trip-lodging-detail-row a { color: var(--accent-dark, var(--accent)); text-decoration: underline; }
+.trip-connections-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 8px 4px;
+  padding: 8px 10px;
+  border: 1px dashed color-mix(in srgb, var(--ink) 20%, transparent);
+  border-radius: 10px;
+}
+.trip-connections-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.trip-connection-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.82rem;
+}
+.trip-connection-row.is-planned { color: var(--muted); }
+.trip-connection-arrow { color: var(--muted); }
+.trip-connection-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.trip-connection-suggest { font-size: 0.75rem; color: var(--muted); }
+.trip-connection-suggest strong { color: var(--accent-dark, var(--accent)); font-weight: 700; }
+.conn-route-options { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.conn-route-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--ink) 15%, transparent);
+  border-radius: 10px;
+  background: none;
+  cursor: pointer;
+  font-size: 0.92rem;
+  color: var(--ink);
+  text-align: left;
+}
+.conn-route-option:hover:not([disabled]) { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.conn-route-option.is-suggested { border: 2px solid var(--accent); }
+.conn-route-option[disabled] { opacity: 0.45; cursor: default; }
+.conn-route-option-icon { font-size: 1.2rem; }
+.conn-route-option-label { flex: 1; font-weight: 600; }
+.conn-route-suggested-chip {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--accent-dark, var(--accent));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-left: 6px;
+}
+.conn-route-option-time { display: flex; flex-direction: column; align-items: flex-end; font-weight: 700; }
+.conn-route-option-dist { font-size: 0.72rem; font-weight: 400; color: var(--muted); }
+/* "All" blended listen list — rows share the podcast queue's design */
+.media-all-header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
+.media-all-art {
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+  margin-right: 10px;
+}
+.media-all-art--icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+#mediaAllList .podcast-episode-row.is-dragging { opacity: 0.4; }
+#mediaAllList .podcast-episode-row.is-drag-over { box-shadow: inset 0 2px 0 var(--accent); }
+/* Mobile has no hover — row actions across the Media page stay visible there */
+@media (max-width: 680px) {
+  #mediaMainPage .article-row-actions { display: flex; }
+}
+
+/* Sign-in gate: covers the app until body.app-authed is set */
+#appLockScreen {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--sun-soft, #f7f5ef);
+}
+body.app-authed #appLockScreen { display: none; }
+.lock-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  padding: 36px 44px;
+  border-radius: 18px;
+  background: var(--paper, #fff);
+  border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  box-shadow: 0 10px 40px rgba(0,0,0,0.08);
+}
+.lock-card h1 { margin: 0; font-size: 1.5rem; color: var(--ink); }
+.lock-card p { margin: 0 0 10px; font-size: 0.9rem; color: var(--text-muted, #888); }
+.mail-folder-menu { position: fixed; right: auto; top: auto; z-index: 60; min-width: 170px; }
+.mail-notifications-btn { position: relative; }
+.mail-reply-to-input {
+  flex: 1;
+  min-width: 200px;
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  background: transparent;
+  font: inherit;
+  color: var(--ink);
+  padding: 2px 4px;
+}
+.mail-reply-to-input:focus { outline: none; border-bottom-color: var(--accent); }
+.mail-reply-to { display: flex; align-items: baseline; gap: 6px; }
+.mail-forward-note { font-size: 0.78rem; color: var(--text-muted, #888); margin-top: 6px; }
+.mail-notifications-btn.is-checking { opacity: 0.5; }
+.mail-notif-badge {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+.mail-new-folder-btn { color: var(--text-muted, #888); }
+.mail-new-folder-btn:hover { color: var(--ink); }
+.mail-ai-feature-list { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
+.mail-ai-feature-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.mail-ai-feature-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.mail-ai-feature-label { font-size: 0.9rem; font-weight: 650; }
+.mail-ai-feature-desc { font-size: 0.78rem; color: var(--text-muted, #888); line-height: 1.4; }
+.mail-msg-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  min-height: 40px;
+  background: #fff;
+  border-radius: 8px;
+}
+.trip-connection-plan-btn { font-size: 0.75rem; padding: 3px 10px; flex-shrink: 0; }
+.trip-day-car-badge { flex-shrink: 0; }
+.act-endloc-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 7px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+.act-endloc-toggle input { width: 14px; height: 14px; accent-color: var(--accent); }
+.trip-day-tab { min-width: 64px; }
+.trip-day-empty-note { color: var(--muted); font-size: 0.85rem; padding: 10px 14px; margin: 0; }
 .trip-day-card {
   flex: none;
   width: 100%;
@@ -13931,9 +14154,9 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 .trip-day-card--edit { flex: none; }
 .trip-item-list { display: flex; flex-direction: column; gap: 6px; }
 .trip-item-card {
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--accent-soft, #d9f4ed) 40%, #fff);
+  background: #fff;
   overflow: hidden;
 }
 .trip-item-header {
@@ -13992,13 +14215,13 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
   padding: 2px 8px 0;
 }
 .trip-item-card--arriving {
-  border-color: color-mix(in srgb, var(--accent) 20%, transparent);
-  background: color-mix(in srgb, var(--accent-soft, #d9f4ed) 25%, #fff);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: #fff;
   opacity: 0.85;
 }
 .trip-item-card--spanning {
-  border-color: color-mix(in srgb, var(--muted) 25%, transparent);
-  background: color-mix(in srgb, var(--muted) 6%, #fff);
+  border-color: color-mix(in srgb, var(--muted) 40%, transparent);
+  background: #fff;
   opacity: 0.8;
 }
 .trip-item-spanning-badge {
@@ -14193,16 +14416,8 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
   color: var(--muted);
   margin: -8px 0 4px 0;
 }
-.tlg-car-rental-row .toggle-switch {
-  width: 36px;
-  height: 20px;
-  margin-top: 0;
-}
-.tlg-car-rental-row .toggle-slider::before {
-  width: 14px;
-  height: 14px;
-}
-.tlg-car-rental-row .toggle-switch input:checked + .toggle-slider::before { transform: translateX(16px); }
+/* (car-rental toggle overrides removed — the base .toggle-switch is now the
+   house 36×20 design everywhere) */
 .travel-leg-maps-link {
   display: inline-flex;
   align-items: center;
@@ -14431,7 +14646,7 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 
 .travel-detail-title-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
   margin-bottom: 6px;
 }

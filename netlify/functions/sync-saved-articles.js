@@ -1,4 +1,4 @@
-const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
+const { getUserIdFromToken, getUserGroupId, loadSection, updateSection } = require("./_state-sections.js");
 
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
@@ -12,14 +12,14 @@ exports.handler = async (event) => {
   const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
   if (!accessToken) return cors(json(401, { error: "Not authenticated." }));
 
-  const userId = await getUserId(accessToken, serviceKey);
+  const userId = await getUserIdFromToken(accessToken, serviceKey);
   if (!userId) return cors(json(401, { error: "Invalid session." }));
 
-  const stateId = await getUserStateId(serviceKey, userId);
-  if (!stateId) return cors(json(404, { error: "User group not found." }));
+  const groupId = await getUserGroupId(serviceKey, userId);
+  if (!groupId) return cors(json(404, { error: "User group not found." }));
 
-  const currentState = await loadState(serviceKey, stateId);
-  const syncConfig = currentState?.articleSync || {};
+  const mediaRow = await loadSection(serviceKey, groupId, "media").catch(() => null);
+  const syncConfig = mediaRow?.state?.articleSync || {};
   const nytCookie = (syncConfig.nytCookie || "").trim();
   const economistCookie = (syncConfig.economistCookie || "").trim();
 
@@ -27,51 +27,47 @@ exports.handler = async (event) => {
     return cors(json(200, { ok: true, nytAdded: 0, economistAdded: 0, articles: [], message: "No cookies configured." }));
   }
 
-  const existingArticles = Array.isArray(currentState?.savedArticles) ? currentState.savedArticles : [];
-  const existingUrls = new Set(existingArticles.map((a) => a.url));
-  const newArticles = [];
-
-  let nytAdded = 0;
-  let economistAdded = 0;
-
+  const fetched = [];
   let nytError = null;
   let economistError = null;
 
   if (nytCookie) {
     try {
-      const nytItems = await fetchNYTSaved(nytCookie);
-      for (const item of nytItems) {
-        if (!existingUrls.has(item.url)) {
-          existingUrls.add(item.url);
-          newArticles.push({ ...item, savedAt: new Date().toISOString(), author: null, date: null, text: null });
-          nytAdded++;
-        }
-      }
+      fetched.push(...(await fetchNYTSaved(nytCookie)));
     } catch (e) { nytError = e.message; }
   }
 
   if (economistCookie) {
     try {
-      const econItems = await fetchEconomistSaved(economistCookie);
-      for (const item of econItems) {
-        if (!existingUrls.has(item.url)) {
-          existingUrls.add(item.url);
-          newArticles.push({ ...item, savedAt: new Date().toISOString(), author: null, date: null, text: null });
-          economistAdded++;
-        }
-      }
+      fetched.push(...(await fetchEconomistSaved(economistCookie)));
     } catch (e) { economistError = e.message; }
   }
 
-  if (newArticles.length > 0) {
-    const updatedArticles = [...existingArticles, ...newArticles];
-    const newState = {
-      ...(currentState || {}),
-      savedArticles: updatedArticles,
-      articleSync: { ...syncConfig, lastSyncedAt: new Date().toISOString() },
-      stateUpdatedAt: new Date().toISOString()
-    };
-    await saveState(serviceKey, stateId, newState);
+  let nytAdded = 0;
+  let economistAdded = 0;
+  let newArticles = [];
+
+  try {
+    await updateSection(serviceKey, groupId, "media", (state) => {
+      const existing = Array.isArray(state.savedArticles) ? state.savedArticles : [];
+      const existingUrls = new Set(existing.map((a) => a.url));
+      nytAdded = 0;
+      economistAdded = 0;
+      newArticles = [];
+      for (const item of fetched) {
+        if (existingUrls.has(item.url)) continue;
+        existingUrls.add(item.url);
+        newArticles.push({ ...item, savedAt: new Date().toISOString(), author: null, date: null, text: null });
+        if (item.publication === "economist") economistAdded++; else nytAdded++;
+      }
+      return {
+        ...state,
+        savedArticles: [...existing, ...newArticles],
+        articleSync: { ...(state.articleSync || {}), lastSyncedAt: new Date().toISOString() }
+      };
+    });
+  } catch (err) {
+    return cors(json(500, { error: "Could not save synced articles: " + err.message }));
   }
 
   return cors(json(200, { ok: true, nytAdded, economistAdded, articles: newArticles, nytError, economistError }));
@@ -191,52 +187,6 @@ function parseEconomistArticles(html) {
     articles.push({ id: crypto.randomUUID(), url, title, publication: "economist", date: null });
   }
   return articles;
-}
-
-async function getUserId(accessToken, serviceKey) {
-  try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-      headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
-    });
-    if (!res.ok) return null;
-    const user = await res.json();
-    return user.id || null;
-  } catch { return null; }
-}
-
-async function getUserStateId(serviceKey, userId) {
-  try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(userId)}&select=group_id&limit=1`,
-      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, accept: "application/json" } }
-    );
-    if (!res.ok) return null;
-    const rows = await res.json();
-    return rows[0]?.group_id || null;
-  } catch { return null; }
-}
-
-async function loadState(serviceKey, stateId) {
-  const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(stateId)}&select=state`,
-    { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, accept: "application/json" }, cache: "no-store" }
-  );
-  if (!res.ok) return null;
-  const rows = await res.json();
-  return rows[0]?.state || null;
-}
-
-async function saveState(serviceKey, stateId, newState) {
-  await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
-    method: "POST",
-    headers: {
-      apikey: serviceKey,
-      Authorization: `Bearer ${serviceKey}`,
-      "content-type": "application/json",
-      prefer: "resolution=merge-duplicates,return=minimal"
-    },
-    body: JSON.stringify({ id: stateId, state: newState, updated_at: new Date().toISOString() })
-  });
 }
 
 function json(statusCode, body) {

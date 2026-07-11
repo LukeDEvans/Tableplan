@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#32B496" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -17,6 +17,29 @@
     <link rel="stylesheet" href="./styles.css?v=daily-dozen-17" />
   </head>
   <body>
+    <script>
+      // Optimistic unlock: a stored Supabase session means a returning user, so
+      // skip the "Checking sign-in…" cover. The real session check still runs and
+      // re-locks if the token is dead; visitors with no token never get past the gate.
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (/^sb-.+-auth-token$/.test(k) && JSON.parse(localStorage.getItem(k))?.access_token) {
+            document.body.classList.add("app-authed");
+            break;
+          }
+        }
+      } catch { /* gate stays up */ }
+    </script>
+    <!-- Sign-in gate: visible until a session is confirmed (body.app-authed) -->
+    <div id="appLockScreen">
+      <div class="lock-card">
+        <img src="./favicon.svg" alt="" width="56" height="56" />
+        <h1>Live</h1>
+        <p id="lockStatus">Checking sign-in…</p>
+        <button class="primary-btn" id="lockSignInBtn" type="button" hidden>Sign in</button>
+      </div>
+    </div>
     <div class="app-shell">
       <header class="topbar">
         <div class="header-main">
@@ -216,6 +239,11 @@
             </div>
           <div class="article-layout">
               <div class="article-sidebar" id="mediaSidebar">
+                <button class="article-sidebar-tab" type="button" data-media-tab="all" role="tab" aria-selected="false">
+                  <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                  <span>All</span>
+                </button>
+                <div class="article-sidebar-divider"></div>
                 <div class="article-sidebar-section-label">Podcasts</div>
                 <button class="article-sidebar-tab is-active" type="button" data-media-tab="podcasts" role="tab" aria-selected="true">
                   <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
@@ -241,6 +269,11 @@
                 <button class="article-sidebar-tab" type="button" data-media-tab="books-kindle" role="tab" aria-selected="false">
                   <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12" y2="18"/></svg>
                   <span>Kindle</span>
+                </button>
+                <div class="article-sidebar-divider"></div>
+                <button class="article-sidebar-tab" type="button" data-media-tab="archive" role="tab" aria-selected="false">
+                  <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+                  <span>Archive</span>
                 </button>
               </div>
               <div class="article-content" id="mediaContent">
@@ -302,6 +335,15 @@
                 </div>
                 <div class="article-list-panel media-service-panel" id="mediaKindlePanel" hidden>
                   <div class="planner-grid" id="kindlePlannerGrid"></div>
+                </div>
+                <div class="podcast-panel" id="mediaArchivePanel" hidden>
+                  <div id="mediaArchiveList"></div>
+                </div>
+                <div class="podcast-panel" id="mediaAllPanel" hidden>
+                  <div class="media-all-header">
+                    <button class="secondary-btn" type="button" id="mediaAllResetBtn" hidden>Reset order</button>
+                  </div>
+                  <div id="mediaAllList"></div>
                 </div>
                 <div class="podcast-panel" id="mediaPodcastsPanel" hidden>
                   <div class="podcast-playlist-bar" id="podcastPlaylistBar"></div>
@@ -399,11 +441,6 @@
         <!-- ── Explore page ──────────────────────────────────────────────── -->
         <section class="planner-column do-column article-read-page" id="exploreMainPage" aria-label="Explore" hidden>
           <div class="article-page-inner">
-            <div class="media-mobile-bar">
-              <button class="icon-btn" type="button" id="exMediaSidebarToggle" title="Toggle menu" aria-label="Toggle menu">
-                <svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-              </button>
-            </div>
           <div class="article-layout">
               <div class="article-sidebar" id="exMediaSidebar">
                 <div class="explore-trips-header">
@@ -413,11 +450,6 @@
                 <div id="exploreTripList"></div>
               </div>
               <div class="article-content" id="exMediaContent">
-                <div class="explore-content-topbar">
-                  <button class="icon-btn explore-sidebar-toggle-btn" type="button" id="exploreSidebarToggle" title="Collapse sidebar" aria-label="Collapse sidebar">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-                  </button>
-                </div>
                 <!-- Empty state -->
                 <div class="travel-empty" id="exploreTripEmpty">
                   <div class="travel-empty-icon">✈</div>
@@ -431,6 +463,9 @@
                 <div class="explore-trip-view" id="exploreTripView" hidden>
                   <div class="travel-detail-header" id="exploreTripHeader">
                     <div class="travel-detail-title-row">
+                      <button class="icon-btn explore-trip-menu-btn" type="button" id="exploreTripMenuBtn" title="Show trips" aria-label="Show trips list">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+                      </button>
                       <h2 class="travel-detail-name" id="exploreDetailName" contenteditable="true" spellcheck="true"></h2>
                       <div class="travel-detail-header-actions">
                         <select class="travel-status-select" id="exploreStatusSelect">
@@ -453,7 +488,7 @@
                   </div>
                   <div class="watch-category-tabs explore-tabs" role="tablist" id="exploreTabsNav">
                     <button class="watch-category-tab explore-tab is-active" type="button" role="tab" data-explore-tab="overview" aria-selected="true">Overview</button>
-                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="travel" aria-selected="false">Travel</button>
+                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="travel" aria-selected="false">Transportation</button>
                     <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="lodging" aria-selected="false">Lodging</button>
                     <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="activities" aria-selected="false">Activities</button>
                     <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="food" aria-selected="false">Food</button>
@@ -611,12 +646,9 @@
                   <input class="mail-search-input" id="mailSearchInput" type="search" placeholder="Search mail" aria-label="Search email" />
                 </div>
                 <div class="mail-topbar-right">
-                  <span class="mail-account-email" id="mailAccountBadge"></span>
-                  <button class="icon-btn mail-refresh-btn" type="button" id="mailRefreshBtn" title="Refresh" aria-label="Refresh">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4v5h.582m0 0a8.001 8.001 0 0 1 15.356 2m.062-2H20M20 20v-5h-.581m0 0A8.001 8.001 0 0 1 4.062 13m-.062 2H4"/></svg>
-                  </button>
-                  <button class="icon-btn mail-disconnect-btn" type="button" id="mailDisconnectBtn" title="Disconnect Gmail" aria-label="Disconnect Gmail">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.364 5.636a9 9 0 1 1-12.728 12.728 9 9 0 0 1 12.728-12.728M12 8v4m0 4h.01"/></svg>
+                  <button class="icon-btn mail-notifications-btn" type="button" id="mailSuggCheckNow" title="AI-flagged actions from your email — click to check now" aria-label="Notifications" hidden>
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                    <span class="mail-notif-badge" id="mailNotifBadge" hidden>0</span>
                   </button>
                 </div>
               </div>

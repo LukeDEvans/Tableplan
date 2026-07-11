@@ -177,6 +177,10 @@ const server = http.createServer(async (request, response) => {
       await handleNetlifyFunction("./netlify/functions/gmail-watch-rearm", request, response);
       return;
     }
+    if (url.pathname === "/.netlify/functions/recipe-digest") {
+      await handleNetlifyFunction("./netlify/functions/recipe-digest", request, response);
+      return;
+    }
     if (url.pathname === "/.netlify/functions/generate-tts") {
       await handleNetlifyFunction("./netlify/functions/generate-tts", request, response);
       return;
@@ -307,10 +311,10 @@ async function lookupTravelTimes(origin, destination, apiKey) {
     if (el?.status !== "OK") return null;
     return { durationMin: Math.ceil(el.duration.value / 60), label: el.duration.text, distance: el.distance?.text || "" };
   }
-  const [walk, drive, transit] = await Promise.all([
-    oneMode("walking"), oneMode("driving"), oneMode("transit")
+  const [walk, drive, transit, bike] = await Promise.all([
+    oneMode("walking"), oneMode("driving"), oneMode("transit"), oneMode("bicycling")
   ]);
-  return { walk, drive, transit };
+  return { walk, drive, transit, bike };
 }
 
 async function handleTravelMapUrl(request, response) {

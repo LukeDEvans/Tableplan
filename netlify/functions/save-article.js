@@ -1,7 +1,7 @@
-const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
+const { getUserIdFromToken, getUserGroupId, updateSection } = require("./_state-sections.js");
 
 exports.handler = async (event) => {
-  if (event.httpMethod === "OPTIONS") return cors(200);
+  if (event.httpMethod === "OPTIONS") return cors(json(200, {}));
   if (event.httpMethod !== "POST") return cors(json(405, { error: "Method not allowed" }));
 
   const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
@@ -9,7 +9,7 @@ exports.handler = async (event) => {
   const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
   if (!accessToken) return cors(json(401, { error: "Not authenticated." }));
 
-  const userId = await getUserId(accessToken, serviceKey);
+  const userId = await getUserIdFromToken(accessToken, serviceKey);
   if (!userId) return cors(json(401, { error: "Invalid session." }));
 
   let body;
@@ -18,84 +18,42 @@ exports.handler = async (event) => {
   const { url, title, publication, text, author, date } = body;
   if (!url) return cors(json(400, { error: "url is required" }));
 
-  const stateId = await getUserStateId(serviceKey, userId);
-  if (!stateId) return cors(json(404, { error: "User group not found." }));
-
-  const currentState = await loadState(serviceKey, stateId);
-  if (!currentState) return cors(json(500, { error: "Could not load your current state. Please try again." }));
-  const articles = Array.isArray(currentState?.savedArticles) ? currentState.savedArticles : [];
-
-  const existing = articles.find((a) => a.url === url);
-  if (existing) return cors(json(200, { ok: true, already_saved: true, id: existing.id }));
+  const groupId = await getUserGroupId(serviceKey, userId);
+  if (!groupId) return cors(json(404, { error: "User group not found." }));
 
   const id = crypto.randomUUID();
-  articles.push({
-    id,
-    url,
-    title: title || url,
-    publication: publication || detectPublication(url),
-    savedAt: new Date().toISOString(),
-    author: author || null,
-    date: date || null,
-    text: text || null
-  });
+  let alreadySaved = false;
+  let existingId = null;
 
-  const newState = {
-    ...(currentState || {}),
-    savedArticles: articles,
-    stateUpdatedAt: new Date().toISOString()
-  };
-  await saveState(serviceKey, stateId, newState);
-
-  return cors(json(200, { ok: true, already_saved: false, id }));
-};
-
-async function getUserId(accessToken, serviceKey) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-      headers: { apikey: serviceKey, Authorization: `Bearer ${accessToken}` }
+    await updateSection(serviceKey, groupId, "media", (state) => {
+      const articles = Array.isArray(state.savedArticles) ? state.savedArticles : [];
+      const existing = articles.find((a) => a.url === url);
+      if (existing) {
+        alreadySaved = true;
+        existingId = existing.id;
+        return null; // no write needed
+      }
+      return {
+        ...state,
+        savedArticles: [...articles, {
+          id,
+          url,
+          title: title || url,
+          publication: publication || detectPublication(url),
+          savedAt: new Date().toISOString(),
+          author: author || null,
+          date: date || null,
+          text: text || null
+        }]
+      };
     });
-    if (!res.ok) return null;
-    const user = await res.json();
-    return user.id || null;
-  } catch { return null; }
-}
+  } catch (err) {
+    return cors(json(500, { error: "Could not save the article: " + err.message }));
+  }
 
-async function getUserStateId(serviceKey, userId) {
-  try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(userId)}&select=group_id&limit=1`,
-      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, accept: "application/json" } }
-    );
-    if (!res.ok) return null;
-    const rows = await res.json();
-    return rows[0]?.group_id || null;
-  } catch { return null; }
-}
-
-async function loadState(serviceKey, stateId) {
-  const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(stateId)}&select=state`,
-    { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, accept: "application/json" }, cache: "no-store" }
-  );
-  if (!res.ok) return null;
-  const rows = await res.json();
-  return rows[0]?.state || null;
-}
-
-async function saveState(serviceKey, stateId, newState) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
-    method: "POST",
-    headers: {
-      apikey: serviceKey,
-      Authorization: `Bearer ${serviceKey}`,
-      "content-type": "application/json",
-      prefer: "resolution=merge-duplicates,return=minimal"
-    },
-    body: JSON.stringify({ id: stateId, state: newState, updated_at: new Date().toISOString() })
-  });
-  if (!res.ok) throw new Error(`State save failed (${res.status})`);
-}
+  return cors(json(200, { ok: true, already_saved: alreadySaved, id: alreadySaved ? existingId : id }));
+};
 
 function detectPublication(url) {
   try {

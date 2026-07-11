@@ -35,10 +35,10 @@ async function lookupTravelTimes(origin, destination, apiKey) {
     if (el?.status !== "OK") return null;
     return { durationMin: Math.ceil(el.duration.value / 60), label: el.duration.text, distance: el.distance?.text || "" };
   }
-  const [walk, drive, transit] = await Promise.all([
-    oneMode("walking"), oneMode("driving"), oneMode("transit")
+  const [walk, drive, transit, bike] = await Promise.all([
+    oneMode("walking"), oneMode("driving"), oneMode("transit"), oneMode("bicycling")
   ]);
-  return { walk, drive, transit };
+  return { walk, drive, transit, bike };
 }
 
 function jsonResponse(statusCode, body) {

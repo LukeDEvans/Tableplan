@@ -1,0 +1,214 @@
+// Shared pieces of the recipe-digest Mail AI features (NYT Cooking,
+// Bon Appétit, …). Collection happens wherever mail is processed (inbox
+// sweep, weekly catch-up): recipe links are persisted to the user's pending
+// collection FIRST, then the source email is filed away immediately — to the
+// "Apps/AI trash" label while test mode is on, to the real Trash otherwise.
+// The weekly digest then emails the whole collection.
+// Files prefixed with _ are not deployed as individual functions.
+const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
+
+// One entry per publication. `key` doubles as the settings toggle in
+// state.mailAiSettings (Settings → Mail AI).
+const RECIPE_SOURCES = [
+  {
+    key: "nytCookingDigest",
+    name: "NYT Cooking",
+    category: "Recipes",
+    senderRe: /nytimes\.com/i,
+    urlRe: /^https?:\/\/cooking\.nytimes\.com\/recipes\/[a-z0-9][^?#\s"']*/i,
+    slugRe: /\/recipes\/(?:\d+-)?([^/?#]+)/i,
+    searchQ: 'from:(nytimes.com) ("NYT Cooking" OR subject:cooking)'
+  },
+  {
+    key: "bonAppetitDigest",
+    name: "Bon Appétit",
+    category: "Recipes",
+    senderRe: /bonappetit\.com/i,
+    urlRe: /^https?:\/\/(?:www\.)?bonappetit\.com\/recipe\/[a-z0-9][^?#\s"']*/i,
+    slugRe: /\/recipe\/([^/?#]+)/i,
+    searchQ: "from:(bonappetit.com)",
+    // Condé Nast newsletters wrap links in opaque click-trackers that don't
+    // embed the target URL — those need a redirect hop to resolve.
+    resolveRedirects: true,
+    trackerRe: /^https?:\/\/[^/]*(?:bonappetit|condenast|cmail|exacttarget)\.[^/]+\//i
+  },
+  {
+    key: "nutritionFactsDigest",
+    name: "Dr. Greger / NutritionFacts",
+    category: "Health",
+    senderRe: /nutritionfacts\.org|dr\.?\s*greger/i,
+    urlRe: /^https?:\/\/(?:www\.)?nutritionfacts\.org\/(?:video|blog|audio|topics)\/[a-z0-9][^?#\s"']*/i,
+    slugRe: /\/(?:video|blog|audio|topics)\/([^/?#]+)/i,
+    searchQ: 'from:(nutritionfacts.org)',
+    resolveRedirects: true,
+    trackerRe: /^https?:\/\/[^/]*(?:nutritionfacts|list-manage|mailchimp|createsend|cmail\d*)\.[^/]+\//i
+  },
+];
+
+function enabledRecipeSources(mailAiSettings) {
+  return RECIPE_SOURCES.filter((s) => mailAiSettings?.[s.key]);
+}
+
+function recipeSourceForSender(from, mailAiSettings) {
+  return enabledRecipeSources(mailAiSettings).find((s) => s.senderRe.test(from || "")) || null;
+}
+
+// Extracts { url, title, source } for every recipe link of `source` in an
+// email body. Unwraps ?url=-style redirects; follows opaque click-trackers
+// (bounded, parallel) when the source requires it.
+async function extractRecipes(html, source) {
+  const anchors = [];
+  const anchorRe = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = anchorRe.exec(html)) !== null) anchors.push({ href: m[1], inner: m[2] });
+
+  const results = [];
+  const pendingResolves = [];
+  for (const { href, inner } of anchors) {
+    const unwrapped = unwrapParamRedirect(href);
+    const direct = unwrapped.match(source.urlRe);
+    if (direct) {
+      results.push({ url: direct[0], inner });
+    } else if (source.resolveRedirects && source.trackerRe?.test(href) && pendingResolves.length < 15) {
+      pendingResolves.push({ href, inner });
+    }
+  }
+
+  if (pendingResolves.length) {
+    const resolved = await Promise.all(pendingResolves.map(async ({ href, inner }) => {
+      const final = await followRedirects(href);
+      const hit = unwrapParamRedirect(final).match(source.urlRe);
+      return hit ? { url: hit[0], inner } : null;
+    }));
+    resolved.filter(Boolean).forEach((r) => results.push(r));
+  }
+
+  return results.map(({ url, inner }) => {
+    let title = inner
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&amp;/gi, "&")
+      .replace(/&#39;|&apos;|&rsquo;/gi, "’")
+      .replace(/&quot;/gi, '"')
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!title || title.length < 3 || /^(view|see|tap|click|get|make|recipe|cook|save|read more)\b.{0,14}$/i.test(title)) {
+      title = titleFromSlug(url, source);
+    }
+    return title ? { url, title, source: source.name, category: source.category || "Recipes" } : null;
+  }).filter(Boolean);
+}
+
+function unwrapParamRedirect(raw) {
+  let url = String(raw || "");
+  for (let i = 0; i < 3; i++) {
+    const m = url.match(/[?&](?:url|u|redirect_uri|destination)=([^&]+)/i);
+    if (!m) break;
+    try { url = decodeURIComponent(m[1]); } catch { break; }
+  }
+  return url;
+}
+
+async function followRedirects(url, hops = 3) {
+  let cur = url;
+  for (let i = 0; i < hops; i++) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 4000);
+      const res = await fetch(cur, { method: "GET", redirect: "manual", signal: ctrl.signal });
+      clearTimeout(t);
+      const loc = res.headers.get("location");
+      if (!loc) return cur;
+      cur = new URL(loc, cur).toString();
+    } catch { return cur; }
+  }
+  return cur;
+}
+
+function titleFromSlug(url, source) {
+  const m = url.match(source.slugRe);
+  if (!m) return "";
+  return m[1].replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// ── Disposal ─────────────────────────────────────────────────────────────────
+// Test mode (default ON until explicitly turned off in settings): file the
+// email under the "Apps/AI trash" label so it can be verified by hand.
+// Otherwise: real Trash.
+
+function aiTrashTestMode(mailAiSettings) {
+  return mailAiSettings?.aiTrashTestMode !== false;
+}
+
+async function findAiTrashLabelId(gFetch, gToken) {
+  const res = await gFetch(gToken, "/labels");
+  if (!res.ok) return null;
+  const data = await res.json();
+  const label = (data.labels || []).find((l) => /^(apps\/)?ai.?trash$/i.test(l.name || ""));
+  return label?.id || null;
+}
+
+// Returns true if the message was filed away.
+async function disposeProcessedEmail(gFetch, gToken, messageId, { testMode, aiTrashLabelId }) {
+  if (testMode) {
+    if (!aiTrashLabelId) {
+      console.error("[recipe-digest] 'Apps/AI trash' label not found — leaving email in place");
+      return false;
+    }
+    const r = await gFetch(gToken, `/messages/${messageId}/modify`, "POST", {
+      addLabelIds: [aiTrashLabelId],
+      removeLabelIds: ["INBOX", "UNREAD"]
+    });
+    return r.ok;
+  }
+  const r = await gFetch(gToken, `/messages/${messageId}/trash`, "POST");
+  return r.ok;
+}
+
+// ── Pending collection storage (row mailai_<userId>) ────────────────────────
+
+async function loadMailAiRow(serviceKey, userId) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.mailai_${userId}&select=state`, {
+    headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" }
+  });
+  const rows = await res.json().catch(() => []);
+  return rows[0]?.state || {};
+}
+
+async function saveMailAiRow(serviceKey, userId, state) {
+  await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states`, {
+    method: "POST",
+    headers: {
+      apikey: serviceKey,
+      authorization: `Bearer ${serviceKey}`,
+      "content-type": "application/json",
+      prefer: "resolution=merge-duplicates,return=minimal"
+    },
+    body: JSON.stringify({ id: `mailai_${userId}`, state })
+  });
+}
+
+async function appendPendingRecipes(serviceKey, userId, recipes) {
+  const row = await loadMailAiRow(serviceKey, userId);
+  const pending = new Map((row.recipesPending || []).map((r) => [r.url, r]));
+  for (const r of recipes) {
+    const existing = pending.get(r.url);
+    if (!existing || r.title.length > existing.title.length) pending.set(r.url, r);
+  }
+  row.recipesPending = [...pending.values()].slice(-300);
+  await saveMailAiRow(serviceKey, userId, row);
+  return row;
+}
+
+module.exports = {
+  RECIPE_SOURCES,
+  enabledRecipeSources,
+  recipeSourceForSender,
+  extractRecipes,
+  aiTrashTestMode,
+  findAiTrashLabelId,
+  disposeProcessedEmail,
+  loadMailAiRow,
+  saveMailAiRow,
+  appendPendingRecipes
+};
