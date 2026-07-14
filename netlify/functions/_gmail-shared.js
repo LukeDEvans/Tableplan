@@ -287,7 +287,7 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
   const fresh = messageIds.filter((id) => !processed.has(id)).slice(0, 10);
 
   // Mail AI feature flags (config state section)
-  const appCfg = await loadAppConfig(serviceKey);
+  const appCfg = await loadAppConfig(serviceKey, userId);
   const mailAi = appCfg?.mailAiSettings || {};
   const testMode = aiTrashTestMode(mailAi);
   const aiTrashLabelId = (enabledRecipeSources(mailAi).length && testMode)
@@ -407,13 +407,13 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
   return { scanned: fresh.length, added: added.length };
 }
 
-// App config (the "personal:config" state section — feature flags etc.)
-async function loadAppConfig(serviceKey) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.personal:config&select=state`, {
-    headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" }
-  });
-  const rows = await res.json().catch(() => []);
-  return rows[0]?.state || null;
+// App config (the user's "<groupId>:config" state section — feature flags etc.)
+async function loadAppConfig(serviceKey, userId) {
+  const { getUserGroupId, loadSection } = require("./_state-sections.js");
+  const groupId = await getUserGroupId(serviceKey, userId);
+  if (!groupId) return null;
+  const row = await loadSection(serviceKey, groupId, "config").catch(() => null);
+  return row?.state || null;
 }
 
 // ─── Watch (Pub/Sub push subscription) ───────────────────────────────────────
@@ -451,5 +451,6 @@ module.exports = {
   triageEmail,
   fetchHistoryDelta,
   runInboxSweep,
-  armGmailWatch
+  armGmailWatch,
+  loadAppConfig
 };

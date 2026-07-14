@@ -871,13 +871,51 @@ h3 {
   text-align: center;
 }
 
-.home-center h2 {
-  margin: 0;
-  color: var(--ink);
-  font-family: "Great Vibes", cursive;
-  font-size: clamp(5rem, 18vw, 13rem);
-  font-weight: 700;
-  line-height: 0.9;
+/* Default home layout: logo stacked above the links. */
+.home-hero {
+  position: relative;
+  width: fit-content;
+  margin: 0 auto;
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+}
+
+.home-logo {
+  display: block;
+  width: clamp(100px, 18vw, 160px);
+  height: auto;
+}
+
+/* ── Alternate "hero" layout (saved for later) ────────────────────────────────
+   Add class "home-layout-hero" to <section id="homeMainPage" class="home-page">
+   to switch back: the artwork fills ~76% of the viewport height and the links
+   sit inside its open pocket (right side, between the cloud and the swoosh). */
+.home-layout-hero .home-logo {
+  width: min(94vw, calc(76dvh * 1.222)); /* 1.222 = artwork aspect ratio */
+}
+
+.home-layout-hero .home-hero .home-links {
+  position: absolute;
+  left: 57%;
+  right: 1%;
+  top: 37%;
+  bottom: 18%;
+  justify-content: center;
+  gap: clamp(2px, 1.1dvh, 12px);
+}
+
+.home-layout-hero .home-hero .home-links button {
+  font-size: clamp(0.92rem, 2.1dvh, 1.15rem);
+}
+
+@media (max-width: 680px) {
+  /* Small screens: the hero pocket is too tight — stack below the art */
+  .home-layout-hero .home-hero .home-links {
+    position: static;
+    margin-top: 10px;
+  }
+  .home-layout-hero .home-logo { width: min(88vw, calc(48dvh * 1.222)); }
 }
 
 .home-links {
@@ -3344,10 +3382,27 @@ input.live-toggle:checked::before,
 }
 
 .grocery-store-section h3 {
-  margin: 0;
+  margin: 0 auto 0 0; /* keep title left beside the collapse button; directions stay right */
   color: var(--ink);
   font-size: 1rem;
   font-weight: 900;
+}
+
+.grocery-collapse-btn {
+  flex: 0 0 auto;
+  color: var(--muted);
+  width: 26px;
+  height: 26px;
+}
+
+.grocery-collapse-btn:hover {
+  color: var(--accent-dark);
+}
+
+.grocery-collapsed-count {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
 .grocery-store-directions {
@@ -3736,6 +3791,37 @@ input.live-toggle:checked::before,
 .grocery-price-observation.expired {
   opacity: 0.56;
 }
+
+/* Stores passed over for the current week (preferences untouched) */
+.grocery-skipped-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.grocery-skipped-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.grocery-skipped-chip button {
+  border: none;
+  background: none;
+  color: var(--accent-dark);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.grocery-skipped-chip button:hover { text-decoration: underline; }
 
 .grocery-price-summary {
   display: flex;
@@ -14019,16 +14105,22 @@ body.app-authed #appLockScreen { display: none; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 4px;
   text-align: center;
-  padding: 36px 44px;
+  padding: 20px 44px 32px;
   border-radius: 18px;
-  background: var(--paper, #fff);
-  border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  /* Must exactly match the lock-logo.png background so the art blends in */
+  background: #FDE291;
+  border: 1px solid color-mix(in srgb, #1E5D5E 14%, transparent);
   box-shadow: 0 10px 40px rgba(0,0,0,0.08);
 }
-.lock-card h1 { margin: 0; font-size: 1.5rem; color: var(--ink); }
-.lock-card p { margin: 0 0 10px; font-size: 0.9rem; color: var(--text-muted, #888); }
+.lock-logo {
+  display: block;
+  width: 280px;
+  max-width: 70vw;
+  height: auto;
+}
+.lock-card p { margin: 0 0 10px; font-size: 0.9rem; color: #1E5D5E; }
 .mail-folder-menu { position: fixed; right: auto; top: auto; z-index: 60; min-width: 170px; }
 .mail-notifications-btn { position: relative; }
 .mail-reply-to-input {

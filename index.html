@@ -3,13 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <meta name="theme-color" content="#32B496" />
+    <meta name="theme-color" content="#2C9993" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Live" />
     <title>Live</title>
-    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png" />
+    <link rel="icon" href="./favicon-32.png?v=7" type="image/png" sizes="32x32" />
+    <link rel="icon" href="./favicon-16.png?v=7" type="image/png" sizes="16x16" />
+    <link rel="icon" href="./favicon.svg?v=7" type="image/svg+xml" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png?v=7" />
     <link rel="manifest" href="./manifest.json" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -34,8 +36,7 @@
     <!-- Sign-in gate: visible until a session is confirmed (body.app-authed) -->
     <div id="appLockScreen">
       <div class="lock-card">
-        <img src="./favicon.svg" alt="" width="56" height="56" />
-        <h1>Live</h1>
+        <img class="lock-logo" src="./lock-logo.png" alt="Live" width="280" height="280" />
         <p id="lockStatus">Checking sign-in…</p>
         <button class="primary-btn" id="lockSignInBtn" type="button" hidden>Sign in</button>
       </div>
@@ -190,7 +191,22 @@
       <main class="workspace">
         <section class="home-page" id="homeMainPage" aria-label="Live home">
           <div class="home-center">
-            <h2>Live</h2>
+            <div class="home-hero">
+              <img class="home-logo" src="./home-logo.png" alt="Live" width="1023" height="836" />
+              <nav class="home-links" aria-label="App pages">
+                <button type="button" id="homePlayBtn">Exercise</button>
+                <button type="button" id="homeMailBtn">Mail</button>
+                <button type="button" id="homeEatBtn">Meal Plan</button>
+                <button type="button" id="homeReadBtn">Media</button>
+                <button type="button" id="homeRecreateBtn">Recreate</button>
+                <button type="button" id="homeExploreBtn">Explore</button>
+                <button type="button" id="homePlanBtn">Calendar</button>
+                <button type="button" id="homeShopBtn">Shop</button>
+                <button type="button" id="homeInventoryBtn">Stock</button>
+                <button type="button" id="homeDoBtn">To-Do</button>
+                <button type="button" id="homeWatchBtn">Watch</button>
+              </nav>
+            </div>
             <div class="home-briefing" id="homeBriefing" hidden>
               <div class="home-briefing-top">
                 <span class="home-briefing-date" id="homeBriefingDate"></span>
@@ -201,19 +217,6 @@
               <div class="home-briefing-ai" id="homeBriefingAi"></div>
               <div class="home-briefing-panels" id="homeBriefingPanels"></div>
             </div>
-            <nav class="home-links" aria-label="App pages">
-              <button type="button" id="homePlayBtn">Exercise</button>
-              <button type="button" id="homeMailBtn">Mail</button>
-              <button type="button" id="homeEatBtn">Meal Plan</button>
-              <button type="button" id="homeReadBtn">Media</button>
-              <button type="button" id="homeRecreateBtn">Recreate</button>
-              <button type="button" id="homeExploreBtn">Explore</button>
-              <button type="button" id="homePlanBtn">Calendar</button>
-              <button type="button" id="homeShopBtn">Shop</button>
-              <button type="button" id="homeInventoryBtn">Stock</button>
-              <button type="button" id="homeDoBtn">To-Do</button>
-              <button type="button" id="homeWatchBtn">Watch</button>
-            </nav>
           </div>
         </section>
         <section class="planner-column" data-section="mealPrep" aria-label="Weekly meal prep planner" hidden>

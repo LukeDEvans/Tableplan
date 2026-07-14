@@ -199,7 +199,7 @@ const CLOUD_SNAPSHOT_HOURLY_MAX = 720; // 1 per hour going back up to 30 days
 // Each section is stored as its own Supabase row: id = "{stateId}:{section}"
 const STATE_SECTIONS = {
   eat:       ["recipes", "trashedRecipes", "folders", "plans", "publishedWeeks", "recipeTags", "ingredientOptions", "autoGenerateRules", "mealPlanConfig", "activeCooking"],
-  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "checkedGroceries", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory"],
+  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "checkedGroceries", "grocerySkippedStores", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory"],
   do:        ["doTasks", "doPlans", "doBacklog", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
@@ -2554,6 +2554,7 @@ function defaultState() {
     pantry: ["olive oil", "salt", "pepper"],
     persistentManualGroceries: [],
     checkedGroceries: {},
+    grocerySkippedStores: {},
     recipeTags: defaultRecipeTags(),
     groceryBaseItems: defaultGroceryBaseItems(),
     groceryCatalogVersion: 1,
@@ -2648,6 +2649,7 @@ function normalizeState(parsed) {
     pantry: Array.isArray(parsed?.pantry) ? parsed.pantry : [],
     persistentManualGroceries: normalizePersistentManualGroceries(parsed),
     checkedGroceries: parsed?.checkedGroceries || {},
+    grocerySkippedStores: parsed?.grocerySkippedStores && typeof parsed.grocerySkippedStores === "object" ? parsed.grocerySkippedStores : {},
     recipeTags: normalizeRecipeTags(parsed?.recipeTags),
     groceryBaseItems: Array.isArray(parsed?.groceryBaseItems) ? normalizeGroceryBaseItems(parsed.groceryBaseItems) : defaultGroceryBaseItems(),
     groceryCatalogVersion: Number(parsed?.groceryCatalogVersion) || 0,
@@ -4330,7 +4332,7 @@ function mergeStates(newer, older) {
   // ── Flat keyed maps: union keys, newer wins on conflict ───────────────────
   for (const key of [
     "groceryItemLocations", "groceryAliases", "grocerySplitPreferences",
-    "receiptItemMappings", "personGoals", "checkedGroceries",
+    "receiptItemMappings", "personGoals", "checkedGroceries", "grocerySkippedStores",
     "nutritionIngredientMappings", "publishedWeeks",
     "inventoryRoomVisibility", "watchShowtimesData",
     "groceryReviewDismissed", "collapsedDays",
@@ -5532,7 +5534,10 @@ function folderName(folderId) {
 
 function render() {
   const name = getAppName();
-  elements.homeMainPage.querySelector("h2").textContent = name;
+  // The home title is the logo image now; a custom app name shows in the tab
+  // title and the logo's alt text (there is no h2 to update anymore).
+  const homeLogo = elements.homeMainPage.querySelector(".home-logo");
+  if (homeLogo) homeLogo.alt = name;
   document.title = name;
   updatePageVisibility();
   const week = weekState();
@@ -13923,6 +13928,7 @@ function openGroceryStoreMenu(event) {
   menu.className = "folder-context-menu grocery-store-context-menu";
   menu.setAttribute("role", "menu");
   menu.innerHTML = `
+    <button type="button" role="menuitem" data-skip-grocery-store="${escapeHtml(store.id)}">Skip this week</button>
     <button type="button" role="menuitem" data-edit-grocery-store="${escapeHtml(store.id)}">Edit</button>
     <button type="button" role="menuitem" data-remove-grocery-store-menu="${escapeHtml(store.id)}">Remove</button>
   `;
@@ -13937,6 +13943,12 @@ function openGroceryStoreMenu(event) {
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
 
+  menu.querySelector("[data-skip-grocery-store]").addEventListener("click", (clickEvent) => {
+    clickEvent.preventDefault();
+    clickEvent.stopPropagation();
+    closeFolderMenu();
+    setGroceryStoreSkipped(store.id, true);
+  });
   menu.querySelector("[data-edit-grocery-store]").addEventListener("click", (clickEvent) => {
     clickEvent.preventDefault();
     clickEvent.stopPropagation();
@@ -19793,7 +19805,8 @@ function autoGeneratePlannerDay(dayId) {
 function renderGroceryStoreTabs() {
   const el = document.getElementById("groceryStoreTabBar");
   if (!el) return;
-  const stores = groceryStores().filter((s) => s.enabled !== false);
+  const skippedIds = skippedGroceryStoreIds();
+  const stores = groceryStores().filter((s) => s.enabled !== false && !skippedIds.has(s.id));
   if (!stores.length) { el.innerHTML = ""; return; }
   if (!stores.some((s) => s.id === activeGroceryStoreTab) && activeGroceryStoreTab !== "all") {
     activeGroceryStoreTab = "all";
@@ -19802,7 +19815,7 @@ function renderGroceryStoreTabs() {
     <div class="watch-category-tabs" role="tablist" aria-label="Store">
       <button class="watch-category-tab${activeGroceryStoreTab === "all" ? " is-active" : ""}" type="button" role="tab" data-grocery-tab="all">All</button>
       ${stores.map((store) => `
-        <button class="watch-category-tab${activeGroceryStoreTab === store.id ? " is-active" : ""}" type="button" role="tab" data-grocery-tab="${escapeHtml(store.id)}">${escapeHtml(store.name)}</button>
+        <button class="watch-category-tab${activeGroceryStoreTab === store.id ? " is-active" : ""}" type="button" role="tab" data-grocery-tab="${escapeHtml(store.id)}" data-grocery-store-setting="${escapeHtml(store.id)}">${escapeHtml(store.name)}</button>
       `).join("")}
     </div>
   `;
@@ -19812,6 +19825,7 @@ function renderGroceryStoreTabs() {
       renderGroceries();
     });
     if (btn.dataset.groceryTab !== "all") {
+      btn.addEventListener("contextmenu", openGroceryStoreMenu);
       btn.addEventListener("dragover", (event) => {
         if (!draggedGroceryItem?.itemKey) return;
         event.preventDefault();
@@ -19836,8 +19850,8 @@ function renderGroceryStoreTabs() {
 
 function renderGroceries() {
   renderGroceryWeekOptions();
-  renderGroceryStoreTabs();
   if (!groceryRangeStart || !groceryRangeEnd) initGroceryRange();
+  renderGroceryStoreTabs();
   const rangeKey = `${groceryRangeStart}/${groceryRangeEnd}`;
   const isCheckedRow = (rowKey) => {
     const newVal = state.checkedGroceries[groceryCheckedKey(rangeKey, rowKey)];
@@ -19892,14 +19906,20 @@ function renderGroceries() {
     return [...unchecked, ...checked];
   };
 
+  const miscCollapsed = Boolean(state.collapsedSections?.["groceryStore:misc"]);
   const miscSection = unlocatedManualRows.length ? `
     <section class="grocery-store-section grocery-misc-section" data-grocery-store-section="">
       <div class="grocery-store-heading">
-        <h3>Miscellaneous</h3>
+        <button class="icon-btn grocery-collapse-btn" type="button" data-grocery-collapse="groceryStore:misc" title="${miscCollapsed ? "Expand" : "Collapse"} Miscellaneous" aria-expanded="${!miscCollapsed}">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
+        </button>
+        <h3>Miscellaneous${miscCollapsed ? ` <span class="grocery-collapsed-count">(${unlocatedManualRows.length})</span>` : ""}</h3>
       </div>
+      ${miscCollapsed ? "" : `
       <div class="grocery-store-list" data-grocery-store-list="" data-grocery-store-section-list="">
         ${sortCheckedLast(unlocatedManualRows).map(groceryItemTemplate).join("")}
       </div>
+      `}
     </section>
   ` : "";
 
@@ -19907,11 +19927,16 @@ function renderGroceries() {
     // Flatten groups preserving section order; checked items sink to the bottom
     const flatRows = sectionGroups.flatMap((group) => group.rows);
     const sortedRows = sortCheckedLast(flatRows);
+    const collapseKey = `groceryStore:${storeId || "unassigned"}`;
+    const isCollapsed = activeGroceryStoreTab === "all" && Boolean(state.collapsedSections?.[collapseKey]);
     return `
       <section class="grocery-store-section" data-grocery-store-section="${escapeHtml(storeId)}">
         ${activeGroceryStoreTab === "all" ? `
           <div class="grocery-store-heading" ${storeId ? `data-grocery-store-setting="${escapeHtml(storeId)}"` : ""}>
-            <h3>${escapeHtml(name)}</h3>
+            <button class="icon-btn grocery-collapse-btn" type="button" data-grocery-collapse="${escapeHtml(collapseKey)}" title="${isCollapsed ? "Expand" : "Collapse"} ${escapeHtml(name)}" aria-expanded="${!isCollapsed}">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
+            </button>
+            <h3>${escapeHtml(name)}${isCollapsed ? ` <span class="grocery-collapsed-count">(${sortedRows.length})</span>` : ""}</h3>
             ${storeDirectionsUrl(store) ? `
               <a class="icon-btn grocery-store-directions" href="${escapeHtml(storeDirectionsUrl(store))}" target="_blank" rel="noopener" title="Directions to ${escapeHtml(name)}" aria-label="Directions to ${escapeHtml(name)}">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 5 6 6-6 6v-4H8a4 4 0 0 0-4 4V9a4 4 0 0 1 4-4h5Z" /></svg>
@@ -19919,14 +19944,28 @@ function renderGroceries() {
             ` : ""}
           </div>
         ` : ""}
+        ${isCollapsed ? "" : `
         <div class="grocery-store-list ${sortedRows.length ? "" : "is-empty"}"
           data-grocery-store-list="${escapeHtml(storeId)}"
           data-grocery-store-section-list="">
           ${sortedRows.length ? sortedRows.map(groceryItemTemplate).join("") : `<div class="grocery-store-empty">Drop items here</div>`}
         </div>
+        `}
       </section>
     `;
   };
+
+  const skippedIds = skippedGroceryStoreIds();
+  const skippedStrip = skippedIds.size ? `
+    <div class="grocery-skipped-strip">
+      ${groceryStores().filter((s) => skippedIds.has(s.id)).map((s) => `
+        <span class="grocery-skipped-chip">
+          ${escapeHtml(s.name)} skipped this week
+          <button type="button" data-unskip-grocery-store="${escapeHtml(s.id)}">Shop it</button>
+        </span>
+      `).join("")}
+    </div>
+  ` : "";
 
   let planSections;
   if (activeGroceryStoreTab === "all") {
@@ -19934,7 +19973,8 @@ function renderGroceries() {
       ${groceryPricePlanTemplate(pricePlan)}
       ${groceryFallbackRoutingTemplate(needed, pricePlan.assignments)}
       ${storeSections.map(storeSection).join("")}
-    ` : "";
+      ${skippedStrip}
+    ` : skippedStrip;
   } else {
     const active = storeSections.find((s) => s.storeId === activeGroceryStoreTab);
     planSections = active?.rows.length
@@ -19984,6 +20024,19 @@ function renderGroceries() {
   });
   elements.groceryList.querySelectorAll("[data-grocery-store-setting]").forEach((heading) => {
     heading.addEventListener("contextmenu", openGroceryStoreMenu);
+  });
+  elements.groceryList.querySelectorAll("[data-unskip-grocery-store]").forEach((btn) => {
+    btn.addEventListener("click", () => setGroceryStoreSkipped(btn.dataset.unskipGroceryStore, false));
+  });
+  elements.groceryList.querySelectorAll("[data-grocery-collapse]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (!state.collapsedSections || typeof state.collapsedSections !== "object") state.collapsedSections = {};
+      const key = btn.dataset.groceryCollapse;
+      state.collapsedSections[key] = !state.collapsedSections[key];
+      persist();
+      renderGroceries();
+    });
   });
 }
 
@@ -20131,6 +20184,30 @@ function normalizeComparablePriceUnit(value) {
   return aliases[unit] ?? unit;
 }
 
+// ── Weekly store skips ────────────────────────────────────────────────────────
+// A store can be passed over for the current shopping range without touching
+// any item's preferred-store rankings: skipped stores drop out of routing, so
+// items flow to their next preferred store for this week only. Keys are
+// "<rangeStart>/<rangeEnd>::<storeId>"; un-skipping stores `false` (never
+// deletes) so a sync merge can't resurrect the skip.
+function grocerySkipKey(storeId) {
+  return `${groceryRangeStart}/${groceryRangeEnd}::${storeId}`;
+}
+
+function skippedGroceryStoreIds() {
+  const map = state.grocerySkippedStores && typeof state.grocerySkippedStores === "object" ? state.grocerySkippedStores : {};
+  const prefix = `${groceryRangeStart}/${groceryRangeEnd}::`;
+  return new Set(Object.entries(map).filter(([k, v]) => v && k.startsWith(prefix)).map(([k]) => k.slice(prefix.length)));
+}
+
+function setGroceryStoreSkipped(storeId, skipped) {
+  if (!state.grocerySkippedStores || typeof state.grocerySkippedStores !== "object") state.grocerySkippedStores = {};
+  state.grocerySkippedStores[grocerySkipKey(storeId)] = !!skipped;
+  if (skipped && activeGroceryStoreTab === storeId) activeGroceryStoreTab = "all";
+  persist();
+  renderGroceries();
+}
+
 function resolveItemEffectiveStoreId(itemKey, locations, enabledStoreIds) {
   const loc = locations[itemKey];
   if (!loc) return null;
@@ -20144,7 +20221,8 @@ function resolveItemEffectiveStoreId(itemKey, locations, enabledStoreIds) {
 function groceryStoreSections(rows, priceAssignments = {}, priceEstimates = {}) {
   const locations = groceryItemLocations();
   const itemSections = groceryStoreItemSections();
-  const enabledStores = groceryStores().filter((s) => s.enabled !== false);
+  const skippedIds = skippedGroceryStoreIds();
+  const enabledStores = groceryStores().filter((s) => s.enabled !== false && !skippedIds.has(s.id));
   const enabledStoreIds = new Set(enabledStores.map((s) => s.id));
   const stores = enabledStores.map((store) => ({ storeId: store.id, name: store.name, store }));
   const fallbackStoreId = stores[0]?.storeId || "";
@@ -20154,7 +20232,9 @@ function groceryStoreSections(rows, priceAssignments = {}, priceEstimates = {}) 
       const storeRows = rows
         .filter((row) => {
           const effective = resolveItemEffectiveStoreId(row.key, locations, enabledStoreIds);
-          return (effective || priceAssignments[row.key] || fallbackStoreId) === section.storeId;
+          // Price-plan assignments to a skipped store must not strand the item
+          const assigned = enabledStoreIds.has(priceAssignments[row.key]) ? priceAssignments[row.key] : "";
+          return (effective || assigned || fallbackStoreId) === section.storeId;
         })
         .map((row) => ({ ...row, priceEstimate: priceEstimates[row.key] || null }))
         .sort((a, b) => Number(a.checked) - Number(b.checked)
@@ -30017,10 +30097,10 @@ function renderArticleList(containerId, pub) {
     </div>
   `;
 
-  const markLabel = "Mark as read";
-  const unmarkLabel = "Mark as unread";
-  const checkIcon = `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
-  const unmarkIcon = `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/><line x1="3" y1="3" x2="21" y2="21" stroke-width="2"/></svg>`;
+  const markLabel = "Send to archive";
+  const unmarkLabel = "Restore from archive";
+  const checkIcon = `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>`;
+  const unmarkIcon = `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><path d="M12 18v-6M9 15l3-3 3 3"/></svg>`;
   const trashIcon = `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
 
   listEl.innerHTML = sortBar + articles.map((a) => {
@@ -30132,7 +30212,8 @@ function openArticle(id, fromListId) {
   const article = (state.savedArticles || []).find((a) => a.id === id);
   if (!article) return;
   openArticleId = id;
-  markArticleRead(id);
+  // Opening an article does NOT archive it — archiving is explicit (the
+  // Archive button) or happens when it finishes playing in the listen queue.
 
   const readerPanel = document.getElementById("articleReaderPanel");
   const listPanel = document.getElementById("articleListPanel");

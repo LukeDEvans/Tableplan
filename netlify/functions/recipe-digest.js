@@ -10,10 +10,9 @@
 //      missed (e.g. arrived while the real-time watch was down).
 //   2. Delivery: one email with the accumulated collection from all sources,
 //      grouped by publication, deduped against previous digests.
-const { listGmailUsers, getValidAccessToken, gFetch, headersMap, extractBody } = require("./_gmail-shared");
+const { listGmailUsers, getValidAccessToken, gFetch, headersMap, extractBody, loadAppConfig } = require("./_gmail-shared");
 const { enabledRecipeSources, extractRecipes, aiTrashTestMode, findAiTrashLabelId, disposeProcessedEmail, loadMailAiRow, saveMailAiRow, appendPendingRecipes } = require("./_recipe-digest");
 const { resolveRecipientEmail } = require("./_recipient");
-const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const FROM_EMAIL = "Live App <onboarding@resend.dev>";
 
 exports.handler = async () => {
@@ -21,17 +20,18 @@ exports.handler = async () => {
   const resendKey = (process.env.RESEND_API_KEY || "").trim();
   if (!serviceKey || !resendKey) { console.log("[recipe-digest] Missing SUPABASE_SERVICE_ROLE_KEY or RESEND_API_KEY"); return ok(); }
 
-  const cfg = await loadRow(serviceKey, "personal:config");
-  const mailAi = cfg?.mailAiSettings || {};
-  const sources = enabledRecipeSources(mailAi);
-  if (!sources.length) { console.log("[recipe-digest] No recipe sources enabled — skipping"); return ok(); }
-  const testMode = aiTrashTestMode(mailAi);
-
   const users = await listGmailUsers(serviceKey);
   if (!users.length) { console.log("[recipe-digest] No connected Gmail users"); return ok(); }
 
   for (const { userId, tokens } of users) {
     try {
+      // Feature flags live in each user's own config section
+      const cfg = await loadAppConfig(serviceKey, userId);
+      const mailAi = cfg?.mailAiSettings || {};
+      const sources = enabledRecipeSources(mailAi);
+      if (!sources.length) { console.log(`[recipe-digest] ${tokens.email}: no recipe sources enabled — skipping`); continue; }
+      const testMode = aiTrashTestMode(mailAi);
+
       const { token: gToken } = await getValidAccessToken(tokens, serviceKey, userId);
       if (!gToken) { console.error(`[recipe-digest] ${tokens.email}: no access token`); continue; }
 
@@ -137,14 +137,6 @@ async function sendResendEmail(resendKey, to, subject, html) {
     body: JSON.stringify({ from: FROM_EMAIL, to: [to], subject, html })
   });
   return res.ok;
-}
-
-async function loadRow(serviceKey, id) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(id)}&select=state`, {
-    headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" }
-  });
-  const rows = await res.json().catch(() => []);
-  return rows[0]?.state || null;
 }
 
 function escapeHtml(s) {

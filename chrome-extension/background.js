@@ -162,33 +162,54 @@ function extractArticleTextFromDOM() {
     "main"
   ];
 
-  let container = null;
+  const SKIP_RE = /^(subscribe|sign in|log in|advertisement|share|follow|newsletter|cookies|more from|read more|listen|related)/i;
+
+  // Extracts blocks from a SET of containers (many sites split one article
+  // body across several same-class sections — a single querySelector only
+  // caught the first fragment, truncating the save).
+  function collectBlocks(containers) {
+    const seen = new Set();
+    const blocks = [];
+    let totalLen = 0;
+    containers.forEach(function (container) {
+      container.querySelectorAll("p, h2, h3, h4, blockquote").forEach(function (el) {
+        if (el.closest("nav, aside, [aria-hidden='true'], [aria-hidden=\"true\"]")) return;
+        const cls = (el.getAttribute("class") || "") + " " + (el.parentElement?.getAttribute("class") || "");
+        if (/promo|newsletter|ad[-_]|related|recommend|paywall/i.test(cls)) return;
+        const text = (el.innerText || "").replace(/\s+/g, " ").trim();
+        if (text.length < 12 || seen.has(text)) return;
+        // Boilerplate filter only applies to short blocks — a real paragraph
+        // can legitimately start with "Listen…" or "Share…"
+        if (text.length < 120 && SKIP_RE.test(text)) return;
+        seen.add(text);
+        const tag = el.tagName.toLowerCase();
+        blocks.push(tag === "p" || tag === "blockquote" ? "<p>" + esc(text) + "</p>" : "<h3>" + esc(text) + "</h3>");
+        totalLen += text.length;
+      });
+    });
+    return { blocks: blocks, totalLen: totalLen };
+  }
+
+  let best = null;
   for (const sel of SELECTORS) {
     try {
-      const el = document.querySelector(sel);
-      if (el) { container = el; break; }
+      const els = Array.from(document.querySelectorAll(sel));
+      if (!els.length) continue;
+      const cand = collectBlocks(els);
+      if (cand.blocks.length >= 3) { best = cand; break; }
     } catch { /* skip bad selector */ }
   }
-  if (!container) return null;
 
-  const SKIP_RE = /^(subscribe|sign in|log in|advertisement|share|follow|newsletter|cookies|more from|read more|listen|related)/i;
-  const seen = new Set();
-  const blocks = [];
+  // Sanity check against a broad container: if the page's <article>/<main>
+  // yields much more text, the specific selector only matched a fragment.
+  const broadRoot = document.querySelector("article") || document.querySelector("main");
+  if (broadRoot) {
+    const broad = collectBlocks([broadRoot]);
+    if (broad.blocks.length >= 3 && (!best || broad.totalLen > best.totalLen * 1.6)) best = broad;
+  }
 
-  container.querySelectorAll("p, h2, h3, h4, blockquote").forEach(function (el) {
-    if (el.closest("nav, aside, [aria-hidden='true'], [aria-hidden=\"true\"]")) return;
-    const cls = (el.getAttribute("class") || "") + " " + (el.parentElement?.getAttribute("class") || "");
-    if (/promo|newsletter|ad[-_]|related|recommend|paywall/i.test(cls)) return;
-    const text = (el.innerText || "").replace(/\s+/g, " ").trim();
-    if (text.length < 25 || seen.has(text)) return;
-    if (SKIP_RE.test(text)) return;
-    seen.add(text);
-    const tag = el.tagName.toLowerCase();
-    blocks.push(tag === "p" || tag === "blockquote" ? "<p>" + esc(text) + "</p>" : "<h3>" + esc(text) + "</h3>");
-  });
-
-  if (blocks.length < 3) return null;
-  return { title: title.trim(), author: author.trim(), date: date.trim(), text: blocks.join("\n") };
+  if (!best || best.blocks.length < 3) return null;
+  return { title: title.trim(), author: author.trim(), date: date.trim(), text: best.blocks.join("\n") };
 }
 
 async function importFromPage(tabId, publication) {

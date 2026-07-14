@@ -14,6 +14,11 @@ function copyRootFilesPlugin() {
       copyFileSync('./icon-180.png', './dist/icon-180.png');
       copyFileSync('./icon-192.png', './dist/icon-192.png');
       copyFileSync('./icon-512.png', './dist/icon-512.png');
+      copyFileSync('./lock-logo.png', './dist/lock-logo.png');
+      copyFileSync('./home-logo.png', './dist/home-logo.png');
+      copyFileSync('./favicon.ico', './dist/favicon.ico');
+      copyFileSync('./favicon-32.png', './dist/favicon-32.png');
+      copyFileSync('./favicon-16.png', './dist/favicon-16.png');
     },
   };
 }
