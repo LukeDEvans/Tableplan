@@ -4701,6 +4701,14 @@ input.live-toggle:checked::before,
   margin-bottom: 4px;
 }
 
+.workout-pool-img {
+  width: 52px;
+  height: 52px;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto;
+}
+
 .workout-pool-title {
   font-size: 0.9rem;
   font-weight: 950;

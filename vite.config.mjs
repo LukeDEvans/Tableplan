@@ -19,6 +19,9 @@ function copyRootFilesPlugin() {
       copyFileSync('./favicon.ico', './dist/favicon.ico');
       copyFileSync('./favicon-32.png', './dist/favicon-32.png');
       copyFileSync('./favicon-16.png', './dist/favicon-16.png');
+      copyFileSync('./activity-weightlifting.png', './dist/activity-weightlifting.png');
+      copyFileSync('./activity-cycling.png', './dist/activity-cycling.png');
+      copyFileSync('./activity-soccer.png', './dist/activity-soccer.png');
     },
   };
 }

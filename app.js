@@ -9509,9 +9509,13 @@ function workoutLogSummary(workout, log) {
 }
 
 function workoutTypeIcon(type) {
-  if (type === "reps") return "💪";
-  if (type === "game") return "⚽";
-  return "🚴";
+  // LDE activity pictograms (transparent PNGs). reps→weightlifting,
+  // game→soccer, timed/default→cycling.
+  const src = type === "reps" ? "./activity-weightlifting.png"
+    : type === "game" ? "./activity-soccer.png"
+    : "./activity-cycling.png";
+  const alt = type === "reps" ? "Weightlifting" : type === "game" ? "Soccer" : "Cycling";
+  return `<img class="workout-pool-img" src="${src}" alt="${alt}" width="52" height="52" draggable="false" />`;
 }
 
 function workoutPoolCardTemplate(workout) {
