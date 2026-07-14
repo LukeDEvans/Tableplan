@@ -2182,10 +2182,15 @@ async function submitGroupSetup(event) {
   btn.disabled = true;
   errorEl.textContent = "";
   try {
-    if (pendingInviteToken) {
+    // Always try to join by invite first — even without a token the server
+    // finds a pending invite addressed to this email (the token lives in
+    // per-tab sessionStorage and is easily lost on phones). Only when no
+    // invite exists does this become a brand-new solo group.
+    try {
       await acceptGroupInvite(pendingInviteToken, displayName);
       maybeAutoLinkProfile();
-    } else {
+    } catch (inviteErr) {
+      if (pendingInviteToken) throw inviteErr; // explicit invite that failed — surface it
       await createUserGroup(displayName);
     }
     dialog.close();
@@ -2319,7 +2324,9 @@ function renderGroupSettingsSection() {
       status.textContent = "Sending…";
       try {
         const result = await sendGroupInvite(email);
-        status.innerHTML = `Invite sent to ${escapeHtml(email)}.${result.inviteUrl ? ` <a href="${escapeHtml(result.inviteUrl)}" target="_blank" rel="noopener">Open link</a>` : ""}`;
+        status.innerHTML = result.emailSent === false
+          ? `Invite created, but the email could not be delivered — share the link directly: <a href="${escapeHtml(result.inviteUrl)}" target="_blank" rel="noopener">invite link</a> (copy and text it).`
+          : `Invite sent to ${escapeHtml(email)}.${result.inviteUrl ? ` <a href="${escapeHtml(result.inviteUrl)}" target="_blank" rel="noopener">Open link</a>` : ""}`;
         if (emailInput) emailInput.value = "";
       } catch (e) {
         status.textContent = e.message;
@@ -13137,7 +13144,9 @@ function handleContextSettingsAction(event) {
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
-        statusEl.innerHTML = `Invite sent to ${escapeHtml(email)}.${data.inviteUrl ? ` <a href="${escapeHtml(data.inviteUrl)}" target="_blank" rel="noopener">Open link</a>` : ""}`;
+        statusEl.innerHTML = data.emailSent === false
+          ? `Invite created, but the email could not be delivered — share the link directly: <a href="${escapeHtml(data.inviteUrl)}" target="_blank" rel="noopener">invite link</a> (copy and text it).`
+          : `Invite sent to ${escapeHtml(email)}.${data.inviteUrl ? ` <a href="${escapeHtml(data.inviteUrl)}" target="_blank" rel="noopener">Open link</a>` : ""}`;
         emailInput.value = "";
       } catch (e) {
         statusEl.textContent = e.message || "Could not send invite.";

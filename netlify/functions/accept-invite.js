@@ -15,10 +15,16 @@ exports.handler = async (event) => {
   let body;
   try { body = JSON.parse(event.body || "{}"); } catch { return jsonResponse(400, { error: "Invalid JSON." }); }
   const { token, displayName } = body;
-  if (!token) return jsonResponse(400, { error: "Invite token is required." });
 
+  // With a token: exact lookup. Without one (the link's token lives in
+  // per-tab sessionStorage and is easily lost on phones), fall back to the
+  // newest pending invite addressed to the signed-in email — the pre-created
+  // auth account proves the owner invited exactly this address.
+  const query = token
+    ? `id=eq.${encodeURIComponent(token)}`
+    : `email=eq.${encodeURIComponent((caller.email || "").toLowerCase())}&accepted_at=is.null&order=created_at.desc&limit=1`;
   const inviteRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/live_group_invites?id=eq.${encodeURIComponent(token)}&select=id,group_id,email,accepted_at,expires_at`,
+    `${SUPABASE_URL}/rest/v1/live_group_invites?${query}&select=id,group_id,email,accepted_at,expires_at`,
     { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } }
   );
   if (!inviteRes.ok) return jsonResponse(500, { error: "Could not look up invite." });

@@ -55,10 +55,20 @@ exports.handler = async (event) => {
 
   const appUrl = (process.env.APP_URL || process.env.URL || "").replace(/\/$/, "");
   const inviteUrl = `${appUrl}/?invite=${invite.id}`;
-  await sendEmail({ resendKey, from: DEFAULT_FROM_EMAIL, to: email, subject: "You've been invited to Live",
-    html: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;color:#1C1917;"><h2 style="color:#92400E;margin-bottom:16px;">You're invited</h2><p style="margin-bottom:24px;">You've been invited to join a family group on <strong>Live</strong>, a personal life-management app.</p><a href="${inviteUrl}" style="display:inline-block;background:#92400E;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600;">Accept Invite</a><p style="margin-top:24px;font-size:0.85em;color:#78716c;">If you didn't expect this, you can safely ignore this email.</p></div>`
-  });
-  return jsonResponse(200, { ok: true, inviteUrl });
+  // Email delivery is best-effort: Resend's test sender can only deliver to
+  // the account owner's own address, so invites to other people may bounce.
+  // The invite itself is already valid — return the link so the admin can
+  // share it directly (text/AirDrop) instead of failing the whole invite.
+  let emailSent = true;
+  try {
+    await sendEmail({ resendKey, from: DEFAULT_FROM_EMAIL, to: email, subject: "You've been invited to Live",
+      html: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;color:#1C1917;"><h2 style="color:#92400E;margin-bottom:16px;">You're invited</h2><p style="margin-bottom:24px;">You've been invited to join a family group on <strong>Live</strong>, a personal life-management app.</p><a href="${inviteUrl}" style="display:inline-block;background:#92400E;color:#fff;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600;">Accept Invite</a><p style="margin-top:24px;font-size:0.85em;color:#78716c;">If you didn't expect this, you can safely ignore this email.</p></div>`
+    });
+  } catch (e) {
+    console.error("[send-invite] email delivery failed (invite still valid):", e.message);
+    emailSent = false;
+  }
+  return jsonResponse(200, { ok: true, inviteUrl, emailSent });
 };
 
 async function getCallerUser(accessToken, serviceKey) {
