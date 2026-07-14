@@ -124,7 +124,7 @@ async function saveArticleToMediaSection(serviceKey, userId, article) {
       `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&updated_at=eq.${encodeURIComponent(updated_at)}`,
       {
         method: "PATCH",
-        headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, "content-type": "application/json", prefer: "return=representation" },
+        headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, "content-type": "application/json", prefer: "return=representation", "x-live-writer": "2" },
         body: JSON.stringify({ state: newState, updated_at: new Date().toISOString() })
       }
     );

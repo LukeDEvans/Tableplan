@@ -183,6 +183,7 @@ const seedRecipes = [
 const state = loadState();
 let sharedStorageReady = false;
 let sharedStorageSaveTimer = null;
+let appHiddenAt = 0; // when the tab/PWA was last hidden (stale-resume reload check)
 let sharedStorageRetryTimer = null;
 let sharedStorageRetryCount = 0;
 const SHARED_STORAGE_RETRY_DELAYS = [5000, 15000, 45000, 120000, 300000]; // 5s, 15s, 45s, 2m, 5m — last entry repeats
@@ -1606,7 +1607,18 @@ function bindEvents() {
   window.addEventListener("resize", closeFloatingMenus);
   window.addEventListener("scroll", closeFloatingMenusOnPageScroll, true);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "hidden") return;
+    if (document.visibilityState !== "hidden") {
+      // Waking after a long suspension (phone PWAs sleep for days holding old
+      // code in memory): reload so the current bundle runs before any sync.
+      // All state is persisted on hide (below), so a reload loses nothing.
+      if (appHiddenAt && Date.now() - appHiddenAt > 6 * 3600 * 1000) {
+        window.location.reload();
+        return;
+      }
+      appHiddenAt = 0;
+      return;
+    }
+    appHiddenAt = Date.now();
     window.clearTimeout(sharedStorageSaveTimer);
     window.clearTimeout(localBackupTimer);
     if (sharedStorageReady && activeSharedStorageProvider) {
@@ -5324,7 +5336,11 @@ function supabaseHeaders() {
   return {
     apikey: anonKey,
     Authorization: `Bearer ${accessToken}`,
-    "content-type": "application/json"
+    "content-type": "application/json",
+    // Writer-version stamp: a DB trigger rejects section writes without it,
+    // which fences off stale cached bundles (the repeat data-wipe vector —
+    // e.g. a suspended phone PWA waking up with week-old code and syncing).
+    "x-live-writer": "2"
   };
 }
 

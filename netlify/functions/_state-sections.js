@@ -9,7 +9,9 @@ function serviceHeaders(serviceKey) {
   return {
     apikey: serviceKey,
     authorization: `Bearer ${serviceKey}`,
-    accept: "application/json"
+    accept: "application/json",
+    // Writer-version stamp — see enforce_live_writer trigger / app.js
+    "x-live-writer": "2"
   };
 }
 
