@@ -11,7 +11,7 @@ exports.handler = async (event) => {
   if (!accessToken) return jsonResponse(401, { error: "Not authenticated." });
   if (!await verifySession(accessToken, serviceKey)) return jsonResponse(401, { error: "Invalid session." });
 
-  const apiKey = (process.env.GOOGLE_MAPS_API_KEY || "").trim();
+  const apiKey = (process.env.GOOGLE_MAPS_API_KEY || process.env.Google_Maps || "").trim();
   if (!apiKey) return jsonResponse(503, { error: "Google Maps is not configured." });
 
   let body;

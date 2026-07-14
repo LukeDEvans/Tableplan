@@ -15,7 +15,7 @@ exports.handler = async (event) => {
   if (!accessToken) return { statusCode: 401, body: "Not authenticated" };
   if (!await verifySession(accessToken, serviceKey)) return { statusCode: 401, body: "Invalid session" };
 
-  const apiKey = (process.env.GOOGLE_MAPS_API_KEY || "").trim();
+  const apiKey = (process.env.GOOGLE_MAPS_API_KEY || process.env.Google_Maps || "").trim();
   if (!apiKey) return { statusCode: 503, body: "Maps not configured" };
 
   // Forward all params to Google except _token

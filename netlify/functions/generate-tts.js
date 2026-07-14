@@ -6,7 +6,7 @@ exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return cors(json(405, { error: "Method not allowed" }));
 
   const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
-  const ttsKey = (process.env.GOOGLE_MAPS_API_KEY || "").trim();
+  const ttsKey = (process.env.GOOGLE_MAPS_API_KEY || process.env.Google_Maps || "").trim();
   if (!ttsKey) return cors(json(500, { error: "TTS API key not configured." }));
 
   const authHeader = event.headers.authorization || event.headers.Authorization || "";
