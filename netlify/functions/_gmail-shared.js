@@ -311,12 +311,17 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
     // (the collection is persisted before disposal, so nothing can be lost)
     const recipeSource = recipeSourceForSender(hdrs.from, mailAi);
     if (recipeSource) {
-      const recipes = await extractRecipes(rawBody, recipeSource);
-      if (recipes.length) {
-        await appendPendingRecipes(serviceKey, userId, recipes);
-        await disposeProcessedEmail(gFetch, gToken, messageId, { testMode, aiTrashLabelId });
-        console.log(`[recipe-digest] ${recipeSource.name}: collected ${recipes.length} link(s) from message ${messageId} (${testMode ? "AI trash" : "trash"})`);
-        return { suggestions: [] };
+      try {
+        const recipes = await extractRecipes(rawBody, recipeSource);
+        if (recipes.length) {
+          await appendPendingRecipes(serviceKey, userId, recipes);
+          await disposeProcessedEmail(gFetch, gToken, messageId, { testMode, aiTrashLabelId });
+          console.log(`[recipe-digest] ${recipeSource.name}: collected ${recipes.length} link(s) from message ${messageId} (${testMode ? "AI trash" : "trash"})`);
+          return { suggestions: [] };
+        }
+      } catch (e) {
+        console.error(`[recipe-digest] ${recipeSource.name} failed — email left in place for retry:`, e.message);
+        return { suggestions: [], retry: true };
       }
     }
 

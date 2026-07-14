@@ -17,7 +17,11 @@ const RECIPE_SOURCES = [
     senderRe: /nytimes\.com/i,
     urlRe: /^https?:\/\/cooking\.nytimes\.com\/recipes\/[a-z0-9][^?#\s"']*/i,
     slugRe: /\/recipes\/(?:\d+-)?([^/?#]+)/i,
-    searchQ: 'from:(nytimes.com) ("NYT Cooking" OR subject:cooking)'
+    searchQ: 'from:(nytimes.com) ("NYT Cooking" OR subject:cooking)',
+    // Every link in NYT newsletters is an nl.nytimes.com click-tracker with no
+    // embedded target URL — recipe links only surface after a redirect hop.
+    resolveRedirects: true,
+    trackerRe: /^https?:\/\/nl\.nytimes\.com\//i
   },
   {
     key: "bonAppetitDigest",
@@ -63,19 +67,28 @@ async function extractRecipes(html, source) {
   while ((m = anchorRe.exec(html)) !== null) anchors.push({ href: m[1], inner: m[2] });
 
   const results = [];
-  const pendingResolves = [];
+  const candidates = [];
+  const seenHrefs = new Set();
+  // Anchor text that is clearly newsletter chrome, not a recipe card
+  const BOILER_RE = /unsubscrib|view in browser|privacy|advertis|manage (your )?(preferences|account)|sign ?up|app store|google play|feedback|help center|terms of|follow us|facebook|twitter|instagram|tiktok|read more news|games|wirecutter|athletic|audio|account/i;
   for (const { href, inner } of anchors) {
     const unwrapped = unwrapParamRedirect(href);
     const direct = unwrapped.match(source.urlRe);
     if (direct) {
       results.push({ url: direct[0], inner });
-    } else if (source.resolveRedirects && source.trackerRe?.test(href) && pendingResolves.length < 15) {
-      pendingResolves.push({ href, inner });
+    } else if (source.resolveRedirects && source.trackerRe?.test(href) && !seenHrefs.has(href)) {
+      seenHrefs.add(href);
+      const innerText = inner.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      if (BOILER_RE.test(innerText)) continue;
+      // Recipe cards carry an image and/or a real title — resolve those first
+      const weight = (/<img\b/i.test(inner) ? 2 : 0) + (innerText.length >= 12 ? 1 : 0);
+      candidates.push({ href, inner, weight });
     }
   }
 
-  if (pendingResolves.length) {
-    const resolved = await Promise.all(pendingResolves.map(async ({ href, inner }) => {
+  if (candidates.length) {
+    const toResolve = candidates.sort((a, b) => b.weight - a.weight).slice(0, 30);
+    const resolved = await Promise.all(toResolve.map(async ({ href, inner }) => {
       const final = await followRedirects(href);
       const hit = unwrapParamRedirect(final).match(source.urlRe);
       return hit ? { url: hit[0], inner } : null;
@@ -92,7 +105,8 @@ async function extractRecipes(html, source) {
       .replace(/&quot;/gi, '"')
       .replace(/\s+/g, " ")
       .trim();
-    if (!title || title.length < 3 || /^(view|see|tap|click|get|make|recipe|cook|save|read more)\b.{0,14}$/i.test(title)) {
+    if (!title || title.length < 3 || /^(view|see|tap|click|get|make|recipe|cook|save|read more)\b.{0,14}$/i.test(title)
+      || /\bfor the new york times\b|food stylist|prop stylist|photograph by|getty images/i.test(title)) {
       title = titleFromSlug(url, source);
     }
     return title ? { url, title, source: source.name, category: source.category || "Recipes" } : null;
@@ -176,7 +190,7 @@ async function loadMailAiRow(serviceKey, userId) {
 }
 
 async function saveMailAiRow(serviceKey, userId, state) {
-  await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states`, {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
     method: "POST",
     headers: {
       apikey: serviceKey,
@@ -184,8 +198,14 @@ async function saveMailAiRow(serviceKey, userId, state) {
       "content-type": "application/json",
       prefer: "resolution=merge-duplicates,return=minimal"
     },
-    body: JSON.stringify({ id: `mailai_${userId}`, state })
+    body: JSON.stringify({ id: `mailai_${userId}`, state, updated_at: new Date().toISOString() })
   });
+  // Must throw on failure: callers dispose the source email after this write,
+  // so a silent failure would lose the collected recipes permanently.
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`mailai row save failed (${res.status}): ${detail.slice(0, 200)}`);
+  }
 }
 
 async function appendPendingRecipes(serviceKey, userId, recipes) {
