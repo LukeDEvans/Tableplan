@@ -1,10 +1,11 @@
 // Receives Gmail push notifications via Google Cloud Pub/Sub.
 // Pub/Sub POSTs { message: { data: base64({ emailAddress, historyId }) } }
-// whenever new mail arrives for a watched inbox. We respond by sweeping the
-// history delta and generating suggestions. Always ACK (200) — returning an
-// error makes Pub/Sub retry aggressively, and our checkpoint means a missed
+// whenever new mail arrives for a watched inbox. The actual sweep is handed
+// to sweep-background (15-minute limit) because AI newsletter conversion
+// blows this function's ~26s budget. Always ACK (200) — returning an error
+// makes Pub/Sub retry aggressively, and our checkpoint means a missed
 // notification is recovered by the next one anyway.
-const { findGmailUserByEmail, runInboxSweep } = require("./_gmail-shared");
+const { findGmailUserByEmail } = require("./_gmail-shared");
 
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return { statusCode: 405, body: "" };
@@ -36,10 +37,15 @@ exports.handler = async (event) => {
   }
 
   try {
-    const result = await runInboxSweep(user.tokens, serviceKey, user.userId, { anthropicKey });
-    if (result.added) console.log(`gmail-webhook: ${result.scanned} scanned, ${result.added} suggestion(s) added`);
+    // Background functions ACK with 202 immediately and keep running
+    const base = (process.env.URL || "").replace(/\/$/, "");
+    await fetch(`${base}/.netlify/functions/sweep-background?token=${encodeURIComponent(expected)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: notif.emailAddress })
+    });
   } catch (e) {
-    console.error("gmail-webhook sweep failed:", e.message);
+    console.error("gmail-webhook: could not start background sweep:", e.message);
   }
   return { statusCode: 200, body: "" };
 };

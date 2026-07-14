@@ -3,7 +3,7 @@
 // user, and doubles as a catch-up sweep in case any push notification was
 // missed. With a daily schedule there are six days of slack before real-time
 // delivery would actually stop.
-const { listGmailUsers, getValidAccessToken, armGmailWatch, runInboxSweep, loadMailSuggestions, saveMailSuggestions } = require("./_gmail-shared");
+const { listGmailUsers, getValidAccessToken, armGmailWatch, loadMailSuggestions, saveMailSuggestions } = require("./_gmail-shared");
 
 exports.handler = async () => {
   const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
@@ -31,12 +31,21 @@ exports.handler = async () => {
         console.log("[gmail-watch-rearm] GMAIL_PUBSUB_TOPIC not set — skipping watch, running sweep only");
       }
 
-      if (anthropicKey) {
-        const result = await runInboxSweep(tokens, serviceKey, userId, { anthropicKey });
-        console.log(`[gmail-watch-rearm] ${tokens.email}: catch-up scanned ${result.scanned}, added ${result.added}`);
-      }
     } catch (e) {
       console.error(`[gmail-watch-rearm] ${tokens.email} failed:`, e.message);
+    }
+  }
+
+  // Catch-up sweep for all users runs in the background function — AI
+  // newsletter conversion takes longer than this function's time budget.
+  if (anthropicKey) {
+    try {
+      const base = (process.env.URL || "").replace(/\/$/, "");
+      const token = (process.env.PUBSUB_VERIFICATION_TOKEN || "").trim();
+      await fetch(`${base}/.netlify/functions/sweep-background?token=${encodeURIComponent(token)}`, { method: "POST", body: "{}" });
+      console.log("[gmail-watch-rearm] background catch-up sweep started");
+    } catch (e) {
+      console.error("[gmail-watch-rearm] could not start background sweep:", e.message);
     }
   }
   return ok();

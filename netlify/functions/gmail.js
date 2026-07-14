@@ -117,11 +117,19 @@ exports.handler = async (event) => {
   }
 
   if (action === "checkInboxNow") {
-    const anthropicKey = (process.env.ANTHROPIC_API_KEY || "").trim();
+    // The sweep runs in sweep-background (15-min limit) — AI newsletter
+    // conversion can exceed this function's ~26s budget. Return current
+    // suggestions immediately; the client's next refresh picks up new ones.
     try {
-      const result = await runInboxSweep(tokens, serviceKey, userId, { anthropicKey });
+      const base = (process.env.URL || "").replace(/\/$/, "");
+      const bgToken = (process.env.PUBSUB_VERIFICATION_TOKEN || "").trim();
+      await fetch(`${base}/.netlify/functions/sweep-background?token=${encodeURIComponent(bgToken)}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: tokens.email })
+      });
       const data = await loadMailSuggestions(serviceKey, userId);
-      return json(200, { ...result, suggestions: data.suggestions });
+      return json(200, { started: true, scanned: 0, added: 0, suggestions: data.suggestions });
     } catch (e) {
       console.error("checkInboxNow failed:", e.message);
       return json(502, { error: e.message || "Inbox check failed." });
