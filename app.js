@@ -5,6 +5,7 @@ import * as LiveFoodHealthChecklists from './food-health-checklists.js';
 import * as LiveMealPlanServings from './meal-plan-servings.js';
 import * as LiveReceiptDomain from './receipt-domain.js';
 import * as NutritionDomain from './nutrition-domain.js';
+import { icon as ldeIcon } from './live-icons.js';
 
 const STORAGE_KEY = "tableplan-state-v1";
 const TRAVEL_LOGISTIC_ICONS = { flight: "✈️", hotel: "🏨", car: "🚗", train: "🚆", ferry: "⛴️", other: "📌" };
@@ -6123,16 +6124,16 @@ function appendMailRows(messages) {
         <span class="mail-row-date">${escapeHtml(formatMailDate(m.internalDate))}</span>
         <div class="mail-row-actions" aria-label="Quick actions">
           <button class="mail-row-action-btn" type="button" data-row-action="archive" title="Archive" aria-label="Archive">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+            ${ldeIcon("archive", { size: 19 })}
           </button>
           <button class="mail-row-action-btn" type="button" data-row-action="delete" title="Delete" aria-label="Delete">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            ${ldeIcon("trash", { size: 19 })}
           </button>
           <button class="mail-row-action-btn" type="button" data-row-action="unread" title="Mark as unread" aria-label="Mark as unread">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.2 8.4c.5.38.8.97.8 1.6v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V10c0-.63.3-1.22.8-1.6l8-6a2 2 0 0 1 2.4 0l8 6z"/></svg>
+            ${ldeIcon("markUnread", { size: 19 })}
           </button>
           <button class="mail-row-action-btn" type="button" data-row-action="snooze" title="Snooze" aria-label="Snooze">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            ${ldeIcon("snoozed", { size: 19 })}
           </button>
         </div>
       </div>`;
@@ -6522,37 +6523,37 @@ function renderMailThread(thread) {
   const html = `
     <div class="mail-thread-toolbar">
       <button class="icon-btn mail-action-btn" type="button" id="mailBackBtn" title="Back" aria-label="Back">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5"/><path d="m12 5-7 7 7 7"/></svg>
+        ${ldeIcon("back", { size: 22 })}
       </button>
       <div class="mail-thread-actions">
         <button class="icon-btn mail-action-btn" type="button" id="mailReplyBtn" title="Reply" aria-label="Reply">
-          <svg viewBox="0 0 24 24" aria-hidden="true" style="fill:currentColor;stroke:none"><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/></svg>
+          ${ldeIcon("reply", { size: 22 })}
         </button>
         <button class="icon-btn mail-action-btn" type="button" id="mailForwardBtn" title="Forward" aria-label="Forward">
-          <svg viewBox="0 0 24 24" aria-hidden="true" style="fill:currentColor;stroke:none"><path d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
+          ${ldeIcon("forward", { size: 22 })}
         </button>
         <div class="mail-action-divider"></div>
         <button class="icon-btn mail-action-btn" type="button" id="mailArchiveBtn" title="Archive">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+          ${ldeIcon("archive", { size: 22 })}
         </button>
         <button class="icon-btn mail-action-btn" type="button" id="mailSpamBtn" title="Report spam">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><octagon/><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          ${ldeIcon("spam", { size: 22 })}
         </button>
         <button class="icon-btn mail-action-btn" type="button" id="mailDeleteBtn" title="Delete">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          ${ldeIcon("trash", { size: 22 })}
         </button>
         <button class="icon-btn mail-action-btn" type="button" id="mailUnreadBtn" title="Mark as unread">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.2 8.4c.5.38.8.97.8 1.6v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V10c0-.63.3-1.22.8-1.6l8-6a2 2 0 0 1 2.4 0l8 6z"/></svg>
+          ${ldeIcon("markUnread", { size: 22 })}
         </button>
         <div class="mail-action-divider"></div>
         <div class="mail-move-wrap">
           <button class="icon-btn mail-action-btn" type="button" id="mailMoveBtn" title="Move to">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            ${ldeIcon("move", { size: 22 })}
           </button>
         </div>
         <div class="mail-more-wrap">
           <button class="icon-btn mail-action-btn" type="button" id="mailMoreBtn" title="More actions" aria-label="More actions">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.2" fill="currentColor" stroke="none"/></svg>
+            ${ldeIcon("moreOptions", { size: 22 })}
           </button>
         </div>
       </div>
@@ -6578,7 +6579,7 @@ function renderMailThread(thread) {
           <textarea class="mail-reply-body" id="mailReplyBody" rows="8" placeholder="Write your reply…"></textarea>
           <div class="mail-forward-note" id="mailForwardNote" hidden>📎 The original email is included below your note, formatting intact.</div>
           <div class="mail-reply-actions">
-            <button class="secondary-btn mail-ai-draft-btn" type="button" id="mailAiDraftBtn" style="margin-right:auto">✦ Draft with AI</button>
+            <button class="secondary-btn mail-ai-draft-btn" type="button" id="mailAiDraftBtn" style="margin-right:auto">${ldeIcon("livDraft", { size: 16, cls: "btn-icon" })} Draft with AI</button>
             <button class="secondary-btn" type="button" id="mailReplyCancelBtn">Cancel</button>
             <button class="primary-btn" type="button" id="mailReplySendBtn">Send</button>
           </div>
@@ -28422,16 +28423,16 @@ function renderMediaAllList() {
       </div>
       <div class="article-row-actions">
         ${e.type === "book"
-          ? `<button class="article-row-action-btn" type="button" title="Open" aria-label="Open" data-all-open="${escapeHtml(e.id)}"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>`
+          ? `<button class="article-row-action-btn" type="button" title="Open" aria-label="Open" data-all-open="${escapeHtml(e.id)}">${ldeIcon("link", { size: 16 })}</button>`
           : `
           <button class="article-row-action-btn" type="button" title="Mark as played" aria-label="Mark as played" data-all-played="${escapeHtml(e.id)}">
-            <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            ${ldeIcon("checkmark", { size: 16 })}
           </button>
           <button class="article-row-action-btn" type="button" title="Remove from playlist" aria-label="Remove from playlist" data-all-remove="${escapeHtml(e.id)}">
-            <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            ${ldeIcon("close", { size: 16 })}
           </button>
           <button class="article-row-action-btn" type="button" title="Play from here" aria-label="Play from here" data-all-play="${escapeHtml(e.id)}">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+            ${ldeIcon("play", { size: 16 })}
           </button>`}
       </div>
     </div>`;
@@ -30099,9 +30100,9 @@ function renderArticleList(containerId, pub) {
 
   const markLabel = "Send to archive";
   const unmarkLabel = "Restore from archive";
-  const checkIcon = `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>`;
-  const unmarkIcon = `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><path d="M12 18v-6M9 15l3-3 3 3"/></svg>`;
-  const trashIcon = `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
+  const checkIcon = ldeIcon("archive");
+  const unmarkIcon = ldeIcon("restore");
+  const trashIcon = ldeIcon("trash");
 
   listEl.innerHTML = sortBar + articles.map((a) => {
     const isRead = readIds.has(a.id);
