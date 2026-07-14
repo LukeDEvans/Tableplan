@@ -300,7 +300,13 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
   // next sweep tries again (e.g. a transient conversion failure).
   const perMessage = await Promise.all(fresh.map(async (messageId) => {
     const r = await gFetch(gToken, `/messages/${messageId}?format=full`);
-    if (!r.ok) return { suggestions: [], retry: true };
+    if (!r.ok) {
+      // 404/410 → the message was deleted; retrying forever would pin a dead
+      // ID in the queue. Treat it as processed so it ages out. Other errors
+      // (auth, rate limit, 5xx) are transient and do warrant a retry.
+      const gone = r.status === 404 || r.status === 410;
+      return { suggestions: [], retry: !gone };
+    }
     const msg = await r.json();
     const hdrs = headersMap(msg.payload?.headers);
     const fromSelf = tokens.email && (hdrs.from || "").toLowerCase().includes(tokens.email.toLowerCase());
