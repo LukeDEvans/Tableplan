@@ -6082,6 +6082,14 @@ let mailLabels = [];
 let mailFolderExpanded = new Set();
 let mailSelected = new Map(); // threadId → { subject }
 let mailBulkBarWired = false;
+let mailSwipedRow = null; // the .mail-row currently revealing its swipe actions, if any
+function closeSwipedMailRow() {
+  if (!mailSwipedRow) return;
+  mailSwipedRow.classList.remove("mail-row--swiped");
+  const front = mailSwipedRow.querySelector(".mail-row-front");
+  if (front) front.style.transform = "";
+  mailSwipedRow = null;
+}
 
 function warmMailStatus() {
   if (!authSession?.access_token) return;
@@ -6291,6 +6299,7 @@ async function loadMailList(labelId, q = "", append = false) {
     mailCurrentQuery = q;
     mailSelected.clear();
     updateMailBulkBar();
+    mailSwipedRow = null;
     elements.mailList.innerHTML = `<div class="mail-loading">Loading…</div>`;
     elements.mailThread.hidden = true;
     mailOpenThreadId = null;
@@ -6331,42 +6340,83 @@ function appendMailRows(messages) {
     row.className = `mail-row${m.unread ? " mail-row--unread" : ""}${m.starred ? " mail-row--starred" : ""}`;
     row.dataset.threadId = m.threadId;
     row.innerHTML = `
-      <div class="mail-row-left">
-        <button class="mail-row-check" type="button" aria-label="Select" title="Select">
-          <svg class="mail-row-check-box" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
-          <svg class="mail-row-check-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" fill="currentColor"/><path d="m9 12 2 2 4-4" stroke="white" stroke-width="2.5" fill="none"/></svg>
+      <div class="mail-row-actions" aria-label="Quick actions">
+        <button class="mail-row-action-btn" type="button" data-row-action="archive" title="Archive" aria-label="Archive">
+          ${ldeIcon("archive", { size: 19 })}
         </button>
-        <button class="mail-row-star${m.starred ? " is-starred" : ""}" type="button" aria-label="${m.starred ? "Unstar" : "Star"}" title="${m.starred ? "Unstar" : "Star"}">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+        <button class="mail-row-action-btn" type="button" data-row-action="delete" title="Delete" aria-label="Delete">
+          ${ldeIcon("trash", { size: 19 })}
         </button>
-        <button class="mail-row-label-btn" type="button" aria-label="Label" title="Label">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+        <button class="mail-row-action-btn" type="button" data-row-action="unread" title="Mark as unread" aria-label="Mark as unread">
+          ${ldeIcon("markUnread", { size: 19 })}
+        </button>
+        <button class="mail-row-action-btn" type="button" data-row-action="snooze" title="Snooze" aria-label="Snooze">
+          ${ldeIcon("snoozed", { size: 19 })}
         </button>
       </div>
-      <span class="mail-row-from">${escapeHtml(parseDisplayName(m.from))}</span>
-      <span class="mail-row-content">
-        <span class="mail-row-subject">${escapeHtml(m.subject)}</span>${m.snippet ? `<span class="mail-row-sep"> — </span><span class="mail-row-snippet">${escapeHtml(cleanMailSnippet(m.snippet))}</span>` : ""}
-      </span>
-      <div class="mail-row-right">
-        <span class="mail-row-date">${escapeHtml(formatMailDate(m.internalDate))}</span>
-        <div class="mail-row-actions" aria-label="Quick actions">
-          <button class="mail-row-action-btn" type="button" data-row-action="archive" title="Archive" aria-label="Archive">
-            ${ldeIcon("archive", { size: 19 })}
+      <div class="mail-row-front">
+        <div class="mail-row-left">
+          <button class="mail-row-check" type="button" aria-label="Select" title="Select">
+            <svg class="mail-row-check-box" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+            <svg class="mail-row-check-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" fill="currentColor"/><path d="m9 12 2 2 4-4" stroke="white" stroke-width="2.5" fill="none"/></svg>
           </button>
-          <button class="mail-row-action-btn" type="button" data-row-action="delete" title="Delete" aria-label="Delete">
-            ${ldeIcon("trash", { size: 19 })}
+          <button class="mail-row-star${m.starred ? " is-starred" : ""}" type="button" aria-label="${m.starred ? "Unstar" : "Star"}" title="${m.starred ? "Unstar" : "Star"}">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
           </button>
-          <button class="mail-row-action-btn" type="button" data-row-action="unread" title="Mark as unread" aria-label="Mark as unread">
-            ${ldeIcon("markUnread", { size: 19 })}
+          <button class="mail-row-label-btn" type="button" aria-label="Label" title="Label">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
           </button>
-          <button class="mail-row-action-btn" type="button" data-row-action="snooze" title="Snooze" aria-label="Snooze">
-            ${ldeIcon("snoozed", { size: 19 })}
-          </button>
+        </div>
+        <span class="mail-row-from">${escapeHtml(parseDisplayName(m.from))}</span>
+        <span class="mail-row-content">
+          <span class="mail-row-subject">${escapeHtml(m.subject)}</span>${m.snippet ? `<span class="mail-row-sep"> — </span><span class="mail-row-snippet">${escapeHtml(cleanMailSnippet(m.snippet))}</span>` : ""}
+        </span>
+        <div class="mail-row-right">
+          <span class="mail-row-date">${escapeHtml(formatMailDate(m.internalDate))}</span>
         </div>
       </div>`;
 
+    const front = row.querySelector(".mail-row-front");
+    const actionsEl = row.querySelector(".mail-row-actions");
+
+    // Swipe-left-to-reveal (touch only — desktop still reveals actions on hover via CSS).
+    // A tap that moves more than a few px horizontally is a swipe, not a click, so we
+    // suppress the resulting click on release; a tap while already swiped-open closes it
+    // instead of opening the thread underneath.
+    let touchStartX = 0, touchStartY = 0, dragDx = 0, dragging = false, wasSwipe = false;
+    const actionsWidth = () => actionsEl.getBoundingClientRect().width || 124;
+    front.addEventListener("touchstart", (e) => {
+      if (mailSwipedRow && mailSwipedRow !== row) closeSwipedMailRow();
+      const t = e.touches[0];
+      touchStartX = t.clientX; touchStartY = t.clientY; dragDx = 0; dragging = false; wasSwipe = false;
+      front.style.transition = "none";
+    }, { passive: true });
+    front.addEventListener("touchmove", (e) => {
+      const t = e.touches[0];
+      const dx = t.clientX - touchStartX, dy = t.clientY - touchStartY;
+      if (!dragging && Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+      if (!dragging) dragging = Math.abs(dx) > Math.abs(dy); // horizontal drag beats vertical scroll
+      if (!dragging) return;
+      wasSwipe = true;
+      const base = row.classList.contains("mail-row--swiped") ? -actionsWidth() : 0;
+      dragDx = Math.min(0, Math.max(-actionsWidth(), base + dx));
+      front.style.transform = `translateX(${dragDx}px)`;
+    }, { passive: true });
+    front.addEventListener("touchend", () => {
+      front.style.transition = "";
+      if (dragging) {
+        const open = dragDx <= -actionsWidth() / 2;
+        front.style.transform = open ? `translateX(${-actionsWidth()}px)` : "";
+        row.classList.toggle("mail-row--swiped", open);
+        mailSwipedRow = open ? row : (mailSwipedRow === row ? null : mailSwipedRow);
+      }
+      setTimeout(() => { wasSwipe = false; }, 0);
+    });
+
     row.addEventListener("click", (e) => {
       if (e.target.closest(".mail-row-left, .mail-row-actions")) return;
+      if (wasSwipe) return;
+      if (row.classList.contains("mail-row--swiped")) { closeSwipedMailRow(); return; }
       openMailThread(m.threadId);
     });
 
@@ -6399,17 +6449,21 @@ function appendMailRows(messages) {
       const action = btn.dataset.rowAction;
       if (action === "archive") {
         await callGmailApi({ action: "move", threadId: m.threadId, addLabelIds: [], removeLabelIds: ["INBOX"] });
+        if (mailSwipedRow === row) mailSwipedRow = null;
         row.remove();
         if (mailOpenThreadId === m.threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
       } else if (action === "delete") {
         await callGmailApi({ action: "move", threadId: m.threadId, addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] });
+        if (mailSwipedRow === row) mailSwipedRow = null;
         row.remove();
         if (mailOpenThreadId === m.threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
       } else if (action === "unread") {
         await callGmailApi({ action: "move", threadId: m.threadId, addLabelIds: ["UNREAD"], removeLabelIds: [] });
         row.classList.add("mail-row--unread");
+        if (mailSwipedRow === row) closeSwipedMailRow();
       } else if (action === "snooze") {
         showMailToast("Snooze coming soon");
+        if (mailSwipedRow === row) closeSwipedMailRow();
       }
     });
 
