@@ -23,7 +23,7 @@ exports.handler = async (event) => {
   if (!groupId) return cors(json(404, { error: "User group not found." }));
 
   try {
-    await updateSection(serviceKey, groupId, "media", (state) => {
+    await updateSection(serviceKey, `u-${userId}`, "media", (state) => {
       const articleSync = { ...(state.articleSync || {}) };
       if (publication === "nyt") articleSync.nytCookie = cookieValue.trim();
       if (publication === "economist") articleSync.economistCookie = cookieValue.trim();

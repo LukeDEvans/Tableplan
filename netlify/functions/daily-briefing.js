@@ -94,35 +94,51 @@ async function loadState(serviceKey) {
   );
   if (!listRes.ok) throw new Error(`Supabase list failed: ${listRes.status}`);
   const allRows = await listRes.json();
-  // Ignore infrastructure rows (Gmail tokens, mail suggestions) — they update
-  // frequently and must not be mistaken for the app state
-  const rows = allRows.filter(r => !/^(gmail_|mailsugg_)/.test(r.id));
+  // Ignore infrastructure/personal/backup rows when hunting the group id —
+  // they update frequently and must not be mistaken for the household state
+  const rows = allRows.filter(r => !/^(gmail_|mailsugg_|mailai_|u-|backup-)/.test(r.id) && r.id.includes(":"));
   if (!rows.length) return null;
 
-  // Find base stateId (strip :section suffix)
-  const baseId = rows[0].id.includes(":") ? rows[0].id.split(":")[0] : rows[0].id;
+  const baseId = rows[0].id.split(":")[0];
 
-  if (!rows[0].id.includes(":")) {
-    // Old unified format
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${baseId}&select=state`, { headers });
-    const [row] = await r.json();
-    return row?.state || null;
-  }
-
-  // Sectioned format
-  const sectionIds = SECTION_NAMES.map(s => `${baseId}:${s}`).join(",");
+  // Household rows overlaid with the admin's PERSONAL rows — most day-to-day
+  // data lives in the member's personal store now, and the briefing is for
+  // the admin, so their personal data wins per key when it has content.
+  const adminUid = await getAdminUid(headers, baseId);
+  const ids = [
+    ...SECTION_NAMES.map(s => `${baseId}:${s}`),
+    ...(adminUid ? SECTION_NAMES.map(s => `u-${adminUid}:${s}`) : []),
+  ].join(",");
   const sectionRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/tableplan_states?id=in.(${encodeURIComponent(sectionIds)})&select=id,state`,
+    `${SUPABASE_URL}/rest/v1/tableplan_states?id=in.(${encodeURIComponent(ids)})&select=id,state`,
     { headers }
   );
   if (!sectionRes.ok) throw new Error(`Supabase sections failed: ${sectionRes.status}`);
   const sections = await sectionRes.json();
   const assembled = {};
+  const overlay = {};
   for (const row of sections) {
     const { stateUpdatedAt, ...data } = row.state || {};
-    Object.assign(assembled, data);
+    Object.assign(row.id.startsWith("u-") ? overlay : assembled, data);
+  }
+  for (const [k, v] of Object.entries(overlay)) {
+    const empty = v == null || (Array.isArray(v) && !v.length) ||
+      (typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length);
+    if (!empty || !(k in assembled)) assembled[k] = v;
   }
   return assembled;
+}
+
+async function getAdminUid(headers, groupId) {
+  try {
+    const r = await fetch(
+      `${SUPABASE_URL}/rest/v1/live_group_members?group_id=eq.${encodeURIComponent(groupId)}&role=eq.admin&select=user_id&limit=1`,
+      { headers }
+    );
+    if (!r.ok) return null;
+    const rows = await r.json();
+    return rows[0]?.user_id || null;
+  } catch { return null; }
 }
 
 async function loadSubscriptions(serviceKey) {

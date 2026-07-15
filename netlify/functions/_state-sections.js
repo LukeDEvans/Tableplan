@@ -38,6 +38,11 @@ async function getUserGroupId(serviceKey, userId) {
   } catch { return null; }
 }
 
+// Personal (per-member) rows live beside the group rows: "u-<userId>:<section>".
+function personalRowId(userId, section) {
+  return `u-${userId}:${section}`;
+}
+
 async function loadSection(serviceKey, groupId, section) {
   const rowId = `${groupId}:${section}`;
   const res = await fetch(
@@ -52,11 +57,24 @@ async function loadSection(serviceKey, groupId, section) {
 // Read-modify-write with optimistic locking. `mutate(state)` returns the new
 // state object, or null/undefined to skip writing. Retries on conflict with a
 // fresh read, so concurrent writers interleave instead of overwriting.
-async function updateSection(serviceKey, groupId, section, mutate, attempts = 4) {
-  const rowId = `${groupId}:${section}`;
+// `owner` is a group id (household row) or "u-<userId>" (personal row) —
+// personal rows are created on first write instead of failing.
+async function updateSection(serviceKey, owner, section, mutate, attempts = 4) {
+  const rowId = `${owner}:${section}`;
   for (let attempt = 0; attempt < attempts; attempt++) {
-    const row = await loadSection(serviceKey, groupId, section);
-    if (!row) throw new Error(`Section row "${rowId}" not found`);
+    const row = await loadSection(serviceKey, owner, section);
+    if (!row) {
+      if (!owner.startsWith("u-")) throw new Error(`Section row "${rowId}" not found`);
+      const newState = mutate({});
+      if (!newState) return { ok: true, skipped: true };
+      const ins = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
+        method: "POST",
+        headers: { ...serviceHeaders(serviceKey), "content-type": "application/json", prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({ id: rowId, state: newState, updated_at: new Date().toISOString() })
+      });
+      if (!ins.ok) throw new Error(`Section "${section}" create failed (${ins.status})`);
+      return { ok: true, created: true };
+    }
     const newState = mutate({ ...(row.state || {}) });
     if (!newState) return { ok: true, skipped: true };
 
@@ -76,4 +94,4 @@ async function updateSection(serviceKey, groupId, section, mutate, attempts = 4)
   throw new Error(`Section "${section}" kept conflicting — giving up`);
 }
 
-module.exports = { SUPABASE_URL, serviceHeaders, getUserIdFromToken, getUserGroupId, loadSection, updateSection };
+module.exports = { SUPABASE_URL, serviceHeaders, getUserIdFromToken, getUserGroupId, loadSection, updateSection, personalRowId };

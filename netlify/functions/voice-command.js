@@ -95,9 +95,14 @@ exports.handler = async (event) => {
     bySections.get(section).push(action);
   }
 
+  // Voice-added content is personal (the household admin's store) — except
+  // meals, which live on the exclusively-shared Meal Plan.
+  const adminUid = await getGroupAdminUserId(serviceKey, householdId);
+
   try {
     for (const [section, sectionActions] of bySections) {
-      await updateSection(serviceKey, householdId, section, (state) =>
+      const owner = section === "eat" || !adminUid ? householdId : `u-${adminUid}`;
+      await updateSection(serviceKey, owner, section, (state) =>
         applyActions(state, sectionActions, currentWeekKey)
       );
     }
@@ -482,6 +487,18 @@ async function claudeCall(apiKey, { system, user, maxTokens = 512 }) {
   }
   const data = await res.json();
   return data.content?.[0]?.text || "";
+}
+
+async function getGroupAdminUserId(serviceKey, groupId) {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/live_group_members?group_id=eq.${encodeURIComponent(groupId)}&role=eq.admin&select=user_id&limit=1`,
+      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } }
+    );
+    if (!res.ok) return null;
+    const rows = await res.json();
+    return rows[0]?.user_id || null;
+  } catch { return null; }
 }
 
 function serviceHeaders(serviceKey) {

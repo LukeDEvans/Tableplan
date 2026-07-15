@@ -14098,6 +14098,37 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
   #mediaMainPage .article-row-actions { display: flex; }
 }
 
+/* Household / personal view toggle (topbar, toggleable pages only) */
+.scope-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 10px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+
+.scope-toggle button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.scope-toggle button.is-active {
+  background: var(--accent);
+  color: #fff;
+}
+
 /* Sign-in gate: covers the app until body.app-authed is set */
 #appLockScreen {
   position: fixed;

@@ -214,6 +214,167 @@ const STATE_SECTIONS = {
   config:    ["weeklyEmailSettings", "mailAiSettings", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
+// ── Household vs personal data scoping ────────────────────────────────────────
+// Each state section is either always-shared, always-individual, or view-
+// toggleable. `state` always holds the ACTIVE view's data; the inactive
+// scope of a toggleable section lives in `shadowSections` and swaps in when
+// the user flips the page's household/person toggle. The sync layer routes
+// each section to its scoped Supabase row:
+//   household →  "<groupId>:<section>"
+//   personal  →  "u-<userId>:<section>"
+const SECTION_SCOPE = {
+  eat: "household",       // Meal Plan is exclusively shared
+  config: "household",    // app settings stay shared
+  play: "personal",       // Exercise is exclusively individual
+  recreate: "personal",   // Recreate is exclusively individual
+  grocery: "toggle",
+  do: "toggle",
+  watch: "toggle",
+  media: "toggle",
+  plan: "toggle",
+  // health holds familyMembers, which the shared Meal Plan depends on — it is
+  // not a standalone page, so it stays household.
+  health: "household",
+  inventory: "toggle",
+  travel: "toggle",
+};
+const SCOPE_PREFS_KEY = "live-section-scopes-v1";
+const SHADOW_KEY = "live-shadow-sections-v1";
+
+// Active scope per toggleable section — sticky, defaults to personal.
+let sectionScopes = (() => {
+  try { return JSON.parse(localStorage.getItem(SCOPE_PREFS_KEY)) || {}; } catch { return {}; }
+})();
+
+// The INACTIVE scope's data for each toggleable section: { section: {key: value} }
+let shadowSections = (() => {
+  try { return JSON.parse(localStorage.getItem(SHADOW_KEY)) || {}; } catch { return {}; }
+})();
+
+function sectionScope(section) {
+  const kind = SECTION_SCOPE[section] || "household";
+  if (kind !== "toggle") return kind;
+  return sectionScopes[section] === "household" ? "household" : "personal";
+}
+
+function sectionRowId(stateId, section) {
+  if (sectionScope(section) === "personal" && authSession?.user?.id) {
+    return `u-${authSession.user.id}:${section}`;
+  }
+  return `${stateId}:${section}`;
+}
+
+// Row id for the scope a toggleable section is NOT currently showing.
+function inactiveSectionRowId(stateId, section) {
+  if (SECTION_SCOPE[section] !== "toggle") return null;
+  return sectionScope(section) === "personal"
+    ? `${stateId}:${section}`
+    : (authSession?.user?.id ? `u-${authSession.user.id}:${section}` : null);
+}
+
+function persistShadowSections() {
+  try { localStorage.setItem(SHADOW_KEY, JSON.stringify(shadowSections)); } catch { /* full */ }
+}
+
+// Flip a toggleable section between household and personal view. The active
+// data is flushed to its row first, then swapped with the shadow copy, so
+// nothing is ever lost and both scopes keep their own sync history.
+async function setSectionScope(section, scope) {
+  if (SECTION_SCOPE[section] !== "toggle" || sectionScope(section) === scope) return;
+  const keys = STATE_SECTIONS[section] || [];
+  const stateId = supabaseConfig().stateId;
+
+  // 1. Flush the outgoing view's data to its own row (best effort — the
+  //    data also survives in the shadow if the network is down).
+  try {
+    if (sharedStorageReady && activeSharedStorageProvider) {
+      await writeSectionWithMerge(stateId, section, keys);
+    }
+  } catch (e) { console.warn(`[scope] flush of ${section} before toggle failed:`, e.message); }
+
+  // 2. Swap active <-> shadow
+  const outgoing = extractSectionData(keys);
+  const incoming = shadowSections[section] || {};
+  shadowSections[section] = outgoing;
+  persistShadowSections();
+  const draft = { ...state };
+  for (const key of keys) delete draft[key];
+  for (const key of keys) { if (key in incoming) draft[key] = incoming[key]; }
+  sectionScopes[section] = scope;
+  try { localStorage.setItem(SCOPE_PREFS_KEY, JSON.stringify(sectionScopes)); } catch { /* full */ }
+  applyStoredState(draft);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+
+  // 3. The swapped-in data isn't "dirty" — reset its write signature so the
+  //    debounced save doesn't push it needlessly.
+  if (lastWrittenSections) lastWrittenSections[section] = JSON.stringify(extractSectionData(keys));
+
+  // 4. Refresh the newly-active row from the server in the background (another
+  //    device/member may have changed it since the shadow was captured).
+  refreshActiveSectionFromServer(stateId, section, keys).catch(() => {});
+  render();
+  updateScopeToggleUi();
+}
+
+// Which state section backs each toggleable page's view control
+const PAGE_SCOPE_SECTION = {
+  shop: "grocery",
+  do: "do",
+  watch: "watch",
+  media: "media",
+  plan: "plan",
+  stock: "inventory",
+  inventory: "inventory",
+  explore: "travel",
+};
+
+let scopeToggleWired = false;
+
+function updateScopeToggleUi() {
+  const wrap = document.getElementById("scopeToggle");
+  if (!wrap) return;
+  const section = PAGE_SCOPE_SECTION[activeAppArea];
+  const show = !!section && SECTION_SCOPE[section] === "toggle" && !!authSession?.access_token;
+  wrap.hidden = !show;
+  if (!show) return;
+  const scope = sectionScope(section);
+  document.getElementById("scopeHouseholdBtn")?.classList.toggle("is-active", scope === "household");
+  document.getElementById("scopePersonalBtn")?.classList.toggle("is-active", scope === "personal");
+  if (!scopeToggleWired) {
+    scopeToggleWired = true;
+    document.getElementById("scopeHouseholdBtn")?.addEventListener("click", () => {
+      const s = PAGE_SCOPE_SECTION[activeAppArea];
+      if (s) setSectionScope(s, "household");
+    });
+    document.getElementById("scopePersonalBtn")?.addEventListener("click", () => {
+      const s = PAGE_SCOPE_SECTION[activeAppArea];
+      if (s) setSectionScope(s, "personal");
+    });
+  }
+}
+
+async function refreshActiveSectionFromServer(stateId, section, keys) {
+  const rowId = sectionRowId(stateId, section);
+  const res = await fetch(
+    `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&select=state,updated_at`,
+    { headers: supabaseHeaders(), cache: "no-store" }
+  );
+  if (!res.ok) return;
+  const rows = await res.json();
+  if (!rows.length) return;
+  lastSeenSectionStamp[rowId] = rows[0].updated_at;
+  const { stateUpdatedAt: remoteTs, ...remoteData } = rows[0].state || {};
+  const localFrag = { ...extractSectionData(keys), tombstones: state.tombstones, stateUpdatedAt: state.stateUpdatedAt || "" };
+  const remoteFrag = { ...remoteData, tombstones: remoteData.tombstones || state.tombstones, stateUpdatedAt: remoteTs || "" };
+  const merged = (state.stateUpdatedAt || "") >= (remoteTs || "")
+    ? mergeStates(localFrag, remoteFrag)
+    : mergeStates(remoteFrag, localFrag);
+  for (const key of keys) { if (merged[key] !== undefined) state[key] = merged[key]; }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  if (lastWrittenSections) lastWrittenSections[section] = JSON.stringify(extractSectionData(keys));
+  render();
+}
+
 // The gateable app pages — the single source of truth for every page-access
 // list (household "Members can access", personal visibility, admin-wide).
 // Keep in sync with the home nav and the isPageEnabled() keys. Note: "read"
@@ -4968,17 +5129,40 @@ const lastSeenSectionStamp = {};
 async function loadStateFromSupabase() {
   const config = supabaseConfig();
   const stateId = config.stateId;
-  const sectionIds = Object.keys(STATE_SECTIONS).map(s => `${stateId}:${s}`).join(",");
+
+  // One fetch covers every row this user can see: the household's section
+  // rows plus this member's personal rows. Which of the two feeds `state`
+  // for a given section depends on its scope; the other lands in the shadow.
+  const activeIds = Object.keys(STATE_SECTIONS).map(s => sectionRowId(stateId, s));
+  const inactiveIds = Object.keys(STATE_SECTIONS).map(s => inactiveSectionRowId(stateId, s)).filter(Boolean);
+  const allIds = [...new Set([...activeIds, ...inactiveIds])].join(",");
 
   const res = await fetch(
-    `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=in.(${sectionIds})&select=id,state,updated_at`,
+    `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=in.(${allIds})&select=id,state,updated_at`,
     { headers: supabaseHeaders(), cache: "no-store" }
   );
   if (!res.ok) throw new Error(`Supabase state load failed with status ${res.status}`);
   const rows = await res.json();
   rows.forEach((r) => { lastSeenSectionStamp[r.id] = r.updated_at; });
+  const byId = new Map(rows.map((r) => [r.id, r]));
 
-  if (rows.length > 0) return assembleSectionRows(rows);
+  // Refresh the inactive-scope shadows for toggleable sections
+  for (const section of Object.keys(STATE_SECTIONS)) {
+    const shadowId = inactiveSectionRowId(stateId, section);
+    if (!shadowId) continue;
+    const row = byId.get(shadowId);
+    if (row) {
+      const { stateUpdatedAt, ...data } = row.state || {};
+      shadowSections[section] = data;
+    } else if (!(section in shadowSections)) {
+      shadowSections[section] = {};
+    }
+  }
+  persistShadowSections();
+
+  const activeRows = activeIds.map((id) => byId.get(id)).filter(Boolean);
+  if (activeRows.length > 0) return assembleSectionRows(activeRows);
+  if (rows.length > 0) return assembleSectionRows([]); // rows exist but none active (fresh personal scopes)
 
   // Migration fallback: no section rows yet — load old unified row
   const fallbackRes = await fetch(
@@ -5014,7 +5198,7 @@ async function writeStateToSupabase() {
 // data is fetched and key-level merged into local state first, then the write
 // retries. A stale device can therefore never erase another device's changes.
 async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
-  const rowId = `${stateId}:${section}`;
+  const rowId = sectionRowId(stateId, section); // household or personal row per scope
   const now = new Date().toISOString();
   const payload = {
     state: { ...extractSectionData(keys), stateUpdatedAt: state.stateUpdatedAt },
@@ -12066,6 +12250,7 @@ function setPageTitle(title) {
   updatePageVisibility();
   updatePageTitleMenu();
   updateTopLeftNavigation();
+  updateScopeToggleUi();
 }
 
 function updatePageTitleMenu() {
@@ -26300,6 +26485,17 @@ function getPlanEventsForRange(startKey, endKey) {
       events.push({ ...e, source: "personal", color: color || PLAN_COLORS[0] });
     }
   });
+  // Household view overlays the member's own events (marked) so nothing is
+  // missed while planning family things. Personal view stays personal-only.
+  if (sectionScope("plan") === "household") {
+    const mine = shadowSections.plan?.planEvents || [];
+    const seen = new Set(events.map((e) => e.id));
+    mine.forEach((e) => {
+      if (e.date >= startKey && e.date <= endKey && !seen.has(e.id)) {
+        events.push({ ...e, source: "personal-overlay", color: e.color || PLAN_COLORS[0], title: `◦ ${e.title}` });
+      }
+    });
+  }
   (state.planCalendars || []).filter((c) => c.enabled).forEach((cal) => {
     const cached = planCalendarCache[cal.id];
     if (!cached) return;
@@ -26540,6 +26736,12 @@ function planFormatTime(time) {
 function openPlanEventDialog(date, eventId) {
   editingPlanEventId = eventId || null;
   const existing = eventId ? (state.planEvents || []).find((e) => e.id === eventId) : null;
+  // A personal event overlaid on the household view lives in the other scope —
+  // point the user at their own view rather than editing across scopes.
+  if (eventId && !existing && (shadowSections.plan?.planEvents || []).some((e) => e.id === eventId)) {
+    showMailToast("That's one of your personal events — switch to the personal view to edit it.");
+    return;
+  }
   const selectedCalId = existing?.calendarId || null;
   if (existing) {
     elements.planEventTitle.value = existing.title;
@@ -27419,7 +27621,7 @@ function refreshStalePodcastFeeds() {
     if (updated) {
       persist();
       if (activeAppArea === "media") {
-        if (activeMediaTab === "all") renderMediaAllList();
+        if (activeMediaTab === "queue") renderMediaAllList();
         else if (activeMediaTab === "podcasts") {
           if (activePodcastTab === "recent") renderRecentEpisodes();
           else if (activePodcastTab === "playlist") renderPodcastQueueEpisodes();
@@ -27511,7 +27713,8 @@ function switchMediaTab(tab) {
   if (syncSettingsBtn) syncSettingsBtn.hidden = true;
   openArticleId = null;
 
-  if (tab === "all") {
+  if (tab === "queue") {
+    // Top "All" tab: the blended listen queue (podcasts + articles + books)
     if (allPanel) { allPanel.hidden = false; renderMediaAllList(); }
   } else if (tab === "archive") {
     if (archivePanel) { archivePanel.hidden = false; renderMediaArchive(); }

@@ -82,9 +82,9 @@ async function loadLatestState(serviceKey) {
   );
   if (!res.ok) throw new Error(`Supabase load failed: ${res.status}`);
   const allRows = await res.json();
-  // Ignore infrastructure rows (Gmail tokens, mail suggestions, logs) — they
-  // update frequently and must not be mistaken for the app state
-  const rows = allRows.filter(r => !/^(gmail_|mailsugg_|email_schedule_log|push_schedule_log)/.test(r.id));
+  // Ignore infrastructure/personal/backup rows — they update frequently and
+  // must not be mistaken for the household state
+  const rows = allRows.filter(r => !/^(gmail_|mailsugg_|mailai_|u-|backup-|email_schedule_log|push_schedule_log)/.test(r.id) && r.id.includes(":"));
   if (!rows.length) return null;
 
   // Sort by inner stateUpdatedAt to find the most current base state
@@ -106,8 +106,22 @@ async function loadLatestState(serviceKey) {
     return latestRow.state;
   }
 
-  // New sectioned format: load all sections for this baseId
-  const sectionIds = SECTION_NAMES.map(s => `${baseId}:${s}`).join(",");
+  // Sectioned format: household rows overlaid with the admin's PERSONAL rows
+  // (day-to-day data lives in the member's personal store now; the email goes
+  // to the admin, so their personal data wins per key when it has content).
+  let adminUid = null;
+  try {
+    const ar = await fetch(
+      `${SUPABASE_URL}/rest/v1/live_group_members?group_id=eq.${encodeURIComponent(baseId)}&role=eq.admin&select=user_id&limit=1`,
+      { headers }
+    );
+    if (ar.ok) adminUid = (await ar.json())[0]?.user_id || null;
+  } catch { /* household-only */ }
+
+  const sectionIds = [
+    ...SECTION_NAMES.map(s => `${baseId}:${s}`),
+    ...(adminUid ? SECTION_NAMES.map(s => `u-${adminUid}:${s}`) : []),
+  ].join(",");
   const sectionRes = await fetch(
     `${SUPABASE_URL}/rest/v1/tableplan_states?id=in.(${sectionIds})&select=id,state`,
     { headers }
@@ -116,11 +130,17 @@ async function loadLatestState(serviceKey) {
   const sectionRows = await sectionRes.json();
 
   const assembled = {};
+  const overlay = {};
   let latestTs = "";
   for (const row of sectionRows) {
     const { stateUpdatedAt, ...data } = row.state || {};
-    Object.assign(assembled, data);
+    Object.assign(row.id.startsWith("u-") ? overlay : assembled, data);
     if (stateUpdatedAt && stateUpdatedAt > latestTs) latestTs = stateUpdatedAt;
+  }
+  for (const [k, v] of Object.entries(overlay)) {
+    const empty = v == null || (Array.isArray(v) && !v.length) ||
+      (typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length);
+    if (!empty || !(k in assembled)) assembled[k] = v;
   }
   if (latestTs) assembled.stateUpdatedAt = latestTs;
   return assembled;

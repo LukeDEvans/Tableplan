@@ -18,7 +18,7 @@ exports.handler = async (event) => {
   const groupId = await getUserGroupId(serviceKey, userId);
   if (!groupId) return cors(json(404, { error: "User group not found." }));
 
-  const mediaRow = await loadSection(serviceKey, groupId, "media").catch(() => null);
+  const mediaRow = await loadSection(serviceKey, `u-${userId}`, "media").catch(() => null);
   const syncConfig = mediaRow?.state?.articleSync || {};
   const nytCookie = (syncConfig.nytCookie || "").trim();
   const economistCookie = (syncConfig.economistCookie || "").trim();
@@ -48,7 +48,7 @@ exports.handler = async (event) => {
   let newArticles = [];
 
   try {
-    await updateSection(serviceKey, groupId, "media", (state) => {
+    await updateSection(serviceKey, `u-${userId}`, "media", (state) => {
       const existing = Array.isArray(state.savedArticles) ? state.savedArticles : [];
       const existingUrls = new Set(existing.map((a) => a.url));
       nytAdded = 0;

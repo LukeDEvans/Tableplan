@@ -25,7 +25,7 @@ exports.handler = async (event) => {
 
   let imported = 0;
   try {
-    await updateSection(serviceKey, groupId, "media", (state) => {
+    await updateSection(serviceKey, `u-${userId}`, "media", (state) => {
       const existing = Array.isArray(state.savedArticles) ? state.savedArticles : [];
       const existingUrls = new Set(existing.map((a) => a.url));
       const now = new Date().toISOString();

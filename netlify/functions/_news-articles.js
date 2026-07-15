@@ -98,42 +98,19 @@ async function getUserGroupId(serviceKey, userId) {
   return rows[0]?.group_id || null;
 }
 
-// Appends an article to savedArticles in the group's media section using a
-// conditional write, so a concurrent client write can never be clobbered
-// (mirrors the client's optimistic locking).
+// Appends an article to savedArticles in the USER'S PERSONAL media section
+// (articles converted from someone's Gmail belong to that member, not the
+// household). Optimistically locked via the shared helper; the personal row
+// is created on first write.
 async function saveArticleToMediaSection(serviceKey, userId, article) {
-  const groupId = await getUserGroupId(serviceKey, userId);
-  if (!groupId) throw new Error("No group for user — cannot locate media state");
-  const rowId = `${groupId}:media`;
-
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&select=state,updated_at`,
-      { headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" } }
-    );
-    if (!res.ok) throw new Error(`Media row load failed (${res.status})`);
-    const rows = await res.json();
-    if (!rows.length) throw new Error("Media section row not found");
-    const { state, updated_at } = rows[0];
-
+  const { updateSection } = require("./_state-sections.js");
+  let duplicate = false;
+  await updateSection(serviceKey, `u-${userId}`, "media", (state) => {
     const articles = Array.isArray(state.savedArticles) ? state.savedArticles : [];
-    if (articles.some((a) => a?.id === article.id)) return { ok: true, duplicate: true };
-    const newState = { ...state, savedArticles: [...articles, article] };
-
-    const upd = await fetch(
-      `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&updated_at=eq.${encodeURIComponent(updated_at)}`,
-      {
-        method: "PATCH",
-        headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, "content-type": "application/json", prefer: "return=representation", "x-live-writer": "2" },
-        body: JSON.stringify({ state: newState, updated_at: new Date().toISOString() })
-      }
-    );
-    if (!upd.ok) throw new Error(`Media row save failed (${upd.status})`);
-    const updRows = await upd.json();
-    if (updRows.length) return { ok: true };
-    // Conflict — someone wrote between our read and write; re-read and retry
-  }
-  throw new Error("Media row kept conflicting — giving up this round");
+    if (articles.some((a) => a?.id === article.id)) { duplicate = true; return null; }
+    return { ...state, savedArticles: [...articles, article] };
+  });
+  return { ok: true, duplicate };
 }
 
 module.exports = { NEWS_SOURCES, newsSourceForMessage, simplifyNewsletterHtml, convertNewsEmailToArticle, saveArticleToMediaSection };

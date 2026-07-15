@@ -84,6 +84,14 @@
                   <span id="pageTitleText">Live</span>
                 </button>
               </h1>
+              <div class="scope-toggle" id="scopeToggle" hidden role="group" aria-label="Household or personal view">
+                <button type="button" id="scopeHouseholdBtn" title="Household view" aria-label="Household view">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11 12 4l9 7"/><path d="M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9"/><path d="M10 20v-6h4v6"/></svg>
+                </button>
+                <button type="button" id="scopePersonalBtn" title="Personal view" aria-label="Personal view">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>
+                </button>
+              </div>
               <div class="page-title-menu" id="pageTitleMenu" hidden>
                 <button type="button" id="titleExercisePlanBtn">Exercise</button>
                 <button type="button" id="titleMealPlanBtn">Meal Plan</button>
@@ -242,7 +250,7 @@
             </div>
           <div class="article-layout">
               <div class="article-sidebar" id="mediaSidebar">
-                <button class="article-sidebar-tab" type="button" data-media-tab="all" role="tab" aria-selected="false">
+                <button class="article-sidebar-tab" type="button" data-media-tab="queue" role="tab" aria-selected="false">
                   <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
                   <span>All</span>
                 </button>

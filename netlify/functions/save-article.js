@@ -26,7 +26,7 @@ exports.handler = async (event) => {
   let existingId = null;
 
   try {
-    await updateSection(serviceKey, groupId, "media", (state) => {
+    await updateSection(serviceKey, `u-${userId}`, "media", (state) => {
       const articles = Array.isArray(state.savedArticles) ? state.savedArticles : [];
       const existing = articles.find((a) => a.url === url);
       if (existing) {
