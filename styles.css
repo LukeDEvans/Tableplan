@@ -15,6 +15,8 @@
   --sun-soft: #f9e49b;
   --sun-pale: #fff3c8;
   --blue: #f1cc54;
+  --window-bg: #ffffff;
+  --window-border: #191970; /* midnight blue */
   --shadow: 0 18px 40px rgba(73, 54, 16, 0.14);
   --radius: 14px;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -37,6 +39,8 @@ body[data-theme="dark"] {
   --sun-soft: #f9e49b;
   --sun-pale: #6f5b22;
   --blue: #f1cc54;
+  --window-bg: #20221f;
+  --window-border: #6363b8; /* midnight blue, lifted for dark surfaces */
   --shadow: 0 18px 40px rgba(0, 0, 0, 0.36);
 }
 
@@ -61,6 +65,8 @@ body[data-theme="auto"] {
     --sun-soft: #f9e49b;
     --sun-pale: #6f5b22;
     --blue: #f1cc54;
+    --window-bg: #20221f;
+    --window-border: #6363b8;
     --shadow: 0 18px 40px rgba(0, 0, 0, 0.36);
   }
 }
@@ -924,8 +930,8 @@ h3 {
   align-items: center;
   gap: 12px;
   padding: 18px 36px;
-  background: #fff;
-  border: 2px solid #191970; /* midnight blue */
+  background: var(--window-bg);
+  border: 2px solid var(--window-border);
   border-radius: 16px;
 }
 
@@ -1066,8 +1072,8 @@ h3 {
 .planner-column {
   position: relative;
   flex-direction: column;
-  background: rgba(255, 253, 248, 0.92);
-  border: 1px solid var(--line);
+  background: var(--window-bg);
+  border: 2px solid var(--window-border);
   border-radius: var(--radius);
   box-shadow: 0 10px 30px rgba(50, 45, 35, 0.08);
 }
@@ -1110,8 +1116,6 @@ h3 {
   width: 100%;
   padding: 16px;
   min-width: 0;
-  background: var(--sun-pale);
-  border: 1px solid color-mix(in srgb, var(--sun) 56%, #ffffff);
   box-shadow: 0 22px 54px rgba(116, 85, 18, 0.18);
 }
 
@@ -2374,7 +2378,7 @@ input.live-toggle:checked::before,
   grid-column: 1 / -1;
   padding: 10px;
   border-bottom: 3px solid var(--accent);
-  background: #fbfaf5;
+  background: color-mix(in srgb, var(--sun-pale) 60%, var(--window-bg));
   border-radius: var(--radius);
 }
 
@@ -2689,12 +2693,13 @@ input.live-toggle:checked::before,
   padding: 10px;
   border: 1px solid color-mix(in srgb, var(--sun) 48%, #ffffff);
   border-radius: 18px;
-  background: rgba(255, 250, 235, 0.74);
+  /* The old window yellow, demoted to a card accent on the white window */
+  background: color-mix(in srgb, var(--sun-pale) 55%, var(--window-bg));
 }
 
 .slot-card.filled {
   border-style: solid;
-  background: rgba(255, 253, 246, 0.9);
+  background: color-mix(in srgb, var(--sun-pale) 45%, var(--window-bg));
   box-shadow: 0 10px 28px rgba(116, 85, 18, 0.08);
 }
 
@@ -4120,7 +4125,7 @@ input.live-toggle:checked::before,
   padding: 10px;
   border: 1px solid color-mix(in srgb, var(--sun) 48%, #ffffff);
   border-radius: 18px;
-  background: rgba(255, 253, 246, 0.9);
+  background: color-mix(in srgb, var(--sun-pale) 45%, var(--window-bg));
   box-shadow: 0 10px 28px rgba(116, 85, 18, 0.08);
 }
 
@@ -4799,7 +4804,7 @@ input.live-toggle:checked::before,
   height: 72px;
   border: 2px solid color-mix(in srgb, var(--sun) 55%, var(--line));
   border-radius: 50%;
-  background: rgba(255, 253, 246, 0.9);
+  background: color-mix(in srgb, var(--sun-pale) 45%, var(--window-bg));
   cursor: pointer;
   font-size: 2rem;
   transition: border-color 0.12s, box-shadow 0.12s, transform 0.1s;
@@ -4853,7 +4858,7 @@ input.live-toggle:checked::before,
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--sun) 55%, var(--line));
   border-radius: 10px;
-  background: rgba(255, 253, 246, 0.9);
+  background: color-mix(in srgb, var(--sun-pale) 45%, var(--window-bg));
   color: var(--ink);
   font: inherit;
   font-weight: 700;
@@ -4869,7 +4874,7 @@ input.live-toggle:checked::before,
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--sun) 55%, var(--line));
   border-radius: 10px;
-  background: rgba(255, 253, 246, 0.9);
+  background: color-mix(in srgb, var(--sun-pale) 45%, var(--window-bg));
   color: var(--ink);
   font: inherit;
   font-weight: 700;
@@ -4920,7 +4925,7 @@ input.live-toggle:checked::before,
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--sun) 55%, var(--line));
   border-radius: 10px;
-  background: rgba(255, 253, 246, 0.9);
+  background: color-mix(in srgb, var(--sun-pale) 45%, var(--window-bg));
   color: var(--ink);
   font: inherit;
   font-weight: 700;
@@ -5248,7 +5253,7 @@ input.live-toggle:checked::before,
   padding: 10px;
   border: 1px solid color-mix(in srgb, var(--sun) 48%, #ffffff);
   border-radius: 18px;
-  background: rgba(255, 253, 246, 0.9);
+  background: color-mix(in srgb, var(--sun-pale) 45%, var(--window-bg));
   box-shadow: 0 10px 28px rgba(116, 85, 18, 0.08);
 }
 
@@ -7680,8 +7685,8 @@ body[data-theme="dark"] .empty-state {
 }
 
 body[data-theme="dark"] .planner-column {
-  background: #6f5b22;
-  border-color: color-mix(in srgb, var(--sun) 42%, var(--line));
+  background: var(--window-bg);
+  border-color: var(--window-border);
 }
 
 body[data-theme="dark"] .folder-btn {
@@ -7790,8 +7795,8 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
   }
 
   body[data-theme="auto"] .planner-column {
-    background: #6f5b22;
-    border-color: color-mix(in srgb, var(--sun) 42%, var(--line));
+    background: var(--window-bg);
+    border-color: var(--window-border);
   }
 
   body[data-theme="auto"] .folder-btn {
@@ -8757,7 +8762,7 @@ body.touch-drag-active * {
   padding: 3px 6px;
   border: 1px solid color-mix(in srgb, var(--sun) 48%, #ffffff);
   border-radius: 8px;
-  background: rgba(255, 253, 246, 0.9);
+  background: color-mix(in srgb, var(--sun-pale) 45%, var(--window-bg));
   font: inherit;
   font-size: 0.75rem;
   color: var(--ink);
@@ -13997,8 +14002,8 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
   flex: 1;
   min-height: 0;
 }
-#exploreMainPage { background: var(--sun-pale); }
-#exploreMainPage .travel-detail-header { background: var(--sun-pale); }
+#exploreMainPage { background: var(--window-bg); }
+#exploreMainPage .travel-detail-header { background: var(--window-bg); }
 #exploreMainPage .article-sidebar { background: color-mix(in srgb, var(--sun) 12%, var(--sun-pale)); border-right: 1px solid color-mix(in srgb, var(--sun) 30%, transparent); }
 
 .explore-trips-header {
@@ -14156,7 +14161,7 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
   padding: 2px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: var(--sun-pale, #fff3c8);
+  background: var(--window-bg, #fff);
 }
 
 .scope-toggle button {
@@ -14682,7 +14687,7 @@ body:has(#overflowMainPage:not([hidden])) { overflow: hidden; }
 body:has(#overflowMainPage:not([hidden])) .app-shell { display: flex; flex-direction: column; min-height: 100dvh; max-height: 100dvh; overflow: hidden; padding: 0; box-sizing: border-box; }
 body:has(#overflowMainPage:not([hidden])) .workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0; border-radius: 0; border-left: none; border-right: none; border-bottom: none; box-shadow: none; }
-#overflowMainPage { background: var(--sun-pale); }
+#overflowMainPage { background: var(--window-bg); }
 #overflowMainPage .travel-sidebar { background: color-mix(in srgb, var(--sun) 12%, var(--sun-pale)); border-right-color: color-mix(in srgb, var(--sun) 30%, transparent); }
 
 .travel-page {
