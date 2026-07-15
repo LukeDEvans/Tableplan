@@ -12129,34 +12129,45 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   height: 50px;
   border-bottom: 1px solid color-mix(in srgb, var(--ink) 7%, transparent);
 }
-/* Front layer: everything but the quick-action buttons. Opaque so it fully
-   occludes .mail-row-actions (docked behind it, right-aligned) until the
-   front slides away — via hover (desktop) or swipe-left (touch). */
+/* Front layer: everything but the quick-action buttons. On touch it's opaque
+   and slides away on swipe to reveal .mail-row-actions docked behind it; on
+   mouse it stays exactly as before (transparent, no motion — hover just
+   swaps the date for the action icons in place, see below). */
 .mail-row-front {
   display: flex;
   align-items: center;
   padding: 0 8px 0 0;
   height: 50px;
   cursor: pointer;
-  transition: background 0.1s, transform 0.18s ease;
-  background: var(--surface, #fff);
   position: relative;
   z-index: 1;
   touch-action: pan-y;
 }
-.mail-row-front:hover { background: color-mix(in srgb, var(--ink) 4%, var(--surface, #fff)); box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
-.mail-row.mail-row--active .mail-row-front { background: color-mix(in srgb, var(--accent) 8%, var(--surface, #fff)); }
-.mail-row--unread .mail-row-front { background: color-mix(in srgb, var(--ink) 1.5%, var(--surface, #fff)); }
-.mail-row--unread .mail-row-front:hover { background: color-mix(in srgb, var(--ink) 5%, var(--surface, #fff)); }
-.mail-row--selected .mail-row-front { background: color-mix(in srgb, var(--accent) 6%, var(--surface, #fff)) !important; }
-/* Desktop mouse: hovering the row slides the front layer left to reveal actions. */
+.mail-row.mail-row--active .mail-row-front { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.mail-row--unread .mail-row-front { background: color-mix(in srgb, var(--ink) 1.5%, transparent); }
+.mail-row--selected .mail-row-front { background: color-mix(in srgb, var(--accent) 6%, transparent) !important; }
+
+/* Desktop / mouse — unchanged from before: hovering the row swaps the date
+   for the action icons in the same spot, no sliding. */
 @media (hover: hover) and (pointer: fine) {
-  .mail-row:hover .mail-row-front { transform: translateX(-124px); }
+  .mail-row:hover .mail-row-front { background: color-mix(in srgb, var(--ink) 4%, transparent); box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+  .mail-row--unread:hover .mail-row-front { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+  .mail-row:hover .mail-row-date { display: none; }
+  .mail-row:hover .mail-row-actions { display: flex; z-index: 2; }
 }
-/* Touch: swipe-left (handled in JS) toggles this class instead of relying on :hover,
-   which WebKit fires on first-tap and made the very first tap open the actions
-   instead of the email. */
-.mail-row--swiped .mail-row-front { transform: translateX(-124px); }
+
+/* Touch — WebKit fires :hover on the first tap, which made the hover-swap
+   above eat the first tap on mobile (had to tap twice to open an email).
+   So touch instead requires an explicit swipe-left gesture (JS) to reveal
+   actions, by sliding this opaque front layer away. */
+@media (hover: none), (pointer: coarse) {
+  .mail-row-front { background: var(--surface, #fff); transition: transform 0.18s ease; }
+  .mail-row.mail-row--active .mail-row-front { background: color-mix(in srgb, var(--accent) 8%, var(--surface, #fff)); }
+  .mail-row--unread .mail-row-front { background: color-mix(in srgb, var(--ink) 1.5%, var(--surface, #fff)); }
+  .mail-row--selected .mail-row-front { background: color-mix(in srgb, var(--accent) 6%, var(--surface, #fff)) !important; }
+  .mail-row-actions { display: flex; background: color-mix(in srgb, var(--ink) 6%, var(--surface, #fff)); }
+  .mail-row--swiped .mail-row-front { transform: translateX(-124px); }
+}
 
 /* Left controls: checkbox, star, label */
 .mail-row-left { display: flex; align-items: center; flex-shrink: 0; }
@@ -12221,17 +12232,18 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   padding-left: 8px;
 }
 .mail-row--unread .mail-row-date { font-weight: 600; color: var(--ink); }
-/* Docked behind the front layer, right-aligned; revealed as the front slides away. */
+/* Docked behind the front layer, right-aligned. Hidden by default (desktop
+   shows it via :hover, touch always lays it out — see the media queries
+   on .mail-row-front above). */
 .mail-row-actions {
   position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
-  display: flex;
+  display: none;
   align-items: center;
   gap: 0;
   padding-right: 4px;
-  background: color-mix(in srgb, var(--ink) 6%, var(--surface, #fff));
 }
 .mail-row-action-btn {
   flex-shrink: 0;
