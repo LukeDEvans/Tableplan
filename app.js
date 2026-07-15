@@ -308,13 +308,18 @@ async function setSectionScope(section, scope) {
   applyStoredState(draft);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 
-  // 3. The swapped-in data isn't "dirty" — reset its write signature so the
-  //    debounced save doesn't push it needlessly.
-  if (lastWrittenSections) lastWrittenSections[section] = JSON.stringify(extractSectionData(keys));
-
-  // 4. Refresh the newly-active row from the server in the background (another
-  //    device/member may have changed it since the shadow was captured).
-  refreshActiveSectionFromServer(stateId, section, keys).catch(() => {});
+  // 3. Refresh the newly-active row from the server (another device/member
+  //    may have changed it since the shadow was captured). Deliberately do
+  //    NOT mark this section as "already synced" here: if this refresh fails
+  //    or is slow, the swapped-in (shadow) data must still look dirty against
+  //    the OLD scope's lastWrittenSections signature, so the very next
+  //    persist() retries a real, merge-protected write instead of the wrong
+  //    data silently being treated as already up to date. Only a confirmed
+  //    successful merge (inside refreshActiveSectionFromServer) may update
+  //    lastWrittenSections.
+  refreshActiveSectionFromServer(stateId, section, keys).catch((e) => {
+    console.warn(`[scope] background refresh of ${section} failed — will retry on next save:`, e.message);
+  });
   render();
   updateScopeToggleUi();
 }

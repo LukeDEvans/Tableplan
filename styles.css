@@ -11303,7 +11303,8 @@ body.touch-drag-active * {
 /* ── Voice command ───────────────────────────────────────────────────────────── */
 
 .voice-mic-btn {
-  display: grid;
+  /* Temporarily disabled — remove this line to bring the button back. */
+  display: none !important;
   place-items: center;
   position: fixed;
   bottom: 24px;
