@@ -345,6 +345,10 @@ function updateScopeToggleUi() {
   const show = !!section && SECTION_SCOPE[section] === "toggle" && !!authSession?.access_token;
   wrap.hidden = !show;
   if (!show) return;
+  // Anchor inside the active page window (top-right, CSS absolute) rather than
+  // the topbar. Re-parenting keeps one shared element + its wired listeners.
+  const page = document.getElementById(`${activeAppArea}MainPage`);
+  if (page && wrap.parentElement !== page) page.appendChild(wrap);
   const scope = sectionScope(section);
   document.getElementById("scopeHouseholdBtn")?.classList.toggle("is-active", scope === "household");
   document.getElementById("scopePersonalBtn")?.classList.toggle("is-active", scope === "personal");

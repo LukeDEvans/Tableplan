@@ -14139,16 +14139,20 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
   #mediaMainPage .article-row-actions { display: flex; }
 }
 
-/* Household / personal view toggle (topbar, toggleable pages only) */
+/* Household / personal view toggle — anchored to the top-right corner of the
+   active page window (JS re-parents it into the .planner-column section). */
 .scope-toggle {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 20;
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  margin-left: 10px;
   padding: 2px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  background: var(--sun-pale, #fff3c8);
 }
 
 .scope-toggle button {
