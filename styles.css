@@ -12292,7 +12292,8 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 .mail-move-picker {
   position: absolute;
   top: calc(100% + 4px);
-  left: 0;
+  right: 0;
+  left: auto;
   background: var(--paper, #fff);
   border: 1px solid color-mix(in srgb, var(--ink) 15%, transparent);
   border-radius: 10px;
