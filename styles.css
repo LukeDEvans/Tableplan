@@ -16,7 +16,7 @@
   --sun-pale: #fff3c8;
   --blue: #f1cc54;
   --window-bg: #ffffff;
-  --window-border: #191970; /* midnight blue */
+  --window-border: #003865; /* Pantone 2955 C */
   --shadow: 0 18px 40px rgba(73, 54, 16, 0.14);
   --radius: 14px;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -40,7 +40,7 @@ body[data-theme="dark"] {
   --sun-pale: #6f5b22;
   --blue: #f1cc54;
   --window-bg: #20221f;
-  --window-border: #6363b8; /* midnight blue, lifted for dark surfaces */
+  --window-border: #4a7fae; /* Pantone 2955 C, lifted for dark surfaces */
   --shadow: 0 18px 40px rgba(0, 0, 0, 0.36);
 }
 
@@ -66,7 +66,7 @@ body[data-theme="auto"] {
     --sun-pale: #6f5b22;
     --blue: #f1cc54;
     --window-bg: #20221f;
-    --window-border: #6363b8;
+    --window-border: #4a7fae;
     --shadow: 0 18px 40px rgba(0, 0, 0, 0.36);
   }
 }
