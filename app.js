@@ -254,7 +254,10 @@ let shadowSections = (() => {
 function sectionScope(section) {
   const kind = SECTION_SCOPE[section] || "household";
   if (kind !== "toggle") return kind;
-  return sectionScopes[section] === "household" ? "household" : "personal";
+  if (sectionScopes[section]) return sectionScopes[section] === "household" ? "household" : "personal";
+  // Defaults: Shop opens on the household list (the meal plan populates it);
+  // every other toggleable page opens on the personal view.
+  return section === "grocery" ? "household" : "personal";
 }
 
 function sectionRowId(stateId, section) {
@@ -20086,7 +20089,10 @@ function renderGroceries() {
     if (weISO < groceryRangeStart || wsISO > groceryRangeEnd) return;
     (weekPlan.skippedGroceryKeys || []).forEach((k) => skippedKeys.add(k));
   });
-  const needed = aggregateGroceryRows(buildRawGroceryRowsForRange(groceryRangeStart, groceryRangeEnd))
+  // Meal-plan-derived items populate the HOUSEHOLD list only — a personal
+  // Shop view is a from-scratch manual list.
+  const needed = sectionScope("grocery") === "personal" ? [] :
+    aggregateGroceryRows(buildRawGroceryRowsForRange(groceryRangeStart, groceryRangeEnd))
     .filter((row) => !pantrySet.has(groceryRowKey(row.item)) && !skippedKeys.has(row.key))
     .map((row) => ({
       ...row,
