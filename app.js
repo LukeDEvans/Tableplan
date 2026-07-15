@@ -214,6 +214,24 @@ const STATE_SECTIONS = {
   config:    ["weeklyEmailSettings", "mailAiSettings", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
+// The gateable app pages — the single source of truth for every page-access
+// list (household "Members can access", personal visibility, admin-wide).
+// Keep in sync with the home nav and the isPageEnabled() keys. Note: "read"
+// is the Media page's key (historical name).
+const MANAGED_PAGES = [
+  { key: "eat",       label: "Meal Plan" },
+  { key: "mail",      label: "Mail" },
+  { key: "shop",      label: "Shop" },
+  { key: "do",        label: "To-Do" },
+  { key: "play",      label: "Exercise" },
+  { key: "watch",     label: "Watch" },
+  { key: "read",      label: "Media" },
+  { key: "recreate",  label: "Recreate" },
+  { key: "explore",   label: "Explore" },
+  { key: "plan",      label: "Calendar" },
+  { key: "inventory", label: "Stock" },
+];
+
 // JSON snapshot of each section as of the last successful Supabase write.
 // null means "never written this session — write everything".
 let lastWrittenSections = null;
@@ -2291,13 +2309,7 @@ function renderGroupSettingsSection() {
       <p class="import-status" id="groupInviteStatus"></p>
     </div>
   ` : "";
-  const pages = [
-    { key: "eat", label: "Meal Plan" }, { key: "shop", label: "Shop" },
-    { key: "do", label: "To-Do" }, { key: "watch", label: "Watch" },
-    { key: "play", label: "Exercise" }, { key: "read", label: "Read" },
-    { key: "recreate", label: "Recreate" }, { key: "plan", label: "Calendar" },
-    { key: "inventory", label: "Stock" }
-  ];
+  const pages = MANAGED_PAGES;
   const pageAccessHtml = canManageHousehold ? `
     <div class="group-page-access">
       <p class="settings-subheading">Members can access</p>
@@ -12067,7 +12079,7 @@ function updatePageTitleMenu() {
   elements.titleRecreateBtn.hidden = activeAppArea === "recreate" || !isPagePersonallyEnabled("recreate");
   elements.titlePlanBtn.hidden = activeAppArea === "plan" || !isPagePersonallyEnabled("plan");
   elements.titleMailBtn.hidden = activeAppArea === "mail" || !isPagePersonallyEnabled("mail");
-  if (elements.titleExploreBtn) elements.titleExploreBtn.hidden = activeAppArea === "explore";
+  if (elements.titleExploreBtn) elements.titleExploreBtn.hidden = activeAppArea === "explore" || !isPagePersonallyEnabled("explore");
   const menu = elements.pageTitleMenu;
   const btns = [...menu.querySelectorAll("button")];
   btns.sort((a, b) => a.textContent.trim().localeCompare(b.textContent.trim()));
@@ -12085,6 +12097,8 @@ function updatePageVisibility() {
   elements.homeRecreateBtn.hidden = !isPagePersonallyEnabled("recreate");
   elements.homePlanBtn.hidden = !isPagePersonallyEnabled("plan");
   elements.homeMailBtn.hidden = !isPagePersonallyEnabled("mail");
+  const exploreBtn = document.getElementById("homeExploreBtn");
+  if (exploreBtn) exploreBtn.hidden = !isPagePersonallyEnabled("explore");
   updatePageVisibilityControls();
 }
 
@@ -12294,17 +12308,7 @@ function renderContextSettingsDialog(kind) {
 
   if (kind === "admin-pages") {
     if (userGroup?.role !== "admin") return;
-    const pages = [
-      { key: "eat",       label: "Meal Plan"  },
-      { key: "shop",      label: "Shop"       },
-      { key: "do",        label: "To-Do"      },
-      { key: "play",      label: "Exercise"      },
-      { key: "watch",     label: "Watch"      },
-      { key: "read",      label: "Read"       },
-      { key: "recreate",  label: "Recreate"   },
-      { key: "plan",      label: "Calendar"   },
-      { key: "inventory", label: "Inventory"  },
-    ];
+    const pages = MANAGED_PAGES;
     elements.contextSettingsBody.innerHTML = `
       <p class="muted-label" style="margin-bottom:10px;font-size:0.82rem">These pages are hidden for all users app-wide, regardless of household or personal settings.</p>
       <div class="page-vis-card" role="group" aria-label="Globally enabled pages">
@@ -12322,18 +12326,7 @@ function renderContextSettingsDialog(kind) {
   }
 
   if (kind === "pages") {
-    const pages = [
-      { key: "eat",       label: "Meal Plan"  },
-      { key: "shop",      label: "Shop"       },
-      { key: "do",        label: "To-Do"      },
-      { key: "play",      label: "Exercise"      },
-      { key: "watch",     label: "Watch"      },
-      { key: "read",      label: "Read"       },
-      { key: "recreate",  label: "Recreate"   },
-      { key: "plan",      label: "Calendar"   },
-      { key: "inventory", label: "Inventory"  },
-      { key: "mail",      label: "Mail"       },
-    ];
+    const pages = MANAGED_PAGES;
     elements.contextSettingsBody.innerHTML = `
       <div class="page-vis-card" role="group" aria-label="Enabled pages">
         ${pages.map(({ key, label }) => {
@@ -12808,13 +12801,7 @@ function renderContextSettingsDialog(kind) {
       `;
       const isAdmin = userGroup.role === "admin";
       const canManageHousehold = isAdmin || userGroup.role === "hoh";
-      const pages = [
-        { key: "eat", label: "Meal Plan" }, { key: "shop", label: "Shop" },
-        { key: "do", label: "To-Do" }, { key: "watch", label: "Watch" },
-        { key: "play", label: "Exercise" }, { key: "read", label: "Read" },
-        { key: "recreate", label: "Recreate" }, { key: "plan", label: "Calendar" },
-        { key: "inventory", label: "Stock" }
-      ];
+      const pages = MANAGED_PAGES;
       const roleLabel = (r) => r === "admin" ? "Admin" : r === "hoh" ? "HoH" : "Member";
       const accountMembersHtml = groupMembers.map((m) => `
         <div class="config-row group-member-row">
@@ -33012,6 +32999,7 @@ function formatTravelCurrency(trip, amount) {
 
 function showExploreApp(event) {
   event?.stopPropagation();
+  if (!isPageEnabled("explore")) { showHomeApp(); return; }
   activeAppArea = "explore";
   hideAllPages();
   document.getElementById("exploreMainPage").hidden = false;
