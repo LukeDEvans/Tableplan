@@ -6322,19 +6322,41 @@ async function loadMailList(labelId, q = "", append = false) {
   mailNextPageToken = data.nextPageToken || null;
   const messages = data.messages || [];
   if (append) {
-    elements.mailList.querySelector(".mail-load-more-btn")?.remove();
+    mailScrollSentinel?.remove();
   } else {
     elements.mailList.innerHTML = "";
     if (!messages.length) { elements.mailList.innerHTML = `<div class="mail-empty">No messages.</div>`; return; }
   }
   appendMailRows(messages);
-  if (mailNextPageToken) {
-    const btn = document.createElement("button");
-    btn.className = "mail-load-more-btn secondary-btn";
-    btn.type = "button";
-    btn.textContent = "Load more";
-    btn.addEventListener("click", () => loadMailList(currentMailbox, mailCurrentQuery, true));
-    elements.mailList.appendChild(btn);
+  if (mailNextPageToken) attachMailScrollSentinel();
+}
+
+// Infinite scroll: one persistent sentinel div sits after the last row; when
+// it scrolls within 600px of the list panel's viewport, the next page is
+// fetched and appended (replacing the old "Load more" button).
+let mailScrollSentinel = null;
+let mailScrollObserver = null;
+let mailLoadingMore = false;
+
+function attachMailScrollSentinel() {
+  if (!mailScrollSentinel) {
+    mailScrollSentinel = document.createElement("div");
+    mailScrollSentinel.className = "mail-scroll-sentinel mail-loading";
+    mailScrollSentinel.textContent = "Loading more…";
+  }
+  elements.mailList.appendChild(mailScrollSentinel);
+  if (!mailScrollObserver) {
+    mailScrollObserver = new IntersectionObserver(async (entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      if (mailLoadingMore || !mailNextPageToken) return;
+      mailLoadingMore = true;
+      try {
+        await loadMailList(currentMailbox, mailCurrentQuery, true);
+      } finally {
+        mailLoadingMore = false;
+      }
+    }, { root: elements.mailList.closest(".mail-list-panel"), rootMargin: "600px" });
+    mailScrollObserver.observe(mailScrollSentinel);
   }
 }
 

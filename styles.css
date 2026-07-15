@@ -12332,8 +12332,8 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 .mail-reply-body:focus { outline: none; border-color: var(--accent, #92400E); }
 .mail-reply-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
-/* Load more */
-.mail-load-more-btn { display: block; width: calc(100% - 32px); margin: 8px 16px 16px; }
+/* Infinite-scroll sentinel (inherits .mail-loading text styling) */
+.mail-scroll-sentinel { text-align: center; }
 
 /* Move to picker */
 .mail-move-wrap { position: relative; }
