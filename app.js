@@ -28043,6 +28043,116 @@ function showEpisodePlaylistMenu(episodeId, btn) {
 
 // ── Shows grid ───────────────────────────────────────────────────────────────
 
+// ── Copy media items across scopes (personal ⇄ household) ────────────────────
+
+// Writes the INACTIVE scope's shadow copy of a section to its own row, with
+// the same conditional-PATCH + merge-retry protection as active writes.
+async function writeInactiveSection(section, attempt = 0) {
+  const stateId = supabaseConfig().stateId;
+  const rowId = inactiveSectionRowId(stateId, section);
+  if (!rowId || !authSession?.access_token) return;
+  const keys = STATE_SECTIONS[section] || [];
+  const now = new Date().toISOString();
+  const data = shadowSections[section] || {};
+
+  const res = await fetch(
+    `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&select=state,updated_at`,
+    { headers: supabaseHeaders(), cache: "no-store" }
+  );
+  if (!res.ok) throw new Error(`Shadow section "${section}" read failed: ${res.status}`);
+  const rows = await res.json();
+
+  if (!rows.length) {
+    const ins = await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?on_conflict=id`, {
+      method: "POST",
+      headers: { ...supabaseHeaders(), Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({ id: rowId, state: { ...data, stateUpdatedAt: now }, updated_at: now })
+    });
+    if (!ins.ok) throw new Error(`Shadow section "${section}" create failed: ${ins.status}`);
+    return;
+  }
+
+  const { stateUpdatedAt: remoteTs, ...remoteData } = rows[0].state || {};
+  const localFrag = { ...data, tombstones: state.tombstones, stateUpdatedAt: now };
+  const remoteFrag = { ...remoteData, tombstones: remoteData.tombstones || state.tombstones, stateUpdatedAt: remoteTs || "" };
+  const merged = mergeStates(localFrag, remoteFrag);
+  const mergedFrag = {};
+  for (const key of keys) { if (merged[key] !== undefined) mergedFrag[key] = merged[key]; }
+  shadowSections[section] = mergedFrag;
+  persistShadowSections();
+
+  const upd = await fetch(
+    `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&updated_at=eq.${encodeURIComponent(rows[0].updated_at)}`,
+    {
+      method: "PATCH",
+      headers: { ...supabaseHeaders(), Prefer: "return=representation" },
+      body: JSON.stringify({ state: { ...mergedFrag, stateUpdatedAt: now }, updated_at: now })
+    }
+  );
+  if (!upd.ok) throw new Error(`Shadow section "${section}" save failed: ${upd.status}`);
+  const updRows = await upd.json();
+  if (!updRows.length) {
+    if (attempt >= 2) throw new Error(`Shadow section "${section}" kept conflicting`);
+    return writeInactiveSection(section, attempt + 1);
+  }
+  lastSeenSectionStamp[rowId] = updRows[0].updated_at || now;
+}
+
+// Duplicates a podcast show or saved article into the OTHER scope's media
+// store (personal view → household, household view → personal).
+async function copyMediaItemToOtherScope(kind, id) {
+  const scope = sectionScope("media");
+  const targetName = scope === "personal" ? "the household library" : "your personal library";
+  if (!shadowSections.media || typeof shadowSections.media !== "object") shadowSections.media = {};
+  const shadow = shadowSections.media;
+
+  if (kind === "article") {
+    const article = (state.savedArticles || []).find((a) => a.id === id);
+    if (!article) return;
+    if (!Array.isArray(shadow.savedArticles)) shadow.savedArticles = [];
+    const dup = shadow.savedArticles.some((a) => (a.url && article.url) ? a.url === article.url : a.id === article.id);
+    if (dup) { showMailToast(`Already in ${targetName}.`); return; }
+    shadow.savedArticles.push({ ...article, id: createId("article") });
+  } else {
+    const show = (state.podcasts || []).find((p) => p.id === id);
+    if (!show) return;
+    if (!Array.isArray(shadow.podcasts)) shadow.podcasts = [];
+    const dup = shadow.podcasts.some((p) => (p.feedUrl && show.feedUrl) ? p.feedUrl === show.feedUrl : p.id === show.id);
+    if (dup) { showMailToast(`Already in ${targetName}.`); return; }
+    shadow.podcasts.push(JSON.parse(JSON.stringify(show)));
+  }
+
+  persistShadowSections();
+  try {
+    await writeInactiveSection("media");
+    showMailToast(`Copied to ${targetName}.`);
+  } catch (e) {
+    // The copy is safe in the local shadow; it syncs on the next toggle/write
+    console.warn("[scope] shared copy sync failed (kept locally):", e.message);
+    showMailToast(`Copied to ${targetName} — will sync when back online.`);
+  }
+}
+
+function openMediaShareMenu(event, kind, id) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeFolderMenu();
+  const label = sectionScope("media") === "personal" ? "Copy to household" : "Copy to my personal list";
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu media-share-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `<button type="button" role="menuitem" data-media-share-copy>${escapeHtml(label)}</button>`;
+  document.body.append(menu);
+  const x = Math.min(event.clientX || 10, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(event.clientY || 10, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+  menu.querySelector("[data-media-share-copy]").addEventListener("click", () => {
+    closeFolderMenu();
+    copyMediaItemToOtherScope(kind, id);
+  });
+}
+
 function renderPodcastShowsGrid() {
   const listEl = document.getElementById("podcastEpisodeList");
   if (!listEl) return;
@@ -28074,6 +28184,7 @@ function renderPodcastShowsGrid() {
 
   listEl.querySelectorAll("[data-show-id]").forEach(btn => {
     btn.addEventListener("click", () => openPodcastShow(btn.dataset.showId));
+    btn.addEventListener("contextmenu", (e) => openMediaShareMenu(e, "show", btn.dataset.showId));
   });
   listEl.querySelector("#podcastShowAddCard")?.addEventListener("click", openPodcastAddDialog);
 }
@@ -30380,6 +30491,7 @@ function renderArticleList(containerId, pub) {
       if (e.target.closest(".article-row-actions")) return;
       openArticle(id, containerId);
     });
+    row.addEventListener("contextmenu", (e) => openMediaShareMenu(e, "article", id));
     row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") openArticle(id, containerId); });
     row.querySelector(".article-row-actions").addEventListener("click", (e) => {
       e.stopPropagation();
