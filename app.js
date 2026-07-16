@@ -26113,7 +26113,6 @@ function renderPianoPanel() {
           min="20" max="300" value="${metronomeBpm}" aria-label="Tempo slider" />
         <div class="metronome-actions">
           <button class="secondary-btn" type="button" id="metronomeTapBtn">Tap</button>
-          <button class="secondary-btn${metronomeAccentEnabled ? " is-active-toggle" : ""}" type="button" id="metronomeAccentBtn">Accent</button>
           <button class="${metronomeIsPlaying ? "primary-btn" : "secondary-btn"} metronome-play-btn" type="button" id="metronomePlayBtn">
             ${metronomeIsPlaying ? "Stop" : "Play"}
           </button>
@@ -26144,11 +26143,6 @@ function bindPianoControls() {
     metronomeIsPlaying ? stopMetronome() : startMetronome();
   });
   grid.querySelector("#metronomeTapBtn")?.addEventListener("click", metronomeTapTempo);
-  grid.querySelector("#metronomeAccentBtn")?.addEventListener("click", () => {
-    metronomeAccentEnabled = !metronomeAccentEnabled;
-    const btn = document.getElementById("metronomeAccentBtn");
-    if (btn) btn.classList.toggle("is-active-toggle", metronomeAccentEnabled);
-  });
   grid.querySelector("#metronomeDecBtn")?.addEventListener("click", () => setMetronomeBpm(metronomeBpm - 1));
   grid.querySelector("#metronomeIncBtn")?.addEventListener("click", () => setMetronomeBpm(metronomeBpm + 1));
   const attachRepeat = (btnId, delta) => {
