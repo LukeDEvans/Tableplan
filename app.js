@@ -27876,7 +27876,7 @@ function removePublication(key) {
   if (activeMediaTab === key) switchMediaTab("all");
 }
 
-let activeMediaTab = "podcasts";
+let activeMediaTab = "queue"; // "queue" is the sidebar's top "All" tab
 let openArticleId = null;
 let mediaTabsWired = false;
 let articleViewMode = "unread";
@@ -27884,7 +27884,8 @@ let articleViewMode = "unread";
 function initMediaPage() {
   renderMediaPubTabs();
   wireMediaTabs();
-  switchMediaTab(activeMediaTab);
+  // Every visit lands on the "All" tab (not wherever the last visit ended)
+  switchMediaTab("queue");
   maybeAutoSync("read");
   refreshStalePodcastFeeds(); // stale views render immediately, then update in place
 }
