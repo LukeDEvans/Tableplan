@@ -27,8 +27,9 @@ const NEWS_SOURCES = [
 ];
 
 function newsSourceForMessage(from, subject, mailAiSettings) {
+  // Features default ON: only an explicit false (user toggled off) disables.
   return NEWS_SOURCES.find((s) =>
-    mailAiSettings?.[s.key] && s.senderRe.test(from || "") && s.subjectRe.test((subject || "").trim())
+    mailAiSettings?.[s.key] !== false && s.senderRe.test(from || "") && s.subjectRe.test((subject || "").trim())
   ) || null;
 }
 

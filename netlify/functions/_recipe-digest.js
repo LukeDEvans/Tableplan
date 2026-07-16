@@ -50,7 +50,8 @@ const RECIPE_SOURCES = [
 ];
 
 function enabledRecipeSources(mailAiSettings) {
-  return RECIPE_SOURCES.filter((s) => mailAiSettings?.[s.key]);
+  // Features default ON: only an explicit false (user toggled off) disables.
+  return RECIPE_SOURCES.filter((s) => mailAiSettings?.[s.key] !== false);
 }
 
 function recipeSourceForSender(from, mailAiSettings) {

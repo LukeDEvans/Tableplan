@@ -12471,26 +12471,31 @@ function openContextSettingsDialog(kind) {
 const MAIL_AI_FEATURES = [
   {
     key: "nytCookingDigest",
+    defaultOn: true,
     label: "NYT Cooking recipe digest",
     desc: "As NYT Cooking emails arrive: collects their recipe links and files each email away immediately. Every Sunday: one email with the week's recipes, duplicates removed."
   },
   {
     key: "bonAppetitDigest",
+    defaultOn: true,
     label: "Bon Appétit recipe digest",
     desc: "Same treatment for Bon Appétit emails — their recipes join the same weekly digest email, in their own section."
   },
   {
     key: "nutritionFactsDigest",
+    defaultOn: true,
     label: "Dr. Greger / NutritionFacts digest",
     desc: "Collects article and video links from NutritionFacts.org emails into a separate “Health” section of the same weekly digest."
   },
   {
     key: "nytMorningToArticle",
+    defaultOn: true,
     label: "“The Morning” → article",
     desc: "Converts NYT's daily The Morning email into a clean article you can read or listen to on the Media page, then files the email away."
   },
   {
     key: "economistBriefToArticle",
+    defaultOn: true,
     label: "“The world in brief” → article",
     desc: "Same for The Economist's daily briefing — saved as a listenable article on the Media page, email filed away."
   },
