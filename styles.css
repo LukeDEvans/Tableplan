@@ -10009,7 +10009,7 @@ body.touch-drag-active * {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--bg, #fff);
+  background: var(--window-bg, #fff);
 }
 
 /* View tab bar */
