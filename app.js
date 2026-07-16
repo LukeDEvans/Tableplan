@@ -7625,7 +7625,44 @@ function sanitizeMailFrameHtml(html) {
                attr.value.trim().toLowerCase().startsWith("javascript:")) el.removeAttribute(attr.name);
     });
   });
+  stripLabeledEmailAds(div);
   return div.innerHTML;
+}
+
+// Clips ad units from newsletters (NYT etc.). Publishers label every ad with
+// a standalone "ADVERTISEMENT" marker; from that marker we climb to the
+// smallest enclosing block that is still essentially just the ad (bounded by
+// how much text it contains) and remove it. Deliberately conservative: a
+// block with substantial text is never removed, so at worst an ad survives —
+// article content is never clipped.
+function stripLabeledEmailAds(root) {
+  const AD_LABELS = /^(advertisement|paid post|sponsored|sponsored content|paid for and posted by .{0,80})$/i;
+  const MAX_AD_TEXT = 320; // an ad unit's total text (label + short ad copy)
+  const markers = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    if (AD_LABELS.test(walker.currentNode.textContent.replace(/\s+/g, " ").trim())) {
+      markers.push(walker.currentNode);
+    }
+  }
+  markers.forEach((marker) => {
+    if (!root.contains(marker)) return; // already inside a removed unit
+    let unit = marker.parentElement;
+    if (!unit) return;
+    while (unit.parentElement && unit.parentElement !== root) {
+      const parentText = unit.parentElement.textContent.replace(/\s+/g, " ").trim();
+      if (parentText.length > MAX_AD_TEXT) break;
+      unit = unit.parentElement;
+    }
+    // The creative often sits in a sibling block right after the label unit:
+    // remove it only when it's clearly just a linked image with no real text.
+    const next = unit.nextElementSibling;
+    if (next && next.querySelector("img") && next.querySelector("a") &&
+        next.textContent.replace(/\s+/g, " ").trim().length < 120) {
+      next.remove();
+    }
+    unit.remove();
+  });
 }
 
 async function generateAiDraft(thread) {
