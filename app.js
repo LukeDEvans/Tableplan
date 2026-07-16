@@ -7391,6 +7391,10 @@ function buildMailBodyFrame(html) {
   // lets the app measure the content height for auto-sizing.
   iframe.setAttribute("sandbox", "allow-same-origin allow-popups allow-popups-to-escape-sandbox");
   iframe.setAttribute("referrerpolicy", "no-referrer");
+  // The frame must never scroll internally — a mis-measured height would
+  // otherwise produce a phantom nested scrollbar that swallows wheel/touch
+  // scrolling. The thread panel is the only scroller.
+  iframe.setAttribute("scrolling", "no");
   iframe.srcdoc =
     '<!doctype html><html><head><meta charset="utf-8"><base target="_blank">' +
     '<style>html,body{margin:0;padding:0}' +
@@ -7418,7 +7422,11 @@ function buildMailBodyFrame(html) {
       if (b.scrollWidth > avail + 4) z = avail / b.scrollWidth;
       else if (design && design < avail - 8) z = Math.min(avail / design, 1.75);
       if (Math.abs(z - 1) > 0.03) b.style.zoom = z;
-      iframe.style.height = Math.min(Math.max(doc.documentElement.scrollHeight, 40), 30000) + "px";
+      // Measure the VISUAL height: with zoom applied, scrollHeight alone can
+      // undershoot by a few px, which used to leave a nested scrollbar.
+      const visual = Math.ceil(b.getBoundingClientRect().bottom + (doc.defaultView?.scrollY || 0));
+      const h = Math.max(doc.documentElement.scrollHeight, visual) + 4;
+      iframe.style.height = Math.min(Math.max(h, 40), 30000) + "px";
     } catch {}
   };
   iframe.addEventListener("load", () => {
