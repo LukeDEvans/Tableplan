@@ -361,7 +361,10 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
       }
     }
 
-    const bodyText = htmlToText(rawBody);
+    // Triage only the NEW text of the message: replies quote the whole
+    // thread, and triaging the quoted part re-suggests old action items
+    // (e.g. an RSVP request re-flagged on every follow-up).
+    const bodyText = stripQuotedReply(htmlToText(rawBody));
     const emailMeta = { subject: hdrs.subject || "(no subject)", from: hdrs.from || "", date: hdrs.date || "" };
 
     let ideas = [];
@@ -378,6 +381,7 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
       const suggestion = {
         id: `sg_${messageId}_${i}`,
         messageId,
+        threadId: msg.threadId || "",
         kind: idea.kind,
         title: idea.title,
         details: idea.details,
@@ -408,7 +412,16 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
   const processedNow = fresh.filter((_, i) => !perMessage[i].retry);
 
   const existingIds = new Set(sugg.suggestions.map((s) => s.id));
-  const merged = [...added.filter((s) => !existingIds.has(s.id)), ...sugg.suggestions].slice(0, 100);
+  // Thread-level dedupe: one suggestion of a given kind per email thread,
+  // counting resolved ones too — dismissing an RSVP nag means follow-ups in
+  // that thread never re-raise it. Same-title dedupe catches thread repeats
+  // recorded before suggestions carried a threadId.
+  const normTitle = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const isDuplicate = (s) => sugg.suggestions.some((e) =>
+    (s.threadId && e.threadId && e.threadId === s.threadId && e.kind === s.kind) ||
+    (e.kind === s.kind && normTitle(e.title) === normTitle(s.title))
+  );
+  const merged = [...added.filter((s) => !existingIds.has(s.id) && !isDuplicate(s)), ...sugg.suggestions].slice(0, 100);
   await saveMailSuggestions(serviceKey, userId, {
     lastHistoryId: newHistoryId || sugg.lastHistoryId,
     watchExpiration: sugg.watchExpiration,
@@ -427,6 +440,24 @@ async function loadAppConfig(serviceKey, userId) {
   if (!groupId) return null;
   const row = await loadSection(serviceKey, groupId, "config").catch(() => null);
   return row?.state || null;
+}
+
+// Cuts a plain-text email body at the first quoted-reply marker, leaving only
+// what the sender newly wrote. Conservative: unrecognized formats pass whole.
+function stripQuotedReply(text) {
+  const t = String(text || "");
+  const markers = [
+    /\r?\nOn [^\r\n]{1,140} wrote:\s*\r?\n/, // Gmail/Apple "On Tue, Jul 15, 2026… <x> wrote:"
+    /\r?\n-{2,}\s*Original Message\s*-{2,}/i, // Outlook classic
+    /\r?\nFrom:\s[^\r\n]{1,200}\r?\n(Sent|Date):\s/i, // Outlook top-quote header
+    /\r?\n>{1}\s?[^\r\n]*\r?\n(>{1}\s?[^\r\n]*\r?\n){3,}/ // long ">"-quoted run
+  ];
+  let cut = t.length;
+  for (const re of markers) {
+    const m = re.exec(t);
+    if (m && m.index < cut) cut = m.index;
+  }
+  return t.slice(0, cut);
 }
 
 // ─── Snooze (emulated — the Gmail API has no native snooze) ──────────────────
