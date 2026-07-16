@@ -2809,9 +2809,9 @@ input.live-toggle:checked::before,
   width: 28px;
   height: 28px;
   min-height: 28px;
-  border: 1px solid color-mix(in srgb, var(--sun) 48%, var(--line));
+  border: 2px solid var(--window-border);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--sun-pale) 72%, #ffffff);
+  background: var(--window-bg);
   color: var(--ink);
   font-weight: 850;
 }
@@ -2822,7 +2822,7 @@ input.live-toggle:checked::before,
 .slot-generate-btn:focus-visible,
 .meal-entry-remove:hover,
 .meal-entry-remove:focus-visible {
-  border-color: #b8ccbe;
+  border-color: var(--window-border);
   background: var(--accent-soft);
   outline: none;
 }
@@ -2833,7 +2833,7 @@ input.live-toggle:checked::before,
 
 .slot-delete-btn:hover,
 .slot-delete-btn:focus-visible {
-  border-color: #e9b6a8;
+  border-color: var(--window-border);
   background: var(--tomato-soft);
   outline: none;
 }

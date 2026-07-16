@@ -468,7 +468,6 @@ let inventoryBoxPendingId = null;
 let inventoryBoxPendingParentId = null;
 let inventoryItemPendingId = null;
 let inventoryDragItemId = null;
-let mealSwipeGesture = null;
 let doTaskSwipeGesture = null;
 let grocerySwipeGesture = null;
 let autoRuleSwipeGesture = null;
@@ -17826,9 +17825,6 @@ function renderPlanner() {
     entry.addEventListener("contextmenu", openMealEntryMenu);
     entry.addEventListener("mousedown", handleMealEntryMouseDown);
     entry.addEventListener("pointerdown", handleMealEntryPointerDown);
-    entry.addEventListener("pointermove", handleMealEntryPointerMove);
-    entry.addEventListener("pointerup", handleMealEntryPointerEnd);
-    entry.addEventListener("pointercancel", handleMealEntryPointerEnd);
   });
 
   elements.plannerGrid.querySelectorAll("[data-meal-slot]").forEach((slot) => {
@@ -19360,22 +19356,13 @@ function activeTrashTarget() {
 }
 
 function handleMealEntryPointerDown(event) {
+  // Touch swipe-to-delete was removed here: it fought the horizontal swipe
+  // that pages between meals within a day. Mobile deletes go through the
+  // long-press entry menu instead; mouse drag-to-trash is unaffected.
   if (event.pointerType === "mouse") {
     if (event.button !== 0 || event.currentTarget.querySelector("[data-meal-input]") || event.target.closest("[data-special-meal-note], [data-link-restaurant], [data-unlink-restaurant], [data-show-restaurant-info], .meal-restaurant-bar-link")) return;
     startMealPointerDeleteGesture(event.currentTarget, event.clientX, event.clientY);
-    return;
   }
-  if (event.pointerType !== "touch") return;
-  const entry = event.currentTarget;
-  elements.plannerGrid.querySelectorAll(".meal-entry.is-swiped").forEach((item) => {
-    if (item !== entry) item.classList.remove("is-swiped");
-  });
-  mealSwipeGesture = {
-    entry,
-    startX: event.clientX,
-    startY: event.clientY,
-    active: false
-  };
 }
 
 function handleMealEntryMouseDown(event) {
@@ -19398,34 +19385,6 @@ function startMealPointerDeleteGesture(entry, startX, startY) {
   window.addEventListener("pointerup", handleMealPointerDeleteEnd, { once: true });
   window.addEventListener("mousemove", handleMealPointerDeleteMove);
   window.addEventListener("mouseup", handleMealPointerDeleteEnd, { once: true });
-}
-
-function handleMealEntryPointerMove(event) {
-  if (!mealSwipeGesture || mealSwipeGesture.entry !== event.currentTarget) return;
-  const deltaX = event.clientX - mealSwipeGesture.startX;
-  const deltaY = event.clientY - mealSwipeGesture.startY;
-  if (Math.abs(deltaY) > 28 && Math.abs(deltaY) > Math.abs(deltaX)) {
-    mealSwipeGesture = null;
-    return;
-  }
-  if (deltaX < -28) {
-    mealSwipeGesture.active = true;
-    event.currentTarget.classList.add("is-swiped");
-    suppressMealEntryClick = true;
-  } else if (deltaX > 18) {
-    event.currentTarget.classList.remove("is-swiped");
-  }
-}
-
-function handleMealEntryPointerEnd(event) {
-  if (!mealSwipeGesture || mealSwipeGesture.entry !== event.currentTarget) return;
-  if (!mealSwipeGesture.active) {
-    event.currentTarget.classList.remove("is-swiped");
-  }
-  mealSwipeGesture = null;
-  window.setTimeout(() => {
-    suppressMealEntryClick = false;
-  }, 120);
 }
 
 function handleMealPointerDeleteMove(event) {
