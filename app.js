@@ -6397,6 +6397,7 @@ function appendMailRows(messages) {
           <span class="mail-row-subject">${escapeHtml(m.subject)}</span>${m.snippet ? `<span class="mail-row-sep"> — </span><span class="mail-row-snippet">${escapeHtml(cleanMailSnippet(m.snippet))}</span>` : ""}
         </span>
         <div class="mail-row-right">
+          ${m.hasAttachment ? `<svg class="mail-row-clip" viewBox="0 0 24 24" aria-label="Has attachment"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>` : ""}
           <span class="mail-row-date">${escapeHtml(formatMailDate(m.internalDate))}</span>
         </div>
       </div>`;
@@ -7018,9 +7019,14 @@ function renderMailThread(thread) {
       if (!wrap || !holder) return;
       const nowCollapsed = wrap.classList.toggle("mail-msg--collapsed");
       holder.hidden = nowCollapsed;
+      const attRow = wrap.querySelector("[data-msg-atts]");
+      if (attRow) attRow.hidden = nowCollapsed;
       metaEl.title = nowCollapsed ? "Expand" : "Collapse";
       if (!nowCollapsed) mountMailMessageFrames(elements.mailThread, displayOrder);
     });
+  });
+  elements.mailThread.querySelectorAll(".mail-attachment-chip").forEach((chip) => {
+    chip.addEventListener("click", (e) => { e.stopPropagation(); openMailAttachment(chip); });
   });
 
   document.getElementById("mailBackBtn").addEventListener("click", () => { elements.mailThread.hidden = true; mailOpenThreadId = null; });
@@ -7450,6 +7456,20 @@ function renderMailMessage(msg, idx) {
   const from = parseDisplayName(msg.from);
   const date = msg.date ? new Date(msg.date).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
   const collapsed = idx !== 0; // newest (first in display order) starts expanded
+  const atts = (msg.attachments || []).filter((a) => a.filename && !a.inline);
+  const attRow = atts.length ? `
+    <div class="mail-attachments" data-msg-atts="${idx}"${collapsed ? " hidden" : ""}>
+      ${atts.map((a) => `
+        <button class="mail-attachment-chip" type="button"
+                data-att-message="${escapeHtml(msg.id)}" data-att-id="${escapeHtml(a.attachmentId || "")}"
+                data-att-name="${escapeHtml(a.filename)}" data-att-mime="${escapeHtml(a.mimeType || "")}"
+                data-att-size="${Number(a.size) || 0}" data-att-thread="${escapeHtml(msg.threadId || "")}"
+                title="${escapeHtml(a.filename)}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          <span class="mail-attachment-name">${escapeHtml(a.filename)}</span>
+          <span class="mail-attachment-size">${escapeHtml(formatAttachmentSize(a.size))}</span>
+        </button>`).join("")}
+    </div>` : "";
   return `<div class="mail-msg${collapsed ? " mail-msg--collapsed" : ""}">
     <div class="mail-msg-meta" data-msg-toggle="${idx}" role="button" tabindex="0" title="${collapsed ? "Expand" : "Collapse"}">
       <span class="mail-msg-from">${escapeHtml(from)}</span>
@@ -7457,7 +7477,55 @@ function renderMailMessage(msg, idx) {
       <span class="mail-msg-date">${escapeHtml(date)}</span>
     </div>
     <div class="mail-msg-body" data-msg-idx="${idx}"${collapsed ? " hidden" : ""}></div>
+    ${attRow}
   </div>`;
+}
+
+function formatAttachmentSize(bytes) {
+  const b = Number(bytes) || 0;
+  if (b >= 1048576) return (b / 1048576).toFixed(1) + " MB";
+  if (b >= 1024) return Math.round(b / 1024) + " KB";
+  return b + " B";
+}
+
+// Attachments proxy through the gmail function as base64, so cap what we
+// pull that way; bigger files deep-link to Gmail web (zero hosting cost).
+const MAIL_ATTACHMENT_PROXY_LIMIT = 4500000;
+
+async function openMailAttachment(chip) {
+  const { attMessage, attId, attName, attMime, attSize, attThread } = chip.dataset;
+  if (!attId) { window.open(`https://mail.google.com/mail/#all/${attThread || attMessage}`, "_blank"); return; }
+  if (Number(attSize) > MAIL_ATTACHMENT_PROXY_LIMIT) {
+    window.open(`https://mail.google.com/mail/#all/${attThread || attMessage}`, "_blank");
+    return;
+  }
+  chip.disabled = true;
+  chip.classList.add("is-loading");
+  const res = await callGmailApi({ action: "attachment", messageId: attMessage, attachmentId: attId });
+  chip.disabled = false;
+  chip.classList.remove("is-loading");
+  if (!res?.data) {
+    if (confirm("Couldn't download here" + (lastGmailApiError ? ` (${lastGmailApiError})` : "") + ".\n\nOpen the email in Gmail instead?")) {
+      window.open(`https://mail.google.com/mail/#all/${attThread || attMessage}`, "_blank");
+    }
+    return;
+  }
+  const b64 = res.data.replace(/-/g, "+").replace(/_/g, "/");
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const blob = new Blob([bytes], { type: attMime || "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  // Viewable types open in a tab; everything else downloads with its filename
+  if (/^image\/|^application\/pdf|^text\//.test(attMime)) {
+    window.open(url, "_blank");
+  } else {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = attName || "attachment";
+    a.click();
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 120000);
 }
 
 // Renders each message body the way Gmail does: HTML mail goes into a

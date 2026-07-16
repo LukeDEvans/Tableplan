@@ -12453,6 +12453,34 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 /* Infinite-scroll sentinel (inherits .mail-loading text styling) */
 .mail-scroll-sentinel { text-align: center; }
 
+/* Attachments */
+.mail-row-clip { width: 14px; height: 14px; flex-shrink: 0; margin-right: 4px; stroke: var(--text-muted, #888); stroke-width: 2; fill: none; }
+.mail-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 0 2px;
+}
+.mail-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 280px;
+  padding: 7px 12px;
+  border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 0.82rem;
+  cursor: pointer;
+  text-align: left;
+}
+.mail-attachment-chip:hover { background: color-mix(in srgb, var(--ink) 5%, #fff); }
+.mail-attachment-chip.is-loading { opacity: 0.55; cursor: progress; }
+.mail-attachment-chip svg { width: 14px; height: 14px; flex-shrink: 0; stroke: currentColor; stroke-width: 2; fill: none; }
+.mail-attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.mail-attachment-size { color: var(--text-muted, #888); font-size: 0.75rem; flex-shrink: 0; }
+
 /* Move to picker */
 .mail-move-wrap { position: relative; }
 .mail-move-picker {

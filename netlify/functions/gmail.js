@@ -94,6 +94,16 @@ exports.handler = async (event) => {
     }
     const listData = await listRes.json();
 
+    // One cheap ids-only query flags which of this page's messages carry
+    // attachments (metadata format can't tell us).
+    let attachmentIds = new Set();
+    try {
+      const ap = new URLSearchParams({ maxResults: "100", q: q ? `(${q}) has:attachment` : "has:attachment" });
+      labelIds.forEach((l) => ap.append("labelIds", l));
+      const ar = await gFetch(gToken, `/messages?${ap}`);
+      if (ar.ok) attachmentIds = new Set((((await ar.json()).messages) || []).map((m) => m.id));
+    } catch { /* indicator only — never block the list */ }
+
     const messages = (await Promise.all(
       (listData.messages || []).map(async (m) => {
         const r = await gFetch(gToken, `/messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`);
@@ -106,6 +116,7 @@ exports.handler = async (event) => {
           snippet: cleanSnippet(d.snippet),
           unread: (d.labelIds || []).includes("UNREAD"),
           starred: (d.labelIds || []).includes("STARRED"),
+          hasAttachment: attachmentIds.has(d.id),
           from: hdrs.from || "",
           subject: hdrs.subject || "(no subject)",
           date: hdrs.date || "",
@@ -115,6 +126,21 @@ exports.handler = async (event) => {
     )).filter(Boolean);
 
     return json(200, { messages, nextPageToken: listData.nextPageToken || null });
+  }
+
+  if (action === "attachment") {
+    // Streams one attachment through the function as base64. Capped well
+    // under Netlify's ~6MB response limit — anything larger should be
+    // opened in Gmail itself (the client handles that fallback).
+    const { messageId, attachmentId } = body;
+    if (!messageId || !attachmentId) return json(400, { error: "messageId and attachmentId required" });
+    const r = await gFetch(gToken, `/messages/${messageId}/attachments/${encodeURIComponent(attachmentId)}`);
+    if (!r.ok) return json(502, { error: "Attachment fetch failed." });
+    const data = await r.json();
+    if ((data.data || "").length > 7000000) {
+      return json(413, { error: "Attachment too large to download here — open it in Gmail.", tooLarge: true });
+    }
+    return json(200, { data: data.data || "", size: data.size || 0 });
   }
 
   if (action === "checkInboxNow") {
@@ -362,7 +388,7 @@ function normalizeMessage(msg) {
     body: extractBody(msg.payload),
     messageId: hdrs["message-id"] || "",
     references: hdrs.references || "",
-    attachments: collectAttachmentParts(msg.payload).map(({ attachmentId, ...meta }) => meta)
+    attachments: collectAttachmentParts(msg.payload)
   };
 }
 
