@@ -134,10 +134,11 @@ exports.handler = async (event) => {
     // opened in Gmail itself (the client handles that fallback).
     const { messageId, attachmentId } = body;
     if (!messageId || !attachmentId) return json(400, { error: "messageId and attachmentId required" });
-    const r = await gFetch(gToken, `/messages/${messageId}/attachments/${encodeURIComponent(attachmentId)}`);
+    const r = await gFetch(gToken, `/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`);
     if (!r.ok) return json(502, { error: "Attachment fetch failed." });
     const data = await r.json();
-    if ((data.data || "").length > 7000000) {
+    // Netlify sync responses cap at ~6MB; keep the JSON well under it
+    if ((data.data || "").length > 5000000) {
       return json(413, { error: "Attachment too large to download here — open it in Gmail.", tooLarge: true });
     }
     return json(200, { data: data.data || "", size: data.size || 0 });
@@ -343,7 +344,7 @@ exports.handler = async (event) => {
     const wake = new Date(wakeAt || 0);
     if (!threadId || !(wake.getTime() > Date.now())) return json(400, { error: "threadId and a future wakeAt required" });
     const labelId = await findOrCreateSnoozedLabel(gToken);
-    const threadRes = await gFetch(gToken, `/threads/${threadId}?format=minimal`);
+    const threadRes = await gFetch(gToken, `/threads/${encodeURIComponent(threadId)}?format=minimal`);
     if (!threadRes.ok) return json(502, { error: "Thread fetch failed." });
     const thread = await threadRes.json();
     await Promise.all((thread.messages || []).map((m) =>

@@ -7514,9 +7514,10 @@ function formatAttachmentSize(bytes) {
   return b + " B";
 }
 
-// Attachments proxy through the gmail function as base64, so cap what we
-// pull that way; bigger files deep-link to Gmail web (zero hosting cost).
-const MAIL_ATTACHMENT_PROXY_LIMIT = 4500000;
+// Attachments proxy through the gmail function as base64 (×1.33 size), and
+// Netlify caps responses at ~6MB — so cap the binary size we pull that way;
+// bigger files deep-link to Gmail web (zero hosting cost).
+const MAIL_ATTACHMENT_PROXY_LIMIT = 3500000;
 
 async function openMailAttachment(chip) {
   const { attMessage, attId, attName, attMime, attSize, attThread } = chip.dataset;
@@ -7540,10 +7541,14 @@ async function openMailAttachment(chip) {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  const blob = new Blob([bytes], { type: attMime || "application/octet-stream" });
+  // SECURITY: the sender controls the declared MIME type, and blob: URLs run
+  // with THIS APP's origin — so only inert types may open as a tab. text/html
+  // or image/svg+xml would execute the sender's scripts with our session;
+  // they (and everything else) download as files instead.
+  const viewable = /^image\/(png|jpe?g|gif|webp|avif|bmp)$|^application\/pdf$|^text\/plain$/i.test(attMime);
+  const blob = new Blob([bytes], { type: viewable ? attMime : "application/octet-stream" });
   const url = URL.createObjectURL(blob);
-  // Viewable types open in a tab; everything else downloads with its filename
-  if (/^image\/|^application\/pdf|^text\//.test(attMime)) {
+  if (viewable) {
     window.open(url, "_blank");
   } else {
     const a = document.createElement("a");

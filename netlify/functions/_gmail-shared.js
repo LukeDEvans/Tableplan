@@ -471,7 +471,7 @@ async function findOrCreateSnoozedLabel(gToken) {
 }
 
 async function modifyWholeThread(gToken, threadId, addLabelIds, removeLabelIds) {
-  const tr = await gFetch(gToken, `/threads/${threadId}?format=minimal`);
+  const tr = await gFetch(gToken, `/threads/${encodeURIComponent(threadId)}?format=minimal`);
   if (!tr.ok) throw new Error(`Thread fetch failed (${tr.status})`);
   const thread = await tr.json();
   await Promise.all((thread.messages || []).map((m) =>
