@@ -12308,7 +12308,9 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   .mail-row.mail-row--active .mail-row-front { background: color-mix(in srgb, var(--accent) 8%, var(--surface, #fff)); }
   .mail-row--unread .mail-row-front { background: color-mix(in srgb, var(--ink) 1.5%, var(--surface, #fff)); }
   .mail-row--selected .mail-row-front { background: color-mix(in srgb, var(--accent) 6%, var(--surface, #fff)) !important; }
-  .mail-row-actions { display: flex; background: color-mix(in srgb, var(--ink) 6%, var(--surface, #fff)); }
+  /* .mail-row prefix: must out-specify the base display:none, which sits
+     LATER in the file and would otherwise win the tie and hide the buttons */
+  .mail-row .mail-row-actions { display: flex; background: color-mix(in srgb, var(--ink) 6%, var(--surface, #fff)); }
   .mail-row--swiped .mail-row-front { transform: translateX(-124px); }
 }
 

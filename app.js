@@ -6425,43 +6425,58 @@ function appendMailRows(messages) {
     const front = row.querySelector(".mail-row-front");
     const actionsEl = row.querySelector(".mail-row-actions");
 
-    // Swipe-left-to-reveal (touch only — desktop still reveals actions on hover via CSS).
-    // A tap that moves more than a few px horizontally is a swipe, not a click, so we
-    // suppress the resulting click on release; a tap while already swiped-open closes it
-    // instead of opening the thread underneath.
-    let touchStartX = 0, touchStartY = 0, dragDx = 0, dragging = false, wasSwipe = false;
+    // Touch handling (mobile): swipe-left reveals the actions, and a clean
+    // tap opens the thread DIRECTLY from touchend — iOS's synthetic click
+    // after touch gestures proved unreliable, so taps don't depend on it.
+    // The click handler below remains for mouse; a timestamp guard stops a
+    // synthetic click double-firing after we've already acted on the touch.
+    let tStartX = 0, tStartY = 0, tDx = 0, tDragging = false, tMoved = false, suppressClickUntil = 0;
     const actionsWidth = () => actionsEl.getBoundingClientRect().width || 124;
-    front.addEventListener("touchstart", (e) => {
+    row.addEventListener("touchstart", (e) => {
       if (mailSwipedRow && mailSwipedRow !== row) closeSwipedMailRow();
       const t = e.touches[0];
-      touchStartX = t.clientX; touchStartY = t.clientY; dragDx = 0; dragging = false; wasSwipe = false;
+      tStartX = t.clientX; tStartY = t.clientY;
+      tDx = 0; tDragging = false; tMoved = false;
       front.style.transition = "none";
     }, { passive: true });
-    front.addEventListener("touchmove", (e) => {
+    row.addEventListener("touchmove", (e) => {
       const t = e.touches[0];
-      const dx = t.clientX - touchStartX, dy = t.clientY - touchStartY;
-      if (!dragging && Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
-      if (!dragging) dragging = Math.abs(dx) > Math.abs(dy); // horizontal drag beats vertical scroll
-      if (!dragging) return;
-      wasSwipe = true;
+      const dx = t.clientX - tStartX, dy = t.clientY - tStartY;
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) tMoved = true;
+      if (!tDragging) {
+        if (Math.abs(dx) < 10 || Math.abs(dx) < Math.abs(dy) * 1.2) return; // vertical scroll wins
+        tDragging = true;
+      }
       const base = row.classList.contains("mail-row--swiped") ? -actionsWidth() : 0;
-      dragDx = Math.min(0, Math.max(-actionsWidth(), base + dx));
-      front.style.transform = `translateX(${dragDx}px)`;
+      tDx = Math.min(0, Math.max(-actionsWidth(), base + dx));
+      front.style.transform = `translateX(${tDx}px)`;
     }, { passive: true });
-    front.addEventListener("touchend", () => {
+    row.addEventListener("touchend", (e) => {
       front.style.transition = "";
-      if (dragging) {
-        const open = dragDx <= -actionsWidth() / 2;
+      if (tDragging) {
+        const open = tDx <= -actionsWidth() / 2;
         front.style.transform = open ? `translateX(${-actionsWidth()}px)` : "";
         row.classList.toggle("mail-row--swiped", open);
         mailSwipedRow = open ? row : (mailSwipedRow === row ? null : mailSwipedRow);
+        suppressClickUntil = Date.now() + 700;
+        return;
       }
-      setTimeout(() => { wasSwipe = false; }, 0);
+      if (tMoved) { suppressClickUntil = Date.now() + 700; return; } // was a scroll
+      // Clean tap. Buttons (star/check/actions) keep their native click.
+      if (e.target.closest(".mail-row-left, .mail-row-actions")) return;
+      suppressClickUntil = Date.now() + 700;
+      if (row.classList.contains("mail-row--swiped")) { closeSwipedMailRow(); return; }
+      openMailThread(m.threadId);
+    });
+    row.addEventListener("touchcancel", () => {
+      front.style.transition = "";
+      if (!row.classList.contains("mail-row--swiped")) front.style.transform = "";
+      tDragging = false;
     });
 
     row.addEventListener("click", (e) => {
+      if (Date.now() < suppressClickUntil) return;
       if (e.target.closest(".mail-row-left, .mail-row-actions")) return;
-      if (wasSwipe) return;
       if (row.classList.contains("mail-row--swiped")) { closeSwipedMailRow(); return; }
       openMailThread(m.threadId);
     });
