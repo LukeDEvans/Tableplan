@@ -2854,7 +2854,13 @@ input.live-toggle:checked::before,
 
 .meal-entry-list {
   display: grid;
-  gap: 3px;
+  gap: 0;
+}
+
+/* Keep entries compact: the links' tap-height was adding most of the
+   visual spacing between recipes in a slot. */
+.meal-entry-list .recipe-meal-link {
+  min-height: 26px;
 }
 
 .meal-plan-publish-row {
