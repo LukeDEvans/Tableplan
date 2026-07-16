@@ -28634,7 +28634,7 @@ function toggleEpisodeInQueue(episodeId) {
   }
 }
 
-// ── Prioritization Hierarchy ──────────────────────────────────────────────────
+// ── Playlist Hierarchy ──────────────────────────────────────────────────
 
 function showPodcastPriorityModal() {
   document.getElementById("podcastPriorityOverlay")?.remove();
@@ -28652,9 +28652,9 @@ function showPodcastPriorityModal() {
   overlay.id = "podcastPriorityOverlay";
   overlay.className = "priority-overlay";
   overlay.innerHTML = `
-    <div class="priority-modal" role="dialog" aria-modal="true" aria-label="Prioritization Hierarchy">
+    <div class="priority-modal" role="dialog" aria-modal="true" aria-label="Playlist Hierarchy">
       <div class="priority-modal-header">
-        <h2 class="priority-modal-title">Prioritization Hierarchy</h2>
+        <h2 class="priority-modal-title">Playlist Hierarchy</h2>
         <button class="icon-btn" type="button" id="closePodcastPriorityBtn" aria-label="Close">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
@@ -28759,7 +28759,17 @@ function showPodcastPriorityModal() {
       showsByTier[(t > 0 && t <= ms.tierCount) ? t : 0].push(show);
     }
 
-    const publications = getReadPublications();
+    // Pseudo-publications: articles saved from email carry publication
+    // "email" and Wikipedia saves carry "wikipedia" — tiering them here
+    // orders them in playlists like any real publication.
+    const pseudo = [
+      { key: "email", label: "Email", domain: "" },
+      { key: "wikipedia", label: "Wikipedia", domain: "wikipedia.org" },
+    ];
+    const publications = [
+      ...getReadPublications().filter((p) => !pseudo.some((x) => x.key === p.key)),
+      ...pseudo,
+    ];
     const pubsByTier = {};
     for (let t = 0; t <= ms.tierCount; t++) pubsByTier[t] = [];
     for (const pub of publications) {

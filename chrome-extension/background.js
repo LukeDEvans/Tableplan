@@ -147,6 +147,43 @@ function extractArticleTextFromDOM() {
     document.querySelector("time[datetime]")?.getAttribute("datetime") ||
     "";
 
+  // Wikipedia gets a dedicated path: generic extraction would keep "[edit]"
+  // links, [1][2] citation markers, and the References/External-links tail —
+  // all garbage when the article is read aloud.
+  if (/(^|\.)wikipedia\.org$/i.test(location.hostname)) {
+    const src = document.querySelector("#mw-content-text .mw-parser-output");
+    if (src) {
+      const root = src.cloneNode(true);
+      root.querySelectorAll(
+        ".mw-editsection, sup.reference, .reference, sup.noprint, .infobox, .navbox, " +
+        ".vertical-navbox, .sidebar, table, figure, .thumb, .hatnote, .shortdescription, " +
+        ".toc, #toc, .reflist, .mw-references-wrap, style, .gallery, .metadata, .ambox, " +
+        ".portalbox, .sistersitebox, .mw-empty-elt, .side-box"
+      ).forEach(function (el) { el.remove(); });
+      const STOP_H2 = /^(references|external links|see also|further reading|notes|footnotes|bibliography|sources|citations|works cited)$/i;
+      const wikiBlocks = [];
+      const wikiSeen = new Set();
+      let stopped = false;
+      root.querySelectorAll("p, h2, h3, h4, blockquote").forEach(function (el) {
+        if (stopped) return;
+        const raw = (el.innerText || "").replace(/\s+/g, " ").trim();
+        if (el.tagName === "H2") {
+          if (STOP_H2.test(raw)) { stopped = true; return; }
+        }
+        // Strip leftover citation markers: [1], [a], [citation needed], [note 2]
+        const text = raw.replace(/\[\d+\]|\[[a-z]\]|\[citation needed\]|\[note \d+\]|\[update\]/gi, "").trim();
+        if (text.length < 12 || wikiSeen.has(text)) return;
+        wikiSeen.add(text);
+        const tag = el.tagName.toLowerCase();
+        wikiBlocks.push(tag === "p" || tag === "blockquote" ? "<p>" + esc(text) + "</p>" : "<h3>" + esc(text) + "</h3>");
+      });
+      if (wikiBlocks.length >= 2) {
+        const wikiTitle = (document.querySelector("#firstHeading")?.innerText || title).trim();
+        return { title: wikiTitle, author: "Wikipedia", date: "", text: wikiBlocks.join("\n") };
+      }
+    }
+  }
+
   const SELECTORS = [
     '[data-testid="article-body"]',
     'section[name="articleBody"]',
@@ -300,6 +337,7 @@ function detectPublication(url) {
     if (h.includes("nytimes.com")) return "nyt";
     if (h.includes("economist.com")) return "economist";
     if (h.includes("startribune.com")) return "startribune";
+    if (h.includes("wikipedia.org")) return "wikipedia";
   } catch { /* ignore */ }
   return "other";
 }
