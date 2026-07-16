@@ -10062,6 +10062,23 @@ body.touch-drag-active * {
   flex-shrink: 0;
 }
 
+/* The household/personal toggle sits IN the tab bar row on the calendar
+   page, far right, sized to match the Manage-calendars icon button.
+   The bar reserves space for it so Today/Manage shift left of it. */
+#planMainPage .plan-view-tabs {
+  padding-right: 96px;
+}
+
+#planMainPage .scope-toggle {
+  top: 24px;
+  right: 28px;
+}
+
+#planMainPage .scope-toggle button {
+  width: 32px;
+  height: 32px;
+}
+
 /* Calendar fills the viewport on desktop */
 @media (min-width: 561px) {
   #planMainPage {
