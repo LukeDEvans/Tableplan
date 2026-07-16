@@ -1371,18 +1371,22 @@ function bindEvents() {
   elements.mailComposeBtn?.addEventListener("click", showMailCompose);
   document.getElementById("mailSuggCheckNow")?.addEventListener("click", async (e) => {
     const btn = e.currentTarget;
-    btn.disabled = true;
+    if (mailNotifPanelOpen) { setMailNotifPanelOpen(false); return; }
+    // Open immediately with what we already know, then refresh in place
+    setMailNotifPanelOpen(true);
+    renderMailSuggestions(lastMailSuggestions);
     btn.classList.add("is-checking");
     const data = await callGmailApi({ action: "checkInboxNow" });
-    btn.disabled = false;
     btn.classList.remove("is-checking");
-    if (!data) {
-      btn.title = lastGmailApiError || "Check failed";
-      return;
-    }
-    btn.title = "AI-flagged actions from your email — click to check now";
+    if (!data) { btn.title = lastGmailApiError || "Check failed"; return; }
+    btn.title = "Notifications — AI-suggested actions from your email";
     renderMailSuggestions(data.suggestions || []);
   });
+  document.addEventListener("click", (e) => {
+    if (!mailNotifPanelOpen) return;
+    if (e.target.closest("#mailSuggestions, #mailSuggCheckNow")) return;
+    setMailNotifPanelOpen(false);
+  }, { capture: true });
   elements.mailSearchInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") loadMailList(currentMailbox, e.target.value); });
   document.getElementById("mailSidebarToggle")?.addEventListener("click", () => {
     const sidebar = document.getElementById("mailSidebar");
@@ -6140,7 +6144,20 @@ async function loadMailSuggestionsPanel() {
   renderMailSuggestions(data?.suggestions || []);
 }
 
+// The suggestions live in a notifications dropdown anchored to the topbar
+// bell — opened by the bell, closed by any outside click. The badge updates
+// in the background regardless of whether the panel is open.
+let mailNotifPanelOpen = false;
+let lastMailSuggestions = [];
+
+function setMailNotifPanelOpen(open) {
+  mailNotifPanelOpen = open;
+  const panel = document.getElementById("mailSuggestions");
+  if (panel) panel.hidden = !open;
+}
+
 function renderMailSuggestions(suggestions) {
+  lastMailSuggestions = suggestions;
   const panel = document.getElementById("mailSuggestions");
   const pending = suggestions.filter(s => s.status === "pending");
 
@@ -6154,8 +6171,11 @@ function renderMailSuggestions(suggestions) {
   }
 
   if (!panel) return;
-  if (!pending.length) { panel.hidden = true; panel.innerHTML = ""; return; }
-  panel.hidden = false;
+  panel.hidden = !mailNotifPanelOpen;
+  if (!pending.length) {
+    panel.innerHTML = '<div class="mail-notif-empty">No suggested actions right now.</div>';
+    return;
+  }
 
   const KIND_ICONS = { add_todo: "✅", add_booking: "🧳" };
   panel.innerHTML =

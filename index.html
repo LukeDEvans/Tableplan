@@ -657,10 +657,11 @@
                   <input class="mail-search-input" id="mailSearchInput" type="search" placeholder="Search mail" aria-label="Search email" />
                 </div>
                 <div class="mail-topbar-right">
-                  <button class="icon-btn mail-notifications-btn" type="button" id="mailSuggCheckNow" title="AI-flagged actions from your email — click to check now" aria-label="Notifications" hidden>
+                  <button class="icon-btn mail-notifications-btn" type="button" id="mailSuggCheckNow" title="Notifications — AI-suggested actions from your email" aria-label="Notifications" hidden>
                     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
                     <span class="mail-notif-badge" id="mailNotifBadge" hidden>0</span>
                   </button>
+                  <div class="mail-suggestions" id="mailSuggestions" hidden></div>
                 </div>
               </div>
               <div class="mail-layout">
@@ -678,7 +679,6 @@
                 </div>
                 <div class="mail-content">
                   <div class="mail-list-panel">
-                    <div class="mail-suggestions" id="mailSuggestions" hidden></div>
                     <div class="mail-bulk-bar" id="mailBulkBar" hidden>
                       <div class="mail-bulk-left">
                         <button class="mail-bulk-deselect" type="button" id="mailBulkDeselect" aria-label="Deselect all">✕</button>
