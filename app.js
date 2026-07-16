@@ -7662,11 +7662,12 @@ function sanitizeMailFrameHtml(html) {
 // block with substantial text is never removed, so at worst an ad survives —
 // article content is never clipped.
 function stripLabeledEmailAds(root) {
-  // Pass 1 — ad IMAGES. NYT (via liveintent) serves every ad creative and
-  // its little "Ad" chip as images with alt="Ad" from an ad-server domain.
-  // Remove each one's enclosing block, climbing only through wrappers with
-  // no meaningful text of their own.
-  root.querySelectorAll('img[alt="Ad" i], img[src*="liveintent." i]').forEach((img) => {
+  // Pass 1 — ad IMAGES. LiveIntent-served newsletters (NYT, Star Tribune's
+  // Hot Dish, …) deliver every ad creative/chip/tracker as images from an
+  // "/imp?" impression endpoint (liveintent.<pub>.com, sli.<pub>.com), often
+  // alt="Ad", never with real content. Remove each one's enclosing block,
+  // climbing only through wrappers with no meaningful text of their own.
+  root.querySelectorAll('img[alt="Ad" i], img[src*="liveintent." i], img[src*="/imp?" i]').forEach((img) => {
     if (!root.contains(img)) return; // removed along with an earlier unit
     let el = img.closest("a") || img;
     while (el.parentElement && el.parentElement !== root) {
