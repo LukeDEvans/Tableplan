@@ -6487,7 +6487,7 @@ function appendMailRows(messages) {
         row.classList.add("mail-row--unread");
         if (mailSwipedRow === row) closeSwipedMailRow();
       } else if (action === "snooze") {
-        showMailToast("Snooze coming soon");
+        showMailSnoozeMenu(m.threadId, btn);
         if (mailSwipedRow === row) closeSwipedMailRow();
       }
     });
@@ -6732,12 +6732,14 @@ function mailLabelIcon(id, type) {
   return type === "user" ? userIcon : (icons[id] || userIcon);
 }
 
-// The Move-to picker and More-actions menu are mutually exclusive and close
-// on ANY click that isn't inside them. The document listener runs in the
-// capture phase so toolbar buttons' stopPropagation() can't keep a menu open.
+// The Move-to picker, More-actions menu and Snooze menu are mutually
+// exclusive and close on ANY click that isn't inside them. The document
+// listener runs in the capture phase so toolbar buttons' stopPropagation()
+// can't keep a menu open.
 function closeMailMenus() {
   document.getElementById("mailMovePicker")?.remove();
   document.getElementById("mailMoreMenu")?.remove();
+  document.getElementById("mailSnoozeMenu")?.remove();
 }
 
 let mailMenuDismissWired = false;
@@ -6745,10 +6747,105 @@ function wireMailMenuDismiss() {
   if (mailMenuDismissWired) return;
   mailMenuDismissWired = true;
   document.addEventListener("click", (e) => {
-    if (!document.getElementById("mailMovePicker") && !document.getElementById("mailMoreMenu")) return;
-    if (e.target.closest("#mailMovePicker, #mailMoreMenu")) return;
+    if (!document.getElementById("mailMovePicker") && !document.getElementById("mailMoreMenu") && !document.getElementById("mailSnoozeMenu")) return;
+    if (e.target.closest("#mailMovePicker, #mailMoreMenu, #mailSnoozeMenu")) return;
     closeMailMenus();
   }, { capture: true });
+}
+
+// ─── Snooze (matches Gmail's own option set) ─────────────────────────────────
+// Options shown depend on the current day/time, exactly like Gmail:
+// Later today 6 PM (until late afternoon), Tomorrow 8 AM, Later this week
+// (day after tomorrow, weekdays only), This weekend (Sat, shown Mon–Thu),
+// Next week (Mon), and a free date-time picker.
+function gmailSnoozeOptions(now = new Date()) {
+  const at = (addDays, h) => { const d = new Date(now); d.setDate(d.getDate() + addDays); d.setHours(h, 0, 0, 0); return d; };
+  const opts = [];
+  if (now.getHours() < 17) opts.push({ label: "Later today", when: at(0, 18) });
+  opts.push({ label: "Tomorrow", when: at(1, 8) });
+  const dayAfter = at(2, 8);
+  if (dayAfter.getDay() >= 2 && dayAfter.getDay() <= 5) opts.push({ label: "Later this week", when: dayAfter });
+  if (now.getDay() >= 1 && now.getDay() <= 4) opts.push({ label: "This weekend", when: at(6 - now.getDay(), 8) });
+  opts.push({ label: "Next week", when: at(((8 - now.getDay()) % 7) || 7, 8) });
+  return opts;
+}
+
+function formatSnoozeWhen(d) {
+  const withinWeek = d.getTime() - Date.now() < 6.5 * 86400000;
+  return d.toLocaleString(undefined, {
+    ...(withinWeek ? { weekday: "short" } : { month: "short", day: "numeric" }),
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+
+function showMailSnoozeMenu(threadId, anchorEl) {
+  closeMailMenus();
+  const menu = document.createElement("div");
+  menu.id = "mailSnoozeMenu";
+  menu.className = "mail-more-menu mail-snooze-menu";
+  const rect = anchorEl.getBoundingClientRect();
+  menu.style.position = "fixed";
+  menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - 268)) + "px";
+  menu.style.top = Math.min(rect.bottom + 4, window.innerHeight - 300) + "px";
+  const renderOptions = () => {
+    menu.innerHTML = `
+      <div class="mail-snooze-title">Snooze until…</div>
+      ${gmailSnoozeOptions().map((o, i) => `
+        <button class="mail-more-option mail-snooze-option" type="button" data-snooze-idx="${i}">
+          <span>${escapeHtml(o.label)}</span>
+          <span class="mail-snooze-when">${escapeHtml(formatSnoozeWhen(o.when))}</span>
+        </button>`).join("")}
+      <div class="mail-more-divider"></div>
+      <button class="mail-more-option" type="button" data-snooze-pick>Pick date &amp; time</button>`;
+  };
+  renderOptions();
+  menu.addEventListener("click", (e) => {
+    const optBtn = e.target.closest("[data-snooze-idx]");
+    if (optBtn) {
+      const when = gmailSnoozeOptions()[Number(optBtn.dataset.snoozeIdx)]?.when;
+      menu.remove();
+      if (when) snoozeMailThread(threadId, when);
+      return;
+    }
+    if (e.target.closest("[data-snooze-pick]")) {
+      const min = new Date(Date.now() + 5 * 60000);
+      const pad = (n) => String(n).padStart(2, "0");
+      const toLocal = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      menu.innerHTML = `
+        <div class="mail-snooze-title">Pick date &amp; time</div>
+        <div class="mail-snooze-pick-row">
+          <input type="datetime-local" id="mailSnoozeCustom" min="${toLocal(min)}" value="${toLocal(new Date(min.getTime() + 55 * 60000))}" />
+        </div>
+        <div class="mail-snooze-pick-actions">
+          <button class="secondary-btn" type="button" data-snooze-cancel>Cancel</button>
+          <button class="primary-btn" type="button" data-snooze-save>Snooze</button>
+        </div>`;
+      menu.querySelector("[data-snooze-cancel]").addEventListener("click", () => menu.remove());
+      menu.querySelector("[data-snooze-save]").addEventListener("click", () => {
+        const v = menu.querySelector("#mailSnoozeCustom").value;
+        const when = v ? new Date(v) : null;
+        if (!when || when.getTime() <= Date.now()) { showMailToast("Pick a future time"); return; }
+        menu.remove();
+        snoozeMailThread(threadId, when);
+      });
+    }
+  });
+  document.body.appendChild(menu);
+  wireMailMenuDismiss();
+}
+
+async function snoozeMailThread(threadId, when) {
+  const res = await callGmailApi({ action: "snooze", threadId, wakeAt: when.toISOString() });
+  if (!res?.ok) { alert("Snooze failed: " + (lastGmailApiError || "unknown error")); return; }
+  showMailToast(`Snoozed until ${formatSnoozeWhen(when)}`);
+  if (currentMailbox === "INBOX") {
+    afterMailThreadAction(threadId);
+  } else if (mailOpenThreadId === threadId) {
+    elements.mailThread.hidden = true;
+    mailOpenThreadId = null;
+  }
+  renderMailLabelTabs();
 }
 
 function showMailMovePicker(thread) {
@@ -7064,7 +7161,7 @@ function showMailMoreMenu(thread, lastMsg) {
     if (!opt) return;
     menu.remove();
     const action = opt.dataset.action;
-    if (action === "snooze") showMailToast("Snooze coming soon");
+    if (action === "snooze") showMailSnoozeMenu(thread.id, btn);
     else if (action === "add-task") addEmailToTasks(lastMsg?.subject || "(no subject)");
     else if (action === "create-event") createEventFromEmail(lastMsg?.subject || "");
     else if (action === "read-as-article") saveMailAsArticle(thread, lastMsg);

@@ -2,7 +2,8 @@ const { scanBookingFromEmailText } = require("../../booking-scan");
 const {
   loadUserGmailTokens, saveUserGmailTokens, deleteUserGmailTokens,
   getUserId, getValidAccessToken, gFetch, headersMap, extractBody,
-  htmlToText, cleanSnippet, loadMailSuggestions, saveMailSuggestions, runInboxSweep
+  htmlToText, cleanSnippet, loadMailSuggestions, saveMailSuggestions, runInboxSweep,
+  loadSnoozes, saveSnoozes, findOrCreateSnoozedLabel
 } = require("./_gmail-shared");
 
 // Domains that send travel booking confirmations, used by listBookingEmails
@@ -307,6 +308,25 @@ exports.handler = async (event) => {
       gFetch(gToken, `/messages/${m.id}/modify`, "POST", { addLabelIds, removeLabelIds })
     ));
     return json(200, { ok: true });
+  }
+
+  if (action === "snooze") {
+    // Emulated snooze (no native API): park under "Snoozed" out of the inbox
+    // and record the wake time; the 15-min scheduler brings it back.
+    const { threadId, wakeAt } = body;
+    const wake = new Date(wakeAt || 0);
+    if (!threadId || !(wake.getTime() > Date.now())) return json(400, { error: "threadId and a future wakeAt required" });
+    const labelId = await findOrCreateSnoozedLabel(gToken);
+    const threadRes = await gFetch(gToken, `/threads/${threadId}?format=minimal`);
+    if (!threadRes.ok) return json(502, { error: "Thread fetch failed." });
+    const thread = await threadRes.json();
+    await Promise.all((thread.messages || []).map((m) =>
+      gFetch(gToken, `/messages/${m.id}/modify`, "POST", { addLabelIds: labelId ? [labelId] : [], removeLabelIds: ["INBOX"] })
+    ));
+    const snoozes = (await loadSnoozes(serviceKey, userId)).filter((s) => s.threadId !== threadId);
+    snoozes.push({ threadId, wakeAt: wake.toISOString(), snoozedAt: new Date().toISOString() });
+    await saveSnoozes(serviceKey, userId, snoozes);
+    return json(200, { ok: true, wakeAt: wake.toISOString() });
   }
 
   if (action === "draft") {

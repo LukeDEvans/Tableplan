@@ -12154,6 +12154,22 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   z-index: 100;
   padding: 4px 0;
 }
+/* Snooze menu (Gmail-style) */
+.mail-snooze-menu { min-width: 250px; z-index: 200; }
+.mail-snooze-title {
+  padding: 10px 16px 6px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.mail-snooze-option { justify-content: space-between; }
+.mail-snooze-when { color: var(--text-muted, #888); font-size: 0.82rem; white-space: nowrap; }
+.mail-snooze-pick-row { padding: 6px 16px; }
+.mail-snooze-pick-row input { width: 100%; }
+.mail-snooze-pick-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 8px 16px 10px; }
+
 .mail-more-option {
   display: flex;
   align-items: center;

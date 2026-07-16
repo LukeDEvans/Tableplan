@@ -14,6 +14,15 @@ exports.handler = async () => {
   const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
   if (!serviceKey) { console.log("[scheduled-email] No SUPABASE_SERVICE_ROLE_KEY"); return ok(); }
 
+  // Piggybacked on this 15-min schedule: return due snoozed emails to the
+  // inbox. Runs every invocation, before the weekly-email early returns.
+  try {
+    const { processDueSnoozes } = require("./_gmail-shared");
+    await processDueSnoozes(serviceKey);
+  } catch (e) {
+    console.error("[scheduled-email] snooze wake failed:", e.message);
+  }
+
   const anthropicKey = (process.env.ANTHROPIC_API_KEY || "").trim();
   const resendKey = (process.env.RESEND_API_KEY || "").trim();
   if (!anthropicKey || !resendKey) { console.log("[scheduled-email] Missing API keys"); return ok(); }

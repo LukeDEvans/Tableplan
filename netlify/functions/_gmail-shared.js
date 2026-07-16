@@ -427,6 +427,86 @@ async function loadAppConfig(serviceKey, userId) {
   return row?.state || null;
 }
 
+// ─── Snooze (emulated — the Gmail API has no native snooze) ──────────────────
+// Snoozing removes INBOX and parks the thread under a user "Snoozed" label,
+// recording a wake time in row mailsnooze_<userId>. processDueSnoozes (run by
+// the every-15-min scheduled function) returns due threads to the inbox,
+// marked unread so they surface, and drops the record.
+
+async function loadSnoozes(serviceKey, userId) {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.mailsnooze_${userId}&select=state`,
+    { headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" } }
+  );
+  if (!res.ok) return [];
+  const rows = await res.json();
+  return Array.isArray(rows[0]?.state?.snoozes) ? rows[0].state.snoozes : [];
+}
+
+async function saveSnoozes(serviceKey, userId, snoozes) {
+  await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
+    method: "POST",
+    headers: {
+      apikey: serviceKey,
+      authorization: `Bearer ${serviceKey}`,
+      "content-type": "application/json",
+      prefer: "resolution=merge-duplicates,return=minimal"
+    },
+    body: JSON.stringify({ id: `mailsnooze_${userId}`, state: { snoozes }, updated_at: new Date().toISOString() })
+  });
+}
+
+async function findOrCreateSnoozedLabel(gToken) {
+  const r = await gFetch(gToken, "/labels");
+  if (r.ok) {
+    const data = await r.json();
+    const hit = (data.labels || []).find((l) => l.type === "user" && (l.name || "").toLowerCase() === "snoozed");
+    if (hit) return hit.id;
+  }
+  const c = await gFetch(gToken, "/labels", "POST", { name: "Snoozed", labelListVisibility: "labelShow", messageListVisibility: "show" });
+  const made = await c.json().catch(() => ({}));
+  return c.ok ? made.id : null;
+}
+
+async function modifyWholeThread(gToken, threadId, addLabelIds, removeLabelIds) {
+  const tr = await gFetch(gToken, `/threads/${threadId}?format=minimal`);
+  if (!tr.ok) throw new Error(`Thread fetch failed (${tr.status})`);
+  const thread = await tr.json();
+  await Promise.all((thread.messages || []).map((m) =>
+    gFetch(gToken, `/messages/${m.id}/modify`, "POST", { addLabelIds, removeLabelIds })
+  ));
+}
+
+async function processDueSnoozes(serviceKey) {
+  const users = await listGmailUsers(serviceKey);
+  for (const { userId, tokens } of users) {
+    try {
+      const snoozes = await loadSnoozes(serviceKey, userId);
+      const now = Date.now();
+      const due = snoozes.filter((s) => new Date(s.wakeAt).getTime() <= now);
+      if (!due.length) continue;
+      const { token: gToken } = await getValidAccessToken(tokens, serviceKey, userId);
+      if (!gToken) continue;
+      const labelId = await findOrCreateSnoozedLabel(gToken);
+      const remaining = [...snoozes];
+      for (const s of due) {
+        try {
+          await modifyWholeThread(gToken, s.threadId, ["INBOX", "UNREAD"], labelId ? [labelId] : []);
+          const i = remaining.findIndex((x) => x.threadId === s.threadId && x.wakeAt === s.wakeAt);
+          if (i !== -1) remaining.splice(i, 1);
+          console.log(`[snooze] woke thread ${s.threadId} for ${tokens.email}`);
+        } catch (e) {
+          // Leave the record in place: the next run retries the wake.
+          console.error(`[snooze] wake failed for ${s.threadId}: ${e.message}`);
+        }
+      }
+      if (remaining.length !== snoozes.length) await saveSnoozes(serviceKey, userId, remaining);
+    } catch (e) {
+      console.error(`[snooze] ${tokens?.email || userId}: ${e.message}`);
+    }
+  }
+}
+
 // ─── Watch (Pub/Sub push subscription) ───────────────────────────────────────
 
 async function armGmailWatch(gToken, topicName) {
@@ -463,5 +543,9 @@ module.exports = {
   fetchHistoryDelta,
   runInboxSweep,
   armGmailWatch,
-  loadAppConfig
+  loadAppConfig,
+  loadSnoozes,
+  saveSnoozes,
+  findOrCreateSnoozedLabel,
+  processDueSnoozes
 };
