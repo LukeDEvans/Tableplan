@@ -2854,7 +2854,7 @@ input.live-toggle:checked::before,
 
 .meal-entry-list {
   display: grid;
-  gap: 6px;
+  gap: 3px;
 }
 
 .meal-plan-publish-row {
