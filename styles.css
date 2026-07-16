@@ -951,9 +951,7 @@ h3 {
 .home-links button:hover,
 .home-links button:focus-visible {
   background: transparent;
-  color: var(--accent);
-  text-decoration: underline;
-  text-underline-offset: 4px;
+  color: var(--window-border);
   outline: none;
 }
 
