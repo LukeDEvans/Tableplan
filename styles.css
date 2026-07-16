@@ -2689,15 +2689,14 @@ input.live-toggle:checked::before,
   gap: 8px;
   min-height: 0;
   padding: 10px;
-  border: 1px solid color-mix(in srgb, var(--sun) 48%, #ffffff);
+  border: 2px solid var(--window-border);
   border-radius: 18px;
-  /* The old window yellow, demoted to a card accent on the white window */
-  background: color-mix(in srgb, var(--sun-pale) 55%, var(--window-bg));
+  background: var(--window-bg);
 }
 
 .slot-card.filled {
   border-style: solid;
-  background: color-mix(in srgb, var(--sun-pale) 45%, var(--window-bg));
+  background: var(--window-bg);
   box-shadow: 0 10px 28px rgba(116, 85, 18, 0.08);
 }
 
@@ -2761,8 +2760,8 @@ input.live-toggle:checked::before,
 .published-meal-entry .recipe-meal-link:hover,
 .published-meal-entry .recipe-meal-link:focus-visible {
   background: transparent;
-  color: var(--accent-dark);
-  text-decoration: underline;
+  color: var(--window-border);
+  text-decoration: none;
   outline: none;
 }
 
@@ -2981,7 +2980,6 @@ input.live-toggle:checked::before,
   padding: 0 9px;
 }
 
-.recipe-meal-link,
 .meal-pick-slot {
   display: flex;
   align-items: center;
@@ -2992,6 +2990,27 @@ input.live-toggle:checked::before,
   font-weight: 850;
   text-align: left;
   transition: transform 0.18s ease;
+}
+
+/* Recipe links read like the landing-page links: plain accent text,
+   navy on hover, no underline, no pill. */
+.recipe-meal-link {
+  display: flex;
+  align-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 850;
+  text-align: left;
+}
+
+.recipe-meal-link:hover,
+.recipe-meal-link:focus-visible {
+  background: transparent;
+  color: var(--window-border);
+  text-decoration: none;
+  outline: none;
 }
 
 .meal-pick-slot {
@@ -3045,8 +3064,6 @@ input.live-toggle:checked::before,
   stroke-linejoin: round;
 }
 
-.recipe-meal-link:hover,
-.recipe-meal-link:focus-visible,
 .meal-pick-slot:hover,
 .meal-pick-slot:focus-visible,
 .meal-special-choice:hover,
