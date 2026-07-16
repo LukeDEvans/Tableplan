@@ -2858,8 +2858,12 @@ input.live-toggle:checked::before,
 }
 
 /* Keep entries compact: the links' tap-height was adding most of the
-   visual spacing between recipes in a slot. */
-.meal-entry-list .recipe-meal-link {
+   visual spacing between recipes in a slot. Special meals (Leftovers,
+   Out, …) and custom/ingredient entries match the recipe-link height. */
+.meal-entry-list .recipe-meal-link,
+.meal-entry-list .special-meal-card,
+.meal-entry-list .special-meal-label-row,
+.meal-entry-list .special-meal-card input {
   min-height: 26px;
 }
 
