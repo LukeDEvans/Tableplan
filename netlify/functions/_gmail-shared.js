@@ -346,7 +346,9 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
           author: newsSource.publication,
           date: hdrs.date ? new Date(hdrs.date).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "",
           publication: "email",
-          savedAt: new Date().toISOString(),
+          // Recorded at the email's arrival time so it sorts by when it
+          // actually showed up, not when the sweep converted it.
+          savedAt: (hdrs.date && !isNaN(new Date(hdrs.date)) ? new Date(hdrs.date) : new Date()).toISOString(),
           text: articleHtml
         };
         await saveArticleToMediaSection(serviceKey, userId, article);

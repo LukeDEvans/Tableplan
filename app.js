@@ -7322,7 +7322,13 @@ function saveMailAsArticle(thread, lastMsg) {
     author: parseDisplayName(lastMsg.from),
     date: lastMsg.date ? new Date(lastMsg.date).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "",
     publication: "email",
-    savedAt: new Date().toISOString(),
+    // Recorded at the email's ARRIVAL time, not when it was saved to Media,
+    // so it sorts among articles by when it actually showed up.
+    savedAt: (() => {
+      const arrived = lastMsg.internalDate ? new Date(Number(lastMsg.internalDate))
+        : lastMsg.date ? new Date(lastMsg.date) : null;
+      return (arrived && !isNaN(arrived) ? arrived : new Date()).toISOString();
+    })(),
     text: sanitized
   });
   persist();
