@@ -375,7 +375,7 @@ svg {
   width: 50px;
   height: 50px;
   padding: 0;
-  border: 2px solid color-mix(in srgb, var(--accent-dark) 24%, #ffffff);
+  border: 2px solid var(--window-border);
   border-radius: 999px;
   background:
     radial-gradient(circle at 35% 25%, rgba(255, 255, 255, 0.26), transparent 42%),
@@ -634,7 +634,7 @@ h3 {
   height: 50px;
   min-height: 50px;
   padding: 0;
-  border: 2px solid color-mix(in srgb, var(--accent-dark) 24%, #ffffff);
+  border: 2px solid var(--window-border);
   border-radius: 999px;
   background:
     radial-gradient(circle at 35% 25%, rgba(255, 255, 255, 0.26), transparent 42%),
