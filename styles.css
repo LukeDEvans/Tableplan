@@ -2896,6 +2896,28 @@ input.live-toggle:checked::before,
   flex: 0 0 auto;
 }
 
+/* Meal Plan action buttons: standard white fill + navy border */
+.planner-page-btn,
+[data-section="mealPrep"] .meal-pick-slot,
+[data-section="mealPrep"] .meal-special-choice {
+  background: var(--window-bg);
+  border: 2px solid var(--window-border);
+  color: var(--ink);
+  box-shadow: none;
+}
+
+.planner-page-btn:hover,
+.planner-page-btn:focus-visible,
+[data-section="mealPrep"] .meal-pick-slot:hover,
+[data-section="mealPrep"] .meal-pick-slot:focus-visible,
+[data-section="mealPrep"] .meal-special-choice:hover,
+[data-section="mealPrep"] .meal-special-choice:focus-visible {
+  background: var(--accent-soft);
+  border-color: var(--window-border);
+  color: var(--ink);
+  outline: none;
+}
+
 .planner-page-btn[data-open-recipe-box-page] {
   margin-left: auto;
 }
@@ -3107,6 +3129,20 @@ input.live-toggle:checked::before,
   border: 0;
   background: transparent;
   color: var(--ink);
+}
+
+/* Leftovers reads like a recipe link (patina text, no card chrome) —
+   it's just not clickable. The note input stays editable. */
+.special-meal-card.special-meal-leftovers {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.special-meal-card.special-meal-leftovers strong,
+.special-meal-card.special-meal-leftovers input {
+  color: var(--accent);
+  font-weight: 850;
 }
 
 /* Restaurant link area inside "Out" meal card */

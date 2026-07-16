@@ -18746,7 +18746,7 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
     const pinTitle = restaurantLinked ? "Change restaurant" : "Link restaurant";
     return `
       <div class="meal-entry draggable-meal-entry special-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true">
-        <div class="special-meal-card">
+        <div class="special-meal-card special-meal-${escapeHtml(specialMeal.type)}">
           <div class="special-meal-label-row">
             <strong>${escapeHtml(specialMealLabel(specialMeal.type))}${specialMeal.note && !restaurantLinked ? " -" : ""}</strong>
             ${restaurantLinked
