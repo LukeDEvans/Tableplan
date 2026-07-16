@@ -12103,14 +12103,14 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   --muted: #6b6459;
 }
 
-/* Thread toolbar */
+/* Thread toolbar — white to match the reading surface below it */
 .mail-thread-toolbar {
   display: flex;
   align-items: center;
   gap: 2px;
   padding: 6px 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
-  background: var(--sun-pale);
+  background: #fff;
   position: sticky;
   top: 0;
   z-index: 30;

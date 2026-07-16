@@ -6732,8 +6732,27 @@ function mailLabelIcon(id, type) {
   return type === "user" ? userIcon : (icons[id] || userIcon);
 }
 
-function showMailMovePicker(thread) {
+// The Move-to picker and More-actions menu are mutually exclusive and close
+// on ANY click that isn't inside them. The document listener runs in the
+// capture phase so toolbar buttons' stopPropagation() can't keep a menu open.
+function closeMailMenus() {
   document.getElementById("mailMovePicker")?.remove();
+  document.getElementById("mailMoreMenu")?.remove();
+}
+
+let mailMenuDismissWired = false;
+function wireMailMenuDismiss() {
+  if (mailMenuDismissWired) return;
+  mailMenuDismissWired = true;
+  document.addEventListener("click", (e) => {
+    if (!document.getElementById("mailMovePicker") && !document.getElementById("mailMoreMenu")) return;
+    if (e.target.closest("#mailMovePicker, #mailMoreMenu")) return;
+    closeMailMenus();
+  }, { capture: true });
+}
+
+function showMailMovePicker(thread) {
+  closeMailMenus();
   const btn = document.getElementById("mailMoveBtn");
   if (!btn) return;
   const picker = document.createElement("div");
@@ -6751,7 +6770,7 @@ function showMailMovePicker(thread) {
     });
   });
   btn.closest(".mail-move-wrap").appendChild(picker);
-  setTimeout(() => document.addEventListener("click", () => document.getElementById("mailMovePicker")?.remove(), { once: true }), 0);
+  wireMailMenuDismiss();
 }
 
 async function moveMailToLabel(threadId, targetLabelId) {
@@ -7012,7 +7031,7 @@ function afterMailThreadAction(threadId) {
 }
 
 function showMailMoreMenu(thread, lastMsg) {
-  document.getElementById("mailMoreMenu")?.remove();
+  closeMailMenus();
   const btn = document.getElementById("mailMoreBtn");
   if (!btn) return;
   const menu = document.createElement("div");
@@ -7052,7 +7071,7 @@ function showMailMoreMenu(thread, lastMsg) {
     else if (action === "label") showMailMovePicker(thread);
   });
   btn.closest(".mail-more-wrap").appendChild(menu);
-  setTimeout(() => document.addEventListener("click", () => document.getElementById("mailMoreMenu")?.remove(), { once: true }), 0);
+  wireMailMenuDismiss();
 }
 
 function addEmailToTasks(subject) {
