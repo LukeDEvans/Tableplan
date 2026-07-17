@@ -209,7 +209,7 @@ const STATE_SECTIONS = {
   plan:      ["calendars", "planEvents", "planCalendars"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
-  recreate:  ["sailingLog", "pianoSongs", "recreateHobbies"],
+  recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
@@ -2796,6 +2796,7 @@ function defaultState() {
     inventoryRoomVisibility: {},
     watchShowtimesData: {},
     sailingLog: [],
+    pianoLog: [],
     recreateHobbies: { sailing: true, piano: true },
     pianoSongs: [],
     trips: [],
@@ -2891,6 +2892,7 @@ function normalizeState(parsed) {
     inventoryRoomVisibility: normalizeInventoryRoomVisibility(parsed?.inventoryRoomVisibility),
     watchShowtimesData: normalizeShowtimesData(parsed?.watchShowtimesData),
     sailingLog: normalizeSailingLog(parsed?.sailingLog),
+    pianoLog: normalizePianoLog(parsed?.pianoLog),
     recreateHobbies: normalizeRecreateHobbies(parsed?.recreateHobbies),
     pianoSongs: normalizePianoSongs(parsed?.pianoSongs),
     trips: Array.isArray(parsed?.trips) ? parsed.trips : [],
@@ -4542,7 +4544,7 @@ function mergeStates(newer, older) {
     "recurringTasks", "playAutoRules",
     // Watch / Read / Recreate
     "watchItems", "readingItems",
-    "pianoSongs", "sailingLog",
+    "pianoSongs", "sailingLog", "pianoLog",
     // Inventory & shopping
     "inventoryBoxes", "inventoryItems",
     "groceryStores", "groceryPriceObservations", "priceHistory",
@@ -26042,6 +26044,21 @@ function sailingLogList() {
   return state.sailingLog;
 }
 
+function normalizePianoLog(entries) {
+  return (Array.isArray(entries) ? entries : []).map((e) => ({
+    id: e?.id || createId("piano-log"),
+    date: e?.date || "",
+    minutes: Number(e?.minutes) || 0,
+    notes: e?.notes || "",
+    createdAt: e?.createdAt || new Date().toISOString()
+  }));
+}
+
+function pianoLogList() {
+  if (!Array.isArray(state.pianoLog)) state.pianoLog = [];
+  return state.pianoLog;
+}
+
 function visibleRecreateHobbies() {
   const hobbies = state.recreateHobbies || {};
   return RECREATE_HOBBIES.filter((h) => hobbies[h.key] !== false);
@@ -26058,9 +26075,11 @@ function recreateHobbySummary(key) {
     return `${entries.length} ${entries.length === 1 ? "entry" : "entries"}${when ? ` · last ${when}` : ""}`;
   }
   if (key === "piano") {
-    const songs = state.pianoSongs || [];
-    const learned = songs.filter((s) => s.learned).length;
-    return songs.length ? `${learned} of ${songs.length} songs learned` : "Metronome & songs";
+    const entries = pianoLogList();
+    if (!entries.length) return "No practice logged yet";
+    const latest = entries.slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""))[0];
+    const when = latest?.date ? new Date(latest.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+    return `${entries.length} ${entries.length === 1 ? "session" : "sessions"}${when ? ` · last ${when}` : ""}`;
   }
   return "";
 }
@@ -26276,6 +26295,32 @@ function renderPianoPanel() {
           </button>
         </form>
       </div>
+
+      <div class="piano-songs-section piano-log-section">
+        <div class="piano-songs-head">
+          <span class="settings-subheading">Practice Log</span>
+        </div>
+        <form class="piano-log-form inline-form" id="pianoLogForm">
+          <input type="date" id="pianoLogDate" value="${escapeHtml(dateKeyFromDate(new Date()))}" required />
+          <input type="number" id="pianoLogMinutes" placeholder="Min" min="1" max="600" />
+          <input type="text" id="pianoLogNote" placeholder="What did you work on? (optional)" autocomplete="off" />
+          <button class="icon-btn" type="submit" title="Log practice" aria-label="Log practice">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </form>
+        <div class="piano-log-list">
+          ${pianoLogList().slice().sort((a, b) => (b.date || "").localeCompare(a.date || "")).map((e) => `
+            <div class="piano-log-row" data-piano-log-id="${escapeHtml(e.id)}">
+              <span class="piano-log-date">${e.date ? escapeHtml(new Date(e.date + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })) : ""}</span>
+              ${e.minutes ? `<span class="piano-log-minutes">${e.minutes} min</span>` : ""}
+              <span class="piano-log-note">${escapeHtml(e.notes || "")}</span>
+              <button class="icon-btn piano-song-delete-btn" type="button" data-piano-log-delete="${escapeHtml(e.id)}" title="Delete entry" aria-label="Delete entry">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              </button>
+            </div>
+          `).join("") || `<div class="empty-state">No practice logged yet.</div>`}
+        </div>
+      </div>
     </div>
   `;
 }
@@ -26312,6 +26357,26 @@ function bindPianoControls() {
     persist();
     input.value = "";
     renderPianoSongsList();
+  });
+
+  grid.querySelector("#pianoLogForm")?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const date = grid.querySelector("#pianoLogDate")?.value;
+    if (!date) return;
+    const minutes = Number(grid.querySelector("#pianoLogMinutes")?.value) || 0;
+    const notes = grid.querySelector("#pianoLogNote")?.value.trim() || "";
+    pianoLogList().push({ id: createId("piano-log"), date, minutes, notes, createdAt: new Date().toISOString() });
+    persist();
+    renderRecreatePage();
+  });
+
+  grid.querySelectorAll("[data-piano-log-delete]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      recordDeletion("pianoLog", btn.dataset.pianoLogDelete);
+      state.pianoLog = pianoLogList().filter((x) => x.id !== btn.dataset.pianoLogDelete);
+      persist();
+      renderRecreatePage();
+    });
   });
 
   grid.querySelector("#pianoSongsList")?.addEventListener("change", (e) => {
