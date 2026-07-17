@@ -191,6 +191,22 @@ const PATHS = {
   reminder: '<path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
   dueToday: '<rect x="4" y="5" width="16" height="16" rx="2"/><line x1="4" y1="9" x2="20" y2="9"/><line x1="8" y1="3" x2="8" y2="6"/><line x1="16" y1="3" x2="16" y2="6"/><polyline points="9 14 11 16 15 12"/>',
 
+  // ── Meal Plan icon library (v1.0 sheet) ───────────────────────────────────
+  // Recipe book with a chef-hat cover mark
+  recipeBook: '<path d="M5 4.5A2.5 2.5 0 0 1 7.5 2H18a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H7.5A2.5 2.5 0 0 1 5 19.5z"/><path d="M8.5 2v20"/><path d="M13 11.4a1.7 1.7 0 0 1 .6-3.2 1.8 1.8 0 0 1 3.5 0 1.7 1.7 0 0 1 .6 3.2v1.9H13z"/>',
+  // Clipboard checklist
+  groceryList: '<rect x="5.5" y="4.2" width="13" height="17.8" rx="2"/><rect x="9" y="2.2" width="6" height="3.6" rx="1.2"/><line x1="9" y1="11" x2="15.5" y2="11"/><line x1="9" y1="14.5" x2="15.5" y2="14.5"/><line x1="9" y1="18" x2="13" y2="18"/>',
+  // Half bowl with sprouting leaves
+  nutrition: '<path d="M3.5 12.5h17a8.5 8.5 0 0 1-17 0z"/><path d="M12.5 12.5c0-3 1.5-5 4.5-5.5"/><path d="M17 7c.4-2.4 2-3.6 4-4 0 2.8-1.2 4.6-4 4z"/>',
+  // Circular arrow with a sparkle — Liv builds the plan
+  autoGenerate: '<path d="M19.5 12a7.5 7.5 0 1 1-3.2-6.2"/><polyline points="16.6 2.6 16.3 5.8 19.5 6.1"/><path d="M11.3 9.3l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9z" fill="currentColor" stroke="none"/>',
+  // Storage container with a leaf — make the most of what you have
+  leftovers: '<path d="M4.5 8.5h15"/><path d="M6.5 8.5V7a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1.5"/><path d="M5.5 8.5l1 10.5a2 2 0 0 0 2 1.8h7a2 2 0 0 0 2-1.8l1-10.5"/><path d="M10 15.6c0-2.2 1.7-3.6 5-3.6-.2 3.6-1.7 5.2-3.6 5.2-1 0-1.4-.7-1.4-1.6z"/>',
+  // Apple — a single ingredient
+  ingredient: '<path d="M12 8.4C10.6 6.9 8.7 6.5 7.2 7.3c-2.3 1.2-3 4.6-1.6 7.8s4.1 5.1 6.4 4c2.3 1.1 5-.8 6.4-4s.7-6.6-1.6-7.8c-1.5-.8-3.4-.4-4.8 1.1z"/><path d="M12 8.4V6"/><path d="M12 6c0-1.6 1.1-2.7 2.7-2.7C14.7 4.9 13.6 6 12 6z"/>',
+  // Cloche — select a dish
+  selectDish: '<path d="M4 16.5a8 8 0 0 1 16 0"/><line x1="2.5" y1="16.5" x2="21.5" y2="16.5"/><line x1="4.5" y1="20" x2="19.5" y2="20"/><line x1="12" y1="8.5" x2="12" y2="7.5"/><circle cx="12" cy="6.3" r="1.2"/>',
+
   // ── Liv AI base mark (sailboat, simplified for legibility at icon size) ────
   // A single sail curving up to the mast, sitting on a water line.
   liv: '<path d="M13 4c2.8 3.4 3.8 8 3 12H8z"/><line x1="13" y1="4" x2="13" y2="16"/><path d="M4 19c1.5 1.4 3.5 1.4 5 0s3.5-1.4 5 0 3.5 1.4 5 0"/>',

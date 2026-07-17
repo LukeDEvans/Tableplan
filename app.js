@@ -17991,21 +17991,18 @@ function renderPlanner() {
         <div class="meal-plan-page-actions">
           <div class="meal-plan-btns-left">
             <button class="secondary-btn planner-page-btn" type="button" data-open-recipe-box-page title="Recipe Book" aria-label="Recipe Book">
-              <svg class="planner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+              ${ldeIcon("recipeBook", { size: 20, cls: "planner-icon" })}
             </button>
             <button class="secondary-btn planner-page-btn" type="button" data-open-groceries-page title="Groceries" aria-label="Groceries">
-              <svg class="planner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>
+              ${ldeIcon("groceryList", { size: 20, cls: "planner-icon" })}
             </button>
           </div>
           <div class="meal-plan-btns-right">
             <button class="secondary-btn planner-page-btn" type="button" data-open-daily-dozen-page title="Nutrition" aria-label="Nutrition">
-              <svg class="planner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 22 20 2 20Z"/><line x1="8.5" y1="9" x2="15.5" y2="9"/><line x1="5.5" y1="14" x2="18.5" y2="14"/></svg>
+              ${ldeIcon("nutrition", { size: 20, cls: "planner-icon" })}
             </button>
             <button class="primary-btn icon-primary-btn planner-page-btn" type="button" data-open-meal-autofill title="Auto-fill" aria-label="Auto-fill">
-              <svg class="fast-forward-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M5 6.5 12.5 12 5 17.5Z" />
-                <path d="M12 6.5 19.5 12 12 17.5Z" />
-              </svg>
+              ${ldeIcon("autoGenerate", { size: 20, cls: "planner-icon" })}
             </button>
           </div>
         </div>
@@ -18972,18 +18969,10 @@ function slotTemplate(day, meal, slotValue, options = {}) {
         <div class="slot-label" ${canCombine ? `draggable="true" data-meal-section-drag data-day="${day.id}" data-meal="${meal}" title="Drag onto another ${escapeHtml(displayMealName(combineGroupKeyForMeal(meal) || meal).toLowerCase())} section to combine"` : ""}>${escapeHtml(displayMeal)}</div>
         ${readOnly ? "" : `<div class="slot-actions">
           <button class="slot-delete-btn" type="button" data-clear-meal-section data-day="${day.id}" data-meal="${meal}" title="${isCombined ? `Clear and split ${displayMeal}` : `Clear ${displayMeal}`}" aria-label="${isCombined ? `Clear and split ${displayMeal}` : `Clear ${displayMeal}`}">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 7h16" />
-              <path d="M10 11v6M14 11v6" />
-              <path d="M6 7l1 14h10l1-14" />
-              <path d="M9 7V4h6v3" />
-            </svg>
+            ${ldeIcon("trash", { size: 16 })}
           </button>
           <button class="slot-generate-btn" type="button" data-generate-meal-section data-day="${day.id}" data-meal="${meal}" title="Auto-generate ${displayMeal}" aria-label="Auto-generate ${displayMeal}">
-            <svg class="fast-forward-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M5 6.5 12.5 12 5 17.5Z" />
-              <path d="M12 6.5 19.5 12 12 17.5Z" />
-            </svg>
+            ${ldeIcon("autoGenerate", { size: 16 })}
           </button>
           <button class="slot-add-btn" type="button" data-add-meal-entry data-day="${day.id}" data-meal="${meal}" title="${hasOpenEntry ? `Fill the open slot before adding another recipe` : `Add another recipe`}" aria-label="Add another recipe to ${displayMeal}" ${hasOpenEntry ? "disabled" : ""}>+</button>
         </div>`}
@@ -19161,27 +19150,11 @@ function mealEntryPlaceholder(meal, index) {
 }
 
 function stackedDishesIconTemplate() {
-  return `
-    <svg class="stacked-dishes-icon" viewBox="0 0 48 32" aria-hidden="true">
-      <path d="M6 9.5c0-4.1 8-7.1 18-7.1s18 3 18 7.1-8 7.1-18 7.1S6 13.6 6 9.5Z" />
-      <path d="M13.5 9.3c2.4-1.6 6-2.4 10.5-2.4s8.1.8 10.5 2.4" />
-      <path d="M7.8 14.2c2.7 3.3 8.8 5.2 16.2 5.2s13.5-1.9 16.2-5.2" />
-      <path d="M7.8 20.2c2.7 3.3 8.8 5.2 16.2 5.2s13.5-1.9 16.2-5.2" />
-      <path d="M7.8 26.2c2.7 3.3 8.8 5.2 16.2 5.2s13.5-1.9 16.2-5.2" />
-    </svg>
-  `;
+  return ldeIcon("selectDish", { size: 22, cls: "stacked-dishes-icon" });
 }
 
 function broccoliIconTemplate() {
-  return `
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 6 C11.5 4 9.5 2.5 9 3.5" />
-      <path d="M12 6 C12 3.5 13.5 2.5 14.5 3.5" />
-      <path d="M12 6 C12.5 3.5 14.5 2.5 15.5 3.5" />
-      <path d="M12 21 C9.5 19.5 8.5 15 9 10 C9.5 7 11 6 12 6 C13 6 14.5 7 15 10 C15.5 15 14.5 19.5 12 21 Z" />
-      <path d="M10 12.5 C11 12 13 12 14 12.5" />
-    </svg>
-  `;
+  return ldeIcon("ingredient", { size: 18 });
 }
 
 function outMealIconTemplate() {
@@ -19194,12 +19167,7 @@ function outMealIconTemplate() {
 }
 
 function leftoversIconTemplate() {
-  return `
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 5 C11.5 3.5 13.5 2.5 14.5 3" />
-      <path d="M12 5 C9 5 7 6.5 7 8.5 C7 10 9 10.5 9 12 C9 13.5 7 14 7 15.5 C7 17.5 9 19 12 19 C15 19 17 17.5 17 15.5 C17 14 15 13.5 15 12 C15 10.5 17 10 17 8.5 C17 6.5 15 5 12 5 Z" />
-    </svg>
-  `;
+  return ldeIcon("leftovers", { size: 18 });
 }
 
 function minimumMealEntryCount(meal) {
