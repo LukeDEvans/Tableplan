@@ -306,7 +306,7 @@ async function setSectionScope(section, scope) {
   sectionScopes[section] = scope;
   try { localStorage.setItem(SCOPE_PREFS_KEY, JSON.stringify(sectionScopes)); } catch { /* full */ }
   applyStoredState(draft);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  mirrorStateToLocalStorage();
 
   // 3. Refresh the newly-active row from the server (another device/member
   //    may have changed it since the shadow was captured). Deliberately do
@@ -382,7 +382,7 @@ async function refreshActiveSectionFromServer(stateId, section, keys) {
     ? mergeStates(localFrag, remoteFrag)
     : mergeStates(remoteFrag, localFrag);
   for (const key of keys) { if (merged[key] !== undefined) state[key] = merged[key]; }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  mirrorStateToLocalStorage();
   if (lastWrittenSections) lastWrittenSections[section] = JSON.stringify(extractSectionData(keys));
   render();
 }
@@ -2609,9 +2609,34 @@ function loadTripBackup() {
   try { return JSON.parse(localStorage.getItem(TRIP_BACKUP_KEY) || "null"); } catch { return null; }
 }
 
+// localStorage is only a bootstrap/offline cache — Supabase holds the truth.
+// Mobile Safari caps localStorage around 5MB and saved-article texts can push
+// the state past it. A mirror failure must DEGRADE, never throw into whatever
+// user action happened to trigger the save (it once surfaced on iPhone as
+// "Could not generate audio: The quota has been exceeded").
+function mirrorStateToLocalStorage() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    return;
+  } catch { /* over quota — try slimmer mirrors */ }
+  try {
+    const slim = { ...state, savedArticles: (state.savedArticles || []).map((a) => ({ ...a, text: null })) };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
+    console.warn("[persist] localStorage over quota — mirrored without article texts (cloud copy unaffected)");
+    return;
+  } catch { /* still over quota */ }
+  try {
+    const slimmer = { ...state, savedArticles: [], podcasts: (state.podcasts || []).map((p) => ({ ...p, episodes: [] })) };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(slimmer));
+    console.warn("[persist] localStorage far over quota — minimal mirror only (cloud copy unaffected)");
+  } catch (e) {
+    console.warn("[persist] localStorage mirror failed:", e.message);
+  }
+}
+
 function persist() {
   state.stateUpdatedAt = new Date().toISOString();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  mirrorStateToLocalStorage();
   saveTripBackup();
   saveStateToSharedStorage();
   scheduleLocalBackup();
@@ -2682,7 +2707,7 @@ function updateTabIndicator(stableParent) {
 
 async function persistImmediately(label = "saving") {
   state.stateUpdatedAt = new Date().toISOString();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  mirrorStateToLocalStorage();
   window.clearTimeout(sharedStorageSaveTimer);
   window.clearTimeout(localBackupTimer);
   const writes = [];
@@ -3834,7 +3859,7 @@ function migrateRecipeFoldersToTags(targetState = state) {
 
 function migrateLegacyRecipeOrganization() {
   migrateRecipeFoldersToTags(state);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  mirrorStateToLocalStorage();
 }
 
 function migrateGroceryDescriptorNames() {
@@ -3854,7 +3879,7 @@ function migrateGroceryDescriptorNames() {
     changed = true;
   }
   state.migrations = { ...state.migrations, groceryDescriptorNamesV1: true };
-  if (changed) localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  if (changed) mirrorStateToLocalStorage();
 }
 
 function defaultGroceryBaseItems() {
@@ -5088,7 +5113,7 @@ function applyStoredState(storedState) {
   }
   Object.assign(showtimesCache, state.watchShowtimesData || {});
   applyThemeMode();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  mirrorStateToLocalStorage();
   lastWrittenSections = null; // force full re-upload after any full state replacement
   render();
 }
@@ -5271,7 +5296,7 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
     for (const key of keys) {
       if (merged[key] !== undefined) state[key] = merged[key];
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    mirrorStateToLocalStorage();
     lastSeenSectionStamp[rowId] = curRows[0].updated_at;
   } else {
     delete lastSeenSectionStamp[rowId]; // row vanished — recreate on retry
@@ -5293,7 +5318,7 @@ async function hydrateRecipeRowsFromSupabase() {
       state.folders = folders;
       state.recipes = recipes;
       migrateRecipeFoldersToTags(state);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      mirrorStateToLocalStorage();
       rowStorageReady = true;
       await writeAllRecipeRowsToSupabase();
       render();
