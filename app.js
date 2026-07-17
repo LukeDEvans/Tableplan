@@ -235,7 +235,7 @@ const SECTION_SCOPE = {
   // health holds familyMembers, which the shared Meal Plan depends on — it is
   // not a standalone page, so it stays household.
   health: "household",
-  inventory: "toggle",
+  inventory: "household", // Stock: one shared record of where things are
   travel: "toggle",
 };
 const SCOPE_PREFS_KEY = "live-section-scopes-v1";
@@ -331,8 +331,6 @@ const PAGE_SCOPE_SECTION = {
   watch: "watch",
   media: "media",
   plan: "plan",
-  stock: "inventory",
-  inventory: "inventory",
   explore: "travel",
 };
 

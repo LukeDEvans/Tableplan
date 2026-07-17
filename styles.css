@@ -14394,9 +14394,6 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
   padding-right: 96px;
 }
 
-#inventoryMainPage .planner-grid {
-  padding-top: 46px;
-}
 
 .scope-toggle button {
   display: inline-flex;
