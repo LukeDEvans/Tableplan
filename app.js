@@ -615,6 +615,7 @@ const elements = {
   menuReadSyncBtn: document.querySelector("#menuReadSyncBtn"),
   menuRecreateHobbiesBtn: document.querySelector("#menuRecreateHobbiesBtn"),
   menuCalendarsBtn: document.querySelector("#menuCalendarsBtn"),
+  menuManageCalendarsBtn: document.querySelector("#menuManageCalendarsBtn"),
   contextSettingsDialog: document.querySelector("#contextSettingsDialog"),
   contextSettingsTitle: document.querySelector("#contextSettingsTitle"),
   contextSettingsBody: document.querySelector("#contextSettingsBody"),
@@ -1444,6 +1445,7 @@ function bindEvents() {
   elements.menuWorkoutLogsBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLogsDialog));
   elements.menuRecreateHobbiesBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("recreate")));
   elements.menuCalendarsBtn.addEventListener("click", () => openSettingsMenuDialog(openCalendarsDialog));
+  elements.menuManageCalendarsBtn.addEventListener("click", () => openSettingsMenuDialog(openPlanCalDialog));
   elements.closeContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
   elements.contextSettingsBackBtn.addEventListener("click", () => renderContextSettingsDialog("general"));
   elements.doneContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
@@ -12761,6 +12763,7 @@ function updateSettingsMenuOptions() {
   elements.menuPublicationsBtn.hidden = activeAppArea !== "media";
   elements.menuRecreateHobbiesBtn.hidden = !isRecreate;
   elements.menuCalendarsBtn.hidden = !isPlan;
+  elements.menuManageCalendarsBtn.hidden = !isPlan;
 }
 
 function hasPageSpecificSettings() {
@@ -26783,10 +26786,6 @@ function renderPlanPage() {
            ${v.charAt(0).toUpperCase() + v.slice(1)}
          </button>`
       ).join("")}
-      <button class="plan-today-btn" type="button" data-plan-today>Today</button>
-      <button class="plan-cal-mgr-btn icon-btn" type="button" data-plan-cal-mgr title="Manage calendars" aria-label="Manage calendars">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-      </button>
     </div>
     <div class="plan-view-content" ${swipeAttr}="true">
       ${planViewMode === "month" ? renderPlanMonthView()
@@ -26802,12 +26801,6 @@ function renderPlanPage() {
       renderPlanPage();
     });
   });
-  elements.planCalendar.querySelector("[data-plan-today]")?.addEventListener("click", () => {
-    planViewDate = new Date();
-    setWeekToolsMode("plan");
-    renderPlanPage();
-  });
-  elements.planCalendar.querySelector("[data-plan-cal-mgr]")?.addEventListener("click", openPlanCalDialog);
   elements.planCalendar.querySelectorAll("[data-plan-day]").forEach((cell) => {
     cell.addEventListener("click", (e) => {
       if (e.target.closest("[data-plan-event-id]")) return;
