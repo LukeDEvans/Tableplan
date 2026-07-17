@@ -26065,7 +26065,11 @@ function recreateHobbySummary(key) {
   return "";
 }
 
-const RECREATE_HOBBY_ICONS = { sailing: "⛵", piano: "🎹" };
+// LDE activity pictograms — same set the Exercise cards use
+const RECREATE_HOBBY_ICONS = {
+  sailing: `<img class="workout-pool-img" src="./activity-sailing.png" alt="Sailing" width="52" height="52" draggable="false" />`,
+  piano: `<img class="workout-pool-img" src="./activity-piano.png" alt="Piano" width="52" height="52" draggable="false" />`,
+};
 
 function renderRecreatePage() {
   if (!elements.recreatePlannerGrid) return;

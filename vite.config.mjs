@@ -22,6 +22,8 @@ function copyRootFilesPlugin() {
       copyFileSync('./activity-weightlifting.png', './dist/activity-weightlifting.png');
       copyFileSync('./activity-cycling.png', './dist/activity-cycling.png');
       copyFileSync('./activity-soccer.png', './dist/activity-soccer.png');
+      copyFileSync('./activity-sailing.png', './dist/activity-sailing.png');
+      copyFileSync('./activity-piano.png', './dist/activity-piano.png');
     },
   };
 }
