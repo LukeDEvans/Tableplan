@@ -14313,7 +14313,8 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 }
 
 /* Household / personal view toggle — anchored to the top-right corner of the
-   active page window (JS re-parents it into the .planner-column section). */
+   active page window (JS re-parents it into the .planner-column section).
+   Styled like the app's standard controls: white fill, navy border. */
 .scope-toggle {
   position: absolute;
   top: 12px;
@@ -14323,9 +14324,25 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
   align-items: center;
   gap: 2px;
   padding: 2px;
-  border: 1px solid var(--line);
+  border: 2px solid var(--window-border);
   border-radius: 999px;
   background: var(--window-bg, #fff);
+}
+
+/* Each toggleable page reserves top-right room so the toggle never sits on
+   top of that page's own controls. */
+#doMainPage .day-tabs,
+#watchMainPage .watch-category-bar,
+#shopMainPage #groceryStoreTabBar,
+#exploreMainPage .travel-detail-header,
+#mediaMainPage .media-all-header,
+#mediaMainPage .podcast-playlist-bar,
+#mediaMainPage .article-reader-topbar {
+  padding-right: 96px;
+}
+
+#inventoryMainPage .planner-grid {
+  padding-top: 46px;
 }
 
 .scope-toggle button {

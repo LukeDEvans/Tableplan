@@ -14,6 +14,6 @@ Every AI email-processing feature MUST have an on/off toggle in Settings → Mai
 
 ## Git / GitHub
 
-**Always ask before pushing to GitHub.** Luke has a limited number of pushes per month (~20). Batch changes and confirm before running `git push`. Never push automatically as part of a task.
+**Local commits are welcome — commit freely as work completes.** Luke likes reviewing changes locally before they go out.
 
-When ready to push, summarize what will be committed and ask explicitly: "Ready to commit and push — OK to go?"
+**Never `git push` without explicit permission — ask first, every time.** Pushing to main auto-triggers a Netlify deploy, which spends limited deploy credits (and GitHub pushes are capped ~20/month). Batch work into local commits, then when ready ask: "OK to push?" Never push automatically as part of a task.
