@@ -6960,7 +6960,7 @@ async function moveMailToLabel(threadId, targetLabelId) {
   }
 }
 
-function showMailCompose() {
+function showMailCompose(toAddress) {
   mailOpenThreadId = null;
   elements.mailThread.hidden = false;
   elements.mailThread.innerHTML = `
@@ -6984,7 +6984,12 @@ function showMailCompose() {
     </div>`;
   document.getElementById("mailComposeCancelBtn").addEventListener("click", () => { elements.mailThread.hidden = true; });
   document.getElementById("mailComposeSendBtn").addEventListener("click", sendMailCompose);
-  document.getElementById("mailComposeTo").focus();
+  if (typeof toAddress === "string" && toAddress) {
+    document.getElementById("mailComposeTo").value = toAddress;
+    document.getElementById("mailComposeSubject").focus();
+  } else {
+    document.getElementById("mailComposeTo").focus();
+  }
 }
 
 async function sendMailCompose() {
@@ -7624,6 +7629,121 @@ async function openMailAttachment(chip) {
 // sandboxed iframe (scripts blocked by the sandbox) with the email's own
 // <style> blocks preserved, isolated from the app's CSS and the app from the
 // email's. Plain-text mail renders as <pre>.
+// ── Clickable links & addresses in emails ────────────────────────────────────
+// Bare URLs and email addresses (common in plain-text mail, and sometimes
+// left as text in HTML mail) become clickable everywhere. Email addresses
+// open the app's compose prefilled; right-click offers a small address menu.
+const MAIL_LINKIFY_RE = /(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/gi;
+
+function linkifyMailPlainText(text) {
+  const escaped = escapeHtml(String(text || ""));
+  return escaped.replace(MAIL_LINKIFY_RE, (m) => {
+    if (m.includes("@") && !/^https?:/i.test(m)) {
+      return `<a href="mailto:${m}" data-mail-address="${m}">${m}</a>`;
+    }
+    return `<a href="${m}" target="_blank" rel="noopener noreferrer">${m}</a>`;
+  });
+}
+
+// Wraps bare URLs/addresses found in TEXT nodes of an HTML email (skips
+// existing links, styles, scripts). Runs inside the message iframe's doc.
+function linkifyMailDocument(doc) {
+  if (!doc?.body) return;
+  const nodes = [];
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => {
+      if (!n.parentElement || n.parentElement.closest("a, style, script, title")) return NodeFilter.FILTER_REJECT;
+      return new RegExp(MAIL_LINKIFY_RE.source, "i").test(n.textContent) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    }
+  });
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  nodes.forEach((node) => {
+    const text = node.textContent;
+    const frag = doc.createDocumentFragment();
+    const re = new RegExp(MAIL_LINKIFY_RE.source, "gi");
+    let last = 0, m;
+    while ((m = re.exec(text))) {
+      frag.appendChild(doc.createTextNode(text.slice(last, m.index)));
+      const a = doc.createElement("a");
+      const val = m[0];
+      if (val.includes("@") && !/^https?:/i.test(val)) {
+        a.href = "mailto:" + val;
+      } else {
+        a.href = val;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+      }
+      a.textContent = val;
+      frag.appendChild(a);
+      last = m.index + val.length;
+    }
+    frag.appendChild(doc.createTextNode(text.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  });
+}
+
+function mailAddressFromMailto(href) {
+  try { return decodeURIComponent(String(href || "").replace(/^mailto:/i, "").split("?")[0]).trim(); }
+  catch { return String(href || "").replace(/^mailto:/i, "").split("?")[0].trim(); }
+}
+
+// mailto links inside the app document (plain-text <pre> render)
+function wireMailAddressLinks(root) {
+  root.querySelectorAll('a[href^="mailto:"]').forEach((a) => {
+    const addr = mailAddressFromMailto(a.getAttribute("href"));
+    if (!addr) return;
+    a.addEventListener("click", (e) => { e.preventDefault(); showMailCompose(addr); });
+    a.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      showMailAddressMenu(e.clientX, e.clientY, addr);
+    });
+  });
+}
+
+// mailto links inside a message iframe: same behavior, coordinates mapped
+// out of the (possibly zoomed) frame into the page
+function wireMailFrameAddressLinks(iframe) {
+  const doc = iframe.contentDocument;
+  if (!doc) return;
+  doc.querySelectorAll('a[href^="mailto:"]').forEach((a) => {
+    const addr = mailAddressFromMailto(a.getAttribute("href"));
+    if (!addr) return;
+    a.addEventListener("click", (e) => { e.preventDefault(); showMailCompose(addr); });
+    a.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const r = iframe.getBoundingClientRect();
+      const zoom = parseFloat(doc.body?.style.zoom) || 1;
+      showMailAddressMenu(r.left + e.clientX * zoom, r.top + e.clientY * zoom, addr);
+    });
+  });
+}
+
+function showMailAddressMenu(x, y, addr) {
+  closeMailMenus();
+  document.getElementById("mailAddressMenu")?.remove();
+  const menu = document.createElement("div");
+  menu.id = "mailAddressMenu";
+  menu.className = "mail-more-menu";
+  menu.style.position = "fixed";
+  menu.style.left = Math.max(8, Math.min(x, window.innerWidth - 220)) + "px";
+  menu.style.top = Math.min(y, window.innerHeight - 150) + "px";
+  menu.innerHTML = `
+    <button class="mail-more-option" type="button" data-addr-action="compose">Email ${escapeHtml(addr)}</button>
+    <button class="mail-more-option" type="button" data-addr-action="copy">Copy address</button>
+    <div class="mail-more-divider"></div>
+    <button class="mail-more-option" type="button" data-addr-action="add-contact">Add contact <span class="mail-addr-soon">coming soon</span></button>`;
+  menu.addEventListener("click", (e) => {
+    const act = e.target.closest("[data-addr-action]")?.dataset.addrAction;
+    if (!act) return;
+    menu.remove();
+    if (act === "compose") showMailCompose(addr);
+    else if (act === "copy") { navigator.clipboard?.writeText(addr); showMailToast("Address copied"); }
+    else if (act === "add-contact") showMailToast("Contacts are coming soon");
+  });
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener("click", () => menu.remove(), { once: true, capture: true }), 0);
+}
+
 function mountMailMessageFrames(container, messages) {
   container.querySelectorAll("[data-msg-idx]").forEach((holder) => {
     if (holder.hidden || holder.dataset.mounted) return; // collapsed bodies mount lazily on expand
@@ -7635,7 +7755,8 @@ function mountMailMessageFrames(container, messages) {
     } else {
       const pre = document.createElement("pre");
       pre.className = "mail-msg-pre";
-      pre.textContent = msg.body || "";
+      pre.innerHTML = linkifyMailPlainText(msg.body || "");
+      wireMailAddressLinks(pre);
       holder.appendChild(pre);
     }
   });
@@ -7687,6 +7808,10 @@ function buildMailBodyFrame(html) {
     } catch {}
   };
   iframe.addEventListener("load", () => {
+    try {
+      linkifyMailDocument(iframe.contentDocument);
+      wireMailFrameAddressLinks(iframe);
+    } catch {}
     fitAndSize();
     try {
       iframe.contentDocument.querySelectorAll("img").forEach((img) => img.addEventListener("load", fitAndSize));
