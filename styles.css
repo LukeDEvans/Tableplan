@@ -2833,6 +2833,8 @@ input.live-toggle:checked::before,
   width: 28px;
   height: 28px;
   min-height: 28px;
+  padding: 0;
+  line-height: 1;
   border: 2px solid var(--window-border);
   border-radius: 999px;
   background: var(--window-bg);
@@ -2862,8 +2864,10 @@ input.live-toggle:checked::before,
   outline: none;
 }
 
+.slot-add-btn svg,
 .slot-generate-btn svg,
 .slot-delete-btn svg {
+  display: block;
   width: 16px;
   height: 16px;
 }
@@ -3107,13 +3111,6 @@ input.live-toggle:checked::before,
   height: 18px;
 }
 
-.meal-special-choice svg path {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
 
 .meal-pick-slot:hover,
 .meal-pick-slot:focus-visible,

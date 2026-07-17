@@ -18684,7 +18684,7 @@ function autoRuleSlotTemplate(day, meal, displayMeal = meal) {
         <div class="slot-label">${escapeHtml(displayMeal)}</div>
         <div class="slot-actions">
           <button class="slot-generate-btn auto-rule-skip-btn" type="button" data-create-tag-auto-rule data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="0" title="Choose tags" aria-label="Choose tags for ${escapeHtml(displayMeal)}">#</button>
-          <button class="slot-add-btn auto-rule-add-btn" type="button" data-add-auto-rule data-day="${day.id}" data-meal="${escapeHtml(meal)}" title="${addTitle}" aria-label="Add another ${escapeHtml(displayMeal)} rule slot" ${addDisabled ? "disabled" : ""}>+</button>
+          <button class="slot-add-btn auto-rule-add-btn" type="button" data-add-auto-rule data-day="${day.id}" data-meal="${escapeHtml(meal)}" title="${addTitle}" aria-label="Add another ${escapeHtml(displayMeal)} rule slot" ${addDisabled ? "disabled" : ""}>${ldeIcon("add", { size: 16 })}</button>
         </div>
       </div>
       <div class="meal-entry-list">
@@ -19099,7 +19099,7 @@ function slotTemplate(day, meal, slotValue, options = {}) {
           <button class="slot-generate-btn" type="button" data-generate-meal-section data-day="${day.id}" data-meal="${meal}" title="Auto-generate ${displayMeal}" aria-label="Auto-generate ${displayMeal}">
             ${ldeIcon("autoGenerate", { size: 16 })}
           </button>
-          <button class="slot-add-btn" type="button" data-add-meal-entry data-day="${day.id}" data-meal="${meal}" title="${hasOpenEntry ? `Fill the open slot before adding another recipe` : `Add another recipe`}" aria-label="Add another recipe to ${displayMeal}" ${hasOpenEntry ? "disabled" : ""}>+</button>
+          <button class="slot-add-btn" type="button" data-add-meal-entry data-day="${day.id}" data-meal="${meal}" title="${hasOpenEntry ? `Fill the open slot before adding another recipe` : `Add another recipe`}" aria-label="Add another recipe to ${displayMeal}" ${hasOpenEntry ? "disabled" : ""}>${ldeIcon("add", { size: 16 })}</button>
         </div>`}
       </div>
       <div class="meal-entry-list">
