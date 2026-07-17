@@ -10406,6 +10406,58 @@ body.touch-drag-active * {
 
 .plan-event-dialog, .plan-cal-dialog { max-width: 440px; }
 
+/* Date + start/end share one line (Google Calendar style) */
+.plan-when-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+.plan-when-row .plan-when-date { flex: 1.4; min-width: 0; }
+.plan-when-row .plan-time-fields {
+  display: flex;
+  gap: 10px;
+  flex: 2;
+  min-width: 0;
+}
+.plan-when-row .plan-time-fields .form-field { flex: 1; min-width: 0; }
+.plan-when-row input { width: 100%; min-width: 0; }
+
+/* Location autocomplete */
+.plan-location-field { position: relative; }
+.plan-location-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  background: var(--window-bg, #fff);
+  border: 2px solid var(--window-border);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.14);
+  overflow: hidden;
+}
+.plan-location-suggestions button {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.plan-location-suggestions button:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.plan-location-suggestions strong { display: block; font-size: 0.86rem; }
+.plan-location-suggestions small { display: block; color: var(--muted); font-size: 0.75rem; }
+
+/* Attachment row */
+.plan-attachment-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.plan-attachment-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; }
+.plan-attachment-name a { color: var(--accent-dark); }
+.plan-attachment-remove { width: 28px; height: 28px; min-height: 28px; }
+
+/* Notes start one line tall and grow with content (JS autosize) */
+#planEventNotes { resize: none; overflow: hidden; min-height: 38px; }
+
 .plan-allday-field {
   display: flex !important;
   flex-direction: row !important;

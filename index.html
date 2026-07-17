@@ -75,7 +75,6 @@
                 <button type="button" id="menuPublicationsBtn">Publications</button>
                 <button type="button" id="menuReadSyncBtn">Sync Settings</button>
                 <button type="button" id="menuRecreateHobbiesBtn">Hobbies</button>
-                <button type="button" id="menuCalendarsBtn">Calendars</button>
                 <button type="button" id="menuManageCalendarsBtn">Manage Calendars</button>
               </div>
             </div>
@@ -2995,36 +2994,48 @@
             <span>Title</span>
             <input type="text" id="planEventTitle" placeholder="Event title" autocomplete="off" />
           </label>
-          <label class="form-field">
-            <span>Date</span>
-            <input type="date" id="planEventDate" />
-          </label>
+          <div class="plan-when-row">
+            <label class="form-field plan-when-date">
+              <span>Date</span>
+              <input type="date" id="planEventDate" />
+            </label>
+            <div class="plan-time-fields" id="planTimeFields">
+              <label class="form-field">
+                <span>Start</span>
+                <input type="time" id="planEventStart" value="09:00" />
+              </label>
+              <label class="form-field">
+                <span>End</span>
+                <input type="time" id="planEventEnd" value="10:00" />
+              </label>
+            </div>
+          </div>
           <label class="form-field plan-allday-field">
-            <input type="checkbox" id="planEventAllDay" checked />
+            <input type="checkbox" id="planEventAllDay" />
             <span>All day</span>
           </label>
-          <div class="plan-time-fields" id="planTimeFields" hidden>
-            <label class="form-field">
-              <span>Start</span>
-              <input type="time" id="planEventStart" value="09:00" />
-            </label>
-            <label class="form-field">
-              <span>End</span>
-              <input type="time" id="planEventEnd" value="10:00" />
-            </label>
+          <div class="form-field plan-location-field">
+            <span>Location</span>
+            <input type="text" id="planEventLocation" placeholder="Add location" autocomplete="off" role="combobox" aria-expanded="false" />
+            <div class="plan-location-suggestions" id="planEventLocationSuggestions" hidden></div>
           </div>
           <label class="form-field">
             <span>Notes</span>
-            <textarea id="planEventNotes" rows="2" placeholder="Optional notes"></textarea>
+            <textarea id="planEventNotes" rows="1" placeholder="Optional notes"></textarea>
           </label>
           <div class="form-field plan-evt-cal-row" id="planEventCalRow" hidden>
             <span>Calendar</span>
             <div class="plan-evt-cal-chips" id="planEventCalPicker"></div>
           </div>
-          <label class="form-field">
-            <span>Color</span>
-            <div class="plan-color-picker" id="planEventColorPicker"></div>
-          </label>
+          <div class="form-field">
+            <span>Attachment</span>
+            <div class="plan-attachment-row">
+              <button class="secondary-btn" type="button" id="planEventAttachBtn">Attach file</button>
+              <input class="visually-hidden" type="file" id="planEventAttachInput" />
+              <span class="plan-attachment-name" id="planEventAttachName" hidden></span>
+              <button class="icon-btn plan-attachment-remove" type="button" id="planEventAttachRemoveBtn" title="Remove attachment" aria-label="Remove attachment" hidden>×</button>
+            </div>
+          </div>
         </div>
         <div class="recipe-form-actions">
           <button class="secondary-btn" type="button" id="deletePlanEventBtn" hidden>Delete</button>

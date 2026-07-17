@@ -614,7 +614,6 @@ const elements = {
   menuPublicationsBtn: document.querySelector("#menuPublicationsBtn"),
   menuReadSyncBtn: document.querySelector("#menuReadSyncBtn"),
   menuRecreateHobbiesBtn: document.querySelector("#menuRecreateHobbiesBtn"),
-  menuCalendarsBtn: document.querySelector("#menuCalendarsBtn"),
   menuManageCalendarsBtn: document.querySelector("#menuManageCalendarsBtn"),
   contextSettingsDialog: document.querySelector("#contextSettingsDialog"),
   contextSettingsTitle: document.querySelector("#contextSettingsTitle"),
@@ -718,7 +717,12 @@ const elements = {
   planEventStart: document.querySelector("#planEventStart"),
   planEventEnd: document.querySelector("#planEventEnd"),
   planEventNotes: document.querySelector("#planEventNotes"),
-  planEventColorPicker: document.querySelector("#planEventColorPicker"),
+  planEventLocation: document.querySelector("#planEventLocation"),
+  planEventLocationSuggestions: document.querySelector("#planEventLocationSuggestions"),
+  planEventAttachBtn: document.querySelector("#planEventAttachBtn"),
+  planEventAttachInput: document.querySelector("#planEventAttachInput"),
+  planEventAttachName: document.querySelector("#planEventAttachName"),
+  planEventAttachRemoveBtn: document.querySelector("#planEventAttachRemoveBtn"),
   planEventCalPicker: document.querySelector("#planEventCalPicker"),
   planEventCalRow: document.querySelector("#planEventCalRow"),
   closePlanEventBtn: document.querySelector("#closePlanEventBtn"),
@@ -1419,6 +1423,21 @@ function bindEvents() {
   elements.planEventAllDay.addEventListener("change", () => {
     elements.planTimeFields.hidden = elements.planEventAllDay.checked;
   });
+  elements.planEventLocation?.addEventListener("input", () => {
+    planEventSelectedPlace = null; // typing invalidates the previous pick
+    clearTimeout(planEventLocationDebounce);
+    planEventLocationDebounce = setTimeout(searchPlanEventLocations, 250);
+  });
+  elements.planEventNotes?.addEventListener("input", autosizePlanEventNotes);
+  elements.planEventAttachBtn?.addEventListener("click", () => elements.planEventAttachInput?.click());
+  elements.planEventAttachInput?.addEventListener("change", (e) => {
+    uploadPlanEventAttachment(e.target.files?.[0]);
+    e.target.value = "";
+  });
+  elements.planEventAttachRemoveBtn?.addEventListener("click", () => {
+    planEventAttachment = null;
+    renderPlanEventAttachment();
+  });
   elements.savePlanEventBtn.addEventListener("click", savePlanEvent);
   elements.deletePlanEventBtn.addEventListener("click", deletePlanEvent);
   elements.closePlanCalBtn.addEventListener("click", () => elements.planCalDialog.close());
@@ -1444,7 +1463,6 @@ function bindEvents() {
   elements.menuWorkoutLibraryBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLibraryDialog));
   elements.menuWorkoutLogsBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLogsDialog));
   elements.menuRecreateHobbiesBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("recreate")));
-  elements.menuCalendarsBtn.addEventListener("click", () => openSettingsMenuDialog(openCalendarsDialog));
   elements.menuManageCalendarsBtn.addEventListener("click", () => openSettingsMenuDialog(openPlanCalDialog));
   elements.closeContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
   elements.contextSettingsBackBtn.addEventListener("click", () => renderContextSettingsDialog("general"));
@@ -12762,7 +12780,6 @@ function updateSettingsMenuOptions() {
   elements.menuPodcastPriorityBtn.hidden = activeAppArea !== "media";
   elements.menuPublicationsBtn.hidden = activeAppArea !== "media";
   elements.menuRecreateHobbiesBtn.hidden = !isRecreate;
-  elements.menuCalendarsBtn.hidden = !isPlan;
   elements.menuManageCalendarsBtn.hidden = !isPlan;
 }
 
@@ -27110,23 +27127,122 @@ function openPlanEventDialog(date, eventId) {
     elements.planEventStart.value = existing.startTime || "09:00";
     elements.planEventEnd.value = existing.endTime || "10:00";
     elements.planEventNotes.value = existing.notes || "";
-    renderPlanColorPicker(elements.planEventColorPicker, existing.color || PLAN_COLORS[0], "planEventColor");
+    planEventSelectedPlace = existing.location || null;
+    elements.planEventLocation.value = existing.location
+      ? [existing.location.name, existing.location.address].filter(Boolean).join(", ")
+      : "";
+    planEventAttachment = existing.attachment || null;
     elements.deletePlanEventBtn.hidden = false;
     document.querySelector("#planEventDialogTitle").textContent = "Edit Event";
   } else {
     elements.planEventTitle.value = "";
     elements.planEventDate.value = date || dateKeyFromDate(new Date());
-    elements.planEventAllDay.checked = true;
-    elements.planTimeFields.hidden = true;
+    // Timed events are the default; "All day" is the opt-in
+    elements.planEventAllDay.checked = false;
+    elements.planTimeFields.hidden = false;
     elements.planEventStart.value = "09:00";
     elements.planEventEnd.value = "10:00";
     elements.planEventNotes.value = "";
-    renderPlanColorPicker(elements.planEventColorPicker, PLAN_COLORS[0], "planEventColor");
+    planEventSelectedPlace = null;
+    elements.planEventLocation.value = "";
+    planEventAttachment = null;
     elements.deletePlanEventBtn.hidden = true;
     document.querySelector("#planEventDialogTitle").textContent = "New Event";
   }
+  elements.planEventLocationSuggestions.hidden = true;
+  renderPlanEventAttachment();
   renderPlanEventCalPicker(selectedCalId);
   elements.planEventDialog.showModal();
+  autosizePlanEventNotes();
+}
+
+// ── Event location (Google Places) ────────────────────────────────────────────
+let planEventSelectedPlace = null;
+let planEventLocationDebounce = null;
+
+async function searchPlanEventLocations() {
+  const query = elements.planEventLocation.value.trim();
+  if (query.length < 2) { elements.planEventLocationSuggestions.hidden = true; return; }
+  try {
+    const response = await fetch(groceryPlacesApiUrl({ action: "autocomplete", input: query }), groceryPlacesRequestOptions());
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || "Location search unavailable");
+    if (elements.planEventLocation.value.trim() !== query) return; // stale response
+    const suggestions = Array.isArray(body.suggestions) ? body.suggestions.slice(0, 5) : [];
+    const box = elements.planEventLocationSuggestions;
+    box.hidden = !suggestions.length;
+    elements.planEventLocation.setAttribute("aria-expanded", String(Boolean(suggestions.length)));
+    box.innerHTML = suggestions.map((s) => `
+      <button type="button" role="option" data-plan-place="${escapeHtml(s.placeId)}" data-plan-place-name="${escapeHtml(s.name)}" data-plan-place-address="${escapeHtml(s.address || "")}">
+        <strong>${escapeHtml(s.name)}</strong>
+        <small>${escapeHtml(s.address || "")}</small>
+      </button>
+    `).join("");
+    box.querySelectorAll("[data-plan-place]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        planEventSelectedPlace = {
+          placeId: btn.dataset.planPlace,
+          name: btn.dataset.planPlaceName,
+          address: btn.dataset.planPlaceAddress || ""
+        };
+        elements.planEventLocation.value = [planEventSelectedPlace.name, planEventSelectedPlace.address].filter(Boolean).join(", ");
+        box.hidden = true;
+      });
+    });
+  } catch {
+    elements.planEventLocationSuggestions.hidden = true;
+  }
+}
+
+// ── Event attachment ──────────────────────────────────────────────────────────
+let planEventAttachment = null;
+
+function renderPlanEventAttachment() {
+  const nameEl = elements.planEventAttachName;
+  const removeBtn = elements.planEventAttachRemoveBtn;
+  if (!nameEl || !removeBtn) return;
+  if (planEventAttachment?.url) {
+    nameEl.hidden = false;
+    nameEl.innerHTML = `<a href="${escapeHtml(planEventAttachment.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(planEventAttachment.name || "Attachment")}</a>`;
+    removeBtn.hidden = false;
+    elements.planEventAttachBtn.textContent = "Replace file";
+  } else {
+    nameEl.hidden = true;
+    nameEl.innerHTML = "";
+    removeBtn.hidden = true;
+    elements.planEventAttachBtn.textContent = "Attach file";
+  }
+}
+
+async function uploadPlanEventAttachment(file) {
+  if (!file) return;
+  if (file.size > 4 * 1024 * 1024) { alert("Attachments are limited to 4MB."); return; }
+  const btn = elements.planEventAttachBtn;
+  btn.disabled = true;
+  btn.textContent = "Uploading…";
+  try {
+    const data = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+      reader.onerror = () => reject(new Error("Could not read the file."));
+      reader.readAsDataURL(file);
+    });
+    const result = await callNetlifyFunction("event-attachment", { name: file.name, type: file.type, data });
+    if (result.error || !result.url) throw new Error(result.error || "Upload failed.");
+    planEventAttachment = { url: result.url, path: result.path, name: file.name, type: file.type };
+  } catch (e) {
+    alert("Could not attach the file: " + e.message);
+  } finally {
+    btn.disabled = false;
+    renderPlanEventAttachment();
+  }
+}
+
+function autosizePlanEventNotes() {
+  const el = elements.planEventNotes;
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = Math.min(el.scrollHeight + 2, 220) + "px";
 }
 
 function renderPlanColorPicker(container, selectedColor, name) {
@@ -27155,11 +27271,7 @@ function renderPlanEventCalPicker(selectedCalId) {
     btn.addEventListener("click", () => {
       picker.querySelectorAll("[data-plan-evt-cal]").forEach((b) => b.classList.remove("is-selected"));
       btn.classList.add("is-selected");
-      const calId = btn.dataset.planEvtCal;
-      if (calId) {
-        const cal = nativeCals.find((c) => c.id === calId);
-        if (cal) renderPlanColorPicker(elements.planEventColorPicker, cal.color, "planEventColor");
-      }
+      // Event color follows the chosen calendar automatically on save
     });
   });
 }
@@ -27169,14 +27281,23 @@ function savePlanEvent() {
   const date = elements.planEventDate.value.trim();
   if (!title || !date) return;
   const allDay = elements.planEventAllDay.checked;
-  const color = elements.planEventColorPicker.querySelector("input:checked")?.value || PLAN_COLORS[0];
   const calId = elements.planEventCalPicker?.querySelector(".is-selected")?.dataset.planEvtCal || null;
+  // Color always follows the event's calendar (no per-event picker)
+  const cal = calId ? (state.planCalendars || []).find((c) => c.id === calId) : null;
+  const existing = editingPlanEventId ? (state.planEvents || []).find((e) => e.id === editingPlanEventId) : null;
+  const color = cal?.color || existing?.color || PLAN_COLORS[0];
+  // Free-typed location (no suggestion picked) still saves as a plain name
+  const typedLocation = elements.planEventLocation.value.trim();
+  const location = planEventSelectedPlace
+    || (typedLocation ? { placeId: null, name: typedLocation, address: "" } : null);
   const eventData = {
     title, date, allDay,
     startTime: allDay ? null : (elements.planEventStart.value || null),
     endTime: allDay ? null : (elements.planEventEnd.value || null),
     notes: elements.planEventNotes.value.trim(),
     color, calendarId: calId || null,
+    location,
+    attachment: planEventAttachment || null,
   };
   if (editingPlanEventId) {
     state.planEvents = (state.planEvents || []).map((e) =>
