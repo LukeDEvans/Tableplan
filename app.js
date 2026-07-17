@@ -6006,6 +6006,7 @@ function showRecreateApp(event) {
   elements.activeCookingSection.hidden = true;
   setPageTitle("Recreate");
   setPageHash("recreate");
+  activeRecreateHobby = null; // always land on the activity cards
   renderRecreatePage();
   closePageTitleMenu();
   closeAppMenu();
@@ -26024,7 +26025,7 @@ const RECREATE_HOBBIES = [
 ];
 
 let sailLogPendingId = null;
-let activeRecreateHobby = "sailing";
+let activeRecreateHobby = null; // null = activity-card landing
 
 // Metronome state
 let metronomeBpm = 120;
@@ -26046,29 +26047,79 @@ function visibleRecreateHobbies() {
   return RECREATE_HOBBIES.filter((h) => hobbies[h.key] !== false);
 }
 
+// Like the Exercise page: a grid of activity cards; clicking one opens that
+// activity's full view (sailing log, or metronome + songs) with a back button.
+function recreateHobbySummary(key) {
+  if (key === "sailing") {
+    const entries = sailingLogList();
+    if (!entries.length) return "No log entries yet";
+    const latest = entries.slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""))[0];
+    const when = latest?.date ? new Date(latest.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+    return `${entries.length} ${entries.length === 1 ? "entry" : "entries"}${when ? ` · last ${when}` : ""}`;
+  }
+  if (key === "piano") {
+    const songs = state.pianoSongs || [];
+    const learned = songs.filter((s) => s.learned).length;
+    return songs.length ? `${learned} of ${songs.length} songs learned` : "Metronome & songs";
+  }
+  return "";
+}
+
+const RECREATE_HOBBY_ICONS = { sailing: "⛵", piano: "🎹" };
+
 function renderRecreatePage() {
   if (!elements.recreatePlannerGrid) return;
   const visible = visibleRecreateHobbies();
-  if (!visible.find((h) => h.key === activeRecreateHobby)) {
-    activeRecreateHobby = visible[0]?.key || "sailing";
+  if (activeRecreateHobby && !visible.find((h) => h.key === activeRecreateHobby)) {
+    activeRecreateHobby = null;
   }
-  const tabsHtml = visible.map((h) => `
-    <button class="recreate-topic-tab${h.key === activeRecreateHobby ? " is-active" : ""}"
-      role="tab" aria-selected="${h.key === activeRecreateHobby}" data-hobby-tab="${h.key}">
-      ${escapeHtml(h.label)}
-    </button>
-  `).join("");
+
+  // Landing: activity cards
+  if (!activeRecreateHobby) {
+    elements.recreatePlannerGrid.innerHTML = `
+      <div class="workout-pool recreate-pool">
+        ${visible.length ? visible.map((h) => `
+          <div class="workout-pool-card-wrap">
+            <button class="workout-pool-card" type="button" data-open-hobby="${escapeHtml(h.key)}">
+              <span class="workout-pool-icon" aria-hidden="true">${RECREATE_HOBBY_ICONS[h.key] || "🎯"}</span>
+              <span class="workout-pool-title">${escapeHtml(h.label)}</span>
+              <span class="workout-pool-last">${escapeHtml(recreateHobbySummary(h.key))}</span>
+            </button>
+          </div>
+        `).join("") : `<div class="empty-state">Turn on hobbies in Settings → Recreate → Hobbies.</div>`}
+      </div>
+    `;
+    elements.recreatePlannerGrid.querySelectorAll("[data-open-hobby]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        activeRecreateHobby = btn.dataset.openHobby;
+        renderRecreatePage();
+      });
+    });
+    return;
+  }
+
+  // Detail: the activity's full view with a back button
+  const hobby = RECREATE_HOBBIES.find((h) => h.key === activeRecreateHobby);
   let bodyHtml = "";
   if (activeRecreateHobby === "sailing") bodyHtml = renderSailingLogPanel();
   else if (activeRecreateHobby === "piano") bodyHtml = renderPianoPanel();
   elements.recreatePlannerGrid.innerHTML = `
     <div class="recreate-page">
-      <div class="recreate-topic-tabs" role="tablist">${tabsHtml}</div>
+      <div class="recreate-detail-head">
+        <button class="icon-btn" type="button" data-recreate-back title="Back" aria-label="Back to activities">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        </button>
+        <h2 class="recreate-detail-title">${escapeHtml(hobby?.label || "")}</h2>
+      </div>
       <div class="recreate-topic-body">${bodyHtml}</div>
     </div>
   `;
+  elements.recreatePlannerGrid.querySelector("[data-recreate-back]")?.addEventListener("click", () => {
+    stopMetronome();
+    activeRecreateHobby = null;
+    renderRecreatePage();
+  });
   bindRecreateControls();
-  updateTabIndicator(elements.recreatePlannerGrid);
 }
 
 function renderSailingLogPanel() {

@@ -4761,6 +4761,20 @@ input.live-toggle:checked::before,
   padding: 16px 16px 8px;
 }
 
+/* Recreate landing reuses the Exercise card grid; detail views get a
+   back-button header. */
+.recreate-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0 10px;
+}
+
+.recreate-detail-title {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
 .workout-pool-card {
   display: grid;
   grid-template-rows: auto 1fr auto;
