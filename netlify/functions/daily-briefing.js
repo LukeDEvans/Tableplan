@@ -169,9 +169,43 @@ async function generateBriefing(apiKey, context) {
 
 export const config = { schedule: "0 13 * * *" };
 
+// TTS audio is a regenerable cache: article MP3s in the article-audio bucket
+// are cheap to recreate on demand, so anything older than 30 days is swept
+// daily. This bounds the bucket to ~a month of listening instead of growing
+// forever toward the storage quota.
+async function cleanupOldTtsAudio(serviceKey) {
+  const headers = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "content-type": "application/json" };
+  const list = async (prefix) => {
+    const r = await fetch(`${SUPABASE_URL}/storage/v1/object/list/article-audio`, {
+      method: "POST", headers,
+      body: JSON.stringify({ prefix, limit: 1000, sortBy: { column: "name", order: "asc" } })
+    });
+    return r.ok ? r.json() : [];
+  };
+  const cutoff = Date.now() - 30 * 86400000;
+  const folders = await list("");
+  for (const f of folders) {
+    if (f.id) continue; // root-level file, not an article folder
+    const files = await list(f.name + "/");
+    const paths = files.filter((x) => x.id).map((x) => `${f.name}/${x.name}`);
+    if (!paths.length) continue;
+    const newest = Math.max(...files.map((x) => new Date(x.updated_at || x.created_at || 0).getTime()));
+    if (newest >= cutoff) continue;
+    const del = await fetch(`${SUPABASE_URL}/storage/v1/object/article-audio`, {
+      method: "DELETE", headers, body: JSON.stringify({ prefixes: paths })
+    });
+    console.log(`[tts-cleanup] ${f.name}: ${del.ok ? "removed" : "delete failed"} (${paths.length} files)`);
+  }
+}
+
 export default async () => {
   const apiKey = (process.env.ANTHROPIC_API_KEY || "").trim();
   const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+
+  if (serviceKey) {
+    try { await cleanupOldTtsAudio(serviceKey); }
+    catch (e) { console.error("[tts-cleanup] failed:", e.message); }
+  }
   const vapidPublic = (process.env.VAPID_PUBLIC_KEY || "").trim();
   const vapidPrivate = (process.env.VAPID_PRIVATE_KEY || "").trim();
   const vapidEmail = (process.env.VAPID_CONTACT_EMAIL || "").trim();
