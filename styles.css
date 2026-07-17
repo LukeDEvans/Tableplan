@@ -2899,7 +2899,7 @@ input.live-toggle:checked::before,
   display: flex;
   align-items: center;
   gap: 10px;
-  justify-content: space-between;
+  justify-content: center;
   padding-top: 12px;
 }
 
@@ -2913,6 +2913,7 @@ input.live-toggle:checked::before,
 
 .meal-plan-page-actions {
   flex: 1;
+  justify-content: center;
 }
 
 .meal-plan-publish-actions {
@@ -2954,10 +2955,6 @@ input.live-toggle:checked::before,
   border-color: var(--window-border);
   color: var(--ink);
   outline: none;
-}
-
-.planner-page-btn[data-open-recipe-box-page] {
-  margin-left: auto;
 }
 
 .meal-plan-btns-left,
@@ -8315,39 +8312,35 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
 
   .meal-plan-page-actions {
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    gap: 10px;
     flex: unset;
     padding: 10px 0 16px;
+    width: 100%;
   }
 
+  /* The four page buttons share the full row width equally */
   .meal-plan-btns-left,
   .meal-plan-btns-right {
-    display: flex;
-    gap: 8px;
-    align-items: center;
+    display: contents;
   }
 
   .meal-plan-page-actions .planner-page-btn {
-    width: 64px;
+    flex: 1;
+    width: auto;
     height: 64px;
     padding: 0;
     border-radius: 14px;
   }
 
   .meal-plan-page-actions .icon-primary-btn {
-    width: 64px;
     height: 64px;
   }
 
   .meal-plan-page-actions .planner-icon,
   .meal-plan-page-actions [data-open-meal-autofill] .fast-forward-icon {
-    width: 24px;
-    height: 24px;
-  }
-
-  .planner-page-btn[data-open-recipe-box-page] {
-    margin-left: 0;
+    width: 26px;
+    height: 26px;
   }
 
   .auto-rule-combined-row {
@@ -12038,10 +12031,6 @@ body:has(#mailMainPage:not([hidden])) { overflow: hidden; height: 100dvh; }
 body:has(#mailMainPage:not([hidden])) .app-shell { height: 100%; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; }
 body:has(#mailMainPage:not([hidden])) .workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
-@media (max-width: 860px) {
-  body:has(#mailMainPage:not([hidden])) .app-shell { padding: 0; }
-  body:has(#mailMainPage:not([hidden])) .mail-page { padding: 0; border-radius: 0; border-left: none; border-right: none; border-top: none; }
-}
 
 .mail-page { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .mail-page-inner { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
