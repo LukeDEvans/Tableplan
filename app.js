@@ -6417,23 +6417,36 @@ function renderFinancePage() {
         </div>
         ${(state.financeAccounts || []).filter((a) => (a.owner || "Other") === owner).map((a) => {
           const live = a.linkedId ? liveById.get(a.linkedId) : null;
+          const editing = financeExpanded.has(`edit:${a.id}`);
           return `
-          <div class="fin-item-row">
-            <input class="fin-item-name" type="text" value="${escapeHtml(a.name)}" data-fin-edit="account-name" data-id="${a.id}" />
-            <select class="fin-scenario-select fin-owner-select" data-fin-edit="account-owner" data-id="${a.id}" title="Label" aria-label="Label for ${escapeHtml(a.name)}">
-              ${owners.map((o) => `<option value="${escapeHtml(o)}" ${o === (a.owner || "Other") ? "selected" : ""}>${escapeHtml(o)}</option>`).join("")}
-              <option value="__new__">New label…</option>
-            </select>
-            ${financeLinkStatus?.connected ? `
-            <select class="fin-scenario-select fin-acct-link" data-fin-edit="account-link" data-id="${a.id}" title="Linked bank account" aria-label="Link ${escapeHtml(a.name)} to a bank account">
-              <option value="">not linked</option>
-              ${(financeLive?.accounts || []).map((la) => `<option value="${escapeHtml(la.id)}" ${la.id === a.linkedId ? "selected" : ""}>${escapeHtml(la.org)}${la.org && la.name ? " — " : ""}${escapeHtml(la.name)}</option>`).join("")}
-              ${a.linkedId && !liveById.has(a.linkedId) ? `<option value="${escapeHtml(a.linkedId)}" selected>(linked — awaiting data)</option>` : ""}
-            </select>` : ""}
+          <div class="fin-item-row fin-acct-row">
+            <span class="fin-acct-name">${escapeHtml(a.name)}</span>
             ${live ? `<span class="fin-live-bal${(live.balance ?? 0) < 0 ? " is-neg" : ""}">${formatFinMoney(live.balance ?? 0)}</span>` : ""}
-            <button class="icon-btn fin-del-btn" type="button" data-fin-action="delete-account" data-id="${a.id}" title="Delete" aria-label="Delete account">&times;</button>
-          </div>`;
-        }).join("") || `<p class="fin-hint">No accounts under this label yet — move one here with its label dropdown.</p>`}`).join("")}
+            <button class="icon-btn fin-del-btn fin-label-btn" type="button" data-fin-action="toggle-expand" data-id="edit:${a.id}" title="Edit account" aria-label="Edit ${escapeHtml(a.name)}">${editing ? "▴" : "✎"}</button>
+          </div>
+          ${editing ? `
+          <div class="fin-acct-editor">
+            <div class="fin-item-row">
+              <input class="fin-item-name" type="text" value="${escapeHtml(a.name)}" data-fin-edit="account-name" data-id="${a.id}" aria-label="Account name" />
+            </div>
+            <div class="fin-item-row">
+              <select class="fin-scenario-select fin-editor-select" data-fin-edit="account-owner" data-id="${a.id}" title="Label" aria-label="Label for ${escapeHtml(a.name)}">
+                ${owners.map((o) => `<option value="${escapeHtml(o)}" ${o === (a.owner || "Other") ? "selected" : ""}>${escapeHtml(o)}</option>`).join("")}
+                <option value="__new__">New label…</option>
+              </select>
+              ${financeLinkStatus?.connected ? `
+              <select class="fin-scenario-select fin-editor-select" data-fin-edit="account-link" data-id="${a.id}" title="Linked bank account" aria-label="Link ${escapeHtml(a.name)} to a bank account">
+                <option value="">not linked</option>
+                ${(financeLive?.accounts || []).map((la) => `<option value="${escapeHtml(la.id)}" ${la.id === a.linkedId ? "selected" : ""}>${escapeHtml(la.org)}${la.org && la.name ? " — " : ""}${escapeHtml(la.name)}</option>`).join("")}
+                ${a.linkedId && !liveById.has(a.linkedId) ? `<option value="${escapeHtml(a.linkedId)}" selected>(linked — awaiting data)</option>` : ""}
+              </select>` : ""}
+            </div>
+            <div class="fin-item-row fin-item-row--tools">
+              <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="delete-account" data-id="${a.id}">Delete account</button>
+              <button class="secondary-btn fin-add-btn" type="button" data-fin-action="toggle-expand" data-id="edit:${a.id}">Done</button>
+            </div>
+          </div>` : ""}`;
+        }).join("") || `<p class="fin-hint">No accounts under this label yet — open an account's ✎ and pick this label.</p>`}`).join("")}
       ${unlinkedLive.length ? `
       <div class="fin-subhead">Live accounts not linked yet</div>
       ${unlinkedLive.map((a) => `

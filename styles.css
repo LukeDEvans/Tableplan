@@ -17489,3 +17489,14 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   [data-fin-card="accounts"] .fin-item-row { flex-wrap: wrap; }
   .fin-owner-select, .fin-acct-link { max-width: 44%; }
 }
+.fin-acct-row { min-height: 26px; }
+.fin-acct-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; }
+.fin-acct-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px 10px;
+  margin: 0 0 4px;
+  border-left: 2px solid color-mix(in srgb, var(--window-border) 35%, transparent);
+}
+.fin-editor-select { flex: 1; min-width: 0; max-width: none; }
