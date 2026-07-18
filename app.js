@@ -6175,7 +6175,8 @@ async function refreshFinanceLive() {
   if (financeLiveLoading) return;
   financeLiveLoading = true;
   if (activeAppArea === "finance") renderFinancePage();
-  const data = await callNetlifyFunction("simplefin", { action: "accounts", days: 30 });
+  // 45 days so the current calendar month is always fully covered for actuals
+  const data = await callNetlifyFunction("simplefin", { action: "accounts", days: 45 });
   financeLiveLoading = false;
   financeLive = data?.accounts
     ? { accounts: data.accounts, errors: data.errors || [], at: Date.now() }
