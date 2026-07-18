@@ -7797,9 +7797,17 @@ function buildMailBodyFrame(html) {
         const r = el.getBoundingClientRect().width;
         if (r >= 280 && r <= avail + 40) design = Math.max(design, r);
       });
-      if (b.scrollWidth > avail + 4) z = avail / b.scrollWidth;
+      // Absolutely-positioned content overflows html, not body — check both.
+      const wide = Math.max(b.scrollWidth, doc.documentElement.scrollWidth);
+      if (wide > avail + 4) z = avail / wide;
       else if (design && design < avail - 8) z = Math.min(avail / design, 1.75);
       if (Math.abs(z - 1) > 0.03) b.style.zoom = z;
+      // zoom is approximate on nested fixed-width layouts: if the doc still
+      // spills past the pane it would be clipped (scrolling="no"), so tighten.
+      if (z < 1) {
+        const still = Math.max(b.scrollWidth, doc.documentElement.scrollWidth);
+        if (still > avail + 4) b.style.zoom = z * (avail / still);
+      }
       // Measure the VISUAL height: with zoom applied, scrollHeight alone can
       // undershoot by a few px, which used to leave a nested scrollbar.
       const visual = Math.ceil(b.getBoundingClientRect().bottom + (doc.defaultView?.scrollY || 0));
