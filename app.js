@@ -6030,7 +6030,8 @@ function hideAllPages() {
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
-  elements.financeMainPage.hidden = true;
+  // Guarded: a stale cached shell without this section must not break nav
+  if (elements.financeMainPage) elements.financeMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
@@ -13582,7 +13583,7 @@ function updatePageTitleMenu() {
   elements.titleShopBtn.hidden = activeAppArea === "shop" || !isPagePersonallyEnabled("shop");
   elements.titleInventoryBtn.hidden = activeAppArea === "inventory" || !isPagePersonallyEnabled("inventory");
   elements.titleRecreateBtn.hidden = activeAppArea === "recreate" || !isPagePersonallyEnabled("recreate");
-  elements.titleFinanceBtn.hidden = activeAppArea === "finance" || !isPagePersonallyEnabled("finance");
+  if (elements.titleFinanceBtn) elements.titleFinanceBtn.hidden = activeAppArea === "finance" || !isPagePersonallyEnabled("finance");
   elements.titlePlanBtn.hidden = activeAppArea === "plan" || !isPagePersonallyEnabled("plan");
   elements.titleMailBtn.hidden = activeAppArea === "mail" || !isPagePersonallyEnabled("mail");
   if (elements.titleExploreBtn) elements.titleExploreBtn.hidden = activeAppArea === "explore" || !isPagePersonallyEnabled("explore");
@@ -13601,7 +13602,7 @@ function updatePageVisibility() {
   elements.homeShopBtn.hidden = !isPagePersonallyEnabled("shop");
   elements.homeInventoryBtn.hidden = !isPagePersonallyEnabled("inventory");
   elements.homeRecreateBtn.hidden = !isPagePersonallyEnabled("recreate");
-  elements.homeFinanceBtn.hidden = !isPagePersonallyEnabled("finance");
+  if (elements.homeFinanceBtn) elements.homeFinanceBtn.hidden = !isPagePersonallyEnabled("finance");
   elements.homePlanBtn.hidden = !isPagePersonallyEnabled("plan");
   elements.homeMailBtn.hidden = !isPagePersonallyEnabled("mail");
   const exploreBtn = document.getElementById("homeExploreBtn");
