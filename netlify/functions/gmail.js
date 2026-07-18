@@ -221,8 +221,9 @@ exports.handler = async (event) => {
       const r = await gFetch(gToken, `/threads/${threadId}?format=full`);
       if (!r.ok) return json(502, { error: "Gmail thread fetch failed." });
       const thread = await r.json();
+      // peek = background prefetch: reading ahead must never mark mail read
       const firstUnread = (thread.messages || []).find((m) => (m.labelIds || []).includes("UNREAD"));
-      if (firstUnread) await gFetch(gToken, `/messages/${firstUnread.id}/modify`, "POST", { removeLabelIds: ["UNREAD"] });
+      if (firstUnread && !body.peek) await gFetch(gToken, `/messages/${firstUnread.id}/modify`, "POST", { removeLabelIds: ["UNREAD"] });
       return json(200, { thread: normalizeThread(thread) });
     }
 

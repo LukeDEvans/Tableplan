@@ -2036,7 +2036,7 @@ async function initializeSupabaseAuth() {
   authSession = data.session;
   authCheckCompleted = true;
   updateAppLockState();
-  if (authSession?.access_token) warmMailStatus();
+  if (authSession?.access_token) { warmMailStatus(); warmMailList(); }
   supabaseClient.auth.onAuthStateChange(async (_event, session) => {
     const hadSession = !!authSession?.access_token;
     authSession = session;
@@ -2059,8 +2059,10 @@ async function initializeSupabaseAuth() {
       await hydrateRecipeRowsFromSupabase();
       maybeAutoLinkProfile();
       warmMailStatus();
+      warmMailList();
     } else {
       mailStatusPromise = null;
+      mailListPreload = null;
     }
   });
   updateAuthUi();
@@ -6151,6 +6153,46 @@ function warmMailStatus() {
   mailStatusPromise = callGmailApi({ action: "status" });
 }
 
+// ── Mail speed: preloaded inbox list + read-ahead thread cache ───────────────
+// warmMailList fires with the status warm-up at app start, so the inbox list
+// is usually already in flight (or resolved) by the time Mail opens. Once the
+// list renders, prefetchMailThreads quietly pulls full thread bodies (peek
+// mode — never marks anything read) so opening an email is instant.
+let mailListPreload = null; // { promise, at, labelId }
+const mailThreadCache = new Map(); // threadId → { thread, at }
+let mailPrefetchGen = 0;
+const MAIL_LIST_PRELOAD_TTL = 2 * 60 * 1000;
+const MAIL_THREAD_CACHE_TTL = 5 * 60 * 1000;
+const MAIL_PREFETCH_COUNT = 15;
+
+function warmMailList() {
+  if (!authSession?.access_token) return;
+  mailListPreload = { promise: callGmailApi({ action: "list", labelIds: ["INBOX"] }), at: Date.now(), labelId: "INBOX" };
+}
+
+function invalidateMailThreadCache(threadId) {
+  if (threadId) mailThreadCache.delete(threadId);
+}
+
+async function prefetchMailThreads(messages) {
+  const gen = ++mailPrefetchGen;
+  const targets = (messages || []).slice(0, MAIL_PREFETCH_COUNT).filter((m) => {
+    const c = mailThreadCache.get(m.threadId);
+    return !(c && Date.now() - c.at < MAIL_THREAD_CACHE_TTL);
+  });
+  // One at a time: this is a background nicety and must not crowd out
+  // user-initiated Gmail calls or trip API rate limits.
+  for (const m of targets) {
+    if (mailPrefetchGen !== gen) return; // a newer list superseded this run
+    const data = await callGmailApi({ action: "get", threadId: m.threadId, peek: true });
+    if (mailPrefetchGen !== gen) return;
+    if (data?.thread) {
+      mailThreadCache.set(m.threadId, { thread: data.thread, at: Date.now() });
+      while (mailThreadCache.size > 60) mailThreadCache.delete(mailThreadCache.keys().next().value);
+    }
+  }
+}
+
 (function setupMailSwipe() {
   let touchStartX = 0, touchStartY = 0;
   elements.mailThread.addEventListener("touchstart", (e) => {
@@ -6375,12 +6417,20 @@ async function loadMailList(labelId, q = "", append = false) {
     elements.mailThread.hidden = true;
     mailOpenThreadId = null;
   }
-  const data = await callGmailApi({
-    action: "list",
-    labelIds: [labelId],
-    q: (q || mailCurrentQuery) || undefined,
-    pageToken: append ? mailNextPageToken : undefined
-  });
+  // A fresh warm-up list (fired at app start) stands in for the first fetch
+  const preload = (!append && !q && mailListPreload &&
+    mailListPreload.labelId === labelId &&
+    Date.now() - mailListPreload.at < MAIL_LIST_PRELOAD_TTL) ? mailListPreload.promise : null;
+  if (preload) mailListPreload = null; // one-shot
+  let data = preload ? await preload : null;
+  if (!data) {
+    data = await callGmailApi({
+      action: "list",
+      labelIds: [labelId],
+      q: (q || mailCurrentQuery) || undefined,
+      pageToken: append ? mailNextPageToken : undefined
+    });
+  }
   if (!data) {
     const detail = lastGmailApiError ? ` ${escapeHtml(lastGmailApiError)}` : "";
     if (!append) elements.mailList.innerHTML = `<div class="mail-empty">Failed to load mail.${detail}</div>`;
@@ -6396,6 +6446,7 @@ async function loadMailList(labelId, q = "", append = false) {
   }
   appendMailRows(messages);
   if (mailNextPageToken) attachMailScrollSentinel();
+  prefetchMailThreads(messages);
 }
 
 // Infinite scroll: one persistent sentinel div sits after the last row; when
@@ -6544,6 +6595,7 @@ function appendMailRows(messages) {
       const nowStarred = !starBtn.classList.contains("is-starred");
       starBtn.classList.toggle("is-starred", nowStarred);
       starBtn.setAttribute("aria-label", nowStarred ? "Unstar" : "Star");
+      invalidateMailThreadCache(m.threadId);
       callGmailApi({ action: "move", threadId: m.threadId, addLabelIds: nowStarred ? ["STARRED"] : [], removeLabelIds: nowStarred ? [] : ["STARRED"] });
     });
 
@@ -6557,6 +6609,7 @@ function appendMailRows(messages) {
       const btn = e.target.closest("[data-row-action]");
       if (!btn) return;
       const action = btn.dataset.rowAction;
+      invalidateMailThreadCache(m.threadId);
       if (action === "archive") {
         await callGmailApi({ action: "move", threadId: m.threadId, addLabelIds: [], removeLabelIds: ["INBOX"] });
         if (mailSwipedRow === row) mailSwipedRow = null;
@@ -6594,6 +6647,7 @@ function showRowLabelPicker(threadId, btn, row) {
       const data = await callGmailApi({ action: "move", threadId, addLabelIds: [opt.dataset.labelId], removeLabelIds: [currentMailbox] });
       if (data?.ok) {
         recordMailMove(threadId, opt.dataset.labelId);
+        invalidateMailThreadCache(threadId);
         row.remove();
         if (mailOpenThreadId === threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
       }
@@ -6920,6 +6974,7 @@ function showMailSnoozeMenu(threadId, anchorEl) {
 async function snoozeMailThread(threadId, when) {
   const res = await callGmailApi({ action: "snooze", threadId, wakeAt: when.toISOString() });
   if (!res?.ok) { alert("Snooze failed: " + (lastGmailApiError || "unknown error")); return; }
+  invalidateMailThreadCache(threadId);
   showMailToast(`Snoozed until ${formatSnoozeWhen(when)}`);
   if (currentMailbox === "INBOX") {
     afterMailThreadAction(threadId);
@@ -7106,10 +7161,21 @@ async function openMailThread(threadId) {
   trackUsage("gmail_thread");
   mailOpenThreadId = threadId;
   elements.mailThread.hidden = false;
-  elements.mailThread.innerHTML = `<div class="mail-loading">Loading…</div>`;
-  const data = await callGmailApi({ action: "get", threadId });
-  if (!data?.thread) { elements.mailThread.innerHTML = `<div class="mail-empty">Failed to load thread.</div>`; return; }
-  renderMailThread(data.thread);
+  const cached = mailThreadCache.get(threadId);
+  if (cached && Date.now() - cached.at < MAIL_THREAD_CACHE_TTL) {
+    renderMailThread(cached.thread);
+    // The prefetch peeked without marking read — settle that now
+    if (cached.thread.messages?.some((m) => m.unread)) {
+      cached.thread.messages.forEach((m) => { m.unread = false; });
+      callGmailApi({ action: "move", threadId, addLabelIds: [], removeLabelIds: ["UNREAD"] });
+    }
+  } else {
+    elements.mailThread.innerHTML = `<div class="mail-loading">Loading…</div>`;
+    const data = await callGmailApi({ action: "get", threadId });
+    if (!data?.thread) { elements.mailThread.innerHTML = `<div class="mail-empty">Failed to load thread.</div>`; return; }
+    mailThreadCache.set(threadId, { thread: data.thread, at: Date.now() });
+    renderMailThread(data.thread);
+  }
   elements.mailList.querySelectorAll(".mail-row").forEach((b) => {
     b.classList.toggle("mail-row--active", b.dataset.threadId === threadId);
     if (b.dataset.threadId === threadId) b.classList.remove("mail-row--unread");
@@ -7315,6 +7381,7 @@ async function deleteMailThread(thread) {
 }
 
 async function markMailUnread(thread) {
+  invalidateMailThreadCache(thread.id);
   const data = await callGmailApi({ action: "move", threadId: thread.id, addLabelIds: ["UNREAD"], removeLabelIds: [] });
   if (data?.ok) {
     elements.mailList.querySelectorAll(`[data-thread-id="${CSS.escape(thread.id)}"]`).forEach((el) => el.classList.add("mail-row--unread"));
@@ -7324,6 +7391,7 @@ async function markMailUnread(thread) {
 }
 
 function afterMailThreadAction(threadId) {
+  invalidateMailThreadCache(threadId);
   elements.mailList.querySelectorAll(`[data-thread-id="${CSS.escape(threadId)}"]`).forEach((el) => el.remove());
   elements.mailThread.hidden = true;
   mailOpenThreadId = null;
@@ -7546,6 +7614,7 @@ function wireMailBulkBar() {
     const ids = [...mailSelected.keys()];
     await Promise.all(ids.map((threadId) => callGmailApi({ action: "move", threadId, addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] })));
     ids.forEach((threadId) => {
+      invalidateMailThreadCache(threadId);
       elements.mailList.querySelectorAll(`[data-thread-id="${CSS.escape(threadId)}"]`).forEach((r) => r.remove());
       mailSelected.delete(threadId);
       if (mailOpenThreadId === threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
@@ -7557,6 +7626,7 @@ function wireMailBulkBar() {
     const ids = [...mailSelected.keys()];
     await Promise.all(ids.map((threadId) => callGmailApi({ action: "move", threadId, addLabelIds: ["UNREAD"], removeLabelIds: [] })));
     ids.forEach((threadId) => {
+      invalidateMailThreadCache(threadId);
       elements.mailList.querySelectorAll(`[data-thread-id="${CSS.escape(threadId)}"]`).forEach((r) => r.classList.add("mail-row--unread"));
       mailSelected.delete(threadId);
     });
@@ -7594,6 +7664,8 @@ function showBulkMovePicker() {
       const ids = [...mailSelected.keys()];
       await Promise.all(ids.map((threadId) => callGmailApi({ action: "move", threadId, addLabelIds: [opt.dataset.labelId], removeLabelIds: [currentMailbox] })));
       ids.forEach((threadId) => {
+        recordMailMove(threadId, opt.dataset.labelId);
+        invalidateMailThreadCache(threadId);
         elements.mailList.querySelectorAll(`[data-thread-id="${CSS.escape(threadId)}"]`).forEach((r) => r.remove());
         mailSelected.delete(threadId);
         if (mailOpenThreadId === threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
@@ -8081,6 +8153,7 @@ async function sendMailReply(thread, lastMsg) {
   if (data?.ok) {
     document.getElementById("mailReplyCompose").hidden = true;
     document.getElementById("mailReplyBody").value = "";
+    invalidateMailThreadCache(thread.id); // the cached copy predates this reply
     openMailThread(thread.id);
   } else {
     alert("Send failed: " + (lastGmailApiError || "unknown error"));
