@@ -6290,7 +6290,12 @@ function financeLabeledTxns() {
 function financeTxnLabelName(key) {
   if (key === "income") return "Income";
   if (key === "mgmt") return "Account mgmt";
-  const [, gId, cId] = String(key || "").split(":");
+  const k = String(key || "");
+  if (k.startsWith("income:")) {
+    const p = (state.financePeople || []).find((x) => x.id === k.slice(7));
+    return p ? `Income · ${p.name}` : "Income";
+  }
+  const [, gId, cId] = k.split(":");
   const g = (state.financeBudgetGroups || []).find((x) => x.id === gId);
   const c = g?.categories.find((x) => x.id === cId);
   return g && c ? `${g.label} · ${c.name}` : "";
@@ -6298,7 +6303,13 @@ function financeTxnLabelName(key) {
 
 function financeTxnLabelOptionsHtml(selected) {
   return `
-    <option value="income" ${selected === "income" ? "selected" : ""}>Income</option>
+    <optgroup label="Income">
+      ${(state.financePeople || []).map((p) => {
+        const key = `income:${p.id}`;
+        return `<option value="${key}" ${selected === key ? "selected" : ""}>${escapeHtml(p.name)}</option>`;
+      }).join("")}
+      <option value="income" ${selected === "income" ? "selected" : ""}>Other income</option>
+    </optgroup>
     <option value="mgmt" ${selected === "mgmt" ? "selected" : ""}>Account management</option>
     ${(state.financeBudgetGroups || []).map((g) => `
       <optgroup label="${escapeHtml(g.label)}">
@@ -6316,16 +6327,19 @@ function updateFinanceMonthActuals() {
   if (!financeLive?.accounts?.length) return;
   const month = new Date().toISOString().slice(0, 7);
   const cats = {};
+  const incomeBy = {};
   let incomeGot = 0;
   for (const t of financeLabeledTxns()) {
     if ((t.posted || "").slice(0, 7) !== month || !t.label) continue;
-    if (t.label === "income") incomeGot += (t.amount || 0);
-    else if (t.label.startsWith("cat:")) {
+    if (t.label === "income" || t.label.startsWith("income:")) {
+      incomeGot += (t.amount || 0);
+      incomeBy[t.label] = Math.round(((incomeBy[t.label] || 0) + (t.amount || 0)) * 100) / 100;
+    } else if (t.label.startsWith("cat:")) {
       const k = t.label.slice(4);
       cats[k] = Math.round(((cats[k] || 0) - (t.amount || 0)) * 100) / 100;
     }
   }
-  const entry = { cats, income: Math.round(incomeGot * 100) / 100 };
+  const entry = { cats, income: Math.round(incomeGot * 100) / 100, incomeBy };
   if (!state.financeMonthActuals || typeof state.financeMonthActuals !== "object") state.financeMonthActuals = {};
   if (JSON.stringify(state.financeMonthActuals[month]) === JSON.stringify(entry)) return;
   state.financeMonthActuals[month] = entry;
@@ -6432,17 +6446,23 @@ function renderFinancePage() {
   const haveLive = Boolean(financeLive?.accounts?.length);
   const showActuals = Boolean(financeLinkStatus?.connected && (haveLive || storedNow));
   const catActuals = new Map();
+  const incomeByKey = new Map();
   let incomeActual = 0;
   if (haveLive) {
     for (const t of allTxns) {
       if (!t.label || (t.posted || "").slice(0, 7) !== monthKey) continue;
-      if (t.label === "income") { incomeActual += (t.amount || 0); continue; }
+      if (t.label === "income" || t.label.startsWith("income:")) {
+        incomeActual += (t.amount || 0);
+        incomeByKey.set(t.label, (incomeByKey.get(t.label) || 0) + (t.amount || 0));
+        continue;
+      }
       if (!t.label.startsWith("cat:")) continue;
       const k = t.label.slice(4); // "<groupId>:<categoryId>"
       catActuals.set(k, (catActuals.get(k) || 0) - (t.amount || 0));
     }
   } else if (storedNow) {
     for (const [k, v] of Object.entries(storedNow.cats || {})) catActuals.set(k, Number(v) || 0);
+    for (const [k, v] of Object.entries(storedNow.incomeBy || {})) incomeByKey.set(k, Number(v) || 0);
     incomeActual = Number(storedNow.income) || 0;
   }
   const catActual = (g, c) => catActuals.get(`${g.id}:${c.id}`) || 0;
@@ -6476,6 +6496,7 @@ function renderFinancePage() {
       ${!incomeOpen ? "" : (state.financePeople || []).map((p) => {
         const active = financeActiveIncome(p);
         const open = financeExpanded.has(p.id);
+        const got = incomeByKey.get(`income:${p.id}`) || 0;
         return `
         <div class="fin-person">
           <div class="fin-person-row">
@@ -6483,6 +6504,7 @@ function renderFinancePage() {
             <select class="fin-scenario-select" data-fin-edit="active-scenario" data-person="${p.id}">
               ${p.scenarios.map((s) => `<option value="${s.id}" ${s.id === (active?.id || "") ? "selected" : ""}>${escapeHtml(s.label)}</option>`).join("")}
             </select>
+            ${showActuals && got ? `<span class="fin-cat-actual" title="Received this month">${formatFinMoney(got)}</span><span class="fin-of">/</span>` : ""}
             <span class="fin-person-amount">${formatFinMoney(active?.amount || 0)}</span>
             <button class="icon-btn fin-expand-btn" type="button" data-fin-action="toggle-expand" data-id="${p.id}" title="Edit scenarios" aria-label="Edit scenarios for ${escapeHtml(p.name)}">${open ? "▴" : "▾"}</button>
           </div>
