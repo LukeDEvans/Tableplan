@@ -157,6 +157,14 @@ const server = http.createServer(async (request, response) => {
       await handleNetlifyFunction("./netlify/functions/admin-data", request, response);
       return;
     }
+    if (url.pathname === "/.netlify/functions/simplefin") {
+      await handleNetlifyFunction("./netlify/functions/simplefin", request, response);
+      return;
+    }
+    if (url.pathname === "/.netlify/functions/event-attachment") {
+      await handleNetlifyFunction("./netlify/functions/event-attachment", request, response);
+      return;
+    }
     if (url.pathname === "/.netlify/functions/gmail") {
       await handleNetlifyFunction("./netlify/functions/gmail", request, response);
       return;
