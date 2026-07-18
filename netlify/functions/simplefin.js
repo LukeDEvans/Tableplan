@@ -68,6 +68,18 @@ exports.handler = async (event) => {
       return cors(json(200, { ok: true }));
     }
 
+    if (action === "history") {
+      // Daily balance snapshots recorded by the briefing job (finhist_ row is
+      // service-only; this is the sole client-facing read path).
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(`finhist_${groupId}`)}&select=state`,
+        { headers: svc(serviceKey), cache: "no-store" }
+      );
+      if (!res.ok) return cors(json(502, { error: "History load failed." }));
+      const rows = await res.json();
+      return cors(json(200, { days: rows[0]?.state?.days || {} }));
+    }
+
     if (action === "accounts") {
       const row = await loadSecretRow(serviceKey, groupId);
       const accessUrl = row?.state?.accessUrl;

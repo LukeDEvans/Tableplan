@@ -212,7 +212,7 @@ const STATE_SECTIONS = {
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
@@ -2869,6 +2869,7 @@ function defaultState() {
     financePersonal: [],
     financeTxnLabels: {},
     financeTxnRules: {},
+    financeMonthActuals: {},
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -2987,6 +2988,7 @@ function normalizeState(parsed) {
     financeAccountSubLabels: normalizeFinanceSubLabels(parsed?.financeAccountSubLabels),
     financeTxnLabels: (parsed?.financeTxnLabels && typeof parsed.financeTxnLabels === "object") ? parsed.financeTxnLabels : {},
     financeTxnRules: (parsed?.financeTxnRules && typeof parsed.financeTxnRules === "object") ? parsed.financeTxnRules : {},
+    financeMonthActuals: (parsed?.financeMonthActuals && typeof parsed.financeMonthActuals === "object") ? parsed.financeMonthActuals : {},
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
@@ -6167,6 +6169,13 @@ let financeLinkStatus = null; // null = unknown yet
 let financeLive = null;       // { accounts, errors, at }
 let financeLiveLoading = false;
 let financeLinkBusy = false;
+let financeHistory = null;    // { "YYYY-MM-DD": { netWorth, balances } } from daily snapshots
+
+async function loadFinanceHistory() {
+  const data = await callNetlifyFunction("simplefin", { action: "history" });
+  financeHistory = (data?.days && typeof data.days === "object") ? data.days : {};
+  if (activeAppArea === "finance") renderFinancePage();
+}
 
 async function checkFinanceLinkStatus() {
   const data = await callNetlifyFunction("simplefin", { action: "status" });
@@ -6186,6 +6195,8 @@ async function refreshFinanceLive() {
     ? { accounts: data.accounts, errors: data.errors || [], at: Date.now() }
     : { accounts: [], errors: [data?.error || "Could not reach the bank bridge."], at: Date.now() };
   setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length);
+  updateFinanceMonthActuals();
+  if (financeHistory === null) loadFinanceHistory();
   if (activeAppArea === "finance") renderFinancePage();
 }
 
@@ -6298,6 +6309,31 @@ function financeTxnLabelOptionsHtml(selected) {
       </optgroup>`).join("")}`;
 }
 
+// Persist this month's per-category totals (and income received) so history
+// survives the rolling transaction window, device restarts, and bridge
+// outages. Derived from labeled transactions; only written when values change.
+function updateFinanceMonthActuals() {
+  if (!financeLive?.accounts?.length) return;
+  const month = new Date().toISOString().slice(0, 7);
+  const cats = {};
+  let incomeGot = 0;
+  for (const t of financeLabeledTxns()) {
+    if ((t.posted || "").slice(0, 7) !== month || !t.label) continue;
+    if (t.label === "income") incomeGot += (t.amount || 0);
+    else if (t.label.startsWith("cat:")) {
+      const k = t.label.slice(4);
+      cats[k] = Math.round(((cats[k] || 0) - (t.amount || 0)) * 100) / 100;
+    }
+  }
+  const entry = { cats, income: Math.round(incomeGot * 100) / 100 };
+  if (!state.financeMonthActuals || typeof state.financeMonthActuals !== "object") state.financeMonthActuals = {};
+  if (JSON.stringify(state.financeMonthActuals[month]) === JSON.stringify(entry)) return;
+  state.financeMonthActuals[month] = entry;
+  const months = Object.keys(state.financeMonthActuals).sort();
+  for (let i = 0; i < months.length - 36; i++) delete state.financeMonthActuals[months[i]];
+  persist();
+}
+
 function recordFinanceTxnLabel(txnId, labelKey, description) {
   if (!state.financeTxnLabels || typeof state.financeTxnLabels !== "object") state.financeTxnLabels = {};
   const labels = state.financeTxnLabels;
@@ -6319,6 +6355,7 @@ function recordFinanceTxnLabel(txnId, labelKey, description) {
   }
   if (financeLive) financeLive.labeled = null; // recompute with the new label
   setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length);
+  updateFinanceMonthActuals();
   persist();
 }
 
@@ -6386,18 +6423,34 @@ function renderFinancePage() {
   const cashFlow = income - expenses;
 
   // Actual spend this calendar month per category, from labeled transactions
-  // (spend transactions are negative amounts; mgmt/income labels don't land here)
+  // (spend transactions are negative amounts; mgmt/income labels don't land
+  // here). Falls back to the persisted month totals when live data is absent.
   const allTxns = financeLabeledTxns();
-  const showActuals = Boolean(financeLinkStatus?.connected && financeLive);
   const monthKey = new Date().toISOString().slice(0, 7);
+  const storedMonths = (state.financeMonthActuals && typeof state.financeMonthActuals === "object") ? state.financeMonthActuals : {};
+  const storedNow = storedMonths[monthKey];
+  const haveLive = Boolean(financeLive?.accounts?.length);
+  const showActuals = Boolean(financeLinkStatus?.connected && (haveLive || storedNow));
   const catActuals = new Map();
-  for (const t of allTxns) {
-    if (!t.label || !t.label.startsWith("cat:")) continue;
-    if ((t.posted || "").slice(0, 7) !== monthKey) continue;
-    const k = t.label.slice(4); // "<groupId>:<categoryId>"
-    catActuals.set(k, (catActuals.get(k) || 0) - (t.amount || 0));
+  let incomeActual = 0;
+  if (haveLive) {
+    for (const t of allTxns) {
+      if (!t.label || (t.posted || "").slice(0, 7) !== monthKey) continue;
+      if (t.label === "income") { incomeActual += (t.amount || 0); continue; }
+      if (!t.label.startsWith("cat:")) continue;
+      const k = t.label.slice(4); // "<groupId>:<categoryId>"
+      catActuals.set(k, (catActuals.get(k) || 0) - (t.amount || 0));
+    }
+  } else if (storedNow) {
+    for (const [k, v] of Object.entries(storedNow.cats || {})) catActuals.set(k, Number(v) || 0);
+    incomeActual = Number(storedNow.income) || 0;
   }
   const catActual = (g, c) => catActuals.get(`${g.id}:${c.id}`) || 0;
+  const prevMonthKey = (() => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); })();
+  const lastMo = storedMonths[prevMonthKey];
+  const lastMoGroupActual = (g) => lastMo?.cats
+    ? g.categories.reduce((s, c) => s + (Number(lastMo.cats[`${g.id}:${c.id}`]) || 0), 0)
+    : null;
 
   const finItemRow = (scope, it) => `
     <div class="fin-item-row">
@@ -6414,9 +6467,12 @@ function renderFinancePage() {
     </div>`;
 
   const incomeOpen = financeExpanded.has("card:income");
+  const incomeHead = showActuals
+    ? `<span class="fin-cat-actual">${formatFinMoney(incomeActual)}</span> <span class="fin-of">of</span> ${formatFinMoney(income)}/mo`
+    : `${formatFinMoney(income)}/mo`;
   const incomeCard = `
     <div class="fin-card" data-fin-card="income">
-      ${cardHead("card:income", "Income", `${formatFinMoney(income)}/mo`)}
+      ${cardHead("card:income", "Income", incomeHead)}
       ${!incomeOpen ? "" : (state.financePeople || []).map((p) => {
         const active = financeActiveIncome(p);
         const open = financeExpanded.has(p.id);
@@ -6462,7 +6518,7 @@ function renderFinancePage() {
         <div class="fin-group-meter-fill${pct > g.idealPct ? " is-over" : ""}" style="width:${Math.min(100, pct)}%"></div>
         <div class="fin-group-meter-ideal" style="left:${Math.min(100, g.idealPct)}%"></div>
       </div>
-      <div class="fin-group-pct">${income > 0 ? `${pct.toFixed(1)}% of income · ideal ${g.idealPct}%` : `ideal ${g.idealPct}% of income`}</div>
+      <div class="fin-group-pct">${income > 0 ? `${pct.toFixed(1)}% of income · ideal ${g.idealPct}%` : `ideal ${g.idealPct}% of income`}${showActuals && lastMoGroupActual(g) !== null ? ` · last mo ${formatFinMoney(lastMoGroupActual(g))}` : ""}</div>
       ${!cardOpen ? "" : g.categories.map((c) => {
         const open = financeExpanded.has(c.id);
         const scope = `cat:${g.id}:${c.id}`;
@@ -6697,6 +6753,26 @@ function renderFinancePage() {
       ${!txnsOpen ? "" : txns.map(txnRow).join("") || `<div class="empty-state">No transactions in the last 30 days.</div>`}
     </div>`;
 
+  const histDays = financeHistory ? Object.keys(financeHistory).sort() : [];
+  const trendCard = histDays.length < 2 ? "" : (() => {
+    const vals = histDays.map((d) => Number(financeHistory[d]?.netWorth) || 0);
+    const min = Math.min(...vals), max = Math.max(...vals);
+    const span = (max - min) || 1;
+    const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * 100},${26 - ((v - min) / span) * 22}`).join(" ");
+    const delta = vals[vals.length - 1] - vals[0];
+    const sinceLabel = new Date(histDays[0] + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const open = financeExpanded.has("card:networth");
+    return `
+    <div class="fin-card" data-fin-card="networth">
+      ${cardHead("card:networth", "Net worth trend", `<span class="fin-cat-actual${delta < 0 ? " is-over" : ""}">${delta >= 0 ? "+" : ""}${formatFinMoney(delta)}</span> <span class="fin-of">since ${escapeHtml(sinceLabel)}</span>`)}
+      ${!open ? "" : `
+      <svg class="fin-trend" viewBox="0 0 100 28" preserveAspectRatio="none" role="img" aria-label="Net worth over time">
+        <polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+      </svg>
+      <div class="fin-group-pct">${histDays.length} daily snapshots · ${formatFinMoney(vals[0])} → ${formatFinMoney(vals[vals.length - 1])}</div>`}
+    </div>`;
+  })();
+
   const bellSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
   const notifBlock = !financeLinkStatus?.connected ? "" : `
     <div class="fin-notif-wrap">
@@ -6727,6 +6803,7 @@ function renderFinancePage() {
         ${incomeCard}
         ${groupCards}
         ${txnsCard}
+        ${trendCard}
         ${personalCard}
         ${accountsCard}
       </div>

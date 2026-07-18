@@ -198,6 +198,82 @@ async function cleanupOldTtsAudio(serviceKey) {
   }
 }
 
+// ── Daily finance balance snapshot ───────────────────────────────────────────
+// For each household with a SimpleFIN link: record every tracked account's
+// balance (live for linked accounts, manual otherwise) plus the net-worth sum
+// into the service-only row finhist_<groupId>. Clients read it through the
+// simplefin function's "history" action; they can never write or clobber it.
+function sbHeaders(serviceKey) {
+  return { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json", "content-type": "application/json", "x-live-writer": "2" };
+}
+
+function splitAccessUrl(accessUrl) {
+  try {
+    const u = new URL(accessUrl);
+    const auth = (u.username || u.password)
+      ? Buffer.from(`${decodeURIComponent(u.username)}:${decodeURIComponent(u.password)}`).toString("base64")
+      : null;
+    u.username = ""; u.password = "";
+    return { url: u.toString().replace(/\/+$/, ""), auth };
+  } catch { return { url: accessUrl, auth: null }; }
+}
+
+async function snapshotFinanceBalances(serviceKey) {
+  const headers = sbHeaders(serviceKey);
+  const linkRes = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=like.simplefin*&select=id,state`, { headers });
+  if (!linkRes.ok) throw new Error(`simplefin rows ${linkRes.status}`);
+  for (const linkRow of await linkRes.json()) {
+    const groupId = linkRow.id.replace(/^simplefin_/, "");
+    const accessUrl = linkRow.state?.accessUrl;
+    if (!accessUrl || groupId === linkRow.id) continue;
+    try {
+      const { url, auth } = splitAccessUrl(accessUrl);
+      // balances only — a 1-day window keeps the payload tiny
+      const start = Math.floor(Date.now() / 1000) - 86400;
+      const bridge = await fetch(`${url}/accounts?start-date=${start}`, {
+        headers: { accept: "application/json", ...(auth ? { authorization: `Basic ${auth}` } : {}) }
+      });
+      if (!bridge.ok) { console.error(`[fin-snapshot] bridge ${bridge.status} for group`); continue; }
+      const data = await bridge.json().catch(() => null);
+      const liveById = new Map((data?.accounts || []).map((a) => [String(a.id || ""), a]));
+
+      const finRes = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(groupId + ":finance")}&select=state`, { headers });
+      const finRows = finRes.ok ? await finRes.json() : [];
+      const accounts = finRows[0]?.state?.financeAccounts || [];
+
+      const balances = {};
+      let netWorth = 0, any = false;
+      for (const a of accounts) {
+        const live = a.linkedId ? liveById.get(a.linkedId) : null;
+        const bal = live && live.balance != null ? parseFloat(live.balance)
+          : (a.manualBalance != null && a.manualBalance !== "" ? Number(a.manualBalance) : null);
+        if (bal === null || !Number.isFinite(bal)) continue;
+        balances[a.id] = Math.round(bal * 100) / 100;
+        netWorth += bal; any = true;
+      }
+      if (!any) continue;
+
+      const histId = `finhist_${groupId}`;
+      const histRes = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(histId)}&select=state`, { headers });
+      const histRows = histRes.ok ? await histRes.json() : [];
+      const days = (histRows[0]?.state?.days && typeof histRows[0].state.days === "object") ? histRows[0].state.days : {};
+      days[dateKey(new Date())] = { netWorth: Math.round(netWorth * 100) / 100, balances };
+      const keys = Object.keys(days).sort();
+      for (let i = 0; i < keys.length - 730; i++) delete days[keys[i]];
+
+      const up = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
+        method: "POST",
+        headers: { ...headers, prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({ id: histId, state: { days }, updated_at: new Date().toISOString() })
+      });
+      if (!up.ok) console.error(`[fin-snapshot] save ${up.status}`);
+      else console.log(`[fin-snapshot] recorded ${Object.keys(balances).length} balances`);
+    } catch (e) {
+      console.error("[fin-snapshot] group failed:", e.name || "error"); // names only — no URLs in logs
+    }
+  }
+}
+
 export default async () => {
   const apiKey = (process.env.ANTHROPIC_API_KEY || "").trim();
   const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
@@ -205,6 +281,8 @@ export default async () => {
   if (serviceKey) {
     try { await cleanupOldTtsAudio(serviceKey); }
     catch (e) { console.error("[tts-cleanup] failed:", e.message); }
+    try { await snapshotFinanceBalances(serviceKey); }
+    catch (e) { console.error("[fin-snapshot] failed:", e.message); }
   }
   const vapidPublic = (process.env.VAPID_PUBLIC_KEY || "").trim();
   const vapidPrivate = (process.env.VAPID_PRIVATE_KEY || "").trim();
