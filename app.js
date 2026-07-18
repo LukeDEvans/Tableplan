@@ -212,7 +212,7 @@ const STATE_SECTIONS = {
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
@@ -2870,6 +2870,7 @@ function defaultState() {
     financeTxnLabels: {},
     financeTxnRules: {},
     financeMonthActuals: {},
+    financeRecurring: [],
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -2989,6 +2990,19 @@ function normalizeState(parsed) {
     financeTxnLabels: (parsed?.financeTxnLabels && typeof parsed.financeTxnLabels === "object") ? parsed.financeTxnLabels : {},
     financeTxnRules: (parsed?.financeTxnRules && typeof parsed.financeTxnRules === "object") ? parsed.financeTxnRules : {},
     financeMonthActuals: (parsed?.financeMonthActuals && typeof parsed.financeMonthActuals === "object") ? parsed.financeMonthActuals : {},
+    financeRecurring: (Array.isArray(parsed?.financeRecurring) ? parsed.financeRecurring : []).map((r) => ({
+      id: r?.id || createId("fin-rec"),
+      merchantKey: r?.merchantKey || "",
+      name: r?.name || "",
+      lineItemKey: r?.lineItemKey || "",
+      expectedDay: Number(r?.expectedDay) || 1,
+      lastAmount: Number(r?.lastAmount) || 0,
+      lastSeen: r?.lastSeen || "",
+      active: r?.active !== false,
+      ackAmount: Number.isFinite(Number(r?.ackAmount)) && r?.ackAmount !== null ? Number(r.ackAmount) : null,
+      missAck: r?.missAck || "",
+      newAck: Boolean(r?.newAck)
+    })),
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
@@ -4689,7 +4703,7 @@ function mergeStates(newer, older) {
     // Travel
     "trips", "travelIdeas",
     // Finance
-    "financePeople", "financeBudgetGroups", "financeAccounts", "financePersonal",
+    "financePeople", "financeBudgetGroups", "financeAccounts", "financePersonal", "financeRecurring",
   ]) {
     merged[key] = unionById(newer[key], older[key], key);
   }
@@ -6214,8 +6228,9 @@ async function refreshFinanceLive() {
   financeLive = data?.accounts
     ? { accounts: data.accounts, errors: data.errors || [], at: Date.now() }
     : { accounts: [], errors: [data?.error || "Could not reach the bank bridge."], at: Date.now() };
-  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length);
   updateFinanceMonthActuals();
+  updateFinanceRecurring();
+  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
   if (financeHistory === null) loadFinanceHistory();
   if (financeReceipts === null) loadFinanceReceipts();
   if (activeAppArea === "finance") renderFinancePage();
@@ -6244,6 +6259,7 @@ async function linkFinanceBanks() {
 // live in financeTxnLabels (txnId → key). financeTxnRules learns merchant →
 // label counts from MANUAL labels only, so auto-labels never train themselves.
 let financeNotifOpen = false;
+const financeTxnFilter = { q: "", kind: "", account: "" };
 
 function financeMerchantKey(desc) {
   const stop = new Set(["pos", "debit", "credit", "card", "purchase", "ach", "web", "id", "des", "co", "the", "of", "and", "inc", "llc", "com"]);
@@ -6274,8 +6290,44 @@ const FIN_INCOME_KEYWORDS = /payroll|direct dep|dir dep|dirdep|salary/i;
 function financeLabeledTxns() {
   if (!financeLive) return [];
   if (financeLive.labeled) return financeLive.labeled;
-  const txns = (financeLive.accounts || []).flatMap((a) =>
+  let txns = (financeLive.accounts || []).flatMap((a) =>
     a.transactions.map((t) => ({ ...t, accountId: a.id, account: `${a.org}${a.org && a.name ? " — " : ""}${a.name}` })));
+
+  // Pending→posted dedupe: banks reissue transaction ids when a pending
+  // charge posts, which would double-count anything labeled while pending.
+  // Same account + same amount + shared merchant token + ≤7d apart → keep
+  // the posted copy and migrate any label from the pending id.
+  {
+    const tokens = (d) => new Set(financeMerchantKey(d).split(" ").filter(Boolean));
+    const byKey = new Map();
+    for (const t of txns) {
+      const k = `${t.accountId}|${(t.amount || 0).toFixed(2)}`;
+      if (!byKey.has(k)) byKey.set(k, []);
+      byKey.get(k).push(t);
+    }
+    const dropIds = new Set();
+    let migrated = false;
+    for (const group of byKey.values()) {
+      const posted = group.filter((t) => !t.pending);
+      for (const p of group.filter((t) => t.pending)) {
+        const pTok = tokens(p.description);
+        const match = posted.find((q) =>
+          Math.abs(new Date(p.posted || 0) - new Date(q.posted || 0)) <= 7 * 86400000 &&
+          [...pTok].some((tok) => tokens(q.description).has(tok)));
+        if (!match) continue;
+        dropIds.add(p.id);
+        const ex = state.financeTxnLabels || {};
+        if (ex[p.id] && !ex[match.id]) {
+          ex[match.id] = ex[p.id];
+          delete ex[p.id];
+          migrated = true;
+        }
+      }
+    }
+    if (dropIds.size) txns = txns.filter((t) => !dropIds.has(t.id));
+    if (migrated) persist();
+  }
+
   // Transfer pairs: same magnitude, opposite signs, different accounts, ≤5d apart
   const mgmtPairs = new Set();
   const byAmt = new Map();
@@ -6362,6 +6414,109 @@ function financeTxnLabelOptionsHtml(selected) {
           return `<option value="${key}" ${selected === key ? "selected" : ""}>${escapeHtml(c.name)}</option>`;
         }).join("")}
       </optgroup>`).join("")}`;
+}
+
+// ── Recurring charges ────────────────────────────────────────────────────────
+// Detected from the live window: two same-merchant spend charges 24–38 days
+// apart with amounts within ±15% mark the merchant recurring. Entries can be
+// linked to a budget LINE ITEM, enabling price-change and missing-bill alerts.
+function financeResolveLineItem(key) {
+  const [kind, gId, cId, itemId] = String(key || "").split(":");
+  if (kind !== "item") return null;
+  const g = (state.financeBudgetGroups || []).find((x) => x.id === gId);
+  const c = g?.categories.find((x) => x.id === cId);
+  const it = c?.items.find((x) => x.id === itemId);
+  return it ? { g, c, it } : null;
+}
+
+function financeLineItemOptionsHtml(selected) {
+  return (state.financeBudgetGroups || []).map((g) => `
+    <optgroup label="${escapeHtml(g.label)}">
+      ${g.categories.flatMap((c) => c.items.map((it) => {
+        const key = `item:${g.id}:${c.id}:${it.id}`;
+        return `<option value="${key}" ${key === selected ? "selected" : ""}>${escapeHtml(c.name)} · ${escapeHtml(it.name || "(unnamed)")}</option>`;
+      })).join("")}
+    </optgroup>`).join("");
+}
+
+function updateFinanceRecurring() {
+  if (!financeLive?.accounts?.length) return;
+  const byMerchant = new Map();
+  for (const t of financeLabeledTxns()) {
+    if ((t.amount || 0) >= 0 || t.pending) continue;
+    const k = financeMerchantKey(t.description);
+    if (!k) continue;
+    if (!byMerchant.has(k)) byMerchant.set(k, []);
+    byMerchant.get(k).push(t);
+  }
+  if (!Array.isArray(state.financeRecurring)) state.financeRecurring = [];
+  let changed = false;
+  for (const [mk, list] of byMerchant) {
+    list.sort((a, b) => (a.posted || "").localeCompare(b.posted || ""));
+    const latest = list[list.length - 1];
+    let isRecurring = false;
+    for (let i = 1; i < list.length; i++) {
+      const gap = (new Date(list[i].posted || 0) - new Date(list[i - 1].posted || 0)) / 86400000;
+      const ratio = Math.abs(list[i].amount) / (Math.abs(list[i - 1].amount) || 1);
+      if (gap >= 24 && gap <= 38 && Math.abs(list[i].amount) >= 3 && ratio >= 0.85 && ratio <= 1.15) isRecurring = true;
+    }
+    const entry = state.financeRecurring.find((r) => r.merchantKey === mk);
+    const seenDate = (latest.posted || "").slice(0, 10);
+    const amt = Math.round(Math.abs(latest.amount) * 100) / 100;
+    if (entry) {
+      if (entry.lastSeen !== seenDate || entry.lastAmount !== amt) {
+        entry.lastSeen = seenDate;
+        entry.lastAmount = amt;
+        entry.expectedDay = new Date(latest.posted || 0).getDate() || entry.expectedDay;
+        changed = true;
+      }
+    } else if (isRecurring) {
+      state.financeRecurring.push({
+        id: createId("fin-rec"),
+        merchantKey: mk,
+        name: String(latest.description || mk).slice(0, 48),
+        lineItemKey: "",
+        expectedDay: new Date(latest.posted || 0).getDate() || 1,
+        lastAmount: amt,
+        lastSeen: seenDate,
+        active: true,
+        ackAmount: null,
+        missAck: "",
+        newAck: false
+      });
+      changed = true;
+    }
+  }
+  if (changed) persist();
+}
+
+// Alerts the bell surfaces. kinds: "new" (unlinked recurring found),
+// "price" (charge differs from its budget line), "missing" (expected charge
+// hasn't arrived this month).
+function financeRecurringAlerts() {
+  const out = [];
+  const today = new Date();
+  const monthKey = today.toISOString().slice(0, 7);
+  for (const r of (state.financeRecurring || [])) {
+    if (!r.active || !r.lastSeen) continue;
+    if ((today - new Date(r.lastSeen)) / 86400000 > 75) continue; // stale — stop nagging
+    if (!r.lineItemKey) {
+      if (!r.newAck) out.push({ kind: "new", r });
+      continue;
+    }
+    const li = financeResolveLineItem(r.lineItemKey);
+    if (li) {
+      const diff = Math.abs((r.lastAmount || 0) - (li.it.amount || 0));
+      if (diff > Math.max(0.5, 0.02 * (li.it.amount || 0)) && r.ackAmount !== r.lastAmount) {
+        out.push({ kind: "price", r, li });
+      }
+    }
+    const seenMonth = r.lastSeen.slice(0, 7);
+    if (seenMonth < monthKey && today.getDate() > Math.min(28, (r.expectedDay || 1) + 5) && r.missAck !== monthKey) {
+      out.push({ kind: "missing", r });
+    }
+  }
+  return out;
 }
 
 // Persist this month's per-category totals (and income received) so history
@@ -6453,7 +6608,7 @@ function recordFinanceTxnLabel(txnId, labelKey, description) {
     }
   }
   if (financeLive) financeLive.labeled = null; // recompute with the new label
-  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length);
+  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
   updateFinanceMonthActuals();
   persist();
 }
@@ -6840,8 +6995,19 @@ function renderFinancePage() {
       </div>`}
     </div>`;
 
-  const txns = allTxns.slice(0, 60);
+  const f = financeTxnFilter;
+  let shownTxns = allTxns;
+  if (f.q) shownTxns = shownTxns.filter((t) => (t.description || "").toLowerCase().includes(f.q.toLowerCase()));
+  if (f.account) shownTxns = shownTxns.filter((t) => t.accountId === f.account);
+  if (f.kind === "unlabeled") shownTxns = shownTxns.filter((t) => !t.label);
+  else if (f.kind === "auto") shownTxns = shownTxns.filter((t) => t.labelSource === "auto");
+  else if (f.kind === "split") shownTxns = shownTxns.filter((t) => t.label === "split");
+  else if (f.kind === "mgmt") shownTxns = shownTxns.filter((t) => t.label === "mgmt");
+  else if (f.kind === "income") shownTxns = shownTxns.filter((t) => t.label === "income" || (t.label || "").startsWith("income:"));
+  else if (f.kind.startsWith("group:")) shownTxns = shownTxns.filter((t) => (t.label || "").startsWith(`cat:${f.kind.slice(6)}`));
+  const txns = shownTxns.slice(0, 60);
   const needsLabel = allTxns.filter((t) => !t.label);
+  const recAlerts = financeRecurringAlerts();
   const txnSelect = (t) => {
     const isSplit = t.label === "split";
     const placeholder = isSplit ? `Split (${(t.split || []).length})` : t.labelSource === "auto" ? `auto: ${escapeHtml(financeTxnLabelName(t.label))}` : "label…";
@@ -6891,10 +7057,52 @@ function renderFinancePage() {
       ${txnSelect(t)}
     </div>`;
   const txnsOpen = financeExpanded.has("card:txns");
+  const filterActive = Boolean(f.q || f.kind || f.account);
   const txnsCard = !financeLinkStatus?.connected ? "" : `
     <div class="fin-card" data-fin-card="txns">
-      ${cardHead("card:txns", "Transactions", `${needsLabel.length ? `${needsLabel.length} to label · ` : ""}${txns.length} · 30d`)}
-      ${!txnsOpen ? "" : txns.map((t) => txnRow(t) + (financeSplitDraft?.txnId === t.id ? splitEditorHtml(t) : "")).join("") || `<div class="empty-state">No transactions in the last 30 days.</div>`}
+      ${cardHead("card:txns", "Transactions", `${needsLabel.length ? `${needsLabel.length} to label · ` : ""}${filterActive ? `${shownTxns.length} of ` : ""}${allTxns.length}`)}
+      ${!txnsOpen ? "" : `
+      <div class="fin-txn-filters">
+        <input type="search" class="fin-item-name fin-txn-search" placeholder="Search…" value="${escapeHtml(f.q)}" data-fin-edit="txn-filter-q" aria-label="Search transactions" />
+        <select class="fin-scenario-select" data-fin-edit="txn-filter-kind" aria-label="Filter by label">
+          <option value="">All labels</option>
+          <option value="unlabeled" ${f.kind === "unlabeled" ? "selected" : ""}>Unlabeled</option>
+          <option value="auto" ${f.kind === "auto" ? "selected" : ""}>Auto-labeled</option>
+          <option value="income" ${f.kind === "income" ? "selected" : ""}>Income</option>
+          <option value="mgmt" ${f.kind === "mgmt" ? "selected" : ""}>Account mgmt</option>
+          <option value="split" ${f.kind === "split" ? "selected" : ""}>Splits</option>
+          ${(state.financeBudgetGroups || []).map((g) => `<option value="group:${g.id}" ${f.kind === `group:${g.id}` ? "selected" : ""}>${escapeHtml(g.label)}</option>`).join("")}
+        </select>
+        <select class="fin-scenario-select" data-fin-edit="txn-filter-account" aria-label="Filter by account">
+          <option value="">All accounts</option>
+          ${(financeLive?.accounts || []).map((a) => `<option value="${escapeHtml(a.id)}" ${f.account === a.id ? "selected" : ""}>${escapeHtml(a.org)}${a.org && a.name ? " — " : ""}${escapeHtml(a.name)}</option>`).join("")}
+        </select>
+        ${filterActive ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="txn-filter-clear">Clear</button>` : ""}
+      </div>
+      ${txns.map((t) => txnRow(t) + (financeSplitDraft?.txnId === t.id ? splitEditorHtml(t) : "")).join("") || `<div class="empty-state">${filterActive ? "Nothing matches the filters." : "No transactions in the last 30 days."}</div>`}`}
+    </div>`;
+
+  const recurringActive = (state.financeRecurring || []).filter((r) => r.active);
+  const recurringOpen = financeExpanded.has("card:recurring");
+  const recurringCard = !recurringActive.length ? "" : `
+    <div class="fin-card" data-fin-card="recurring">
+      ${cardHead("card:recurring", "Recurring", `${recurringActive.length}`)}
+      ${!recurringOpen ? "" : recurringActive.map((r) => {
+        const li = financeResolveLineItem(r.lineItemKey);
+        return `
+        <div class="fin-item-row fin-rec-row">
+          <span class="fin-acct-name" title="${escapeHtml(r.merchantKey)}">${escapeHtml(r.name)}</span>
+          <span class="fin-hint">~day ${r.expectedDay}</span>
+          <span class="fin-live-bal">${formatFinMoney(r.lastAmount)}</span>
+        </div>
+        <div class="fin-item-row fin-rec-link-row">
+          <select class="fin-scenario-select fin-editor-select" data-fin-edit="recurring-link" data-id="${r.id}" aria-label="Budget line for ${escapeHtml(r.name)}">
+            <option value="">${li ? "unlink" : "link to budget line…"}</option>
+            ${financeLineItemOptionsHtml(r.lineItemKey)}
+          </select>
+          <button class="icon-btn fin-del-btn" type="button" data-fin-action="recurring-not" data-id="${r.id}" title="Stop tracking" aria-label="Stop tracking ${escapeHtml(r.name)}">&times;</button>
+        </div>`;
+      }).join("")}
     </div>`;
 
   const histDays = financeHistory ? Object.keys(financeHistory).sort() : [];
@@ -6917,15 +7125,95 @@ function renderFinancePage() {
     </div>`;
   })();
 
+  // Month-close recap: pure arithmetic from the persisted month history.
+  const recapCard = !lastMo ? "" : (() => {
+    const monthName = new Date(prevMonthKey + "-15T12:00:00").toLocaleDateString(undefined, { month: "long" });
+    const cats = lastMo.cats || {};
+    const totalSpent = Object.values(cats).reduce((s, v) => s + (Number(v) || 0), 0);
+    const catName = (k) => {
+      const [gId, cId] = k.split(":");
+      const g = (state.financeBudgetGroups || []).find((x) => x.id === gId);
+      const c = g?.categories.find((x) => x.id === cId);
+      return c ? c.name : "(removed category)";
+    };
+    const top = Object.entries(cats).sort((a, b) => (b[1] || 0) - (a[1] || 0)).slice(0, 3);
+    const open = financeExpanded.has("card:recap");
+    return `
+    <div class="fin-card" data-fin-card="recap">
+      ${cardHead("card:recap", `${monthName} recap`, formatFinMoney(totalSpent))}
+      ${!open ? "" : `
+      ${(state.financeBudgetGroups || []).map((g) => {
+        const actual = lastMoGroupActual(g) || 0;
+        const budget = financeGroupTotal(g);
+        const over = actual - budget;
+        return `
+        <div class="fin-item-row fin-recap-row">
+          <span class="fin-acct-name">${escapeHtml(g.label)}</span>
+          <span class="fin-cat-actual${over > 0 ? " is-over" : ""}">${formatFinMoney(actual)}</span>
+          <span class="fin-of">of</span>
+          <span class="fin-category-total">${formatFinMoney(budget)}</span>
+          <span class="fin-recap-delta${over > 0 ? " is-over" : ""}">${over > 0 ? "+" : ""}${formatFinMoney(over)}</span>
+        </div>`;
+      }).join("")}
+      <div class="fin-item-row fin-recap-row">
+        <span class="fin-acct-name">Income received</span>
+        <span class="fin-cat-actual">${formatFinMoney(Number(lastMo.income) || 0)}</span>
+        <span class="fin-of">of</span>
+        <span class="fin-category-total">${formatFinMoney(income)}</span>
+      </div>
+      ${top.length ? `
+      <div class="fin-subhead">Biggest categories</div>
+      ${top.map(([k, v]) => `
+        <div class="fin-item-row fin-recap-row">
+          <span class="fin-acct-name">${escapeHtml(catName(k))}</span>
+          <span class="fin-live-bal">${formatFinMoney(Number(v) || 0)}</span>
+        </div>`).join("")}` : ""}
+      <p class="fin-hint">Compared against the current budget — plan changes since ${escapeHtml(monthName)} shift the deltas.</p>`}
+    </div>`;
+  })();
+
   const bellSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
+  const notifCount = needsLabel.length + recAlerts.length;
+  const alertHtml = (a) => {
+    if (a.kind === "new") return `
+      <div class="fin-alert">
+        <div class="fin-alert-text">New recurring charge: <b>${escapeHtml(a.r.name)}</b> · ${formatFinMoney(a.r.lastAmount)} around day ${a.r.expectedDay}</div>
+        <div class="fin-item-row fin-item-row--tools">
+          <select class="fin-scenario-select fin-editor-select" data-fin-edit="recurring-link" data-id="${a.r.id}" aria-label="Budget line for ${escapeHtml(a.r.name)}">
+            <option value="">link to budget line…</option>
+            ${financeLineItemOptionsHtml("")}
+          </select>
+          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-ignore" data-id="${a.r.id}">Ignore</button>
+          <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="recurring-not" data-id="${a.r.id}">Not recurring</button>
+        </div>
+      </div>`;
+    if (a.kind === "price") return `
+      <div class="fin-alert">
+        <div class="fin-alert-text"><b>${escapeHtml(a.r.name)}</b> charged ${formatFinMoney(a.r.lastAmount)} — the "${escapeHtml(a.li.c.name)} · ${escapeHtml(a.li.it.name)}" line budgets ${formatFinMoney(a.li.it.amount)}</div>
+        <div class="fin-item-row fin-item-row--tools">
+          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-price-update" data-id="${a.r.id}">Update line to ${formatFinMoney(a.r.lastAmount)}</button>
+          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-price-keep" data-id="${a.r.id}">Keep budget</button>
+        </div>
+      </div>`;
+    return `
+      <div class="fin-alert">
+        <div class="fin-alert-text"><b>${escapeHtml(a.r.name)}</b> (~day ${a.r.expectedDay}, usually ${formatFinMoney(a.r.lastAmount)}) hasn't appeared this month</div>
+        <div class="fin-item-row fin-item-row--tools">
+          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-miss-dismiss" data-id="${a.r.id}">Dismiss</button>
+        </div>
+      </div>`;
+  };
   const notifBlock = !financeLinkStatus?.connected ? "" : `
     <div class="fin-notif-wrap">
-      <button class="icon-btn fin-notif-btn" type="button" data-fin-action="toggle-notifs" title="Transactions that need a budget label" aria-label="Transactions to label">
+      <button class="icon-btn fin-notif-btn" type="button" data-fin-action="toggle-notifs" title="Finance items that need attention" aria-label="Finance notifications">
         ${bellSvg}
-        ${needsLabel.length ? `<span class="fin-notif-badge">${needsLabel.length}</span>` : ""}
+        ${notifCount ? `<span class="fin-notif-badge">${notifCount}</span>` : ""}
       </button>
       ${financeNotifOpen ? `
       <div class="fin-notif-panel">
+        ${recAlerts.length ? `
+        <div class="fin-notif-head">Recurring charges</div>
+        ${recAlerts.slice(0, 8).map(alertHtml).join("")}` : ""}
         <div class="fin-notif-head">Transactions to label</div>
         ${needsLabel.slice(0, 15).map(txnRow).join("") || `<div class="fin-notif-empty">Everything is labeled.</div>`}
         ${needsLabel.length > 15 ? `<div class="fin-notif-more">+ ${needsLabel.length - 15} more in the Transactions card</div>` : ""}
@@ -6947,6 +7235,8 @@ function renderFinancePage() {
         ${incomeCard}
         ${groupCards}
         ${txnsCard}
+        ${recurringCard}
+        ${recapCard}
         ${trendCard}
         ${personalCard}
         ${accountsCard}
@@ -7002,6 +7292,27 @@ function onFinanceGridClick(e) {
   if (action === "refresh-live") { refreshFinanceLive(); return; }
   if (action === "unlink-banks") { unlinkFinanceBanks(); return; }
   if (action === "toggle-notifs") { financeNotifOpen = !financeNotifOpen; renderFinancePage(); return; }
+  if (action === "txn-filter-clear") {
+    financeTxnFilter.q = ""; financeTxnFilter.kind = ""; financeTxnFilter.account = "";
+    renderFinancePage();
+    return;
+  }
+  if (action.startsWith("recurring-")) {
+    const r = (state.financeRecurring || []).find((x) => x.id === btn.dataset.id);
+    if (!r) return;
+    if (action === "recurring-not") r.active = false;
+    else if (action === "recurring-ignore") r.newAck = true;
+    else if (action === "recurring-price-update") {
+      const li = financeResolveLineItem(r.lineItemKey);
+      if (li) li.it.amount = r.lastAmount;
+      r.ackAmount = r.lastAmount;
+    } else if (action === "recurring-price-keep") r.ackAmount = r.lastAmount;
+    else if (action === "recurring-miss-dismiss") r.missAck = new Date().toISOString().slice(0, 7);
+    setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
+    persist();
+    renderFinancePage();
+    return;
+  }
   if (action === "split-add-row") { financeSplitDraft?.portions.push({ label: "", amount: "" }); renderFinancePage(); return; }
   if (action === "split-remove-row") { financeSplitDraft?.portions.splice(Number(btn.dataset.idx), 1); renderFinancePage(); return; }
   if (action === "split-cancel") { financeSplitDraft = null; renderFinancePage(); return; }
@@ -7165,6 +7476,24 @@ function onFinanceGridChange(e) {
       return;
     }
     recordFinanceTxnLabel(el.dataset.id, el.value, el.dataset.desc || "");
+    renderFinancePage();
+    return;
+  }
+  if (kind === "txn-filter-q" || kind === "txn-filter-kind" || kind === "txn-filter-account") {
+    if (kind === "txn-filter-q") financeTxnFilter.q = el.value.trim();
+    else if (kind === "txn-filter-kind") financeTxnFilter.kind = el.value;
+    else financeTxnFilter.account = el.value;
+    renderFinancePage();
+    return;
+  }
+  if (kind === "recurring-link") {
+    const r = (state.financeRecurring || []).find((x) => x.id === el.dataset.id);
+    if (!r) return;
+    r.lineItemKey = el.value;
+    r.newAck = true; // linked (or explicitly unlinked) — the "new" alert is answered
+    r.ackAmount = null; // fresh link: let a price mismatch surface
+    setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
+    persist();
     renderFinancePage();
     return;
   }

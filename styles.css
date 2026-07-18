@@ -17606,3 +17606,15 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 }
 .fin-split-select { max-width: none; flex: 1; }
 .fin-split-off { color: #b3261e; font-weight: 750; }
+
+/* Finance: filters, recurring, alerts, recap */
+.fin-txn-filters { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding-bottom: 6px; }
+.fin-txn-search { flex: 1 1 120px; min-width: 0; }
+.fin-txn-filters .fin-scenario-select { max-width: 32%; }
+.fin-alert { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding: 8px 0 4px; display: flex; flex-direction: column; gap: 4px; }
+.fin-alert-text { font-size: 0.82rem; line-height: 1.35; }
+.fin-rec-row { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding-top: 6px; }
+.fin-rec-link-row { padding-bottom: 6px; }
+.fin-recap-row { min-height: 24px; }
+.fin-recap-delta { font-size: 0.74rem; font-weight: 800; color: color-mix(in srgb, var(--ink) 55%, transparent); min-width: 64px; text-align: right; }
+.fin-recap-delta.is-over { color: #b3261e; }
