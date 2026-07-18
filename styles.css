@@ -17307,7 +17307,7 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 
 .fin-summary {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 10px;
 }
 .fin-stat {
@@ -17437,7 +17437,7 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-account-add .fin-item-name { flex: 1 1 130px; }
 
 @media (max-width: 700px) {
-  .fin-summary { grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+  .fin-summary { grid-template-columns: 1fr 1fr; gap: 6px; }
   .fin-stat { padding: 10px; }
   .fin-stat-value { font-size: 1.05rem; }
   .fin-personal-cols { grid-template-columns: 1fr; }
@@ -17591,3 +17591,5 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   margin-left: 7px;
   vertical-align: 2px;
 }
+.fin-bal-manual { opacity: 0.75; font-style: italic; }
+.fin-manual-bal { width: 130px; }

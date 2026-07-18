@@ -3657,7 +3657,10 @@ function normalizeFinanceAccounts(raw) {
     owner: a?.owner || "",
     sub: a?.sub || "",     // sub-label within the owner group ("" = none)
     name: a?.name || "",
-    linkedId: a?.linkedId || "" // SimpleFIN account id this row displays
+    linkedId: a?.linkedId || "", // SimpleFIN account id this row displays
+    // For accounts no aggregator reaches (loans, small 401(k)s): a manually
+    // kept balance, negative for debts. null = not tracked.
+    manualBalance: Number.isFinite(Number(a?.manualBalance)) && a?.manualBalance !== null && a?.manualBalance !== "" ? Number(a.manualBalance) : null
   }));
 }
 
@@ -6564,6 +6567,18 @@ function renderFinancePage() {
   const liveById = new Map((financeLive?.accounts || []).map((a) => [a.id, a]));
   const linkedIds = new Set((state.financeAccounts || []).map((a) => a.linkedId).filter(Boolean));
   const unlinkedLive = (financeLive?.accounts || []).filter((a) => !linkedIds.has(a.id));
+
+  // Net worth: live balances for linked accounts + manual balances elsewhere
+  let netWorth = null;
+  {
+    let sum = 0, any = false;
+    for (const a of (state.financeAccounts || [])) {
+      const live = a.linkedId ? liveById.get(a.linkedId) : null;
+      if (live && live.balance !== null && live.balance !== undefined) { sum += live.balance; any = true; }
+      else if (a.manualBalance !== null && a.manualBalance !== undefined) { sum += a.manualBalance; any = true; }
+    }
+    if (any) netWorth = sum;
+  }
   const accountsOpen = financeExpanded.has("card:accounts");
   const accountsCard = `
     <div class="fin-card" data-fin-card="accounts">
@@ -6579,10 +6594,11 @@ function renderFinancePage() {
           const live = a.linkedId ? liveById.get(a.linkedId) : null;
           const editing = financeExpanded.has(`edit:${a.id}`);
           const subs = ownerSubs(a.owner || "Other");
+          const shownBal = live ? (live.balance ?? 0) : a.manualBalance;
           return `
           <div class="fin-item-row fin-acct-row">
             <span class="fin-acct-name">${escapeHtml(a.name)}</span>
-            ${live ? `<span class="fin-live-bal${(live.balance ?? 0) < 0 ? " is-neg" : ""}">${formatFinMoney(live.balance ?? 0)}</span>` : ""}
+            ${shownBal !== null && shownBal !== undefined ? `<span class="fin-live-bal${shownBal < 0 ? " is-neg" : ""}${live ? "" : " fin-bal-manual"}" ${live ? "" : `title="Manually kept balance"`}>${formatFinMoney(shownBal)}</span>` : ""}
             <button class="icon-btn fin-del-btn fin-label-btn" type="button" data-fin-action="toggle-expand" data-id="edit:${a.id}" title="Edit account" aria-label="Edit ${escapeHtml(a.name)}">${editing ? "▴" : "✎"}</button>
           </div>
           ${editing ? `
@@ -6608,6 +6624,11 @@ function renderFinancePage() {
                 ${(financeLive?.accounts || []).map((la) => `<option value="${escapeHtml(la.id)}" ${la.id === a.linkedId ? "selected" : ""}>${escapeHtml(la.org)}${la.org && la.name ? " — " : ""}${escapeHtml(la.name)}</option>`).join("")}
                 ${a.linkedId && !liveById.has(a.linkedId) ? `<option value="${escapeHtml(a.linkedId)}" selected>(linked — awaiting data)</option>` : ""}
               </select>
+            </div>` : ""}
+            ${!a.linkedId ? `
+            <div class="fin-item-row">
+              <input class="fin-item-amount fin-manual-bal" type="text" inputmode="decimal" value="${a.manualBalance === null ? "" : escapeHtml(String(a.manualBalance))}" placeholder="Balance (− for debts)" data-fin-edit="account-manual-balance" data-id="${a.id}" aria-label="Manual balance for ${escapeHtml(a.name)}" />
+              <span class="fin-hint">manual balance — counts toward net worth</span>
             </div>` : ""}
             <div class="fin-item-row fin-item-row--tools">
               <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="delete-account" data-id="${a.id}">Delete account</button>
@@ -6698,6 +6719,7 @@ function renderFinancePage() {
           <div class="fin-stat"><span class="fin-stat-label">Income</span><span class="fin-stat-value">${formatFinMoney(income)}</span></div>
           <div class="fin-stat"><span class="fin-stat-label">Budgeted</span><span class="fin-stat-value">${formatFinMoney(expenses)}</span></div>
           <div class="fin-stat"><span class="fin-stat-label">Unallocated</span><span class="fin-stat-value${cashFlow < 0 ? " is-neg" : ""}">${formatFinMoney(cashFlow)}</span></div>
+          ${netWorth === null ? "" : `<div class="fin-stat"><span class="fin-stat-label">Net worth</span><span class="fin-stat-value${netWorth < 0 ? " is-neg" : ""}">${formatFinMoney(netWorth)}</span></div>`}
         </div>
         ${notifBlock}
       </div>
@@ -6906,6 +6928,15 @@ function onFinanceGridChange(e) {
   } else if (kind === "account-link") {
     const a = state.financeAccounts.find((x) => x.id === el.dataset.id);
     if (a) a.linkedId = el.value;
+  } else if (kind === "account-manual-balance") {
+    const a = state.financeAccounts.find((x) => x.id === el.dataset.id);
+    if (!a) return;
+    const raw = el.value.trim();
+    a.manualBalance = raw === "" ? null : (() => {
+      const neg = /^[-−(]/.test(raw);
+      const n = parseFinAmount(raw);
+      return neg ? -Math.abs(n) : n;
+    })();
   } else if (kind === "account-owner") {
     const a = state.financeAccounts.find((x) => x.id === el.dataset.id);
     if (!a) return;
