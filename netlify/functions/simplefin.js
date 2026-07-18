@@ -74,8 +74,11 @@ exports.handler = async (event) => {
       if (!accessUrl) return cors(json(409, { error: "SimpleFIN is not connected yet." }));
       const days = Math.min(Math.max(Number(body.days) || 30, 1), 90);
       const start = Math.floor(Date.now() / 1000) - days * 86400;
-      const res = await fetch(`${accessUrl}/accounts?start-date=${start}`, {
-        headers: { accept: "application/json" }
+      // SimpleFIN access URLs embed basic-auth credentials; Node's fetch
+      // rejects such URLs, so split them into an Authorization header.
+      const { url: bridgeUrl, auth } = splitAccessUrl(accessUrl);
+      const res = await fetch(`${bridgeUrl}/accounts?start-date=${start}`, {
+        headers: { accept: "application/json", ...(auth ? { authorization: `Basic ${auth}` } : {}) }
       });
       if (!res.ok) return cors(json(502, { error: `Bridge fetch failed (${res.status}).` }));
       const data = await res.json().catch(() => null);
@@ -111,6 +114,20 @@ exports.handler = async (event) => {
 function numOrNull(v) {
   const n = parseFloat(v);
   return Number.isFinite(n) ? n : null;
+}
+
+function splitAccessUrl(accessUrl) {
+  try {
+    const u = new URL(accessUrl);
+    const auth = (u.username || u.password)
+      ? Buffer.from(`${decodeURIComponent(u.username)}:${decodeURIComponent(u.password)}`).toString("base64")
+      : null;
+    u.username = "";
+    u.password = "";
+    return { url: u.toString().replace(/\/+$/, ""), auth };
+  } catch {
+    return { url: accessUrl, auth: null };
+  }
 }
 
 function secretRowId(groupId) {
