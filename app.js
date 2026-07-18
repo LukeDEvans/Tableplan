@@ -3646,7 +3646,8 @@ function normalizeFinanceAccounts(raw) {
   return (Array.isArray(raw) ? raw : []).map((a) => ({
     id: a?.id || createId("fin-account"),
     owner: a?.owner || "",
-    name: a?.name || ""
+    name: a?.name || "",
+    linkedId: a?.linkedId || "" // SimpleFIN account id this row displays
   }));
 }
 
@@ -6381,13 +6382,6 @@ function renderFinancePage() {
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="refresh-live" ${financeLiveLoading ? "disabled" : ""}>${financeLiveLoading ? "Refreshing…" : "Refresh"}</button>
         <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="unlink-banks">Disconnect</button>
       </div>
-      ${(financeLive?.accounts || []).length ? `
-      <div class="fin-subhead">Live balances</div>
-      ${financeLive.accounts.map((a) => `
-        <div class="fin-live-row">
-          <span class="fin-live-name">${escapeHtml(a.org)}${a.org && a.name ? " — " : ""}${escapeHtml(a.name)}</span>
-          <span class="fin-live-bal${(a.balance ?? 0) < 0 ? " is-neg" : ""}">${formatFinMoney(a.balance ?? 0)}</span>
-        </div>`).join("")}` : ""}
       ${(financeLive?.errors || []).length ? `<p class="fin-hint">${escapeHtml(financeLive.errors.join(" · "))}</p>` : ""}`
     : financeLinkStatus ? `
       <div class="fin-subhead">Bank link · SimpleFIN</div>
@@ -6399,6 +6393,9 @@ function renderFinancePage() {
     : `<p class="fin-hint">Checking bank link…</p>`;
 
   const owners = [...new Set((state.financeAccounts || []).map((a) => a.owner || "Other"))];
+  const liveById = new Map((financeLive?.accounts || []).map((a) => [a.id, a]));
+  const linkedIds = new Set((state.financeAccounts || []).map((a) => a.linkedId).filter(Boolean));
+  const unlinkedLive = (financeLive?.accounts || []).filter((a) => !linkedIds.has(a.id));
   const accountsOpen = financeExpanded.has("card:accounts");
   const accountsCard = `
     <div class="fin-card" data-fin-card="accounts">
@@ -6407,11 +6404,28 @@ function renderFinancePage() {
       ${linkBlock}
       ${owners.map((owner) => `
         <div class="fin-subhead">${escapeHtml(owner)}</div>
-        ${(state.financeAccounts || []).filter((a) => (a.owner || "Other") === owner).map((a) => `
+        ${(state.financeAccounts || []).filter((a) => (a.owner || "Other") === owner).map((a) => {
+          const live = a.linkedId ? liveById.get(a.linkedId) : null;
+          return `
           <div class="fin-item-row">
             <input class="fin-item-name" type="text" value="${escapeHtml(a.name)}" data-fin-edit="account-name" data-id="${a.id}" />
+            ${financeLinkStatus?.connected ? `
+            <select class="fin-scenario-select fin-acct-link" data-fin-edit="account-link" data-id="${a.id}" title="Linked bank account" aria-label="Link ${escapeHtml(a.name)} to a bank account">
+              <option value="">not linked</option>
+              ${(financeLive?.accounts || []).map((la) => `<option value="${escapeHtml(la.id)}" ${la.id === a.linkedId ? "selected" : ""}>${escapeHtml(la.org)}${la.org && la.name ? " — " : ""}${escapeHtml(la.name)}</option>`).join("")}
+              ${a.linkedId && !liveById.has(a.linkedId) ? `<option value="${escapeHtml(a.linkedId)}" selected>(linked — awaiting data)</option>` : ""}
+            </select>` : ""}
+            ${live ? `<span class="fin-live-bal${(live.balance ?? 0) < 0 ? " is-neg" : ""}">${formatFinMoney(live.balance ?? 0)}</span>` : ""}
             <button class="icon-btn fin-del-btn" type="button" data-fin-action="delete-account" data-id="${a.id}" title="Delete" aria-label="Delete account">&times;</button>
-          </div>`).join("")}`).join("")}
+          </div>`;
+        }).join("")}`).join("")}
+      ${unlinkedLive.length ? `
+      <div class="fin-subhead">Live accounts not linked yet</div>
+      ${unlinkedLive.map((a) => `
+        <div class="fin-live-row">
+          <span class="fin-live-name">${escapeHtml(a.org)}${a.org && a.name ? " — " : ""}${escapeHtml(a.name)}</span>
+          <span class="fin-live-bal${(a.balance ?? 0) < 0 ? " is-neg" : ""}">${formatFinMoney(a.balance ?? 0)}</span>
+        </div>`).join("")}` : ""}
       <div class="fin-account-add">
         <input class="fin-item-name" type="text" id="finNewAccountOwner" placeholder="Owner (e.g. Family)" />
         <input class="fin-item-name" type="text" id="finNewAccountName" placeholder="Institution — account" />
@@ -6580,6 +6594,9 @@ function onFinanceGridChange(e) {
   } else if (kind === "account-name") {
     const a = state.financeAccounts.find((x) => x.id === el.dataset.id);
     if (a) a.name = el.value.trim();
+  } else if (kind === "account-link") {
+    const a = state.financeAccounts.find((x) => x.id === el.dataset.id);
+    if (a) a.linkedId = el.value;
   } else if (kind === "category-mode") {
     const c = financeScopeCategory(el.dataset.scope);
     if (!c) return;

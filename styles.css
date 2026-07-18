@@ -17479,3 +17479,4 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-txn-date { flex: 0 0 52px; color: var(--muted); font-size: 0.76rem; }
 .fin-txn-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fin-txn-amt { font-weight: 750; }
+.fin-acct-link { max-width: 34%; font-weight: 600; font-size: 0.74rem; }
