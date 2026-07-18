@@ -17442,3 +17442,29 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   .fin-stat-value { font-size: 1.05rem; }
   .fin-personal-cols { grid-template-columns: 1fr; }
 }
+
+/* Finance: pick-one categories (income-scenario style) */
+.fin-category-row--pick { display: flex; align-items: center; gap: 8px; padding: 8px 2px; }
+.fin-category-pick-expand {
+  border: none;
+  background: none;
+  color: var(--ink);
+  font-weight: 750;
+  font-size: 0.88rem;
+  padding: 0;
+  text-align: left;
+}
+.fin-category-row--pick .fin-category-pick-expand:first-child { flex: 1; min-width: 0; }
+.fin-category-row--pick .fin-scenario-select { max-width: 40%; }
+.fin-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--muted);
+  margin-left: auto;
+  white-space: nowrap;
+}
+.fin-item-row--tools { flex-wrap: wrap; }
+.fin-item-row--tools .fin-danger { margin-left: auto; }

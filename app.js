@@ -3625,6 +3625,10 @@ function normalizeFinanceBudgetGroups(raw) {
     categories: (Array.isArray(g?.categories) ? g.categories : []).map((c) => ({
       id: c?.id || createId("fin-cat"),
       name: c?.name || "",
+      // "sum" totals every line; "pick" makes the lines exclusive options
+      // (income-scenario style) and the category equals the selected one.
+      mode: c?.mode === "pick" ? "pick" : "sum",
+      activeItemId: c?.activeItemId || "",
       items: normalizeFinanceLineItems(c?.items)
     }))
   }));
@@ -6147,8 +6151,17 @@ function financeItemsTotal(items) {
   return (items || []).reduce((s, it) => s + (Number(it.amount) || 0), 0);
 }
 
+function financeCategoryActiveItem(c) {
+  return (c.items || []).find((it) => it.id === c.activeItemId) || c.items?.[0] || null;
+}
+
+function financeCategoryTotal(c) {
+  if (c.mode === "pick") return financeCategoryActiveItem(c)?.amount || 0;
+  return financeItemsTotal(c.items);
+}
+
 function financeGroupTotal(group) {
-  return (group.categories || []).reduce((s, c) => s + financeItemsTotal(c.items), 0);
+  return (group.categories || []).reduce((s, c) => s + financeCategoryTotal(c), 0);
 }
 
 function financeExpensesTotal() {
@@ -6224,18 +6237,37 @@ function renderFinancePage() {
       <div class="fin-group-pct">${income > 0 ? `${pct.toFixed(1)}% of income · ideal ${g.idealPct}%` : `ideal ${g.idealPct}% of income`}</div>
       ${!cardOpen ? "" : g.categories.map((c) => {
         const open = financeExpanded.has(c.id);
-        return `
-        <div class="fin-category">
+        const scope = `cat:${g.id}:${c.id}`;
+        const pick = c.mode === "pick";
+        const activeItem = financeCategoryActiveItem(c);
+        const rowHtml = pick ? `
+          <div class="fin-category-row fin-category-row--pick">
+            <button class="fin-category-pick-expand" type="button" data-fin-action="toggle-expand" data-id="${c.id}">
+              <span class="fin-category-name">${escapeHtml(c.name)}</span>
+            </button>
+            <select class="fin-scenario-select" data-fin-edit="category-active" data-scope="${scope}" aria-label="${escapeHtml(c.name)} option">
+              ${c.items.map((it) => `<option value="${it.id}" ${it.id === (activeItem?.id || "") ? "selected" : ""}>${escapeHtml(it.name || "(unnamed)")}</option>`).join("")}
+            </select>
+            <span class="fin-category-total">${formatFinMoney(financeCategoryTotal(c))}</span>
+            <button class="fin-category-pick-expand fin-category-caret" type="button" data-fin-action="toggle-expand" data-id="${c.id}" aria-label="Edit ${escapeHtml(c.name)} options">${open ? "▴" : "▾"}</button>
+          </div>` : `
           <button class="fin-category-row" type="button" data-fin-action="toggle-expand" data-id="${c.id}">
             <span class="fin-category-name">${escapeHtml(c.name)}</span>
-            <span class="fin-category-total">${formatFinMoney(financeItemsTotal(c.items))}</span>
+            <span class="fin-category-total">${formatFinMoney(financeCategoryTotal(c))}</span>
             <span class="fin-category-caret">${open ? "▴" : "▾"}</span>
-          </button>
+          </button>`;
+        return `
+        <div class="fin-category">
+          ${rowHtml}
           ${open ? `
           <div class="fin-category-items">
-            ${c.items.map((it) => finItemRow(`cat:${g.id}:${c.id}`, it)).join("")}
+            ${c.items.map((it) => finItemRow(scope, it)).join("")}
             <div class="fin-item-row fin-item-row--tools">
-              <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-item" data-scope="cat:${g.id}:${c.id}">+ Line</button>
+              <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-item" data-scope="${scope}">+ ${pick ? "Option" : "Line"}</button>
+              <label class="fin-mode-toggle">
+                <input type="checkbox" class="live-toggle" data-fin-edit="category-mode" data-scope="${scope}" ${pick ? "checked" : ""} />
+                <span>Pick one</span>
+              </label>
               <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="delete-category" data-group="${g.id}" data-id="${c.id}">Delete category</button>
             </div>
           </div>` : ""}
@@ -6325,12 +6357,19 @@ function renderFinancePage() {
   }
 }
 
+// Resolves a "cat:<group>:<category>" scope to the live category object.
+function financeScopeCategory(scope) {
+  const [kind, a, b] = String(scope || "").split(":");
+  if (kind !== "cat") return null;
+  const group = (state.financeBudgetGroups || []).find((g) => g.id === a);
+  return group?.categories.find((c) => c.id === b) || null;
+}
+
 // Resolves a data-scope string to the live items array it addresses.
 function financeScopeItems(scope) {
   const [kind, a, b] = String(scope || "").split(":");
   if (kind === "cat") {
-    const group = (state.financeBudgetGroups || []).find((g) => g.id === a);
-    return group?.categories.find((c) => c.id === b)?.items || null;
+    return financeScopeCategory(scope)?.items || null;
   }
   const personal = (state.financePersonal || []).find((p) => p.id === a);
   if (!personal) return null;
@@ -6430,6 +6469,16 @@ function onFinanceGridChange(e) {
   } else if (kind === "account-name") {
     const a = state.financeAccounts.find((x) => x.id === el.dataset.id);
     if (a) a.name = el.value.trim();
+  } else if (kind === "category-mode") {
+    const c = financeScopeCategory(el.dataset.scope);
+    if (!c) return;
+    c.mode = el.checked ? "pick" : "sum";
+    if (c.mode === "pick" && !c.items.some((it) => it.id === c.activeItemId)) {
+      c.activeItemId = c.items[0]?.id || "";
+    }
+  } else if (kind === "category-active") {
+    const c = financeScopeCategory(el.dataset.scope);
+    if (c) c.activeItemId = el.value;
   } else {
     return;
   }
