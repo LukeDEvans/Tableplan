@@ -116,7 +116,8 @@ const pageVisibilityDefaults = {
   recreate: true,
   plan: true,
   mail: true,
-  travel: true
+  travel: true,
+  finance: true
 };
 const DEFAULT_INVENTORY_ROOMS = [
   { id: "ibox-default-pantry",      name: "Pantry" },
@@ -211,6 +212,7 @@ const STATE_SECTIONS = {
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financePersonal"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
@@ -237,6 +239,7 @@ const SECTION_SCOPE = {
   health: "household",
   inventory: "household", // Stock: one shared record of where things are
   travel: "toggle",
+  finance: "household",   // one shared household budget
 };
 const SCOPE_PREFS_KEY = "live-section-scopes-v1";
 const SHADOW_KEY = "live-shadow-sections-v1";
@@ -401,6 +404,7 @@ const MANAGED_PAGES = [
   { key: "explore",   label: "Explore" },
   { key: "plan",      label: "Calendar" },
   { key: "inventory", label: "Stock" },
+  { key: "finance",   label: "Finance" },
 ];
 
 // JSON snapshot of each section as of the last successful Supabase write.
@@ -703,6 +707,10 @@ const elements = {
   recreatePlannerGrid: document.querySelector("#recreatePlannerGrid"),
   homeRecreateBtn: document.querySelector("#homeRecreateBtn"),
   titleRecreateBtn: document.querySelector("#titleRecreateBtn"),
+  financeMainPage: document.querySelector("#financeMainPage"),
+  financePlannerGrid: document.querySelector("#financePlannerGrid"),
+  homeFinanceBtn: document.querySelector("#homeFinanceBtn"),
+  titleFinanceBtn: document.querySelector("#titleFinanceBtn"),
   homePlanBtn: document.querySelector("#homePlanBtn"),
   titlePlanBtn: document.querySelector("#titlePlanBtn"),
   planMainPage: document.querySelector("#planMainPage"),
@@ -1368,6 +1376,8 @@ function bindEvents() {
   elements.titlePlanBtn.addEventListener("click", showPlanApp);
   document.getElementById("homeExploreBtn")?.addEventListener("click", showExploreApp);
   elements.titleExploreBtn?.addEventListener("click", showExploreApp);
+  elements.homeFinanceBtn?.addEventListener("click", showFinanceApp);
+  elements.titleFinanceBtn?.addEventListener("click", showFinanceApp);
   elements.homeMailBtn?.addEventListener("click", showMailApp);
   elements.titleMailBtn?.addEventListener("click", showMailApp);
   elements.mailConnectBtn?.addEventListener("click", connectGmail);
@@ -1996,6 +2006,7 @@ function handleHashNavigation() {
     shop: showShopApp,
     watch: showWatchApp,
     recreate: showRecreateApp,
+    finance: showFinanceApp,
     schedule: showPlanApp,
     settings: showSettingsApp,
     home: showHomeApp,
@@ -2842,6 +2853,10 @@ function defaultState() {
     weeklyEmailSettings: defaultWeeklyEmailSettings(),
     mailAiSettings: {},
     mailMoveMemory: { threads: {}, senders: {} },
+    financePeople: [],
+    financeBudgetGroups: defaultFinanceBudgetGroups(),
+    financeAccounts: [],
+    financePersonal: [],
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -2953,6 +2968,10 @@ function normalizeState(parsed) {
     weeklyEmailSettings: normalizeWeeklyEmailSettings(parsed?.weeklyEmailSettings),
     mailAiSettings: (parsed?.mailAiSettings && typeof parsed.mailAiSettings === "object") ? parsed.mailAiSettings : {},
     mailMoveMemory: (parsed?.mailMoveMemory && typeof parsed.mailMoveMemory === "object") ? parsed.mailMoveMemory : { threads: {}, senders: {} },
+    financePeople: normalizeFinancePeople(parsed?.financePeople),
+    financeBudgetGroups: normalizeFinanceBudgetGroups(parsed?.financeBudgetGroups),
+    financeAccounts: normalizeFinanceAccounts(parsed?.financeAccounts),
+    financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
     locationSharingEnabled: Boolean(parsed?.locationSharingEnabled),
@@ -3563,6 +3582,70 @@ function normalizeShowtimesData(raw) {
     }
   }
   return out;
+}
+
+// ── Finance normalizers ──────────────────────────────────────────────────────
+// Fixed group ids keep the three budget groups merge-stable across devices.
+function defaultFinanceBudgetGroups() {
+  return [
+    { id: "fin-group-needs",   label: "Needs",   idealPct: 50, categories: [] },
+    { id: "fin-group-wants",   label: "Wants",   idealPct: 30, categories: [] },
+    { id: "fin-group-savings", label: "Savings", idealPct: 20, categories: [] },
+  ];
+}
+
+function normalizeFinanceLineItems(items) {
+  return (Array.isArray(items) ? items : []).map((it) => ({
+    id: it?.id || createId("fin-item"),
+    name: it?.name || "",
+    amount: Number(it?.amount) || 0,
+    note: it?.note || ""
+  }));
+}
+
+function normalizeFinancePeople(raw) {
+  return (Array.isArray(raw) ? raw : []).map((p) => ({
+    id: p?.id || createId("fin-person"),
+    name: p?.name || "",
+    activeScenarioId: p?.activeScenarioId || "",
+    scenarios: (Array.isArray(p?.scenarios) ? p.scenarios : []).map((s) => ({
+      id: s?.id || createId("fin-scenario"),
+      label: s?.label || "",
+      amount: Number(s?.amount) || 0,
+      note: s?.note || ""
+    }))
+  }));
+}
+
+function normalizeFinanceBudgetGroups(raw) {
+  const groups = (Array.isArray(raw) ? raw : []).map((g) => ({
+    id: g?.id || createId("fin-group"),
+    label: g?.label || "",
+    idealPct: Number(g?.idealPct) || 0,
+    categories: (Array.isArray(g?.categories) ? g.categories : []).map((c) => ({
+      id: c?.id || createId("fin-cat"),
+      name: c?.name || "",
+      items: normalizeFinanceLineItems(c?.items)
+    }))
+  }));
+  return groups.length ? groups : defaultFinanceBudgetGroups();
+}
+
+function normalizeFinanceAccounts(raw) {
+  return (Array.isArray(raw) ? raw : []).map((a) => ({
+    id: a?.id || createId("fin-account"),
+    owner: a?.owner || "",
+    name: a?.name || ""
+  }));
+}
+
+function normalizeFinancePersonal(raw) {
+  return (Array.isArray(raw) ? raw : []).map((p) => ({
+    id: p?.id || createId("fin-personal"),
+    person: p?.person || "",
+    incomeItems: normalizeFinanceLineItems(p?.incomeItems),
+    expenseItems: normalizeFinanceLineItems(p?.expenseItems)
+  }));
 }
 
 function normalizeRecreateHobbies(h) {
@@ -4566,6 +4649,8 @@ function mergeStates(newer, older) {
     "podcasts", "podcastPlaylists", "podcastSavedCategories",
     // Travel
     "trips", "travelIdeas",
+    // Finance
+    "financePeople", "financeBudgetGroups", "financeAccounts", "financePersonal",
   ]) {
     merged[key] = unionById(newer[key], older[key], key);
   }
@@ -5848,6 +5933,7 @@ function render() {
     renderArticleList("articleList", activeMediaTab);
   }
   if (activeAppArea === "explore") renderExploreSidebar(exploreOpenTripId);
+  if (activeAppArea === "finance") renderFinancePage();
 }
 
 function showEatApp(event) {
@@ -5933,6 +6019,7 @@ function hideAllPages() {
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
+  elements.financeMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
@@ -6016,6 +6103,322 @@ function showRecreateApp(event) {
   renderRecreatePage();
   closePageTitleMenu();
   closeAppMenu();
+}
+
+function showFinanceApp(event) {
+  event?.stopPropagation();
+  if (!isPageEnabled("finance")) { showHomeApp(); return; }
+  activeAppArea = "finance";
+  hideAllPages();
+  elements.financeMainPage.hidden = false;
+  setWeekToolsMode("today");
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("Finance");
+  setPageHash("finance");
+  renderFinancePage();
+  closePageTitleMenu();
+  closeAppMenu();
+}
+
+// ── Finance page ─────────────────────────────────────────────────────────────
+const financeExpanded = new Set(); // ids of expanded categories/person editors
+let financeGridWired = false;
+
+function formatFinMoney(n) {
+  const v = Number(n) || 0;
+  const opts = Number.isInteger(v) ? { minimumFractionDigits: 0 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 };
+  return (v < 0 ? "−$" : "$") + Math.abs(v).toLocaleString(undefined, opts);
+}
+
+function parseFinAmount(str) {
+  const n = parseFloat(String(str || "").replace(/[$,\s]/g, ""));
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
+}
+
+function financeActiveIncome(person) {
+  return person.scenarios.find((s) => s.id === person.activeScenarioId) || person.scenarios[0] || null;
+}
+
+function financeIncomeTotal() {
+  return (state.financePeople || []).reduce((sum, p) => sum + (financeActiveIncome(p)?.amount || 0), 0);
+}
+
+function financeItemsTotal(items) {
+  return (items || []).reduce((s, it) => s + (Number(it.amount) || 0), 0);
+}
+
+function financeGroupTotal(group) {
+  return (group.categories || []).reduce((s, c) => s + financeItemsTotal(c.items), 0);
+}
+
+function financeExpensesTotal() {
+  return (state.financeBudgetGroups || []).reduce((s, g) => s + financeGroupTotal(g), 0);
+}
+
+function renderFinancePage() {
+  const grid = elements.financePlannerGrid;
+  if (!grid) return;
+  const income = financeIncomeTotal();
+  const expenses = financeExpensesTotal();
+  const cashFlow = income - expenses;
+
+  const finItemRow = (scope, it) => `
+    <div class="fin-item-row">
+      <input class="fin-item-name" type="text" value="${escapeHtml(it.name)}" data-fin-edit="item-name" data-scope="${scope}" data-id="${it.id}" placeholder="Name" />
+      <input class="fin-item-amount" type="text" inputmode="decimal" value="${escapeHtml(String(it.amount || 0))}" data-fin-edit="item-amount" data-scope="${scope}" data-id="${it.id}" />
+      <button class="icon-btn fin-del-btn" type="button" data-fin-action="delete-item" data-scope="${scope}" data-id="${it.id}" title="Delete" aria-label="Delete line">&times;</button>
+    </div>`;
+
+  const incomeCard = `
+    <div class="fin-card" data-fin-card="income">
+      <div class="fin-card-head"><h3>Income</h3><span class="fin-card-total">${formatFinMoney(income)}/mo</span></div>
+      ${(state.financePeople || []).map((p) => {
+        const active = financeActiveIncome(p);
+        const open = financeExpanded.has(p.id);
+        return `
+        <div class="fin-person">
+          <div class="fin-person-row">
+            <span class="fin-person-name">${escapeHtml(p.name)}</span>
+            <select class="fin-scenario-select" data-fin-edit="active-scenario" data-person="${p.id}">
+              ${p.scenarios.map((s) => `<option value="${s.id}" ${s.id === (active?.id || "") ? "selected" : ""}>${escapeHtml(s.label)}</option>`).join("")}
+            </select>
+            <span class="fin-person-amount">${formatFinMoney(active?.amount || 0)}</span>
+            <button class="icon-btn fin-expand-btn" type="button" data-fin-action="toggle-expand" data-id="${p.id}" title="Edit scenarios" aria-label="Edit scenarios for ${escapeHtml(p.name)}">${open ? "▴" : "▾"}</button>
+          </div>
+          ${open ? `
+          <div class="fin-person-editor">
+            ${p.scenarios.map((s) => `
+              <div class="fin-item-row">
+                <input class="fin-item-name" type="text" value="${escapeHtml(s.label)}" data-fin-edit="scenario-label" data-person="${p.id}" data-id="${s.id}" placeholder="Scenario" />
+                <input class="fin-item-amount" type="text" inputmode="decimal" value="${escapeHtml(String(s.amount || 0))}" data-fin-edit="scenario-amount" data-person="${p.id}" data-id="${s.id}" />
+                <button class="icon-btn fin-del-btn" type="button" data-fin-action="delete-scenario" data-person="${p.id}" data-id="${s.id}" title="Delete scenario" aria-label="Delete scenario">&times;</button>
+              </div>
+              ${s.note ? `<div class="fin-item-note">${escapeHtml(s.note)}</div>` : ""}`).join("")}
+            <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-scenario" data-person="${p.id}">+ Scenario</button>
+            <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="delete-person" data-person="${p.id}">Remove ${escapeHtml(p.name)}</button>
+          </div>` : ""}
+        </div>`;
+      }).join("") || `<div class="empty-state">No income sources yet.</div>`}
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-person">+ Person</button>
+    </div>`;
+
+  const groupCards = (state.financeBudgetGroups || []).map((g) => {
+    const total = financeGroupTotal(g);
+    const pct = income > 0 ? (total / income) * 100 : 0;
+    return `
+    <div class="fin-card" data-fin-card="group">
+      <div class="fin-card-head">
+        <h3>${escapeHtml(g.label)}</h3>
+        <span class="fin-card-total">${formatFinMoney(total)}</span>
+      </div>
+      <div class="fin-group-meter" title="${pct.toFixed(1)}% of income — ideal ${g.idealPct}%">
+        <div class="fin-group-meter-fill${pct > g.idealPct ? " is-over" : ""}" style="width:${Math.min(100, pct)}%"></div>
+        <div class="fin-group-meter-ideal" style="left:${Math.min(100, g.idealPct)}%"></div>
+      </div>
+      <div class="fin-group-pct">${income > 0 ? `${pct.toFixed(1)}% of income · ideal ${g.idealPct}%` : `ideal ${g.idealPct}% of income`}</div>
+      ${g.categories.map((c) => {
+        const open = financeExpanded.has(c.id);
+        return `
+        <div class="fin-category">
+          <button class="fin-category-row" type="button" data-fin-action="toggle-expand" data-id="${c.id}">
+            <span class="fin-category-name">${escapeHtml(c.name)}</span>
+            <span class="fin-category-total">${formatFinMoney(financeItemsTotal(c.items))}</span>
+            <span class="fin-category-caret">${open ? "▴" : "▾"}</span>
+          </button>
+          ${open ? `
+          <div class="fin-category-items">
+            ${c.items.map((it) => finItemRow(`cat:${g.id}:${c.id}`, it)).join("")}
+            <div class="fin-item-row fin-item-row--tools">
+              <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-item" data-scope="cat:${g.id}:${c.id}">+ Line</button>
+              <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="delete-category" data-group="${g.id}" data-id="${c.id}">Delete category</button>
+            </div>
+          </div>` : ""}
+        </div>`;
+      }).join("")}
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-category" data-group="${g.id}">+ Category</button>
+    </div>`;
+  }).join("");
+
+  const personalCard = `
+    <div class="fin-card" data-fin-card="personal">
+      <div class="fin-card-head"><h3>Personal</h3></div>
+      ${(state.financePersonal || []).map((p) => {
+        const inc = financeItemsTotal(p.incomeItems);
+        const exp = financeItemsTotal(p.expenseItems);
+        return `
+        <div class="fin-personal-block">
+          <div class="fin-person-row">
+            <span class="fin-person-name">${escapeHtml(p.person)}</span>
+            <span class="fin-personal-flow${inc - exp < 0 ? " is-neg" : ""}">${formatFinMoney(inc - exp)}/mo free</span>
+          </div>
+          <div class="fin-personal-cols">
+            <div>
+              <div class="fin-subhead">Income · ${formatFinMoney(inc)}</div>
+              ${p.incomeItems.map((it) => finItemRow(`pinc:${p.id}`, it)).join("")}
+              <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-item" data-scope="pinc:${p.id}">+ Line</button>
+            </div>
+            <div>
+              <div class="fin-subhead">Expenses · ${formatFinMoney(exp)}</div>
+              ${p.expenseItems.map((it) => finItemRow(`pexp:${p.id}`, it)).join("")}
+              <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-item" data-scope="pexp:${p.id}">+ Line</button>
+            </div>
+          </div>
+        </div>`;
+      }).join("") || `<div class="empty-state">No personal budgets yet.</div>`}
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-personal">+ Personal budget</button>
+    </div>`;
+
+  const owners = [...new Set((state.financeAccounts || []).map((a) => a.owner || "Other"))];
+  const accountsCard = `
+    <div class="fin-card" data-fin-card="accounts">
+      <div class="fin-card-head"><h3>Accounts</h3></div>
+      <p class="fin-hint">The household's accounts, ready to link to live balances later.</p>
+      ${owners.map((owner) => `
+        <div class="fin-subhead">${escapeHtml(owner)}</div>
+        ${(state.financeAccounts || []).filter((a) => (a.owner || "Other") === owner).map((a) => `
+          <div class="fin-item-row">
+            <input class="fin-item-name" type="text" value="${escapeHtml(a.name)}" data-fin-edit="account-name" data-id="${a.id}" />
+            <button class="icon-btn fin-del-btn" type="button" data-fin-action="delete-account" data-id="${a.id}" title="Delete" aria-label="Delete account">&times;</button>
+          </div>`).join("")}`).join("")}
+      <div class="fin-account-add">
+        <input class="fin-item-name" type="text" id="finNewAccountOwner" placeholder="Owner (e.g. Family)" />
+        <input class="fin-item-name" type="text" id="finNewAccountName" placeholder="Institution — account" />
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-account">Add</button>
+      </div>
+    </div>`;
+
+  grid.innerHTML = `
+    <section class="panel fin-panel">
+      <div class="fin-summary">
+        <div class="fin-stat"><span class="fin-stat-label">Income</span><span class="fin-stat-value">${formatFinMoney(income)}</span></div>
+        <div class="fin-stat"><span class="fin-stat-label">Budgeted</span><span class="fin-stat-value">${formatFinMoney(expenses)}</span></div>
+        <div class="fin-stat"><span class="fin-stat-label">Unallocated</span><span class="fin-stat-value${cashFlow < 0 ? " is-neg" : ""}">${formatFinMoney(cashFlow)}</span></div>
+      </div>
+      <div class="fin-cards">
+        ${incomeCard}
+        ${groupCards}
+        ${personalCard}
+        ${accountsCard}
+      </div>
+    </section>`;
+
+  if (!financeGridWired) {
+    financeGridWired = true;
+    grid.addEventListener("click", onFinanceGridClick);
+    grid.addEventListener("change", onFinanceGridChange);
+  }
+}
+
+// Resolves a data-scope string to the live items array it addresses.
+function financeScopeItems(scope) {
+  const [kind, a, b] = String(scope || "").split(":");
+  if (kind === "cat") {
+    const group = (state.financeBudgetGroups || []).find((g) => g.id === a);
+    return group?.categories.find((c) => c.id === b)?.items || null;
+  }
+  const personal = (state.financePersonal || []).find((p) => p.id === a);
+  if (!personal) return null;
+  if (kind === "pinc") return personal.incomeItems;
+  if (kind === "pexp") return personal.expenseItems;
+  return null;
+}
+
+function onFinanceGridClick(e) {
+  const btn = e.target.closest("[data-fin-action]");
+  if (!btn) return;
+  const action = btn.dataset.finAction;
+  if (action === "toggle-expand") {
+    const id = btn.dataset.id;
+    financeExpanded.has(id) ? financeExpanded.delete(id) : financeExpanded.add(id);
+    renderFinancePage();
+    return;
+  }
+  if (action === "add-person") {
+    const name = prompt("Name?");
+    if (!name?.trim()) return;
+    const sid = createId("fin-scenario");
+    state.financePeople.push({ id: createId("fin-person"), name: name.trim(), activeScenarioId: sid, scenarios: [{ id: sid, label: "Take-home pay", amount: 0, note: "" }] });
+  } else if (action === "delete-person") {
+    const p = state.financePeople.find((x) => x.id === btn.dataset.person);
+    if (!p || !confirm(`Remove ${p.name} and their scenarios?`)) return;
+    state.financePeople = state.financePeople.filter((x) => x.id !== p.id);
+    recordDeletion("financePeople", p.id);
+  } else if (action === "add-scenario") {
+    const p = state.financePeople.find((x) => x.id === btn.dataset.person);
+    if (!p) return;
+    p.scenarios.push({ id: createId("fin-scenario"), label: "New scenario", amount: 0, note: "" });
+  } else if (action === "delete-scenario") {
+    const p = state.financePeople.find((x) => x.id === btn.dataset.person);
+    if (!p) return;
+    p.scenarios = p.scenarios.filter((s) => s.id !== btn.dataset.id);
+    if (p.activeScenarioId === btn.dataset.id) p.activeScenarioId = p.scenarios[0]?.id || "";
+  } else if (action === "add-category") {
+    const g = state.financeBudgetGroups.find((x) => x.id === btn.dataset.group);
+    const name = g && prompt("Category name?");
+    if (!name?.trim()) return;
+    const cat = { id: createId("fin-cat"), name: name.trim(), items: [] };
+    g.categories.push(cat);
+    financeExpanded.add(cat.id);
+  } else if (action === "delete-category") {
+    const g = state.financeBudgetGroups.find((x) => x.id === btn.dataset.group);
+    const c = g?.categories.find((x) => x.id === btn.dataset.id);
+    if (!g || !c || !confirm(`Delete "${c.name}" and its ${c.items.length} lines?`)) return;
+    g.categories = g.categories.filter((x) => x.id !== c.id);
+  } else if (action === "add-item") {
+    const items = financeScopeItems(btn.dataset.scope);
+    if (!items) return;
+    items.push({ id: createId("fin-item"), name: "", amount: 0, note: "" });
+  } else if (action === "delete-item") {
+    const items = financeScopeItems(btn.dataset.scope);
+    if (!items) return;
+    const idx = items.findIndex((it) => it.id === btn.dataset.id);
+    if (idx >= 0) items.splice(idx, 1);
+  } else if (action === "add-personal") {
+    const name = prompt("Whose personal budget?");
+    if (!name?.trim()) return;
+    state.financePersonal.push({ id: createId("fin-personal"), person: name.trim(), incomeItems: [], expenseItems: [] });
+  } else if (action === "add-account") {
+    const owner = document.getElementById("finNewAccountOwner")?.value.trim();
+    const name = document.getElementById("finNewAccountName")?.value.trim();
+    if (!name) return;
+    state.financeAccounts.push({ id: createId("fin-account"), owner: owner || "Other", name });
+  } else if (action === "delete-account") {
+    state.financeAccounts = state.financeAccounts.filter((a) => a.id !== btn.dataset.id);
+    recordDeletion("financeAccounts", btn.dataset.id);
+  } else {
+    return;
+  }
+  persist();
+  renderFinancePage();
+}
+
+function onFinanceGridChange(e) {
+  const el = e.target.closest("[data-fin-edit]");
+  if (!el) return;
+  const kind = el.dataset.finEdit;
+  if (kind === "active-scenario") {
+    const p = state.financePeople.find((x) => x.id === el.dataset.person);
+    if (p) p.activeScenarioId = el.value;
+  } else if (kind === "scenario-label" || kind === "scenario-amount") {
+    const p = state.financePeople.find((x) => x.id === el.dataset.person);
+    const s = p?.scenarios.find((x) => x.id === el.dataset.id);
+    if (!s) return;
+    if (kind === "scenario-label") s.label = el.value.trim();
+    else s.amount = parseFinAmount(el.value);
+  } else if (kind === "item-name" || kind === "item-amount") {
+    const items = financeScopeItems(el.dataset.scope);
+    const it = items?.find((x) => x.id === el.dataset.id);
+    if (!it) return;
+    if (kind === "item-name") it.name = el.value.trim();
+    else it.amount = parseFinAmount(el.value);
+  } else if (kind === "account-name") {
+    const a = state.financeAccounts.find((x) => x.id === el.dataset.id);
+    if (a) a.name = el.value.trim();
+  } else {
+    return;
+  }
+  persist();
+  renderFinancePage();
 }
 
 function showPlanApp(event) {
@@ -8263,6 +8666,7 @@ function currentMainPageTitle() {
   if (activeAppArea === "media") return "Media";
   if (activeAppArea === "shop") return "Shop";
   if (activeAppArea === "recreate") return "Recreate";
+  if (activeAppArea === "finance") return "Finance";
   if (activeAppArea === "settings") return "Settings";
   if (activeAppArea === "mail") return "Mail";
   if (activeAppArea === "explore") return "Explore";
@@ -13003,6 +13407,7 @@ function updatePageTitleMenu() {
   elements.titleShopBtn.hidden = activeAppArea === "shop" || !isPagePersonallyEnabled("shop");
   elements.titleInventoryBtn.hidden = activeAppArea === "inventory" || !isPagePersonallyEnabled("inventory");
   elements.titleRecreateBtn.hidden = activeAppArea === "recreate" || !isPagePersonallyEnabled("recreate");
+  elements.titleFinanceBtn.hidden = activeAppArea === "finance" || !isPagePersonallyEnabled("finance");
   elements.titlePlanBtn.hidden = activeAppArea === "plan" || !isPagePersonallyEnabled("plan");
   elements.titleMailBtn.hidden = activeAppArea === "mail" || !isPagePersonallyEnabled("mail");
   if (elements.titleExploreBtn) elements.titleExploreBtn.hidden = activeAppArea === "explore" || !isPagePersonallyEnabled("explore");
@@ -13021,6 +13426,7 @@ function updatePageVisibility() {
   elements.homeShopBtn.hidden = !isPagePersonallyEnabled("shop");
   elements.homeInventoryBtn.hidden = !isPagePersonallyEnabled("inventory");
   elements.homeRecreateBtn.hidden = !isPagePersonallyEnabled("recreate");
+  elements.homeFinanceBtn.hidden = !isPagePersonallyEnabled("finance");
   elements.homePlanBtn.hidden = !isPagePersonallyEnabled("plan");
   elements.homeMailBtn.hidden = !isPagePersonallyEnabled("mail");
   const exploreBtn = document.getElementById("homeExploreBtn");
