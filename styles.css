@@ -12600,6 +12600,14 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   border-radius: 6px;
 }
 .mail-move-option:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.mail-move-suggest-head {
+  font-size: 0.66rem;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 6px 12px 2px;
+}
 
 /* Compose form */
 .mail-compose-form { display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }

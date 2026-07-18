@@ -211,7 +211,7 @@ const STATE_SECTIONS = {
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
-  config:    ["weeklyEmailSettings", "mailAiSettings", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
+  config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
 // ── Household vs personal data scoping ────────────────────────────────────────
@@ -2839,6 +2839,7 @@ function defaultState() {
     activeCooking: [],
     weeklyEmailSettings: defaultWeeklyEmailSettings(),
     mailAiSettings: {},
+    mailMoveMemory: { threads: {}, senders: {} },
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -2949,6 +2950,7 @@ function normalizeState(parsed) {
     activeCooking: normalizeActiveCooking(parsed?.activeCooking),
     weeklyEmailSettings: normalizeWeeklyEmailSettings(parsed?.weeklyEmailSettings),
     mailAiSettings: (parsed?.mailAiSettings && typeof parsed.mailAiSettings === "object") ? parsed.mailAiSettings : {},
+    mailMoveMemory: (parsed?.mailMoveMemory && typeof parsed.mailMoveMemory === "object") ? parsed.mailMoveMemory : { threads: {}, senders: {} },
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
     locationSharingEnabled: Boolean(parsed?.locationSharingEnabled),
@@ -6430,6 +6432,7 @@ function appendMailRows(messages) {
     const row = document.createElement("div");
     row.className = `mail-row${m.unread ? " mail-row--unread" : ""}${m.starred ? " mail-row--starred" : ""}`;
     row.dataset.threadId = m.threadId;
+    if (m.from) mailThreadSenders.set(m.threadId, mailSenderAddress(m.from));
     row.innerHTML = `
       <div class="mail-row-actions" aria-label="Quick actions">
         <button class="mail-row-action-btn" type="button" data-row-action="archive" title="Archive" aria-label="Archive">
@@ -6580,20 +6583,17 @@ function appendMailRows(messages) {
 
 function showRowLabelPicker(threadId, btn, row) {
   document.getElementById("rowLabelPicker")?.remove();
-  const options = mailLabels.filter((l) => l.id !== currentMailbox);
-  if (!options.length) { showMailToast("No labels available"); return; }
+  if (!mailLabels.some((l) => l.id !== currentMailbox)) { showMailToast("No labels available"); return; }
   const picker = document.createElement("div");
   picker.id = "rowLabelPicker";
   picker.className = "mail-move-picker";
-  picker.innerHTML = options.map((l) => {
-    const label = l.type === "system" ? formatSystemLabel(l.id) : l.name;
-    return `<button class="mail-move-option" type="button" data-label-id="${escapeHtml(l.id)}">${escapeHtml(label)}</button>`;
-  }).join("");
+  picker.innerHTML = mailMoveOptionsHtml(threadId);
   picker.querySelectorAll(".mail-move-option").forEach((opt) => {
     opt.addEventListener("click", async () => {
       picker.remove();
       const data = await callGmailApi({ action: "move", threadId, addLabelIds: [opt.dataset.labelId], removeLabelIds: [currentMailbox] });
       if (data?.ok) {
+        recordMailMove(threadId, opt.dataset.labelId);
         row.remove();
         if (mailOpenThreadId === threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
       }
@@ -6930,18 +6930,84 @@ async function snoozeMailThread(threadId, when) {
   renderMailLabelTabs();
 }
 
+// ── Predictive folder moves ──────────────────────────────────────────────────
+// Every manual move is remembered (thread → folder, and per-sender folder
+// counts, capped). When the move picker opens, the remembered folder for the
+// same conversation — or failing that, the sender's usual folder — is offered
+// at the top under "Suggested".
+const mailThreadSenders = new Map();
+
+function mailMoveMemory() {
+  if (!state.mailMoveMemory || typeof state.mailMoveMemory !== "object") state.mailMoveMemory = {};
+  const mem = state.mailMoveMemory;
+  if (!mem.threads || typeof mem.threads !== "object") mem.threads = {};
+  if (!mem.senders || typeof mem.senders !== "object") mem.senders = {};
+  return mem;
+}
+
+function mailSenderAddress(from) {
+  const m = /<([^>]+)>/.exec(String(from || ""));
+  return (m ? m[1] : String(from || "")).trim().toLowerCase();
+}
+
+function recordMailMove(threadId, labelId) {
+  if (!threadId || !labelId || labelId === "TRASH" || labelId === "SPAM") return;
+  const mem = mailMoveMemory();
+  delete mem.threads[threadId]; // re-insert so caps evict the least recent
+  mem.threads[threadId] = labelId;
+  const tKeys = Object.keys(mem.threads);
+  for (let i = 0; i < tKeys.length - 500; i++) delete mem.threads[tKeys[i]];
+  const sender = mailThreadSenders.get(threadId);
+  if (sender) {
+    const counts = (mem.senders[sender] && typeof mem.senders[sender] === "object") ? mem.senders[sender] : {};
+    counts[labelId] = (Number(counts[labelId]) || 0) + 1;
+    delete mem.senders[sender];
+    mem.senders[sender] = counts;
+    const sKeys = Object.keys(mem.senders);
+    for (let i = 0; i < sKeys.length - 300; i++) delete mem.senders[sKeys[i]];
+  }
+  persist();
+}
+
+function predictMailFolder(threadId) {
+  const mem = mailMoveMemory();
+  const remembered = mem.threads[threadId];
+  if (remembered) return remembered;
+  const sender = mailThreadSenders.get(threadId);
+  const counts = sender ? mem.senders[sender] : null;
+  if (!counts) return null;
+  let best = null, n = 0;
+  for (const [id, c] of Object.entries(counts)) {
+    if (Number(c) > n) { n = Number(c); best = id; }
+  }
+  return best;
+}
+
+// Renders picker options with the predicted folder pulled to the top.
+function mailMoveOptionsHtml(threadId) {
+  const options = mailLabels.filter((l) => l.id !== currentMailbox);
+  const optionHtml = (l) => {
+    const label = l.type === "system" ? formatSystemLabel(l.id) : l.name;
+    return `<button class="mail-move-option" type="button" data-label-id="${escapeHtml(l.id)}">${escapeHtml(label)}</button>`;
+  };
+  const predicted = predictMailFolder(threadId);
+  const suggested = predicted ? options.find((l) => l.id === predicted) : null;
+  if (!suggested) return options.map(optionHtml).join("");
+  return `<div class="mail-move-suggest-head">Suggested</div>${optionHtml(suggested)}<div class="mail-more-divider"></div>` +
+    options.filter((l) => l !== suggested).map(optionHtml).join("");
+}
+
 function showMailMovePicker(thread) {
   closeMailMenus();
   const btn = document.getElementById("mailMoveBtn");
   if (!btn) return;
+  if (!mailThreadSenders.has(thread.id) && thread.messages?.[0]?.from) {
+    mailThreadSenders.set(thread.id, mailSenderAddress(thread.messages[0].from));
+  }
   const picker = document.createElement("div");
   picker.id = "mailMovePicker";
   picker.className = "mail-move-picker";
-  const options = mailLabels.filter((l) => l.id !== currentMailbox);
-  picker.innerHTML = options.map((l) => {
-    const label = l.type === "system" ? formatSystemLabel(l.id) : l.name;
-    return `<button class="mail-move-option" type="button" data-label-id="${escapeHtml(l.id)}">${escapeHtml(label)}</button>`;
-  }).join("");
+  picker.innerHTML = mailMoveOptionsHtml(thread.id);
   picker.querySelectorAll(".mail-move-option").forEach((opt) => {
     opt.addEventListener("click", () => {
       picker.remove();
@@ -6955,6 +7021,7 @@ function showMailMovePicker(thread) {
 async function moveMailToLabel(threadId, targetLabelId) {
   const data = await callGmailApi({ action: "move", threadId, addLabelIds: [targetLabelId], removeLabelIds: [currentMailbox] });
   if (data?.ok) {
+    recordMailMove(threadId, targetLabelId);
     afterMailThreadAction(threadId);
     renderMailLabelTabs();
   }
