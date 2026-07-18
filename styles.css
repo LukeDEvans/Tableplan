@@ -17578,3 +17578,16 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-cat-actual { font-weight: 800; color: color-mix(in srgb, var(--ink) 62%, transparent); }
 .fin-cat-actual.is-over { color: #b3261e; }
 .fin-of { color: var(--muted); font-size: 0.72rem; font-weight: 650; padding: 0 1px; }
+
+/* Red dot on landing links / page-title menu entries with notifications */
+.home-links button.has-notif-dot::after,
+.page-title-menu button.has-notif-dot::after {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #b3261e;
+  margin-left: 7px;
+  vertical-align: 2px;
+}

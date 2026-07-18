@@ -2047,7 +2047,7 @@ async function initializeSupabaseAuth() {
   authSession = data.session;
   authCheckCompleted = true;
   updateAppLockState();
-  if (authSession?.access_token) { warmMailStatus(); warmMailList(); }
+  if (authSession?.access_token) { warmMailStatus(); warmMailList(); warmPageNotifs(); }
   supabaseClient.auth.onAuthStateChange(async (_event, session) => {
     const hadSession = !!authSession?.access_token;
     authSession = session;
@@ -2071,6 +2071,7 @@ async function initializeSupabaseAuth() {
       maybeAutoLinkProfile();
       warmMailStatus();
       warmMailList();
+      warmPageNotifs();
     } else {
       mailStatusPromise = null;
       mailListPreload = null;
@@ -6181,6 +6182,7 @@ async function refreshFinanceLive() {
   financeLive = data?.accounts
     ? { accounts: data.accounts, errors: data.errors || [], at: Date.now() }
     : { accounts: [], errors: [data?.error || "Could not reach the bank bridge."], at: Date.now() };
+  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length);
   if (activeAppArea === "finance") renderFinancePage();
 }
 
@@ -6313,6 +6315,7 @@ function recordFinanceTxnLabel(txnId, labelKey, description) {
     }
   }
   if (financeLive) financeLive.labeled = null; // recompute with the new label
+  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length);
   persist();
 }
 
@@ -7084,6 +7087,30 @@ function warmMailStatus() {
   mailStatusPromise = callGmailApi({ action: "status" });
 }
 
+// ── Page notification dots ───────────────────────────────────────────────────
+// Landing links and the page-title menu show a red dot for pages with
+// unaddressed notifications (Mail: pending AI suggestions; Finance:
+// transactions awaiting a budget label). Warmed at app start.
+const PAGE_NOTIF_BUTTONS = {
+  mail: ["homeMailBtn", "titleMailBtn"],
+  finance: ["homeFinanceBtn", "titleFinanceBtn"],
+};
+
+function setPageNotifCount(page, count) {
+  (PAGE_NOTIF_BUTTONS[page] || []).forEach((key) => {
+    elements[key]?.classList.toggle("has-notif-dot", count > 0);
+  });
+}
+
+function warmPageNotifs() {
+  if (!authSession?.access_token) return;
+  callGmailApi({ action: "suggestions" }).then((d) => {
+    if (d?.suggestions) setPageNotifCount("mail", d.suggestions.filter((s) => s.status === "pending").length);
+  });
+  // Fetches live accounts when connected, which also sets the finance dot
+  if (financeLinkStatus === null) checkFinanceLinkStatus();
+}
+
 // ── Mail speed: preloaded inbox list + read-ahead thread cache ───────────────
 // warmMailList fires with the status warm-up at app start, so the inbox list
 // is usually already in flight (or resolved) by the time Mail opens. Once the
@@ -7181,6 +7208,7 @@ function renderMailSuggestions(suggestions) {
   lastMailSuggestions = suggestions;
   const panel = document.getElementById("mailSuggestions");
   const pending = suggestions.filter(s => s.status === "pending");
+  setPageNotifCount("mail", pending.length);
 
   // Topbar bell: red badge with the pending count (no badge when zero)
   const notifBtn = document.getElementById("mailSuggCheckNow");
