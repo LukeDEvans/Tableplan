@@ -17511,3 +17511,67 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   padding-top: 4px;
 }
 .fin-sub-group { padding-left: 10px; border-left: 2px solid color-mix(in srgb, var(--window-border) 18%, transparent); margin: 0 0 2px 2px; }
+
+/* Finance: transaction labels + notifications bell */
+.fin-summary-row { display: flex; align-items: flex-start; gap: 10px; }
+.fin-summary { flex: 1; }
+.fin-notif-wrap { position: relative; flex: 0 0 auto; }
+.fin-notif-btn {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border: 2px solid var(--window-border);
+  border-radius: 12px;
+  background: var(--window-bg);
+  color: var(--ink);
+}
+.fin-notif-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #b3261e;
+  color: #fff;
+  font-size: 0.66rem;
+  font-weight: 850;
+  line-height: 18px;
+  text-align: center;
+}
+.fin-notif-panel {
+  position: absolute;
+  right: 0;
+  top: 46px;
+  width: min(440px, 92vw);
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--window-bg);
+  border: 2px solid var(--window-border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  z-index: 60;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+.fin-notif-head { font-size: 0.74rem; font-weight: 850; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding-bottom: 4px; }
+.fin-notif-empty, .fin-notif-more { font-size: 0.8rem; color: var(--muted); padding: 6px 0; }
+.fin-txn-label {
+  flex: 0 0 auto;
+  max-width: 34%;
+  padding: 3px 6px;
+  border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
+  border-radius: 8px;
+  background: var(--window-bg);
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+.fin-txn-label.is-unlabeled { border-color: #b3261e; color: #b3261e; font-weight: 750; }
+.fin-txn-label.is-auto { border-style: dashed; color: var(--muted); }
+.fin-notif-panel .fin-txn-row { flex-wrap: wrap; }
+.fin-notif-panel .fin-txn-label { max-width: 100%; flex: 1 1 100%; }
+@media (max-width: 700px) {
+  [data-fin-card="txns"] .fin-txn-row { flex-wrap: wrap; }
+  [data-fin-card="txns"] .fin-txn-label { max-width: 60%; }
+}

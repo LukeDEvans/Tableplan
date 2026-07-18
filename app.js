@@ -212,7 +212,7 @@ const STATE_SECTIONS = {
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
@@ -2866,6 +2866,8 @@ function defaultState() {
     financeAccountLabels: [],
     financeAccountSubLabels: {},
     financePersonal: [],
+    financeTxnLabels: {},
+    financeTxnRules: {},
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -2982,6 +2984,8 @@ function normalizeState(parsed) {
     financeAccounts: normalizeFinanceAccounts(parsed?.financeAccounts),
     financeAccountLabels: [...new Set((Array.isArray(parsed?.financeAccountLabels) ? parsed.financeAccountLabels : []).map((l) => String(l || "").trim()).filter(Boolean))],
     financeAccountSubLabels: normalizeFinanceSubLabels(parsed?.financeAccountSubLabels),
+    financeTxnLabels: (parsed?.financeTxnLabels && typeof parsed.financeTxnLabels === "object") ? parsed.financeTxnLabels : {},
+    financeTxnRules: (parsed?.financeTxnRules && typeof parsed.financeTxnRules === "object") ? parsed.financeTxnRules : {},
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
@@ -6196,6 +6200,121 @@ async function linkFinanceBanks() {
   renderFinancePage();
 }
 
+// ── Transaction budget labels ────────────────────────────────────────────────
+// Label keys: "income", "mgmt" (account management — transfers/CC payments,
+// invisible to budgeting), or "cat:<groupId>:<categoryId>". Explicit labels
+// live in financeTxnLabels (txnId → key). financeTxnRules learns merchant →
+// label counts from MANUAL labels only, so auto-labels never train themselves.
+let financeNotifOpen = false;
+
+function financeMerchantKey(desc) {
+  const stop = new Set(["pos", "debit", "credit", "card", "purchase", "ach", "web", "id", "des", "co", "the", "of", "and", "inc", "llc", "com"]);
+  const tokens = String(desc || "").toLowerCase()
+    .replace(/[0-9#*]+/g, " ")
+    .replace(/[^a-z\s]/g, " ")
+    .split(/\s+/)
+    .filter((t) => t.length >= 2 && !stop.has(t));
+  return tokens.slice(0, 3).join(" ");
+}
+
+function financeTxnRuleGuess(desc) {
+  const key = financeMerchantKey(desc);
+  const counts = key && state.financeTxnRules?.[key];
+  if (!counts || typeof counts !== "object") return null;
+  let best = null, n = 0, total = 0;
+  for (const [k, c] of Object.entries(counts)) {
+    total += Number(c) || 0;
+    if (Number(c) > n) { n = Number(c); best = k; }
+  }
+  return (n >= 2 && n / total >= 0.6) ? best : null;
+}
+
+const FIN_MGMT_KEYWORDS = /payment thank you|autopay|auto pay|online payment|internet transfer|online transfer|transfer (to|from)|crcardpmt|epay/i;
+const FIN_INCOME_KEYWORDS = /payroll|direct dep|dir dep|dirdep|salary/i;
+
+// Flattened transactions with resolved labels; cached per live payload.
+function financeLabeledTxns() {
+  if (!financeLive) return [];
+  if (financeLive.labeled) return financeLive.labeled;
+  const txns = (financeLive.accounts || []).flatMap((a) =>
+    a.transactions.map((t) => ({ ...t, accountId: a.id, account: `${a.org}${a.org && a.name ? " — " : ""}${a.name}` })));
+  // Transfer pairs: same magnitude, opposite signs, different accounts, ≤5d apart
+  const mgmtPairs = new Set();
+  const byAmt = new Map();
+  for (const t of txns) {
+    if (!t.amount) continue;
+    const k = Math.abs(t.amount).toFixed(2);
+    if (!byAmt.has(k)) byAmt.set(k, []);
+    byAmt.get(k).push(t);
+  }
+  for (const group of byAmt.values()) {
+    for (const a of group) for (const b of group) {
+      if (a === b || a.accountId === b.accountId) continue;
+      if ((a.amount > 0) === (b.amount > 0)) continue;
+      if (Math.abs(new Date(a.posted || 0) - new Date(b.posted || 0)) <= 5 * 86400000) {
+        mgmtPairs.add(a.id); mgmtPairs.add(b.id);
+      }
+    }
+  }
+  const explicit = state.financeTxnLabels || {};
+  for (const t of txns) {
+    if (explicit[t.id]) { t.label = explicit[t.id]; t.labelSource = "manual"; continue; }
+    const rule = financeTxnRuleGuess(t.description);
+    if (rule) { t.label = rule; t.labelSource = "auto"; continue; }
+    if (mgmtPairs.has(t.id) || FIN_MGMT_KEYWORDS.test(t.description)) { t.label = "mgmt"; t.labelSource = "auto"; continue; }
+    if ((t.amount || 0) > 0 && FIN_INCOME_KEYWORDS.test(t.description)) { t.label = "income"; t.labelSource = "auto"; continue; }
+    t.label = ""; t.labelSource = "";
+  }
+  txns.sort((x, y) => (y.posted || "").localeCompare(x.posted || ""));
+  financeLive.labeled = txns;
+  return txns;
+}
+
+function financeTxnLabelName(key) {
+  if (key === "income") return "Income";
+  if (key === "mgmt") return "Account mgmt";
+  const [, gId, cId] = String(key || "").split(":");
+  const g = (state.financeBudgetGroups || []).find((x) => x.id === gId);
+  const c = g?.categories.find((x) => x.id === cId);
+  return g && c ? `${g.label} · ${c.name}` : "";
+}
+
+function financeTxnLabelOptionsHtml(selected) {
+  return `
+    <option value="income" ${selected === "income" ? "selected" : ""}>Income</option>
+    <option value="mgmt" ${selected === "mgmt" ? "selected" : ""}>Account management</option>
+    ${(state.financeBudgetGroups || []).map((g) => `
+      <optgroup label="${escapeHtml(g.label)}">
+        ${g.categories.map((c) => {
+          const key = `cat:${g.id}:${c.id}`;
+          return `<option value="${key}" ${selected === key ? "selected" : ""}>${escapeHtml(c.name)}</option>`;
+        }).join("")}
+      </optgroup>`).join("")}`;
+}
+
+function recordFinanceTxnLabel(txnId, labelKey, description) {
+  if (!state.financeTxnLabels || typeof state.financeTxnLabels !== "object") state.financeTxnLabels = {};
+  const labels = state.financeTxnLabels;
+  delete labels[txnId]; // re-insert so the cap evicts least-recent
+  if (labelKey) labels[txnId] = labelKey;
+  const ids = Object.keys(labels);
+  for (let i = 0; i < ids.length - 600; i++) delete labels[ids[i]];
+  if (labelKey) {
+    const key = financeMerchantKey(description);
+    if (key) {
+      if (!state.financeTxnRules || typeof state.financeTxnRules !== "object") state.financeTxnRules = {};
+      const counts = (state.financeTxnRules[key] && typeof state.financeTxnRules[key] === "object") ? state.financeTxnRules[key] : {};
+      counts[labelKey] = (Number(counts[labelKey]) || 0) + 1;
+      delete state.financeTxnRules[key];
+      state.financeTxnRules[key] = counts;
+      const rKeys = Object.keys(state.financeTxnRules);
+      for (let i = 0; i < rKeys.length - 400; i++) delete state.financeTxnRules[rKeys[i]];
+    }
+  }
+  if (financeLive) financeLive.labeled = null; // recompute with the new label
+  persist();
+}
+
 async function unlinkFinanceBanks() {
   if (!confirm("Disconnect SimpleFIN? Live balances stop updating; your budget data is unaffected.")) return;
   const data = await callNetlifyFunction("simplefin", { action: "disconnect" });
@@ -6509,28 +6628,52 @@ function renderFinancePage() {
       </div>`}
     </div>`;
 
-  const txns = (financeLive?.accounts || [])
-    .flatMap((a) => a.transactions.map((t) => ({ ...t, account: `${a.org}${a.org && a.name ? " — " : ""}${a.name}` })))
-    .sort((x, y) => (y.posted || "").localeCompare(x.posted || ""))
-    .slice(0, 60);
+  const allTxns = financeLabeledTxns();
+  const txns = allTxns.slice(0, 60);
+  const needsLabel = allTxns.filter((t) => !t.label);
+  const txnSelect = (t) => `
+    <select class="fin-txn-label${!t.label ? " is-unlabeled" : t.labelSource === "auto" ? " is-auto" : ""}" data-fin-edit="txn-label" data-id="${escapeHtml(t.id)}" data-desc="${escapeHtml(t.description)}" aria-label="Budget label for ${escapeHtml(t.description)}">
+      <option value="" ${t.labelSource !== "manual" ? "selected" : ""}>${t.labelSource === "auto" ? `auto: ${escapeHtml(financeTxnLabelName(t.label))}` : "label…"}</option>
+      ${financeTxnLabelOptionsHtml(t.labelSource === "manual" ? t.label : "")}
+    </select>`;
+  const txnRow = (t) => `
+    <div class="fin-txn-row${t.pending ? " is-pending" : ""}">
+      <span class="fin-txn-date">${t.posted ? escapeHtml(new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>
+      <span class="fin-txn-desc" title="${escapeHtml(t.account)}">${escapeHtml(t.description)}${t.pending ? " · pending" : ""}</span>
+      <span class="fin-txn-amt${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</span>
+      ${txnSelect(t)}
+    </div>`;
   const txnsOpen = financeExpanded.has("card:txns");
   const txnsCard = !financeLinkStatus?.connected ? "" : `
     <div class="fin-card" data-fin-card="txns">
-      ${cardHead("card:txns", "Transactions", `${txns.length} · 30d`)}
-      ${!txnsOpen ? "" : txns.map((t) => `
-        <div class="fin-txn-row${t.pending ? " is-pending" : ""}">
-          <span class="fin-txn-date">${t.posted ? escapeHtml(new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>
-          <span class="fin-txn-desc" title="${escapeHtml(t.account)}">${escapeHtml(t.description)}${t.pending ? " · pending" : ""}</span>
-          <span class="fin-txn-amt${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</span>
-        </div>`).join("") || `<div class="empty-state">No transactions in the last 30 days.</div>`}
+      ${cardHead("card:txns", "Transactions", `${needsLabel.length ? `${needsLabel.length} to label · ` : ""}${txns.length} · 30d`)}
+      ${!txnsOpen ? "" : txns.map(txnRow).join("") || `<div class="empty-state">No transactions in the last 30 days.</div>`}
+    </div>`;
+
+  const bellSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
+  const notifBlock = !financeLinkStatus?.connected ? "" : `
+    <div class="fin-notif-wrap">
+      <button class="icon-btn fin-notif-btn" type="button" data-fin-action="toggle-notifs" title="Transactions that need a budget label" aria-label="Transactions to label">
+        ${bellSvg}
+        ${needsLabel.length ? `<span class="fin-notif-badge">${needsLabel.length}</span>` : ""}
+      </button>
+      ${financeNotifOpen ? `
+      <div class="fin-notif-panel">
+        <div class="fin-notif-head">Transactions to label</div>
+        ${needsLabel.slice(0, 15).map(txnRow).join("") || `<div class="fin-notif-empty">Everything is labeled.</div>`}
+        ${needsLabel.length > 15 ? `<div class="fin-notif-more">+ ${needsLabel.length - 15} more in the Transactions card</div>` : ""}
+      </div>` : ""}
     </div>`;
 
   grid.innerHTML = `
     <section class="fin-panel">
-      <div class="fin-summary">
-        <div class="fin-stat"><span class="fin-stat-label">Income</span><span class="fin-stat-value">${formatFinMoney(income)}</span></div>
-        <div class="fin-stat"><span class="fin-stat-label">Budgeted</span><span class="fin-stat-value">${formatFinMoney(expenses)}</span></div>
-        <div class="fin-stat"><span class="fin-stat-label">Unallocated</span><span class="fin-stat-value${cashFlow < 0 ? " is-neg" : ""}">${formatFinMoney(cashFlow)}</span></div>
+      <div class="fin-summary-row">
+        <div class="fin-summary">
+          <div class="fin-stat"><span class="fin-stat-label">Income</span><span class="fin-stat-value">${formatFinMoney(income)}</span></div>
+          <div class="fin-stat"><span class="fin-stat-label">Budgeted</span><span class="fin-stat-value">${formatFinMoney(expenses)}</span></div>
+          <div class="fin-stat"><span class="fin-stat-label">Unallocated</span><span class="fin-stat-value${cashFlow < 0 ? " is-neg" : ""}">${formatFinMoney(cashFlow)}</span></div>
+        </div>
+        ${notifBlock}
       </div>
       <div class="fin-cards">
         ${incomeCard}
@@ -6551,6 +6694,12 @@ function renderFinancePage() {
         onFinanceGridClick(e);
       }
     });
+    document.addEventListener("click", (e) => {
+      if (!financeNotifOpen) return;
+      if (e.target.closest(".fin-notif-wrap")) return;
+      financeNotifOpen = false;
+      renderFinancePage();
+    }, { capture: true });
   }
 }
 
@@ -6583,6 +6732,7 @@ function onFinanceGridClick(e) {
   if (action === "link-banks") { linkFinanceBanks(); return; }
   if (action === "refresh-live") { refreshFinanceLive(); return; }
   if (action === "unlink-banks") { unlinkFinanceBanks(); return; }
+  if (action === "toggle-notifs") { financeNotifOpen = !financeNotifOpen; renderFinancePage(); return; }
   if (action === "toggle-expand") {
     const id = btn.dataset.id;
     financeExpanded.has(id) ? financeExpanded.delete(id) : financeExpanded.add(id);
@@ -6703,6 +6853,12 @@ function onFinanceGridChange(e) {
   const el = e.target.closest("[data-fin-edit]");
   if (!el) return;
   const kind = el.dataset.finEdit;
+  if (kind === "txn-label") {
+    if (!el.value) return; // picked the placeholder — nothing to record
+    recordFinanceTxnLabel(el.dataset.id, el.value, el.dataset.desc || "");
+    renderFinancePage();
+    return;
+  }
   if (kind === "active-scenario") {
     const p = state.financePeople.find((x) => x.id === el.dataset.person);
     if (p) p.activeScenarioId = el.value;
