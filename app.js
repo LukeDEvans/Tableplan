@@ -212,7 +212,7 @@ const STATE_SECTIONS = {
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financePersonal"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financePersonal"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
@@ -2863,6 +2863,7 @@ function defaultState() {
     financePeople: [],
     financeBudgetGroups: defaultFinanceBudgetGroups(),
     financeAccounts: [],
+    financeAccountLabels: [],
     financePersonal: [],
     doTasks: [],
     themeMode: "light",
@@ -2978,6 +2979,7 @@ function normalizeState(parsed) {
     financePeople: normalizeFinancePeople(parsed?.financePeople),
     financeBudgetGroups: normalizeFinanceBudgetGroups(parsed?.financeBudgetGroups),
     financeAccounts: normalizeFinanceAccounts(parsed?.financeAccounts),
+    financeAccountLabels: [...new Set((Array.isArray(parsed?.financeAccountLabels) ? parsed.financeAccountLabels : []).map((l) => String(l || "").trim()).filter(Boolean))],
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
@@ -6392,7 +6394,12 @@ function renderFinancePage() {
       </div>`
     : `<p class="fin-hint">Checking bank link…</p>`;
 
-  const owners = [...new Set((state.financeAccounts || []).map((a) => a.owner || "Other"))];
+  // Owner labels: the explicit list (add/rename/delete) unioned with any
+  // owner strings still present on accounts, so nothing ever disappears.
+  const owners = [...new Set([
+    ...(Array.isArray(state.financeAccountLabels) ? state.financeAccountLabels : []),
+    ...(state.financeAccounts || []).map((a) => a.owner || "Other"),
+  ])];
   const liveById = new Map((financeLive?.accounts || []).map((a) => [a.id, a]));
   const linkedIds = new Set((state.financeAccounts || []).map((a) => a.linkedId).filter(Boolean));
   const unlinkedLive = (financeLive?.accounts || []).filter((a) => !linkedIds.has(a.id));
@@ -6403,12 +6410,20 @@ function renderFinancePage() {
       ${!accountsOpen ? "" : `
       ${linkBlock}
       ${owners.map((owner) => `
-        <div class="fin-subhead">${escapeHtml(owner)}</div>
+        <div class="fin-label-head">
+          <span class="fin-subhead">${escapeHtml(owner)}</span>
+          <button class="icon-btn fin-del-btn fin-label-btn" type="button" data-fin-action="rename-label" data-label="${escapeHtml(owner)}" title="Rename label" aria-label="Rename ${escapeHtml(owner)}">✎</button>
+          <button class="icon-btn fin-del-btn fin-label-btn" type="button" data-fin-action="delete-label" data-label="${escapeHtml(owner)}" title="Delete label" aria-label="Delete ${escapeHtml(owner)}">&times;</button>
+        </div>
         ${(state.financeAccounts || []).filter((a) => (a.owner || "Other") === owner).map((a) => {
           const live = a.linkedId ? liveById.get(a.linkedId) : null;
           return `
           <div class="fin-item-row">
             <input class="fin-item-name" type="text" value="${escapeHtml(a.name)}" data-fin-edit="account-name" data-id="${a.id}" />
+            <select class="fin-scenario-select fin-owner-select" data-fin-edit="account-owner" data-id="${a.id}" title="Label" aria-label="Label for ${escapeHtml(a.name)}">
+              ${owners.map((o) => `<option value="${escapeHtml(o)}" ${o === (a.owner || "Other") ? "selected" : ""}>${escapeHtml(o)}</option>`).join("")}
+              <option value="__new__">New label…</option>
+            </select>
             ${financeLinkStatus?.connected ? `
             <select class="fin-scenario-select fin-acct-link" data-fin-edit="account-link" data-id="${a.id}" title="Linked bank account" aria-label="Link ${escapeHtml(a.name)} to a bank account">
               <option value="">not linked</option>
@@ -6418,7 +6433,7 @@ function renderFinancePage() {
             ${live ? `<span class="fin-live-bal${(live.balance ?? 0) < 0 ? " is-neg" : ""}">${formatFinMoney(live.balance ?? 0)}</span>` : ""}
             <button class="icon-btn fin-del-btn" type="button" data-fin-action="delete-account" data-id="${a.id}" title="Delete" aria-label="Delete account">&times;</button>
           </div>`;
-        }).join("")}`).join("")}
+        }).join("") || `<p class="fin-hint">No accounts under this label yet — move one here with its label dropdown.</p>`}`).join("")}
       ${unlinkedLive.length ? `
       <div class="fin-subhead">Live accounts not linked yet</div>
       ${unlinkedLive.map((a) => `
@@ -6427,9 +6442,11 @@ function renderFinancePage() {
           <span class="fin-live-bal${(a.balance ?? 0) < 0 ? " is-neg" : ""}">${formatFinMoney(a.balance ?? 0)}</span>
         </div>`).join("")}` : ""}
       <div class="fin-account-add">
-        <input class="fin-item-name" type="text" id="finNewAccountOwner" placeholder="Owner (e.g. Family)" />
+        <input class="fin-item-name" type="text" list="finOwnerList" id="finNewAccountOwner" placeholder="Label (e.g. Family)" />
+        <datalist id="finOwnerList">${owners.map((o) => `<option value="${escapeHtml(o)}"></option>`).join("")}</datalist>
         <input class="fin-item-name" type="text" id="finNewAccountName" placeholder="Institution — account" />
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-account">Add</button>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-label">+ Label</button>
       </div>`}
     </div>`;
 
@@ -6565,6 +6582,29 @@ function onFinanceGridClick(e) {
   } else if (action === "delete-account") {
     state.financeAccounts = state.financeAccounts.filter((a) => a.id !== btn.dataset.id);
     recordDeletion("financeAccounts", btn.dataset.id);
+  } else if (action === "add-label") {
+    const name = prompt("New label name?");
+    if (!name?.trim()) return;
+    if (!Array.isArray(state.financeAccountLabels)) state.financeAccountLabels = [];
+    if (!state.financeAccountLabels.includes(name.trim())) state.financeAccountLabels.push(name.trim());
+  } else if (action === "rename-label") {
+    const old = btn.dataset.label;
+    const name = prompt(`Rename "${old}" to:`, old);
+    if (!name?.trim() || name.trim() === old) return;
+    const label = name.trim();
+    if (!Array.isArray(state.financeAccountLabels)) state.financeAccountLabels = [];
+    state.financeAccountLabels = state.financeAccountLabels.filter((l) => l !== old && l !== label);
+    state.financeAccountLabels.push(label);
+    state.financeAccounts.forEach((a) => { if ((a.owner || "Other") === old) a.owner = label; });
+  } else if (action === "delete-label") {
+    const old = btn.dataset.label;
+    const count = state.financeAccounts.filter((a) => (a.owner || "Other") === old).length;
+    const msg = count
+      ? `Delete the label "${old}"? Its ${count} account${count === 1 ? "" : "s"} will move to "Other".`
+      : `Delete the label "${old}"?`;
+    if (!confirm(msg)) return;
+    state.financeAccountLabels = (state.financeAccountLabels || []).filter((l) => l !== old);
+    state.financeAccounts.forEach((a) => { if ((a.owner || "Other") === old) a.owner = "Other"; });
   } else {
     return;
   }
@@ -6597,6 +6637,19 @@ function onFinanceGridChange(e) {
   } else if (kind === "account-link") {
     const a = state.financeAccounts.find((x) => x.id === el.dataset.id);
     if (a) a.linkedId = el.value;
+  } else if (kind === "account-owner") {
+    const a = state.financeAccounts.find((x) => x.id === el.dataset.id);
+    if (!a) return;
+    if (el.value === "__new__") {
+      const name = prompt("New label name?");
+      if (!name?.trim()) { renderFinancePage(); return; } // reset the select
+      const label = name.trim();
+      if (!Array.isArray(state.financeAccountLabels)) state.financeAccountLabels = [];
+      if (!state.financeAccountLabels.includes(label)) state.financeAccountLabels.push(label);
+      a.owner = label;
+    } else {
+      a.owner = el.value;
+    }
   } else if (kind === "category-mode") {
     const c = financeScopeCategory(el.dataset.scope);
     if (!c) return;
