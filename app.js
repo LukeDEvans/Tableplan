@@ -6169,10 +6169,18 @@ function renderFinancePage() {
       <button class="icon-btn fin-del-btn" type="button" data-fin-action="delete-item" data-scope="${scope}" data-id="${it.id}" title="Delete" aria-label="Delete line">&times;</button>
     </div>`;
 
+  const cardHead = (cardId, title, total) => `
+    <div class="fin-card-head" data-fin-action="toggle-expand" data-id="${cardId}" role="button" tabindex="0" aria-expanded="${financeExpanded.has(cardId)}">
+      <h3>${escapeHtml(title)}</h3>
+      <span class="fin-card-total">${total}</span>
+      <span class="fin-card-caret">${financeExpanded.has(cardId) ? "▴" : "▾"}</span>
+    </div>`;
+
+  const incomeOpen = financeExpanded.has("card:income");
   const incomeCard = `
     <div class="fin-card" data-fin-card="income">
-      <div class="fin-card-head"><h3>Income</h3><span class="fin-card-total">${formatFinMoney(income)}/mo</span></div>
-      ${(state.financePeople || []).map((p) => {
+      ${cardHead("card:income", "Income", `${formatFinMoney(income)}/mo`)}
+      ${!incomeOpen ? "" : (state.financePeople || []).map((p) => {
         const active = financeActiveIncome(p);
         const open = financeExpanded.has(p.id);
         return `
@@ -6199,24 +6207,22 @@ function renderFinancePage() {
           </div>` : ""}
         </div>`;
       }).join("") || `<div class="empty-state">No income sources yet.</div>`}
-      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-person">+ Person</button>
+      ${!incomeOpen ? "" : `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-person">+ Person</button>`}
     </div>`;
 
   const groupCards = (state.financeBudgetGroups || []).map((g) => {
     const total = financeGroupTotal(g);
     const pct = income > 0 ? (total / income) * 100 : 0;
+    const cardOpen = financeExpanded.has(`card:${g.id}`);
     return `
     <div class="fin-card" data-fin-card="group">
-      <div class="fin-card-head">
-        <h3>${escapeHtml(g.label)}</h3>
-        <span class="fin-card-total">${formatFinMoney(total)}</span>
-      </div>
+      ${cardHead(`card:${g.id}`, g.label, formatFinMoney(total))}
       <div class="fin-group-meter" title="${pct.toFixed(1)}% of income — ideal ${g.idealPct}%">
         <div class="fin-group-meter-fill${pct > g.idealPct ? " is-over" : ""}" style="width:${Math.min(100, pct)}%"></div>
         <div class="fin-group-meter-ideal" style="left:${Math.min(100, g.idealPct)}%"></div>
       </div>
       <div class="fin-group-pct">${income > 0 ? `${pct.toFixed(1)}% of income · ideal ${g.idealPct}%` : `ideal ${g.idealPct}% of income`}</div>
-      ${g.categories.map((c) => {
+      ${!cardOpen ? "" : g.categories.map((c) => {
         const open = financeExpanded.has(c.id);
         return `
         <div class="fin-category">
@@ -6235,14 +6241,16 @@ function renderFinancePage() {
           </div>` : ""}
         </div>`;
       }).join("")}
-      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-category" data-group="${g.id}">+ Category</button>
+      ${!cardOpen ? "" : `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-category" data-group="${g.id}">+ Category</button>`}
     </div>`;
   }).join("");
 
+  const personalOpen = financeExpanded.has("card:personal");
+  const personalFree = (state.financePersonal || []).reduce((s, p) => s + financeItemsTotal(p.incomeItems) - financeItemsTotal(p.expenseItems), 0);
   const personalCard = `
     <div class="fin-card" data-fin-card="personal">
-      <div class="fin-card-head"><h3>Personal</h3></div>
-      ${(state.financePersonal || []).map((p) => {
+      ${cardHead("card:personal", "Personal", `${formatFinMoney(personalFree)}/mo free`)}
+      ${!personalOpen ? "" : (state.financePersonal || []).map((p) => {
         const inc = financeItemsTotal(p.incomeItems);
         const exp = financeItemsTotal(p.expenseItems);
         return `
@@ -6265,13 +6273,15 @@ function renderFinancePage() {
           </div>
         </div>`;
       }).join("") || `<div class="empty-state">No personal budgets yet.</div>`}
-      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-personal">+ Personal budget</button>
+      ${!personalOpen ? "" : `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-personal">+ Personal budget</button>`}
     </div>`;
 
   const owners = [...new Set((state.financeAccounts || []).map((a) => a.owner || "Other"))];
+  const accountsOpen = financeExpanded.has("card:accounts");
   const accountsCard = `
     <div class="fin-card" data-fin-card="accounts">
-      <div class="fin-card-head"><h3>Accounts</h3></div>
+      ${cardHead("card:accounts", "Accounts", `${(state.financeAccounts || []).length}`)}
+      ${!accountsOpen ? "" : `
       <p class="fin-hint">The household's accounts, ready to link to live balances later.</p>
       ${owners.map((owner) => `
         <div class="fin-subhead">${escapeHtml(owner)}</div>
@@ -6284,7 +6294,7 @@ function renderFinancePage() {
         <input class="fin-item-name" type="text" id="finNewAccountOwner" placeholder="Owner (e.g. Family)" />
         <input class="fin-item-name" type="text" id="finNewAccountName" placeholder="Institution — account" />
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-account">Add</button>
-      </div>
+      </div>`}
     </div>`;
 
   grid.innerHTML = `
@@ -6306,6 +6316,12 @@ function renderFinancePage() {
     financeGridWired = true;
     grid.addEventListener("click", onFinanceGridClick);
     grid.addEventListener("change", onFinanceGridChange);
+    grid.addEventListener("keydown", (e) => {
+      if ((e.key === "Enter" || e.key === " ") && e.target.matches?.('[data-fin-action][role="button"]')) {
+        e.preventDefault();
+        onFinanceGridClick(e);
+      }
+    });
   }
 }
 

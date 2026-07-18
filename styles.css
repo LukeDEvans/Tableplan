@@ -17338,9 +17338,11 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   flex-direction: column;
   gap: 8px;
 }
-.fin-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.fin-card-head h3 { margin: 0; font-size: 1rem; }
+.fin-card-head { display: flex; align-items: baseline; gap: 8px; cursor: pointer; border-radius: 8px; }
+.fin-card-head:focus-visible { outline: 2px solid var(--window-border); outline-offset: 2px; }
+.fin-card-head h3 { margin: 0; font-size: 1rem; flex: 1; }
 .fin-card-total { font-weight: 850; color: var(--ink); }
+.fin-card-caret { color: var(--muted); font-size: 0.85rem; }
 .fin-hint { margin: 0; font-size: 0.78rem; color: var(--muted); }
 
 .fin-group-meter {
