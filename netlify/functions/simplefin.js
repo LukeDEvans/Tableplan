@@ -80,6 +80,18 @@ exports.handler = async (event) => {
       return cors(json(200, { days: rows[0]?.state?.days || {} }));
     }
 
+    if (action === "receipts") {
+      // Email receipts extracted by the mail sweep (finreceipts_ is a
+      // service-only row; this is the sole client-facing read path).
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(`finreceipts_${groupId}`)}&select=state`,
+        { headers: svc(serviceKey), cache: "no-store" }
+      );
+      if (!res.ok) return cors(json(502, { error: "Receipts load failed." }));
+      const rows = await res.json();
+      return cors(json(200, { receipts: rows[0]?.state?.receipts || [] }));
+    }
+
     if (action === "accounts") {
       const row = await loadSecretRow(serviceKey, groupId);
       const accessUrl = row?.state?.accessUrl;

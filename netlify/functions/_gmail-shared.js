@@ -216,6 +216,91 @@ async function triageEmail(anthropicKey, { subject, from, date, bodyText }) {
     }));
 }
 
+// ─── Email receipt extraction (mailAiSettings.receiptExtract, default on) ────
+// Order-confirmation emails get itemized by Claude, each item assigned one of
+// the household's budget categories, and the result stored per household in
+// the service-only row finreceipts_<groupId>. The Finance page matches
+// receipts to bank transactions by total+date and prefills the split editor.
+const RECEIPT_HINT_RE = /receipt|your order|order confirm|order #|purchase confirmation|thanks for (your |shopping)|e-receipt|order has (shipped|been placed)/i;
+
+async function loadReceiptContext(serviceKey, userId, mailAi) {
+  if (mailAi.receiptExtract === false) return null;
+  try {
+    const headers = { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" };
+    const gRes = await fetch(`${SUPABASE_URL}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(userId)}&select=group_id&limit=1`, { headers });
+    if (!gRes.ok) return null;
+    const groupId = (await gRes.json())[0]?.group_id;
+    if (!groupId) return null;
+    const fRes = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(groupId + ":finance")}&select=state`, { headers });
+    const rows = fRes.ok ? await fRes.json() : [];
+    const groups = rows[0]?.state?.financeBudgetGroups || [];
+    const categories = groups.flatMap((g) => (g.categories || []).map((c) => ({ key: `cat:${g.id}:${c.id}`, name: `${g.label} · ${c.name}` })));
+    return categories.length ? { groupId, categories } : null;
+  } catch { return null; }
+}
+
+async function extractReceipt(anthropicKey, { subject, from, date, bodyText, categories }) {
+  const system = [
+    "You extract purchase receipts / order confirmations from emails for a household budget app.",
+    'Reply with ONLY valid JSON, no markdown: {"receipt": {...}} or {"receipt": null}.',
+    "Return null unless the email contains an itemized purchase with a charged total.",
+    'Receipt shape: {"merchant": "...", "date": "YYYY-MM-DD", "total": 12.34, "items": [{"name": "...", "price": 1.23, "category": "<key>" or null}]}',
+    "total = the amount actually charged (after tax, shipping, discounts).",
+    "Assign each item the best-fitting budget category key from this list; use null when unsure:",
+    categories.map((c) => `${c.key} = ${c.name}`).join("\n")
+  ].join("\n");
+  const user = `Subject: ${subject}\nFrom: ${from}\nDate: ${date}\n\n${(bodyText || "").slice(0, 9000)}`;
+  const text = await claudeCall(anthropicKey, { system, user, maxTokens: 1500 });
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  let parsed;
+  try { parsed = JSON.parse(m[0]); } catch { return null; }
+  const r = parsed.receipt;
+  if (!r || !Number(r.total)) return null;
+  const validKeys = new Set(categories.map((c) => c.key));
+  const items = (Array.isArray(r.items) ? r.items : []).slice(0, 60).map((it) => ({
+    name: String(it.name || "").slice(0, 80),
+    price: Math.round((Number(it.price) || 0) * 100) / 100,
+    category: validKeys.has(it.category) ? it.category : ""
+  }));
+  // Portions = per-category item sums; uncategorized items plus the
+  // tax/shipping remainder form one unlabeled portion for the user to assign.
+  const byCat = {};
+  let assigned = 0;
+  for (const it of items) {
+    if (!it.category || !it.price) continue;
+    byCat[it.category] = Math.round(((byCat[it.category] || 0) + it.price) * 100) / 100;
+    assigned += it.price;
+  }
+  const portions = Object.entries(byCat).map(([label, amount]) => ({ label, amount }));
+  const remainder = Math.round((Number(r.total) - assigned) * 100) / 100;
+  if (remainder > 0.02) portions.push({ label: "", amount: remainder });
+  return {
+    merchant: String(r.merchant || "").slice(0, 60),
+    date: /^\d{4}-\d{2}-\d{2}$/.test(r.date) ? r.date : "",
+    total: Math.round(Number(r.total) * 100) / 100,
+    items,
+    portions,
+    at: new Date().toISOString()
+  };
+}
+
+async function saveFinanceReceipts(serviceKey, groupId, newReceipts) {
+  const id = `finreceipts_${groupId}`;
+  const headers = { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json", "content-type": "application/json", "x-live-writer": "2" };
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(id)}&select=state`, { headers });
+  const rows = res.ok ? await res.json() : [];
+  const existing = rows[0]?.state?.receipts || [];
+  const seen = new Set(existing.map((r) => r.id));
+  const merged = [...newReceipts.filter((r) => !seen.has(r.id)), ...existing].slice(0, 40);
+  const up = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
+    method: "POST",
+    headers: { ...headers, prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({ id, state: { receipts: merged }, updated_at: new Date().toISOString() })
+  });
+  if (!up.ok) console.error(`[receipt] save failed (${up.status})`);
+}
+
 // ─── History delta + inbox sweep ─────────────────────────────────────────────
 
 // Returns { ids, historyId } of INBOX messages added since startHistoryId,
@@ -293,6 +378,7 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
   const aiTrashLabelId = (enabledRecipeSources(mailAi).length && testMode)
     ? await findAiTrashLabelId(gFetch, gToken)
     : null;
+  const receiptCtx = anthropicKey ? await loadReceiptContext(serviceKey, userId, mailAi) : null;
 
   // Messages are processed in parallel so the sweep stays within the Netlify
   // function time limit even at the 10-message cap. Each returns
@@ -367,12 +453,25 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
     const bodyText = stripQuotedReply(htmlToText(rawBody));
     const emailMeta = { subject: hdrs.subject || "(no subject)", from: hdrs.from || "", date: hdrs.date || "" };
 
+    let receipt = null;
+    if (receiptCtx && RECEIPT_HINT_RE.test(`${emailMeta.subject} ${emailMeta.from}`)) {
+      try {
+        receipt = await extractReceipt(anthropicKey, { ...emailMeta, bodyText, categories: receiptCtx.categories });
+        if (receipt) {
+          receipt.id = messageId;
+          console.log(`[receipt] extracted ${receipt.merchant || "?"} $${receipt.total} (${receipt.items.length} items)`);
+        }
+      } catch (e) {
+        console.error("[receipt] extraction failed:", e.message);
+      }
+    }
+
     let ideas = [];
     try {
       ideas = await triageEmail(anthropicKey, { ...emailMeta, bodyText });
     } catch (e) {
       console.error("Triage failed for message", messageId, e.message);
-      return { suggestions: [], retry: true };
+      return { suggestions: [], retry: true, receipt };
     }
 
     const out = [];
@@ -405,9 +504,14 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
       }
       out.push(suggestion);
     }
-    return { suggestions: out };
+    return { suggestions: out, receipt };
   }));
   const added = perMessage.flatMap((r) => r.suggestions);
+  const receipts = perMessage.map((r) => r.receipt).filter(Boolean);
+  if (receipts.length && receiptCtx) {
+    try { await saveFinanceReceipts(serviceKey, receiptCtx.groupId, receipts); }
+    catch (e) { console.error("[receipt] save failed:", e.message); }
+  }
   // Messages flagged retry stay out of processedIds so the next sweep retries them
   const processedNow = fresh.filter((_, i) => !perMessage[i].retry);
 

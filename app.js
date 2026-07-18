@@ -6170,11 +6170,31 @@ let financeLive = null;       // { accounts, errors, at }
 let financeLiveLoading = false;
 let financeLinkBusy = false;
 let financeHistory = null;    // { "YYYY-MM-DD": { netWorth, balances } } from daily snapshots
+let financeReceipts = null;   // email receipts extracted by the mail sweep
 
 async function loadFinanceHistory() {
   const data = await callNetlifyFunction("simplefin", { action: "history" });
   financeHistory = (data?.days && typeof data.days === "object") ? data.days : {};
   if (activeAppArea === "finance") renderFinancePage();
+}
+
+async function loadFinanceReceipts() {
+  const data = await callNetlifyFunction("simplefin", { action: "receipts" });
+  financeReceipts = Array.isArray(data?.receipts) ? data.receipts : [];
+  if (activeAppArea === "finance") renderFinancePage();
+}
+
+// Matches an email receipt to a spend transaction: same total (±2¢), dated
+// within 4 days. Used to prefill the split editor with categorized portions.
+function financeReceiptForTxn(t) {
+  if (!financeReceipts || (t.amount || 0) >= 0) return null;
+  const amt = Math.abs(t.amount);
+  const tDate = new Date(t.posted || 0).getTime();
+  return financeReceipts.find((r) => {
+    if (Math.abs((Number(r.total) || 0) - amt) > 0.02) return false;
+    if (!r.date) return true;
+    return Math.abs(new Date(r.date).getTime() - tDate) <= 4 * 86400000;
+  }) || null;
 }
 
 async function checkFinanceLinkStatus() {
@@ -6197,6 +6217,7 @@ async function refreshFinanceLive() {
   setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length);
   updateFinanceMonthActuals();
   if (financeHistory === null) loadFinanceHistory();
+  if (financeReceipts === null) loadFinanceReceipts();
   if (activeAppArea === "finance") renderFinancePage();
 }
 
@@ -6275,7 +6296,15 @@ function financeLabeledTxns() {
   }
   const explicit = state.financeTxnLabels || {};
   for (const t of txns) {
-    if (explicit[t.id]) { t.label = explicit[t.id]; t.labelSource = "manual"; continue; }
+    const ex = explicit[t.id];
+    if (ex) {
+      // A split stores { split: [{label, amount}] } — amounts are positive
+      // magnitudes; portions land in their categories individually.
+      if (typeof ex === "object" && Array.isArray(ex.split)) { t.label = "split"; t.split = ex.split; }
+      else t.label = ex;
+      t.labelSource = "manual";
+      continue;
+    }
     const rule = financeTxnRuleGuess(t.description);
     if (rule) { t.label = rule; t.labelSource = "auto"; continue; }
     if (mgmtPairs.has(t.id) || FIN_MGMT_KEYWORDS.test(t.description)) { t.label = "mgmt"; t.labelSource = "auto"; continue; }
@@ -6285,6 +6314,21 @@ function financeLabeledTxns() {
   txns.sort((x, y) => (y.posted || "").localeCompare(x.posted || ""));
   financeLive.labeled = txns;
   return txns;
+}
+
+// Normalizes a labeled transaction into portions with signed amounts the
+// aggregators expect: positive spend for cat portions, positive received for
+// income portions. Splits contribute each portion; mgmt portions match no
+// branch downstream and so stay out of every total by construction.
+function financeTxnPortions(t) {
+  if (t.label === "split" && Array.isArray(t.split)) {
+    return t.split
+      .filter((p) => p.label && Number(p.amount) > 0)
+      .map((p) => ({ label: p.label, amount: Number(p.amount) }));
+  }
+  if (!t.label) return [];
+  const isIncome = t.label === "income" || t.label.startsWith("income:");
+  return [{ label: t.label, amount: isIncome ? (t.amount || 0) : -(t.amount || 0) }];
 }
 
 function financeTxnLabelName(key) {
@@ -6331,12 +6375,14 @@ function updateFinanceMonthActuals() {
   let incomeGot = 0;
   for (const t of financeLabeledTxns()) {
     if ((t.posted || "").slice(0, 7) !== month || !t.label) continue;
-    if (t.label === "income" || t.label.startsWith("income:")) {
-      incomeGot += (t.amount || 0);
-      incomeBy[t.label] = Math.round(((incomeBy[t.label] || 0) + (t.amount || 0)) * 100) / 100;
-    } else if (t.label.startsWith("cat:")) {
-      const k = t.label.slice(4);
-      cats[k] = Math.round(((cats[k] || 0) - (t.amount || 0)) * 100) / 100;
+    for (const p of financeTxnPortions(t)) {
+      if (p.label === "income" || p.label.startsWith("income:")) {
+        incomeGot += p.amount;
+        incomeBy[p.label] = Math.round(((incomeBy[p.label] || 0) + p.amount) * 100) / 100;
+      } else if (p.label.startsWith("cat:")) {
+        const k = p.label.slice(4);
+        cats[k] = Math.round(((cats[k] || 0) + p.amount) * 100) / 100;
+      }
     }
   }
   const entry = { cats, income: Math.round(incomeGot * 100) / 100, incomeBy };
@@ -6345,6 +6391,23 @@ function updateFinanceMonthActuals() {
   state.financeMonthActuals[month] = entry;
   const months = Object.keys(state.financeMonthActuals).sort();
   for (let i = 0; i < months.length - 36; i++) delete state.financeMonthActuals[months[i]];
+  persist();
+}
+
+// A split replaces a single label with portions; no merchant rule is learned
+// (a mixed basket teaches nothing about the merchant's usual category).
+let financeSplitDraft = null; // { txnId, portions: [{label, amount}] }
+
+function recordFinanceTxnSplit(txnId, portions) {
+  if (!state.financeTxnLabels || typeof state.financeTxnLabels !== "object") state.financeTxnLabels = {};
+  const labels = state.financeTxnLabels;
+  delete labels[txnId];
+  labels[txnId] = { split: portions };
+  const ids = Object.keys(labels);
+  for (let i = 0; i < ids.length - 600; i++) delete labels[ids[i]];
+  if (financeLive) financeLive.labeled = null;
+  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length);
+  updateFinanceMonthActuals();
   persist();
 }
 
@@ -6451,14 +6514,15 @@ function renderFinancePage() {
   if (haveLive) {
     for (const t of allTxns) {
       if (!t.label || (t.posted || "").slice(0, 7) !== monthKey) continue;
-      if (t.label === "income" || t.label.startsWith("income:")) {
-        incomeActual += (t.amount || 0);
-        incomeByKey.set(t.label, (incomeByKey.get(t.label) || 0) + (t.amount || 0));
-        continue;
+      for (const p of financeTxnPortions(t)) {
+        if (p.label === "income" || p.label.startsWith("income:")) {
+          incomeActual += p.amount;
+          incomeByKey.set(p.label, (incomeByKey.get(p.label) || 0) + p.amount);
+        } else if (p.label.startsWith("cat:")) {
+          const k = p.label.slice(4); // "<groupId>:<categoryId>"
+          catActuals.set(k, (catActuals.get(k) || 0) + p.amount);
+        }
       }
-      if (!t.label.startsWith("cat:")) continue;
-      const k = t.label.slice(4); // "<groupId>:<categoryId>"
-      catActuals.set(k, (catActuals.get(k) || 0) - (t.amount || 0));
     }
   } else if (storedNow) {
     for (const [k, v] of Object.entries(storedNow.cats || {})) catActuals.set(k, Number(v) || 0);
@@ -6756,11 +6820,43 @@ function renderFinancePage() {
 
   const txns = allTxns.slice(0, 60);
   const needsLabel = allTxns.filter((t) => !t.label);
-  const txnSelect = (t) => `
+  const txnSelect = (t) => {
+    const isSplit = t.label === "split";
+    const placeholder = isSplit ? `Split (${(t.split || []).length})` : t.labelSource === "auto" ? `auto: ${escapeHtml(financeTxnLabelName(t.label))}` : "label…";
+    return `
     <select class="fin-txn-label${!t.label ? " is-unlabeled" : t.labelSource === "auto" ? " is-auto" : ""}" data-fin-edit="txn-label" data-id="${escapeHtml(t.id)}" data-desc="${escapeHtml(t.description)}" aria-label="Budget label for ${escapeHtml(t.description)}">
-      <option value="" ${t.labelSource !== "manual" ? "selected" : ""}>${t.labelSource === "auto" ? `auto: ${escapeHtml(financeTxnLabelName(t.label))}` : "label…"}</option>
-      ${financeTxnLabelOptionsHtml(t.labelSource === "manual" ? t.label : "")}
+      <option value="" ${t.labelSource !== "manual" || isSplit ? "selected" : ""}>${placeholder}</option>
+      ${financeTxnLabelOptionsHtml(t.labelSource === "manual" && !isSplit ? t.label : "")}
+      ${(t.amount || 0) < 0 ? `<option value="__split__">Split…</option>` : ""}
     </select>`;
+  };
+  const splitEditorHtml = (t) => {
+    const total = Math.abs(t.amount || 0);
+    const assigned = financeSplitDraft.portions.reduce((s, p) => s + (parseFinAmount(p.amount) || 0), 0);
+    const remaining = Math.round((total - assigned) * 100) / 100;
+    const ok = Math.abs(remaining) <= 0.02 && financeSplitDraft.portions.some((p) => p.label && parseFinAmount(p.amount) > 0);
+    const receipt = financeReceiptForTxn(t);
+    return `
+    <div class="fin-split-editor">
+      <div class="fin-subhead">Split ${formatFinMoney(total)} — ${escapeHtml(t.description)}</div>
+      ${receipt ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="split-prefill" data-id="${escapeHtml(t.id)}">Use email receipt · ${escapeHtml(receipt.merchant || "receipt")}${(receipt.items || []).length ? ` (${receipt.items.length} items)` : ""}</button>` : ""}
+      ${financeSplitDraft.portions.map((p, i) => `
+        <div class="fin-item-row">
+          <input class="fin-item-amount" type="text" inputmode="decimal" value="${escapeHtml(String(p.amount ?? ""))}" placeholder="0.00" data-fin-edit="split-amount" data-idx="${i}" aria-label="Portion amount" />
+          <select class="fin-txn-label fin-split-select" data-fin-edit="split-label" data-idx="${i}" aria-label="Portion label">
+            <option value="">label…</option>
+            ${financeTxnLabelOptionsHtml(p.label)}
+          </select>
+          <button class="icon-btn fin-del-btn" type="button" data-fin-action="split-remove-row" data-idx="${i}" title="Remove portion" aria-label="Remove portion">&times;</button>
+        </div>`).join("")}
+      <div class="fin-item-row fin-item-row--tools">
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="split-add-row">+ Portion</button>
+        <span class="fin-hint${Math.abs(remaining) > 0.02 ? " fin-split-off" : ""}">unassigned: ${formatFinMoney(remaining)}</span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="split-cancel">Cancel</button>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="split-save" data-id="${escapeHtml(t.id)}" ${ok ? "" : "disabled"}>Save split</button>
+      </div>
+    </div>`;
+  };
   const txnRow = (t) => `
     <div class="fin-txn-row${t.pending ? " is-pending" : ""}">
       <span class="fin-txn-date">${t.posted ? escapeHtml(new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>
@@ -6772,7 +6868,7 @@ function renderFinancePage() {
   const txnsCard = !financeLinkStatus?.connected ? "" : `
     <div class="fin-card" data-fin-card="txns">
       ${cardHead("card:txns", "Transactions", `${needsLabel.length ? `${needsLabel.length} to label · ` : ""}${txns.length} · 30d`)}
-      ${!txnsOpen ? "" : txns.map(txnRow).join("") || `<div class="empty-state">No transactions in the last 30 days.</div>`}
+      ${!txnsOpen ? "" : txns.map((t) => txnRow(t) + (financeSplitDraft?.txnId === t.id ? splitEditorHtml(t) : "")).join("") || `<div class="empty-state">No transactions in the last 30 days.</div>`}
     </div>`;
 
   const histDays = financeHistory ? Object.keys(financeHistory).sort() : [];
@@ -6880,6 +6976,29 @@ function onFinanceGridClick(e) {
   if (action === "refresh-live") { refreshFinanceLive(); return; }
   if (action === "unlink-banks") { unlinkFinanceBanks(); return; }
   if (action === "toggle-notifs") { financeNotifOpen = !financeNotifOpen; renderFinancePage(); return; }
+  if (action === "split-add-row") { financeSplitDraft?.portions.push({ label: "", amount: "" }); renderFinancePage(); return; }
+  if (action === "split-remove-row") { financeSplitDraft?.portions.splice(Number(btn.dataset.idx), 1); renderFinancePage(); return; }
+  if (action === "split-cancel") { financeSplitDraft = null; renderFinancePage(); return; }
+  if (action === "split-save") {
+    const portions = (financeSplitDraft?.portions || [])
+      .map((p) => ({ label: p.label, amount: parseFinAmount(p.amount) }))
+      .filter((p) => p.label && p.amount > 0);
+    if (!portions.length) return;
+    recordFinanceTxnSplit(btn.dataset.id, portions);
+    financeSplitDraft = null;
+    renderFinancePage();
+    return;
+  }
+  if (action === "split-prefill") {
+    const t = financeLabeledTxns().find((x) => x.id === btn.dataset.id);
+    const receipt = t && financeReceiptForTxn(t);
+    if (receipt && financeSplitDraft) {
+      financeSplitDraft.portions = (receipt.portions || []).map((p) => ({ label: p.label || "", amount: p.amount }));
+      if (!financeSplitDraft.portions.length) financeSplitDraft.portions = [{ label: "", amount: "" }];
+      renderFinancePage();
+    }
+    return;
+  }
   if (action === "toggle-expand") {
     const id = btn.dataset.id;
     financeExpanded.has(id) ? financeExpanded.delete(id) : financeExpanded.add(id);
@@ -7002,7 +7121,28 @@ function onFinanceGridChange(e) {
   const kind = el.dataset.finEdit;
   if (kind === "txn-label") {
     if (!el.value) return; // picked the placeholder — nothing to record
+    if (el.value === "__split__") {
+      const t = financeLabeledTxns().find((x) => x.id === el.dataset.id);
+      if (!t) return;
+      financeSplitDraft = {
+        txnId: t.id,
+        portions: (t.split && t.split.length ? t.split : [{ label: "", amount: "" }, { label: "", amount: "" }])
+          .map((p) => ({ label: p.label || "", amount: p.amount ?? "" }))
+      };
+      financeExpanded.add("card:txns");
+      financeNotifOpen = false;
+      renderFinancePage();
+      return;
+    }
     recordFinanceTxnLabel(el.dataset.id, el.value, el.dataset.desc || "");
+    renderFinancePage();
+    return;
+  }
+  if (kind === "split-amount" || kind === "split-label") {
+    const p = financeSplitDraft?.portions[Number(el.dataset.idx)];
+    if (!p) return;
+    if (kind === "split-amount") p.amount = el.value;
+    else p.label = el.value;
     renderFinancePage();
     return;
   }
@@ -14214,6 +14354,12 @@ function openContextSettingsDialog(kind) {
 // The server-side function for each feature must check its flag in
 // state.mailAiSettings before acting.
 const MAIL_AI_FEATURES = [
+  {
+    key: "receiptExtract",
+    defaultOn: true,
+    label: "Receipt extraction for Finance",
+    desc: "Order-confirmation emails are itemized, each item assigned a budget category, and matched to the bank transaction so a mixed purchase (groceries + diapers + household) can be split accurately in one tap."
+  },
   {
     key: "nytCookingDigest",
     defaultOn: true,
