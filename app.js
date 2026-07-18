@@ -2645,14 +2645,14 @@ function loadTripBackup() {
 // the state past it. A mirror failure must DEGRADE, never throw into whatever
 // user action happened to trigger the save (it once surfaced on iPhone as
 // "Could not generate audio: The quota has been exceeded").
-// Finance data is deliberately NEVER mirrored to device localStorage: a lost
-// or shared device should not carry a readable copy of the household ledger.
-// Supabase (RLS-protected) is the only store; the page re-hydrates from it.
-const LOCAL_MIRROR_EXCLUDED_KEYS = ["financePeople", "financeBudgetGroups", "financeAccounts", "financePersonal"];
-
 function mirrorStateToLocalStorage() {
+  // Finance data is deliberately NEVER mirrored to device localStorage: a
+  // lost or shared device should not carry a readable copy of the household
+  // ledger. Supabase (RLS-protected) is the only store. The list lives inside
+  // the function: callers run during script evaluation, before top-level
+  // consts declared later in the file initialize (TDZ).
   const base = { ...state };
-  for (const k of LOCAL_MIRROR_EXCLUDED_KEYS) delete base[k];
+  for (const k of ["financePeople", "financeBudgetGroups", "financeAccounts", "financePersonal"]) delete base[k];
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(base));
     return;
