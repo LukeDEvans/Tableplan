@@ -80,6 +80,86 @@ exports.handler = async (event) => {
       return cors(json(200, { days: rows[0]?.state?.days || {} }));
     }
 
+    if (action === "scanReceipt") {
+      // Photo of a paper receipt → itemized + categorized against the
+      // household's budget → split portions. Same output shape as the
+      // email-receipt extractor, so the split editor consumes both.
+      const anthropicKey = (process.env.ANTHROPIC_API_KEY || "").trim();
+      if (!anthropicKey) return cors(json(503, { error: "Scanning is not configured." }));
+      const m = String(body.image || "").match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/);
+      if (!m) return cors(json(400, { error: "image must be a base64 data URL." }));
+      if (m[2].length > 6000000) return cors(json(413, { error: "Image too large." }));
+
+      const finRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(groupId + ":finance")}&select=state`,
+        { headers: svc(serviceKey), cache: "no-store" }
+      );
+      const finRows = finRes.ok ? await finRes.json() : [];
+      const groups = finRows[0]?.state?.financeBudgetGroups || [];
+      const categories = groups.flatMap((g) => (g.categories || []).map((c) => ({ key: `cat:${g.id}:${c.id}`, name: `${g.label} · ${c.name}` })));
+      if (!categories.length) return cors(json(409, { error: "No budget categories to assign." }));
+
+      const prompt = [
+        "You extract itemized purchase receipts from photos for a household budget app.",
+        'Reply with ONLY valid JSON, no markdown: {"receipt": {...}} or {"receipt": null} if no readable receipt.',
+        'Receipt shape: {"merchant": "...", "date": "YYYY-MM-DD", "total": 12.34, "items": [{"name": "...", "price": 1.23, "category": "<key>" or null}]}',
+        "total = the final amount charged (after tax and discounts).",
+        "Assign each item the best-fitting budget category key from this list; use null when unsure:",
+        categories.map((c) => `${c.key} = ${c.name}`).join("\n")
+      ].join("\n");
+
+      const ai = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": anthropicKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify({
+          model: process.env.ANTHROPIC_RECEIPT_SCAN_MODEL || "claude-haiku-4-5-20251001",
+          max_tokens: 2000,
+          temperature: 0,
+          messages: [{
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              { type: "image", source: { type: "base64", media_type: m[1], data: m[2] } }
+            ]
+          }]
+        })
+      });
+      if (!ai.ok) return cors(json(502, { error: `Scan failed (${ai.status}).` }));
+      const aiData = await ai.json().catch(() => null);
+      const text = aiData?.content?.map((c) => c.text || "").join("") || "";
+      const jm = text.match(/\{[\s\S]*\}/);
+      let parsed = null;
+      try { parsed = jm ? JSON.parse(jm[0]) : null; } catch { /* fall through */ }
+      const r = parsed?.receipt;
+      if (!r || !Number(r.total)) return cors(json(200, { receipt: null }));
+
+      const validKeys = new Set(categories.map((c) => c.key));
+      const items = (Array.isArray(r.items) ? r.items : []).slice(0, 80).map((it) => ({
+        name: String(it.name || "").slice(0, 80),
+        price: Math.round((Number(it.price) || 0) * 100) / 100,
+        category: validKeys.has(it.category) ? it.category : ""
+      }));
+      const byCat = {};
+      let assigned = 0;
+      for (const it of items) {
+        if (!it.category || !it.price) continue;
+        byCat[it.category] = Math.round(((byCat[it.category] || 0) + it.price) * 100) / 100;
+        assigned += it.price;
+      }
+      const portions = Object.entries(byCat).map(([label, amount]) => ({ label, amount }));
+      const remainder = Math.round((Number(r.total) - assigned) * 100) / 100;
+      if (remainder > 0.02) portions.push({ label: "", amount: remainder });
+      return cors(json(200, {
+        receipt: {
+          merchant: String(r.merchant || "").slice(0, 60),
+          date: /^\d{4}-\d{2}-\d{2}$/.test(r.date) ? r.date : "",
+          total: Math.round(Number(r.total) * 100) / 100,
+          items,
+          portions
+        }
+      }));
+    }
+
     if (action === "receipts") {
       // Email receipts extracted by the mail sweep (finreceipts_ is a
       // service-only row; this is the sole client-facing read path).

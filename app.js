@@ -6397,6 +6397,28 @@ function updateFinanceMonthActuals() {
 // A split replaces a single label with portions; no merchant rule is learned
 // (a mixed basket teaches nothing about the merchant's usual category).
 let financeSplitDraft = null; // { txnId, portions: [{label, amount}] }
+let financeScanBusy = false;
+
+// Photo of a paper receipt → server itemizes + categorizes → portions prefill
+async function scanReceiptIntoSplit(file) {
+  if (financeScanBusy || !financeSplitDraft || !file) return;
+  financeScanBusy = true;
+  renderFinancePage();
+  try {
+    trackUsage("claude_receipt_scan");
+    const image = await fileToDataUrl(await prepareScanImage(file, undefined, { maxDimension: 1600, quality: 0.82 }));
+    const data = await callNetlifyFunction("simplefin", { action: "scanReceipt", image });
+    if (data?.receipt?.portions?.length && financeSplitDraft) {
+      financeSplitDraft.portions = data.receipt.portions.map((p) => ({ label: p.label || "", amount: p.amount }));
+    } else {
+      alert(data?.error ? `Scan failed: ${data.error}` : "Could not read a receipt from that photo — try a straighter, brighter shot.");
+    }
+  } catch (e) {
+    alert("Scan failed: " + (e?.message || "unknown error"));
+  }
+  financeScanBusy = false;
+  renderFinancePage();
+}
 
 function recordFinanceTxnSplit(txnId, portions) {
   if (!state.financeTxnLabels || typeof state.financeTxnLabels !== "object") state.financeTxnLabels = {};
@@ -6839,7 +6861,11 @@ function renderFinancePage() {
     return `
     <div class="fin-split-editor">
       <div class="fin-subhead">Split ${formatFinMoney(total)} — ${escapeHtml(t.description)}</div>
-      ${receipt ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="split-prefill" data-id="${escapeHtml(t.id)}">Use email receipt · ${escapeHtml(receipt.merchant || "receipt")}${(receipt.items || []).length ? ` (${receipt.items.length} items)` : ""}</button>` : ""}
+      <div class="fin-item-row fin-item-row--tools">
+        ${receipt ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="split-prefill" data-id="${escapeHtml(t.id)}">Use email receipt · ${escapeHtml(receipt.merchant || "receipt")}${(receipt.items || []).length ? ` (${receipt.items.length} items)` : ""}</button>` : ""}
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="split-scan" ${financeScanBusy ? "disabled" : ""}>${financeScanBusy ? "Scanning…" : "📷 Scan receipt"}</button>
+        <input type="file" accept="image/*" capture="environment" data-fin-edit="split-scan-file" hidden />
+      </div>
       ${financeSplitDraft.portions.map((p, i) => `
         <div class="fin-item-row">
           <input class="fin-item-amount" type="text" inputmode="decimal" value="${escapeHtml(String(p.amount ?? ""))}" placeholder="0.00" data-fin-edit="split-amount" data-idx="${i}" aria-label="Portion amount" />
@@ -6989,6 +7015,10 @@ function onFinanceGridClick(e) {
     renderFinancePage();
     return;
   }
+  if (action === "split-scan") {
+    btn.closest(".fin-split-editor")?.querySelector('[data-fin-edit="split-scan-file"]')?.click();
+    return;
+  }
   if (action === "split-prefill") {
     const t = financeLabeledTxns().find((x) => x.id === btn.dataset.id);
     const receipt = t && financeReceiptForTxn(t);
@@ -7136,6 +7166,12 @@ function onFinanceGridChange(e) {
     }
     recordFinanceTxnLabel(el.dataset.id, el.value, el.dataset.desc || "");
     renderFinancePage();
+    return;
+  }
+  if (kind === "split-scan-file") {
+    const file = el.files?.[0];
+    el.value = "";
+    if (file) scanReceiptIntoSplit(file);
     return;
   }
   if (kind === "split-amount" || kind === "split-label") {
