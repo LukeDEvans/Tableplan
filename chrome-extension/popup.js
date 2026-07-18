@@ -5,6 +5,7 @@ const actionGroup = document.querySelector("#actionGroup");
 const importSavedGroup = document.querySelector("#importSavedGroup");
 const importButton = document.querySelector("#importCurrentPage");
 const saveArticleButton = document.querySelector("#saveCurrentArticle");
+const saveReceiptButton = document.querySelector("#saveReceipt");
 const importSavedButton = document.querySelector("#importSavedArticles");
 const signOutButton = document.querySelector("#signOut");
 let currentTabId = null;
@@ -39,6 +40,8 @@ async function updateActionLabels() {
   const isEconSaved = /economist\.com\/for-you\/bookmarks\b/i.test(url);
   currentTabPublication = isNYTSaved ? "nyt" : isEconSaved ? "economist" : null;
   importSavedGroup.hidden = !currentTabPublication;
+  const isReceiptSite = /target\.com|amazon\.|walmart\.com|costco\.com|instacart\.com|kohls\.com/i.test(url);
+  saveReceiptButton.hidden = !isReceiptSite;
   const isArticle = /nytimes\.com|economist\.com/i.test(url);
   if (isArticle) {
     saveArticleButton.style.order = "-1";
@@ -82,6 +85,16 @@ importSavedButton.addEventListener("click", async () => {
   status.textContent = response?.ok
     ? `Imported ${response.imported} of ${response.total} articles. Reload the Live app to see them.`
     : response?.error || "Import failed.";
+});
+
+saveReceiptButton.addEventListener("click", async () => {
+  const tab = await currentTab();
+  if (!tab?.id) return;
+  status.textContent = "Reading receipt from page...";
+  const response = await send({ type: "importReceipt", tabId: tab.id });
+  status.textContent = response?.ok
+    ? `Saved: ${response.receipt.merchant || "receipt"} · $${response.receipt.total} (${response.receipt.items} items). It will match its bank transaction in Finance.`
+    : response?.error || "Could not extract a receipt.";
 });
 
 saveArticleButton.addEventListener("click", async () => {

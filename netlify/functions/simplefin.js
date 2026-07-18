@@ -90,23 +90,8 @@ exports.handler = async (event) => {
       if (!m) return cors(json(400, { error: "image must be a base64 data URL." }));
       if (m[2].length > 6000000) return cors(json(413, { error: "Image too large." }));
 
-      const finRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(groupId + ":finance")}&select=state`,
-        { headers: svc(serviceKey), cache: "no-store" }
-      );
-      const finRows = finRes.ok ? await finRes.json() : [];
-      const groups = finRows[0]?.state?.financeBudgetGroups || [];
-      const categories = groups.flatMap((g) => (g.categories || []).map((c) => ({ key: `cat:${g.id}:${c.id}`, name: `${g.label} · ${c.name}` })));
+      const categories = await loadFinanceCategories(serviceKey, groupId);
       if (!categories.length) return cors(json(409, { error: "No budget categories to assign." }));
-
-      const prompt = [
-        "You extract itemized purchase receipts from photos for a household budget app.",
-        'Reply with ONLY valid JSON, no markdown: {"receipt": {...}} or {"receipt": null} if no readable receipt.',
-        'Receipt shape: {"merchant": "...", "date": "YYYY-MM-DD", "total": 12.34, "items": [{"name": "...", "price": 1.23, "category": "<key>" or null}]}',
-        "total = the final amount charged (after tax and discounts).",
-        "Assign each item the best-fitting budget category key from this list; use null when unsure:",
-        categories.map((c) => `${c.key} = ${c.name}`).join("\n")
-      ].join("\n");
 
       const ai = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -118,46 +103,50 @@ exports.handler = async (event) => {
           messages: [{
             role: "user",
             content: [
-              { type: "text", text: prompt },
+              { type: "text", text: receiptPrompt("photos", categories) },
               { type: "image", source: { type: "base64", media_type: m[1], data: m[2] } }
             ]
           }]
         })
       });
       if (!ai.ok) return cors(json(502, { error: `Scan failed (${ai.status}).` }));
-      const aiData = await ai.json().catch(() => null);
-      const text = aiData?.content?.map((c) => c.text || "").join("") || "";
-      const jm = text.match(/\{[\s\S]*\}/);
-      let parsed = null;
-      try { parsed = jm ? JSON.parse(jm[0]) : null; } catch { /* fall through */ }
-      const r = parsed?.receipt;
-      if (!r || !Number(r.total)) return cors(json(200, { receipt: null }));
+      const receipt = receiptFromModel(await modelText(ai), categories);
+      return cors(json(200, { receipt }));
+    }
 
-      const validKeys = new Set(categories.map((c) => c.key));
-      const items = (Array.isArray(r.items) ? r.items : []).slice(0, 80).map((it) => ({
-        name: String(it.name || "").slice(0, 80),
-        price: Math.round((Number(it.price) || 0) * 100) / 100,
-        category: validKeys.has(it.category) ? it.category : ""
-      }));
-      const byCat = {};
-      let assigned = 0;
-      for (const it of items) {
-        if (!it.category || !it.price) continue;
-        byCat[it.category] = Math.round(((byCat[it.category] || 0) + it.price) * 100) / 100;
-        assigned += it.price;
-      }
-      const portions = Object.entries(byCat).map(([label, amount]) => ({ label, amount }));
-      const remainder = Math.round((Number(r.total) - assigned) * 100) / 100;
-      if (remainder > 0.02) portions.push({ label: "", amount: remainder });
-      return cors(json(200, {
-        receipt: {
-          merchant: String(r.merchant || "").slice(0, 60),
-          date: /^\d{4}-\d{2}-\d{2}$/.test(r.date) ? r.date : "",
-          total: Math.round(Number(r.total) * 100) / 100,
-          items,
-          portions
-        }
-      }));
+    if (action === "importReceipt") {
+      // Rendered page text from the browser extension (Target purchase
+      // history, Amazon orders, …) → itemized + categorized → stored with
+      // the email receipts so transaction matching picks it up.
+      const anthropicKey = (process.env.ANTHROPIC_API_KEY || "").trim();
+      if (!anthropicKey) return cors(json(503, { error: "Extraction is not configured." }));
+      const text = String(body.text || "").slice(0, 20000);
+      if (text.length < 40) return cors(json(400, { error: "No readable receipt text on this page." }));
+      const categories = await loadFinanceCategories(serviceKey, groupId);
+      if (!categories.length) return cors(json(409, { error: "No budget categories to assign." }));
+
+      const ai = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": anthropicKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify({
+          model: process.env.ANTHROPIC_RECEIPT_SCAN_MODEL || "claude-haiku-4-5-20251001",
+          max_tokens: 2000,
+          temperature: 0,
+          messages: [{ role: "user", content: [{ type: "text", text: `${receiptPrompt("web order/purchase-history pages", categories)}\n\nPAGE TEXT:\n${text}` }] }]
+        })
+      });
+      if (!ai.ok) return cors(json(502, { error: `Extraction failed (${ai.status}).` }));
+      const receipt = receiptFromModel(await modelText(ai), categories);
+      if (!receipt) return cors(json(200, { receipt: null }));
+      // Stable id from merchant+date+total so re-importing the same page
+      // doesn't duplicate the receipt.
+      let h = 0;
+      const fp = `${receipt.merchant}|${receipt.date}|${receipt.total}`;
+      for (let i = 0; i < fp.length; i++) h = (h * 31 + fp.charCodeAt(i)) | 0;
+      receipt.id = `imp_${Math.abs(h).toString(36)}`;
+      receipt.source = "extension";
+      await saveImportedReceipt(serviceKey, groupId, receipt);
+      return cors(json(200, { ok: true, receipt: { merchant: receipt.merchant, date: receipt.date, total: receipt.total, items: receipt.items.length } }));
     }
 
     if (action === "receipts") {
@@ -218,6 +207,82 @@ exports.handler = async (event) => {
 function numOrNull(v) {
   const n = parseFloat(v);
   return Number.isFinite(n) ? n : null;
+}
+
+// ── Receipt extraction helpers (shared by scanReceipt / importReceipt) ──────
+async function loadFinanceCategories(serviceKey, groupId) {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(groupId + ":finance")}&select=state`,
+    { headers: svc(serviceKey), cache: "no-store" }
+  );
+  const rows = res.ok ? await res.json() : [];
+  const groups = rows[0]?.state?.financeBudgetGroups || [];
+  return groups.flatMap((g) => (g.categories || []).map((c) => ({ key: `cat:${g.id}:${c.id}`, name: `${g.label} · ${c.name}` })));
+}
+
+function receiptPrompt(sourceKind, categories) {
+  return [
+    `You extract itemized purchase receipts from ${sourceKind} for a household budget app.`,
+    'Reply with ONLY valid JSON, no markdown: {"receipt": {...}} or {"receipt": null} if no readable receipt.',
+    'Receipt shape: {"merchant": "...", "date": "YYYY-MM-DD", "total": 12.34, "items": [{"name": "...", "price": 1.23, "category": "<key>" or null}]}',
+    "total = the final amount charged (after tax and discounts).",
+    "Assign each item the best-fitting budget category key from this list; use null when unsure:",
+    categories.map((c) => `${c.key} = ${c.name}`).join("\n")
+  ].join("\n");
+}
+
+async function modelText(aiResponse) {
+  const data = await aiResponse.json().catch(() => null);
+  return data?.content?.map((c) => c.text || "").join("") || "";
+}
+
+// Parses the model reply and normalizes into { merchant, date, total, items,
+// portions } — per-category item sums plus one unlabeled remainder portion
+// (tax/shipping/uncertain items) so portions always cover the total.
+function receiptFromModel(text, categories) {
+  const jm = String(text || "").match(/\{[\s\S]*\}/);
+  let parsed = null;
+  try { parsed = jm ? JSON.parse(jm[0]) : null; } catch { return null; }
+  const r = parsed?.receipt;
+  if (!r || !Number(r.total)) return null;
+  const validKeys = new Set(categories.map((c) => c.key));
+  const items = (Array.isArray(r.items) ? r.items : []).slice(0, 80).map((it) => ({
+    name: String(it.name || "").slice(0, 80),
+    price: Math.round((Number(it.price) || 0) * 100) / 100,
+    category: validKeys.has(it.category) ? it.category : ""
+  }));
+  const byCat = {};
+  let assigned = 0;
+  for (const it of items) {
+    if (!it.category || !it.price) continue;
+    byCat[it.category] = Math.round(((byCat[it.category] || 0) + it.price) * 100) / 100;
+    assigned += it.price;
+  }
+  const portions = Object.entries(byCat).map(([label, amount]) => ({ label, amount }));
+  const remainder = Math.round((Number(r.total) - assigned) * 100) / 100;
+  if (remainder > 0.02) portions.push({ label: "", amount: remainder });
+  return {
+    merchant: String(r.merchant || "").slice(0, 60),
+    date: /^\d{4}-\d{2}-\d{2}$/.test(r.date) ? r.date : "",
+    total: Math.round(Number(r.total) * 100) / 100,
+    items,
+    portions,
+    at: new Date().toISOString()
+  };
+}
+
+async function saveImportedReceipt(serviceKey, groupId, receipt) {
+  const id = `finreceipts_${groupId}`;
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(id)}&select=state`, { headers: svc(serviceKey), cache: "no-store" });
+  const rows = res.ok ? await res.json() : [];
+  const existing = rows[0]?.state?.receipts || [];
+  const merged = [receipt, ...existing.filter((r) => r.id !== receipt.id)].slice(0, 40);
+  const up = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
+    method: "POST",
+    headers: { ...svc(serviceKey), "content-type": "application/json", prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({ id, state: { receipts: merged }, updated_at: new Date().toISOString() })
+  });
+  if (!up.ok) throw new Error(`receipt save ${up.status}`);
 }
 
 function splitAccessUrl(accessUrl) {

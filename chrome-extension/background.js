@@ -3,6 +3,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const IMPORT_RECIPE_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/import-recipe";
 const SAVE_ARTICLE_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/save-article";
 const SAVE_PAGE_ARTICLES_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/save-page-articles";
+const SIMPLEFIN_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/simplefin";
 const SESSION_KEY = "eatSupabaseSession";
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -19,7 +20,31 @@ async function handleMessage(message) {
   if (message?.type === "importRecipe") return importRecipe(message.url);
   if (message?.type === "saveArticle") return saveArticle(message.url, message.title, message.tabId);
   if (message?.type === "importFromPage") return importFromPage(message.tabId, message.publication);
+  if (message?.type === "importReceipt") return importReceiptFromPage(message.tabId);
   return { ok: false, error: "Unknown action." };
+}
+
+// Grabs the RENDERED text of an order/receipt page (Target purchase history,
+// Amazon orders, …) from the user's logged-in session — no credentials, no
+// brittle selectors — and lets the server itemize + categorize it.
+async function importReceiptFromPage(tabId) {
+  const session = await getValidSession(true);
+  if (!tabId) throw new Error("Open the receipt page first.");
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => ({ url: location.href, text: (document.body?.innerText || "").slice(0, 20000) })
+  });
+  const page = results?.[0]?.result;
+  if (!page?.text || page.text.length < 40) throw new Error("Could not read this page.");
+  const response = await fetch(SIMPLEFIN_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
+    body: JSON.stringify({ action: "importReceipt", text: page.text, url: page.url })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `Import failed (${response.status})`);
+  if (!payload.receipt) throw new Error("No itemized receipt found — open a single order's details page.");
+  return { ok: true, receipt: payload.receipt };
 }
 
 async function sessionStatus() {
