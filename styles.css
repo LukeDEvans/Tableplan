@@ -12600,6 +12600,35 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   border-radius: 6px;
 }
 .mail-move-option:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+/* Proactive filing chip (below the subject, inbox only) */
+.mail-file-chip-row { display: flex; align-items: center; gap: 4px; padding: 10px 0 2px; }
+.mail-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 13px;
+  border: 2px solid var(--window-border);
+  border-radius: 999px;
+  background: var(--window-bg);
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+.mail-file-chip:hover,
+.mail-file-chip:focus-visible { background: var(--accent-soft); outline: none; }
+.mail-file-chip .live-icon { flex: 0 0 auto; }
+.mail-file-chip-dismiss {
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 1.05rem;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  line-height: 1;
+}
+.mail-file-chip-dismiss:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+
 .mail-move-suggest-head {
   font-size: 0.66rem;
   font-weight: 850;

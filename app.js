@@ -6983,6 +6983,32 @@ function predictMailFolder(threadId) {
   return best;
 }
 
+// Proactive filing: the chip offers a one-tap move when we're confident —
+// the conversation was filed before, or the sender's history clearly leans
+// one way (2+ moves, ≥60% to the same folder). Inbox only; dismiss lasts
+// the session.
+const dismissedMailFileChips = new Set();
+
+function mailFileChipTarget(threadId) {
+  if (currentMailbox !== "INBOX" || dismissedMailFileChips.has(threadId)) return null;
+  const mem = mailMoveMemory();
+  let target = mem.threads[threadId] || null;
+  if (!target) {
+    const sender = mailThreadSenders.get(threadId);
+    const counts = sender && mem.senders[sender];
+    if (counts && typeof counts === "object") {
+      let best = null, n = 0, total = 0;
+      for (const [id, c] of Object.entries(counts)) {
+        total += Number(c) || 0;
+        if (Number(c) > n) { n = Number(c); best = id; }
+      }
+      if (n >= 2 && n / total >= 0.6) target = best;
+    }
+  }
+  if (!target || target === "INBOX") return null;
+  return mailLabels.find((l) => l.id === target) || null;
+}
+
 // Renders picker options with the predicted folder pulled to the top.
 function mailMoveOptionsHtml(threadId) {
   const options = mailLabels.filter((l) => l.id !== currentMailbox);
@@ -7096,6 +7122,10 @@ function renderMailThread(thread) {
   // Newest message first in the thread view; replies/forwards still target `last` (the actual latest)
   const displayOrder = [...messages].reverse();
   const subject = last?.subject || "(no subject)";
+  if (!mailThreadSenders.has(thread.id) && messages[0]?.from) {
+    mailThreadSenders.set(thread.id, mailSenderAddress(messages[0].from));
+  }
+  const fileChip = mailFileChipTarget(thread.id);
   const html = `
     <div class="mail-thread-toolbar">
       <button class="icon-btn mail-action-btn" type="button" id="mailBackBtn" title="Back" aria-label="Back">
@@ -7139,6 +7169,12 @@ function renderMailThread(thread) {
       <div class="mail-thread-subject-bar">
         <h2 class="mail-thread-subject">${escapeHtml(subject)}</h2>
       </div>
+      ${fileChip ? `<div class="mail-file-chip-row" id="mailFileChipRow">
+        <button class="mail-file-chip" type="button" id="mailFileChipBtn">
+          ${ldeIcon("move", { size: 14 })} Move to ${escapeHtml(fileChip.type === "system" ? formatSystemLabel(fileChip.id) : fileChip.name)}?
+        </button>
+        <button class="mail-file-chip-dismiss" type="button" id="mailFileChipDismissBtn" title="Not this time" aria-label="Dismiss suggestion">&times;</button>
+      </div>` : ""}
       <div class="mail-thread-messages">
         ${displayOrder.map((m, i) => renderMailMessage(m, i)).join("")}
       </div>
@@ -7203,6 +7239,13 @@ function renderMailThread(thread) {
   document.getElementById("mailDeleteBtn").addEventListener("click", () => deleteMailThread(thread));
   document.getElementById("mailUnreadBtn").addEventListener("click", () => markMailUnread(thread));
   document.getElementById("mailMoveBtn").addEventListener("click", (e) => { e.stopPropagation(); showMailMovePicker(thread); });
+  if (fileChip) {
+    document.getElementById("mailFileChipBtn")?.addEventListener("click", () => moveMailToLabel(thread.id, fileChip.id));
+    document.getElementById("mailFileChipDismissBtn")?.addEventListener("click", () => {
+      dismissedMailFileChips.add(thread.id);
+      document.getElementById("mailFileChipRow")?.remove();
+    });
+  }
   document.getElementById("mailMoreBtn").addEventListener("click", (e) => { e.stopPropagation(); showMailMoreMenu(thread, last); });
   const openMailComposeArea = (mode) => {
     mailComposeMode = mode;
