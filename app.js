@@ -6378,6 +6378,20 @@ function renderFinancePage() {
   const expenses = financeExpensesTotal();
   const cashFlow = income - expenses;
 
+  // Actual spend this calendar month per category, from labeled transactions
+  // (spend transactions are negative amounts; mgmt/income labels don't land here)
+  const allTxns = financeLabeledTxns();
+  const showActuals = Boolean(financeLinkStatus?.connected && financeLive);
+  const monthKey = new Date().toISOString().slice(0, 7);
+  const catActuals = new Map();
+  for (const t of allTxns) {
+    if (!t.label || !t.label.startsWith("cat:")) continue;
+    if ((t.posted || "").slice(0, 7) !== monthKey) continue;
+    const k = t.label.slice(4); // "<groupId>:<categoryId>"
+    catActuals.set(k, (catActuals.get(k) || 0) - (t.amount || 0));
+  }
+  const catActual = (g, c) => catActuals.get(`${g.id}:${c.id}`) || 0;
+
   const finItemRow = (scope, it) => `
     <div class="fin-item-row">
       <input class="fin-item-name" type="text" value="${escapeHtml(it.name)}" data-fin-edit="item-name" data-scope="${scope}" data-id="${it.id}" placeholder="Name" />
@@ -6430,9 +6444,13 @@ function renderFinancePage() {
     const total = financeGroupTotal(g);
     const pct = income > 0 ? (total / income) * 100 : 0;
     const cardOpen = financeExpanded.has(`card:${g.id}`);
+    const gActual = g.categories.reduce((s, c) => s + catActual(g, c), 0);
+    const headTotal = showActuals
+      ? `<span class="fin-cat-actual${gActual > total ? " is-over" : ""}">${formatFinMoney(gActual)}</span> <span class="fin-of">of</span> ${formatFinMoney(total)}`
+      : formatFinMoney(total);
     return `
     <div class="fin-card" data-fin-card="group">
-      ${cardHead(`card:${g.id}`, g.label, formatFinMoney(total))}
+      ${cardHead(`card:${g.id}`, g.label, headTotal)}
       <div class="fin-group-meter" title="${pct.toFixed(1)}% of income — ideal ${g.idealPct}%">
         <div class="fin-group-meter-fill${pct > g.idealPct ? " is-over" : ""}" style="width:${Math.min(100, pct)}%"></div>
         <div class="fin-group-meter-ideal" style="left:${Math.min(100, g.idealPct)}%"></div>
@@ -6443,6 +6461,11 @@ function renderFinancePage() {
         const scope = `cat:${g.id}:${c.id}`;
         const pick = c.mode === "pick";
         const activeItem = financeCategoryActiveItem(c);
+        const budget = financeCategoryTotal(c);
+        const actual = catActual(g, c);
+        const actualHtml = showActuals
+          ? `<span class="fin-cat-actual${actual > budget ? " is-over" : ""}">${formatFinMoney(actual)}</span><span class="fin-of">/</span>`
+          : "";
         const rowHtml = pick ? `
           <div class="fin-category-row fin-category-row--pick">
             <button class="fin-category-pick-expand" type="button" data-fin-action="toggle-expand" data-id="${c.id}">
@@ -6451,12 +6474,12 @@ function renderFinancePage() {
             <select class="fin-scenario-select" data-fin-edit="category-active" data-scope="${scope}" aria-label="${escapeHtml(c.name)} option">
               ${c.items.map((it) => `<option value="${it.id}" ${it.id === (activeItem?.id || "") ? "selected" : ""}>${escapeHtml(it.name || "(unnamed)")}</option>`).join("")}
             </select>
-            <span class="fin-category-total">${formatFinMoney(financeCategoryTotal(c))}</span>
+            ${actualHtml}<span class="fin-category-total">${formatFinMoney(budget)}</span>
             <button class="fin-category-pick-expand fin-category-caret" type="button" data-fin-action="toggle-expand" data-id="${c.id}" aria-label="Edit ${escapeHtml(c.name)} options">${open ? "▴" : "▾"}</button>
           </div>` : `
           <button class="fin-category-row" type="button" data-fin-action="toggle-expand" data-id="${c.id}">
             <span class="fin-category-name">${escapeHtml(c.name)}</span>
-            <span class="fin-category-total">${formatFinMoney(financeCategoryTotal(c))}</span>
+            ${actualHtml}<span class="fin-category-total">${formatFinMoney(budget)}</span>
             <span class="fin-category-caret">${open ? "▴" : "▾"}</span>
           </button>`;
         return `
@@ -6628,7 +6651,6 @@ function renderFinancePage() {
       </div>`}
     </div>`;
 
-  const allTxns = financeLabeledTxns();
   const txns = allTxns.slice(0, 60);
   const needsLabel = allTxns.filter((t) => !t.label);
   const txnSelect = (t) => `

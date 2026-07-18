@@ -17575,3 +17575,6 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   [data-fin-card="txns"] .fin-txn-row { flex-wrap: wrap; }
   [data-fin-card="txns"] .fin-txn-label { max-width: 60%; }
 }
+.fin-cat-actual { font-weight: 800; color: color-mix(in srgb, var(--ink) 62%, transparent); }
+.fin-cat-actual.is-over { color: #b3261e; }
+.fin-of { color: var(--muted); font-size: 0.72rem; font-weight: 650; padding: 0 1px; }
