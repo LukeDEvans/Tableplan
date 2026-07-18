@@ -212,7 +212,7 @@ const STATE_SECTIONS = {
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financePersonal"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
@@ -2864,6 +2864,7 @@ function defaultState() {
     financeBudgetGroups: defaultFinanceBudgetGroups(),
     financeAccounts: [],
     financeAccountLabels: [],
+    financeAccountSubLabels: {},
     financePersonal: [],
     doTasks: [],
     themeMode: "light",
@@ -2980,6 +2981,7 @@ function normalizeState(parsed) {
     financeBudgetGroups: normalizeFinanceBudgetGroups(parsed?.financeBudgetGroups),
     financeAccounts: normalizeFinanceAccounts(parsed?.financeAccounts),
     financeAccountLabels: [...new Set((Array.isArray(parsed?.financeAccountLabels) ? parsed.financeAccountLabels : []).map((l) => String(l || "").trim()).filter(Boolean))],
+    financeAccountSubLabels: normalizeFinanceSubLabels(parsed?.financeAccountSubLabels),
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
@@ -3648,9 +3650,22 @@ function normalizeFinanceAccounts(raw) {
   return (Array.isArray(raw) ? raw : []).map((a) => ({
     id: a?.id || createId("fin-account"),
     owner: a?.owner || "",
+    sub: a?.sub || "",     // sub-label within the owner group ("" = none)
     name: a?.name || "",
     linkedId: a?.linkedId || "" // SimpleFIN account id this row displays
   }));
+}
+
+// { ownerLabel: ["Sub-label", ...] } — persistent so empty sub-groups survive
+function normalizeFinanceSubLabels(raw) {
+  const out = {};
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    for (const [owner, subs] of Object.entries(raw)) {
+      const clean = [...new Set((Array.isArray(subs) ? subs : []).map((s) => String(s || "").trim()).filter(Boolean))];
+      if (clean.length) out[owner] = clean;
+    }
+  }
+  return out;
 }
 
 function normalizeFinancePersonal(raw) {
@@ -6409,15 +6424,15 @@ function renderFinancePage() {
       ${cardHead("card:accounts", "Accounts", `${(state.financeAccounts || []).length}`)}
       ${!accountsOpen ? "" : `
       ${linkBlock}
-      ${owners.map((owner) => `
-        <div class="fin-label-head">
-          <span class="fin-subhead">${escapeHtml(owner)}</span>
-          <button class="icon-btn fin-del-btn fin-label-btn" type="button" data-fin-action="rename-label" data-label="${escapeHtml(owner)}" title="Rename label" aria-label="Rename ${escapeHtml(owner)}">✎</button>
-          <button class="icon-btn fin-del-btn fin-label-btn" type="button" data-fin-action="delete-label" data-label="${escapeHtml(owner)}" title="Delete label" aria-label="Delete ${escapeHtml(owner)}">&times;</button>
-        </div>
-        ${(state.financeAccounts || []).filter((a) => (a.owner || "Other") === owner).map((a) => {
+      ${(() => {
+        const ownerSubs = (owner) => [...new Set([
+          ...(((state.financeAccountSubLabels || {})[owner]) || []),
+          ...(state.financeAccounts || []).filter((x) => (x.owner || "Other") === owner && x.sub).map((x) => x.sub),
+        ])];
+        const finAcctRow = (a) => {
           const live = a.linkedId ? liveById.get(a.linkedId) : null;
           const editing = financeExpanded.has(`edit:${a.id}`);
+          const subs = ownerSubs(a.owner || "Other");
           return `
           <div class="fin-item-row fin-acct-row">
             <span class="fin-acct-name">${escapeHtml(a.name)}</span>
@@ -6434,19 +6449,50 @@ function renderFinancePage() {
                 ${owners.map((o) => `<option value="${escapeHtml(o)}" ${o === (a.owner || "Other") ? "selected" : ""}>${escapeHtml(o)}</option>`).join("")}
                 <option value="__new__">New label…</option>
               </select>
-              ${financeLinkStatus?.connected ? `
+              <select class="fin-scenario-select fin-editor-select" data-fin-edit="account-sub" data-id="${a.id}" title="Sub-label" aria-label="Sub-label for ${escapeHtml(a.name)}">
+                <option value="">no sub-label</option>
+                ${subs.map((s) => `<option value="${escapeHtml(s)}" ${s === a.sub ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
+                <option value="__new__">New sub-label…</option>
+              </select>
+            </div>
+            ${financeLinkStatus?.connected ? `
+            <div class="fin-item-row">
               <select class="fin-scenario-select fin-editor-select" data-fin-edit="account-link" data-id="${a.id}" title="Linked bank account" aria-label="Link ${escapeHtml(a.name)} to a bank account">
                 <option value="">not linked</option>
                 ${(financeLive?.accounts || []).map((la) => `<option value="${escapeHtml(la.id)}" ${la.id === a.linkedId ? "selected" : ""}>${escapeHtml(la.org)}${la.org && la.name ? " — " : ""}${escapeHtml(la.name)}</option>`).join("")}
                 ${a.linkedId && !liveById.has(a.linkedId) ? `<option value="${escapeHtml(a.linkedId)}" selected>(linked — awaiting data)</option>` : ""}
-              </select>` : ""}
-            </div>
+              </select>
+            </div>` : ""}
             <div class="fin-item-row fin-item-row--tools">
               <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="delete-account" data-id="${a.id}">Delete account</button>
               <button class="secondary-btn fin-add-btn" type="button" data-fin-action="toggle-expand" data-id="edit:${a.id}">Done</button>
             </div>
           </div>` : ""}`;
-        }).join("") || `<p class="fin-hint">No accounts under this label yet — open an account's ✎ and pick this label.</p>`}`).join("")}
+        };
+        return owners.map((owner) => {
+          const ownerAccts = (state.financeAccounts || []).filter((x) => (x.owner || "Other") === owner);
+          const subs = ownerSubs(owner);
+          const noSub = ownerAccts.filter((x) => !x.sub);
+          return `
+          <div class="fin-label-head">
+            <span class="fin-subhead">${escapeHtml(owner)}</span>
+            <button class="icon-btn fin-del-btn fin-label-btn" type="button" data-fin-action="add-sublabel" data-label="${escapeHtml(owner)}" title="Add sub-label" aria-label="Add sub-label under ${escapeHtml(owner)}">+</button>
+            <button class="icon-btn fin-del-btn fin-label-btn" type="button" data-fin-action="rename-label" data-label="${escapeHtml(owner)}" title="Rename label" aria-label="Rename ${escapeHtml(owner)}">✎</button>
+            <button class="icon-btn fin-del-btn fin-label-btn" type="button" data-fin-action="delete-label" data-label="${escapeHtml(owner)}" title="Delete label" aria-label="Delete ${escapeHtml(owner)}">&times;</button>
+          </div>
+          ${noSub.map(finAcctRow).join("")}
+          ${subs.map((sub) => `
+            <div class="fin-label-head fin-sublabel-head">
+              <span class="fin-sublabel">${escapeHtml(sub)}</span>
+              <button class="icon-btn fin-del-btn fin-label-btn" type="button" data-fin-action="rename-sublabel" data-label="${escapeHtml(owner)}" data-sub="${escapeHtml(sub)}" title="Rename sub-label" aria-label="Rename ${escapeHtml(sub)}">✎</button>
+              <button class="icon-btn fin-del-btn fin-label-btn" type="button" data-fin-action="delete-sublabel" data-label="${escapeHtml(owner)}" data-sub="${escapeHtml(sub)}" title="Delete sub-label" aria-label="Delete ${escapeHtml(sub)}">&times;</button>
+            </div>
+            <div class="fin-sub-group">
+              ${ownerAccts.filter((x) => x.sub === sub).map(finAcctRow).join("") || `<p class="fin-hint">Empty — file accounts here from their ✎ editor.</p>`}
+            </div>`).join("")}
+          ${!ownerAccts.length && !subs.length ? `<p class="fin-hint">No accounts under this label yet — open an account's ✎ and pick this label.</p>` : ""}`;
+        }).join("");
+      })()}
       ${unlinkedLive.length ? `
       <div class="fin-subhead">Live accounts not linked yet</div>
       ${unlinkedLive.map((a) => `
@@ -6617,7 +6663,35 @@ function onFinanceGridClick(e) {
       : `Delete the label "${old}"?`;
     if (!confirm(msg)) return;
     state.financeAccountLabels = (state.financeAccountLabels || []).filter((l) => l !== old);
+    if (state.financeAccountSubLabels) delete state.financeAccountSubLabels[old];
     state.financeAccounts.forEach((a) => { if ((a.owner || "Other") === old) a.owner = "Other"; });
+  } else if (action === "add-sublabel") {
+    const owner = btn.dataset.label;
+    const name = prompt(`New sub-label under "${owner}"?`);
+    if (!name?.trim()) return;
+    if (!state.financeAccountSubLabels || typeof state.financeAccountSubLabels !== "object") state.financeAccountSubLabels = {};
+    const list = state.financeAccountSubLabels[owner] || [];
+    if (!list.includes(name.trim())) state.financeAccountSubLabels[owner] = [...list, name.trim()];
+  } else if (action === "rename-sublabel") {
+    const owner = btn.dataset.label;
+    const old = btn.dataset.sub;
+    const name = prompt(`Rename "${old}" to:`, old);
+    if (!name?.trim() || name.trim() === old) return;
+    const label = name.trim();
+    if (!state.financeAccountSubLabels || typeof state.financeAccountSubLabels !== "object") state.financeAccountSubLabels = {};
+    const list = (state.financeAccountSubLabels[owner] || []).filter((s) => s !== old && s !== label);
+    state.financeAccountSubLabels[owner] = [...list, label];
+    state.financeAccounts.forEach((a) => { if ((a.owner || "Other") === owner && a.sub === old) a.sub = label; });
+  } else if (action === "delete-sublabel") {
+    const owner = btn.dataset.label;
+    const sub = btn.dataset.sub;
+    const count = state.financeAccounts.filter((a) => (a.owner || "Other") === owner && a.sub === sub).length;
+    if (!confirm(count ? `Delete "${sub}"? Its ${count} account${count === 1 ? "" : "s"} stay under ${owner}, unfiled.` : `Delete the sub-label "${sub}"?`)) return;
+    if (state.financeAccountSubLabels?.[owner]) {
+      state.financeAccountSubLabels[owner] = state.financeAccountSubLabels[owner].filter((s) => s !== sub);
+      if (!state.financeAccountSubLabels[owner].length) delete state.financeAccountSubLabels[owner];
+    }
+    state.financeAccounts.forEach((a) => { if ((a.owner || "Other") === owner && a.sub === sub) a.sub = ""; });
   } else {
     return;
   }
@@ -6662,6 +6736,22 @@ function onFinanceGridChange(e) {
       a.owner = label;
     } else {
       a.owner = el.value;
+    }
+    a.sub = ""; // sub-labels belong to an owner; moving owners unfiles it
+  } else if (kind === "account-sub") {
+    const a = state.financeAccounts.find((x) => x.id === el.dataset.id);
+    if (!a) return;
+    if (el.value === "__new__") {
+      const name = prompt("New sub-label name?");
+      if (!name?.trim()) { renderFinancePage(); return; }
+      const sub = name.trim();
+      const owner = a.owner || "Other";
+      if (!state.financeAccountSubLabels || typeof state.financeAccountSubLabels !== "object") state.financeAccountSubLabels = {};
+      const list = state.financeAccountSubLabels[owner] || [];
+      if (!list.includes(sub)) state.financeAccountSubLabels[owner] = [...list, sub];
+      a.sub = sub;
+    } else {
+      a.sub = el.value;
     }
   } else if (kind === "category-mode") {
     const c = financeScopeCategory(el.dataset.scope);

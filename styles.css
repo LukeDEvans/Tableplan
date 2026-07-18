@@ -17500,3 +17500,14 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   border-left: 2px solid color-mix(in srgb, var(--window-border) 35%, transparent);
 }
 .fin-editor-select { flex: 1; min-width: 0; max-width: none; }
+.fin-sublabel-head { padding-left: 10px; }
+.fin-sublabel {
+  flex: 1;
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, var(--muted) 80%, var(--window-border));
+  padding-top: 4px;
+}
+.fin-sub-group { padding-left: 10px; border-left: 2px solid color-mix(in srgb, var(--window-border) 18%, transparent); margin: 0 0 2px 2px; }
