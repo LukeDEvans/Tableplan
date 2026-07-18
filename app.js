@@ -2645,19 +2645,26 @@ function loadTripBackup() {
 // the state past it. A mirror failure must DEGRADE, never throw into whatever
 // user action happened to trigger the save (it once surfaced on iPhone as
 // "Could not generate audio: The quota has been exceeded").
+// Finance data is deliberately NEVER mirrored to device localStorage: a lost
+// or shared device should not carry a readable copy of the household ledger.
+// Supabase (RLS-protected) is the only store; the page re-hydrates from it.
+const LOCAL_MIRROR_EXCLUDED_KEYS = ["financePeople", "financeBudgetGroups", "financeAccounts", "financePersonal"];
+
 function mirrorStateToLocalStorage() {
+  const base = { ...state };
+  for (const k of LOCAL_MIRROR_EXCLUDED_KEYS) delete base[k];
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(base));
     return;
   } catch { /* over quota — try slimmer mirrors */ }
   try {
-    const slim = { ...state, savedArticles: (state.savedArticles || []).map((a) => ({ ...a, text: null })) };
+    const slim = { ...base, savedArticles: (base.savedArticles || []).map((a) => ({ ...a, text: null })) };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
     console.warn("[persist] localStorage over quota — mirrored without article texts (cloud copy unaffected)");
     return;
   } catch { /* still over quota */ }
   try {
-    const slimmer = { ...state, savedArticles: [], podcasts: (state.podcasts || []).map((p) => ({ ...p, episodes: [] })) };
+    const slimmer = { ...base, savedArticles: [], podcasts: (base.podcasts || []).map((p) => ({ ...p, episodes: [] })) };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(slimmer));
     console.warn("[persist] localStorage far over quota — minimal mirror only (cloud copy unaffected)");
   } catch (e) {
@@ -6120,8 +6127,66 @@ function showFinanceApp(event) {
   setPageTitle("Finance");
   setPageHash("finance");
   renderFinancePage();
+  if (financeLinkStatus === null) checkFinanceLinkStatus();
+  else if (financeLinkStatus.connected && !financeLive) refreshFinanceLive();
   closePageTitleMenu();
   closeAppMenu();
+}
+
+// ── SimpleFIN bank link (read-only) ──────────────────────────────────────────
+// Live balances/transactions are held in module memory for the session only —
+// never written to state, localStorage, or anywhere a device would retain.
+let financeLinkStatus = null; // null = unknown yet
+let financeLive = null;       // { accounts, errors, at }
+let financeLiveLoading = false;
+let financeLinkBusy = false;
+
+async function checkFinanceLinkStatus() {
+  const data = await callNetlifyFunction("simplefin", { action: "status" });
+  financeLinkStatus = data && !data.error ? data : { connected: false };
+  if (activeAppArea === "finance") renderFinancePage();
+  if (financeLinkStatus.connected && !financeLive) refreshFinanceLive();
+}
+
+async function refreshFinanceLive() {
+  if (financeLiveLoading) return;
+  financeLiveLoading = true;
+  if (activeAppArea === "finance") renderFinancePage();
+  const data = await callNetlifyFunction("simplefin", { action: "accounts", days: 30 });
+  financeLiveLoading = false;
+  financeLive = data?.accounts
+    ? { accounts: data.accounts, errors: data.errors || [], at: Date.now() }
+    : { accounts: [], errors: [data?.error || "Could not reach the bank bridge."], at: Date.now() };
+  if (activeAppArea === "finance") renderFinancePage();
+}
+
+async function linkFinanceBanks() {
+  const input = document.getElementById("finSetupToken");
+  const setupToken = input?.value.trim();
+  if (!setupToken || financeLinkBusy) return;
+  financeLinkBusy = true;
+  renderFinancePage();
+  const data = await callNetlifyFunction("simplefin", { action: "setup", setupToken });
+  financeLinkBusy = false;
+  if (data?.ok) {
+    financeLinkStatus = { connected: true, connectedAt: new Date().toISOString() };
+    refreshFinanceLive();
+  } else {
+    alert("Bank link failed: " + (data?.error || "unknown error"));
+  }
+  renderFinancePage();
+}
+
+async function unlinkFinanceBanks() {
+  if (!confirm("Disconnect SimpleFIN? Live balances stop updating; your budget data is unaffected.")) return;
+  const data = await callNetlifyFunction("simplefin", { action: "disconnect" });
+  if (data?.ok) {
+    financeLinkStatus = { connected: false };
+    financeLive = null;
+  } else {
+    alert("Disconnect failed: " + (data?.error || "unknown error"));
+  }
+  renderFinancePage();
 }
 
 // ── Finance page ─────────────────────────────────────────────────────────────
@@ -6308,13 +6373,37 @@ function renderFinancePage() {
       ${!personalOpen ? "" : `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-personal">+ Personal budget</button>`}
     </div>`;
 
+  const linkBlock = financeLinkStatus?.connected ? `
+      <div class="fin-subhead">Bank link · SimpleFIN</div>
+      <div class="fin-item-row fin-item-row--tools">
+        <span class="fin-hint">Connected${financeLive?.at ? ` · updated ${new Date(financeLive.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}</span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="refresh-live" ${financeLiveLoading ? "disabled" : ""}>${financeLiveLoading ? "Refreshing…" : "Refresh"}</button>
+        <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="unlink-banks">Disconnect</button>
+      </div>
+      ${(financeLive?.accounts || []).length ? `
+      <div class="fin-subhead">Live balances</div>
+      ${financeLive.accounts.map((a) => `
+        <div class="fin-live-row">
+          <span class="fin-live-name">${escapeHtml(a.org)}${a.org && a.name ? " — " : ""}${escapeHtml(a.name)}</span>
+          <span class="fin-live-bal${(a.balance ?? 0) < 0 ? " is-neg" : ""}">${formatFinMoney(a.balance ?? 0)}</span>
+        </div>`).join("")}` : ""}
+      ${(financeLive?.errors || []).length ? `<p class="fin-hint">${escapeHtml(financeLive.errors.join(" · "))}</p>` : ""}`
+    : financeLinkStatus ? `
+      <div class="fin-subhead">Bank link · SimpleFIN</div>
+      <p class="fin-hint">Paste a one-time setup token from <a href="https://beta-bridge.simplefin.org" target="_blank" rel="noopener noreferrer">SimpleFIN Bridge</a>. Bank logins stay at the bridge — the app only ever receives read-only balances.</p>
+      <div class="fin-account-add">
+        <input class="fin-item-name" type="password" id="finSetupToken" placeholder="SimpleFIN setup token" autocomplete="off" />
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="link-banks" ${financeLinkBusy ? "disabled" : ""}>${financeLinkBusy ? "Connecting…" : "Connect"}</button>
+      </div>`
+    : `<p class="fin-hint">Checking bank link…</p>`;
+
   const owners = [...new Set((state.financeAccounts || []).map((a) => a.owner || "Other"))];
   const accountsOpen = financeExpanded.has("card:accounts");
   const accountsCard = `
     <div class="fin-card" data-fin-card="accounts">
       ${cardHead("card:accounts", "Accounts", `${(state.financeAccounts || []).length}`)}
       ${!accountsOpen ? "" : `
-      <p class="fin-hint">The household's accounts, ready to link to live balances later.</p>
+      ${linkBlock}
       ${owners.map((owner) => `
         <div class="fin-subhead">${escapeHtml(owner)}</div>
         ${(state.financeAccounts || []).filter((a) => (a.owner || "Other") === owner).map((a) => `
@@ -6329,6 +6418,22 @@ function renderFinancePage() {
       </div>`}
     </div>`;
 
+  const txns = (financeLive?.accounts || [])
+    .flatMap((a) => a.transactions.map((t) => ({ ...t, account: `${a.org}${a.org && a.name ? " — " : ""}${a.name}` })))
+    .sort((x, y) => (y.posted || "").localeCompare(x.posted || ""))
+    .slice(0, 60);
+  const txnsOpen = financeExpanded.has("card:txns");
+  const txnsCard = !financeLinkStatus?.connected ? "" : `
+    <div class="fin-card" data-fin-card="txns">
+      ${cardHead("card:txns", "Transactions", `${txns.length} · 30d`)}
+      ${!txnsOpen ? "" : txns.map((t) => `
+        <div class="fin-txn-row${t.pending ? " is-pending" : ""}">
+          <span class="fin-txn-date">${t.posted ? escapeHtml(new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>
+          <span class="fin-txn-desc" title="${escapeHtml(t.account)}">${escapeHtml(t.description)}${t.pending ? " · pending" : ""}</span>
+          <span class="fin-txn-amt${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</span>
+        </div>`).join("") || `<div class="empty-state">No transactions in the last 30 days.</div>`}
+    </div>`;
+
   grid.innerHTML = `
     <section class="panel fin-panel">
       <div class="fin-summary">
@@ -6339,6 +6444,7 @@ function renderFinancePage() {
       <div class="fin-cards">
         ${incomeCard}
         ${groupCards}
+        ${txnsCard}
         ${personalCard}
         ${accountsCard}
       </div>
@@ -6382,6 +6488,10 @@ function onFinanceGridClick(e) {
   const btn = e.target.closest("[data-fin-action]");
   if (!btn) return;
   const action = btn.dataset.finAction;
+  // Bank-link actions are async and don't touch budget state
+  if (action === "link-banks") { linkFinanceBanks(); return; }
+  if (action === "refresh-live") { refreshFinanceLive(); return; }
+  if (action === "unlink-banks") { unlinkFinanceBanks(); return; }
   if (action === "toggle-expand") {
     const id = btn.dataset.id;
     financeExpanded.has(id) ? financeExpanded.delete(id) : financeExpanded.add(id);

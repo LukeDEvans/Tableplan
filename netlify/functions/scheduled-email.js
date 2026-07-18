@@ -79,7 +79,7 @@ function shouldSendNow(sched) {
   return Math.abs(totalNow - totalSched) < 8;
 }
 
-const SECTION_NAMES = ["eat", "grocery", "do", "play", "watch", "media", "plan", "health", "inventory", "recreate", "config"];
+const SECTION_NAMES = ["eat", "grocery", "do", "play", "watch", "media", "plan", "health", "inventory", "recreate", "config"]; // NOTE: "finance" is intentionally excluded — never feed financial data into AI prompts
 
 async function loadLatestState(serviceKey) {
   const headers = { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" };

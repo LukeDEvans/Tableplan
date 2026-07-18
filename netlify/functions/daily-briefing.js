@@ -7,7 +7,7 @@
 import webpush from "web-push";
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
-const SECTION_NAMES = ["eat", "grocery", "do", "play", "watch", "media", "plan", "health", "inventory", "recreate", "config"];
+const SECTION_NAMES = ["eat", "grocery", "do", "play", "watch", "media", "plan", "health", "inventory", "recreate", "config"]; // NOTE: "finance" is intentionally excluded — never feed financial data into AI prompts
 
 // Prep week starts on Friday — maps JS day index to app dayId
 const DAY_ID_MAP = { 0: "sunday", 1: "monday", 2: "tuesday", 3: "wednesday", 4: "thursday", 5: "friday-start", 6: "saturday" };

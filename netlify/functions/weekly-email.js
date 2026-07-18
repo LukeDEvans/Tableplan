@@ -73,7 +73,7 @@ Output ONLY the HTML body content (start with a <div> or <table>, no doctype/htm
   return jsonResponse(200, { ok: true, to });
 };
 
-const SECTION_NAMES = ["eat", "grocery", "do", "play", "watch", "media", "plan", "health", "inventory", "recreate", "config"];
+const SECTION_NAMES = ["eat", "grocery", "do", "play", "watch", "media", "plan", "health", "inventory", "recreate", "config"]; // NOTE: "finance" is intentionally excluded — never feed financial data into AI prompts
 
 async function loadStateFromSupabase(serviceKey) {
   const headers = { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" };

@@ -17468,3 +17468,14 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 }
 .fin-item-row--tools { flex-wrap: wrap; }
 .fin-item-row--tools .fin-danger { margin-left: auto; }
+
+/* Finance: SimpleFIN live balances & transactions */
+.fin-live-row { display: flex; align-items: baseline; gap: 8px; padding: 3px 2px; font-size: 0.85rem; }
+.fin-live-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-live-bal { font-weight: 800; }
+.fin-live-bal.is-neg, .fin-txn-amt.is-neg { color: #b3261e; }
+.fin-txn-row { display: flex; align-items: baseline; gap: 8px; padding: 4px 2px; font-size: 0.83rem; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); }
+.fin-txn-row.is-pending { opacity: 0.65; }
+.fin-txn-date { flex: 0 0 52px; color: var(--muted); font-size: 0.76rem; }
+.fin-txn-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-txn-amt { font-weight: 750; }
