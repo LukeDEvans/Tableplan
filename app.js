@@ -6467,7 +6467,7 @@ function renderFinancePage() {
     </div>`;
 
   grid.innerHTML = `
-    <section class="panel fin-panel">
+    <section class="fin-panel">
       <div class="fin-summary">
         <div class="fin-stat"><span class="fin-stat-label">Income</span><span class="fin-stat-value">${formatFinMoney(income)}</span></div>
         <div class="fin-stat"><span class="fin-stat-label">Budgeted</span><span class="fin-stat-value">${formatFinMoney(expenses)}</span></div>
