@@ -212,7 +212,7 @@ const STATE_SECTIONS = {
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
@@ -2909,6 +2909,7 @@ function defaultState() {
     financeRecurring: [],
     financeMerchantNames: {},
     financeTxnLinks: {},
+    financeTxnSignFlips: {},
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -3043,6 +3044,7 @@ function normalizeState(parsed) {
     })),
     financeMerchantNames: (parsed?.financeMerchantNames && typeof parsed.financeMerchantNames === "object") ? parsed.financeMerchantNames : {},
     financeTxnLinks: (parsed?.financeTxnLinks && typeof parsed.financeTxnLinks === "object") ? parsed.financeTxnLinks : {},
+    financeTxnSignFlips: (parsed?.financeTxnSignFlips && typeof parsed.financeTxnSignFlips === "object") ? parsed.financeTxnSignFlips : {},
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
@@ -6336,8 +6338,20 @@ const FIN_INCOME_KEYWORDS = /payroll|direct dep|dir dep|dirdep|salary/i;
 function financeLabeledTxns() {
   if (!financeLive) return [];
   if (financeLive.labeled) return financeLive.labeled;
+  // A handful of institutions/rails (seen with P2P "gift" deposits) report a
+  // transaction's amount with the wrong sign — money received shows up as a
+  // debit. financeTxnSignFlips holds manually-confirmed corrections; applied
+  // here, first, so every downstream check (dedupe, mgmt-pair transfer
+  // detection, income keywords, portions, return matching) sees the true sign.
+  const flips = state.financeTxnSignFlips || {};
   let txns = (financeLive.accounts || []).flatMap((a) =>
-    a.transactions.map((t) => ({ ...t, accountId: a.id, account: `${a.org}${a.org && a.name ? " — " : ""}${a.name}` })));
+    a.transactions.map((t) => ({
+      ...t,
+      accountId: a.id,
+      account: `${a.org}${a.org && a.name ? " — " : ""}${a.name}`,
+      amount: flips[t.id] ? -(t.amount || 0) : (t.amount || 0),
+      signFlipped: Boolean(flips[t.id])
+    })));
 
   // Pending→posted dedupe: banks reissue transaction ids when a pending
   // charge posts, which would double-count anything labeled while pending.
@@ -6506,6 +6520,29 @@ function recordFinanceTxnLink(returnId, purchaseId) {
 function clearFinanceTxnLink(returnId) {
   if (!state.financeTxnLinks) return;
   delete state.financeTxnLinks[returnId];
+  if (financeLive) financeLive.labeled = null;
+  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
+  updateFinanceMonthActuals();
+  persist();
+  renderFinancePage();
+}
+
+// A handful of institutions report certain transactions (P2P "gift"
+// deposits seen so far) with an inverted sign — money received posts as a
+// debit. This is a manual, per-transaction correction; toggling it flips
+// the effective sign everywhere (financeLabeledTxns applies it first, before
+// dedupe/labeling/portions), so it behaves exactly as if the bank had
+// reported it correctly.
+function toggleFinanceTxnSignFlip(txnId) {
+  if (!state.financeTxnSignFlips || typeof state.financeTxnSignFlips !== "object") state.financeTxnSignFlips = {};
+  const flips = state.financeTxnSignFlips;
+  if (flips[txnId]) {
+    delete flips[txnId];
+  } else {
+    flips[txnId] = true;
+    const ids = Object.keys(flips);
+    for (let i = 0; i < ids.length - 600; i++) delete flips[ids[i]];
+  }
   if (financeLive) financeLive.labeled = null;
   setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
   updateFinanceMonthActuals();
@@ -7366,7 +7403,14 @@ function renderFinancePage() {
       ${t.displayName !== raw ? `<p class="fin-hint">Raw text: ${escapeHtml(raw)}</p>` : ""}
       <div class="fin-txn-detail-grid">
         <div><span class="fin-hint">Date</span><div>${escapeHtml(fullDate)}</div></div>
-        <div><span class="fin-hint">Amount</span><div class="fin-txn-amt${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</div></div>
+        <div>
+          <span class="fin-hint">Amount</span>
+          <div class="fin-txn-amt-row">
+            <span class="fin-txn-amt${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</span>
+            <button class="icon-btn fin-del-btn fin-sign-flip-btn" type="button" data-fin-action="flip-txn-sign" data-id="${escapeHtml(t.id)}" title="${t.signFlipped ? "Restore the original sign" : "Bank reported this backwards? Flip the sign"}" aria-label="${t.signFlipped ? "Restore original sign" : "Flip sign"}">⇄</button>
+          </div>
+          ${t.signFlipped ? `<span class="fin-hint">Sign corrected — bank reported ${formatFinMoney(-(t.amount || 0))}</span>` : ""}
+        </div>
         <div><span class="fin-hint">Account</span><div>${escapeHtml(t.account)}</div></div>
         <div><span class="fin-hint">Status</span><div>${t.pending ? "Pending" : "Posted"}</div></div>
       </div>
@@ -7656,6 +7700,7 @@ function onFinanceGridClick(e) {
   }
   if (action === "return-link-search-cancel") { financeReturnLinkSearch = null; renderFinancePage(); return; }
   if (action === "detail-scan-receipt") { startScanReceiptForTxn(btn.dataset.id); return; }
+  if (action === "flip-txn-sign") { toggleFinanceTxnSignFlip(btn.dataset.id); return; }
   if (action === "open-txn-detail") {
     financeDetailTxnId = financeDetailTxnId === btn.dataset.id ? null : btn.dataset.id;
     renderFinancePage();

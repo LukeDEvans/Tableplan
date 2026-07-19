@@ -17693,6 +17693,8 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 }
 .fin-txn-detail-grid .fin-hint { display: block; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; }
 .fin-txn-detail .fin-txn-label { max-width: none; width: 100%; }
+.fin-txn-amt-row { display: flex; align-items: center; gap: 4px; }
+.fin-sign-flip-btn { width: 22px; height: 22px; font-size: 0.8rem; line-height: 1; flex: 0 0 auto; }
 .fin-return-box {
   display: flex;
   flex-direction: column;
