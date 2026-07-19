@@ -17709,6 +17709,17 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   border-color: color-mix(in srgb, var(--accent) 45%, var(--window-border));
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
+.fin-return-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  border-top: 1px solid var(--window-border);
+  font-size: 0.82rem;
+}
+.fin-return-result:first-of-type { border-top: none; }
+.fin-return-result .fin-add-btn { flex: 0 0 auto; }
 .fin-txn-menu {
   position: fixed;
   z-index: 200;

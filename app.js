@@ -6474,12 +6474,28 @@ function financeSuggestReturnMatch(t, allTxns) {
   return best;
 }
 
+// Manual fallback for when the auto-suggestion misses (different account,
+// no merchant-token overlap, older than 60 days, etc.) — same eligibility
+// rules as financeSuggestReturnMatch minus the account/token/date narrowing.
+let financeReturnLinkSearch = null; // { txnId, q }
+
+function financeReturnLinkCandidates(t, allTxns, query) {
+  const q = String(query || "").trim().toLowerCase();
+  return allTxns
+    .filter((p) => p.id !== t.id && (p.amount || 0) < 0 && p.label && !["split", "mgmt", "income"].includes(p.label) && !p.label.startsWith("income:"))
+    .filter((p) => Math.abs(p.amount) - financeLinkedReturnsTotal(p.id, allTxns) >= t.amount - 0.01)
+    .filter((p) => !q || (p.displayName || p.description || "").toLowerCase().includes(q))
+    .sort((a, b) => (b.posted || "").localeCompare(a.posted || ""))
+    .slice(0, 8);
+}
+
 function recordFinanceTxnLink(returnId, purchaseId) {
   if (!state.financeTxnLinks || typeof state.financeTxnLinks !== "object") state.financeTxnLinks = {};
   delete state.financeTxnLinks[returnId]; // re-insert so the cap evicts least-recent
   state.financeTxnLinks[returnId] = purchaseId;
   const ids = Object.keys(state.financeTxnLinks);
   for (let i = 0; i < ids.length - 600; i++) delete state.financeTxnLinks[ids[i]];
+  financeReturnLinkSearch = null;
   if (financeLive) financeLive.labeled = null;
   setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
   updateFinanceMonthActuals();
@@ -7298,14 +7314,43 @@ function renderFinancePage() {
         <span class="fin-hint">${t.linkedReturnIds.length} linked return${t.linkedReturnIds.length > 1 ? "s" : ""} · ${formatFinMoney(total)} offsetting this category</span>
       </div>`;
     }
+    if ((t.amount || 0) <= 0) return "";
+    const searching = financeReturnLinkSearch?.txnId === t.id;
+    if (searching) {
+      const q = financeReturnLinkSearch.q || "";
+      const candidates = financeReturnLinkCandidates(t, allTxns, q);
+      return `
+      <div class="fin-return-box fin-return-search">
+        <span class="fin-hint">Find the original purchase</span>
+        <input type="search" class="fin-item-name" placeholder="Search by merchant…" value="${escapeHtml(q)}" data-fin-edit="return-link-q" data-id="${escapeHtml(t.id)}" aria-label="Search for the original purchase" />
+        ${candidates.length ? candidates.map((p) => {
+          const pDate = p.posted ? new Date(p.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—";
+          return `
+          <div class="fin-return-result">
+            <span>${escapeHtml(p.displayName)} · ${escapeHtml(pDate)} · ${formatFinMoney(p.amount || 0)}</span>
+            <button class="secondary-btn fin-add-btn" type="button" data-fin-action="link-return" data-id="${escapeHtml(t.id)}" data-purchase-id="${escapeHtml(p.id)}">Link</button>
+          </div>`;
+        }).join("") : `<span class="fin-hint">No matching purchases.</span>`}
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="return-link-search-cancel">Cancel</button>
+      </div>`;
+    }
     const suggestion = financeSuggestReturnMatch(t, allTxns);
-    if (!suggestion) return "";
-    const sDate = suggestion.posted ? new Date(suggestion.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—";
+    if (suggestion) {
+      const sDate = suggestion.posted ? new Date(suggestion.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—";
+      return `
+      <div class="fin-return-box fin-return-suggest">
+        <span class="fin-hint">Possible return for</span>
+        <div><strong>${escapeHtml(suggestion.displayName)}</strong> · ${escapeHtml(sDate)} · ${formatFinMoney(suggestion.amount || 0)}</div>
+        <div class="fin-item-row">
+          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="link-return" data-id="${escapeHtml(t.id)}" data-purchase-id="${escapeHtml(suggestion.id)}">Link as return</button>
+          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="return-link-search-start" data-id="${escapeHtml(t.id)}">Not this one…</button>
+        </div>
+      </div>`;
+    }
     return `
-    <div class="fin-return-box fin-return-suggest">
-      <span class="fin-hint">Possible return for</span>
-      <div><strong>${escapeHtml(suggestion.displayName)}</strong> · ${escapeHtml(sDate)} · ${formatFinMoney(suggestion.amount || 0)}</div>
-      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="link-return" data-id="${escapeHtml(t.id)}" data-purchase-id="${escapeHtml(suggestion.id)}">Link as return</button>
+    <div class="fin-return-box">
+      <span class="fin-hint">Is this a return?</span>
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="return-link-search-start" data-id="${escapeHtml(t.id)}">Find the purchase…</button>
     </div>`;
   };
   const txnDetailHtml = (t) => {
@@ -7603,6 +7648,13 @@ function onFinanceGridClick(e) {
   }
   if (action === "link-return") { recordFinanceTxnLink(btn.dataset.id, btn.dataset.purchaseId); return; }
   if (action === "unlink-return") { clearFinanceTxnLink(btn.dataset.id); return; }
+  if (action === "return-link-search-start") {
+    financeReturnLinkSearch = { txnId: btn.dataset.id, q: "" };
+    renderFinancePage();
+    requestAnimationFrame(() => document.querySelector('[data-fin-edit="return-link-q"]')?.focus());
+    return;
+  }
+  if (action === "return-link-search-cancel") { financeReturnLinkSearch = null; renderFinancePage(); return; }
   if (action === "detail-scan-receipt") { startScanReceiptForTxn(btn.dataset.id); return; }
   if (action === "open-txn-detail") {
     financeDetailTxnId = financeDetailTxnId === btn.dataset.id ? null : btn.dataset.id;
@@ -7789,6 +7841,11 @@ function onFinanceGridChange(e) {
     if (kind === "txn-filter-q") financeTxnFilter.q = el.value.trim();
     else if (kind === "txn-filter-kind") financeTxnFilter.kind = el.value;
     else financeTxnFilter.account = el.value;
+    renderFinancePage();
+    return;
+  }
+  if (kind === "return-link-q") {
+    if (financeReturnLinkSearch?.txnId === el.dataset.id) financeReturnLinkSearch.q = el.value.trim();
     renderFinancePage();
     return;
   }
