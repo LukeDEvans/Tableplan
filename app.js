@@ -212,7 +212,7 @@ const STATE_SECTIONS = {
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
@@ -2890,6 +2890,7 @@ function defaultState() {
     financeTxnRules: {},
     financeMonthActuals: {},
     financeRecurring: [],
+    financeMerchantNames: {},
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -3022,6 +3023,7 @@ function normalizeState(parsed) {
       missAck: r?.missAck || "",
       newAck: Boolean(r?.newAck)
     })),
+    financeMerchantNames: (parsed?.financeMerchantNames && typeof parsed.financeMerchantNames === "object") ? parsed.financeMerchantNames : {},
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
@@ -6371,8 +6373,12 @@ function financeLabeledTxns() {
       }
     }
   }
+  const names = state.financeMerchantNames || {};
   const explicit = state.financeTxnLabels || {};
   for (const t of txns) {
+    // Raw bank text stays on t.description; this is purely presentation, so
+    // filters/rules/split-editor headers etc. can all just read displayName.
+    t.displayName = names[financeMerchantKey(t.description)] || t.description;
     const ex = explicit[t.id];
     if (ex) {
       // A split stores { split: [{label, amount}] } — amounts are positive
@@ -6603,6 +6609,43 @@ async function scanReceiptIntoSplit(file) {
     alert("Scan failed: " + (e?.message || "unknown error"));
   }
   financeScanBusy = false;
+  renderFinancePage();
+}
+
+// ── Merchant renaming ("Electronic Deposit Ur..." → "Urban Greens") ─────────
+// Keyed off the same merchant grouping used for rule-learning and recurring
+// detection, so a rename applies everywhere that merchant shows up — past
+// and future transactions alike — without touching the raw bank text, which
+// stays on t.description for reference (e.g. search still matches it).
+let financeRenamingTxnId = null;
+
+function startRenameTxn(txnId) {
+  financeRenamingTxnId = txnId;
+  renderFinancePage();
+  requestAnimationFrame(() => {
+    const input = document.querySelector(`[data-fin-rename-id="${CSS.escape(txnId)}"]`);
+    input?.focus();
+    input?.select();
+  });
+}
+
+function cancelRenameTxn() {
+  financeRenamingTxnId = null;
+  renderFinancePage();
+}
+
+function saveRenameTxn(txnId, rawDescription, newName) {
+  const name = newName.trim().slice(0, 80);
+  const key = financeMerchantKey(rawDescription);
+  if (!key) { financeRenamingTxnId = null; renderFinancePage(); return; }
+  if (!state.financeMerchantNames || typeof state.financeMerchantNames !== "object") state.financeMerchantNames = {};
+  if (name) state.financeMerchantNames[key] = name;
+  else delete state.financeMerchantNames[key]; // blank clears back to the raw text
+  // Recurring entries snapshot a display name at detection time — keep it in sync.
+  (state.financeRecurring || []).forEach((r) => { if (r.merchantKey === key) r.name = name || rawDescription.slice(0, 48); });
+  if (financeLive) financeLive.labeled = null; // recompute displayName for every txn sharing this merchant
+  financeRenamingTxnId = null;
+  persist();
   renderFinancePage();
 }
 
@@ -7028,7 +7071,7 @@ function renderFinancePage() {
 
   const f = financeTxnFilter;
   let shownTxns = allTxns;
-  if (f.q) shownTxns = shownTxns.filter((t) => (t.description || "").toLowerCase().includes(f.q.toLowerCase()));
+  if (f.q) shownTxns = shownTxns.filter((t) => `${t.description || ""} ${t.displayName || ""}`.toLowerCase().includes(f.q.toLowerCase()));
   if (f.account) shownTxns = shownTxns.filter((t) => t.accountId === f.account);
   if (f.kind === "unlabeled") shownTxns = shownTxns.filter((t) => !t.label);
   else if (f.kind === "auto") shownTxns = shownTxns.filter((t) => t.labelSource === "auto");
@@ -7043,7 +7086,7 @@ function renderFinancePage() {
     const isSplit = t.label === "split";
     const placeholder = isSplit ? `Split (${(t.split || []).length})` : t.labelSource === "auto" ? `auto: ${escapeHtml(financeTxnLabelName(t.label))}` : "label…";
     return `
-    <select class="fin-txn-label${!t.label ? " is-unlabeled" : t.labelSource === "auto" ? " is-auto" : ""}" data-fin-edit="txn-label" data-id="${escapeHtml(t.id)}" data-desc="${escapeHtml(t.description)}" aria-label="Budget label for ${escapeHtml(t.description)}">
+    <select class="fin-txn-label${!t.label ? " is-unlabeled" : t.labelSource === "auto" ? " is-auto" : ""}" data-fin-edit="txn-label" data-id="${escapeHtml(t.id)}" data-desc="${escapeHtml(t.description)}" aria-label="Budget label for ${escapeHtml(t.displayName)}">
       <option value="" ${t.labelSource !== "manual" || isSplit ? "selected" : ""}>${placeholder}</option>
       ${financeTxnLabelOptionsHtml(t.labelSource === "manual" && !isSplit ? t.label : "")}
       ${(t.amount || 0) < 0 ? `<option value="__split__">Split…</option>` : ""}
@@ -7057,7 +7100,7 @@ function renderFinancePage() {
     const receipt = financeReceiptForTxn(t);
     return `
     <div class="fin-split-editor">
-      <div class="fin-subhead">Split ${formatFinMoney(total)} — ${escapeHtml(t.description)}</div>
+      <div class="fin-subhead">Split ${formatFinMoney(total)} — ${escapeHtml(t.displayName)}</div>
       <div class="fin-item-row fin-item-row--tools">
         ${receipt ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="split-prefill" data-id="${escapeHtml(t.id)}">Use email receipt · ${escapeHtml(receipt.merchant || "receipt")}${(receipt.items || []).length ? ` (${receipt.items.length} items)` : ""}</button>` : ""}
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="split-scan" ${financeScanBusy ? "disabled" : ""}>${financeScanBusy ? "Scanning…" : "📷 Scan receipt"}</button>
@@ -7080,13 +7123,26 @@ function renderFinancePage() {
       </div>
     </div>`;
   };
-  const txnRow = (t) => `
+  const txnRow = (t) => {
+    const renaming = financeRenamingTxnId === t.id;
+    const raw = String(t.description || "");
+    const rawEsc = escapeHtml(raw);
+    const descTitle = t.displayName !== raw ? `${escapeHtml(t.account)} · was: ${rawEsc}` : escapeHtml(t.account);
+    return `
     <div class="fin-txn-row${t.pending ? " is-pending" : ""}">
       <span class="fin-txn-date">${t.posted ? escapeHtml(new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>
-      <span class="fin-txn-desc" title="${escapeHtml(t.account)}">${escapeHtml(t.description)}${t.pending ? " · pending" : ""}</span>
+      ${renaming ? `
+      <input class="fin-item-name fin-txn-rename-input" type="text" value="${escapeHtml(t.displayName)}" data-fin-rename-id="${escapeHtml(t.id)}" data-fin-rename-raw="${rawEsc}" placeholder="${rawEsc}" aria-label="Rename this merchant" />
+      <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-save" data-id="${escapeHtml(t.id)}" title="Save name" aria-label="Save name">✓</button>
+      <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-cancel" title="Cancel" aria-label="Cancel">&times;</button>
+      ` : `
+      <span class="fin-txn-desc" title="${descTitle}">${escapeHtml(t.displayName)}${t.pending ? " · pending" : ""}</span>
+      <button class="icon-btn fin-del-btn fin-label-btn fin-txn-rename-btn" type="button" data-fin-action="rename-txn-start" data-id="${escapeHtml(t.id)}" title="Rename this merchant" aria-label="Rename this merchant">✎</button>
       <span class="fin-txn-amt${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</span>
       ${txnSelect(t)}
+      `}
     </div>`;
+  };
   const txnsOpen = financeExpanded.has("card:txns");
   const filterActive = Boolean(f.q || f.kind || f.account);
   const txnsCard = !financeLinkStatus?.connected ? "" : `
@@ -7283,6 +7339,10 @@ function renderFinancePage() {
         e.preventDefault();
         onFinanceGridClick(e);
       }
+      if (e.target.matches?.("[data-fin-rename-id]")) {
+        if (e.key === "Enter") { e.preventDefault(); saveRenameTxn(e.target.dataset.finRenameId, e.target.dataset.finRenameRaw, e.target.value); }
+        else if (e.key === "Escape") { e.preventDefault(); cancelRenameTxn(); }
+      }
     });
     document.addEventListener("click", (e) => {
       if (!financeNotifOpen) return;
@@ -7323,6 +7383,13 @@ function onFinanceGridClick(e) {
   if (action === "refresh-live") { refreshFinanceLive(true); return; }
   if (action === "unlink-banks") { unlinkFinanceBanks(); return; }
   if (action === "toggle-notifs") { financeNotifOpen = !financeNotifOpen; renderFinancePage(); return; }
+  if (action === "rename-txn-start") { startRenameTxn(btn.dataset.id); return; }
+  if (action === "rename-txn-cancel") { cancelRenameTxn(); return; }
+  if (action === "rename-txn-save") {
+    const input = btn.closest(".fin-txn-row")?.querySelector("[data-fin-rename-id]");
+    if (input) saveRenameTxn(btn.dataset.id, input.dataset.finRenameRaw, input.value);
+    return;
+  }
   if (action === "txn-filter-clear") {
     financeTxnFilter.q = ""; financeTxnFilter.kind = ""; financeTxnFilter.account = "";
     renderFinancePage();
