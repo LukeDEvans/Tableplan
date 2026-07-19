@@ -1203,6 +1203,23 @@ const elements = {
 
 let pendingRestore = null;
 let pendingCookLogId = "";
+let doNotifOpen = false;
+
+// ── Page notification dots ───────────────────────────────────────────────────
+// Landing links and the page-title menu show a red dot for pages with
+// unaddressed notifications (Mail: pending AI suggestions; Finance:
+// transactions awaiting a budget label). Warmed at app start.
+const PAGE_NOTIF_BUTTONS = {
+  mail: ["homeMailBtn", "titleMailBtn"],
+  finance: ["homeFinanceBtn", "titleFinanceBtn"],
+  do: ["homeDoBtn", "titleToDoListBtn"],
+};
+
+function setPageNotifCount(page, count) {
+  (PAGE_NOTIF_BUTTONS[page] || []).forEach((key) => {
+    elements[key]?.classList.toggle("has-notif-dot", count > 0);
+  });
+}
 
 applyThemeMode();
 migrateLegacyRecipeOrganization();
@@ -7885,22 +7902,6 @@ function warmMailStatus() {
   mailStatusPromise = callGmailApi({ action: "status" });
 }
 
-// ── Page notification dots ───────────────────────────────────────────────────
-// Landing links and the page-title menu show a red dot for pages with
-// unaddressed notifications (Mail: pending AI suggestions; Finance:
-// transactions awaiting a budget label). Warmed at app start.
-const PAGE_NOTIF_BUTTONS = {
-  mail: ["homeMailBtn", "titleMailBtn"],
-  finance: ["homeFinanceBtn", "titleFinanceBtn"],
-  do: ["homeDoBtn", "titleToDoListBtn"],
-};
-
-function setPageNotifCount(page, count) {
-  (PAGE_NOTIF_BUTTONS[page] || []).forEach((key) => {
-    elements[key]?.classList.toggle("has-notif-dot", count > 0);
-  });
-}
-
 function warmPageNotifs() {
   if (!authSession?.access_token) return;
   callGmailApi({ action: "suggestions" }).then((d) => {
@@ -10714,7 +10715,6 @@ function visibleDoBacklogTasks(key = weekKey()) {
 // ── "Needs attention": unfinished chores + tasks from days already past ─────
 // this real week. Independent of whatever week the user has browsed to
 // (currentWeek/weekKey()) — this always looks at TODAY's actual prep week.
-let doNotifOpen = false;
 
 function doRealWeekKey() {
   return dateKeyFromDate(startOfPrepWindow(new Date()));
