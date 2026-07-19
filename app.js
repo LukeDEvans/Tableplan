@@ -6618,6 +6618,7 @@ async function scanReceiptIntoSplit(file) {
 // and future transactions alike — without touching the raw bank text, which
 // stays on t.description for reference (e.g. search still matches it).
 let financeRenamingTxnId = null;
+let financeDetailTxnId = null; // which transaction's detail card is open (main list only)
 
 function startRenameTxn(txnId) {
   financeRenamingTxnId = txnId;
@@ -6693,6 +6694,9 @@ async function unlinkFinanceBanks() {
   if (data?.ok) {
     financeLinkStatus = { connected: false };
     financeLive = null;
+    financeDetailTxnId = null;
+    financeRenamingTxnId = null;
+    financeSplitDraft = null;
   } else {
     alert("Disconnect failed: " + (data?.error || "unknown error"));
   }
@@ -7123,24 +7127,55 @@ function renderFinancePage() {
       </div>
     </div>`;
   };
-  const txnRow = (t) => {
+  const txnRow = (t, { compact = false } = {}) => {
     const renaming = financeRenamingTxnId === t.id;
     const raw = String(t.description || "");
     const rawEsc = escapeHtml(raw);
     const descTitle = t.displayName !== raw ? `${escapeHtml(t.account)} · was: ${rawEsc}` : escapeHtml(t.account);
+    if (renaming) {
+      return `
+      <div class="fin-txn-row${t.pending ? " is-pending" : ""}">
+        <span class="fin-txn-date">${t.posted ? escapeHtml(new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>
+        <input class="fin-item-name fin-txn-rename-input" type="text" value="${escapeHtml(t.displayName)}" data-fin-rename-id="${escapeHtml(t.id)}" data-fin-rename-raw="${rawEsc}" placeholder="${rawEsc}" aria-label="Rename this merchant" />
+        <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-save" data-id="${escapeHtml(t.id)}" title="Save name" aria-label="Save name">✓</button>
+        <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-cancel" title="Cancel" aria-label="Cancel">&times;</button>
+      </div>`;
+    }
+    if (compact) {
+      return `
+      <div class="fin-txn-row${t.pending ? " is-pending" : ""}" data-fin-txn-id="${escapeHtml(t.id)}">
+        <span class="fin-txn-date">${t.posted ? escapeHtml(new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>
+        <span class="fin-txn-desc" title="${descTitle}">${escapeHtml(t.displayName)}${t.pending ? " · pending" : ""}</span>
+        <span class="fin-txn-amt${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</span>
+        ${txnSelect(t)}
+      </div>`;
+    }
     return `
-    <div class="fin-txn-row${t.pending ? " is-pending" : ""}">
+    <div class="fin-txn-row fin-txn-row--clickable${t.pending ? " is-pending" : ""}${financeDetailTxnId === t.id ? " is-open" : ""}" data-fin-action="open-txn-detail" data-id="${escapeHtml(t.id)}" data-fin-txn-id="${escapeHtml(t.id)}" role="button" tabindex="0" aria-expanded="${financeDetailTxnId === t.id}">
       <span class="fin-txn-date">${t.posted ? escapeHtml(new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>
-      ${renaming ? `
-      <input class="fin-item-name fin-txn-rename-input" type="text" value="${escapeHtml(t.displayName)}" data-fin-rename-id="${escapeHtml(t.id)}" data-fin-rename-raw="${rawEsc}" placeholder="${rawEsc}" aria-label="Rename this merchant" />
-      <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-save" data-id="${escapeHtml(t.id)}" title="Save name" aria-label="Save name">✓</button>
-      <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-cancel" title="Cancel" aria-label="Cancel">&times;</button>
-      ` : `
+      ${!t.label ? `<span class="fin-txn-dot" title="Needs a label" aria-label="Needs a label"></span>` : ""}
       <span class="fin-txn-desc" title="${descTitle}">${escapeHtml(t.displayName)}${t.pending ? " · pending" : ""}</span>
-      <button class="icon-btn fin-del-btn fin-label-btn fin-txn-rename-btn" type="button" data-fin-action="rename-txn-start" data-id="${escapeHtml(t.id)}" title="Rename this merchant" aria-label="Rename this merchant">✎</button>
       <span class="fin-txn-amt${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</span>
-      ${txnSelect(t)}
-      `}
+    </div>`;
+  };
+  const txnDetailHtml = (t) => {
+    const raw = String(t.description || "");
+    const fullDate = t.posted ? new Date(t.posted).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" }) : "Unknown date";
+    return `
+    <div class="fin-txn-detail">
+      <div class="fin-txn-detail-head">
+        <span class="fin-txn-detail-name">${escapeHtml(t.displayName)}</span>
+        <button class="icon-btn fin-del-btn" type="button" data-fin-action="close-txn-detail" title="Close" aria-label="Close">&times;</button>
+      </div>
+      ${t.displayName !== raw ? `<p class="fin-hint">Raw text: ${escapeHtml(raw)}</p>` : ""}
+      <div class="fin-txn-detail-grid">
+        <div><span class="fin-hint">Date</span><div>${escapeHtml(fullDate)}</div></div>
+        <div><span class="fin-hint">Amount</span><div class="fin-txn-amt${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</div></div>
+        <div><span class="fin-hint">Account</span><div>${escapeHtml(t.account)}</div></div>
+        <div><span class="fin-hint">Status</span><div>${t.pending ? "Pending" : "Posted"}</div></div>
+      </div>
+      <span class="fin-hint">Budget label</span>
+      <div class="fin-item-row">${txnSelect(t)}</div>
     </div>`;
   };
   const txnsOpen = financeExpanded.has("card:txns");
@@ -7166,7 +7201,7 @@ function renderFinancePage() {
         </select>
         ${filterActive ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="txn-filter-clear">Clear</button>` : ""}
       </div>
-      ${txns.map((t) => txnRow(t) + (financeSplitDraft?.txnId === t.id ? splitEditorHtml(t) : "")).join("") || `<div class="empty-state">${filterActive ? "Nothing matches the filters." : "No transactions in the last 30 days."}</div>`}`}
+      ${txns.map((t) => txnRow(t) + (financeDetailTxnId === t.id ? txnDetailHtml(t) : "") + (financeSplitDraft?.txnId === t.id ? splitEditorHtml(t) : "")).join("") || `<div class="empty-state">${filterActive ? "Nothing matches the filters." : "No transactions in the last 30 days."}</div>`}`}
     </div>`;
 
   const recurringActive = (state.financeRecurring || []).filter((r) => r.active);
@@ -7302,7 +7337,7 @@ function renderFinancePage() {
         <div class="fin-notif-head">Recurring charges</div>
         ${recAlerts.slice(0, 8).map(alertHtml).join("")}` : ""}
         <div class="fin-notif-head">Transactions to label</div>
-        ${needsLabel.slice(0, 15).map(txnRow).join("") || `<div class="fin-notif-empty">Everything is labeled.</div>`}
+        ${needsLabel.slice(0, 15).map((t) => txnRow(t, { compact: true })).join("") || `<div class="fin-notif-empty">Everything is labeled.</div>`}
         ${needsLabel.length > 15 ? `<div class="fin-notif-more">+ ${needsLabel.length - 15} more in the Transactions card</div>` : ""}
       </div>` : ""}
     </div>`;
@@ -7350,7 +7385,31 @@ function renderFinancePage() {
       financeNotifOpen = false;
       renderFinancePage();
     }, { capture: true });
+    grid.addEventListener("contextmenu", (e) => {
+      const row = e.target.closest("[data-fin-txn-id]");
+      if (!row) return;
+      e.preventDefault();
+      showFinTxnMenu(e.clientX, e.clientY, row.dataset.finTxnId);
+    });
   }
+}
+
+// Right-click menu on a transaction row — currently just Rename, but gives
+// merchant-level actions a home off the row itself so the list stays clean.
+function showFinTxnMenu(x, y, txnId) {
+  document.getElementById("finTxnMenu")?.remove();
+  const menu = document.createElement("div");
+  menu.id = "finTxnMenu";
+  menu.className = "fin-txn-menu";
+  menu.style.left = Math.max(8, Math.min(x, window.innerWidth - 180)) + "px";
+  menu.style.top = Math.min(y, window.innerHeight - 90) + "px";
+  menu.innerHTML = `<button class="fin-txn-menu-option" type="button" data-menu-action="rename">Rename</button>`;
+  menu.querySelector('[data-menu-action="rename"]').addEventListener("click", () => {
+    menu.remove();
+    startRenameTxn(txnId);
+  });
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener("click", () => menu.remove(), { once: true, capture: true }), 0);
 }
 
 // Resolves a "cat:<group>:<category>" scope to the live category object.
@@ -7390,6 +7449,12 @@ function onFinanceGridClick(e) {
     if (input) saveRenameTxn(btn.dataset.id, input.dataset.finRenameRaw, input.value);
     return;
   }
+  if (action === "open-txn-detail") {
+    financeDetailTxnId = financeDetailTxnId === btn.dataset.id ? null : btn.dataset.id;
+    renderFinancePage();
+    return;
+  }
+  if (action === "close-txn-detail") { financeDetailTxnId = null; renderFinancePage(); return; }
   if (action === "txn-filter-clear") {
     financeTxnFilter.q = ""; financeTxnFilter.kind = ""; financeTxnFilter.account = "";
     renderFinancePage();

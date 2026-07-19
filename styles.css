@@ -17660,6 +17660,58 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .import-ai-status { font-size: 0.82rem; color: var(--muted); margin-right: auto; }
 
 /* Finance: rename a merchant's display text on a transaction row */
-.fin-txn-rename-btn { flex: 0 0 auto; width: 22px; height: 22px; min-height: 22px; font-size: 0.72rem; opacity: 0.5; }
-.fin-txn-row:hover .fin-txn-rename-btn, .fin-txn-rename-btn:focus-visible { opacity: 1; }
 .fin-txn-rename-input { flex: 1; min-width: 0; padding: 3px 8px; font-size: 0.83rem; }
+
+/* Finance: clickable transaction rows, detail card, right-click menu */
+.fin-txn-row--clickable { cursor: pointer; border-radius: 6px; }
+.fin-txn-row--clickable:hover, .fin-txn-row--clickable:focus-visible { background: color-mix(in srgb, var(--window-border) 6%, transparent); outline: none; }
+.fin-txn-row--clickable.is-open { background: color-mix(in srgb, var(--window-border) 8%, transparent); }
+.fin-txn-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #b3261e;
+}
+.fin-txn-detail {
+  margin: 2px 0 8px;
+  padding: 10px 12px;
+  border: 2px solid var(--window-border);
+  border-radius: 10px;
+  background: var(--window-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fin-txn-detail-head { display: flex; align-items: baseline; gap: 8px; }
+.fin-txn-detail-name { flex: 1; min-width: 0; font-weight: 800; font-size: 0.92rem; }
+.fin-txn-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px 12px;
+  font-size: 0.85rem;
+}
+.fin-txn-detail-grid .fin-hint { display: block; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.fin-txn-detail .fin-txn-label { max-width: none; width: 100%; }
+.fin-txn-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 160px;
+  background: var(--window-bg);
+  border: 2px solid var(--window-border);
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.16);
+  padding: 4px;
+}
+.fin-txn-menu-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 0.85rem;
+}
+.fin-txn-menu-option:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
