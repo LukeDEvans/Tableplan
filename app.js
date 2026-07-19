@@ -212,7 +212,7 @@ const STATE_SECTIONS = {
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnDescNotes"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnDescNotes", "financeTxnNoteOverrides"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
@@ -2911,6 +2911,7 @@ function defaultState() {
     financeTxnLinks: {},
     financeTxnSignFlips: {},
     financeTxnDescNotes: {},
+    financeTxnNoteOverrides: {},
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -3047,6 +3048,7 @@ function normalizeState(parsed) {
     financeTxnLinks: (parsed?.financeTxnLinks && typeof parsed.financeTxnLinks === "object") ? parsed.financeTxnLinks : {},
     financeTxnSignFlips: (parsed?.financeTxnSignFlips && typeof parsed.financeTxnSignFlips === "object") ? parsed.financeTxnSignFlips : {},
     financeTxnDescNotes: (parsed?.financeTxnDescNotes && typeof parsed.financeTxnDescNotes === "object") ? parsed.financeTxnDescNotes : {},
+    financeTxnNoteOverrides: (parsed?.financeTxnNoteOverrides && typeof parsed.financeTxnNoteOverrides === "object") ? parsed.financeTxnNoteOverrides : {},
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
@@ -6415,17 +6417,22 @@ function financeLabeledTxns() {
   }
   const names = state.financeMerchantNames || {};
   const descNotes = state.financeTxnDescNotes || {};
+  const noteOverrides = state.financeTxnNoteOverrides || {};
   const explicit = state.financeTxnLabels || {};
   for (const t of txns) {
     // Raw bank text stays on t.description; this is purely presentation, so
     // filters/rules/split-editor headers etc. can all just read displayName.
     // Format is "<store/account> - <what was purchased>": the store part is
     // shared across every transaction with the same merchant key (renaming
-    // one Trader Joe's renames them all), but the note is keyed off the
-    // fuller, unsliced token set, so a grocery-store charge and an adjacent
-    // liquor-store charge under the same chain can carry different notes.
+    // one Trader Joe's renames them all). The note is normally keyed off the
+    // fuller, unsliced token set (financeDescKey), but two locations can
+    // still share identical raw text (e.g. a card reader that doesn't
+    // distinguish departments) — financeTxnNoteOverrides lets a single
+    // transaction id override the shared note when that happens.
     const merchantPart = names[financeMerchantKey(t.description)] || t.description;
-    const note = descNotes[financeDescKey(t.description)];
+    const hasOverride = Object.prototype.hasOwnProperty.call(noteOverrides, t.id);
+    const note = hasOverride ? noteOverrides[t.id] : descNotes[financeDescKey(t.description)];
+    t.noteIsOverride = hasOverride;
     t.displayName = note ? `${merchantPart} - ${note}` : merchantPart;
     const ex = explicit[t.id];
     if (ex) {
@@ -6825,11 +6832,13 @@ function cancelRenameTxn() {
 }
 
 // name is shared across every transaction with the same merchant key (a
-// rename applies everywhere that merchant shows up); note is keyed off the
-// fuller, unsliced token set (financeDescKey), so it distinguishes e.g. a
-// grocery-store charge from an adjacent liquor-store charge under the same
-// chain, which would otherwise share a merchant key and so a name.
-function saveRenameTxn(txnId, rawDescription, newName, newNote) {
+// rename applies everywhere that merchant shows up); note is normally keyed
+// off the fuller, unsliced token set (financeDescKey), so it distinguishes
+// e.g. a grocery-store charge from an adjacent liquor-store charge under the
+// same chain. When even that text is identical between two locations (a
+// shared card reader, say), noteOnlyThis stores the note against this one
+// transaction id instead, so it stops following the shared descKey note.
+function saveRenameTxn(txnId, rawDescription, newName, newNote, noteOnlyThis) {
   const name = newName.trim().slice(0, 80);
   const note = String(newNote || "").trim().slice(0, 60);
   const key = financeMerchantKey(rawDescription);
@@ -6841,10 +6850,19 @@ function saveRenameTxn(txnId, rawDescription, newName, newNote) {
     // Recurring entries snapshot a display name at detection time — keep it in sync.
     (state.financeRecurring || []).forEach((r) => { if (r.merchantKey === key) r.name = name || rawDescription.slice(0, 48); });
   }
-  if (descKey) {
-    if (!state.financeTxnDescNotes || typeof state.financeTxnDescNotes !== "object") state.financeTxnDescNotes = {};
-    if (note) state.financeTxnDescNotes[descKey] = note;
-    else delete state.financeTxnDescNotes[descKey]; // blank clears the note
+  if (noteOnlyThis) {
+    if (!state.financeTxnNoteOverrides || typeof state.financeTxnNoteOverrides !== "object") state.financeTxnNoteOverrides = {};
+    delete state.financeTxnNoteOverrides[txnId]; // re-insert so the cap evicts least-recent
+    state.financeTxnNoteOverrides[txnId] = note; // "" is meaningful: explicitly no note for this one
+    const ids = Object.keys(state.financeTxnNoteOverrides);
+    for (let i = 0; i < ids.length - 600; i++) delete state.financeTxnNoteOverrides[ids[i]];
+  } else {
+    if (state.financeTxnNoteOverrides) delete state.financeTxnNoteOverrides[txnId]; // back to following the shared note
+    if (descKey) {
+      if (!state.financeTxnDescNotes || typeof state.financeTxnDescNotes !== "object") state.financeTxnDescNotes = {};
+      if (note) state.financeTxnDescNotes[descKey] = note;
+      else delete state.financeTxnDescNotes[descKey]; // blank clears the note
+    }
   }
   if (financeLive) financeLive.labeled = null; // recompute displayName for every txn sharing this merchant/note
   financeRenamingTxnId = null;
@@ -6855,7 +6873,8 @@ function saveRenameTxn(txnId, rawDescription, newName, newNote) {
 function saveRenameFromRow(row, txnId) {
   const nameInput = row?.querySelector('[data-fin-rename-field="name"]');
   const noteInput = row?.querySelector('[data-fin-rename-field="note"]');
-  if (nameInput) saveRenameTxn(txnId, nameInput.dataset.finRenameRaw, nameInput.value, noteInput?.value || "");
+  const onlyThisInput = row?.querySelector('[data-fin-rename-field="only-this"]');
+  if (nameInput) saveRenameTxn(txnId, nameInput.dataset.finRenameRaw, nameInput.value, noteInput?.value || "", Boolean(onlyThisInput?.checked));
 }
 
 function recordFinanceTxnSplit(txnId, portions) {
@@ -7344,7 +7363,9 @@ function renderFinancePage() {
       const merchantKey = financeMerchantKey(raw);
       const descKey = financeDescKey(raw);
       const currentMerchant = (state.financeMerchantNames || {})[merchantKey] || raw;
-      const currentNote = (state.financeTxnDescNotes || {})[descKey] || "";
+      const overrides = state.financeTxnNoteOverrides || {};
+      const hasOverride = Object.prototype.hasOwnProperty.call(overrides, t.id);
+      const currentNote = hasOverride ? overrides[t.id] : ((state.financeTxnDescNotes || {})[descKey] || "");
       return `
       <div class="fin-txn-row fin-txn-row--renaming${t.pending ? " is-pending" : ""}">
         <span class="fin-txn-date">${t.posted ? escapeHtml(new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>
@@ -7353,6 +7374,10 @@ function renderFinancePage() {
           <span class="fin-rename-sep">–</span>
           <input class="fin-item-name fin-txn-rename-input" type="text" value="${escapeHtml(currentNote)}" placeholder="what was purchased (optional)" data-fin-rename-id="${escapeHtml(t.id)}" data-fin-rename-raw="${rawEsc}" data-fin-rename-field="note" aria-label="What was purchased" />
         </div>
+        <label class="fin-rename-scope" title="When on, this note applies to only this transaction instead of every transaction with matching text">
+          <input type="checkbox" class="live-toggle" data-fin-rename-field="only-this" ${hasOverride ? "checked" : ""} aria-label="Apply this note to only this transaction" />
+          just this one
+        </label>
         <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-save" data-id="${escapeHtml(t.id)}" title="Save" aria-label="Save">✓</button>
         <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-cancel" title="Cancel" aria-label="Cancel">&times;</button>
       </div>`;
