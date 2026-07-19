@@ -14439,7 +14439,7 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 
 /* Each toggleable page reserves top-right room so the toggle never sits on
    top of that page's own controls. */
-#doMainPage .day-tabs,
+#doMainPage .do-top-row,
 #watchMainPage .watch-category-bar,
 #shopMainPage #groceryStoreTabBar,
 #exploreMainPage .travel-detail-header,
@@ -17715,3 +17715,55 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   font-size: 0.85rem;
 }
 .fin-txn-menu-option:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+
+/* To-Do: overdue/unfinished notification bell */
+.do-top-row { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 12%, transparent); }
+.do-top-row .day-tabs { flex: 1; min-width: 0; border-bottom: none; }
+.do-notif-wrap { position: relative; flex: 0 0 auto; }
+.do-notif-btn {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border: 2px solid var(--window-border);
+  border-radius: 12px;
+  background: var(--window-bg);
+  color: var(--ink);
+}
+.do-notif-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #b3261e;
+  color: #fff;
+  font-size: 0.66rem;
+  font-weight: 850;
+  line-height: 18px;
+  text-align: center;
+}
+.do-notif-panel {
+  position: absolute;
+  right: 0;
+  top: 46px;
+  width: min(360px, 88vw);
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--window-bg);
+  border: 2px solid var(--window-border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  z-index: 60;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+.do-notif-head { font-size: 0.74rem; font-weight: 850; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 6px 0 4px; }
+.do-notif-empty { font-size: 0.8rem; color: var(--muted); padding: 6px 0; }
+.do-notif-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.do-notif-item { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; font-size: 0.85rem; cursor: pointer; }
+.do-notif-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.do-notif-jump { flex: 0 0 auto; font-size: 0.72rem; padding: 4px 10px; min-height: 26px; }
+@media (max-width: 700px) {
+  .do-notif-panel { width: min(320px, 92vw); }
+}

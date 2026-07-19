@@ -7892,6 +7892,7 @@ function warmMailStatus() {
 const PAGE_NOTIF_BUTTONS = {
   mail: ["homeMailBtn", "titleMailBtn"],
   finance: ["homeFinanceBtn", "titleFinanceBtn"],
+  do: ["homeDoBtn", "titleToDoListBtn"],
 };
 
 function setPageNotifCount(page, count) {
@@ -10459,12 +10460,24 @@ function initDoPlannerDelegation() {
     if (del) { deleteDoTask(del.dataset.doDay, del.dataset.doTaskDelete); return; }
     const edit = e.target.closest("[data-do-task-swipe-edit]");
     if (edit) { openEditTaskDialog(edit.dataset.doDay, edit.dataset.doTaskSwipeEdit); return; }
+    if (e.target.closest("[data-do-notif-toggle]")) { doNotifOpen = !doNotifOpen; renderDoPlanner(); return; }
+    const jump = e.target.closest("[data-do-notif-jump]");
+    if (jump) { doNotifOpen = false; selectPlannerDay(jump.dataset.doNotifJump); return; }
   });
 
   grid.addEventListener("change", (e) => {
     const toggle = e.target.closest("[data-do-task-toggle]");
-    if (toggle) toggleDoTask(toggle.dataset.doDay, toggle.dataset.doTaskToggle, toggle.checked);
+    if (toggle) { toggleDoTask(toggle.dataset.doDay, toggle.dataset.doTaskToggle, toggle.checked); return; }
+    const notifCheck = e.target.closest("[data-do-notif-check]");
+    if (notifCheck) toggleDoTaskForWeek(notifCheck.dataset.key, notifCheck.dataset.day, notifCheck.dataset.task, true);
   });
+
+  document.addEventListener("click", (e) => {
+    if (!doNotifOpen) return;
+    if (e.target.closest(".do-notif-wrap")) return;
+    doNotifOpen = false;
+    renderDoPlanner();
+  }, { capture: true });
 
   grid.addEventListener("dragover", (e) => {
     if (!Array.from(e.dataTransfer.types || []).includes("application/json")) return;
@@ -10517,13 +10530,49 @@ function initTasksPageDelegation() {
   });
 }
 
+function doNotifBellHtml() {
+  const chores = doUnfinishedChores();
+  const overdue = doOverdueDayTasks();
+  const count = chores.length + overdue.length;
+  const bellSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
+  const rowHtml = (label, key, dayId, taskId) => `
+    <label class="do-notif-item">
+      <input type="checkbox" data-do-notif-check data-key="${escapeHtml(key)}" data-day="${escapeHtml(dayId)}" data-task="${escapeHtml(taskId)}" />
+      <span class="do-notif-item-title">${escapeHtml(label)}</span>
+    </label>`;
+  return `
+    <div class="do-notif-wrap">
+      <button class="icon-btn do-notif-btn" type="button" data-do-notif-toggle title="Unfinished items needing attention" aria-label="Unfinished items">
+        ${bellSvg}
+        ${count ? `<span class="do-notif-badge">${count}</span>` : ""}
+      </button>
+      ${doNotifOpen ? `
+      <div class="do-notif-panel">
+        ${overdue.length ? `
+        <div class="do-notif-head">Overdue this week</div>
+        ${overdue.map((o) => `
+          <div class="do-notif-row">
+            ${rowHtml(o.task.title, o.dayKey, o.dayId, o.task.id)}
+            <button class="secondary-btn do-notif-jump" type="button" data-do-notif-jump="${escapeHtml(o.dayId)}">${escapeHtml(o.dayName)}</button>
+          </div>`).join("")}` : ""}
+        ${chores.length ? `
+        <div class="do-notif-head">Unfinished chores</div>
+        ${chores.map((c) => rowHtml(c.title, doRealWeekKey(), "backlog", c.id)).join("")}` : ""}
+        ${!count ? `<div class="do-notif-empty">Nothing overdue.</div>` : ""}
+      </div>` : ""}
+    </div>`;
+}
+
 function renderDoPlanner() {
   if (!elements.doPlannerGrid) return;
   if (!doPrepDays.some((day) => day.id === activePlannerDayId)) activePlannerDayId = doPrepDays[0].id;
   const activeDay = doPrepDays.find((day) => day.id === activePlannerDayId);
   elements.doPlannerGrid.innerHTML = `
-    <div class="day-tabs" role="tablist" aria-label="To-do days">
-      ${doPrepDays.map((day) => doDayTabTemplate(day, day.id === activeDay.id)).join("")}
+    <div class="do-top-row">
+      <div class="day-tabs" role="tablist" aria-label="To-do days">
+        ${doPrepDays.map((day) => doDayTabTemplate(day, day.id === activeDay.id)).join("")}
+      </div>
+      ${doNotifBellHtml()}
     </div>
     <div class="do-week-shell">
       <section class="day-column planner-day-panel do-day-panel" role="tabpanel" id="do-panel-${activeDay.id}" aria-labelledby="do-tab-${activeDay.id}">
@@ -10550,6 +10599,7 @@ function renderDoPlanner() {
   `;
   bindDoTaskControls(elements.doPlannerGrid);
   updateTabIndicator(elements.doPlannerGrid);
+  updateDoNotifCount();
 }
 
 function doDayTabTemplate(day, isActive) {
@@ -10654,8 +10704,66 @@ function doBacklogTasks() {
   return state.doBacklog;
 }
 
+// Unfinished chores must never disappear just because the week turned over —
+// only a DONE chore's weekKey stamp (set when it was added or dropped into
+// the backlog) is used to quietly clear it from view after its week passes.
 function visibleDoBacklogTasks(key = weekKey()) {
-  return doBacklogTasks().filter((task) => !task.weekKey || task.weekKey === key);
+  return doBacklogTasks().filter((task) => !task.done || !task.weekKey || task.weekKey === key);
+}
+
+// ── "Needs attention": unfinished chores + tasks from days already past ─────
+// this real week. Independent of whatever week the user has browsed to
+// (currentWeek/weekKey()) — this always looks at TODAY's actual prep week.
+let doNotifOpen = false;
+
+function doRealWeekKey() {
+  return dateKeyFromDate(startOfPrepWindow(new Date()));
+}
+
+function doUnfinishedChores() {
+  return doBacklogTasks().filter((t) => !t.done);
+}
+
+// Only already-materialized task instances are checked (rawDoTasksForDay is
+// side-effect-free) — a recurring task for a past day the user never opened
+// this week won't have an instance yet, so it can't be flagged. That's a
+// narrow gap versus eagerly materializing here, which would mutate state
+// without a persist() and risk phantom data surviving to the next reload.
+function doOverdueDayTasks() {
+  const key = doRealWeekKey();
+  const start = startOfPrepWindow(new Date());
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const out = [];
+  doPrepDays.forEach((day) => {
+    const date = addDays(start, day.offset);
+    if (date >= today) return;
+    rawDoTasksForDay(day.id, key).filter((t) => !t.done).forEach((task) => {
+      out.push({ task, dayId: day.id, dayName: day.name, dayKey: key });
+    });
+  });
+  return out;
+}
+
+function updateDoNotifCount() {
+  const count = doUnfinishedChores().length + doOverdueDayTasks().length;
+  setPageNotifCount("do", count);
+}
+
+// Explicit-week toggle for the notif panel: applyDoTaskToggle/doTasksForDay
+// write against weekKey() (the currently BROWSED week), which is wrong here
+// since an overdue item belongs to the real current week regardless of what
+// week the user happens to be looking at.
+function toggleDoTaskForWeek(key, dayId, taskId, done) {
+  if (dayId === "backlog") {
+    state.doBacklog = doBacklogTasks().map((task) => task.id === taskId ? { ...task, done } : task);
+  } else {
+    const tasks = rawDoTasksForDay(dayId, key);
+    state.doPlans[key][dayId] = tasks.map((task) => task.id === taskId ? { ...task, done } : task);
+  }
+  persist();
+  renderDoPlanner();
+  renderTasksPage();
 }
 
 function ensureRecurringTasksForDay(key, dayId) {
