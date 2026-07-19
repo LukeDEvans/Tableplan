@@ -162,6 +162,26 @@ exports.handler = async (event) => {
     }
 
     if (action === "accounts") {
+      // SimpleFIN's own guidance: data refreshes once a day; they expect at
+      // most ~24 requests/day per token. The client used to call this on
+      // every app load (mobile PWAs reload constantly on memory pressure),
+      // which blew past that. This cache is the actual enforcement point —
+      // server-side and shared across every device on the household, so no
+      // client behavior (reload storms, a second phone, a bug) can exceed
+      // it. Passive calls reuse a cache up to 6h old; a forced (manual
+      // Refresh) call may jump the TTL but never the 1h hard floor, which
+      // alone caps this at 24 bridge calls/day even in the worst case.
+      const ACCOUNTS_CACHE_TTL_MS = 6 * 3600 * 1000;
+      const ACCOUNTS_MIN_INTERVAL_MS = 60 * 60 * 1000;
+      const cacheId = `finaccts_${groupId}`;
+      const cache = await loadRawCache(serviceKey, cacheId);
+      const lastFetchedAt = cache?.fetchedAt ? new Date(cache.fetchedAt).getTime() : 0;
+      const age = Date.now() - lastFetchedAt;
+      const wantsFresh = !cache || age >= ACCOUNTS_CACHE_TTL_MS || (body.force && age >= ACCOUNTS_MIN_INTERVAL_MS);
+      if (!wantsFresh) {
+        return cors(json(200, { accounts: cache.accounts, errors: cache.errors || [], cached: true, fetchedAt: cache.fetchedAt }));
+      }
+
       const row = await loadSecretRow(serviceKey, groupId);
       const accessUrl = row?.state?.accessUrl;
       if (!accessUrl) return cors(json(409, { error: "SimpleFIN is not connected yet." }));
@@ -173,7 +193,11 @@ exports.handler = async (event) => {
       const res = await fetch(`${bridgeUrl}/accounts?start-date=${start}`, {
         headers: { accept: "application/json", ...(auth ? { authorization: `Basic ${auth}` } : {}) }
       });
-      if (!res.ok) return cors(json(502, { error: `Bridge fetch failed (${res.status}).` }));
+      if (!res.ok) {
+        // Bridge hiccup: serve stale cache rather than a hard error if we have one.
+        if (cache) return cors(json(200, { accounts: cache.accounts, errors: cache.errors || [], cached: true, fetchedAt: cache.fetchedAt }));
+        return cors(json(502, { error: `Bridge fetch failed (${res.status}).` }));
+      }
       const data = await res.json().catch(() => null);
       if (!data || !Array.isArray(data.accounts)) return cors(json(502, { error: "Bridge returned an unexpected payload." }));
       // Derived data only — normalize and drop anything we don't display.
@@ -193,7 +217,10 @@ exports.handler = async (event) => {
           pending: Boolean(t.pending)
         }))
       }));
-      return cors(json(200, { accounts, errors: Array.isArray(data.errors) ? data.errors.map(String).slice(0, 5) : [] }));
+      const errors = Array.isArray(data.errors) ? data.errors.map(String).slice(0, 5) : [];
+      const fetchedAt = new Date().toISOString();
+      await saveRawCache(serviceKey, cacheId, { accounts, errors, fetchedAt });
+      return cors(json(200, { accounts, errors, cached: false, fetchedAt }));
     }
 
     return cors(json(400, { error: `Unknown action: ${action}` }));
@@ -291,6 +318,24 @@ function splitAccessUrl(accessUrl) {
   } catch {
     return { url: accessUrl, auth: null };
   }
+}
+
+// Plain overwrite cache (unlike the receipts row, losing a race here just
+// means one fetch's result doesn't get cached — harmless) for accounts+
+// transactions, keyed off the same colon-less service-only convention.
+async function loadRawCache(serviceKey, id) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(id)}&select=state`, { headers: svc(serviceKey), cache: "no-store" });
+  if (!res.ok) return null;
+  const rows = await res.json();
+  return rows[0]?.state || null;
+}
+
+async function saveRawCache(serviceKey, id, state) {
+  await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
+    method: "POST",
+    headers: { ...svc(serviceKey), "content-type": "application/json", prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({ id, state, updated_at: new Date().toISOString() })
+  }).catch(() => {}); // cache-write failure shouldn't fail the request
 }
 
 function secretRowId(groupId) {

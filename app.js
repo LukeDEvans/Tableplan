@@ -6237,15 +6237,21 @@ async function checkFinanceLinkStatus() {
   if (financeLinkStatus.connected && !financeLive) refreshFinanceLive();
 }
 
-async function refreshFinanceLive() {
+async function refreshFinanceLive(force = false) {
   if (financeLiveLoading) return;
   financeLiveLoading = true;
   if (activeAppArea === "finance") renderFinancePage();
-  // 45 days so the current calendar month is always fully covered for actuals
-  const data = await callNetlifyFunction("simplefin", { action: "accounts", days: 45 });
+  // 45 days so the current calendar month is always fully covered for actuals.
+  // The server caches this (SimpleFIN expects ~24 req/day, not one per app
+  // load) — force just requests a check against the 1h floor, it does not
+  // guarantee a real bridge hit.
+  const data = await callNetlifyFunction("simplefin", { action: "accounts", days: 45, force });
   financeLiveLoading = false;
+  // Trust the server's fetchedAt (when the data actually came from the bank)
+  // over the local clock, since a cache hit didn't just fetch anything.
+  const at = data?.fetchedAt ? new Date(data.fetchedAt).getTime() : Date.now();
   financeLive = data?.accounts
-    ? { accounts: data.accounts, errors: data.errors || [], at: Date.now() }
+    ? { accounts: data.accounts, errors: data.errors || [], at }
     : { accounts: [], errors: [data?.error || "Could not reach the bank bridge."], at: Date.now() };
   updateFinanceMonthActuals();
   updateFinanceRecurring();
@@ -7314,7 +7320,7 @@ function onFinanceGridClick(e) {
   const action = btn.dataset.finAction;
   // Bank-link actions are async and don't touch budget state
   if (action === "link-banks") { linkFinanceBanks(); return; }
-  if (action === "refresh-live") { refreshFinanceLive(); return; }
+  if (action === "refresh-live") { refreshFinanceLive(true); return; }
   if (action === "unlink-banks") { unlinkFinanceBanks(); return; }
   if (action === "toggle-notifs") { financeNotifOpen = !financeNotifOpen; renderFinancePage(); return; }
   if (action === "txn-filter-clear") {
