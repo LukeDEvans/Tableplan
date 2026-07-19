@@ -17693,6 +17693,22 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 }
 .fin-txn-detail-grid .fin-hint { display: block; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; }
 .fin-txn-detail .fin-txn-label { max-width: none; width: 100%; }
+.fin-return-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--window-border);
+  background: color-mix(in srgb, var(--muted) 10%, transparent);
+  font-size: 0.85rem;
+}
+.fin-return-box .fin-hint { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.fin-return-box .fin-add-btn { align-self: flex-start; }
+.fin-return-suggest {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--window-border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
 .fin-txn-menu {
   position: fixed;
   z-index: 200;

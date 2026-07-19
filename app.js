@@ -212,7 +212,7 @@ const STATE_SECTIONS = {
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
@@ -2908,6 +2908,7 @@ function defaultState() {
     financeMonthActuals: {},
     financeRecurring: [],
     financeMerchantNames: {},
+    financeTxnLinks: {},
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -3041,6 +3042,7 @@ function normalizeState(parsed) {
       newAck: Boolean(r?.newAck)
     })),
     financeMerchantNames: (parsed?.financeMerchantNames && typeof parsed.financeMerchantNames === "object") ? parsed.financeMerchantNames : {},
+    financeTxnLinks: (parsed?.financeTxnLinks && typeof parsed.financeTxnLinks === "object") ? parsed.financeTxnLinks : {},
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
@@ -6411,9 +6413,88 @@ function financeLabeledTxns() {
     if ((t.amount || 0) > 0 && FIN_INCOME_KEYWORDS.test(t.description)) { t.label = "income"; t.labelSource = "auto"; continue; }
     t.label = ""; t.labelSource = "";
   }
+
+  // Linked returns: a manually-confirmed return→purchase link (financeTxnLinks)
+  // borrows the purchase's category label, so its positive credit amount nets
+  // against that category via the ordinary (non-income) financeTxnPortions
+  // formula below — no separate "refund" total to keep in sync elsewhere.
+  // An explicit manual label on the return itself still wins over a link.
+  const links = state.financeTxnLinks || {};
+  const byId = new Map(txns.map((t) => [t.id, t]));
+  for (const [retId, purchaseId] of Object.entries(links)) {
+    const ret = byId.get(retId);
+    const purchase = byId.get(purchaseId);
+    if (!ret || !purchase || explicit[retId]) continue;
+    if (!purchase.label || purchase.label === "split" || purchase.label === "mgmt" || purchase.label === "income" || purchase.label.startsWith("income:")) continue;
+    ret.label = purchase.label;
+    ret.labelSource = "linked";
+    ret.linkedPurchaseId = purchaseId;
+    (purchase.linkedReturnIds || (purchase.linkedReturnIds = [])).push(retId);
+  }
+
   txns.sort((x, y) => (y.posted || "").localeCompare(x.posted || ""));
   financeLive.labeled = txns;
   return txns;
+}
+
+// Best-guess original purchase for a return/credit: same account, opposite
+// sign, overlapping merchant tokens, purchase posted before the return within
+// a 60-day window, and enough unreturned amount left on the purchase to cover
+// it (accounts for earlier partial-return links). Suggestion only — nothing
+// links until the user clicks "Link as return".
+function financeLinkedReturnsTotal(purchaseId, allTxns) {
+  const links = state.financeTxnLinks || {};
+  let total = 0;
+  for (const [retId, pid] of Object.entries(links)) {
+    if (pid !== purchaseId) continue;
+    const r = allTxns.find((x) => x.id === retId);
+    if (r) total += r.amount || 0;
+  }
+  return total;
+}
+
+function financeSuggestReturnMatch(t, allTxns) {
+  if ((t.amount || 0) <= 0 || state.financeTxnLinks?.[t.id]) return null;
+  const retTokens = new Set(financeMerchantKey(t.description).split(" ").filter(Boolean));
+  if (!retTokens.size) return null;
+  const retTime = new Date(t.posted || 0).getTime();
+  let best = null, bestScore = -Infinity;
+  for (const p of allTxns) {
+    if (p.id === t.id || p.accountId !== t.accountId || (p.amount || 0) >= 0) continue;
+    if (!p.label || ["split", "mgmt", "income"].includes(p.label) || p.label.startsWith("income:")) continue;
+    const pTokens = new Set(financeMerchantKey(p.description).split(" ").filter(Boolean));
+    if (![...retTokens].some((tok) => pTokens.has(tok))) continue;
+    const days = (retTime - new Date(p.posted || 0).getTime()) / 86400000;
+    if (days < 0 || days > 60) continue;
+    const available = Math.abs(p.amount) - financeLinkedReturnsTotal(p.id, allTxns);
+    if (available < t.amount - 0.01) continue;
+    const score = -days - Math.abs(available - t.amount) * 0.1;
+    if (score > bestScore) { bestScore = score; best = p; }
+  }
+  return best;
+}
+
+function recordFinanceTxnLink(returnId, purchaseId) {
+  if (!state.financeTxnLinks || typeof state.financeTxnLinks !== "object") state.financeTxnLinks = {};
+  delete state.financeTxnLinks[returnId]; // re-insert so the cap evicts least-recent
+  state.financeTxnLinks[returnId] = purchaseId;
+  const ids = Object.keys(state.financeTxnLinks);
+  for (let i = 0; i < ids.length - 600; i++) delete state.financeTxnLinks[ids[i]];
+  if (financeLive) financeLive.labeled = null;
+  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
+  updateFinanceMonthActuals();
+  persist();
+  renderFinancePage();
+}
+
+function clearFinanceTxnLink(returnId) {
+  if (!state.financeTxnLinks) return;
+  delete state.financeTxnLinks[returnId];
+  if (financeLive) financeLive.labeled = null;
+  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
+  updateFinanceMonthActuals();
+  persist();
+  renderFinancePage();
 }
 
 // Normalizes a labeled transaction into portions with signed amounts the
@@ -7175,6 +7256,35 @@ function renderFinancePage() {
       <span class="fin-txn-amt${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</span>
     </div>`;
   };
+  const returnLinkHtml = (t) => {
+    if (t.linkedPurchaseId) {
+      const purchase = allTxns.find((x) => x.id === t.linkedPurchaseId);
+      if (!purchase) return "";
+      const pDate = purchase.posted ? new Date(purchase.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—";
+      return `
+      <div class="fin-return-box fin-return-linked">
+        <span class="fin-hint">Linked return</span>
+        <div>Offsets <strong>${escapeHtml(purchase.displayName)}</strong> · ${escapeHtml(pDate)} · ${formatFinMoney(purchase.amount || 0)}</div>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="unlink-return" data-id="${escapeHtml(t.id)}">Unlink</button>
+      </div>`;
+    }
+    if (t.linkedReturnIds?.length) {
+      const total = t.linkedReturnIds.reduce((s, id) => s + (allTxns.find((x) => x.id === id)?.amount || 0), 0);
+      return `
+      <div class="fin-return-box">
+        <span class="fin-hint">${t.linkedReturnIds.length} linked return${t.linkedReturnIds.length > 1 ? "s" : ""} · ${formatFinMoney(total)} offsetting this category</span>
+      </div>`;
+    }
+    const suggestion = financeSuggestReturnMatch(t, allTxns);
+    if (!suggestion) return "";
+    const sDate = suggestion.posted ? new Date(suggestion.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—";
+    return `
+    <div class="fin-return-box fin-return-suggest">
+      <span class="fin-hint">Possible return for</span>
+      <div><strong>${escapeHtml(suggestion.displayName)}</strong> · ${escapeHtml(sDate)} · ${formatFinMoney(suggestion.amount || 0)}</div>
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="link-return" data-id="${escapeHtml(t.id)}" data-purchase-id="${escapeHtml(suggestion.id)}">Link as return</button>
+    </div>`;
+  };
   const txnDetailHtml = (t) => {
     const raw = String(t.description || "");
     const fullDate = t.posted ? new Date(t.posted).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" }) : "Unknown date";
@@ -7191,6 +7301,7 @@ function renderFinancePage() {
         <div><span class="fin-hint">Account</span><div>${escapeHtml(t.account)}</div></div>
         <div><span class="fin-hint">Status</span><div>${t.pending ? "Pending" : "Posted"}</div></div>
       </div>
+      ${returnLinkHtml(t)}
       <span class="fin-hint">Budget label</span>
       <div class="fin-item-row">${txnSelect(t)}</div>
     </div>`;
@@ -7466,6 +7577,8 @@ function onFinanceGridClick(e) {
     if (input) saveRenameTxn(btn.dataset.id, input.dataset.finRenameRaw, input.value);
     return;
   }
+  if (action === "link-return") { recordFinanceTxnLink(btn.dataset.id, btn.dataset.purchaseId); return; }
+  if (action === "unlink-return") { clearFinanceTxnLink(btn.dataset.id); return; }
   if (action === "open-txn-detail") {
     financeDetailTxnId = financeDetailTxnId === btn.dataset.id ? null : btn.dataset.id;
     renderFinancePage();
