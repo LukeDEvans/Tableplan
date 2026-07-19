@@ -286,19 +286,12 @@ async function extractReceipt(anthropicKey, { subject, from, date, bodyText, cat
 }
 
 async function saveFinanceReceipts(serviceKey, groupId, newReceipts) {
-  const id = `finreceipts_${groupId}`;
-  const headers = { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json", "content-type": "application/json", "x-live-writer": "2" };
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(id)}&select=state`, { headers });
-  const rows = res.ok ? await res.json() : [];
-  const existing = rows[0]?.state?.receipts || [];
-  const seen = new Set(existing.map((r) => r.id));
-  const merged = [...newReceipts.filter((r) => !seen.has(r.id)), ...existing].slice(0, 40);
-  const up = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
-    method: "POST",
-    headers: { ...headers, prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify({ id, state: { receipts: merged }, updated_at: new Date().toISOString() })
+  const { updateRawRow } = require("./_state-sections.js");
+  await updateRawRow(serviceKey, `finreceipts_${groupId}`, (s) => {
+    const existing = s.receipts || [];
+    const seen = new Set(existing.map((r) => r.id));
+    return { receipts: [...newReceipts.filter((r) => !seen.has(r.id)), ...existing].slice(0, 40) };
   });
-  if (!up.ok) console.error(`[receipt] save failed (${up.status})`);
 }
 
 // ─── History delta + inbox sweep ─────────────────────────────────────────────

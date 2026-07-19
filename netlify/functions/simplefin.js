@@ -272,17 +272,11 @@ function receiptFromModel(text, categories) {
 }
 
 async function saveImportedReceipt(serviceKey, groupId, receipt) {
-  const id = `finreceipts_${groupId}`;
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(id)}&select=state`, { headers: svc(serviceKey), cache: "no-store" });
-  const rows = res.ok ? await res.json() : [];
-  const existing = rows[0]?.state?.receipts || [];
-  const merged = [receipt, ...existing.filter((r) => r.id !== receipt.id)].slice(0, 40);
-  const up = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
-    method: "POST",
-    headers: { ...svc(serviceKey), "content-type": "application/json", prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify({ id, state: { receipts: merged }, updated_at: new Date().toISOString() })
+  const { updateRawRow } = require("./_state-sections.js");
+  await updateRawRow(serviceKey, `finreceipts_${groupId}`, (s) => {
+    const existing = s.receipts || [];
+    return { receipts: [receipt, ...existing.filter((r) => r.id !== receipt.id)].slice(0, 40) };
   });
-  if (!up.ok) throw new Error(`receipt save ${up.status}`);
 }
 
 function splitAccessUrl(accessUrl) {

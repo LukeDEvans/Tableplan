@@ -94,4 +94,48 @@ async function updateSection(serviceKey, owner, section, mutate, attempts = 4) {
   throw new Error(`Section "${section}" kept conflicting — giving up`);
 }
 
-module.exports = { SUPABASE_URL, serviceHeaders, getUserIdFromToken, getUserGroupId, loadSection, updateSection, personalRowId };
+// Same optimistic-locking read-modify-write as updateSection, but for rows
+// addressed by an arbitrary raw id rather than "<owner>:<section>" — used by
+// the service-only rows (finreceipts_/finhist_/simplefin_) that deliberately
+// have no ":" so client RLS policies can never match them. Concurrent writers
+// (e.g. the mail sweep and a manual extension import both touching
+// finreceipts_ within the same window) retry instead of clobbering.
+async function updateRawRow(serviceKey, rowId, mutate, attempts = 4) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&select=state,updated_at`,
+      { headers: serviceHeaders(serviceKey), cache: "no-store" }
+    );
+    if (!res.ok) throw new Error(`Row "${rowId}" load failed (${res.status})`);
+    const rows = await res.json();
+    const row = rows[0];
+    if (!row) {
+      const newState = mutate({});
+      if (!newState) return { ok: true, skipped: true };
+      const ins = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
+        method: "POST",
+        headers: { ...serviceHeaders(serviceKey), "content-type": "application/json", prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({ id: rowId, state: newState, updated_at: new Date().toISOString() })
+      });
+      if (!ins.ok) throw new Error(`Row "${rowId}" create failed (${ins.status})`);
+      return { ok: true, created: true };
+    }
+    const newState = mutate({ ...(row.state || {}) });
+    if (!newState) return { ok: true, skipped: true };
+    const upd = await fetch(
+      `${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&updated_at=eq.${encodeURIComponent(row.updated_at)}`,
+      {
+        method: "PATCH",
+        headers: { ...serviceHeaders(serviceKey), "content-type": "application/json", prefer: "return=representation" },
+        body: JSON.stringify({ state: newState, updated_at: new Date().toISOString() })
+      }
+    );
+    if (!upd.ok) throw new Error(`Row "${rowId}" save failed (${upd.status})`);
+    const updRows = await upd.json();
+    if (updRows.length) return { ok: true };
+    // 0 rows matched → another writer got there first; re-read and retry
+  }
+  throw new Error(`Row "${rowId}" kept conflicting — giving up`);
+}
+
+module.exports = { SUPABASE_URL, serviceHeaders, getUserIdFromToken, getUserGroupId, loadSection, updateSection, updateRawRow, personalRowId };

@@ -6487,6 +6487,12 @@ function updateFinanceRecurring() {
       changed = true;
     }
   }
+  // Prune merchants not seen in a year — otherwise a one-off recurring-looking
+  // charge (a gym trial, a seasonal purchase) sits in synced state forever.
+  const cutoff = Date.now() - 365 * 86400000;
+  const before = state.financeRecurring.length;
+  state.financeRecurring = state.financeRecurring.filter((r) => !r.lastSeen || new Date(r.lastSeen).getTime() >= cutoff);
+  if (state.financeRecurring.length !== before) changed = true;
   if (changed) persist();
 }
 
