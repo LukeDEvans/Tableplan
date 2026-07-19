@@ -17661,6 +17661,13 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 
 /* Finance: rename a merchant's display text on a transaction row */
 .fin-txn-rename-input { flex: 1; min-width: 0; padding: 3px 8px; font-size: 0.83rem; }
+.fin-txn-row--renaming { align-items: center; }
+.fin-rename-fields { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+.fin-rename-sep { flex: 0 0 auto; color: var(--muted); }
+@media (max-width: 640px) {
+  .fin-rename-fields { flex-direction: column; align-items: stretch; gap: 2px; }
+  .fin-rename-sep { display: none; }
+}
 
 /* Finance: clickable transaction rows, detail card, right-click menu */
 .fin-txn-row--clickable { cursor: pointer; border-radius: 6px; }

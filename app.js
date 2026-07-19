@@ -212,7 +212,7 @@ const STATE_SECTIONS = {
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnDescNotes"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
@@ -2910,6 +2910,7 @@ function defaultState() {
     financeMerchantNames: {},
     financeTxnLinks: {},
     financeTxnSignFlips: {},
+    financeTxnDescNotes: {},
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -3045,6 +3046,7 @@ function normalizeState(parsed) {
     financeMerchantNames: (parsed?.financeMerchantNames && typeof parsed.financeMerchantNames === "object") ? parsed.financeMerchantNames : {},
     financeTxnLinks: (parsed?.financeTxnLinks && typeof parsed.financeTxnLinks === "object") ? parsed.financeTxnLinks : {},
     financeTxnSignFlips: (parsed?.financeTxnSignFlips && typeof parsed.financeTxnSignFlips === "object") ? parsed.financeTxnSignFlips : {},
+    financeTxnDescNotes: (parsed?.financeTxnDescNotes && typeof parsed.financeTxnDescNotes === "object") ? parsed.financeTxnDescNotes : {},
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
@@ -6309,15 +6311,20 @@ async function linkFinanceBanks() {
 let financeNotifOpen = false;
 const financeTxnFilter = { q: "", kind: "", account: "" };
 
-function financeMerchantKey(desc) {
-  const stop = new Set(["pos", "debit", "credit", "card", "purchase", "ach", "web", "id", "des", "co", "the", "of", "and", "inc", "llc", "com"]);
-  const tokens = String(desc || "").toLowerCase()
+const FIN_MERCHANT_STOPWORDS = new Set(["pos", "debit", "credit", "card", "purchase", "ach", "web", "id", "des", "co", "the", "of", "and", "inc", "llc", "com"]);
+function financeMerchantTokens(desc) {
+  return String(desc || "").toLowerCase()
     .replace(/[0-9#*]+/g, " ")
     .replace(/[^a-z\s]/g, " ")
     .split(/\s+/)
-    .filter((t) => t.length >= 2 && !stop.has(t));
-  return tokens.slice(0, 3).join(" ");
+    .filter((t) => t.length >= 2 && !FIN_MERCHANT_STOPWORDS.has(t));
 }
+function financeMerchantKey(desc) { return financeMerchantTokens(desc).slice(0, 3).join(" "); }
+// Same normalization, but keeps every token instead of just the first 3 — a
+// grocery store and an adjacent liquor store under the same chain share a
+// merchant key (and so a rename), but their fuller text usually diverges
+// past token 3, letting a per-location purchase note key off this instead.
+function financeDescKey(desc) { return financeMerchantTokens(desc).join(" "); }
 
 function financeTxnRuleGuess(desc) {
   const key = financeMerchantKey(desc);
@@ -6407,11 +6414,19 @@ function financeLabeledTxns() {
     }
   }
   const names = state.financeMerchantNames || {};
+  const descNotes = state.financeTxnDescNotes || {};
   const explicit = state.financeTxnLabels || {};
   for (const t of txns) {
     // Raw bank text stays on t.description; this is purely presentation, so
     // filters/rules/split-editor headers etc. can all just read displayName.
-    t.displayName = names[financeMerchantKey(t.description)] || t.description;
+    // Format is "<store/account> - <what was purchased>": the store part is
+    // shared across every transaction with the same merchant key (renaming
+    // one Trader Joe's renames them all), but the note is keyed off the
+    // fuller, unsliced token set, so a grocery-store charge and an adjacent
+    // liquor-store charge under the same chain can carry different notes.
+    const merchantPart = names[financeMerchantKey(t.description)] || t.description;
+    const note = descNotes[financeDescKey(t.description)];
+    t.displayName = note ? `${merchantPart} - ${note}` : merchantPart;
     const ex = explicit[t.id];
     if (ex) {
       // A split stores { split: [{label, amount}] } — amounts are positive
@@ -6798,7 +6813,7 @@ function startRenameTxn(txnId) {
   financeRenamingTxnId = txnId;
   renderFinancePage();
   requestAnimationFrame(() => {
-    const input = document.querySelector(`[data-fin-rename-id="${CSS.escape(txnId)}"]`);
+    const input = document.querySelector(`[data-fin-rename-id="${CSS.escape(txnId)}"][data-fin-rename-field="name"]`);
     input?.focus();
     input?.select();
   });
@@ -6809,19 +6824,38 @@ function cancelRenameTxn() {
   renderFinancePage();
 }
 
-function saveRenameTxn(txnId, rawDescription, newName) {
+// name is shared across every transaction with the same merchant key (a
+// rename applies everywhere that merchant shows up); note is keyed off the
+// fuller, unsliced token set (financeDescKey), so it distinguishes e.g. a
+// grocery-store charge from an adjacent liquor-store charge under the same
+// chain, which would otherwise share a merchant key and so a name.
+function saveRenameTxn(txnId, rawDescription, newName, newNote) {
   const name = newName.trim().slice(0, 80);
+  const note = String(newNote || "").trim().slice(0, 60);
   const key = financeMerchantKey(rawDescription);
-  if (!key) { financeRenamingTxnId = null; renderFinancePage(); return; }
-  if (!state.financeMerchantNames || typeof state.financeMerchantNames !== "object") state.financeMerchantNames = {};
-  if (name) state.financeMerchantNames[key] = name;
-  else delete state.financeMerchantNames[key]; // blank clears back to the raw text
-  // Recurring entries snapshot a display name at detection time — keep it in sync.
-  (state.financeRecurring || []).forEach((r) => { if (r.merchantKey === key) r.name = name || rawDescription.slice(0, 48); });
-  if (financeLive) financeLive.labeled = null; // recompute displayName for every txn sharing this merchant
+  const descKey = financeDescKey(rawDescription);
+  if (key) {
+    if (!state.financeMerchantNames || typeof state.financeMerchantNames !== "object") state.financeMerchantNames = {};
+    if (name) state.financeMerchantNames[key] = name;
+    else delete state.financeMerchantNames[key]; // blank clears back to the raw text
+    // Recurring entries snapshot a display name at detection time — keep it in sync.
+    (state.financeRecurring || []).forEach((r) => { if (r.merchantKey === key) r.name = name || rawDescription.slice(0, 48); });
+  }
+  if (descKey) {
+    if (!state.financeTxnDescNotes || typeof state.financeTxnDescNotes !== "object") state.financeTxnDescNotes = {};
+    if (note) state.financeTxnDescNotes[descKey] = note;
+    else delete state.financeTxnDescNotes[descKey]; // blank clears the note
+  }
+  if (financeLive) financeLive.labeled = null; // recompute displayName for every txn sharing this merchant/note
   financeRenamingTxnId = null;
   persist();
   renderFinancePage();
+}
+
+function saveRenameFromRow(row, txnId) {
+  const nameInput = row?.querySelector('[data-fin-rename-field="name"]');
+  const noteInput = row?.querySelector('[data-fin-rename-field="note"]');
+  if (nameInput) saveRenameTxn(txnId, nameInput.dataset.finRenameRaw, nameInput.value, noteInput?.value || "");
 }
 
 function recordFinanceTxnSplit(txnId, portions) {
@@ -7307,11 +7341,19 @@ function renderFinancePage() {
     const rawEsc = escapeHtml(raw);
     const descTitle = t.displayName !== raw ? `${escapeHtml(t.account)} · was: ${rawEsc}` : escapeHtml(t.account);
     if (renaming) {
+      const merchantKey = financeMerchantKey(raw);
+      const descKey = financeDescKey(raw);
+      const currentMerchant = (state.financeMerchantNames || {})[merchantKey] || raw;
+      const currentNote = (state.financeTxnDescNotes || {})[descKey] || "";
       return `
-      <div class="fin-txn-row${t.pending ? " is-pending" : ""}">
+      <div class="fin-txn-row fin-txn-row--renaming${t.pending ? " is-pending" : ""}">
         <span class="fin-txn-date">${t.posted ? escapeHtml(new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>
-        <input class="fin-item-name fin-txn-rename-input" type="text" value="${escapeHtml(t.displayName)}" data-fin-rename-id="${escapeHtml(t.id)}" data-fin-rename-raw="${rawEsc}" placeholder="${rawEsc}" aria-label="Rename this merchant" />
-        <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-save" data-id="${escapeHtml(t.id)}" title="Save name" aria-label="Save name">✓</button>
+        <div class="fin-rename-fields">
+          <input class="fin-item-name fin-txn-rename-input" type="text" value="${escapeHtml(currentMerchant)}" placeholder="${rawEsc}" data-fin-rename-id="${escapeHtml(t.id)}" data-fin-rename-raw="${rawEsc}" data-fin-rename-field="name" aria-label="Store or account name" />
+          <span class="fin-rename-sep">–</span>
+          <input class="fin-item-name fin-txn-rename-input" type="text" value="${escapeHtml(currentNote)}" placeholder="what was purchased (optional)" data-fin-rename-id="${escapeHtml(t.id)}" data-fin-rename-raw="${rawEsc}" data-fin-rename-field="note" aria-label="What was purchased" />
+        </div>
+        <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-save" data-id="${escapeHtml(t.id)}" title="Save" aria-label="Save">✓</button>
         <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-cancel" title="Cancel" aria-label="Cancel">&times;</button>
       </div>`;
     }
@@ -7616,7 +7658,7 @@ function renderFinancePage() {
         onFinanceGridClick(e);
       }
       if (e.target.matches?.("[data-fin-rename-id]")) {
-        if (e.key === "Enter") { e.preventDefault(); saveRenameTxn(e.target.dataset.finRenameId, e.target.dataset.finRenameRaw, e.target.value); }
+        if (e.key === "Enter") { e.preventDefault(); saveRenameFromRow(e.target.closest(".fin-txn-row"), e.target.dataset.finRenameId); }
         else if (e.key === "Escape") { e.preventDefault(); cancelRenameTxn(); }
       }
     });
@@ -7644,7 +7686,7 @@ function showFinTxnMenu(x, y, txnId) {
   menu.className = "fin-txn-menu";
   menu.style.left = Math.max(8, Math.min(x, window.innerWidth - 180)) + "px";
   menu.style.top = Math.min(y, window.innerHeight - 90) + "px";
-  menu.innerHTML = `<button class="fin-txn-menu-option" type="button" data-menu-action="rename">Rename</button>`;
+  menu.innerHTML = `<button class="fin-txn-menu-option" type="button" data-menu-action="rename">Rename / add note</button>`;
   menu.querySelector('[data-menu-action="rename"]').addEventListener("click", () => {
     menu.remove();
     startRenameTxn(txnId);
@@ -7685,11 +7727,7 @@ function onFinanceGridClick(e) {
   if (action === "toggle-notifs") { financeNotifOpen = !financeNotifOpen; renderFinancePage(); return; }
   if (action === "rename-txn-start") { startRenameTxn(btn.dataset.id); return; }
   if (action === "rename-txn-cancel") { cancelRenameTxn(); return; }
-  if (action === "rename-txn-save") {
-    const input = btn.closest(".fin-txn-row")?.querySelector("[data-fin-rename-id]");
-    if (input) saveRenameTxn(btn.dataset.id, input.dataset.finRenameRaw, input.value);
-    return;
-  }
+  if (action === "rename-txn-save") { saveRenameFromRow(btn.closest(".fin-txn-row"), btn.dataset.id); return; }
   if (action === "link-return") { recordFinanceTxnLink(btn.dataset.id, btn.dataset.purchaseId); return; }
   if (action === "unlink-return") { clearFinanceTxnLink(btn.dataset.id); return; }
   if (action === "return-link-search-start") {
