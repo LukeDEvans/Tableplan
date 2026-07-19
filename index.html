@@ -76,6 +76,7 @@
                 <button type="button" id="menuReadSyncBtn">Sync Settings</button>
                 <button type="button" id="menuRecreateHobbiesBtn">Hobbies</button>
                 <button type="button" id="menuManageCalendarsBtn">Manage Calendars</button>
+                <button type="button" id="menuImportAiBtn">Import from AI Chat</button>
               </div>
             </div>
             <div class="page-title-wrap" id="pageTitleWrap" hidden>
@@ -1664,6 +1665,31 @@
       </dialog>
 
       <dialog id="groceriesPageDialog"></dialog>
+
+      <dialog class="recipe-dialog import-ai-dialog" id="importAiDialog">
+        <div class="recipe-form">
+          <div class="dialog-head">
+            <h2>Import from AI Chat</h2>
+            <button class="icon-btn" id="closeImportAiDialogBtn" type="button" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <p class="import-ai-help">Talk through something with ChatGPT or Claude, then ask it to prepare a Live import. Give it these instructions once (paste at the start of the chat, or save as a custom instruction), then paste back whatever it gives you.</p>
+          <div class="import-ai-instructions-row">
+            <textarea id="importAiInstructions" readonly rows="6"></textarea>
+            <button class="secondary-btn" type="button" id="importAiCopyBtn">Copy instructions</button>
+          </div>
+          <textarea id="importAiPasteInput" class="import-ai-paste" rows="6" placeholder="Paste the JSON your AI chat gave you here…"></textarea>
+          <div class="dialog-actions">
+            <button class="secondary-btn" type="button" id="importAiParseBtn">Preview</button>
+          </div>
+          <div id="importAiPreview" class="import-ai-preview"></div>
+          <div class="dialog-actions" id="importAiApplyRow" hidden>
+            <span class="import-ai-status" id="importAiStatus"></span>
+            <button class="primary-btn" type="button" id="importAiApplyBtn">Add to Live</button>
+          </div>
+        </div>
+      </dialog>
 
       <dialog class="page-dialog" id="dailyDozenPageDialog">
         <section class="panel app-page-panel daily-dozen-page food-health-page" aria-label="Nutrition">

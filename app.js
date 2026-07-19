@@ -617,6 +617,17 @@ const elements = {
   menuReadSyncBtn: document.querySelector("#menuReadSyncBtn"),
   menuRecreateHobbiesBtn: document.querySelector("#menuRecreateHobbiesBtn"),
   menuManageCalendarsBtn: document.querySelector("#menuManageCalendarsBtn"),
+  menuImportAiBtn: document.querySelector("#menuImportAiBtn"),
+  importAiDialog: document.querySelector("#importAiDialog"),
+  closeImportAiDialogBtn: document.querySelector("#closeImportAiDialogBtn"),
+  importAiInstructions: document.querySelector("#importAiInstructions"),
+  importAiCopyBtn: document.querySelector("#importAiCopyBtn"),
+  importAiPasteInput: document.querySelector("#importAiPasteInput"),
+  importAiParseBtn: document.querySelector("#importAiParseBtn"),
+  importAiPreview: document.querySelector("#importAiPreview"),
+  importAiApplyRow: document.querySelector("#importAiApplyRow"),
+  importAiStatus: document.querySelector("#importAiStatus"),
+  importAiApplyBtn: document.querySelector("#importAiApplyBtn"),
   contextSettingsDialog: document.querySelector("#contextSettingsDialog"),
   contextSettingsTitle: document.querySelector("#contextSettingsTitle"),
   contextSettingsBody: document.querySelector("#contextSettingsBody"),
@@ -1472,6 +1483,14 @@ function bindEvents() {
   elements.menuWorkoutLogsBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLogsDialog));
   elements.menuRecreateHobbiesBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("recreate")));
   elements.menuManageCalendarsBtn.addEventListener("click", () => openSettingsMenuDialog(openPlanCalDialog));
+  elements.menuImportAiBtn.addEventListener("click", () => openSettingsMenuDialog(openImportAiDialog));
+  elements.closeImportAiDialogBtn.addEventListener("click", () => elements.importAiDialog.close());
+  elements.importAiCopyBtn.addEventListener("click", copyImportAiInstructions);
+  elements.importAiParseBtn.addEventListener("click", parseImportAiPaste);
+  elements.importAiApplyBtn.addEventListener("click", applyImportAiItems);
+  elements.importAiPreview.addEventListener("change", (e) => {
+    if (e.target.matches("[data-import-ai-toggle]")) updateImportAiApplyLabel();
+  });
   elements.closeContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
   elements.contextSettingsBackBtn.addEventListener("click", () => renderContextSettingsDialog("general"));
   elements.doneContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
@@ -9892,6 +9911,186 @@ function openRecurringTasksDialog(event) {
   activeRecurringTaskDayId = activePlannerDayId || plannerDayIdForDate(new Date());
   renderRecurringTasks();
   elements.recurringTasksDialog.showModal();
+}
+
+// ── Import from AI Chat ──────────────────────────────────────────────────────
+// Lets Luke work through a real-life topic with ChatGPT/Claude outside the
+// app (cheaper than spending Live's own tokens on open-ended brainstorming),
+// then paste back a small structured JSON blob that gets turned into real
+// To-Do / Calendar / Shopping / Recurring-task items — reusing the exact same
+// state shapes and push sites the app's own "add" buttons use, so imported
+// items are indistinguishable from hand-entered ones.
+const IMPORT_AI_SECTIONS = new Set(["todo", "calendar", "shopping", "recurring"]);
+const IMPORT_AI_DAY_MAP = {
+  sunday: "sunday", monday: "monday", tuesday: "tuesday", wednesday: "wednesday",
+  thursday: "thursday", friday: "friday-start", saturday: "saturday"
+};
+let importAiParsedItems = [];
+
+function importAiInstructionsText() {
+  const today = new Date().toISOString().slice(0, 10);
+  return `You are helping me turn a conversation into structured actions for my personal life-management app, Live. When I ask you to "prepare my Live import" (or similar), respond with ONLY a single fenced json code block — no text before or after it — matching exactly this schema:
+
+{
+  "summary": "one short line describing this batch",
+  "items": [
+    { "section": "todo", "title": "...", "notes": "" },
+    { "section": "calendar", "title": "...", "date": "YYYY-MM-DD", "time": "HH:MM", "notes": "" },
+    { "section": "shopping", "title": "..." },
+    { "section": "recurring", "title": "...", "notes": "", "days": ["monday","wednesday"] }
+  ]
+}
+
+Rules:
+- "section" is exactly one of: todo, calendar, shopping, recurring.
+- todo = a one-time task with no fixed date (goes to my backlog).
+- calendar = a one-time event on a specific date. Only include "time" if there's a real time — omit it entirely for an all-day event.
+- shopping = a single item for my grocery list. No other fields besides title.
+- recurring = a task that repeats weekly. "days" uses only: sunday, monday, tuesday, wednesday, thursday, friday, saturday.
+- Every item needs "section" and "title". Only include fields that apply to that section.
+- Today's date is ${today} — resolve "tomorrow," "next week," etc. against that.
+- Only include things we actually discussed — don't invent items. If nothing applies, return {"summary": "", "items": []}.`;
+}
+
+function openImportAiDialog() {
+  elements.importAiInstructions.value = importAiInstructionsText();
+  elements.importAiPasteInput.value = "";
+  elements.importAiPreview.innerHTML = "";
+  elements.importAiApplyRow.hidden = true;
+  importAiParsedItems = [];
+  if (!elements.importAiDialog.open) elements.importAiDialog.showModal();
+}
+
+async function copyImportAiInstructions() {
+  try {
+    await navigator.clipboard.writeText(elements.importAiInstructions.value);
+    const original = elements.importAiCopyBtn.textContent;
+    elements.importAiCopyBtn.textContent = "Copied!";
+    setTimeout(() => { elements.importAiCopyBtn.textContent = original; }, 1500);
+  } catch {
+    elements.importAiInstructions.select();
+  }
+}
+
+function importAiItemSummary(item) {
+  if (item.section === "calendar") return `${item.date}${item.time ? ` · ${item.time}` : " · all day"}`;
+  if (item.section === "recurring") return (item.days || []).map((d) => d.slice(0, 3)).join(", ") || "no days";
+  if (item.section === "shopping") return "Shopping list";
+  return "To-Do backlog";
+}
+
+// Lenient parse: strips a markdown fence if present, validates each item
+// independently so one bad entry doesn't sink the whole batch.
+function parseImportAiPaste() {
+  const raw = elements.importAiPasteInput.value.trim();
+  elements.importAiPreview.innerHTML = "";
+  elements.importAiApplyRow.hidden = true;
+  importAiParsedItems = [];
+  if (!raw) {
+    elements.importAiPreview.innerHTML = `<p class="import-ai-error">Paste the JSON your AI chat gave you first.</p>`;
+    return;
+  }
+  const fenced = raw.match(/\{[\s\S]*\}/);
+  let parsed;
+  try {
+    parsed = JSON.parse(fenced ? fenced[0] : raw);
+  } catch {
+    elements.importAiPreview.innerHTML = `<p class="import-ai-error">That doesn't look like valid JSON. Make sure you copied the whole code block.</p>`;
+    return;
+  }
+  const items = Array.isArray(parsed?.items) ? parsed.items : [];
+  if (!items.length) {
+    elements.importAiPreview.innerHTML = `<p class="import-ai-error">No items found in that import.</p>`;
+    return;
+  }
+
+  const results = items.map((raw, i) => {
+    const section = String(raw?.section || "").toLowerCase().trim();
+    const title = String(raw?.title || "").trim().slice(0, 200);
+    const notes = String(raw?.notes || "").trim().slice(0, 2000);
+    if (!IMPORT_AI_SECTIONS.has(section)) return { ok: false, i, error: `Unknown section "${raw?.section}"` };
+    if (!title) return { ok: false, i, error: "Missing title" };
+    if (section === "calendar") {
+      const date = String(raw?.date || "").trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, i, error: `"${title}" has no valid date` };
+      const time = /^\d{2}:\d{2}$/.test(String(raw?.time || "")) ? raw.time : "";
+      return { ok: true, i, item: { section, title, notes, date, time } };
+    }
+    if (section === "recurring") {
+      const days = (Array.isArray(raw?.days) ? raw.days : [])
+        .map((d) => IMPORT_AI_DAY_MAP[String(d || "").toLowerCase().trim()])
+        .filter(Boolean);
+      if (!days.length) return { ok: false, i, error: `"${title}" has no valid days` };
+      return { ok: true, i, item: { section, title, notes, days: [...new Set(days)] } };
+    }
+    return { ok: true, i, item: { section, title, notes } };
+  });
+
+  importAiParsedItems = results.filter((r) => r.ok).map((r) => r.item);
+  const bad = results.filter((r) => !r.ok);
+
+  const sectionLabel = { todo: "To-Do", calendar: "Calendar", shopping: "Shopping", recurring: "Recurring" };
+  elements.importAiPreview.innerHTML = `
+    ${parsed.summary ? `<p class="import-ai-summary">${escapeHtml(String(parsed.summary).slice(0, 300))}</p>` : ""}
+    ${importAiParsedItems.map((item, idx) => `
+      <label class="import-ai-item">
+        <input type="checkbox" data-import-ai-toggle data-idx="${idx}" checked />
+        <span class="import-ai-item-section">${sectionLabel[item.section]}</span>
+        <span class="import-ai-item-title">${escapeHtml(item.title)}</span>
+        <span class="import-ai-item-meta">${escapeHtml(importAiItemSummary(item))}</span>
+      </label>`).join("")}
+    ${bad.length ? `<p class="import-ai-error">${bad.length} item${bad.length === 1 ? "" : "s"} skipped: ${bad.map((b) => escapeHtml(b.error)).join("; ")}</p>` : ""}
+  `;
+  if (importAiParsedItems.length) {
+    elements.importAiApplyRow.hidden = false;
+    updateImportAiApplyLabel();
+  }
+}
+
+function updateImportAiApplyLabel() {
+  const checked = elements.importAiPreview.querySelectorAll("[data-import-ai-toggle]:checked").length;
+  elements.importAiApplyBtn.disabled = checked === 0;
+  elements.importAiApplyBtn.textContent = checked ? `Add ${checked} item${checked === 1 ? "" : "s"} to Live` : "Add to Live";
+}
+
+function applyImportAiItems() {
+  const checkedIdx = new Set([...elements.importAiPreview.querySelectorAll("[data-import-ai-toggle]:checked")].map((cb) => Number(cb.dataset.idx)));
+  const toApply = importAiParsedItems.filter((_, idx) => checkedIdx.has(idx));
+  if (!toApply.length) return;
+
+  let addedCalendar = false;
+  for (const item of toApply) {
+    if (item.section === "todo") {
+      doBacklogTasks().push({ id: createId("task"), title: item.title, notes: item.notes, done: false, weekKey: weekKey(), createdAt: new Date().toISOString() });
+    } else if (item.section === "calendar") {
+      state.planEvents = [...(state.planEvents || []), {
+        id: createId("plan-evt"), createdAt: new Date().toISOString(),
+        title: item.title, date: item.date, allDay: !item.time,
+        startTime: item.time || null, endTime: null,
+        notes: item.notes, color: PLAN_COLORS[0], calendarId: null, location: null, attachment: null
+      }];
+      addedCalendar = true;
+    } else if (item.section === "shopping") {
+      if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
+      if (!state.persistentManualGroceries.some((existing) => normalize(existing) === normalize(item.title))) {
+        state.persistentManualGroceries.push(item.title);
+        state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
+      }
+    } else if (item.section === "recurring") {
+      state.recurringTasks = normalizeRecurringTasks(state.recurringTasks);
+      state.recurringTasks.push({ id: createId("recurring-task"), title: item.title, notes: item.notes, dayIds: item.days, createdAt: new Date().toISOString() });
+    }
+  }
+
+  persist();
+  render();
+  if (addedCalendar && activeAppArea === "plan") renderPlanPage();
+  elements.importAiStatus.textContent = `Added ${toApply.length} item${toApply.length === 1 ? "" : "s"}.`;
+  elements.importAiApplyRow.hidden = true;
+  elements.importAiPreview.innerHTML = "";
+  elements.importAiPasteInput.value = "";
+  importAiParsedItems = [];
+  setTimeout(() => elements.importAiDialog.close(), 900);
 }
 
 function addDoTaskFromTasksPage(event) {

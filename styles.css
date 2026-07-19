@@ -17618,3 +17618,43 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-recap-row { min-height: 24px; }
 .fin-recap-delta { font-size: 0.74rem; font-weight: 800; color: color-mix(in srgb, var(--ink) 55%, transparent); min-width: 64px; text-align: right; }
 .fin-recap-delta.is-over { color: #b3261e; }
+
+/* Import from AI Chat */
+.import-ai-help { font-size: 0.85rem; color: var(--muted); line-height: 1.4; margin: 0 0 4px; }
+.import-ai-instructions-row { display: flex; flex-direction: column; gap: 6px; }
+#importAiInstructions {
+  width: 100%;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
+  border-radius: 8px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+.import-ai-paste { width: 100%; resize: vertical; margin-top: 10px; }
+.import-ai-preview { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.import-ai-summary { font-size: 0.82rem; font-style: italic; color: var(--muted); margin: 0 0 4px; }
+.import-ai-error { font-size: 0.82rem; color: #b3261e; margin: 4px 0 0; }
+.import-ai-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.import-ai-item-section {
+  flex: 0 0 auto;
+  font-size: 0.66rem;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--window-border);
+}
+.import-ai-item-title { flex: 1; min-width: 0; font-size: 0.88rem; }
+.import-ai-item-meta { flex: 0 0 auto; font-size: 0.74rem; color: var(--muted); }
+.import-ai-status { font-size: 0.82rem; color: var(--muted); margin-right: auto; }
