@@ -6689,6 +6689,29 @@ function updateFinanceMonthActuals() {
 let financeSplitDraft = null; // { txnId, portions: [{label, amount}] }
 let financeScanBusy = false;
 
+function startSplitTxn(txnId) {
+  const t = financeLabeledTxns().find((x) => x.id === txnId);
+  if (!t) return;
+  financeSplitDraft = {
+    txnId: t.id,
+    portions: (t.split && t.split.length ? t.split : [{ label: "", amount: "" }, { label: "", amount: "" }])
+      .map((p) => ({ label: p.label || "", amount: p.amount ?? "" }))
+  };
+  financeExpanded.add("card:txns");
+  financeNotifOpen = false;
+  renderFinancePage();
+}
+
+// Opens (or reuses) the split editor for a transaction and immediately pops
+// the camera/file picker, so scanning a receipt is a single tap from the
+// detail card instead of Split… → Scan receipt as two separate steps.
+function startScanReceiptForTxn(txnId) {
+  if (financeSplitDraft?.txnId !== txnId) startSplitTxn(txnId);
+  requestAnimationFrame(() => {
+    document.querySelector('.fin-split-editor [data-fin-edit="split-scan-file"]')?.click();
+  });
+}
+
 // Photo of a paper receipt → server itemizes + categorizes → portions prefill
 async function scanReceiptIntoSplit(file) {
   if (financeScanBusy || !financeSplitDraft || !file) return;
@@ -7292,6 +7315,7 @@ function renderFinancePage() {
     <div class="fin-txn-detail">
       <div class="fin-txn-detail-head">
         <span class="fin-txn-detail-name">${escapeHtml(t.displayName)}</span>
+        ${(t.amount || 0) < 0 ? `<button class="icon-btn fin-del-btn" type="button" data-fin-action="detail-scan-receipt" data-id="${escapeHtml(t.id)}" title="Scan receipt" aria-label="Scan receipt">📷</button>` : ""}
         <button class="icon-btn fin-del-btn" type="button" data-fin-action="close-txn-detail" title="Close" aria-label="Close">&times;</button>
       </div>
       ${t.displayName !== raw ? `<p class="fin-hint">Raw text: ${escapeHtml(raw)}</p>` : ""}
@@ -7579,6 +7603,7 @@ function onFinanceGridClick(e) {
   }
   if (action === "link-return") { recordFinanceTxnLink(btn.dataset.id, btn.dataset.purchaseId); return; }
   if (action === "unlink-return") { clearFinanceTxnLink(btn.dataset.id); return; }
+  if (action === "detail-scan-receipt") { startScanReceiptForTxn(btn.dataset.id); return; }
   if (action === "open-txn-detail") {
     financeDetailTxnId = financeDetailTxnId === btn.dataset.id ? null : btn.dataset.id;
     renderFinancePage();
@@ -7755,19 +7780,7 @@ function onFinanceGridChange(e) {
   const kind = el.dataset.finEdit;
   if (kind === "txn-label") {
     if (!el.value) return; // picked the placeholder — nothing to record
-    if (el.value === "__split__") {
-      const t = financeLabeledTxns().find((x) => x.id === el.dataset.id);
-      if (!t) return;
-      financeSplitDraft = {
-        txnId: t.id,
-        portions: (t.split && t.split.length ? t.split : [{ label: "", amount: "" }, { label: "", amount: "" }])
-          .map((p) => ({ label: p.label || "", amount: p.amount ?? "" }))
-      };
-      financeExpanded.add("card:txns");
-      financeNotifOpen = false;
-      renderFinancePage();
-      return;
-    }
+    if (el.value === "__split__") { startSplitTxn(el.dataset.id); return; }
     recordFinanceTxnLabel(el.dataset.id, el.value, el.dataset.desc || "");
     renderFinancePage();
     return;
