@@ -168,11 +168,13 @@ exports.handler = async (event) => {
       // which blew past that. This cache is the actual enforcement point —
       // server-side and shared across every device on the household, so no
       // client behavior (reload storms, a second phone, a bug) can exceed
-      // it. Passive calls reuse a cache up to 6h old; a forced (manual
-      // Refresh) call may jump the TTL but never the 1h hard floor, which
-      // alone caps this at 24 bridge calls/day even in the worst case.
-      const ACCOUNTS_CACHE_TTL_MS = 6 * 3600 * 1000;
-      const ACCOUNTS_MIN_INTERVAL_MS = 60 * 60 * 1000;
+      // it. Since the bank data itself only changes once a day, there's no
+      // benefit to polling more often than that even passively — TTL/floor
+      // are set well inside the 24/day budget on purpose (worst case: 2
+      // passive refreshes/day + up to 4 forced refreshes/day), so the app
+      // stays comfortably compliant even if something upstream retries.
+      const ACCOUNTS_CACHE_TTL_MS = 20 * 3600 * 1000;
+      const ACCOUNTS_MIN_INTERVAL_MS = 4 * 3600 * 1000;
       const cacheId = `finaccts_${groupId}`;
       const cache = await loadRawCache(serviceKey, cacheId);
       const lastFetchedAt = cache?.fetchedAt ? new Date(cache.fetchedAt).getTime() : 0;
@@ -331,11 +333,23 @@ async function loadRawCache(serviceKey, id) {
 }
 
 async function saveRawCache(serviceKey, id, state) {
-  await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
-    method: "POST",
-    headers: { ...svc(serviceKey), "content-type": "application/json", prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify({ id, state, updated_at: new Date().toISOString() })
-  }).catch(() => {}); // cache-write failure shouldn't fail the request
+  // fetch() only rejects on network failure, never on a 4xx/5xx response —
+  // if this write silently fails (RLS, bad payload, whatever), the cache
+  // never actually persists, and every subsequent "accounts" call sees no
+  // cache and re-hits the real bridge, defeating the entire rate-limit
+  // guard below without any visible symptom. Log loudly so a bridge-side
+  // rate warning is diagnosable from Netlify function logs, but still don't
+  // fail the request over a cache-write hiccup.
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
+      method: "POST",
+      headers: { ...svc(serviceKey), "content-type": "application/json", prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({ id, state, updated_at: new Date().toISOString() })
+    });
+    if (!res.ok) console.error("[simplefin] cache write failed", id, res.status, await res.text().catch(() => ""));
+  } catch (e) {
+    console.error("[simplefin] cache write threw", id, e.name || e.message || "error");
+  }
 }
 
 function secretRowId(groupId) {
