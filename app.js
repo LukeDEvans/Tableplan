@@ -6142,9 +6142,7 @@ function render() {
   renderDoPlanner();
   renderPlayPlanner();
   renderCollapsedSections();
-  if (activeAppArea === "media" && !["books","books-audible","books-libby","books-kindle","podcasts"].includes(activeMediaTab)) {
-    renderArticleList("articleList", activeMediaTab);
-  }
+  if (activeAppArea === "media") renderActiveMediaView();
   if (activeAppArea === "explore") renderExploreSidebar(exploreOpenTripId);
   if (activeAppArea === "finance") renderFinancePage();
 }
@@ -31726,6 +31724,22 @@ function renderPodcastPlaylistBar() {
     });
   }
 
+}
+
+// Re-render whatever media sub-view is currently on screen (used by the global
+// render() so a household/personal scope toggle refreshes the visible view
+// immediately, instead of only after switching tabs). The panels are already
+// shown; this just refreshes their content against the now-active scope's data.
+function renderActiveMediaView() {
+  const tab = activeMediaTab;
+  if (tab === "queue") renderMediaAllList();
+  else if (tab === "archive") renderMediaArchive();
+  else if (tab === "books") renderReadingPlanner();
+  else if (tab === "books-audible") renderReadingPlanner("audiobook");
+  else if (tab === "books-libby") renderReadingPlanner("libby");
+  else if (tab === "books-kindle") renderReadingPlanner("ebook");
+  else if (tab === "podcasts") switchPodcastTab(activePodcastTab); // re-dispatch the active podcast sub-tab
+  else renderArticleList("articleList", tab);
 }
 
 function switchPodcastTab(tabId) {
