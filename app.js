@@ -2702,6 +2702,10 @@ function mirrorStateToLocalStorage() {
   // consts declared later in the file initialize (TDZ).
   const base = { ...state };
   for (const k of ["financePeople", "financeBudgetGroups", "financeAccounts", "financePersonal"]) delete base[k];
+  // Drop per-episode show-notes here too (see extractSectionData) — they're
+  // the biggest thing in state, re-fetchable, and keeping them risks blowing
+  // the ~5 MB localStorage cap.
+  if (Array.isArray(base.podcasts)) base.podcasts = stripEpisodeDescriptions(base.podcasts);
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(base));
     return;
@@ -5403,7 +5407,20 @@ function extractSectionData(keys) {
   for (const key of keys) {
     if (key in state) obj[key] = state[key];
   }
+  // Per-episode show-notes are the single heaviest thing in the whole state
+  // (~1 MB per subscribed show) and are re-fetchable from the feed on demand.
+  // They're stripped from everything that gets persisted (Supabase + the
+  // localStorage mirror) so a cold load isn't a multi-megabyte download; the
+  // full text stays in memory during a session and is re-fetched via
+  // ensureEpisodeDescription() when a user actually opens the notes.
+  if (Array.isArray(obj.podcasts)) obj.podcasts = stripEpisodeDescriptions(obj.podcasts);
   return obj;
+}
+
+function stripEpisodeDescriptions(podcasts) {
+  return podcasts.map((p) => (p && Array.isArray(p.episodes))
+    ? { ...p, episodes: p.episodes.map((e) => (e && e.description) ? { ...e, description: "" } : e) }
+    : p);
 }
 
 function updateLastWrittenSections() {
@@ -32878,6 +32895,36 @@ function renderAutoPlaylist(listEl, items) {
   // All row interactions are handled by initPodcastEpisodeListDelegation()
 }
 
+// Show notes are stripped from persisted state (see extractSectionData), so a
+// freshly-loaded episode has none until we re-fetch its feed. Fills every
+// episode of the show in one fetch, keyed by id, into the in-memory copy.
+const episodeDescFetchInFlight = new Map(); // showId → Promise
+function ensureEpisodeDescription(episodeId) {
+  const { episode, show } = findPodcastEpisode(episodeId);
+  if (!episode || episode.description || !show?.url) return Promise.resolve(episode?.description || "");
+  if (episodeDescFetchInFlight.has(show.id)) return episodeDescFetchInFlight.get(show.id);
+  const p = (async () => {
+    try {
+      const fetched = await callNetlifyFunction("fetch-podcast", { url: show.url });
+      if (Array.isArray(fetched?.episodes)) {
+        const descById = new Map(fetched.episodes.map((e) => [e.id, e.description || ""]));
+        (show.episodes || []).forEach((e) => { if (!e.description && descById.has(e.id)) e.description = descById.get(e.id); });
+      }
+    } catch { /* leave notes empty — still fully browsable/playable */ }
+    episodeDescFetchInFlight.delete(show.id);
+    return findPodcastEpisode(episodeId).episode?.description || "";
+  })();
+  episodeDescFetchInFlight.set(show.id, p);
+  return p;
+}
+
+function episodeNotesBodyHtml(desc) {
+  if (!desc) return `<p style="color:var(--ink-faint);margin:0">No show notes available for this episode.</p>`;
+  return /<[a-z][\s\S]*>/i.test(desc)
+    ? `<div class="episode-notes-html">${desc}</div>`
+    : `<div class="episode-notes-plain">${escapeHtml(desc).replace(/\n/g, "<br>")}</div>`;
+}
+
 function showEpisodeNotesModal(episodeId) {
   document.getElementById("episodeNotesOverlay")?.remove();
   const { episode, show } = findPodcastEpisode(episodeId);
@@ -32888,12 +32935,11 @@ function showEpisodeNotesModal(episodeId) {
   overlay.className = "priority-overlay";
 
   const desc = episode.description || "";
-  const hasHtml = /<[a-z][\s\S]*>/i.test(desc);
-  const bodyContent = desc
-    ? (hasHtml
-        ? `<div class="episode-notes-html">${desc}</div>`
-        : `<div class="episode-notes-plain">${escapeHtml(desc).replace(/\n/g, "<br>")}</div>`)
-    : `<p style="color:var(--ink-faint);margin:0">No show notes available for this episode.</p>`;
+  // Missing notes but a re-fetchable feed → show a loading state and fill in.
+  const willFetch = !desc && Boolean(show?.url);
+  const bodyContent = willFetch
+    ? `<p style="color:var(--ink-faint);margin:0">Loading show notes…</p>`
+    : episodeNotesBodyHtml(desc);
 
   overlay.innerHTML = `
     <div class="priority-modal episode-notes-modal" role="dialog" aria-modal="true" aria-label="Episode Notes">
@@ -32912,6 +32958,13 @@ function showEpisodeNotesModal(episodeId) {
   document.body.appendChild(overlay);
   overlay.querySelector("#closeEpisodeNotesBtn").addEventListener("click", () => overlay.remove());
   overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+
+  if (willFetch) {
+    ensureEpisodeDescription(episodeId).then((desc) => {
+      const body = overlay.querySelector(".episode-notes-body");
+      if (body && document.body.contains(overlay)) body.innerHTML = episodeNotesBodyHtml(desc);
+    });
+  }
 }
 
 function renderPodcastSavedEpisodes() {
