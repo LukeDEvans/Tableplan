@@ -7476,10 +7476,9 @@ function renderFinancePage() {
           const subs = ownerSubs(a.owner || "Other");
           const shownBal = live ? (live.balance ?? 0) : a.manualBalance;
           return `
-          <div class="fin-item-row fin-acct-row">
+          <div class="fin-item-row fin-acct-row" data-fin-acct-id="${escapeHtml(a.id)}" title="Right-click to edit or delete">
             <span class="fin-acct-name">${escapeHtml(a.name)}</span>
             ${shownBal !== null && shownBal !== undefined ? `<span class="fin-live-bal${shownBal < 0 ? " is-neg" : ""}${live ? "" : " fin-bal-manual"}" ${live ? "" : `title="Manually kept balance"`}>${formatFinMoney(shownBal)}</span>` : ""}
-            <button class="icon-btn fin-del-btn fin-label-btn" type="button" data-fin-action="toggle-expand" data-id="edit:${a.id}" title="Edit account" aria-label="Edit ${escapeHtml(a.name)}">${editing ? "▴" : "✎"}</button>
           </div>
           ${editing ? `
           <div class="fin-acct-editor">
@@ -7531,21 +7530,16 @@ function renderFinancePage() {
           const subs = ownerSubs(owner);
           const noSub = ownerAccts.filter((x) => !x.sub);
           return `
-          <div class="fin-label-head">
+          <div class="fin-label-head" data-fin-owner="${escapeHtml(owner)}" title="Right-click to add a sub-label, rename, or delete">
             <span class="fin-subhead">${escapeHtml(owner)}</span>
-            <button class="icon-btn fin-del-btn fin-label-btn" type="button" data-fin-action="add-sublabel" data-label="${escapeHtml(owner)}" title="Add sub-label" aria-label="Add sub-label under ${escapeHtml(owner)}">+</button>
-            <button class="icon-btn fin-del-btn fin-label-btn" type="button" data-fin-action="rename-label" data-label="${escapeHtml(owner)}" title="Rename label" aria-label="Rename ${escapeHtml(owner)}">✎</button>
-            <button class="icon-btn fin-del-btn fin-label-btn" type="button" data-fin-action="delete-label" data-label="${escapeHtml(owner)}" title="Delete label" aria-label="Delete ${escapeHtml(owner)}">&times;</button>
           </div>
           ${noSub.map(finAcctRow).join("")}
           ${subs.map((sub) => `
-            <div class="fin-label-head fin-sublabel-head">
+            <div class="fin-label-head fin-sublabel-head" data-fin-owner="${escapeHtml(owner)}" data-fin-sub="${escapeHtml(sub)}" title="Right-click to rename or delete">
               <span class="fin-sublabel">${escapeHtml(sub)}</span>
-              <button class="icon-btn fin-del-btn fin-label-btn" type="button" data-fin-action="rename-sublabel" data-label="${escapeHtml(owner)}" data-sub="${escapeHtml(sub)}" title="Rename sub-label" aria-label="Rename ${escapeHtml(sub)}">✎</button>
-              <button class="icon-btn fin-del-btn fin-label-btn" type="button" data-fin-action="delete-sublabel" data-label="${escapeHtml(owner)}" data-sub="${escapeHtml(sub)}" title="Delete sub-label" aria-label="Delete ${escapeHtml(sub)}">&times;</button>
             </div>
             <div class="fin-sub-group">
-              ${ownerAccts.filter((x) => x.sub === sub).map(finAcctRow).join("") || `<p class="fin-hint">Empty — file accounts here from their ✎ editor.</p>`}
+              ${ownerAccts.filter((x) => x.sub === sub).map(finAcctRow).join("") || `<p class="fin-hint">Empty — right-click an account to file it here.</p>`}
             </div>`).join("")}
           ${!ownerAccts.length && !subs.length ? `<p class="fin-hint">No accounts under this label yet — open an account's ✎ and pick this label.</p>` : ""}`;
         }).join("");
@@ -7998,11 +7992,58 @@ function renderFinancePage() {
     }, { capture: true });
     grid.addEventListener("contextmenu", (e) => {
       const row = e.target.closest("[data-fin-txn-id]");
-      if (!row) return;
-      e.preventDefault();
-      showFinTxnMenu(e.clientX, e.clientY, row.dataset.finTxnId);
+      if (row) { e.preventDefault(); showFinTxnMenu(e.clientX, e.clientY, row.dataset.finTxnId); return; }
+      const acct = e.target.closest("[data-fin-acct-id]");
+      if (acct) { e.preventDefault(); showFinAcctMenu(e.clientX, e.clientY, { type: "account", id: acct.dataset.finAcctId }); return; }
+      const sub = e.target.closest("[data-fin-sub]");
+      if (sub) { e.preventDefault(); showFinAcctMenu(e.clientX, e.clientY, { type: "sub", label: sub.dataset.finOwner, sub: sub.dataset.finSub }); return; }
+      const owner = e.target.closest("[data-fin-owner]");
+      if (owner) { e.preventDefault(); showFinAcctMenu(e.clientX, e.clientY, { type: "owner", label: owner.dataset.finOwner }); return; }
     });
   }
+}
+
+// Right-click menu for the Accounts card — the edit/delete/label actions used
+// to be inline buttons on every row; moving them here keeps the standard view
+// to just names and balances. Each item routes through onFinanceGridClick by
+// synthesizing the same data-fin-action element the old buttons carried, so
+// all the existing confirm/prompt logic is reused unchanged.
+function showFinAcctMenu(x, y, opts) {
+  document.getElementById("finAcctMenu")?.remove();
+  let items = [];
+  if (opts.type === "account") {
+    items = [
+      { label: "Edit account", action: "toggle-expand", data: { id: `edit:${opts.id}` } },
+      { label: "Delete account", danger: true, action: "delete-account", data: { id: opts.id } },
+    ];
+  } else if (opts.type === "owner") {
+    items = [
+      { label: "Add sub-label", action: "add-sublabel", data: { label: opts.label } },
+      { label: "Rename label", action: "rename-label", data: { label: opts.label } },
+      { label: "Delete label", danger: true, action: "delete-label", data: { label: opts.label } },
+    ];
+  } else {
+    items = [
+      { label: "Rename sub-label", action: "rename-sublabel", data: { label: opts.label, sub: opts.sub } },
+      { label: "Delete sub-label", danger: true, action: "delete-sublabel", data: { label: opts.label, sub: opts.sub } },
+    ];
+  }
+  const menu = document.createElement("div");
+  menu.id = "finAcctMenu";
+  menu.className = "fin-txn-menu";
+  menu.style.left = Math.max(8, Math.min(x, window.innerWidth - 180)) + "px";
+  menu.style.top = Math.min(y, window.innerHeight - 40 - items.length * 34) + "px";
+  menu.innerHTML = items.map((it, i) => `<button class="fin-txn-menu-option${it.danger ? " fin-danger" : ""}" type="button" data-i="${i}">${escapeHtml(it.label)}</button>`).join("");
+  menu.querySelectorAll("button").forEach((btn, i) => btn.addEventListener("click", () => {
+    menu.remove();
+    const it = items[i];
+    const el = document.createElement("button");
+    el.dataset.finAction = it.action;
+    for (const [k, v] of Object.entries(it.data || {})) el.dataset[k] = v;
+    onFinanceGridClick({ target: el });
+  }));
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener("click", () => menu.remove(), { once: true, capture: true }), 0);
 }
 
 // Right-click menu on a transaction row — currently just Rename, but gives

@@ -17582,6 +17582,9 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   .fin-owner-select, .fin-acct-link { max-width: 44%; }
 }
 .fin-acct-row { min-height: 26px; }
+/* Edit/delete moved to a right-click menu — signal it, like the store headings */
+.fin-acct-row[data-fin-acct-id], .fin-label-head[data-fin-owner] { cursor: context-menu; }
+.fin-acct-row[data-fin-acct-id]:hover { background: color-mix(in srgb, var(--window-border) 8%, transparent); border-radius: 6px; }
 .fin-acct-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; }
 .fin-acct-editor {
   display: flex;
