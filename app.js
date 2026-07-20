@@ -202,7 +202,7 @@ const CLOUD_SNAPSHOT_HOURLY_MAX = 720; // 1 per hour going back up to 30 days
 // Each section is stored as its own Supabase row: id = "{stateId}:{section}"
 const STATE_SECTIONS = {
   eat:       ["recipes", "trashedRecipes", "folders", "plans", "publishedWeeks", "recipeTags", "ingredientOptions", "autoGenerateRules", "mealPlanConfig", "activeCooking"],
-  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "checkedGroceries", "grocerySkippedStores", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory"],
+  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory"],
   do:        ["doTasks", "doPlans", "doBacklog", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
@@ -2865,6 +2865,7 @@ function defaultState() {
     persistentManualGroceries: [],
     checkedGroceries: {},
     grocerySkippedStores: {},
+    groceryItemWeekOverride: {},
     recipeTags: defaultRecipeTags(),
     groceryBaseItems: defaultGroceryBaseItems(),
     groceryCatalogVersion: 1,
@@ -2978,6 +2979,7 @@ function normalizeState(parsed) {
     persistentManualGroceries: normalizePersistentManualGroceries(parsed),
     checkedGroceries: parsed?.checkedGroceries || {},
     grocerySkippedStores: parsed?.grocerySkippedStores && typeof parsed.grocerySkippedStores === "object" ? parsed.grocerySkippedStores : {},
+    groceryItemWeekOverride: parsed?.groceryItemWeekOverride && typeof parsed.groceryItemWeekOverride === "object" ? parsed.groceryItemWeekOverride : {},
     recipeTags: normalizeRecipeTags(parsed?.recipeTags),
     groceryBaseItems: Array.isArray(parsed?.groceryBaseItems) ? normalizeGroceryBaseItems(parsed.groceryBaseItems) : defaultGroceryBaseItems(),
     groceryCatalogVersion: Number(parsed?.groceryCatalogVersion) || 0,
@@ -4782,7 +4784,7 @@ function mergeStates(newer, older) {
   // ── Flat keyed maps: union keys, newer wins on conflict ───────────────────
   for (const key of [
     "groceryItemLocations", "groceryAliases", "grocerySplitPreferences",
-    "receiptItemMappings", "personGoals", "checkedGroceries", "grocerySkippedStores",
+    "receiptItemMappings", "personGoals", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride",
     "nutritionIngredientMappings", "publishedWeeks",
     "inventoryRoomVisibility", "watchShowtimesData",
     "groceryReviewDismissed", "collapsedDays",
@@ -23481,6 +23483,20 @@ function renderGroceries() {
   elements.groceryList.querySelectorAll("[data-grocery]").forEach((checkbox) => {
     checkbox.addEventListener("change", () => {
       state.checkedGroceries[checkbox.dataset.grocery] = checkbox.checked;
+      // Auto-collapse a store's section the moment every item in it is
+      // checked — persisted, so it's still collapsed next time the page
+      // loads. Never auto-expands: unchecking an item just leaves whatever
+      // collapsed state was already there (the user's own toggle, or none).
+      if (checkbox.checked && activeGroceryStoreTab === "all") {
+        const section = checkbox.closest(".grocery-store-section");
+        const collapseBtn = section?.querySelector("[data-grocery-collapse]");
+        const collapseKey = collapseBtn?.dataset.groceryCollapse;
+        const allChecked = section && [...section.querySelectorAll("[data-grocery]")].every((cb) => cb.checked);
+        if (collapseKey && allChecked) {
+          if (!state.collapsedSections || typeof state.collapsedSections !== "object") state.collapsedSections = {};
+          state.collapsedSections[collapseKey] = true;
+        }
+      }
       persist();
       renderGroceries();
     });
@@ -23703,6 +23719,11 @@ function setGroceryStoreSkipped(storeId, skipped) {
 }
 
 function resolveItemEffectiveStoreId(itemKey, locations, enabledStoreIds) {
+  // A this-trip-only override (added while viewing a specific store tab)
+  // wins over the item's actual preferred-store ranking below — see
+  // assignGroceryItemToOpenStoreTab.
+  const override = groceryItemWeekOverrides()[groceryItemWeekOverrideKey(itemKey)];
+  if (override && enabledStoreIds.has(override)) return override;
   const loc = locations[itemKey];
   if (!loc) return null;
   const rank = loc.storeRank?.length ? loc.storeRank : (loc.storeId ? [loc.storeId] : []);
@@ -24264,9 +24285,46 @@ function addManualGroceryItem(event) {
     state.persistentManualGroceries.push(item);
     state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
   }
+  if (activeGroceryStoreTab !== "all") {
+    assignGroceryItemToOpenStoreTab(manualGroceryRow(item).key, activeGroceryStoreTab);
+  }
   elements.groceryInput.value = "";
   persist();
   renderGroceries();
+}
+
+// Adding an item while viewing a specific store's tab should land it there
+// this trip, without touching the item's actual preferred-store ranking —
+// see resolveItemEffectiveStoreId, which checks this override first. Mirrors
+// the "skip a store this week" pattern (grocerySkipKey): keyed off the
+// current shopping range so it naturally stops applying once the range
+// moves on, and only ever set true/a value, never deleted, so a sync merge
+// can't resurrect a stale one.
+function groceryItemWeekOverrideKey(itemKey) {
+  return `${groceryRangeStart}/${groceryRangeEnd}::${itemKey}`;
+}
+
+function groceryItemWeekOverrides() {
+  const map = state.groceryItemWeekOverride;
+  return map && typeof map === "object" ? map : {};
+}
+
+function assignGroceryItemToOpenStoreTab(itemKey, tabStoreId) {
+  if (!itemKey || !groceryStores().some((s) => s.id === tabStoreId)) return;
+  if (!state.groceryItemWeekOverride || typeof state.groceryItemWeekOverride !== "object") state.groceryItemWeekOverride = {};
+  state.groceryItemWeekOverride[groceryItemWeekOverrideKey(itemKey)] = tabStoreId;
+
+  // If this store isn't already a reachable fallback for the item, add it to
+  // the bottom of the preferred-store list — low priority, so it can never
+  // outrank whatever's already there, but it's there in case this store is
+  // ever the only one left (e.g. the primary gets skipped some week).
+  const locations = groceryItemLocations();
+  const loc = locations[itemKey];
+  const rank = loc?.storeRank?.length ? loc.storeRank : (loc?.storeId ? [loc.storeId] : []);
+  if (!rank.includes(tabStoreId)) {
+    locations[itemKey] = { storeId: loc?.storeId || "", storeRank: [...rank, tabStoreId], order: loc?.order || 0 };
+    state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
+  }
 }
 
 function removeManualGroceryItem(item) {
