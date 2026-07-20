@@ -12303,9 +12303,16 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   .mail-thread-toolbar { padding-left: 4px; padding-right: 4px; }
   .mail-content { position: relative; }
   .mail-content { position: relative; }
+  /* .mail-row-right's 130px min-width exists to fit the quick-action icons
+     that swap in for the date on desktop :hover (see line ~12369) — touch
+     has no hover, so that reserved space is pure waste here, and was wide
+     enough to push the row past the viewport (clipped by
+     .mail-list-panel's overflow-x: hidden above), taking the date with it. */
+  .mail-row-right { min-width: 0; }
+  .mail-row-from { width: 130px; }
 }
 @media (max-width: 480px) {
-  .mail-row-from { width: 110px; }
+  .mail-row-from { width: 96px; }
 }
 
 /* Bulk action bar */
