@@ -181,6 +181,12 @@ const seedRecipes = [
   }
 ];
 
+// Whether this device booted with NO cached data at all (fresh install, or an
+// iOS PWA whose localStorage was evicted). This is the true "everything looks
+// wiped until the cloud loads" condition — distinct from a device that just
+// has stale data — and gates the syncing overlay. Captured once, before any
+// write can repopulate storage.
+const bootedWithEmptyStorage = !localStorage.getItem(STORAGE_KEY);
 const state = loadState();
 let sharedStorageReady = false;
 let sharedStorageSaveTimer = null;
@@ -563,6 +569,8 @@ const elements = {
   adminUsersDialog: document.querySelector("#adminUsersDialog"),
   adminHouseholdsDialog: document.querySelector("#adminHouseholdsDialog"),
   syncStatus: document.querySelector("#syncStatus"),
+  hydrationOverlay: document.querySelector("#hydrationOverlay"),
+  hydrationContinueBtn: document.querySelector("#hydrationContinueBtn"),
   voiceMicBtn: document.querySelector("#voiceMicBtn"),
   voiceToast: document.querySelector("#voiceToast"),
   authDialog: document.querySelector("#authDialog"),
@@ -1375,6 +1383,7 @@ function bindEvents() {
   elements.closeAuthBtn.addEventListener("click", () => elements.authDialog.close());
   elements.cancelAuthBtn.addEventListener("click", () => elements.authDialog.close());
   document.getElementById("lockSignInBtn")?.addEventListener("click", () => elements.authDialog.showModal());
+  elements.hydrationContinueBtn?.addEventListener("click", hideHydrationOverlay);
   elements.appMenuBtn.addEventListener("click", handleAppMenuButtonClick);
   elements.appMenu.addEventListener("click", (event) => event.stopPropagation());
   elements.pageTitleBtn.addEventListener("click", togglePageTitleMenu);
@@ -2019,6 +2028,7 @@ async function initializeApp() {
     await loadOrCreateUserGroup();
     await migratePersonalStateIfNeeded();
   }
+  maybeShowHydrationOverlay();
   await hydrateStateFromSharedStorage();
   await hydrateRecipeRowsFromSupabase();
   applyInitialMealPlanFocus();
@@ -2103,6 +2113,7 @@ async function initializeSupabaseAuth() {
       activeSharedStorageProvider = null;
       await loadAdminConfig();
       await loadOrCreateUserGroup();
+      maybeShowHydrationOverlay();
       await hydrateStateFromSharedStorage();
       await hydrateRecipeRowsFromSupabase();
       maybeAutoLinkProfile();
@@ -5055,6 +5066,7 @@ async function hydrateStateFromSharedStorage() {
       localStorage.removeItem("live_signed_out_explicitly"); // clear on any successful sync
       sharedStorageReady = true;
       hydrateRetryCount = 0;
+      hideHydrationOverlay(); // data is in — never leave the "Syncing…" cover up
       return;
     } catch (error) {
       console.warn(`${provider.label} storage unavailable; trying the next option.`, error);
@@ -5196,6 +5208,39 @@ async function maybeWriteCloudSnapshot({ force = false } = {}) {
 }
 
 let syncHideTimer = null;
+// Anti-"data loss" scare: a signed-in device whose local cache is empty
+// (fresh install, or an iOS PWA whose storage was evicted under memory
+// pressure) would otherwise render every page blank until the multi-section
+// cloud fetch lands — indistinguishable from a wipe. Show a clear "Syncing…"
+// cover instead, removed the instant the first hydration succeeds. Devices
+// that already have cached data (hasRecoverableUserState) never see it.
+let hydrationOverlayTimer = null;
+let hydrationOverlayShown = false;
+
+function maybeShowHydrationOverlay() {
+  if (hydrationOverlayShown) return;
+  const el = elements.hydrationOverlay;
+  if (!el) return;
+  const pending = authSession?.access_token && canUseCloudStorage() && !sharedStorageReady && bootedWithEmptyStorage;
+  if (!pending) return;
+  hydrationOverlayShown = true;
+  el.hidden = false;
+  // Escape hatch: if the load is genuinely stuck (offline, server down), let
+  // the user into the app after a while rather than trapping them behind the
+  // cover. The persistent "not saved to cloud" indicator keeps them informed.
+  elements.hydrationContinueBtn?.setAttribute("hidden", "");
+  hydrationOverlayTimer = window.setTimeout(() => {
+    elements.hydrationContinueBtn?.removeAttribute("hidden");
+  }, 12000);
+}
+
+function hideHydrationOverlay() {
+  if (!hydrationOverlayShown) return;
+  hydrationOverlayShown = false;
+  window.clearTimeout(hydrationOverlayTimer);
+  if (elements.hydrationOverlay) elements.hydrationOverlay.hidden = true;
+}
+
 function updateSyncStatus(status) {
   const el = elements.syncStatus;
   if (!el) return;
