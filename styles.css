@@ -17378,6 +17378,42 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-stat-label { font-size: 0.72rem; font-weight: 850; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 .fin-stat-value { font-size: 1.35rem; font-weight: 850; color: var(--ink); }
 .fin-stat-value.is-neg, .fin-personal-flow.is-neg { color: #b3261e; }
+/* Net worth stat is a button that reveals the detail card */
+.fin-stat-btn { cursor: pointer; text-align: left; font: inherit; align-items: flex-start; transition: border-color 0.12s; }
+.fin-stat-btn:hover, .fin-stat-btn.is-open { border-color: var(--accent); }
+
+/* Savings snapshot cards — above and separate from the budget cards */
+.fin-savings-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+.fin-savings-card {
+  background: var(--window-bg);
+  border: 2px solid var(--window-border);
+  border-radius: 12px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fin-savings-emergency { border-color: color-mix(in srgb, var(--accent) 40%, var(--window-border)); }
+.fin-savings-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.fin-savings-label { font-size: 0.72rem; font-weight: 850; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.fin-savings-target { font-size: 0.8rem; font-weight: 800; color: var(--accent-dark); }
+.fin-savings-value { font-size: 1.35rem; font-weight: 850; color: var(--ink); }
+.fin-savings-value.is-neg { color: #b3261e; }
+.fin-savings-bar { height: 6px; border-radius: 999px; background: color-mix(in srgb, var(--window-border) 40%, transparent); overflow: hidden; }
+.fin-savings-bar-fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.2s; }
+.fin-savings-bar-fill.is-full { background: #1f9d55; }
+.fin-savings-sub { font-size: 0.76rem; color: var(--muted); display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.fin-savings-months { width: 44px; padding: 1px 4px; font: inherit; font-size: 0.76rem; text-align: center; border: 1px solid var(--window-border); border-radius: 6px; background: var(--window-bg); color: var(--ink); }
+
+/* Net worth detail card */
+.fin-nw-row { justify-content: space-between; padding: 3px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); }
+.fin-nw-row:first-of-type { border-top: none; }
+.fin-nw-trend { margin-top: 8px; }
+.fin-nw-trend-head { font-size: 0.85rem; margin-bottom: 2px; }
 
 .fin-cards {
   display: grid;

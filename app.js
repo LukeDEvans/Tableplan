@@ -218,7 +218,7 @@ const STATE_SECTIONS = {
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
@@ -2932,6 +2932,7 @@ function defaultState() {
     financeTxnNoteOverrides: {},
     financeTxnNoteCounts: {},
     financeManualTxns: [],
+    financeEmergencyMonths: 3,
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -3078,6 +3079,7 @@ function normalizeState(parsed) {
       description: String(m?.description || "").slice(0, 120),
       account: String(m?.account || "").slice(0, 60)
     })),
+    financeEmergencyMonths: (Number(parsed?.financeEmergencyMonths) > 0 ? Number(parsed.financeEmergencyMonths) : 3),
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
@@ -3742,6 +3744,7 @@ function normalizeFinanceBudgetGroups(raw) {
   return groups.length ? groups : defaultFinanceBudgetGroups();
 }
 
+const FINANCE_ACCOUNT_KINDS = ["cash", "retirement", "investment", "debt", "other"];
 function normalizeFinanceAccounts(raw) {
   return (Array.isArray(raw) ? raw : []).map((a) => ({
     id: a?.id || createId("fin-account"),
@@ -3749,10 +3752,45 @@ function normalizeFinanceAccounts(raw) {
     sub: a?.sub || "",     // sub-label within the owner group ("" = none)
     name: a?.name || "",
     linkedId: a?.linkedId || "", // SimpleFIN account id this row displays
+    // Bucket for the top-of-page savings cards. "" = auto (inferred from the
+    // sub-label/name); an explicit value is a user override.
+    kind: FINANCE_ACCOUNT_KINDS.includes(a?.kind) ? a.kind : "",
     // For accounts no aggregator reaches (loans, small 401(k)s): a manually
     // kept balance, negative for debts. null = not tracked.
     manualBalance: Number.isFinite(Number(a?.manualBalance)) && a?.manualBalance !== null && a?.manualBalance !== "" ? Number(a.manualBalance) : null
   }));
+}
+
+// Auto-classification from the account's sub-label + name; overridable per
+// account (a.kind). Feeds the emergency-savings / retirement / cash cards.
+function inferFinanceAccountKind(a) {
+  const t = `${a.sub || ""} ${a.name || ""}`.toLowerCase();
+  if (/\b(401|403|457|ira|roth|retire|retirement|pension|hsa)\b/.test(t)) return "retirement";
+  if (/\b(credit|card|loan|debt|debts|mortgage|heloc|line of credit)\b/.test(t)) return "debt";
+  if (/\b(invest|investment|brokerage|stock|etf|mutual|529|college|crypto)\b/.test(t)) return "investment";
+  if (/\b(check|checking|saving|savings|cash|bank|money market|deposit|hysa)\b/.test(t)) return "cash";
+  if (Number(a.manualBalance) < 0) return "debt"; // a negative balance smells like a debt
+  return "cash";
+}
+function financeAccountKind(a) {
+  return a.kind || inferFinanceAccountKind(a);
+}
+function financeAccountBalance(a, liveById) {
+  const live = a.linkedId ? liveById.get(a.linkedId) : null;
+  if (live && live.balance !== null && live.balance !== undefined) return live.balance;
+  if (a.manualBalance !== null && a.manualBalance !== undefined) return a.manualBalance;
+  return null;
+}
+// Sum of current balances of accounts of the given kind(s).
+function financeSumByKind(kinds, liveById) {
+  const set = new Set([].concat(kinds));
+  let sum = 0, any = false;
+  for (const a of (state.financeAccounts || [])) {
+    if (!set.has(financeAccountKind(a))) continue;
+    const bal = financeAccountBalance(a, liveById);
+    if (bal !== null) { sum += bal; any = true; }
+  }
+  return any ? sum : null;
 }
 
 // { ownerLabel: ["Sub-label", ...] } — persistent so empty sub-groups survive
@@ -7374,12 +7412,53 @@ function renderFinancePage() {
   {
     let sum = 0, any = false;
     for (const a of (state.financeAccounts || [])) {
-      const live = a.linkedId ? liveById.get(a.linkedId) : null;
-      if (live && live.balance !== null && live.balance !== undefined) { sum += live.balance; any = true; }
-      else if (a.manualBalance !== null && a.manualBalance !== undefined) { sum += a.manualBalance; any = true; }
+      const bal = financeAccountBalance(a, liveById);
+      if (bal !== null) { sum += bal; any = true; }
     }
     if (any) netWorth = sum;
   }
+
+  // Top-of-page savings snapshot, by account kind.
+  const cashOnHand = financeSumByKind("cash", liveById);
+  const retirementTotal = financeSumByKind("retirement", liveById);
+  const investmentTotal = financeSumByKind("investment", liveById);
+  const debtTotal = financeSumByKind("debt", liveById);
+  const needsGroup = (state.financeBudgetGroups || []).find((g) => g.id === "fin-group-needs")
+    || (state.financeBudgetGroups || []).find((g) => /needs/i.test(g.label || ""));
+  const monthlyNeeds = needsGroup ? financeGroupTotal(needsGroup) : 0;
+  const emergencyMonths = Number(state.financeEmergencyMonths) > 0 ? Number(state.financeEmergencyMonths) : 3;
+  const emergencyTarget = monthlyNeeds * emergencyMonths;
+  const emergencyHave = cashOnHand || 0;
+  const emergencyPct = emergencyTarget > 0 ? Math.min(100, (emergencyHave / emergencyTarget) * 100) : 0;
+  const monthsCovered = monthlyNeeds > 0 ? emergencyHave / monthlyNeeds : null;
+
+  const savingsRow = !(state.financeAccounts || []).length ? "" : `
+    <div class="fin-savings-row">
+      <div class="fin-savings-card fin-savings-emergency">
+        <div class="fin-savings-head">
+          <span class="fin-savings-label">Emergency savings</span>
+          <span class="fin-savings-target">${monthsCovered !== null ? `${monthsCovered.toFixed(1)} mo` : "—"}</span>
+        </div>
+        <div class="fin-savings-value${emergencyHave < 0 ? " is-neg" : ""}">${formatFinMoney(emergencyHave)}</div>
+        <div class="fin-savings-bar"><div class="fin-savings-bar-fill${emergencyPct >= 100 ? " is-full" : ""}" style="width:${emergencyPct}%"></div></div>
+        <div class="fin-savings-sub">
+          target
+          <input class="fin-savings-months" type="number" min="1" max="24" step="1" value="${emergencyMonths}" data-fin-edit="emergency-months" aria-label="Months of needs to target" />
+          mo of needs · ${emergencyTarget > 0 ? formatFinMoney(emergencyTarget) : "set a Needs budget"}
+        </div>
+      </div>
+      <div class="fin-savings-card">
+        <div class="fin-savings-head"><span class="fin-savings-label">Retirement</span></div>
+        <div class="fin-savings-value">${retirementTotal === null ? "—" : formatFinMoney(retirementTotal)}</div>
+        <div class="fin-savings-sub">across retirement accounts</div>
+      </div>
+      <div class="fin-savings-card">
+        <div class="fin-savings-head"><span class="fin-savings-label">Cash on hand</span></div>
+        <div class="fin-savings-value${(cashOnHand || 0) < 0 ? " is-neg" : ""}">${cashOnHand === null ? "—" : formatFinMoney(cashOnHand)}</div>
+        <div class="fin-savings-sub">checking &amp; savings</div>
+      </div>
+    </div>`;
+
   const accountsOpen = financeExpanded.has("card:accounts");
   const accountsCard = `
     <div class="fin-card" data-fin-card="accounts">
@@ -7416,6 +7495,16 @@ function renderFinancePage() {
                 <option value="">no sub-label</option>
                 ${subs.map((s) => `<option value="${escapeHtml(s)}" ${s === a.sub ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
                 <option value="__new__">New sub-label…</option>
+              </select>
+            </div>
+            <div class="fin-item-row">
+              <select class="fin-scenario-select fin-editor-select" data-fin-edit="account-kind" data-id="${a.id}" title="Type — feeds the savings cards" aria-label="Type for ${escapeHtml(a.name)}">
+                <option value="" ${a.kind ? "" : "selected"}>Auto (${escapeHtml(inferFinanceAccountKind(a))})</option>
+                <option value="cash" ${a.kind === "cash" ? "selected" : ""}>Cash</option>
+                <option value="retirement" ${a.kind === "retirement" ? "selected" : ""}>Retirement</option>
+                <option value="investment" ${a.kind === "investment" ? "selected" : ""}>Investment</option>
+                <option value="debt" ${a.kind === "debt" ? "selected" : ""}>Debt</option>
+                <option value="other" ${a.kind === "other" ? "selected" : ""}>Other</option>
               </select>
             </div>
             ${financeLinkStatus?.connected ? `
@@ -7728,46 +7817,38 @@ function renderFinancePage() {
       ${txns.map((t) => txnRow(t) + (financeDetailTxnId === t.id ? txnDetailHtml(t) : "") + (financeSplitDraft?.txnId === t.id ? splitEditorHtml(t) : "")).join("") || `<div class="empty-state">${filterActive ? "Nothing matches the filters." : "No transactions in the last 30 days."}</div>`}`}
     </div>`;
 
-  const recurringActive = (state.financeRecurring || []).filter((r) => r.active);
-  const recurringOpen = financeExpanded.has("card:recurring");
-  const recurringCard = !recurringActive.length ? "" : `
-    <div class="fin-card" data-fin-card="recurring">
-      ${cardHead("card:recurring", "Recurring", `${recurringActive.length}`)}
-      ${!recurringOpen ? "" : recurringActive.map((r) => {
-        const li = financeResolveLineItem(r.lineItemKey);
-        return `
-        <div class="fin-item-row fin-rec-row">
-          <span class="fin-acct-name" title="${escapeHtml(r.merchantKey)}">${escapeHtml(r.name)}</span>
-          <span class="fin-hint">~day ${r.expectedDay}</span>
-          <span class="fin-live-bal">${formatFinMoney(r.lastAmount)}</span>
-        </div>
-        <div class="fin-item-row fin-rec-link-row">
-          <select class="fin-scenario-select fin-editor-select" data-fin-edit="recurring-link" data-id="${r.id}" aria-label="Budget line for ${escapeHtml(r.name)}">
-            <option value="">${li ? "unlink" : "link to budget line…"}</option>
-            ${financeLineItemOptionsHtml(r.lineItemKey)}
-          </select>
-          <button class="icon-btn fin-del-btn" type="button" data-fin-action="recurring-not" data-id="${r.id}" title="Stop tracking" aria-label="Stop tracking ${escapeHtml(r.name)}">&times;</button>
-        </div>`;
-      }).join("")}
-    </div>`;
-
-  const histDays = financeHistory ? Object.keys(financeHistory).sort() : [];
-  const trendCard = histDays.length < 2 ? "" : (() => {
-    const vals = histDays.map((d) => Number(financeHistory[d]?.netWorth) || 0);
-    const min = Math.min(...vals), max = Math.max(...vals);
-    const span = (max - min) || 1;
-    const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * 100},${26 - ((v - min) / span) * 22}`).join(" ");
-    const delta = vals[vals.length - 1] - vals[0];
-    const sinceLabel = new Date(histDays[0] + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    const open = financeExpanded.has("card:networth");
+  // Net-worth detail — only rendered when the user clicks the Net worth stat.
+  // Absorbs the old standalone trend card: a composition breakdown by account
+  // kind plus the daily-snapshot sparkline.
+  const netWorthCard = (netWorth === null || !financeExpanded.has("card:networth")) ? "" : (() => {
+    const histDays = financeHistory ? Object.keys(financeHistory).sort() : [];
+    let trend = "";
+    if (histDays.length >= 2) {
+      const vals = histDays.map((d) => Number(financeHistory[d]?.netWorth) || 0);
+      const min = Math.min(...vals), max = Math.max(...vals);
+      const span = (max - min) || 1;
+      const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * 100},${26 - ((v - min) / span) * 22}`).join(" ");
+      const delta = vals[vals.length - 1] - vals[0];
+      const sinceLabel = new Date(histDays[0] + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      trend = `
+        <div class="fin-nw-trend-head"><span class="fin-cat-actual${delta < 0 ? " is-over" : ""}">${delta >= 0 ? "+" : ""}${formatFinMoney(delta)}</span> <span class="fin-of">since ${escapeHtml(sinceLabel)}</span></div>
+        <svg class="fin-trend" viewBox="0 0 100 28" preserveAspectRatio="none" role="img" aria-label="Net worth over time">
+          <polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+        </svg>
+        <div class="fin-group-pct">${histDays.length} daily snapshots · ${formatFinMoney(vals[0])} → ${formatFinMoney(vals[vals.length - 1])}</div>`;
+    } else {
+      trend = `<div class="fin-hint">A trend line appears here once a couple of daily balance snapshots have been recorded.</div>`;
+    }
+    const breakdownRow = (label, val) => val === null ? "" :
+      `<div class="fin-item-row fin-nw-row"><span class="fin-acct-name">${label}</span><span class="fin-live-bal${val < 0 ? " is-neg" : ""}">${formatFinMoney(val)}</span></div>`;
     return `
     <div class="fin-card" data-fin-card="networth">
-      ${cardHead("card:networth", "Net worth trend", `<span class="fin-cat-actual${delta < 0 ? " is-over" : ""}">${delta >= 0 ? "+" : ""}${formatFinMoney(delta)}</span> <span class="fin-of">since ${escapeHtml(sinceLabel)}</span>`)}
-      ${!open ? "" : `
-      <svg class="fin-trend" viewBox="0 0 100 28" preserveAspectRatio="none" role="img" aria-label="Net worth over time">
-        <polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
-      </svg>
-      <div class="fin-group-pct">${histDays.length} daily snapshots · ${formatFinMoney(vals[0])} → ${formatFinMoney(vals[vals.length - 1])}</div>`}
+      ${cardHead("card:networth", "Net worth", `<span class="fin-cat-actual${netWorth < 0 ? " is-over" : ""}">${formatFinMoney(netWorth)}</span>`)}
+      ${breakdownRow("Cash", cashOnHand)}
+      ${breakdownRow("Investments", investmentTotal)}
+      ${breakdownRow("Retirement", retirementTotal)}
+      ${breakdownRow("Debt", debtTotal)}
+      <div class="fin-nw-trend">${trend}</div>
     </div>`;
   })();
 
@@ -7873,17 +7954,17 @@ function renderFinancePage() {
           <div class="fin-stat"><span class="fin-stat-label">Income</span><span class="fin-stat-value">${formatFinMoney(income)}</span></div>
           <div class="fin-stat"><span class="fin-stat-label">Budgeted</span><span class="fin-stat-value">${formatFinMoney(expenses)}</span></div>
           <div class="fin-stat"><span class="fin-stat-label">Unallocated</span><span class="fin-stat-value${cashFlow < 0 ? " is-neg" : ""}">${formatFinMoney(cashFlow)}</span></div>
-          ${netWorth === null ? "" : `<div class="fin-stat"><span class="fin-stat-label">Net worth</span><span class="fin-stat-value${netWorth < 0 ? " is-neg" : ""}">${formatFinMoney(netWorth)}</span></div>`}
+          ${netWorth === null ? "" : `<button class="fin-stat fin-stat-btn${financeExpanded.has("card:networth") ? " is-open" : ""}" type="button" data-fin-action="toggle-expand" data-id="card:networth" aria-expanded="${financeExpanded.has("card:networth")}" title="Net worth details"><span class="fin-stat-label">Net worth</span><span class="fin-stat-value${netWorth < 0 ? " is-neg" : ""}">${formatFinMoney(netWorth)}</span></button>`}
         </div>
         ${notifBlock}
       </div>
+      ${savingsRow}
+      ${netWorthCard}
       <div class="fin-cards">
         ${incomeCard}
         ${groupCards}
         ${txnsCard}
-        ${recurringCard}
         ${recapCard}
-        ${trendCard}
         ${personalCard}
         ${accountsCard}
       </div>
@@ -8248,6 +8329,12 @@ function onFinanceGridChange(e) {
     if (!it) return;
     if (kind === "item-name") it.name = el.value.trim();
     else it.amount = parseFinAmount(el.value);
+  } else if (kind === "emergency-months") {
+    const n = Math.max(1, Math.min(24, Math.round(Number(el.value) || 3)));
+    state.financeEmergencyMonths = n;
+  } else if (kind === "account-kind") {
+    const a = state.financeAccounts.find((x) => x.id === el.dataset.id);
+    if (a) a.kind = FINANCE_ACCOUNT_KINDS.includes(el.value) ? el.value : "";
   } else if (kind === "account-name") {
     const a = state.financeAccounts.find((x) => x.id === el.dataset.id);
     if (a) a.name = el.value.trim();
