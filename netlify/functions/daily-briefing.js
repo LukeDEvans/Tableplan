@@ -218,6 +218,8 @@ function splitAccessUrl(accessUrl) {
   } catch { return { url: accessUrl, auth: null }; }
 }
 
+const numOrNull = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+
 async function snapshotFinanceBalances(serviceKey) {
   const headers = sbHeaders(serviceKey);
   const linkRes = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=like.simplefin*&select=id,state`, { headers });
@@ -228,14 +230,48 @@ async function snapshotFinanceBalances(serviceKey) {
     if (!accessUrl || groupId === linkRow.id) continue;
     try {
       const { url, auth } = splitAccessUrl(accessUrl);
-      // balances only — a 1-day window keeps the payload tiny
-      const start = Math.floor(Date.now() / 1000) - 86400;
+      // 45-day window: same as the interactive endpoint, so this one daily
+      // bridge call can pre-warm that endpoint's finaccts_ cache (below) and
+      // interactive phone loads never need their own bridge hit — which is
+      // what was generating a "new IP" email on nearly every phone visit
+      // (each Netlify egress IP differs). Bank data only changes once a day,
+      // so a single daily pull loses nothing.
+      const start = Math.floor(Date.now() / 1000) - 45 * 86400;
       const bridge = await fetch(`${url}/accounts?start-date=${start}`, {
         headers: { accept: "application/json", ...(auth ? { authorization: `Basic ${auth}` } : {}) }
       });
       if (!bridge.ok) { console.error(`[fin-snapshot] bridge ${bridge.status} for group`); continue; }
       const data = await bridge.json().catch(() => null);
       const liveById = new Map((data?.accounts || []).map((a) => [String(a.id || ""), a]));
+
+      // Pre-warm the interactive accounts cache with the same normalized shape
+      // simplefin.js writes, so a phone load served from here is identical to a
+      // live fetch. Best-effort — a snapshot failure must not block the cache
+      // write, and vice versa.
+      if (Array.isArray(data?.accounts)) {
+        const normalized = data.accounts.map((a) => ({
+          id: String(a.id || ""),
+          org: a.org?.name || a.org?.domain || "",
+          name: a.name || "",
+          currency: a.currency || "USD",
+          balance: numOrNull(a.balance),
+          available: numOrNull(a["available-balance"]),
+          balanceDate: a["balance-date"] ? new Date(a["balance-date"] * 1000).toISOString() : null,
+          transactions: (a.transactions || []).map((t) => ({
+            id: String(t.id || ""),
+            posted: t.posted ? new Date(t.posted * 1000).toISOString() : null,
+            amount: numOrNull(t.amount),
+            description: String(t.description || "").slice(0, 200),
+            pending: Boolean(t.pending)
+          }))
+        }));
+        const errors = Array.isArray(data.errors) ? data.errors.map(String).slice(0, 5) : [];
+        await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
+          method: "POST",
+          headers: { ...headers, prefer: "resolution=merge-duplicates,return=minimal" },
+          body: JSON.stringify({ id: `finaccts_${groupId}`, state: { accounts: normalized, errors, fetchedAt: new Date().toISOString() }, updated_at: new Date().toISOString() })
+        }).then((r) => { if (!r.ok) console.error(`[fin-snapshot] cache warm ${r.status}`); }).catch((e) => console.error("[fin-snapshot] cache warm threw", e.name || "error"));
+      }
 
       const finRes = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(groupId + ":finance")}&select=state`, { headers });
       const finRows = finRes.ok ? await finRes.json() : [];

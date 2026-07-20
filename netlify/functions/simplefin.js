@@ -163,17 +163,15 @@ exports.handler = async (event) => {
 
     if (action === "accounts") {
       // SimpleFIN's own guidance: data refreshes once a day; they expect at
-      // most ~24 requests/day per token. The client used to call this on
-      // every app load (mobile PWAs reload constantly on memory pressure),
-      // which blew past that. This cache is the actual enforcement point —
-      // server-side and shared across every device on the household, so no
-      // client behavior (reload storms, a second phone, a bug) can exceed
-      // it. Since the bank data itself only changes once a day, there's no
-      // benefit to polling more often than that even passively — TTL/floor
-      // are set well inside the 24/day budget on purpose (worst case: 2
-      // passive refreshes/day + up to 4 forced refreshes/day), so the app
-      // stays comfortably compliant even if something upstream retries.
-      const ACCOUNTS_CACHE_TTL_MS = 20 * 3600 * 1000;
+      // most ~24 requests/day per token, and it emails on every access from a
+      // new IP (Netlify egress IPs rotate, so each real bridge call risks
+      // one). The daily-briefing cron makes ONE bridge call/day and pre-warms
+      // this same finaccts_ cache, so the passive TTL is set just OVER 24h:
+      // interactive phone loads then always find a fresh-enough cache and
+      // never hit the bridge themselves. Only the manual Refresh button forces
+      // a real fetch, floored at 4h. Net effect: ~1 predictable bridge call a
+      // day (the cron) instead of one on nearly every phone visit.
+      const ACCOUNTS_CACHE_TTL_MS = 25 * 3600 * 1000;
       const ACCOUNTS_MIN_INTERVAL_MS = 4 * 3600 * 1000;
       const cacheId = `finaccts_${groupId}`;
       const cache = await loadRawCache(serviceKey, cacheId);
