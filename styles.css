@@ -13260,7 +13260,11 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
 }
+#podcastShowMenuBtn { flex: 0 0 auto; }
+.media-share-context-menu .media-share-remove { color: #b3261e; }
 .podcast-queue-num {
   font-size: .75rem;
   font-weight: 600;

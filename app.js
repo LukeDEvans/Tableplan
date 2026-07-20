@@ -31989,11 +31989,20 @@ function openMediaShareMenu(event, kind, id) {
   event.preventDefault();
   event.stopPropagation();
   closeFolderMenu();
-  const label = sectionScope("media") === "personal" ? "Copy to household" : "Copy to my personal list";
+  const inPersonal = sectionScope("media") === "personal";
+  const copyLabel = inPersonal ? "Copy to household" : "Copy to my personal list";
+  // "Remove from this list" is the per-scope prune: podcast lists are kept
+  // separate per household/person, so this only unsubscribes from the list
+  // you're currently viewing — the other scope's copy is untouched.
+  const removeLabel = kind === "show"
+    ? `Remove from ${inPersonal ? "my list" : "the household list"}`
+    : "Remove from this list";
   const menu = document.createElement("div");
   menu.className = "folder-context-menu media-share-context-menu";
   menu.setAttribute("role", "menu");
-  menu.innerHTML = `<button type="button" role="menuitem" data-media-share-copy>${escapeHtml(label)}</button>`;
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-media-share-copy>${escapeHtml(copyLabel)}</button>
+    <button type="button" role="menuitem" class="media-share-remove" data-media-share-remove>${escapeHtml(removeLabel)}</button>`;
   document.body.append(menu);
   const x = Math.min(event.clientX || 10, window.innerWidth - menu.offsetWidth - 10);
   const y = Math.min(event.clientY || 10, window.innerHeight - menu.offsetHeight - 10);
@@ -32003,6 +32012,26 @@ function openMediaShareMenu(event, kind, id) {
     closeFolderMenu();
     copyMediaItemToOtherScope(kind, id);
   });
+  menu.querySelector("[data-media-share-remove]").addEventListener("click", () => {
+    closeFolderMenu();
+    if (kind === "show") removePodcastFromCurrentScope(id);
+    else deleteArticle(id);
+  });
+}
+
+// Unsubscribe a podcast from ONLY the currently-viewed scope's list. Orphaned
+// per-episode entries (progress, saved, queue) are keyed by episode id and are
+// already ignored wherever the show can't be found, so no deep cleanup needed.
+function removePodcastFromCurrentScope(id) {
+  const show = (state.podcasts || []).find((p) => p.id === id);
+  if (!show) return;
+  if (!confirm(`Remove "${show.title}" from ${sectionScope("media") === "personal" ? "your personal" : "the household"} podcast list?`)) return;
+  recordDeletion("podcasts", id);
+  state.podcasts = (state.podcasts || []).filter((p) => p.id !== id);
+  if (activePodcastShowId === id) activePodcastShowId = null;
+  persist();
+  showMailToast(`Removed "${show.title}".`);
+  renderPodcastShowsGrid();
 }
 
 function renderPodcastShowsGrid() {
@@ -33484,6 +33513,9 @@ function renderPodcastShowEpisodes(showId) {
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5"/><path d="m12 5-7 7 7 7"/></svg>
       </button>
       <span class="podcast-show-episodes-title">${escapeHtml(show.title)}</span>
+      <button class="icon-btn" type="button" id="podcastShowMenuBtn" aria-label="Show options" title="Copy or remove this show">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+      </button>
     </div>
     ${episodes.map(e => podcastEpisodeRowHtml(e, { showShowTitle: false, hasPlaylists })).join("")}`;
 
@@ -33491,6 +33523,7 @@ function renderPodcastShowEpisodes(showId) {
     activePodcastShowId = null;
     renderPodcastShowsGrid();
   });
+  listEl.querySelector("#podcastShowMenuBtn")?.addEventListener("click", (e) => openMediaShareMenu(e, "show", show.id));
   wirePodcastEpisodeRows(listEl);
 }
 
