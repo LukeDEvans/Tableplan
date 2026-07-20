@@ -5,6 +5,7 @@ const {
   htmlToText, cleanSnippet, loadMailSuggestions, saveMailSuggestions, runInboxSweep,
   loadSnoozes, saveSnoozes, findOrCreateSnoozedLabel
 } = require("./_gmail-shared");
+const { loadMailAiRow, dismissPendingRecipe } = require("./_recipe-digest");
 
 // Domains that send travel booking confirmations, used by listBookingEmails
 const TRAVEL_SENDERS = [
@@ -70,6 +71,21 @@ exports.handler = async (event) => {
       await saveMailSuggestions(serviceKey, userId, data);
     }
     return json(200, { ok: true });
+  }
+
+  // Recipes collected by the recipe-digest Mail AI features (NYT Cooking,
+  // Bon Appétit) — the Meal Plan page's notification bell reads this list
+  // directly instead of waiting for a digest email.
+  if (action === "pendingRecipes") {
+    const row = await loadMailAiRow(serviceKey, userId);
+    return json(200, { recipes: row.recipesPending || [] });
+  }
+
+  if (action === "dismissRecipe") {
+    const { url } = body;
+    if (!url) return json(400, { error: "url required" });
+    const recipes = await dismissPendingRecipe(serviceKey, userId, url);
+    return json(200, { ok: true, recipes });
   }
 
   const tokens = await loadUserGmailTokens(serviceKey, userId);

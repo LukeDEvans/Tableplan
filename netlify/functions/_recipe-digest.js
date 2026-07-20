@@ -261,6 +261,58 @@ async function classifyVegetarian(anthropicKey, recipes) {
   }
 }
 
+function stableId(prefix, text) {
+  let h = 0;
+  const s = String(text || "");
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return `${prefix}${Math.abs(h).toString(36)}`;
+}
+
+// Single entry point for a batch of just-extracted recipes, used by both the
+// real-time inbox sweep and the weekly catch-up run. Recipes (NYT Cooking,
+// Bon Appétit) go to the pending queue the Meal Plan page's notification
+// bell reads from — filtered to vegetarian-only first if that setting is on.
+// Health links (NutritionFacts) skip the queue entirely and are saved
+// straight to the Media page as link-only saved articles (no AI conversion:
+// many are videos, and even the blog posts aren't meant to be read in-app).
+async function handleExtractedRecipes(serviceKey, userId, mailAi, anthropicKey, recipes) {
+  const recipeItems = recipes.filter((r) => (r.category || "Recipes") === "Recipes");
+  const healthItems = recipes.filter((r) => (r.category || "Recipes") === "Health");
+
+  let toQueue = recipeItems;
+  if (mailAi?.recipeDigestVegOnly && recipeItems.length) {
+    const isVeg = await classifyVegetarian(anthropicKey, recipeItems);
+    if (isVeg) toQueue = recipeItems.filter((_, i) => isVeg[i]);
+    else console.error(`[recipe-digest] ${userId}: vegetarian classification unavailable — queuing unfiltered`);
+  }
+  if (toQueue.length) await appendPendingRecipes(serviceKey, userId, toQueue);
+
+  if (healthItems.length) {
+    const { saveArticleToMediaSection } = require("./_news-articles.js");
+    for (const item of healthItems) {
+      await saveArticleToMediaSection(serviceKey, userId, {
+        id: stableId("nf-", item.url),
+        url: item.url,
+        title: item.title,
+        author: item.source || "NutritionFacts.org",
+        date: null,
+        publication: item.source || "NutritionFacts.org",
+        savedAt: new Date().toISOString(),
+        text: null // link-only: video/blog links open externally, not read in-app
+      });
+    }
+  }
+
+  return { queued: toQueue.length, filtered: recipeItems.length - toQueue.length, health: healthItems.length };
+}
+
+async function dismissPendingRecipe(serviceKey, userId, url) {
+  const row = await loadMailAiRow(serviceKey, userId);
+  row.recipesPending = (row.recipesPending || []).filter((r) => r.url !== url);
+  await saveMailAiRow(serviceKey, userId, row);
+  return row.recipesPending;
+}
+
 module.exports = {
   RECIPE_SOURCES,
   enabledRecipeSources,
@@ -272,5 +324,7 @@ module.exports = {
   loadMailAiRow,
   saveMailAiRow,
   appendPendingRecipes,
-  classifyVegetarian
+  classifyVegetarian,
+  handleExtractedRecipes,
+  dismissPendingRecipe
 };

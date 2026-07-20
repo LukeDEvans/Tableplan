@@ -4,7 +4,7 @@ const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 const { scanBookingFromEmailText } = require("../../booking-scan");
 const { claudeCall } = require("./_claude");
-const { recipeSourceForSender, extractRecipes, appendPendingRecipes, aiTrashTestMode, findAiTrashLabelId, disposeProcessedEmail, enabledRecipeSources } = require("./_recipe-digest");
+const { recipeSourceForSender, extractRecipes, handleExtractedRecipes, aiTrashTestMode, findAiTrashLabelId, disposeProcessedEmail, enabledRecipeSources } = require("./_recipe-digest");
 const { newsSourceForMessage, convertNewsEmailToArticle, saveArticleToMediaSection } = require("./_news-articles");
 
 // ─── Token storage (Supabase tableplan_states, id = gmail_<userId>) ──────────
@@ -399,9 +399,9 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
       try {
         const recipes = await extractRecipes(rawBody, recipeSource);
         if (recipes.length) {
-          await appendPendingRecipes(serviceKey, userId, recipes);
+          const result = await handleExtractedRecipes(serviceKey, userId, mailAi, anthropicKey, recipes);
           await disposeProcessedEmail(gFetch, gToken, messageId, { testMode, aiTrashLabelId });
-          console.log(`[recipe-digest] ${recipeSource.name}: collected ${recipes.length} link(s) from message ${messageId} (${testMode ? "AI trash" : "trash"})`);
+          console.log(`[recipe-digest] ${recipeSource.name}: queued ${result.queued}, filtered ${result.filtered}, health ${result.health} from message ${messageId} (${testMode ? "AI trash" : "trash"})`);
           return { suggestions: [] };
         }
       } catch (e) {

@@ -1213,6 +1213,7 @@ const PAGE_NOTIF_BUTTONS = {
   mail: ["homeMailBtn", "titleMailBtn"],
   finance: ["homeFinanceBtn", "titleFinanceBtn"],
   do: ["homeDoBtn", "titleToDoListBtn"],
+  eat: ["homeEatBtn", "titleMealPlanBtn"],
 };
 
 function setPageNotifCount(page, count) {
@@ -8383,6 +8384,82 @@ function warmPageNotifs() {
   });
   // Fetches live accounts when connected, which also sets the finance dot
   if (financeLinkStatus === null) checkFinanceLinkStatus();
+  warmMealPlanRecipes();
+}
+
+// ── Meal Plan recipe notifications ───────────────────────────────────────────
+// Recipes collected from NYT Cooking / Bon Appétit emails (see
+// _recipe-digest.js) surface here as soon as they're collected, instead of
+// waiting for a weekly digest email. mealPlanRecipes is null until the first
+// successful load; the bell only renders once it's an array.
+let mealPlanRecipes = null;
+let mealPlanNotifOpen = false;
+
+function warmMealPlanRecipes() {
+  if (!authSession?.access_token) return;
+  callGmailApi({ action: "pendingRecipes" }).then((d) => {
+    if (!d?.recipes) return;
+    mealPlanRecipes = d.recipes;
+    setPageNotifCount("eat", mealPlanRecipes.length);
+    if (activeAppArea === "eat") renderPlanner();
+  });
+}
+
+function dismissMealPlanRecipe(url) {
+  if (!mealPlanRecipes) return;
+  mealPlanRecipes = mealPlanRecipes.filter((r) => r.url !== url);
+  setPageNotifCount("eat", mealPlanRecipes.length);
+  renderPlanner();
+  callGmailApi({ action: "dismissRecipe", url });
+}
+
+function addMealPlanRecipe(url) {
+  dismissMealPlanRecipe(url); // leaves the list the moment you act on it
+  mealPlanNotifOpen = false;
+  openImportDialog(url, true);
+}
+
+function mealPlanNotifBellHtml() {
+  const recipes = mealPlanRecipes || [];
+  const count = recipes.length;
+  const bellSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
+  return `
+    <div class="eat-notif-wrap">
+      <button class="icon-btn eat-notif-btn" type="button" data-eat-notif-toggle title="New recipes" aria-label="New recipes" aria-expanded="${mealPlanNotifOpen}">
+        ${bellSvg}
+        ${count ? `<span class="eat-notif-badge">${count}</span>` : ""}
+      </button>
+      ${mealPlanNotifOpen ? `
+      <div class="eat-notif-panel">
+        <div class="eat-notif-head">New recipes</div>
+        ${recipes.length ? recipes.map((r) => `
+          <div class="eat-notif-row">
+            <a class="eat-notif-item-title" href="${escapeHtml(r.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(r.title)}">${escapeHtml(r.title)}</a>
+            <span class="eat-notif-source">${escapeHtml(r.source || "")}</span>
+            <button class="secondary-btn eat-notif-add" type="button" data-eat-notif-add="${escapeHtml(r.url)}">Add</button>
+            <button class="icon-btn eat-notif-dismiss" type="button" data-eat-notif-dismiss="${escapeHtml(r.url)}" title="Dismiss" aria-label="Dismiss">&times;</button>
+          </div>`).join("") : `<div class="eat-notif-empty">No new recipes.</div>`}
+      </div>` : ""}
+    </div>`;
+}
+
+let mealPlanNotifWired = false;
+function wireMealPlanNotifDelegation() {
+  if (mealPlanNotifWired) return;
+  mealPlanNotifWired = true;
+  elements.plannerGrid.addEventListener("click", (e) => {
+    if (e.target.closest("[data-eat-notif-toggle]")) { mealPlanNotifOpen = !mealPlanNotifOpen; renderPlanner(); return; }
+    const add = e.target.closest("[data-eat-notif-add]");
+    if (add) { addMealPlanRecipe(add.dataset.eatNotifAdd); return; }
+    const dismiss = e.target.closest("[data-eat-notif-dismiss]");
+    if (dismiss) { dismissMealPlanRecipe(dismiss.dataset.eatNotifDismiss); return; }
+  });
+  document.addEventListener("click", (e) => {
+    if (!mealPlanNotifOpen) return;
+    if (e.target.closest(".eat-notif-wrap")) return;
+    mealPlanNotifOpen = false;
+    renderPlanner();
+  }, { capture: true });
 }
 
 // ── Mail speed: preloaded inbox list + read-ahead thread cache ───────────────
@@ -15653,26 +15730,26 @@ const MAIL_AI_FEATURES = [
   {
     key: "nytCookingDigest",
     defaultOn: true,
-    label: "NYT Cooking recipe digest",
-    desc: "As NYT Cooking emails arrive: collects their recipe links and files each email away immediately. Every Sunday: one email with the week's recipes, duplicates removed."
+    label: "NYT Cooking recipes",
+    desc: "As NYT Cooking emails arrive: collects their recipe links, files each email away immediately, and surfaces the recipes in the Meal Plan page's notification bell."
   },
   {
     key: "bonAppetitDigest",
     defaultOn: true,
-    label: "Bon Appétit recipe digest",
-    desc: "Same treatment for Bon Appétit emails — their recipes join the same weekly digest email, in their own section."
+    label: "Bon Appétit recipes",
+    desc: "Same treatment for Bon Appétit emails — their recipes join the same Meal Plan notification bell."
   },
   {
     key: "recipeDigestVegOnly",
     defaultOn: false,
     label: "Vegetarian recipes only",
-    desc: "Before each weekly digest goes out, an AI pass drops any NYT Cooking / Bon Appétit recipe that isn't vegetarian (dairy, eggs, and honey are fine — meat, poultry, and fish/seafood are not). Off by default. Doesn't touch the NutritionFacts health section."
+    desc: "As each NYT Cooking / Bon Appétit recipe is collected, an AI pass drops it before it ever reaches the notification bell if it isn't vegetarian (dairy, eggs, and honey are fine — meat, poultry, and fish/seafood are not). Off by default. Doesn't touch NutritionFacts health links."
   },
   {
     key: "nutritionFactsDigest",
     defaultOn: true,
-    label: "Dr. Greger / NutritionFacts digest",
-    desc: "Collects article and video links from NutritionFacts.org emails into a separate “Health” section of the same weekly digest."
+    label: "Dr. Greger / NutritionFacts links",
+    desc: "Collects article and video links from NutritionFacts.org emails and saves them straight to the Media page, then files the email away."
   },
   {
     key: "nytMorningToArticle",
@@ -20807,6 +20884,7 @@ function renderPlanner() {
   const mealPlanColumnCount = Math.max(1, mealPlanColumns.length);
 
   elements.plannerGrid.innerHTML = `
+    <div class="eat-top-row">
     <div class="day-tabs" role="tablist" aria-label="Meal plan days">
       ${prepDays.map((day) => {
         const date = addDays(currentWeek, day.offset);
@@ -20827,6 +20905,8 @@ function renderPlanner() {
           </button>
         `;
       }).join("")}
+    </div>
+    ${mealPlanNotifBellHtml()}
     </div>
     <section class="day-column planner-day-panel" role="tabpanel" id="panel-${activeDay.id}" aria-labelledby="tab-${activeDay.id}">
       ${activeDayEventsTemplate(activeDay)}
@@ -21032,6 +21112,7 @@ function renderPlanner() {
 
   restorePlannerCarouselState(previousCarouselState, activeDay.id);
   updateTabIndicator(elements.plannerGrid);
+  wireMealPlanNotifDelegation();
 }
 
 function currentPlannerCarouselState() {
