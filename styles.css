@@ -17617,7 +17617,21 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 /* Finance: filters, recurring, alerts, recap */
 .fin-txn-filters { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding-bottom: 6px; }
 .fin-txn-search { flex: 1 1 120px; min-width: 0; }
-.fin-txn-filters .fin-scenario-select { max-width: 32%; }
+.fin-txn-filters .fin-add-btn.is-active { border-color: var(--accent); color: var(--accent); }
+.fin-txn-filter-panel { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding-bottom: 8px; }
+.fin-txn-filter-panel .fin-scenario-select { max-width: 32%; }
+.fin-txn-manual-tag {
+  display: inline-block;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-weight: 700;
+  color: var(--muted);
+  border: 1px solid color-mix(in srgb, var(--muted) 45%, transparent);
+  border-radius: 4px;
+  padding: 0 4px;
+  vertical-align: middle;
+}
 .fin-alert { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding: 8px 0 4px; display: flex; flex-direction: column; gap: 4px; }
 .fin-alert-text { font-size: 0.82rem; line-height: 1.35; }
 .fin-rec-row { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding-top: 6px; }

@@ -212,7 +212,7 @@ const STATE_SECTIONS = {
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
@@ -2912,6 +2912,7 @@ function defaultState() {
     financeTxnSignFlips: {},
     financeTxnNoteOverrides: {},
     financeTxnNoteCounts: {},
+    financeManualTxns: [],
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -3049,6 +3050,13 @@ function normalizeState(parsed) {
     financeTxnSignFlips: (parsed?.financeTxnSignFlips && typeof parsed.financeTxnSignFlips === "object") ? parsed.financeTxnSignFlips : {},
     financeTxnNoteOverrides: (parsed?.financeTxnNoteOverrides && typeof parsed.financeTxnNoteOverrides === "object") ? parsed.financeTxnNoteOverrides : {},
     financeTxnNoteCounts: (parsed?.financeTxnNoteCounts && typeof parsed.financeTxnNoteCounts === "object") ? parsed.financeTxnNoteCounts : {},
+    financeManualTxns: (Array.isArray(parsed?.financeManualTxns) ? parsed.financeManualTxns : []).map((m) => ({
+      id: m?.id || createId("fin-man"),
+      posted: /^\d{4}-\d{2}-\d{2}/.test(m?.posted || "") ? m.posted : new Date().toISOString(),
+      amount: Number(m?.amount) || 0,
+      description: String(m?.description || "").slice(0, 120),
+      account: String(m?.account || "").slice(0, 60)
+    })),
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
@@ -6280,6 +6288,7 @@ async function refreshFinanceLive(force = false) {
   financeLive = data?.accounts
     ? { accounts: data.accounts, errors: data.errors || [], at }
     : { accounts: [], errors: [data?.error || "Could not reach the bank bridge."], at: Date.now() };
+  invalidateFinanceLabeled(); // fresh accounts payload — the cache (now decoupled from financeLive) needs a nudge
   updateFinanceMonthActuals();
   updateFinanceRecurring();
   setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
@@ -6311,7 +6320,8 @@ async function linkFinanceBanks() {
 // live in financeTxnLabels (txnId → key). financeTxnRules learns merchant →
 // label counts from MANUAL labels only, so auto-labels never train themselves.
 let financeNotifOpen = false;
-const financeTxnFilter = { q: "", kind: "", account: "" };
+const financeTxnFilter = { q: "", kind: "", account: "", sort: "date" };
+let financeTxnFilterOpen = false;
 
 const FIN_MERCHANT_STOPWORDS = new Set(["pos", "debit", "credit", "card", "purchase", "ach", "web", "id", "des", "co", "the", "of", "and", "inc", "llc", "com"]);
 function financeMerchantTokens(desc) {
@@ -6354,17 +6364,23 @@ function financeTxnRuleGuess(desc) {
 const FIN_MGMT_KEYWORDS = /payment thank you|autopay|auto pay|online payment|internet transfer|online transfer|transfer (to|from)|crcardpmt|epay/i;
 const FIN_INCOME_KEYWORDS = /payroll|direct dep|dir dep|dirdep|salary/i;
 
-// Flattened transactions with resolved labels; cached per live payload.
+// Cache is decoupled from financeLive (rather than living on it, like it used
+// to) so manually-entered transactions still get the same dedupe/labeling/
+// caching treatment on households that haven't linked a bank yet.
+let financeLabeledCache = null;
+function invalidateFinanceLabeled() { financeLabeledCache = null; }
+
+// Flattened transactions with resolved labels; cached per live payload +
+// manual-entry list.
 function financeLabeledTxns() {
-  if (!financeLive) return [];
-  if (financeLive.labeled) return financeLive.labeled;
+  if (financeLabeledCache) return financeLabeledCache;
   // A handful of institutions/rails (seen with P2P "gift" deposits) report a
   // transaction's amount with the wrong sign — money received shows up as a
   // debit. financeTxnSignFlips holds manually-confirmed corrections; applied
   // here, first, so every downstream check (dedupe, mgmt-pair transfer
   // detection, income keywords, portions, return matching) sees the true sign.
   const flips = state.financeTxnSignFlips || {};
-  let txns = (financeLive.accounts || []).flatMap((a) =>
+  const bankTxns = (financeLive?.accounts || []).flatMap((a) =>
     a.transactions.map((t) => ({
       ...t,
       accountId: a.id,
@@ -6372,6 +6388,26 @@ function financeLabeledTxns() {
       amount: flips[t.id] ? -(t.amount || 0) : (t.amount || 0),
       signFlipped: Boolean(flips[t.id])
     })));
+  // Manual entries (cash, an unlinked account, a gift, …) flow through the
+  // exact same pipeline below — dedupe, labeling, notes, splits, return
+  // linking — so they behave identically to a bank-sourced transaction
+  // everywhere except they came from the "+ Add transaction" form instead of
+  // SimpleFIN. Kept out of any real linked account's id (own "manual:<slug>"
+  // pseudo-account) so they can never collide with or double-count a bank
+  // transaction, and so mgmt-pair transfer detection can't pair them against
+  // a real account by accident.
+  const manualTxns = (state.financeManualTxns || []).map((m) => ({
+    id: m.id,
+    accountId: `manual:${(m.account || "cash").trim().toLowerCase().replace(/\s+/g, "-") || "cash"}`,
+    account: m.account || "Cash",
+    posted: m.posted,
+    amount: Number(m.amount) || 0,
+    description: m.description || "",
+    pending: false,
+    isManual: true
+  }));
+  if (!bankTxns.length && !manualTxns.length) return [];
+  let txns = [...bankTxns, ...manualTxns];
 
   // Pending→posted dedupe: banks reissue transaction ids when a pending
   // charge posts, which would double-count anything labeled while pending.
@@ -6482,7 +6518,7 @@ function financeLabeledTxns() {
   }
 
   txns.sort((x, y) => (y.posted || "").localeCompare(x.posted || ""));
-  financeLive.labeled = txns;
+  financeLabeledCache = txns;
   return txns;
 }
 
@@ -6545,7 +6581,7 @@ function recordFinanceTxnLink(returnId, purchaseId) {
   const ids = Object.keys(state.financeTxnLinks);
   for (let i = 0; i < ids.length - 600; i++) delete state.financeTxnLinks[ids[i]];
   financeReturnLinkSearch = null;
-  if (financeLive) financeLive.labeled = null;
+  invalidateFinanceLabeled();
   setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
   updateFinanceMonthActuals();
   persist();
@@ -6555,7 +6591,7 @@ function recordFinanceTxnLink(returnId, purchaseId) {
 function clearFinanceTxnLink(returnId) {
   if (!state.financeTxnLinks) return;
   delete state.financeTxnLinks[returnId];
-  if (financeLive) financeLive.labeled = null;
+  invalidateFinanceLabeled();
   setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
   updateFinanceMonthActuals();
   persist();
@@ -6578,7 +6614,69 @@ function toggleFinanceTxnSignFlip(txnId) {
     const ids = Object.keys(flips);
     for (let i = 0; i < ids.length - 600; i++) delete flips[ids[i]];
   }
-  if (financeLive) financeLive.labeled = null;
+  invalidateFinanceLabeled();
+  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
+  updateFinanceMonthActuals();
+  persist();
+  renderFinancePage();
+}
+
+// ── Manually-entered transactions (cash, an unlinked account, …) ────────────
+// Draft shape while the form is open: { id: null|existingId, date, desc,
+// amount, account, label }. id is null while adding, or the existing
+// financeManualTxns row's id while editing (openManualTxnForm(existing)).
+let financeManualForm = null;
+
+function openManualTxnForm(existing) {
+  financeManualForm = existing
+    ? { id: existing.id, date: (existing.posted || "").slice(0, 10), desc: existing.description || "", amount: String(existing.amount ?? ""), account: existing.account || "", label: (state.financeTxnLabels || {})[existing.id] || "" }
+    : { id: null, date: new Date().toISOString().slice(0, 10), desc: "", amount: "", account: "", label: "" };
+  financeExpanded.add("card:txns");
+  renderFinancePage();
+}
+
+function cancelManualTxnForm() {
+  financeManualForm = null;
+  renderFinancePage();
+}
+
+function saveManualTxnForm(fields) {
+  const amount = parseFinAmount(fields.amount);
+  const desc = String(fields.desc || "").trim().slice(0, 120);
+  if (!desc || !Number.isFinite(amount) || !amount) { alert("Enter a description and a non-zero amount."); return; }
+  if (!state.financeManualTxns) state.financeManualTxns = [];
+  const entry = {
+    id: fields.id || createId("fin-man"),
+    posted: /^\d{4}-\d{2}-\d{2}$/.test(fields.date) ? `${fields.date}T12:00:00.000Z` : new Date().toISOString(),
+    amount,
+    description: desc,
+    account: String(fields.account || "").trim().slice(0, 60) || "Cash"
+  };
+  const i = state.financeManualTxns.findIndex((m) => m.id === entry.id);
+  if (i >= 0) state.financeManualTxns[i] = entry; else state.financeManualTxns.unshift(entry);
+  if (fields.label) recordFinanceTxnLabel(entry.id, fields.label, desc);
+  else if (state.financeTxnLabels) delete state.financeTxnLabels[entry.id];
+  invalidateFinanceLabeled();
+  financeManualForm = null;
+  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
+  updateFinanceMonthActuals();
+  persist();
+  renderFinancePage();
+}
+
+function deleteManualTxn(id) {
+  if (!state.financeManualTxns || !confirm("Delete this transaction?")) return;
+  state.financeManualTxns = state.financeManualTxns.filter((m) => m.id !== id);
+  if (state.financeTxnLabels) delete state.financeTxnLabels[id];
+  if (state.financeTxnNoteOverrides) delete state.financeTxnNoteOverrides[id];
+  if (state.financeTxnLinks) {
+    delete state.financeTxnLinks[id]; // this txn as a return, linked to some purchase
+    for (const [retId, purchaseId] of Object.entries(state.financeTxnLinks)) {
+      if (purchaseId === id) delete state.financeTxnLinks[retId]; // this txn as the purchase a return pointed to
+    }
+  }
+  invalidateFinanceLabeled();
+  financeDetailTxnId = financeDetailTxnId === id ? null : financeDetailTxnId;
   setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
   updateFinanceMonthActuals();
   persist();
@@ -6875,7 +6973,7 @@ function saveRenameTxn(txnId, rawDescription, newName, newNote) {
     const mKeys = Object.keys(state.financeTxnNoteCounts);
     for (let i = 0; i < mKeys.length - 400; i++) delete state.financeTxnNoteCounts[mKeys[i]];
   }
-  if (financeLive) financeLive.labeled = null; // recompute displayName for every txn sharing this merchant/note
+  invalidateFinanceLabeled(); // recompute displayName for every txn sharing this merchant/note
   financeRenamingTxnId = null;
   persist();
   renderFinancePage();
@@ -6894,7 +6992,7 @@ function recordFinanceTxnSplit(txnId, portions) {
   labels[txnId] = { split: portions };
   const ids = Object.keys(labels);
   for (let i = 0; i < ids.length - 600; i++) delete labels[ids[i]];
-  if (financeLive) financeLive.labeled = null;
+  invalidateFinanceLabeled();
   setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length);
   updateFinanceMonthActuals();
   persist();
@@ -6919,7 +7017,7 @@ function recordFinanceTxnLabel(txnId, labelKey, description) {
       for (let i = 0; i < rKeys.length - 400; i++) delete state.financeTxnRules[rKeys[i]];
     }
   }
-  if (financeLive) financeLive.labeled = null; // recompute with the new label
+  invalidateFinanceLabeled(); // recompute with the new label
   setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
   updateFinanceMonthActuals();
   persist();
@@ -6931,6 +7029,7 @@ async function unlinkFinanceBanks() {
   if (data?.ok) {
     financeLinkStatus = { connected: false };
     financeLive = null;
+    invalidateFinanceLabeled(); // manual transactions still need to reflect the disconnect
     financeDetailTxnId = null;
     financeRenamingTxnId = null;
     financeSplitDraft = null;
@@ -7311,7 +7410,7 @@ function renderFinancePage() {
     </div>`;
 
   const f = financeTxnFilter;
-  let shownTxns = allTxns;
+  let shownTxns = allTxns.slice(); // copy — sorting below must never mutate the cached/shared array
   if (f.q) shownTxns = shownTxns.filter((t) => `${t.description || ""} ${t.displayName || ""}`.toLowerCase().includes(f.q.toLowerCase()));
   if (f.account) shownTxns = shownTxns.filter((t) => t.accountId === f.account);
   if (f.kind === "unlabeled") shownTxns = shownTxns.filter((t) => !t.label);
@@ -7320,6 +7419,14 @@ function renderFinancePage() {
   else if (f.kind === "mgmt") shownTxns = shownTxns.filter((t) => t.label === "mgmt");
   else if (f.kind === "income") shownTxns = shownTxns.filter((t) => t.label === "income" || (t.label || "").startsWith("income:"));
   else if (f.kind.startsWith("group:")) shownTxns = shownTxns.filter((t) => (t.label || "").startsWith(`cat:${f.kind.slice(6)}`));
+  if (f.sort === "label") {
+    shownTxns.sort((x, y) => {
+      const lx = x.label ? financeTxnLabelName(x.label) : "￿", ly = y.label ? financeTxnLabelName(y.label) : "￿";
+      return lx.localeCompare(ly) || (y.posted || "").localeCompare(x.posted || "");
+    });
+  } else if (f.sort === "account") {
+    shownTxns.sort((x, y) => (x.account || "").localeCompare(y.account || "") || (y.posted || "").localeCompare(x.posted || ""));
+  }
   const txns = shownTxns.slice(0, 60);
   const needsLabel = allTxns.filter((t) => !t.label);
   const recAlerts = financeRecurringAlerts();
@@ -7400,7 +7507,7 @@ function renderFinancePage() {
     <div class="fin-txn-row fin-txn-row--clickable${t.pending ? " is-pending" : ""}${financeDetailTxnId === t.id ? " is-open" : ""}" data-fin-action="open-txn-detail" data-id="${escapeHtml(t.id)}" data-fin-txn-id="${escapeHtml(t.id)}" role="button" tabindex="0" aria-expanded="${financeDetailTxnId === t.id}">
       <span class="fin-txn-date">${t.posted ? escapeHtml(new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>
       ${!t.label ? `<span class="fin-txn-dot" title="Needs a label" aria-label="Needs a label"></span>` : ""}
-      <span class="fin-txn-desc" title="${descTitle}">${escapeHtml(t.displayName)}${t.pending ? " · pending" : ""}</span>
+      <span class="fin-txn-desc" title="${descTitle}">${t.isManual ? `<span class="fin-txn-manual-tag" title="Manually entered">manual</span> ` : ""}${escapeHtml(t.displayName)}${t.pending ? " · pending" : ""}</span>
       <span class="fin-txn-amt${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</span>
     </div>`;
   };
@@ -7470,6 +7577,8 @@ function renderFinancePage() {
       <div class="fin-txn-detail-head">
         <span class="fin-txn-detail-name">${escapeHtml(t.displayName)}</span>
         ${(t.amount || 0) < 0 ? `<button class="icon-btn fin-del-btn" type="button" data-fin-action="detail-scan-receipt" data-id="${escapeHtml(t.id)}" title="Scan receipt" aria-label="Scan receipt">📷</button>` : ""}
+        ${t.isManual ? `<button class="icon-btn fin-del-btn" type="button" data-fin-action="manual-txn-edit" data-id="${escapeHtml(t.id)}" title="Edit transaction" aria-label="Edit transaction">✎</button>
+        <button class="icon-btn fin-del-btn" type="button" data-fin-action="manual-txn-delete" data-id="${escapeHtml(t.id)}" title="Delete transaction" aria-label="Delete transaction">🗑</button>` : ""}
         <button class="icon-btn fin-del-btn" type="button" data-fin-action="close-txn-detail" title="Close" aria-label="Close">&times;</button>
       </div>
       ${t.displayName !== raw ? `<p class="fin-hint">Raw text: ${escapeHtml(raw)}</p>` : ""}
@@ -7493,12 +7602,40 @@ function renderFinancePage() {
   };
   const txnsOpen = financeExpanded.has("card:txns");
   const filterActive = Boolean(f.q || f.kind || f.account);
+  const sortActive = f.sort !== "date";
+  const accountOptions = [...new Map(allTxns.map((t) => [t.accountId, t.account])).entries()];
+  const manualFormHtml = !financeManualForm ? "" : `
+    <div class="fin-split-editor">
+      <div class="fin-subhead">${financeManualForm.id ? "Edit transaction" : "Add transaction"}</div>
+      <div class="fin-item-row">
+        <input class="fin-item-name" type="date" value="${escapeHtml(financeManualForm.date)}" data-fin-manual="date" aria-label="Date" />
+        <input class="fin-item-name" type="text" value="${escapeHtml(financeManualForm.desc)}" placeholder="Description" data-fin-manual="desc" aria-label="Description" />
+      </div>
+      <div class="fin-item-row">
+        <input class="fin-item-amount" type="text" inputmode="decimal" value="${escapeHtml(financeManualForm.amount)}" placeholder="-12.34" data-fin-manual="amount" aria-label="Amount" />
+        <input class="fin-item-name" type="text" value="${escapeHtml(financeManualForm.account)}" placeholder="Cash" data-fin-manual="account" aria-label="Account or source" />
+      </div>
+      <select class="fin-txn-label" data-fin-manual="label" aria-label="Budget label">
+        <option value="">label…</option>
+        ${financeTxnLabelOptionsHtml(financeManualForm.label)}
+      </select>
+      <div class="fin-item-row fin-item-row--tools">
+        <span class="fin-hint">Negative = spent, positive = received</span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="manual-txn-cancel">Cancel</button>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="manual-txn-save">Save</button>
+      </div>
+    </div>`;
   const txnsCard = !financeLinkStatus?.connected ? "" : `
     <div class="fin-card" data-fin-card="txns">
       ${cardHead("card:txns", "Transactions", `${needsLabel.length ? `${needsLabel.length} to label · ` : ""}${filterActive ? `${shownTxns.length} of ` : ""}${allTxns.length}`)}
       ${!txnsOpen ? "" : `
       <div class="fin-txn-filters">
         <input type="search" class="fin-item-name fin-txn-search" placeholder="Search…" value="${escapeHtml(f.q)}" data-fin-edit="txn-filter-q" aria-label="Search transactions" />
+        <button class="secondary-btn fin-add-btn${filterActive || sortActive ? " is-active" : ""}" type="button" data-fin-action="txn-filter-toggle" aria-expanded="${financeTxnFilterOpen}">Filter${filterActive || sortActive ? " •" : ""}</button>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="manual-txn-open">+ Add transaction</button>
+      </div>
+      ${!financeTxnFilterOpen ? "" : `
+      <div class="fin-txn-filter-panel">
         <select class="fin-scenario-select" data-fin-edit="txn-filter-kind" aria-label="Filter by label">
           <option value="">All labels</option>
           <option value="unlabeled" ${f.kind === "unlabeled" ? "selected" : ""}>Unlabeled</option>
@@ -7510,10 +7647,16 @@ function renderFinancePage() {
         </select>
         <select class="fin-scenario-select" data-fin-edit="txn-filter-account" aria-label="Filter by account">
           <option value="">All accounts</option>
-          ${(financeLive?.accounts || []).map((a) => `<option value="${escapeHtml(a.id)}" ${f.account === a.id ? "selected" : ""}>${escapeHtml(a.org)}${a.org && a.name ? " — " : ""}${escapeHtml(a.name)}</option>`).join("")}
+          ${accountOptions.map(([id, name]) => `<option value="${escapeHtml(id)}" ${f.account === id ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}
         </select>
-        ${filterActive ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="txn-filter-clear">Clear</button>` : ""}
-      </div>
+        <select class="fin-scenario-select" data-fin-edit="txn-filter-sort" aria-label="Sort by">
+          <option value="date" ${f.sort === "date" ? "selected" : ""}>Sort: Date</option>
+          <option value="label" ${f.sort === "label" ? "selected" : ""}>Sort: Label</option>
+          <option value="account" ${f.sort === "account" ? "selected" : ""}>Sort: Account</option>
+        </select>
+        ${filterActive || sortActive ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="txn-filter-clear">Clear</button>` : ""}
+      </div>`}
+      ${manualFormHtml}
       ${txns.map((t) => txnRow(t) + (financeDetailTxnId === t.id ? txnDetailHtml(t) : "") + (financeSplitDraft?.txnId === t.id ? splitEditorHtml(t) : "")).join("") || `<div class="empty-state">${filterActive ? "Nothing matches the filters." : "No transactions in the last 30 days."}</div>`}`}
     </div>`;
 
@@ -7698,6 +7841,12 @@ function renderFinancePage() {
       financeNotifOpen = false;
       renderFinancePage();
     }, { capture: true });
+    document.addEventListener("click", (e) => {
+      if (!financeTxnFilterOpen) return;
+      if (e.target.closest(".fin-txn-filters, .fin-txn-filter-panel")) return;
+      financeTxnFilterOpen = false;
+      renderFinancePage();
+    }, { capture: true });
     grid.addEventListener("contextmenu", (e) => {
       const row = e.target.closest("[data-fin-txn-id]");
       if (!row) return;
@@ -7711,15 +7860,28 @@ function renderFinancePage() {
 // merchant-level actions a home off the row itself so the list stays clean.
 function showFinTxnMenu(x, y, txnId) {
   document.getElementById("finTxnMenu")?.remove();
+  const isManual = financeLabeledTxns().find((t) => t.id === txnId)?.isManual;
   const menu = document.createElement("div");
   menu.id = "finTxnMenu";
   menu.className = "fin-txn-menu";
   menu.style.left = Math.max(8, Math.min(x, window.innerWidth - 180)) + "px";
   menu.style.top = Math.min(y, window.innerHeight - 90) + "px";
-  menu.innerHTML = `<button class="fin-txn-menu-option" type="button" data-menu-action="rename">Rename / add note</button>`;
+  menu.innerHTML = `
+    <button class="fin-txn-menu-option" type="button" data-menu-action="rename">Rename / add note</button>
+    ${isManual ? `
+    <button class="fin-txn-menu-option" type="button" data-menu-action="edit">Edit transaction</button>
+    <button class="fin-txn-menu-option fin-danger" type="button" data-menu-action="delete">Delete transaction</button>` : ""}`;
   menu.querySelector('[data-menu-action="rename"]').addEventListener("click", () => {
     menu.remove();
     startRenameTxn(txnId);
+  });
+  menu.querySelector('[data-menu-action="edit"]')?.addEventListener("click", () => {
+    menu.remove();
+    openManualTxnForm((state.financeManualTxns || []).find((m) => m.id === txnId));
+  });
+  menu.querySelector('[data-menu-action="delete"]')?.addEventListener("click", () => {
+    menu.remove();
+    deleteManualTxn(txnId);
   });
   document.body.appendChild(menu);
   setTimeout(() => document.addEventListener("click", () => menu.remove(), { once: true, capture: true }), 0);
@@ -7776,8 +7938,23 @@ function onFinanceGridClick(e) {
   }
   if (action === "close-txn-detail") { financeDetailTxnId = null; renderFinancePage(); return; }
   if (action === "txn-filter-clear") {
-    financeTxnFilter.q = ""; financeTxnFilter.kind = ""; financeTxnFilter.account = "";
+    financeTxnFilter.q = ""; financeTxnFilter.kind = ""; financeTxnFilter.account = ""; financeTxnFilter.sort = "date";
     renderFinancePage();
+    return;
+  }
+  if (action === "txn-filter-toggle") { financeTxnFilterOpen = !financeTxnFilterOpen; renderFinancePage(); return; }
+  if (action === "manual-txn-open") { openManualTxnForm(null); return; }
+  if (action === "manual-txn-edit") {
+    const t = financeLabeledTxns().find((x) => x.id === btn.dataset.id);
+    if (t?.isManual) openManualTxnForm((state.financeManualTxns || []).find((m) => m.id === t.id));
+    return;
+  }
+  if (action === "manual-txn-delete") { deleteManualTxn(btn.dataset.id); return; }
+  if (action === "manual-txn-cancel") { cancelManualTxnForm(); return; }
+  if (action === "manual-txn-save") {
+    const box = btn.closest(".fin-split-editor");
+    const field = (name) => box?.querySelector(`[data-fin-manual="${name}"]`)?.value || "";
+    saveManualTxnForm({ id: financeManualForm?.id || null, date: field("date"), desc: field("desc"), amount: field("amount"), account: field("account"), label: field("label") });
     return;
   }
   if (action.startsWith("recurring-")) {
@@ -7950,9 +8127,10 @@ function onFinanceGridChange(e) {
     renderFinancePage();
     return;
   }
-  if (kind === "txn-filter-q" || kind === "txn-filter-kind" || kind === "txn-filter-account") {
+  if (kind === "txn-filter-q" || kind === "txn-filter-kind" || kind === "txn-filter-account" || kind === "txn-filter-sort") {
     if (kind === "txn-filter-q") financeTxnFilter.q = el.value.trim();
     else if (kind === "txn-filter-kind") financeTxnFilter.kind = el.value;
+    else if (kind === "txn-filter-sort") financeTxnFilter.sort = el.value;
     else financeTxnFilter.account = el.value;
     renderFinancePage();
     return;
