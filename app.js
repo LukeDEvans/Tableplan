@@ -27070,14 +27070,26 @@ function buildRawGroceryRowsForRange(startISO, endISO) {
   return rows;
 }
 
+// Default shopping window: today through the NEXT Friday (the household's
+// shopping day). Grocery needs are filtered per-day (buildRawGroceryRowsForRange),
+// so "next Friday" — not today-if-Friday — is what makes shopping *on* Friday
+// cover the whole upcoming prep week (Fri→Thu) rather than just Friday's meals.
+// The window shrinks toward the shop day as the week progresses. Still fully
+// editable via the range pickers.
+function upcomingFriday(from) {
+  const d = new Date(from);
+  d.setHours(0, 0, 0, 0);
+  const add = (5 - d.getDay() + 7) % 7 || 7; // 5 = Friday; strictly after today, so Friday → +7
+  d.setDate(d.getDate() + add);
+  return d;
+}
+
 function initGroceryRange(force = false) {
   if (!force && groceryRangeStart && groceryRangeEnd) return;
-  const key = selectedGroceryWeekKey || weekKey();
-  const weekStart = dateFromWeekKey(key);
-  const endDate = new Date(weekStart);
-  endDate.setDate(weekStart.getDate() + 7);
-  groceryRangeStart = dateKeyFromDate(weekStart);
-  groceryRangeEnd = dateKeyFromDate(endDate);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  groceryRangeStart = dateKeyFromDate(today);
+  groceryRangeEnd = dateKeyFromDate(upcomingFriday(today));
   syncGroceryRangeInputs();
 }
 
