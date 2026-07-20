@@ -3501,6 +3501,30 @@ input.live-toggle:checked::before,
   outline-offset: 2px;
 }
 
+/* Clear-checked cleanup bar */
+.grocery-cleanup-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 2px 2px 10px;
+}
+.grocery-cleanup-btn { font-size: 0.82rem; padding: 5px 14px; }
+.grocery-cleanup-link {
+  background: none;
+  border: none;
+  padding: 4px 2px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.grocery-cleanup-link:hover { color: var(--accent-dark); }
+.grocery-item--cleared { opacity: 0.55; }
+
 .grocery-store-empty {
   display: grid;
   min-height: 44px;

@@ -208,7 +208,7 @@ const CLOUD_SNAPSHOT_HOURLY_MAX = 720; // 1 per hour going back up to 30 days
 // Each section is stored as its own Supabase row: id = "{stateId}:{section}"
 const STATE_SECTIONS = {
   eat:       ["recipes", "trashedRecipes", "folders", "plans", "publishedWeeks", "recipeTags", "ingredientOptions", "autoGenerateRules", "mealPlanConfig", "activeCooking"],
-  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory"],
+  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory"],
   do:        ["doTasks", "doPlans", "doBacklog", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
@@ -504,6 +504,7 @@ let selectedGroceryWeekKey = "";
 let activeGroceryStoreTab = "all";
 let groceryRangeStart = "";
 let groceryRangeEnd = "";
+let showClearedGroceries = false; // session toggle: reveal items cleared off this cycle's list
 let currentActiveRecipeViewId = "";
 let recipeViewMealContext = null;
 const activeRecipeScrollPositions = new Map();
@@ -2881,6 +2882,7 @@ function defaultState() {
     checkedGroceries: {},
     grocerySkippedStores: {},
     groceryItemWeekOverride: {},
+    groceryCleared: {},
     recipeTags: defaultRecipeTags(),
     groceryBaseItems: defaultGroceryBaseItems(),
     groceryCatalogVersion: 1,
@@ -2995,6 +2997,7 @@ function normalizeState(parsed) {
     checkedGroceries: parsed?.checkedGroceries || {},
     grocerySkippedStores: parsed?.grocerySkippedStores && typeof parsed.grocerySkippedStores === "object" ? parsed.grocerySkippedStores : {},
     groceryItemWeekOverride: parsed?.groceryItemWeekOverride && typeof parsed.groceryItemWeekOverride === "object" ? parsed.groceryItemWeekOverride : {},
+    groceryCleared: parsed?.groceryCleared && typeof parsed.groceryCleared === "object" ? parsed.groceryCleared : {},
     recipeTags: normalizeRecipeTags(parsed?.recipeTags),
     groceryBaseItems: Array.isArray(parsed?.groceryBaseItems) ? normalizeGroceryBaseItems(parsed.groceryBaseItems) : defaultGroceryBaseItems(),
     groceryCatalogVersion: Number(parsed?.groceryCatalogVersion) || 0,
@@ -4799,7 +4802,7 @@ function mergeStates(newer, older) {
   // ── Flat keyed maps: union keys, newer wins on conflict ───────────────────
   for (const key of [
     "groceryItemLocations", "groceryAliases", "grocerySplitPreferences",
-    "receiptItemMappings", "personGoals", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride",
+    "receiptItemMappings", "personGoals", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared",
     "nutritionIngredientMappings", "publishedWeeks",
     "inventoryRoomVisibility", "watchShowtimesData",
     "groceryReviewDismissed", "collapsedDays",
@@ -23407,24 +23410,19 @@ function renderGroceries() {
   renderGroceryWeekOptions();
   if (!groceryRangeStart || !groceryRangeEnd) initGroceryRange();
   renderGroceryStoreTabs();
-  const rangeKey = `${groceryRangeStart}/${groceryRangeEnd}`;
-  const isCheckedRow = (rowKey) => {
-    const newVal = state.checkedGroceries[groceryCheckedKey(rangeKey, rowKey)];
-    if (newVal !== undefined) return Boolean(newVal);
-    return Boolean(state.checkedGroceries[groceryCheckedKey(groceryRangeStart, rowKey)]);
-  };
+  const rangeKey = groceryCycleKey();
+  const isCheckedRow = (rowKey) => Boolean(state.checkedGroceries[groceryCheckedKey(rangeKey, rowKey)]);
 
-  // Manual items — build all, then split by whether they have a saved store preference
-  const allManualRows = manualGroceryItems().map(manualGroceryRow).map((row) => ({
+  const withFlags = (row) => ({
     ...row,
     checkedKey: groceryCheckedKey(rangeKey, row.key),
-    checked: isCheckedRow(row.key)
-  }));
+    checked: isCheckedRow(row.key),
+    cleared: isGroceryCleared(row.key)
+  });
+
+  // Manual items — build all, then split by whether they have a saved store preference
+  const allManualRows = manualGroceryItems().map(manualGroceryRow).map(withFlags);
   const manualLocations = groceryItemLocations();
-  const locatedManualRows = allManualRows.filter((row) => manualLocations[row.key]?.storeId);
-  const unlocatedManualRows = activeGroceryStoreTab === "all"
-    ? allManualRows.filter((row) => !manualLocations[row.key]?.storeId)
-    : [];
 
   // Plan-derived items — filtered by pantry; skipped keys collected across all weeks in range
   const pantrySet = new Set(state.pantry.map(groceryRowKey));
@@ -23444,16 +23442,26 @@ function renderGroceries() {
   const needed = sectionScope("grocery") === "personal" ? [] :
     aggregateGroceryRows(buildRawGroceryRowsForRange(groceryRangeStart, groceryRangeEnd))
     .filter((row) => !pantrySet.has(groceryRowKey(row.item)) && !skippedKeys.has(row.key))
-    .map((row) => ({
-      ...row,
-      checkedKey: groceryCheckedKey(rangeKey, row.key),
-      checked: isCheckedRow(row.key)
-    }));
-  const pricePlan = optimizeGroceryBasket(needed);
-  // Located manual items join the store routing so their preferences are respected
-  const storeSections = groceryStoreSections([...needed, ...locatedManualRows], pricePlan.assignments, pricePlan.estimates);
+    .map(withFlags);
 
-  if (!unlocatedManualRows.length && !needed.length && !locatedManualRows.length) {
+  // Cleared items were bought and swept off the list this cycle — hide them
+  // (unless the user is reviewing them) and, crucially, keep them out of the
+  // routing/pricing below so a later meal needing the same thing doesn't
+  // re-surface it as still-needed. Count is cycle-wide (both tabs).
+  const clearedCount = new Set([...allManualRows, ...needed].filter((r) => r.cleared).map((r) => r.key)).size;
+  const visible = (rows) => showClearedGroceries ? rows : rows.filter((r) => !r.cleared);
+  const visibleManual = visible(allManualRows);
+  const visibleNeeded = visible(needed);
+
+  const locatedManualRows = visibleManual.filter((row) => manualLocations[row.key]?.storeId);
+  const unlocatedManualRows = activeGroceryStoreTab === "all"
+    ? visibleManual.filter((row) => !manualLocations[row.key]?.storeId)
+    : [];
+  const pricePlan = optimizeGroceryBasket(visibleNeeded);
+  // Located manual items join the store routing so their preferences are respected
+  const storeSections = groceryStoreSections([...visibleNeeded, ...locatedManualRows], pricePlan.assignments, pricePlan.estimates);
+
+  if (!unlocatedManualRows.length && !visibleNeeded.length && !locatedManualRows.length && !clearedCount) {
     elements.groceryList.innerHTML = `<div class="empty-state">Add meals to your plan and groceries will appear here.</div>`;
     return;
   }
@@ -23527,9 +23535,9 @@ function renderGroceries() {
 
   let planSections;
   if (activeGroceryStoreTab === "all") {
-    planSections = needed.length ? `
+    planSections = visibleNeeded.length ? `
       ${groceryPricePlanTemplate(pricePlan)}
-      ${groceryFallbackRoutingTemplate(needed, pricePlan.assignments)}
+      ${groceryFallbackRoutingTemplate(visibleNeeded, pricePlan.assignments)}
       ${storeSections.map(storeSection).join("")}
       ${skippedStrip}
     ` : skippedStrip;
@@ -23540,11 +23548,37 @@ function renderGroceries() {
       : `<div class="empty-state">No items assigned to this store yet. Drag items here from the All tab to assign them.</div>`;
   }
 
-  elements.groceryList.innerHTML = miscSection + planSections;
+  // Cleanup bar: sweep checked items off the list, and review/restore ones
+  // already swept this cycle.
+  const renderedRows = activeGroceryStoreTab === "all"
+    ? [...unlocatedManualRows, ...storeSections.flatMap((s) => s.rows)]
+    : (storeSections.find((s) => s.storeId === activeGroceryStoreTab)?.rows || []);
+  const checkedVisibleCount = renderedRows.filter((r) => r.checked).length;
+  const cleanupBar = (checkedVisibleCount || clearedCount) ? `
+    <div class="grocery-cleanup-bar">
+      ${checkedVisibleCount ? `<button class="secondary-btn grocery-cleanup-btn" type="button" data-grocery-clear-checked>Clear ${checkedVisibleCount} checked</button>` : ""}
+      ${clearedCount ? `<button class="grocery-cleanup-link" type="button" data-grocery-toggle-cleared aria-pressed="${showClearedGroceries}">${showClearedGroceries ? "Hide" : "Show"} ${clearedCount} bought</button>` : ""}
+      ${showClearedGroceries && clearedCount ? `<button class="grocery-cleanup-link" type="button" data-grocery-restore-cleared>Restore all</button>` : ""}
+    </div>` : "";
+
+  elements.groceryList.innerHTML = cleanupBar + miscSection + planSections;
+
+  elements.groceryList.querySelector("[data-grocery-clear-checked]")?.addEventListener("click", clearCheckedGroceries);
+  elements.groceryList.querySelector("[data-grocery-toggle-cleared]")?.addEventListener("click", () => {
+    showClearedGroceries = !showClearedGroceries;
+    renderGroceries();
+  });
+  elements.groceryList.querySelector("[data-grocery-restore-cleared]")?.addEventListener("click", restoreClearedGroceries);
 
   elements.groceryList.querySelectorAll("[data-grocery]").forEach((checkbox) => {
     checkbox.addEventListener("change", () => {
       state.checkedGroceries[checkbox.dataset.grocery] = checkbox.checked;
+      // Unchecking a bought/cleared item (visible only while reviewing) brings
+      // it back to the active list — the intuitive per-item "restore".
+      if (!checkbox.checked) {
+        const rowKey = checkbox.closest("[data-grocery-row-key]")?.dataset.groceryRowKey;
+        if (rowKey && isGroceryCleared(rowKey)) setGroceryCleared(rowKey, false);
+      }
       // Auto-collapse a store's section the moment every item in it is
       // checked — persisted, so it's still collapsed next time the page
       // loads. Never auto-expands: unchecking an item just leaves whatever
@@ -23757,18 +23791,18 @@ function normalizeComparablePriceUnit(value) {
 }
 
 // ── Weekly store skips ────────────────────────────────────────────────────────
-// A store can be passed over for the current shopping range without touching
+// A store can be passed over for the current shopping cycle without touching
 // any item's preferred-store rankings: skipped stores drop out of routing, so
-// items flow to their next preferred store for this week only. Keys are
-// "<rangeStart>/<rangeEnd>::<storeId>"; un-skipping stores `false` (never
-// deletes) so a sync merge can't resurrect the skip.
+// items flow to their next preferred store for this cycle only. Keys are
+// "<cycleKey>::<storeId>"; un-skipping stores `false` (never deletes) so a sync
+// merge can't resurrect the skip.
 function grocerySkipKey(storeId) {
-  return `${groceryRangeStart}/${groceryRangeEnd}::${storeId}`;
+  return `${groceryCycleKey()}::${storeId}`;
 }
 
 function skippedGroceryStoreIds() {
   const map = state.grocerySkippedStores && typeof state.grocerySkippedStores === "object" ? state.grocerySkippedStores : {};
-  const prefix = `${groceryRangeStart}/${groceryRangeEnd}::`;
+  const prefix = `${groceryCycleKey()}::`;
   return new Set(Object.entries(map).filter(([k, v]) => v && k.startsWith(prefix)).map(([k]) => k.slice(prefix.length)));
 }
 
@@ -23884,7 +23918,7 @@ function groceryRowStoreOrder(row, locations) {
 function groceryItemTemplate(row) {
   return `
     <div class="grocery-item-wrap" data-grocery-wrap-key="${escapeHtml(row.key)}">
-      <label class="grocery-item ${row.checked ? "checked" : ""}" draggable="true" data-grocery-row-key="${escapeHtml(row.key)}" title="Drag to organize">
+      <label class="grocery-item ${row.checked ? "checked" : ""}${row.cleared ? " grocery-item--cleared" : ""}" draggable="true" data-grocery-row-key="${escapeHtml(row.key)}" title="Drag to organize">
         <input type="checkbox" data-grocery="${escapeHtml(row.checkedKey)}" ${row.checked ? "checked" : ""} />
         <span class="grocery-name">
           ${escapeHtml(row.displayName || row.item)}
@@ -24363,7 +24397,7 @@ function addManualGroceryItem(event) {
 // moves on, and only ever set true/a value, never deleted, so a sync merge
 // can't resurrect a stale one.
 function groceryItemWeekOverrideKey(itemKey) {
-  return `${groceryRangeStart}/${groceryRangeEnd}::${itemKey}`;
+  return `${groceryCycleKey()}::${itemKey}`;
 }
 
 function groceryItemWeekOverrides() {
@@ -27091,6 +27125,58 @@ function initGroceryRange(force = false) {
   groceryRangeStart = dateKeyFromDate(today);
   groceryRangeEnd = dateKeyFromDate(upcomingFriday(today));
   syncGroceryRangeInputs();
+}
+
+// Stable identifier for the current shopping cycle, used to bucket all
+// per-trip memory (checked items, cleared items, store skips, this-trip store
+// overrides). The display range START moves day to day (today→shop day), which
+// would otherwise reset that memory every morning; the END — the upcoming
+// Friday / shop day — stays put for the whole cycle, so it's the anchor. A new
+// cycle (each shop day) naturally starts with a clean slate.
+function groceryCycleKey() {
+  return groceryRangeEnd || dateKeyFromDate(upcomingFriday(new Date()));
+}
+
+// "Cleared" = bought this cycle and swept off the visible list, so it stays
+// hidden AND is not re-surfaced as still-needed by later meals in the same
+// cycle. Keyed by cycle so a new shop day starts the list fresh.
+function groceryClearedKey(rowKey) {
+  return `${groceryCycleKey()}::${rowKey}`;
+}
+function isGroceryCleared(rowKey) {
+  return Boolean(state.groceryCleared?.[groceryClearedKey(rowKey)]);
+}
+function setGroceryCleared(rowKey, cleared) {
+  if (!state.groceryCleared || typeof state.groceryCleared !== "object") state.groceryCleared = {};
+  // Restore writes an explicit `false` rather than deleting — same merge-safety
+  // trick the store-skip map uses, so a stale device's `true` can't resurrect a
+  // clear the user has since undone (newer stateUpdatedAt wins the merge).
+  state.groceryCleared[groceryClearedKey(rowKey)] = Boolean(cleared);
+}
+
+function clearCheckedGroceries() {
+  // Sweep every currently-visible, checked item into the cleared memory. Reads
+  // the DOM so it targets exactly what the user sees checked (all tabs share
+  // one cycle bucket, so this clears across stores too).
+  const keys = new Set();
+  elements.groceryList.querySelectorAll("input[data-grocery]:checked").forEach((cb) => {
+    const rowKey = cb.closest("[data-grocery-row-key]")?.dataset.groceryRowKey;
+    if (rowKey) keys.add(rowKey);
+  });
+  if (!keys.size) return;
+  keys.forEach((k) => setGroceryCleared(k, true));
+  persist();
+  renderGroceries();
+}
+
+function restoreClearedGroceries() {
+  const prefix = `${groceryCycleKey()}::`;
+  if (state.groceryCleared) {
+    Object.keys(state.groceryCleared).forEach((k) => { if (k.startsWith(prefix)) state.groceryCleared[k] = false; });
+  }
+  showClearedGroceries = false;
+  persist();
+  renderGroceries();
 }
 
 function syncGroceryRangeInputs() {
