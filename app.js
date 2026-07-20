@@ -23323,10 +23323,10 @@ function renderGroceries() {
   const miscSection = unlocatedManualRows.length ? `
     <section class="grocery-store-section grocery-misc-section" data-grocery-store-section="">
       <div class="grocery-store-heading">
-        <button class="icon-btn grocery-collapse-btn" type="button" data-grocery-collapse="groceryStore:misc" title="${miscCollapsed ? "Expand" : "Collapse"} Miscellaneous" aria-expanded="${!miscCollapsed}">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
+        <button class="watch-section-head" type="button" data-grocery-collapse="groceryStore:misc" title="${miscCollapsed ? "Expand" : "Collapse"} Miscellaneous" aria-expanded="${!miscCollapsed}">
+          <svg class="watch-section-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          <span>Miscellaneous${miscCollapsed ? ` <span class="grocery-collapsed-count">(${unlocatedManualRows.length})</span>` : ""}</span>
         </button>
-        <h3>Miscellaneous${miscCollapsed ? ` <span class="grocery-collapsed-count">(${unlocatedManualRows.length})</span>` : ""}</h3>
       </div>
       ${miscCollapsed ? "" : `
       <div class="grocery-store-list" data-grocery-store-list="" data-grocery-store-section-list="">
@@ -23346,10 +23346,10 @@ function renderGroceries() {
       <section class="grocery-store-section" data-grocery-store-section="${escapeHtml(storeId)}">
         ${activeGroceryStoreTab === "all" ? `
           <div class="grocery-store-heading" ${storeId ? `data-grocery-store-setting="${escapeHtml(storeId)}"` : ""}>
-            <button class="icon-btn grocery-collapse-btn" type="button" data-grocery-collapse="${escapeHtml(collapseKey)}" title="${isCollapsed ? "Expand" : "Collapse"} ${escapeHtml(name)}" aria-expanded="${!isCollapsed}">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
+            <button class="watch-section-head" type="button" data-grocery-collapse="${escapeHtml(collapseKey)}" title="${isCollapsed ? "Expand" : "Collapse"} ${escapeHtml(name)}" aria-expanded="${!isCollapsed}">
+              <svg class="watch-section-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              <span>${escapeHtml(name)}${isCollapsed ? ` <span class="grocery-collapsed-count">(${sortedRows.length})</span>` : ""}</span>
             </button>
-            <h3>${escapeHtml(name)}${isCollapsed ? ` <span class="grocery-collapsed-count">(${sortedRows.length})</span>` : ""}</h3>
             ${storeDirectionsUrl(store) ? `
               <a class="icon-btn grocery-store-directions" href="${escapeHtml(storeDirectionsUrl(store))}" target="_blank" rel="noopener" title="Directions to ${escapeHtml(name)}" aria-label="Directions to ${escapeHtml(name)}">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 5 6 6-6 6v-4H8a4 4 0 0 0-4 4V9a4 4 0 0 1 4-4h5Z" /></svg>

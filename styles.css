@@ -3464,22 +3464,15 @@ input.live-toggle:checked::before,
   background: color-mix(in srgb, var(--accent-soft) 35%, transparent);
 }
 
-.grocery-store-section h3 {
-  margin: 0 auto 0 0; /* keep title left beside the collapse button; directions stay right */
-  color: var(--ink);
-  font-size: 1rem;
-  font-weight: 900;
-}
-
-.grocery-collapse-btn {
-  flex: 0 0 auto;
-  color: var(--muted);
-  width: 26px;
-  height: 26px;
-}
-
-.grocery-collapse-btn:hover {
-  color: var(--accent-dark);
+/* The collapse control is the shared watch-page chevron+label button (see
+   .watch-section-head) — sized to fill the row so the whole heading is
+   clickable, same as Watch/Reading, instead of a small icon-only square. */
+.grocery-store-heading .watch-section-head {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+  border-bottom: none;
+  padding: 0;
 }
 
 .grocery-collapsed-count {
@@ -8724,6 +8717,13 @@ body.touch-drag-active * {
 }
 
 .watch-section.is-collapsed .watch-section-chevron {
+  transform: rotate(-90deg);
+}
+
+/* Same rotation, driven by aria-expanded instead of an ancestor's
+   is-collapsed class — for uses (e.g. grocery store sections) where the
+   collapse state doesn't have a wrapping .watch-section to key off of. */
+.watch-section-head[aria-expanded="false"] .watch-section-chevron {
   transform: rotate(-90deg);
 }
 
