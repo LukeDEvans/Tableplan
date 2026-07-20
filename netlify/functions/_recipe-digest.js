@@ -221,6 +221,46 @@ async function appendPendingRecipes(serviceKey, userId, recipes) {
   return row;
 }
 
+// Classifies each recipe's title as vegetarian or not (dairy/eggs/honey are
+// fine; meat, poultry, and fish/seafood are not). Returns an array of
+// booleans aligned to `recipes`, or null if classification couldn't be
+// trusted (no key, bad response, mismatched length) — callers should treat
+// null as "don't filter" rather than dropping everything.
+async function classifyVegetarian(anthropicKey, recipes) {
+  if (!anthropicKey || !recipes.length) return null;
+  try {
+    const ai = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": anthropicKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: process.env.ANTHROPIC_RECIPE_FILTER_MODEL || "claude-haiku-4-5-20251001",
+        max_tokens: 500,
+        temperature: 0,
+        messages: [{
+          role: "user",
+          content: [
+            "For each numbered recipe title, decide if the dish is vegetarian.",
+            "Dairy, eggs, and honey are fine. Meat, poultry, and fish/seafood (including things like anchovy, bacon, gelatin, fish sauce, or stock/broth unless clearly vegetable) are not.",
+            'Reply with ONLY a JSON array of booleans, same order and length as the list, true = vegetarian. No other text.',
+            "",
+            recipes.map((r, i) => `${i + 1}. ${r.title}`).join("\n")
+          ].join("\n")
+        }]
+      })
+    });
+    if (!ai.ok) return null;
+    const data = await ai.json();
+    const text = data?.content?.map((c) => c.text || "").join("") || "";
+    const m = text.match(/\[[\s\S]*\]/);
+    if (!m) return null;
+    const arr = JSON.parse(m[0]);
+    if (!Array.isArray(arr) || arr.length !== recipes.length) return null;
+    return arr.map(Boolean);
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   RECIPE_SOURCES,
   enabledRecipeSources,
@@ -231,5 +271,6 @@ module.exports = {
   disposeProcessedEmail,
   loadMailAiRow,
   saveMailAiRow,
-  appendPendingRecipes
+  appendPendingRecipes,
+  classifyVegetarian
 };

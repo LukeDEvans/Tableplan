@@ -11,7 +11,7 @@
 //   2. Delivery: one email with the accumulated collection from all sources,
 //      grouped by publication, deduped against previous digests.
 const { listGmailUsers, getValidAccessToken, gFetch, headersMap, extractBody, loadAppConfig } = require("./_gmail-shared");
-const { enabledRecipeSources, extractRecipes, aiTrashTestMode, findAiTrashLabelId, disposeProcessedEmail, loadMailAiRow, saveMailAiRow, appendPendingRecipes } = require("./_recipe-digest");
+const { enabledRecipeSources, extractRecipes, aiTrashTestMode, findAiTrashLabelId, disposeProcessedEmail, loadMailAiRow, saveMailAiRow, appendPendingRecipes, classifyVegetarian } = require("./_recipe-digest");
 const { resolveRecipientEmail } = require("./_recipient");
 const FROM_EMAIL = "Live App <onboarding@resend.dev>";
 
@@ -71,13 +71,42 @@ exports.handler = async () => {
         continue;
       }
 
+      // Vegetarian-only filter (Settings → Mail AI, off by default). Only
+      // applies to actual recipes — the NutritionFacts "Health" section is
+      // articles/videos, not dishes, so it's left alone. A recipe filtered
+      // out here is still marked "sent" below so it never resurfaces: it
+      // will always fail the same test, so there's nothing to gain by
+      // reconsidering it next week.
+      let toSend = fresh;
+      if (mailAi.recipeDigestVegOnly) {
+        const anthropicKey = (process.env.ANTHROPIC_API_KEY || "").trim();
+        const recipeItems = fresh.filter((r) => (r.category || "Recipes") === "Recipes");
+        const isVeg = await classifyVegetarian(anthropicKey, recipeItems);
+        if (isVeg) {
+          const nonVegUrls = new Set(recipeItems.filter((_, i) => !isVeg[i]).map((r) => r.url));
+          toSend = fresh.filter((r) => !nonVegUrls.has(r.url));
+          if (nonVegUrls.size) console.log(`[recipe-digest] ${tokens.email}: filtered ${nonVegUrls.size} non-vegetarian recipe(s)`);
+        } else {
+          console.error(`[recipe-digest] ${tokens.email}: vegetarian classification unavailable — sending unfiltered`);
+        }
+      }
+
+      if (!toSend.length) {
+        console.log(`[recipe-digest] ${tokens.email}: nothing to send after the vegetarian filter (${fresh.length} pending)`);
+        row.recipesPending = [];
+        row.recipesSentUrls = [...sentUrls, ...fresh.map((r) => r.url)].slice(-500);
+        row.recipesLastRunAt = new Date().toISOString();
+        await saveMailAiRow(serviceKey, userId, row);
+        continue;
+      }
+
       const to = await resolveRecipientEmail(serviceKey);
       if (!to) { console.error("[recipe-digest] No recipient email — keeping collection for next week"); continue; }
 
       // Group: category header (Recipes, Health, …) → source subheading → links
       const CATEGORY_ORDER = ["Recipes", "Health"];
       const byCategory = new Map();
-      for (const r of fresh) {
+      for (const r of toSend) {
         const cat = r.category || "Recipes";
         if (!byCategory.has(cat)) byCategory.set(cat, new Map());
         const bySource = byCategory.get(cat);
@@ -122,7 +151,7 @@ exports.handler = async () => {
       row.recipesSentUrls = [...sentUrls, ...fresh.map((r) => r.url)].slice(-500);
       row.recipesLastRunAt = new Date().toISOString();
       await saveMailAiRow(serviceKey, userId, row);
-      console.log(`[recipe-digest] ${tokens.email}: sent ${fresh.length} recipes to ${to}`);
+      console.log(`[recipe-digest] ${tokens.email}: sent ${toSend.length} recipes to ${to}`);
     } catch (e) {
       console.error(`[recipe-digest] ${tokens.email} failed:`, e.message);
     }

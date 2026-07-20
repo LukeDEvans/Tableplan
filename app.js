@@ -15663,6 +15663,12 @@ const MAIL_AI_FEATURES = [
     desc: "Same treatment for Bon Appétit emails — their recipes join the same weekly digest email, in their own section."
   },
   {
+    key: "recipeDigestVegOnly",
+    defaultOn: false,
+    label: "Vegetarian recipes only",
+    desc: "Before each weekly digest goes out, an AI pass drops any NYT Cooking / Bon Appétit recipe that isn't vegetarian (dairy, eggs, and honey are fine — meat, poultry, and fish/seafood are not). Off by default. Doesn't touch the NutritionFacts health section."
+  },
+  {
     key: "nutritionFactsDigest",
     defaultOn: true,
     label: "Dr. Greger / NutritionFacts digest",
