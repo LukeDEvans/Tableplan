@@ -4823,7 +4823,7 @@ function mergeStates(newer, older) {
     // Travel
     "trips", "travelIdeas",
     // Finance
-    "financePeople", "financeBudgetGroups", "financeAccounts", "financePersonal", "financeRecurring",
+    "financePeople", "financeBudgetGroups", "financeAccounts", "financePersonal", "financeRecurring", "financeManualTxns",
   ]) {
     merged[key] = unionById(newer[key], older[key], key);
   }
@@ -4855,6 +4855,11 @@ function mergeStates(newer, older) {
     "podcastSavedEpisodeCategories",
     "podcastProgress", "podcastShowTiers", "podcastEpisodeTiers",
     "podcastPlaylistItems", "articleReadDates", "publicationTiers",
+    // Finance per-transaction metadata (keyed by txn id / merchant key / month).
+    // Union-merged so a sync between two devices never drops one device's
+    // labels, splits, renames, sign-flips, return links, or month history.
+    "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeMerchantNames",
+    "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts",
   ]) {
     merged[key] = unionByKey(newer[key], older[key]);
   }
