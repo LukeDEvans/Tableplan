@@ -1213,6 +1213,13 @@ const elements = {
 let pendingRestore = null;
 let pendingCookLogId = "";
 let doNotifOpen = false;
+// Declared here (above the initial render() below) because renderPlanner() —
+// which render() calls — reads them via mealPlanNotifBellHtml() during that
+// first synchronous render, before their original `let` further down would
+// have initialized (TDZ). Same reason doNotifOpen sits here.
+let mealPlanRecipes = null;
+let mealPlanNotifOpen = false;
+let mealPlanNotifWired = false;
 
 // ── Page notification dots ───────────────────────────────────────────────────
 // Landing links and the page-title menu show a red dot for pages with
@@ -8592,11 +8599,9 @@ function warmPageNotifs() {
 // ── Meal Plan recipe notifications ───────────────────────────────────────────
 // Recipes collected from NYT Cooking / Bon Appétit emails (see
 // _recipe-digest.js) surface here as soon as they're collected, instead of
-// waiting for a weekly digest email. mealPlanRecipes is null until the first
-// successful load; the bell only renders once it's an array.
-let mealPlanRecipes = null;
-let mealPlanNotifOpen = false;
-
+// waiting for a weekly digest email. mealPlanRecipes/mealPlanNotifOpen are
+// declared up near the top of the file (above the initial render()) to avoid
+// a TDZ crash — see the note there.
 function warmMealPlanRecipes() {
   if (!authSession?.access_token) return;
   callGmailApi({ action: "pendingRecipes" }).then((d) => {
@@ -8645,7 +8650,6 @@ function mealPlanNotifBellHtml() {
     </div>`;
 }
 
-let mealPlanNotifWired = false;
 function wireMealPlanNotifDelegation() {
   if (mealPlanNotifWired) return;
   mealPlanNotifWired = true;
