@@ -9114,15 +9114,15 @@ function appendMailRows(messages) {
       const action = btn.dataset.rowAction;
       invalidateMailThreadCache(m.threadId);
       if (action === "archive") {
-        await callGmailApi({ action: "move", threadId: m.threadId, addLabelIds: [], removeLabelIds: ["INBOX"] });
         if (mailSwipedRow === row) mailSwipedRow = null;
-        row.remove();
-        if (mailOpenThreadId === m.threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
+        removeMailRowWithUndo(row, m.threadId, "Archived",
+          { addLabelIds: [], removeLabelIds: ["INBOX"] },
+          { addLabelIds: ["INBOX"], removeLabelIds: [] });
       } else if (action === "delete") {
-        await callGmailApi({ action: "move", threadId: m.threadId, addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] });
         if (mailSwipedRow === row) mailSwipedRow = null;
-        row.remove();
-        if (mailOpenThreadId === m.threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
+        removeMailRowWithUndo(row, m.threadId, "Moved to Trash",
+          { addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] },
+          { addLabelIds: ["INBOX"], removeLabelIds: ["TRASH"] });
       } else if (action === "unread") {
         await callGmailApi({ action: "move", threadId: m.threadId, addLabelIds: ["UNREAD"], removeLabelIds: [] });
         row.classList.add("mail-row--unread");
@@ -9145,15 +9145,13 @@ function showRowLabelPicker(threadId, btn, row) {
   picker.className = "mail-move-picker";
   picker.innerHTML = mailMoveOptionsHtml(threadId);
   picker.querySelectorAll(".mail-move-option").forEach((opt) => {
-    opt.addEventListener("click", async () => {
+    opt.addEventListener("click", () => {
       picker.remove();
-      const data = await callGmailApi({ action: "move", threadId, addLabelIds: [opt.dataset.labelId], removeLabelIds: [currentMailbox] });
-      if (data?.ok) {
-        recordMailMove(threadId, opt.dataset.labelId);
-        invalidateMailThreadCache(threadId);
-        row.remove();
-        if (mailOpenThreadId === threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
-      }
+      recordMailMove(threadId, opt.dataset.labelId);
+      const labelName = mailLabels.find((l) => l.id === opt.dataset.labelId)?.name || "folder";
+      removeMailRowWithUndo(row, threadId, `Moved to ${labelName}`,
+        { addLabelIds: [opt.dataset.labelId], removeLabelIds: [currentMailbox] },
+        { addLabelIds: [currentMailbox], removeLabelIds: [opt.dataset.labelId] });
     });
   });
   btn.parentElement.style.position = "relative";
@@ -9478,7 +9476,12 @@ async function snoozeMailThread(threadId, when) {
   const res = await callGmailApi({ action: "snooze", threadId, wakeAt: when.toISOString() });
   if (!res?.ok) { alert("Snooze failed: " + (lastGmailApiError || "unknown error")); return; }
   invalidateMailThreadCache(threadId);
-  showMailToast(`Snoozed until ${formatSnoozeWhen(when)}`);
+  showMailToast(`Snoozed until ${formatSnoozeWhen(when)}`, async () => {
+    invalidateMailThreadCache(threadId);
+    const undoData = await callGmailApi({ action: "unsnooze", threadId });
+    if (undoData?.ok) { if (currentMailbox === "INBOX") loadMailList("INBOX"); renderMailLabelTabs(); }
+    else showMailToast("Couldn't undo — " + (lastGmailApiError || "try refreshing"));
+  });
   if (currentMailbox === "INBOX") {
     afterMailThreadAction(threadId);
   } else if (mailOpenThreadId === threadId) {
@@ -9868,9 +9871,24 @@ function renderMailThread(thread) {
   document.getElementById("mailReplySendBtn").addEventListener("click", () => sendMailReply(thread, last));
 }
 
-async function archiveMailThread(thread) {
-  const data = await callGmailApi({ action: "move", threadId: thread.id, addLabelIds: [], removeLabelIds: ["INBOX"] });
-  if (data?.ok) afterMailThreadAction(thread.id);
+// Thread-view version of the undo flow: no single row element to restore, so
+// undo reverses the labels and reloads the inbox list to bring the thread back.
+function mailThreadActionWithUndo(threadId, verb, forward, undo) {
+  invalidateMailThreadCache(threadId);
+  callGmailApi({ action: "move", threadId, ...forward });
+  afterMailThreadAction(threadId);
+  showMailToast(verb, async () => {
+    invalidateMailThreadCache(threadId);
+    const data = await callGmailApi({ action: "move", threadId, ...undo });
+    if (data?.ok) { if (currentMailbox === "INBOX") loadMailList("INBOX"); }
+    else showMailToast("Couldn't undo — " + (lastGmailApiError || "try refreshing"));
+  });
+}
+
+function archiveMailThread(thread) {
+  mailThreadActionWithUndo(thread.id, "Archived",
+    { addLabelIds: [], removeLabelIds: ["INBOX"] },
+    { addLabelIds: ["INBOX"], removeLabelIds: [] });
 }
 
 async function spamMailThread(thread) {
@@ -9878,9 +9896,10 @@ async function spamMailThread(thread) {
   if (data?.ok) afterMailThreadAction(thread.id);
 }
 
-async function deleteMailThread(thread) {
-  const data = await callGmailApi({ action: "move", threadId: thread.id, addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] });
-  if (data?.ok) afterMailThreadAction(thread.id);
+function deleteMailThread(thread) {
+  mailThreadActionWithUndo(thread.id, "Moved to Trash",
+    { addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] },
+    { addLabelIds: ["INBOX"], removeLabelIds: ["TRASH"] });
 }
 
 async function markMailUnread(thread) {
@@ -10084,14 +10103,51 @@ function saveMailAsArticle(thread, lastMsg) {
   openArticle(id, "articleList");
 }
 
-function showMailToast(message) {
+// Optimistically remove an inbox row, run the forward label change, and offer
+// a Gmail-style Undo that reverses the labels and re-inserts the row at the
+// same spot. forward/undo are { addLabelIds, removeLabelIds } for the "move".
+function removeMailRowWithUndo(row, threadId, verb, forward, undo) {
+  const anchor = row.nextElementSibling;
+  const list = row.parentElement;
+  row.remove();
+  if (mailOpenThreadId === threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
+  invalidateMailThreadCache(threadId);
+  callGmailApi({ action: "move", threadId, ...forward });
+  showMailToast(verb, async () => {
+    invalidateMailThreadCache(threadId);
+    const data = await callGmailApi({ action: "move", threadId, ...undo });
+    if (data?.ok && list) {
+      if (anchor && anchor.parentNode === list) list.insertBefore(row, anchor);
+      else list.appendChild(row);
+    } else if (!data?.ok) {
+      showMailToast("Couldn't undo — " + (lastGmailApiError || "try refreshing"));
+    }
+  });
+}
+
+function showMailToast(message, undo) {
   document.getElementById("mailToast")?.remove();
   const toast = document.createElement("div");
   toast.id = "mailToast";
   toast.className = "mail-toast";
-  toast.textContent = message;
+  const label = document.createElement("span");
+  label.textContent = message;
+  toast.appendChild(label);
+  let timer;
+  if (typeof undo === "function") {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "mail-toast-undo";
+    btn.textContent = "Undo";
+    btn.addEventListener("click", () => {
+      clearTimeout(timer);
+      toast.remove();
+      undo();
+    });
+    toast.appendChild(btn);
+  }
   document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 3000);
+  timer = setTimeout(() => toast.remove(), undo ? 6000 : 3000);
 }
 
 function updateMailBulkBar() {

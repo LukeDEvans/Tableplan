@@ -677,5 +677,6 @@ module.exports = {
   loadSnoozes,
   saveSnoozes,
   findOrCreateSnoozedLabel,
+  modifyWholeThread,
   processDueSnoozes
 };

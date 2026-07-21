@@ -12303,7 +12303,24 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   z-index: 9999;
   pointer-events: none;
   animation: mail-toast-in 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
 }
+.mail-toast-undo {
+  pointer-events: auto;
+  background: none;
+  border: none;
+  color: var(--sun, #f5c542);
+  font: inherit;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.mail-toast-undo:hover { text-decoration: underline; }
 @keyframes mail-toast-in { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 
 /* Mobile */

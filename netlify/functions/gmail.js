@@ -3,7 +3,7 @@ const {
   loadUserGmailTokens, saveUserGmailTokens, deleteUserGmailTokens,
   getUserId, getValidAccessToken, gFetch, headersMap, extractBody,
   htmlToText, cleanSnippet, loadMailSuggestions, saveMailSuggestions, runInboxSweep,
-  loadSnoozes, saveSnoozes, findOrCreateSnoozedLabel
+  loadSnoozes, saveSnoozes, findOrCreateSnoozedLabel, modifyWholeThread
 } = require("./_gmail-shared");
 const { loadMailAiRow, dismissPendingRecipe } = require("./_recipe-digest");
 
@@ -86,6 +86,12 @@ exports.handler = async (event) => {
     if (!url) return json(400, { error: "url required" });
     const recipes = await dismissPendingRecipe(serviceKey, userId, url);
     return json(200, { ok: true, recipes });
+  }
+
+  // Wake-time metadata for the client's Snoozed folder (the threads themselves
+  // carry the "Snoozed" Gmail label; this adds the "until when" per thread).
+  if (action === "listSnoozes") {
+    return json(200, { snoozes: await loadSnoozes(serviceKey, userId) });
   }
 
   const tokens = await loadUserGmailTokens(serviceKey, userId);
@@ -371,6 +377,19 @@ exports.handler = async (event) => {
     snoozes.push({ threadId, wakeAt: wake.toISOString(), snoozedAt: new Date().toISOString() });
     await saveSnoozes(serviceKey, userId, snoozes);
     return json(200, { ok: true, wakeAt: wake.toISOString() });
+  }
+
+  if (action === "unsnooze") {
+    // Wake a snoozed thread now: back to the inbox, drop the Snoozed label and
+    // the wake record. Also the reverse used by the "Undo" on a snooze.
+    const { threadId } = body;
+    if (!threadId) return json(400, { error: "threadId required" });
+    const labelId = await findOrCreateSnoozedLabel(gToken);
+    try { await modifyWholeThread(gToken, threadId, ["INBOX"], labelId ? [labelId] : []); }
+    catch (e) { return json(502, { error: e.message || "Thread update failed." }); }
+    const snoozes = (await loadSnoozes(serviceKey, userId)).filter((s) => s.threadId !== threadId);
+    await saveSnoozes(serviceKey, userId, snoozes);
+    return json(200, { ok: true });
   }
 
   if (action === "draft") {
