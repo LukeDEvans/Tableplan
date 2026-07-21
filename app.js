@@ -8553,7 +8553,16 @@ let mailOpenThreadId = null;
 let mailNextPageToken = null;
 let mailCurrentQuery = "";
 let mailLabels = [];
+let mailSnoozeMap = {}; // threadId → wakeAt ISO, populated when the Snoozed folder is open
 let mailFolderExpanded = new Set();
+
+// The emulated-snooze user label ("Snoozed"), and whether we're viewing it.
+function snoozedLabelId() {
+  return mailLabels.find((l) => l.type === "user" && (l.name || "").toLowerCase() === "snoozed")?.id || null;
+}
+function isSnoozedView() {
+  return Boolean(snoozedLabelId()) && currentMailbox === snoozedLabelId();
+}
 let mailSelected = new Map(); // threadId → { subject }
 let mailBulkBarWired = false;
 let mailSwipedRow = null; // the .mail-row currently revealing its swipe actions, if any
@@ -8910,6 +8919,12 @@ async function disconnectGmail() {
 
 async function loadMailList(labelId, q = "", append = false) {
   currentMailbox = labelId;
+  // Snoozed folder: pull the wake-time metadata so rows can show "until when"
+  // and offer unsnooze/reschedule instead of the normal quick actions.
+  if (!append && labelId === snoozedLabelId()) {
+    const s = await callGmailApi({ action: "listSnoozes" });
+    mailSnoozeMap = Object.fromEntries((s?.snoozes || []).map((x) => [x.threadId, x.wakeAt]));
+  }
   if (!append) {
     mailNextPageToken = null;
     mailCurrentQuery = q;
@@ -8982,13 +8997,25 @@ function attachMailScrollSentinel() {
 }
 
 function appendMailRows(messages) {
+  const snoozeView = isSnoozedView();
   messages.forEach((m) => {
     const row = document.createElement("div");
     row.className = `mail-row${m.unread ? " mail-row--unread" : ""}${m.starred ? " mail-row--starred" : ""}`;
     row.dataset.threadId = m.threadId;
     if (m.from) mailThreadSenders.set(m.threadId, mailSenderAddress(m.from));
-    row.innerHTML = `
-      <div class="mail-row-actions" aria-label="Quick actions">
+    const wakeAt = snoozeView ? mailSnoozeMap[m.threadId] : null;
+    const rightHtml = wakeAt
+      ? `<span class="mail-row-date mail-row-wake" title="Snoozed until ${escapeHtml(new Date(wakeAt).toLocaleString())}">${escapeHtml(formatSnoozeWhen(new Date(wakeAt)))}</span>`
+      : `${m.hasAttachment ? `<svg class="mail-row-clip" viewBox="0 0 24 24" aria-label="Has attachment"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>` : ""}<span class="mail-row-date">${escapeHtml(formatMailDate(m.internalDate))}</span>`;
+    const actionsHtml = snoozeView
+      ? `
+        <button class="mail-row-action-btn" type="button" data-row-action="unsnooze" title="Unsnooze — return to inbox now" aria-label="Unsnooze">
+          ${ldeIcon("markUnread", { size: 19 })}
+        </button>
+        <button class="mail-row-action-btn" type="button" data-row-action="reschedule" title="Reschedule snooze" aria-label="Reschedule">
+          ${ldeIcon("snoozed", { size: 19 })}
+        </button>`
+      : `
         <button class="mail-row-action-btn" type="button" data-row-action="archive" title="Archive" aria-label="Archive">
           ${ldeIcon("archive", { size: 19 })}
         </button>
@@ -9000,7 +9027,9 @@ function appendMailRows(messages) {
         </button>
         <button class="mail-row-action-btn" type="button" data-row-action="snooze" title="Snooze" aria-label="Snooze">
           ${ldeIcon("snoozed", { size: 19 })}
-        </button>
+        </button>`;
+    row.innerHTML = `
+      <div class="mail-row-actions" aria-label="Quick actions">${actionsHtml}
       </div>
       <div class="mail-row-front">
         <div class="mail-row-left">
@@ -9020,8 +9049,7 @@ function appendMailRows(messages) {
           <span class="mail-row-subject">${escapeHtml(m.subject)}</span>${m.snippet ? `<span class="mail-row-sep"> — </span><span class="mail-row-snippet">${escapeHtml(cleanMailSnippet(m.snippet))}</span>` : ""}
         </span>
         <div class="mail-row-right">
-          ${m.hasAttachment ? `<svg class="mail-row-clip" viewBox="0 0 24 24" aria-label="Has attachment"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>` : ""}
-          <span class="mail-row-date">${escapeHtml(formatMailDate(m.internalDate))}</span>
+          ${rightHtml}
         </div>
       </div>`;
 
@@ -9128,6 +9156,21 @@ function appendMailRows(messages) {
         row.classList.add("mail-row--unread");
         if (mailSwipedRow === row) closeSwipedMailRow();
       } else if (action === "snooze") {
+        showMailSnoozeMenu(m.threadId, btn);
+        if (mailSwipedRow === row) closeSwipedMailRow();
+      } else if (action === "unsnooze") {
+        if (mailSwipedRow === row) mailSwipedRow = null;
+        const anchor = row.nextElementSibling;
+        row.remove();
+        delete mailSnoozeMap[m.threadId];
+        const data = await callGmailApi({ action: "unsnooze", threadId: m.threadId });
+        if (data?.ok) {
+          showMailToast("Returned to inbox");
+        } else {
+          if (anchor?.parentNode) anchor.parentNode.insertBefore(row, anchor); else elements.mailList.appendChild(row);
+          showMailToast("Couldn't unsnooze — " + (lastGmailApiError || "try again"));
+        }
+      } else if (action === "reschedule") {
         showMailSnoozeMenu(m.threadId, btn);
         if (mailSwipedRow === row) closeSwipedMailRow();
       }
@@ -9484,6 +9527,8 @@ async function snoozeMailThread(threadId, when) {
   });
   if (currentMailbox === "INBOX") {
     afterMailThreadAction(threadId);
+  } else if (isSnoozedView()) {
+    loadMailList(currentMailbox); // reschedule from the Snoozed folder → refresh wake times
   } else if (mailOpenThreadId === threadId) {
     elements.mailThread.hidden = true;
     mailOpenThreadId = null;

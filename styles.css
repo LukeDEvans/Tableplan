@@ -12486,6 +12486,7 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   padding-left: 8px;
 }
 .mail-row--unread .mail-row-date { font-weight: 600; color: var(--ink); }
+.mail-row-wake { color: var(--accent, #92400E); font-weight: 700; }
 /* Docked behind the front layer, right-aligned. Hidden by default (desktop
    shows it via :hover, touch always lays it out — see the media queries
    on .mail-row-front above). */
