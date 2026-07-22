@@ -10610,6 +10610,15 @@ function buildMailBodyFrame(html) {
       iframe.style.height = Math.min(Math.max(h, 40), 30000) + "px";
     } catch {}
   };
+  // Coalesce refit bursts into one measure per frame. Deferring to the next
+  // animation frame also breaks any synchronous ResizeObserver feedback (the
+  // zoom fitAndSize applies changes body size, which would otherwise re-notify).
+  let fitPending = false;
+  const scheduleFit = () => {
+    if (fitPending) return;
+    fitPending = true;
+    requestAnimationFrame(() => { fitPending = false; fitAndSize(); });
+  };
   iframe.addEventListener("load", () => {
     try {
       linkifyMailDocument(iframe.contentDocument);
@@ -10617,11 +10626,26 @@ function buildMailBodyFrame(html) {
     } catch {}
     fitAndSize();
     try {
-      iframe.contentDocument.querySelectorAll("img").forEach((img) => img.addEventListener("load", fitAndSize));
+      const doc = iframe.contentDocument;
+      // Re-fit whenever an image settles — load AND error both finalize layout,
+      // so a blocked or broken remote image (common under no-referrer) can no
+      // longer leave the frame stuck at a too-short height.
+      doc.querySelectorAll("img").forEach((img) => {
+        img.addEventListener("load", scheduleFit);
+        img.addEventListener("error", scheduleFit);
+      });
+      // Event-driven height tracking: any change in the rendered body size —
+      // late remote images, web-font swaps, reflow — re-fits immediately, with
+      // no fixed time window that can expire before slow content finishes
+      // (the old 4s poll was why slow/blocked images left a half-height frame).
+      if (doc.body && typeof ResizeObserver !== "undefined") {
+        new ResizeObserver(scheduleFit).observe(doc.body);
+      }
     } catch {}
-    // Remote images and web fonts settle late — re-measure briefly
+    // A few early re-measures cover the first layout settle even when the body
+    // size doesn't change (e.g. same-metrics font swaps).
     let n = 0;
-    const t = setInterval(() => { fitAndSize(); if (++n >= 10) clearInterval(t); }, 400);
+    const t = setInterval(() => { fitAndSize(); if (++n >= 6) clearInterval(t); }, 400);
     // Refit when the pane width changes (sidebar toggle, window resize)
     let lastW = iframe.clientWidth;
     new ResizeObserver(() => {
