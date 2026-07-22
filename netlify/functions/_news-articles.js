@@ -4,7 +4,7 @@
 // away. Conversion uses Claude so the article reads well aloud; hyperlinks in
 // the newsletter body are preserved as clickable <a> tags.
 // Files prefixed with _ are not deployed as individual functions.
-const { claudeCall } = require("./_claude");
+const { claudeCallComplete } = require("./_claude");
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
 // One entry per newsletter. `key` doubles as the settings toggle in
@@ -78,11 +78,18 @@ async function convertNewsEmailToArticle(anthropicKey, source, { subject, date, 
     "Do not summarize or shorten the editorial content. Do not add commentary."
   ].join("\n");
 
-  const out = await claudeCall(anthropicKey, {
+  // Sonnet reproduces the whole newsletter faithfully and in order — Haiku
+  // inconsistently condensed or dropped middle sections, and on the busiest
+  // news days its output ran past the token ceiling and was clipped
+  // mid-sentence in the Media reader. claudeCallComplete continues past the
+  // per-round ceiling so even a very long issue comes through in full.
+  const out = await claudeCallComplete(anthropicKey, {
     system,
     user: `Newsletter subject: ${subject}\nDate: ${date}\n\n${text}`,
     maxTokens: 8000,
-    model: "claude-haiku-4-5-20251001"
+    maxRounds: 4,
+    model: "claude-sonnet-5",
+    thinking: { type: "disabled" }
   });
   const cleaned = out.replace(/^```html?\s*/i, "").replace(/```\s*$/i, "").trim();
   if (cleaned.length < 400) throw new Error("Conversion produced too little content");
