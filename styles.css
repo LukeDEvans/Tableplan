@@ -12332,14 +12332,23 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   .mail-content { border-left: none; }
   .mail-thread-body { padding: 0 16px 24px; }
   .mail-thread-toolbar { padding-left: 4px; padding-right: 4px; }
+  /* Fewer buttons now (reply/forward/spam/unread moved to "…"): spread the
+     survivors across the row and enlarge them for comfortable touch targets. */
+  .mail-thread-actions { flex: 1; justify-content: space-around; gap: 2px; margin-left: 6px; }
+  .mail-action-btn { width: 46px; height: 46px; }
+  .mail-action-btn svg { width: 23px; height: 23px; }
+  .mail-thread-toolbar .mail-action-divider { display: none; }
   .mail-content { position: relative; }
   .mail-content { position: relative; }
   /* .mail-row-right's 130px min-width exists to fit the quick-action icons
      that swap in for the date on desktop :hover (see line ~12369) — touch
      has no hover, so that reserved space is pure waste here, and was wide
      enough to push the row past the viewport (clipped by
-     .mail-list-panel's overflow-x: hidden above), taking the date with it. */
-  .mail-row-right { min-width: 0; }
+     .mail-list-panel's overflow-x: hidden above), taking the date with it.
+     Scoped under .mail-row-front so it out-specifies the later base rule
+     (.mail-row-right { min-width: 130px }) and actually wins on mobile —
+     otherwise the reserved 130px pushed the date off the clipped edge. */
+  .mail-row-front .mail-row-right { min-width: 0; }
   .mail-row-from { width: 130px; }
 }
 @media (max-width: 480px) {
@@ -12463,6 +12472,10 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   padding: 0 8px 0 2px;
 }
 .mail-row--unread .mail-row-from { font-weight: 700; }
+/* Conversation message count (Gmail-style), shown only when a thread bundles
+   more than one email. */
+.mail-row-count { color: var(--text-muted, #888); font-weight: 400; font-size: 0.78rem; }
+.mail-row--unread .mail-row-count { color: var(--ink); }
 .mail-row-content {
   flex: 1;
   min-width: 0;

@@ -8562,7 +8562,38 @@ let currentMailbox = "INBOX";
 let mailGmailConnected = false;
 let mailStatusPromise = null; // pre-fetched status so Mail page loads instantly
 let mailOpenThreadId = null;
+// Set by renderMailThread to the current thread's compose opener so the "…"
+// menu (a separate function) can trigger reply/forward for the open thread.
+let mailReplyForwardTrigger = null;
+// Adjacent threads in the current list, for swipe-between-emails navigation
+// (the prev/next buttons are hidden on mobile — swipe replaces them there).
+let mailNavPrevId = null;
+let mailNavNextId = null;
+let mailSwipeNavWired = false;
 let mailNextPageToken = null;
+
+// dir > 0 = next email, dir < 0 = previous. No-op at the ends of the list.
+function mailSwipeNavigate(dir) {
+  const id = dir > 0 ? mailNavNextId : mailNavPrevId;
+  if (id) openMailThread(id);
+}
+
+// Detects a clear horizontal swipe on `target` and navigates: left → next,
+// right → previous. Ignores vertical drags (scrolling) and multi-touch.
+function wireMailSwipeNav(target) {
+  let sx = 0, sy = 0, tracking = false;
+  target.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) { tracking = false; return; }
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY; tracking = true;
+  }, { passive: true });
+  target.addEventListener("touchend", (e) => {
+    if (!tracking) return;
+    tracking = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 2) mailSwipeNavigate(dx < 0 ? 1 : -1);
+  }, { passive: true });
+}
 let mailCurrentQuery = "";
 let mailLabels = [];
 let mailSnoozeMap = {}; // threadId → wakeAt ISO, populated when the Snoozed folder is open
@@ -8763,7 +8794,22 @@ let lastMailSuggestions = [];
 function setMailNotifPanelOpen(open) {
   mailNotifPanelOpen = open;
   const panel = document.getElementById("mailSuggestions");
-  if (panel) panel.hidden = !open;
+  if (!panel) return;
+  panel.hidden = !open;
+  // On a narrow screen the panel is anchored to the tiny bell wrapper, which
+  // let it run off the right edge. Pin it to the viewport (fixed, 8px insets)
+  // just under the bell so it always fits; clear the overrides on desktop.
+  if (open && window.innerWidth <= 600) {
+    const r = document.getElementById("mailSuggCheckNow")?.getBoundingClientRect();
+    panel.style.position = "fixed";
+    panel.style.top = (r ? r.bottom + 6 : 56) + "px";
+    panel.style.left = "8px";
+    panel.style.right = "8px";
+    panel.style.width = "auto";
+    panel.style.maxWidth = "none";
+  } else {
+    panel.style.position = panel.style.top = panel.style.left = panel.style.right = panel.style.width = panel.style.maxWidth = "";
+  }
 }
 
 function renderMailSuggestions(suggestions) {
@@ -9053,7 +9099,7 @@ function appendMailRows(messages) {
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
           </button>
         </div>
-        <span class="mail-row-from">${escapeHtml(parseDisplayName(m.from))}</span>
+        <span class="mail-row-from">${escapeHtml(parseDisplayName(m.from))}${m.count > 1 ? ` <span class="mail-row-count">${m.count}</span>` : ""}</span>
         <span class="mail-row-content">
           <span class="mail-row-subject">${escapeHtml(m.subject)}</span>${m.snippet ? `<span class="mail-row-sep"> — </span><span class="mail-row-snippet">${escapeHtml(cleanMailSnippet(m.snippet))}</span>` : ""}
         </span>
@@ -9335,6 +9381,9 @@ function renderMailLabelTabs() {
       btn.classList.add("is-active");
       btn.setAttribute("aria-selected", "true");
       loadMailList(btn.dataset.mailbox);
+      // On mobile the folder list is an overlay drawer — collapse it once a
+      // folder is chosen so the message list is visible right away.
+      if (window.innerWidth <= 860) document.getElementById("mailSidebar")?.classList.remove("is-expanded");
     });
   });
 
@@ -9758,24 +9807,14 @@ function renderMailThread(thread) {
         ${ldeIcon("back", { size: 22 })}
       </button>
       <div class="mail-thread-actions">
-        <button class="icon-btn mail-action-btn" type="button" id="mailReplyBtn" title="Reply" aria-label="Reply">
-          ${ldeIcon("reply", { size: 22 })}
-        </button>
-        <button class="icon-btn mail-action-btn" type="button" id="mailForwardBtn" title="Forward" aria-label="Forward">
-          ${ldeIcon("forward", { size: 22 })}
-        </button>
-        <div class="mail-action-divider"></div>
-        <button class="icon-btn mail-action-btn" type="button" id="mailArchiveBtn" title="Archive">
+        <button class="icon-btn mail-action-btn" id="mailArchiveBtn" type="button" title="Archive" aria-label="Archive">
           ${ldeIcon("archive", { size: 22 })}
         </button>
-        <button class="icon-btn mail-action-btn" type="button" id="mailSpamBtn" title="Report spam">
-          ${ldeIcon("spam", { size: 22 })}
-        </button>
-        <button class="icon-btn mail-action-btn" type="button" id="mailDeleteBtn" title="Delete">
+        <button class="icon-btn mail-action-btn" id="mailDeleteBtn" type="button" title="Delete" aria-label="Delete">
           ${ldeIcon("trash", { size: 22 })}
         </button>
-        <button class="icon-btn mail-action-btn" type="button" id="mailUnreadBtn" title="Mark as unread">
-          ${ldeIcon("markUnread", { size: 22 })}
+        <button class="icon-btn mail-action-btn" id="mailSnoozeBtn" type="button" title="Snooze" aria-label="Snooze">
+          ${ldeIcon("snoozed", { size: 22 })}
         </button>
         <div class="mail-action-divider"></div>
         <div class="mail-move-wrap">
@@ -9847,6 +9886,12 @@ function renderMailThread(thread) {
   document.getElementById("mailBackBtn").addEventListener("click", () => { elements.mailThread.hidden = true; mailOpenThreadId = null; });
   const mailRows = [...elements.mailList.querySelectorAll(".mail-row[data-thread-id]")];
   const mailIdx = mailRows.findIndex(r => r.dataset.threadId === thread.id);
+  // Adjacent threads power both the prev/next buttons and the swipe gesture.
+  mailNavPrevId = mailIdx > 0 ? mailRows[mailIdx - 1].dataset.threadId : null;
+  mailNavNextId = (mailIdx !== -1 && mailIdx < mailRows.length - 1) ? mailRows[mailIdx + 1].dataset.threadId : null;
+  // The thread container persists across renders — wire the swipe once so
+  // listeners don't stack (it reads the module-level adjacent ids each time).
+  if (!mailSwipeNavWired) { wireMailSwipeNav(elements.mailThread); mailSwipeNavWired = true; }
   const navCounter = document.getElementById("mailNavCounter");
   if (mailIdx !== -1) {
     navCounter.innerHTML = `
@@ -9861,9 +9906,8 @@ function renderMailThread(thread) {
     document.getElementById("mailNavNextBtn").addEventListener("click", () => openMailThread(mailRows[mailIdx + 1].dataset.threadId));
   }
   document.getElementById("mailArchiveBtn").addEventListener("click", () => archiveMailThread(thread));
-  document.getElementById("mailSpamBtn").addEventListener("click", () => spamMailThread(thread));
   document.getElementById("mailDeleteBtn").addEventListener("click", () => deleteMailThread(thread));
-  document.getElementById("mailUnreadBtn").addEventListener("click", () => markMailUnread(thread));
+  document.getElementById("mailSnoozeBtn").addEventListener("click", (e) => { e.stopPropagation(); showMailSnoozeMenu(thread.id, e.currentTarget); });
   document.getElementById("mailMoveBtn").addEventListener("click", (e) => { e.stopPropagation(); showMailMovePicker(thread); });
   if (fileChip) {
     document.getElementById("mailFileChipBtn")?.addEventListener("click", () => moveMailToLabel(thread.id, fileChip.id));
@@ -9914,8 +9958,9 @@ function renderMailThread(thread) {
     }
     document.getElementById("mailReplyArea").scrollIntoView({ behavior: "smooth", block: "nearest" });
   };
-  document.getElementById("mailReplyBtn").addEventListener("click", () => openMailComposeArea("reply"));
-  document.getElementById("mailForwardBtn").addEventListener("click", () => openMailComposeArea("forward"));
+  // Reply/Forward now live in the "…" menu (a separate function); expose this
+  // thread's opener so it can trigger them.
+  mailReplyForwardTrigger = openMailComposeArea;
   document.getElementById("mailAiDraftBtn").addEventListener("click", () => {
     document.getElementById("mailAiInstructionRow").hidden = false;
     document.getElementById("mailAiInstruction").focus();
@@ -9981,10 +10026,23 @@ function showMailMoreMenu(thread, lastMsg) {
   menu.id = "mailMoreMenu";
   menu.className = "mail-more-menu";
   menu.innerHTML = `
-    <button class="mail-more-option" type="button" data-action="snooze">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-      Snooze
+    <button class="mail-more-option" type="button" data-action="reply">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
+      Reply
     </button>
+    <button class="mail-more-option" type="button" data-action="forward">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg>
+      Forward
+    </button>
+    <button class="mail-more-option" type="button" data-action="spam">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      Report spam
+    </button>
+    <button class="mail-more-option" type="button" data-action="unread">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="m4 7 8 6 8-6"/></svg>
+      Mark as unread
+    </button>
+    <div class="mail-more-divider"></div>
     <button class="mail-more-option" type="button" data-action="add-task">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
       Add to tasks
@@ -10007,7 +10065,10 @@ function showMailMoreMenu(thread, lastMsg) {
     if (!opt) return;
     menu.remove();
     const action = opt.dataset.action;
-    if (action === "snooze") showMailSnoozeMenu(thread.id, btn);
+    if (action === "reply") mailReplyForwardTrigger?.("reply");
+    else if (action === "forward") mailReplyForwardTrigger?.("forward");
+    else if (action === "spam") spamMailThread(thread);
+    else if (action === "unread") markMailUnread(thread);
     else if (action === "add-task") addEmailToTasks(lastMsg?.subject || "(no subject)");
     else if (action === "create-event") createEventFromEmail(lastMsg?.subject || "");
     else if (action === "read-as-article") saveMailAsArticle(thread, lastMsg);
@@ -10627,6 +10688,21 @@ function buildMailBodyFrame(html) {
     fitAndSize();
     try {
       const doc = iframe.contentDocument;
+      // The email body fills most of the reader; the iframe swallows touches
+      // over it, so detect horizontal swipes here too and forward them to the
+      // list navigation (left → next email, right → previous).
+      let sx = 0, sy = 0, tr = false;
+      doc.addEventListener("touchstart", (e) => {
+        if (e.touches.length !== 1) { tr = false; return; }
+        sx = e.touches[0].clientX; sy = e.touches[0].clientY; tr = true;
+      }, { passive: true });
+      doc.addEventListener("touchend", (e) => {
+        if (!tr) return;
+        tr = false;
+        const t = e.changedTouches[0];
+        const dx = t.clientX - sx, dy = t.clientY - sy;
+        if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 2) mailSwipeNavigate(dx < 0 ? 1 : -1);
+      }, { passive: true });
       // Re-fit whenever an image settles — load AND error both finalize layout,
       // so a blocked or broken remote image (common under no-referrer) can no
       // longer leave the frame stuck at a too-short height.

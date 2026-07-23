@@ -108,7 +108,9 @@ exports.handler = async (event) => {
     if (q) params.set("q", q);
     labelIds.forEach((l) => params.append("labelIds", l));
 
-    const listRes = await gFetch(gToken, `/messages?${params}`);
+    // List CONVERSATIONS, not individual messages, so a multi-message chain is
+    // one row (Gmail-style). Each thread is summarized from its latest message.
+    const listRes = await gFetch(gToken, `/threads?${params}`);
     if (!listRes.ok) {
       const e = await listRes.json().catch(() => ({}));
       console.error("Gmail list failed:", listRes.status, JSON.stringify(e));
@@ -116,8 +118,8 @@ exports.handler = async (event) => {
     }
     const listData = await listRes.json();
 
-    // One cheap ids-only query flags which of this page's messages carry
-    // attachments (metadata format can't tell us).
+    // One cheap ids-only query flags which messages carry attachments (metadata
+    // format can't tell us); a thread counts as having one if any message does.
     let attachmentIds = new Set();
     try {
       const ap = new URLSearchParams({ maxResults: "100", q: q ? `(${q}) has:attachment` : "has:attachment" });
@@ -127,22 +129,26 @@ exports.handler = async (event) => {
     } catch { /* indicator only — never block the list */ }
 
     const messages = (await Promise.all(
-      (listData.messages || []).map(async (m) => {
-        const r = await gFetch(gToken, `/messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`);
+      (listData.threads || []).map(async (t) => {
+        const r = await gFetch(gToken, `/threads/${t.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`);
         if (!r.ok) return null;
         const d = await r.json();
-        const hdrs = headersMap(d.payload?.headers);
+        const msgs = d.messages || [];
+        if (!msgs.length) return null;
+        const last = msgs[msgs.length - 1]; // most recent message drives the row
+        const hdrs = headersMap(last.payload?.headers);
         return {
-          id: d.id,
-          threadId: d.threadId,
-          snippet: cleanSnippet(d.snippet),
-          unread: (d.labelIds || []).includes("UNREAD"),
-          starred: (d.labelIds || []).includes("STARRED"),
-          hasAttachment: attachmentIds.has(d.id),
+          id: last.id,
+          threadId: t.id,
+          count: msgs.length,
+          snippet: cleanSnippet(t.snippet || last.snippet || ""),
+          unread: msgs.some((m) => (m.labelIds || []).includes("UNREAD")),
+          starred: msgs.some((m) => (m.labelIds || []).includes("STARRED")),
+          hasAttachment: msgs.some((m) => attachmentIds.has(m.id)),
           from: hdrs.from || "",
           subject: hdrs.subject || "(no subject)",
           date: hdrs.date || "",
-          internalDate: d.internalDate
+          internalDate: last.internalDate
         };
       })
     )).filter(Boolean);
