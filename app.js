@@ -35074,9 +35074,20 @@ function populateReadListenSettings() {
 
 let listenAudio = null;
 let listenAudioQueue = [];
+let listenNextAudio = null; // next chunk, preloaded while the current one plays
 let listenSpeaking = false;
 let listenLoading = false;
 let listenGenId = 0;
+
+// Builds an <audio> that immediately starts buffering, so by the time the
+// current chunk ends the next one is ready and playback doesn't stall.
+function makeListenChunk(url) {
+  const a = new Audio();
+  a.preload = "auto";
+  a.src = url;
+  a.load();
+  return a;
+}
 
 function listenToArticle(id) {
   const article = (state.savedArticles || []).find((a) => a.id === id);
@@ -35172,6 +35183,7 @@ function playNextAudioChunk(article) {
   if (!listenAudioQueue.length) {
     listenSpeaking = false;
     listenAudio = null;
+    listenNextAudio = null;
     updateListenPlayBtn();
     markArticleRead(article.id);
     // All-queue hand-off takes priority; otherwise the per-tab article advance
@@ -35179,8 +35191,10 @@ function playNextAudioChunk(article) {
     return;
   }
   const url = listenAudioQueue.shift();
-  if (listenAudio) { listenAudio.onended = null; listenAudio.onpause = null; }
-  listenAudio = new Audio(url);
+  if (listenAudio) { listenAudio.onended = null; listenAudio.onpause = null; listenAudio.onplay = null; listenAudio.onerror = null; }
+  // Reuse the chunk we preloaded last round if it matches; otherwise build it.
+  listenAudio = (listenNextAudio && listenNextAudio.src === url) ? listenNextAudio : makeListenChunk(url);
+  listenNextAudio = null;
   const speedSelect = document.getElementById("listenSpeedSelect");
   listenAudio.playbackRate = speedSelect ? parseFloat(speedSelect.value) : 1;
   listenAudio.onplay = () => { listenSpeaking = true; updateListenPlayBtn(); };
@@ -35188,6 +35202,8 @@ function playNextAudioChunk(article) {
   listenAudio.onerror = () => { listenSpeaking = false; listenAudio = null; updateListenPlayBtn(); };
   listenAudio.onended = () => playNextAudioChunk(article);
   listenAudio.play().catch(() => {});
+  // Start buffering the next chunk now so the hand-off is seamless.
+  listenNextAudio = listenAudioQueue.length ? makeListenChunk(listenAudioQueue[0]) : null;
 
   if ("mediaSession" in navigator) {
     navigator.mediaSession.metadata = new MediaMetadata({
@@ -35242,6 +35258,7 @@ function stopListen() {
     listenAudio.pause();
     listenAudio = null;
   }
+  if (listenNextAudio) { listenNextAudio.src = ""; listenNextAudio = null; }
   listenAudioQueue = [];
   listenSpeaking = false;
   listenLoading = false;
