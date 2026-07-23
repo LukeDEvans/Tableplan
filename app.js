@@ -345,31 +345,42 @@ const PAGE_SCOPE_SECTION = {
 
 let scopeToggleWired = false;
 
+// The per-page header toggle has moved into Settings → General → View, which
+// switches every page at once. Keep this stub so callers stay valid; it just
+// keeps the old header control hidden and refreshes the Settings radios.
 function updateScopeToggleUi() {
   const wrap = document.getElementById("scopeToggle");
-  if (!wrap) return;
-  const section = PAGE_SCOPE_SECTION[activeAppArea];
-  const show = !!section && SECTION_SCOPE[section] === "toggle" && !!authSession?.access_token;
-  wrap.hidden = !show;
-  if (!show) return;
-  // Anchor inside the active page window (top-right, CSS absolute) rather than
-  // the topbar. Re-parenting keeps one shared element + its wired listeners.
-  const page = document.getElementById(`${activeAppArea}MainPage`);
-  if (page && wrap.parentElement !== page) page.appendChild(wrap);
-  const scope = sectionScope(section);
-  document.getElementById("scopeHouseholdBtn")?.classList.toggle("is-active", scope === "household");
-  document.getElementById("scopePersonalBtn")?.classList.toggle("is-active", scope === "personal");
-  if (!scopeToggleWired) {
-    scopeToggleWired = true;
-    document.getElementById("scopeHouseholdBtn")?.addEventListener("click", () => {
-      const s = PAGE_SCOPE_SECTION[activeAppArea];
-      if (s) setSectionScope(s, "household");
-    });
-    document.getElementById("scopePersonalBtn")?.addEventListener("click", () => {
-      const s = PAGE_SCOPE_SECTION[activeAppArea];
-      if (s) setSectionScope(s, "personal");
-    });
+  if (wrap) wrap.hidden = true;
+  updateGlobalScopeUi();
+}
+
+// Distinct toggleable sections behind the pages (grocery, do, watch, media,
+// plan, travel).
+const TOGGLEABLE_SECTIONS = [...new Set(Object.values(PAGE_SCOPE_SECTION))]
+  .filter((s) => SECTION_SCOPE[s] === "toggle");
+
+// The single scope shared by every toggleable section, or null if they differ.
+function currentGlobalScope() {
+  const scopes = TOGGLEABLE_SECTIONS.map((s) => sectionScope(s));
+  return scopes.every((x) => x === scopes[0]) ? (scopes[0] || "personal") : null;
+}
+
+// Switch the whole app's household/personal view. Reuses the existing, tested
+// per-section swap so the household/personal data separation is unchanged —
+// each section that isn't already on `scope` flips one at a time.
+async function setAllScopes(scope) {
+  for (const section of TOGGLEABLE_SECTIONS) {
+    try { await setSectionScope(section, scope); }
+    catch (e) { console.warn(`[scope] global switch of ${section} failed:`, e.message); }
   }
+  updateGlobalScopeUi();
+}
+
+function updateGlobalScopeUi() {
+  const active = currentGlobalScope();
+  document.querySelectorAll('input[name="globalScope"]').forEach((input) => {
+    input.checked = input.value === active;
+  });
 }
 
 async function refreshActiveSectionFromServer(stateId, section, keys) {
@@ -1697,6 +1708,9 @@ function bindEvents() {
   elements.startPastWorkoutBtn.addEventListener("click", startPastWorkout);
   elements.themeModeInputs.forEach((input) => {
     input.addEventListener("change", () => setThemeMode(input.value));
+  });
+  document.querySelectorAll('input[name="globalScope"]').forEach((input) => {
+    input.addEventListener("change", () => { if (input.checked) setAllScopes(input.value); });
   });
   elements.openAutoRulesBtn.addEventListener("click", openAutoRulesDialog);
   elements.openTagsBtn.addEventListener("click", openTagsDialog);
@@ -31879,8 +31893,6 @@ function renderPodcastPlaylistBar() {
       <button class="watch-category-tab${activePodcastTab === "recent" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="recent">Recent</button>
       <button class="watch-category-tab${activePodcastTab === "shows" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="shows">Shows</button>
       <button class="watch-category-tab${activePodcastTab === "saved" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="saved">Saved</button>
-      <button class="watch-category-tab${activePodcastTab === "search" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="search">Search</button>
-      <button class="watch-category-tab${activePodcastTab === "history" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="history">Archive</button>
       ${playlists.map(pl => `
         <button class="watch-category-tab${activePodcastTab === pl.id ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="${escapeHtml(pl.id)}">${escapeHtml(pl.name)}</button>
       `).join("")}
@@ -31890,6 +31902,14 @@ function renderPodcastPlaylistBar() {
            </form>`
         : `<button class="watch-category-tab watch-category-add-tab" type="button" id="podcastPlaylistAddBtn" title="Add playlist">+</button>`
       }
+    </div>
+    <div class="podcast-tabs-actions">
+      <button class="podcast-tabs-action-btn${activePodcastTab === "search" ? " is-active" : ""}" type="button" data-podcast-tab="search" title="Search podcasts" aria-label="Search podcasts">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      </button>
+      <button class="podcast-tabs-action-btn${activePodcastTab === "history" ? " is-active" : ""}" type="button" data-podcast-tab="history" title="Archive" aria-label="Podcast archive">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+      </button>
     </div>`;
 
   bar.querySelector("#podcastTabsMenuBtn")?.addEventListener("click", () => {

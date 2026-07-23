@@ -13107,6 +13107,22 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   cursor: pointer;
 }
 .podcast-tabs-menu-btn:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+/* Standalone Search + Archive buttons at the right end of the podcast tab row */
+.podcast-tabs-actions { display: flex; gap: 2px; flex-shrink: 0; }
+.podcast-tabs-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  color: var(--text-muted, #888);
+  cursor: pointer;
+}
+.podcast-tabs-action-btn:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); }
+.podcast-tabs-action-btn.is-active { color: var(--accent, #92400E); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 @media (max-width: 680px) {
   .podcast-tabs-menu-btn { display: inline-flex; }
   .article-page-inner:has(#mediaPodcastsPanel:not([hidden])) .media-mobile-bar { display: none; }
