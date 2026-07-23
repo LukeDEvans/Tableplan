@@ -32940,30 +32940,11 @@ function renderMediaAllList() {
     return;
   }
 
-  // Same look as the podcast queue: article-row markup, tier dividers (only
-  // while the order is pure auto — a manual arrangement interleaves tiers),
-  // drag handles, logos and type badges.
-  const tiers = state.podcastShowTiers || {};
-  const epTiers = state.podcastEpisodeTiers || {};
-  const pubTiers = state.publicationTiers || {};
+  // Same row markup as the podcast queue: logos, type badges, actions.
+  // Tiering silently sorts the list (via getAutoPlaylist) — no tier headers.
   const progress = state.podcastProgress || {};
-  const effectiveTier = (e) =>
-    e.type === "article" ? (pubTiers[e.publication] ?? 4)
-    : e.type === "book" ? 99
-    : (epTiers[e.id] ?? tiers[e.showId] ?? 4);
-  const tierLabel = (t) => t === 99 ? "Books" : (t <= (state.podcastTierCount ?? 3) ? `Tier ${t}` : "Untiered");
-  const showDividers = !(state.mediaAllPinnedOrder || []).length;
-
   let html = "";
-  let lastTier = null;
   items.forEach((e) => {
-    if (showDividers) {
-      const t = effectiveTier(e);
-      if (t !== lastTier) {
-        html += `<div class="playlist-tier-divider" data-tier="${t}">${tierLabel(t)}</div>`;
-        lastTier = t;
-      }
-    }
     const badge = e.type === "article" ? "Article" : e.type === "book" ? "Book" : "";
     const dur = e.type !== "article" && e.type !== "book" ? (e.duration || progress[e.id]?.duration || 0) : 0;
     const art = e.showArt
