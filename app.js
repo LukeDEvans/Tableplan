@@ -31872,6 +31872,9 @@ function renderPodcastPlaylistBar() {
   if (!bar) return;
   const playlists = state.podcastPlaylists || [];
   bar.innerHTML = `
+    <button class="podcast-tabs-menu-btn" type="button" id="podcastTabsMenuBtn" title="Folders" aria-label="Toggle folder menu">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
     <div class="watch-category-tabs" role="tablist" aria-label="Podcast tabs">
       <button class="watch-category-tab${activePodcastTab === "recent" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="recent">Recent</button>
       <button class="watch-category-tab${activePodcastTab === "shows" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="shows">Shows</button>
@@ -31888,6 +31891,10 @@ function renderPodcastPlaylistBar() {
         : `<button class="watch-category-tab watch-category-add-tab" type="button" id="podcastPlaylistAddBtn" title="Add playlist">+</button>`
       }
     </div>`;
+
+  bar.querySelector("#podcastTabsMenuBtn")?.addEventListener("click", () => {
+    document.getElementById("mediaSidebar")?.classList.toggle("is-expanded");
+  });
 
   bar.querySelectorAll("[data-podcast-tab]").forEach(btn => {
     btn.addEventListener("click", () => switchPodcastTab(btn.dataset.podcastTab));

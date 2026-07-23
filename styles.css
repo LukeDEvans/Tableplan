@@ -13078,11 +13078,39 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   flex-shrink: 0;
   border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
   padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.podcast-playlist-bar .watch-category-tabs {
+  flex: 1;
+  min-width: 0;
+  flex-wrap: nowrap;
   overflow-x: auto;
   scrollbar-width: none;
 }
-.podcast-playlist-bar::-webkit-scrollbar { display: none; }
-.podcast-playlist-bar .watch-category-tabs { flex-wrap: nowrap; }
+.podcast-playlist-bar .watch-category-tabs::-webkit-scrollbar { display: none; }
+/* Inline folder-menu button: shares the tab row with the podcast tabs, so the
+   mobile-only menu bar above can be hidden on the podcasts view. Mobile only —
+   on desktop the folder sidebar is always visible. */
+.podcast-tabs-menu-btn {
+  display: none;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.podcast-tabs-menu-btn:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+@media (max-width: 680px) {
+  .podcast-tabs-menu-btn { display: inline-flex; }
+  .article-page-inner:has(#mediaPodcastsPanel:not([hidden])) .media-mobile-bar { display: none; }
+}
 .podcast-playlist-menu {
   position: fixed;
   background: var(--surface);
