@@ -31809,7 +31809,7 @@ function renderMediaPubTabs() {
 // ─── Podcasts ─────────────────────────────────────────────────────────────────
 
 let activePodcastShowId = null;
-let activePodcastTab = "playlist";
+let activePodcastTab = "recent";
 let activePodcastSavedCategory = "all";
 let podcastSavedCatInputActive = false;
 let podcastTabInputActive = false;
@@ -31873,7 +31873,6 @@ function renderPodcastPlaylistBar() {
   const playlists = state.podcastPlaylists || [];
   bar.innerHTML = `
     <div class="watch-category-tabs" role="tablist" aria-label="Podcast tabs">
-      <button class="watch-category-tab${activePodcastTab === "playlist" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="playlist">Playlist</button>
       <button class="watch-category-tab${activePodcastTab === "recent" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="recent">Recent</button>
       <button class="watch-category-tab${activePodcastTab === "shows" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="shows">Shows</button>
       <button class="watch-category-tab${activePodcastTab === "saved" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="saved">Saved</button>
@@ -31997,10 +31996,10 @@ function deletePodcastPlaylist(playlistId) {
   recordDeletion("podcastPlaylists", playlistId);
   state.podcastPlaylists = (state.podcastPlaylists || []).filter(pl => pl.id !== playlistId);
   if (state.podcastPlaylistItems) delete state.podcastPlaylistItems[playlistId];
-  if (activePodcastTab === playlistId) activePodcastTab = "playlist";
+  if (activePodcastTab === playlistId) activePodcastTab = "recent";
   persist();
   renderPodcastPlaylistBar();
-  if (activePodcastTab === "playlist") renderPodcastQueueEpisodes();
+  if (activePodcastTab === "recent") renderRecentEpisodes();
 }
 
 function renderPodcastPlaylistEpisodes(playlistId) {
@@ -34721,6 +34720,12 @@ function openArticle(id, fromListId) {
   listPanel?.querySelectorAll(".article-row").forEach((row) => {
     row.classList.toggle("article-row--active", row.dataset.articleId === id);
   });
+
+  // Always start a freshly opened article at the very top — reused reader DOM
+  // otherwise keeps the previous article's scroll position.
+  const readerBody = document.getElementById("articleReaderBody");
+  if (readerBody) readerBody.scrollTop = 0;
+  readerPanel.scrollTop = 0;
 }
 
 function closeArticleReader() {
@@ -35089,8 +35094,16 @@ function listenToArticle(id) {
 // Fetches (or generates) the TTS chunk URLs for an article. The server caches
 // generated audio per article, so repeated calls are cheap.
 async function generateTtsUrls(article) {
-  const text = article.text?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || "";
-  if (!text) return null;
+  const body = article.text?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || "";
+  if (!body) return null;
+  // Announce the headline and its source before the article itself, so a
+  // listener (often not looking at the screen) knows what's being read.
+  const source = (article.author || article.publication || "").trim();
+  const intro = [
+    (article.title || "").trim(),
+    source && !/^email$/i.test(source) ? `From ${source}` : ""
+  ].filter(Boolean).join(". ");
+  const text = (intro ? intro + ". " : "") + body;
   trackUsage("google_tts");
   const result = await callNetlifyFunction("generate-tts", { articleId: article.id, text });
   if (result.error || !Array.isArray(result.urls) || !result.urls.length) {
