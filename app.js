@@ -33849,6 +33849,7 @@ function showAdSkippedToast() {
 
 function startPodcastPlayback(episode, show) {
   stopPodcastAudio();
+  stopListen(); // stop any article read-aloud so they don't overlap
 
   const progress = (state.podcastProgress || {})[episode.id] || {};
   const startPos = progress.played ? 0 : (progress.position || 0);
@@ -33980,56 +33981,98 @@ function stopPodcastAudio() {
   hideMiniPlayer();
 }
 
-// ── Mini-player ───────────────────────────────────────────────────────────────
+// ── Unified now-playing bar (podcasts + article/email TTS) ───────────────────
+// One persistent bottom bar drives whichever kind of audio is active, so both
+// share the same play/pause, skip, seek scale and elapsed/remaining readout.
+
+function nowPlayingKind() {
+  if (podcastAudio) return "podcast";
+  if (listenAudio || listenLoading || listenArticle) return "tts";
+  return null;
+}
+function nowPlayingIsPlaying() {
+  if (podcastAudio) return !podcastAudio.paused && !podcastAudio.ended;
+  return !!(listenSpeaking && listenAudio && !listenAudio.paused);
+}
+function nowPlayingElapsed() { return podcastAudio ? (podcastAudio.currentTime || 0) : listenElapsed(); }
+function nowPlayingTotal() { return podcastAudio ? (podcastAudio.duration || 0) : (listenTotalDuration || 0); }
+function nowPlayingToggle() { nowPlayingKind() === "podcast" ? togglePodcastPlayPause() : toggleListenPlayPause(); }
+function nowPlayingSkip(sec) { nowPlayingKind() === "podcast" ? skipPodcast(sec) : listenSkip(sec); }
+function nowPlayingSeekFraction(f) {
+  if (nowPlayingKind() === "podcast") {
+    if (podcastAudio && podcastAudio.duration) podcastAudio.currentTime = f * podcastAudio.duration;
+  } else if (listenTotalDuration) {
+    listenSeekToTime(f * listenTotalDuration);
+  }
+}
+function nowPlayingOpen() {
+  if (nowPlayingKind() === "podcast") { goToOpenEpisode(); return; }
+  if (listenArticle) { showMediaApp(); openArticle(listenArticle.id, "articleList"); }
+}
 
 function showMiniPlayer(episode, show) {
+  setMiniPlayer(episode.title || "", show?.title || "", episode.art || show?.art || "");
+}
+function showMiniPlayerForArticle(article) {
+  setMiniPlayer(article.title || "Article", article.author || article.publication || "", "");
+}
+function setMiniPlayer(title, subtitle, art) {
   const el = document.getElementById("miniPlayer");
   if (!el) return;
-
-  const title = document.getElementById("miniPlayerTitle");
-  const showEl = document.getElementById("miniPlayerShow");
-  const artEl = document.getElementById("miniPlayerArt");
-  if (title) title.textContent = episode.title || "";
-  if (showEl) showEl.textContent = show?.title || "";
-  const art = episode.art || show?.art || "";
-  if (artEl) { artEl.src = art; artEl.hidden = !art; }
-
+  const t = document.getElementById("miniPlayerTitle");
+  const s = document.getElementById("miniPlayerShow");
+  const a = document.getElementById("miniPlayerArt");
+  if (t) t.textContent = title;
+  if (s) s.textContent = subtitle;
+  if (a) { a.src = art || ""; a.hidden = !art; }
   el.hidden = false;
   document.body.classList.add("has-mini-player");
   updateMiniPlayerPlayBtn();
+  updateMiniPlayerProgress();
 }
 
 function hideMiniPlayer() {
   const el = document.getElementById("miniPlayer");
   if (el) el.hidden = true;
   document.body.classList.remove("has-mini-player");
-  const track = document.getElementById("miniPlayerTrack");
-  if (track) track.style.width = "0%";
+  const seek = document.getElementById("miniPlayerSeek");
+  if (seek) seek.value = 0;
 }
 
 function updateMiniPlayerPlayBtn() {
   const icon = document.getElementById("miniPlayerBtnIcon");
   const btn = document.getElementById("miniPlayerPlayPause");
   if (!icon || !btn) return;
-  const playing = podcastAudio && !podcastAudio.paused && !podcastAudio.ended;
+  const playing = nowPlayingIsPlaying();
   btn.setAttribute("aria-label", playing ? "Pause" : "Play");
   icon.innerHTML = playing
     ? `<rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/>`
     : `<polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>`;
 }
 
+let miniPlayerScrubbing = false;
 function updateMiniPlayerProgress() {
-  if (!podcastAudio || !podcastAudio.duration) return;
-  const pct = (podcastAudio.currentTime / podcastAudio.duration) * 100;
-  const track = document.getElementById("miniPlayerTrack");
-  if (track) track.style.width = `${pct.toFixed(1)}%`;
+  if (miniPlayerScrubbing) return;
+  const cur = nowPlayingElapsed();
+  const total = nowPlayingTotal();
+  const seek = document.getElementById("miniPlayerSeek");
+  const curEl = document.getElementById("miniPlayerCurTime");
+  const remEl = document.getElementById("miniPlayerRemTime");
+  if (seek) seek.value = total ? Math.round((cur / total) * 1000) : 0;
+  if (curEl) curEl.textContent = formatPodcastDuration(Math.floor(cur));
+  if (remEl) remEl.textContent = total ? "-" + formatPodcastDuration(Math.max(0, Math.floor(total - cur))) : "--:--";
 }
 
 function wireMiniPlayer() {
-  document.getElementById("miniPlayerPlayPause")?.addEventListener("click", togglePodcastPlayPause);
-  document.getElementById("miniPlayerSkipBack")?.addEventListener("click", () => skipPodcast(-15));
-  document.getElementById("miniPlayerSkipFwd")?.addEventListener("click", () => skipPodcast(30));
-  document.getElementById("miniPlayerInfoBtn")?.addEventListener("click", goToOpenEpisode);
+  document.getElementById("miniPlayerPlayPause")?.addEventListener("click", nowPlayingToggle);
+  document.getElementById("miniPlayerSkipBack")?.addEventListener("click", () => nowPlayingSkip(-15));
+  document.getElementById("miniPlayerSkipFwd")?.addEventListener("click", () => nowPlayingSkip(30));
+  document.getElementById("miniPlayerInfoBtn")?.addEventListener("click", nowPlayingOpen);
+  const seek = document.getElementById("miniPlayerSeek");
+  if (seek) {
+    seek.addEventListener("input", () => { miniPlayerScrubbing = true; });
+    seek.addEventListener("change", () => { nowPlayingSeekFraction(Number(seek.value) / 1000); miniPlayerScrubbing = false; });
+  }
 }
 
 function goToOpenEpisode() {
@@ -34062,6 +34105,11 @@ function setPodcastEpisodePlayed(episodeId, played) {
     ...(played && !prev.playedAt ? { playedAt: new Date().toISOString() } : {}),
     ...(!played ? { playedAt: null } : {}),
   };
+  // A played episode leaves the manual Playlist queue (it already drops out of
+  // the auto playlist and surfaces in Archive by virtue of being played).
+  if (played && Array.isArray(state.podcastQueue)) {
+    state.podcastQueue = state.podcastQueue.filter((qid) => qid !== episodeId);
+  }
   persist();
   document.querySelectorAll(`.podcast-episode-row[data-episode-id="${CSS.escape(episodeId)}"]`).forEach(row => {
     row.classList.toggle("article-row--read", played);
@@ -34731,7 +34779,8 @@ function openArticle(id, fromListId) {
 function closeArticleReader() {
   const readerPanel = document.getElementById("articleReaderPanel");
   if (readerPanel) readerPanel.hidden = true;
-  stopListen();
+  // Leave playback running — the now-playing bar keeps it going and controllable
+  // while you browse elsewhere. Explicit Stop (listenStopBtn) still ends it.
   openArticleId = null;
   document.querySelectorAll(".article-row--active").forEach((r) => r.classList.remove("article-row--active"));
 }
@@ -35073,8 +35122,13 @@ function populateReadListenSettings() {
 // ─── TTS audio ────────────────────────────────────────────────────────────────
 
 let listenAudio = null;
-let listenAudioQueue = [];
-let listenNextAudio = null; // next chunk, preloaded while the current one plays
+let listenNextAudio = null;    // next chunk, preloaded while the current one plays
+let listenAllUrls = [];        // every TTS chunk URL for the article being read
+let listenChunkIdx = 0;        // index of the chunk currently playing
+let listenChunkDurations = []; // seconds per chunk (resolved asynchronously)
+let listenChunkOffsets = [];   // cumulative start time of each chunk
+let listenTotalDuration = 0;   // sum of all chunk durations (0 until known)
+let listenArticle = null;      // the article/email being read (bar + auto-advance)
 let listenSpeaking = false;
 let listenLoading = false;
 let listenGenId = 0;
@@ -35087,6 +35141,58 @@ function makeListenChunk(url) {
   a.src = url;
   a.load();
   return a;
+}
+
+// Load each chunk's duration (metadata only) so the unified bar can show a
+// real seek scale and elapsed/remaining across the whole article.
+async function loadListenChunkDurations(urls, genId) {
+  const durations = await Promise.all(urls.map((u) => new Promise((resolve) => {
+    const a = new Audio();
+    a.preload = "metadata";
+    a.addEventListener("loadedmetadata", () => resolve(Number.isFinite(a.duration) ? a.duration : 0), { once: true });
+    a.addEventListener("error", () => resolve(0), { once: true });
+    a.src = u;
+  })));
+  if (genId !== listenGenId) return; // playback moved on while we were measuring
+  listenChunkDurations = durations;
+  listenChunkOffsets = [];
+  let acc = 0;
+  for (const d of durations) { listenChunkOffsets.push(acc); acc += d; }
+  listenTotalDuration = acc;
+  updateMiniPlayerProgress();
+}
+
+// Seconds elapsed across the whole article (finished chunks + position in the
+// current one).
+function listenElapsed() {
+  if (!listenAudio) return 0;
+  return (listenChunkOffsets[listenChunkIdx] || 0) + (listenAudio.currentTime || 0);
+}
+
+// Jump to an absolute time across chunks: seek within the current chunk if it
+// lands there, otherwise switch to the chunk that contains it.
+function listenSeekToTime(t) {
+  if (!listenAllUrls.length) return;
+  const total = listenTotalDuration || 0;
+  const target = Math.max(0, total ? Math.min(t, total - 0.25) : t);
+  let idx = listenChunkIdx;
+  if (listenChunkOffsets.length === listenAllUrls.length) {
+    idx = 0;
+    for (let i = 0; i < listenChunkOffsets.length; i++) {
+      if (target >= listenChunkOffsets[i]) idx = i; else break;
+    }
+  }
+  const within = target - (listenChunkOffsets[idx] || 0);
+  if (idx === listenChunkIdx && listenAudio) {
+    try { listenAudio.currentTime = Math.max(0, within); } catch { /* not seekable yet */ }
+  } else {
+    playChunkAt(idx, Math.max(0, within));
+  }
+}
+
+function listenSkip(seconds) {
+  if (!listenAudio) return;
+  listenSeekToTime(listenElapsed() + seconds);
 }
 
 function listenToArticle(id) {
@@ -35148,6 +35254,7 @@ function prefetchNextQueueAudio() {
 }
 
 async function startListenTTS(article) {
+  stopPodcastAudio(); // never let a podcast and an article read at the same time
   stopListen();
   listenLoading = true;
   const myGenId = ++listenGenId;
@@ -35175,68 +35282,90 @@ async function startListenTTS(article) {
   if (!urls) { listenLoading = false; updateListenPlayBtn(); return; }
 
   listenLoading = false;
-  listenAudioQueue = [...urls];
-  playNextAudioChunk(article);
+  listenArticle = article;
+  listenAllUrls = [...urls];
+  listenChunkDurations = [];
+  listenChunkOffsets = [];
+  listenTotalDuration = 0;
+  showMiniPlayerForArticle(article);
+  loadListenChunkDurations(listenAllUrls, myGenId); // fills the seek scale in the background
+  playChunkAt(0);
 }
 
-function playNextAudioChunk(article) {
-  if (!listenAudioQueue.length) {
+function playChunkAt(idx, offsetSec = 0) {
+  if (idx >= listenAllUrls.length) {
+    // Finished the whole article.
     listenSpeaking = false;
     listenAudio = null;
     listenNextAudio = null;
     updateListenPlayBtn();
-    markArticleRead(article.id);
-    // All-queue hand-off takes priority; otherwise the per-tab article advance
-    if (!advanceMediaAllQueue(article.id)) advanceListenArticle();
+    updateMiniPlayerPlayBtn();
+    const finished = listenArticle;
+    markArticleRead(finished?.id);
+    // Play the next item in the blended queue; otherwise fall back to the
+    // next article in the current list.
+    if (!advanceMediaAllQueue(finished?.id)) {
+      if (!advanceListenArticle()) { hideMiniPlayer(); listenArticle = null; }
+    }
     return;
   }
-  const url = listenAudioQueue.shift();
-  if (listenAudio) { listenAudio.onended = null; listenAudio.onpause = null; listenAudio.onplay = null; listenAudio.onerror = null; }
+  listenChunkIdx = idx;
+  const url = listenAllUrls[idx];
+  if (listenAudio) { listenAudio.onended = null; listenAudio.onpause = null; listenAudio.onplay = null; listenAudio.onerror = null; listenAudio.ontimeupdate = null; }
   // Reuse the chunk we preloaded last round if it matches; otherwise build it.
   listenAudio = (listenNextAudio && listenNextAudio.src === url) ? listenNextAudio : makeListenChunk(url);
   listenNextAudio = null;
   const speedSelect = document.getElementById("listenSpeedSelect");
   listenAudio.playbackRate = speedSelect ? parseFloat(speedSelect.value) : 1;
-  listenAudio.onplay = () => { listenSpeaking = true; updateListenPlayBtn(); };
-  listenAudio.onpause = () => { if (!listenAudio.ended) { listenSpeaking = false; updateListenPlayBtn(); } };
-  listenAudio.onerror = () => { listenSpeaking = false; listenAudio = null; updateListenPlayBtn(); };
-  listenAudio.onended = () => playNextAudioChunk(article);
+  const applyOffset = () => { if (offsetSec > 0) { try { listenAudio.currentTime = offsetSec; } catch { /* wait for metadata */ } } };
+  if (listenAudio.readyState >= 1) applyOffset();
+  else listenAudio.addEventListener("loadedmetadata", applyOffset, { once: true });
+  listenAudio.onplay = () => { listenSpeaking = true; updateListenPlayBtn(); updateMiniPlayerPlayBtn(); };
+  listenAudio.onpause = () => { if (!listenAudio.ended) { listenSpeaking = false; updateListenPlayBtn(); updateMiniPlayerPlayBtn(); } };
+  listenAudio.onerror = () => { listenSpeaking = false; listenAudio = null; updateListenPlayBtn(); updateMiniPlayerPlayBtn(); };
+  listenAudio.ontimeupdate = () => updateMiniPlayerProgress();
+  listenAudio.onended = () => playChunkAt(listenChunkIdx + 1);
   listenAudio.play().catch(() => {});
   // Start buffering the next chunk now so the hand-off is seamless.
-  listenNextAudio = listenAudioQueue.length ? makeListenChunk(listenAudioQueue[0]) : null;
+  listenNextAudio = (idx + 1 < listenAllUrls.length) ? makeListenChunk(listenAllUrls[idx + 1]) : null;
 
-  if ("mediaSession" in navigator) {
+  if ("mediaSession" in navigator && listenArticle) {
     navigator.mediaSession.metadata = new MediaMetadata({
-      title: article.title || "Article",
-      artist: article.publication || "Live",
+      title: listenArticle.title || "Article",
+      artist: listenArticle.author || listenArticle.publication || "Live",
       album: "Live"
     });
     navigator.mediaSession.setActionHandler("play", () => { listenAudio?.play(); });
     navigator.mediaSession.setActionHandler("pause", () => { listenAudio?.pause(); });
     navigator.mediaSession.setActionHandler("stop", stopListen);
+    navigator.mediaSession.setActionHandler("seekbackward", () => listenSkip(-15));
+    navigator.mediaSession.setActionHandler("seekforward", () => listenSkip(30));
     navigator.mediaSession.setActionHandler("nexttrack", advanceListenArticle);
   }
 }
 
 function advanceListenArticle() {
+  // Advance relative to the article we were reading (which may not be the one
+  // open on screen anymore now that audio persists across page changes).
+  const anchorId = listenArticle?.id || openArticleId;
   const articles = getFilteredSortedArticles(activeMediaTab);
-  const currentIndex = articles.findIndex(a => a.id === openArticleId);
-  if (currentIndex === -1) return;
+  const currentIndex = articles.findIndex(a => a.id === anchorId);
+  if (currentIndex === -1) return false;
   for (let i = currentIndex + 1; i < articles.length; i++) {
     if (articles[i].text) {
-      openArticle(articles[i].id, "articleList");
+      if (activeAppArea === "media" && !document.getElementById("articleReaderPanel")?.hidden) openArticle(articles[i].id, "articleList");
       startListenTTS(articles[i]);
-      return;
+      return true;
     }
   }
+  return false;
 }
 
 function toggleListenPlayPause() {
   if (!listenAudio && !listenLoading) {
-    if (openArticleId) {
-      const article = (state.savedArticles || []).find((a) => a.id === openArticleId);
-      if (article) startListenTTS(article);
-    }
+    // Resume the article we were reading, or start the one that's open.
+    const article = listenArticle || (openArticleId ? (state.savedArticles || []).find((a) => a.id === openArticleId) : null);
+    if (article) startListenTTS(article);
     return;
   }
   if (!listenAudio) return;
@@ -35248,6 +35377,7 @@ function toggleListenPlayPause() {
     listenSpeaking = false;
   }
   updateListenPlayBtn();
+  updateMiniPlayerPlayBtn();
 }
 
 function stopListen() {
@@ -35255,14 +35385,22 @@ function stopListen() {
   if (listenAudio) {
     listenAudio.onended = null;
     listenAudio.onpause = null;
+    listenAudio.ontimeupdate = null;
     listenAudio.pause();
     listenAudio = null;
   }
   if (listenNextAudio) { listenNextAudio.src = ""; listenNextAudio = null; }
-  listenAudioQueue = [];
+  listenAllUrls = [];
+  listenChunkIdx = 0;
+  listenChunkDurations = [];
+  listenChunkOffsets = [];
+  listenTotalDuration = 0;
+  listenArticle = null;
   listenSpeaking = false;
   listenLoading = false;
   updateListenPlayBtn();
+  // Hide the bar only if a podcast isn't using it.
+  if (!podcastAudio) hideMiniPlayer();
 }
 
 function updateListenPlayBtn() {

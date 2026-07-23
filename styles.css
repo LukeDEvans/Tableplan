@@ -14062,23 +14062,54 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
-.mini-player-track {
-  height: 2px;
-  background: color-mix(in srgb, var(--ink) 8%, transparent);
-  flex-shrink: 0;
-}
-.mini-player-track-fill {
-  height: 100%;
-  background: var(--accent, #92400E);
-  transition: width 1s linear;
-  border-radius: 0 1px 1px 0;
-}
 .mini-player-body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  height: 62px;
+  padding: 8px 12px 2px;
+  height: 56px;
+}
+/* Seek scale + elapsed / remaining, shared by podcasts and article read-aloud */
+.mini-player-seek {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 8px;
+}
+.mini-player-time {
+  font-size: 0.7rem;
+  color: var(--text-muted, #888);
+  font-variant-numeric: tabular-nums;
+  min-width: 5ch;
+  flex-shrink: 0;
+}
+.mini-player-time-right { text-align: right; }
+.mini-player-seek-bar {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.mini-player-seek-bar::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent, #92400E);
+  cursor: pointer;
+}
+.mini-player-seek-bar::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent, #92400E);
+  cursor: pointer;
 }
 .mini-player-left {
   flex: 1;
@@ -14146,10 +14177,10 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
 .mini-player-play-btn svg { display: block; }
 
 /* Nudge body down so content isn't permanently hidden behind the mini-player */
-body.has-mini-player .app-shell { padding-bottom: 76px; }
+body.has-mini-player .app-shell { padding-bottom: 92px; }
 body.has-mini-player .article-list,
 body.has-mini-player .podcast-list-panel .article-list,
-body.has-mini-player .mail-list { padding-bottom: 76px; }
+body.has-mini-player .mail-list { padding-bottom: 92px; }
 
 @media (max-width: 640px) {
   .mini-player-body { padding: 6px 8px; height: 58px; }
