@@ -218,7 +218,7 @@ const STATE_SECTIONS = {
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
@@ -2961,6 +2961,8 @@ function defaultState() {
     financeTxnNoteCounts: {},
     financeManualTxns: [],
     financeEmergencyMonths: 3,
+    financeBirthYear: null,
+    financeAnnualIncome: 0,
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -3108,6 +3110,8 @@ function normalizeState(parsed) {
       account: String(m?.account || "").slice(0, 60)
     })),
     financeEmergencyMonths: (Number(parsed?.financeEmergencyMonths) > 0 ? Number(parsed.financeEmergencyMonths) : 3),
+    financeBirthYear: (Number(parsed?.financeBirthYear) >= 1900 && Number(parsed?.financeBirthYear) <= new Date().getFullYear() ? Math.round(Number(parsed.financeBirthYear)) : null),
+    financeAnnualIncome: (Number(parsed?.financeAnnualIncome) > 0 ? Number(parsed.financeAnnualIncome) : 0),
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
@@ -3729,6 +3733,25 @@ function defaultFinanceBudgetGroups() {
     { id: "fin-group-wants",   label: "Wants",   idealPct: 30, categories: [] },
     { id: "fin-group-savings", label: "Savings", idealPct: 20, categories: [] },
   ];
+}
+
+// Age-based retirement savings benchmark — Fidelity's widely-cited "save N×
+// your salary by this age" guideposts (1× by 30, 3× by 40, 6× by 50, 8× by 60,
+// 10× by 67). Linearly interpolated between anchors so the target advances
+// smoothly year to year rather than jumping. Returns the salary multiple.
+const RETIREMENT_MULTIPLE_ANCHORS = [
+  [25, 0], [30, 1], [35, 2], [40, 3], [45, 4], [50, 6], [55, 7], [60, 8], [67, 10],
+];
+function retirementTargetMultiple(age) {
+  if (!Number.isFinite(age)) return null;
+  const A = RETIREMENT_MULTIPLE_ANCHORS;
+  if (age <= A[0][0]) return A[0][1];
+  if (age >= A[A.length - 1][0]) return A[A.length - 1][1];
+  for (let i = 0; i < A.length - 1; i++) {
+    const [a0, m0] = A[i], [a1, m1] = A[i + 1];
+    if (age >= a0 && age <= a1) return m0 + (m1 - m0) * ((age - a0) / (a1 - a0));
+  }
+  return A[A.length - 1][1];
 }
 
 function normalizeFinanceLineItems(items) {
@@ -7467,6 +7490,17 @@ function renderFinancePage() {
   const emergencyPct = emergencyTarget > 0 ? Math.min(100, (emergencyHave / emergencyTarget) * 100) : 0;
   const monthsCovered = monthlyNeeds > 0 ? emergencyHave / monthlyNeeds : null;
 
+  // Retirement progress toward an age-based multiple of annual income
+  // (configured in Settings › Finance). No config → show the balance only.
+  const retBirthYear = Number(state.financeBirthYear) || null;
+  const retAge = retBirthYear ? (new Date().getFullYear() - retBirthYear) : null;
+  const retIncome = Number(state.financeAnnualIncome) > 0 ? Number(state.financeAnnualIncome) : 0;
+  const retMultiple = retAge !== null ? retirementTargetMultiple(retAge) : null;
+  const retTarget = (retMultiple !== null && retIncome > 0) ? retIncome * retMultiple : 0;
+  const retHave = retirementTotal || 0;
+  const retPct = retTarget > 0 ? Math.min(100, (retHave / retTarget) * 100) : 0;
+  const retConfigured = retTarget > 0;
+
   const savingsRow = !(state.financeAccounts || []).length ? "" : `
     <div class="fin-savings-row">
       <div class="fin-savings-card fin-savings-emergency">
@@ -7476,21 +7510,20 @@ function renderFinancePage() {
         </div>
         <div class="fin-savings-value${emergencyHave < 0 ? " is-neg" : ""}">${formatFinMoney(emergencyHave)}</div>
         <div class="fin-savings-bar"><div class="fin-savings-bar-fill${emergencyPct >= 100 ? " is-full" : ""}" style="width:${emergencyPct}%"></div></div>
-        <div class="fin-savings-sub">
-          target
-          <input class="fin-savings-months" type="number" min="1" max="24" step="1" value="${emergencyMonths}" data-fin-edit="emergency-months" aria-label="Months of needs to target" />
-          mo of needs · ${emergencyTarget > 0 ? formatFinMoney(emergencyTarget) : "set a Needs budget"}
-        </div>
       </div>
-      <div class="fin-savings-card">
-        <div class="fin-savings-head"><span class="fin-savings-label">Retirement</span></div>
-        <div class="fin-savings-value">${retirementTotal === null ? "—" : formatFinMoney(retirementTotal)}</div>
-        <div class="fin-savings-sub">across retirement accounts</div>
+      <div class="fin-savings-card fin-savings-retirement">
+        <div class="fin-savings-head">
+          <span class="fin-savings-label">Retirement</span>
+          ${retConfigured ? `<span class="fin-savings-target">${retMultiple.toFixed(1)}× target</span>` : ""}
+        </div>
+        <div class="fin-savings-value">${retirementTotal === null ? "—" : formatFinMoney(retHave)}</div>
+        ${retConfigured
+          ? `<div class="fin-savings-bar"><div class="fin-savings-bar-fill${retPct >= 100 ? " is-full" : ""}" style="width:${retPct}%"></div></div>`
+          : `<div class="fin-savings-sub">Add age &amp; income in Settings › Finance for a target</div>`}
       </div>
       <div class="fin-savings-card">
         <div class="fin-savings-head"><span class="fin-savings-label">Cash on hand</span></div>
         <div class="fin-savings-value${(cashOnHand || 0) < 0 ? " is-neg" : ""}">${cashOnHand === null ? "—" : formatFinMoney(cashOnHand)}</div>
-        <div class="fin-savings-sub">checking &amp; savings</div>
       </div>
     </div>`;
 
@@ -16212,6 +16245,7 @@ function renderContextSettingsDialog(kind) {
     "voice-commands": "Voice Commands",
     "admin-pages": "Global Pages",
     "read-sync": "Sync Settings",
+    "finance": "Finance",
     "api-usage": "API Usage",
     "ai-notes": "AI Notes",
     "mail-ai": "Mail AI"
@@ -16228,6 +16262,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="weekly-email">Email</button>
         <button type="button" data-context-settings-action="mail-ai">Mail AI</button>
         <button type="button" data-context-settings-action="family">Household</button>
+        <button type="button" data-context-settings-action="finance">Finance</button>
         <button type="button" data-context-settings-action="voice-commands">Voice Commands</button>
         <button type="button" data-context-settings-action="ai-log">AI Action Log</button>
         <button type="button" data-context-settings-action="ai-notes">AI Notes</button>
@@ -16246,6 +16281,53 @@ function renderContextSettingsDialog(kind) {
         </div>
       ` : ""}
     `;
+    return;
+  }
+
+  if (kind === "finance") {
+    const emMonths = Number(state.financeEmergencyMonths) > 0 ? Number(state.financeEmergencyMonths) : 3;
+    const birthYear = Number(state.financeBirthYear) || "";
+    const income = Number(state.financeAnnualIncome) > 0 ? Number(state.financeAnnualIncome) : "";
+    const age = birthYear ? (new Date().getFullYear() - Number(birthYear)) : null;
+    const mult = age !== null ? retirementTargetMultiple(age) : null;
+    elements.contextSettingsBody.innerHTML = `
+      <div class="fin-set-group">
+        <span class="theme-setting-title">Emergency savings target</span>
+        <p class="settings-hint">The emergency-savings card aims for this many months of your Needs budget.</p>
+        <label class="fin-set-row">
+          <span>Months of needs to cover</span>
+          <input type="number" min="1" max="24" step="1" value="${emMonths}" data-fin-setting="emergency-months" />
+        </label>
+      </div>
+      <div class="fin-set-group">
+        <span class="theme-setting-title">Retirement target</span>
+        <p class="settings-hint">Your retirement card compares savings to an age-based benchmark (Fidelity's guideposts: 1× income by 30, 3× by 40, 6× by 50, 10× by 67).</p>
+        <label class="fin-set-row">
+          <span>Birth year</span>
+          <input type="number" min="1900" max="${new Date().getFullYear()}" step="1" placeholder="e.g. 1988" value="${birthYear}" data-fin-setting="birth-year" />
+        </label>
+        <label class="fin-set-row">
+          <span>Annual household income</span>
+          <input type="number" min="0" step="1000" placeholder="e.g. 90000" value="${income}" data-fin-setting="annual-income" />
+        </label>
+        ${mult !== null ? `<p class="settings-hint">At age ${age}, the benchmark is ${mult.toFixed(1)}× income${income ? ` = ${formatFinMoney(Number(income) * mult)}` : ""}.</p>` : ""}
+      </div>`;
+    elements.contextSettingsBody.querySelectorAll("[data-fin-setting]").forEach((input) => {
+      input.addEventListener("change", () => {
+        const k = input.dataset.finSetting;
+        if (k === "emergency-months") {
+          state.financeEmergencyMonths = Math.max(1, Math.min(24, Math.round(Number(input.value) || 3)));
+        } else if (k === "birth-year") {
+          const y = Math.round(Number(input.value) || 0);
+          state.financeBirthYear = (y >= 1900 && y <= new Date().getFullYear()) ? y : null;
+        } else if (k === "annual-income") {
+          state.financeAnnualIncome = Math.max(0, Number(input.value) || 0);
+        }
+        persist();
+        renderContextSettingsDialog("finance");
+        if (activeAppArea === "finance") renderFinancePage();
+      });
+    });
     return;
   }
 
@@ -16999,6 +17081,7 @@ function handleContextSettingsAction(event) {
     "meal-plan-settings": () => closeAndRun(openMealPlanSettingsDialog),
     "test-location": () => testLocationAccess(),
     "family": () => renderContextSettingsDialog("family"),
+    "finance": () => renderContextSettingsDialog("finance"),
     "pages": () => renderContextSettingsDialog("pages"),
     "location-services": () => renderContextSettingsDialog("location-services"),
     "voice-commands": () => renderContextSettingsDialog("voice-commands"),

@@ -17553,6 +17553,7 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   gap: 6px;
 }
 .fin-savings-emergency { border-color: color-mix(in srgb, var(--accent) 40%, var(--window-border)); }
+.fin-savings-retirement { border-color: color-mix(in srgb, var(--accent) 40%, var(--window-border)); }
 .fin-savings-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .fin-savings-label { font-size: 0.72rem; font-weight: 850; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 .fin-savings-target { font-size: 0.8rem; font-weight: 800; color: var(--accent-dark); }
@@ -17563,6 +17564,13 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-savings-bar-fill.is-full { background: #1f9d55; }
 .fin-savings-sub { font-size: 0.76rem; color: var(--muted); display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .fin-savings-months { width: 44px; padding: 1px 4px; font: inherit; font-size: 0.76rem; text-align: center; border: 1px solid var(--window-border); border-radius: 6px; background: var(--window-bg); color: var(--ink); }
+
+/* Finance settings panel (Settings › Finance) */
+.fin-set-group { display: flex; flex-direction: column; gap: 8px; padding: 4px 0 14px; }
+.fin-set-group + .fin-set-group { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding-top: 14px; }
+.fin-set-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.9rem; font-weight: 600; }
+.fin-set-row input { width: 130px; padding: 6px 8px; font: inherit; text-align: right; border: 1px solid var(--window-border); border-radius: 8px; background: var(--window-bg); color: var(--ink); }
+.fin-set-row input:focus { outline: none; border-color: var(--accent); }
 
 /* Net worth detail card */
 .fin-nw-row { justify-content: space-between; padding: 3px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); }
