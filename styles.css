@@ -13744,6 +13744,14 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
 }
 .priority-show-card:active { cursor: grabbing; }
 .priority-show-card.is-dragging { opacity: 0.4; }
+/* Mobile: stack the tiers vertically at full width so each tier reads as its
+   own list (one show per line) instead of cramped side-by-side columns. */
+@media (max-width: 640px) {
+  .priority-tiers-row { flex-direction: column; flex-wrap: nowrap; gap: 16px; padding: 14px 14px 0; }
+  .priority-tier-col { min-width: 0; width: 100%; }
+  .priority-add-tier-btn { margin-top: 4px; align-self: stretch; text-align: center; }
+  .priority-show-card { padding: 9px 10px; }
+}
 .priority-show-art {
   width: 32px;
   height: 32px;
