@@ -81,13 +81,14 @@ async function convertNewsEmailToArticle(anthropicKey, source, { subject, date, 
   // Sonnet reproduces the whole newsletter faithfully and in order — Haiku
   // inconsistently condensed or dropped middle sections, and on the busiest
   // news days its output ran past the token ceiling and was clipped
-  // mid-sentence in the Media reader. claudeCallComplete continues past the
-  // per-round ceiling so even a very long issue comes through in full.
+  // mid-sentence in the Media reader. max_tokens is set generously (a full
+  // issue is well under it) so it completes in one pass: Sonnet doesn't
+  // support the assistant-prefill continuation, so we must not rely on it.
   const out = await claudeCallComplete(anthropicKey, {
     system,
     user: `Newsletter subject: ${subject}\nDate: ${date}\n\n${text}`,
-    maxTokens: 8000,
-    maxRounds: 4,
+    maxTokens: 24000,
+    maxRounds: 1,
     model: "claude-sonnet-5",
     thinking: { type: "disabled" }
   });

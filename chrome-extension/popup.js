@@ -106,7 +106,9 @@ saveArticleButton.addEventListener("click", async () => {
   status.textContent = "Saving article...";
   const response = await send({ type: "saveArticle", url: tab.url, title: tab.title, tabId: tab.id });
   status.textContent = response?.ok
-    ? (response.already_saved ? "Already saved." : response.hasText ? "Saved with full text." : "Saved (text not available).")
+    ? (response.pdf ? "Importing PDF in the background — it'll appear in your articles in a few minutes."
+      : response.already_saved ? "Already saved."
+      : response.hasText ? "Saved with full text." : "Saved (text not available).")
     : response?.error || "Could not save article.";
 });
 

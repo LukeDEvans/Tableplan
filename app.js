@@ -31737,6 +31737,10 @@ function wireMediaTabs() {
   document.getElementById("articleUrlInput")?.addEventListener("keydown", (e) => {
     if (e.key === "Enter") confirmSaveArticle();
   });
+  document.getElementById("articleImportPdfBtn")?.addEventListener("click", openPdfImportDialog);
+  document.getElementById("closePdfImportBtn")?.addEventListener("click", () => document.getElementById("pdfImportDialog")?.close());
+  document.getElementById("cancelPdfImportBtn")?.addEventListener("click", () => document.getElementById("pdfImportDialog")?.close());
+  document.getElementById("confirmPdfImportBtn")?.addEventListener("click", confirmPdfImport);
 }
 
 const MEDIA_SERVICE_TABS = ["books", "books-audible", "books-libby", "books-kindle", "podcasts"];
@@ -35030,6 +35034,85 @@ function saveArticleUrl(url) {
   state.savedArticles.push({ id, url, title: url, publication: pub, savedAt: new Date().toISOString(), author: null, date: null, text: null });
   persist();
   if (activeAppArea === "media") switchMediaTab(pub);
+}
+
+// ── PDF import ──────────────────────────────────────────────────────────────
+
+function openPdfImportDialog() {
+  const dialog = document.getElementById("pdfImportDialog");
+  if (!dialog) return;
+  const urlInput = document.getElementById("pdfUrlInput");
+  const fileInput = document.getElementById("pdfFileInput");
+  const status = document.getElementById("pdfImportStatus");
+  if (urlInput) urlInput.value = "";
+  if (fileInput) fileInput.value = "";
+  if (status) { status.hidden = true; status.textContent = ""; }
+  dialog.showModal();
+  urlInput?.focus();
+}
+
+async function confirmPdfImport() {
+  const urlInput = document.getElementById("pdfUrlInput");
+  const fileInput = document.getElementById("pdfFileInput");
+  const status = document.getElementById("pdfImportStatus");
+  const setStatus = (msg) => { if (status) { status.hidden = false; status.textContent = msg; } };
+
+  const url = (urlInput?.value || "").trim();
+  const file = fileInput?.files?.[0] || null;
+  if (!url && !file) { setStatus("Paste a PDF link or choose a PDF file."); return; }
+
+  let payload;
+  if (file) {
+    if (file.type && file.type !== "application/pdf" && !/\.pdf$/i.test(file.name)) { setStatus("That doesn't look like a PDF."); return; }
+    if (file.size > 4 * 1024 * 1024) { setStatus("That PDF is over ~4 MB — use a link instead, or a smaller file."); return; }
+    setStatus("Uploading…");
+    const b64 = await fileToBase64(file);
+    payload = { title: file.name.replace(/\.pdf$/i, ""), pdfData: b64, mediaType: "application/pdf" };
+  } else {
+    if (!/^https?:\/\//i.test(url)) { setStatus("Enter a valid http(s) link."); return; }
+    payload = { pdfUrl: url, sourceUrl: url, title: pdfTitleFromUrl(url) };
+  }
+
+  setStatus("Starting import…");
+  const ok = await startPdfImport(payload);
+  if (ok) {
+    document.getElementById("pdfImportDialog")?.close();
+    alert("Importing your PDF in the background — it'll appear in your articles in a few minutes. Refresh if you don't see it.");
+  } else {
+    setStatus("Could not start the import. Check your connection and try again.");
+  }
+}
+
+function pdfTitleFromUrl(url) {
+  try {
+    const name = decodeURIComponent(new URL(url).pathname.split("/").filter(Boolean).pop() || "");
+    return name.replace(/\.pdf$/i, "").replace(/[-_]+/g, " ").trim() || "Imported PDF";
+  } catch { return "Imported PDF"; }
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+    reader.onerror = () => reject(new Error("Could not read the file."));
+    reader.readAsDataURL(file);
+  });
+}
+
+// Kicks off the background PDF conversion. It's a Netlify background function,
+// so the request returns 202 immediately with no JSON body — success is just a
+// 2xx status; the finished article arrives via the normal media sync.
+async function startPdfImport(payload) {
+  try {
+    const session = supabaseClient ? await supabaseClient.auth.getSession() : null;
+    const token = session?.data?.session?.access_token;
+    const res = await fetch(`/.netlify/functions/import-pdf-background`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify(payload)
+    });
+    return res.ok || res.status === 202;
+  } catch { return false; }
 }
 
 // Called by the Chrome extension after it saves an article to Supabase, so the

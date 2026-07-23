@@ -2,6 +2,7 @@ const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5veW9jamNsdHJlbndkb3ZxcnFsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzMjk5MjUsImV4cCI6MjA5MzkwNTkyNX0.UFs3GHdG2yuqOvPGXr6D8DjbvnTLzgC5-KGilg4Oc94";
 const IMPORT_RECIPE_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/import-recipe";
 const SAVE_ARTICLE_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/save-article";
+const IMPORT_PDF_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/import-pdf-background";
 const SAVE_PAGE_ARTICLES_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/save-page-articles";
 const SIMPLEFIN_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/simplefin";
 const SESSION_KEY = "eatSupabaseSession";
@@ -107,6 +108,20 @@ async function importRecipe(url) {
 async function saveArticle(url, title, tabId) {
   const session = await getValidSession(true);
   if (!url || !url.startsWith("http")) throw new Error("Open a web page first.");
+
+  // A PDF (paper, report, etc.) can't be scraped as HTML — hand its URL to the
+  // background importer, which reads the PDF directly and reproduces it as a
+  // readable article (lightly condensed for academic papers).
+  if (/\.pdf(\?|#|$)/i.test(url)) {
+    const res = await fetch(IMPORT_PDF_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ pdfUrl: url, sourceUrl: url, title: (title || "").replace(/\.pdf$/i, "").trim() || "Imported PDF" })
+    });
+    if (!(res.ok || res.status === 202)) throw new Error(`Import failed with status ${res.status}`);
+    return { ok: true, already_saved: false, pdf: true };
+  }
+
   const publication = detectPublication(url);
 
   let extracted = null;

@@ -305,6 +305,9 @@
                 <div class="article-list-panel" id="articleListPanel" hidden>
                   <div class="article-list-topbar">
                     <div class="article-list-actions">
+                      <button class="icon-btn" type="button" id="articleImportPdfBtn" title="Import a PDF (article or paper)" aria-label="Import a PDF">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>
+                      </button>
                       <button class="icon-btn" type="button" id="articleSyncBtn" title="Sync saved articles" aria-label="Sync from NYT and Economist" hidden>
                         <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                       </button>
@@ -1000,6 +1003,29 @@
           <div class="dialog-actions">
             <button class="secondary-btn" type="button" id="cancelArticleSaveBtn">Cancel</button>
             <button class="primary-btn" type="button" id="confirmArticleSaveBtn">Save</button>
+          </div>
+        </div>
+      </dialog>
+
+      <dialog class="recipe-dialog article-save-dialog" id="pdfImportDialog">
+        <div class="recipe-form">
+          <div class="dialog-head">
+            <h2>Import PDF</h2>
+            <button class="icon-btn" id="closePdfImportBtn" type="button" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <div class="article-save-body">
+            <label class="article-save-label" for="pdfUrlInput">Paste a link to a PDF</label>
+            <input class="article-save-input" id="pdfUrlInput" type="url" placeholder="https://arxiv.org/pdf/1706.03762" autocomplete="off" />
+            <p class="article-save-hint">…or choose a PDF file from this device (up to ~4&nbsp;MB).</p>
+            <input class="article-save-input" id="pdfFileInput" type="file" accept="application/pdf,.pdf" />
+            <p class="article-save-hint">Academic/scientific papers are reproduced (lightly condensed) for reading and listening. Conversion runs in the background — the article appears in your list in a few minutes.</p>
+            <p class="article-save-status" id="pdfImportStatus" hidden></p>
+          </div>
+          <div class="dialog-actions">
+            <button class="secondary-btn" type="button" id="cancelPdfImportBtn">Cancel</button>
+            <button class="primary-btn" type="button" id="confirmPdfImportBtn">Import</button>
           </div>
         </div>
       </dialog>
