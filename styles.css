@@ -12843,9 +12843,20 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
 /* Touch: podcast episode actions hide until a swipe-left reveals them, rather
    than flashing in on the synthetic tap-hover. */
 @media (hover: none), (pointer: coarse) {
-  .podcast-episode-row:hover .article-row-actions { display: none; }
+  .podcast-episode-row:not(.podcast-draggable-row):hover .article-row-actions { display: none; }
   .podcast-episode-row.podcast-episode-row--swiped .article-row-actions { display: flex; }
   .podcast-episode-row.podcast-episode-row--swiped { background: color-mix(in srgb, var(--ink) 3%, transparent); }
+  /* Playlist rows show their actions inline on touch (they reorder by
+     long-press instead of swiping). */
+  .podcast-draggable-row .article-row-actions { display: flex; position: static; transform: none; background: none; padding-left: 4px; }
+}
+/* Long-press reorder feedback */
+.reorder-active { touch-action: none; }
+.reorder-dragging {
+  background: var(--surface, #fff) !important;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+  border-radius: 8px;
+  opacity: 0.96;
 }
 .article-row--active .article-row-actions { background: linear-gradient(to right, transparent, color-mix(in srgb, var(--accent, #92400E) 8%, var(--paper, #fff)) 30%); }
 .article-row-action-btn {

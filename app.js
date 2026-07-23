@@ -32872,9 +32872,6 @@ function renderMediaAllList() {
       : `<span class="media-all-art media-all-art--icon">${e.type === "book" ? "📚" : e.type === "article" ? "📰" : "🎧"}</span>`;
     html += `
     <div class="article-row podcast-episode-row podcast-draggable-row${e.id === mediaAllQueueId ? " article-row--active" : ""}" data-all-id="${escapeHtml(e.id)}" data-all-type="${escapeHtml(e.type)}" draggable="true" role="button" tabindex="0">
-      <span class="playlist-drag-handle" title="Drag to reorder" aria-label="Drag to reorder">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
-      </span>
       ${art}
       <div class="article-row-main">
         <div class="article-row-title">${escapeHtml(e.title || "")}</div>
@@ -33037,7 +33034,64 @@ function openMediaAllBook(id) {
   switchMediaTab(tab);
 }
 
+// Long-press touch reorder for a vertical list (HTML5 drag-and-drop never
+// fires on touch). Hold a row briefly, then drag up/down — rows shuffle live
+// and onDrop(orderedIds) fires when you let go. Taps and control buttons still
+// work because we only take over once the long-press has armed.
+function makeTouchReorder(listEl, { rowSelector, getId, onDrop, longPressMs = 280 }) {
+  let dragging = null, armed = false, reordered = false, startX = 0, startY = 0, pressTimer = null;
+  const rowsInOrder = () => [...listEl.querySelectorAll(rowSelector)];
+
+  function cleanup() {
+    clearTimeout(pressTimer); pressTimer = null;
+    if (dragging) { dragging.classList.remove("reorder-dragging"); dragging.style.pointerEvents = ""; }
+    listEl.classList.remove("reorder-active");
+    document.removeEventListener("touchmove", onMove, { passive: false });
+    document.removeEventListener("touchend", onEnd);
+    document.removeEventListener("touchcancel", onEnd);
+    dragging = null; armed = false; reordered = false;
+  }
+  function onMove(e) {
+    const t = e.touches[0];
+    if (!armed) {
+      if (Math.abs(t.clientY - startY) > 10 || Math.abs(t.clientX - startX) > 10) cleanup(); // became a scroll
+      return;
+    }
+    e.preventDefault(); // hold reordering steady; don't scroll the list
+    const under = document.elementFromPoint(t.clientX, t.clientY)?.closest(rowSelector);
+    if (!under || under === dragging || !listEl.contains(under)) return;
+    const r = under.getBoundingClientRect();
+    if (t.clientY < r.top + r.height / 2) listEl.insertBefore(dragging, under);
+    else listEl.insertBefore(dragging, under.nextSibling);
+    reordered = true;
+  }
+  function onEnd() {
+    if (armed && reordered) onDrop(rowsInOrder().map(getId));
+    cleanup();
+  }
+  listEl.addEventListener("touchstart", (e) => {
+    const row = e.target.closest(rowSelector);
+    if (!row || e.target.closest(".article-row-actions, button, a, input, select")) return;
+    dragging = row; startX = e.touches[0].clientX; startY = e.touches[0].clientY;
+    pressTimer = setTimeout(() => {
+      armed = true;
+      listEl.classList.add("reorder-active");
+      row.classList.add("reorder-dragging");
+      row.style.pointerEvents = "none"; // so elementFromPoint sees rows beneath
+      if (navigator.vibrate) navigator.vibrate(8);
+    }, longPressMs);
+    document.addEventListener("touchmove", onMove, { passive: false });
+    document.addEventListener("touchend", onEnd);
+    document.addEventListener("touchcancel", onEnd);
+  }, { passive: true });
+}
+
 function setupMediaAllDrag(listEl, items) {
+  makeTouchReorder(listEl, {
+    rowSelector: "[data-all-id]",
+    getId: (row) => row.dataset.allId,
+    onDrop: (order) => { state.mediaAllPinnedOrder = order; persist(); renderMediaAllList(); },
+  });
   let dragSrc = null;
   listEl.querySelectorAll("[data-all-id]").forEach((row) => {
     row.addEventListener("dragstart", (e) => {
