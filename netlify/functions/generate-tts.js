@@ -24,67 +24,88 @@ exports.handler = async (event) => {
   const cleanText = text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
   if (!cleanText) return cors(json(400, { error: "No text content." }));
 
-  // Check cache — if meta.json exists, audio was already generated
+  // Bump when the generation format changes so older cached audio (which has
+  // no word timings) is regenerated on next play instead of served stale.
+  const FORMAT_VERSION = 2;
+
+  // Check cache — reuse only if it was generated in the current format (i.e.
+  // already carries per-word timings for on-screen highlighting).
   const cached = await getStorageJson(serviceKey, `${articleId}/meta.json`);
-  if (cached?.count) {
+  if (cached?.count && cached.version === FORMAT_VERSION) {
     const urls = Array.from({ length: cached.count }, (_, i) =>
       `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${articleId}/${i}.mp3`
     );
-    return cors(json(200, { urls, cached: true }));
+    return cors(json(200, { urls, timings: cached.timings || null, cached: true }));
   }
 
-  // Split text into ≤4800-char chunks at sentence boundaries
-  const chunks = splitText(cleanText, 4800);
+  // One word per token; each is wrapped in an SSML <mark> so the API reports
+  // the exact time it's spoken (used to highlight the word on screen).
+  const words = cleanText.split(/\s+/).filter(Boolean);
+  const chunks = buildSsmlChunks(words); // [{ startIndex, ssml }]
 
   const urls = [];
+  const timings = new Array(words.length).fill(null); // per word: { c: chunkIndex, t: seconds }
   for (let i = 0; i < chunks.length; i++) {
-    const audioBase64 = await synthesize(ttsKey, chunks[i]);
-    if (!audioBase64) return cors(json(500, { error: `TTS generation failed for chunk ${i}` }));
+    const result = await synthesize(ttsKey, chunks[i].ssml);
+    if (!result?.audio) return cors(json(500, { error: `TTS generation failed for chunk ${i}` }));
     const uploaded = await uploadToStorage(
       serviceKey,
       `${articleId}/${i}.mp3`,
-      Buffer.from(audioBase64, "base64"),
+      Buffer.from(result.audio, "base64"),
       "audio/mpeg"
     );
     if (!uploaded) return cors(json(500, { error: `Storage upload failed for chunk ${i}` }));
     urls.push(`${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${articleId}/${i}.mp3`);
+    for (const tp of result.timepoints || []) {
+      const gi = parseInt(String(tp.markName).slice(1), 10); // "w123" -> 123 (global index)
+      if (gi >= 0 && gi < timings.length) timings[gi] = { c: i, t: tp.timeSeconds || 0 };
+    }
   }
 
-  // Save metadata so future requests return cached URLs
   await uploadToStorage(
     serviceKey,
     `${articleId}/meta.json`,
-    Buffer.from(JSON.stringify({ count: chunks.length, generatedAt: new Date().toISOString() })),
+    Buffer.from(JSON.stringify({ count: chunks.length, version: FORMAT_VERSION, timings, generatedAt: new Date().toISOString() })),
     "application/json"
   );
 
-  return cors(json(200, { urls, cached: false }));
+  return cors(json(200, { urls, timings, cached: false }));
 };
 
-function splitText(text, maxLen) {
+function escapeSsml(w) {
+  return w.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
+// Group words into chunks whose SSML stays under Google's ~5000-byte input
+// limit. Each word carries an SSML <mark> with its GLOBAL index so timepoints
+// map straight back to the word regardless of which chunk they came from.
+function buildSsmlChunks(words, maxBytes = 4500) {
   const chunks = [];
-  let remaining = text;
-  while (remaining.length > maxLen) {
-    let cutAt = maxLen;
-    const sentenceEnd = remaining.lastIndexOf(". ", maxLen);
-    if (sentenceEnd > maxLen * 0.5) cutAt = sentenceEnd + 2;
-    chunks.push(remaining.slice(0, cutAt).trim());
-    remaining = remaining.slice(cutAt).trim();
+  let cur = [], curStart = 0, curBytes = "<speak></speak>".length;
+  for (let i = 0; i < words.length; i++) {
+    const piece = `<mark name="w${i}"/>${escapeSsml(words[i])} `;
+    const pieceBytes = Buffer.byteLength(piece, "utf8");
+    if (cur.length && curBytes + pieceBytes > maxBytes) {
+      chunks.push({ startIndex: curStart, ssml: `<speak>${cur.join("")}</speak>` });
+      cur = []; curStart = i; curBytes = "<speak></speak>".length;
+    }
+    cur.push(piece); curBytes += pieceBytes;
   }
-  if (remaining) chunks.push(remaining);
+  if (cur.length) chunks.push({ startIndex: curStart, ssml: `<speak>${cur.join("")}</speak>` });
   return chunks;
 }
 
-async function synthesize(apiKey, text) {
+async function synthesize(apiKey, ssml) {
   const res = await fetch(
-    `https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`,
+    `https://texttospeech.googleapis.com/v1beta1/text:synthesize?key=${apiKey}`,
     {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        input: { text },
+        input: { ssml },
         voice: { languageCode: "en-US", name: "en-US-Neural2-D" },
-        audioConfig: { audioEncoding: "MP3" }
+        audioConfig: { audioEncoding: "MP3" },
+        enableTimePointing: ["SSML_MARK"]
       })
     }
   );
@@ -94,7 +115,7 @@ async function synthesize(apiKey, text) {
     return null;
   }
   const data = await res.json();
-  return data.audioContent || null;
+  return data.audioContent ? { audio: data.audioContent, timepoints: data.timepoints || [] } : null;
 }
 
 async function getStorageJson(serviceKey, path) {

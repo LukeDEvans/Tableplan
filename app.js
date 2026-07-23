@@ -34931,6 +34931,13 @@ function openArticle(id, fromListId) {
     row.classList.toggle("article-row--active", row.dataset.articleId === id);
   });
 
+  // Wrap words so read-aloud can highlight them; if this is the article that's
+  // currently playing, sync the highlight to the current position right away.
+  if (textEl && article.text) {
+    wrapArticleWords(textEl);
+    if (listenArticle && listenArticle.id === id) highlightCurrentWord();
+  }
+
   // Always start a freshly opened article at the very top — reused reader DOM
   // otherwise keeps the previous article's scroll position.
   const readerBody = document.getElementById("articleReaderBody");
@@ -35291,6 +35298,10 @@ let listenChunkDurations = []; // seconds per chunk (resolved asynchronously)
 let listenChunkOffsets = [];   // cumulative start time of each chunk
 let listenTotalDuration = 0;   // sum of all chunk durations (0 until known)
 let listenArticle = null;      // the article/email being read (bar + auto-advance)
+let listenTimings = null;      // per spoken word: { c: chunkIndex, t: seconds } (incl. intro)
+let listenIntroWords = 0;      // spoken intro words before the body's first word
+let listenWordAbsTimes = null; // absolute start time (s) of each spoken word
+let listenActiveWordEl = null; // currently highlighted word span, if any
 let listenSpeaking = false;
 let listenLoading = false;
 let listenGenId = 0;
@@ -35321,7 +35332,83 @@ async function loadListenChunkDurations(urls, genId) {
   let acc = 0;
   for (const d of durations) { listenChunkOffsets.push(acc); acc += d; }
   listenTotalDuration = acc;
+  computeWordAbsTimes();
   updateMiniPlayerProgress();
+}
+
+// Absolute start time of each spoken word = its chunk's offset + its in-chunk
+// time. Needs both the per-word timings (from the server) and the measured
+// chunk offsets, so it's recomputed once durations land.
+function computeWordAbsTimes() {
+  if (!listenTimings || !listenChunkOffsets.length) { listenWordAbsTimes = null; return; }
+  let last = 0;
+  listenWordAbsTimes = listenTimings.map((tp) => {
+    if (!tp) return last; // no timepoint for this word — hold the previous time
+    last = (listenChunkOffsets[tp.c] || 0) + (tp.t || 0);
+    return last;
+  });
+}
+
+// Wrap each word of a rendered article in a <span data-wi> so it can be
+// highlighted as it's read. Walking text nodes (not textContent) means tag
+// boundaries split words exactly like the server's tokenizer did.
+function wrapArticleWords(container) {
+  if (!container) return 0;
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+  const nodes = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    if (n.parentElement?.closest("script,style")) continue;
+    if (/\S/.test(n.textContent)) nodes.push(n);
+  }
+  let wi = 0;
+  for (const node of nodes) {
+    const frag = document.createDocumentFragment();
+    for (const part of node.textContent.split(/(\s+)/)) {
+      if (!part) continue;
+      if (/^\s+$/.test(part)) frag.appendChild(document.createTextNode(part));
+      else {
+        const span = document.createElement("span");
+        span.className = "tts-word";
+        span.dataset.wi = String(wi++);
+        span.textContent = part;
+        frag.appendChild(span);
+      }
+    }
+    node.parentNode.replaceChild(frag, node);
+  }
+  return wi;
+}
+
+function clearWordHighlight() {
+  if (listenActiveWordEl) { listenActiveWordEl.classList.remove("tts-word--active"); listenActiveWordEl = null; }
+}
+
+function setWordHighlight(bodyIdx) {
+  const textEl = document.getElementById("articleReaderText");
+  if (!textEl) return;
+  const span = textEl.querySelector(`.tts-word[data-wi="${bodyIdx}"]`);
+  if (!span || span === listenActiveWordEl) return;
+  clearWordHighlight();
+  span.classList.add("tts-word--active");
+  listenActiveWordEl = span;
+  // Keep the highlighted word comfortably in view without yanking the page.
+  const bodyEl = document.getElementById("articleReaderBody");
+  if (bodyEl) {
+    const r = span.getBoundingClientRect(), b = bodyEl.getBoundingClientRect();
+    if (r.top < b.top + 60 || r.bottom > b.bottom - 40) span.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+}
+
+// Highlight the word currently being spoken, if its article is on screen.
+function highlightCurrentWord() {
+  if (!listenWordAbsTimes || !listenWordAbsTimes.length) return;
+  if (!listenArticle || openArticleId !== listenArticle.id) return;
+  const cur = nowPlayingElapsed();
+  let lo = 0, hi = listenWordAbsTimes.length - 1, g = -1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (listenWordAbsTimes[mid] <= cur) { g = mid; lo = mid + 1; } else hi = mid - 1; }
+  const bodyIdx = g - listenIntroWords;
+  if (bodyIdx < 0) { clearWordHighlight(); return; } // still on the spoken intro
+  setWordHighlight(bodyIdx);
 }
 
 // Seconds elapsed across the whole article (finished chunks + position in the
@@ -35383,12 +35470,15 @@ async function generateTtsUrls(article) {
     source && !/^email$/i.test(source) ? `From ${source}` : ""
   ].filter(Boolean).join(". ");
   const text = (intro ? intro + ". " : "") + body;
+  // How many leading words belong to the spoken intro — the article body words
+  // (what we highlight on screen) start after these.
+  const introWords = intro ? (intro + ".").split(/\s+/).filter(Boolean).length : 0;
   trackUsage("google_tts");
   const result = await callNetlifyFunction("generate-tts", { articleId: article.id, text });
   if (result.error || !Array.isArray(result.urls) || !result.urls.length) {
     throw new Error(result.error || "Unknown error");
   }
-  return result.urls;
+  return { urls: result.urls, timings: result.timings || null, introWords };
 }
 
 // Audio prefetched for upcoming All-queue items: articleId → Promise<urls>
@@ -35422,16 +35512,16 @@ async function startListenTTS(article) {
   const myGenId = ++listenGenId;
   updateListenPlayBtn();
 
-  let urls = null;
+  let data = null;
   const prefetched = ttsPrefetchCache.get(article.id);
   if (prefetched) {
-    urls = await prefetched;
+    data = await prefetched;
     ttsPrefetchCache.delete(article.id);
     if (myGenId !== listenGenId) return;
   }
-  if (!urls) {
+  if (!data) {
     try {
-      urls = await generateTtsUrls(article);
+      data = await generateTtsUrls(article);
     } catch (e) {
       if (myGenId !== listenGenId) return;
       listenLoading = false;
@@ -35441,11 +35531,15 @@ async function startListenTTS(article) {
     }
     if (myGenId !== listenGenId) return;
   }
-  if (!urls) { listenLoading = false; updateListenPlayBtn(); return; }
+  if (!data || !data.urls) { listenLoading = false; updateListenPlayBtn(); return; }
 
   listenLoading = false;
   listenArticle = article;
-  listenAllUrls = [...urls];
+  listenAllUrls = [...data.urls];
+  listenTimings = Array.isArray(data.timings) ? data.timings : null;
+  listenIntroWords = data.introWords || 0;
+  listenWordAbsTimes = null;
+  clearWordHighlight();
   listenChunkDurations = [];
   listenChunkOffsets = [];
   listenTotalDuration = 0;
@@ -35485,7 +35579,7 @@ function playChunkAt(idx, offsetSec = 0) {
   listenAudio.onplay = () => { listenSpeaking = true; updateListenPlayBtn(); updateMiniPlayerPlayBtn(); };
   listenAudio.onpause = () => { if (!listenAudio.ended) { listenSpeaking = false; updateListenPlayBtn(); updateMiniPlayerPlayBtn(); } };
   listenAudio.onerror = () => { listenSpeaking = false; listenAudio = null; updateListenPlayBtn(); updateMiniPlayerPlayBtn(); };
-  listenAudio.ontimeupdate = () => updateMiniPlayerProgress();
+  listenAudio.ontimeupdate = () => { updateMiniPlayerProgress(); highlightCurrentWord(); };
   listenAudio.onended = () => playChunkAt(listenChunkIdx + 1);
   listenAudio.play().catch(() => {});
   // Start buffering the next chunk now so the hand-off is seamless.
@@ -35558,6 +35652,10 @@ function stopListen() {
   listenChunkOffsets = [];
   listenTotalDuration = 0;
   listenArticle = null;
+  listenTimings = null;
+  listenWordAbsTimes = null;
+  listenIntroWords = 0;
+  clearWordHighlight();
   listenSpeaking = false;
   listenLoading = false;
   updateListenPlayBtn();

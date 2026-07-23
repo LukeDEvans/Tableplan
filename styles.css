@@ -12932,6 +12932,13 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   color: var(--ink);
 }
 .article-reader-text p { margin: 0 0 1em; }
+/* Read-aloud word highlight (karaoke). .tts-word is invisible until active. */
+.tts-word { border-radius: 3px; }
+.tts-word--active {
+  background: color-mix(in srgb, var(--accent, #92400E) 26%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #92400E) 26%, transparent);
+  color: var(--ink);
+}
 .article-fetch-prompt {
   padding: 32px 0;
   color: var(--text-muted, #888);
