@@ -26,6 +26,8 @@ exports.handler = async (event) => {
     scope: [
       "https://www.googleapis.com/auth/gmail.modify",
       "https://www.googleapis.com/auth/gmail.send",
+      // Lets the app create/manage Gmail filters (e.g. auto-filing statements).
+      "https://www.googleapis.com/auth/gmail.settings.basic",
       "email",
       "profile"
     ].join(" "),
