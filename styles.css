@@ -13689,8 +13689,20 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   white-space: nowrap;
 }
 .priority-add-tier-btn:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.priority-tier-move { margin-left: auto; display: inline-flex; gap: 1px; }
+.priority-tier-move-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted, #aaa);
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 3px 4px;
+  border-radius: 4px;
+}
+.priority-tier-move-btn:hover:not(:disabled) { color: var(--accent, #92400E); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.priority-tier-move-btn:disabled { opacity: 0.3; cursor: default; }
 .priority-tier-remove-btn {
-  margin-left: auto;
   background: none;
   border: none;
   cursor: pointer;

@@ -32490,6 +32490,7 @@ function showPodcastPriorityModal() {
       : `<div class="priority-show-art priority-show-art--placeholder"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div><span class="priority-show-name">${escapeHtml(show.title)}</span>`;
     d.addEventListener("dragstart", (e) => { dragItemId = show.id; dragItemKind = "show"; d.classList.add("is-dragging"); e.dataTransfer.effectAllowed = "move"; });
     d.addEventListener("dragend", () => { dragItemId = null; dragItemKind = null; d.classList.remove("is-dragging"); overlay.querySelectorAll(".priority-drop-zone").forEach(z => z.classList.remove("drag-over")); });
+    wireCardTouch(d);
     return d;
   }
 
@@ -32504,6 +32505,7 @@ function showPodcastPriorityModal() {
       : `<div class="priority-show-art priority-show-art--placeholder"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></div><span class="priority-show-name">${escapeHtml(pub.label)}</span><span class="priority-show-badge">Article</span>`;
     d.addEventListener("dragstart", (e) => { dragItemId = pub.key; dragItemKind = "pub"; d.classList.add("is-dragging"); e.dataTransfer.effectAllowed = "move"; });
     d.addEventListener("dragend", () => { dragItemId = null; dragItemKind = null; d.classList.remove("is-dragging"); overlay.querySelectorAll(".priority-drop-zone").forEach(z => z.classList.remove("drag-over")); });
+    wireCardTouch(d);
     return d;
   }
 
@@ -32527,6 +32529,70 @@ function showPodcastPriorityModal() {
         }
       });
     });
+  }
+
+  // Reorder whole tiers (so a newly added bottom tier can move to the top):
+  // swap every assignment between tier n and its neighbour.
+  function moveTier(n, dir) {
+    readCurrentAssignments();
+    const other = n + dir;
+    if (other < 1 || other > ms.tierCount) return;
+    const swap = (map) => { for (const k of Object.keys(map)) { if (map[k] === n) map[k] = other; else if (map[k] === other) map[k] = n; } };
+    swap(ms.showTiers); swap(ms.publicationTiers);
+    renderTiers();
+  }
+
+  // Touch drag for a tier card: long-press to pick it up, drag over a tier's
+  // drop zone, release to drop it there (HTML5 drag-and-drop is mouse-only).
+  function wireCardTouch(card) {
+    let pressTimer = null, armed = false, sx = 0, sy = 0;
+    const zones = () => overlay.querySelectorAll(".priority-drop-zone");
+    const clearHover = () => zones().forEach((z) => z.classList.remove("drag-over"));
+    function refreshHints() {
+      zones().forEach((z) => {
+        if (!z.querySelector(".priority-show-card") && !z.querySelector(".priority-drop-hint")) {
+          z.insertAdjacentHTML("beforeend", `<div class="priority-drop-hint">${z.dataset.tier === "0" ? "All items assigned to tiers" : "Drop shows or publications here"}</div>`);
+        }
+      });
+    }
+    function cleanup() {
+      clearTimeout(pressTimer); pressTimer = null;
+      card.classList.remove("is-dragging"); card.style.pointerEvents = "";
+      clearHover();
+      document.removeEventListener("touchmove", onMove, { passive: false });
+      document.removeEventListener("touchend", onEnd);
+      document.removeEventListener("touchcancel", onEnd);
+      armed = false;
+    }
+    function onMove(e) {
+      const t = e.touches[0];
+      if (!armed) { if (Math.abs(t.clientX - sx) > 10 || Math.abs(t.clientY - sy) > 10) cleanup(); return; }
+      e.preventDefault();
+      clearHover();
+      document.elementFromPoint(t.clientX, t.clientY)?.closest(".priority-drop-zone")?.classList.add("drag-over");
+    }
+    function onEnd(e) {
+      if (armed) {
+        const t = e.changedTouches[0];
+        card.style.pointerEvents = "";
+        const zone = document.elementFromPoint(t.clientX, t.clientY)?.closest(".priority-drop-zone");
+        if (zone) { zone.querySelector(".priority-drop-hint")?.remove(); zone.appendChild(card); }
+        refreshHints();
+      }
+      cleanup();
+    }
+    card.addEventListener("touchstart", (e) => {
+      sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+      pressTimer = setTimeout(() => {
+        armed = true;
+        card.classList.add("is-dragging");
+        card.style.pointerEvents = "none";
+        if (navigator.vibrate) navigator.vibrate(8);
+      }, 250);
+      document.addEventListener("touchmove", onMove, { passive: false });
+      document.addEventListener("touchend", onEnd);
+      document.addEventListener("touchcancel", onEnd);
+    }, { passive: true });
   }
 
   function renderTiers() {
@@ -32572,6 +32638,10 @@ function showPodcastPriorityModal() {
           <span class="priority-tier-label-text">Tier ${n}</span>
           ${n === 1 ? `<span class="priority-tier-sub">Plays first</span>` : ""}
           ${n === ms.tierCount && ms.tierCount > 1 ? `<span class="priority-tier-sub">Plays last</span>` : ""}
+          <span class="priority-tier-move">
+            <button class="priority-tier-move-btn" type="button" data-move-tier="up" title="Move tier up" aria-label="Move tier ${n} up"${n === 1 ? " disabled" : ""}>▲</button>
+            <button class="priority-tier-move-btn" type="button" data-move-tier="down" title="Move tier down" aria-label="Move tier ${n} down"${n === ms.tierCount ? " disabled" : ""}>▼</button>
+          </span>
           <button class="priority-tier-remove-btn" type="button" data-remove-tier="${n}" title="Remove tier" aria-label="Remove tier ${n}">×</button>
         </div>
         <div class="priority-drop-zone" data-tier="${n}"></div>`;
@@ -32580,6 +32650,8 @@ function showPodcastPriorityModal() {
       for (const pub of pubsByTier[n]) zone.appendChild(pubCard(pub));
       if (zoneIsEmpty(n)) zone.innerHTML = `<div class="priority-drop-hint">Drop shows or publications here</div>`;
       wireZone(zone);
+      col.querySelector('[data-move-tier="up"]').addEventListener("click", () => moveTier(n, -1));
+      col.querySelector('[data-move-tier="down"]').addEventListener("click", () => moveTier(n, 1));
       col.querySelector("[data-remove-tier]").addEventListener("click", () => {
         readCurrentAssignments();
         const removeNum = parseInt(col.querySelector("[data-remove-tier]").dataset.removeTier, 10);
