@@ -275,6 +275,15 @@ async function snapshotFinanceBalances(serviceKey) {
 
       const finRes = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(groupId + ":finance")}&select=state`, { headers });
       const finRows = finRes.ok ? await finRes.json() : [];
+
+      // Rolling daily backup of the household finance section, so budget
+      // categories and transaction annotations are always recoverable if any
+      // client ever wipes them. A snapshot that is EMPTIER than the newest
+      // stored one is skipped, so a wipe can never poison the backup — the last
+      // healthy copy survives. Kept per date; window trimmed to ~21 days.
+      try { await backupFinanceSection(headers, groupId, finRows[0]?.state); }
+      catch (e) { console.error("[fin-backup] failed:", e.name || "error"); }
+
       const accounts = finRows[0]?.state?.financeAccounts || [];
 
       const balances = {};
@@ -308,6 +317,57 @@ async function snapshotFinanceBalances(serviceKey) {
       console.error("[fin-snapshot] group failed:", e.name || "error"); // names only — no URLs in logs
     }
   }
+}
+
+// How "rich" a finance state is — used to refuse backing up a wipe over a
+// healthy snapshot. Counts budget categories + every transaction-annotation
+// entry + manual transactions.
+function financeRichness(fin) {
+  if (!fin || typeof fin !== "object") return 0;
+  let n = 0;
+  for (const g of (Array.isArray(fin.financeBudgetGroups) ? fin.financeBudgetGroups : [])) {
+    n += Array.isArray(g?.categories) ? g.categories.length : 0;
+  }
+  for (const k of ["financeTxnLabels", "financeTxnRules", "financeTxnNoteOverrides",
+    "financeTxnNoteCounts", "financeTxnLinks", "financeTxnSignFlips", "financeMerchantNames",
+    "financeAccountSubLabels", "financeMonthActuals"]) {
+    const v = fin[k];
+    if (v && typeof v === "object") n += Object.keys(v).length;
+  }
+  for (const k of ["financeManualTxns", "financeAccountLabels"]) {
+    if (Array.isArray(fin[k])) n += fin[k].length;
+  }
+  return n;
+}
+
+async function backupFinanceSection(headers, groupId, finState) {
+  if (!finState || typeof finState !== "object") return;
+  const id = `finbackup_${groupId}`;
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(id)}&select=state`, { headers, cache: "no-store" });
+  const rows = res.ok ? await res.json() : [];
+  const snaps = (rows[0]?.state?.snapshots && typeof rows[0].state.snapshots === "object") ? rows[0].state.snapshots : {};
+
+  // Never let a wipe overwrite a healthier copy: skip if today's data is
+  // emptier than the newest snapshot we already hold.
+  const newestKey = Object.keys(snaps).sort().at(-1);
+  const newestRichness = newestKey ? financeRichness(snaps[newestKey]) : -1;
+  const todayRichness = financeRichness(finState);
+  if (todayRichness < newestRichness) {
+    console.log(`[fin-backup] skipped — today (${todayRichness}) poorer than newest (${newestRichness})`);
+    return;
+  }
+
+  const today = dateKey(new Date());
+  snaps[today] = finState;
+  for (const k of Object.keys(snaps).sort().slice(0, -21)) delete snaps[k]; // keep newest ~21 days
+
+  const up = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
+    method: "POST",
+    headers: { ...headers, prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({ id, state: { snapshots: snaps }, updated_at: new Date().toISOString() })
+  });
+  if (!up.ok) console.error(`[fin-backup] save ${up.status}`);
+  else console.log(`[fin-backup] stored ${today} (richness ${todayRichness}, ${Object.keys(snaps).length} days kept)`);
 }
 
 export default async () => {

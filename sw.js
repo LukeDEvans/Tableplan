@@ -1,4 +1,4 @@
-const CACHE = "live-v10";
+const CACHE = "live-v11";
 const PRECACHE = ["/", "/favicon.svg"];
 const SKIP_HOSTS = ["supabase.co", "googleapis.com", "gstatic.com"];
 

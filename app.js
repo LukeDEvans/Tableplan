@@ -230,6 +230,13 @@ const STATE_SECTIONS = {
 // each section to its scoped Supabase row:
 //   household →  "<groupId>:<section>"
 //   personal  →  "u-<userId>:<section>"
+// Bumped whenever a new key (or nested field) is added to a section — the
+// server's finance-protection trigger uses it to refuse writes from clients
+// running code older than the row was last written with, so a stale device can
+// never drop budget categories or transaction annotations it doesn't know
+// about. MUST be incremented when finance* keys are added/restructured.
+const STATE_SCHEMA_VERSION = 2;
+
 const SECTION_SCOPE = {
   eat: "household",       // Meal Plan is exclusively shared
   config: "household",    // app settings stay shared
@@ -5501,7 +5508,7 @@ function assembleSectionRows(rows) {
   const assembled = {};
   let latestTs = "";
   for (const row of rows) {
-    const { stateUpdatedAt, ...data } = row.state || {};
+    const { stateUpdatedAt, schemaVersion, ...data } = row.state || {};
     Object.assign(assembled, data);
     if (stateUpdatedAt && stateUpdatedAt > latestTs) latestTs = stateUpdatedAt;
   }
@@ -5540,7 +5547,7 @@ async function loadStateFromSupabase() {
     if (!shadowId) continue;
     const row = byId.get(shadowId);
     if (row) {
-      const { stateUpdatedAt, ...data } = row.state || {};
+      const { stateUpdatedAt, schemaVersion, ...data } = row.state || {};
       shadowSections[section] = data;
     } else if (!(section in shadowSections)) {
       shadowSections[section] = {};
@@ -5589,7 +5596,11 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
   const rowId = sectionRowId(stateId, section); // household or personal row per scope
   const now = new Date().toISOString();
   const payload = {
-    state: { ...extractSectionData(keys), stateUpdatedAt: state.stateUpdatedAt },
+    // schemaVersion lets the server (see the tp_protect_finance_merge trigger)
+    // reject finance-key overwrites from clients running older code than the
+    // row was last written with — the guard against a stale device silently
+    // wiping budget categories or transaction annotations.
+    state: { ...extractSectionData(keys), stateUpdatedAt: state.stateUpdatedAt, schemaVersion: STATE_SCHEMA_VERSION },
     updated_at: now
   };
   const seen = lastSeenSectionStamp[rowId];
@@ -5634,7 +5645,7 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
   if (!cur.ok) throw new Error(`Supabase section "${section}" conflict fetch failed: ${cur.status}`);
   const curRows = await cur.json();
   if (curRows.length) {
-    const { stateUpdatedAt: remoteTs, ...remoteData } = curRows[0].state || {};
+    const { stateUpdatedAt: remoteTs, schemaVersion: _rv, ...remoteData } = curRows[0].state || {};
     const localTs = state.stateUpdatedAt || "";
     const localFrag  = { ...extractSectionData(keys), tombstones: state.tombstones, stateUpdatedAt: localTs };
     const remoteFrag = { ...remoteData, tombstones: remoteData.tombstones || state.tombstones, stateUpdatedAt: remoteTs || "" };
