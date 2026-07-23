@@ -32334,10 +32334,38 @@ function podcastEpisodeRowHtml(e, { showShowTitle = false, hasPlaylists = false 
   </div>`;
 }
 
+let podcastSwipedRow = null;
+
 function wirePodcastEpisodeRows(listEl) {
   listEl.querySelectorAll(".podcast-episode-row").forEach(row => {
     const id = row.dataset.episodeId;
-    row.addEventListener("click", (ev) => { if (ev.target.closest(".article-row-actions")) return; openPodcastEpisode(id); });
+    // Touch: the action buttons stay hidden until a swipe-left reveals them
+    // (on desktop they still appear on hover). A clean tap opens the episode.
+    let sx = 0, sy = 0, moved = false, swiping = false, suppressUntil = 0;
+    row.addEventListener("touchstart", (e) => {
+      if (podcastSwipedRow && podcastSwipedRow !== row) { podcastSwipedRow.classList.remove("podcast-episode-row--swiped"); podcastSwipedRow = null; }
+      const t = e.touches[0]; sx = t.clientX; sy = t.clientY; moved = false; swiping = false;
+    }, { passive: true });
+    row.addEventListener("touchmove", (e) => {
+      const t = e.touches[0]; const dx = t.clientX - sx, dy = t.clientY - sy;
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) moved = true;
+      if (!swiping && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.2) swiping = true;
+    }, { passive: true });
+    row.addEventListener("touchend", (e) => {
+      const dx = e.changedTouches[0].clientX - sx;
+      if (swiping) {
+        suppressUntil = Date.now() + 600;
+        if (dx <= -40) { row.classList.add("podcast-episode-row--swiped"); podcastSwipedRow = row; }
+        else if (dx >= 40) { row.classList.remove("podcast-episode-row--swiped"); if (podcastSwipedRow === row) podcastSwipedRow = null; }
+        return;
+      }
+      if (moved) { suppressUntil = Date.now() + 600; return; }
+      if (e.target.closest(".article-row-actions")) return; // let the button handle it
+      suppressUntil = Date.now() + 600;
+      if (row.classList.contains("podcast-episode-row--swiped")) { row.classList.remove("podcast-episode-row--swiped"); podcastSwipedRow = null; return; }
+      openPodcastEpisode(id);
+    });
+    row.addEventListener("click", (ev) => { if (Date.now() < suppressUntil) return; if (ev.target.closest(".article-row-actions")) return; openPodcastEpisode(id); });
     row.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openPodcastEpisode(id); } });
     row.querySelector("[data-episode-save]")?.addEventListener("click", (ev) => { ev.stopPropagation(); toggleEpisodeSaved(id); });
     row.querySelector("[data-episode-queue]")?.addEventListener("click", (ev) => { ev.stopPropagation(); toggleEpisodeInQueue(id); });

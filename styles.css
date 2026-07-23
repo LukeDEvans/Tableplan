@@ -12840,6 +12840,13 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   background: linear-gradient(to right, transparent, var(--paper, #fff) 30%);
 }
 .article-row:hover .article-row-actions { display: flex; }
+/* Touch: podcast episode actions hide until a swipe-left reveals them, rather
+   than flashing in on the synthetic tap-hover. */
+@media (hover: none), (pointer: coarse) {
+  .podcast-episode-row:hover .article-row-actions { display: none; }
+  .podcast-episode-row.podcast-episode-row--swiped .article-row-actions { display: flex; }
+  .podcast-episode-row.podcast-episode-row--swiped { background: color-mix(in srgb, var(--ink) 3%, transparent); }
+}
 .article-row--active .article-row-actions { background: linear-gradient(to right, transparent, color-mix(in srgb, var(--accent, #92400E) 8%, var(--paper, #fff)) 30%); }
 .article-row-action-btn {
   width: 30px;
