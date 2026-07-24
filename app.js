@@ -500,6 +500,56 @@ let autoRuleSwipeGesture = null;
 let workoutPoolSwipeGesture = null;
 let mealPointerDeleteGesture = null;
 let lastMealDragPoint = null;
+
+// ── Shared media playback speed (persisted across sessions & players) ─────────
+const PLAYBACK_SPEED_KEY = "live-playback-speed-v1";
+const SPEED_SELECT_IDS = ["listenSpeedSelect", "podcastSpeedSelect", "exListenSpeedSelect", "exPodcastSpeedSelect"];
+let mediaPlaybackSpeed = (() => {
+  const v = parseFloat(localStorage.getItem(PLAYBACK_SPEED_KEY));
+  return (v && v >= 0.5 && v <= 3) ? v : 1;
+})();
+function setMediaPlaybackSpeed(v) {
+  const rate = (v && v >= 0.5 && v <= 3) ? v : 1;
+  mediaPlaybackSpeed = rate;
+  try { localStorage.setItem(PLAYBACK_SPEED_KEY, String(rate)); } catch { /* private mode */ }
+  if (typeof listenAudio !== "undefined" && listenAudio) listenAudio.playbackRate = rate;
+  if (typeof podcastAudio !== "undefined" && podcastAudio) podcastAudio.playbackRate = rate;
+  syncSpeedSelectsUi();
+}
+function syncSpeedSelectsUi() {
+  for (const id of SPEED_SELECT_IDS) {
+    const el = document.getElementById(id);
+    if (el && parseFloat(el.value) !== mediaPlaybackSpeed) el.value = String(mediaPlaybackSpeed);
+  }
+}
+
+// A single, gesture-blessed <audio> element for article read-aloud. iOS only
+// lets an element play() after it has once been started inside a user gesture;
+// TTS generation is async, so the first real play() lands outside the tap.
+// Priming this element with a silent clip on the tap "unlocks" it for the rest
+// of the session — the fix for "won't play until I leave and come back".
+const SILENT_AUDIO_URI = "data:audio/wav;base64,UklGRmQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YUAAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA";
+let listenAudioEl = null;
+let listenAudioUnlocked = false;
+// Articles we've already auto-fetched text for this session (avoid re-hammering
+// the fetch endpoint when a fetch legitimately returns nothing).
+const articleAutoFetchTried = new Set();
+function ensureListenAudioEl() {
+  if (!listenAudioEl) { listenAudioEl = new Audio(); listenAudioEl.preload = "auto"; }
+  return listenAudioEl;
+}
+function unlockListenAudio() {
+  if (listenAudioUnlocked) return;
+  const el = ensureListenAudioEl();
+  try {
+    el.muted = true;
+    el.src = SILENT_AUDIO_URI;
+    const p = el.play();
+    const settle = () => { listenAudioUnlocked = true; try { el.pause(); } catch { /* noop */ } el.currentTime = 0; el.muted = false; };
+    if (p && p.then) p.then(settle).catch(() => { el.muted = false; });
+    else settle();
+  } catch { el.muted = false; }
+}
 let pendingMealRecipeSelection = null;
 let pendingMealIngredientSelection = null;
 let pendingAutoRuleRecipeSelection = null;
@@ -32091,9 +32141,8 @@ function wireMediaTabs() {
   document.getElementById("articleSyncSettingsBtn")?.addEventListener("click", () => openSyncSettingsDialog("read"));
   document.getElementById("listenPlayPauseBtn")?.addEventListener("click", toggleListenPlayPause);
   document.getElementById("listenStopBtn")?.addEventListener("click", stopListen);
-  document.getElementById("listenSpeedSelect")?.addEventListener("change", (e) => {
-    if (listenAudio) listenAudio.playbackRate = parseFloat(e.target.value);
-  });
+  document.getElementById("listenSpeedSelect")?.addEventListener("change", (e) => setMediaPlaybackSpeed(parseFloat(e.target.value)));
+  document.getElementById("exListenSpeedSelect")?.addEventListener("change", (e) => setMediaPlaybackSpeed(parseFloat(e.target.value)));
   document.getElementById("closeArticleSaveBtn")?.addEventListener("click", closeArticleSaveDialog);
   document.getElementById("cancelArticleSaveBtn")?.addEventListener("click", closeArticleSaveDialog);
   document.getElementById("confirmArticleSaveBtn")?.addEventListener("click", confirmSaveArticle);
@@ -32226,9 +32275,9 @@ function wirePodcastPanel() {
   document.getElementById("podcastSkipBackBtn")?.addEventListener("click", () => skipPodcast(-15));
   document.getElementById("podcastSkipFwdBtn")?.addEventListener("click", () => skipPodcast(30));
   document.getElementById("podcastMarkPlayedBtn")?.addEventListener("click", toggleOpenEpisodePlayed);
-  document.getElementById("podcastSpeedSelect")?.addEventListener("change", (e) => {
-    if (podcastAudio) podcastAudio.playbackRate = parseFloat(e.target.value);
-  });
+  document.getElementById("podcastSpeedSelect")?.addEventListener("change", (e) => setMediaPlaybackSpeed(parseFloat(e.target.value)));
+  document.getElementById("exPodcastSpeedSelect")?.addEventListener("change", (e) => setMediaPlaybackSpeed(parseFloat(e.target.value)));
+  syncSpeedSelectsUi();
   const skipAdsToggle = document.getElementById("podcastSkipAdsToggle");
   if (skipAdsToggle) {
     skipAdsToggle.checked = !!state.podcastSkipAds;
@@ -34385,7 +34434,7 @@ function startPodcastPlayback(episode, show) {
 
   podcastCurrentChapters = null;
   podcastAudio = new Audio(episode.audioUrl);
-  podcastAudio.playbackRate = parseFloat(document.getElementById("podcastSpeedSelect")?.value || "1");
+  podcastAudio.playbackRate = mediaPlaybackSpeed;
   if (startPos > 10) podcastAudio.currentTime = startPos;
 
   const audio = podcastAudio;
@@ -34417,11 +34466,13 @@ function startPodcastPlayback(episode, show) {
   podcastAudio.addEventListener("play", () => {
     updatePodcastPlayBtn();
     updateMiniPlayerPlayBtn();
+    setMediaSessionPlaybackState("playing");
     scheduleAdSkips(podcastCurrentChapters, audio);
   });
   podcastAudio.addEventListener("pause", () => {
     updatePodcastPlayBtn();
     updateMiniPlayerPlayBtn();
+    setMediaSessionPlaybackState("paused");
     clearAdSkipTimers();
   });
 
@@ -35288,9 +35339,16 @@ function openArticle(id, fromListId) {
   if (textEl) {
     if (article.text) {
       textEl.innerHTML = article.text;
+    } else if (!articleAutoFetchTried.has(id)) {
+      // Auto-fetch the text instead of making the user tap "Fetch" (e.g.
+      // NutritionFacts links arrive without body text). Fall back to the manual
+      // prompt only if the auto-fetch fails.
+      articleAutoFetchTried.add(id);
+      textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
+      fetchArticleText(id);
     } else {
-      textEl.innerHTML = `<div class="article-fetch-prompt"><p>Article text not yet loaded.</p><p class="article-fetch-hint">Click Fetch to load the article. Free and open-access articles load fully. Paywalled articles may return only the opening paragraphs.</p><button class="primary-btn" type="button" data-fetch-article="${escapeHtml(id)}">Fetch Article</button></div>`;
-      textEl.querySelector("[data-fetch-article]")?.addEventListener("click", () => fetchArticleText(id));
+      textEl.innerHTML = `<div class="article-fetch-prompt"><p>Article text not yet loaded.</p><p class="article-fetch-hint">Free and open-access articles load fully. Paywalled articles may return only the opening paragraphs.</p><button class="primary-btn" type="button" data-fetch-article="${escapeHtml(id)}">Fetch Article</button></div>`;
+      textEl.querySelector("[data-fetch-article]")?.addEventListener("click", () => { articleAutoFetchTried.delete(id); fetchArticleText(id); });
     }
   }
 
@@ -35346,23 +35404,35 @@ function deleteOpenArticle() {
   deleteArticle(openArticleId);
 }
 
+// Fetches an article's body text into state (returns the outcome). Shared by
+// the reader (auto-fetch on open) and the listen flow (fetch-then-play).
+async function ensureArticleText(id) {
+  const article = (state.savedArticles || []).find((a) => a.id === id);
+  if (!article) return { ok: false, error: "Article not found." };
+  if (article.text) return { ok: true };
+  const res = await callNetlifyFunction("fetch-article", { url: article.url, publication: article.publication });
+  if (res?.text) {
+    article.text = res.text;
+    if (res.title && res.title !== article.url) article.title = res.title;
+    if (res.author) article.author = res.author;
+    if (res.date) article.date = res.date;
+    persist();
+    return { ok: true };
+  }
+  return { ok: false, error: res?.error || "Could not extract article text." };
+}
+
 async function fetchArticleText(id) {
   const article = (state.savedArticles || []).find((a) => a.id === id);
   if (!article) return;
   const textEl = document.getElementById("articleReaderText");
   if (textEl) textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
   try {
-    const res = await callNetlifyFunction("fetch-article", { url: article.url, publication: article.publication });
-    if (res?.text) {
-      article.text = res.text;
-      if (res.title && res.title !== article.url) article.title = res.title;
-      if (res.author) article.author = res.author;
-      if (res.date) article.date = res.date;
-      persist();
+    const result = await ensureArticleText(id);
+    if (result.ok) {
       openArticle(id, "articleList");
-    } else {
-      const msg = res?.error || "Could not extract article text.";
-      if (textEl) textEl.innerHTML = `<div class="article-fetch-prompt"><p class="article-fetch-hint">${escapeHtml(msg)}</p><a href="${escapeHtml(article.url)}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`;
+    } else if (textEl) {
+      textEl.innerHTML = `<div class="article-fetch-prompt"><p class="article-fetch-hint">${escapeHtml(result.error)}</p><a href="${escapeHtml(article.url)}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`;
     }
   } catch (e) {
     if (textEl) textEl.innerHTML = `<div class="article-fetch-prompt"><p class="article-fetch-hint">Fetch failed. Check your connection and try again.</p><a href="${escapeHtml(article.url)}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`;
@@ -35890,16 +35960,20 @@ function listenSkip(seconds) {
   listenSeekToTime(listenElapsed() + seconds);
 }
 
-function listenToArticle(id) {
+async function listenToArticle(id) {
+  unlockListenAudio(); // still inside the tap — bless audio before any await
   const article = (state.savedArticles || []).find((a) => a.id === id);
   if (!article) return;
-  if (!article.text) {
-    alert("Fetch the article text first before listening.");
-    return;
-  }
   if (activeAppArea !== "media") showMediaApp();
   stopListen();
   openArticle(id, "articleList");
+  if (!article.text) {
+    // Auto-fetch rather than refusing to play (item 4). openArticle already
+    // shows a "Fetching…"/failure state.
+    const result = await ensureArticleText(id);
+    if (!result.ok) return;
+    openArticle(id, "articleList");
+  }
   startListenTTS(article);
 }
 
@@ -35952,6 +36026,17 @@ function prefetchNextQueueAudio() {
 }
 
 async function startListenTTS(article) {
+  unlockListenAudio(); // bless the audio element NOW, while still in the user's tap
+  // Articles saved without body text (e.g. NutritionFacts links) fetch on
+  // demand instead of silently failing to play (item 4).
+  if (article && !article.text) {
+    listenLoading = true;
+    updateListenPlayBtn();
+    const r = await ensureArticleText(article.id);
+    listenLoading = false;
+    if (!r.ok) { updateListenPlayBtn(); alert("Couldn't load this article's text to read aloud."); return; }
+    if (openArticleId === article.id) openArticle(article.id, "articleList");
+  }
   stopPodcastAudio(); // never let a podcast and an article read at the same time
   stopListen();
   listenLoading = true;
@@ -36013,22 +36098,26 @@ function playChunkAt(idx, offsetSec = 0) {
   }
   listenChunkIdx = idx;
   const url = listenAllUrls[idx];
-  if (listenAudio) { listenAudio.onended = null; listenAudio.onpause = null; listenAudio.onplay = null; listenAudio.onerror = null; listenAudio.ontimeupdate = null; }
-  // Reuse the chunk we preloaded last round if it matches; otherwise build it.
-  listenAudio = (listenNextAudio && listenNextAudio.src === url) ? listenNextAudio : makeListenChunk(url);
-  listenNextAudio = null;
-  const speedSelect = document.getElementById("listenSpeedSelect");
-  listenAudio.playbackRate = speedSelect ? parseFloat(speedSelect.value) : 1;
-  const applyOffset = () => { if (offsetSec > 0) { try { listenAudio.currentTime = offsetSec; } catch { /* wait for metadata */ } } };
-  if (listenAudio.readyState >= 1) applyOffset();
-  else listenAudio.addEventListener("loadedmetadata", applyOffset, { once: true });
-  listenAudio.onplay = () => { listenSpeaking = true; updateListenPlayBtn(); updateMiniPlayerPlayBtn(); };
-  listenAudio.onpause = () => { if (!listenAudio.ended) { listenSpeaking = false; updateListenPlayBtn(); updateMiniPlayerPlayBtn(); } };
-  listenAudio.onerror = () => { listenSpeaking = false; listenAudio = null; updateListenPlayBtn(); updateMiniPlayerPlayBtn(); };
-  listenAudio.ontimeupdate = () => { updateMiniPlayerProgress(); highlightCurrentWord(); };
-  listenAudio.onended = () => playChunkAt(listenChunkIdx + 1);
-  listenAudio.play().catch(() => {});
-  // Start buffering the next chunk now so the hand-off is seamless.
+  // Reuse ONE gesture-blessed element across chunks so iOS keeps letting us
+  // play() after the async TTS fetch (see unlockListenAudio). The next chunk is
+  // warmed into the browser cache via a throwaway element so the hand-off stays
+  // near-seamless.
+  const el = ensureListenAudioEl();
+  el.onended = el.onpause = el.onplay = el.onerror = el.ontimeupdate = null;
+  listenAudio = el;
+  if (el.src !== url) { el.src = url; el.load(); }
+  el.muted = false;
+  el.playbackRate = mediaPlaybackSpeed;
+  const applyOffset = () => { if (offsetSec > 0) { try { el.currentTime = offsetSec; } catch { /* wait for metadata */ } } };
+  if (el.readyState >= 1) applyOffset();
+  else el.addEventListener("loadedmetadata", applyOffset, { once: true });
+  el.onplay = () => { listenSpeaking = true; setMediaSessionPlaybackState("playing"); updateListenPlayBtn(); updateMiniPlayerPlayBtn(); };
+  el.onpause = () => { if (!el.ended) { listenSpeaking = false; setMediaSessionPlaybackState("paused"); updateListenPlayBtn(); updateMiniPlayerPlayBtn(); } };
+  el.onerror = () => { listenSpeaking = false; listenAudio = null; updateListenPlayBtn(); updateMiniPlayerPlayBtn(); };
+  el.ontimeupdate = () => { updateMiniPlayerProgress(); highlightCurrentWord(); };
+  el.onended = () => playChunkAt(listenChunkIdx + 1);
+  el.play().catch(() => {});
+  // Warm the next chunk's URL into the browser cache (buffer only, never played).
   listenNextAudio = (idx + 1 < listenAllUrls.length) ? makeListenChunk(listenAllUrls[idx + 1]) : null;
 
   if ("mediaSession" in navigator && listenArticle) {
@@ -36037,12 +36126,21 @@ function playChunkAt(idx, offsetSec = 0) {
       artist: listenArticle.author || listenArticle.publication || "Live",
       album: "Live"
     });
-    navigator.mediaSession.setActionHandler("play", () => { listenAudio?.play(); });
+    setMediaSessionPlaybackState("playing");
+    // AirPod / lock-screen / headset controls. A single AirPod press toggles
+    // play|pause; these handlers make that reach the article audio.
+    navigator.mediaSession.setActionHandler("play", () => { listenAudio?.play().catch(() => {}); });
     navigator.mediaSession.setActionHandler("pause", () => { listenAudio?.pause(); });
     navigator.mediaSession.setActionHandler("stop", stopListen);
     navigator.mediaSession.setActionHandler("seekbackward", () => listenSkip(-15));
     navigator.mediaSession.setActionHandler("seekforward", () => listenSkip(30));
-    navigator.mediaSession.setActionHandler("nexttrack", advanceListenArticle);
+    try { navigator.mediaSession.setActionHandler("nexttrack", advanceListenArticle); } catch { /* unsupported */ }
+  }
+}
+
+function setMediaSessionPlaybackState(stateStr) {
+  if ("mediaSession" in navigator) {
+    try { navigator.mediaSession.playbackState = stateStr; } catch { /* unsupported */ }
   }
 }
 
@@ -36064,6 +36162,7 @@ function advanceListenArticle() {
 }
 
 function toggleListenPlayPause() {
+  unlockListenAudio();
   if (!listenAudio && !listenLoading) {
     // Resume the article we were reading, or start the one that's open.
     const article = listenArticle || (openArticleId ? (state.savedArticles || []).find((a) => a.id === openArticleId) : null);
@@ -36074,9 +36173,11 @@ function toggleListenPlayPause() {
   if (listenAudio.paused) {
     listenAudio.play().catch(() => {});
     listenSpeaking = true;
+    setMediaSessionPlaybackState("playing");
   } else {
     listenAudio.pause();
     listenSpeaking = false;
+    setMediaSessionPlaybackState("paused");
   }
   updateListenPlayBtn();
   updateMiniPlayerPlayBtn();
@@ -36089,8 +36190,10 @@ function stopListen() {
     listenAudio.onpause = null;
     listenAudio.ontimeupdate = null;
     listenAudio.pause();
+    // Keep the element (and its iOS "blessing") for reuse — just detach it.
     listenAudio = null;
   }
+  setMediaSessionPlaybackState("none");
   if (listenNextAudio) { listenNextAudio.src = ""; listenNextAudio = null; }
   listenAllUrls = [];
   listenChunkIdx = 0;
