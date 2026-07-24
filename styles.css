@@ -12581,6 +12581,54 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   .mail-row-front .mail-row-right { min-width: 0; }
 }
 
+/* List toolbar: select-all · refresh, and range + pager on the right */
+.mail-list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 44px;
+  padding: 0 6px 0 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--paper, #fff);
+}
+.mail-toolbar-left, .mail-toolbar-right { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.mail-toolbar-check {
+  width: 40px; height: 40px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  background: none; border: none; cursor: pointer; border-radius: 50%; padding: 0;
+}
+.mail-toolbar-check:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.mail-toolbar-check-box {
+  width: 18px; height: 18px; border: 2px solid var(--text-muted, #888);
+  border-radius: 4px; position: relative; box-sizing: border-box;
+}
+.mail-toolbar-check[data-state="all"] .mail-toolbar-check-box,
+.mail-toolbar-check[data-state="some"] .mail-toolbar-check-box {
+  background: var(--accent, #92400E); border-color: var(--accent, #92400E);
+}
+.mail-toolbar-check[data-state="all"] .mail-toolbar-check-box::after {
+  content: ""; position: absolute; left: 4px; top: 0; width: 6px; height: 11px;
+  border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.mail-toolbar-check[data-state="some"] .mail-toolbar-check-box::after {
+  content: ""; position: absolute; left: 3px; top: 6px; width: 10px; height: 2px; background: #fff; border-radius: 1px;
+}
+.mail-toolbar-btn {
+  width: 36px; height: 36px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  background: none; border: none; cursor: pointer; border-radius: 50%; padding: 0;
+  color: var(--text-muted, #888);
+}
+.mail-toolbar-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+.mail-toolbar-btn:disabled { opacity: 0.3; cursor: default; }
+.mail-toolbar-btn svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.8; fill: none; }
+.mail-toolbar-btn.is-spinning svg { animation: mail-toolbar-spin 0.8s linear infinite; }
+@keyframes mail-toolbar-spin { to { transform: rotate(360deg); } }
+.mail-toolbar-range { font-size: 0.8rem; color: var(--text-muted, #888); white-space: nowrap; padding: 0 4px; }
+
 /* Bulk action bar */
 .mail-bulk-bar {
   display: flex;

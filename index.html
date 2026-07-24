@@ -696,6 +696,23 @@
                 </div>
                 <div class="mail-content">
                   <div class="mail-list-panel">
+                    <div class="mail-list-toolbar" id="mailListToolbar" hidden>
+                      <div class="mail-toolbar-left">
+                        <button class="mail-toolbar-check" id="mailSelectAll" type="button" role="checkbox" aria-checked="false" aria-label="Select all" title="Select all"><span class="mail-toolbar-check-box"></span></button>
+                        <button class="icon-btn mail-toolbar-btn" id="mailRefreshBtn" type="button" title="Refresh" aria-label="Refresh">
+                          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
+                        </button>
+                      </div>
+                      <div class="mail-toolbar-right">
+                        <span class="mail-toolbar-range" id="mailListRange"></span>
+                        <button class="icon-btn mail-toolbar-btn" id="mailPagePrev" type="button" title="Newer" aria-label="Newer">
+                          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+                        </button>
+                        <button class="icon-btn mail-toolbar-btn" id="mailPageNext" type="button" title="Older" aria-label="Older">
+                          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
+                        </button>
+                      </div>
+                    </div>
                     <div class="mail-bulk-bar" id="mailBulkBar" hidden>
                       <div class="mail-bulk-left">
                         <button class="mail-bulk-deselect" type="button" id="mailBulkDeselect" aria-label="Deselect all">✕</button>

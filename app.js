@@ -1525,6 +1525,10 @@ function bindEvents() {
     setMailNotifPanelOpen(false);
   }, { capture: true });
   elements.mailSearchInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") loadMailList(currentMailbox, e.target.value); });
+  document.getElementById("mailSelectAll")?.addEventListener("click", toggleMailSelectAll);
+  document.getElementById("mailRefreshBtn")?.addEventListener("click", refreshMailList);
+  document.getElementById("mailPagePrev")?.addEventListener("click", () => mailGoToPage(-1));
+  document.getElementById("mailPageNext")?.addEventListener("click", () => mailGoToPage(1));
   document.getElementById("mailSidebarToggle")?.addEventListener("click", () => {
     const sidebar = document.getElementById("mailSidebar");
     if (!sidebar) return;
@@ -6572,8 +6576,25 @@ async function checkFinanceLinkStatus() {
   if (financeLinkStatus.connected && !financeLive) refreshFinanceLive();
 }
 
+// True when the app is served from a local dev host. Netlify functions then run
+// on this machine, so any bridge call would go out from the home IP.
+function isLocalDevHost() {
+  const h = location.hostname;
+  return h === "localhost" || h === "127.0.0.1" || h === "0.0.0.0" || h === "[::1]" || h.endsWith(".local");
+}
+
 async function refreshFinanceLive(force = false) {
   if (financeLiveLoading) return;
+  // Dev gate: never hit the real SimpleFIN bridge from localhost. In local dev
+  // the "accounts" function runs on this machine, so its bridge fetch leaves
+  // from the home IP and burns the bank's ~24-requests/day budget. Show manual
+  // balances only while developing; production is unaffected.
+  if (isLocalDevHost()) {
+    financeLive = { accounts: [], errors: ["Live bank data is off in local dev."], at: Date.now() };
+    if (activeAppArea === "finance") renderFinancePage();
+    refreshFinanceSettingsIfOpen();
+    return;
+  }
   financeLiveLoading = true;
   if (activeAppArea === "finance") renderFinancePage();
   refreshFinanceSettingsIfOpen();
@@ -8885,6 +8906,14 @@ let mailNavPrevId = null;
 let mailNavNextId = null;
 let mailSwipeNavWired = false;
 let mailNextPageToken = null;
+// Gmail-style paging (replaces infinite scroll). mailPageTokens[i] is the
+// Gmail pageToken that loads page i (index 0 = undefined = first page).
+const MAIL_PAGE_SIZE = 50;
+let mailPageTokens = [undefined];
+let mailPageIndex = 0;
+let mailTotalEstimate = null;
+let mailPageBusy = false;
+let mailLastPageCount = 0;
 
 // dir > 0 = next email, dir < 0 = previous. No-op at the ends of the list.
 function mailSwipeNavigate(dir) {
@@ -9032,7 +9061,7 @@ const MAIL_PREFETCH_COUNT = 15;
 
 function warmMailList() {
   if (!authSession?.access_token) return;
-  mailListPreload = { promise: callGmailApi({ action: "list", labelIds: ["INBOX"] }), at: Date.now(), labelId: "INBOX" };
+  mailListPreload = { promise: callGmailApi({ action: "list", labelIds: ["INBOX"], maxResults: MAIL_PAGE_SIZE }), at: Date.now(), labelId: "INBOX" };
 }
 
 function invalidateMailThreadCache(threadId) {
@@ -9295,83 +9324,155 @@ async function disconnectGmail() {
   renderMailConnectState();
 }
 
-async function loadMailList(labelId, q = "", append = false) {
+// A fresh load resets to page 1 of the given mailbox/query. Page navigation
+// (prev/next) goes through mailGoToPage → fetchAndRenderMailPage.
+async function loadMailList(labelId, q = "") {
   currentMailbox = labelId;
   // Snoozed folder: pull the wake-time metadata so rows can show "until when"
   // and offer unsnooze/reschedule instead of the normal quick actions.
-  if (!append && labelId === snoozedLabelId()) {
+  if (labelId === snoozedLabelId()) {
     const s = await callGmailApi({ action: "listSnoozes" });
     mailSnoozeMap = Object.fromEntries((s?.snoozes || []).map((x) => [x.threadId, x.wakeAt]));
   }
-  if (!append) {
-    mailNextPageToken = null;
-    mailCurrentQuery = q;
-    mailSelected.clear();
-    updateMailBulkBar();
-    mailSwipedRow = null;
-    elements.mailList.innerHTML = `<div class="mail-loading">Loading…</div>`;
-    elements.mailThread.hidden = true;
-    mailOpenThreadId = null;
-  }
-  // A fresh warm-up list (fired at app start) stands in for the first fetch
-  const preload = (!append && !q && mailListPreload &&
-    mailListPreload.labelId === labelId &&
+  mailCurrentQuery = q;
+  mailNextPageToken = null;
+  mailPageTokens = [undefined];
+  mailPageIndex = 0;
+  mailTotalEstimate = null;
+  mailLastPageCount = 0;
+  mailSelected.clear();
+  updateMailBulkBar();
+  mailSwipedRow = null;
+  elements.mailThread.hidden = true;
+  mailOpenThreadId = null;
+  await fetchAndRenderMailPage({ fresh: true });
+}
+
+// Loads the page whose token is mailPageTokens[mailPageIndex] and renders it,
+// replacing the list (no appending — this is paged, not infinite-scroll).
+async function fetchAndRenderMailPage({ fresh = false } = {}) {
+  if (mailPageBusy) return;
+  mailPageBusy = true;
+  renderMailListToolbar();
+  elements.mailList.innerHTML = `<div class="mail-loading">Loading…</div>`;
+  const token = mailPageTokens[mailPageIndex];
+  // The app-start warm-up list stands in for the very first inbox page.
+  const preload = (fresh && mailPageIndex === 0 && !mailCurrentQuery && mailListPreload &&
+    mailListPreload.labelId === currentMailbox &&
     Date.now() - mailListPreload.at < MAIL_LIST_PRELOAD_TTL) ? mailListPreload.promise : null;
   if (preload) mailListPreload = null; // one-shot
   let data = preload ? await preload : null;
   if (!data) {
     data = await callGmailApi({
       action: "list",
-      labelIds: [labelId],
-      q: (q || mailCurrentQuery) || undefined,
-      pageToken: append ? mailNextPageToken : undefined
+      labelIds: [currentMailbox],
+      q: mailCurrentQuery || undefined,
+      pageToken: token || undefined,
+      maxResults: MAIL_PAGE_SIZE
     });
   }
+  mailPageBusy = false;
   if (!data) {
     const detail = lastGmailApiError ? ` ${escapeHtml(lastGmailApiError)}` : "";
-    if (!append) elements.mailList.innerHTML = `<div class="mail-empty">Failed to load mail.${detail}</div>`;
+    elements.mailList.innerHTML = `<div class="mail-empty">Failed to load mail.${detail}</div>`;
+    renderMailListToolbar();
     return;
   }
   mailNextPageToken = data.nextPageToken || null;
+  // Record the token for the next page so we can page forward and back.
+  if (mailNextPageToken && mailPageIndex + 1 >= mailPageTokens.length) mailPageTokens.push(mailNextPageToken);
+  if (typeof data.resultSizeEstimate === "number") mailTotalEstimate = data.resultSizeEstimate;
   const messages = data.messages || [];
-  if (append) {
-    mailScrollSentinel?.remove();
-  } else {
-    elements.mailList.innerHTML = "";
-    if (!messages.length) { elements.mailList.innerHTML = `<div class="mail-empty">No messages.</div>`; return; }
+  mailLastPageCount = messages.length;
+  elements.mailList.innerHTML = "";
+  if (!messages.length) {
+    elements.mailList.innerHTML = `<div class="mail-empty">${mailPageIndex === 0 ? "No messages." : "No more messages."}</div>`;
+    renderMailListToolbar();
+    return;
   }
   appendMailRows(messages);
-  if (mailNextPageToken) attachMailScrollSentinel();
+  renderMailListToolbar();
+  const panel = elements.mailList.closest(".mail-list-panel");
+  if (panel) panel.scrollTop = 0;
   prefetchMailThreads(messages);
 }
 
-// Infinite scroll: one persistent sentinel div sits after the last row; when
-// it scrolls within 600px of the list panel's viewport, the next page is
-// fetched and appended (replacing the old "Load more" button).
-let mailScrollSentinel = null;
-let mailScrollObserver = null;
-let mailLoadingMore = false;
+// Move by delta pages (−1 newer, +1 older). Bounded by page 0 and the last
+// page we have a token for (i.e. only when a next page actually exists).
+function mailGoToPage(delta) {
+  if (mailPageBusy) return;
+  const next = mailPageIndex + delta;
+  if (next < 0) return;
+  if (delta > 0 && !mailNextPageToken) return;
+  if (next >= mailPageTokens.length) return;
+  mailPageIndex = next;
+  mailSelected.clear();
+  updateMailBulkBar();
+  fetchAndRenderMailPage();
+}
 
-function attachMailScrollSentinel() {
-  if (!mailScrollSentinel) {
-    mailScrollSentinel = document.createElement("div");
-    mailScrollSentinel.className = "mail-scroll-sentinel mail-loading";
-    mailScrollSentinel.textContent = "Loading more…";
+// The list toolbar above the rows: select-all, refresh, and "start–end of total"
+// with prev/next. Hidden while a bulk selection is active (the bulk bar takes
+// over, Gmail-style) or while Gmail isn't connected.
+function renderMailListToolbar() {
+  const bar = document.getElementById("mailListToolbar");
+  if (!bar) return;
+  bar.hidden = !mailGmailConnected || mailSelected.size > 0;
+
+  const rangeEl = document.getElementById("mailListRange");
+  if (rangeEl) {
+    if (!mailLastPageCount) {
+      rangeEl.textContent = "";
+    } else {
+      const start = mailPageIndex * MAIL_PAGE_SIZE + 1;
+      const end = start + mailLastPageCount - 1;
+      // Gmail's estimate is approximate; if a next page exists but the estimate
+      // undercounts, show "end+" so we never claim a smaller total than shown.
+      const total = (typeof mailTotalEstimate === "number" && mailTotalEstimate >= end)
+        ? mailTotalEstimate.toLocaleString()
+        : (mailNextPageToken ? `${end.toLocaleString()}+` : end.toLocaleString());
+      rangeEl.textContent = `${start.toLocaleString()}–${end.toLocaleString()} of ${total}`;
+    }
   }
-  elements.mailList.appendChild(mailScrollSentinel);
-  if (!mailScrollObserver) {
-    mailScrollObserver = new IntersectionObserver(async (entries) => {
-      if (!entries.some((e) => e.isIntersecting)) return;
-      if (mailLoadingMore || !mailNextPageToken) return;
-      mailLoadingMore = true;
-      try {
-        await loadMailList(currentMailbox, mailCurrentQuery, true);
-      } finally {
-        mailLoadingMore = false;
-      }
-    }, { root: elements.mailList.closest(".mail-list-panel"), rootMargin: "600px" });
-    mailScrollObserver.observe(mailScrollSentinel);
-  }
+  const prev = document.getElementById("mailPagePrev");
+  const next = document.getElementById("mailPageNext");
+  if (prev) prev.disabled = mailPageBusy || mailPageIndex === 0;
+  if (next) next.disabled = mailPageBusy || !mailNextPageToken;
+  document.getElementById("mailRefreshBtn")?.classList.toggle("is-spinning", mailPageBusy);
+  updateMailSelectAllState();
+}
+
+function updateMailSelectAllState() {
+  const btn = document.getElementById("mailSelectAll");
+  if (!btn) return;
+  const rows = elements.mailList.querySelectorAll(".mail-row[data-thread-id]");
+  let sel = 0;
+  rows.forEach((r) => { if (r.classList.contains("mail-row--selected")) sel++; });
+  const state = rows.length === 0 || sel === 0 ? "none" : sel === rows.length ? "all" : "some";
+  btn.dataset.state = state;
+  btn.setAttribute("aria-checked", state === "all" ? "true" : state === "some" ? "mixed" : "false");
+}
+
+function toggleMailSelectAll() {
+  const rows = [...elements.mailList.querySelectorAll(".mail-row[data-thread-id]")];
+  if (!rows.length) return;
+  const allSelected = rows.every((r) => r.classList.contains("mail-row--selected"));
+  rows.forEach((r) => {
+    const id = r.dataset.threadId;
+    if (allSelected) {
+      r.classList.remove("mail-row--selected");
+      mailSelected.delete(id);
+    } else if (!r.classList.contains("mail-row--selected")) {
+      r.classList.add("mail-row--selected");
+      mailSelected.set(id, { subject: r.querySelector(".mail-row-subject")?.textContent || "" });
+    }
+  });
+  updateMailBulkBar();
+}
+
+function refreshMailList() {
+  if (mailPageBusy) return;
+  loadMailList(currentMailbox, mailCurrentQuery);
 }
 
 function appendMailRows(messages) {
@@ -10578,6 +10679,7 @@ function updateMailBulkBar() {
   const countEl = document.getElementById("mailBulkCount");
   if (countEl) countEl.textContent = `${count} selected`;
   if (count > 0 && !mailBulkBarWired) wireMailBulkBar();
+  renderMailListToolbar(); // the pagination toolbar hides while a selection is active
 }
 
 function wireMailBulkBar() {

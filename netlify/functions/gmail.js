@@ -153,7 +153,7 @@ exports.handler = async (event) => {
       })
     )).filter(Boolean);
 
-    return json(200, { messages, nextPageToken: listData.nextPageToken || null });
+    return json(200, { messages, nextPageToken: listData.nextPageToken || null, resultSizeEstimate: listData.resultSizeEstimate ?? null });
   }
 
   if (action === "attachment") {
