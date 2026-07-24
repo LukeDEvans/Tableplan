@@ -9104,6 +9104,7 @@ async function loadMailSuggestionsPanel() {
 // in the background regardless of whether the panel is open.
 let mailNotifPanelOpen = false;
 let lastMailSuggestions = [];
+let lastMailPendingCount = 0;
 
 function setMailNotifPanelOpen(open) {
   mailNotifPanelOpen = open;
@@ -9131,6 +9132,14 @@ function renderMailSuggestions(suggestions) {
   const panel = document.getElementById("mailSuggestions");
   const pending = suggestions.filter(s => s.status === "pending");
   setPageNotifCount("mail", pending.length);
+
+  // Auto-close the panel the moment the last pending item is addressed. Only
+  // fire on the >0 → 0 transition, so opening the bell with nothing pending
+  // still shows the "No suggested actions" state rather than snapping shut.
+  if (mailNotifPanelOpen && pending.length === 0 && lastMailPendingCount > 0) {
+    setMailNotifPanelOpen(false);
+  }
+  lastMailPendingCount = pending.length;
 
   // Topbar bell: red badge with the pending count (no badge when zero)
   const notifBtn = document.getElementById("mailSuggCheckNow");
