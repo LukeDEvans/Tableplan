@@ -3475,6 +3475,11 @@ input.live-toggle:checked::before,
   padding: 0;
 }
 
+/* Per-store sweep (broom) button */
+.grocery-store-clear { flex: 0 0 auto; color: var(--muted); }
+.grocery-store-clear:hover, .grocery-store-clear:focus-visible { color: var(--accent-dark); background: color-mix(in srgb, var(--accent-soft) 40%, transparent); }
+.grocery-store-solo-actions { display: flex; justify-content: flex-end; padding: 0 2px 6px; }
+
 .grocery-collapsed-count {
   color: var(--muted);
   font-size: 0.85rem;

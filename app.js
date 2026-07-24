@@ -24236,6 +24236,7 @@ function renderGroceries() {
   };
 
   const miscCollapsed = Boolean(state.collapsedSections?.["groceryStore:misc"]);
+  const miscChecked = unlocatedManualRows.filter((r) => r.checked).length;
   const miscSection = unlocatedManualRows.length ? `
     <section class="grocery-store-section grocery-misc-section" data-grocery-store-section="">
       <div class="grocery-store-heading">
@@ -24243,6 +24244,7 @@ function renderGroceries() {
           <svg class="watch-section-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
           <span>Miscellaneous${miscCollapsed ? ` <span class="grocery-collapsed-count">(${unlocatedManualRows.length})</span>` : ""}</span>
         </button>
+        ${miscChecked ? `<button class="icon-btn grocery-store-clear" type="button" data-grocery-clear-store="" title="Sweep ${miscChecked} checked" aria-label="Sweep ${miscChecked} checked items into bought">${groceryBroomSvg()}</button>` : ""}
       </div>
       ${miscCollapsed ? "" : `
       <div class="grocery-store-list" data-grocery-store-list="" data-grocery-store-section-list="">
@@ -24258,6 +24260,10 @@ function renderGroceries() {
     const sortedRows = sortCheckedLast(flatRows);
     const collapseKey = `groceryStore:${storeId || "unassigned"}`;
     const isCollapsed = activeGroceryStoreTab === "all" && Boolean(state.collapsedSections?.[collapseKey]);
+    const storeChecked = sortedRows.filter((r) => r.checked).length;
+    const broomBtn = storeChecked
+      ? `<button class="icon-btn grocery-store-clear" type="button" data-grocery-clear-store="${escapeHtml(storeId)}" title="Sweep ${storeChecked} checked" aria-label="Sweep ${storeChecked} checked items into bought">${groceryBroomSvg()}</button>`
+      : "";
     return `
       <section class="grocery-store-section" data-grocery-store-section="${escapeHtml(storeId)}">
         ${activeGroceryStoreTab === "all" ? `
@@ -24271,8 +24277,9 @@ function renderGroceries() {
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 5 6 6-6 6v-4H8a4 4 0 0 0-4 4V9a4 4 0 0 1 4-4h5Z" /></svg>
               </a>
             ` : ""}
+            ${broomBtn}
           </div>
-        ` : ""}
+        ` : (broomBtn ? `<div class="grocery-store-solo-actions">${broomBtn}</div>` : "")}
         ${isCollapsed ? "" : `
         <div class="grocery-store-list ${sortedRows.length ? "" : "is-empty"}"
           data-grocery-store-list="${escapeHtml(storeId)}"
@@ -24311,22 +24318,19 @@ function renderGroceries() {
       : `<div class="empty-state">No items assigned to this store yet. Drag items here from the All tab to assign them.</div>`;
   }
 
-  // Cleanup bar: sweep checked items off the list, and review/restore ones
-  // already swept this cycle.
-  const renderedRows = activeGroceryStoreTab === "all"
-    ? [...unlocatedManualRows, ...storeSections.flatMap((s) => s.rows)]
-    : (storeSections.find((s) => s.storeId === activeGroceryStoreTab)?.rows || []);
-  const checkedVisibleCount = renderedRows.filter((r) => r.checked).length;
-  const cleanupBar = (checkedVisibleCount || clearedCount) ? `
+  // Per-store sweeping now lives in each store heading (broom icon). The bar
+  // only keeps the show/restore-bought controls.
+  const cleanupBar = clearedCount ? `
     <div class="grocery-cleanup-bar">
-      ${checkedVisibleCount ? `<button class="secondary-btn grocery-cleanup-btn" type="button" data-grocery-clear-checked>Clear ${checkedVisibleCount} checked</button>` : ""}
-      ${clearedCount ? `<button class="grocery-cleanup-link" type="button" data-grocery-toggle-cleared aria-pressed="${showClearedGroceries}">${showClearedGroceries ? "Hide" : "Show"} ${clearedCount} bought</button>` : ""}
-      ${showClearedGroceries && clearedCount ? `<button class="grocery-cleanup-link" type="button" data-grocery-restore-cleared>Restore all</button>` : ""}
+      <button class="grocery-cleanup-link" type="button" data-grocery-toggle-cleared aria-pressed="${showClearedGroceries}">${showClearedGroceries ? "Hide" : "Show"} ${clearedCount} bought</button>
+      ${showClearedGroceries ? `<button class="grocery-cleanup-link" type="button" data-grocery-restore-cleared>Restore all</button>` : ""}
     </div>` : "";
 
   elements.groceryList.innerHTML = cleanupBar + miscSection + planSections;
 
-  elements.groceryList.querySelector("[data-grocery-clear-checked]")?.addEventListener("click", clearCheckedGroceries);
+  elements.groceryList.querySelectorAll("[data-grocery-clear-store]").forEach((btn) => {
+    btn.addEventListener("click", (e) => { e.stopPropagation(); clearCheckedGroceriesForStore(btn.dataset.groceryClearStore); });
+  });
   elements.groceryList.querySelector("[data-grocery-toggle-cleared]")?.addEventListener("click", () => {
     showClearedGroceries = !showClearedGroceries;
     renderGroceries();
@@ -27917,12 +27921,17 @@ function setGroceryCleared(rowKey, cleared) {
   state.groceryCleared[groceryClearedKey(rowKey)] = Boolean(cleared);
 }
 
-function clearCheckedGroceries() {
-  // Sweep every currently-visible, checked item into the cleared memory. Reads
-  // the DOM so it targets exactly what the user sees checked (all tabs share
-  // one cycle bucket, so this clears across stores too).
+function groceryBroomSvg() {
+  return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 4.5 12 12"/><path d="m11 10 3 3-4.6 4.6a3 3 0 0 1-1.8.85l-3.9.45.45-3.9a3 3 0 0 1 .85-1.8L11 10Z"/><path d="m6.5 15.5 2 2"/></svg>`;
+}
+
+// Sweep the checked items in ONE store section into the cleared memory (the
+// per-store broom). storeId "" is the Miscellaneous/unassigned section.
+function clearCheckedGroceriesForStore(storeId) {
+  const section = elements.groceryList.querySelector(`[data-grocery-store-section="${(window.CSS && CSS.escape) ? CSS.escape(storeId || "") : (storeId || "")}"]`);
+  if (!section) return;
   const keys = new Set();
-  elements.groceryList.querySelectorAll("input[data-grocery]:checked").forEach((cb) => {
+  section.querySelectorAll("input[data-grocery]:checked").forEach((cb) => {
     const rowKey = cb.closest("[data-grocery-row-key]")?.dataset.groceryRowKey;
     if (rowKey) keys.add(rowKey);
   });
