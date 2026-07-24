@@ -85,17 +85,16 @@ exports.handler = async (event) => {
   return cors(json(200, { ok: true, id: savedId }));
 };
 
-// Convert the PDF to HTML in a single call. A lightly-condensed paper fits well
-// under the token ceiling, so no continuation is needed (Sonnet doesn't support
-// assistant-prefill continuation anyway). max_tokens is set generously so even
-// a long paper completes in one pass.
+// Convert the PDF to HTML in a single call. Haiku with a hard token cap keeps
+// this cheap: Sonnet-5 at 32k tokens was by far the most expensive call in the
+// app (~$0.50 each). A lightly-condensed paper fits under the cap in one pass.
 async function convertPdf(apiKey, source) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
     body: JSON.stringify({
-      model: "claude-sonnet-5",
-      max_tokens: 32000,
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 12000,
       system: SYSTEM,
       messages: [{
         role: "user",

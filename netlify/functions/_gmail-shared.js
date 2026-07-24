@@ -170,12 +170,13 @@ async function loadMailSuggestions(serviceKey, userId) {
     watchExpiration: state.watchExpiration || 0,
     processedIds: Array.isArray(state.processedIds) ? state.processedIds : [],
     retryIds: Array.isArray(state.retryIds) ? state.retryIds : [],
+    attempts: (state.attempts && typeof state.attempts === "object" && !Array.isArray(state.attempts)) ? state.attempts : {},
     suggestions: Array.isArray(state.suggestions) ? state.suggestions : []
   };
 }
 
 async function saveMailSuggestions(serviceKey, userId, data) {
-  await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states`, {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
     method: "POST",
     headers: {
       apikey: serviceKey,
@@ -183,8 +184,11 @@ async function saveMailSuggestions(serviceKey, userId, data) {
       "content-type": "application/json",
       prefer: "resolution=merge-duplicates,return=minimal"
     },
-    body: JSON.stringify({ id: `mailsugg_${userId}`, state: data })
+    body: JSON.stringify({ id: `mailsugg_${userId}`, state: data, updated_at: new Date().toISOString() })
   });
+  // A silently-failing checkpoint write is exactly what let the sweep reprocess
+  // (and re-spend on) the same emails — surface it loudly.
+  if (!res.ok) console.error(`[sweep] checkpoint save failed ${res.status} for ${userId}`);
 }
 
 // ─── AI triage ────────────────────────────────────────────────────────────────
@@ -364,6 +368,15 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
   const processed = new Set(sugg.processedIds);
   const fresh = messageIds.filter((id) => !processed.has(id)).slice(0, 10);
 
+  // Bounded retries: count each attempt, and give up on a message once it has
+  // been tried MAX_MSG_ATTEMPTS times. This is the hard stop against a
+  // conversion that keeps failing (or a sweep that dies before checkpointing)
+  // reconverting the same email forever and burning tokens on every trigger.
+  const MAX_MSG_ATTEMPTS = 2;
+  const attempts = { ...sugg.attempts };
+  for (const id of fresh) attempts[id] = (attempts[id] || 0) + 1;
+  const giveUp = new Set(fresh.filter((id) => attempts[id] > MAX_MSG_ATTEMPTS));
+
   // Mail AI feature flags (config state section)
   const appCfg = await loadAppConfig(serviceKey, userId);
   const mailAi = appCfg?.mailAiSettings || {};
@@ -378,6 +391,8 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
   // { suggestions, retry? } — retry leaves the message unprocessed so the
   // next sweep tries again (e.g. a transient conversion failure).
   const perMessage = await Promise.all(fresh.map(async (messageId) => {
+    // Exhausted its retries — give up (mark processed) without any Claude work.
+    if (giveUp.has(messageId)) { console.warn(`[sweep] giving up on ${messageId} after ${MAX_MSG_ATTEMPTS} attempts`); return { suggestions: [] }; }
     const r = await gFetch(gToken, `/messages/${messageId}?format=full`);
     if (!r.ok) {
       // 404/410 → the message was deleted; retrying forever would pin a dead
@@ -519,11 +534,17 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
     (e.kind === s.kind && normTitle(e.title) === normTitle(s.title))
   );
   const merged = [...added.filter((s) => !existingIds.has(s.id) && !isDuplicate(s)), ...sugg.suggestions].slice(0, 100);
+  const nextRetry = fresh.filter((_, i) => perMessage[i].retry && !giveUp.has(fresh[i])).slice(0, 20);
+  // Keep attempt counts only for messages still in the retry queue, so the map
+  // can't grow without bound.
+  const nextAttempts = {};
+  for (const id of nextRetry) nextAttempts[id] = attempts[id];
   await saveMailSuggestions(serviceKey, userId, {
     lastHistoryId: newHistoryId || sugg.lastHistoryId,
     watchExpiration: sugg.watchExpiration,
     processedIds: [...processedNow, ...sugg.processedIds].slice(0, 300),
-    retryIds: fresh.filter((_, i) => perMessage[i].retry).slice(0, 20),
+    retryIds: nextRetry,
+    attempts: nextAttempts,
     suggestions: merged
   });
 

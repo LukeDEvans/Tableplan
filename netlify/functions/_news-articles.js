@@ -78,19 +78,18 @@ async function convertNewsEmailToArticle(anthropicKey, source, { subject, date, 
     "Do not summarize or shorten the editorial content. Do not add commentary."
   ].join("\n");
 
-  // Sonnet reproduces the whole newsletter faithfully and in order — Haiku
-  // inconsistently condensed or dropped middle sections, and on the busiest
-  // news days its output ran past the token ceiling and was clipped
-  // mid-sentence in the Media reader. max_tokens is set generously (a full
-  // issue is well under it) so it completes in one pass: Sonnet doesn't
-  // support the assistant-prefill continuation, so we must not rely on it.
+  // Cost + speed: Haiku with a hard token cap. Sonnet-5 at 24k tokens was
+  // ~10x the price AND slow enough that the sweep could time out mid-batch
+  // before checkpointing — which made it reconvert the same newsletters on
+  // every trigger (a runaway spend loop). Haiku is cheap and fast, so the
+  // sweep finishes and records the message as processed. maxRounds:1 (Haiku
+  // supports prefill continuation, but we cap the spend to a single pass).
   const out = await claudeCallComplete(anthropicKey, {
     system,
     user: `Newsletter subject: ${subject}\nDate: ${date}\n\n${text}`,
-    maxTokens: 24000,
+    maxTokens: 12000,
     maxRounds: 1,
-    model: "claude-sonnet-5",
-    thinking: { type: "disabled" }
+    model: "claude-haiku-4-5-20251001"
   });
   const cleaned = out.replace(/^```html?\s*/i, "").replace(/```\s*$/i, "").trim();
   if (cleaned.length < 400) throw new Error("Conversion produced too little content");
