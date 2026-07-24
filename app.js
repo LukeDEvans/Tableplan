@@ -7691,7 +7691,7 @@ function renderFinancePage() {
       </div>
       <div class="fin-savings-card fin-savings-retirement">
         <div class="fin-savings-head">
-          <span class="fin-savings-label">Retirement</span>
+          <span class="fin-savings-label">Retirement savings</span>
           ${savingsCaret("savings:retirement")}
         </div>
         ${savingsValue(retHave, retConfigured ? retTarget : null, retirementTotal === null && !retConfigured)}
