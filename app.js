@@ -609,6 +609,7 @@ let planViewMode = "month";
 let planViewDate = new Date();
 const planCalendarCache = {};
 let editingPlanEventId = null;
+let editingPlanEventOccurrenceDate = null; // which occurrence of a recurring event was opened
 let mealPlanContextPressTimer = null;
 let mealPlanContextPressStart = null;
 let suppressNextWeekLabelClick = false;
@@ -30859,6 +30860,15 @@ function escapeHtml(value) {
 const PLAN_COLORS = ["#4285f4","#0f9d58","#db4437","#f4b400","#9c27b0","#ff5722","#00bcd4","#607d8b"];
 const PLAN_APP_COLORS = { eat: "#0f9d58", play: "#ff5722", do: "#1976d2", watch: "#7b1fa2" };
 
+function normalizeRecurrence(r) {
+  if (!r || typeof r !== "object") return null;
+  const freq = ["daily", "weekly", "monthly", "yearly"].includes(r.freq) ? r.freq : null;
+  if (!freq) return null;
+  const interval = Math.max(1, Math.min(365, Math.round(Number(r.interval) || 1)));
+  const until = (typeof r.until === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.until)) ? r.until : null;
+  return { freq, interval, until };
+}
+
 function normalizePlanEvents(events) {
   return Array.isArray(events) ? events.map((e) => ({
     id: e?.id || createId("plan-evt"),
@@ -30870,8 +30880,36 @@ function normalizePlanEvents(events) {
     color: e?.color ? String(e.color) : null,
     calendarId: e?.calendarId ? String(e.calendarId) : null,
     notes: String(e?.notes || "").trim(),
+    location: (e?.location && typeof e.location === "object") ? e.location : null,
+    attachment: (e?.attachment && typeof e.attachment === "object") ? e.attachment : null,
+    recurrence: normalizeRecurrence(e?.recurrence),
+    exceptions: Array.isArray(e?.exceptions) ? e.exceptions.filter((d) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) : [],
     createdAt: e?.createdAt || new Date().toISOString()
   })).filter((e) => e.date && e.title) : [];
+}
+
+// Expand a recurring event into occurrence date-keys within [startKey, endKey].
+function expandRecurringOccurrences(e, startKey, endKey) {
+  const occ = [];
+  const rec = e.recurrence;
+  if (!rec) return occ;
+  const base = new Date(e.date + "T00:00:00");
+  if (isNaN(base)) return occ;
+  const exceptions = new Set(e.exceptions || []);
+  const hardEnd = (rec.until && rec.until < endKey) ? rec.until : endKey;
+  const d = new Date(base);
+  let guard = 0;
+  while (guard++ < 1500) {
+    const key = dateKeyFromDate(d);
+    if (key > hardEnd) break;
+    if (key >= startKey && !exceptions.has(key)) occ.push(key);
+    if (rec.freq === "daily") d.setDate(d.getDate() + rec.interval);
+    else if (rec.freq === "weekly") d.setDate(d.getDate() + 7 * rec.interval);
+    else if (rec.freq === "monthly") d.setMonth(d.getMonth() + rec.interval);
+    else if (rec.freq === "yearly") d.setFullYear(d.getFullYear() + rec.interval);
+    else break;
+  }
+  return occ;
 }
 
 function normalizePlanCalendars(calendars) {
@@ -30938,7 +30976,7 @@ function renderPlanPage() {
   elements.planCalendar.querySelectorAll("[data-plan-event-id]").forEach((pill) => {
     pill.addEventListener("click", (e) => {
       e.stopPropagation();
-      openPlanEventDialog(null, pill.dataset.planEventId);
+      openPlanEventDialog(pill.dataset.planEventDate || null, pill.dataset.planEventId);
     });
   });
   bindPlanSwipe(elements.planCalendar.querySelector("[data-plan-swipe]"));
@@ -30956,13 +30994,15 @@ function bindPlanSwipe(el) {
 
 function getPlanEventsForRange(startKey, endKey) {
   const events = [];
+  const eventColor = (e) => e.color || ((state.planCalendars || []).find((c) => c.id === e.calendarId)?.color) || PLAN_COLORS[0];
   (state.planEvents || []).forEach((e) => {
-    if (e.date >= startKey && e.date <= endKey) {
-      let color = e.color;
-      if (!color && e.calendarId) {
-        color = (state.planCalendars || []).find((c) => c.id === e.calendarId)?.color;
-      }
-      events.push({ ...e, source: "personal", color: color || PLAN_COLORS[0] });
+    const color = eventColor(e);
+    if (e.recurrence) {
+      expandRecurringOccurrences(e, startKey, endKey).forEach((occDate) => {
+        events.push({ ...e, date: occDate, occurrenceOf: e.id, source: "personal", color });
+      });
+    } else if (e.date >= startKey && e.date <= endKey) {
+      events.push({ ...e, source: "personal", color });
     }
   });
   // Household view overlays the member's own events (marked) so nothing is
@@ -30971,9 +31011,10 @@ function getPlanEventsForRange(startKey, endKey) {
     const mine = shadowSections.plan?.planEvents || [];
     const seen = new Set(events.map((e) => e.id));
     mine.forEach((e) => {
-      if (e.date >= startKey && e.date <= endKey && !seen.has(e.id)) {
-        events.push({ ...e, source: "personal-overlay", color: e.color || PLAN_COLORS[0], title: `◦ ${e.title}` });
-      }
+      if (seen.has(e.id)) return;
+      const push = (occDate) => events.push({ ...e, date: occDate, occurrenceOf: e.recurrence ? e.id : undefined, source: "personal-overlay", color: e.color || PLAN_COLORS[0], title: `◦ ${e.title}` });
+      if (e.recurrence) expandRecurringOccurrences(e, startKey, endKey).forEach(push);
+      else if (e.date >= startKey && e.date <= endKey) push(e.date);
     });
   }
   (state.planCalendars || []).filter((c) => c.enabled).forEach((cal) => {
@@ -31034,9 +31075,9 @@ function getAppDataEvents(startKey, endKey) {
 function planEventPillTemplate(event) {
   const dot = `<span class="plan-event-dot" style="background:${escapeHtml(event.color || PLAN_COLORS[0])}"></span>`;
   const time = (!event.allDay && event.startTime) ? `<span class="plan-event-time">${escapeHtml(planFormatTime(event.startTime))}</span>` : "";
-  return `<div class="plan-event-pill" data-plan-event-id="${escapeHtml(event.id)}"
-               style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])}" title="${escapeHtml(event.title)}">
-    ${dot}${time}<span class="plan-event-title">${escapeHtml(event.title)}</span>
+  return `<div class="plan-event-pill" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}"
+               style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])}" title="${escapeHtml(event.title)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}">
+    ${dot}${time}<span class="plan-event-title">${escapeHtml(event.title)}</span>${event.recurrence || event.occurrenceOf ? '<span class="plan-event-recur" aria-hidden="true">↻</span>' : ""}
   </div>`;
 }
 
@@ -31175,10 +31216,10 @@ function renderPlanAgendaView() {
     const rows = byDay[key].map((e) => {
       const timeStr = e.allDay ? "All day" : (e.startTime ? planFormatTime(e.startTime) + (e.endTime ? ` – ${planFormatTime(e.endTime)}` : "") : "");
       const calLabel = e.calendarName ? `<span class="plan-agenda-cal">${escapeHtml(e.calendarName)}</span>` : "";
-      return `<div class="plan-agenda-event" data-plan-event-id="${escapeHtml(e.id)}" data-plan-day="${escapeHtml(key)}">
+      return `<div class="plan-agenda-event" data-plan-event-id="${escapeHtml(e.id)}" data-plan-event-date="${escapeHtml(e.date || key)}" data-plan-day="${escapeHtml(key)}">
         <span class="plan-agenda-dot" style="background:${escapeHtml(e.color || PLAN_COLORS[0])}"></span>
         <div class="plan-agenda-info">
-          <span class="plan-agenda-title">${escapeHtml(e.title)}</span>
+          <span class="plan-agenda-title">${escapeHtml(e.title)}${e.recurrence || e.occurrenceOf ? ' <span class="plan-event-recur" aria-hidden="true">↻</span>' : ""}</span>
           <span class="plan-agenda-time">${escapeHtml(timeStr)}${calLabel}</span>
         </div>
       </div>`;
@@ -31198,10 +31239,10 @@ function planTimedEventBlock(event) {
   const endMin = Math.max(eh * 60 + em, startMin + 30);
   const top = ((startMin % 60) / 60) * 100;
   const height = Math.max(((endMin - startMin) / 60) * 100, 33);
-  return `<div class="plan-timed-event" data-plan-event-id="${escapeHtml(event.id)}"
+  return `<div class="plan-timed-event" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}"
                style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])};top:${top}%;height:${height}%"
-               title="${escapeHtml(event.title)}">
-    <span>${escapeHtml(planFormatTime(event.startTime))} ${escapeHtml(event.title)}</span>
+               title="${escapeHtml(event.title)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}">
+    <span>${escapeHtml(planFormatTime(event.startTime))} ${escapeHtml(event.title)}${event.recurrence || event.occurrenceOf ? " ↻" : ""}</span>
   </div>`;
 }
 
@@ -31213,8 +31254,18 @@ function planFormatTime(time) {
   return m === 0 ? `${h12} ${ampm}` : `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
 }
 
+function syncPlanRepeatUi() {
+  const sel = document.getElementById("planEventRepeat");
+  const detail = document.getElementById("planRepeatDetail");
+  const unit = document.getElementById("planRepeatUnit");
+  if (!sel || !detail) return;
+  detail.hidden = !sel.value;
+  if (unit) unit.textContent = ({ daily: "days", weekly: "weeks", monthly: "months", yearly: "years" })[sel.value] || "days";
+}
+
 function openPlanEventDialog(date, eventId) {
   editingPlanEventId = eventId || null;
+  editingPlanEventOccurrenceDate = date || null;
   const existing = eventId ? (state.planEvents || []).find((e) => e.id === eventId) : null;
   // A personal event overlaid on the household view lives in the other scope —
   // point the user at their own view rather than editing across scopes.
@@ -31253,6 +31304,16 @@ function openPlanEventDialog(date, eventId) {
     elements.deletePlanEventBtn.hidden = true;
     document.querySelector("#planEventDialogTitle").textContent = "New Event";
   }
+  // Recurrence controls (edit a recurring event = edit the whole series).
+  const rec = existing?.recurrence || null;
+  const repeatSel = document.getElementById("planEventRepeat");
+  if (repeatSel) { repeatSel.value = rec?.freq || ""; repeatSel.onchange = syncPlanRepeatUi; }
+  const intInput = document.getElementById("planEventRepeatInterval");
+  if (intInput) intInput.value = rec?.interval || 1;
+  const untilInput = document.getElementById("planEventRepeatUntil");
+  if (untilInput) untilInput.value = rec?.until || "";
+  syncPlanRepeatUi();
+
   elements.planEventLocationSuggestions.hidden = true;
   renderPlanEventAttachment();
   renderPlanEventCalPicker(selectedCalId);
@@ -31394,6 +31455,12 @@ function savePlanEvent() {
   const typedLocation = elements.planEventLocation.value.trim();
   const location = planEventSelectedPlace
     || (typedLocation ? { placeId: null, name: typedLocation, address: "" } : null);
+  const repeatFreq = document.getElementById("planEventRepeat")?.value || "";
+  const recurrence = repeatFreq ? normalizeRecurrence({
+    freq: repeatFreq,
+    interval: Number(document.getElementById("planEventRepeatInterval")?.value) || 1,
+    until: (document.getElementById("planEventRepeatUntil")?.value || "").trim() || null,
+  }) : null;
   const eventData = {
     title, date, allDay,
     startTime: allDay ? null : (elements.planEventStart.value || null),
@@ -31402,6 +31469,7 @@ function savePlanEvent() {
     color, calendarId: calId || null,
     location,
     attachment: planEventAttachment || null,
+    recurrence,
   };
   if (editingPlanEventId) {
     state.planEvents = (state.planEvents || []).map((e) =>
@@ -31417,8 +31485,22 @@ function savePlanEvent() {
 
 function deletePlanEvent() {
   if (!editingPlanEventId) return;
-  recordDeletion("planEvents", editingPlanEventId);
-  state.planEvents = (state.planEvents || []).filter((e) => e.id !== editingPlanEventId);
+  const existing = (state.planEvents || []).find((e) => e.id === editingPlanEventId);
+  if (existing?.recurrence) {
+    // OK = delete the whole series; Cancel = skip just this occurrence.
+    const deleteAll = window.confirm("This is a repeating event.\n\nOK — delete the entire series.\nCancel — delete only this day.");
+    if (deleteAll) {
+      recordDeletion("planEvents", editingPlanEventId);
+      state.planEvents = (state.planEvents || []).filter((e) => e.id !== editingPlanEventId);
+    } else {
+      const occ = editingPlanEventOccurrenceDate || existing.date;
+      state.planEvents = (state.planEvents || []).map((e) =>
+        e.id === editingPlanEventId ? { ...e, exceptions: [...(e.exceptions || []), occ] } : e);
+    }
+  } else {
+    recordDeletion("planEvents", editingPlanEventId);
+    state.planEvents = (state.planEvents || []).filter((e) => e.id !== editingPlanEventId);
+  }
   persist();
   elements.planEventDialog.close();
   if (activeAppArea === "plan") renderPlanPage();

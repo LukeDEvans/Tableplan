@@ -10675,6 +10675,14 @@ body.touch-drag-active * {
 
 .plan-time-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
+/* Recurrence controls */
+.plan-repeat-field select { width: 100%; }
+.plan-repeat-detail { display: flex; flex-wrap: wrap; gap: 10px 16px; margin-top: 8px; }
+.plan-repeat-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; font-weight: 600; }
+.plan-repeat-inline input[type="number"] { width: 62px; }
+.plan-repeat-inline input[type="date"] { width: auto; }
+.plan-event-recur { opacity: 0.7; font-size: 0.82em; }
+
 .plan-color-picker, .plan-cal-colors {
   display: flex;
   flex-wrap: wrap;

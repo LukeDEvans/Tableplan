@@ -3115,6 +3115,25 @@
             <input type="checkbox" id="planEventAllDay" />
             <span>All day</span>
           </label>
+          <div class="form-field plan-repeat-field">
+            <span>Repeat</span>
+            <select id="planEventRepeat">
+              <option value="">Does not repeat</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
+            </select>
+            <div class="plan-repeat-detail" id="planRepeatDetail" hidden>
+              <label class="plan-repeat-inline">Every
+                <input type="number" id="planEventRepeatInterval" min="1" max="365" value="1" />
+                <span id="planRepeatUnit">days</span>
+              </label>
+              <label class="plan-repeat-inline">Until
+                <input type="date" id="planEventRepeatUntil" />
+              </label>
+            </div>
+          </div>
           <div class="form-field plan-location-field">
             <span>Location</span>
             <input type="text" id="planEventLocation" placeholder="Add location" autocomplete="off" role="combobox" aria-expanded="false" />
