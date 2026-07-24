@@ -9412,14 +9412,10 @@ function appendMailRows(messages) {
             <svg class="mail-row-check-box" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
             <svg class="mail-row-check-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" fill="currentColor"/><path d="m9 12 2 2 4-4" stroke="white" stroke-width="2.5" fill="none"/></svg>
           </button>
-          <button class="mail-row-label-btn" type="button" aria-label="Label" title="Label">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
-          </button>
         </div>
         <span class="mail-row-from">${escapeHtml(parseDisplayName(m.from))}${m.count > 1 ? ` <span class="mail-row-count">${m.count}</span>` : ""}</span>
-        <span class="mail-row-content">
-          <span class="mail-row-subject">${escapeHtml(m.subject)}</span>${m.snippet ? `<span class="mail-row-sep"> — </span><span class="mail-row-snippet">${escapeHtml(cleanMailSnippet(m.snippet))}</span>` : ""}
-        </span>
+        <span class="mail-row-sep"> - </span>
+        <span class="mail-row-subject">${escapeHtml(m.subject)}</span>
         <div class="mail-row-right">
           ${rightHtml}
         </div>
@@ -9490,11 +9486,6 @@ function appendMailRows(messages) {
       if (selected) mailSelected.set(m.threadId, { subject: m.subject });
       else mailSelected.delete(m.threadId);
       updateMailBulkBar();
-    });
-
-    row.querySelector(".mail-row-label-btn").addEventListener("click", (e) => {
-      e.stopPropagation();
-      showRowLabelPicker(m.threadId, e.currentTarget, row);
     });
 
     row.querySelector(".mail-row-actions").addEventListener("click", async (e) => {
@@ -11206,12 +11197,17 @@ function formatMailDate(internalDate) {
   if (!internalDate) return "";
   const d = new Date(Number(internalDate));
   const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
-  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
-  if (now - d < 7 * 86400000) return d.toLocaleDateString(undefined, { weekday: "short" });
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  // Calendar-day difference (not a rolling 24h window): this keeps the weekday
+  // label to days 2–6 ago, which are all a different weekday than today. A
+  // message from exactly 7 days ago shares today's weekday (e.g. last Friday
+  // when today is Friday), so it falls through to the numeric date instead of
+  // an ambiguous "Fri".
+  const startOfDay = (x) => { const y = new Date(x); y.setHours(0, 0, 0, 0); return y; };
+  const dayDiff = Math.round((startOfDay(now) - startOfDay(d)) / 86400000);
+  if (dayDiff === 0) return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (dayDiff === 1) return "Yesterday";
+  if (dayDiff >= 2 && dayDiff <= 6) return d.toLocaleDateString(undefined, { weekday: "short" });
+  return d.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
 }
 
 function sanitizeMailHtml(html) {

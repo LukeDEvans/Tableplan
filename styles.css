@@ -12579,10 +12579,6 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
      (.mail-row-right { min-width: 130px }) and actually wins on mobile —
      otherwise the reserved 130px pushed the date off the clipped edge. */
   .mail-row-front .mail-row-right { min-width: 0; }
-  .mail-row-from { width: 130px; }
-}
-@media (max-width: 480px) {
-  .mail-row-from { width: 96px; }
 }
 
 /* Bulk action bar */
@@ -12664,7 +12660,7 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 
 /* Left controls: checkbox, star, label */
 .mail-row-left { display: flex; align-items: center; flex-shrink: 0; }
-.mail-row-check, .mail-row-label-btn {
+.mail-row-check {
   flex-shrink: 0;
   width: 32px;
   height: 32px;
@@ -12677,47 +12673,44 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   border-radius: 50%;
   color: var(--text-muted, #888);
   padding: 0;
-  transition: background 0.12s, color 0.12s, opacity 0.12s;
+  transition: background 0.12s, color 0.12s;
 }
-/* Checkbox always visible, Gmail-style. The label button takes no space until
-   the row is hovered, so the sender name sits right next to the checkbox. */
-.mail-row-label-btn { opacity: 0; width: 0; overflow: hidden; }
-.mail-row:hover .mail-row-label-btn { opacity: 1; width: 32px; }
-.mail-row-check:hover, .mail-row-label-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
-.mail-row-check svg, .mail-row-label-btn svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.5; fill: none; }
+.mail-row-check:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.mail-row-check svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.5; fill: none; }
 .mail-row-check-mark { display: none; }
 .mail-row--selected .mail-row-check-box { display: none; }
 .mail-row--selected .mail-row-check-mark { display: block; color: var(--accent, #92400E); }
 
+/* Sender takes only the width its name needs (capped), so a short sender sits
+   right up against the " - " and subject — no fixed gap. */
 .mail-row-from {
-  flex-shrink: 0;
-  width: 160px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 55%;
   font-size: 0.855rem;
   font-weight: 400;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--ink);
-  padding: 0 8px 0 2px;
+  padding-left: 2px;
 }
 .mail-row--unread .mail-row-from { font-weight: 700; }
 /* Conversation message count (Gmail-style), shown only when a thread bundles
    more than one email. */
 .mail-row-count { color: var(--text-muted, #888); font-weight: 400; font-size: 0.78rem; }
 .mail-row--unread .mail-row-count { color: var(--ink); }
-.mail-row-content {
-  flex: 1;
+.mail-row-sep { color: var(--text-muted, #888); flex-shrink: 0; padding: 0 6px; font-size: 0.855rem; }
+.mail-row-subject {
+  flex: 1 1 auto;
   min-width: 0;
-  display: flex;
-  align-items: center;
+  color: var(--ink);
   overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.855rem;
 }
-.mail-row-subject { color: var(--ink); flex-shrink: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; }
 .mail-row--unread .mail-row-subject { font-weight: 600; }
-.mail-row-sep { color: var(--text-muted, #888); margin: 0 6px; flex-shrink: 0; }
-.mail-row-snippet { color: var(--text-muted, #888); overflow: hidden; text-overflow: ellipsis; flex: 1; }
 
 .mail-row-right { display: flex; align-items: center; flex-shrink: 0; justify-content: flex-end; min-width: 130px; position: relative; }
 .mail-row-date {
