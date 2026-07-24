@@ -4200,11 +4200,18 @@ input.live-toggle:checked::before,
 
 .do-task-list {
   display: grid;
+  /* Explicit constrained column so a long, nowrap chore title can't blow the
+     grid track out to its max-content width and push the panel (and the "+"
+     button) past the viewport on mobile — this engages .do-task-title's ellipsis. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
+  min-width: 0;
   min-height: 52px;
   padding: 3px;
   border-radius: 18px;
 }
+
+.do-board { min-width: 0; }
 
 .do-task-item {
   position: relative;
@@ -4269,7 +4276,7 @@ input.live-toggle:checked::before,
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
-.do-task-item label {
+.do-task-item .do-task-main {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
   align-items: center;
@@ -4286,14 +4293,37 @@ input.live-toggle:checked::before,
   accent-color: var(--accent);
 }
 
+/* Title is now a button that opens the chore detail window on tap. */
 .do-task-title {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
   width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-weight: 850;
+  text-align: left;
+  cursor: pointer;
   color: var(--ink, #1e1a14) !important;
+}
+.do-task-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+
+.do-task-title-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.do-task-info-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 .workout-title-button {
@@ -4313,10 +4343,83 @@ input.live-toggle:checked::before,
   outline: none;
 }
 
-.do-task-item.is-done .do-task-title {
+.do-task-item.is-done .do-task-title,
+.do-task-item.is-done .do-task-title-text {
   color: var(--muted, #6f695f) !important;
   text-decoration: line-through;
 }
+
+/* Touch drag (long-press to move a chore onto a day) */
+.do-task-drag-clone {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 4000;
+  margin: 0;
+  pointer-events: none;
+  opacity: 0.92;
+  box-shadow: 0 18px 40px rgba(116, 85, 18, 0.28);
+  transform: translate(-9999px, -9999px);
+}
+body.do-task-touch-dragging { cursor: grabbing; }
+body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
+
+/* Archive button in the Chores header */
+.do-archive-btn { position: relative; }
+.do-archive-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 900;
+  line-height: 15px;
+  text-align: center;
+}
+
+/* Chore detail window */
+.do-task-detail-body { display: grid; gap: 14px; }
+.do-detail-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.do-detail-type {
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent-dark);
+}
+.do-detail-created { font-size: 0.8rem; color: var(--muted); }
+.do-detail-section { display: grid; gap: 5px; }
+.do-detail-label { font-size: 0.72rem; font-weight: 850; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.do-detail-notes { margin: 0; white-space: pre-wrap; line-height: 1.45; }
+.do-detail-empty { margin: 0; color: var(--muted); font-style: italic; }
+.do-detail-log { margin: 0; padding-left: 18px; display: grid; gap: 3px; font-size: 0.86rem; }
+.do-detail-actions { display: flex; gap: 8px; justify-content: flex-end; padding-top: 4px; }
+.do-detail-delete { color: var(--tomato); border-color: color-mix(in srgb, var(--tomato) 45%, var(--window-border)); }
+
+/* Archive list */
+.do-archive-body { display: grid; gap: 16px; max-height: 60vh; overflow-y: auto; }
+.do-archive-group { display: grid; gap: 6px; }
+.do-archive-date { font-size: 0.72rem; font-weight: 850; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.do-archive-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--window-border);
+  border-radius: 12px;
+  background: var(--window-bg);
+}
+.do-archive-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.do-archive-row-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.do-archive-del { color: var(--tomato); }
 
 .play-workout-item label {
   grid-template-columns: minmax(0, 1fr);

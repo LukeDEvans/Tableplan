@@ -209,7 +209,7 @@ const CLOUD_SNAPSHOT_HOURLY_MAX = 720; // 1 per hour going back up to 30 days
 const STATE_SECTIONS = {
   eat:       ["recipes", "trashedRecipes", "folders", "plans", "publishedWeeks", "recipeTags", "ingredientOptions", "autoGenerateRules", "mealPlanConfig", "activeCooking"],
   grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory"],
-  do:        ["doTasks", "doPlans", "doBacklog", "recurringTasks", "collapsedDays"],
+  do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
   media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder"],
@@ -865,6 +865,12 @@ const elements = {
   taskLogViewTitle: document.querySelector("#taskLogViewTitle"),
   taskLogViewBody: document.querySelector("#taskLogViewBody"),
   closeTaskLogViewBtn: document.querySelector("#closeTaskLogViewBtn"),
+  doTaskDetailDialog: document.querySelector("#doTaskDetailDialog"),
+  doTaskDetailBody: document.querySelector("#doTaskDetailBody"),
+  closeDoTaskDetailBtn: document.querySelector("#closeDoTaskDetailBtn"),
+  doArchiveDialog: document.querySelector("#doArchiveDialog"),
+  doArchiveBody: document.querySelector("#doArchiveBody"),
+  closeDoArchiveBtn: document.querySelector("#closeDoArchiveBtn"),
   tasksPageDialog: document.querySelector("#tasksPageDialog"),
   closeTasksPageBtn: document.querySelector("#closeTasksPageBtn"),
   tasksPageTaskForm: document.querySelector("#tasksPageTaskForm"),
@@ -1574,6 +1580,8 @@ function bindEvents() {
   elements.skipTaskLogBtn.addEventListener("click", () => skipTaskLogDialog());
   elements.taskLogForm.addEventListener("submit", (e) => { e.preventDefault(); submitTaskLogDialog(); });
   elements.closeTaskLogViewBtn.addEventListener("click", () => elements.taskLogViewDialog.close());
+  elements.closeDoTaskDetailBtn?.addEventListener("click", () => elements.doTaskDetailDialog.close());
+  elements.closeDoArchiveBtn?.addEventListener("click", () => elements.doArchiveDialog.close());
   elements.closeTasksPageBtn.addEventListener("click", () => elements.tasksPageDialog.close());
   elements.tasksPageDialog.addEventListener("close", () => setPageTitle(currentMainPageTitle()));
   elements.closeDoSettingsBtn.addEventListener("click", () => elements.doSettingsDialog.close());
@@ -2860,6 +2868,7 @@ function defaultState() {
     publishedWeeks: {},
     doPlans: {},
     doBacklog: [],
+    doArchive: [],
     recurringTasks: [],
     playPlans: {},
     playBacklog: [],
@@ -2994,6 +3003,7 @@ function normalizeState(parsed) {
     publishedWeeks: normalizePublishedWeeks(parsed?.publishedWeeks),
     doPlans: normalizeDoPlans(parsed?.doPlans, parsed?.doTasks),
     doBacklog: normalizeDoTasks(parsed?.doBacklog),
+    doArchive: normalizeDoArchive(parsed?.doArchive),
     recurringTasks: normalizeRecurringTasks(parsed?.recurringTasks),
     playPlans: normalizeDoPlans(parsed?.playPlans),
     playBacklog: normalizeDoTasks(parsed?.playBacklog),
@@ -3303,6 +3313,21 @@ function normalizeDoTasks(tasks) {
       };
     })
     .filter((task) => task.title);
+}
+
+function normalizeDoArchive(entries) {
+  return (Array.isArray(entries) ? entries : [])
+    .map((e) => ({
+      id: e?.id || createId("task"),
+      title: String(e?.title || "").trim(),
+      notes: String(e?.notes || "").trim(),
+      taskType: ["regular", "one-off"].includes(e?.taskType) ? e.taskType : "one-off",
+      log: normalizeTaskLogEntries(e?.log),
+      sourceDay: e?.sourceDay || "",
+      createdAt: e?.createdAt || "",
+      archivedAt: e?.archivedAt || new Date().toISOString()
+    }))
+    .filter((e) => e.title);
 }
 
 function normalizeRecurringTasks(tasks) {
@@ -4844,7 +4869,7 @@ function mergeStates(newer, older) {
     "recipes", "trashedRecipes", "folders",
     // Planning & tasks
     "planCalendars", "planEvents", "autoGenerateRules",
-    "doTasks", "doBacklog", "playBacklog",
+    "doTasks", "doBacklog", "doArchive", "playBacklog",
     "recurringTasks", "playAutoRules",
     // Watch / Read / Recreate
     "watchItems", "readingItems",
@@ -11469,6 +11494,9 @@ function initDoPlannerDelegation() {
     const dayTab = e.target.closest("[data-do-day-tab]");
     if (dayTab) { selectPlannerDay(dayTab.dataset.doDayTab); return; }
     if (e.target.closest("[data-open-add-task]")) { openAddTaskDialog(); return; }
+    if (e.target.closest("[data-open-do-archive]")) { openDoArchiveDialog(); return; }
+    const detail = e.target.closest("[data-do-task-detail]");
+    if (detail) { openDoTaskDetail(detail.dataset.doDay, detail.dataset.doTaskDetail); return; }
     const del = e.target.closest("[data-do-task-delete]");
     if (del) { deleteDoTask(del.dataset.doDay, del.dataset.doTaskDelete); return; }
     const edit = e.target.closest("[data-do-task-swipe-edit]");
@@ -11531,6 +11559,8 @@ function initTasksPageDelegation() {
   if (!dialog) return;
 
   dialog.addEventListener("click", (e) => {
+    const detail = e.target.closest("[data-do-task-detail]");
+    if (detail) { openDoTaskDetail(detail.dataset.doDay, detail.dataset.doTaskDetail); return; }
     const del = e.target.closest("[data-do-task-delete]");
     if (del) { deleteDoTask(del.dataset.doDay, del.dataset.doTaskDelete); return; }
     const edit = e.target.closest("[data-do-task-swipe-edit]");
@@ -11598,9 +11628,14 @@ function renderDoPlanner() {
       <section class="day-column planner-day-panel do-backlog-panel" aria-label="Chores">
         <div class="slot-topline">
           <div class="slot-label">Chores</div>
-          <button class="primary-btn icon-primary-btn" type="button" data-open-add-task title="Add task" aria-label="Add task" style="margin-left:auto">
-            <span aria-hidden="true">+</span>
-          </button>
+          <div class="slot-actions" style="margin-left:auto">
+            <button class="icon-btn do-archive-btn" type="button" data-open-do-archive title="Completed chores archive" aria-label="Completed chores archive">
+              ${doArchiveIconSvg()}${(state.doArchive || []).length ? `<span class="do-archive-count">${(state.doArchive || []).length}</span>` : ""}
+            </button>
+            <button class="primary-btn icon-primary-btn" type="button" data-open-add-task title="Add task" aria-label="Add task">
+              <span aria-hidden="true">+</span>
+            </button>
+          </div>
         </div>
         <div class="do-board">
           <div class="do-task-list" data-do-backlog-drop>
@@ -13087,15 +13122,15 @@ function skippedRecurringTasksForPlan(plan, dayId) {
 function doTaskTemplate(task, dayId) {
   const isLoggable = task.taskType === "regular" || !!task.recurringTaskId;
   const logCount = isLoggable ? getTaskLogEntries(task).length : 0;
+  const hasInfo = Boolean((task.notes || "").trim()) || logCount > 0;
   return `
     <article class="do-task-item ${task.done ? "is-done" : ""} ${task.recurringTaskId ? "is-recurring" : ""}" data-do-task="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" draggable="true">
-      <label>
-        <input type="checkbox" data-do-task-toggle="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" ${task.done ? "checked" : ""} />
-        <span class="do-task-title">${escapeHtml(task.title)}</span>
-      </label>
-      <div class="do-task-swipe-actions">
-        <button class="do-task-swipe-btn do-task-swipe-edit" type="button" data-do-task-swipe-edit="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}">Edit</button>
-        <button class="do-task-swipe-btn do-task-swipe-delete" type="button" data-do-task-delete="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" aria-label="Delete ${escapeHtml(task.title)}">Delete</button>
+      <div class="do-task-main">
+        <input type="checkbox" class="do-task-check" data-do-task-toggle="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" ${task.done ? "checked" : ""} aria-label="Mark ${escapeHtml(task.title)} done" />
+        <button type="button" class="do-task-title" data-do-task-detail="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}">
+          <span class="do-task-title-text">${escapeHtml(task.title)}</span>
+          ${hasInfo ? `<span class="do-task-info-dot" aria-hidden="true"></span>` : ""}
+        </button>
       </div>
     </article>
   `;
@@ -13106,11 +13141,176 @@ function toggleDoTask(dayId, taskId, done) {
     const pool = dayId === "backlog" ? doBacklogTasks() : doTasksForDay(dayId);
     const task = pool.find((t) => t.id === taskId);
     if (task && (task.taskType === "regular" || task.recurringTaskId)) {
+      // Loggable tasks (Regular "stays in pool always" / Recurring) keep their
+      // completion-log behavior — they are not archived.
       openTaskLogDialog(dayId, taskId, task.title);
       return;
     }
+    // A one-off chore ("Disappears once done") checked complete moves to the
+    // dated archive rather than lingering struck-through in the list.
+    if (task) { archiveDoTask(dayId, taskId); return; }
   }
   applyDoTaskToggle(dayId, taskId, done);
+}
+
+// Move a completed one-off chore out of its list into the dated archive.
+function archiveDoTask(dayId, taskId) {
+  const pool = dayId === "backlog" ? doBacklogTasks() : doTasksForDay(dayId);
+  const task = pool.find((t) => t.id === taskId);
+  if (!task) return;
+  if (dayId === "backlog") {
+    recordDeletion("doBacklog", taskId);
+    state.doBacklog = doBacklogTasks().filter((t) => t.id !== taskId);
+  } else {
+    recordDeletion("doPlanTasks", taskId);
+    const key = weekKey();
+    state.doPlans[key][dayId] = (state.doPlans[key][dayId] || []).filter((t) => t.id !== taskId);
+  }
+  state.doArchive = normalizeDoArchive(state.doArchive);
+  state.doArchive.push({
+    id: task.id,
+    title: task.title,
+    notes: task.notes || "",
+    taskType: task.taskType || "one-off",
+    log: task.log || [],
+    sourceDay: dayId,
+    createdAt: task.createdAt || "",
+    archivedAt: new Date().toISOString()
+  });
+  persist();
+  renderDoPlanner();
+  renderTasksPage();
+  if (elements.doArchiveDialog?.open) renderDoArchiveDialog();
+}
+
+// Return an archived chore to the Chores list as a fresh, uncompleted task.
+function restoreDoArchive(archiveId) {
+  state.doArchive = normalizeDoArchive(state.doArchive);
+  const entry = state.doArchive.find((e) => e.id === archiveId);
+  if (!entry) return;
+  recordDeletion("doArchive", archiveId);
+  state.doArchive = state.doArchive.filter((e) => e.id !== archiveId);
+  doBacklogTasks().push({
+    id: createId("task"),
+    title: entry.title,
+    notes: entry.notes || "",
+    taskType: entry.taskType || "one-off",
+    log: entry.log || [],
+    done: false,
+    weekKey: weekKey(),
+    createdAt: new Date().toISOString()
+  });
+  persist();
+  renderDoPlanner();
+  renderTasksPage();
+  if (elements.doArchiveDialog?.open) renderDoArchiveDialog();
+}
+
+// Permanently remove an entry from the archive.
+function deleteDoArchive(archiveId) {
+  recordDeletion("doArchive", archiveId);
+  state.doArchive = normalizeDoArchive(state.doArchive).filter((e) => e.id !== archiveId);
+  persist();
+  if (elements.doArchiveDialog?.open) renderDoArchiveDialog();
+}
+
+function doArchiveIconSvg() {
+  return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg>`;
+}
+
+// ── Chore detail window (item 4) ─────────────────────────────────────────────
+let doTaskDetailContext = null;
+function openDoTaskDetail(dayId, taskId) {
+  const pool = dayId === "backlog" ? doBacklogTasks() : doTasksForDay(dayId);
+  if (!pool.some((t) => t.id === taskId)) return;
+  doTaskDetailContext = { dayId, taskId };
+  renderDoTaskDetail();
+  elements.doTaskDetailDialog.showModal();
+}
+
+function renderDoTaskDetail() {
+  if (!doTaskDetailContext || !elements.doTaskDetailBody) return;
+  const { dayId, taskId } = doTaskDetailContext;
+  const pool = dayId === "backlog" ? doBacklogTasks() : doTasksForDay(dayId);
+  const task = pool.find((t) => t.id === taskId);
+  if (!task) { elements.doTaskDetailDialog.close(); return; }
+  const titleEl = document.getElementById("doTaskDetailTitle");
+  if (titleEl) titleEl.textContent = task.title;
+  const isLoggable = task.taskType === "regular" || !!task.recurringTaskId;
+  const typeLabel = task.recurringTaskId ? "Recurring" : task.taskType === "regular" ? "Regular" : "One-off";
+  const log = isLoggable ? getTaskLogEntries(task) : [];
+  const created = task.createdAt ? new Date(task.createdAt) : null;
+  elements.doTaskDetailBody.innerHTML = `
+    <div class="do-detail-meta">
+      <span class="do-detail-type">${escapeHtml(typeLabel)}</span>
+      ${created && !isNaN(created) ? `<span class="do-detail-created">Added ${escapeHtml(created.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }))}</span>` : ""}
+    </div>
+    <div class="do-detail-section">
+      <span class="do-detail-label">Details</span>
+      ${task.notes ? `<p class="do-detail-notes">${escapeHtml(task.notes)}</p>` : `<p class="do-detail-empty">No additional details yet — tap Edit to add some.</p>`}
+    </div>
+    ${isLoggable ? `
+      <div class="do-detail-section">
+        <span class="do-detail-label">Completion log${log.length ? ` (${log.length})` : ""}</span>
+        ${log.length
+          ? `<ul class="do-detail-log">${[...log].reverse().slice(0, 6).map((e) => { const d = new Date(e.completedAt); return `<li>${escapeHtml(isNaN(d) ? String(e.completedAt) : d.toLocaleDateString(undefined, { month: "short", day: "numeric" }))}${e.notes ? ` — ${escapeHtml(e.notes)}` : ""}</li>`; }).join("")}</ul>`
+          : `<p class="do-detail-empty">No completions logged.</p>`}
+      </div>` : ""}
+    <div class="do-detail-actions">
+      <button type="button" class="secondary-btn" data-do-detail-edit>Edit</button>
+      <button type="button" class="secondary-btn do-detail-delete" data-do-detail-delete>Delete</button>
+    </div>
+  `;
+  elements.doTaskDetailBody.querySelector("[data-do-detail-edit]").onclick = () => {
+    elements.doTaskDetailDialog.close();
+    openEditTaskDialog(dayId, taskId);
+  };
+  elements.doTaskDetailBody.querySelector("[data-do-detail-delete]").onclick = () => {
+    elements.doTaskDetailDialog.close();
+    deleteDoTask(dayId, taskId);
+  };
+}
+
+// ── Completed-chore archive (item 3) ─────────────────────────────────────────
+function openDoArchiveDialog() {
+  renderDoArchiveDialog();
+  elements.doArchiveDialog.showModal();
+}
+
+function renderDoArchiveDialog() {
+  if (!elements.doArchiveBody) return;
+  const entries = normalizeDoArchive(state.doArchive)
+    .slice()
+    .sort((a, b) => String(b.archivedAt).localeCompare(String(a.archivedAt)));
+  if (!entries.length) {
+    elements.doArchiveBody.innerHTML = `<p class="empty-state">No completed chores yet. Check off a one-off chore and it lands here.</p>`;
+    return;
+  }
+  const groups = [];
+  const byDate = new Map();
+  for (const e of entries) {
+    const d = new Date(e.archivedAt);
+    const key = isNaN(d) ? "Earlier" : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+    if (!byDate.has(key)) { byDate.set(key, []); groups.push(key); }
+    byDate.get(key).push(e);
+  }
+  elements.doArchiveBody.innerHTML = groups.map((date) => `
+    <div class="do-archive-group">
+      <div class="do-archive-date">${escapeHtml(date)}</div>
+      ${byDate.get(date).map((e) => `
+        <div class="do-archive-row">
+          <span class="do-archive-title">${escapeHtml(e.title)}</span>
+          <div class="do-archive-row-actions">
+            <button type="button" class="secondary-btn compact-btn" data-do-archive-restore="${escapeHtml(e.id)}">Restore</button>
+            <button type="button" class="icon-btn do-archive-del" data-do-archive-delete="${escapeHtml(e.id)}" aria-label="Delete permanently">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+            </button>
+          </div>
+        </div>`).join("")}
+    </div>
+  `).join("");
+  elements.doArchiveBody.querySelectorAll("[data-do-archive-restore]").forEach((b) => { b.onclick = () => restoreDoArchive(b.dataset.doArchiveRestore); });
+  elements.doArchiveBody.querySelectorAll("[data-do-archive-delete]").forEach((b) => { b.onclick = () => deleteDoArchive(b.dataset.doArchiveDelete); });
 }
 
 function applyDoTaskToggle(dayId, taskId, done) {
@@ -13290,43 +13490,112 @@ function clearDoTaskDragState() {
   document.querySelectorAll(".do-task-item.is-dragging").forEach((item) => item.classList.remove("is-dragging"));
 }
 
+// ── Touch drag: long-press a chore, then drag it onto a day tab / list /
+// backlog (item 2). A quick tap still toggles the checkbox or opens the detail
+// window; a quick swipe still scrolls the list. Only a stationary press of
+// ~320ms picks the chore up.
+const DO_TASK_LONGPRESS_MS = 320;
+
 function handleDoTaskPointerDown(event) {
   if (event.pointerType !== "touch") return;
-  if (event.target.closest("button, input")) return;
   const entry = event.currentTarget;
-  document.querySelectorAll(".do-task-item.is-swiped").forEach((item) => {
-    if (item !== entry) item.classList.remove("is-swiped");
-  });
-  doTaskSwipeGesture = {
+  const g = {
     entry,
+    taskId: entry.dataset.doTask,
+    sourceDay: entry.dataset.doDay,
     startX: event.clientX,
     startY: event.clientY,
-    active: false
+    pointerId: event.pointerId,
+    dragging: false,
+    clone: null,
+    offsetX: 0,
+    offsetY: 0,
+    timer: null,
   };
+  g.timer = setTimeout(() => startDoTaskTouchDrag(g), DO_TASK_LONGPRESS_MS);
+  doTaskSwipeGesture = g;
+}
+
+function startDoTaskTouchDrag(g) {
+  if (!g || doTaskSwipeGesture !== g || !g.taskId) return;
+  g.dragging = true;
+  try { g.entry.setPointerCapture(g.pointerId); } catch { /* element gone */ }
+  if (navigator.vibrate) { try { navigator.vibrate(15); } catch { /* unsupported */ } }
+  const rect = g.entry.getBoundingClientRect();
+  g.offsetX = g.startX - rect.left;
+  g.offsetY = g.startY - rect.top;
+  const clone = g.entry.cloneNode(true);
+  clone.classList.add("do-task-drag-clone");
+  clone.style.width = `${rect.width}px`;
+  document.body.appendChild(clone);
+  g.clone = clone;
+  g.entry.classList.add("is-dragging");
+  document.body.classList.add("do-task-touch-dragging");
+  moveDoTaskDragClone(g, g.startX, g.startY);
+}
+
+function moveDoTaskDragClone(g, x, y) {
+  if (g.clone) g.clone.style.transform = `translate(${x - g.offsetX}px, ${y - g.offsetY}px)`;
+}
+
+function doTaskDropTargetAt(x, y) {
+  const el = document.elementFromPoint(x, y);
+  return el?.closest?.("[data-do-day-tab], [data-do-task-drop-day], [data-do-backlog-drop]") || null;
 }
 
 function handleDoTaskPointerMove(event) {
-  if (!doTaskSwipeGesture || doTaskSwipeGesture.entry !== event.currentTarget) return;
-  const deltaX = event.clientX - doTaskSwipeGesture.startX;
-  const deltaY = event.clientY - doTaskSwipeGesture.startY;
-  if (Math.abs(deltaY) > 28 && Math.abs(deltaY) > Math.abs(deltaX)) {
-    doTaskSwipeGesture = null;
+  const g = doTaskSwipeGesture;
+  if (!g || g.entry !== event.currentTarget) return;
+  if (!g.dragging) {
+    // Movement before the long-press fires means a scroll/swipe — let it go.
+    if (Math.abs(event.clientX - g.startX) > 10 || Math.abs(event.clientY - g.startY) > 10) {
+      clearTimeout(g.timer);
+      doTaskSwipeGesture = null;
+    }
     return;
   }
-  if (deltaX < -28) {
-    doTaskSwipeGesture.active = true;
-    event.currentTarget.classList.add("is-swiped");
-  } else if (deltaX > 18) {
-    event.currentTarget.classList.remove("is-swiped");
-  }
+  event.preventDefault();
+  moveDoTaskDragClone(g, event.clientX, event.clientY);
+  const target = doTaskDropTargetAt(event.clientX, event.clientY);
+  document.querySelectorAll(".do-task-drop-over").forEach((t) => { if (t !== target) t.classList.remove("do-task-drop-over"); });
+  if (target) target.classList.add("do-task-drop-over");
 }
 
 function handleDoTaskPointerEnd(event) {
-  if (!doTaskSwipeGesture || doTaskSwipeGesture.entry !== event.currentTarget) return;
-  if (!doTaskSwipeGesture.active) {
-    event.currentTarget.classList.remove("is-swiped");
+  const g = doTaskSwipeGesture;
+  if (!g || g.entry !== event.currentTarget) return;
+  clearTimeout(g.timer);
+  if (g.dragging) {
+    event.preventDefault();
+    if (g.clone) g.clone.style.display = "none"; // so elementFromPoint sees beneath
+    const target = doTaskDropTargetAt(event.clientX, event.clientY);
+    const targetDay = target
+      ? (target.dataset.doDayTab || target.dataset.doTaskDropDay || (target.hasAttribute("data-do-backlog-drop") ? "backlog" : null))
+      : null;
+    endDoTaskTouchDrag(g);
+    suppressNextDoTaskClick(); // swallow the click that follows the drag
+    if (targetDay) moveDoTask(g.sourceDay, targetDay, g.taskId);
   }
   doTaskSwipeGesture = null;
+}
+
+function endDoTaskTouchDrag(g) {
+  try { g.entry.releasePointerCapture(g.pointerId); } catch { /* detached */ }
+  if (g.clone) g.clone.remove();
+  g.clone = null;
+  g.entry.classList.remove("is-dragging");
+  document.body.classList.remove("do-task-touch-dragging");
+  document.querySelectorAll(".do-task-drop-over").forEach((t) => t.classList.remove("do-task-drop-over"));
+}
+
+function suppressNextDoTaskClick() {
+  const swallow = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    document.removeEventListener("click", swallow, true);
+  };
+  document.addEventListener("click", swallow, true);
+  setTimeout(() => document.removeEventListener("click", swallow, true), 400);
 }
 
 function moveDoTask(sourceDay, targetDay, taskId) {
