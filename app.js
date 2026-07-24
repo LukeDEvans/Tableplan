@@ -8921,20 +8921,34 @@ function mailSwipeNavigate(dir) {
   if (id) openMailThread(id);
 }
 
-// Detects a clear horizontal swipe on `target` and navigates: left → next,
-// right → previous. Ignores vertical drags (scrolling) and multi-touch.
+// Shared swipe test for switching emails. Returns 1 (next), -1 (prev), or 0.
+// Forgiving: the horizontal move only needs to lead the vertical one, and
+// either a ~45px drag OR a ~28px quick flick counts — so a slightly diagonal
+// swipe still works.
+function mailNavSwipeDir(dx, dy, dtMs) {
+  const adx = Math.abs(dx), ady = Math.abs(dy);
+  if (adx <= ady * 1.15) return 0;
+  if (adx > 45 || (dtMs < 350 && adx > 28)) return dx < 0 ? 1 : -1;
+  return 0;
+}
+
+// Detects a horizontal swipe on `target` and navigates: left → next, right →
+// previous. Ignores vertical drags (scrolling) and multi-touch. Kept forgiving:
+// the horizontal component only needs to lead the vertical one, and either a
+// modest drag OR a quick flick counts — so it doesn't demand a perfectly
+// straight, long swipe.
 function wireMailSwipeNav(target) {
-  let sx = 0, sy = 0, tracking = false;
+  let sx = 0, sy = 0, st = 0, tracking = false;
   target.addEventListener("touchstart", (e) => {
     if (e.touches.length !== 1) { tracking = false; return; }
-    sx = e.touches[0].clientX; sy = e.touches[0].clientY; tracking = true;
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now(); tracking = true;
   }, { passive: true });
   target.addEventListener("touchend", (e) => {
     if (!tracking) return;
     tracking = false;
     const t = e.changedTouches[0];
-    const dx = t.clientX - sx, dy = t.clientY - sy;
-    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 2) mailSwipeNavigate(dx < 0 ? 1 : -1);
+    const dir = mailNavSwipeDir(t.clientX - sx, t.clientY - sy, Date.now() - st);
+    if (dir) mailSwipeNavigate(dir);
   }, { passive: true });
 }
 let mailCurrentQuery = "";
@@ -11098,17 +11112,17 @@ function buildMailBodyFrame(html) {
       // The email body fills most of the reader; the iframe swallows touches
       // over it, so detect horizontal swipes here too and forward them to the
       // list navigation (left → next email, right → previous).
-      let sx = 0, sy = 0, tr = false;
+      let sx = 0, sy = 0, stime = 0, tr = false;
       doc.addEventListener("touchstart", (e) => {
         if (e.touches.length !== 1) { tr = false; return; }
-        sx = e.touches[0].clientX; sy = e.touches[0].clientY; tr = true;
+        sx = e.touches[0].clientX; sy = e.touches[0].clientY; stime = Date.now(); tr = true;
       }, { passive: true });
       doc.addEventListener("touchend", (e) => {
         if (!tr) return;
         tr = false;
         const t = e.changedTouches[0];
-        const dx = t.clientX - sx, dy = t.clientY - sy;
-        if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 2) mailSwipeNavigate(dx < 0 ? 1 : -1);
+        const dir = mailNavSwipeDir(t.clientX - sx, t.clientY - sy, Date.now() - stime);
+        if (dir) mailSwipeNavigate(dir);
       }, { passive: true });
       // Re-fit whenever an image settles — load AND error both finalize layout,
       // so a blocked or broken remote image (common under no-referrer) can no
