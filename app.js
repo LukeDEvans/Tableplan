@@ -21774,6 +21774,9 @@ function renderPlanner() {
           </div>
         `).join("")}
       </div>
+      ${mealPlanColumnCount > 1 ? `<div class="meal-carousel-nav" role="tablist" aria-label="Jump to meal">
+        ${mealPlanColumns.map(({ column }, i) => `<button class="meal-carousel-nav-btn${i === 0 ? " is-active" : ""}" type="button" role="tab" data-meal-jump="${i}">${escapeHtml(column.label)}</button>`).join("")}
+      </div>` : ""}
       <div class="meal-plan-publish-row">
         <div class="meal-plan-page-actions">
           <div class="meal-plan-btns-left">
@@ -21814,6 +21817,8 @@ function renderPlanner() {
     button.addEventListener("dragleave", () => button.classList.remove("meal-day-drop-over"));
     button.addEventListener("drop", handleMealDayTabDrop);
   });
+
+  wireMealCarouselNav();
 
   elements.plannerGrid.querySelectorAll("[data-meal-input]").forEach((input) => {
     input.addEventListener("change", () => commitMealInput(input));
@@ -21979,6 +21984,33 @@ function currentPlannerCarouselState() {
     dayId: panel?.id?.replace(/^panel-/, "") || "",
     scrollLeft: carousel?.scrollLeft || 0
   };
+}
+
+// Meal jump-nav (Breakfast · Lunch · Dinner) below the day carousel — tap to
+// slide to a meal, and it tracks manual swipes. Only shown when the carousel
+// actually pages (i.e. one meal per screen on mobile).
+function wireMealCarouselNav() {
+  const carousel = elements.plannerGrid.querySelector(".day-slots-carousel");
+  const nav = elements.plannerGrid.querySelector(".meal-carousel-nav");
+  if (!carousel || !nav) return;
+  const btns = [...nav.querySelectorAll("[data-meal-jump]")];
+
+  const isPaging = () => carousel.scrollWidth > carousel.clientWidth + 4;
+  const applyVisibility = () => nav.classList.toggle("is-visible", isPaging());
+  applyVisibility();
+  window.requestAnimationFrame(applyVisibility); // after layout settles
+
+  const setActive = () => {
+    if (!carousel.clientWidth) return;
+    const idx = Math.round(carousel.scrollLeft / carousel.clientWidth);
+    btns.forEach((b, i) => b.classList.toggle("is-active", i === idx));
+  };
+  carousel.addEventListener("scroll", () => { window.requestAnimationFrame(setActive); }, { passive: true });
+
+  btns.forEach((b, i) => b.addEventListener("click", () => {
+    carousel.scrollTo({ left: i * carousel.clientWidth, behavior: "smooth" });
+    btns.forEach((x, j) => x.classList.toggle("is-active", i === j));
+  }));
 }
 
 function restorePlannerCarouselState(previousState, activeDayId) {

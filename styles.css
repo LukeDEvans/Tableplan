@@ -2376,6 +2376,38 @@ input.live-toggle:checked::before,
   padding-top: 0;
 }
 
+/* Meal jump-nav (Breakfast · Lunch · Dinner) — only shown when the day carousel
+   pages one meal at a time (mobile). Makes moving between meals a tap, and it
+   follows swipes. */
+.meal-carousel-nav {
+  display: none;
+  gap: 6px;
+  margin: 8px 0 2px;
+  padding: 4px;
+  background: color-mix(in srgb, var(--window-border) 22%, transparent);
+  border-radius: 999px;
+}
+.meal-carousel-nav.is-visible { display: flex; }
+.meal-carousel-nav-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.meal-carousel-nav-btn.is-active {
+  background: var(--window-bg);
+  color: var(--accent-dark);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
 .day-slots-carousel {
   display: grid;
   grid-template-columns: repeat(var(--meal-column-count, 4), minmax(280px, 1fr));
