@@ -1927,6 +1927,7 @@ function bindEvents() {
   elements.nutritionEstimateServings.addEventListener("input", recalculatePendingNutritionEstimate);
   elements.nutritionMatchList.addEventListener("change", handleNutritionMatchChange);
   elements.recipeViewDialog.addEventListener("close", () => {
+    allowScreenOff("recipe"); // let the screen sleep again once the recipe closes
     rememberActiveRecipeScroll();
     currentActiveRecipeViewId = "";
     if (recipeViewMealContext) {
@@ -25566,6 +25567,7 @@ function openRecipeView(id, mealContext = null) {
     if (cookingId) openActiveRecipeView(cookingId);
   });
   if (!elements.recipeViewDialog.open) elements.recipeViewDialog.showModal();
+  keepScreenOn("recipe"); // keep the screen awake while a recipe is open for cooking
   requestAnimationFrame(() => {
     const scroller = recipeViewScroller();
     if (scroller) scroller.scrollTop = 0;
@@ -25587,6 +25589,7 @@ function openActiveRecipeView(cookingId) {
   bindActiveRecipeViewControls(cookingItem.id);
   bindActiveRecipeSwipe(cookingItem.id);
   if (!elements.recipeViewDialog.open) elements.recipeViewDialog.showModal();
+  keepScreenOn("recipe"); // active cooking view — keep the screen awake
   currentActiveRecipeViewId = cookingItem.id;
   restoreActiveRecipeScroll(cookingItem.id);
 }
@@ -29942,6 +29945,28 @@ const RECREATE_HOBBIES = [
 let sailLogPendingId = null;
 let activeRecreateHobby = null; // null = activity-card landing
 
+// ── Screen Wake Lock ─────────────────────────────────────────────────────────
+// Keeps the screen awake while the metronome runs or a recipe is open for
+// cooking. Reference-counted by reason; the OS drops the lock when the tab is
+// backgrounded, so we re-acquire on return to the foreground.
+let screenWakeLock = null;
+const wakeLockReasons = new Set();
+async function refreshWakeLock() {
+  try {
+    if (wakeLockReasons.size && !screenWakeLock && "wakeLock" in navigator && document.visibilityState === "visible") {
+      screenWakeLock = await navigator.wakeLock.request("screen");
+      screenWakeLock.addEventListener("release", () => { screenWakeLock = null; });
+    } else if (!wakeLockReasons.size && screenWakeLock) {
+      const lock = screenWakeLock;
+      screenWakeLock = null;
+      await lock.release();
+    }
+  } catch { /* wake lock unsupported or denied (e.g. not visible) — best effort */ }
+}
+function keepScreenOn(reason) { wakeLockReasons.add(reason); refreshWakeLock(); }
+function allowScreenOff(reason) { wakeLockReasons.delete(reason); refreshWakeLock(); }
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshWakeLock(); });
+
 // Metronome state
 let metronomeBpm = 120;
 let metronomeIsPlaying = false;
@@ -30399,12 +30424,14 @@ function startMetronome() {
   metronomeNextBeatTime = ctx.currentTime + 0.05;
   metronomeSchedulerTick();
   updateMetronomePlayBtn();
+  keepScreenOn("metronome");
 }
 
 function stopMetronome() {
   if (!metronomeIsPlaying) return;
   clearTimeout(metronomeSchedulerId);
   metronomeIsPlaying = false;
+  allowScreenOff("metronome");
   updateMetronomePlayBtn();
   const needle = document.getElementById("metronomeNeedle");
   if (needle) {
