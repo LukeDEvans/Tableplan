@@ -7480,7 +7480,11 @@ function renderFinancePage() {
         <div class="fin-group-meter-fill${pct > g.idealPct ? " is-over" : ""}" style="width:${Math.min(100, pct)}%"></div>
         <div class="fin-group-meter-ideal" style="left:${Math.min(100, g.idealPct)}%"></div>
       </div>
-      <div class="fin-group-pct">${income > 0 ? `${pct.toFixed(1)}% of income · ideal ${g.idealPct}%` : `ideal ${g.idealPct}% of income`}${showActuals && lastMoGroupActual(g) !== null ? ` · last mo ${formatFinMoney(lastMoGroupActual(g))}` : ""}</div>
+      ${!cardOpen ? "" : `
+      <div class="fin-group-detail">
+        <span class="fin-group-pct">${income > 0 ? `${pct.toFixed(1)}% of income` : "% of income shows once income is set"}${showActuals && lastMoGroupActual(g) !== null ? ` · last mo ${formatFinMoney(lastMoGroupActual(g))}` : ""}</span>
+        <label class="fin-group-ideal">Ideal <input type="number" min="0" max="100" step="1" value="${g.idealPct}" data-fin-edit="group-ideal" data-id="${g.id}" aria-label="Ideal percent of income for ${escapeHtml(g.label)}" /> %</label>
+      </div>`}
       ${!cardOpen ? "" : g.categories.map((c) => {
         const open = financeExpanded.has(c.id);
         const scope = `cat:${g.id}:${c.id}`;
@@ -8702,6 +8706,10 @@ function onFinanceGridChange(e) {
   } else if (kind === "category-active") {
     const c = financeScopeCategory(el.dataset.scope);
     if (c) c.activeItemId = el.value;
+  } else if (kind === "group-ideal") {
+    const grp = (state.financeBudgetGroups || []).find((x) => x.id === el.dataset.id);
+    if (!grp) return;
+    grp.idealPct = Math.max(0, Math.min(100, Math.round(Number(el.value) || 0)));
   } else if (kind === "ret-birth-year") {
     const y = Math.round(Number(el.value) || 0);
     state.financeBirthYear = (y >= 1900 && y <= new Date().getFullYear()) ? y : null;
