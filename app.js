@@ -7623,21 +7623,33 @@ function renderFinancePage() {
   const retHave = retirementTotal || 0;
   const retConfigured = retTarget > 0;
 
-  // A "which accounts feed this card" checklist, shown when the card is
-  // expanded via its ▾ caret. Toggling a box makes the pick explicit.
-  const savingsAccountChecklist = (card, activeIds) => {
+  // A "which accounts feed this card" editor, shown when the card is expanded
+  // via its ▾ caret. The included accounts appear as removable rows; a dropdown
+  // + "+" button adds one more at a time. Making any pick materializes the set.
+  const savingsAccountEditor = (card, activeIds) => {
     const accts = state.financeAccounts || [];
-    if (!accts.length) return `<p class="fin-hint">Add accounts below to include them.</p>`;
-    const active = new Set(activeIds);
-    return `<div class="fin-savings-accts">${accts.map((a) => {
+    if (!accts.length) return `<p class="fin-hint">Add accounts on the Accounts card first.</p>`;
+    const byId = new Map(accts.map((a) => [a.id, a]));
+    const active = activeIds.filter((id) => byId.has(id));
+    const remaining = accts.filter((a) => !active.includes(a.id));
+    const rows = active.map((id) => {
+      const a = byId.get(id);
       const bal = financeAccountBalance(a, liveById);
       return `
-        <label class="fin-savings-acct">
-          <input type="checkbox" data-fin-edit="card-account" data-card="${card}" data-id="${escapeHtml(a.id)}" ${active.has(a.id) ? "checked" : ""} />
+        <div class="fin-savings-acct">
           <span class="fin-savings-acct-name">${escapeHtml(a.name || "Untitled")}</span>
           <span class="fin-savings-acct-bal${(bal || 0) < 0 ? " is-neg" : ""}">${bal === null ? "—" : formatFinMoney(bal)}</span>
-        </label>`;
-    }).join("")}</div>`;
+          <button class="fin-savings-acct-rm" type="button" data-fin-action="remove-card-account" data-card="${card}" data-id="${escapeHtml(a.id)}" aria-label="Remove ${escapeHtml(a.name || "account")}">×</button>
+        </div>`;
+    }).join("");
+    const adder = remaining.length ? `
+      <div class="fin-savings-add">
+        <select class="fin-savings-add-select" data-card-add="${card}" aria-label="Choose an account to add">
+          ${remaining.map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name || "Untitled")}</option>`).join("")}
+        </select>
+        <button class="fin-savings-add-btn" type="button" data-fin-action="add-card-account" data-card="${card}" aria-label="Add the selected account">+</button>
+      </div>` : `<p class="fin-hint">Every account is already included.</p>`;
+    return `<div class="fin-savings-accts">${rows || `<p class="fin-hint">None selected yet — add one below.</p>`}</div>${adder}`;
   };
   const savingsCaret = (id) => `<button class="fin-savings-caret" type="button" data-fin-action="toggle-expand" data-id="${id}" aria-expanded="${financeExpanded.has(id)}" aria-label="Show details">${financeExpanded.has(id) ? "▴" : "▾"}</button>`;
   // "$have / $target" (target omitted for cash-on-hand, which has no goal).
@@ -7658,7 +7670,7 @@ function renderFinancePage() {
         ${savingsValue(cashOnHand || 0, null, cashOnHand === null)}
         ${cashOpen ? `<div class="fin-savings-editor">
           <p class="fin-hint">Accounts counted as cash on hand.</p>
-          ${savingsAccountChecklist("cash", cashIds)}
+          ${savingsAccountEditor("cash", cashIds)}
         </div>` : ""}
       </div>
       <div class="fin-savings-card fin-savings-emergency">
@@ -7670,7 +7682,7 @@ function renderFinancePage() {
         ${emergencyOpen ? `<div class="fin-savings-editor">
           <p class="fin-hint">Target = ${emergencyMonths} month${emergencyMonths === 1 ? "" : "s"} of Needs${monthlyNeeds > 0 ? ` (${formatFinMoney(monthlyNeeds)}/mo)` : ""}${emergencyTarget > 0 ? ` = ${formatFinMoney(emergencyTarget)}` : ""}. Adjust the number of months in Settings › Finance.</p>
           <p class="fin-hint">Accounts counted as emergency savings.</p>
-          ${savingsAccountChecklist("emergency", emergencyIds)}
+          ${savingsAccountEditor("emergency", emergencyIds)}
         </div>` : ""}
       </div>
       <div class="fin-savings-card fin-savings-retirement">
@@ -7692,7 +7704,7 @@ function renderFinancePage() {
           </div>
           <p class="fin-hint">${retAge !== null ? `At age ${retAge}, the benchmark is ${retMultiple.toFixed(1)}× income${retConfigured ? ` = ${formatFinMoney(retTarget)}` : ""} (Fidelity's guideposts: 1× by 30, 3× by 40, 6× by 50, 10× by 67).` : "Add your birth year and income for an age-based target."}</p>
           <p class="fin-hint">Accounts counted as retirement.</p>
-          ${savingsAccountChecklist("retirement", retirementIds)}
+          ${savingsAccountEditor("retirement", retirementIds)}
         </div>` : ""}
       </div>
     </div>`;
@@ -8434,6 +8446,28 @@ function onFinanceGridClick(e) {
     renderFinancePage();
     return;
   }
+  if (action === "add-card-account") {
+    const card = btn.dataset.card;
+    const key = FINANCE_CARD_ID_KEYS[card];
+    if (!key) return;
+    const id = btn.parentElement?.querySelector("select[data-card-add]")?.value;
+    if (!id) return;
+    const ids = financeCardAccountIds(card).slice();
+    if (!ids.includes(id)) ids.push(id);
+    state[key] = ids;
+    persist();
+    renderFinancePage();
+    return;
+  }
+  if (action === "remove-card-account") {
+    const card = btn.dataset.card;
+    const key = FINANCE_CARD_ID_KEYS[card];
+    if (!key) return;
+    state[key] = financeCardAccountIds(card).filter((x) => x !== btn.dataset.id);
+    persist();
+    renderFinancePage();
+    return;
+  }
   if (action === "add-person") {
     const name = prompt("Name?");
     if (!name?.trim()) return;
@@ -8668,15 +8702,6 @@ function onFinanceGridChange(e) {
   } else if (kind === "category-active") {
     const c = financeScopeCategory(el.dataset.scope);
     if (c) c.activeItemId = el.value;
-  } else if (kind === "card-account") {
-    const key = FINANCE_CARD_ID_KEYS[el.dataset.card];
-    if (!key) return;
-    // Materialize the card's current effective set, then flip this account.
-    let ids = financeCardAccountIds(el.dataset.card).slice();
-    const id = el.dataset.id;
-    if (el.checked) { if (!ids.includes(id)) ids.push(id); }
-    else ids = ids.filter((x) => x !== id);
-    state[key] = ids;
   } else if (kind === "ret-birth-year") {
     const y = Math.round(Number(el.value) || 0);
     state.financeBirthYear = (y >= 1900 && y <= new Date().getFullYear()) ? y : null;
