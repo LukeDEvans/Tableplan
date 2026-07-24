@@ -17,3 +17,5 @@ Every AI email-processing feature MUST have an on/off toggle in Settings → Mai
 **Local commits are welcome — commit freely as work completes.** Luke likes reviewing changes locally before they go out.
 
 **Never `git push` without explicit permission — ask first, every time.** Pushing to main auto-triggers a Netlify deploy, which spends limited deploy credits (and GitHub pushes are capped ~20/month). Batch work into local commits, then when ready ask: "OK to push?" Never push automatically as part of a task.
+
+**Before any push, run through [PRE_PUSH_CHECKLIST.md](PRE_PUSH_CHECKLIST.md)** — especially the mobile horizontal-fit pass (every page must lay out within a ~360px phone; no sideways scroll, nothing clipped at the right edge). Report anything that fails before pushing.

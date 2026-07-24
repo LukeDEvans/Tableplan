@@ -82,6 +82,12 @@ body {
   color: var(--ink);
   /* Blocks pinch-zoom on iOS, which ignores user-scalable=no in the viewport meta */
   touch-action: pan-x pan-y;
+  /* Global guard: the page itself never scrolls sideways on mobile. Intended
+     horizontal-scroll regions (day carousels, tab strips) keep their own
+     overflow-x:auto and still scroll within their box. Prevents the recurring
+     "page too wide for the phone" bleed. */
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -17760,7 +17766,9 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 
 .fin-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  /* min(320px, 100%) lets a card shrink below 320px on narrow phones instead
+     of forcing a track wider than the viewport. */
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
   gap: 12px;
   align-items: start;
 }
