@@ -8790,6 +8790,7 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
 .watch-category-tabs {
   display: flex;
   flex: 1;
+  min-width: 0; /* let the tab strip shrink + scroll instead of forcing the panel wider than the phone */
   gap: 0;
   overflow-x: auto;
   overflow-y: hidden;

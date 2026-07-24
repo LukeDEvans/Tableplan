@@ -5027,6 +5027,7 @@ function mergeStates(newer, older) {
   // ── Non-empty string fields: blank newer must never erase saved data ──────
   merged.emailPrefs = newer.emailPrefs || older.emailPrefs || "";
   merged.appName = newer.appName || older.appName || "";
+  merged.travelHome = newer.travelHome || older.travelHome || "";
   merged.voiceCommandSecret = newer.voiceCommandSecret || older.voiceCommandSecret || "";
 
   // ── Email schedule: preserve configured schedule over fresh-device defaults
@@ -30898,6 +30899,15 @@ function expandRecurringOccurrences(e, startKey, endKey) {
   const exceptions = new Set(e.exceptions || []);
   const hardEnd = (rec.until && rec.until < endKey) ? rec.until : endKey;
   const d = new Date(base);
+  // Fast-forward day/week series from an old start so we don't burn the
+  // iteration cap before reaching the visible window (e.g. a daily event that
+  // started years ago). Monthly/yearly step coarsely enough already.
+  const startD = new Date(startKey + "T00:00:00");
+  if ((rec.freq === "daily" || rec.freq === "weekly") && d < startD) {
+    const step = (rec.freq === "daily" ? 1 : 7) * rec.interval;
+    const jumps = Math.floor((startD - d) / 86400000 / step);
+    if (jumps > 0) d.setDate(d.getDate() + jumps * step);
+  }
   let guard = 0;
   while (guard++ < 1500) {
     const key = dateKeyFromDate(d);
