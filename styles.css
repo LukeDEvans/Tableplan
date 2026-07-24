@@ -12664,7 +12664,7 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 
 /* Left controls: checkbox, star, label */
 .mail-row-left { display: flex; align-items: center; flex-shrink: 0; }
-.mail-row-check, .mail-row-star, .mail-row-label-btn {
+.mail-row-check, .mail-row-label-btn {
   flex-shrink: 0;
   width: 32px;
   height: 32px;
@@ -12679,13 +12679,12 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   padding: 0;
   transition: background 0.12s, color 0.12s, opacity 0.12s;
 }
-/* Checkboxes always visible, Gmail-style; label button appears on hover */
-.mail-row-label-btn { opacity: 0; }
-.mail-row:hover .mail-row-label-btn { opacity: 1; }
-.mail-row-check:hover, .mail-row-star:hover, .mail-row-label-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
-.mail-row-check svg, .mail-row-star svg, .mail-row-label-btn svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.5; fill: none; }
-.mail-row-star.is-starred { color: #f59e0b; }
-.mail-row-star.is-starred svg { fill: currentColor; }
+/* Checkbox always visible, Gmail-style. The label button takes no space until
+   the row is hovered, so the sender name sits right next to the checkbox. */
+.mail-row-label-btn { opacity: 0; width: 0; overflow: hidden; }
+.mail-row:hover .mail-row-label-btn { opacity: 1; width: 32px; }
+.mail-row-check:hover, .mail-row-label-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.mail-row-check svg, .mail-row-label-btn svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.5; fill: none; }
 .mail-row-check-mark { display: none; }
 .mail-row--selected .mail-row-check-box { display: none; }
 .mail-row--selected .mail-row-check-mark { display: block; color: var(--accent, #92400E); }

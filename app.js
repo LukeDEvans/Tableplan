@@ -9397,14 +9397,11 @@ function appendMailRows(messages) {
         <button class="mail-row-action-btn" type="button" data-row-action="archive" title="Archive" aria-label="Archive">
           ${ldeIcon("archive", { size: 19 })}
         </button>
-        <button class="mail-row-action-btn" type="button" data-row-action="delete" title="Delete" aria-label="Delete">
-          ${ldeIcon("trash", { size: 19 })}
-        </button>
-        <button class="mail-row-action-btn" type="button" data-row-action="unread" title="Mark as unread" aria-label="Mark as unread">
-          ${ldeIcon("markUnread", { size: 19 })}
-        </button>
         <button class="mail-row-action-btn" type="button" data-row-action="snooze" title="Snooze" aria-label="Snooze">
           ${ldeIcon("snoozed", { size: 19 })}
+        </button>
+        <button class="mail-row-action-btn" type="button" data-row-action="delete" title="Delete" aria-label="Delete">
+          ${ldeIcon("trash", { size: 19 })}
         </button>`;
     row.innerHTML = `
       <div class="mail-row-actions" aria-label="Quick actions">${actionsHtml}
@@ -9414,9 +9411,6 @@ function appendMailRows(messages) {
           <button class="mail-row-check" type="button" aria-label="Select" title="Select">
             <svg class="mail-row-check-box" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
             <svg class="mail-row-check-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" fill="currentColor"/><path d="m9 12 2 2 4-4" stroke="white" stroke-width="2.5" fill="none"/></svg>
-          </button>
-          <button class="mail-row-star${m.starred ? " is-starred" : ""}" type="button" aria-label="${m.starred ? "Unstar" : "Star"}" title="${m.starred ? "Unstar" : "Star"}">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
           </button>
           <button class="mail-row-label-btn" type="button" aria-label="Label" title="Label">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
@@ -9496,16 +9490,6 @@ function appendMailRows(messages) {
       if (selected) mailSelected.set(m.threadId, { subject: m.subject });
       else mailSelected.delete(m.threadId);
       updateMailBulkBar();
-    });
-
-    const starBtn = row.querySelector(".mail-row-star");
-    starBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const nowStarred = !starBtn.classList.contains("is-starred");
-      starBtn.classList.toggle("is-starred", nowStarred);
-      starBtn.setAttribute("aria-label", nowStarred ? "Unstar" : "Star");
-      invalidateMailThreadCache(m.threadId);
-      callGmailApi({ action: "move", threadId: m.threadId, addLabelIds: nowStarred ? ["STARRED"] : [], removeLabelIds: nowStarred ? [] : ["STARRED"] });
     });
 
     row.querySelector(".mail-row-label-btn").addEventListener("click", (e) => {
@@ -9807,11 +9791,19 @@ let mailMenuDismissWired = false;
 function wireMailMenuDismiss() {
   if (mailMenuDismissWired) return;
   mailMenuDismissWired = true;
+  const anyMenuOpen = () => document.getElementById("mailMovePicker") || document.getElementById("mailMoreMenu") || document.getElementById("mailSnoozeMenu");
   document.addEventListener("click", (e) => {
-    if (!document.getElementById("mailMovePicker") && !document.getElementById("mailMoreMenu") && !document.getElementById("mailSnoozeMenu")) return;
+    if (!anyMenuOpen()) return;
     if (e.target.closest("#mailMovePicker, #mailMoreMenu, #mailSnoozeMenu")) return;
     closeMailMenus();
   }, { capture: true });
+  // Tapping inside an email message iframe swallows the click (it never reaches
+  // the document), so also close when focus moves into an iframe — this is what
+  // made the snooze/more menus feel "stuck" open. Scoped to IFRAME focus so the
+  // snooze date-time picker (a native control) doesn't dismiss the menu.
+  window.addEventListener("blur", () => {
+    if (anyMenuOpen() && document.activeElement?.tagName === "IFRAME") closeMailMenus();
+  });
 }
 
 // ─── Snooze (matches Gmail's own option set) ─────────────────────────────────
@@ -10130,21 +10122,20 @@ function renderMailThread(thread) {
         ${ldeIcon("back", { size: 22 })}
       </button>
       <div class="mail-thread-actions">
-        <button class="icon-btn mail-action-btn" id="mailArchiveBtn" type="button" title="Archive" aria-label="Archive">
-          ${ldeIcon("archive", { size: 22 })}
-        </button>
-        <button class="icon-btn mail-action-btn" id="mailDeleteBtn" type="button" title="Delete" aria-label="Delete">
-          ${ldeIcon("trash", { size: 22 })}
-        </button>
-        <button class="icon-btn mail-action-btn" id="mailSnoozeBtn" type="button" title="Snooze" aria-label="Snooze">
-          ${ldeIcon("snoozed", { size: 22 })}
-        </button>
-        <div class="mail-action-divider"></div>
         <div class="mail-move-wrap">
           <button class="icon-btn mail-action-btn" type="button" id="mailMoveBtn" title="Move to">
             ${ldeIcon("move", { size: 22 })}
           </button>
         </div>
+        <button class="icon-btn mail-action-btn" id="mailArchiveBtn" type="button" title="Archive" aria-label="Archive">
+          ${ldeIcon("archive", { size: 22 })}
+        </button>
+        <button class="icon-btn mail-action-btn" id="mailSnoozeBtn" type="button" title="Snooze" aria-label="Snooze">
+          ${ldeIcon("snoozed", { size: 22 })}
+        </button>
+        <button class="icon-btn mail-action-btn" id="mailDeleteBtn" type="button" title="Delete" aria-label="Delete">
+          ${ldeIcon("trash", { size: 22 })}
+        </button>
         <div class="mail-more-wrap">
           <button class="icon-btn mail-action-btn" type="button" id="mailMoreBtn" title="More actions" aria-label="More actions">
             ${ldeIcon("moreOptions", { size: 22 })}
