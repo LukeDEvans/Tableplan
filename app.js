@@ -30192,14 +30192,25 @@ function renderPianoPanel() {
     <div class="piano-panel">
       <div class="piano-metronome">
         <div class="metronome-visual">
-          <svg class="metronome-pendulum-svg" viewBox="-50 -118 100 136" aria-hidden="true">
-            <g id="metronomeNeedle" class="metronome-needle-group">
-              <line class="metronome-rod" x1="0" y1="2" x2="0" y2="-108"/>
-              <circle class="metronome-bob" cx="0" cy="-72" r="9"/>
-              <circle class="metronome-tip-dot" cx="0" cy="-108" r="3.5"/>
+          <svg class="metronome-pendulum-svg" viewBox="-50 -122 100 154" aria-hidden="true">
+            <!-- weighted wooden body (pyramid) -->
+            <polygon class="metronome-body" points="-40,26 40,26 15,-40 -15,-40"/>
+            <polygon class="metronome-body-face" points="-30,26 30,26 12,-34 -12,-34"/>
+            <!-- center scale slot + tempo ticks -->
+            <rect class="metronome-scale" x="-3.5" y="-34" width="7" height="56" rx="3.5"/>
+            <g class="metronome-scale-ticks">
+              <line x1="5" y1="-28" x2="10" y2="-28"/>
+              <line x1="5" y1="-15" x2="9" y2="-15"/>
+              <line x1="5" y1="-2" x2="10" y2="-2"/>
+              <line x1="5" y1="11" x2="9" y2="11"/>
             </g>
-            <ellipse class="metronome-pivot" cx="0" cy="2" rx="5" ry="4"/>
-            <polygon class="metronome-base-tri" points="-26,15 26,15 11,2 -11,2"/>
+            <!-- swinging weighted arm (pivots at the body's top) -->
+            <g id="metronomeNeedle" class="metronome-needle-group">
+              <line class="metronome-rod" x1="0" y1="-40" x2="0" y2="-112"/>
+              <polygon class="metronome-bob" points="-9,-72 9,-72 7,-90 -7,-90"/>
+              <circle class="metronome-tip-dot" cx="0" cy="-112" r="3.5"/>
+            </g>
+            <circle class="metronome-pivot" cx="0" cy="-40" r="4.5"/>
           </svg>
         </div>
         <div class="metronome-bpm-row">
