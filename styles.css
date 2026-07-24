@@ -17852,6 +17852,21 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 }
 .fin-savings-add-btn:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
 
+/* "Manage accounts →" link at the foot of the Finance page */
+.fin-accounts-link { display: block; width: 100%; margin-top: 12px; text-align: center; }
+
+/* Edit (✎) button on each account row inside the Settings › Finance panel */
+.fin-acct-edit-btn {
+  flex: none; width: 26px; height: 26px; margin-left: 6px; padding: 0; line-height: 1;
+  border: 1px solid var(--window-border); border-radius: 7px; cursor: pointer;
+  background: var(--window-bg); color: var(--muted); font-size: 0.85rem;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.fin-acct-edit-btn:hover { color: var(--ink); border-color: var(--accent); }
+/* Accounts panel embedded in Settings › Finance */
+.fin-set-accounts { min-width: 0; }
+.fin-accounts-panel { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+
 /* Finance settings panel (Settings › Finance) */
 .fin-set-group { display: flex; flex-direction: column; gap: 8px; padding: 4px 0 14px; }
 .fin-set-group + .fin-set-group { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding-top: 14px; }

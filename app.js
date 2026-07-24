@@ -1607,6 +1607,16 @@ function bindEvents() {
   elements.doneContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
   elements.contextSettingsBody.addEventListener("click", handleContextSettingsAction);
   elements.contextSettingsBody.addEventListener("change", handleContextSettingsChange);
+  // Right-click label/sub/account management inside the Accounts panel (mirrors
+  // the Finance page's own contextmenu wiring).
+  elements.contextSettingsBody.addEventListener("contextmenu", (e) => {
+    const acct = e.target.closest("[data-fin-acct-id]");
+    if (acct) { e.preventDefault(); showFinAcctMenu(e.clientX, e.clientY, { type: "account", id: acct.dataset.finAcctId }); return; }
+    const sub = e.target.closest("[data-fin-sub]");
+    if (sub) { e.preventDefault(); showFinAcctMenu(e.clientX, e.clientY, { type: "sub", label: sub.dataset.finOwner, sub: sub.dataset.finSub }); return; }
+    const owner = e.target.closest("[data-fin-owner]");
+    if (owner) { e.preventDefault(); showFinAcctMenu(e.clientX, e.clientY, { type: "owner", label: owner.dataset.finOwner }); return; }
+  });
   elements.openMealPlanBtn?.addEventListener("click", showEatApp);
   elements.openDoListBtn?.addEventListener("click", showDoApp);
   elements.openTasksPageBtn?.addEventListener("click", openTasksPage);
@@ -6554,6 +6564,7 @@ async function checkFinanceLinkStatus() {
   const data = await callNetlifyFunction("simplefin", { action: "status" });
   financeLinkStatus = data && !data.error ? data : { connected: false };
   if (activeAppArea === "finance") renderFinancePage();
+  refreshFinanceSettingsIfOpen();
   if (financeLinkStatus.connected && !financeLive) refreshFinanceLive();
 }
 
@@ -6561,6 +6572,7 @@ async function refreshFinanceLive(force = false) {
   if (financeLiveLoading) return;
   financeLiveLoading = true;
   if (activeAppArea === "finance") renderFinancePage();
+  refreshFinanceSettingsIfOpen();
   // 45 days so the current calendar month is always fully covered for actuals.
   // The server caches this (SimpleFIN expects ~24 req/day, not one per app
   // load) — force just requests a check against the 1h floor, it does not
@@ -6580,6 +6592,7 @@ async function refreshFinanceLive(force = false) {
   if (financeHistory === null) loadFinanceHistory();
   if (financeReceipts === null) loadFinanceReceipts();
   if (activeAppArea === "finance") renderFinancePage();
+  refreshFinanceSettingsIfOpen();
 }
 
 async function linkFinanceBanks() {
@@ -7368,6 +7381,136 @@ function financeExpensesTotal() {
   return (state.financeBudgetGroups || []).reduce((s, g) => s + financeGroupTotal(g), 0);
 }
 
+// The Accounts management UI. It used to be a card on the Finance page; it now
+// lives in Settings › Finance. Returns the inner HTML; the same data-fin-edit /
+// data-fin-action hooks route through onFinanceGridChange / onFinanceGridClick
+// (delegated from the settings body). A visible ✎ button opens each account's
+// editor, since the old right-click menu can't layer above a modal dialog.
+function renderFinanceAccountsPanel() {
+  const owners = [...new Set([
+    ...(Array.isArray(state.financeAccountLabels) ? state.financeAccountLabels : []),
+    ...(state.financeAccounts || []).map((a) => a.owner || "Other"),
+  ])];
+  const liveById = new Map((financeLive?.accounts || []).map((a) => [a.id, a]));
+  const linkedIds = new Set((state.financeAccounts || []).map((a) => a.linkedId).filter(Boolean));
+  const unlinkedLive = (financeLive?.accounts || []).filter((a) => !linkedIds.has(a.id));
+
+  const linkBlock = financeLinkStatus?.connected ? `
+      <div class="fin-subhead">Bank link · SimpleFIN</div>
+      <div class="fin-item-row fin-item-row--tools">
+        <span class="fin-hint">Connected${financeLive?.at ? ` · updated ${new Date(financeLive.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}</span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="refresh-live" ${financeLiveLoading ? "disabled" : ""}>${financeLiveLoading ? "Refreshing…" : "Refresh"}</button>
+        <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="unlink-banks">Disconnect</button>
+      </div>
+      ${(financeLive?.errors || []).length ? `<p class="fin-hint">${escapeHtml(financeLive.errors.join(" · "))}</p>` : ""}`
+    : financeLinkStatus ? `
+      <div class="fin-subhead">Bank link · SimpleFIN</div>
+      <p class="fin-hint">Paste a one-time setup token from <a href="https://beta-bridge.simplefin.org" target="_blank" rel="noopener noreferrer">SimpleFIN Bridge</a>. Bank logins stay at the bridge — the app only ever receives read-only balances.</p>
+      <div class="fin-account-add">
+        <input class="fin-item-name" type="password" id="finSetupToken" placeholder="SimpleFIN setup token" autocomplete="off" />
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="link-banks" ${financeLinkBusy ? "disabled" : ""}>${financeLinkBusy ? "Connecting…" : "Connect"}</button>
+      </div>`
+    : `<p class="fin-hint">Checking bank link…</p>`;
+
+  const ownerSubs = (owner) => [...new Set([
+    ...(((state.financeAccountSubLabels || {})[owner]) || []),
+    ...(state.financeAccounts || []).filter((x) => (x.owner || "Other") === owner && x.sub).map((x) => x.sub),
+  ])];
+  const finAcctRow = (a) => {
+    const live = a.linkedId ? liveById.get(a.linkedId) : null;
+    const editing = financeExpanded.has(`edit:${a.id}`);
+    const subs = ownerSubs(a.owner || "Other");
+    const shownBal = live ? (live.balance ?? 0) : a.manualBalance;
+    return `
+    <div class="fin-item-row fin-acct-row" data-fin-acct-id="${escapeHtml(a.id)}" title="Right-click (or ✎) to edit or delete">
+      <span class="fin-acct-name">${escapeHtml(a.name)}</span>
+      ${shownBal !== null && shownBal !== undefined ? `<span class="fin-live-bal${shownBal < 0 ? " is-neg" : ""}${live ? "" : " fin-bal-manual"}" ${live ? "" : `title="Manually kept balance"`}>${formatFinMoney(shownBal)}</span>` : ""}
+      <button class="fin-acct-edit-btn" type="button" data-fin-action="toggle-expand" data-id="edit:${a.id}" aria-label="Edit ${escapeHtml(a.name)}">${editing ? "▴" : "✎"}</button>
+    </div>
+    ${editing ? `
+    <div class="fin-acct-editor">
+      <div class="fin-item-row">
+        <input class="fin-item-name" type="text" value="${escapeHtml(a.name)}" data-fin-edit="account-name" data-id="${a.id}" aria-label="Account name" />
+      </div>
+      <div class="fin-item-row">
+        <select class="fin-scenario-select fin-editor-select" data-fin-edit="account-owner" data-id="${a.id}" title="Label" aria-label="Label for ${escapeHtml(a.name)}">
+          ${owners.map((o) => `<option value="${escapeHtml(o)}" ${o === (a.owner || "Other") ? "selected" : ""}>${escapeHtml(o)}</option>`).join("")}
+          <option value="__new__">New label…</option>
+        </select>
+        <select class="fin-scenario-select fin-editor-select" data-fin-edit="account-sub" data-id="${a.id}" title="Sub-label" aria-label="Sub-label for ${escapeHtml(a.name)}">
+          <option value="">no sub-label</option>
+          ${subs.map((s) => `<option value="${escapeHtml(s)}" ${s === a.sub ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
+          <option value="__new__">New sub-label…</option>
+        </select>
+      </div>
+      <div class="fin-item-row">
+        <select class="fin-scenario-select fin-editor-select" data-fin-edit="account-kind" data-id="${a.id}" title="Type — feeds the savings cards" aria-label="Type for ${escapeHtml(a.name)}">
+          <option value="" ${a.kind ? "" : "selected"}>Auto (${escapeHtml(inferFinanceAccountKind(a))})</option>
+          <option value="cash" ${a.kind === "cash" ? "selected" : ""}>Cash</option>
+          <option value="retirement" ${a.kind === "retirement" ? "selected" : ""}>Retirement</option>
+          <option value="investment" ${a.kind === "investment" ? "selected" : ""}>Investment</option>
+          <option value="debt" ${a.kind === "debt" ? "selected" : ""}>Debt</option>
+          <option value="other" ${a.kind === "other" ? "selected" : ""}>Other</option>
+        </select>
+      </div>
+      ${financeLinkStatus?.connected ? `
+      <div class="fin-item-row">
+        <select class="fin-scenario-select fin-editor-select" data-fin-edit="account-link" data-id="${a.id}" title="Linked bank account" aria-label="Link ${escapeHtml(a.name)} to a bank account">
+          <option value="">not linked</option>
+          ${(financeLive?.accounts || []).map((la) => `<option value="${escapeHtml(la.id)}" ${la.id === a.linkedId ? "selected" : ""}>${escapeHtml(la.org)}${la.org && la.name ? " — " : ""}${escapeHtml(la.name)}</option>`).join("")}
+          ${a.linkedId && !liveById.has(a.linkedId) ? `<option value="${escapeHtml(a.linkedId)}" selected>(linked — awaiting data)</option>` : ""}
+        </select>
+      </div>` : ""}
+      ${!a.linkedId ? `
+      <div class="fin-item-row">
+        <input class="fin-item-amount fin-manual-bal" type="text" inputmode="decimal" value="${a.manualBalance === null ? "" : escapeHtml(String(a.manualBalance))}" placeholder="Balance (− for debts)" data-fin-edit="account-manual-balance" data-id="${a.id}" aria-label="Manual balance for ${escapeHtml(a.name)}" />
+        <span class="fin-hint">manual balance — counts toward net worth</span>
+      </div>` : ""}
+      <div class="fin-item-row fin-item-row--tools">
+        <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="delete-account" data-id="${a.id}">Delete account</button>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="toggle-expand" data-id="edit:${a.id}">Done</button>
+      </div>
+    </div>` : ""}`;
+  };
+
+  const ownerBlocks = owners.map((owner) => {
+    const ownerAccts = (state.financeAccounts || []).filter((x) => (x.owner || "Other") === owner);
+    const subs = ownerSubs(owner);
+    const noSub = ownerAccts.filter((x) => !x.sub);
+    return `
+    <div class="fin-label-head" data-fin-owner="${escapeHtml(owner)}" title="Right-click to add a sub-label, rename, or delete">
+      <span class="fin-subhead">${escapeHtml(owner)}</span>
+    </div>
+    ${noSub.map(finAcctRow).join("")}
+    ${subs.map((sub) => `
+      <div class="fin-label-head fin-sublabel-head" data-fin-owner="${escapeHtml(owner)}" data-fin-sub="${escapeHtml(sub)}" title="Right-click to rename or delete">
+        <span class="fin-sublabel">${escapeHtml(sub)}</span>
+      </div>
+      <div class="fin-sub-group">
+        ${ownerAccts.filter((x) => x.sub === sub).map(finAcctRow).join("") || `<p class="fin-hint">Empty — right-click an account to file it here.</p>`}
+      </div>`).join("")}
+    ${!ownerAccts.length && !subs.length ? `<p class="fin-hint">No accounts under this label yet — open an account's ✎ and pick this label.</p>` : ""}`;
+  }).join("");
+
+  return `
+    ${linkBlock}
+    ${ownerBlocks}
+    ${unlinkedLive.length ? `
+    <div class="fin-subhead">Live accounts not linked yet</div>
+    ${unlinkedLive.map((a) => `
+      <div class="fin-live-row">
+        <span class="fin-live-name">${escapeHtml(a.org)}${a.org && a.name ? " — " : ""}${escapeHtml(a.name)}</span>
+        <span class="fin-live-bal${(a.balance ?? 0) < 0 ? " is-neg" : ""}">${formatFinMoney(a.balance ?? 0)}</span>
+      </div>`).join("")}` : ""}
+    <div class="fin-account-add">
+      <input class="fin-item-name" type="text" list="finOwnerList" id="finNewAccountOwner" placeholder="Label (e.g. Family)" />
+      <datalist id="finOwnerList">${owners.map((o) => `<option value="${escapeHtml(o)}"></option>`).join("")}</datalist>
+      <input class="fin-item-name" type="text" id="finNewAccountName" placeholder="Institution — account" />
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-account">Add</button>
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-label">+ Label</button>
+    </div>`;
+}
+
 function renderFinancePage() {
   const grid = elements.financePlannerGrid;
   if (!grid) return;
@@ -7563,23 +7706,6 @@ function renderFinancePage() {
       ${!personalOpen ? "" : `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-personal">+ Personal budget</button>`}
     </div>`;
 
-  const linkBlock = financeLinkStatus?.connected ? `
-      <div class="fin-subhead">Bank link · SimpleFIN</div>
-      <div class="fin-item-row fin-item-row--tools">
-        <span class="fin-hint">Connected${financeLive?.at ? ` · updated ${new Date(financeLive.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}</span>
-        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="refresh-live" ${financeLiveLoading ? "disabled" : ""}>${financeLiveLoading ? "Refreshing…" : "Refresh"}</button>
-        <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="unlink-banks">Disconnect</button>
-      </div>
-      ${(financeLive?.errors || []).length ? `<p class="fin-hint">${escapeHtml(financeLive.errors.join(" · "))}</p>` : ""}`
-    : financeLinkStatus ? `
-      <div class="fin-subhead">Bank link · SimpleFIN</div>
-      <p class="fin-hint">Paste a one-time setup token from <a href="https://beta-bridge.simplefin.org" target="_blank" rel="noopener noreferrer">SimpleFIN Bridge</a>. Bank logins stay at the bridge — the app only ever receives read-only balances.</p>
-      <div class="fin-account-add">
-        <input class="fin-item-name" type="password" id="finSetupToken" placeholder="SimpleFIN setup token" autocomplete="off" />
-        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="link-banks" ${financeLinkBusy ? "disabled" : ""}>${financeLinkBusy ? "Connecting…" : "Connect"}</button>
-      </div>`
-    : `<p class="fin-hint">Checking bank link…</p>`;
-
   // Owner labels: the explicit list (add/rename/delete) unioned with any
   // owner strings still present on accounts, so nothing ever disappears.
   const owners = [...new Set([
@@ -7632,7 +7758,7 @@ function renderFinancePage() {
   // + "+" button adds one more at a time. Making any pick materializes the set.
   const savingsAccountEditor = (card, activeIds) => {
     const accts = state.financeAccounts || [];
-    if (!accts.length) return `<p class="fin-hint">Add accounts on the Accounts card first.</p>`;
+    if (!accts.length) return `<p class="fin-hint">Add accounts in Settings › Finance first.</p>`;
     const byId = new Map(accts.map((a) => [a.id, a]));
     const active = activeIds.filter((id) => byId.has(id));
     const remaining = accts.filter((a) => !active.includes(a.id));
@@ -7713,106 +7839,8 @@ function renderFinancePage() {
       </div>
     </div>`;
 
-  const accountsOpen = financeExpanded.has("card:accounts");
-  const accountsCard = `
-    <div class="fin-card" data-fin-card="accounts">
-      ${cardHead("card:accounts", "Accounts", `${(state.financeAccounts || []).length}`)}
-      ${!accountsOpen ? "" : `
-      ${linkBlock}
-      ${(() => {
-        const ownerSubs = (owner) => [...new Set([
-          ...(((state.financeAccountSubLabels || {})[owner]) || []),
-          ...(state.financeAccounts || []).filter((x) => (x.owner || "Other") === owner && x.sub).map((x) => x.sub),
-        ])];
-        const finAcctRow = (a) => {
-          const live = a.linkedId ? liveById.get(a.linkedId) : null;
-          const editing = financeExpanded.has(`edit:${a.id}`);
-          const subs = ownerSubs(a.owner || "Other");
-          const shownBal = live ? (live.balance ?? 0) : a.manualBalance;
-          return `
-          <div class="fin-item-row fin-acct-row" data-fin-acct-id="${escapeHtml(a.id)}" title="Right-click to edit or delete">
-            <span class="fin-acct-name">${escapeHtml(a.name)}</span>
-            ${shownBal !== null && shownBal !== undefined ? `<span class="fin-live-bal${shownBal < 0 ? " is-neg" : ""}${live ? "" : " fin-bal-manual"}" ${live ? "" : `title="Manually kept balance"`}>${formatFinMoney(shownBal)}</span>` : ""}
-          </div>
-          ${editing ? `
-          <div class="fin-acct-editor">
-            <div class="fin-item-row">
-              <input class="fin-item-name" type="text" value="${escapeHtml(a.name)}" data-fin-edit="account-name" data-id="${a.id}" aria-label="Account name" />
-            </div>
-            <div class="fin-item-row">
-              <select class="fin-scenario-select fin-editor-select" data-fin-edit="account-owner" data-id="${a.id}" title="Label" aria-label="Label for ${escapeHtml(a.name)}">
-                ${owners.map((o) => `<option value="${escapeHtml(o)}" ${o === (a.owner || "Other") ? "selected" : ""}>${escapeHtml(o)}</option>`).join("")}
-                <option value="__new__">New label…</option>
-              </select>
-              <select class="fin-scenario-select fin-editor-select" data-fin-edit="account-sub" data-id="${a.id}" title="Sub-label" aria-label="Sub-label for ${escapeHtml(a.name)}">
-                <option value="">no sub-label</option>
-                ${subs.map((s) => `<option value="${escapeHtml(s)}" ${s === a.sub ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
-                <option value="__new__">New sub-label…</option>
-              </select>
-            </div>
-            <div class="fin-item-row">
-              <select class="fin-scenario-select fin-editor-select" data-fin-edit="account-kind" data-id="${a.id}" title="Type — feeds the savings cards" aria-label="Type for ${escapeHtml(a.name)}">
-                <option value="" ${a.kind ? "" : "selected"}>Auto (${escapeHtml(inferFinanceAccountKind(a))})</option>
-                <option value="cash" ${a.kind === "cash" ? "selected" : ""}>Cash</option>
-                <option value="retirement" ${a.kind === "retirement" ? "selected" : ""}>Retirement</option>
-                <option value="investment" ${a.kind === "investment" ? "selected" : ""}>Investment</option>
-                <option value="debt" ${a.kind === "debt" ? "selected" : ""}>Debt</option>
-                <option value="other" ${a.kind === "other" ? "selected" : ""}>Other</option>
-              </select>
-            </div>
-            ${financeLinkStatus?.connected ? `
-            <div class="fin-item-row">
-              <select class="fin-scenario-select fin-editor-select" data-fin-edit="account-link" data-id="${a.id}" title="Linked bank account" aria-label="Link ${escapeHtml(a.name)} to a bank account">
-                <option value="">not linked</option>
-                ${(financeLive?.accounts || []).map((la) => `<option value="${escapeHtml(la.id)}" ${la.id === a.linkedId ? "selected" : ""}>${escapeHtml(la.org)}${la.org && la.name ? " — " : ""}${escapeHtml(la.name)}</option>`).join("")}
-                ${a.linkedId && !liveById.has(a.linkedId) ? `<option value="${escapeHtml(a.linkedId)}" selected>(linked — awaiting data)</option>` : ""}
-              </select>
-            </div>` : ""}
-            ${!a.linkedId ? `
-            <div class="fin-item-row">
-              <input class="fin-item-amount fin-manual-bal" type="text" inputmode="decimal" value="${a.manualBalance === null ? "" : escapeHtml(String(a.manualBalance))}" placeholder="Balance (− for debts)" data-fin-edit="account-manual-balance" data-id="${a.id}" aria-label="Manual balance for ${escapeHtml(a.name)}" />
-              <span class="fin-hint">manual balance — counts toward net worth</span>
-            </div>` : ""}
-            <div class="fin-item-row fin-item-row--tools">
-              <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="delete-account" data-id="${a.id}">Delete account</button>
-              <button class="secondary-btn fin-add-btn" type="button" data-fin-action="toggle-expand" data-id="edit:${a.id}">Done</button>
-            </div>
-          </div>` : ""}`;
-        };
-        return owners.map((owner) => {
-          const ownerAccts = (state.financeAccounts || []).filter((x) => (x.owner || "Other") === owner);
-          const subs = ownerSubs(owner);
-          const noSub = ownerAccts.filter((x) => !x.sub);
-          return `
-          <div class="fin-label-head" data-fin-owner="${escapeHtml(owner)}" title="Right-click to add a sub-label, rename, or delete">
-            <span class="fin-subhead">${escapeHtml(owner)}</span>
-          </div>
-          ${noSub.map(finAcctRow).join("")}
-          ${subs.map((sub) => `
-            <div class="fin-label-head fin-sublabel-head" data-fin-owner="${escapeHtml(owner)}" data-fin-sub="${escapeHtml(sub)}" title="Right-click to rename or delete">
-              <span class="fin-sublabel">${escapeHtml(sub)}</span>
-            </div>
-            <div class="fin-sub-group">
-              ${ownerAccts.filter((x) => x.sub === sub).map(finAcctRow).join("") || `<p class="fin-hint">Empty — right-click an account to file it here.</p>`}
-            </div>`).join("")}
-          ${!ownerAccts.length && !subs.length ? `<p class="fin-hint">No accounts under this label yet — open an account's ✎ and pick this label.</p>` : ""}`;
-        }).join("");
-      })()}
-      ${unlinkedLive.length ? `
-      <div class="fin-subhead">Live accounts not linked yet</div>
-      ${unlinkedLive.map((a) => `
-        <div class="fin-live-row">
-          <span class="fin-live-name">${escapeHtml(a.org)}${a.org && a.name ? " — " : ""}${escapeHtml(a.name)}</span>
-          <span class="fin-live-bal${(a.balance ?? 0) < 0 ? " is-neg" : ""}">${formatFinMoney(a.balance ?? 0)}</span>
-        </div>`).join("")}` : ""}
-      <div class="fin-account-add">
-        <input class="fin-item-name" type="text" list="finOwnerList" id="finNewAccountOwner" placeholder="Label (e.g. Family)" />
-        <datalist id="finOwnerList">${owners.map((o) => `<option value="${escapeHtml(o)}"></option>`).join("")}</datalist>
-        <input class="fin-item-name" type="text" id="finNewAccountName" placeholder="Institution — account" />
-        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-account">Add</button>
-        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-label">+ Label</button>
-      </div>`}
-    </div>`;
+  // The Accounts management UI moved to Settings › Finance (see
+  // renderFinanceAccountsPanel); it no longer renders as a card here.
 
   const f = financeTxnFilter;
   let shownTxns = allTxns.slice(); // copy — sorting below must never mutate the cached/shared array
@@ -8214,8 +8242,8 @@ function renderFinancePage() {
         ${txnsCard}
         ${recapCard}
         ${personalCard}
-        ${accountsCard}
       </div>
+      <button class="secondary-btn fin-accounts-link" type="button" data-fin-action="open-accounts-settings">Manage accounts →</button>
     </section>`;
 
   if (!financeGridWired) {
@@ -8255,6 +8283,10 @@ function renderFinancePage() {
       if (owner) { e.preventDefault(); showFinAcctMenu(e.clientX, e.clientY, { type: "owner", label: owner.dataset.finOwner }); return; }
     });
   }
+
+  // Keep the Accounts panel (Settings › Finance) in sync when the finance page
+  // re-renders — e.g. after an async bank refresh updates live balances.
+  refreshFinanceSettingsIfOpen();
 }
 
 // Right-click menu for the Accounts card — the edit/delete/label actions used
@@ -8295,8 +8327,12 @@ function showFinAcctMenu(x, y, opts) {
     el.dataset.finAction = it.action;
     for (const [k, v] of Object.entries(it.data || {})) el.dataset[k] = v;
     onFinanceGridClick({ target: el });
+    refreshFinanceSettingsIfOpen();
   }));
-  document.body.appendChild(menu);
+  // A modal <dialog> sits in the top layer; a menu on document.body would hide
+  // behind it. Append to the open dialog so the menu shows above it.
+  const host = elements.contextSettingsDialog?.open ? elements.contextSettingsDialog : document.body;
+  host.appendChild(menu);
   setTimeout(() => document.addEventListener("click", () => menu.remove(), { once: true, capture: true }), 0);
 }
 
@@ -8356,6 +8392,7 @@ function onFinanceGridClick(e) {
   const btn = e.target.closest("[data-fin-action]");
   if (!btn) return;
   const action = btn.dataset.finAction;
+  if (action === "open-accounts-settings") { openContextSettingsDialog("finance"); return; }
   // Bank-link actions are async and don't touch budget state
   if (action === "link-banks") { linkFinanceBanks(); return; }
   if (action === "refresh-live") { refreshFinanceLive(true); return; }
@@ -16716,7 +16753,16 @@ const MAIL_AI_FEATURES = [
   },
 ];
 
+let contextSettingsKind = null; // which sub-panel the settings dialog is showing
+// Re-render the Finance settings panel in place (used after an account edit
+// made through the delegated finance handlers, so the change shows at once).
+function refreshFinanceSettingsIfOpen() {
+  if (elements.contextSettingsDialog?.open && contextSettingsKind === "finance") {
+    renderContextSettingsDialog("finance");
+  }
+}
 function renderContextSettingsDialog(kind) {
+  contextSettingsKind = kind;
   const titles = {
     general: "Settings",
     eat: "Meal Plan",
@@ -16770,6 +16816,7 @@ function renderContextSettingsDialog(kind) {
 
   if (kind === "finance") {
     const emMonths = Number(state.financeEmergencyMonths) > 0 ? Number(state.financeEmergencyMonths) : 3;
+    if (financeLinkStatus === null) checkFinanceLinkStatus();
     elements.contextSettingsBody.innerHTML = `
       <div class="fin-set-group">
         <span class="theme-setting-title">Emergency savings target</span>
@@ -16779,7 +16826,12 @@ function renderContextSettingsDialog(kind) {
           <input type="number" min="1" max="24" step="1" value="${emMonths}" data-fin-setting="emergency-months" />
         </label>
       </div>
-      <p class="settings-hint">Your retirement target (birth year &amp; income) now lives in the Retirement card — tap its ▾ on the Finance page.</p>`;
+      <p class="settings-hint">Your retirement target (birth year &amp; income) now lives in the Retirement card — tap its ▾ on the Finance page.</p>
+      <div class="fin-set-group fin-set-accounts">
+        <span class="theme-setting-title">Accounts</span>
+        <p class="settings-hint">Your accounts, labels, balances and bank link. These feed net worth and the savings cards.</p>
+        <div class="fin-accounts-panel">${renderFinanceAccountsPanel()}</div>
+      </div>`;
     elements.contextSettingsBody.querySelectorAll("[data-fin-setting]").forEach((input) => {
       input.addEventListener("change", () => {
         const k = input.dataset.finSetting;
@@ -17486,6 +17538,13 @@ function renderWatchContextSettings() {
 }
 
 function handleContextSettingsChange(event) {
+  // The Accounts panel (Settings › Finance) reuses the Finance page's edit
+  // hooks; route them through the shared handler and refresh the panel.
+  if (event.target.closest?.("[data-fin-edit]")) {
+    onFinanceGridChange(event);
+    refreshFinanceSettingsIfOpen();
+    return;
+  }
   const themeInput = event.target.closest?.("input[name='contextThemeMode']");
   if (themeInput) setThemeMode(themeInput.value);
   const pageVisibilityInput = event.target.closest?.("[data-page-visibility]");
@@ -17512,6 +17571,13 @@ function handleContextSettingsChange(event) {
 }
 
 function handleContextSettingsAction(event) {
+  // Accounts panel (Settings › Finance): route the Finance action hooks
+  // (add/delete account, edit, labels, bank link) through the shared handler.
+  if (event.target.closest?.("[data-fin-action]")) {
+    onFinanceGridClick(event);
+    refreshFinanceSettingsIfOpen();
+    return;
+  }
   const button = event.target.closest?.("[data-context-settings-action]");
   if (!button) return;
   const action = button.dataset.contextSettingsAction;
