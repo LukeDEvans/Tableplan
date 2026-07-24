@@ -427,7 +427,7 @@ const MANAGED_PAGES = [
   { key: "recreate",  label: "Recreate" },
   { key: "explore",   label: "Explore" },
   { key: "plan",      label: "Calendar" },
-  { key: "inventory", label: "Stock" },
+  { key: "inventory", label: "Inventory" },
   { key: "finance",   label: "Finance" },
 ];
 
@@ -3773,6 +3773,7 @@ function normalizeInventoryItems(raw) {
     boxId: typeof item?.boxId === "string" ? item.boxId : null,
     quantity: item?.quantity ? String(item.quantity).trim() : null,
     notes: item?.notes ? String(item.notes).trim() : null,
+    trackWeekly: Boolean(item?.trackWeekly), // appears on the weekly inventory checklist
     createdAt: item?.createdAt || new Date().toISOString()
   })).filter((item) => item.name);
 }
@@ -8653,7 +8654,7 @@ function showInventoryApp(event) {
   elements.inventoryMainPage.hidden = false;
   setWeekToolsMode("today");
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Stock");
+  setPageTitle("Inventory");
   setPageHash("stock");
   renderInventoryPage();
   closePageTitleMenu();
@@ -11108,7 +11109,7 @@ function currentMainPageTitle() {
   if (activeAppArea === "do") return "To-Do";
   if (activeAppArea === "play") return "Exercise";
   if (activeAppArea === "plan") return "Calendar";
-  if (activeAppArea === "inventory") return "Stock";
+  if (activeAppArea === "inventory") return "Inventory";
   if (activeAppArea === "watch") return "Watch";
   if (activeAppArea === "media") return "Media";
   if (activeAppArea === "shop") return "Shop";
@@ -31684,8 +31685,15 @@ function renderInventoryPage() {
   const rooms = [...defaultRooms, ...userRooms];
   const unplaced = inventoryItemList().filter((i) => !i.boxId);
 
+  const trackedCount = inventoryItemList().filter((i) => i.trackWeekly).length;
   grid.innerHTML = `
     <div class="inventory-layout">
+      <div class="inventory-toolbar">
+        <button class="secondary-btn compact-btn inventory-checklist-btn" type="button" data-open-inventory-checklist>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          Weekly checklist${trackedCount ? ` (${trackedCount})` : ""}
+        </button>
+      </div>
       <div class="inventory-rooms-grid">
         ${rooms.map((r) => inventoryRoomCardTemplate(r)).join("")}
         ${unplaced.length ? `
@@ -31703,6 +31711,95 @@ function renderInventoryPage() {
   `;
 
   bindInventoryControls(grid);
+}
+
+// ── Weekly inventory checklist ───────────────────────────────────────────────
+function shoppingListHas(name) {
+  const n = normalize(name);
+  return (state.persistentManualGroceries || []).some((x) => normalize(x) === n);
+}
+function addToShoppingList(name) {
+  if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
+  if (!shoppingListHas(name)) {
+    state.persistentManualGroceries.push(name);
+    state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
+  }
+}
+function removeFromShoppingList(name) {
+  const n = normalize(name);
+  state.persistentManualGroceries = (state.persistentManualGroceries || []).filter((x) => normalize(x) !== n);
+}
+
+let inventoryChecklistDialogEl = null;
+function openInventoryChecklist() {
+  if (!inventoryChecklistDialogEl) {
+    inventoryChecklistDialogEl = document.createElement("dialog");
+    inventoryChecklistDialogEl.className = "recipe-dialog inventory-checklist-dialog";
+    document.body.appendChild(inventoryChecklistDialogEl);
+    inventoryChecklistDialogEl.addEventListener("click", (e) => {
+      if (e.target === inventoryChecklistDialogEl) inventoryChecklistDialogEl.close();
+    });
+  }
+  renderInventoryChecklist();
+  if (!inventoryChecklistDialogEl.open) inventoryChecklistDialogEl.showModal();
+}
+
+function renderInventoryChecklist() {
+  const dlg = inventoryChecklistDialogEl;
+  if (!dlg) return;
+  const tracked = inventoryItemList().filter((i) => i.trackWeekly);
+  // Group by room name for a tidy walk-through.
+  const roomName = (boxId) => {
+    if (!boxId) return "Unplaced";
+    const box = (state.inventoryBoxes || []).find((b) => b.id === boxId);
+    if (!box) return "Unplaced";
+    // Walk up to the top-level room for grouping.
+    let cur = box;
+    while (cur?.parentId) { const p = (state.inventoryBoxes || []).find((b) => b.id === cur.parentId); if (!p) break; cur = p; }
+    return cur?.name || "Unplaced";
+  };
+  const groups = [];
+  const byRoom = new Map();
+  for (const it of tracked) {
+    const r = roomName(it.boxId);
+    if (!byRoom.has(r)) { byRoom.set(r, []); groups.push(r); }
+    byRoom.get(r).push(it);
+  }
+  const needCount = tracked.filter((i) => shoppingListHas(i.name)).length;
+  dlg.innerHTML = `
+    <div class="recipe-form">
+      <div class="dialog-head">
+        <div>
+          <h2 style="margin:0">Weekly checklist</h2>
+          <p class="muted-label" style="margin:2px 0 0">Tick anything running low — it goes to your shopping list${needCount ? ` · ${needCount} on the list` : ""}</p>
+        </div>
+        <button class="icon-btn" type="button" data-inv-checklist-close aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+        </button>
+      </div>
+      <div class="inventory-checklist-body">
+        ${tracked.length ? groups.map((r) => `
+          <div class="inventory-checklist-group">
+            <div class="inventory-checklist-room">${escapeHtml(r)}</div>
+            ${byRoom.get(r).map((it) => `
+              <label class="inventory-checklist-row ${shoppingListHas(it.name) ? "is-low" : ""}">
+                <input type="checkbox" data-inv-checklist-need="${escapeHtml(it.name)}" ${shoppingListHas(it.name) ? "checked" : ""} />
+                <span class="inventory-checklist-name">${escapeHtml(it.name)}</span>
+                <span class="inventory-checklist-flag">${shoppingListHas(it.name) ? "On list" : "Low?"}</span>
+              </label>`).join("")}
+          </div>`).join("") : `<p class="empty-state">No items tracked yet. Long-press (or right-click) an inventory item and choose “Track on weekly checklist”.</p>`}
+      </div>
+    </div>`;
+  dlg.querySelector("[data-inv-checklist-close]")?.addEventListener("click", () => dlg.close());
+  dlg.querySelectorAll("[data-inv-checklist-need]").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      const name = cb.dataset.invChecklistNeed;
+      if (cb.checked) addToShoppingList(name); else removeFromShoppingList(name);
+      persist();
+      renderInventoryChecklist();
+      if (activeAppArea === "shop") renderGroceries();
+    });
+  });
 }
 
 function inventoryRoomCardTemplate(room) {
@@ -31765,7 +31862,8 @@ function inventoryContainerTemplate(container) {
 
 function inventoryItemChipTemplate(item) {
   return `
-    <div class="inventory-item-chip" data-inventory-item="${escapeHtml(item.id)}" draggable="true">
+    <div class="inventory-item-chip${item.trackWeekly ? " is-tracked" : ""}" data-inventory-item="${escapeHtml(item.id)}" draggable="true">
+      ${item.trackWeekly ? `<span class="inventory-item-track-dot" title="On the weekly checklist" aria-hidden="true"></span>` : ""}
       <span class="inventory-item-name">${escapeHtml(item.name)}</span>
       ${item.quantity ? `<span class="inventory-item-qty">${escapeHtml(item.quantity)}</span>` : ""}
       ${item.notes ? `<span class="inventory-item-notes">${escapeHtml(item.notes)}</span>` : ""}
@@ -31798,6 +31896,8 @@ function bindInventoryControls(root) {
   root.querySelectorAll("[data-inventory-item]").forEach((chip) => {
     chip.addEventListener("contextmenu", openInventoryItemMenu);
   });
+
+  root.querySelector("[data-open-inventory-checklist]")?.addEventListener("click", openInventoryChecklist);
 
   // Inline quick-add: Enter creates an item in the room or container
   root.querySelectorAll("[data-inventory-quick-add]").forEach((input) => {
@@ -32044,6 +32144,7 @@ function openInventoryItemMenu(event) {
   menu.setAttribute("role", "menu");
   menu.innerHTML = `
     <button type="button" role="menuitem" data-inv-ctx-edit-item="${escapeHtml(itemId)}">Edit</button>
+    <button type="button" role="menuitem" data-inv-ctx-track-item="${escapeHtml(itemId)}">${item.trackWeekly ? "Remove from weekly checklist" : "Track on weekly checklist"}</button>
     <div class="watch-context-divider"></div>
     <button type="button" role="menuitem" data-inv-ctx-delete-item="${escapeHtml(itemId)}" class="danger-item">Delete</button>
   `;
@@ -32063,6 +32164,13 @@ function openInventoryItemMenu(event) {
 
   const editBtn = menu.querySelector("[data-inv-ctx-edit-item]");
   if (editBtn) { editBtn.addEventListener("pointerdown", handle(() => openInventoryItemDialog(itemId))); editBtn.addEventListener("click", handle(() => openInventoryItemDialog(itemId))); }
+
+  const trackBtn = menu.querySelector("[data-inv-ctx-track-item]");
+  if (trackBtn) {
+    const toggleTrack = () => { item.trackWeekly = !item.trackWeekly; persist(); renderInventoryPage(); };
+    trackBtn.addEventListener("pointerdown", handle(toggleTrack));
+    trackBtn.addEventListener("click", handle(toggleTrack));
+  }
 
   const delBtn = menu.querySelector("[data-inv-ctx-delete-item]");
   if (delBtn) {
