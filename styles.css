@@ -17852,9 +17852,6 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 }
 .fin-savings-add-btn:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
 
-/* "Manage accounts →" link at the foot of the Finance page */
-.fin-accounts-link { display: block; width: 100%; margin-top: 12px; text-align: center; }
-
 /* Edit (✎) button on each account row inside the Settings › Finance panel */
 .fin-acct-edit-btn {
   flex: none; width: 26px; height: 26px; margin-left: 6px; padding: 0; line-height: 1;

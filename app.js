@@ -696,6 +696,8 @@ const elements = {
   menuReadSyncBtn: document.querySelector("#menuReadSyncBtn"),
   menuRecreateHobbiesBtn: document.querySelector("#menuRecreateHobbiesBtn"),
   menuManageCalendarsBtn: document.querySelector("#menuManageCalendarsBtn"),
+  menuFinanceAccountsBtn: document.querySelector("#menuFinanceAccountsBtn"),
+  menuFinanceEmergencyBtn: document.querySelector("#menuFinanceEmergencyBtn"),
   menuImportAiBtn: document.querySelector("#menuImportAiBtn"),
   importAiDialog: document.querySelector("#importAiDialog"),
   closeImportAiDialogBtn: document.querySelector("#closeImportAiDialogBtn"),
@@ -1594,6 +1596,8 @@ function bindEvents() {
   elements.menuWorkoutLogsBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLogsDialog));
   elements.menuRecreateHobbiesBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("recreate")));
   elements.menuManageCalendarsBtn.addEventListener("click", () => openSettingsMenuDialog(openPlanCalDialog));
+  elements.menuFinanceAccountsBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("finance-accounts")));
+  elements.menuFinanceEmergencyBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("finance-emergency")));
   elements.menuImportAiBtn.addEventListener("click", () => openSettingsMenuDialog(openImportAiDialog));
   elements.closeImportAiDialogBtn.addEventListener("click", () => elements.importAiDialog.close());
   elements.importAiCopyBtn.addEventListener("click", copyImportAiInstructions);
@@ -8243,7 +8247,6 @@ function renderFinancePage() {
         ${recapCard}
         ${personalCard}
       </div>
-      <button class="secondary-btn fin-accounts-link" type="button" data-fin-action="open-accounts-settings">Manage accounts →</button>
     </section>`;
 
   if (!financeGridWired) {
@@ -8392,7 +8395,6 @@ function onFinanceGridClick(e) {
   const btn = e.target.closest("[data-fin-action]");
   if (!btn) return;
   const action = btn.dataset.finAction;
-  if (action === "open-accounts-settings") { openContextSettingsDialog("finance"); return; }
   // Bank-link actions are async and don't touch budget state
   if (action === "link-banks") { linkFinanceBanks(); return; }
   if (action === "refresh-live") { refreshFinanceLive(true); return; }
@@ -16679,10 +16681,13 @@ function updateSettingsMenuOptions() {
   elements.menuPublicationsBtn.hidden = activeAppArea !== "media";
   elements.menuRecreateHobbiesBtn.hidden = !isRecreate;
   elements.menuManageCalendarsBtn.hidden = !isPlan;
+  const isFinance = activeAppArea === "finance";
+  elements.menuFinanceAccountsBtn.hidden = !isFinance;
+  elements.menuFinanceEmergencyBtn.hidden = !isFinance;
 }
 
 function hasPageSpecificSettings() {
-  return ["eat", "play", "do", "watch", "shop", "inventory", "recreate", "plan", "read", "listen", "media"].includes(activeAppArea);
+  return ["eat", "play", "do", "watch", "shop", "inventory", "recreate", "plan", "read", "listen", "media", "finance"].includes(activeAppArea);
 }
 
 function openSettingsMenuDialog(openDialog) {
@@ -16691,7 +16696,7 @@ function openSettingsMenuDialog(openDialog) {
 }
 
 function openContextSettingsDialog(kind) {
-  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync", "ai-notes"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync", "ai-notes", "finance-accounts", "finance-emergency"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -16757,8 +16762,8 @@ let contextSettingsKind = null; // which sub-panel the settings dialog is showin
 // Re-render the Finance settings panel in place (used after an account edit
 // made through the delegated finance handlers, so the change shows at once).
 function refreshFinanceSettingsIfOpen() {
-  if (elements.contextSettingsDialog?.open && contextSettingsKind === "finance") {
-    renderContextSettingsDialog("finance");
+  if (elements.contextSettingsDialog?.open && contextSettingsKind === "finance-accounts") {
+    renderContextSettingsDialog("finance-accounts");
   }
 }
 function renderContextSettingsDialog(kind) {
@@ -16775,7 +16780,8 @@ function renderContextSettingsDialog(kind) {
     "voice-commands": "Voice Commands",
     "admin-pages": "Global Pages",
     "read-sync": "Sync Settings",
-    "finance": "Finance",
+    "finance-accounts": "Accounts",
+    "finance-emergency": "Emergency Savings",
     "api-usage": "API Usage",
     "ai-notes": "AI Notes",
     "mail-ai": "Mail AI"
@@ -16792,7 +16798,6 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="weekly-email">Email</button>
         <button type="button" data-context-settings-action="mail-ai">Mail AI</button>
         <button type="button" data-context-settings-action="family">Household</button>
-        <button type="button" data-context-settings-action="finance">Finance</button>
         <button type="button" data-context-settings-action="voice-commands">Voice Commands</button>
         <button type="button" data-context-settings-action="ai-log">AI Action Log</button>
         <button type="button" data-context-settings-action="ai-notes">AI Notes</button>
@@ -16814,9 +16819,8 @@ function renderContextSettingsDialog(kind) {
     return;
   }
 
-  if (kind === "finance") {
+  if (kind === "finance-emergency") {
     const emMonths = Number(state.financeEmergencyMonths) > 0 ? Number(state.financeEmergencyMonths) : 3;
-    if (financeLinkStatus === null) checkFinanceLinkStatus();
     elements.contextSettingsBody.innerHTML = `
       <div class="fin-set-group">
         <span class="theme-setting-title">Emergency savings target</span>
@@ -16826,12 +16830,7 @@ function renderContextSettingsDialog(kind) {
           <input type="number" min="1" max="24" step="1" value="${emMonths}" data-fin-setting="emergency-months" />
         </label>
       </div>
-      <p class="settings-hint">Your retirement target (birth year &amp; income) now lives in the Retirement card — tap its ▾ on the Finance page.</p>
-      <div class="fin-set-group fin-set-accounts">
-        <span class="theme-setting-title">Accounts</span>
-        <p class="settings-hint">Your accounts, labels, balances and bank link. These feed net worth and the savings cards.</p>
-        <div class="fin-accounts-panel">${renderFinanceAccountsPanel()}</div>
-      </div>`;
+      <p class="settings-hint">Your retirement target (birth year &amp; income) lives in the Retirement card — tap its ▾ on the Finance page.</p>`;
     elements.contextSettingsBody.querySelectorAll("[data-fin-setting]").forEach((input) => {
       input.addEventListener("change", () => {
         const k = input.dataset.finSetting;
@@ -16839,10 +16838,18 @@ function renderContextSettingsDialog(kind) {
           state.financeEmergencyMonths = Math.max(1, Math.min(24, Math.round(Number(input.value) || 3)));
         }
         persist();
-        renderContextSettingsDialog("finance");
+        renderContextSettingsDialog("finance-emergency");
         if (activeAppArea === "finance") renderFinancePage();
       });
     });
+    return;
+  }
+
+  if (kind === "finance-accounts") {
+    if (financeLinkStatus === null) checkFinanceLinkStatus();
+    elements.contextSettingsBody.innerHTML = `
+      <p class="settings-hint">Your accounts, labels, balances and bank link. These feed net worth and the savings cards.</p>
+      <div class="fin-accounts-panel">${renderFinanceAccountsPanel()}</div>`;
     return;
   }
 
@@ -17610,7 +17617,6 @@ function handleContextSettingsAction(event) {
     "meal-plan-settings": () => closeAndRun(openMealPlanSettingsDialog),
     "test-location": () => testLocationAccess(),
     "family": () => renderContextSettingsDialog("family"),
-    "finance": () => renderContextSettingsDialog("finance"),
     "pages": () => renderContextSettingsDialog("pages"),
     "location-services": () => renderContextSettingsDialog("location-services"),
     "voice-commands": () => renderContextSettingsDialog("voice-commands"),
