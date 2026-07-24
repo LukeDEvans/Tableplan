@@ -598,6 +598,7 @@ let activeRecurringTaskDayId = "";
 let activePlayAutoRuleDayId = "";
 let activeWorkoutDetail = null;
 let activeWorkoutLogWorkoutId = "";
+let activeWorkoutLogFocusId = ""; // a specific log entry to scroll to when opening the logs dialog
 let activeExerciseContext = null;
 let pendingRepWeightSelection = null;
 let activeRecordingWorkoutId = null;
@@ -12149,6 +12150,18 @@ function renderWorkoutLogs() {
     openPastWorkoutDialog(workoutId);
   });
   updateTabIndicator(elements.workoutLogsList);
+  // When opened from a specific history entry, scroll it into view and flash it.
+  if (activeWorkoutLogFocusId) {
+    const card = elements.workoutLogsList.querySelector(`[data-log="${(window.CSS && CSS.escape) ? CSS.escape(activeWorkoutLogFocusId) : activeWorkoutLogFocusId}"]`)?.closest(".workout-log-editor-card");
+    activeWorkoutLogFocusId = "";
+    if (card) {
+      requestAnimationFrame(() => {
+        card.scrollIntoView({ block: "center", behavior: "smooth" });
+        card.classList.add("workout-log-editor-card--flash");
+        setTimeout(() => card.classList.remove("workout-log-editor-card--flash"), 1600);
+      });
+    }
+  }
 }
 
 function workoutLogEntries() {
@@ -12334,9 +12347,20 @@ function openWorkoutDetail(context = {}) {
     ? logs
       .slice()
       .sort((a, b) => String(b.date).localeCompare(String(a.date)))
-      .map((log) => `<p class="workout-log-row"><strong>${escapeHtml(log.date || "Undated")}</strong>${log.time ? ` · ${escapeHtml(log.time)}` : ""}${log.weight ? ` · ${escapeHtml(log.weight)}` : ""}</p>`)
+      .map((log) => `<button type="button" class="workout-log-row workout-log-row--link" data-workout-log-open="${escapeHtml(workout?.id || "")}" data-log-id="${escapeHtml(log.id)}"><strong>${escapeHtml(log.date || "Undated")}</strong>${log.time ? ` · ${escapeHtml(log.time)}` : ""}${log.weight ? ` · ${escapeHtml(log.weight)}` : ""}<span class="workout-log-row-chevron" aria-hidden="true">›</span></button>`)
       .join("")
     : `<p class="empty-state">No workout data logged yet.</p>`;
+  // Each history entry opens the detailed, editable log view for that workout.
+  elements.workoutDetailLogs.querySelectorAll("[data-workout-log-open]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const wid = btn.dataset.workoutLogOpen;
+      if (!wid) return;
+      activeWorkoutLogWorkoutId = wid;
+      activeWorkoutLogFocusId = btn.dataset.logId || "";
+      elements.workoutDetailDialog.close();
+      openWorkoutLogsDialog();
+    });
+  });
   if (!elements.workoutDetailDialog.open) elements.workoutDetailDialog.showModal();
   requestAnimationFrame(() => elements.workoutDetailName.focus());
 }

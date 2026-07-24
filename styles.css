@@ -4619,6 +4619,33 @@ body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
   font-weight: 750;
 }
 
+/* Clickable history entry → opens the detailed, editable log view */
+.workout-log-row--link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--sun) 34%, transparent);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 750;
+}
+.workout-log-row--link:hover, .workout-log-row--link:focus-visible {
+  color: var(--accent-dark);
+  outline: none;
+}
+.workout-log-row-chevron { margin-left: auto; color: var(--muted); font-weight: 900; }
+.workout-log-editor-card--flash {
+  animation: workoutLogFlash 1.6s ease;
+}
+@keyframes workoutLogFlash {
+  0%, 100% { background: transparent; }
+  20% { background: color-mix(in srgb, var(--accent-soft) 60%, transparent); }
+}
+
 .workout-log-editor-list {
   display: grid;
   gap: 12px;
