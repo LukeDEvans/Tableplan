@@ -218,7 +218,7 @@ const STATE_SECTIONS = {
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
@@ -3025,6 +3025,12 @@ function defaultState() {
     financeEmergencyMonths: 3,
     financeBirthYear: null,
     financeAnnualIncome: 0,
+    // Which accounts feed each top-of-page savings card. [] = auto (fall back
+    // to the account's inferred/overridden kind); a non-empty list is the
+    // user's explicit pick.
+    financeCashAccountIds: [],
+    financeEmergencyAccountIds: [],
+    financeRetirementAccountIds: [],
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -3176,6 +3182,9 @@ function normalizeState(parsed) {
     financeEmergencyMonths: (Number(parsed?.financeEmergencyMonths) > 0 ? Number(parsed.financeEmergencyMonths) : 3),
     financeBirthYear: (Number(parsed?.financeBirthYear) >= 1900 && Number(parsed?.financeBirthYear) <= new Date().getFullYear() ? Math.round(Number(parsed.financeBirthYear)) : null),
     financeAnnualIncome: (Number(parsed?.financeAnnualIncome) > 0 ? Number(parsed.financeAnnualIncome) : 0),
+    financeCashAccountIds: (Array.isArray(parsed?.financeCashAccountIds) ? parsed.financeCashAccountIds.filter((x) => typeof x === "string") : []),
+    financeEmergencyAccountIds: (Array.isArray(parsed?.financeEmergencyAccountIds) ? parsed.financeEmergencyAccountIds.filter((x) => typeof x === "string") : []),
+    financeRetirementAccountIds: (Array.isArray(parsed?.financeRetirementAccountIds) ? parsed.financeRetirementAccountIds.filter((x) => typeof x === "string") : []),
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
@@ -3919,6 +3928,36 @@ function financeSumByKind(kinds, liveById) {
   let sum = 0, any = false;
   for (const a of (state.financeAccounts || [])) {
     if (!set.has(financeAccountKind(a))) continue;
+    const bal = financeAccountBalance(a, liveById);
+    if (bal !== null) { sum += bal; any = true; }
+  }
+  return any ? sum : null;
+}
+
+// The accounts feeding a savings card ("cash" | "emergency" | "retirement").
+// An explicit user pick (non-empty id list) wins; otherwise fall back to the
+// accounts whose inferred/overridden kind matches (emergency shares "cash").
+const FINANCE_CARD_ID_KEYS = {
+  cash: "financeCashAccountIds",
+  emergency: "financeEmergencyAccountIds",
+  retirement: "financeRetirementAccountIds",
+};
+function financeCardAccountIds(card) {
+  const key = FINANCE_CARD_ID_KEYS[card];
+  const explicit = Array.isArray(state[key]) ? state[key] : [];
+  if (explicit.length) {
+    const valid = new Set((state.financeAccounts || []).map((a) => a.id));
+    return explicit.filter((id) => valid.has(id));
+  }
+  const inferKind = card === "emergency" ? "cash" : card;
+  return (state.financeAccounts || []).filter((a) => financeAccountKind(a) === inferKind).map((a) => a.id);
+}
+// Sum of current balances for an explicit set of account ids.
+function financeSumByAccountIds(ids, liveById) {
+  const set = new Set(ids || []);
+  let sum = 0, any = false;
+  for (const a of (state.financeAccounts || [])) {
+    if (!set.has(a.id)) continue;
     const bal = financeAccountBalance(a, liveById);
     if (bal !== null) { sum += bal; any = true; }
   }
@@ -7558,9 +7597,13 @@ function renderFinancePage() {
     if (any) netWorth = sum;
   }
 
-  // Top-of-page savings snapshot, by account kind.
-  const cashOnHand = financeSumByKind("cash", liveById);
-  const retirementTotal = financeSumByKind("retirement", liveById);
+  // Top-of-page savings snapshot. Each card sums the accounts the user picked
+  // for it (or, until they pick, the accounts of the matching kind).
+  const cashIds = financeCardAccountIds("cash");
+  const emergencyIds = financeCardAccountIds("emergency");
+  const retirementIds = financeCardAccountIds("retirement");
+  const cashOnHand = financeSumByAccountIds(cashIds, liveById);
+  const retirementTotal = financeSumByAccountIds(retirementIds, liveById);
   const investmentTotal = financeSumByKind("investment", liveById);
   const debtTotal = financeSumByKind("debt", liveById);
   const needsGroup = (state.financeBudgetGroups || []).find((g) => g.id === "fin-group-needs")
@@ -7568,44 +7611,89 @@ function renderFinancePage() {
   const monthlyNeeds = needsGroup ? financeGroupTotal(needsGroup) : 0;
   const emergencyMonths = Number(state.financeEmergencyMonths) > 0 ? Number(state.financeEmergencyMonths) : 3;
   const emergencyTarget = monthlyNeeds * emergencyMonths;
-  const emergencyHave = cashOnHand || 0;
-  const emergencyPct = emergencyTarget > 0 ? Math.min(100, (emergencyHave / emergencyTarget) * 100) : 0;
-  const monthsCovered = monthlyNeeds > 0 ? emergencyHave / monthlyNeeds : null;
+  const emergencyHave = financeSumByAccountIds(emergencyIds, liveById) || 0;
 
   // Retirement progress toward an age-based multiple of annual income
-  // (configured in Settings › Finance). No config → show the balance only.
+  // (configured right in the card's dropdown). No config → target is unknown.
   const retBirthYear = Number(state.financeBirthYear) || null;
   const retAge = retBirthYear ? (new Date().getFullYear() - retBirthYear) : null;
   const retIncome = Number(state.financeAnnualIncome) > 0 ? Number(state.financeAnnualIncome) : 0;
   const retMultiple = retAge !== null ? retirementTargetMultiple(retAge) : null;
   const retTarget = (retMultiple !== null && retIncome > 0) ? retIncome * retMultiple : 0;
   const retHave = retirementTotal || 0;
-  const retPct = retTarget > 0 ? Math.min(100, (retHave / retTarget) * 100) : 0;
   const retConfigured = retTarget > 0;
 
+  // A "which accounts feed this card" checklist, shown when the card is
+  // expanded via its ▾ caret. Toggling a box makes the pick explicit.
+  const savingsAccountChecklist = (card, activeIds) => {
+    const accts = state.financeAccounts || [];
+    if (!accts.length) return `<p class="fin-hint">Add accounts below to include them.</p>`;
+    const active = new Set(activeIds);
+    return `<div class="fin-savings-accts">${accts.map((a) => {
+      const bal = financeAccountBalance(a, liveById);
+      return `
+        <label class="fin-savings-acct">
+          <input type="checkbox" data-fin-edit="card-account" data-card="${card}" data-id="${escapeHtml(a.id)}" ${active.has(a.id) ? "checked" : ""} />
+          <span class="fin-savings-acct-name">${escapeHtml(a.name || "Untitled")}</span>
+          <span class="fin-savings-acct-bal${(bal || 0) < 0 ? " is-neg" : ""}">${bal === null ? "—" : formatFinMoney(bal)}</span>
+        </label>`;
+    }).join("")}</div>`;
+  };
+  const savingsCaret = (id) => `<button class="fin-savings-caret" type="button" data-fin-action="toggle-expand" data-id="${id}" aria-expanded="${financeExpanded.has(id)}" aria-label="Show details">${financeExpanded.has(id) ? "▴" : "▾"}</button>`;
+  // "$have / $target" (target omitted for cash-on-hand, which has no goal).
+  const savingsValue = (have, target, isNull) => isNull
+    ? `<div class="fin-savings-value">—</div>`
+    : `<div class="fin-savings-value${have < 0 ? " is-neg" : ""}">${formatFinMoney(have)}${target != null ? `<span class="fin-savings-goal"> / ${formatFinMoney(target)}</span>` : ""}</div>`;
+
+  const cashOpen = financeExpanded.has("savings:cash");
+  const emergencyOpen = financeExpanded.has("savings:emergency");
+  const retirementOpen = financeExpanded.has("savings:retirement");
   const savingsRow = !(state.financeAccounts || []).length ? "" : `
     <div class="fin-savings-row">
+      <div class="fin-savings-card">
+        <div class="fin-savings-head">
+          <span class="fin-savings-label">Cash on hand</span>
+          ${savingsCaret("savings:cash")}
+        </div>
+        ${savingsValue(cashOnHand || 0, null, cashOnHand === null)}
+        ${cashOpen ? `<div class="fin-savings-editor">
+          <p class="fin-hint">Accounts counted as cash on hand.</p>
+          ${savingsAccountChecklist("cash", cashIds)}
+        </div>` : ""}
+      </div>
       <div class="fin-savings-card fin-savings-emergency">
         <div class="fin-savings-head">
           <span class="fin-savings-label">Emergency savings</span>
-          <span class="fin-savings-target">${monthsCovered !== null ? `${monthsCovered.toFixed(1)} mo` : "—"}</span>
+          ${savingsCaret("savings:emergency")}
         </div>
-        <div class="fin-savings-value${emergencyHave < 0 ? " is-neg" : ""}">${formatFinMoney(emergencyHave)}</div>
-        <div class="fin-savings-bar"><div class="fin-savings-bar-fill${emergencyPct >= 100 ? " is-full" : ""}" style="width:${emergencyPct}%"></div></div>
+        ${savingsValue(emergencyHave, emergencyTarget > 0 ? emergencyTarget : null, false)}
+        ${emergencyOpen ? `<div class="fin-savings-editor">
+          <p class="fin-hint">Target = ${emergencyMonths} month${emergencyMonths === 1 ? "" : "s"} of Needs${monthlyNeeds > 0 ? ` (${formatFinMoney(monthlyNeeds)}/mo)` : ""}${emergencyTarget > 0 ? ` = ${formatFinMoney(emergencyTarget)}` : ""}. Adjust the number of months in Settings › Finance.</p>
+          <p class="fin-hint">Accounts counted as emergency savings.</p>
+          ${savingsAccountChecklist("emergency", emergencyIds)}
+        </div>` : ""}
       </div>
       <div class="fin-savings-card fin-savings-retirement">
         <div class="fin-savings-head">
           <span class="fin-savings-label">Retirement</span>
-          ${retConfigured ? `<span class="fin-savings-target">${retMultiple.toFixed(1)}× target</span>` : ""}
+          ${savingsCaret("savings:retirement")}
         </div>
-        <div class="fin-savings-value">${retirementTotal === null ? "—" : formatFinMoney(retHave)}</div>
-        ${retConfigured
-          ? `<div class="fin-savings-bar"><div class="fin-savings-bar-fill${retPct >= 100 ? " is-full" : ""}" style="width:${retPct}%"></div></div>`
-          : `<div class="fin-savings-sub">Add age &amp; income in Settings › Finance for a target</div>`}
-      </div>
-      <div class="fin-savings-card">
-        <div class="fin-savings-head"><span class="fin-savings-label">Cash on hand</span></div>
-        <div class="fin-savings-value${(cashOnHand || 0) < 0 ? " is-neg" : ""}">${cashOnHand === null ? "—" : formatFinMoney(cashOnHand)}</div>
+        ${savingsValue(retHave, retConfigured ? retTarget : null, retirementTotal === null && !retConfigured)}
+        ${retirementOpen ? `<div class="fin-savings-editor">
+          <div class="fin-savings-fields">
+            <label class="fin-savings-field">
+              <span>Birth year</span>
+              <input type="number" min="1900" max="${new Date().getFullYear()}" step="1" placeholder="e.g. 1988" value="${retBirthYear || ""}" data-fin-edit="ret-birth-year" />
+            </label>
+            <label class="fin-savings-field">
+              <span>Annual income</span>
+              <input type="number" min="0" step="1000" placeholder="e.g. 90000" value="${retIncome || ""}" data-fin-edit="ret-annual-income" />
+            </label>
+          </div>
+          <p class="fin-hint">${retAge !== null ? `At age ${retAge}, the benchmark is ${retMultiple.toFixed(1)}× income${retConfigured ? ` = ${formatFinMoney(retTarget)}` : ""} (Fidelity's guideposts: 1× by 30, 3× by 40, 6× by 50, 10× by 67).` : "Add your birth year and income for an age-based target."}</p>
+          <p class="fin-hint">Accounts counted as retirement.</p>
+          ${savingsAccountChecklist("retirement", retirementIds)}
+        </div>` : ""}
       </div>
     </div>`;
 
@@ -8580,6 +8668,20 @@ function onFinanceGridChange(e) {
   } else if (kind === "category-active") {
     const c = financeScopeCategory(el.dataset.scope);
     if (c) c.activeItemId = el.value;
+  } else if (kind === "card-account") {
+    const key = FINANCE_CARD_ID_KEYS[el.dataset.card];
+    if (!key) return;
+    // Materialize the card's current effective set, then flip this account.
+    let ids = financeCardAccountIds(el.dataset.card).slice();
+    const id = el.dataset.id;
+    if (el.checked) { if (!ids.includes(id)) ids.push(id); }
+    else ids = ids.filter((x) => x !== id);
+    state[key] = ids;
+  } else if (kind === "ret-birth-year") {
+    const y = Math.round(Number(el.value) || 0);
+    state.financeBirthYear = (y >= 1900 && y <= new Date().getFullYear()) ? y : null;
+  } else if (kind === "ret-annual-income") {
+    state.financeAnnualIncome = Math.max(0, Number(el.value) || 0);
   } else {
     return;
   }
@@ -16635,10 +16737,6 @@ function renderContextSettingsDialog(kind) {
 
   if (kind === "finance") {
     const emMonths = Number(state.financeEmergencyMonths) > 0 ? Number(state.financeEmergencyMonths) : 3;
-    const birthYear = Number(state.financeBirthYear) || "";
-    const income = Number(state.financeAnnualIncome) > 0 ? Number(state.financeAnnualIncome) : "";
-    const age = birthYear ? (new Date().getFullYear() - Number(birthYear)) : null;
-    const mult = age !== null ? retirementTargetMultiple(age) : null;
     elements.contextSettingsBody.innerHTML = `
       <div class="fin-set-group">
         <span class="theme-setting-title">Emergency savings target</span>
@@ -16648,29 +16746,12 @@ function renderContextSettingsDialog(kind) {
           <input type="number" min="1" max="24" step="1" value="${emMonths}" data-fin-setting="emergency-months" />
         </label>
       </div>
-      <div class="fin-set-group">
-        <span class="theme-setting-title">Retirement target</span>
-        <p class="settings-hint">Your retirement card compares savings to an age-based benchmark (Fidelity's guideposts: 1× income by 30, 3× by 40, 6× by 50, 10× by 67).</p>
-        <label class="fin-set-row">
-          <span>Birth year</span>
-          <input type="number" min="1900" max="${new Date().getFullYear()}" step="1" placeholder="e.g. 1988" value="${birthYear}" data-fin-setting="birth-year" />
-        </label>
-        <label class="fin-set-row">
-          <span>Annual household income</span>
-          <input type="number" min="0" step="1000" placeholder="e.g. 90000" value="${income}" data-fin-setting="annual-income" />
-        </label>
-        ${mult !== null ? `<p class="settings-hint">At age ${age}, the benchmark is ${mult.toFixed(1)}× income${income ? ` = ${formatFinMoney(Number(income) * mult)}` : ""}.</p>` : ""}
-      </div>`;
+      <p class="settings-hint">Your retirement target (birth year &amp; income) now lives in the Retirement card — tap its ▾ on the Finance page.</p>`;
     elements.contextSettingsBody.querySelectorAll("[data-fin-setting]").forEach((input) => {
       input.addEventListener("change", () => {
         const k = input.dataset.finSetting;
         if (k === "emergency-months") {
           state.financeEmergencyMonths = Math.max(1, Math.min(24, Math.round(Number(input.value) || 3)));
-        } else if (k === "birth-year") {
-          const y = Math.round(Number(input.value) || 0);
-          state.financeBirthYear = (y >= 1900 && y <= new Date().getFullYear()) ? y : null;
-        } else if (k === "annual-income") {
-          state.financeAnnualIncome = Math.max(0, Number(input.value) || 0);
         }
         persist();
         renderContextSettingsDialog("finance");

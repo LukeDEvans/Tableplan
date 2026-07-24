@@ -17807,16 +17807,28 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 }
 .fin-savings-emergency { border-color: color-mix(in srgb, var(--accent) 40%, var(--window-border)); }
 .fin-savings-retirement { border-color: color-mix(in srgb, var(--accent) 40%, var(--window-border)); }
-.fin-savings-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.fin-savings-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .fin-savings-label { font-size: 0.72rem; font-weight: 850; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-.fin-savings-target { font-size: 0.8rem; font-weight: 800; color: var(--accent-dark); }
+.fin-savings-caret {
+  flex: none; width: 26px; height: 26px; padding: 0; line-height: 1;
+  border: 1px solid var(--window-border); border-radius: 8px;
+  background: var(--window-bg); color: var(--muted); cursor: pointer;
+  font-size: 0.8rem; display: flex; align-items: center; justify-content: center;
+}
+.fin-savings-caret:hover { color: var(--ink); border-color: var(--accent); }
 .fin-savings-value { font-size: 1.35rem; font-weight: 850; color: var(--ink); }
 .fin-savings-value.is-neg { color: #b3261e; }
-.fin-savings-bar { height: 6px; border-radius: 999px; background: color-mix(in srgb, var(--window-border) 40%, transparent); overflow: hidden; }
-.fin-savings-bar-fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.2s; }
-.fin-savings-bar-fill.is-full { background: #1f9d55; }
-.fin-savings-sub { font-size: 0.76rem; color: var(--muted); display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-.fin-savings-months { width: 44px; padding: 1px 4px; font: inherit; font-size: 0.76rem; text-align: center; border: 1px solid var(--window-border); border-radius: 6px; background: var(--window-bg); color: var(--ink); }
+.fin-savings-goal { font-size: 0.95rem; font-weight: 800; color: var(--muted); }
+.fin-savings-editor { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); }
+.fin-savings-fields { display: flex; gap: 8px; flex-wrap: wrap; }
+.fin-savings-field { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 110px; font-size: 0.72rem; font-weight: 700; color: var(--muted); }
+.fin-savings-field input { width: 100%; padding: 5px 8px; font: inherit; font-size: 0.85rem; border: 1px solid var(--window-border); border-radius: 8px; background: var(--window-bg); color: var(--ink); }
+.fin-savings-accts { display: flex; flex-direction: column; gap: 2px; }
+.fin-savings-acct { display: flex; align-items: center; gap: 8px; padding: 4px 2px; cursor: pointer; }
+.fin-savings-acct input { flex: none; }
+.fin-savings-acct-name { flex: 1; min-width: 0; font-size: 0.86rem; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-savings-acct-bal { flex: none; font-size: 0.82rem; font-weight: 700; color: var(--muted); }
+.fin-savings-acct-bal.is-neg { color: #b3261e; }
 
 /* Finance settings panel (Settings › Finance) */
 .fin-set-group { display: flex; flex-direction: column; gap: 8px; padding: 4px 0 14px; }
