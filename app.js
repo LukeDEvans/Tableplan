@@ -219,7 +219,7 @@ const STATE_SECTIONS = {
   recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome"],
-  config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
+  config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
 // ── Household vs personal data scoping ────────────────────────────────────────
@@ -3034,6 +3034,7 @@ function defaultState() {
     collapsedDays: {},
     emailPrefs: "",
     appName: "",
+    travelHome: "",
     voiceCommandSecret: "",
     tombstones: {},
     apiUsage: {},
@@ -3186,6 +3187,7 @@ function normalizeState(parsed) {
     planCalendars: normalizePlanCalendars(parsed?.planCalendars),
     mealPlanConfig,
     appName: typeof parsed?.appName === "string" ? parsed.appName.trim() : "",
+    travelHome: typeof parsed?.travelHome === "string" ? parsed.travelHome.trim() : "",
     emailPrefs: String(parsed?.emailPrefs || ""),
     voiceCommandSecret: typeof parsed?.voiceCommandSecret === "string" ? parsed.voiceCommandSecret : "",
     tombstones: normalizeTombstones(parsed?.tombstones),
@@ -38612,19 +38614,31 @@ function openExploreTrip(tripId) {
     ? Math.round((new Date(trip.endDate) - new Date(trip.startDate)) / 86400000)
     : null;
   const partyStr = (trip.party || []).join(", ") || "Solo";
-  const nightsStr = nights ? ` (${nights}n)` : "";
+  const nightsStr = nights ? ` · ${nights} night${nights === 1 ? "" : "s"}` : "";
   const destChip = trip.destination
     ? `<span class="travel-meta-chip">📍 ${escapeHtml(trip.destination)}</span>`
     : `<span class="travel-meta-chip" id="exploreEditDestBtn" title="Edit destination">📍 Add destination</span>`;
+
+  const homeChip = state.travelHome
+    ? `<span class="travel-meta-chip" id="exploreEditHomeBtn" title="Home base — new trips start and finish here">🏠 ${escapeHtml(state.travelHome)}</span>`
+    : `<span class="travel-meta-chip" id="exploreEditHomeBtn" title="Set your home base — new trips start and finish here">🏠 Set home</span>`;
 
   document.getElementById("exploreDetailMeta").innerHTML =
     `<span class="travel-meta-chip" id="exploreEditDatesBtn" title="Edit dates">📅 ${escapeHtml(dateStr)}${nightsStr}</span>` +
     `<span class="travel-meta-chip" id="exploreEditPartyBtn" title="Edit party">👥 ${escapeHtml(partyStr)}</span>` +
     destChip +
+    homeChip +
     `<button class="travel-ai-btn" id="exploreAskAiBtn" type="button" title="Plan with AI">✨ Ask AI</button>`;
 
   document.getElementById("exploreEditDatesBtn")?.addEventListener("click", () => showTravelEditDatesDialog(trip));
   document.getElementById("exploreEditPartyBtn")?.addEventListener("click", () => showTravelEditPartyDialog(trip));
+  document.getElementById("exploreEditHomeBtn")?.addEventListener("click", () => {
+    const val = window.prompt("Home base (city or airport) — new trip legs start and finish here:", state.travelHome || "");
+    if (val === null) return;
+    state.travelHome = val.trim();
+    persist();
+    openExploreTrip(trip.id);
+  });
   document.getElementById("exploreEditDestBtn")?.addEventListener("click", () => showTravelEditDestDialog(trip));
   document.getElementById("exploreAskAiBtn")?.addEventListener("click", () => {
     openAiPanel();
@@ -39140,13 +39154,71 @@ function showConnectionRouteDialog(trip, dateKey, a, b, hasCar, onSave) {
   });
 }
 
+function renderTravelPacking(trip, panel) {
+  if (!Array.isArray(trip.packing)) trip.packing = [];
+  const items = trip.packing;
+  const packed = items.filter((i) => i.checked).length;
+  panel.innerHTML = `
+    <div class="trip-packing">
+      <div class="trip-packing-add">
+        <input type="text" id="tripPackingInput" class="text-input" placeholder="Add a packing item…" autocomplete="off" />
+        <button class="primary-btn icon-primary-btn" type="button" id="tripPackingAddBtn" aria-label="Add item"><span aria-hidden="true">+</span></button>
+      </div>
+      ${items.length ? `<div class="trip-packing-progress">${packed} / ${items.length} packed</div>` : ""}
+      <ul class="trip-packing-list">
+        ${items.length ? items.map((i) => `
+          <li class="trip-packing-row ${i.checked ? "is-checked" : ""}">
+            <label>
+              <input type="checkbox" data-packing-toggle="${escapeHtml(i.id)}" ${i.checked ? "checked" : ""} />
+              <span>${escapeHtml(i.title)}</span>
+            </label>
+            <button class="icon-btn trip-packing-del" type="button" data-packing-del="${escapeHtml(i.id)}" title="Remove" aria-label="Remove ${escapeHtml(i.title)}">×</button>
+          </li>`).join("") : `<li class="trip-packing-empty">Nothing on the list yet — add items or tap “Common items”.</li>`}
+      </ul>
+      <div class="trip-packing-actions">
+        ${packed ? `<button class="secondary-btn compact-btn" type="button" id="tripPackingClearChecked">Clear ${packed} packed</button>` : ""}
+        <button class="secondary-btn compact-btn" type="button" id="tripPackingSuggest">Common items</button>
+      </div>
+    </div>`;
+  const rerender = () => { persist(); renderTravelPacking(trip, panel); };
+  const addItem = (title) => {
+    const t = String(title || "").trim();
+    if (!t) return;
+    trip.packing.push({ id: createId("pack"), title: t, checked: false });
+    persist();
+    renderTravelPacking(trip, panel);
+    panel.querySelector("#tripPackingInput")?.focus();
+  };
+  panel.querySelector("#tripPackingAddBtn")?.addEventListener("click", () => addItem(panel.querySelector("#tripPackingInput")?.value));
+  panel.querySelector("#tripPackingInput")?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addItem(e.target.value); } });
+  panel.querySelectorAll("[data-packing-toggle]").forEach((cb) => cb.addEventListener("change", () => {
+    const it = trip.packing.find((x) => x.id === cb.dataset.packingToggle);
+    if (it) { it.checked = cb.checked; rerender(); }
+  }));
+  panel.querySelectorAll("[data-packing-del]").forEach((b) => b.addEventListener("click", () => {
+    trip.packing = trip.packing.filter((x) => x.id !== b.dataset.packingDel);
+    rerender();
+  }));
+  panel.querySelector("#tripPackingClearChecked")?.addEventListener("click", () => {
+    trip.packing = trip.packing.filter((x) => !x.checked);
+    rerender();
+  });
+  panel.querySelector("#tripPackingSuggest")?.addEventListener("click", () => {
+    const common = ["Passport / ID", "Wallet & cards", "Phone charger", "Chargers & cables", "Toiletries", "Medications", "Underwear", "Socks", "Water bottle", "Headphones", "Sunglasses", "Reusable bag"];
+    const have = new Set(trip.packing.map((i) => i.title.toLowerCase()));
+    common.forEach((c) => { if (!have.has(c.toLowerCase())) trip.packing.push({ id: createId("pack"), title: c, checked: false }); });
+    rerender();
+  });
+}
+
 function renderExploreTripPanel(tab, trip) {
   const panel = document.getElementById("exploreTripPanel");
   if (!panel) return;
 
-  if (tab === "budget") { renderTravelBudget(trip, panel); return; }
-  if (tab === "notes")  { renderTravelNotes(trip, panel);  return; }
-  if (tab === "map")    { renderTravelMap(trip, panel);    return; }
+  if (tab === "budget")  { renderTravelBudget(trip, panel); return; }
+  if (tab === "notes")   { renderTravelNotes(trip, panel);  return; }
+  if (tab === "map")     { renderTravelMap(trip, panel);    return; }
+  if (tab === "packing") { renderTravelPacking(trip, panel); return; }
 
   const sections = EXPLORE_TAB_SECTIONS[tab];
   if (!sections) {
@@ -39356,11 +39428,12 @@ function renderExploreTripPanel(tab, trip) {
           if (rows.length) detailHtml = '<div class="trip-lodging-details">' + rows.join("") + '</div>';
         }
         const el = document.createElement("div");
-        el.className = "trip-item-card trip-item-card--leg" + (mode === "checkout" || mode === true ? " trip-item-card--arriving" : "");
+        el.className = "trip-item-card trip-item-card--leg trip-item-card--arriving";
         if (item.id && mode === false) el.dataset.itemId = item.id;
         el.innerHTML =
           (mode === "checkout" ? '<div class="trip-item-arriving-badge">Check-out</div>' :
-           mode === true ? '<div class="trip-item-arriving-badge">Staying</div>' : '') +
+           mode === true ? '<div class="trip-item-arriving-badge">Staying</div>' :
+           '<div class="trip-item-arriving-badge">Check-in</div>') +
           '<div class="trip-item-header">' +
           '<span class="trip-item-leg-mode">' + icon + '</span>' +
           '<div class="trip-item-leg-route">' + escapeHtml(item.name || item.title || "") +
@@ -41201,8 +41274,9 @@ function showTravelLegDialog(trip, dateKey, sectionKey, onSave, existingItem = n
   ];
   const MAPS_MODE = { airplane: null, train: "transit", bus: "transit", automobile: "driving", "car-own": "driving", "car-rental": "driving", walk: "walking", bike: "bicycling", other: null };
   const isEdit = !!existingItem;
-  // car-own / car-rental are legacy mode values — map them to "automobile" for the picker
-  const rawMode = existingItem?.mode || prefill?.mode || "airplane";
+  // car-own / car-rental are legacy mode values — map them to "automobile" for the picker.
+  // New legs default to driving your own car (trips assumed to start/finish from home).
+  const rawMode = existingItem?.mode || prefill?.mode || "automobile";
   const initMode = (rawMode === "car-own" || rawMode === "car-rental") ? "automobile" : rawMode;
   const initCarRental = rawMode === "car-rental";
 
@@ -41231,7 +41305,7 @@ function showTravelLegDialog(trip, dateKey, sectionKey, onSave, existingItem = n
     '<span>Rental</span>' +
     '</div>' +
     '<div class="travel-dialog-field"><label>From</label><div class="ap-wrap">' +
-    '<input id="tlgFrom" class="text-input" autocomplete="off" placeholder="City or airport code" value="' + escapeHtml(existingItem?.from || prefill?.from || "") + '" />' +
+    '<input id="tlgFrom" class="text-input" autocomplete="off" placeholder="City or airport code" value="' + escapeHtml(existingItem?.from || prefill?.from || (!isEdit ? (state.travelHome || "") : "")) + '" />' +
     '<div id="tlgFromDrop" class="ap-drop" hidden></div></div></div>' +
     '<div class="travel-dialog-field"><label>To</label><div class="ap-wrap">' +
     '<input id="tlgTo" class="text-input" autocomplete="off" placeholder="City or airport code" value="' + escapeHtml(existingItem?.to || prefill?.to || "") + '" />' +

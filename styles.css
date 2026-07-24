@@ -14640,6 +14640,29 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 .explore-trip-view[hidden] { display: none; }
 
 
+/* Packing list tab */
+.trip-packing { display: flex; flex-direction: column; gap: 12px; padding: 16px; min-width: 0; }
+.trip-packing-add { display: flex; gap: 8px; }
+.trip-packing-add .text-input { flex: 1; min-width: 0; }
+.trip-packing-progress { font-size: 0.78rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.trip-packing-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.trip-packing-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--window-border);
+  border-radius: 12px;
+  background: var(--window-bg);
+}
+.trip-packing-row label { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; cursor: pointer; font-weight: 650; }
+.trip-packing-row label span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.trip-packing-row input[type="checkbox"] { flex: 0 0 auto; accent-color: var(--accent); width: 18px; height: 18px; }
+.trip-packing-row.is-checked label span { text-decoration: line-through; color: var(--muted); }
+.trip-packing-del { flex: 0 0 auto; color: var(--tomato); font-size: 1.2rem; line-height: 1; }
+.trip-packing-empty { color: var(--muted); font-style: italic; padding: 8px 2px; }
+.trip-packing-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
 .explore-trip-panel {
   flex: 1;
   min-height: 0;
