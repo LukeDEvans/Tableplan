@@ -12466,7 +12466,7 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 .mail-action-btn:hover { background: color-mix(in srgb, var(--sun) 45%, transparent); }
 .mail-action-btn svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.5; fill: none; flex-shrink: 0; }
 .mail-action-divider { width: 1px; height: 20px; background: color-mix(in srgb, var(--ink) 12%, transparent); margin: 0 4px; flex-shrink: 0; }
-.mail-move-wrap, .mail-more-wrap { position: relative; }
+.mail-move-wrap, .mail-more-wrap, .mail-snooze-wrap { position: relative; }
 .mail-thread-subject-bar { padding: 16px 0 4px; }
 
 /* More dropdown */

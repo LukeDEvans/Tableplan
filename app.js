@@ -10717,16 +10717,17 @@ function wireMailBulkBar() {
     updateMailBulkBar();
   });
 
-  document.getElementById("mailBulkUnread")?.addEventListener("click", async () => {
+  document.getElementById("mailBulkArchive")?.addEventListener("click", async () => {
     const ids = [...mailSelected.keys()];
-    await Promise.all(ids.map((threadId) => callGmailApi({ action: "move", threadId, addLabelIds: ["UNREAD"], removeLabelIds: [] })));
+    await Promise.all(ids.map((threadId) => callGmailApi({ action: "move", threadId, addLabelIds: [], removeLabelIds: ["INBOX"] })));
     ids.forEach((threadId) => {
       invalidateMailThreadCache(threadId);
-      elements.mailList.querySelectorAll(`[data-thread-id="${CSS.escape(threadId)}"]`).forEach((r) => r.classList.add("mail-row--unread"));
+      elements.mailList.querySelectorAll(`[data-thread-id="${CSS.escape(threadId)}"]`).forEach((r) => r.remove());
       mailSelected.delete(threadId);
+      if (mailOpenThreadId === threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
     });
-    elements.mailList.querySelectorAll(".mail-row--selected").forEach((r) => r.classList.remove("mail-row--selected"));
     updateMailBulkBar();
+    renderMailLabelTabs();
   });
 
   document.getElementById("mailBulkMove")?.addEventListener("click", (e) => {
@@ -10734,10 +10735,53 @@ function wireMailBulkBar() {
     showBulkMovePicker();
   });
 
+  document.getElementById("mailBulkSnooze")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    showBulkSnoozeMenu();
+  });
+
   document.getElementById("mailBulkMore")?.addEventListener("click", (e) => {
     e.stopPropagation();
     showBulkMoreMenu();
   });
+}
+
+// Bulk snooze: same options as the single-thread menu, applied to every
+// selected conversation.
+function showBulkSnoozeMenu() {
+  document.getElementById("mailBulkSnoozeMenu")?.remove();
+  const btn = document.getElementById("mailBulkSnooze");
+  if (!btn) return;
+  const menu = document.createElement("div");
+  menu.id = "mailBulkSnoozeMenu";
+  menu.className = "mail-more-menu mail-snooze-menu";
+  menu.innerHTML = `
+    <div class="mail-snooze-title">Snooze until…</div>
+    ${gmailSnoozeOptions().map((o, i) => `
+      <button class="mail-more-option mail-snooze-option" type="button" data-snooze-idx="${i}">
+        <span>${escapeHtml(o.label)}</span>
+        <span class="mail-snooze-when">${escapeHtml(formatSnoozeWhen(o.when))}</span>
+      </button>`).join("")}`;
+  menu.addEventListener("click", async (e) => {
+    const opt = e.target.closest("[data-snooze-idx]");
+    if (!opt) return;
+    menu.remove();
+    const when = gmailSnoozeOptions()[Number(opt.dataset.snoozeIdx)]?.when;
+    if (!when) return;
+    const ids = [...mailSelected.keys()];
+    await Promise.all(ids.map((threadId) => callGmailApi({ action: "snooze", threadId, wakeAt: when.toISOString() })));
+    ids.forEach((threadId) => {
+      invalidateMailThreadCache(threadId);
+      elements.mailList.querySelectorAll(`[data-thread-id="${CSS.escape(threadId)}"]`).forEach((r) => r.remove());
+      mailSelected.delete(threadId);
+      if (mailOpenThreadId === threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
+    });
+    updateMailBulkBar();
+    renderMailLabelTabs();
+    showMailToast(`Snoozed ${ids.length} until ${formatSnoozeWhen(when)}`);
+  });
+  btn.closest(".mail-snooze-wrap").appendChild(menu);
+  setTimeout(() => document.addEventListener("click", () => document.getElementById("mailBulkSnoozeMenu")?.remove(), { once: true }), 0);
 }
 
 function showBulkMovePicker() {
@@ -10780,9 +10824,9 @@ function showBulkMoreMenu() {
   menu.id = "mailBulkMoreMenu";
   menu.className = "mail-more-menu";
   menu.innerHTML = `
-    <button class="mail-more-option" type="button" data-action="snooze">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-      Snooze
+    <button class="mail-more-option" type="button" data-action="unread">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="m3.5 8 8.5 6 8.5-6"/></svg>
+      Mark as unread
     </button>
     <button class="mail-more-option" type="button" data-action="add-task">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
@@ -10797,13 +10841,20 @@ function showBulkMoreMenu() {
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
       Label as
     </button>`;
-  menu.addEventListener("click", (e) => {
+  menu.addEventListener("click", async (e) => {
     const opt = e.target.closest("[data-action]");
     if (!opt) return;
     menu.remove();
     const action = opt.dataset.action;
-    if (action === "snooze") {
-      showMailToast("Snooze coming soon");
+    if (action === "unread") {
+      const ids = [...mailSelected.keys()];
+      await Promise.all(ids.map((threadId) => callGmailApi({ action: "move", threadId, addLabelIds: ["UNREAD"], removeLabelIds: [] })));
+      ids.forEach((threadId) => {
+        invalidateMailThreadCache(threadId);
+        elements.mailList.querySelectorAll(`[data-thread-id="${CSS.escape(threadId)}"]`).forEach((r) => { r.classList.add("mail-row--unread"); r.classList.remove("mail-row--selected"); });
+        mailSelected.delete(threadId);
+      });
+      updateMailBulkBar();
     } else if (action === "add-task") {
       [...mailSelected.values()].forEach(({ subject }) => {
         doBacklogTasks().push({ id: createId("task"), title: subject, done: false, weekKey: weekKey(), createdAt: new Date().toISOString() });
