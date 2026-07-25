@@ -11374,6 +11374,11 @@ function formatMailDate(internalDate) {
   if (dayDiff === 0) return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   if (dayDiff === 1) return "Yesterday";
   if (dayDiff >= 2 && dayDiff <= 6) return d.toLocaleDateString(undefined, { weekday: "short" });
+  // A message from a previous year gets a 2-digit year (e.g. "4/16/24") so it
+  // can't be mistaken for a few months ago; this year stays bare "4/16".
+  if (d.getFullYear() !== now.getFullYear()) {
+    return d.toLocaleDateString(undefined, { month: "numeric", day: "numeric", year: "2-digit" });
+  }
   return d.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
 }
 
