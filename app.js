@@ -10303,7 +10303,11 @@ function renderMailThread(thread) {
     chip.addEventListener("click", (e) => { e.stopPropagation(); openMailAttachment(chip); });
   });
 
-  document.getElementById("mailBackBtn").addEventListener("click", () => { elements.mailThread.hidden = true; mailOpenThreadId = null; });
+  document.getElementById("mailBackBtn").addEventListener("click", () => {
+    elements.mailThread.hidden = true;
+    mailOpenThreadId = null;
+    elements.mailList.querySelectorAll(".mail-row--active").forEach((r) => r.classList.remove("mail-row--active"));
+  });
   const mailRows = [...elements.mailList.querySelectorAll(".mail-row[data-thread-id]")];
   const mailIdx = mailRows.findIndex(r => r.dataset.threadId === thread.id);
   // Adjacent threads power both the prev/next buttons and the swipe gesture.
