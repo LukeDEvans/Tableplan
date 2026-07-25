@@ -9879,7 +9879,7 @@ function mailLabelIcon(id, type) {
     SPAM:      `<svg viewBox="0 0 24 24" class="mail-label-icon" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>`,
     TRASH:     `<svg viewBox="0 0 24 24" class="mail-label-icon" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
   };
-  const userIcon = `<svg viewBox="0 0 24 24" class="mail-label-icon" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>`;
+  const userIcon = `<svg viewBox="0 0 24 24" class="mail-label-icon" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
   return type === "user" ? userIcon : (icons[id] || userIcon);
 }
 
