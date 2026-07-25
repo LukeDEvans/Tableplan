@@ -8070,6 +8070,10 @@ function renderFinancePage() {
   const needsLabelGroups = financeUnlabeledByMerchant(allTxns); // one row per merchant, not one per repeat charge
   const unlabeledTxnCount = allTxns.filter((t) => !t.label).length; // raw count for the full-ledger card header
   const recAlerts = financeRecurringAlerts();
+  // "Scan receipt" — a phone with a receipt on its screen (torn bottom, logo,
+  // line items), drawn in the app's stroke-icon style (currentColor, no fill)
+  // to match the bell/other icons rather than a raw 📷 emoji.
+  const scanReceiptSvg = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="1.5" width="14" height="21" rx="2.5"/><path d="M9 4h4"/><path d="M10 20h2"/><path d="M7.5 7H14.5V15l-1 1-1-1-1 1-1-1-1 1-1-1-1 1V7Z"/><circle cx="9.4" cy="9.3" r="1.1"/><path d="M11.4 9.3h3M8 11.7h3.2M12.3 11.7h2M8 13.4h3.2M12.3 13.4h2"/></svg>`;
   const txnSelect = (t) => {
     const isSplit = t.label === "split";
     const placeholder = isSplit ? `Split (${(t.split || []).length})` : t.labelSource === "auto" ? `auto: ${escapeHtml(financeTxnLabelName(t.label))}` : "label…";
@@ -8091,7 +8095,7 @@ function renderFinancePage() {
       <div class="fin-subhead">Split ${formatFinMoney(total)} — ${escapeHtml(t.displayName)}</div>
       <div class="fin-item-row fin-item-row--tools">
         ${receipt ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="split-prefill" data-id="${escapeHtml(t.id)}">Use email receipt · ${escapeHtml(receipt.merchant || "receipt")}${(receipt.items || []).length ? ` (${receipt.items.length} items)` : ""}</button>` : ""}
-        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="split-scan" ${financeScanBusy ? "disabled" : ""}>${financeScanBusy ? "Scanning…" : "📷 Scan receipt"}</button>
+        <button class="secondary-btn fin-add-btn fin-scan-btn" type="button" data-fin-action="split-scan" ${financeScanBusy ? "disabled" : ""}>${financeScanBusy ? "Scanning…" : `${scanReceiptSvg}<span>Scan receipt</span>`}</button>
         <input type="file" accept="image/*" capture="environment" data-fin-edit="split-scan-file" hidden />
       </div>
       ${financeSplitDraft.portions.map((p, i) => `
@@ -8112,7 +8116,9 @@ function renderFinancePage() {
     </div>`;
   };
   const txnRow = (t, { compact = false, dupCount = 1 } = {}) => {
-    const renaming = financeRenamingTxnId === t.id;
+    // When the detail card is open for this txn, the rename UI lives there
+    // instead of swapping the row, so the row stays a normal clickable row.
+    const renaming = financeRenamingTxnId === t.id && financeDetailTxnId !== t.id;
     const raw = String(t.description || "");
     const rawEsc = escapeHtml(raw);
     const descTitle = t.displayName !== raw ? `${escapeHtml(t.account)} · was: ${rawEsc}` : escapeHtml(t.account);
@@ -8211,17 +8217,36 @@ function renderFinancePage() {
   };
   const txnDetailHtml = (t) => {
     const raw = String(t.description || "");
+    const rawEsc = escapeHtml(raw);
+    const renaming = financeRenamingTxnId === t.id;
+    const merchantKey = financeMerchantKey(raw);
+    const currentMerchant = (state.financeMerchantNames || {})[merchantKey] || raw;
+    const noteOverrides = state.financeTxnNoteOverrides || {};
+    const currentNote = Object.prototype.hasOwnProperty.call(noteOverrides, t.id)
+      ? noteOverrides[t.id]
+      : financeSuggestedNote((state.financeTxnNoteCounts || {})[merchantKey]);
     const fullDate = t.posted ? new Date(t.posted).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" }) : "Unknown date";
     return `
     <div class="fin-txn-detail">
       <div class="fin-txn-detail-head">
+        ${renaming ? `
+        <div class="fin-rename-fields">
+          <input class="fin-item-name fin-txn-rename-input" type="text" value="${escapeHtml(currentMerchant)}" placeholder="${rawEsc}" data-fin-rename-id="${escapeHtml(t.id)}" data-fin-rename-raw="${rawEsc}" data-fin-rename-field="name" aria-label="Store or person name" />
+          <span class="fin-rename-sep">–</span>
+          <input class="fin-item-name fin-txn-rename-input" type="text" value="${escapeHtml(currentNote)}" placeholder="what was purchased (optional)" data-fin-rename-id="${escapeHtml(t.id)}" data-fin-rename-raw="${rawEsc}" data-fin-rename-field="note" aria-label="What was purchased" />
+        </div>
+        <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-save" data-id="${escapeHtml(t.id)}" title="Save name" aria-label="Save name">✓</button>
+        <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-cancel" title="Cancel" aria-label="Cancel">&times;</button>
+        ` : `
         <span class="fin-txn-detail-name">${escapeHtml(t.displayName)}</span>
-        ${(t.amount || 0) < 0 ? `<button class="icon-btn fin-del-btn" type="button" data-fin-action="detail-scan-receipt" data-id="${escapeHtml(t.id)}" title="Scan receipt" aria-label="Scan receipt">📷</button>` : ""}
+        ${!t.isManual ? `<button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-start" data-id="${escapeHtml(t.id)}" title="Rename person/business" aria-label="Rename person or business">✎</button>` : ""}
+        ${(t.amount || 0) < 0 ? `<button class="icon-btn fin-del-btn" type="button" data-fin-action="detail-scan-receipt" data-id="${escapeHtml(t.id)}" title="Scan receipt" aria-label="Scan receipt">${scanReceiptSvg}</button>` : ""}
         ${t.isManual ? `<button class="icon-btn fin-del-btn" type="button" data-fin-action="manual-txn-edit" data-id="${escapeHtml(t.id)}" title="Edit transaction" aria-label="Edit transaction">✎</button>
         <button class="icon-btn fin-del-btn" type="button" data-fin-action="manual-txn-delete" data-id="${escapeHtml(t.id)}" title="Delete transaction" aria-label="Delete transaction">🗑</button>` : ""}
         <button class="icon-btn fin-del-btn" type="button" data-fin-action="close-txn-detail" title="Close" aria-label="Close">&times;</button>
+        `}
       </div>
-      ${t.displayName !== raw ? `<p class="fin-hint">Raw text: ${escapeHtml(raw)}</p>` : ""}
+      ${!renaming && t.displayName !== raw ? `<p class="fin-hint">Raw text: ${rawEsc}</p>` : ""}
       <div class="fin-txn-detail-grid">
         <div><span class="fin-hint">Date</span><div>${escapeHtml(fullDate)}</div></div>
         <div>
@@ -8462,7 +8487,7 @@ function renderFinancePage() {
         onFinanceGridClick(e);
       }
       if (e.target.matches?.("[data-fin-rename-id]")) {
-        if (e.key === "Enter") { e.preventDefault(); saveRenameFromRow(e.target.closest(".fin-txn-row"), e.target.dataset.finRenameId); }
+        if (e.key === "Enter") { e.preventDefault(); saveRenameFromRow(e.target.closest(".fin-txn-row, .fin-txn-detail"), e.target.dataset.finRenameId); }
         else if (e.key === "Escape") { e.preventDefault(); cancelRenameTxn(); }
       }
     });
@@ -8605,7 +8630,7 @@ function onFinanceGridClick(e) {
   if (action === "toggle-notifs") { financeNotifOpen = !financeNotifOpen; renderFinancePage(); return; }
   if (action === "rename-txn-start") { startRenameTxn(btn.dataset.id); return; }
   if (action === "rename-txn-cancel") { cancelRenameTxn(); return; }
-  if (action === "rename-txn-save") { saveRenameFromRow(btn.closest(".fin-txn-row"), btn.dataset.id); return; }
+  if (action === "rename-txn-save") { saveRenameFromRow(btn.closest(".fin-txn-row, .fin-txn-detail"), btn.dataset.id); return; }
   if (action === "link-return") { recordFinanceTxnLink(btn.dataset.id, btn.dataset.purchaseId); return; }
   if (action === "unlink-return") { clearFinanceTxnLink(btn.dataset.id); return; }
   if (action === "return-link-search-start") {
