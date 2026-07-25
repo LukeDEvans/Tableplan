@@ -698,7 +698,6 @@ const elements = {
   menuManageCalendarsBtn: document.querySelector("#menuManageCalendarsBtn"),
   menuFinanceAccountsBtn: document.querySelector("#menuFinanceAccountsBtn"),
   menuFinanceEmergencyBtn: document.querySelector("#menuFinanceEmergencyBtn"),
-  menuImportAiBtn: document.querySelector("#menuImportAiBtn"),
   importAiDialog: document.querySelector("#importAiDialog"),
   closeImportAiDialogBtn: document.querySelector("#closeImportAiDialogBtn"),
   importAiInstructions: document.querySelector("#importAiInstructions"),
@@ -1602,7 +1601,6 @@ function bindEvents() {
   elements.menuManageCalendarsBtn.addEventListener("click", () => openSettingsMenuDialog(openPlanCalDialog));
   elements.menuFinanceAccountsBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("finance-accounts")));
   elements.menuFinanceEmergencyBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("finance-emergency")));
-  elements.menuImportAiBtn.addEventListener("click", () => openSettingsMenuDialog(openImportAiDialog));
   elements.closeImportAiDialogBtn.addEventListener("click", () => elements.importAiDialog.close());
   elements.importAiCopyBtn.addEventListener("click", copyImportAiInstructions);
   elements.importAiParseBtn.addEventListener("click", parseImportAiPaste);
@@ -17187,6 +17185,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="voice-commands">Voice Commands</button>
         <button type="button" data-context-settings-action="ai-log">AI Action Log</button>
         <button type="button" data-context-settings-action="ai-notes">AI Notes</button>
+        <button type="button" data-context-settings-action="import-ai">Import from AI Chat</button>
         <button type="button" data-context-settings-action="api-usage">API Usage</button>
       </div>
       ${isAdmin ? `
@@ -18008,6 +18007,7 @@ function handleContextSettingsAction(event) {
     "voice-commands": () => renderContextSettingsDialog("voice-commands"),
     "ai-log": () => renderContextSettingsDialog("ai-log"),
     "ai-notes": () => renderContextSettingsDialog("ai-notes"),
+    "import-ai": () => closeAndRun(openImportAiDialog),
     "api-usage": () => renderContextSettingsDialog("api-usage"),
     "save-nyt-cookie": () => {
       const input = document.getElementById("ctxNytCookieInput");
