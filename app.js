@@ -5386,6 +5386,21 @@ function stripAnonymousChanges(localState, cloudState) {
 
 let hydrateRetryCount = 0;
 
+// Finance lives ONLY in the cloud — the localStorage mirror strips it (the
+// household ledger must not sit readable on a device). So every boot starts
+// with EMPTY finance defaults (budget groups blank, account-selection arrays
+// []). Until the cloud copy has actually loaded this session, that boot-empty
+// finance must never win a merge or get written back, or a reload silently
+// blanks budget picks / cash / emergency account selections. This flag flips
+// true the moment finance has been hydrated from (or written to) the cloud.
+let financeSectionHydrated = false;
+function guardBootEmptyFinance(merged, sharedState) {
+  if (financeSectionHydrated) return; // already have the real finance; local edits are authoritative
+  for (const key of STATE_SECTIONS.finance) {
+    if (sharedState && key in sharedState) merged[key] = sharedState[key];
+  }
+}
+
 async function hydrateStateFromSharedStorage() {
   const providers = sharedStorageProviders();
   if (!providers.length) return;
@@ -5417,13 +5432,17 @@ async function hydrateStateFromSharedStorage() {
           console.info(`Local state (${localTs}) is same-or-newer than ${provider.label} (${remoteTs || "no timestamp"}); merging and pushing.`);
           await snapshotCloudStateBeforeOverwrite(sharedState);
           const merged = mergeStates(stateForMerge, sharedState);
+          guardBootEmptyFinance(merged, sharedState); // don't let boot-empty finance overwrite the cloud copy
           applyStoredState(merged);
+          financeSectionHydrated = true;
           await provider.write();
         } else {
           console.info(`Remote state (${remoteTs}) is newer than local (${localTs || "no timestamp"}); merging and applying.`);
           await snapshotBeforeSharedStateReplacement(sharedState, provider.label);
           const merged = mergeStates(sharedState, stateForMerge);
+          guardBootEmptyFinance(merged, sharedState);
           applyStoredState(merged);
+          financeSectionHydrated = true;
           // Only write back if local actually contributed something new (tombstones, additions).
           // Comparing signatures detects whether the merge changed anything vs the remote state —
           // a stale device with nothing new to offer produces an identical signature and is skipped.
@@ -5432,7 +5451,7 @@ async function hydrateStateFromSharedStorage() {
           }
         }
       }
-      else await provider.write();
+      else { financeSectionHydrated = true; await provider.write(); }
       localStorage.removeItem("live_signed_out_explicitly"); // clear on any successful sync
       sharedStorageReady = true;
       hydrateRetryCount = 0;
@@ -5867,6 +5886,10 @@ async function writeStateToSupabase() {
 
   const sectionsToWrite = [];
   for (const [section, keys] of Object.entries(STATE_SECTIONS)) {
+    // Never push the finance section before its cloud copy has loaded — the
+    // boot-empty finance (mirror strips it) would blank budget picks and the
+    // cash/emergency/retirement account selections on the server.
+    if (section === "finance" && !financeSectionHydrated) continue;
     const currentJson = JSON.stringify(extractSectionData(keys));
     if (!lastWrittenSections || lastWrittenSections[section] !== currentJson) {
       sectionsToWrite.push({ section, keys });
