@@ -2225,6 +2225,7 @@ async function initializeSupabaseAuth() {
       await hydrateStateFromSharedStorage();
       await hydrateRecipeRowsFromSupabase();
       maybeAutoLinkProfile();
+      restoreProfileDobFromAuth();
       warmMailStatus();
       warmMailList();
       warmPageNotifs();
@@ -2879,6 +2880,26 @@ function maybeAutoLinkProfile() {
     });
     recomputeMealPlanLayout();
   }
+  persist();
+}
+
+// The logged-in user's birthday is mirrored to their Supabase auth metadata on
+// save (updateUser({ data: { dob } })). That copy is per-user and immune to
+// household member-list rebuilds, so it's the durable backstop: if the linked
+// member ever comes back without a dob (an old id-keyed merge, a group-sync
+// rebuild), restore it from there. Only ever FILLS a missing dob — never
+// overwrites one the member already has.
+function restoreProfileDobFromAuth() {
+  const userId = authSession?.user?.id;
+  const metaDob = String(authSession?.user?.user_metadata?.dob || "").trim();
+  if (!userId || !metaDob) return;
+  const members = normalizeMealPlanConfig(state.mealPlanConfig).members;
+  const me = members.find((m) => m.linkedUserId === userId);
+  if (!me || me.dob) return;
+  state.mealPlanConfig = normalizeMealPlanConfig({
+    ...state.mealPlanConfig,
+    members: members.map((m) => (m.id === me.id ? { ...m, dob: metaDob } : m))
+  });
   persist();
 }
 
@@ -5237,10 +5258,20 @@ function mergeMealPlanConfig(newer, older) {
   // When newer HAS members, its list is authoritative (deletes respected),
   // with newer's fields winning per member.
   const authoritative = nMembers.length ? nMembers : oMembers;
-  const oById = new Map(oMembers.map((m) => [m.id, m]));
+  // Match by a STABLE identity: a linked account's user id survives even when
+  // the member list is rebuilt from group membership (which mints fresh member
+  // ids and comes back with dob:""). Matching by id alone lost the birthday on
+  // every such rebuild. Fall back to id for unlinked members.
+  const keyOf = (m) => (m.linkedUserId ? `u:${m.linkedUserId}` : `i:${m.id}`);
+  const oByKey = new Map(oMembers.map((m) => [keyOf(m), m]));
   const members = authoritative.map((n) => {
-    const o = oById.get(n.id);
-    return o ? { ...o, ...n } : n;
+    const o = oByKey.get(keyOf(n));
+    if (!o) return n;
+    const merged = { ...o, ...n };
+    // Empty-never-erases: a member rebuilt from group membership carries dob:""
+    // — don't let that blank a saved birthday.
+    if (!n.dob && o.dob) merged.dob = o.dob;
+    return merged;
   });
   const oTypeById = new Map((older.mealTypes || []).map((t) => [t.id, t]));
   const nTypeById = new Map((newer.mealTypes || []).map((t) => [t.id, t]));
@@ -7887,7 +7918,16 @@ function renderFinancePage() {
 
   // Retirement progress toward an age-based multiple of annual income
   // (configured right in the card's dropdown). No config → target is unknown.
-  const retBirthYear = Number(state.financeBirthYear) || null;
+  // Birth year: an explicit finance override wins; otherwise auto-fill from the
+  // profile birthday (dob) so the retirement target works without re-entering
+  // it. Clearing the card's input drops the override and falls back here again.
+  const profileDob = getCurrentProfileMember()?.dob || "";
+  const profileBirthYear = (() => {
+    const y = profileDob ? Number(String(profileDob).slice(0, 4)) : NaN;
+    return (y >= 1900 && y <= new Date().getFullYear()) ? y : null;
+  })();
+  const retBirthYear = Number(state.financeBirthYear) || profileBirthYear;
+  const retBirthYearFromProfile = !state.financeBirthYear && profileBirthYear;
   const retAge = retBirthYear ? (new Date().getFullYear() - retBirthYear) : null;
   const retIncome = Number(state.financeAnnualIncome) > 0 ? Number(state.financeAnnualIncome) : 0;
   const retMultiple = retAge !== null ? retirementTargetMultiple(retAge) : null;
@@ -7968,6 +8008,7 @@ function renderFinancePage() {
             <label class="fin-savings-field">
               <span>Birth year</span>
               <input type="number" min="1900" max="${new Date().getFullYear()}" step="1" placeholder="e.g. 1988" value="${retBirthYear || ""}" data-fin-edit="ret-birth-year" />
+              ${retBirthYearFromProfile ? `<span class="fin-hint">From your profile birthday</span>` : ""}
             </label>
             <label class="fin-savings-field">
               <span>Annual income</span>
