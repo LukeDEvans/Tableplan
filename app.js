@@ -9692,7 +9692,7 @@ function renderMailLabelTabs() {
   const navEl = document.getElementById("mailTabs");
   if (!navEl || !mailLabels.length) return;
 
-  const system = mailLabels.filter((l) => l.type === "system");
+  const system = mailLabels.filter((l) => l.type === "system" && l.id !== "STARRED");
   const user = mailLabels.filter((l) => l.type === "user");
 
   // Build tree from user labels — Gmail uses "/" as hierarchy separator.
