@@ -4952,6 +4952,98 @@ function mergeTombstones(a, b) {
   return result;
 }
 
+// ── Finance deep merges ──────────────────────────────────────────────────────
+// The localStorage mirror deliberately omits finance (the household ledger is
+// cloud-only), so on EVERY boot financeBudgetGroups / financePeople /
+// financePersonal come up as empty defaults until the Supabase pull lands. A
+// plain unionById whole-object-replaces a same-id record, which let a
+// just-booted client's empty groups overwrite the cloud's real ones and wipe
+// every category — the recurring data-loss bug. These merges instead UNION by
+// id AND union each record's nested child arrays, so both sides always
+// contribute and an empty just-booted record can never erase a populated cloud
+// one. Genuine deletions still propagate because the delete handlers tombstone
+// the removed id (financeCategories / financeLineItems / financeScenarios).
+function financeDeadSet(tombstones, key) {
+  return new Set((tombstones?.[key] || []).map(String));
+}
+// Union two id-keyed child arrays (items / scenarios). Both sides survive;
+// newer wins on an id clash; tombstoned ids drop out. Order: existing first.
+function unionFinanceChildren(newer, older, deadSet) {
+  const ids = [];
+  const byId = new Map();
+  const add = (x) => {
+    if (!x || x.id == null) return;
+    if (!byId.has(x.id)) ids.push(x.id);
+    byId.set(x.id, x);
+  };
+  (older || []).forEach(add);
+  (newer || []).forEach(add);
+  return ids.map((id) => byId.get(id)).filter((x) => !deadSet.has(String(x.id)));
+}
+function mergeFinanceCategories(newer, older, deadCat, deadItem) {
+  const ids = [];
+  const byId = new Map();
+  const seed = (c) => { if (c?.id == null) return; if (!byId.has(c.id)) ids.push(c.id); byId.set(c.id, c); };
+  (older || []).forEach(seed);
+  (newer || []).forEach((c) => {
+    if (c?.id == null) return;
+    const prev = byId.get(c.id);
+    if (!prev) { ids.push(c.id); byId.set(c.id, c); return; }
+    byId.set(c.id, { ...prev, ...c, items: unionFinanceChildren(c.items, prev.items, deadItem) });
+  });
+  return ids.map((id) => byId.get(id)).filter((c) => !deadCat.has(String(c.id)));
+}
+function mergeFinanceBudgetGroups(newer, older, tombstones) {
+  const deadGroup = financeDeadSet(tombstones, "financeBudgetGroups");
+  const deadCat = financeDeadSet(tombstones, "financeCategories");
+  const deadItem = financeDeadSet(tombstones, "financeLineItems");
+  const ids = [];
+  const byId = new Map();
+  const seed = (g) => { if (g?.id == null) return; if (!byId.has(g.id)) ids.push(g.id); byId.set(g.id, g); };
+  (older || []).forEach(seed);
+  (newer || []).forEach((g) => {
+    if (g?.id == null) return;
+    const prev = byId.get(g.id);
+    if (!prev) { ids.push(g.id); byId.set(g.id, g); return; }
+    byId.set(g.id, { ...prev, ...g, categories: mergeFinanceCategories(g.categories, prev.categories, deadCat, deadItem) });
+  });
+  return ids.map((id) => byId.get(id)).filter((g) => !deadGroup.has(String(g.id)));
+}
+function mergeFinancePeople(newer, older, tombstones) {
+  const deadPerson = financeDeadSet(tombstones, "financePeople");
+  const deadScenario = financeDeadSet(tombstones, "financeScenarios");
+  const ids = [];
+  const byId = new Map();
+  const seed = (p) => { if (p?.id == null) return; if (!byId.has(p.id)) ids.push(p.id); byId.set(p.id, p); };
+  (older || []).forEach(seed);
+  (newer || []).forEach((p) => {
+    if (p?.id == null) return;
+    const prev = byId.get(p.id);
+    if (!prev) { ids.push(p.id); byId.set(p.id, p); return; }
+    byId.set(p.id, { ...prev, ...p, scenarios: unionFinanceChildren(p.scenarios, prev.scenarios, deadScenario) });
+  });
+  return ids.map((id) => byId.get(id)).filter((p) => !deadPerson.has(String(p.id)));
+}
+function mergeFinancePersonal(newer, older, tombstones) {
+  const deadPersonal = financeDeadSet(tombstones, "financePersonal");
+  const deadItem = financeDeadSet(tombstones, "financeLineItems");
+  const ids = [];
+  const byId = new Map();
+  const seed = (p) => { if (p?.id == null) return; if (!byId.has(p.id)) ids.push(p.id); byId.set(p.id, p); };
+  (older || []).forEach(seed);
+  (newer || []).forEach((p) => {
+    if (p?.id == null) return;
+    const prev = byId.get(p.id);
+    if (!prev) { ids.push(p.id); byId.set(p.id, p); return; }
+    byId.set(p.id, {
+      ...prev, ...p,
+      incomeItems: unionFinanceChildren(p.incomeItems, prev.incomeItems, deadItem),
+      expenseItems: unionFinanceChildren(p.expenseItems, prev.expenseItems, deadItem),
+    });
+  });
+  return ids.map((id) => byId.get(id)).filter((p) => !deadPersonal.has(String(p.id)));
+}
+
 function mergeStates(newer, older) {
   const merged = { ...newer };
 
@@ -5004,11 +5096,18 @@ function mergeStates(newer, older) {
     "podcasts", "podcastPlaylists", "podcastSavedCategories",
     // Travel
     "trips", "travelIdeas",
-    // Finance
-    "financePeople", "financeBudgetGroups", "financeAccounts", "financePersonal", "financeRecurring", "financeManualTxns",
+    // Finance (flat id-keyed — the nested ones are deep-merged below)
+    "financeAccounts", "financeRecurring", "financeManualTxns",
   ]) {
     merged[key] = unionById(newer[key], older[key], key);
   }
+
+  // Finance records with nested child arrays: deep-merged so a just-booted
+  // client's empty groups/people/personal budgets can never wipe the cloud's
+  // categories, line items, or scenarios (see the merge helpers above).
+  merged.financeBudgetGroups = mergeFinanceBudgetGroups(newer.financeBudgetGroups, older.financeBudgetGroups, merged.tombstones);
+  merged.financePeople = mergeFinancePeople(newer.financePeople, older.financePeople, merged.tombstones);
+  merged.financePersonal = mergeFinancePersonal(newer.financePersonal, older.financePersonal, merged.tombstones);
 
   // Publications are keyed by "key", not "id"
   {
@@ -6585,16 +6684,12 @@ function isLocalDevHost() {
 
 async function refreshFinanceLive(force = false) {
   if (financeLiveLoading) return;
-  // Dev gate: never hit the real SimpleFIN bridge from localhost. In local dev
-  // the "accounts" function runs on this machine, so its bridge fetch leaves
-  // from the home IP and burns the bank's ~24-requests/day budget. Show manual
-  // balances only while developing; production is unaffected.
-  if (isLocalDevHost()) {
-    financeLive = { accounts: [], errors: ["Live bank data is off in local dev."], at: Date.now() };
-    if (activeAppArea === "finance") renderFinancePage();
-    refreshFinanceSettingsIfOpen();
-    return;
-  }
+  // Dev gate: never trigger a real SimpleFIN bridge fetch from localhost. In
+  // local dev the "accounts" function runs on this machine, so a bridge fetch
+  // would leave from the home IP and burn the bank's ~24-requests/day budget.
+  // Instead read the Supabase cache (which production's daily cron keeps warm)
+  // in cacheOnly mode: real balances show while developing, zero bridge risk.
+  const devCacheOnly = isLocalDevHost();
   financeLiveLoading = true;
   if (activeAppArea === "finance") renderFinancePage();
   refreshFinanceSettingsIfOpen();
@@ -6602,7 +6697,7 @@ async function refreshFinanceLive(force = false) {
   // The server caches this (SimpleFIN expects ~24 req/day, not one per app
   // load) — force just requests a check against the 1h floor, it does not
   // guarantee a real bridge hit.
-  const data = await callNetlifyFunction("simplefin", { action: "accounts", days: 45, force });
+  const data = await callNetlifyFunction("simplefin", { action: "accounts", days: 45, force: devCacheOnly ? false : force, cacheOnly: devCacheOnly });
   financeLiveLoading = false;
   // Trust the server's fetchedAt (when the data actually came from the bank)
   // over the local clock, since a cache hit didn't just fetch anything.
@@ -8550,6 +8645,7 @@ function onFinanceGridClick(e) {
     const p = state.financePeople.find((x) => x.id === btn.dataset.person);
     if (!p) return;
     p.scenarios = p.scenarios.filter((s) => s.id !== btn.dataset.id);
+    recordDeletion("financeScenarios", btn.dataset.id); // tombstone so the delete survives a union merge
     if (p.activeScenarioId === btn.dataset.id) p.activeScenarioId = p.scenarios[0]?.id || "";
   } else if (action === "add-category") {
     const g = state.financeBudgetGroups.find((x) => x.id === btn.dataset.group);
@@ -8563,6 +8659,7 @@ function onFinanceGridClick(e) {
     const c = g?.categories.find((x) => x.id === btn.dataset.id);
     if (!g || !c || !confirm(`Delete "${c.name}" and its ${c.items.length} lines?`)) return;
     g.categories = g.categories.filter((x) => x.id !== c.id);
+    recordDeletion("financeCategories", c.id); // tombstone so the delete survives a union merge
   } else if (action === "add-item") {
     const items = financeScopeItems(btn.dataset.scope);
     if (!items) return;
@@ -8572,6 +8669,7 @@ function onFinanceGridClick(e) {
     if (!items) return;
     const idx = items.findIndex((it) => it.id === btn.dataset.id);
     if (idx >= 0) items.splice(idx, 1);
+    recordDeletion("financeLineItems", btn.dataset.id); // tombstone so the delete survives a union merge
   } else if (action === "add-personal") {
     const name = prompt("Whose personal budget?");
     if (!name?.trim()) return;

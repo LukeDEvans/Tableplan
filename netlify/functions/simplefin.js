@@ -177,6 +177,13 @@ exports.handler = async (event) => {
       const cache = await loadRawCache(serviceKey, cacheId);
       const lastFetchedAt = cache?.fetchedAt ? new Date(cache.fetchedAt).getTime() : 0;
       const age = Date.now() - lastFetchedAt;
+      // cacheOnly: return whatever's cached and NEVER touch the bridge. Local dev
+      // calls this so it can show real (cron-warmed) balances without a bridge
+      // fetch leaving from the home IP and burning the bank's request budget.
+      if (body.cacheOnly) {
+        if (cache) return cors(json(200, { accounts: cache.accounts, errors: cache.errors || [], cached: true, fetchedAt: cache.fetchedAt }));
+        return cors(json(200, { accounts: [], errors: ["No cached bank data yet — open the app in production once to warm the cache."], cached: true, fetchedAt: null }));
+      }
       const wantsFresh = !cache || age >= ACCOUNTS_CACHE_TTL_MS || (body.force && age >= ACCOUNTS_MIN_INTERVAL_MS);
       if (!wantsFresh) {
         return cors(json(200, { accounts: cache.accounts, errors: cache.errors || [], cached: true, fetchedAt: cache.fetchedAt }));
