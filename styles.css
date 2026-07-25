@@ -13160,6 +13160,11 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
 }
 .article-row-action-btn:hover { background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); }
 .article-row-action-btn svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.75; fill: none; }
+/* Podcast episode rows: play/delete quick-actions match the mail list — black
+   (ink) and bigger (40px, 18px icons). */
+.podcast-episode-row .article-row-action-btn { width: 40px; height: 40px; color: var(--ink); }
+.podcast-episode-row .article-row-action-btn svg { width: 18px; height: 18px; }
+.fin-txn-menu-empty { padding: 8px 10px; font-size: 0.8rem; color: var(--muted); max-width: 220px; }
 .article-row--active { background: color-mix(in srgb, var(--accent, #92400E) 8%, transparent); }
 .article-row--read { opacity: 0.55; }
 .article-row--read.article-row--active { opacity: 1; }

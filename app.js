@@ -2123,6 +2123,7 @@ async function initializeApp() {
   initTasksPageDelegation();
   initPlanCalListDelegation();
   initPodcastEpisodeListDelegation();
+  initEpisodeContextMenu();
   initTouchDragPolyfill();
   registerServiceWorker();
   window.addEventListener("online", handleCameOnline);
@@ -33358,11 +33359,7 @@ function renderPodcastPlaylistEpisodes(playlistId) {
         ${pct > 0 ? `<div class="podcast-progress-bar"><div class="podcast-progress-fill" style="width:${pct}%"></div></div>` : ""}
       </div>
       ${played ? `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Played"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
-      <div class="article-row-actions">
-        <button class="article-row-action-btn" type="button" title="Remove from playlist" aria-label="Remove from playlist" data-episode-remove="${escapeHtml(e.id)}">
-          <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-      </div>
+      ${episodePlayDeleteActions(e.id, `data-episode-remove="${escapeHtml(e.id)}"`, "Remove from playlist")}
     </div>`;
   }).join("");
 
@@ -34557,6 +34554,10 @@ function initPodcastEpisodeListDelegation() {
   listEl.addEventListener("click", (e) => {
     // Auto-playlist: strip ads / include articles toggles handled by change event below
 
+    // Play quick-action button (all episode rows)
+    const playBtn = e.target.closest("[data-episode-play]");
+    if (playBtn) { e.stopPropagation(); openPodcastEpisode(playBtn.dataset.episodePlay); return; }
+
     // Notes button (auto-playlist episode rows)
     const notesBtn = e.target.closest("[data-episode-notes]");
     if (notesBtn) { e.stopPropagation(); showEpisodeNotesModal(notesBtn.dataset.episodeNotes); return; }
@@ -34617,7 +34618,7 @@ function initPodcastEpisodeListDelegation() {
     // Row click: open episode or article
     const row = e.target.closest(".podcast-episode-row, .podcast-draggable-row");
     if (!row) return;
-    if (e.target.closest(".article-row-actions, .playlist-drag-handle, .playlist-ep-title-btn, .playlist-show-title-btn")) return;
+    if (e.target.closest(".article-row-actions, .playlist-drag-handle, .playlist-show-title-btn")) return;
     const episodeId = row.dataset.episodeId;
     const articleId = row.dataset.articleId;
     if (articleId) playArticleFromPlaylist(articleId);
@@ -34805,21 +34806,14 @@ function renderAutoPlaylist(listEl, items) {
         </span>
         ${mediaRowArt(e.art || e.showArt, "🎧")}
         <div class="article-row-main">
-          <button class="playlist-ep-title-btn" type="button" data-episode-notes="${escapeHtml(e.id)}">${escapeHtml(e.title)}</button>
+          <div class="article-row-title">${escapeHtml(e.title)}</div>
           <div class="article-row-meta">
             <button class="playlist-show-title-btn" type="button" data-open-show="${escapeHtml(e.showId || "")}">${escapeHtml(e.showTitle)}</button>
             <span class="article-row-date">${escapeHtml(formatArticleDate(e.pubDate))}</span>
             ${dur ? `<span class="article-row-date">${formatPodcastDuration(dur)}</span>` : ""}
           </div>
         </div>
-        <div class="article-row-actions">
-          <button class="article-row-action-btn" type="button" title="Mark as played" aria-label="Mark as played" data-episode-mark="mark">
-            <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/></svg>
-          </button>
-          <button class="article-row-action-btn" type="button" title="Remove from playlist" aria-label="Remove from playlist" data-episode-skip="${escapeHtml(e.id)}">
-            <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
+        ${episodePlayDeleteActions(e.id, `data-episode-skip="${escapeHtml(e.id)}"`, "Remove from playlist")}
       </div>`;
     }
   });
@@ -34898,6 +34892,120 @@ function showEpisodeNotesModal(episodeId) {
       if (body && document.body.contains(overlay)) body.innerHTML = episodeNotesBodyHtml(desc);
     });
   }
+}
+
+// Shared hover/swipe quick-actions for an episode row: just Play + Delete
+// (everything else moved to the right-click / long-press context menu). The
+// delete button's behavior is per-list — pass its data-attribute(s).
+function episodePlayDeleteActions(episodeId, deleteAttrs, deleteTitle = "Remove") {
+  return `
+      <div class="article-row-actions">
+        <button class="article-row-action-btn" type="button" title="Play" aria-label="Play" data-episode-play="${escapeHtml(episodeId)}">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" style="fill:currentColor;stroke:none"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <button class="article-row-action-btn" type="button" title="${escapeHtml(deleteTitle)}" aria-label="${escapeHtml(deleteTitle)}" ${deleteAttrs}>
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>`;
+}
+
+// ── Episode context menu (right-click / long-press on any media list) ─────────
+function closeEpisodeContextMenu() {
+  document.getElementById("episodeContextMenu")?.remove();
+}
+function showEpisodeContextMenu(episodeId, x, y) {
+  closeEpisodeContextMenu();
+  const { episode, show } = findPodcastEpisode(episodeId);
+  if (!episode) return;
+  const isSaved = (state.podcastSaved || []).includes(episodeId);
+  const link = episode.link || episode.audioUrl || show?.url || "";
+  const playlists = state.podcastPlaylists || [];
+
+  const menu = document.createElement("div");
+  menu.id = "episodeContextMenu";
+  menu.className = "fin-txn-menu episode-context-menu";
+  menu.innerHTML = `
+    <button class="fin-txn-menu-option" type="button" data-ep-menu="notes">Show notes</button>
+    ${show ? `<button class="fin-txn-menu-option" type="button" data-ep-menu="show">Go to show</button>` : ""}
+    <button class="fin-txn-menu-option" type="button" data-ep-menu="save">${isSaved ? "Remove from saved" : "Save"}</button>
+    <button class="fin-txn-menu-option" type="button" data-ep-menu="add-playlist">Add to a playlist…</button>
+    ${link ? `<button class="fin-txn-menu-option" type="button" data-ep-menu="copy">Copy link</button>` : ""}`;
+  document.body.appendChild(menu);
+  // Clamp within the viewport (menu is ~200px wide, height grows with options).
+  const mw = 200, mh = menu.offsetHeight || 200;
+  menu.style.left = Math.max(8, Math.min(x, window.innerWidth - mw - 8)) + "px";
+  menu.style.top = Math.max(8, Math.min(y, window.innerHeight - mh - 8)) + "px";
+
+  const close = () => closeEpisodeContextMenu();
+  menu.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-ep-menu]");
+    if (!btn) return;
+    e.stopPropagation();
+    const action = btn.dataset.epMenu;
+    if (action === "notes") { close(); showEpisodeNotesModal(episodeId); }
+    else if (action === "show") { close(); if (show?.id) { activePodcastTab = "shows"; renderPodcastPlaylistBar(); openPodcastShow(show.id); } }
+    else if (action === "save") { close(); toggleEpisodeSaved(episodeId); }
+    else if (action === "copy") { close(); navigator.clipboard?.writeText(link).then(() => showMailToast("Link copied")).catch(() => {}); }
+    else if (action === "add-playlist") { showEpisodeAddToPlaylistMenu(episodeId, menu); }
+  });
+  // Dismiss on any outside interaction.
+  setTimeout(() => {
+    const onDoc = (ev) => { if (!ev.target.closest("#episodeContextMenu")) { close(); document.removeEventListener("pointerdown", onDoc, true); window.removeEventListener("scroll", onScroll, true); } };
+    const onScroll = () => { close(); document.removeEventListener("pointerdown", onDoc, true); window.removeEventListener("scroll", onScroll, true); };
+    document.addEventListener("pointerdown", onDoc, true);
+    window.addEventListener("scroll", onScroll, true);
+  }, 0);
+}
+// Secondary menu: pick which custom playlist to add/remove this episode.
+function showEpisodeAddToPlaylistMenu(episodeId, parentMenu) {
+  const playlists = state.podcastPlaylists || [];
+  const items = state.podcastPlaylistItems || {};
+  parentMenu.innerHTML = playlists.length
+    ? playlists.map((pl) => {
+        const inList = (items[pl.id] || []).includes(episodeId);
+        return `<button class="fin-txn-menu-option" type="button" data-add-pl="${escapeHtml(pl.id)}">${inList ? "✓ " : ""}${escapeHtml(pl.name || "Playlist")}</button>`;
+      }).join("")
+    : `<div class="fin-txn-menu-empty">No playlists yet — create one with + on the playlist bar.</div>`;
+  parentMenu.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-add-pl]");
+    if (!btn) return;
+    e.stopPropagation();
+    toggleEpisodeInPlaylist(episodeId, btn.dataset.addPl);
+    closeEpisodeContextMenu();
+    if (activePodcastTab === btn.dataset.addPl) renderPodcastPlaylistEpisodes(btn.dataset.addPl);
+  });
+}
+
+// Right-click (desktop) and long-press (touch) on any episode row opens the
+// context menu, wherever that row lives in the Media page.
+function initEpisodeContextMenu() {
+  document.addEventListener("contextmenu", (e) => {
+    const row = e.target.closest(".podcast-episode-row[data-episode-id]");
+    if (!row) return;
+    e.preventDefault();
+    showEpisodeContextMenu(row.dataset.episodeId, e.clientX, e.clientY);
+  });
+  let lpTimer = null, lpRow = null, lpXY = null, lpMoved = false;
+  document.addEventListener("touchstart", (e) => {
+    // Draggable rows (auto-playlist, All) already use long-press to reorder,
+    // so skip them here; right-click still opens the menu on desktop.
+    const row = e.target.closest(".podcast-episode-row[data-episode-id]:not(.podcast-draggable-row)");
+    if (!row) return;
+    lpRow = row; lpMoved = false;
+    const t = e.touches[0];
+    lpXY = { x: t.clientX, y: t.clientY };
+    lpTimer = setTimeout(() => {
+      if (lpRow && !lpMoved) { showEpisodeContextMenu(lpRow.dataset.episodeId, lpXY.x, lpXY.y); lpRow = null; }
+    }, 500);
+  }, { passive: true });
+  document.addEventListener("touchmove", (e) => {
+    if (!lpRow) return;
+    const t = e.touches[0];
+    if (Math.abs(t.clientX - lpXY.x) > 10 || Math.abs(t.clientY - lpXY.y) > 10) { lpMoved = true; clearTimeout(lpTimer); }
+  }, { passive: true });
+  const endLp = () => { clearTimeout(lpTimer); lpRow = null; };
+  document.addEventListener("touchend", endLp);
+  document.addEventListener("touchcancel", endLp);
 }
 
 function renderPodcastSavedEpisodes() {
