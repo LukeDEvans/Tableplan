@@ -1367,6 +1367,14 @@ async function serveStatic(pathname, request, response) {
 }
 
 async function handleNetlifyFunction(modulePath, request, response, url = null) {
+  // Dev convenience: drop cached function modules (and their shared _*.js deps)
+  // before each call so edits to netlify/functions/*.js take effect without
+  // restarting this server. (This is the local dev server only; real Netlify
+  // never runs server.js.)
+  const fnDir = `${path.sep}netlify${path.sep}functions${path.sep}`;
+  for (const k of Object.keys(require.cache)) {
+    if (k.includes(fnDir)) delete require.cache[k];
+  }
   const fn = require(modulePath);
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
