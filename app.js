@@ -6708,7 +6708,7 @@ async function refreshFinanceLive(force = false) {
   invalidateFinanceLabeled(); // fresh accounts payload — the cache (now decoupled from financeLive) needs a nudge
   updateFinanceMonthActuals();
   updateFinanceRecurring();
-  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
+  setPageNotifCount("finance", financeUnlabeledCount() + financeRecurringAlerts().length);
   if (financeHistory === null) loadFinanceHistory();
   if (financeReceipts === null) loadFinanceReceipts();
   if (activeAppArea === "finance") renderFinancePage();
@@ -7000,7 +7000,7 @@ function recordFinanceTxnLink(returnId, purchaseId) {
   for (let i = 0; i < ids.length - 600; i++) delete state.financeTxnLinks[ids[i]];
   financeReturnLinkSearch = null;
   invalidateFinanceLabeled();
-  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
+  setPageNotifCount("finance", financeUnlabeledCount() + financeRecurringAlerts().length);
   updateFinanceMonthActuals();
   persist();
   renderFinancePage();
@@ -7010,7 +7010,7 @@ function clearFinanceTxnLink(returnId) {
   if (!state.financeTxnLinks) return;
   delete state.financeTxnLinks[returnId];
   invalidateFinanceLabeled();
-  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
+  setPageNotifCount("finance", financeUnlabeledCount() + financeRecurringAlerts().length);
   updateFinanceMonthActuals();
   persist();
   renderFinancePage();
@@ -7033,7 +7033,7 @@ function toggleFinanceTxnSignFlip(txnId) {
     for (let i = 0; i < ids.length - 600; i++) delete flips[ids[i]];
   }
   invalidateFinanceLabeled();
-  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
+  setPageNotifCount("finance", financeUnlabeledCount() + financeRecurringAlerts().length);
   updateFinanceMonthActuals();
   persist();
   renderFinancePage();
@@ -7076,7 +7076,7 @@ function saveManualTxnForm(fields) {
   else if (state.financeTxnLabels) delete state.financeTxnLabels[entry.id];
   invalidateFinanceLabeled();
   financeManualForm = null;
-  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
+  setPageNotifCount("finance", financeUnlabeledCount() + financeRecurringAlerts().length);
   updateFinanceMonthActuals();
   persist();
   renderFinancePage();
@@ -7095,7 +7095,7 @@ function deleteManualTxn(id) {
   }
   invalidateFinanceLabeled();
   financeDetailTxnId = financeDetailTxnId === id ? null : financeDetailTxnId;
-  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
+  setPageNotifCount("finance", financeUnlabeledCount() + financeRecurringAlerts().length);
   updateFinanceMonthActuals();
   persist();
   renderFinancePage();
@@ -7258,6 +7258,28 @@ function financeRecurringAlerts() {
   return out;
 }
 
+// Unlabeled transactions collapsed to one row per merchant. A recurring debit
+// (e.g. a monthly loan withdrawal) otherwise shows up as one nag per month —
+// eight "electronic withdrawal firstmark" lines when it should be a single
+// "label this merchant" prompt. Labeling the representative learns a merchant
+// rule (recordFinanceTxnLabel) that auto-labels every sibling, so the whole
+// group clears at once. The newest posting represents the group.
+function financeUnlabeledByMerchant(txns) {
+  const byKey = new Map();
+  for (const t of (txns || [])) {
+    if (t.label) continue;
+    const k = financeMerchantKey(t.description) || `id:${t.id}`;
+    const g = byKey.get(k);
+    if (!g) { byKey.set(k, { rep: t, count: 1 }); continue; }
+    g.count++;
+    if ((t.posted || "") > (g.rep.posted || "")) g.rep = t;
+  }
+  return [...byKey.values()];
+}
+function financeUnlabeledCount() {
+  return financeUnlabeledByMerchant(financeLabeledTxns()).length;
+}
+
 // Persist this month's per-category totals (and income received) so history
 // survives the rolling transaction window, device restarts, and bridge
 // outages. Derived from labeled transactions; only written when values change.
@@ -7411,7 +7433,7 @@ function recordFinanceTxnSplit(txnId, portions) {
   const ids = Object.keys(labels);
   for (let i = 0; i < ids.length - 600; i++) delete labels[ids[i]];
   invalidateFinanceLabeled();
-  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length);
+  setPageNotifCount("finance", financeUnlabeledCount());
   updateFinanceMonthActuals();
   persist();
 }
@@ -7436,7 +7458,7 @@ function recordFinanceTxnLabel(txnId, labelKey, description) {
     }
   }
   invalidateFinanceLabeled(); // recompute with the new label
-  setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
+  setPageNotifCount("finance", financeUnlabeledCount() + financeRecurringAlerts().length);
   updateFinanceMonthActuals();
   persist();
 }
@@ -7981,7 +8003,8 @@ function renderFinancePage() {
     shownTxns.sort((x, y) => (x.account || "").localeCompare(y.account || "") || (y.posted || "").localeCompare(x.posted || ""));
   }
   const txns = shownTxns.slice(0, 60);
-  const needsLabel = allTxns.filter((t) => !t.label);
+  const needsLabelGroups = financeUnlabeledByMerchant(allTxns); // one row per merchant, not one per repeat charge
+  const unlabeledTxnCount = allTxns.filter((t) => !t.label).length; // raw count for the full-ledger card header
   const recAlerts = financeRecurringAlerts();
   const txnSelect = (t) => {
     const isSplit = t.label === "split";
@@ -8024,7 +8047,7 @@ function renderFinancePage() {
       </div>
     </div>`;
   };
-  const txnRow = (t, { compact = false } = {}) => {
+  const txnRow = (t, { compact = false, dupCount = 1 } = {}) => {
     const renaming = financeRenamingTxnId === t.id;
     const raw = String(t.description || "");
     const rawEsc = escapeHtml(raw);
@@ -8051,7 +8074,7 @@ function renderFinancePage() {
       return `
       <div class="fin-txn-row${t.pending ? " is-pending" : ""}" data-fin-txn-id="${escapeHtml(t.id)}">
         <span class="fin-txn-date">${t.posted ? escapeHtml(new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>
-        <span class="fin-txn-desc" title="${descTitle}">${escapeHtml(t.displayName)}${t.pending ? " · pending" : ""}</span>
+        <span class="fin-txn-desc" title="${descTitle}">${escapeHtml(t.displayName)}${t.pending ? " · pending" : ""}${dupCount > 1 ? ` <span class="fin-txn-dup" title="${dupCount} unlabeled charges from this merchant — labeling this one labels them all">×${dupCount}</span>` : ""}</span>
         <span class="fin-txn-amt${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</span>
         ${txnSelect(t)}
       </div>`;
@@ -8180,7 +8203,7 @@ function renderFinancePage() {
     </div>`;
   const txnsCard = !financeLinkStatus?.connected ? "" : `
     <div class="fin-card" data-fin-card="txns">
-      ${cardHead("card:txns", "Transactions", `${needsLabel.length ? `${needsLabel.length} to label · ` : ""}${filterActive ? `${shownTxns.length} of ` : ""}${allTxns.length}`)}
+      ${cardHead("card:txns", "Transactions", `${unlabeledTxnCount ? `${unlabeledTxnCount} to label · ` : ""}${filterActive ? `${shownTxns.length} of ` : ""}${allTxns.length}`)}
       ${!txnsOpen ? "" : `
       <div class="fin-txn-filters">
         <input type="search" class="fin-item-name fin-txn-search" placeholder="Search…" value="${escapeHtml(f.q)}" data-fin-edit="txn-filter-q" aria-label="Search transactions" />
@@ -8296,7 +8319,7 @@ function renderFinancePage() {
   })();
 
   const bellSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
-  const notifCount = needsLabel.length + recAlerts.length;
+  const notifCount = needsLabelGroups.length + recAlerts.length;
   const alertHtml = (a) => {
     if (a.kind === "new") return `
       <div class="fin-alert">
@@ -8338,8 +8361,8 @@ function renderFinancePage() {
         <div class="fin-notif-head">Recurring charges</div>
         ${recAlerts.slice(0, 8).map(alertHtml).join("")}` : ""}
         <div class="fin-notif-head">Transactions to label</div>
-        ${needsLabel.slice(0, 15).map((t) => txnRow(t, { compact: true })).join("") || `<div class="fin-notif-empty">Everything is labeled.</div>`}
-        ${needsLabel.length > 15 ? `<div class="fin-notif-more">+ ${needsLabel.length - 15} more in the Transactions card</div>` : ""}
+        ${needsLabelGroups.slice(0, 15).map((grp) => txnRow(grp.rep, { compact: true, dupCount: grp.count })).join("") || `<div class="fin-notif-empty">Everything is labeled.</div>`}
+        ${needsLabelGroups.length > 15 ? `<div class="fin-notif-more">+ ${needsLabelGroups.length - 15} more in the Transactions card</div>` : ""}
       </div>` : ""}
     </div>`;
 
@@ -8567,7 +8590,7 @@ function onFinanceGridClick(e) {
       r.ackAmount = r.lastAmount;
     } else if (action === "recurring-price-keep") r.ackAmount = r.lastAmount;
     else if (action === "recurring-miss-dismiss") r.missAck = new Date().toISOString().slice(0, 7);
-    setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
+    setPageNotifCount("finance", financeUnlabeledCount() + financeRecurringAlerts().length);
     persist();
     renderFinancePage();
     return;
@@ -8770,7 +8793,7 @@ function onFinanceGridChange(e) {
     r.lineItemKey = el.value;
     r.newAck = true; // linked (or explicitly unlinked) — the "new" alert is answered
     r.ackAmount = null; // fresh link: let a price mismatch surface
-    setPageNotifCount("finance", financeLabeledTxns().filter((t) => !t.label).length + financeRecurringAlerts().length);
+    setPageNotifCount("finance", financeUnlabeledCount() + financeRecurringAlerts().length);
     persist();
     renderFinancePage();
     return;

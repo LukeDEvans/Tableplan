@@ -18251,6 +18251,17 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   padding: 0 4px;
   vertical-align: middle;
 }
+.fin-txn-dup {
+  display: inline-block;
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+  border-radius: 999px;
+  padding: 0 6px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
 .fin-alert { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding: 8px 0 4px; display: flex; flex-direction: column; gap: 4px; }
 .fin-alert-text { font-size: 0.82rem; line-height: 1.35; }
 .fin-rec-row { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding-top: 6px; }
