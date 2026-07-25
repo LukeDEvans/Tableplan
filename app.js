@@ -9395,7 +9395,11 @@ async function fetchAndRenderMailPage({ fresh = false } = {}) {
   mailNextPageToken = data.nextPageToken || null;
   // Record the token for the next page so we can page forward and back.
   if (mailNextPageToken && mailPageIndex + 1 >= mailPageTokens.length) mailPageTokens.push(mailNextPageToken);
-  if (typeof data.resultSizeEstimate === "number") mailTotalEstimate = data.resultSizeEstimate;
+  // Prefer the exact folder total (from labels.get, sent on page 1). Keep it
+  // across pages; only fall back to the rough estimate when no exact total is
+  // available (e.g. search results).
+  if (typeof data.total === "number") mailTotalEstimate = data.total;
+  else if (mailTotalEstimate === null && typeof data.resultSizeEstimate === "number") mailTotalEstimate = data.resultSizeEstimate;
   const messages = data.messages || [];
   mailLastPageCount = messages.length;
   elements.mailList.innerHTML = "";
@@ -9440,12 +9444,12 @@ function renderMailListToolbar() {
     } else {
       const start = mailPageIndex * MAIL_PAGE_SIZE + 1;
       const end = start + mailLastPageCount - 1;
-      // Gmail's estimate is approximate; if a next page exists but the estimate
-      // undercounts, show "end+" so we never claim a smaller total than shown.
-      const total = (typeof mailTotalEstimate === "number" && mailTotalEstimate >= end)
-        ? mailTotalEstimate.toLocaleString()
-        : (mailNextPageToken ? `${end.toLocaleString()}+` : end.toLocaleString());
-      rangeEl.textContent = `${start.toLocaleString()}–${end.toLocaleString()} of ${total}`;
+      // Show "of N" only with a real total (the folder's threadsTotal). Search
+      // results have no reliable total, so just show the range rather than a
+      // meaningless "N+".
+      rangeEl.textContent = (typeof mailTotalEstimate === "number" && mailTotalEstimate >= end)
+        ? `${start.toLocaleString()}–${end.toLocaleString()} of ${mailTotalEstimate.toLocaleString()}`
+        : `${start.toLocaleString()}–${end.toLocaleString()}`;
     }
   }
   const prev = document.getElementById("mailPagePrev");

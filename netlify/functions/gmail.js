@@ -118,6 +118,18 @@ exports.handler = async (event) => {
     }
     const listData = await listRes.json();
 
+    // Exact folder total: Gmail's resultSizeEstimate is unreliable, but
+    // labels.get returns threadsTotal. Only meaningful for a single label with
+    // no search query, and only worth fetching on the first page (it doesn't
+    // change as you page).
+    let total = null;
+    if (!pageToken && !q && labelIds.length === 1) {
+      try {
+        const lr = await gFetch(gToken, `/labels/${encodeURIComponent(labelIds[0])}`);
+        if (lr.ok) { const ld = await lr.json(); if (typeof ld.threadsTotal === "number") total = ld.threadsTotal; }
+      } catch { /* best-effort; fall back to the page range */ }
+    }
+
     // One cheap ids-only query flags which messages carry attachments (metadata
     // format can't tell us); a thread counts as having one if any message does.
     let attachmentIds = new Set();
@@ -153,7 +165,7 @@ exports.handler = async (event) => {
       })
     )).filter(Boolean);
 
-    return json(200, { messages, nextPageToken: listData.nextPageToken || null, resultSizeEstimate: listData.resultSizeEstimate ?? null });
+    return json(200, { messages, nextPageToken: listData.nextPageToken || null, resultSizeEstimate: listData.resultSizeEstimate ?? null, total });
   }
 
   if (action === "attachment") {
