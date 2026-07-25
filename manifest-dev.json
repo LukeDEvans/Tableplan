@@ -4,6 +4,7 @@
   "description": "Personal life management — dev build",
   "start_url": "/",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#D4A843",
   "theme_color": "#D4A843",
   "icons": [

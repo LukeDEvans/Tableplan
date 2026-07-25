@@ -4,6 +4,7 @@
   "description": "Personal life management",
   "start_url": "/",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#2C9993",
   "theme_color": "#2C9993",
   "icons": [

@@ -18511,3 +18511,34 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   .eat-notif-panel { width: min(320px, 92vw); }
   .eat-notif-source { display: none; }
 }
+
+/* Portrait-only guard: the app's pages aren't laid out for landscape, so on a
+   phone held sideways cover the UI with a rotate prompt. Belt-and-suspenders
+   for the manifest's "orientation":"portrait" lock (iOS doesn't always honor
+   it). Scoped to short + touch + landscape = phones; tablets/desktop unaffected. */
+#orientationGuard { display: none; }
+@media (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {
+  #orientationGuard {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    z-index: 100000;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: var(--window-bg, #ffffff);
+    color: var(--ink, #222222);
+  }
+  .orientation-guard-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    text-align: center;
+  }
+  .orientation-guard-inner p {
+    margin: 0;
+    font-weight: 750;
+    font-size: 1rem;
+  }
+}

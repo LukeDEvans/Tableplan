@@ -33,6 +33,16 @@
         }
       } catch { /* gate stays up */ }
     </script>
+    <!-- Portrait lock fallback: the pages are portrait-only. The manifest's
+         "orientation":"portrait" locks installed PWAs where the OS honors it;
+         this CSS-only guard covers phones that slip into landscape anyway,
+         showing a rotate prompt instead of a broken sideways layout. -->
+    <div id="orientationGuard" aria-hidden="true">
+      <div class="orientation-guard-inner">
+        <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2.5" width="8" height="19" rx="1.8"/><path d="M11 18.5h2"/><path d="M4.5 8a6 6 0 0 1 5-3.9"/><path d="M4.6 5.2 4.5 8l2.7-.4"/></svg>
+        <p>Rotate your device to portrait</p>
+      </div>
+    </div>
     <!-- Sign-in gate: visible until a session is confirmed (body.app-authed) -->
     <div id="appLockScreen">
       <div class="lock-card">
