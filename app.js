@@ -33359,7 +33359,7 @@ function renderPodcastPlaylistEpisodes(playlistId) {
         ${pct > 0 ? `<div class="podcast-progress-bar"><div class="podcast-progress-fill" style="width:${pct}%"></div></div>` : ""}
       </div>
       ${played ? `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Played"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
-      ${episodePlayDeleteActions(e.id, `data-episode-remove="${escapeHtml(e.id)}"`, "Remove from playlist")}
+      ${episodeArchiveDeleteActions(e.id, `data-episode-remove="${escapeHtml(e.id)}"`, "Remove from playlist")}
     </div>`;
   }).join("");
 
@@ -33634,7 +33634,7 @@ function podcastEpisodeRowHtml(e, { showShowTitle = false, hasPlaylists = false 
       ${pct > 0 ? `<div class="podcast-progress-bar"><div class="podcast-progress-fill" style="width:${pct}%"></div></div>` : ""}
     </div>
     ${played ? `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Played"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
-    ${episodePlayDeleteActions(e.id, `data-episode-dismiss="${escapeHtml(e.id)}"`, "Mark as played")}
+    ${episodeArchiveDeleteActions(e.id, `data-episode-skip="${escapeHtml(e.id)}"`, "Remove from playlist")}
   </div>`;
 }
 
@@ -34541,14 +34541,20 @@ function initPodcastEpisodeListDelegation() {
   listEl.addEventListener("click", (e) => {
     // Auto-playlist: strip ads / include articles toggles handled by change event below
 
-    // Play quick-action button (all episode rows)
-    const playBtn = e.target.closest("[data-episode-play]");
-    if (playBtn) { e.stopPropagation(); openPodcastEpisode(playBtn.dataset.episodePlay); return; }
+    // Archive (mark as played) quick-action — on any episode row, every list.
+    const archiveBtn = e.target.closest("[data-episode-archive]");
+    if (archiveBtn) {
+      e.stopPropagation();
+      setPodcastEpisodePlayed(archiveBtn.dataset.episodeArchive, true);
+      if (activePodcastTab === "playlist") renderPodcastQueueEpisodes(); // drop it from the auto-playlist view
+      return;
+    }
 
-    // Delete quick-action on browse lists (Recent, a show's episodes): the
-    // episode can't be removed from the feed, so "delete" marks it played.
-    const dismissBtn = e.target.closest("[data-episode-dismiss]");
-    if (dismissBtn) { e.stopPropagation(); setPodcastEpisodePlayed(dismissBtn.dataset.episodeDismiss, true); return; }
+    // Article rows (in the auto-playlist): archive = mark read, delete = unsave.
+    const artArchive = e.target.closest("[data-article-archive]");
+    if (artArchive) { e.stopPropagation(); markArticleRead(artArchive.dataset.articleArchive); renderActiveMediaView(); return; }
+    const artRemove = e.target.closest("[data-article-remove]");
+    if (artRemove) { e.stopPropagation(); deleteArticle(artRemove.dataset.articleRemove); renderActiveMediaView(); return; }
 
     // Notes button (auto-playlist episode rows)
     const notesBtn = e.target.closest("[data-episode-notes]");
@@ -34595,7 +34601,10 @@ function initPodcastEpisodeListDelegation() {
       return;
     }
 
-    // Skip from auto-playlist button
+    // Skip button — removes the episode from the auto-playlist. Used as the
+    // "delete" action on the playlist and on browse lists (Recent, a show's
+    // episodes), so re-render whichever media view is active, not just the
+    // playlist.
     const skipBtn = e.target.closest("[data-episode-skip]");
     if (skipBtn) {
       e.stopPropagation();
@@ -34603,7 +34612,7 @@ function initPodcastEpisodeListDelegation() {
       if (!state.podcastAutoSkipped) state.podcastAutoSkipped = [];
       if (!state.podcastAutoSkipped.includes(episodeId)) state.podcastAutoSkipped.push(episodeId);
       persist();
-      renderPodcastQueueEpisodes();
+      renderActiveMediaView();
       return;
     }
 
@@ -34781,8 +34790,11 @@ function renderAutoPlaylist(listEl, items) {
           </div>
         </div>
         <div class="article-row-actions">
-          <button class="article-row-action-btn" type="button" title="Open article" aria-label="Open article" data-open-article="${escapeHtml(e.id)}">
-            <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          <button class="article-row-action-btn" type="button" title="Mark as read" aria-label="Mark as read" data-article-archive="${escapeHtml(e.id)}">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+          </button>
+          <button class="article-row-action-btn" type="button" title="Remove from saved" aria-label="Remove from saved" data-article-remove="${escapeHtml(e.id)}">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
       </div>`;
@@ -34805,7 +34817,7 @@ function renderAutoPlaylist(listEl, items) {
             ${dur ? `<span class="article-row-date">${formatPodcastDuration(dur)}</span>` : ""}
           </div>
         </div>
-        ${episodePlayDeleteActions(e.id, `data-episode-skip="${escapeHtml(e.id)}"`, "Remove from playlist")}
+        ${episodeArchiveDeleteActions(e.id, `data-episode-skip="${escapeHtml(e.id)}"`, "Remove from playlist")}
       </div>`;
     }
   });
@@ -34886,14 +34898,15 @@ function showEpisodeNotesModal(episodeId) {
   }
 }
 
-// Shared hover/swipe quick-actions for an episode row: just Play + Delete
-// (everything else moved to the right-click / long-press context menu). The
+// Shared hover/swipe quick-actions for an episode row: Mark-as-played (archive)
+// + Delete. Playback starts by tapping the row, so no play button is needed;
+// everything else lives in the right-click / long-press context menu. The
 // delete button's behavior is per-list — pass its data-attribute(s).
-function episodePlayDeleteActions(episodeId, deleteAttrs, deleteTitle = "Remove") {
+function episodeArchiveDeleteActions(episodeId, deleteAttrs, deleteTitle = "Remove") {
   return `
       <div class="article-row-actions">
-        <button class="article-row-action-btn" type="button" title="Play" aria-label="Play" data-episode-play="${escapeHtml(episodeId)}">
-          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" style="fill:currentColor;stroke:none"><path d="M8 5v14l11-7z"/></svg>
+        <button class="article-row-action-btn" type="button" title="Mark as played" aria-label="Mark as played" data-episode-archive="${escapeHtml(episodeId)}">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
         </button>
         <button class="article-row-action-btn" type="button" title="${escapeHtml(deleteTitle)}" aria-label="${escapeHtml(deleteTitle)}" ${deleteAttrs}>
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -35073,7 +35086,7 @@ function renderPodcastSavedEpisodes() {
           </div>
         </div>
         ${played ? `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Played"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
-        ${episodePlayDeleteActions(e.id, `data-episode-saved-remove="${escapeHtml(e.id)}"`, "Remove from saved")}
+        ${episodeArchiveDeleteActions(e.id, `data-episode-saved-remove="${escapeHtml(e.id)}"`, "Remove from saved")}
       </div>`;
     }).join("");
   }
@@ -35222,8 +35235,9 @@ function renderRecentEpisodes() {
   const cutoff = Date.now() - windowOpt.ms;
 
   const podcasts = state.podcasts || [];
+  const skipped = new Set(state.podcastAutoSkipped || []); // hidden via the row Delete action
   let episodes = podcasts.flatMap(p => p.episodes.map(e => ({ ...e, showId: p.id, showTitle: p.title, showArt: p.art })));
-  episodes = episodes.filter(e => e.pubDate && new Date(e.pubDate).getTime() >= cutoff);
+  episodes = episodes.filter(e => e.pubDate && new Date(e.pubDate).getTime() >= cutoff && !skipped.has(e.id));
   episodes.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
 
   const hasPlaylists = (state.podcastPlaylists || []).length > 0;
