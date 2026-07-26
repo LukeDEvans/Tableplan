@@ -34228,7 +34228,7 @@ function renderMediaAllList() {
       ? `<img class="media-all-art" src="${escapeHtml(e.showArt)}" alt="" width="38" height="38" loading="lazy" onerror="this.style.display='none'">`
       : `<span class="media-all-art media-all-art--icon">${e.type === "book" ? "📚" : e.type === "article" ? "📰" : "🎧"}</span>`;
     html += `
-    <div class="article-row podcast-episode-row podcast-draggable-row${e.id === mediaAllQueueId ? " article-row--active" : ""}" data-all-id="${escapeHtml(e.id)}" data-all-type="${escapeHtml(e.type)}" draggable="true" role="button" tabindex="0">
+    <div class="article-row podcast-episode-row podcast-draggable-row${e.id === mediaAllQueueId ? " article-row--active" : ""}" data-all-id="${escapeHtml(e.id)}" data-all-type="${escapeHtml(e.type)}"${e.type === "podcast" ? ` data-episode-id="${escapeHtml(e.id)}"` : ""} draggable="true" role="button" tabindex="0">
       ${art}
       <div class="article-row-main">
         <div class="article-row-title">${escapeHtml(e.title || "")}</div>
@@ -34248,9 +34248,6 @@ function renderMediaAllList() {
           </button>
           <button class="article-row-action-btn" type="button" title="Remove from playlist" aria-label="Remove from playlist" data-all-remove="${escapeHtml(e.id)}">
             ${ldeIcon("close", { size: 16 })}
-          </button>
-          <button class="article-row-action-btn" type="button" title="Play from here" aria-label="Play from here" data-all-play="${escapeHtml(e.id)}">
-            ${ldeIcon("play", { size: 16 })}
           </button>`}
       </div>
     </div>`;
@@ -34264,8 +34261,6 @@ function renderMediaAllList() {
       else playAllQueueFrom(row.dataset.allId);
     });
   });
-  listEl.querySelectorAll("[data-all-play]").forEach((b) =>
-    b.addEventListener("click", (ev) => { ev.stopPropagation(); playAllQueueFrom(b.dataset.allPlay); }));
   listEl.querySelectorAll("[data-all-open]").forEach((b) =>
     b.addEventListener("click", (ev) => { ev.stopPropagation(); openMediaAllBook(b.dataset.allOpen); }));
   listEl.querySelectorAll("[data-all-played]").forEach((b) =>
@@ -34504,8 +34499,7 @@ function playMediaAllItem(item) {
     const article = (state.savedArticles || []).find((a) => a.id === item.id);
     if (article) { openArticle(article.id, "articleList"); startListenTTS(article); }
   } else {
-    const show = (state.podcasts || []).find((p) => p.id === item.showId);
-    playPodcastEpisode(item, show);
+    openPodcastEpisode(item.id); // plays + shows the player; registers the queue-advance handler
   }
   // Warm up the next item's audio while this one plays
   prefetchNextQueueAudio();
@@ -34523,12 +34517,12 @@ function advanceMediaAllQueue(finishedId) {
     if (item && item.type !== "book") {
       mediaAllQueueId = item.id;
       playMediaAllItem(item);
-      if (activeMediaTab === "all") renderMediaAllList();
+      if (activeMediaTab === "queue") renderMediaAllList();
       return true;
     }
   }
   mediaAllQueueId = null;
-  if (activeMediaTab === "all") renderMediaAllList();
+  if (activeMediaTab === "queue") renderMediaAllList();
   return true;
 }
 
