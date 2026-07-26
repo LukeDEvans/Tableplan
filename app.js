@@ -33634,20 +33634,7 @@ function podcastEpisodeRowHtml(e, { showShowTitle = false, hasPlaylists = false 
       ${pct > 0 ? `<div class="podcast-progress-bar"><div class="podcast-progress-fill" style="width:${pct}%"></div></div>` : ""}
     </div>
     ${played ? `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Played"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
-    <div class="article-row-actions">
-      <button class="article-row-action-btn${isSaved ? " is-active" : ""}" type="button" title="${isSaved ? "Unsave" : "Save episode"}" aria-label="${isSaved ? "Unsave" : "Save episode"}" data-episode-save="${escapeHtml(e.id)}">
-        <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" fill="${isSaved ? "currentColor" : "none"}"/></svg>
-      </button>
-      <button class="article-row-action-btn${isQueued ? " is-active" : ""}" type="button" title="${isQueued ? "Remove from playlist" : "Add to playlist"}" aria-label="${isQueued ? "Remove from playlist" : "Add to playlist"}" data-episode-queue="${escapeHtml(e.id)}">
-        <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><circle cx="12" cy="12" r="10" fill="${isQueued ? "currentColor" : "none"}"/><polyline points="12 6 12 12 16 14" stroke="${isQueued ? "var(--surface, #fff)" : "currentColor"}" stroke-width="2" fill="none"/></svg>
-      </button>
-      ${hasPlaylists ? `<button class="article-row-action-btn" type="button" title="Add to custom playlist" aria-label="Add to custom playlist" data-episode-playlist="${escapeHtml(e.id)}">${plIcon}</button>` : ""}
-      <button class="article-row-action-btn" type="button" title="${played ? "Mark as unplayed" : "Mark as played"}" aria-label="${played ? "Mark as unplayed" : "Mark as played"}" data-episode-mark="${played ? "unmark" : "mark"}">
-        ${played
-          ? `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/><line x1="3" y1="3" x2="21" y2="21" stroke-width="2"/></svg>`
-          : `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/></svg>`}
-      </button>
-    </div>
+    ${episodePlayDeleteActions(e.id, `data-episode-dismiss="${escapeHtml(e.id)}"`, "Mark as played")}
   </div>`;
 }
 
@@ -34558,6 +34545,11 @@ function initPodcastEpisodeListDelegation() {
     const playBtn = e.target.closest("[data-episode-play]");
     if (playBtn) { e.stopPropagation(); openPodcastEpisode(playBtn.dataset.episodePlay); return; }
 
+    // Delete quick-action on browse lists (Recent, a show's episodes): the
+    // episode can't be removed from the feed, so "delete" marks it played.
+    const dismissBtn = e.target.closest("[data-episode-dismiss]");
+    if (dismissBtn) { e.stopPropagation(); setPodcastEpisodePlayed(dismissBtn.dataset.episodeDismiss, true); return; }
+
     // Notes button (auto-playlist episode rows)
     const notesBtn = e.target.closest("[data-episode-notes]");
     if (notesBtn) { e.stopPropagation(); showEpisodeNotesModal(notesBtn.dataset.episodeNotes); return; }
@@ -34929,6 +34921,7 @@ function showEpisodeContextMenu(episodeId, x, y) {
     ${show ? `<button class="fin-txn-menu-option" type="button" data-ep-menu="show">Go to show</button>` : ""}
     <button class="fin-txn-menu-option" type="button" data-ep-menu="save">${isSaved ? "Remove from saved" : "Save"}</button>
     <button class="fin-txn-menu-option" type="button" data-ep-menu="add-playlist">Add to a playlist…</button>
+    ${(state.podcastSavedCategories || []).length ? `<button class="fin-txn-menu-option" type="button" data-ep-menu="saved-tag">Assign to saved tab…</button>` : ""}
     ${link ? `<button class="fin-txn-menu-option" type="button" data-ep-menu="copy">Copy link</button>` : ""}`;
   document.body.appendChild(menu);
   // Clamp within the viewport (menu is ~200px wide, height grows with options).
@@ -34946,6 +34939,7 @@ function showEpisodeContextMenu(episodeId, x, y) {
     else if (action === "show") { close(); if (show?.id) { activePodcastTab = "shows"; renderPodcastPlaylistBar(); openPodcastShow(show.id); } }
     else if (action === "save") { close(); toggleEpisodeSaved(episodeId); }
     else if (action === "copy") { close(); navigator.clipboard?.writeText(link).then(() => showMailToast("Link copied")).catch(() => {}); }
+    else if (action === "saved-tag") { showPodcastSavedEpisodeCategoryMenu(episodeId, btn); close(); }
     else if (action === "add-playlist") { showEpisodeAddToPlaylistMenu(episodeId, menu); }
   });
   // Dismiss on any outside interaction.
@@ -35079,22 +35073,7 @@ function renderPodcastSavedEpisodes() {
           </div>
         </div>
         ${played ? `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Played"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
-        <div class="article-row-actions">
-          <button class="article-row-action-btn${inQueue ? " is-active" : ""}" type="button" title="${inQueue ? "Remove from playlist" : "Add to playlist"}" aria-label="${inQueue ? "Remove from playlist" : "Add to playlist"}" data-episode-queue="${escapeHtml(e.id)}">
-            <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><circle cx="12" cy="12" r="10" fill="${inQueue ? "currentColor" : "none"}"/><polyline points="12 6 12 12 16 14" stroke="${inQueue ? "var(--surface, #fff)" : "currentColor"}" stroke-width="2" fill="none"/></svg>
-          </button>
-          <button class="article-row-action-btn" type="button" title="${played ? "Mark as unplayed" : "Mark as played"}" aria-label="${played ? "Mark as unplayed" : "Mark as played"}" data-episode-mark="${played ? "unmark" : "mark"}">
-            ${played
-              ? `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/><line x1="3" y1="3" x2="21" y2="21" stroke-width="2"/></svg>`
-              : `<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><polyline points="20 6 9 17 4 12"/></svg>`}
-          </button>
-          ${hasCats ? `<button class="article-row-action-btn${assigned.length ? " is-active" : ""}" type="button" title="Assign to tab" aria-label="Assign to tab" data-episode-saved-tag="${escapeHtml(e.id)}">
-            <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
-          </button>` : ""}
-          <button class="article-row-action-btn" type="button" title="Remove from saved" aria-label="Remove from saved" data-episode-saved-remove="${escapeHtml(e.id)}">
-            <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
+        ${episodePlayDeleteActions(e.id, `data-episode-saved-remove="${escapeHtml(e.id)}"`, "Remove from saved")}
       </div>`;
     }).join("");
   }
