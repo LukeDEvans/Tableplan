@@ -34244,7 +34244,7 @@ function renderMediaAllList() {
           ? `<button class="article-row-action-btn" type="button" title="Open" aria-label="Open" data-all-open="${escapeHtml(e.id)}">${ldeIcon("link", { size: 16 })}</button>`
           : `
           <button class="article-row-action-btn" type="button" title="Mark as played" aria-label="Mark as played" data-all-played="${escapeHtml(e.id)}">
-            ${ldeIcon("checkmark", { size: 16 })}
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
           </button>
           <button class="article-row-action-btn" type="button" title="Remove from playlist" aria-label="Remove from playlist" data-all-remove="${escapeHtml(e.id)}">
             ${ldeIcon("close", { size: 16 })}
@@ -36174,9 +36174,9 @@ function renderArticleList(containerId, pub) {
     </div>
   `;
 
-  const markLabel = "Send to archive";
-  const unmarkLabel = "Restore from archive";
-  const checkIcon = ldeIcon("archive");
+  const markLabel = "Mark as read";
+  const unmarkLabel = "Mark as unread";
+  const checkIcon = `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
   const unmarkIcon = ldeIcon("restore");
   const trashIcon = ldeIcon("trash");
 
