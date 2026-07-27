@@ -32933,6 +32933,7 @@ function removePublication(key) {
 }
 
 let activeMediaTab = "queue"; // "queue" is the sidebar's top "All" tab
+let mediaSearchQuery = "";     // top-bar search across podcasts + articles + books
 let openArticleId = null;
 let mediaTabsWired = false;
 let articleViewMode = "unread"; // "unread" | "archive" (toggled by the Archive button)
@@ -33005,7 +33006,19 @@ function wireMediaTabs() {
   }
 
   document.getElementById("mediaSidebarToggle")?.addEventListener("click", () => {
-    document.getElementById("mediaSidebar")?.classList.toggle("is-expanded");
+    const sidebar = document.getElementById("mediaSidebar");
+    if (!sidebar) return;
+    if (window.innerWidth <= 680) sidebar.classList.toggle("is-expanded");
+    else sidebar.classList.toggle("is-collapsed");
+  });
+  const mediaSearchInput = document.getElementById("mediaSearchInput");
+  mediaSearchInput?.addEventListener("input", () => {
+    mediaSearchQuery = mediaSearchInput.value.trim();
+    if (mediaSearchQuery) renderMediaSearchResults();
+    else exitMediaSearch();
+  });
+  document.getElementById("mediaNotificationsBtn")?.addEventListener("click", () => {
+    showMailToast("Media notifications are coming soon."); // placeholder until media notifications land
   });
 
   document.getElementById("mediaAllResetBtn")?.addEventListener("click", () => {
@@ -33077,6 +33090,14 @@ function switchMediaTab(tab) {
   if (readerPanel) readerPanel.hidden = true;
   if (podcastsPanel) podcastsPanel.hidden = true;
   if (allPanel) allPanel.hidden = true;
+  const searchPanel = document.getElementById("mediaSearchPanel");
+  if (searchPanel) searchPanel.hidden = true;
+  // Leaving to a folder clears an active top-bar search.
+  if (mediaSearchQuery) {
+    mediaSearchQuery = "";
+    const si = document.getElementById("mediaSearchInput");
+    if (si) si.value = "";
+  }
   if (syncBtn) syncBtn.hidden = true;
   if (syncSettingsBtn) syncSettingsBtn.hidden = true;
   openArticleId = null;
@@ -33283,6 +33304,73 @@ function renderActiveMediaView() {
   else if (tab === "books") renderBooksView();
   else if (tab === "podcasts") switchPodcastTab(activePodcastTab); // re-dispatch the active podcast sub-tab
   else renderArticleList("articleList", tab);
+}
+
+// ── Media top-bar search: podcasts + saved articles + books ───────────────────
+function exitMediaSearch() {
+  const panel = document.getElementById("mediaSearchPanel");
+  if (panel) panel.hidden = true;
+  switchMediaTab(activeMediaTab); // restore the active folder's panel
+}
+function renderMediaSearchResults() {
+  const listEl = document.getElementById("mediaSearchList");
+  const panel = document.getElementById("mediaSearchPanel");
+  if (!listEl || !panel) return;
+  // Show only the search panel.
+  ["articleBooksPanel", "articleListPanel", "articleReaderPanel", "mediaPodcastsPanel", "mediaAllPanel"]
+    .forEach((id) => { const el = document.getElementById(id); if (el) el.hidden = true; });
+  panel.hidden = false;
+
+  const q = mediaSearchQuery.toLowerCase();
+  const results = []; // { type, id, title, sub, art, icon }
+  for (const show of (state.podcasts || [])) {
+    for (const ep of (show.episodes || [])) {
+      if ((ep.title || "").toLowerCase().includes(q) || (show.title || "").toLowerCase().includes(q)) {
+        results.push({ type: "podcast", id: ep.id, title: ep.title || "Episode", sub: show.title || "", art: ep.art || show.art || "", icon: "🎧", date: ep.pubDate });
+      }
+    }
+  }
+  const pubs = getReadPublications();
+  for (const a of (state.savedArticles || [])) {
+    if ((a.title || "").toLowerCase().includes(q) || (a.author || "").toLowerCase().includes(q) || (a.url || "").toLowerCase().includes(q)) {
+      const pubEntry = pubs.find(p => p.key === a.publication);
+      results.push({ type: "article", id: a.id, title: a.title || a.url, sub: pubEntry?.label || a.author || "Article", art: pubEntry?.domain ? publicationLogoUrl(pubEntry.domain) : "", icon: "📰", date: a.savedAt });
+    }
+  }
+  for (const b of (state.readingItems || [])) {
+    const authors = Array.isArray(b.authors) ? b.authors.join(", ") : (b.authors || "");
+    if ((b.title || "").toLowerCase().includes(q) || authors.toLowerCase().includes(q)) {
+      results.push({ type: "book", id: b.id, title: b.title || "Book", sub: authors || "Book", art: b.cover || "", icon: "📚", date: b.createdAt });
+    }
+  }
+  results.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
+  if (!results.length) {
+    listEl.innerHTML = `<div class="article-empty"><p>No media matches “${escapeHtml(mediaSearchQuery)}”.</p></div>`;
+    return;
+  }
+  const TYPE_LABEL = { podcast: "Podcast", article: "Article", book: "Book" };
+  listEl.innerHTML = results.slice(0, 80).map((r) => `
+    <div class="article-row" data-media-search-type="${r.type}" data-media-search-id="${escapeHtml(r.id)}" role="button" tabindex="0">
+      ${mediaRowArt(r.art, r.icon)}
+      <div class="article-row-main">
+        <div class="article-row-title">${escapeHtml(r.title)}</div>
+        <div class="article-row-meta">
+          <span class="article-row-pub">${escapeHtml(r.sub)}</span>
+          <span class="playlist-article-badge">${TYPE_LABEL[r.type]}</span>
+        </div>
+      </div>
+    </div>`).join("");
+  listEl.querySelectorAll("[data-media-search-id]").forEach((row) => {
+    const open = () => {
+      const id = row.dataset.mediaSearchId;
+      if (row.dataset.mediaSearchType === "podcast") openPodcastEpisode(id);
+      else if (row.dataset.mediaSearchType === "article") openArticle(id, "mediaSearchList");
+      else if (row.dataset.mediaSearchType === "book") openMediaAllBook(id);
+    };
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+  });
 }
 
 function switchPodcastTab(tabId) {

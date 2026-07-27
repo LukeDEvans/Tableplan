@@ -13009,6 +13009,14 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   border-right: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
   background: color-mix(in srgb, var(--ink) 1%, transparent);
 }
+/* Collapsed by the topbar's menu button (desktop) — mobile uses is-expanded. */
+.article-sidebar.is-collapsed {
+  width: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+  border-right: none;
+}
 .article-sidebar-section-label {
   font-size: 0.72rem;
   font-weight: 700;
