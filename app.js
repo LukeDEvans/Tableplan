@@ -33067,8 +33067,8 @@ function wireMediaTabs() {
   document.getElementById("articleUrlInput")?.addEventListener("keydown", (e) => {
     if (e.key === "Enter") confirmSaveArticle();
   });
-  document.getElementById("articleImportPdfBtn")?.addEventListener("click", openPdfImportDialog);
-  document.getElementById("bookAddBtn")?.addEventListener("click", openReadingSearchDialog);
+  document.getElementById("bookSearchBtn")?.addEventListener("click", openReadingSearchDialog);
+  document.getElementById("bookArchiveBtn")?.addEventListener("click", openReadingArchive);
   document.getElementById("articleArchiveBtn")?.addEventListener("click", () => {
     articleViewMode = articleViewMode === "archive" ? "unread" : "archive";
     articleSearchActive = false;
@@ -33163,10 +33163,14 @@ function renderMediaPubTabs() {
   container.innerHTML = entries.map(p => {
     const active = activeMediaTab === p.key;
     return `<button class="watch-category-tab${active ? " is-active" : ""}" type="button" role="tab" aria-selected="${active}" data-media-tab="${escapeHtml(p.key)}">${escapeHtml(p.label)}</button>`;
-  }).join("");
+  }).join("")
+    // "+" at the end of the tabs = import an article/PDF (styled like the
+    // podcast add-tab button).
+    + `<button class="watch-category-tab watch-category-add-tab" type="button" id="articleImportTabBtn" title="Import article or PDF" aria-label="Import article or PDF">+</button>`;
   container.querySelectorAll("[data-media-tab]").forEach((btn) => {
     btn.addEventListener("click", () => switchMediaTab(btn.dataset.mediaTab));
   });
+  container.querySelector("#articleImportTabBtn")?.addEventListener("click", openPdfImportDialog);
 }
 
 // Article publication tabs (including the combined "Recent"/all view).
@@ -37341,37 +37345,83 @@ async function callNetlifyFunction(name, body) {
 // Books folder: a horizontal tab bar (Audible / Libby / Kindle / Wishlist)
 // over a single content grid, matching the podcasts / saved-articles layout.
 let activeBookTab = "audible";
-const BOOK_TABS = [
+let bookCategoryInputActive = false;
+// The four built-in format tabs; custom "wishlist" tabs (readingSettings
+// .categories) follow, then a "+" to add one — matching the podcast bar.
+const BOOK_FORMAT_TABS = [
   { key: "audible", label: "Audible", format: "audiobook" },
   { key: "libby", label: "Libby", format: "libby" },
   { key: "kindle", label: "Kindle", format: "ebook" },
   { key: "wishlist", label: "Wishlist", format: "wishlist" },
 ];
+function bookCategories() {
+  return Array.isArray(state.readingSettings?.categories) ? state.readingSettings.categories : [];
+}
 function renderBookTabs() {
   const bar = document.getElementById("bookTabs");
   if (!bar) return;
-  bar.innerHTML = BOOK_TABS.map((t) =>
-    `<button class="watch-category-tab${activeBookTab === t.key ? " is-active" : ""}" type="button" role="tab" aria-selected="${activeBookTab === t.key}" data-book-tab="${t.key}">${t.label}</button>`
-  ).join("");
+  const tabBtn = (key, label) =>
+    `<button class="watch-category-tab${activeBookTab === key ? " is-active" : ""}" type="button" role="tab" aria-selected="${activeBookTab === key}" data-book-tab="${escapeHtml(key)}">${escapeHtml(label)}</button>`;
+  const addHtml = bookCategoryInputActive
+    ? `<form class="watch-category-new-form" id="bookCategoryInlineForm"><input class="watch-category-new-input" id="bookCategoryInlineInput" type="text" placeholder="Wishlist name" autocomplete="off" maxlength="32" /></form>`
+    : `<button class="watch-category-tab watch-category-add-tab" type="button" id="bookCategoryAddBtn" title="New wishlist tab" aria-label="New wishlist tab">+</button>`;
+  bar.innerHTML = BOOK_FORMAT_TABS.map((t) => tabBtn(t.key, t.label)).join("")
+    + bookCategories().map((c) => tabBtn(c.id, c.name)).join("")
+    + addHtml;
+
   bar.querySelectorAll("[data-book-tab]").forEach((btn) => {
-    btn.addEventListener("click", () => { activeBookTab = btn.dataset.bookTab; renderBooksView(); });
+    btn.addEventListener("click", () => { activeBookTab = btn.dataset.bookTab; bookCategoryInputActive = false; renderBooksView(); });
   });
+  bar.querySelector("#bookCategoryAddBtn")?.addEventListener("click", () => {
+    bookCategoryInputActive = true;
+    renderBookTabs();
+    bar.querySelector("#bookCategoryInlineInput")?.focus();
+  });
+  const form = bar.querySelector("#bookCategoryInlineForm");
+  const input = bar.querySelector("#bookCategoryInlineInput");
+  if (form && input) {
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const name = input.value.trim();
+      if (name) {
+        if (!state.readingSettings || typeof state.readingSettings !== "object") state.readingSettings = { categories: [] };
+        if (!Array.isArray(state.readingSettings.categories)) state.readingSettings.categories = [];
+        const newCat = { id: createId("rcat"), name };
+        state.readingSettings.categories.push(newCat);
+        persist();
+        activeBookTab = newCat.id;
+      }
+      bookCategoryInputActive = false;
+      renderBooksView();
+    });
+    input.addEventListener("keydown", (e) => { if (e.key === "Escape") { bookCategoryInputActive = false; renderBookTabs(); } });
+    input.addEventListener("blur", () => setTimeout(() => { if (bookCategoryInputActive) { bookCategoryInputActive = false; renderBookTabs(); } }, 120));
+  }
 }
 function renderBooksView() {
   renderBookTabs();
-  const tab = BOOK_TABS.find((t) => t.key === activeBookTab) || BOOK_TABS[0];
-  if (elements.readingPlannerGrid) renderBookFormatPanel(elements.readingPlannerGrid, tab.format);
+  const fmt = BOOK_FORMAT_TABS.find((t) => t.key === activeBookTab);
+  // Adding a book (search button) drops it into the active custom wishlist.
+  activeReadingCategory = fmt ? "all" : activeBookTab;
+  if (!elements.readingPlannerGrid) return;
+  if (fmt) renderBookFormatPanel(elements.readingPlannerGrid, { format: fmt.format, label: fmt.label });
+  else {
+    const cat = bookCategories().find((c) => c.id === activeBookTab);
+    if (!cat) { activeBookTab = "audible"; return renderBooksView(); } // deleted tab → fall back
+    renderBookFormatPanel(elements.readingPlannerGrid, { categoryId: cat.id, label: cat.name });
+  }
 }
 
-function renderBookFormatPanel(gridEl, formatFilter) {
-  const FORMAT_LABELS = { audiobook: "Audiobook", ebook: "eBook", libby: "Library", wishlist: "Wishlist" };
-  // Wishlist = want-to-read across every format; libby shows all; the rest
-  // filter by format.
-  const filterFn = formatFilter === "wishlist"
+function renderBookFormatPanel(gridEl, { format, categoryId, label }) {
+  // Wishlist format = want-to-read across every format; a categoryId filters to
+  // that custom wishlist; libby shows all; the rest filter by format.
+  const filterFn = categoryId
+    ? (i) => Array.isArray(i.categories) && i.categories.includes(categoryId)
+    : format === "wishlist"
     ? (i) => i.status === "want"
-    : formatFilter === "libby"
+    : format === "libby"
     ? () => true
-    : (i) => i.format === formatFilter;
+    : (i) => i.format === format;
 
   const allItems = readingItemsList().filter(filterFn);
   const active = allItems.filter(i => i.status !== "read");
@@ -37389,24 +37439,22 @@ function renderBookFormatPanel(gridEl, formatFilter) {
       <div class="watch-item-list">${items.map(item => readingItemTemplate(item)).join("")}</div>
     </div>`;
 
+  const emptyHint = categoryId
+    ? `<p>No books in this wishlist yet.</p><p>Open this tab and use the <strong>search</strong> button to add one.</p>`
+    : `<p>No ${escapeHtml(label || "books")} tracked yet.</p><p>Use the <strong>search</strong> button to add a book.</p>`;
   gridEl.innerHTML = `
-    <section class="day-column planner-day-panel do-backlog-panel watch-list-panel" aria-label="${FORMAT_LABELS[formatFilter] || "Books"}">
+    <section class="day-column planner-day-panel do-backlog-panel watch-list-panel" aria-label="${escapeHtml(label || "Books")}">
       <div class="do-board">
         <div class="watch-sections">
           ${reading.length === 0 && want.length === 0 && finished.length === 0
-            ? `<div class="article-empty"><p>No ${FORMAT_LABELS[formatFilter] || "books"} tracked yet.</p><p>Add a book with the <strong>+</strong> button.</p></div>`
+            ? `<div class="article-empty">${emptyHint}</div>`
             : section("Currently Reading", reading) + section("Want to Read", want) + section("Finished", finished)
           }
         </div>
       </div>
-      <footer class="watch-archive-footer">
-        <button class="watch-archive-open-btn" type="button" data-open-reading-archive>Archive</button>
-      </footer>
     </section>`;
 
   bindReadingControls(gridEl);
-  gridEl.querySelector("[data-open-reading-archive]")?.addEventListener("click", openReadingArchive);
-  gridEl.querySelector("[data-open-reading-search]")?.addEventListener("click", openReadingSearchDialog);
 }
 
 function renderReadingPlanner(formatFilter) {
