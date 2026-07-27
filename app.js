@@ -33158,6 +33158,7 @@ function renderMediaPubTabs() {
     { key: "all", label: "Recent" },
     { key: "email", label: "Email" },
     ...getReadPublications(),
+    { key: "nutritionfacts", label: "Nutrition Facts" },
     { key: "other", label: "Other" },
   ];
   container.innerHTML = entries.map(p => {
@@ -33175,7 +33176,7 @@ function renderMediaPubTabs() {
 
 // Article publication tabs (including the combined "Recent"/all view).
 function isArticlePubTab(tab) {
-  return tab === "all" || tab === "email" || tab === "other" || getReadPublications().some(p => p.key === tab);
+  return tab === "all" || tab === "email" || tab === "other" || tab === "nutritionfacts" || getReadPublications().some(p => p.key === tab);
 }
 
 // ─── Podcasts ─────────────────────────────────────────────────────────────────
@@ -36322,7 +36323,7 @@ function renderArticleList(containerId, pub) {
     listEl.innerHTML = `
       <div class="article-search-bar">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input class="article-search-input" id="articleSearchInput" type="search" placeholder="Search saved articles…" autocomplete="off" value="${escapeHtml(articleSearchQuery)}" />
+        <input class="article-search-input" id="articleSearchInput" type="search" placeholder="Search articles…" autocomplete="off" value="${escapeHtml(articleSearchQuery)}" />
       </div>
       <div class="article-list-scroll" id="articleSearchResults"></div>`;
     const input = listEl.querySelector("#articleSearchInput");
@@ -36343,7 +36344,7 @@ function renderArticleList(containerId, pub) {
 
   if (!articles.length) {
     const pubEntry = getReadPublications().find(p => p.key === pub);
-    const pubName = pub === "all" ? "saved" : pub === "other" ? "Other" : pub === "email" ? "email" : (pubEntry?.label || pub);
+    const pubName = pub === "all" ? "saved" : pub === "other" ? "Other" : pub === "email" ? "email" : pub === "nutritionfacts" ? "Nutrition Facts" : (pubEntry?.label || pub);
     if (articleViewMode === "archive") {
       listEl.innerHTML = `<div class="article-empty"><p>No archived articles${pub === "all" ? "" : ` in ${pubName}`}.</p><p>Articles you mark read appear here.</p></div>`;
       return;
@@ -36381,9 +36382,16 @@ function renderArticleSearchResults(containerId) {
   if (matches.length) wireArticleRows(resultsEl, containerId);
 }
 
+function isNutritionFactsArticle(a) {
+  const p = (a.publication || "").toLowerCase();
+  const u = (a.url || "").toLowerCase();
+  return p.includes("nutritionfacts") || u.includes("nutritionfacts.org");
+}
 function getFilteredSortedArticles(pub) {
   const all = state.savedArticles || [];
-  const filtered = pub === "all" ? [...all] : all.filter(a => a.publication === pub);
+  const filtered = pub === "all" ? [...all]
+    : pub === "nutritionfacts" ? all.filter(isNutritionFactsArticle)
+    : all.filter(a => a.publication === pub);
   const sortOrder = state.articleSortOrder || "newest";
   filtered.sort((a, b) => {
     const aTime = new Date(a.savedAt || 0).getTime();
