@@ -276,43 +276,29 @@
                   <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
                   <span>Playlist</span>
                 </button>
-                <div class="article-sidebar-divider"></div>
-                <div class="article-sidebar-section-label">Podcasts</div>
                 <button class="article-sidebar-tab is-active" type="button" data-media-tab="podcasts" role="tab" aria-selected="true">
                   <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
                   <span>Podcasts</span>
                 </button>
-                <div class="article-sidebar-divider"></div>
                 <button class="article-sidebar-tab" type="button" data-media-tab="all" role="tab" aria-selected="false">
                   <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M4 4h13a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H4z"/><path d="M19 8h1a1 1 0 0 1 1 1v9a2 2 0 0 1-2 2"/><line x1="7" y1="8" x2="14" y2="8"/><line x1="7" y1="12" x2="14" y2="12"/><line x1="7" y1="16" x2="11" y2="16"/></svg>
                   <span>Saved Articles</span>
                 </button>
-                <div class="article-sidebar-divider"></div>
-                <div class="article-sidebar-section-label">Books</div>
                 <button class="article-sidebar-tab" type="button" data-media-tab="books" role="tab" aria-selected="false">
                   <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-                  <span>Reading List</span>
-                </button>
-                <button class="article-sidebar-tab" type="button" data-media-tab="books-audible" role="tab" aria-selected="false">
-                  <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
-                  <span>Audible</span>
-                </button>
-                <button class="article-sidebar-tab" type="button" data-media-tab="books-libby" role="tab" aria-selected="false">
-                  <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="12" y1="17" x2="12" y2="22"/></svg>
-                  <span>Libby</span>
-                </button>
-                <button class="article-sidebar-tab" type="button" data-media-tab="books-kindle" role="tab" aria-selected="false">
-                  <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12" y2="18"/></svg>
-                  <span>Kindle</span>
-                </button>
-                <div class="article-sidebar-divider"></div>
-                <button class="article-sidebar-tab" type="button" data-media-tab="archive" role="tab" aria-selected="false">
-                  <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
-                  <span>Archive</span>
+                  <span>Books</span>
                 </button>
               </div>
               <div class="article-content" id="mediaContent">
                 <div class="article-books-panel" id="articleBooksPanel">
+                  <div class="podcast-playlist-bar article-pub-bar">
+                    <div class="watch-category-tabs" id="bookTabs" role="tablist" aria-label="Books"></div>
+                    <div class="podcast-tabs-actions">
+                      <button class="podcast-tabs-action-btn" type="button" id="bookAddBtn" title="Add book" aria-label="Add book">
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                      </button>
+                    </div>
+                  </div>
                   <div class="planner-grid" id="readingPlannerGrid"></div>
                 </div>
                 <div class="article-list-panel" id="articleListPanel" hidden>
@@ -368,15 +354,6 @@
                     <div class="article-reader-meta" id="articleReaderMeta"></div>
                     <div class="article-reader-text" id="articleReaderText"></div>
                   </div>
-                </div>
-                <div class="article-list-panel media-service-panel" id="mediaAudiblePanel" hidden>
-                  <div class="planner-grid" id="audiblePlannerGrid"></div>
-                </div>
-                <div class="article-list-panel media-service-panel" id="mediaLibbyPanel" hidden>
-                  <div class="planner-grid" id="libbyPlannerGrid"></div>
-                </div>
-                <div class="article-list-panel media-service-panel" id="mediaKindlePanel" hidden>
-                  <div class="planner-grid" id="kindlePlannerGrid"></div>
                 </div>
                 <div class="podcast-panel" id="mediaArchivePanel" hidden>
                   <div id="mediaArchiveList"></div>

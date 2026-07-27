@@ -33030,6 +33030,7 @@ function wireMediaTabs() {
     if (e.key === "Enter") confirmSaveArticle();
   });
   document.getElementById("articleImportPdfBtn")?.addEventListener("click", openPdfImportDialog);
+  document.getElementById("bookAddBtn")?.addEventListener("click", openReadingSearchDialog);
   document.getElementById("articleArchiveBtn")?.addEventListener("click", () => {
     articleViewMode = articleViewMode === "archive" ? "unread" : "archive";
     articleSearchActive = false;
@@ -33045,7 +33046,7 @@ function wireMediaTabs() {
   document.getElementById("confirmPdfImportBtn")?.addEventListener("click", confirmPdfImport);
 }
 
-const MEDIA_SERVICE_TABS = ["books", "books-audible", "books-libby", "books-kindle", "podcasts"];
+const MEDIA_SERVICE_TABS = ["books", "podcasts"];
 
 function switchMediaTab(tab) {
   activeMediaTab = tab;
@@ -33068,22 +33069,14 @@ function switchMediaTab(tab) {
   const readerPanel = document.getElementById("articleReaderPanel");
   const syncBtn = document.getElementById("articleSyncBtn");
   const syncSettingsBtn = document.getElementById("articleSyncSettingsBtn");
-  const audiblePanel = document.getElementById("mediaAudiblePanel");
-  const libbyPanel = document.getElementById("mediaLibbyPanel");
-  const kindlePanel = document.getElementById("mediaKindlePanel");
   const podcastsPanel = document.getElementById("mediaPodcastsPanel");
   const allPanel = document.getElementById("mediaAllPanel");
-  const archivePanel = document.getElementById("mediaArchivePanel");
 
   if (booksPanel) booksPanel.hidden = true;
   if (listPanel) listPanel.hidden = true;
   if (readerPanel) readerPanel.hidden = true;
-  if (audiblePanel) audiblePanel.hidden = true;
-  if (libbyPanel) libbyPanel.hidden = true;
-  if (kindlePanel) kindlePanel.hidden = true;
   if (podcastsPanel) podcastsPanel.hidden = true;
   if (allPanel) allPanel.hidden = true;
-  if (archivePanel) archivePanel.hidden = true;
   if (syncBtn) syncBtn.hidden = true;
   if (syncSettingsBtn) syncSettingsBtn.hidden = true;
   openArticleId = null;
@@ -33091,17 +33084,9 @@ function switchMediaTab(tab) {
   if (tab === "queue") {
     // Top "All" tab: the blended listen queue (podcasts + articles + books)
     if (allPanel) { allPanel.hidden = false; renderMediaAllList(); }
-  } else if (tab === "archive") {
-    if (archivePanel) { archivePanel.hidden = false; renderMediaArchive(); }
   } else if (tab === "books") {
     if (booksPanel) booksPanel.hidden = false;
-    renderReadingPlanner();
-  } else if (tab === "books-audible") {
-    if (audiblePanel) { audiblePanel.hidden = false; renderReadingPlanner("audiobook"); }
-  } else if (tab === "books-libby") {
-    if (libbyPanel) { libbyPanel.hidden = false; renderReadingPlanner("libby"); }
-  } else if (tab === "books-kindle") {
-    if (kindlePanel) { kindlePanel.hidden = false; renderReadingPlanner("ebook"); }
+    renderBooksView();
   } else if (tab === "podcasts") {
     if (podcastsPanel) podcastsPanel.hidden = false;
     initPodcastPanel();
@@ -33295,11 +33280,7 @@ function renderPodcastPlaylistBar() {
 function renderActiveMediaView() {
   const tab = activeMediaTab;
   if (tab === "queue") renderMediaAllList();
-  else if (tab === "archive") renderMediaArchive();
-  else if (tab === "books") renderReadingPlanner();
-  else if (tab === "books-audible") renderReadingPlanner("audiobook");
-  else if (tab === "books-libby") renderReadingPlanner("libby");
-  else if (tab === "books-kindle") renderReadingPlanner("ebook");
+  else if (tab === "books") renderBooksView();
   else if (tab === "podcasts") switchPodcastTab(activePodcastTab); // re-dispatch the active podcast sub-tab
   else renderArticleList("articleList", tab);
 }
@@ -34412,10 +34393,9 @@ function renderMediaArchive() {
 
 function openMediaAllBook(id) {
   const book = (state.readingItems || []).find((b) => b.id === id);
-  const tab = book?.format === "audiobook" ? "books-audible"
-    : book?.format === "libby" ? "books-libby"
-    : book?.format === "kindle" ? "books-kindle" : "books";
-  switchMediaTab(tab);
+  const f = book?.format;
+  activeBookTab = f === "audiobook" ? "audible" : f === "libby" ? "libby" : f === "ebook" ? "kindle" : "wishlist";
+  switchMediaTab("books");
 }
 
 // Long-press touch reorder for a vertical list (HTML5 drag-and-drop never
@@ -37258,9 +37238,38 @@ async function callNetlifyFunction(name, body) {
   } catch (e) { return { error: String(e) }; }
 }
 
+// Books folder: a horizontal tab bar (Audible / Libby / Kindle / Wishlist)
+// over a single content grid, matching the podcasts / saved-articles layout.
+let activeBookTab = "audible";
+const BOOK_TABS = [
+  { key: "audible", label: "Audible", format: "audiobook" },
+  { key: "libby", label: "Libby", format: "libby" },
+  { key: "kindle", label: "Kindle", format: "ebook" },
+  { key: "wishlist", label: "Wishlist", format: "wishlist" },
+];
+function renderBookTabs() {
+  const bar = document.getElementById("bookTabs");
+  if (!bar) return;
+  bar.innerHTML = BOOK_TABS.map((t) =>
+    `<button class="watch-category-tab${activeBookTab === t.key ? " is-active" : ""}" type="button" role="tab" aria-selected="${activeBookTab === t.key}" data-book-tab="${t.key}">${t.label}</button>`
+  ).join("");
+  bar.querySelectorAll("[data-book-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => { activeBookTab = btn.dataset.bookTab; renderBooksView(); });
+  });
+}
+function renderBooksView() {
+  renderBookTabs();
+  const tab = BOOK_TABS.find((t) => t.key === activeBookTab) || BOOK_TABS[0];
+  if (elements.readingPlannerGrid) renderBookFormatPanel(elements.readingPlannerGrid, tab.format);
+}
+
 function renderBookFormatPanel(gridEl, formatFilter) {
-  const FORMAT_LABELS = { audiobook: "Audiobook", ebook: "eBook", libby: "Library" };
-  const filterFn = formatFilter === "libby"
+  const FORMAT_LABELS = { audiobook: "Audiobook", ebook: "eBook", libby: "Library", wishlist: "Wishlist" };
+  // Wishlist = want-to-read across every format; libby shows all; the rest
+  // filter by format.
+  const filterFn = formatFilter === "wishlist"
+    ? (i) => i.status === "want"
+    : formatFilter === "libby"
     ? () => true
     : (i) => i.format === formatFilter;
 
@@ -37285,14 +37294,13 @@ function renderBookFormatPanel(gridEl, formatFilter) {
       <div class="do-board">
         <div class="watch-sections">
           ${reading.length === 0 && want.length === 0 && finished.length === 0
-            ? `<div class="article-empty"><p>No ${FORMAT_LABELS[formatFilter] || "books"} tracked yet.</p><p>Add books via the <strong>Reading List</strong> tab and set their format.</p></div>`
+            ? `<div class="article-empty"><p>No ${FORMAT_LABELS[formatFilter] || "books"} tracked yet.</p><p>Add a book with the <strong>+</strong> button.</p></div>`
             : section("Currently Reading", reading) + section("Want to Read", want) + section("Finished", finished)
           }
         </div>
       </div>
       <footer class="watch-archive-footer">
         <button class="watch-archive-open-btn" type="button" data-open-reading-archive>Archive</button>
-        <button class="primary-btn icon-primary-btn" type="button" data-open-reading-search title="Add book" aria-label="Add book"><span aria-hidden="true">+</span></button>
       </footer>
     </section>`;
 
@@ -37302,6 +37310,10 @@ function renderBookFormatPanel(gridEl, formatFilter) {
 }
 
 function renderReadingPlanner(formatFilter) {
+  // The Books folder now uses a format tab bar (Audible/Libby/Kindle/Wishlist)
+  // over one grid. All in-app refreshes call this with no format, so route
+  // them to that view; the legacy category-planner body below is unused.
+  if (!formatFilter) { renderBooksView(); return; }
   const gridId = formatFilter === "audiobook" ? "audiblePlannerGrid"
                : formatFilter === "ebook"     ? "kindlePlannerGrid"
                : formatFilter === "libby"     ? "libbyPlannerGrid"
