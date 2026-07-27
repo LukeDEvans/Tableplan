@@ -212,7 +212,7 @@ const STATE_SECTIONS = {
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder"],
   plan:      ["calendars", "planEvents", "planCalendars"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
@@ -691,6 +691,7 @@ const elements = {
   menuRecurringTasksBtn: document.querySelector("#menuRecurringTasksBtn"),
   menuWorkoutLibraryBtn: document.querySelector("#menuWorkoutLibraryBtn"),
   menuWorkoutLogsBtn: document.querySelector("#menuWorkoutLogsBtn"),
+  menuPodcastSettingsBtn: document.querySelector("#menuPodcastSettingsBtn"),
   menuPodcastPriorityBtn: document.querySelector("#menuPodcastPriorityBtn"),
   menuPublicationsBtn: document.querySelector("#menuPublicationsBtn"),
   menuReadSyncBtn: document.querySelector("#menuReadSyncBtn"),
@@ -1590,6 +1591,7 @@ function bindEvents() {
   elements.menuIngredientOptionsBtn.addEventListener("click", () => openSettingsMenuDialog(openIngredientOptionsDialog));
   elements.menuFoodHealthSettingsBtn.addEventListener("click", () => openSettingsMenuDialog(openFoodHealthSettingsDialog));
   elements.menuMealPlanSettingsBtn.addEventListener("click", () => openSettingsMenuDialog(openMealPlanSettingsDialog));
+  elements.menuPodcastSettingsBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("podcasts")));
   elements.menuPodcastPriorityBtn.addEventListener("click", () => openSettingsMenuDialog(showPodcastPriorityModal));
   elements.menuPublicationsBtn.addEventListener("click", () => openSettingsMenuDialog(showPublicationsModal));
   elements.menuReadSyncBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("read-sync")));
@@ -2987,6 +2989,7 @@ function defaultState() {
     podcastTierCount: 3,
     podcastPrioritySort: "oldest",
     podcastPlaylistWindow: "month",
+    podcastRecentWindow: "week",
     libraryKey: "hclib",
     podcastPlaylistIncludeArticles: false,
     mediaAllPinnedOrder: [],
@@ -17062,6 +17065,7 @@ function updateSettingsMenuOptions() {
   elements.menuWorkoutLogsBtn.hidden = !isPlay;
   elements.menuInventoryRoomsBtn.hidden = activeAppArea !== "inventory";
   elements.menuReadSyncBtn.hidden = !["read", "listen", "media"].includes(activeAppArea);
+  elements.menuPodcastSettingsBtn.hidden = activeAppArea !== "media";
   elements.menuPodcastPriorityBtn.hidden = activeAppArea !== "media";
   elements.menuPublicationsBtn.hidden = activeAppArea !== "media";
   elements.menuRecreateHobbiesBtn.hidden = !isRecreate;
@@ -17081,7 +17085,7 @@ function openSettingsMenuDialog(openDialog) {
 }
 
 function openContextSettingsDialog(kind) {
-  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync", "ai-notes", "finance-accounts", "finance-emergency"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync", "ai-notes", "finance-accounts", "finance-emergency", "podcasts"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -17169,7 +17173,8 @@ function renderContextSettingsDialog(kind) {
     "finance-emergency": "Emergency Savings",
     "api-usage": "API Usage",
     "ai-notes": "AI Notes",
-    "mail-ai": "Mail AI"
+    "mail-ai": "Mail AI",
+    "podcasts": "Podcasts"
   };
   const isSubPanel = !["general", "eat", "do", "play", "watch", "recreate", "read-sync"].includes(kind);
   elements.contextSettingsBackBtn.hidden = !isSubPanel;
@@ -17301,6 +17306,20 @@ function renderContextSettingsDialog(kind) {
             </label>
           `;
         }).join("")}
+      </div>
+    `;
+    return;
+  }
+
+  if (kind === "podcasts") {
+    const win = state.podcastRecentWindow || "week";
+    elements.contextSettingsBody.innerHTML = `
+      <div class="settings-field-row">
+        <label for="podcastRecentWindowSelect">Recent podcasts — how far back to pull</label>
+        <select class="config-input" id="podcastRecentWindowSelect" data-podcast-recent-window>
+          ${RECENT_WINDOW_OPTIONS.map(o => `<option value="${o.value}"${o.value === win ? " selected" : ""}>${o.label}</option>`).join("")}
+        </select>
+        <p class="settings-hint settings-hint--small">Controls the time range shown on the podcasts Recent tab.</p>
       </div>
     `;
     return;
@@ -17946,6 +17965,12 @@ function handleContextSettingsChange(event) {
   if (adminPageInput) setAdminDisabledPage(adminPageInput.dataset.adminPageVisibility, !adminPageInput.checked);
   const locationSharingInput = event.target.closest?.("[data-location-sharing]");
   if (locationSharingInput) setLocationSharingEnabled(locationSharingInput.checked, locationSharingInput);
+  const recentWindowSelect = event.target.closest?.("[data-podcast-recent-window]");
+  if (recentWindowSelect) {
+    state.podcastRecentWindow = recentWindowSelect.value;
+    persist();
+    if (activeAppArea === "media" && activePodcastTab === "recent") renderRecentEpisodes();
+  }
   const groupPageInput = event.target.closest?.("[data-group-page]");
   if (groupPageInput) setGroupPageVisibility(groupPageInput.dataset.groupPage, !groupPageInput.checked);
   const memberRoleSelect = event.target.closest?.("select[data-member-role]");
@@ -33156,7 +33181,6 @@ let activePodcastTab = "recent";
 let activePodcastSavedCategory = "all";
 let podcastSavedCatInputActive = false;
 let podcastTabInputActive = false;
-let recentEpisodesWindow = "week";
 let openPodcastEpisodeId = null;
 let podcastPanelWired = false;
 let podcastAudio = null;
@@ -35325,7 +35349,8 @@ function renderRecentEpisodes() {
   const listEl = document.getElementById("podcastEpisodeList");
   if (!listEl) return;
 
-  const windowOpt = RECENT_WINDOW_OPTIONS.find(o => o.value === recentEpisodesWindow) || RECENT_WINDOW_OPTIONS[1];
+  // The time window now lives in Settings › Podcasts (no on-page dropdown).
+  const windowOpt = RECENT_WINDOW_OPTIONS.find(o => o.value === (state.podcastRecentWindow || "week")) || RECENT_WINDOW_OPTIONS[1];
   const cutoff = Date.now() - windowOpt.ms;
 
   const podcasts = state.podcasts || [];
@@ -35335,26 +35360,14 @@ function renderRecentEpisodes() {
   episodes.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
 
   const hasPlaylists = (state.podcastPlaylists || []).length > 0;
-
-  const selectHtml = `
-    <div class="recent-window-bar">
-      <select class="recent-window-select" id="recentWindowSelect" aria-label="Show episodes from">
-        ${RECENT_WINDOW_OPTIONS.map(o => `<option value="${o.value}"${o.value === recentEpisodesWindow ? " selected" : ""}>${o.label}</option>`).join("")}
-      </select>
-      <span class="recent-window-count">${episodes.length} episode${episodes.length !== 1 ? "s" : ""}</span>
-    </div>`;
+  const countBar = `<div class="recent-window-bar"><span class="recent-window-count">${episodes.length} episode${episodes.length !== 1 ? "s" : ""} · ${escapeHtml(windowOpt.label.toLowerCase())}</span></div>`;
 
   if (!episodes.length) {
-    listEl.innerHTML = selectHtml + `<div class="article-empty"><p>No episodes in this time range.</p></div>`;
+    listEl.innerHTML = countBar + `<div class="article-empty"><p>No episodes in this time range.</p></div>`;
   } else {
-    listEl.innerHTML = selectHtml + episodes.map(e => podcastEpisodeRowHtml(e, { showShowTitle: true, hasPlaylists })).join("");
+    listEl.innerHTML = countBar + episodes.map(e => podcastEpisodeRowHtml(e, { showShowTitle: true, hasPlaylists })).join("");
     wirePodcastEpisodeRows(listEl);
   }
-
-  listEl.querySelector("#recentWindowSelect").addEventListener("change", (ev) => {
-    recentEpisodesWindow = ev.target.value;
-    renderRecentEpisodes();
-  });
 }
 
 function renderPodcastShowEpisodes(showId) {
