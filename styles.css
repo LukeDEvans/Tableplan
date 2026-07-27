@@ -8826,11 +8826,30 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
 }
 
 .watch-category-tab.watch-drop-over,
-.watch-category-tab.drag-over {
+.watch-category-tab.drag-over,
+.watch-category-tab.book-tab-drop-over {
   color: var(--accent-dark);
   border-bottom-color: var(--accent);
   background: color-mix(in srgb, var(--accent-soft) 60%, transparent);
 }
+/* Book row menu (⋯) button */
+.reading-item-menu-btn {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: 50%;
+  color: var(--muted);
+  cursor: pointer;
+}
+.reading-item-menu-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+.reading-item.is-dragging { opacity: 0.5; }
 
 body.touch-drag-active {
   user-select: none;

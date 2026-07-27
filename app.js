@@ -37346,6 +37346,28 @@ async function callNetlifyFunction(name, body) {
 // over a single content grid, matching the podcasts / saved-articles layout.
 let activeBookTab = "audible";
 let bookCategoryInputActive = false;
+let draggedReadingItemId = null;
+function handleReadingItemDragStart(event) {
+  const id = event.currentTarget.dataset.readingItem;
+  if (!id) return;
+  draggedReadingItemId = id;
+  event.dataTransfer.effectAllowed = "copy";
+  event.dataTransfer.setData("application/reading-item-id", id);
+  event.currentTarget.classList.add("is-dragging");
+}
+function handleReadingItemDragEnd(event) {
+  event.currentTarget.classList.remove("is-dragging");
+  draggedReadingItemId = null;
+  document.querySelectorAll(".book-tab-drop-over").forEach((el) => el.classList.remove("book-tab-drop-over"));
+}
+function addBookToWishlist(bookId, categoryId) {
+  const item = readingItemById(bookId);
+  if (!item || !categoryId) return;
+  if (!Array.isArray(item.categories)) item.categories = [];
+  if (!item.categories.includes(categoryId)) item.categories.push(categoryId);
+  persist();
+  renderBooksView();
+}
 // The four built-in format tabs; custom "wishlist" tabs (readingSettings
 // .categories) follow, then a "+" to add one — matching the podcast bar.
 const BOOK_FORMAT_TABS = [
@@ -37370,7 +37392,24 @@ function renderBookTabs() {
     + addHtml;
 
   bar.querySelectorAll("[data-book-tab]").forEach((btn) => {
-    btn.addEventListener("click", () => { activeBookTab = btn.dataset.bookTab; bookCategoryInputActive = false; renderBooksView(); });
+    const tabKey = btn.dataset.bookTab;
+    btn.addEventListener("click", () => { activeBookTab = tabKey; bookCategoryInputActive = false; renderBooksView(); });
+    // Custom wishlist tabs accept dragged books (drop = add to that wishlist).
+    if (!BOOK_FORMAT_TABS.some((t) => t.key === tabKey)) {
+      btn.addEventListener("dragover", (e) => {
+        if (!e.dataTransfer.types.includes("application/reading-item-id")) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        btn.classList.add("book-tab-drop-over");
+      });
+      btn.addEventListener("dragleave", () => btn.classList.remove("book-tab-drop-over"));
+      btn.addEventListener("drop", (e) => {
+        e.preventDefault();
+        btn.classList.remove("book-tab-drop-over");
+        const id = e.dataTransfer.getData("application/reading-item-id") || draggedReadingItemId;
+        addBookToWishlist(id, tabKey);
+      });
+    }
   });
   bar.querySelector("#bookCategoryAddBtn")?.addEventListener("click", () => {
     bookCategoryInputActive = true;
@@ -37626,13 +37665,16 @@ function readingItemTemplate(item) {
   const audibleUrl = audibleSearchUrl(item.title, item.authors);
 
   return `
-    <article class="do-task-item watch-item reading-item" data-reading-item="${escapeHtml(item.id)}">
+    <article class="do-task-item watch-item reading-item" data-reading-item="${escapeHtml(item.id)}" draggable="true">
       <div class="watch-item-layout">
         ${coverHtml}
         <div class="watch-item-main">
           <div class="watch-item-row">
             <span class="watch-item-title">${escapeHtml(item.title)}</span>
             ${formatHtml}
+            <button class="reading-item-menu-btn" type="button" data-reading-menu="${escapeHtml(item.id)}" title="Shelves & options" aria-label="Shelves and options">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="none" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+            </button>
           </div>
           ${authorsHtml}
           ${metaHtml}
@@ -37658,8 +37700,13 @@ function readingItemTemplate(item) {
 }
 
 function bindReadingControls(root = document) {
+  root.querySelectorAll("[data-reading-menu]").forEach((btn) => {
+    btn.addEventListener("click", (e) => { e.stopPropagation(); openReadingItemMenu(e); });
+  });
   root.querySelectorAll("[data-reading-item]").forEach((article) => {
     article.addEventListener("contextmenu", openReadingItemMenu);
+    article.addEventListener("dragstart", handleReadingItemDragStart);
+    article.addEventListener("dragend", handleReadingItemDragEnd);
     article.addEventListener("mouseenter", () => {
       const itemId = article.dataset.readingItem;
       const item = readingItemById(itemId);
@@ -37780,8 +37827,10 @@ function openReadingItemMenu(event) {
   event.stopPropagation();
   closeFolderMenu();
 
-  const article = event.currentTarget;
-  const itemId = article.dataset.readingItem;
+  // Works whether triggered by right-click on the row or a click on the row's
+  // menu (⋯) button.
+  const itemId = event.currentTarget.closest?.("[data-reading-item]")?.dataset.readingItem
+    || event.currentTarget.dataset.readingItem;
   if (!itemId) return;
 
   const item = readingItemById(itemId);
