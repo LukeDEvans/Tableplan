@@ -33043,7 +33043,10 @@ function switchMediaTab(tab) {
   const sidebar = document.getElementById("mediaSidebar");
   if (sidebar) {
     sidebar.querySelectorAll("[data-media-tab]").forEach((btn) => {
-      const active = btn.dataset.mediaTab === tab;
+      const bt = btn.dataset.mediaTab;
+      // The single "Saved Articles" sidebar entry stays active for any of its
+      // publication sub-tabs (Recent/Email/NYT/…), which live in the top bar.
+      const active = bt === tab || (bt === "all" && isArticlePubTab(tab));
       btn.classList.toggle("is-active", active);
       btn.setAttribute("aria-selected", String(active));
     });
@@ -33095,23 +33098,34 @@ function switchMediaTab(tab) {
     if (listPanel) listPanel.hidden = false;
     if (syncBtn) syncBtn.hidden = !isArticleTab || !hasSyncCookies();
     if (syncSettingsBtn) syncSettingsBtn.hidden = !isArticleTab;
+    renderMediaPubTabs(); // top publication bar, active tab highlighted
     renderArticleList("articleList", tab);
   }
 }
 
+// Horizontal publication tab bar for the Saved Articles view (styled like the
+// podcast tab bar). "Recent" is the combined all-publications view.
 function renderMediaPubTabs() {
   const container = document.getElementById("mediaPubTabs");
   if (!container) return;
-  const pubs = getReadPublications();
-  container.innerHTML = allPubTabEntries()
-    .map(p => {
-      const pubInfo = pubs.find(pub => pub.key === p.key);
-      const logoUrl = pubInfo?.domain ? publicationLogoUrl(pubInfo.domain) : null;
-      return pubTabButton(p.key, p.label, activeMediaTab, "media-tab", logoUrl);
-    }).join("");
+  const entries = [
+    { key: "all", label: "Recent" },
+    { key: "email", label: "Email" },
+    ...getReadPublications(),
+    { key: "other", label: "Other" },
+  ];
+  container.innerHTML = entries.map(p => {
+    const active = activeMediaTab === p.key;
+    return `<button class="watch-category-tab${active ? " is-active" : ""}" type="button" role="tab" aria-selected="${active}" data-media-tab="${escapeHtml(p.key)}">${escapeHtml(p.label)}</button>`;
+  }).join("");
   container.querySelectorAll("[data-media-tab]").forEach((btn) => {
     btn.addEventListener("click", () => switchMediaTab(btn.dataset.mediaTab));
   });
+}
+
+// Article publication tabs (including the combined "Recent"/all view).
+function isArticlePubTab(tab) {
+  return tab === "all" || tab === "email" || tab === "other" || getReadPublications().some(p => p.key === tab);
 }
 
 // ─── Podcasts ─────────────────────────────────────────────────────────────────
@@ -36164,26 +36178,13 @@ function renderArticleList(containerId, pub) {
     return;
   }
 
-  const sortBar = `
-    <div class="article-sort-bar">
-      <div class="article-view-toggle">
-        <button type="button" class="sort-btn${articleViewMode === "unread" ? " is-active" : ""}" data-article-view="unread">Unread</button>
-        <button type="button" class="sort-btn${articleViewMode === "archive" ? " is-active" : ""}" data-article-view="archive">Archive</button>
-      </div>
-      ${articleViewMode === "unread" && pub === "all" ? `
-        <button type="button" class="sort-btn${sortOrder === "newest" ? " is-active" : ""}" data-sort="newest">Newest</button>
-        <button type="button" class="sort-btn${sortOrder === "oldest" ? " is-active" : ""}" data-sort="oldest">Oldest</button>
-      ` : ""}
-    </div>
-  `;
-
   const markLabel = "Mark as read";
   const unmarkLabel = "Mark as unread";
   const checkIcon = `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
   const unmarkIcon = ldeIcon("restore");
   const trashIcon = ldeIcon("trash");
 
-  listEl.innerHTML = sortBar + articles.map((a) => {
+  listEl.innerHTML = articles.map((a) => {
     const isRead = readIds.has(a.id);
     const pubEntry = getReadPublications().find(p => p.key === a.publication);
     const pubLabel = pub === "all"
@@ -36214,20 +36215,6 @@ function renderArticleList(containerId, pub) {
     </div>`;
   }).join("");
 
-  listEl.querySelectorAll("[data-sort]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      state.articleSortOrder = btn.dataset.sort;
-      persist();
-      renderArticleList(containerId, pub);
-    });
-  });
-
-  listEl.querySelectorAll("[data-article-view]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      articleViewMode = btn.dataset.articleView;
-      renderArticleList(containerId, pub);
-    });
-  });
   listEl.querySelectorAll(".article-row").forEach((row) => {
     const id = row.dataset.articleId;
     row.addEventListener("click", (e) => {
