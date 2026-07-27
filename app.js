@@ -33129,8 +33129,11 @@ let podcastSaveTimer = null;
 
 function initPodcastPanel() {
   wirePodcastPanel();
-  renderPodcastPlaylistBar();
-  renderPodcastQueueEpisodes();
+  // Render the content for whichever tab is active (default "recent"), not a
+  // hardcoded auto-playlist. Otherwise the first open showed the tiered
+  // auto-playlist while the tab bar said "Recent", and only switching tabs
+  // corrected it. switchPodcastTab also draws the tab bar.
+  switchPodcastTab(activePodcastTab);
 }
 
 function wirePodcastPanel() {
