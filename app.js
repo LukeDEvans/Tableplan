@@ -32935,7 +32935,9 @@ function removePublication(key) {
 let activeMediaTab = "queue"; // "queue" is the sidebar's top "All" tab
 let openArticleId = null;
 let mediaTabsWired = false;
-let articleViewMode = "unread";
+let articleViewMode = "unread"; // "unread" | "archive" (toggled by the Archive button)
+let articleSearchActive = false; // Search button toggles a search box over the list
+let articleSearchQuery = "";
 
 function initMediaPage() {
   renderMediaPubTabs();
@@ -33028,6 +33030,16 @@ function wireMediaTabs() {
     if (e.key === "Enter") confirmSaveArticle();
   });
   document.getElementById("articleImportPdfBtn")?.addEventListener("click", openPdfImportDialog);
+  document.getElementById("articleArchiveBtn")?.addEventListener("click", () => {
+    articleViewMode = articleViewMode === "archive" ? "unread" : "archive";
+    articleSearchActive = false;
+    renderArticleList("articleList", isArticlePubTab(activeMediaTab) ? activeMediaTab : "all");
+  });
+  document.getElementById("articleSearchBtn")?.addEventListener("click", () => {
+    articleSearchActive = !articleSearchActive;
+    if (articleSearchActive) articleViewMode = "unread"; else articleSearchQuery = "";
+    renderArticleList("articleList", isArticlePubTab(activeMediaTab) ? activeMediaTab : "all");
+  });
   document.getElementById("closePdfImportBtn")?.addEventListener("click", () => document.getElementById("pdfImportDialog")?.close());
   document.getElementById("cancelPdfImportBtn")?.addEventListener("click", () => document.getElementById("pdfImportDialog")?.close());
   document.getElementById("confirmPdfImportBtn")?.addEventListener("click", confirmPdfImport);
@@ -33098,6 +33110,9 @@ function switchMediaTab(tab) {
     if (listPanel) listPanel.hidden = false;
     if (syncBtn) syncBtn.hidden = !isArticleTab || !hasSyncCookies();
     if (syncSettingsBtn) syncSettingsBtn.hidden = !isArticleTab;
+    // Switching publication tabs exits search/archive back to the normal list.
+    articleSearchActive = false;
+    articleViewMode = "unread";
     renderMediaPubTabs(); // top publication bar, active tab highlighted
     renderArticleList("articleList", tab);
   }
@@ -36148,50 +36163,15 @@ function formatPodcastDuration(seconds) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function renderArticleList(containerId, pub) {
-  const listEl = document.getElementById(containerId);
-  if (!listEl) return;
-  const allArticles = getFilteredSortedArticles(pub);
-  const readIds = new Set(state.readArticleIds || []);
-  const readDates = state.articleReadDates || {};
-  const sortOrder = state.articleSortOrder || "newest";
+const ARTICLE_CHECK_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
 
-  const articles = articleViewMode === "archive"
-    ? allArticles.filter(a => readIds.has(a.id)).sort((a, b) => {
-        const da = readDates[a.id] || a.savedAt || "";
-        const db = readDates[b.id] || b.savedAt || "";
-        return db.localeCompare(da);
-      })
-    : allArticles.filter(a => !readIds.has(a.id));
-
-  if (!articles.length) {
-    const pubEntry = getReadPublications().find(p => p.key === pub);
-    const pubName = pub === "all" ? "saved" : pub === "other" ? "Other" : pub === "email" ? "email" : (pubEntry?.label || pub);
-    const hasCookies = hasSyncCookies();
-    const isPub = !!pubEntry;
-    const syncHint = pub === "email"
-      ? `<p>Emails saved from Gmail will appear here.</p>`
-      : hasCookies && isPub
-        ? `<p>Click the <strong>sync</strong> button above to import your saved articles, or click <strong>+</strong> to paste a URL.</p>`
-        : `<p>Click <strong>+</strong> to paste an article URL${isPub ? ", or configure sync in <strong>Settings → Read &amp; Listen</strong>" : ""}.</p>`;
-    listEl.innerHTML = `<div class="article-empty"><p>No ${pubName} articles yet.</p>${syncHint}</div>`;
-    return;
-  }
-
-  const markLabel = "Mark as read";
-  const unmarkLabel = "Mark as unread";
-  const checkIcon = `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
-  const unmarkIcon = ldeIcon("restore");
-  const trashIcon = ldeIcon("trash");
-
-  listEl.innerHTML = articles.map((a) => {
-    const isRead = readIds.has(a.id);
-    const pubEntry = getReadPublications().find(p => p.key === a.publication);
-    const pubLabel = pub === "all"
-      ? (pubEntry?.label || (a.publication === "other" ? "Other" : a.publication))
-      : "";
-    const artUrl = pubEntry?.domain ? publicationLogoUrl(pubEntry.domain) : "";
-    return `
+function articleRowHtml(a, { pub, readIds, readDates }) {
+  const isRead = readIds.has(a.id);
+  const pubEntry = getReadPublications().find(p => p.key === a.publication);
+  const showPub = pub === "all" || articleSearchActive;
+  const pubLabel = showPub ? (pubEntry?.label || (a.publication === "other" ? "Other" : a.publication)) : "";
+  const artUrl = pubEntry?.domain ? publicationLogoUrl(pubEntry.domain) : "";
+  return `
     <div class="article-row${isRead ? " article-row--read" : ""}" data-article-id="${escapeHtml(a.id)}" role="button" tabindex="0">
       ${mediaRowArt(artUrl, "📰")}
       <div class="article-row-main">
@@ -36205,46 +36185,116 @@ function renderArticleList(containerId, pub) {
       </div>
       ${isRead ? `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Read"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
       <div class="article-row-actions">
-        <button class="article-row-action-btn" type="button" data-article-action="${isRead ? "unmark" : "mark"}" title="${isRead ? unmarkLabel : markLabel}" aria-label="${isRead ? unmarkLabel : markLabel}">
-          ${isRead ? unmarkIcon : checkIcon}
+        <button class="article-row-action-btn" type="button" data-article-action="${isRead ? "unmark" : "mark"}" title="${isRead ? "Mark as unread" : "Mark as read"}" aria-label="${isRead ? "Mark as unread" : "Mark as read"}">
+          ${isRead ? ldeIcon("restore") : ARTICLE_CHECK_ICON}
         </button>
         <button class="article-row-action-btn" type="button" data-article-action="delete" title="Delete" aria-label="Delete">
-          ${trashIcon}
+          ${ldeIcon("trash")}
         </button>
       </div>
     </div>`;
-  }).join("");
+}
 
+function wireArticleRows(listEl, containerId) {
+  const unmarkIcon = ldeIcon("restore");
   listEl.querySelectorAll(".article-row").forEach((row) => {
     const id = row.dataset.articleId;
-    row.addEventListener("click", (e) => {
-      if (e.target.closest(".article-row-actions")) return;
-      openArticle(id, containerId);
-    });
+    row.addEventListener("click", (e) => { if (e.target.closest(".article-row-actions")) return; openArticle(id, containerId); });
     row.addEventListener("contextmenu", (e) => openMediaShareMenu(e, "article", id));
     row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") openArticle(id, containerId); });
-    row.querySelector(".article-row-actions").addEventListener("click", (e) => {
+    row.querySelector(".article-row-actions")?.addEventListener("click", (e) => {
       e.stopPropagation();
       const btn = e.target.closest("[data-article-action]");
       if (!btn) return;
       const action = btn.dataset.articleAction;
       if (action === "mark") {
         markArticleRead(id);
-        btn.dataset.articleAction = "unmark";
-        btn.title = unmarkLabel;
-        btn.setAttribute("aria-label", unmarkLabel);
-        btn.innerHTML = unmarkIcon;
+        btn.dataset.articleAction = "unmark"; btn.title = "Mark as unread"; btn.setAttribute("aria-label", "Mark as unread"); btn.innerHTML = unmarkIcon;
       } else if (action === "unmark") {
         markArticleUnread(id);
-        btn.dataset.articleAction = "mark";
-        btn.title = markLabel;
-        btn.setAttribute("aria-label", markLabel);
-        btn.innerHTML = checkIcon;
+        btn.dataset.articleAction = "mark"; btn.title = "Mark as read"; btn.setAttribute("aria-label", "Mark as read"); btn.innerHTML = ARTICLE_CHECK_ICON;
       } else if (action === "delete") {
         deleteArticle(id);
       }
     });
   });
+}
+
+function updateArticleActionButtons() {
+  document.getElementById("articleArchiveBtn")?.classList.toggle("is-active", articleViewMode === "archive");
+  document.getElementById("articleSearchBtn")?.classList.toggle("is-active", articleSearchActive);
+}
+
+function renderArticleList(containerId, pub) {
+  const listEl = document.getElementById(containerId);
+  if (!listEl) return;
+  updateArticleActionButtons();
+  const readIds = new Set(state.readArticleIds || []);
+  const readDates = state.articleReadDates || {};
+
+  // Search mode: a persistent search box plus a results container that updates
+  // as you type (so focus is never lost). Searches all saved articles.
+  if (articleSearchActive) {
+    listEl.innerHTML = `
+      <div class="article-search-bar">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input class="article-search-input" id="articleSearchInput" type="search" placeholder="Search saved articles…" autocomplete="off" value="${escapeHtml(articleSearchQuery)}" />
+      </div>
+      <div class="article-list-scroll" id="articleSearchResults"></div>`;
+    const input = listEl.querySelector("#articleSearchInput");
+    input?.addEventListener("input", () => { articleSearchQuery = input.value; renderArticleSearchResults(containerId); });
+    requestAnimationFrame(() => input?.focus());
+    renderArticleSearchResults(containerId);
+    return;
+  }
+
+  const allArticles = getFilteredSortedArticles(pub);
+  const articles = articleViewMode === "archive"
+    ? allArticles.filter(a => readIds.has(a.id)).sort((a, b) => {
+        const da = readDates[a.id] || a.savedAt || "";
+        const db = readDates[b.id] || b.savedAt || "";
+        return db.localeCompare(da);
+      })
+    : allArticles.filter(a => !readIds.has(a.id));
+
+  if (!articles.length) {
+    const pubEntry = getReadPublications().find(p => p.key === pub);
+    const pubName = pub === "all" ? "saved" : pub === "other" ? "Other" : pub === "email" ? "email" : (pubEntry?.label || pub);
+    if (articleViewMode === "archive") {
+      listEl.innerHTML = `<div class="article-empty"><p>No archived articles${pub === "all" ? "" : ` in ${pubName}`}.</p><p>Articles you mark read appear here.</p></div>`;
+      return;
+    }
+    const hasCookies = hasSyncCookies();
+    const isPub = !!pubEntry;
+    const syncHint = pub === "email"
+      ? `<p>Emails saved from Gmail will appear here.</p>`
+      : hasCookies && isPub
+        ? `<p>Click the <strong>sync</strong> button to import your saved articles, or <strong>+</strong> to add one.</p>`
+        : `<p>Click <strong>+</strong> to import an article or PDF${isPub ? ", or configure sync in <strong>Settings → Read &amp; Listen</strong>" : ""}.</p>`;
+    listEl.innerHTML = `<div class="article-empty"><p>No ${pubName} articles yet.</p>${syncHint}</div>`;
+    return;
+  }
+
+  listEl.innerHTML = articles.map((a) => articleRowHtml(a, { pub, readIds, readDates })).join("");
+  wireArticleRows(listEl, containerId);
+}
+
+function renderArticleSearchResults(containerId) {
+  const resultsEl = document.getElementById("articleSearchResults");
+  if (!resultsEl) return;
+  const readIds = new Set(state.readArticleIds || []);
+  const readDates = state.articleReadDates || {};
+  const q = articleSearchQuery.trim().toLowerCase();
+  if (!q) { resultsEl.innerHTML = `<div class="article-empty"><p>Type to search your saved articles.</p></div>`; return; }
+  const matches = (state.savedArticles || []).filter(a =>
+    (a.title || "").toLowerCase().includes(q) ||
+    (a.author || "").toLowerCase().includes(q) ||
+    (a.url || "").toLowerCase().includes(q)
+  ).sort((a, b) => new Date(b.savedAt || 0) - new Date(a.savedAt || 0));
+  resultsEl.innerHTML = matches.length
+    ? matches.map((a) => articleRowHtml(a, { pub: "all", readIds, readDates })).join("")
+    : `<div class="article-empty"><p>No articles match “${escapeHtml(articleSearchQuery.trim())}”.</p></div>`;
+  if (matches.length) wireArticleRows(resultsEl, containerId);
 }
 
 function getFilteredSortedArticles(pub) {
