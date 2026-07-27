@@ -14932,10 +14932,13 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 #shopMainPage #groceryStoreTabBar,
 #exploreMainPage .travel-detail-header,
 #mediaMainPage .media-all-header,
-#mediaMainPage .podcast-playlist-bar,
 #mediaMainPage .article-reader-topbar {
   padding-right: 96px;
 }
+/* The old top-right scope toggle is now hidden (it moved to Settings → View),
+   so the podcast tab bar no longer reserves room for it — let the search and
+   archive buttons sit flush against the right edge of the window. */
+#mediaMainPage .podcast-playlist-bar { padding-right: 8px; }
 
 
 .scope-toggle button {
