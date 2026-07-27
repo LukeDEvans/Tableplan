@@ -35360,12 +35360,11 @@ function renderRecentEpisodes() {
   episodes.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
 
   const hasPlaylists = (state.podcastPlaylists || []).length > 0;
-  const countBar = `<div class="recent-window-bar"><span class="recent-window-count">${episodes.length} episode${episodes.length !== 1 ? "s" : ""} · ${escapeHtml(windowOpt.label.toLowerCase())}</span></div>`;
 
   if (!episodes.length) {
-    listEl.innerHTML = countBar + `<div class="article-empty"><p>No episodes in this time range.</p></div>`;
+    listEl.innerHTML = `<div class="article-empty"><p>No episodes in this time range.</p></div>`;
   } else {
-    listEl.innerHTML = countBar + episodes.map(e => podcastEpisodeRowHtml(e, { showShowTitle: true, hasPlaylists })).join("");
+    listEl.innerHTML = episodes.map(e => podcastEpisodeRowHtml(e, { showShowTitle: true, hasPlaylists })).join("");
     wirePodcastEpisodeRows(listEl);
   }
 }
