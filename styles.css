@@ -12762,9 +12762,11 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 /* Sender takes only the width its name needs (capped), so a short sender sits
    right up against the " - " and subject — no fixed gap. */
 .mail-row-from {
+  /* Show the full sender name — the subject shrinks first (see its higher
+     flex-shrink below); this keeps a tiny shrink only as an overflow safety
+     for pathologically long names on a narrow phone. */
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 55%;
   font-size: 0.855rem;
   font-weight: 400;
   overflow: hidden;
@@ -12780,7 +12782,9 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 .mail-row--unread .mail-row-count { color: var(--ink); }
 .mail-row-sep { color: var(--text-muted, #888); flex-shrink: 0; padding: 0 6px; font-size: 0.855rem; }
 .mail-row-subject {
-  flex: 1 1 auto;
+  /* High flex-shrink so the subject gives up its width (and ellipsizes) before
+     the sender name is ever shortened. */
+  flex: 1 8 auto;
   min-width: 0;
   color: var(--ink);
   overflow: hidden;
