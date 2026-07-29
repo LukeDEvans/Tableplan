@@ -10022,15 +10022,8 @@ function renderMailLabelTabs() {
     </div>`;
   }
 
-  const systemHtml = system.map((l) => {
-    const label = formatSystemLabel(l.id);
-    const active = currentMailbox === l.id;
-    return `<button class="mail-label-item${active ? " is-active" : ""}" type="button" data-mailbox="${escapeHtml(l.id)}" role="tab" aria-selected="${active}">
-      ${mailLabelIcon(l.id, l.type)}<span>${escapeHtml(label)}</span>
-    </button>`;
-  }).join("");
-
-  // Snoozed sits in the top section (after the system labels) with a clock icon.
+  // Snoozed sits in the top section with a clock icon, slotted right after
+  // Inbox (i.e. between Inbox and Sent) rather than among the user folders.
   const snoozedHtml = snoozedLabel ? (() => {
     const active = currentMailbox === snoozedLabel.id;
     return `<button class="mail-label-item${active ? " is-active" : ""}" type="button" data-mailbox="${escapeHtml(snoozedLabel.id)}" role="tab" aria-selected="${active}">
@@ -10038,13 +10031,24 @@ function renderMailLabelTabs() {
     </button>`;
   })() : "";
 
+  const systemHtml = system.map((l) => {
+    const label = formatSystemLabel(l.id);
+    const active = currentMailbox === l.id;
+    const btn = `<button class="mail-label-item${active ? " is-active" : ""}" type="button" data-mailbox="${escapeHtml(l.id)}" role="tab" aria-selected="${active}">
+      ${mailLabelIcon(l.id, l.type)}<span>${escapeHtml(label)}</span>
+    </button>`;
+    // Drop Snoozed in immediately after Inbox.
+    return l.id === "INBOX" ? btn + snoozedHtml : btn;
+  }).join("");
+
   const userHtml = roots.map((n) => renderNode(n, 0)).join("");
   const divider = system.length ? `<div class="mail-label-divider"></div>` : "";
   const newFolderHtml = `<button class="mail-label-item mail-new-folder-btn" type="button" id="mailNewFolderBtn">
     <svg viewBox="0 0 24 24" class="mail-label-icon" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg><span>New folder</span>
   </button>`;
 
-  navEl.innerHTML = systemHtml + snoozedHtml + divider + newFolderHtml + userHtml;
+  // If there's no Inbox item for some reason, still show Snoozed up top.
+  navEl.innerHTML = (system.some((l) => l.id === "INBOX") ? systemHtml : systemHtml + snoozedHtml) + divider + newFolderHtml + userHtml;
 
   navEl.querySelectorAll(".mail-label-item").forEach((btn) => {
     btn.addEventListener("click", () => {
