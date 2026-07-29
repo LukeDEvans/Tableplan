@@ -9044,7 +9044,8 @@ function showMediaApp(event) {
   activeAppArea = "media";
   hideAllPages();
   elements.mediaMainPage.hidden = false;
-  setWeekToolsMode("today");
+  // No date bar on Media (like Mail/Explore) — hide the week-tools row.
+  elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
   setPageTitle("Media");
   setPageHash("media");
