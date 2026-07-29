@@ -15042,7 +15042,17 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 #exploreMainPage .travel-detail-header,
 #mediaMainPage .media-all-header,
 #mediaMainPage .article-reader-topbar {
-  padding-right: 96px;
+  padding-right: 12px;
+  gap: 10px;
+}
+/* Reading an article is a focused view — hide the Media search/menu/notifications
+   top bar while the reader is open (the reader has its own Back button). */
+#mediaMainPage:has(#articleReaderPanel:not([hidden])) .media-topbar { display: none; }
+/* Icon-only play/pause + a clearly visible speed control (Stop, the text label,
+   and the trash button were removed to give the speed select room). */
+#mediaMainPage .article-reader-actions .listen-play-btn { width: 40px; height: 40px; }
+#mediaMainPage .article-reader-actions .listen-speed-select {
+  min-width: 64px; height: 36px; padding: 0 8px; font-size: 0.9rem;
 }
 /* The old top-right scope toggle is now hidden (it moved to Settings → View),
    so the podcast tab bar no longer reserves room for it — let the search and
