@@ -381,7 +381,8 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
   const appCfg = await loadAppConfig(serviceKey, userId);
   const mailAi = appCfg?.mailAiSettings || {};
   const testMode = aiTrashTestMode(mailAi);
-  const aiTrashLabelId = (enabledRecipeSources(mailAi).length && testMode)
+  const autoDeleteSimplefin = mailAi.autoDeleteSimplefin === true;
+  const aiTrashLabelId = ((enabledRecipeSources(mailAi).length || autoDeleteSimplefin) && testMode)
     ? await findAiTrashLabelId(gFetch, gToken)
     : null;
   const receiptCtx = anthropicKey ? await loadReceiptContext(serviceKey, userId, mailAi) : null;
@@ -405,6 +406,19 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
     const hdrs = headersMap(msg.payload?.headers);
     const fromSelf = tokens.email && (hdrs.from || "").toLowerCase().includes(tokens.email.toLowerCase());
     if (fromSelf) return { suggestions: [] };
+
+    // Opt-in: auto-delete SimpleFIN Bridge's "Transaction data accessed from
+    // new IP" alerts, which fire on every account sync. Matched narrowly (this
+    // sender + this subject) so no other SimpleFIN mail is ever touched.
+    if (autoDeleteSimplefin &&
+        /(^|[<@.])simplefin\.org\b/i.test(hdrs.from || "") &&
+        /transaction data accessed/i.test(hdrs.subject || "")) {
+      const filed = await disposeProcessedEmail(gFetch, gToken, messageId, { testMode, aiTrashLabelId });
+      if (!filed) return { suggestions: [], retry: true }; // e.g. AI-trash label missing — try again next sweep
+      console.log(`[simplefin-autodelete] disposed ${messageId} (${testMode ? "AI trash" : "trash"})`);
+      return { suggestions: [] };
+    }
+
     const rawBody = extractBody(msg.payload) || "";
 
     // Recipe digests: collect recipe links and file the email away right away
@@ -620,12 +634,11 @@ async function findOrCreateSnoozedLabel(gToken) {
 }
 
 async function modifyWholeThread(gToken, threadId, addLabelIds, removeLabelIds) {
-  const tr = await gFetch(gToken, `/threads/${encodeURIComponent(threadId)}?format=minimal`);
-  if (!tr.ok) throw new Error(`Thread fetch failed (${tr.status})`);
-  const thread = await tr.json();
-  await Promise.all((thread.messages || []).map((m) =>
-    gFetch(gToken, `/messages/${m.id}/modify`, "POST", { addLabelIds, removeLabelIds })
-  ));
+  // Atomic thread-level modify — one request for every message in the thread,
+  // so a wake/unsnooze can't partially apply (which used to strand a thread
+  // half in/out of the inbox).
+  const r = await gFetch(gToken, `/threads/${encodeURIComponent(threadId)}/modify`, "POST", { addLabelIds, removeLabelIds });
+  if (!r.ok) throw new Error(`Thread modify failed (${r.status})`);
 }
 
 async function processDueSnoozes(serviceKey) {

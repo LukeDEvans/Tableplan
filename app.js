@@ -9107,6 +9107,7 @@ function showMailApp(event, hashParams) {
 
 let currentMailbox = "INBOX";
 let mailGmailConnected = false;
+let mailAccountEmail = ""; // this account's own address, to exclude self on reply-all
 let mailStatusPromise = null; // pre-fetched status so Mail page loads instantly
 let mailOpenThreadId = null;
 // Set by renderMailThread to the current thread's compose opener so the "…"
@@ -9290,6 +9291,14 @@ function warmMailList() {
   mailListPreload = { promise: callGmailApi({ action: "list", labelIds: ["INBOX"], maxResults: MAIL_PAGE_SIZE }), at: Date.now(), labelId: "INBOX" };
 }
 
+// Drop the warm inbox snapshot after any action that changes what's in the
+// inbox (move/snooze/archive/trash). warmMailList re-captures on every token
+// refresh, and a snapshot taken inside Gmail's brief label-propagation window
+// still lists the just-moved thread — replaying it would resurrect the row.
+function invalidateMailListPreload() {
+  mailListPreload = null;
+}
+
 function invalidateMailThreadCache(threadId) {
   if (threadId) mailThreadCache.delete(threadId);
 }
@@ -9355,6 +9364,7 @@ async function initMailPage(hashParams) {
   const status = await (mailStatusPromise ?? callGmailApi({ action: "status" }));
   mailStatusPromise = null;
   mailGmailConnected = Boolean(status?.connected);
+  if (status?.email) mailAccountEmail = status.email;
   const badge = document.getElementById("mailAccountBadge");
   if (badge && status?.email) badge.textContent = status.email;
   renderMailConnectState();
@@ -9932,7 +9942,10 @@ function renderMailLabelTabs() {
   if (!navEl || !mailLabels.length) return;
 
   const system = mailLabels.filter((l) => l.type === "system" && l.id !== "STARRED");
-  const user = mailLabels.filter((l) => l.type === "user");
+  // "Snoozed" is a real user label under the hood, but it belongs in the top
+  // (system) section with its own snooze icon — not down among the folders.
+  const snoozedLabel = mailLabels.find((l) => l.type === "user" && (l.name || "").toLowerCase() === "snoozed");
+  const user = mailLabels.filter((l) => l.type === "user" && l !== snoozedLabel);
 
   // Build tree from user labels — Gmail uses "/" as hierarchy separator.
   // Nest under the deepest existing real-label prefix; display name strips that prefix.
@@ -10017,13 +10030,21 @@ function renderMailLabelTabs() {
     </button>`;
   }).join("");
 
+  // Snoozed sits in the top section (after the system labels) with a clock icon.
+  const snoozedHtml = snoozedLabel ? (() => {
+    const active = currentMailbox === snoozedLabel.id;
+    return `<button class="mail-label-item${active ? " is-active" : ""}" type="button" data-mailbox="${escapeHtml(snoozedLabel.id)}" role="tab" aria-selected="${active}">
+      <svg viewBox="0 0 24 24" class="mail-label-icon" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/></svg><span>Snoozed</span>
+    </button>`;
+  })() : "";
+
   const userHtml = roots.map((n) => renderNode(n, 0)).join("");
   const divider = system.length ? `<div class="mail-label-divider"></div>` : "";
   const newFolderHtml = `<button class="mail-label-item mail-new-folder-btn" type="button" id="mailNewFolderBtn">
     <svg viewBox="0 0 24 24" class="mail-label-icon" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg><span>New folder</span>
   </button>`;
 
-  navEl.innerHTML = systemHtml + divider + newFolderHtml + userHtml;
+  navEl.innerHTML = systemHtml + snoozedHtml + divider + newFolderHtml + userHtml;
 
   navEl.querySelectorAll(".mail-label-item").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -10508,6 +10529,9 @@ function renderMailThread(thread) {
             <span id="mailReplyToSpan">${escapeHtml(last?.from || "")}</span>
             <input class="mail-reply-to-input" id="mailReplyToInput" type="email" placeholder="recipient@example.com" hidden />
           </div>
+          <div class="mail-reply-to mail-reply-cc" id="mailReplyCcRow" hidden>Cc:
+            <input class="mail-reply-to-input" id="mailReplyCcInput" type="text" placeholder="cc@example.com" />
+          </div>
           <div class="mail-ai-instruction-row" id="mailAiInstructionRow" hidden>
             <input class="mail-ai-instruction" id="mailAiInstruction" placeholder="Optional: tone or focus (e.g. 'be brief', 'ask about Thursday')" />
             <button class="secondary-btn" type="button" id="mailAiGenerateBtn">Generate</button>
@@ -10586,8 +10610,13 @@ function renderMailThread(thread) {
     document.getElementById("mailAiInstructionRow").hidden = true;
     const toSpan = document.getElementById("mailReplyToSpan");
     const toInput = document.getElementById("mailReplyToInput");
+    const ccRow = document.getElementById("mailReplyCcRow");
+    const ccInput = document.getElementById("mailReplyCcInput");
     const bodyEl = document.getElementById("mailReplyBody");
     const fwdNote = document.getElementById("mailForwardNote");
+    // Cc only participates in reply-all; keep it hidden/empty otherwise.
+    if (ccRow) ccRow.hidden = mode !== "reply-all";
+    if (ccInput && mode !== "reply-all") ccInput.value = "";
     if (mode === "forward") {
       toSpan.hidden = true;
       toInput.hidden = false;
@@ -10616,6 +10645,7 @@ function renderMailThread(thread) {
       toSpan.hidden = false;
       toInput.hidden = true;
       if (fwdNote) fwdNote.hidden = true;
+      if (mode === "reply-all" && ccInput) ccInput.value = computeReplyAllCc(last).join(", ");
       bodyEl.placeholder = "Write your reply…";
       bodyEl.focus();
     }
@@ -10676,6 +10706,7 @@ async function markMailUnread(thread) {
 
 function afterMailThreadAction(threadId) {
   invalidateMailThreadCache(threadId);
+  invalidateMailListPreload();
   elements.mailList.querySelectorAll(`[data-thread-id="${CSS.escape(threadId)}"]`).forEach((el) => el.remove());
   elements.mailThread.hidden = true;
   mailOpenThreadId = null;
@@ -10693,6 +10724,11 @@ function showMailMoreMenu(thread, lastMsg) {
       <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
       Reply
     </button>
+    ${mailThreadHasOtherRecipients(lastMsg) ? `
+    <button class="mail-more-option" type="button" data-action="reply-all">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/></svg>
+      Reply all
+    </button>` : ""}
     <button class="mail-more-option" type="button" data-action="forward">
       <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg>
       Forward
@@ -10729,6 +10765,7 @@ function showMailMoreMenu(thread, lastMsg) {
     menu.remove();
     const action = opt.dataset.action;
     if (action === "reply") mailReplyForwardTrigger?.("reply");
+    else if (action === "reply-all") mailReplyForwardTrigger?.("reply-all");
     else if (action === "forward") mailReplyForwardTrigger?.("forward");
     else if (action === "spam") spamMailThread(thread);
     else if (action === "unread") markMailUnread(thread);
@@ -10775,6 +10812,7 @@ function emailToReaderHtml(html) {
 
   const out = [];
   const seen = new Set();
+  const seenImg = new Set();
   let imgCount = 0;
 
   const inlineHtml = (el) => {
@@ -10814,6 +10852,11 @@ function emailToReaderHtml(html) {
   const pushImg = (img) => {
     const src = img.getAttribute("src") || "";
     if (!src || src.toLowerCase().startsWith("javascript:") || imgCount >= 20) return;
+    // Guard against double emission: a wrapper with no block child emits its
+    // images via querySelectorAll (to catch <a><img></a>) AND is then walked,
+    // whose loop pushes each direct <img> again. Dedupe by src.
+    if (seenImg.has(src)) return;
+    seenImg.add(src);
     imgCount++;
     out.push('<img src="' + escapeHtml(src) + '" alt="' + escapeHtml(img.getAttribute("alt") || "") + '" style="max-width:100%;height:auto" />');
   };
@@ -10890,6 +10933,7 @@ function removeMailRowWithUndo(row, threadId, verb, forward, undo) {
   row.remove();
   if (mailOpenThreadId === threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
   invalidateMailThreadCache(threadId);
+  invalidateMailListPreload();
   callGmailApi({ action: "move", threadId, ...forward });
   showMailToast(verb, async () => {
     invalidateMailThreadCache(threadId);
@@ -11552,6 +11596,51 @@ async function generateAiDraft(thread) {
 let mailComposeMode = "reply";
 let mailForwardOriginal = null;
 
+// Split an address-list header ("Name <a@x>, b@y") into individual addresses,
+// keeping display names intact. Commas inside quoted names are respected.
+function splitAddressList(header) {
+  if (!header) return [];
+  const out = [];
+  let cur = "", depth = 0, quoted = false;
+  for (const ch of String(header)) {
+    if (ch === '"') quoted = !quoted;
+    if (!quoted && (ch === "<")) depth++;
+    if (!quoted && (ch === ">")) depth = Math.max(0, depth - 1);
+    if (ch === "," && !quoted && depth === 0) { if (cur.trim()) out.push(cur.trim()); cur = ""; }
+    else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
+// The bare email out of a "Name <email>" (or plain) address.
+function bareEmail(addr) {
+  const m = String(addr).match(/<([^>]+)>/);
+  return (m ? m[1] : String(addr)).trim().toLowerCase();
+}
+
+// True when a reply-all would reach anyone beyond just the original sender.
+function mailThreadHasOtherRecipients(lastMsg) {
+  return computeReplyAllCc(lastMsg).length > 0;
+}
+
+// Everyone on To + Cc of the original, minus the sender (already the To of the
+// reply) and minus this account. Returns display-form addresses.
+function computeReplyAllCc(lastMsg) {
+  if (!lastMsg) return [];
+  const self = (mailAccountEmail || "").toLowerCase();
+  const sender = bareEmail(lastMsg.from || "");
+  const seen = new Set([sender, self].filter(Boolean));
+  const out = [];
+  [...splitAddressList(lastMsg.to || ""), ...splitAddressList(lastMsg.cc || "")].forEach((addr) => {
+    const key = bareEmail(addr);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(addr);
+  });
+  return out;
+}
+
 async function sendMailReply(thread, lastMsg) {
   const note = document.getElementById("mailReplyBody")?.value?.trim() || "";
   if (!note && mailComposeMode !== "forward") return;
@@ -11577,9 +11666,11 @@ async function sendMailReply(thread, lastMsg) {
     payload = { action: "send", to, subject, body: plain, html, forwardFrom: lastMsg?.id };
   } else {
     const subject = lastMsg?.subject?.startsWith("Re:") ? lastMsg.subject : `Re: ${lastMsg?.subject || ""}`;
+    const cc = mailComposeMode === "reply-all" ? (document.getElementById("mailReplyCcInput")?.value?.trim() || "") : "";
     payload = {
       action: "send",
       to: lastMsg?.from || "",
+      cc,
       subject,
       body,
       inReplyTo: lastMsg?.messageId,
@@ -11672,6 +11763,11 @@ let lastGmailApiError = null;
 
 async function callGmailApi(body) {
   lastGmailApiError = null;
+  // Any action that changes inbox membership invalidates the warm inbox
+  // snapshot, so a stale preload can never resurrect a moved/snoozed row.
+  if (body && (body.action === "move" || body.action === "snooze" || body.action === "unsnooze")) {
+    invalidateMailListPreload();
+  }
   const session = supabaseClient ? await supabaseClient.auth.getSession() : null;
   const token = session?.data?.session?.access_token;
   if (!token) { lastGmailApiError = "Not signed in."; return null; }
@@ -17176,6 +17272,12 @@ const MAIL_AI_FEATURES = [
     defaultOn: true,
     label: "“The world in brief” → article",
     desc: "Same for The Economist's daily briefing — saved as a listenable article on the Media page, email filed away."
+  },
+  {
+    key: "autoDeleteSimplefin",
+    defaultOn: false,
+    label: "Auto-delete SimpleFIN access alerts",
+    desc: "SimpleFIN Bridge sends a “Transaction data accessed from new IP” email every time the app syncs your accounts. When on, each of these is moved to Trash automatically as it arrives (subject to the testing setting below). Off by default."
   },
   {
     key: "aiTrashTestMode",

@@ -273,7 +273,7 @@ exports.handler = async (event) => {
   }
 
   if (action === "send") {
-    const { to, subject, body: emailBody, html, inReplyTo, references, threadId, forwardFrom } = body;
+    const { to, cc, subject, body: emailBody, html, inReplyTo, references, threadId, forwardFrom } = body;
     if (!to || (!emailBody && !html)) return json(400, { error: "to and body required" });
 
     // Forwarding: fetch the original message's attachments (regular + inline
@@ -311,7 +311,7 @@ exports.handler = async (event) => {
       if (finalHtml) finalHtml += `<br><p style="color:#5f6368;font-size:12px">[${note}]</p>`;
     }
 
-    const mimeOpts = { from: tokens.email, to, subject, body: finalBody, html: finalHtml, inReplyTo, references, attachments };
+    const mimeOpts = { from: tokens.email, to, cc, subject, body: finalBody, html: finalHtml, inReplyTo, references, attachments };
 
     let r;
     if (attachments.length) {
@@ -369,12 +369,12 @@ exports.handler = async (event) => {
   if (action === "move") {
     const { threadId, addLabelIds = [], removeLabelIds = [] } = body;
     if (!threadId) return json(400, { error: "threadId required" });
-    const threadRes = await gFetch(gToken, `/threads/${threadId}?format=minimal`);
-    if (!threadRes.ok) return json(502, { error: "Thread fetch failed." });
-    const thread = await threadRes.json();
-    await Promise.all((thread.messages || []).map((m) =>
-      gFetch(gToken, `/messages/${m.id}/modify`, "POST", { addLabelIds, removeLabelIds })
-    ));
+    // Atomic thread-level modify: applies the label change to every message in
+    // one request. The old per-message Promise.all could partially fail (a
+    // single rate-limited /messages/modify), leaving some messages with INBOX
+    // so the thread kept returning to the inbox.
+    const r = await gFetch(gToken, `/threads/${encodeURIComponent(threadId)}/modify`, "POST", { addLabelIds, removeLabelIds });
+    if (!r.ok) { const e = await r.json().catch(() => ({})); return json(502, { error: e.error?.message || "Thread modify failed." }); }
     return json(200, { ok: true });
   }
 
@@ -385,12 +385,10 @@ exports.handler = async (event) => {
     const wake = new Date(wakeAt || 0);
     if (!threadId || !(wake.getTime() > Date.now())) return json(400, { error: "threadId and a future wakeAt required" });
     const labelId = await findOrCreateSnoozedLabel(gToken);
-    const threadRes = await gFetch(gToken, `/threads/${encodeURIComponent(threadId)}?format=minimal`);
-    if (!threadRes.ok) return json(502, { error: "Thread fetch failed." });
-    const thread = await threadRes.json();
-    await Promise.all((thread.messages || []).map((m) =>
-      gFetch(gToken, `/messages/${m.id}/modify`, "POST", { addLabelIds: labelId ? [labelId] : [], removeLabelIds: ["INBOX"] })
-    ));
+    // Atomic thread modify (see the move action): partial per-message failures
+    // used to leave the thread half in the inbox after snoozing.
+    const r = await gFetch(gToken, `/threads/${encodeURIComponent(threadId)}/modify`, "POST", { addLabelIds: labelId ? [labelId] : [], removeLabelIds: ["INBOX"] });
+    if (!r.ok) { const e = await r.json().catch(() => ({})); return json(502, { error: e.error?.message || "Snooze failed." }); }
     const snoozes = (await loadSnoozes(serviceKey, userId)).filter((s) => s.threadId !== threadId);
     snoozes.push({ threadId, wakeAt: wake.toISOString(), snoozedAt: new Date().toISOString() });
     await saveSnoozes(serviceKey, userId, snoozes);
@@ -435,6 +433,7 @@ function normalizeMessage(msg) {
     threadId: msg.threadId,
     from: hdrs.from || "",
     to: hdrs.to || "",
+    cc: hdrs.cc || "",
     subject: hdrs.subject || "(no subject)",
     date: hdrs.date || "",
     internalDate: msg.internalDate,
@@ -472,14 +471,16 @@ function collectAttachmentParts(payload, out = []) {
 //   + html                     → multipart/alternative
 //   + inline (cid) images      → multipart/related wrapping the alternative
 //   + regular attachments      → multipart/mixed wrapping everything
-function buildMimeMessage({ from, to, subject, body, html, inReplyTo, references, attachments = [] }) {
+function buildMimeMessage({ from, to, cc, subject, body, html, inReplyTo, references, attachments = [] }) {
   const CRLF = "\r\n";
   const bnd = (p) => `live-${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   const b64Std = (b64url) => String(b64url || "").replace(/-/g, "+").replace(/_/g, "/");
   const wrap76 = (s) => s.replace(/(.{76})/g, `$1${CRLF}`);
   const safeName = (n) => String(n || "attachment").replace(/["\r\n]/g, "");
 
-  const topHeaders = [`From: ${from}`, `To: ${to}`, `Subject: ${subject}`, `MIME-Version: 1.0`];
+  const topHeaders = [`From: ${from}`, `To: ${to}`];
+  if (cc && String(cc).trim()) topHeaders.push(`Cc: ${String(cc).trim()}`);
+  topHeaders.push(`Subject: ${subject}`, `MIME-Version: 1.0`);
   if (inReplyTo) topHeaders.push(`In-Reply-To: ${inReplyTo}`);
   if (references) topHeaders.push(`References: ${references}`);
 

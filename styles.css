@@ -12602,6 +12602,37 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   .mail-row-front .mail-row-right { min-width: 0; }
 }
 
+/* Desktop: Gmail-style folder rail. The sidebar sits as a narrow icons-only
+   rail and floats open to the full menu while hovered — an overlay, so the
+   message list never shifts. The hamburger (.is-collapsed) hides it entirely. */
+@media (min-width: 861px) {
+  .mail-layout { position: relative; padding-left: 60px; transition: padding-left 0.18s ease; }
+  .mail-layout:has(.mail-sidebar.is-collapsed) { padding-left: 0; }
+
+  .mail-sidebar {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    width: 60px;
+    z-index: 15;
+    background: var(--paper, #fff);
+    padding: 8px 0;
+    overflow-y: auto; overflow-x: hidden;
+    transition: width 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+  }
+  .mail-sidebar.is-collapsed { transform: translateX(-100%); }
+
+  /* Hover the rail → expand to the full menu, floating over the list. */
+  .mail-sidebar:hover { width: 256px; box-shadow: 4px 0 18px rgba(0,0,0,0.13); }
+
+  /* Rail state (not hovered): icons only, centered. */
+  .mail-sidebar:not(:hover) .mail-label-item > span,
+  .mail-sidebar:not(:hover) .mail-label-folder-chevron,
+  .mail-sidebar:not(:hover) .mail-label-children,
+  .mail-sidebar:not(:hover) .mail-label-divider { display: none; }
+  .mail-sidebar:not(:hover) .mail-label-item,
+  .mail-sidebar:not(:hover) .mail-label-folder-row { padding-left: 0; justify-content: center; gap: 0; }
+  .mail-sidebar:not(:hover) .mail-compose-btn { margin: 4px 10px 12px; padding: 14px 0; justify-content: center; gap: 0; font-size: 0; }
+}
+
 /* List toolbar: select-all · refresh, and range + pager on the right */
 .mail-list-toolbar {
   display: flex;
@@ -12718,6 +12749,9 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   .mail-row:hover .mail-row-front { background: color-mix(in srgb, var(--ink) 4%, transparent); box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
   .mail-row--unread:hover .mail-row-front { background: color-mix(in srgb, var(--ink) 5%, transparent); }
   .mail-row:hover .mail-row-date { display: none; }
+  /* Hide the attachment paperclip too — it sits in flow next to the date and
+     otherwise shows through under the (absolutely-positioned) action icons. */
+  .mail-row:hover .mail-row-clip { display: none; }
   .mail-row:hover .mail-row-actions { display: flex; z-index: 2; }
 }
 
