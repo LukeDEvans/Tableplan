@@ -33190,11 +33190,7 @@ function wireMediaTabs() {
     showMailToast("Media notifications are coming soon."); // placeholder until media notifications land
   });
 
-  document.getElementById("mediaAllResetBtn")?.addEventListener("click", () => {
-    state.mediaAllPinnedOrder = [];
-    persist();
-    renderMediaAllList();
-  });
+  // (Reset-order moved into the Playlist settings modal.)
 
   document.getElementById("articleReaderCloseBtn")?.addEventListener("click", closeArticleReader);
   document.getElementById("articleReaderDeleteBtn")?.addEventListener("click", deleteOpenArticle);
@@ -34012,9 +34008,9 @@ function showPodcastPriorityModal() {
   overlay.id = "podcastPriorityOverlay";
   overlay.className = "priority-overlay";
   overlay.innerHTML = `
-    <div class="priority-modal" role="dialog" aria-modal="true" aria-label="Playlist Hierarchy">
+    <div class="priority-modal" role="dialog" aria-modal="true" aria-label="Playlist">
       <div class="priority-modal-header">
-        <h2 class="priority-modal-title">Playlist Hierarchy</h2>
+        <h2 class="priority-modal-title">Playlist</h2>
         <button class="icon-btn" type="button" id="closePodcastPriorityBtn" aria-label="Close">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
@@ -34034,6 +34030,7 @@ function showPodcastPriorityModal() {
       </div>
       <div class="priority-tiers-body" id="priorityTiersBody"></div>
       <div class="priority-modal-footer">
+        <button class="secondary-btn" type="button" id="resetPlaylistOrderBtn" style="margin-right:auto"${(state.mediaAllPinnedOrder || []).length ? "" : " hidden"}>Reset manual order</button>
         <button class="secondary-btn" type="button" id="cancelPodcastPriorityBtn">Cancel</button>
         <button class="primary-btn" type="button" id="savePodcastPriorityBtn">Save</button>
       </div>
@@ -34292,6 +34289,17 @@ function showPodcastPriorityModal() {
   overlay.querySelector("#cancelPodcastPriorityBtn").addEventListener("click", () => overlay.remove());
   overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
 
+  // Clearing the manual drag order lets the Playlist follow this hierarchy
+  // again (a pinned order otherwise overrides tiers). Lives here now instead of
+  // on the playlist toolbar.
+  overlay.querySelector("#resetPlaylistOrderBtn")?.addEventListener("click", (ev) => {
+    state.mediaAllPinnedOrder = [];
+    persist();
+    ev.currentTarget.hidden = true;
+    if (activeMediaTab === "queue") renderMediaAllList();
+    showMailToast("Playlist order reset");
+  });
+
   overlay.querySelector("#savePodcastPriorityBtn").addEventListener("click", () => {
     readCurrentAssignments();
     state.podcastShowTiers = { ...ms.showTiers };
@@ -34299,9 +34307,13 @@ function showPodcastPriorityModal() {
     state.podcastPrioritySort = ms.sortOrder;
     state.podcastPlaylistWindow = ms.playlistWindow;
     state.publicationTiers = { ...ms.publicationTiers };
+    // A changed hierarchy should re-sort the Playlist, but a pinned manual
+    // order would mask it — so applying the hierarchy clears the manual order.
+    state.mediaAllPinnedOrder = [];
     persist();
     overlay.remove();
     if (activePodcastTab === "playlist") renderPodcastQueueEpisodes();
+    if (activeMediaTab === "queue") renderMediaAllList();
   });
 }
 
@@ -34484,41 +34496,50 @@ function renderMediaAllList() {
   const listEl = document.getElementById("mediaAllList");
   if (!listEl) return;
   const items = getAllListenList();
-  document.getElementById("mediaAllResetBtn").hidden = !(state.mediaAllPinnedOrder || []).length;
 
   if (!items.length) {
     listEl.innerHTML = `<div class="article-empty"><p>Nothing to listen to right now.</p><p>Subscribe to podcasts, save articles, or add books — they all blend here.</p></div>`;
     return;
   }
 
-  // Same row markup as the podcast queue: logos, type badges, actions.
-  // Tiering silently sorts the list (via getAutoPlaylist) — no tier headers.
+  // Row: art (→ show / open), date over title, and a play control + duration
+  // under the title (Apple-Podcasts style). Tiering silently sorts the list
+  // (via getAutoPlaylist) — no tier headers, no show-name/type text.
   const progress = state.podcastProgress || {};
   let html = "";
   items.forEach((e) => {
-    const badge = e.type === "article" ? "Article" : e.type === "book" ? "Book" : "";
-    const dur = e.type !== "article" && e.type !== "book" ? (e.duration || progress[e.id]?.duration || 0) : 0;
+    const isPod = e.type === "podcast";
+    const isArt = e.type === "article";
+    const isBook = e.type === "book";
+    const dur = (!isArt && !isBook) ? (e.duration || progress[e.id]?.duration || 0) : 0;
     const art = e.showArt
-      ? `<img class="media-all-art" src="${escapeHtml(e.showArt)}" alt="" width="38" height="38" loading="lazy" onerror="this.style.display='none'">`
-      : `<span class="media-all-art media-all-art--icon">${e.type === "book" ? "📚" : e.type === "article" ? "📰" : "🎧"}</span>`;
+      ? `<img class="media-all-art" src="${escapeHtml(e.showArt)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+      : `<span class="media-all-art media-all-art--icon">${isBook ? "📚" : isArt ? "📰" : "🎧"}</span>`;
+    const saved = isPod ? (state.podcastSaved || []).includes(e.id)
+      : isArt ? !!(state.savedArticles || []).find((a) => a.id === e.id && a.pinned)
+      : false;
     html += `
-    <div class="article-row podcast-episode-row podcast-draggable-row${e.id === mediaAllQueueId ? " article-row--active" : ""}" data-all-id="${escapeHtml(e.id)}" data-all-type="${escapeHtml(e.type)}"${e.type === "podcast" ? ` data-episode-id="${escapeHtml(e.id)}"` : ""} draggable="true" role="button" tabindex="0">
-      ${art}
+    <div class="article-row playlist-row podcast-episode-row podcast-draggable-row${e.id === mediaAllQueueId ? " article-row--active" : ""}" data-all-id="${escapeHtml(e.id)}" data-all-type="${escapeHtml(e.type)}"${isPod ? ` data-episode-id="${escapeHtml(e.id)}"` : ""}${e.showId ? ` data-show-id="${escapeHtml(e.showId)}"` : ""} draggable="true" role="button" tabindex="0">
+      <button class="playlist-art-btn" type="button" data-all-art="${escapeHtml(e.id)}" tabindex="-1" aria-label="${isPod ? "Go to show" : "Open"}">${art}</button>
       <div class="article-row-main">
-        <div class="article-row-title">${escapeHtml(e.title || "")}</div>
-        <div class="article-row-meta">
-          <span class="article-row-pub">${escapeHtml(e.showTitle || "")}</span>
-          ${e.pubDate ? `<span class="article-row-date">${escapeHtml(formatArticleDate(e.pubDate))}</span>` : ""}
-          ${dur ? `<span class="article-row-date">${formatPodcastDuration(dur)}</span>` : ""}
-          ${badge ? `<span class="playlist-article-badge">${badge}</span>` : ""}
-        </div>
+        ${e.pubDate ? `<div class="playlist-row-date">${escapeHtml(formatArticleDate(e.pubDate))}</div>` : ""}
+        <div class="article-row-title playlist-row-title">${escapeHtml(e.title || "")}</div>
+        ${!isBook ? `<div class="playlist-play-row">
+          <button class="playlist-play-btn" type="button" data-all-play="${escapeHtml(e.id)}" aria-label="Play">
+            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4" fill="currentColor"/></svg>
+          </button>
+          ${dur ? `<span class="playlist-play-dur">${formatPodcastDuration(dur)}</span>` : ""}
+        </div>` : ""}
       </div>
       <div class="article-row-actions">
-        ${e.type === "book"
+        ${isBook
           ? `<button class="article-row-action-btn" type="button" title="Open" aria-label="Open" data-all-open="${escapeHtml(e.id)}">${ldeIcon("link", { size: 16 })}</button>`
           : `
-          <button class="article-row-action-btn" type="button" title="Mark as played" aria-label="Mark as played" data-all-played="${escapeHtml(e.id)}">
+          <button class="article-row-action-btn" type="button" title="Mark as ${isArt ? "read" : "played"}" aria-label="Mark as ${isArt ? "read" : "played"}" data-all-played="${escapeHtml(e.id)}">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+          </button>
+          <button class="article-row-action-btn${saved ? " is-active" : ""}" type="button" title="${saved ? "Saved" : "Save"}" aria-label="Save" data-all-save="${escapeHtml(e.id)}">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
           </button>
           <button class="article-row-action-btn" type="button" title="Remove from playlist" aria-label="Remove from playlist" data-all-remove="${escapeHtml(e.id)}">
             ${ldeIcon("close", { size: 16 })}
@@ -34528,30 +34549,60 @@ function renderMediaAllList() {
   });
   listEl.innerHTML = html;
 
+  const rowType = (el) => el.closest("[data-all-type]")?.dataset.allType;
+  // Row body → the item's "page": podcast episode page, article reader, or book.
   listEl.querySelectorAll("[data-all-id]").forEach((row) => {
     row.addEventListener("click", (ev) => {
-      if (ev.target.closest(".article-row-actions, .playlist-drag-handle")) return;
-      if (row.dataset.allType === "book") openMediaAllBook(row.dataset.allId);
-      else playAllQueueFrom(row.dataset.allId);
+      if (ev.target.closest(".article-row-actions, .playlist-drag-handle, .playlist-art-btn, .playlist-play-btn")) return;
+      const id = row.dataset.allId;
+      if (row.dataset.allType === "book") openMediaAllBook(id);
+      else if (row.dataset.allType === "article") openArticle(id, "articleList");
+      else openPodcastEpisode(id);
     });
   });
+  // Art → podcast's show page (article/book: open the item).
+  listEl.querySelectorAll("[data-all-art]").forEach((b) =>
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const id = b.dataset.allArt;
+      const type = rowType(b);
+      if (type === "podcast") {
+        const showId = b.closest("[data-show-id]")?.dataset.showId;
+        if (showId) { activeMediaTab = "podcasts"; switchMediaTab("podcasts"); activePodcastTab = "shows"; renderPodcastPlaylistBar(); openPodcastShow(showId); }
+        else openPodcastEpisode(id);
+      } else if (type === "article") openArticle(id, "articleList");
+      else openMediaAllBook(id);
+    }));
+  // Play control → start playing (stays on the playlist for articles).
+  listEl.querySelectorAll("[data-all-play]").forEach((b) =>
+    b.addEventListener("click", (ev) => { ev.stopPropagation(); playAllQueueFrom(b.dataset.allPlay); }));
   listEl.querySelectorAll("[data-all-open]").forEach((b) =>
     b.addEventListener("click", (ev) => { ev.stopPropagation(); openMediaAllBook(b.dataset.allOpen); }));
   listEl.querySelectorAll("[data-all-played]").forEach((b) =>
     b.addEventListener("click", (ev) => {
       ev.stopPropagation();
       const id = b.dataset.allPlayed;
-      const type = b.closest("[data-all-type]")?.dataset.allType;
-      if (type === "article") markArticleRead(id);
+      if (rowType(b) === "article") markArticleRead(id);
       else setPodcastEpisodePlayed(id, true);
+      renderMediaAllList();
+    }));
+  listEl.querySelectorAll("[data-all-save]").forEach((b) =>
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const id = b.dataset.allSave;
+      if (rowType(b) === "article") {
+        const a = (state.savedArticles || []).find((x) => x.id === id);
+        if (a) { a.pinned = !a.pinned; persist(); showMailToast(a.pinned ? "Saved" : "Removed from saved"); }
+      } else {
+        toggleEpisodeSaved(id);
+      }
       renderMediaAllList();
     }));
   listEl.querySelectorAll("[data-all-remove]").forEach((b) =>
     b.addEventListener("click", (ev) => {
       ev.stopPropagation();
       const id = b.dataset.allRemove;
-      const type = b.closest("[data-all-type]")?.dataset.allType;
-      if (type === "article") {
+      if (rowType(b) === "article") {
         markArticleRead(id);
       } else {
         if (!state.podcastAutoSkipped) state.podcastAutoSkipped = [];
@@ -34769,8 +34820,10 @@ function playAllQueueFrom(id) {
 
 function playMediaAllItem(item) {
   if (item.type === "article") {
+    // Play in place — stay on the playlist. The reader opens only when the row
+    // itself is tapped (or via the now-playing bar's open button).
     const article = (state.savedArticles || []).find((a) => a.id === item.id);
-    if (article) { openArticle(article.id, "articleList"); startListenTTS(article); }
+    if (article) startListenTTS(article);
   } else {
     openPodcastEpisode(item.id); // plays + shows the player; registers the queue-advance handler
   }
