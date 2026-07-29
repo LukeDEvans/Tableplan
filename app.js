@@ -9331,7 +9331,24 @@ async function prefetchMailThreads(messages) {
   }, { passive: true });
 })()
 
+// Keep the "start–end of total" toolbar in sync no matter which code path
+// removes a row (row-hover archive/trash, open-thread actions, bulk actions,
+// snooze, label move, undo re-insert). Rather than teach every site to update
+// the count, watch the list for row add/remove and recompute.
+let mailListObserver = null;
+function ensureMailListObserver() {
+  if (mailListObserver || !elements.mailList) return;
+  let queued = false;
+  mailListObserver = new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; renderMailListToolbar(); });
+  });
+  mailListObserver.observe(elements.mailList, { childList: true });
+}
+
 async function initMailPage(hashParams) {
+  ensureMailListObserver();
   if (hashParams?.get("gm_error")) {
     alert("Gmail connection failed. Please try again.");
   }
@@ -9651,16 +9668,22 @@ function renderMailListToolbar() {
 
   const rangeEl = document.getElementById("mailListRange");
   if (rangeEl) {
-    if (!mailLastPageCount) {
+    // Count the rows actually present now rather than the count we fetched, so
+    // the range stays correct as messages are archived/trashed/snoozed/moved
+    // out of the list without a re-fetch. Removed rows also shrink the total.
+    const visible = elements.mailList.querySelectorAll(".mail-row[data-thread-id]").length;
+    const removed = Math.max(0, mailLastPageCount - visible);
+    if (!visible) {
       rangeEl.textContent = "";
     } else {
       const start = mailPageIndex * MAIL_PAGE_SIZE + 1;
-      const end = start + mailLastPageCount - 1;
+      const end = start + visible - 1;
+      const total = (typeof mailTotalEstimate === "number") ? mailTotalEstimate - removed : null;
       // Show "of N" only with a real total (the folder's threadsTotal). Search
       // results have no reliable total, so just show the range rather than a
       // meaningless "N+".
-      rangeEl.textContent = (typeof mailTotalEstimate === "number" && mailTotalEstimate >= end)
-        ? `${start.toLocaleString()}–${end.toLocaleString()} of ${mailTotalEstimate.toLocaleString()}`
+      rangeEl.textContent = (typeof total === "number" && total >= end)
+        ? `${start.toLocaleString()}–${end.toLocaleString()} of ${total.toLocaleString()}`
         : `${start.toLocaleString()}–${end.toLocaleString()}`;
     }
   }
@@ -11323,7 +11346,11 @@ function buildMailBodyFrame(html) {
   iframe.setAttribute("scrolling", "no");
   iframe.srcdoc =
     '<!doctype html><html><head><meta charset="utf-8"><base target="_blank">' +
-    '<style>html,body{margin:0;padding:0}' +
+    // Force light rendering: the pane background is white, so let the OS/UA
+    // darken nothing (and pair with the dark-media-query neutralizing in
+    // sanitizeMailFrameHtml so email text never turns white-on-white).
+    '<meta name="color-scheme" content="light">' +
+    '<style>:root{color-scheme:light}html,body{margin:0;padding:0}' +
     'body{font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#202124;background:#fff;word-break:break-word}' +
     'img{max-width:100%;height:auto}table{max-width:100%}</style></head><body>' +
     sanitizeMailFrameHtml(html) +
@@ -11436,6 +11463,17 @@ function sanitizeMailFrameHtml(html) {
       else if ((attr.name === "href" || attr.name === "src" || attr.name === "action") &&
                attr.value.trim().toLowerCase().startsWith("javascript:")) el.removeAttribute(attr.name);
     });
+  });
+  // Neutralize the email's own dark-mode rules. Marketing emails (Audible,
+  // Amazon, …) ship `@media (prefers-color-scheme: dark){ … color:#FFF … }`
+  // assuming the client also darkens the background. This reader always renders
+  // on white, so on a dark-mode phone those rules turned every text node white
+  // → invisible (only images showed). Rename the feature to an unknown one so
+  // the dark query can never match; the email's default light styling remains.
+  div.querySelectorAll("style").forEach((styleEl) => {
+    if (/prefers-color-scheme\s*:\s*dark/i.test(styleEl.textContent)) {
+      styleEl.textContent = styleEl.textContent.replace(/prefers-color-scheme(\s*:\s*dark)/gi, "x-disabled-color-scheme$1");
+    }
   });
   stripLabeledEmailAds(div);
   return div.innerHTML;
