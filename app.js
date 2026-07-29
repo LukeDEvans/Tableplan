@@ -33329,7 +33329,11 @@ let podcastSavedCatInputActive = false;
 let podcastTabInputActive = false;
 let openPodcastEpisodeId = null;
 let podcastPanelWired = false;
-let podcastAudio = null;
+let podcastAudio = null;       // the persistent element while an episode is active, else null
+let podcastAudioEl = null;     // the reusable, gesture-unlocked <audio> element (survives stop)
+let podcastCurEpisode = null;  // episode currently loaded into podcastAudioEl
+let podcastCurShow = null;
+let podcastPendingSeek = 0;    // resume position to apply once metadata loads
 let podcastSaveTimer = null;
 
 function initPodcastPanel() {
@@ -33504,7 +33508,7 @@ function renderMediaSearchResults() {
   for (const a of (state.savedArticles || [])) {
     if ((a.title || "").toLowerCase().includes(q) || (a.author || "").toLowerCase().includes(q) || (a.url || "").toLowerCase().includes(q)) {
       const pubEntry = pubs.find(p => p.key === a.publication);
-      results.push({ type: "article", id: a.id, title: a.title || a.url, sub: pubEntry?.label || a.author || "Article", art: pubEntry?.domain ? publicationLogoUrl(pubEntry.domain) : "", icon: "📰", date: a.savedAt });
+      results.push({ type: "article", id: a.id, title: a.title || a.url, sub: pubEntry?.label || a.author || "Article", art: articleArtUrl(a) || "", icon: "📰", date: a.savedAt });
     }
   }
   for (const b of (state.readingItems || [])) {
@@ -34443,7 +34447,7 @@ function getAutoPlaylist(forceIncludeArticles = false) {
           type: "article",
           showId: a.publication,
           showTitle: pubInfo?.label || a.publication || "Article",
-          showArt: pubInfo?.domain ? publicationLogoUrl(pubInfo.domain) : null,
+          showArt: articleArtUrl(a),
           pubDate: getArticleSortDate(a),
         };
       });
@@ -34471,6 +34475,7 @@ function getAutoPlaylist(forceIncludeArticles = false) {
 
 let mediaAllQueueId = null;   // id of the item currently playing from the All queue
 let mediaAllQueueRest = [];   // ordered ids remaining after the current item
+let mediaAllSwipedRow = null; // playlist row currently revealing its swipe actions (touch)
 
 function getAllListenList() {
   const items = getAutoPlaylist(true).map((e) => (e.type === "article" ? e : { ...e, type: e.type || "podcast" }));
@@ -34552,13 +34557,46 @@ function renderMediaAllList() {
 
   const rowType = (el) => el.closest("[data-all-type]")?.dataset.allType;
   // Row body → the item's "page": podcast episode page, article reader, or book.
+  const openRow = (row) => {
+    const id = row.dataset.allId;
+    if (row.dataset.allType === "book") openMediaAllBook(id);
+    else if (row.dataset.allType === "article") openArticle(id, "articleList");
+    else openPodcastEpisode(id);
+  };
+  const inControls = (el) => el.closest(".article-row-actions, .playlist-drag-handle, .playlist-art-btn, .playlist-play-btn");
   listEl.querySelectorAll("[data-all-id]").forEach((row) => {
+    // Touch: quick actions stay hidden until a swipe-left reveals them (desktop
+    // still shows them on hover). A clean tap opens; long-press drags (handled
+    // by makeTouchReorder, which marks the row .reorder-dragging).
+    let sx = 0, sy = 0, moved = false, swiping = false, suppressUntil = 0;
+    row.addEventListener("touchstart", (e) => {
+      if (mediaAllSwipedRow && mediaAllSwipedRow !== row) { mediaAllSwipedRow.classList.remove("podcast-episode-row--swiped"); mediaAllSwipedRow = null; }
+      const t = e.touches[0]; sx = t.clientX; sy = t.clientY; moved = false; swiping = false;
+    }, { passive: true });
+    row.addEventListener("touchmove", (e) => {
+      const t = e.touches[0]; const dx = t.clientX - sx, dy = t.clientY - sy;
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) moved = true;
+      if (!swiping && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.2) swiping = true;
+    }, { passive: true });
+    row.addEventListener("touchend", (e) => {
+      if (row.classList.contains("reorder-dragging")) return; // a long-press drag — not a tap
+      const dx = e.changedTouches[0].clientX - sx;
+      if (swiping) {
+        suppressUntil = Date.now() + 600;
+        if (dx <= -40) { row.classList.add("podcast-episode-row--swiped"); mediaAllSwipedRow = row; }
+        else if (dx >= 40) { row.classList.remove("podcast-episode-row--swiped"); if (mediaAllSwipedRow === row) mediaAllSwipedRow = null; }
+        return;
+      }
+      if (moved) { suppressUntil = Date.now() + 600; return; }
+      if (inControls(e.target)) return; // let the button handle it
+      suppressUntil = Date.now() + 600;
+      if (row.classList.contains("podcast-episode-row--swiped")) { row.classList.remove("podcast-episode-row--swiped"); mediaAllSwipedRow = null; return; }
+      openRow(row);
+    });
     row.addEventListener("click", (ev) => {
-      if (ev.target.closest(".article-row-actions, .playlist-drag-handle, .playlist-art-btn, .playlist-play-btn")) return;
-      const id = row.dataset.allId;
-      if (row.dataset.allType === "book") openMediaAllBook(id);
-      else if (row.dataset.allType === "article") openArticle(id, "articleList");
-      else openPodcastEpisode(id);
+      if (Date.now() < suppressUntil) return; // a touch gesture already handled this
+      if (inControls(ev.target)) return;
+      openRow(row);
     });
   });
   // Art → podcast's show page (article/book: open the item).
@@ -34635,7 +34673,7 @@ function renderMediaArchive() {
     .filter((a) => readIds.has(a.id))
     .map((a) => {
       const pubInfo = getReadPublications().find((p) => p.key === a.publication);
-      return { id: a.id, type: "article", title: a.title, showTitle: pubInfo?.label || a.author || a.publication || "Article", showArt: pubInfo?.domain ? publicationLogoUrl(pubInfo.domain) : null, when: readDates[a.id] || a.savedAt || "" };
+      return { id: a.id, type: "article", title: a.title, showTitle: pubInfo?.label || a.author || a.publication || "Article", showArt: articleArtUrl(a), when: readDates[a.id] || a.savedAt || "" };
     })
     .sort((a, b) => new Date(b.when || 0) - new Date(a.when || 0)).slice(0, 50);
 
@@ -34717,11 +34755,76 @@ function openMediaAllBook(id) {
 // work because we only take over once the long-press has armed.
 function makeTouchReorder(listEl, { rowSelector, getId, onDrop, longPressMs = 280 }) {
   let dragging = null, armed = false, reordered = false, startX = 0, startY = 0, pressTimer = null;
+  let lastX = 0, lastY = 0, autoScrollRAF = null;
   const rowsInOrder = () => [...listEl.querySelectorAll(rowSelector)];
+
+  // Nearest scrollable ancestor (so edge auto-scroll works whether the list is
+  // its own scroller or lives inside a scrolling panel / modal).
+  function scrollParent() {
+    let n = listEl.parentElement;
+    while (n && n !== document.body) {
+      const oy = getComputedStyle(n).overflowY;
+      if ((oy === "auto" || oy === "scroll") && n.scrollHeight > n.clientHeight + 2) return n;
+      n = n.parentElement;
+    }
+    return null; // fall back to the window
+  }
+
+  // Slot the dragged row next to whatever row is under the pointer now, and
+  // slide the displaced row into its new spot (FLIP) so the reorder reads as a
+  // smooth swap rather than an instant jump.
+  function reorderToPointer() {
+    const under = document.elementFromPoint(lastX, lastY)?.closest(rowSelector);
+    if (!under || under === dragging || !listEl.contains(under)) return;
+    const r = under.getBoundingClientRect();
+    const before = lastY < r.top + r.height / 2;
+    // Already in place relative to this neighbour → nothing to do (avoids
+    // re-triggering the slide animation every frame while auto-scrolling).
+    if (before && under.previousElementSibling === dragging) return;
+    if (!before && under.nextElementSibling === dragging) return;
+    const uTopBefore = under.getBoundingClientRect().top;
+    listEl.insertBefore(dragging, before ? under : under.nextSibling);
+    reordered = true;
+    const dy = uTopBefore - under.getBoundingClientRect().top;
+    if (dy) {
+      under.style.transition = "none";
+      under.style.transform = `translateY(${dy}px)`;
+      requestAnimationFrame(() => { under.style.transition = "transform 0.16s ease"; under.style.transform = ""; });
+    }
+  }
+
+  // While dragging near the top/bottom edge, scroll that way and keep sorting.
+  function autoScrollTick() {
+    autoScrollRAF = null;
+    if (!armed) return;
+    const EDGE = 70, SPEED = 14;
+    const cont = scrollParent();
+    let scrolled = false;
+    if (cont) {
+      const r = cont.getBoundingClientRect();
+      if (lastY < r.top + EDGE && cont.scrollTop > 0) { cont.scrollTop -= SPEED; scrolled = true; }
+      else if (lastY > r.bottom - EDGE && cont.scrollTop + cont.clientHeight < cont.scrollHeight) { cont.scrollTop += SPEED; scrolled = true; }
+    } else {
+      const h = window.innerHeight;
+      if (lastY < EDGE && window.scrollY > 0) { window.scrollBy(0, -SPEED); scrolled = true; }
+      else if (lastY > h - EDGE) { window.scrollBy(0, SPEED); scrolled = true; }
+    }
+    if (scrolled) { reorderToPointer(); autoScrollRAF = requestAnimationFrame(autoScrollTick); }
+  }
+  function maybeAutoScroll() {
+    if (autoScrollRAF) return;
+    autoScrollRAF = requestAnimationFrame(autoScrollTick);
+  }
+  function stopAutoScroll() {
+    if (autoScrollRAF) { cancelAnimationFrame(autoScrollRAF); autoScrollRAF = null; }
+  }
 
   function cleanup() {
     clearTimeout(pressTimer); pressTimer = null;
+    stopAutoScroll();
     if (dragging) { dragging.classList.remove("reorder-dragging"); dragging.style.pointerEvents = ""; }
+    // Drop any leftover FLIP transforms from the slide animation.
+    rowsInOrder().forEach((r) => { r.style.transition = ""; r.style.transform = ""; });
     listEl.classList.remove("reorder-active");
     document.removeEventListener("touchmove", onMove, { passive: false });
     document.removeEventListener("touchend", onEnd);
@@ -34735,12 +34838,9 @@ function makeTouchReorder(listEl, { rowSelector, getId, onDrop, longPressMs = 28
       return;
     }
     e.preventDefault(); // hold reordering steady; don't scroll the list
-    const under = document.elementFromPoint(t.clientX, t.clientY)?.closest(rowSelector);
-    if (!under || under === dragging || !listEl.contains(under)) return;
-    const r = under.getBoundingClientRect();
-    if (t.clientY < r.top + r.height / 2) listEl.insertBefore(dragging, under);
-    else listEl.insertBefore(dragging, under.nextSibling);
-    reordered = true;
+    lastX = t.clientX; lastY = t.clientY;
+    reorderToPointer();
+    maybeAutoScroll(); // kicks in only when the pointer is in an edge zone
   }
   function onEnd() {
     if (armed && reordered) onDrop(rowsInOrder().map(getId));
@@ -35720,48 +35820,63 @@ function startPodcastPlayback(episode, show) {
   const startPos = progress.played ? 0 : (progress.position || 0);
 
   podcastCurrentChapters = null;
-  podcastAudio = new Audio(episode.audioUrl);
-  podcastAudio.playbackRate = mediaPlaybackSpeed;
-  if (startPos > 10) podcastAudio.currentTime = startPos;
+  podcastCurEpisode = episode;
+  podcastCurShow = show;
 
+  // Reuse ONE persistent <audio> element across episodes. It's first played
+  // inside the user's tap (which unlocks it on iOS), so reusing the same
+  // element lets the queue auto-advance to the next episode even while the
+  // phone is locked — a freshly-created Audio() would have its play() blocked
+  // in the background. Handlers are assigned via onX so they never stack.
+  if (!podcastAudioEl) { podcastAudioEl = new Audio(); podcastAudioEl.preload = "auto"; }
+  podcastAudio = podcastAudioEl;
   const audio = podcastAudio;
+  podcastPendingSeek = startPos > 10 ? startPos : 0;
 
   if (episode.chaptersUrl) {
     loadEpisodeChapters(episode).then(ch => {
-      if (podcastAudio !== audio) return; // episode changed before chapters resolved
+      if (podcastCurEpisode !== episode) return; // episode changed before chapters resolved
       podcastCurrentChapters = ch;
       scheduleAdSkips(ch, audio);
     });
   }
 
-  podcastAudio.addEventListener("loadedmetadata", () => updatePodcastProgressUI(episode));
-  podcastAudio.addEventListener("error", () => showVoiceToast("Audio failed to load — check your connection and try again"));
-  podcastAudio.addEventListener("timeupdate", () => {
-    updatePodcastProgressUI(episode);
+  audio.onloadedmetadata = () => {
+    if (podcastPendingSeek) { try { audio.currentTime = podcastPendingSeek; } catch { /* not seekable yet */ } podcastPendingSeek = 0; }
+    updatePodcastProgressUI(podcastCurEpisode);
+  };
+  audio.onerror = () => showVoiceToast("Audio failed to load — check your connection and try again");
+  audio.ontimeupdate = () => {
+    updatePodcastProgressUI(podcastCurEpisode);
     updateMiniPlayerProgress();
-    schedulePodcastPositionSave(episode);
-  });
-  podcastAudio.addEventListener("seeked", () => scheduleAdSkips(podcastCurrentChapters, audio));
-  podcastAudio.addEventListener("ratechange", () => scheduleAdSkips(podcastCurrentChapters, audio));
-  podcastAudio.addEventListener("ended", () => {
+    schedulePodcastPositionSave(podcastCurEpisode);
+  };
+  audio.onseeked = () => scheduleAdSkips(podcastCurrentChapters, audio);
+  audio.onratechange = () => scheduleAdSkips(podcastCurrentChapters, audio);
+  audio.onended = () => {
     clearAdSkipTimers();
-    setPodcastEpisodePlayed(episode.id, true);
+    setPodcastEpisodePlayed(podcastCurEpisode.id, true);
     updatePodcastPlayBtn();
     updateMiniPlayerPlayBtn();
-    advanceMediaAllQueue(episode.id); // seamless hand-off when playing the All queue
-  });
-  podcastAudio.addEventListener("play", () => {
+    advanceMediaAllQueue(podcastCurEpisode.id); // seamless hand-off when playing the All queue
+  };
+  audio.onplay = () => {
     updatePodcastPlayBtn();
     updateMiniPlayerPlayBtn();
     setMediaSessionPlaybackState("playing");
     scheduleAdSkips(podcastCurrentChapters, audio);
-  });
-  podcastAudio.addEventListener("pause", () => {
+  };
+  audio.onpause = () => {
     updatePodcastPlayBtn();
     updateMiniPlayerPlayBtn();
     setMediaSessionPlaybackState("paused");
     clearAdSkipTimers();
-  });
+  };
+
+  // Point the reused element at this episode, then (re)apply the rate — some
+  // browsers reset playbackRate when the source changes.
+  audio.src = episode.audioUrl;
+  audio.playbackRate = mediaPlaybackSpeed;
 
   showMiniPlayer(episode, show);
 
@@ -36453,7 +36568,7 @@ function articleRowHtml(a, { pub, readIds, readDates }) {
   const pubEntry = getReadPublications().find(p => p.key === a.publication);
   const showPub = pub === "all" || articleSearchActive;
   const pubLabel = showPub ? (pubEntry?.label || (a.publication === "other" ? "Other" : a.publication)) : "";
-  const artUrl = pubEntry?.domain ? publicationLogoUrl(pubEntry.domain) : "";
+  const artUrl = articleArtUrl(a) || "";
   return `
     <div class="article-row${isRead ? " article-row--read" : ""}" data-article-id="${escapeHtml(a.id)}" role="button" tabindex="0">
       ${mediaRowArt(artUrl, "📰")}
@@ -36912,6 +37027,18 @@ async function loadHclAvailability(itemId, title, authors) {
 function publicationLogoUrl(domain) {
   if (!domain) return null;
   return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain.replace(/^www\./, ""))}&sz=64`;
+}
+
+// NutritionFacts articles carry no publication domain (they're a special tab),
+// so give them the NutritionFacts.org logo; every other article uses its
+// publication's favicon. To swap in a bundled hi-res copy later, point
+// NUTRITIONFACTS_LOGO at a local asset (e.g. "/nutritionfacts-logo.png").
+const NUTRITIONFACTS_LOGO = "https://www.google.com/s2/favicons?domain=nutritionfacts.org&sz=128";
+function articleArtUrl(a) {
+  if (!a) return null;
+  if (isNutritionFactsArticle(a)) return NUTRITIONFACTS_LOGO;
+  const pub = getReadPublications().find((p) => p.key === a.publication);
+  return pub?.domain ? publicationLogoUrl(pub.domain) : null;
 }
 
 function getArticleSortDate(article) {
