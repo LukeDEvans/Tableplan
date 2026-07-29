@@ -37200,6 +37200,25 @@ function clearWordHighlight() {
   if (listenActiveWordEl) { listenActiveWordEl.classList.remove("tts-word--active"); listenActiveWordEl = null; }
 }
 
+// Manual scrolling wins over the auto-follow: once the reader detects a
+// user-initiated scroll we stop yanking the view back to the spoken word, and
+// only resume following once that word is back on screen (or after a seek).
+let listenFollowSuppressed = false;
+let listenProgrammaticScrollUntil = 0;
+function wireListenScrollOverride(bodyEl) {
+  if (!bodyEl || bodyEl.dataset.scrollOverrideWired) return;
+  bodyEl.dataset.scrollOverrideWired = "1";
+  bodyEl.addEventListener("scroll", () => {
+    if (Date.now() < listenProgrammaticScrollUntil) return; // our own smooth scroll
+    if (listenActiveWordEl) {
+      const r = listenActiveWordEl.getBoundingClientRect(), b = bodyEl.getBoundingClientRect();
+      listenFollowSuppressed = !(r.top >= b.top && r.bottom <= b.bottom); // resume once the word is back in view
+    } else {
+      listenFollowSuppressed = true;
+    }
+  }, { passive: true });
+}
+
 function setWordHighlight(bodyIdx) {
   const textEl = document.getElementById("articleReaderText");
   if (!textEl) return;
@@ -37208,11 +37227,18 @@ function setWordHighlight(bodyIdx) {
   clearWordHighlight();
   span.classList.add("tts-word--active");
   listenActiveWordEl = span;
-  // Keep the highlighted word comfortably in view without yanking the page.
+  // Keep the highlighted word comfortably in view without yanking the page —
+  // unless the user has scrolled away, in which case leave the view alone.
   const bodyEl = document.getElementById("articleReaderBody");
   if (bodyEl) {
-    const r = span.getBoundingClientRect(), b = bodyEl.getBoundingClientRect();
-    if (r.top < b.top + 60 || r.bottom > b.bottom - 40) span.scrollIntoView({ block: "center", behavior: "smooth" });
+    wireListenScrollOverride(bodyEl);
+    if (!listenFollowSuppressed) {
+      const r = span.getBoundingClientRect(), b = bodyEl.getBoundingClientRect();
+      if (r.top < b.top + 60 || r.bottom > b.bottom - 40) {
+        listenProgrammaticScrollUntil = Date.now() + 700;
+        span.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+    }
   }
 }
 
@@ -37238,6 +37264,7 @@ function listenElapsed() {
 // Jump to an absolute time across chunks: seek within the current chunk if it
 // lands there, otherwise switch to the chunk that contains it.
 function listenSeekToTime(t) {
+  listenFollowSuppressed = false; // an explicit seek re-centers on the spoken word
   if (!listenAllUrls.length) return;
   const total = listenTotalDuration || 0;
   const target = Math.max(0, total ? Math.min(t, total - 0.25) : t);
