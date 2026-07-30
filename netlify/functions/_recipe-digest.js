@@ -98,7 +98,7 @@ async function extractRecipes(html, source) {
   }
 
   return results.map(({ url, inner }) => {
-    let title = inner
+    const anchorTitle = inner
       .replace(/<[^>]+>/g, " ")
       .replace(/&nbsp;/gi, " ")
       .replace(/&amp;/gi, "&")
@@ -106,10 +106,15 @@ async function extractRecipes(html, source) {
       .replace(/&quot;/gi, '"')
       .replace(/\s+/g, " ")
       .trim();
-    if (!title || title.length < 3 || /^(view|see|tap|click|get|make|recipe|cook|save|read more)\b.{0,14}$/i.test(title)
-      || /\bfor the new york times\b|food stylist|prop stylist|photograph by|getty images/i.test(title)) {
-      title = titleFromSlug(url, source);
-    }
+    const anchorIsJunk = !anchorTitle || anchorTitle.length < 3
+      || /^(view|see|tap|click|get|make|recipe|cook|save|read more)\b.{0,14}$/i.test(anchorTitle)
+      || /\bfor the new york times\b|food stylist|prop stylist|photograph by|getty images/i.test(anchorTitle);
+    // Prefer the canonical recipe name carried in the URL slug — that matches
+    // the actual webpage title (e.g. "Pasta With Green Bean Ragu"), whereas the
+    // newsletter's anchor text is often marketing copy ("hearty pasta recipe
+    // for those green beans"). Fall back to the anchor text only when the slug
+    // yields nothing usable.
+    const title = titleFromSlug(url, source) || (anchorIsJunk ? "" : anchorTitle);
     return title ? { url, title, source: source.name, category: source.category || "Recipes" } : null;
   }).filter(Boolean);
 }

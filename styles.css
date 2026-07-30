@@ -2376,41 +2376,12 @@ input.live-toggle:checked::before,
   padding-top: 0;
 }
 
-/* Meal jump-nav (Breakfast · Lunch · Dinner) — only shown when the day carousel
-   pages one meal at a time (mobile). Makes moving between meals a tap, and it
-   follows swipes. */
-.meal-carousel-nav {
-  display: none;
-  gap: 6px;
-  margin: 8px 0 2px;
-  padding: 4px;
-  background: color-mix(in srgb, var(--window-border) 22%, transparent);
-  border-radius: 999px;
-}
-.meal-carousel-nav.is-visible { display: flex; }
-.meal-carousel-nav-btn {
-  flex: 1;
-  min-width: 0;
-  padding: 7px 6px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 0.8rem;
-  font-weight: 800;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-.meal-carousel-nav-btn.is-active {
-  background: var(--window-bg);
-  color: var(--accent-dark);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
-}
-
 .day-slots-carousel {
   display: grid;
-  grid-template-columns: repeat(var(--meal-column-count, 4), minmax(280px, 1fr));
+  /* minmax(0,1fr) lets every meal column shrink to share the width, so all of
+     them (e.g. 5: breakfast, AM snack, lunch, PM snack, dinner) fit on a full
+     laptop screen with no horizontal scroll. */
+  grid-template-columns: repeat(var(--meal-column-count, 4), minmax(0, 1fr));
   gap: 8px;
   align-items: start;
   min-width: 0;
@@ -2421,7 +2392,7 @@ input.live-toggle:checked::before,
 }
 
 .day-slots-carousel.is-published {
-  grid-template-columns: repeat(var(--meal-column-count, 4), minmax(280px, 1fr));
+  grid-template-columns: repeat(var(--meal-column-count, 4), minmax(0, 1fr));
 }
 
 .meal-plan-column {
@@ -18749,15 +18720,25 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 }
 .eat-notif-head { font-size: 0.74rem; font-weight: 850; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 6px 0 4px; }
 .eat-notif-empty { font-size: 0.8rem; color: var(--muted); padding: 6px 0; }
-.eat-notif-row { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); }
+.eat-notif-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); }
 .eat-notif-row:first-of-type { border-top: none; }
-.eat-notif-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; color: var(--ink); }
-.eat-notif-source { flex: 0 0 auto; font-size: 0.68rem; color: var(--muted); }
+/* Title takes the room; publication sits smaller beneath it so more of the
+   recipe name is visible. Title wraps to two lines before clamping. */
+.eat-notif-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.eat-notif-item-title {
+  min-width: 0;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 0.95rem; font-weight: 700; line-height: 1.3; color: var(--ink);
+  text-decoration: none;
+}
+.eat-notif-item-title:hover { text-decoration: underline; }
+.eat-notif-source { font-size: 0.7rem; font-weight: 600; color: var(--muted); }
+.eat-notif-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
 .eat-notif-add { flex: 0 0 auto; font-size: 0.72rem; padding: 4px 10px; min-height: 26px; }
 .eat-notif-dismiss { flex: 0 0 auto; width: 24px; height: 24px; color: var(--muted); }
 @media (max-width: 700px) {
   .eat-notif-panel { width: min(320px, 92vw); }
-  .eat-notif-source { display: none; }
 }
 
 /* Portrait-only guard: the app's pages aren't laid out for landscape, so on a

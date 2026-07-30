@@ -5307,10 +5307,18 @@ function mergeMealPlanConfig(newer, older) {
     if (!n.dob && o.dob) merged.dob = o.dob;
     return merged;
   });
-  const oTypeById = new Map((older.mealTypes || []).map((t) => [t.id, t]));
-  const nTypeById = new Map((newer.mealTypes || []).map((t) => [t.id, t]));
-  const allTypeIds = new Set([...oTypeById.keys(), ...nTypeById.keys()]);
-  const mealTypes = [...allTypeIds].map((id) => nTypeById.get(id) || oTypeById.get(id));
+  // Meal-type ORDER is meaningful (it lays out the day: breakfast, AM snack,
+  // lunch, …), so the most recent writer must be authoritative for both the
+  // ordering AND deletions — exactly like members above. The old union-of-ids
+  // approach rebuilt the list in OLDER's order and appended newer-only types at
+  // the end, which silently shoved freshly-inserted meals (e.g. AM/PM snack)
+  // back to the bottom of the day after a sync. Empty-never-erases still holds:
+  // a fresh device with no types must not wipe a saved list.
+  const nTypes = newer.mealTypes || [];
+  const oTypes = older.mealTypes || [];
+  const oTypeById = new Map(oTypes.map((t) => [t.id, t]));
+  const authoritativeTypes = nTypes.length ? nTypes : oTypes;
+  const mealTypes = authoritativeTypes.map((n) => ({ ...(oTypeById.get(n.id) || {}), ...n }));
   return { members, mealTypes };
 }
 
@@ -9253,9 +9261,14 @@ function warmMealPlanRecipes() {
 
 function dismissMealPlanRecipe(url) {
   if (!mealPlanRecipes) return;
+  // Keep the notifications panel where the user was scrolled — renderPlanner()
+  // rebuilds the whole grid, which would otherwise snap the panel back to top.
+  const savedScroll = elements.plannerGrid.querySelector(".eat-notif-panel")?.scrollTop || 0;
   mealPlanRecipes = mealPlanRecipes.filter((r) => r.url !== url);
   setPageNotifCount("eat", mealPlanRecipes.length);
   renderPlanner();
+  const panel = elements.plannerGrid.querySelector(".eat-notif-panel");
+  if (panel) panel.scrollTop = savedScroll;
   callGmailApi({ action: "dismissRecipe", url });
 }
 
@@ -9280,10 +9293,14 @@ function mealPlanNotifBellHtml() {
         <div class="eat-notif-head">New recipes</div>
         ${recipes.length ? recipes.map((r) => `
           <div class="eat-notif-row">
-            <a class="eat-notif-item-title" href="${escapeHtml(r.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(r.title)}">${escapeHtml(r.title)}</a>
-            <span class="eat-notif-source">${escapeHtml(r.source || "")}</span>
-            <button class="secondary-btn eat-notif-add" type="button" data-eat-notif-add="${escapeHtml(r.url)}">Add</button>
-            <button class="icon-btn eat-notif-dismiss" type="button" data-eat-notif-dismiss="${escapeHtml(r.url)}" title="Dismiss" aria-label="Dismiss">&times;</button>
+            <div class="eat-notif-text">
+              <a class="eat-notif-item-title" href="${escapeHtml(r.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(r.title)}">${escapeHtml(r.title)}</a>
+              ${r.source ? `<span class="eat-notif-source">${escapeHtml(r.source)}</span>` : ""}
+            </div>
+            <div class="eat-notif-actions">
+              <button class="secondary-btn eat-notif-add" type="button" data-eat-notif-add="${escapeHtml(r.url)}">Add</button>
+              <button class="icon-btn eat-notif-dismiss" type="button" data-eat-notif-dismiss="${escapeHtml(r.url)}" title="Dismiss" aria-label="Dismiss">&times;</button>
+            </div>
           </div>`).join("") : `<div class="eat-notif-empty">No new recipes.</div>`}
       </div>` : ""}
     </div>`;
@@ -22604,9 +22621,6 @@ function renderPlanner() {
           </div>
         `).join("")}
       </div>
-      ${mealPlanColumnCount > 1 ? `<div class="meal-carousel-nav" role="tablist" aria-label="Jump to meal">
-        ${mealPlanColumns.map(({ column }, i) => `<button class="meal-carousel-nav-btn${i === 0 ? " is-active" : ""}" type="button" role="tab" data-meal-jump="${i}">${escapeHtml(column.label)}</button>`).join("")}
-      </div>` : ""}
       <div class="meal-plan-publish-row">
         <div class="meal-plan-page-actions">
           <div class="meal-plan-btns-left">
@@ -22647,8 +22661,6 @@ function renderPlanner() {
     button.addEventListener("dragleave", () => button.classList.remove("meal-day-drop-over"));
     button.addEventListener("drop", handleMealDayTabDrop);
   });
-
-  wireMealCarouselNav();
 
   elements.plannerGrid.querySelectorAll("[data-meal-input]").forEach((input) => {
     input.addEventListener("change", () => commitMealInput(input));
@@ -22814,33 +22826,6 @@ function currentPlannerCarouselState() {
     dayId: panel?.id?.replace(/^panel-/, "") || "",
     scrollLeft: carousel?.scrollLeft || 0
   };
-}
-
-// Meal jump-nav (Breakfast · Lunch · Dinner) below the day carousel — tap to
-// slide to a meal, and it tracks manual swipes. Only shown when the carousel
-// actually pages (i.e. one meal per screen on mobile).
-function wireMealCarouselNav() {
-  const carousel = elements.plannerGrid.querySelector(".day-slots-carousel");
-  const nav = elements.plannerGrid.querySelector(".meal-carousel-nav");
-  if (!carousel || !nav) return;
-  const btns = [...nav.querySelectorAll("[data-meal-jump]")];
-
-  const isPaging = () => carousel.scrollWidth > carousel.clientWidth + 4;
-  const applyVisibility = () => nav.classList.toggle("is-visible", isPaging());
-  applyVisibility();
-  window.requestAnimationFrame(applyVisibility); // after layout settles
-
-  const setActive = () => {
-    if (!carousel.clientWidth) return;
-    const idx = Math.round(carousel.scrollLeft / carousel.clientWidth);
-    btns.forEach((b, i) => b.classList.toggle("is-active", i === idx));
-  };
-  carousel.addEventListener("scroll", () => { window.requestAnimationFrame(setActive); }, { passive: true });
-
-  btns.forEach((b, i) => b.addEventListener("click", () => {
-    carousel.scrollTo({ left: i * carousel.clientWidth, behavior: "smooth" });
-    btns.forEach((x, j) => x.classList.toggle("is-active", i === j));
-  }));
 }
 
 function restorePlannerCarouselState(previousState, activeDayId) {
