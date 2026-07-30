@@ -11729,13 +11729,6 @@ body.touch-drag-active * {
   stroke: rgba(0, 0, 0, 0.26);
   stroke-width: 1.4;
 }
-/* Dark recessed face behind the swinging arm */
-.metronome-face {
-  fill: url(#metroDarkWood);
-  stroke: #100a04;
-  stroke-width: 1.5;
-  stroke-linejoin: round;
-}
 /* Light wood lower panel */
 .metronome-base-panel {
   fill: url(#metroLightWood);
