@@ -15159,9 +15159,12 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
   padding-right: 12px;
   gap: 10px;
 }
-/* Full-bleed Media page: drop the 16px card padding so the Playlist and the
-   other panels fill the whole window (right up to the window's border). */
-#mediaMainPage.planner-column { padding: 0; }
+/* Full-bleed Media + Mail pages: drop the 16px card padding so their panels
+   fill the whole window (right up to the window's border). Both pages manage
+   their own inner spacing (topbars, sidebars, lists), so there's no gap to
+   preserve. */
+#mediaMainPage.planner-column,
+#mailMainPage.planner-column { padding: 0; }
 
 /* Reading an article is a focused view — hide the Media search/menu/notifications
    top bar while the reader is open (the reader has its own Back button). */
