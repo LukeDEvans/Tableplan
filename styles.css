@@ -3539,6 +3539,15 @@ input.live-toggle:checked::before,
 .grocery-cleanup-link:hover { color: var(--accent-dark); }
 .grocery-item--cleared { opacity: 0.55; }
 
+/* Per-store "show N bought" toggle, sitting to the right of the store name in
+   the heading (and in a store tab's solo action row). */
+.grocery-store-bought-toggle {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: 0.76rem;
+  padding: 4px 6px;
+}
+
 .grocery-store-empty {
   display: grid;
   min-height: 44px;
@@ -8763,6 +8772,17 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
 
 .watch-category-bar {
   margin-bottom: 4px;
+}
+
+/* Shop store bar: span the full panel width edge-to-edge (its underline was
+   stopping short inside the list panel's 16px padding). Tabs stay inset. */
+.shop-list-panel > #groceryStoreTabBar {
+  margin-left: -16px;
+  margin-right: -16px;
+}
+.shop-list-panel > #groceryStoreTabBar .watch-category-tabs {
+  padding-left: 16px;
+  padding-right: 16px;
 }
 
 .watch-category-tabs {

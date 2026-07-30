@@ -572,7 +572,10 @@ let selectedGroceryWeekKey = "";
 let activeGroceryStoreTab = "all";
 let groceryRangeStart = "";
 let groceryRangeEnd = "";
-let showClearedGroceries = false; // session toggle: reveal items cleared off this cycle's list
+let showClearedGroceries = false; // (legacy) global reveal — superseded by per-store below
+// Per-store session toggle: which stores are currently showing their bought
+// (cleared-this-cycle) items. Keyed by store id, "" = Miscellaneous/unassigned.
+const groceryBoughtShownStores = new Set();
 let currentActiveRecipeViewId = "";
 let recipeViewMealContext = null;
 const activeRecipeScrollPositions = new Map();
@@ -25126,24 +25129,28 @@ function renderGroceries() {
     .filter((row) => !pantrySet.has(groceryRowKey(row.item)) && !skippedKeys.has(row.key))
     .map(withFlags);
 
-  // Cleared items were bought and swept off the list this cycle — hide them
-  // (unless the user is reviewing them) and, crucially, keep them out of the
-  // routing/pricing below so a later meal needing the same thing doesn't
-  // re-surface it as still-needed. Count is cycle-wide (both tabs).
+  // Cleared items were bought and swept off the active list this cycle. They're
+  // hidden by default and revealed PER STORE via each store heading's "show
+  // bought" toggle. They stay out of the pricing optimizer (already bought) but
+  // are still routed into their store section so that store can reveal them.
   const clearedCount = new Set([...allManualRows, ...needed].filter((r) => r.cleared).map((r) => r.key)).size;
-  const visible = (rows) => showClearedGroceries ? rows : rows.filter((r) => !r.cleared);
-  const visibleManual = visible(allManualRows);
-  const visibleNeeded = visible(needed);
 
-  const locatedManualRows = visibleManual.filter((row) => manualLocations[row.key]?.storeId);
+  // A manual item is "located" if it resolves to an enabled store by ANY route
+  // — its saved preference/rank OR a this-trip override (set when it was added
+  // in a store tab, or defaulted to the preferred store from the All tab). That
+  // lets those overrides actually place the item into a store section below.
+  const manualEnabledIds = new Set(groceryStores().filter((s) => s.enabled !== false && !skippedGroceryStoreIds().has(s.id)).map((s) => s.id));
+  const manualEffectiveStore = (row) => resolveItemEffectiveStoreId(row.key, manualLocations, manualEnabledIds);
+  const locatedManualRows = allManualRows.filter((row) => manualEffectiveStore(row));
   const unlocatedManualRows = activeGroceryStoreTab === "all"
-    ? visibleManual.filter((row) => !manualLocations[row.key]?.storeId)
+    ? allManualRows.filter((row) => !manualEffectiveStore(row))
     : [];
-  const pricePlan = optimizeGroceryBasket(visibleNeeded);
-  // Located manual items join the store routing so their preferences are respected
-  const storeSections = groceryStoreSections([...visibleNeeded, ...locatedManualRows], pricePlan.assignments, pricePlan.estimates);
+  const activeNeeded = needed.filter((r) => !r.cleared);
+  const pricePlan = optimizeGroceryBasket(activeNeeded);
+  // Route active AND bought rows together; storeSection splits them per store.
+  const storeSections = groceryStoreSections([...needed, ...locatedManualRows], pricePlan.assignments, pricePlan.estimates);
 
-  if (!unlocatedManualRows.length && !visibleNeeded.length && !locatedManualRows.length && !clearedCount) {
+  if (!unlocatedManualRows.length && !activeNeeded.length && !locatedManualRows.length && !clearedCount) {
     elements.groceryList.innerHTML = `<div class="empty-state">Add meals to your plan and groceries will appear here.</div>`;
     return;
   }
@@ -25154,32 +25161,48 @@ function renderGroceries() {
     return [...unchecked, ...checked];
   };
 
+  // "Show N bought" toggle for a store heading — placed to the right of the
+  // store name. storeId "" is the Miscellaneous/unassigned section.
+  const boughtToggleBtn = (storeId, boughtRows) => {
+    if (!boughtRows.length) return "";
+    const shown = groceryBoughtShownStores.has(storeId || "");
+    return `<button class="grocery-cleanup-link grocery-store-bought-toggle" type="button" data-grocery-toggle-bought="${escapeHtml(storeId)}" aria-pressed="${shown}">${shown ? "Hide" : "Show"} ${boughtRows.length} bought</button>`;
+  };
+
   const miscCollapsed = Boolean(state.collapsedSections?.["groceryStore:misc"]);
-  const miscChecked = unlocatedManualRows.filter((r) => r.checked).length;
-  const miscSection = unlocatedManualRows.length ? `
+  const miscActive = sortCheckedLast(unlocatedManualRows.filter((r) => !r.cleared));
+  const miscBought = unlocatedManualRows.filter((r) => r.cleared);
+  const miscChecked = miscActive.filter((r) => r.checked).length;
+  const miscShowBought = groceryBoughtShownStores.has("");
+  const miscRendered = miscShowBought ? [...miscActive, ...miscBought] : miscActive;
+  const miscSection = (unlocatedManualRows.length) ? `
     <section class="grocery-store-section grocery-misc-section" data-grocery-store-section="">
       <div class="grocery-store-heading">
         <button class="watch-section-head" type="button" data-grocery-collapse="groceryStore:misc" title="${miscCollapsed ? "Expand" : "Collapse"} Miscellaneous" aria-expanded="${!miscCollapsed}">
           <svg class="watch-section-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-          <span>Miscellaneous${miscCollapsed ? ` <span class="grocery-collapsed-count">(${unlocatedManualRows.length})</span>` : ""}</span>
+          <span>Miscellaneous${miscCollapsed ? ` <span class="grocery-collapsed-count">(${miscActive.length})</span>` : ""}</span>
         </button>
+        ${boughtToggleBtn("", miscBought)}
         ${miscChecked ? `<button class="icon-btn grocery-store-clear" type="button" data-grocery-clear-store="" title="Sweep ${miscChecked} checked" aria-label="Sweep ${miscChecked} checked items into bought">${groceryBroomSvg()}</button>` : ""}
       </div>
       ${miscCollapsed ? "" : `
       <div class="grocery-store-list" data-grocery-store-list="" data-grocery-store-section-list="">
-        ${sortCheckedLast(unlocatedManualRows).map(groceryItemTemplate).join("")}
+        ${miscRendered.length ? miscRendered.map(groceryItemTemplate).join("") : `<div class="grocery-store-empty">Drop items here</div>`}
       </div>
       `}
     </section>
   ` : "";
 
   const storeSection = ({ storeId, name, store, sectionGroups }) => {
-    // Flatten groups preserving section order; checked items sink to the bottom
+    // Flatten groups preserving section order, then split active vs bought.
     const flatRows = sectionGroups.flatMap((group) => group.rows);
-    const sortedRows = sortCheckedLast(flatRows);
+    const activeRows = sortCheckedLast(flatRows.filter((r) => !r.cleared));
+    const boughtRows = flatRows.filter((r) => r.cleared);
+    const showBought = groceryBoughtShownStores.has(storeId || "");
+    const rowsToRender = showBought ? [...activeRows, ...boughtRows] : activeRows;
     const collapseKey = `groceryStore:${storeId || "unassigned"}`;
     const isCollapsed = activeGroceryStoreTab === "all" && Boolean(state.collapsedSections?.[collapseKey]);
-    const storeChecked = sortedRows.filter((r) => r.checked).length;
+    const storeChecked = activeRows.filter((r) => r.checked).length;
     const broomBtn = storeChecked
       ? `<button class="icon-btn grocery-store-clear" type="button" data-grocery-clear-store="${escapeHtml(storeId)}" title="Sweep ${storeChecked} checked" aria-label="Sweep ${storeChecked} checked items into bought">${groceryBroomSvg()}</button>`
       : "";
@@ -25189,8 +25212,9 @@ function renderGroceries() {
           <div class="grocery-store-heading" ${storeId ? `data-grocery-store-setting="${escapeHtml(storeId)}"` : ""}>
             <button class="watch-section-head" type="button" data-grocery-collapse="${escapeHtml(collapseKey)}" title="${isCollapsed ? "Expand" : "Collapse"} ${escapeHtml(name)}" aria-expanded="${!isCollapsed}">
               <svg class="watch-section-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-              <span>${escapeHtml(name)}${isCollapsed ? ` <span class="grocery-collapsed-count">(${sortedRows.length})</span>` : ""}</span>
+              <span>${escapeHtml(name)}${isCollapsed ? ` <span class="grocery-collapsed-count">(${activeRows.length})</span>` : ""}</span>
             </button>
+            ${boughtToggleBtn(storeId, boughtRows)}
             ${storeDirectionsUrl(store) ? `
               <a class="icon-btn grocery-store-directions" href="${escapeHtml(storeDirectionsUrl(store))}" target="_blank" rel="noopener" title="Directions to ${escapeHtml(name)}" aria-label="Directions to ${escapeHtml(name)}">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 5 6 6-6 6v-4H8a4 4 0 0 0-4 4V9a4 4 0 0 1 4-4h5Z" /></svg>
@@ -25198,12 +25222,12 @@ function renderGroceries() {
             ` : ""}
             ${broomBtn}
           </div>
-        ` : (broomBtn ? `<div class="grocery-store-solo-actions">${broomBtn}</div>` : "")}
+        ` : `<div class="grocery-store-solo-actions">${boughtToggleBtn(storeId, boughtRows)}${broomBtn}</div>`}
         ${isCollapsed ? "" : `
-        <div class="grocery-store-list ${sortedRows.length ? "" : "is-empty"}"
+        <div class="grocery-store-list ${rowsToRender.length ? "" : "is-empty"}"
           data-grocery-store-list="${escapeHtml(storeId)}"
           data-grocery-store-section-list="">
-          ${sortedRows.length ? sortedRows.map(groceryItemTemplate).join("") : `<div class="grocery-store-empty">Drop items here</div>`}
+          ${rowsToRender.length ? rowsToRender.map(groceryItemTemplate).join("") : `<div class="grocery-store-empty">Drop items here</div>`}
         </div>
         `}
       </section>
@@ -25224,12 +25248,12 @@ function renderGroceries() {
 
   let planSections;
   if (activeGroceryStoreTab === "all") {
-    planSections = visibleNeeded.length ? `
+    planSections = activeNeeded.length ? `
       ${groceryPricePlanTemplate(pricePlan)}
-      ${groceryFallbackRoutingTemplate(visibleNeeded, pricePlan.assignments)}
+      ${groceryFallbackRoutingTemplate(activeNeeded, pricePlan.assignments)}
       ${storeSections.map(storeSection).join("")}
       ${skippedStrip}
-    ` : skippedStrip;
+    ` : (storeSections.some((s) => s.rows.length) ? storeSections.map(storeSection).join("") + skippedStrip : skippedStrip);
   } else {
     const active = storeSections.find((s) => s.storeId === activeGroceryStoreTab);
     planSections = active?.rows.length
@@ -25237,24 +25261,22 @@ function renderGroceries() {
       : `<div class="empty-state">No items assigned to this store yet. Drag items here from the All tab to assign them.</div>`;
   }
 
-  // Per-store sweeping now lives in each store heading (broom icon). The bar
-  // only keeps the show/restore-bought controls.
-  const cleanupBar = clearedCount ? `
-    <div class="grocery-cleanup-bar">
-      <button class="grocery-cleanup-link" type="button" data-grocery-toggle-cleared aria-pressed="${showClearedGroceries}">${showClearedGroceries ? "Hide" : "Show"} ${clearedCount} bought</button>
-      ${showClearedGroceries ? `<button class="grocery-cleanup-link" type="button" data-grocery-restore-cleared>Restore all</button>` : ""}
-    </div>` : "";
-
-  elements.groceryList.innerHTML = cleanupBar + miscSection + planSections;
+  // "Show bought" now lives per store (to the right of each store name); no
+  // global cleanup bar.
+  elements.groceryList.innerHTML = miscSection + planSections;
 
   elements.groceryList.querySelectorAll("[data-grocery-clear-store]").forEach((btn) => {
     btn.addEventListener("click", (e) => { e.stopPropagation(); clearCheckedGroceriesForStore(btn.dataset.groceryClearStore); });
   });
-  elements.groceryList.querySelector("[data-grocery-toggle-cleared]")?.addEventListener("click", () => {
-    showClearedGroceries = !showClearedGroceries;
-    renderGroceries();
+  elements.groceryList.querySelectorAll("[data-grocery-toggle-bought]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.groceryToggleBought || "";
+      if (groceryBoughtShownStores.has(id)) groceryBoughtShownStores.delete(id);
+      else groceryBoughtShownStores.add(id);
+      renderGroceries();
+    });
   });
-  elements.groceryList.querySelector("[data-grocery-restore-cleared]")?.addEventListener("click", restoreClearedGroceries);
 
   elements.groceryList.querySelectorAll("[data-grocery]").forEach((checkbox) => {
     checkbox.addEventListener("change", () => {
@@ -25501,9 +25523,9 @@ function setGroceryStoreSkipped(storeId, skipped) {
 }
 
 function resolveItemEffectiveStoreId(itemKey, locations, enabledStoreIds) {
-  // A this-trip-only override (added while viewing a specific store tab)
-  // wins over the item's actual preferred-store ranking below — see
-  // assignGroceryItemToOpenStoreTab.
+  // A this-trip-only override (added while viewing a specific store tab, or
+  // defaulted to the preferred store from the All tab) wins over the item's
+  // actual preferred-store ranking below — see setGroceryItemStoreForTrip.
   const override = groceryItemWeekOverrides()[groceryItemWeekOverrideKey(itemKey)];
   if (override && enabledStoreIds.has(override)) return override;
   const loc = locations[itemKey];
@@ -26067,8 +26089,18 @@ function addManualGroceryItem(event) {
     state.persistentManualGroceries.push(item);
     state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
   }
-  if (activeGroceryStoreTab !== "all") {
-    assignGroceryItemToOpenStoreTab(manualGroceryRow(item).key, activeGroceryStoreTab);
+  const itemKey = manualGroceryRow(item).key;
+  const enabledStores = groceryStores().filter((s) => s.enabled !== false && !skippedGroceryStoreIds().has(s.id));
+  const enabledIds = new Set(enabledStores.map((s) => s.id));
+  if (activeGroceryStoreTab !== "all" && enabledIds.has(activeGroceryStoreTab)) {
+    // Land it in the open store's list for this trip (no forward pref change).
+    setGroceryItemStoreForTrip(itemKey, activeGroceryStoreTab);
+  } else if (activeGroceryStoreTab === "all") {
+    // From the All tab, default a brand-new item to the preferred (first) store
+    // rather than Miscellaneous — again only for this trip. An item that already
+    // has a store preference keeps routing to it.
+    const alreadyRouted = resolveItemEffectiveStoreId(itemKey, groceryItemLocations(), enabledIds);
+    if (!alreadyRouted && enabledStores[0]) setGroceryItemStoreForTrip(itemKey, enabledStores[0].id);
   }
   elements.groceryInput.value = "";
   persist();
@@ -26091,22 +26123,15 @@ function groceryItemWeekOverrides() {
   return map && typeof map === "object" ? map : {};
 }
 
-function assignGroceryItemToOpenStoreTab(itemKey, tabStoreId) {
-  if (!itemKey || !groceryStores().some((s) => s.id === tabStoreId)) return;
+// Route an item to a store for THIS trip only — a cycle-scoped week-override,
+// never a change to the item's forward preferred-store ranking. Used both when
+// adding while a store tab is open (lands in that store) and when adding from
+// the All tab (defaults a new item to the preferred store). resolveItemEffective-
+// StoreId checks this override first.
+function setGroceryItemStoreForTrip(itemKey, storeId) {
+  if (!itemKey || !groceryStores().some((s) => s.id === storeId)) return;
   if (!state.groceryItemWeekOverride || typeof state.groceryItemWeekOverride !== "object") state.groceryItemWeekOverride = {};
-  state.groceryItemWeekOverride[groceryItemWeekOverrideKey(itemKey)] = tabStoreId;
-
-  // If this store isn't already a reachable fallback for the item, add it to
-  // the bottom of the preferred-store list — low priority, so it can never
-  // outrank whatever's already there, but it's there in case this store is
-  // ever the only one left (e.g. the primary gets skipped some week).
-  const locations = groceryItemLocations();
-  const loc = locations[itemKey];
-  const rank = loc?.storeRank?.length ? loc.storeRank : (loc?.storeId ? [loc.storeId] : []);
-  if (!rank.includes(tabStoreId)) {
-    locations[itemKey] = { storeId: loc?.storeId || "", storeRank: [...rank, tabStoreId], order: loc?.order || 0 };
-    state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
-  }
+  state.groceryItemWeekOverride[groceryItemWeekOverrideKey(itemKey)] = storeId;
 }
 
 function removeManualGroceryItem(item) {
@@ -28904,7 +28929,11 @@ function toggleGroceryRangeMenu(which) {
   btn.setAttribute("aria-expanded", "true");
   requestAnimationFrame(() => {
     const selected = menu.querySelector(".grocery-range-option.is-selected");
-    if (selected) selected.scrollIntoView({ block: "center" });
+    // Scroll WITHIN the menu, not via scrollIntoView — the latter scrolls the
+    // page, which fires the window scroll listener (closeFloatingMenusOnPageScroll)
+    // and instantly closes the menu on mobile ("opens briefly then disappears").
+    // A scroll of the menu itself is target-guarded, so it stays open.
+    if (selected) menu.scrollTop = selected.offsetTop - menu.clientHeight / 2 + selected.offsetHeight / 2;
   });
 }
 
