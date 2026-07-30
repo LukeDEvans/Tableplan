@@ -2164,6 +2164,7 @@ async function initializeApp() {
   maybeShowHydrationOverlay();
   await hydrateStateFromSharedStorage();
   await hydrateRecipeRowsFromSupabase();
+  resyncAllEventChores(); // roll recurring-event chores forward into the To-Do planner
   applyInitialMealPlanFocus();
   handleImportUrlParameter();
   handleHashNavigation();
@@ -32750,26 +32751,88 @@ function removeEventChoresFromDoList(eventId) {
   });
 }
 
-// Rebuild this event's linked To-Do tasks from its current toggle + chores.
-// Wipes-and-recreates so edits and removals stay in sync; tasks land on the
-// event's (start) date's day cell.
+// How far ahead recurring events materialize chores into the To-Do planner.
+// Re-run at boot so the window keeps rolling forward.
+const CHORE_HORIZON_DAYS = 366;
+
+// Every date this event should drop chores on. One-off → its date; recurring →
+// each occurrence from this To-Do week through the horizon (honors interval,
+// weekdays, until and exceptions via expandRecurringOccurrences).
+function eventChoreDates(event) {
+  if (!event.recurrence) return event.date ? [event.date] : [];
+  const startKey = dateKeyFromDate(startOfPrepWindow(new Date()));
+  const horizon = new Date();
+  horizon.setDate(horizon.getDate() + CHORE_HORIZON_DAYS);
+  return expandRecurringOccurrences(event, startKey, dateKeyFromDate(horizon));
+}
+
+// Reconcile this event's linked To-Do tasks with its current toggle + chores
+// across every occurrence. Idempotent: chores that should still exist are left
+// in place (so a checked-off or edited task survives a re-sync), ones that no
+// longer apply are removed, and missing ones are added.
+// Returns true if anything changed.
 function syncEventChoresToDoList(event) {
-  removeEventChoresFromDoList(event.id);
   const titles = [];
-  if (event.addToDo) titles.push(event.title);
-  (event.chores || []).forEach((c) => { if (c) titles.push(c); });
-  if (!titles.length) return;
-  const ref = doDayRefForDate(event.date);
-  if (!ref) return;
-  const list = rawDoTasksForDay(ref.dayId, ref.key);
-  titles.forEach((title) => {
-    list.push(normalizeDoTasks([{
-      title,
-      taskType: "one-off",
-      time: event.allDay ? "" : (event.startTime || ""),
-      sourceEventId: event.id,
-    }])[0]);
+  if (event.addToDo && event.title) titles.push(event.title);
+  (event.chores || []).forEach((c) => { const t = String(c || "").trim(); if (t) titles.push(t); });
+
+  // desired: cellId ("key|dayId") -> { key, dayId, titles:Set }
+  const desired = new Map();
+  if (titles.length) {
+    eventChoreDates(event).forEach((dateKey) => {
+      const ref = doDayRefForDate(dateKey);
+      if (!ref) return;
+      const cellId = `${ref.key}|${ref.dayId}`;
+      if (!desired.has(cellId)) desired.set(cellId, { key: ref.key, dayId: ref.dayId, titles: new Set() });
+      titles.forEach((t) => desired.get(cellId).titles.add(t));
+    });
+  }
+
+  let changed = false;
+  const present = new Set(); // "key|dayId|title" already in place and still wanted
+  if (state.doPlans && typeof state.doPlans === "object") {
+    Object.entries(state.doPlans).forEach(([key, week]) => {
+      if (!week || typeof week !== "object") return;
+      Object.keys(week).forEach((dayId) => {
+        if (dayId === "__skippedRecurring" || dayId === "__active" || !Array.isArray(week[dayId])) return;
+        const kept = week[dayId].filter((t) => {
+          if (t.sourceEventId !== event.id) return true;
+          const want = desired.get(`${key}|${dayId}`);
+          if (want && want.titles.has(t.title)) { present.add(`${key}|${dayId}|${t.title}`); return true; }
+          changed = true; // stale linked task → drop
+          return false;
+        });
+        if (kept.length !== week[dayId].length) week[dayId] = kept;
+      });
+    });
+  }
+
+  desired.forEach(({ key, dayId, titles: cellTitles }) => {
+    cellTitles.forEach((title) => {
+      if (present.has(`${key}|${dayId}|${title}`)) return;
+      const list = rawDoTasksForDay(dayId, key);
+      list.push(normalizeDoTasks([{
+        title,
+        taskType: "one-off",
+        time: event.allDay ? "" : (event.startTime || ""),
+        sourceEventId: event.id,
+      }])[0]);
+      changed = true;
+    });
   });
+  return changed;
+}
+
+// Roll the chore-materialization window forward for every event that embeds
+// chores (called at boot). Persists only if something actually changed.
+function resyncAllEventChores() {
+  let changed = false;
+  (state.planEvents || []).forEach((e) => {
+    if (e.addToDo || (e.chores && e.chores.length)) {
+      if (syncEventChoresToDoList(e)) changed = true;
+    }
+  });
+  if (changed) persist();
 }
 
 function deletePlanEvent() {
