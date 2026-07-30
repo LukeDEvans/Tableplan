@@ -1315,16 +1315,25 @@
         <div class="recipe-form">
           <div class="dialog-head">
             <h2>Add task</h2>
-            <button class="icon-btn" id="closeAddTaskDialogBtn" type="button" aria-label="Close">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-            </button>
+            <div class="dialog-head-actions">
+              <button class="icon-btn" id="closeAddTaskDialogBtn" type="button" aria-label="Close">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+              </button>
+              <button class="icon-btn add-task-save-btn" id="saveAddTaskBtn" type="submit" form="addTaskDialogForm" aria-label="Save task">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5" /></svg>
+              </button>
+            </div>
           </div>
           <form id="addTaskDialogForm" class="add-task-dialog-form">
             <input id="addTaskDialogInput" type="text" placeholder="Task title" autocomplete="off" />
+            <label class="add-task-time-row">
+              <span class="add-task-time-label">Time (optional)</span>
+              <input id="addTaskDialogTime" type="time" />
+            </label>
             <div class="add-task-type-selector" role="group" aria-label="Task type">
               <button class="add-task-type-btn" type="button" data-task-type="one-off">
                 <span class="add-task-type-name">One-off</span>
-                <span class="add-task-type-desc">Disappears once done</span>
+                <span class="add-task-type-desc">Check off when done</span>
               </button>
               <button class="add-task-type-btn" type="button" data-task-type="regular">
                 <span class="add-task-type-name">Regular</span>
@@ -1337,10 +1346,6 @@
             </div>
             <div id="addTaskRecurringDays" class="add-task-recurring-days" hidden></div>
             <textarea id="addTaskDialogNotes" placeholder="Notes (optional)"></textarea>
-            <div class="dialog-actions">
-              <button class="secondary-btn" type="button" id="cancelAddTaskBtn">Cancel</button>
-              <button class="primary-btn" type="submit">Add task</button>
-            </div>
           </form>
         </div>
       </dialog>

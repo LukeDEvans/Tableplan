@@ -6985,7 +6985,7 @@ textarea {
   text-align: center;
 }
 
-.recipe-form label:not(.travel-leg-mode-radio):not(.toggle-switch):not(.act-endloc-toggle):not(.group-page-toggle-row) {
+.recipe-form label:not(.travel-leg-mode-radio):not(.toggle-switch):not(.act-endloc-toggle):not(.group-page-toggle-row):not(.add-task-time-row) {
   display: grid;
   gap: 6px;
   color: #4f493f;
@@ -8472,6 +8472,13 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
     padding: 5px 2px;
     border-radius: 6px 6px 0 0;
   }
+
+  /* On the To-Do page the day-tabs sit next to the notif bell. Seven tabs at a
+     40px floor (=280px) plus the bell overflow the narrowest phones, forcing a
+     sideways scroll. The compact labels are 1–2 chars, so let the tabs shrink
+     to fill whatever width is left instead. */
+  .do-top-row .day-tab { min-width: 0; padding-left: 1px; padding-right: 1px; }
+  #doMainPage { overflow-x: clip; }
 
   .day-tab .day-tab-full,
   .day-tab .day-tab-short,
@@ -10959,6 +10966,40 @@ body.touch-drag-active * {
 .add-task-day-label:hover span { border-color: var(--accent); }
 .add-task-day-label input:checked + span { background: var(--accent); border-color: var(--accent); color: #fff; }
 .add-task-dialog .dialog-actions { flex-shrink: 0; }
+
+/* Save moved into the header as a patina (accent) checkmark, sitting to the
+   right of the close "x". No separate Cancel button — the x closes. */
+.add-task-save-btn { color: var(--accent); }
+.add-task-save-btn svg { fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.add-task-save-btn:hover { color: var(--accent-dark, var(--accent)); }
+
+/* Optional time-of-day field in the add/edit task dialog. */
+.add-task-time-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  flex-shrink: 0; font-size: 0.9rem; font-weight: 600; color: var(--ink);
+}
+.add-task-time-label { color: color-mix(in srgb, var(--ink) 62%, transparent); }
+.add-task-time-row input[type="time"] {
+  font: inherit; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
+  background: var(--surface, #fff); color: var(--ink);
+}
+
+/* Time chip shown on a task row (between the title and the info dot). */
+.do-task-time {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--accent-dark, var(--accent));
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  padding: 1px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.do-task-item.is-done .do-task-time {
+  color: var(--muted, #6f695f);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
 
 .config-dialog-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 /* Head of Household */

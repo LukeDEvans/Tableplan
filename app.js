@@ -905,9 +905,9 @@ const elements = {
   addTaskDialogForm: document.querySelector("#addTaskDialogForm"),
   addTaskDialogInput: document.querySelector("#addTaskDialogInput"),
   addTaskDialogNotes: document.querySelector("#addTaskDialogNotes"),
+  addTaskDialogTime: document.querySelector("#addTaskDialogTime"),
   addTaskRecurringDays: document.querySelector("#addTaskRecurringDays"),
   closeAddTaskDialogBtn: document.querySelector("#closeAddTaskDialogBtn"),
-  cancelAddTaskBtn: document.querySelector("#cancelAddTaskBtn"),
   taskLogDialog: document.querySelector("#taskLogDialog"),
   taskLogForm: document.querySelector("#taskLogForm"),
   taskLogTaskTitle: document.querySelector("#taskLogTaskTitle"),
@@ -1321,6 +1321,17 @@ migrateLegacyRecipeOrganization();
 migrateGroceryDescriptorNames();
 render();
 bindEvents();
+
+// Refresh task-time reminders every minute while the app is open: keep the
+// page notification dot current, and if the To-Do page is showing (panel
+// closed, no dialog open), re-render so newly-due items surface live.
+setInterval(() => {
+  updateDoNotifCount();
+  if (elements.doPlannerGrid && elements.doPlannerGrid.offsetParent !== null && !doNotifOpen && !document.querySelector("dialog[open]")) {
+    renderDoPlanner();
+  }
+}, 60000);
+
 function initTouchDragPolyfill() {
   let pending = null; // { sourceEl, startX, startY, timer }
   let active = null;  // { sourceEl, ghost, lastOver }
@@ -1641,7 +1652,6 @@ function bindEvents() {
   elements.closeWatchArchiveBtn.addEventListener("click", () => elements.watchArchiveDialog.close());
   elements.watchArchiveDialog.addEventListener("click", closeDialogOnBackdropClick);
   elements.closeAddTaskDialogBtn.addEventListener("click", () => { editingDoTaskContext = null; elements.addTaskDialog.close(); });
-  elements.cancelAddTaskBtn.addEventListener("click", () => { editingDoTaskContext = null; elements.addTaskDialog.close(); });
   elements.addTaskDialog.querySelectorAll("[data-task-type]").forEach((btn) => {
     btn.addEventListener("click", () => setAddTaskType(btn.dataset.taskType));
   });
@@ -3392,6 +3402,26 @@ function normalizeTaskLogEntries(entries) {
   }));
 }
 
+// A task's optional scheduled time of day, stored as "HH:MM" (24h) or "".
+function normalizeTaskTime(t) {
+  if (typeof t !== "string") return "";
+  const m = t.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return "";
+  const h = Math.min(23, Math.max(0, parseInt(m[1], 10)));
+  const min = Math.min(59, Math.max(0, parseInt(m[2], 10)));
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
+// "HH:MM" (24h) -> localized 12h label like "2:30 PM"; "" when no time set.
+function formatTaskTime(t) {
+  const norm = normalizeTaskTime(t);
+  if (!norm) return "";
+  const [h, m] = norm.split(":").map(Number);
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
 function normalizeDoTasks(tasks) {
   return (Array.isArray(tasks) ? tasks : [])
     .map((task) => {
@@ -3400,6 +3430,7 @@ function normalizeDoTasks(tasks) {
         id: task?.id || createId("task"),
         title: String(task?.title || task?.name || task?.text || task?.label || "").trim(),
         notes: String(task?.notes || "").trim(),
+        time: normalizeTaskTime(task?.time),
         taskType: ["regular", "one-off"].includes(task?.taskType) ? task.taskType : "one-off",
         log: normalizeTaskLogEntries(task?.log),
         backlogTaskId: task?.backlogTaskId || "",
@@ -3445,6 +3476,7 @@ function normalizeRecurringTasks(tasks) {
         id: task?.id || createId("recurring-task"),
         title: String(task?.title || "").trim(),
         notes: String(task?.notes || "").trim(),
+        time: normalizeTaskTime(task?.time),
         log: normalizeTaskLogEntries(task?.log),
         dayIds: [...new Set(dayIds)],
         createdAt: task?.createdAt || new Date().toISOString()
@@ -12058,10 +12090,10 @@ function openAddTaskDialog() {
   editingDoTaskContext = null;
   elements.addTaskDialogInput.value = "";
   elements.addTaskDialogNotes.value = "";
+  if (elements.addTaskDialogTime) elements.addTaskDialogTime.value = "";
   elements.addTaskRecurringDays.classList.remove("is-error");
   setAddTaskType("one-off");
   elements.addTaskDialog.querySelector("h2").textContent = "Add task";
-  elements.addTaskDialog.querySelector("[type='submit']").textContent = "Add task";
   elements.addTaskDialog.showModal();
   requestAnimationFrame(() => elements.addTaskDialogInput.focus());
 }
@@ -12076,6 +12108,7 @@ function openEditTaskDialog(dayId, taskId) {
   editingDoTaskContext = { dayId, taskId, task, recurringSource };
   elements.addTaskDialogInput.value = task.title;
   elements.addTaskDialogNotes.value = task.notes || "";
+  if (elements.addTaskDialogTime) elements.addTaskDialogTime.value = normalizeTaskTime(recurringSource ? recurringSource.time : task.time);
   elements.addTaskRecurringDays.classList.remove("is-error");
   if (recurringSource) {
     setAddTaskType("recurring");
@@ -12094,7 +12127,6 @@ function openEditTaskDialog(dayId, taskId) {
     setAddTaskType(task.taskType || "one-off");
   }
   elements.addTaskDialog.querySelector("h2").textContent = "Edit task";
-  elements.addTaskDialog.querySelector("[type='submit']").textContent = "Save";
   elements.addTaskDialog.showModal();
   requestAnimationFrame(() => elements.addTaskDialogInput.focus());
 }
@@ -12119,6 +12151,7 @@ function submitAddTaskDialog(event) {
   const title = elements.addTaskDialogInput.value.trim();
   if (!title) return;
   const notes = elements.addTaskDialogNotes.value.trim();
+  const time = normalizeTaskTime(elements.addTaskDialogTime?.value);
   const taskType = elements.addTaskDialog.querySelector("[data-task-type].is-active")?.dataset.taskType || "one-off";
 
   if (editingDoTaskContext) {
@@ -12129,11 +12162,12 @@ function submitAddTaskDialog(event) {
       elements.addTaskRecurringDays.classList.remove("is-error");
       recurringSource.title = title;
       recurringSource.notes = notes;
+      recurringSource.time = time;
       recurringSource.dayIds = dayIds;
     } else {
       const pool = dayId === "backlog" ? doBacklogTasks() : doTasksForDay(dayId);
       const live = pool.find((t) => t.id === task.id);
-      if (live) { live.title = title; live.notes = notes; live.taskType = taskType; }
+      if (live) { live.title = title; live.notes = notes; live.time = time; live.taskType = taskType; }
     }
     editingDoTaskContext = null;
   } else if (taskType === "recurring") {
@@ -12144,9 +12178,9 @@ function submitAddTaskDialog(event) {
     }
     elements.addTaskRecurringDays.classList.remove("is-error");
     state.recurringTasks = normalizeRecurringTasks(state.recurringTasks);
-    state.recurringTasks.push({ id: createId("recurring-task"), title, notes, dayIds, createdAt: new Date().toISOString() });
+    state.recurringTasks.push({ id: createId("recurring-task"), title, notes, time, dayIds, createdAt: new Date().toISOString() });
   } else {
-    doBacklogTasks().push({ id: createId("task"), title, notes, taskType, done: false, weekKey: weekKey(), createdAt: new Date().toISOString() });
+    doBacklogTasks().push({ id: createId("task"), title, notes, time, taskType, done: false, weekKey: weekKey(), createdAt: new Date().toISOString() });
   }
 
   elements.addTaskDialog.close();
@@ -12252,7 +12286,6 @@ function initDoPlannerDelegation() {
     const dayTab = e.target.closest("[data-do-day-tab]");
     if (dayTab) { selectPlannerDay(dayTab.dataset.doDayTab); return; }
     if (e.target.closest("[data-open-add-task]")) { openAddTaskDialog(); return; }
-    if (e.target.closest("[data-open-do-archive]")) { openDoArchiveDialog(); return; }
     const detail = e.target.closest("[data-do-task-detail]");
     if (detail) { openDoTaskDetail(detail.dataset.doDay, detail.dataset.doTaskDetail); return; }
     const del = e.target.closest("[data-do-task-delete]");
@@ -12334,7 +12367,8 @@ function initTasksPageDelegation() {
 function doNotifBellHtml() {
   const chores = doUnfinishedChores();
   const overdue = doOverdueDayTasks();
-  const count = chores.length + overdue.length;
+  const due = doDueTimedTasks();
+  const count = chores.length + overdue.length + due.length;
   const bellSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
   const rowHtml = (label, key, dayId, taskId) => `
     <label class="do-notif-item">
@@ -12349,6 +12383,13 @@ function doNotifBellHtml() {
       </button>
       ${doNotifOpen ? `
       <div class="do-notif-panel">
+        ${due.length ? `
+        <div class="do-notif-head">Due now</div>
+        ${due.map((d) => `
+          <div class="do-notif-row">
+            ${rowHtml(`${formatTaskTime(d.task.time)} · ${d.task.title}`, d.dayKey, d.dayId, d.task.id)}
+            <button class="secondary-btn do-notif-jump" type="button" data-do-notif-jump="${escapeHtml(d.dayId)}">${escapeHtml(d.dayName)}</button>
+          </div>`).join("")}` : ""}
         ${overdue.length ? `
         <div class="do-notif-head">Overdue this week</div>
         ${overdue.map((o) => `
@@ -12387,9 +12428,6 @@ function renderDoPlanner() {
         <div class="slot-topline">
           <div class="slot-label">Chores</div>
           <div class="slot-actions" style="margin-left:auto">
-            <button class="icon-btn do-archive-btn" type="button" data-open-do-archive title="Completed chores archive" aria-label="Completed chores archive">
-              ${doArchiveIconSvg()}${(state.doArchive || []).length ? `<span class="do-archive-count">${(state.doArchive || []).length}</span>` : ""}
-            </button>
             <button class="primary-btn icon-primary-btn" type="button" data-open-add-task title="Add task" aria-label="Add task">
               <span aria-hidden="true">+</span>
             </button>
@@ -12430,15 +12468,34 @@ function renderTasksPage() {
   bindDoTaskControls(elements.tasksPageDialog);
 }
 
+// Display-only ordering (never mutates the stored array, so drag-reorder keeps
+// working on the real order): unchecked tasks first, checked ones sink to the
+// bottom struck-through. Within each group, tasks with a time come first sorted
+// chronologically, then untimed tasks keep their stored order.
+function sortDoTasksForDisplay(tasks) {
+  return tasks
+    .map((task, index) => ({ task, index }))
+    .sort((a, b) => {
+      const doneDiff = (a.task.done ? 1 : 0) - (b.task.done ? 1 : 0);
+      if (doneDiff) return doneDiff;
+      const at = a.task.time, bt = b.task.time;
+      if (at && bt && at !== bt) return at < bt ? -1 : 1;
+      if (at && !bt) return -1;
+      if (!at && bt) return 1;
+      return a.index - b.index;
+    })
+    .map((entry) => entry.task);
+}
+
 function doTaskListTemplate(dayId) {
-  const tasks = doTasksForDay(dayId);
+  const tasks = sortDoTasksForDisplay(doTasksForDay(dayId));
   return tasks.length
     ? tasks.map((task) => doTaskTemplate(task, dayId)).join("")
     : `<div class="empty-state">No tasks scheduled for this day.</div>`;
 }
 
 function doBacklogListTemplate() {
-  const tasks = visibleDoBacklogTasks();
+  const tasks = sortDoTasksForDisplay(visibleDoBacklogTasks());
   return tasks.length
     ? tasks.map((task) => doTaskTemplate(task, "backlog")).join("")
     : "";
@@ -12550,8 +12607,30 @@ function doOverdueDayTasks() {
   return out;
 }
 
+// Timed tasks scheduled for TODAY whose time has arrived and aren't done yet —
+// the in-app reminder surfaced in the notif bell / page dot while the app is
+// open. Independent of the browsed week (always the real current prep week).
+function doDueTimedTasks() {
+  const key = doRealWeekKey();
+  const start = startOfPrepWindow(new Date());
+  const now = new Date();
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const offset = Math.round((today - start) / 86400000);
+  const todayDay = doPrepDays.find((day) => day.offset === offset);
+  if (!todayDay) return [];
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  return rawDoTasksForDay(todayDay.id, key)
+    .filter((t) => !t.done && t.time)
+    .filter((t) => {
+      const [h, m] = t.time.split(":").map(Number);
+      return h * 60 + m <= nowMinutes;
+    })
+    .map((task) => ({ task, dayId: todayDay.id, dayName: todayDay.name, dayKey: key }));
+}
+
 function updateDoNotifCount() {
-  const count = doUnfinishedChores().length + doOverdueDayTasks().length;
+  const count = doUnfinishedChores().length + doOverdueDayTasks().length + doDueTimedTasks().length;
   setPageNotifCount("do", count);
 }
 
@@ -12581,16 +12660,19 @@ function ensureRecurringTasksForDay(key, dayId) {
       const existingOnDay = tasks.find((item) => item.recurringTaskId === task.id);
       if (existingOnDay) {
         existingOnDay.title = task.title;
+        existingOnDay.time = task.time || "";
         return;
       }
       const existingInWeek = doWeekTasks(key).find((item) => item.recurringTaskId === task.id);
       if (existingInWeek) {
         existingInWeek.title = task.title;
+        existingInWeek.time = task.time || "";
         return;
       }
       tasks.push({
         id: createId("task"),
         title: task.title,
+        time: task.time || "",
         done: false,
         recurringTaskId: task.id,
         createdAt: new Date().toISOString()
@@ -13904,12 +13986,14 @@ function doTaskTemplate(task, dayId) {
   const isLoggable = task.taskType === "regular" || !!task.recurringTaskId;
   const logCount = isLoggable ? getTaskLogEntries(task).length : 0;
   const hasInfo = Boolean((task.notes || "").trim()) || logCount > 0;
+  const timeLabel = formatTaskTime(task.time);
   return `
     <article class="do-task-item ${task.done ? "is-done" : ""} ${task.recurringTaskId ? "is-recurring" : ""}" data-do-task="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" draggable="true">
       <div class="do-task-main">
         <input type="checkbox" class="do-task-check" data-do-task-toggle="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" ${task.done ? "checked" : ""} aria-label="Mark ${escapeHtml(task.title)} done" />
         <button type="button" class="do-task-title" data-do-task-detail="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}">
           <span class="do-task-title-text">${escapeHtml(task.title)}</span>
+          ${timeLabel ? `<span class="do-task-time">${escapeHtml(timeLabel)}</span>` : ""}
           ${hasInfo ? `<span class="do-task-info-dot" aria-hidden="true"></span>` : ""}
         </button>
       </div>
@@ -13923,14 +14007,14 @@ function toggleDoTask(dayId, taskId, done) {
     const task = pool.find((t) => t.id === taskId);
     if (task && (task.taskType === "regular" || task.recurringTaskId)) {
       // Loggable tasks (Regular "stays in pool always" / Recurring) keep their
-      // completion-log behavior — they are not archived.
+      // completion-log behavior — the log dialog records the completion, then
+      // marks the item done so it stays crossed-off at the bottom of the list.
       openTaskLogDialog(dayId, taskId, task.title);
       return;
     }
-    // A one-off chore ("Disappears once done") checked complete moves to the
-    // dated archive rather than lingering struck-through in the list.
-    if (task) { archiveDoTask(dayId, taskId); return; }
   }
+  // Completed items stay visible — checked and struck-through — and sink below
+  // the unchecked ones (see sortDoTasksForDisplay). Nothing is archived.
   applyDoTaskToggle(dayId, taskId, done);
 }
 
