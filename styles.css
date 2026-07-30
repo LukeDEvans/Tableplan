@@ -10241,6 +10241,70 @@ body.touch-drag-active * {
   flex-shrink: 0;
 }
 
+/* Saved boats: quick-pick chips that auto-fill the vessel + its usual sails */
+.sail-log-boats-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+}
+.sail-log-boats-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.sail-log-boat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px 5px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-dark);
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sail-log-boat-chip:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.sail-log-boat-chip .sail-log-boat-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+  color: var(--ink);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.sail-log-boat-chip .sail-log-boat-del:hover {
+  background: color-mix(in srgb, var(--tomato, #e05252) 70%, transparent);
+  color: #fff;
+}
+
+/* On a phone, stack every field in one column instead of a wide grid */
+@media (max-width: 560px) {
+  .sail-log-form-grid { grid-template-columns: 1fr; }
+  .sail-log-field.span-2,
+  .sail-log-field.span-3,
+  .sail-log-field.span-4,
+  .sail-log-field-pair,
+  .sail-log-section-head { grid-column: span 1; }
+  .sail-log-form-body { padding: 0 14px 6px; }
+  .sail-log-form-footer { padding: 12px 14px; }
+}
+
 /* ─── End Recreate page ──────────────────────────────────────────────────────── */
 
 /* ─── Plan Page ──────────────────────────────────────────────────────────────── */
@@ -11555,70 +11619,149 @@ body.touch-drag-active * {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
+  gap: 10px;
   background: color-mix(in srgb, var(--accent-soft) 20%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
   border-radius: 20px;
-  padding: 24px 20px 20px;
+  padding: 18px 20px 22px;
 }
 
-.metronome-visual {
-  height: 160px;
+/* BPM number top-left, +/- buttons stacked top-right */
+.metronome-top-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  width: 100%;
+  gap: 12px;
+}
+
+.metronome-bpm-display {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.metronome-bpm-value {
+  font-size: 3rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.metronome-bpm-unit {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.metronome-adj-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.metronome-adj-btn {
+  font-size: 1.5rem;
+  font-weight: 700;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
+.metronome-visual {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.metronome-visual:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 12px;
+}
+
 .metronome-pendulum-svg {
-  width: 104px;
-  height: 158px;
+  width: min(260px, 74vw);
+  height: auto;
   overflow: visible;
-  filter: drop-shadow(0 6px 10px rgba(60, 40, 12, 0.18));
+  filter: drop-shadow(0 8px 14px rgba(60, 40, 12, 0.22));
 }
 
 .metronome-needle-group {
-  transform-origin: 0px -40px; /* pivots at the top of the body, like a real metronome */
+  transform-box: view-box;
+  transform-origin: 100px 224px; /* pivots near the base, like a real metronome */
   transition-property: transform;
   transition-timing-function: ease-in-out;
   transform: rotate(0deg);
 }
 
-/* Weighted wooden body */
+/* Wooden pyramid frame */
 .metronome-body {
-  fill: color-mix(in srgb, var(--accent) 42%, #6f4f2b);
-  stroke: color-mix(in srgb, #3a2712 60%, var(--accent));
-  stroke-width: 2;
+  fill: color-mix(in srgb, var(--accent) 40%, #7a5327);
+  stroke: color-mix(in srgb, #3a2712 65%, var(--accent));
+  stroke-width: 2.5;
   stroke-linejoin: round;
 }
-.metronome-body-face {
-  fill: color-mix(in srgb, var(--accent) 30%, #8a6636);
+/* Dark recessed face behind the swinging arm */
+.metronome-face {
+  fill: color-mix(in srgb, #241708 82%, var(--accent));
+  stroke: color-mix(in srgb, #1a1005 60%, transparent);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+/* Light wood lower panel */
+.metronome-base-panel {
+  fill: color-mix(in srgb, #c79a5b 78%, var(--accent));
+  stroke: color-mix(in srgb, #3a2712 45%, var(--accent));
+  stroke-width: 1.5;
+  stroke-linejoin: round;
 }
 .metronome-scale {
-  fill: color-mix(in srgb, #2c1d0e 78%, var(--accent));
+  fill: color-mix(in srgb, #f4ecdc 88%, var(--accent));
 }
 .metronome-scale-ticks line {
-  stroke: color-mix(in srgb, #fff 55%, var(--accent));
-  stroke-width: 1.6;
+  stroke: color-mix(in srgb, #4a3418 70%, transparent);
+  stroke-width: 1.4;
   stroke-linecap: round;
+}
+.metronome-scale-num {
+  fill: color-mix(in srgb, #f0e6d2 80%, var(--accent));
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
 }
 
 .metronome-rod {
   stroke: color-mix(in srgb, var(--ink) 82%, #000);
-  stroke-width: 2.5;
+  stroke-width: 3;
   stroke-linecap: round;
 }
 
 /* The sliding weight on the arm */
-.metronome-bob {
-  fill: var(--accent);
-  stroke: color-mix(in srgb, #2c1d0e 55%, var(--accent));
-  stroke-width: 1.4;
-  stroke-linejoin: round;
-  transition: fill 0.1s;
+.metronome-bob-group {
+  cursor: grab;
+  touch-action: none;
 }
-
-.metronome-tip-dot {
-  fill: color-mix(in srgb, var(--ink) 82%, #000);
+.metronome-bob-group:active {
+  cursor: grabbing;
+}
+.metronome-bob-hit {
+  fill: transparent;
+}
+.metronome-bob {
+  fill: color-mix(in srgb, #d9c8a6 60%, var(--accent));
+  stroke: color-mix(in srgb, #2c1d0e 60%, var(--accent));
+  stroke-width: 1.6;
+  stroke-linejoin: round;
 }
 
 .metronome-pivot {
@@ -11627,65 +11770,27 @@ body.touch-drag-active * {
   stroke-width: 1.2;
 }
 
-.metronome-bpm-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.metronome-key line {
+  stroke: color-mix(in srgb, #9a9a9a 70%, var(--ink));
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.metronome-key circle {
+  fill: none;
+  stroke: color-mix(in srgb, #9a9a9a 70%, var(--ink));
+  stroke-width: 3;
 }
 
-.metronome-adj-btn {
-  font-size: 1.4rem;
-  font-weight: 700;
-  width: 40px;
-  height: 40px;
-  flex-shrink: 0;
+.metronome-foot {
+  fill: color-mix(in srgb, #3a2712 60%, var(--accent));
 }
 
-.metronome-bpm-display {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-}
-
-.metronome-bpm-input {
-  width: 72px;
-  text-align: center;
-  font-size: 2.2rem;
-  font-weight: 700;
-  border: none;
-  background: transparent;
-  color: var(--ink);
-  padding: 0;
-  -moz-appearance: textfield;
-}
-
-.metronome-bpm-input::-webkit-outer-spin-button,
-.metronome-bpm-input::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-}
-
-.metronome-bpm-unit {
-  font-size: 0.85rem;
+.metronome-hint {
+  font-size: 0.8rem;
   font-weight: 600;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.06em;
-}
-
-.metronome-slider {
-  width: 100%;
-  max-width: 280px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-
-.metronome-actions {
-  display: flex;
-  gap: 10px;
-}
-
-.metronome-play-btn {
-  min-width: 90px;
 }
 
 .is-active-toggle {

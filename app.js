@@ -216,7 +216,7 @@ const STATE_SECTIONS = {
   plan:      ["calendars", "planEvents", "planCalendars"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
-  recreate:  ["sailingLog", "pianoSongs", "pianoLog", "recreateHobbies"],
+  recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
@@ -3018,6 +3018,7 @@ function defaultState() {
     inventoryRoomVisibility: {},
     watchShowtimesData: {},
     sailingLog: [],
+    sailingBoats: [],
     pianoLog: [],
     recreateHobbies: { sailing: true, piano: true },
     pianoSongs: [],
@@ -3144,6 +3145,7 @@ function normalizeState(parsed) {
     inventoryRoomVisibility: normalizeInventoryRoomVisibility(parsed?.inventoryRoomVisibility),
     watchShowtimesData: normalizeShowtimesData(parsed?.watchShowtimesData),
     sailingLog: normalizeSailingLog(parsed?.sailingLog),
+    sailingBoats: normalizeSailingBoats(parsed?.sailingBoats),
     pianoLog: normalizePianoLog(parsed?.pianoLog),
     recreateHobbies: normalizeRecreateHobbies(parsed?.recreateHobbies),
     pianoSongs: normalizePianoSongs(parsed?.pianoSongs),
@@ -4114,6 +4116,14 @@ function normalizeSailingLog(entries) {
     incidents: e?.incidents || "",
     createdAt: e?.createdAt || new Date().toISOString()
   }));
+}
+
+function normalizeSailingBoats(boats) {
+  return (Array.isArray(boats) ? boats : []).map((b) => ({
+    id: b?.id || createId("boat"),
+    name: String(b?.name || ""),
+    sails: Array.isArray(b?.sails) ? b.sails : [],
+  })).filter((b) => b.name);
 }
 
 function normalizeWatchPlans(plans) {
@@ -5140,7 +5150,7 @@ function mergeStates(newer, older) {
     "recurringTasks", "playAutoRules",
     // Watch / Read / Recreate
     "watchItems", "readingItems",
-    "pianoSongs", "sailingLog", "pianoLog",
+    "pianoSongs", "sailingLog", "sailingBoats", "pianoLog",
     // Inventory & shopping
     "inventoryBoxes", "inventoryItems",
     "groceryStores", "groceryPriceObservations", "priceHistory",
@@ -30891,18 +30901,29 @@ function allowScreenOff(reason) { wakeLockReasons.delete(reason); refreshWakeLoc
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshWakeLock(); });
 
 // Metronome state
+const METRO_MIN_BPM = 40;
+const METRO_MAX_BPM = 208;
+const METRO_BOB_Y_TOP = 60;     // svg y for the slowest tempo (weight high on the arm)
+const METRO_BOB_Y_BOTTOM = 200; // svg y for the fastest tempo (weight low, near the pivot)
+const METRO_SWING_DEG = 26;
 let metronomeBpm = 120;
 let metronomeIsPlaying = false;
-let metronomeAudioCtx = null;
-let metronomeNextBeatTime = 0;
-let metronomeSchedulerId = null;
-let metronomeBeatCount = 0;
-let metronomeTapTimes = [];
-let metronomeAccentEnabled = true;
+let metronomeSwingTimer = null;
+let metronomeSwingDir = 1;
+let metronomeDragging = false;
+let metronomeSuppressTap = false;
+let metronomeAudioEl = null;      // <audio> loop — keeps ticking with the screen off
+let metronomeLoopUrl = null;
+let metronomeLoopRefreshTimer = null;
 
 function sailingLogList() {
   if (!Array.isArray(state.sailingLog)) state.sailingLog = [];
   return state.sailingLog;
+}
+
+function sailingBoatsList() {
+  if (!Array.isArray(state.sailingBoats)) state.sailingBoats = [];
+  return state.sailingBoats;
 }
 
 function normalizePianoLog(entries) {
@@ -31114,45 +31135,59 @@ function renderPianoPanel() {
   return `
     <div class="piano-panel">
       <div class="piano-metronome">
-        <div class="metronome-visual">
-          <svg class="metronome-pendulum-svg" viewBox="-50 -122 100 154" aria-hidden="true">
-            <!-- weighted wooden body (pyramid) -->
-            <polygon class="metronome-body" points="-40,26 40,26 15,-40 -15,-40"/>
-            <polygon class="metronome-body-face" points="-30,26 30,26 12,-34 -12,-34"/>
-            <!-- center scale slot + tempo ticks -->
-            <rect class="metronome-scale" x="-3.5" y="-34" width="7" height="56" rx="3.5"/>
-            <g class="metronome-scale-ticks">
-              <line x1="5" y1="-28" x2="10" y2="-28"/>
-              <line x1="5" y1="-15" x2="9" y2="-15"/>
-              <line x1="5" y1="-2" x2="10" y2="-2"/>
-              <line x1="5" y1="11" x2="9" y2="11"/>
-            </g>
-            <!-- swinging weighted arm (pivots at the body's top) -->
-            <g id="metronomeNeedle" class="metronome-needle-group">
-              <line class="metronome-rod" x1="0" y1="-40" x2="0" y2="-112"/>
-              <polygon class="metronome-bob" points="-9,-72 9,-72 7,-90 -7,-90"/>
-              <circle class="metronome-tip-dot" cx="0" cy="-112" r="3.5"/>
-            </g>
-            <circle class="metronome-pivot" cx="0" cy="-40" r="4.5"/>
-          </svg>
-        </div>
-        <div class="metronome-bpm-row">
-          <button class="icon-btn metronome-adj-btn" type="button" id="metronomeDecBtn" aria-label="Decrease tempo">−</button>
+        <div class="metronome-top-controls">
           <div class="metronome-bpm-display">
-            <input class="metronome-bpm-input" type="number" id="metronomeBpmInput"
-              min="20" max="300" value="${metronomeBpm}" aria-label="Tempo in BPM" />
+            <span class="metronome-bpm-value" id="metronomeBpmValue">${metronomeBpm}</span>
             <span class="metronome-bpm-unit">BPM</span>
           </div>
-          <button class="icon-btn metronome-adj-btn" type="button" id="metronomeIncBtn" aria-label="Increase tempo">+</button>
+          <div class="metronome-adj-stack">
+            <button class="icon-btn metronome-adj-btn" type="button" id="metronomeIncBtn" aria-label="Increase tempo">+</button>
+            <button class="icon-btn metronome-adj-btn" type="button" id="metronomeDecBtn" aria-label="Decrease tempo">−</button>
+          </div>
         </div>
-        <input type="range" class="metronome-slider" id="metronomeBpmSlider"
-          min="20" max="300" value="${metronomeBpm}" aria-label="Tempo slider" />
-        <div class="metronome-actions">
-          <button class="secondary-btn" type="button" id="metronomeTapBtn">Tap</button>
-          <button class="${metronomeIsPlaying ? "primary-btn" : "secondary-btn"} metronome-play-btn" type="button" id="metronomePlayBtn">
-            ${metronomeIsPlaying ? "Stop" : "Play"}
-          </button>
+        <div class="metronome-visual" id="metronomeVisual" role="button" tabindex="0" aria-label="Tap to start or stop the metronome">
+          <svg class="metronome-pendulum-svg" viewBox="0 0 200 300" id="metronomeSvg" aria-hidden="true">
+            <!-- wooden pyramid frame -->
+            <polygon class="metronome-body" points="86,16 114,16 178,290 22,290"/>
+            <!-- dark recessed face with the tempo scale -->
+            <polygon class="metronome-face" points="80,46 120,46 152,224 48,224"/>
+            <!-- light wood lower panel -->
+            <polygon class="metronome-base-panel" points="48,224 152,224 172,286 28,286"/>
+            <!-- printed tempo scale -->
+            <rect class="metronome-scale" x="91" y="54" width="18" height="166" rx="3"/>
+            <g class="metronome-scale-ticks">
+              <line x1="100" y1="62" x2="112" y2="62"/>
+              <line x1="100" y1="82" x2="108" y2="82"/>
+              <line x1="100" y1="102" x2="112" y2="102"/>
+              <line x1="100" y1="122" x2="108" y2="122"/>
+              <line x1="100" y1="142" x2="112" y2="142"/>
+              <line x1="100" y1="162" x2="108" y2="162"/>
+              <line x1="100" y1="182" x2="112" y2="182"/>
+              <line x1="100" y1="202" x2="108" y2="202"/>
+            </g>
+            <text class="metronome-scale-num" x="114" y="65">40</text>
+            <text class="metronome-scale-num" x="114" y="145">120</text>
+            <text class="metronome-scale-num" x="114" y="205">208</text>
+            <!-- swinging weighted arm (pivots near the base) -->
+            <g id="metronomeNeedle" class="metronome-needle-group">
+              <line class="metronome-rod" x1="100" y1="224" x2="100" y2="30"/>
+              <g id="metronomeBob" class="metronome-bob-group" transform="translate(100, ${metronomeBobYFromBpm(metronomeBpm).toFixed(1)})">
+                <rect class="metronome-bob-hit" x="-20" y="-18" width="40" height="36"/>
+                <polygon class="metronome-bob" points="-14,-11 14,-11 4,0 14,11 -14,11 -4,0"/>
+              </g>
+            </g>
+            <circle class="metronome-pivot" cx="100" cy="224" r="6"/>
+            <!-- winding key -->
+            <g class="metronome-key">
+              <line x1="152" y1="252" x2="168" y2="248"/>
+              <circle cx="171" cy="247" r="6"/>
+            </g>
+            <!-- feet -->
+            <rect class="metronome-foot" x="34" y="286" width="20" height="10" rx="2"/>
+            <rect class="metronome-foot" x="146" y="286" width="20" height="10" rx="2"/>
+          </svg>
         </div>
+        <div class="metronome-hint" id="metronomeHint">${metronomeIsPlaying ? "Tap to stop" : "Tap to start"}</div>
       </div>
 
       <div class="piano-songs-section">
@@ -31201,10 +31236,6 @@ function bindPianoControls() {
   const grid = elements.recreatePlannerGrid;
 
   // Metronome controls
-  grid.querySelector("#metronomePlayBtn")?.addEventListener("click", () => {
-    metronomeIsPlaying ? stopMetronome() : startMetronome();
-  });
-  grid.querySelector("#metronomeTapBtn")?.addEventListener("click", metronomeTapTempo);
   grid.querySelector("#metronomeDecBtn")?.addEventListener("click", () => setMetronomeBpm(metronomeBpm - 1));
   grid.querySelector("#metronomeIncBtn")?.addEventListener("click", () => setMetronomeBpm(metronomeBpm + 1));
   const attachRepeat = (btnId, delta) => {
@@ -31215,8 +31246,24 @@ function bindPianoControls() {
   };
   attachRepeat("#metronomeDecBtn", -1);
   attachRepeat("#metronomeIncBtn", 1);
-  grid.querySelector("#metronomeBpmSlider")?.addEventListener("input", (e) => setMetronomeBpm(Number(e.target.value)));
-  grid.querySelector("#metronomeBpmInput")?.addEventListener("change", (e) => setMetronomeBpm(Number(e.target.value)));
+
+  // Tap the metronome body to start/stop; drag the weight to set the tempo.
+  const visual = grid.querySelector("#metronomeVisual");
+  visual?.addEventListener("click", () => {
+    if (metronomeSuppressTap) { metronomeSuppressTap = false; return; }
+    metronomeIsPlaying ? stopMetronome() : startMetronome();
+  });
+  visual?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      metronomeIsPlaying ? stopMetronome() : startMetronome();
+    }
+  });
+  const bob = grid.querySelector("#metronomeBob");
+  bob?.addEventListener("pointerdown", startMetronomeBobDrag);
+  // Keep a tap on the weight itself from also toggling play/stop.
+  bob?.addEventListener("click", (e) => e.stopPropagation());
+  positionMetronomeBob();
 
   // Song list controls
   grid.querySelector("#pianoAddSongForm")?.addEventListener("submit", (e) => {
@@ -31312,106 +31359,200 @@ function openPianoSongEdit(id) {
 }
 
 // ── Metronome engine ────────────────────────────────────────
+// The click track is a one-beat looping WAV played through a plain <audio>
+// element. iOS keeps <audio> media playing when the screen locks or the PWA is
+// backgrounded (Web Audio + setTimeout scheduling get suspended), so this is
+// what lets the metronome keep sounding with the phone screen off.
 
 let metronomeRepeatTimer = null;
 
-function metronomeGetAudioCtx() {
-  if (!metronomeAudioCtx) {
-    metronomeAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  return metronomeAudioCtx;
+// Map the tempo to the sliding weight's position on the arm and back. Weight
+// high on the arm (small y) = slow; low near the pivot (large y) = fast, just
+// like a real mechanical metronome.
+function metronomeBobYFromBpm(bpm) {
+  const t = (Math.max(METRO_MIN_BPM, Math.min(METRO_MAX_BPM, bpm)) - METRO_MIN_BPM) / (METRO_MAX_BPM - METRO_MIN_BPM);
+  return METRO_BOB_Y_TOP + t * (METRO_BOB_Y_BOTTOM - METRO_BOB_Y_TOP);
+}
+function metronomeBpmFromBobY(y) {
+  const t = (y - METRO_BOB_Y_TOP) / (METRO_BOB_Y_BOTTOM - METRO_BOB_Y_TOP);
+  return METRO_MIN_BPM + t * (METRO_MAX_BPM - METRO_MIN_BPM);
+}
+function positionMetronomeBob() {
+  const bob = document.getElementById("metronomeBob");
+  if (bob) bob.setAttribute("transform", `translate(100, ${metronomeBobYFromBpm(metronomeBpm).toFixed(1)})`);
 }
 
-function metronomeScheduleBeat(time, accent) {
-  const ctx = metronomeGetAudioCtx();
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.frequency.value = accent ? 1100 : 880;
-  gain.gain.setValueAtTime(accent ? 0.45 : 0.28, time);
-  gain.gain.exponentialRampToValueAtTime(0.001, time + 0.06);
-  osc.start(time);
-  osc.stop(time + 0.06);
+// Build a one-beat WAV: a short decaying tick followed by silence for the rest
+// of the beat. Looping it plays one click every 60/bpm seconds.
+function buildMetronomeClickWav(bpm) {
+  const sampleRate = 44100;
+  const period = 60 / bpm;
+  const totalSamples = Math.max(1, Math.round(sampleRate * period));
+  const samples = new Float32Array(totalSamples);
+  const clickDur = Math.min(0.045, period * 0.5);
+  const clickSamples = Math.round(sampleRate * clickDur);
+  const freq = 1000;
+  for (let i = 0; i < clickSamples && i < totalSamples; i++) {
+    const t = i / sampleRate;
+    samples[i] = Math.sin(2 * Math.PI * freq * t) * Math.exp(-t * 55) * 0.9;
+  }
+  return encodeWavMono(samples, sampleRate);
 }
 
-function metronomeSchedulerTick() {
-  const ctx = metronomeGetAudioCtx();
-  while (metronomeNextBeatTime < ctx.currentTime + 0.12) {
-    const accent = metronomeAccentEnabled && metronomeBeatCount % 4 === 0;
-    metronomeScheduleBeat(metronomeNextBeatTime, accent);
-    const delay = Math.max(0, (metronomeNextBeatTime - ctx.currentTime) * 1000);
-    const beat = metronomeBeatCount;
-    setTimeout(() => flashMetronomeIndicator(beat), delay);
-    metronomeNextBeatTime += 60 / metronomeBpm;
-    metronomeBeatCount++;
+function encodeWavMono(samples, sampleRate) {
+  const numSamples = samples.length;
+  const buffer = new ArrayBuffer(44 + numSamples * 2);
+  const view = new DataView(buffer);
+  const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + numSamples * 2, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);          // PCM
+  view.setUint16(22, 1, true);          // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, "data");
+  view.setUint32(40, numSamples * 2, true);
+  let off = 44;
+  for (let i = 0; i < numSamples; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    off += 2;
   }
-  metronomeSchedulerId = setTimeout(metronomeSchedulerTick, 25);
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function ensureMetronomeAudioEl() {
+  if (metronomeAudioEl) return metronomeAudioEl;
+  const el = document.createElement("audio");
+  el.loop = true;
+  el.setAttribute("playsinline", "");
+  el.preload = "auto";
+  el.id = "metronomeAudioEl";
+  document.body.append(el);
+  metronomeAudioEl = el;
+  return el;
+}
+
+// Rebuild the loop for the current tempo and (re)start playback. Debounced so
+// dragging the weight doesn't restart the clip on every pixel.
+function refreshMetronomeLoop() {
+  if (!metronomeIsPlaying) return;
+  const el = ensureMetronomeAudioEl();
+  const prev = metronomeLoopUrl;
+  const url = URL.createObjectURL(buildMetronomeClickWav(metronomeBpm));
+  metronomeLoopUrl = url;
+  el.src = url;
+  el.loop = true;
+  const p = el.play();
+  if (p && p.catch) p.catch(() => {});
+  if (prev) setTimeout(() => URL.revokeObjectURL(prev), 200);
+}
+function scheduleMetronomeLoopRefresh() {
+  if (!metronomeIsPlaying) return;
+  clearTimeout(metronomeLoopRefreshTimer);
+  metronomeLoopRefreshTimer = setTimeout(refreshMetronomeLoop, 130);
+}
+
+// Visual pendulum swing (foreground only; audio is the source of truth).
+function metronomeSwingStep() {
+  if (!metronomeIsPlaying) return;
+  const needle = document.getElementById("metronomeNeedle");
+  const beatMs = 60000 / metronomeBpm;
+  if (needle && !metronomeDragging) {
+    metronomeSwingDir *= -1;
+    needle.style.transitionDuration = (beatMs / 1000).toFixed(3) + "s";
+    needle.style.transform = `rotate(${metronomeSwingDir * METRO_SWING_DEG}deg)`;
+  }
+  metronomeSwingTimer = setTimeout(metronomeSwingStep, beatMs);
+}
+function startMetronomeSwing() {
+  clearTimeout(metronomeSwingTimer);
+  metronomeSwingDir = 1;
+  metronomeSwingStep();
 }
 
 function startMetronome() {
   if (metronomeIsPlaying) return;
-  const ctx = metronomeGetAudioCtx();
-  if (ctx.state === "suspended") ctx.resume();
   metronomeIsPlaying = true;
-  metronomeBeatCount = 0;
-  metronomeNextBeatTime = ctx.currentTime + 0.05;
-  metronomeSchedulerTick();
-  updateMetronomePlayBtn();
-  keepScreenOn("metronome");
+  refreshMetronomeLoop();
+  startMetronomeSwing();
+  updateMetronomeUI();
 }
 
 function stopMetronome() {
   if (!metronomeIsPlaying) return;
-  clearTimeout(metronomeSchedulerId);
   metronomeIsPlaying = false;
-  allowScreenOff("metronome");
-  updateMetronomePlayBtn();
+  clearTimeout(metronomeSwingTimer);
+  clearTimeout(metronomeLoopRefreshTimer);
+  if (metronomeAudioEl) metronomeAudioEl.pause();
   const needle = document.getElementById("metronomeNeedle");
   if (needle) {
     needle.style.transitionDuration = "0.4s";
     needle.style.transform = "rotate(0deg)";
   }
+  updateMetronomeUI();
 }
 
-function updateMetronomePlayBtn() {
-  const btn = document.getElementById("metronomePlayBtn");
-  if (!btn) return;
-  btn.textContent = metronomeIsPlaying ? "Stop" : "Play";
-  btn.className = (metronomeIsPlaying ? "primary-btn" : "secondary-btn") + " metronome-play-btn";
-}
-
-function flashMetronomeIndicator(beat) {
-  const needle = document.getElementById("metronomeNeedle");
-  if (!needle || !metronomeIsPlaying) return;
-  const angle = beat % 2 === 0 ? -30 : 30;
-  const duration = 60 / metronomeBpm;
-  needle.style.transitionDuration = `${duration}s`;
-  needle.style.transform = `rotate(${angle}deg)`;
-  const bob = needle.querySelector(".metronome-bob");
-  if (bob) bob.style.fill = (metronomeAccentEnabled && beat % 4 === 0) ? "var(--tomato, #e05252)" : "var(--accent)";
+function updateMetronomeUI() {
+  const hint = document.getElementById("metronomeHint");
+  if (hint) hint.textContent = metronomeIsPlaying ? "Tap to stop" : "Tap to start";
+  document.getElementById("metronomeVisual")?.classList.toggle("is-running", metronomeIsPlaying);
 }
 
 function setMetronomeBpm(bpm) {
-  metronomeBpm = Math.max(20, Math.min(300, Math.round(bpm)));
-  const input = document.getElementById("metronomeBpmInput");
-  if (input) input.value = metronomeBpm;
-  const slider = document.getElementById("metronomeBpmSlider");
-  if (slider) slider.value = metronomeBpm;
+  metronomeBpm = Math.max(METRO_MIN_BPM, Math.min(METRO_MAX_BPM, Math.round(bpm)));
+  const val = document.getElementById("metronomeBpmValue");
+  if (val) val.textContent = metronomeBpm;
+  positionMetronomeBob();
+  scheduleMetronomeLoopRefresh();
 }
 
-function metronomeTapTempo() {
-  const now = performance.now();
-  if (metronomeTapTimes.length > 0 && now - metronomeTapTimes[metronomeTapTimes.length - 1] > 2500) {
-    metronomeTapTimes = [];
+// Drag the weight along the arm to set the tempo. Works while running; the
+// swing freezes upright while the weight is held, then resumes on release.
+function startMetronomeBobDrag(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const svg = document.getElementById("metronomeSvg");
+  const needle = document.getElementById("metronomeNeedle");
+  if (!svg) return;
+  metronomeDragging = true;
+  let moved = false;
+  if (needle) {
+    needle.style.transitionDuration = "0.12s";
+    needle.style.transform = "rotate(0deg)";
   }
-  metronomeTapTimes.push(now);
-  if (metronomeTapTimes.length >= 2) {
-    const intervals = [];
-    for (let i = 1; i < metronomeTapTimes.length; i++) intervals.push(metronomeTapTimes[i] - metronomeTapTimes[i - 1]);
-    const avg = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-    setMetronomeBpm(Math.round(60000 / avg));
-  }
+  const toSvgY = (clientX, clientY) => {
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = clientX; pt.y = clientY;
+    return pt.matrixTransform(ctm.inverse()).y;
+  };
+  const move = (ev) => {
+    const y = toSvgY(ev.clientX, ev.clientY);
+    if (y == null) return;
+    moved = true;
+    const clampedY = Math.max(METRO_BOB_Y_TOP, Math.min(METRO_BOB_Y_BOTTOM, y));
+    setMetronomeBpm(metronomeBpmFromBobY(clampedY));
+  };
+  const up = () => {
+    document.removeEventListener("pointermove", move);
+    document.removeEventListener("pointerup", up);
+    document.removeEventListener("pointercancel", up);
+    metronomeDragging = false;
+    metronomeSuppressTap = moved;
+    // Self-clear so a drag that ends off the body can't swallow a later tap.
+    if (moved) setTimeout(() => { metronomeSuppressTap = false; }, 350);
+    if (metronomeIsPlaying) refreshMetronomeLoop();
+  };
+  document.addEventListener("pointermove", move);
+  document.addEventListener("pointerup", up);
+  document.addEventListener("pointercancel", up);
 }
 
 function startMetronomeRepeat(delta) {
@@ -31468,12 +31609,24 @@ function openSailLogDialog(entryId) {
   const sailOptions = ["Mainsail", "Jib", "Genoa", "Spinnaker", "Spinnaker (A-sail)", "Staysail", "Storm Jib", "Reefed Main", "Motor only"];
   const seaOptions = ["Calm (glassy)", "Light chop", "Moderate (1–2 m)", "Rough (2–4 m)", "Very rough (4 m+)"];
 
+  const boats = sailingBoatsList();
+  const boatsBarHtml = boats.length ? `
+    <div class="sail-log-boats-bar">
+      <span class="sail-log-boats-label">Your boats</span>
+      ${boats.map((b) => `
+        <span class="sail-log-boat-chip" data-boat-fill="${escapeHtml(b.id)}" title="Fill vessel &amp; usual sails">
+          ${escapeHtml(b.name)}
+          <button type="button" class="sail-log-boat-del" data-boat-del="${escapeHtml(b.id)}" aria-label="Forget ${escapeHtml(b.name)}">×</button>
+        </span>`).join("")}
+    </div>` : "";
+
   elements.sailLogForm.innerHTML = `
     <div class="sail-log-form-body">
       <div class="sail-log-autofill-bar">
         <button class="secondary-btn" type="button" id="sailLogAutoFillBtn">Auto-fill location &amp; weather</button>
         <span class="sail-log-autofill-status" id="sailLogAutoFillStatus"></span>
       </div>
+      ${boatsBarHtml}
       <div class="sail-log-form-grid">
         <label class="sail-log-field">
           <span class="sail-log-field-label">Date</span>
@@ -31613,7 +31766,43 @@ function openSailLogDialog(entryId) {
   elements.sailLogForm.querySelector("#sailLogCancelBtn")?.addEventListener("click", () => elements.sailLogDialog.close());
   elements.sailLogForm.querySelector("#sailLogSaveBtn")?.addEventListener("click", saveSailLogEntry);
 
+  // Saved-boat chips: tap to auto-fill vessel name + its usual sails; × forgets it.
+  elements.sailLogForm.querySelectorAll("[data-boat-fill]").forEach((chip) => {
+    chip.addEventListener("click", (e) => {
+      if (e.target.closest("[data-boat-del]")) return;
+      applySailBoat(chip.dataset.boatFill);
+    });
+  });
+  elements.sailLogForm.querySelectorAll("[data-boat-del]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      forgetSailBoat(btn.dataset.boatDel);
+    });
+  });
+
   if (!elements.sailLogDialog.open) elements.sailLogDialog.showModal();
+}
+
+// Fill the vessel name and pre-check the boat's usual sails from a saved boat.
+function applySailBoat(boatId) {
+  const boat = sailingBoatsList().find((b) => b.id === boatId);
+  if (!boat) return;
+  const f = elements.sailLogForm;
+  const vessel = f.querySelector("#slf-vessel");
+  if (vessel) vessel.value = boat.name;
+  f.querySelectorAll("input[name='sails']").forEach((cb) => {
+    cb.checked = boat.sails.includes(cb.value);
+  });
+}
+
+// Remove a saved boat without disturbing anything already typed in the form.
+function forgetSailBoat(boatId) {
+  state.sailingBoats = sailingBoatsList().filter((b) => b.id !== boatId);
+  persist();
+  const chip = elements.sailLogForm.querySelector(`[data-boat-fill="${CSS.escape(boatId)}"]`);
+  chip?.remove();
+  const bar = elements.sailLogForm.querySelector(".sail-log-boats-bar");
+  if (bar && !bar.querySelector(".sail-log-boat-chip")) bar.remove();
 }
 
 async function autoFillSailLog() {
@@ -31720,6 +31909,20 @@ function saveSailLogEntry() {
   } else {
     sailingLogList().push({ id: createId("sail"), createdAt: new Date().toISOString(), ...data });
   }
+
+  // Remember this vessel (and its sail configuration) so it can auto-fill
+  // future logs. Matched case-insensitively by name.
+  if (data.vesselName) {
+    const boats = sailingBoatsList();
+    const existingBoat = boats.find((b) => b.name.toLowerCase() === data.vesselName.toLowerCase());
+    if (existingBoat) {
+      existingBoat.name = data.vesselName;
+      existingBoat.sails = data.sails.slice();
+    } else {
+      boats.push({ id: createId("boat"), name: data.vesselName, sails: data.sails.slice() });
+    }
+  }
+
   sailLogPendingId = null;
   elements.sailLogDialog.close();
   persist();
