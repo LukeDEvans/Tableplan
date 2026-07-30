@@ -11616,6 +11616,7 @@ body.touch-drag-active * {
 /* Metronome */
 
 .piano-metronome {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -11623,22 +11624,33 @@ body.touch-drag-active * {
   background: color-mix(in srgb, var(--accent-soft) 20%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
   border-radius: 20px;
-  padding: 12px 12px 16px;
+  padding: 10px 12px 14px;
 }
 
-/* BPM number top-left, +/- buttons stacked top-right */
+/* BPM number top-left, +/- buttons stacked top-right — overlaid in the top
+   corners so they sit clear of the (narrow) top of the metronome and don't
+   push it down. The gap between them stays tap-through to the body. */
 .metronome-top-controls {
+  position: absolute;
+  top: 10px;
+  left: 14px;
+  right: 12px;
+  z-index: 3;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  width: 100%;
   gap: 12px;
+  pointer-events: none;
+}
+.metronome-top-controls > * {
+  pointer-events: auto;
 }
 
 .metronome-bpm-display {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
 }
 
 .metronome-bpm-value {
