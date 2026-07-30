@@ -11703,9 +11703,11 @@ body.touch-drag-active * {
 }
 
 .metronome-pendulum-svg {
-  width: 100%;
-  max-width: 440px;
-  height: auto;
+  /* Sized by height so it fills most of the phone screen but never overflows
+     it; width follows the 200:300 aspect ratio and is capped to the panel. */
+  height: min(60vh, 540px);
+  width: auto;
+  max-width: 100%;
   overflow: visible;
   filter: drop-shadow(0 8px 14px rgba(60, 40, 12, 0.22));
 }
@@ -11768,7 +11770,11 @@ body.touch-drag-active * {
   cursor: grabbing;
 }
 .metronome-bob-hit {
-  fill: transparent;
+  /* Enlarged drag target. `fill: none` (not transparent) so iOS Safari can't
+     composite it as an opaque black box while the arm swings; pointer-events
+     keeps it grabbable even unpainted. */
+  fill: none;
+  pointer-events: all;
 }
 .metronome-bob {
   fill: url(#metroBrass);
