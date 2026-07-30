@@ -2,6 +2,13 @@
 // Files prefixed with _ are not deployed as individual functions.
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
+
+// Sweep guardrails (added after the 2026-07-30 storm). A sweep files inbox mail,
+// which makes Gmail emit a new push notification → another sweep; combined with
+// aggressive Pub/Sub retries this snowballed until the Supabase pool was pinned.
+// These cap how often a user can be swept and stop two sweeps overlapping.
+const SWEEP_MIN_INTERVAL_MS = 30_000;   // at most one sweep per user per 30s
+const SWEEP_STALE_MS = 5 * 60_000;      // an in-progress lock older than this is treated as dead
 const { scanBookingFromEmailText } = require("../../booking-scan");
 const { claudeCall } = require("./_claude");
 const { recipeSourceForSender, extractRecipes, handleExtractedRecipes, aiTrashTestMode, findAiTrashLabelId, disposeProcessedEmail, enabledRecipeSources } = require("./_recipe-digest");
@@ -28,6 +35,27 @@ async function saveUserGmailTokens(serviceKey, userId, tokens) {
     },
     body: JSON.stringify({ id: `gmail_${userId}`, state: tokens })
   });
+  // Maintain the email→userId index so the webhook can look this user up
+  // directly instead of scanning every gmail_ row on every notification.
+  if (tokens?.email) { try { await saveGmailEmailIndex(serviceKey, tokens.email, userId); } catch { /* best effort */ } }
+}
+
+// email → { userId } index (id = gmailidx_<lowercased-email>), so a Pub/Sub
+// notification (which only carries the address) resolves to a user with a
+// single keyed read instead of a full-table scan.
+async function saveGmailEmailIndex(serviceKey, email, userId) {
+  const key = String(email || "").toLowerCase();
+  if (!key) return;
+  await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
+    method: "POST",
+    headers: {
+      apikey: serviceKey,
+      authorization: `Bearer ${serviceKey}`,
+      "content-type": "application/json",
+      prefer: "resolution=merge-duplicates,return=minimal"
+    },
+    body: JSON.stringify({ id: `gmailidx_${key}`, state: { userId, email: key } })
+  });
 }
 
 async function deleteUserGmailTokens(serviceKey, userId) {
@@ -49,11 +77,28 @@ async function listGmailUsers(serviceKey) {
 }
 
 // Find the user whose connected Gmail address matches (used by the Pub/Sub webhook,
-// whose notifications only carry the email address).
+// whose notifications only carry the email address). Fast path: the email index
+// (one keyed read). Fallback: a full scan, but only when the index misses — and
+// it backfills the index so the next lookup is direct. The old unconditional
+// full scan on every notification was the engine of the 2026-07-30 storm.
 async function findGmailUserByEmail(serviceKey, email) {
   if (!email) return null;
+  const key = email.toLowerCase();
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.gmailidx_${encodeURIComponent(key)}&select=state`, {
+      headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" }
+    });
+    const rows = await res.json().catch(() => []);
+    const userId = rows[0]?.state?.userId;
+    if (userId) {
+      const tokens = await loadUserGmailTokens(serviceKey, userId);
+      if (tokens?.refreshToken && (tokens.email || "").toLowerCase() === key) return { userId, tokens };
+    }
+  } catch { /* fall through to scan */ }
   const users = await listGmailUsers(serviceKey);
-  return users.find((u) => (u.tokens.email || "").toLowerCase() === email.toLowerCase()) || null;
+  const match = users.find((u) => (u.tokens.email || "").toLowerCase() === key) || null;
+  if (match) { try { await saveGmailEmailIndex(serviceKey, match.tokens.email, match.userId); } catch { /* best effort */ } }
+  return match;
 }
 
 async function getUserId(accessToken, serviceKey) {
@@ -171,10 +216,14 @@ async function loadMailSuggestions(serviceKey, userId) {
     processedIds: Array.isArray(state.processedIds) ? state.processedIds : [],
     retryIds: Array.isArray(state.retryIds) ? state.retryIds : [],
     attempts: (state.attempts && typeof state.attempts === "object" && !Array.isArray(state.attempts)) ? state.attempts : {},
-    suggestions: Array.isArray(state.suggestions) ? state.suggestions : []
+    suggestions: Array.isArray(state.suggestions) ? state.suggestions : [],
+    lastSweepAt: state.lastSweepAt || 0,      // when the last sweep finished (debounce)
+    sweepStartedAt: state.sweepStartedAt || 0 // in-progress lock; 0 = no sweep running
   };
 }
 
+// Returns true on success. The sweep's concurrency lock and checkpoint both
+// rely on this write landing, so callers check the result and fail closed.
 async function saveMailSuggestions(serviceKey, userId, data) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
     method: "POST",
@@ -189,6 +238,7 @@ async function saveMailSuggestions(serviceKey, userId, data) {
   // A silently-failing checkpoint write is exactly what let the sweep reprocess
   // (and re-spend on) the same emails — surface it loudly.
   if (!res.ok) console.error(`[sweep] checkpoint save failed ${res.status} for ${userId}`);
+  return res.ok;
 }
 
 // ─── AI triage ────────────────────────────────────────────────────────────────
@@ -334,11 +384,25 @@ async function fetchHistoryDelta(gToken, startHistoryId) {
 // daily re-arm catch-up, and the manual "check now" action.
 async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) {
   if (!anthropicKey) throw new Error("ANTHROPIC_API_KEY not configured.");
+
+  const sugg = await loadMailSuggestions(serviceKey, userId);
+
+  // ── Concurrency + debounce guard (prevents the 2026-07-30 self-amplifying
+  //    sweep→notification→sweep storm). Cheap, and runs before any Gmail/AI work. ──
+  const nowMs = Date.now();
+  const startedMs = sugg.sweepStartedAt ? new Date(sugg.sweepStartedAt).getTime() : 0;
+  const lastMs = sugg.lastSweepAt ? new Date(sugg.lastSweepAt).getTime() : 0;
+  if (startedMs && nowMs - startedMs < SWEEP_STALE_MS) return { scanned: 0, added: 0, skipped: "in-progress" };
+  if (lastMs && nowMs - lastMs < SWEEP_MIN_INTERVAL_MS) return { scanned: 0, added: 0, skipped: "debounced" };
+  // Claim the slot up front so concurrent invocations back off. Fail closed if
+  // the write doesn't land — never pile sweeps onto a struggling database.
+  sugg.sweepStartedAt = new Date(nowMs).toISOString();
+  if (!(await saveMailSuggestions(serviceKey, userId, sugg))) return { scanned: 0, added: 0, skipped: "store-unavailable" };
+
   const { token: gToken, invalidGrant } = await getValidAccessToken(tokens, serviceKey, userId);
   if (invalidGrant) throw new Error("Gmail connection expired — please reconnect.");
   if (!gToken) throw new Error("Could not get Gmail access token.");
 
-  const sugg = await loadMailSuggestions(serviceKey, userId);
   let messageIds = [];
   let newHistoryId = "";
 
@@ -559,7 +623,9 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) 
     processedIds: [...processedNow, ...sugg.processedIds].slice(0, 300),
     retryIds: nextRetry,
     attempts: nextAttempts,
-    suggestions: merged
+    suggestions: merged,
+    lastSweepAt: new Date().toISOString(), // debounce stamp
+    sweepStartedAt: 0                       // release the in-progress lock
   });
 
   return { scanned: fresh.length, added: added.length };

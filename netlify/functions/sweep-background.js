@@ -8,8 +8,8 @@
 const { listGmailUsers, findGmailUserByEmail, runInboxSweep } = require("./_gmail-shared");
 
 // EMERGENCY KILL-SWITCH (incident 2026-07-30) — see gmail-webhook.js. Keep in
-// sync with that flag; set both to false and redeploy to re-enable sweeping.
-const SWEEP_KILL_SWITCH = true;
+// sync with that flag; set both to true + redeploy to instantly halt sweeping.
+const SWEEP_KILL_SWITCH = false;
 
 exports.handler = async (event) => {
   const expected = (process.env.PUBSUB_VERIFICATION_TOKEN || "").trim();
