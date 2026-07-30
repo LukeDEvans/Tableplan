@@ -5708,6 +5708,12 @@ body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
   border-radius: var(--radius);
   background: var(--surface-strong);
   cursor: grab;
+  /* Without this, mouse-dragging the row selects its text instead of starting
+     the drag, so items couldn't be dragged between stores on the laptop.
+     Suppressing selection lets the draggable="true" row initiate the drag;
+     the checkbox still toggles on a plain click. */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .grocery-item:active {
