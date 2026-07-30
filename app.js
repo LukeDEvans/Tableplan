@@ -1431,11 +1431,13 @@ initializeApp();
 
 function bindEvents() {
   elements.previousWeek.addEventListener("click", () => {
+    if (activeAppArea === "finance") { navigateFinanceMonth(-1); return; }
     if (activeAppArea === "plan") { navigatePlanView(-1); return; }
     if (activeAppArea === "shop") { navigateGroceryWeek(-1); return; }
     moveWeek(-7);
   });
   elements.nextWeek.addEventListener("click", () => {
+    if (activeAppArea === "finance") { navigateFinanceMonth(1); return; }
     if (activeAppArea === "plan") { navigatePlanView(1); return; }
     if (activeAppArea === "shop") { navigateGroceryWeek(1); return; }
     moveWeek(7);
@@ -1445,10 +1447,12 @@ function bindEvents() {
       suppressNextWeekLabelClick = false;
       return;
     }
+    // Finance shows a month, navigated by the ‹ › arrows — no week-jump menu.
+    if (activeAppArea === "finance") return;
     toggleWeekJumpMenu(event);
   });
-  elements.weekLabel.addEventListener("contextmenu", (event) => openMealPlanContextMenu(event, "week"));
-  elements.weekLabel.addEventListener("pointerdown", (event) => startMealPlanContextPress(event, "week"));
+  elements.weekLabel.addEventListener("contextmenu", (event) => { if (activeAppArea === "finance") return; openMealPlanContextMenu(event, "week"); });
+  elements.weekLabel.addEventListener("pointerdown", (event) => { if (activeAppArea === "finance") return; startMealPlanContextPress(event, "week"); });
   elements.weekLabel.addEventListener("pointermove", handleMealPlanContextPressMove);
   elements.weekLabel.addEventListener("pointerup", cancelMealPlanContextPress);
   elements.weekLabel.addEventListener("pointercancel", cancelMealPlanContextPress);
@@ -5436,9 +5440,24 @@ let hydrateRetryCount = 0;
 // blanks budget picks / cash / emergency account selections. This flag flips
 // true the moment finance has been hydrated from (or written to) the cloud.
 let financeSectionHydrated = false;
+// Per-transaction metadata that is (a) cached in device localStorage and (b)
+// edited on THIS device, and that mergeStates already combines NON-destructively
+// (unionByKey / unionById — union of keys, newer wins per key, nothing dropped).
+// These must ride that merge and must NOT be force-overwritten from the cloud at
+// boot: doing so reverted the user's just-made budget label / merchant rename /
+// payment-reason edits on the next reload whenever the cloud copy hadn't caught
+// up yet. The rest of the finance section (budget groups, people, accounts,
+// personal budgets, account-selection arrays, scalars) can boot empty and/or is
+// merged wholesale, so it still gets the cloud-restore guard below.
+const FINANCE_LOCAL_AUTHORITATIVE_KEYS = new Set([
+  "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeMerchantNames",
+  "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts",
+  "financeManualTxns", "financeRecurring",
+]);
 function guardBootEmptyFinance(merged, sharedState) {
   if (financeSectionHydrated) return; // already have the real finance; local edits are authoritative
   for (const key of STATE_SECTIONS.finance) {
+    if (FINANCE_LOCAL_AUTHORITATIVE_KEYS.has(key)) continue;
     if (sharedState && key in sharedState) merged[key] = sharedState[key];
   }
 }
@@ -6562,6 +6581,8 @@ function setWeekToolsMode(mode) {
   weekTools.classList.toggle("shop-mode", mode === "shop");
 
   const isShop = mode === "shop";
+  const isFinance = mode === "finance";
+  weekTools.classList.toggle("finance-mode", isFinance);
   const rangeBar = document.getElementById("groceryRangeBar");
   const prevBtn = document.getElementById("previousWeek");
   const nextBtn = document.getElementById("nextWeek");
@@ -6569,9 +6590,13 @@ function setWeekToolsMode(mode) {
   if (rangeBar) rangeBar.hidden = !isShop;
   if (prevBtn) prevBtn.hidden = isShop;
   if (nextBtn) nextBtn.hidden = isShop;
-  if (prepCopy) prepCopy.hidden = isShop;
+  if (prepCopy) prepCopy.hidden = isShop || isFinance;
 
-  if (mode === "today") {
+  if (mode === "finance") {
+    elements.weekLabel.removeAttribute("aria-label");
+    const [y, m] = financeViewMonth.split("-").map(Number);
+    elements.weekLabel.textContent = new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  } else if (mode === "today") {
     elements.weekLabel.removeAttribute("aria-label");
     elements.weekLabel.textContent = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
   } else if (mode === "plan") {
@@ -6717,7 +6742,8 @@ function showFinanceApp(event) {
   activeAppArea = "finance";
   hideAllPages();
   elements.financeMainPage.hidden = false;
-  setWeekToolsMode("today");
+  financeViewMonth = financeCurrentMonthKey(); // always land on the current month
+  setWeekToolsMode("finance");
   elements.activeCookingSection.hidden = true;
   setPageTitle("Finance");
   setPageHash("finance");
@@ -6734,6 +6760,20 @@ function showFinanceApp(event) {
 let financeLinkStatus = null; // null = unknown yet
 let financeLive = null;       // { accounts, errors, at }
 let financeLiveLoading = false;
+// Which month the finance page is showing ("YYYY-MM"). The budget is built to
+// fit one calendar month, so the date bar pages through months — back to review
+// past spend, forward to plan. Reset to the real current month on entry.
+let financeViewMonth = new Date().toISOString().slice(0, 7);
+
+function financeCurrentMonthKey() { return new Date().toISOString().slice(0, 7); }
+
+function navigateFinanceMonth(delta) {
+  const [y, m] = financeViewMonth.split("-").map(Number);
+  const d = new Date(y, (m - 1) + delta, 1);
+  financeViewMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  setWeekToolsMode("finance");
+  renderFinancePage();
+}
 let financeLinkBusy = false;
 let financeHistory = null;    // { "YYYY-MM-DD": { netWorth, balances } } from daily snapshots
 let financeReceipts = null;   // email receipts extracted by the mail sweep
@@ -7756,19 +7796,28 @@ function renderFinancePage() {
   const expenses = financeExpensesTotal();
   const cashFlow = income - expenses;
 
-  // Actual spend this calendar month per category, from labeled transactions
+  // Actual spend for the VIEWED month per category, from labeled transactions
   // (spend transactions are negative amounts; mgmt/income labels don't land
-  // here). Falls back to the persisted month totals when live data is absent.
+  // here). The viewed month can be the current one, a past one (to review), or
+  // a future one (to plan). Live transactions cover roughly the last 45 days;
+  // for anything outside that window (older months), fall back to the persisted
+  // monthly snapshot in financeMonthActuals. Future months have neither, so
+  // they show budget only.
   const allTxns = financeLabeledTxns();
-  const monthKey = new Date().toISOString().slice(0, 7);
+  const monthKey = financeViewMonth;
+  const isCurrentMonth = monthKey === financeCurrentMonthKey();
   const storedMonths = (state.financeMonthActuals && typeof state.financeMonthActuals === "object") ? state.financeMonthActuals : {};
-  const storedNow = storedMonths[monthKey];
+  const storedThis = storedMonths[monthKey];
   const haveLive = Boolean(financeLive?.accounts?.length);
-  const showActuals = Boolean(financeLinkStatus?.connected && (haveLive || storedNow));
+  const liveCoversMonth = haveLive && allTxns.some((t) => (t.posted || "").slice(0, 7) === monthKey);
+  // Current month always reads live (freshest); other months prefer the saved
+  // snapshot, but still use live txns if they happen to reach into that month.
+  const useLive = haveLive && (isCurrentMonth || (!storedThis && liveCoversMonth));
+  const showActuals = Boolean(financeLinkStatus?.connected && (useLive || storedThis));
   const catActuals = new Map();
   const incomeByKey = new Map();
   let incomeActual = 0;
-  if (haveLive) {
+  if (useLive) {
     for (const t of allTxns) {
       if (!t.label || (t.posted || "").slice(0, 7) !== monthKey) continue;
       for (const p of financeTxnPortions(t)) {
@@ -7781,13 +7830,13 @@ function renderFinancePage() {
         }
       }
     }
-  } else if (storedNow) {
-    for (const [k, v] of Object.entries(storedNow.cats || {})) catActuals.set(k, Number(v) || 0);
-    for (const [k, v] of Object.entries(storedNow.incomeBy || {})) incomeByKey.set(k, Number(v) || 0);
-    incomeActual = Number(storedNow.income) || 0;
+  } else if (storedThis) {
+    for (const [k, v] of Object.entries(storedThis.cats || {})) catActuals.set(k, Number(v) || 0);
+    for (const [k, v] of Object.entries(storedThis.incomeBy || {})) incomeByKey.set(k, Number(v) || 0);
+    incomeActual = Number(storedThis.income) || 0;
   }
   const catActual = (g, c) => catActuals.get(`${g.id}:${c.id}`) || 0;
-  const prevMonthKey = (() => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); })();
+  const prevMonthKey = (() => { const [y, m] = monthKey.split("-").map(Number); const d = new Date(y, m - 1, 1); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); })();
   const lastMo = storedMonths[prevMonthKey];
   const lastMoGroupActual = (g) => lastMo?.cats
     ? g.categories.reduce((s, c) => s + (Number(lastMo.cats[`${g.id}:${c.id}`]) || 0), 0)
@@ -7857,10 +7906,6 @@ function renderFinancePage() {
     return `
     <div class="fin-card" data-fin-card="group">
       ${cardHead(`card:${g.id}`, g.label, headTotal)}
-      <div class="fin-group-meter" title="${pct.toFixed(1)}% of income — ideal ${g.idealPct}%">
-        <div class="fin-group-meter-fill${pct > g.idealPct ? " is-over" : ""}" style="width:${Math.min(100, pct)}%"></div>
-        <div class="fin-group-meter-ideal" style="left:${Math.min(100, g.idealPct)}%"></div>
-      </div>
       ${!cardOpen ? "" : `
       <div class="fin-group-detail">
         <span class="fin-group-pct">${income > 0 ? `${pct.toFixed(1)}% of income` : "% of income shows once income is set"}${showActuals && lastMoGroupActual(g) !== null ? ` · last mo ${formatFinMoney(lastMoGroupActual(g))}` : ""}</span>

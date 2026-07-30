@@ -18174,23 +18174,6 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-card-caret { color: var(--muted); font-size: 0.85rem; }
 .fin-hint { margin: 0; font-size: 0.78rem; color: var(--muted); }
 
-.fin-group-meter {
-  position: relative;
-  height: 8px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--ink) 8%, transparent);
-  overflow: visible;
-}
-.fin-group-meter-fill { height: 100%; border-radius: 999px; background: var(--window-border); }
-.fin-group-meter-fill.is-over { background: #b3261e; }
-.fin-group-meter-ideal {
-  position: absolute;
-  top: -3px;
-  width: 2px;
-  height: 14px;
-  background: var(--ink);
-  opacity: 0.55;
-}
 .fin-group-pct { font-size: 0.74rem; color: var(--muted); }
 .fin-group-detail {
   display: flex; align-items: center; justify-content: space-between;
