@@ -7,10 +7,16 @@
 // POST body { email } sweeps one user; empty body sweeps all connected users.
 const { listGmailUsers, findGmailUserByEmail, runInboxSweep } = require("./_gmail-shared");
 
+// EMERGENCY KILL-SWITCH (incident 2026-07-30) — see gmail-webhook.js. Keep in
+// sync with that flag; set both to false and redeploy to re-enable sweeping.
+const SWEEP_KILL_SWITCH = true;
+
 exports.handler = async (event) => {
   const expected = (process.env.PUBSUB_VERIFICATION_TOKEN || "").trim();
   const provided = event.queryStringParameters?.token || "";
   if (!expected || provided !== expected) return { statusCode: 403, body: "" };
+
+  if (SWEEP_KILL_SWITCH) return { statusCode: 200, body: "" };
 
   const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
   const anthropicKey = (process.env.ANTHROPIC_API_KEY || "").trim();

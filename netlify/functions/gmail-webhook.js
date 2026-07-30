@@ -7,12 +7,21 @@
 // notification is recovered by the next one anyway.
 const { findGmailUserByEmail } = require("./_gmail-shared");
 
+// EMERGENCY KILL-SWITCH (incident 2026-07-30): when true, ACK every Pub/Sub
+// notification immediately without scanning users or starting a sweep. Enabled
+// after a per-notification listGmailUsers scan + sweep cascade exhausted the
+// Supabase connection pool and took the auth service (login) down with it.
+// Set to false and redeploy to re-enable Gmail sweeping.
+const SWEEP_KILL_SWITCH = true;
+
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return { statusCode: 405, body: "" };
 
   const expected = (process.env.PUBSUB_VERIFICATION_TOKEN || "").trim();
   const provided = event.queryStringParameters?.token || "";
   if (!expected || provided !== expected) return { statusCode: 403, body: "" };
+
+  if (SWEEP_KILL_SWITCH) return { statusCode: 200, body: "" };
 
   let notif;
   try {
@@ -30,7 +39,17 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: "" };
   }
 
-  const user = await findGmailUserByEmail(serviceKey, notif.emailAddress);
+  // Never let a DB error 500 this endpoint: Pub/Sub retries non-2xx
+  // aggressively, and when the lookup (listGmailUsers) is failing because the
+  // database is overloaded, those retries snowball into a connection-pool
+  // storm. Always ACK; the next notification or the daily catch-up recovers.
+  let user;
+  try {
+    user = await findGmailUserByEmail(serviceKey, notif.emailAddress);
+  } catch (e) {
+    console.error("gmail-webhook: user lookup failed (acking anyway):", e.message);
+    return { statusCode: 200, body: "" };
+  }
   if (!user) {
     console.error("gmail-webhook: no connected user for", notif.emailAddress);
     return { statusCode: 200, body: "" };
