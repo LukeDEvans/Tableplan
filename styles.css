@@ -18678,7 +18678,10 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 
 /* Meal Plan page: recipe notifications (same shape as .do-notif-*) */
 .eat-top-row { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 12%, transparent); }
-.eat-top-row .day-tabs { flex: 1; min-width: 0; border-bottom: none; }
+/* overflow-y:hidden stops the browser from computing overflow-y as `auto`
+   (which it does whenever overflow-x is `auto`) and adding a pointless vertical
+   scrollbar to the day-of-week tab strip. */
+.eat-top-row .day-tabs { flex: 1; min-width: 0; border-bottom: none; overflow-y: hidden; }
 .eat-notif-wrap { position: relative; flex: 0 0 auto; }
 .eat-notif-btn {
   position: relative;
