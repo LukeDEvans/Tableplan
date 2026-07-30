@@ -602,6 +602,35 @@ h3 {
   cursor: default;
 }
 
+/* Plan page: Today + add-event buttons pinned to the top-right */
+.week-plan-actions {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.week-tools.plan-mode .week-plan-actions {
+  display: flex;
+}
+.week-tools.plan-mode .prep-window-copy {
+  flex: 1; /* absorb the middle so the actions sit hard-right */
+}
+.week-today-btn {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-dark);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.week-today-btn:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
 .account-tools {
   grid-column: 3;
   justify-self: end;
@@ -6971,7 +7000,7 @@ textarea {
   text-align: center;
 }
 
-.recipe-form label:not(.travel-leg-mode-radio):not(.toggle-switch):not(.act-endloc-toggle):not(.group-page-toggle-row):not(.add-task-time-row) {
+.recipe-form label:not(.travel-leg-mode-radio):not(.toggle-switch):not(.act-endloc-toggle):not(.group-page-toggle-row):not(.add-task-time-row):not(.plan-todo-toggle) {
   display: grid;
   gap: 6px;
   color: #4f493f;
@@ -10770,6 +10799,91 @@ body.touch-drag-active * {
 .plan-repeat-inline input[type="number"] { width: 62px; }
 .plan-repeat-inline input[type="date"] { width: auto; }
 .plan-event-recur { opacity: 0.7; font-size: 0.82em; }
+
+/* Weekly recurrence: pick which days of the week it repeats on */
+.plan-repeat-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+}
+.plan-weekday {
+  cursor: pointer;
+  user-select: none;
+}
+.plan-weekday input { position: absolute; opacity: 0; pointer-events: none; }
+.plan-weekday span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  background: #fff;
+  color: var(--ink);
+  font-size: 0.85rem;
+  font-weight: 700;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.plan-weekday input:checked + span {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.plan-weekday input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Embed chores into the To-Do list */
+.plan-todo-field { gap: 8px; }
+.plan-todo-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+.plan-todo-toggle input[type="checkbox"] { width: 18px; height: 18px; flex-shrink: 0; accent-color: var(--accent); }
+.plan-chore-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.plan-chore-list:empty { display: none; }
+.plan-chore-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.plan-chore-row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 0.88rem;
+}
+.plan-chore-remove {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  color: var(--ink);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.plan-chore-remove:hover {
+  background: color-mix(in srgb, var(--tomato, #e05252) 70%, transparent);
+  color: #fff;
+}
+.plan-add-chore-btn { align-self: flex-start; padding: 6px 12px; font-size: 0.84rem; }
 
 .plan-color-picker, .plan-cal-colors {
   display: flex;

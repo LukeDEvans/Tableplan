@@ -1594,6 +1594,13 @@ function bindEvents() {
   });
   elements.savePlanEventBtn.addEventListener("click", savePlanEvent);
   elements.deletePlanEventBtn.addEventListener("click", deletePlanEvent);
+  document.getElementById("planAddChoreBtn")?.addEventListener("click", addPlanChoreRow);
+  document.getElementById("planTodayBtn")?.addEventListener("click", () => {
+    planViewDate = new Date();
+    setWeekToolsMode("plan");
+    renderPlanPage();
+  });
+  document.getElementById("planAddEventBtn")?.addEventListener("click", () => openPlanEventDialog(dateKeyFromDate(new Date())));
   elements.closePlanCalBtn.addEventListener("click", () => elements.planCalDialog.close());
   elements.closePlanAddCalBtn.addEventListener("click", () => elements.planAddCalDialog.close());
   elements.addPlanCalBtn.addEventListener("click", addPlanCalendar);
@@ -3448,6 +3455,7 @@ function normalizeDoTasks(tasks) {
         weekKey: task?.weekKey || "",
         sourceRecipeId: task?.sourceRecipeId || "",
         sourceWorkoutId: task?.sourceWorkoutId || "",
+        sourceEventId: task?.sourceEventId || "",
         exerciseData: normalizeExerciseData(task?.exerciseData),
         exerciseHistory: normalizeWorkoutLogs(task?.exerciseHistory),
         exerciseDetails,
@@ -31988,7 +31996,13 @@ function normalizeRecurrence(r) {
   if (!freq) return null;
   const interval = Math.max(1, Math.min(365, Math.round(Number(r.interval) || 1)));
   const until = (typeof r.until === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.until)) ? r.until : null;
-  return { freq, interval, until };
+  // Weekly events can repeat on specific days of the week (0 = Sun … 6 = Sat).
+  let byWeekdays = null;
+  if (freq === "weekly" && Array.isArray(r.byWeekdays)) {
+    const days = [...new Set(r.byWeekdays.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 0 && n <= 6))].sort((a, b) => a - b);
+    if (days.length) byWeekdays = days;
+  }
+  return { freq, interval, until, byWeekdays };
 }
 
 function normalizePlanEvents(events) {
@@ -32006,6 +32020,8 @@ function normalizePlanEvents(events) {
     attachment: (e?.attachment && typeof e.attachment === "object") ? e.attachment : null,
     recurrence: normalizeRecurrence(e?.recurrence),
     exceptions: Array.isArray(e?.exceptions) ? e.exceptions.filter((d) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) : [],
+    addToDo: Boolean(e?.addToDo),
+    chores: Array.isArray(e?.chores) ? e.chores.map((c) => String(c || "").trim()).filter(Boolean) : [],
     createdAt: e?.createdAt || new Date().toISOString()
   })).filter((e) => e.date && e.title) : [];
 }
@@ -32019,6 +32035,28 @@ function expandRecurringOccurrences(e, startKey, endKey) {
   if (isNaN(base)) return occ;
   const exceptions = new Set(e.exceptions || []);
   const hardEnd = (rec.until && rec.until < endKey) ? rec.until : endKey;
+
+  // Weekly on specific weekdays: scan day-by-day, keeping the chosen weekdays
+  // in weeks that fall on the interval (e.g. every 2 weeks on Mon & Wed).
+  if (rec.freq === "weekly" && Array.isArray(rec.byWeekdays) && rec.byWeekdays.length) {
+    const days = new Set(rec.byWeekdays);
+    const baseWeekStart = planWeekStart(base); // Sunday of the event's start week
+    const startD2 = new Date(startKey + "T00:00:00");
+    const scan = new Date(Math.max(base.getTime(), startD2.getTime()));
+    scan.setHours(0, 0, 0, 0);
+    let g = 0;
+    while (g++ < 1500) {
+      const key = dateKeyFromDate(scan);
+      if (key > hardEnd) break;
+      if (key >= startKey && key >= e.date && days.has(scan.getDay()) && !exceptions.has(key)) {
+        const weekOffset = Math.round((planWeekStart(scan) - baseWeekStart) / (7 * 86400000));
+        if (weekOffset >= 0 && weekOffset % rec.interval === 0) occ.push(key);
+      }
+      scan.setDate(scan.getDate() + 1);
+    }
+    return occ;
+  }
+
   const d = new Date(base);
   // Fast-forward day/week series from an old start so we don't burn the
   // iteration cap before reaching the visible window (e.g. a daily event that
@@ -32107,6 +32145,10 @@ function renderPlanPage() {
   elements.planCalendar.querySelectorAll("[data-plan-event-id]").forEach((pill) => {
     pill.addEventListener("click", (e) => {
       e.stopPropagation();
+      // Auto-generated events (a logged workout, a planned meal, a to-do) aren't
+      // editable calendar entries — jump to the page they came from instead of
+      // opening a blank New Event editor.
+      if (openPlanSyntheticEvent(pill.dataset.planEventSource)) return;
       openPlanEventDialog(pill.dataset.planEventDate || null, pill.dataset.planEventId);
     });
   });
@@ -32121,6 +32163,18 @@ function bindPlanSwipe(el) {
     const dx = e.clientX - startX;
     if (Math.abs(dx) > 60) navigatePlanView(dx < 0 ? 1 : -1);
   }, { passive: true });
+}
+
+// Route a click on an auto-generated calendar event to its source page.
+// Returns true when handled (so the caller skips the event editor).
+function openPlanSyntheticEvent(source) {
+  switch (source) {
+    case "play": showPlayApp(); return true;
+    case "eat": showEatApp(); return true;
+    case "do": showDoApp(); return true;
+    case "ical": showMailToast("This event comes from a linked calendar and is read-only."); return true;
+    default: return false;
+  }
 }
 
 function getPlanEventsForRange(startKey, endKey) {
@@ -32206,7 +32260,7 @@ function getAppDataEvents(startKey, endKey) {
 function planEventPillTemplate(event) {
   const dot = `<span class="plan-event-dot" style="background:${escapeHtml(event.color || PLAN_COLORS[0])}"></span>`;
   const time = (!event.allDay && event.startTime) ? `<span class="plan-event-time">${escapeHtml(planFormatTime(event.startTime))}</span>` : "";
-  return `<div class="plan-event-pill" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}"
+  return `<div class="plan-event-pill" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}"
                style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])}" title="${escapeHtml(event.title)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}">
     ${dot}${time}<span class="plan-event-title">${escapeHtml(event.title)}</span>${event.recurrence || event.occurrenceOf ? '<span class="plan-event-recur" aria-hidden="true">↻</span>' : ""}
   </div>`;
@@ -32392,6 +32446,8 @@ function syncPlanRepeatUi() {
   if (!sel || !detail) return;
   detail.hidden = !sel.value;
   if (unit) unit.textContent = ({ daily: "days", weekly: "weeks", monthly: "months", yearly: "years" })[sel.value] || "days";
+  const weekdays = document.getElementById("planRepeatWeekdays");
+  if (weekdays) weekdays.hidden = sel.value !== "weekly";
 }
 
 function openPlanEventDialog(date, eventId) {
@@ -32443,7 +32499,20 @@ function openPlanEventDialog(date, eventId) {
   if (intInput) intInput.value = rec?.interval || 1;
   const untilInput = document.getElementById("planEventRepeatUntil");
   if (untilInput) untilInput.value = rec?.until || "";
+  // Weekly weekday checkboxes: use the saved days, else default to the event
+  // date's own weekday so a fresh weekly event starts sensibly.
+  const eventDay = new Date((existing?.date || date || dateKeyFromDate(new Date())) + "T00:00:00").getDay();
+  const defaultDays = rec?.byWeekdays?.length ? rec.byWeekdays : [eventDay];
+  document.querySelectorAll("#planRepeatWeekdays [name='plan-weekday']").forEach((cb) => {
+    cb.checked = defaultDays.includes(Number(cb.value));
+  });
   syncPlanRepeatUi();
+
+  // To-Do embedding: toggle + editable chore list.
+  const addTodo = document.getElementById("planEventAddTodo");
+  if (addTodo) addTodo.checked = Boolean(existing?.addToDo);
+  planEventChoresDraft = Array.isArray(existing?.chores) ? [...existing.chores] : [];
+  renderPlanChoreList();
 
   elements.planEventLocationSuggestions.hidden = true;
   renderPlanEventAttachment();
@@ -32587,11 +32656,17 @@ function savePlanEvent() {
   const location = planEventSelectedPlace
     || (typedLocation ? { placeId: null, name: typedLocation, address: "" } : null);
   const repeatFreq = document.getElementById("planEventRepeat")?.value || "";
+  const byWeekdays = repeatFreq === "weekly"
+    ? [...document.querySelectorAll("#planRepeatWeekdays [name='plan-weekday']:checked")].map((cb) => Number(cb.value))
+    : null;
   const recurrence = repeatFreq ? normalizeRecurrence({
     freq: repeatFreq,
     interval: Number(document.getElementById("planEventRepeatInterval")?.value) || 1,
     until: (document.getElementById("planEventRepeatUntil")?.value || "").trim() || null,
+    byWeekdays,
   }) : null;
+  const addToDo = Boolean(document.getElementById("planEventAddTodo")?.checked);
+  const chores = (planEventChoresDraft || []).map((c) => c.trim()).filter(Boolean);
   const eventData = {
     title, date, allDay,
     startTime: allDay ? null : (elements.planEventStart.value || null),
@@ -32601,17 +32676,100 @@ function savePlanEvent() {
     location,
     attachment: planEventAttachment || null,
     recurrence,
+    addToDo,
+    chores,
   };
+  let savedEvent;
   if (editingPlanEventId) {
+    savedEvent = { ...existing, ...eventData, id: editingPlanEventId };
     state.planEvents = (state.planEvents || []).map((e) =>
-      e.id === editingPlanEventId ? { ...e, ...eventData } : e
+      e.id === editingPlanEventId ? savedEvent : e
     );
   } else {
-    state.planEvents = [...(state.planEvents || []), { id: createId("plan-evt"), createdAt: new Date().toISOString(), ...eventData }];
+    savedEvent = { id: createId("plan-evt"), createdAt: new Date().toISOString(), ...eventData };
+    state.planEvents = [...(state.planEvents || []), savedEvent];
   }
+  syncEventChoresToDoList(savedEvent);
   persist();
   elements.planEventDialog.close();
   if (activeAppArea === "plan") renderPlanPage();
+}
+
+// ── Embedding event chores into the To-Do list ────────────────────────────────
+let planEventChoresDraft = [];
+
+function renderPlanChoreList() {
+  const list = document.getElementById("planChoreList");
+  if (!list) return;
+  list.innerHTML = (planEventChoresDraft || []).map((c, i) => `
+    <div class="plan-chore-row">
+      <input type="text" value="${escapeHtml(c)}" data-chore-index="${i}" placeholder="Chore" />
+      <button type="button" class="plan-chore-remove" data-chore-remove="${i}" aria-label="Remove chore">×</button>
+    </div>`).join("");
+  list.querySelectorAll("[data-chore-index]").forEach((input) => {
+    input.addEventListener("input", (e) => {
+      planEventChoresDraft[Number(e.target.dataset.choreIndex)] = e.target.value;
+    });
+  });
+  list.querySelectorAll("[data-chore-remove]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      planEventChoresDraft.splice(Number(btn.dataset.choreRemove), 1);
+      renderPlanChoreList();
+    });
+  });
+}
+
+function addPlanChoreRow() {
+  planEventChoresDraft.push("");
+  renderPlanChoreList();
+  const list = document.getElementById("planChoreList");
+  list?.querySelector(".plan-chore-row:last-child input")?.focus();
+}
+
+// Map a date-key to the To-Do planner's (weekKey, dayId) cell it belongs to.
+function doDayRefForDate(dateKey) {
+  const date = dateFromWeekKey(dateKey);
+  if (isNaN(date)) return null;
+  const weekStart = startOfPrepWindow(date);
+  const offset = Math.round((date - weekStart) / 86400000);
+  const day = prepDays.find((d) => d.offset === offset && d.id !== "friday-finish");
+  if (!day) return null;
+  return { key: dateKeyFromDate(weekStart), dayId: day.id };
+}
+
+// Remove every To-Do task previously created from this event (across all weeks).
+function removeEventChoresFromDoList(eventId) {
+  if (!eventId || !state.doPlans) return;
+  Object.values(state.doPlans).forEach((week) => {
+    if (!week || typeof week !== "object") return;
+    Object.keys(week).forEach((dayId) => {
+      if (dayId === "__skippedRecurring" || dayId === "__active") return;
+      if (!Array.isArray(week[dayId])) return;
+      week[dayId] = week[dayId].filter((t) => t.sourceEventId !== eventId);
+    });
+  });
+}
+
+// Rebuild this event's linked To-Do tasks from its current toggle + chores.
+// Wipes-and-recreates so edits and removals stay in sync; tasks land on the
+// event's (start) date's day cell.
+function syncEventChoresToDoList(event) {
+  removeEventChoresFromDoList(event.id);
+  const titles = [];
+  if (event.addToDo) titles.push(event.title);
+  (event.chores || []).forEach((c) => { if (c) titles.push(c); });
+  if (!titles.length) return;
+  const ref = doDayRefForDate(event.date);
+  if (!ref) return;
+  const list = rawDoTasksForDay(ref.dayId, ref.key);
+  titles.forEach((title) => {
+    list.push(normalizeDoTasks([{
+      title,
+      taskType: "one-off",
+      time: event.allDay ? "" : (event.startTime || ""),
+      sourceEventId: event.id,
+    }])[0]);
+  });
 }
 
 function deletePlanEvent() {
@@ -32623,6 +32781,7 @@ function deletePlanEvent() {
     if (deleteAll) {
       recordDeletion("planEvents", editingPlanEventId);
       state.planEvents = (state.planEvents || []).filter((e) => e.id !== editingPlanEventId);
+      removeEventChoresFromDoList(editingPlanEventId);
     } else {
       const occ = editingPlanEventOccurrenceDate || existing.date;
       state.planEvents = (state.planEvents || []).map((e) =>
@@ -32631,6 +32790,7 @@ function deletePlanEvent() {
   } else {
     recordDeletion("planEvents", editingPlanEventId);
     state.planEvents = (state.planEvents || []).filter((e) => e.id !== editingPlanEventId);
+    removeEventChoresFromDoList(editingPlanEventId);
   }
   persist();
   elements.planEventDialog.close();
