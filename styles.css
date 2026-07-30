@@ -11619,11 +11619,11 @@ body.touch-drag-active * {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   background: color-mix(in srgb, var(--accent-soft) 20%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
   border-radius: 20px;
-  padding: 18px 20px 22px;
+  padding: 12px 12px 16px;
 }
 
 /* BPM number top-left, +/- buttons stacked top-right */
@@ -11678,6 +11678,7 @@ body.touch-drag-active * {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
@@ -11690,7 +11691,8 @@ body.touch-drag-active * {
 }
 
 .metronome-pendulum-svg {
-  width: min(260px, 74vw);
+  width: 100%;
+  max-width: 440px;
   height: auto;
   overflow: visible;
   filter: drop-shadow(0 8px 14px rgba(60, 40, 12, 0.22));
@@ -11706,42 +11708,48 @@ body.touch-drag-active * {
 
 /* Wooden pyramid frame */
 .metronome-body {
-  fill: color-mix(in srgb, var(--accent) 40%, #7a5327);
-  stroke: color-mix(in srgb, #3a2712 65%, var(--accent));
+  fill: url(#metroFrameWood);
+  stroke: #241606;
   stroke-width: 2.5;
   stroke-linejoin: round;
 }
+.metronome-ridge {
+  stroke: rgba(0, 0, 0, 0.26);
+  stroke-width: 1.4;
+}
 /* Dark recessed face behind the swinging arm */
 .metronome-face {
-  fill: color-mix(in srgb, #241708 82%, var(--accent));
-  stroke: color-mix(in srgb, #1a1005 60%, transparent);
+  fill: url(#metroDarkWood);
+  stroke: #100a04;
   stroke-width: 1.5;
   stroke-linejoin: round;
 }
 /* Light wood lower panel */
 .metronome-base-panel {
-  fill: color-mix(in srgb, #c79a5b 78%, var(--accent));
-  stroke: color-mix(in srgb, #3a2712 45%, var(--accent));
+  fill: url(#metroLightWood);
+  stroke: #3a2412;
   stroke-width: 1.5;
   stroke-linejoin: round;
 }
 .metronome-scale {
-  fill: color-mix(in srgb, #f4ecdc 88%, var(--accent));
+  fill: url(#metroScalePaper);
+  stroke: rgba(0, 0, 0, 0.18);
+  stroke-width: 0.6;
 }
 .metronome-scale-ticks line {
-  stroke: color-mix(in srgb, #4a3418 70%, transparent);
+  stroke: #4a3418;
   stroke-width: 1.4;
   stroke-linecap: round;
 }
 .metronome-scale-num {
-  fill: color-mix(in srgb, #f0e6d2 80%, var(--accent));
+  fill: #e9ddc4;
   font-size: 11px;
   font-weight: 600;
   font-family: inherit;
 }
 
 .metronome-rod {
-  stroke: color-mix(in srgb, var(--ink) 82%, #000);
+  stroke: url(#metroBrass);
   stroke-width: 3;
   stroke-linecap: round;
 }
@@ -11758,26 +11766,32 @@ body.touch-drag-active * {
   fill: transparent;
 }
 .metronome-bob {
-  fill: color-mix(in srgb, #d9c8a6 60%, var(--accent));
-  stroke: color-mix(in srgb, #2c1d0e 60%, var(--accent));
+  fill: url(#metroBrass);
+  stroke: #6a4f16;
   stroke-width: 1.6;
   stroke-linejoin: round;
 }
+.metronome-bob-slot {
+  stroke: #6a4f16;
+  stroke-width: 2;
+  stroke-linecap: round;
+  opacity: 0.6;
+}
 
 .metronome-pivot {
-  fill: color-mix(in srgb, #d9c08a 60%, var(--ink));
-  stroke: color-mix(in srgb, #2c1d0e 50%, transparent);
+  fill: url(#metroBrass);
+  stroke: #5a4413;
   stroke-width: 1.2;
 }
 
 .metronome-key line {
-  stroke: color-mix(in srgb, #9a9a9a 70%, var(--ink));
+  stroke: url(#metroBrass);
   stroke-width: 3;
   stroke-linecap: round;
 }
 .metronome-key circle {
   fill: none;
-  stroke: color-mix(in srgb, #9a9a9a 70%, var(--ink));
+  stroke: url(#metroBrass);
   stroke-width: 3;
 }
 

@@ -31147,12 +31147,56 @@ function renderPianoPanel() {
         </div>
         <div class="metronome-visual" id="metronomeVisual" role="button" tabindex="0" aria-label="Tap to start or stop the metronome">
           <svg class="metronome-pendulum-svg" viewBox="0 0 200 300" id="metronomeSvg" aria-hidden="true">
+            <defs>
+              <linearGradient id="metroFrameWood" x1="0" y1="0" x2="1" y2="0.08">
+                <stop offset="0" stop-color="#3a2311"/>
+                <stop offset="0.5" stop-color="#5c3a1d"/>
+                <stop offset="1" stop-color="#2b1a0c"/>
+              </linearGradient>
+              <linearGradient id="metroDarkWood" x1="0" y1="0" x2="1" y2="0.05">
+                <stop offset="0" stop-color="#170e06"/>
+                <stop offset="0.5" stop-color="#32210f"/>
+                <stop offset="1" stop-color="#120b04"/>
+              </linearGradient>
+              <linearGradient id="metroLightWood" x1="0" y1="0" x2="0.85" y2="0.25">
+                <stop offset="0" stop-color="#794a22"/>
+                <stop offset="0.45" stop-color="#c88b48"/>
+                <stop offset="0.72" stop-color="#a96f31"/>
+                <stop offset="1" stop-color="#653f1c"/>
+              </linearGradient>
+              <linearGradient id="metroScalePaper" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#f7f0de"/>
+                <stop offset="1" stop-color="#e1d2b1"/>
+              </linearGradient>
+              <linearGradient id="metroBrass" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#efd591"/>
+                <stop offset="0.5" stop-color="#b8912f"/>
+                <stop offset="1" stop-color="#7f6019"/>
+              </linearGradient>
+              <!-- wood grain: fine vertical streaks -->
+              <filter id="metroGrainDark" x="-10%" y="-10%" width="120%" height="120%">
+                <feTurbulence type="fractalNoise" baseFrequency="0.14 0.012" numOctaves="4" seed="9" stitchTiles="stitch" result="n"/>
+                <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  1 0 0 0 0"/>
+              </filter>
+              <filter id="metroGrainLight" x="-10%" y="-10%" width="120%" height="120%">
+                <feTurbulence type="fractalNoise" baseFrequency="0.13 0.02" numOctaves="5" seed="4" stitchTiles="stitch" result="n"/>
+                <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.26  0 0 0 0 0.14  0 0 0 0 0.04  1 0 0 0 0"/>
+              </filter>
+              <clipPath id="metroFrameClip"><polygon points="86,16 114,16 178,290 22,290"/></clipPath>
+              <clipPath id="metroFaceClip"><polygon points="80,46 120,46 152,224 48,224"/></clipPath>
+              <clipPath id="metroBaseClip"><polygon points="48,224 152,224 172,286 28,286"/></clipPath>
+            </defs>
             <!-- wooden pyramid frame -->
             <polygon class="metronome-body" points="86,16 114,16 178,290 22,290"/>
+            <g clip-path="url(#metroFrameClip)"><rect x="0" y="0" width="200" height="300" filter="url(#metroGrainLight)" opacity="0.22"/></g>
+            <!-- centre ridge of the pyramid -->
+            <line class="metronome-ridge" x1="100" y1="16" x2="100" y2="290"/>
             <!-- dark recessed face with the tempo scale -->
             <polygon class="metronome-face" points="80,46 120,46 152,224 48,224"/>
+            <g clip-path="url(#metroFaceClip)"><rect x="0" y="0" width="200" height="300" filter="url(#metroGrainDark)" opacity="0.4"/></g>
             <!-- light wood lower panel -->
             <polygon class="metronome-base-panel" points="48,224 152,224 172,286 28,286"/>
+            <g clip-path="url(#metroBaseClip)"><rect x="0" y="0" width="200" height="300" filter="url(#metroGrainLight)" opacity="0.5"/></g>
             <!-- printed tempo scale -->
             <rect class="metronome-scale" x="91" y="54" width="18" height="166" rx="3"/>
             <g class="metronome-scale-ticks">
@@ -31173,7 +31217,8 @@ function renderPianoPanel() {
               <line class="metronome-rod" x1="100" y1="224" x2="100" y2="30"/>
               <g id="metronomeBob" class="metronome-bob-group" transform="translate(100, ${metronomeBobYFromBpm(metronomeBpm).toFixed(1)})">
                 <rect class="metronome-bob-hit" x="-20" y="-18" width="40" height="36"/>
-                <polygon class="metronome-bob" points="-14,-11 14,-11 4,0 14,11 -14,11 -4,0"/>
+                <polygon class="metronome-bob" points="-14,-12 14,-12 11,12 -11,12"/>
+                <line class="metronome-bob-slot" x1="-8" y1="0" x2="8" y2="0"/>
               </g>
             </g>
             <circle class="metronome-pivot" cx="100" cy="224" r="6"/>
