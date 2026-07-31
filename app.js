@@ -9398,6 +9398,9 @@ function wireMealPlanNotifDelegation() {
 // mode — never marks anything read) so opening an email is instant.
 let mailListPreload = null; // { promise, at, labelId }
 const mailThreadCache = new Map(); // threadId → { thread, at }
+// Message ids the user has opted to load remote images for this session.
+// Remote images are blocked by default (speed + tracking-pixel privacy).
+const mailShownImages = new Set();
 let mailPrefetchGen = 0;
 const MAIL_LIST_PRELOAD_TTL = 2 * 60 * 1000;
 const MAIL_THREAD_CACHE_TTL = 5 * 60 * 1000;
@@ -11486,21 +11489,54 @@ function mountMailMessageFrames(container, messages) {
     const msg = messages[Number(holder.dataset.msgIdx)];
     if (!msg) return;
     holder.dataset.mounted = "1";
-    if (msg.body?.includes("<")) {
-      holder.appendChild(buildMailBodyFrame(msg.body));
-    } else {
-      const pre = document.createElement("pre");
-      pre.className = "mail-msg-pre";
-      pre.innerHTML = linkifyMailPlainText(msg.body || "");
-      wireMailAddressLinks(pre);
-      holder.appendChild(pre);
-    }
+    mountMailMessageBody(holder, msg);
   });
 }
 
-function buildMailBodyFrame(html) {
+function mountMailMessageBody(holder, msg) {
+  if (msg.body?.includes("<")) {
+    const showImages = mailShownImages.has(msg.id);
+    const frame = buildMailBodyFrame(msg.body, { showImages });
+    // Remote images are blocked by default — offer a one-tap "Display images"
+    // (kept for the session) when this message had any.
+    if (!showImages && Number(frame.dataset.blockedImages) > 0) {
+      const bar = document.createElement("div");
+      bar.className = "mail-images-blocked-bar";
+      const label = document.createElement("span");
+      label.textContent = "Images aren't shown.";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "mail-show-images-btn";
+      btn.textContent = "Display images";
+      btn.addEventListener("click", () => {
+        mailShownImages.add(msg.id);
+        holder.innerHTML = "";
+        mountMailMessageBody(holder, msg); // re-render with images loaded
+      });
+      bar.append(label, btn);
+      holder.appendChild(bar);
+    }
+    holder.appendChild(frame);
+  } else {
+    const pre = document.createElement("pre");
+    pre.className = "mail-msg-pre";
+    pre.innerHTML = linkifyMailPlainText(msg.body || "");
+    wireMailAddressLinks(pre);
+    holder.appendChild(pre);
+  }
+}
+
+function buildMailBodyFrame(html, { showImages = false } = {}) {
+  let bodyHtml = sanitizeMailFrameHtml(html);
+  let blocked = 0;
+  if (!showImages) {
+    const r = blockRemoteMailImages(bodyHtml);
+    bodyHtml = r.html;
+    blocked = r.blocked;
+  }
   const iframe = document.createElement("iframe");
   iframe.className = "mail-msg-frame";
+  iframe.dataset.blockedImages = String(blocked);
   // No allow-scripts: any scripting in the email is inert. allow-same-origin
   // lets the app measure the content height for auto-sizing.
   iframe.setAttribute("sandbox", "allow-same-origin allow-popups allow-popups-to-escape-sandbox");
@@ -11518,7 +11554,7 @@ function buildMailBodyFrame(html) {
     '<style>:root{color-scheme:light}html,body{margin:0;padding:0}' +
     'body{font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#202124;background:#fff;word-break:break-word}' +
     'img{max-width:100%;height:auto}table{max-width:100%}</style></head><body>' +
-    sanitizeMailFrameHtml(html) +
+    bodyHtml +
     "</body></html>";
 
   // Scale the email to fill the pane: fixed-width designs (newsletters are
@@ -11642,6 +11678,41 @@ function sanitizeMailFrameHtml(html) {
   });
   stripLabeledEmailAds(div);
   return div.innerHTML;
+}
+
+// Strip remote image loads from a sanitized email body so it renders instantly
+// (marketing blasts pull dozens of images from the sender's servers) and no
+// tracking pixels fire. Only http(s) URLs are neutralized — inline data:/cid:
+// images already ship with the message, so they stay. Returns the rewritten
+// HTML plus a count so the caller can offer a "Display images" button.
+function blockRemoteMailImages(html) {
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  let blocked = 0;
+  const isRemote = (u) => /^\s*https?:\/\//i.test(u || "");
+  const cssHasRemote = /url\(\s*['"]?\s*https?:\/\//i;                 // non-global: stateless test
+  const cssRemoteAll = /url\(\s*['"]?\s*https?:\/\/[^)]*\)/gi;         // global: replace every occurrence
+
+  div.querySelectorAll("img").forEach((img) => {
+    if (isRemote(img.getAttribute("src"))) { img.setAttribute("data-blk-src", img.getAttribute("src")); img.removeAttribute("src"); blocked++; }
+    const ss = img.getAttribute("srcset");
+    if (ss && /https?:\/\//i.test(ss)) { img.setAttribute("data-blk-srcset", ss); img.removeAttribute("srcset"); }
+  });
+  // Legacy table/cell background images (<td background="…">).
+  div.querySelectorAll("[background]").forEach((el) => {
+    if (isRemote(el.getAttribute("background"))) { el.setAttribute("data-blk-background", el.getAttribute("background")); el.removeAttribute("background"); blocked++; }
+  });
+  // Inline style background images.
+  div.querySelectorAll("[style]").forEach((el) => {
+    const s = el.getAttribute("style") || "";
+    if (cssHasRemote.test(s)) { el.setAttribute("style", s.replace(cssRemoteAll, "none")); blocked++; }
+  });
+  // <style> block background images.
+  div.querySelectorAll("style").forEach((st) => {
+    const t = st.textContent || "";
+    if (cssHasRemote.test(t)) { st.textContent = t.replace(cssRemoteAll, "none"); blocked++; }
+  });
+  return { html: div.innerHTML, blocked };
 }
 
 // Clips ad units from newsletters (NYT etc.). Publishers label every ad with

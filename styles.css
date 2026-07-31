@@ -15576,6 +15576,35 @@ body.app-authed #appLockScreen { display: none; }
   background: #fff;
   border-radius: 8px;
 }
+/* "Images aren't shown · Display images" bar (remote images blocked by default) */
+.mail-images-blocked-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 8px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.mail-show-images-btn {
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-dark);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mail-show-images-btn:hover {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
 .trip-connection-plan-btn { font-size: 0.75rem; padding: 3px 10px; flex-shrink: 0; }
 .trip-day-car-badge { flex-shrink: 0; }
 .act-endloc-toggle {
