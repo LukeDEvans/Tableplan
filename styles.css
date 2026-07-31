@@ -8202,8 +8202,12 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
     max-height: none;
   }
 
+  /* minmax(0,1fr) (not the default 1fr = minmax(auto,1fr)) so the single track
+     can't grow to a child's min-content. Without this, the day-tab row's
+     min-content stretched the meal-plan section ~34px past the phone width,
+     pushing every card's + button (and the bottom buttons) off the right edge. */
   .planner-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .active-cooking-list {
