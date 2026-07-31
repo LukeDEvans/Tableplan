@@ -123,7 +123,7 @@ async function extractRecipes(html, source) {
   }
 
   const seenUrls = new Set();
-  return results.map(({ url, inner }) => {
+  const recipes = results.map(({ url, inner }) => {
     const anchorTitle = inner
       .replace(/<[^>]+>/g, " ")
       .replace(/&nbsp;/gi, " ")
@@ -145,6 +145,40 @@ async function extractRecipes(html, source) {
     seenUrls.add(url);
     return { url, title, source: source.name, category: source.category || "Recipes" };
   }).filter(Boolean);
+
+  // Attach a thumbnail (the recipe page's og:image) to each recipe for the
+  // notifications list. Best-effort and parallel; recipes without one just
+  // render text-only. Health items become media articles, so skip those.
+  await Promise.all(recipes.map(async (r) => {
+    if ((r.category || "Recipes") !== "Recipes") return;
+    const image = await fetchRecipeImage(r.url);
+    if (image) r.image = image;
+  }));
+  return recipes;
+}
+
+// Fetch a recipe page's social-share image (og:image / twitter:image) for a
+// thumbnail. Range-limited to the <head> (og:image sits ~1KB in), timeout-
+// bounded, fails soft to "".
+async function fetchRecipeImage(url) {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 6000);
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: {
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17 Safari/605.1.15",
+        accept: "text/html",
+        range: "bytes=0-49999"
+      }
+    });
+    clearTimeout(t);
+    if (!res.ok && res.status !== 206) return "";
+    const head = await res.text();
+    const m = head.match(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]+content=["']([^"']+)["']/i)
+           || head.match(/<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:og:image|twitter:image)["']/i);
+    return m && /^https?:\/\//i.test(m[1]) ? m[1] : "";
+  } catch { return ""; }
 }
 
 // Open a roundup/collection page and pull out every recipe link it lists. The

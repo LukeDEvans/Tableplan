@@ -19029,8 +19029,17 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 }
 .eat-notif-head { font-size: 0.74rem; font-weight: 850; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 6px 0 4px; }
 .eat-notif-empty { font-size: 0.8rem; color: var(--muted); padding: 6px 0; }
-.eat-notif-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); }
+.eat-notif-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); }
 .eat-notif-row:first-of-type { border-top: none; }
+.eat-notif-thumb-link { flex: 0 0 auto; display: block; line-height: 0; }
+.eat-notif-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  display: block;
+}
 /* Title takes the room; publication sits smaller beneath it so more of the
    recipe name is visible. Title wraps to two lines before clamping. */
 .eat-notif-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }

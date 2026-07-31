@@ -9360,6 +9360,7 @@ function mealPlanNotifBellHtml() {
         <div class="eat-notif-head">New recipes</div>
         ${recipes.length ? recipes.map((r) => `
           <div class="eat-notif-row">
+            ${r.image ? `<a class="eat-notif-thumb-link" href="${escapeHtml(r.url)}" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true"><img class="eat-notif-thumb" src="${escapeHtml(r.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.closest('.eat-notif-thumb-link').remove()"></a>` : ""}
             <div class="eat-notif-text">
               <a class="eat-notif-item-title" href="${escapeHtml(r.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(r.title)}">${escapeHtml(r.title)}</a>
               ${r.source ? `<span class="eat-notif-source">${escapeHtml(r.source)}</span>` : ""}
