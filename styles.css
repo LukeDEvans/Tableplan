@@ -12930,7 +12930,10 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
      rail it shifts every icon ~8px left of the rail centre. The compose button
      sits outside this nav, which is why it looked centred and the folders didn't. */
   .mail-sidebar:not(:hover) .mail-label-nav { padding-right: 0; }
-  .mail-sidebar:not(:hover) .mail-compose-btn { margin: 4px 10px 12px; padding: 14px 0; justify-content: center; gap: 0; font-size: 0; }
+  /* 16px vertical padding matches the expanded button's 16px so the compose
+     button is the same height collapsed vs hovered — otherwise hovering grew it
+     4px and shifted every folder down. */
+  .mail-sidebar:not(:hover) .mail-compose-btn { margin: 4px 10px 12px; padding: 16px 0; justify-content: center; gap: 0; font-size: 0; }
 }
 
 /* List toolbar: select-all · refresh, and range + pager on the right */
