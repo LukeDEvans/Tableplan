@@ -37713,9 +37713,21 @@ async function loadHclAvailability(itemId, title, authors) {
   }
 }
 
+// Publications whose real logo reads far better than the tiny generic favicon.
+// Bundled as data-URI SVGs so they always render (no network, no CORS) and are
+// used everywhere a publication logo appears (media list, sidebar tabs, …).
+const PUBLICATION_LOGOS = {
+  "nytimes.com": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iIzAwMCIvPjx0ZXh0IHg9IjUwIiB5PSI3NSIgZmlsbD0iI2ZmZiIgZm9udC1mYW1pbHk9Ikdlb3JnaWEsc2VyaWYiIGZvbnQtc2l6ZT0iNzQiIGZvbnQtd2VpZ2h0PSI3MDAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPlQ8L3RleHQ+PC9zdmc+",
+  "economist.com": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iI0UzMTIwQiIvPjx0ZXh0IHg9IjUwIiB5PSI0MyIgZmlsbD0iI2ZmZiIgZm9udC1mYW1pbHk9Ikdlb3JnaWEsc2VyaWYiIGZvbnQtc2l6ZT0iMTciIGZvbnQtd2VpZ2h0PSI3MDAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPlRoZTwvdGV4dD48dGV4dCB4PSI1MCIgeT0iNjYiIGZpbGw9IiNmZmYiIGZvbnQtZmFtaWx5PSJHZW9yZ2lhLHNlcmlmIiBmb250LXNpemU9IjE1IiBmb250LXdlaWdodD0iNzAwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5FY29ub21pc3Q8L3RleHQ+PC9zdmc+",
+};
+
 function publicationLogoUrl(domain) {
   if (!domain) return null;
-  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain.replace(/^www\./, ""))}&sz=64`;
+  const d = domain.replace(/^www\./, "").toLowerCase();
+  for (const base in PUBLICATION_LOGOS) {
+    if (d === base || d.endsWith("." + base)) return PUBLICATION_LOGOS[base];
+  }
+  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(d)}&sz=64`;
 }
 
 // NutritionFacts articles carry no publication domain (they're a special tab),

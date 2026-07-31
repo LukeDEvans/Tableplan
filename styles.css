@@ -15356,8 +15356,10 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 #mediaAllList .playlist-row { align-items: stretch; gap: 12px; padding: 10px 14px; -webkit-tap-highlight-color: transparent; }
 /* No gray hover/tap wash — only the actively-playing row gets the accent tint. */
 #mediaAllList .playlist-row:hover { background: transparent; }
-.playlist-art-btn { border: none; background: none; padding: 0; margin: 0; cursor: pointer; flex-shrink: 0; align-self: stretch; display: flex; }
-.playlist-art-btn .media-all-art { width: 58px; height: 100%; min-height: 58px; margin: 0; border-radius: 8px; }
+.playlist-art-btn { border: none; background: none; padding: 0; margin: 0; cursor: pointer; flex-shrink: 0; align-self: stretch; display: flex; align-items: center; }
+/* Square, not row-height-tall — a tall mobile row used to stretch this to a
+   portrait rectangle that cropped the sides of show/article art. */
+.playlist-art-btn .media-all-art { width: 58px; height: 58px; aspect-ratio: 1 / 1; object-fit: cover; margin: 0; border-radius: 8px; }
 .playlist-row .article-row-main { justify-content: center; gap: 2px; }
 .playlist-row-date { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-muted, #888); }
 .playlist-row-title { font-size: 0.92rem; font-weight: 600; line-height: 1.3; }
