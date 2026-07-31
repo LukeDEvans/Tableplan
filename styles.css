@@ -8499,6 +8499,11 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
   .do-top-row .day-tab { min-width: 0; padding-left: 1px; padding-right: 1px; }
   #doMainPage { overflow-x: clip; }
 
+  /* Meal Plan has the same crunch, but with EIGHT tabs (Fri–Fri) + the bell —
+     the 40px floor forced the 8th tab off the row into a scroll. Let them
+     shrink to fit so all eight days show without scrolling. */
+  .eat-top-row .day-tab { min-width: 0; padding-left: 1px; padding-right: 1px; }
+
   .day-tab .day-tab-full,
   .day-tab .day-tab-short,
   .day-tab .day-tab-date {
