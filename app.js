@@ -613,6 +613,10 @@ let planViewDate = new Date();
 const planCalendarCache = {};
 let editingPlanEventId = null;
 let editingPlanEventOccurrenceDate = null; // which occurrence of a recurring event was opened
+// Which meal-plan context cards are expanded, keyed "dayId|columnLabel". Transient
+// (defaults collapsed each load). Declared here — above the top-level render() —
+// so mealContextCardTemplate never hits it in its temporal dead zone.
+const expandedMealContext = new Set();
 let mealPlanContextPressTimer = null;
 let mealPlanContextPressStart = null;
 let suppressNextWeekLabelClick = false;
@@ -22730,12 +22734,15 @@ function renderPlanner() {
   const combinedState = combinedMealSectionsForWeek(week);
   const mealPlanColumns = mealColumnConfigs
     .map((column) => {
-      const columnHtml = columnMealsForDay(activeDay, column, combinedState).filter(Boolean).map((meal) => (
+      const slotsHtml = columnMealsForDay(activeDay, column, combinedState).filter(Boolean).map((meal) => (
         slotTemplate(activeDay, meal, visibleSlots?.[activeDay.id]?.[meal] || "", {
           displayMeal: displayMealName(meal),
           combined: isCombinedMealKey(meal)
         })
       )).join("");
+      // One context card per column (Breakfast/Lunch/Dinner), above its meal(s) —
+      // never per person, even when the column is split into individual meals.
+      const columnHtml = slotsHtml.trim() ? mealContextCardTemplate(activeDay, column) + slotsHtml : "";
       return { column, html: columnHtml };
     })
     .filter((column) => column.html.trim());
@@ -22859,6 +22866,21 @@ function renderPlanner() {
   elements.plannerGrid.querySelectorAll("[data-special-meal-note]").forEach((input) => {
     input.addEventListener("change", () => updateSpecialMealNote(input));
     input.addEventListener("blur", () => updateSpecialMealNote(input));
+  });
+
+  elements.plannerGrid.querySelectorAll("[data-meal-context-toggle]").forEach((button) => {
+    button.addEventListener("click", () => toggleMealContext(button.dataset.day, button.dataset.meal));
+  });
+
+  elements.plannerGrid.querySelectorAll("[data-meal-note]").forEach((textarea) => {
+    autosizeMealNote(textarea);
+    textarea.addEventListener("input", () => autosizeMealNote(textarea));
+    textarea.addEventListener("change", () => setMealNote(textarea.dataset.day, textarea.dataset.meal, textarea.value));
+    textarea.addEventListener("blur", () => setMealNote(textarea.dataset.day, textarea.dataset.meal, textarea.value));
+  });
+
+  elements.plannerGrid.querySelectorAll("[data-meal-event-id]").forEach((button) => {
+    button.addEventListener("click", () => openPlanEventDialog(button.dataset.mealEventDate || null, button.dataset.mealEventId));
   });
 
   elements.plannerGrid.querySelectorAll("[data-link-restaurant]").forEach((btn) => {
@@ -22990,6 +23012,129 @@ function restorePlannerCarouselState(previousState, activeDayId) {
   window.requestAnimationFrame(() => {
     carousel.scrollLeft = previousState.scrollLeft;
   });
+}
+
+// ── Per-meal context cards (notes + calendar events) ─────────────────────────
+// A small card above each meal for free-typed circumstances ("MJ works until 8")
+// plus real calendar events tagged to that meal (they sync to the Calendar page).
+function mealNoteValue(dayId, meal) {
+  return weekState().mealNotes?.[dayId]?.[meal] || "";
+}
+
+function setMealNote(dayId, meal, text) {
+  const week = weekState();
+  if (!week.mealNotes) week.mealNotes = {};
+  if (!week.mealNotes[dayId]) week.mealNotes[dayId] = {};
+  const value = String(text || "");
+  if (value.trim()) week.mealNotes[dayId][meal] = value;
+  else {
+    delete week.mealNotes[dayId][meal];
+    if (!Object.keys(week.mealNotes[dayId]).length) delete week.mealNotes[dayId];
+  }
+  persist();
+}
+
+// Does a plan event land on this date? Covers one-off dates and every recurrence
+// rule (interval / weekdays / until / exceptions) via expandRecurringOccurrences.
+function planEventOccursOn(event, dateKey) {
+  if (!event || !dateKey) return false;
+  if ((event.exceptions || []).includes(dateKey)) return false;
+  if (event.date === dateKey) return true;
+  if (event.recurrence) return expandRecurringOccurrences(event, dateKey, dateKey).includes(dateKey);
+  return false;
+}
+
+// Meal columns as half-open minute-of-day windows covering the whole day, so an
+// event maps to a meal by its start/end time and can span more than one.
+const MEAL_TIME_WINDOWS = {
+  Breakfast: [0, 11 * 60],        // until 11:00
+  Lunch:     [11 * 60, 15 * 60],  // 11:00–15:00
+  Dinner:    [15 * 60, 24 * 60],  // 15:00 onward
+};
+
+function minutesOfDay(hhmm) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || "").trim());
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+// Does this event's time of day fall in the given meal column's window? All-day
+// or untimed events cover every meal.
+function eventCoversMeal(event, meal) {
+  const win = MEAL_TIME_WINDOWS[meal];
+  if (!win) return false;
+  if (event.allDay || !event.startTime) return true;
+  const start = minutesOfDay(event.startTime);
+  if (start == null) return true;
+  const end = minutesOfDay(event.endTime);
+  const eEnd = (end != null && end > start) ? end : start;
+  // A point (no real end) covers the window containing it; a span overlaps any
+  // window it intersects.
+  if (eEnd === start) return start >= win[0] && start < win[1];
+  return start < win[1] && eEnd > win[0];
+}
+
+function mealContextEvents(dateKey, meal) {
+  return (state.planEvents || [])
+    .filter((e) => e.showInMealPlan && planEventOccursOn(e, dateKey) && eventCoversMeal(e, meal))
+    .sort((a, b) => String(a.startTime || "").localeCompare(String(b.startTime || "")));
+}
+
+function autosizeMealNote(textarea) {
+  if (!textarea) return;
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
+}
+
+function mealContextCardTemplate(day, column) {
+  // Keyed by the column (Breakfast/Lunch/Dinner) so a single card serves the
+  // whole meal, independent of any per-person split.
+  const key = column.label;
+  const ctxKey = `${day.id}|${key}`;
+  const expanded = expandedMealContext.has(ctxKey);
+  const dateKey = dateKeyFromDate(addDays(currentWeek, day.offset));
+  const note = mealNoteValue(day.id, key);
+  const events = mealContextEvents(dateKey, key);
+  const chips = events.map((e) => {
+    const color = e.color || PLAN_COLORS[0];
+    return `<button type="button" class="meal-context-event" data-meal-event-id="${escapeHtml(e.id)}" data-meal-event-date="${escapeHtml(dateKey)}" title="Edit event">
+        <span class="meal-context-event-dot" style="background:${escapeHtml(color)}"></span>
+        <span class="meal-context-event-title">${escapeHtml(e.title)}</span>
+      </button>`;
+  }).join("");
+  // A quiet summary on the collapsed header hints at what's inside.
+  const summaryParts = [];
+  if (events.length) summaryParts.push(`${events.length} event${events.length > 1 ? "s" : ""}`);
+  if (note.trim()) summaryParts.push("note");
+  const summary = summaryParts.join(" · ");
+  return `
+    <div class="meal-context-card${expanded ? " is-expanded" : ""}" data-meal-context data-day="${day.id}" data-meal="${escapeHtml(key)}">
+      <button type="button" class="meal-context-toggle" data-meal-context-toggle data-day="${day.id}" data-meal="${escapeHtml(key)}" aria-expanded="${expanded}">
+        <span class="slot-label meal-context-label">Events &amp; Notes</span>
+        ${summary ? `<span class="meal-context-summary">${escapeHtml(summary)}</span>` : ""}
+        <svg class="meal-context-chevron" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="meal-context-body">
+        ${events.length ? `<div class="meal-context-events">${chips}</div>` : ""}
+        <textarea class="meal-context-note" data-meal-note data-day="${day.id}" data-meal="${escapeHtml(key)}" rows="1" placeholder="Add notes…" aria-label="Notes for ${escapeHtml(key)}">${escapeHtml(note)}</textarea>
+      </div>
+    </div>
+  `;
+}
+
+function toggleMealContext(dayId, key) {
+  const ctxKey = `${dayId}|${key}`;
+  const card = elements.plannerGrid.querySelector(`.meal-context-card[data-day="${CSS.escape(dayId)}"][data-meal="${CSS.escape(key)}"]`);
+  const expand = !expandedMealContext.has(ctxKey);
+  if (expand) expandedMealContext.add(ctxKey);
+  else expandedMealContext.delete(ctxKey);
+  if (!card) return;
+  card.classList.toggle("is-expanded", expand);
+  card.querySelector("[data-meal-context-toggle]")?.setAttribute("aria-expanded", String(expand));
+  if (expand) {
+    const textarea = card.querySelector("[data-meal-note]");
+    if (textarea) autosizeMealNote(textarea);
+  }
 }
 
 function activeDayEventsTemplate(day) {
@@ -28640,6 +28785,8 @@ function createBlankWeek() {
     publishedSlots: null,
     combinedMealSections: {},
     publishedCombinedMealSections: {},
+    // Free-typed context per meal ({ [dayId]: { [meal]: "note" } }).
+    mealNotes: {},
     slots: Object.fromEntries(prepDays.map((day) => [day.id, Object.fromEntries(day.meals.map((meal) => [meal, ""]))]))
   };
 }
@@ -28650,6 +28797,7 @@ function ensurePrepWindowShape(week) {
   if (!week.slots) week.slots = {};
   if (!week.combinedMealSections || typeof week.combinedMealSections !== "object") week.combinedMealSections = {};
   if (!week.publishedCombinedMealSections || typeof week.publishedCombinedMealSections !== "object") week.publishedCombinedMealSections = {};
+  if (!week.mealNotes || typeof week.mealNotes !== "object") week.mealNotes = {};
   ensureCombinedMealSectionShape(week.combinedMealSections);
   ensureCombinedMealSectionShape(week.publishedCombinedMealSections);
   ensureMealSlotShape(week.slots);
@@ -32111,6 +32259,9 @@ function normalizePlanEvents(events) {
     exceptions: Array.isArray(e?.exceptions) ? e.exceptions.filter((d) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) : [],
     addToDo: Boolean(e?.addToDo),
     chores: Array.isArray(e?.chores) ? e.chores.map((c) => String(c || "").trim()).filter(Boolean) : [],
+    // When on, the event shows on the meal plan in whichever meal column(s) its
+    // time of day falls into (all-day / untimed events show on every meal).
+    showInMealPlan: Boolean(e?.showInMealPlan),
     createdAt: e?.createdAt || new Date().toISOString()
   })).filter((e) => e.date && e.title) : [];
 }
@@ -32603,6 +32754,10 @@ function openPlanEventDialog(date, eventId) {
   planEventChoresDraft = Array.isArray(existing?.chores) ? [...existing.chores] : [];
   renderPlanChoreList();
 
+  // Meal-plan placement: show this event on the meal plan by time of day.
+  const addMealPlan = document.getElementById("planEventAddMealPlan");
+  if (addMealPlan) addMealPlan.checked = Boolean(existing?.showInMealPlan);
+
   elements.planEventLocationSuggestions.hidden = true;
   renderPlanEventAttachment();
   renderPlanEventCalPicker(selectedCalId);
@@ -32755,6 +32910,7 @@ function savePlanEvent() {
     byWeekdays,
   }) : null;
   const addToDo = Boolean(document.getElementById("planEventAddTodo")?.checked);
+  const showInMealPlan = Boolean(document.getElementById("planEventAddMealPlan")?.checked);
   const chores = (planEventChoresDraft || []).map((c) => c.trim()).filter(Boolean);
   const eventData = {
     title, date, allDay,
@@ -32767,6 +32923,7 @@ function savePlanEvent() {
     recurrence,
     addToDo,
     chores,
+    showInMealPlan,
   };
   let savedEvent;
   if (editingPlanEventId) {
@@ -32782,6 +32939,7 @@ function savePlanEvent() {
   persist();
   elements.planEventDialog.close();
   if (activeAppArea === "plan") renderPlanPage();
+  else if (activeAppArea === "eat") renderPlanner();
 }
 
 // ── Embedding event chores into the To-Do list ────────────────────────────────
@@ -32946,6 +33104,7 @@ function deletePlanEvent() {
   persist();
   elements.planEventDialog.close();
   if (activeAppArea === "plan") renderPlanPage();
+  else if (activeAppArea === "eat") renderPlanner();
 }
 
 function openPlanCalDialog() {
