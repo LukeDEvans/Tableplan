@@ -7,6 +7,10 @@
 // Files prefixed with _ are not deployed as individual functions.
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
+// Cap recipes pulled from a single roundup/collection page so one "50 best…"
+// article can't flood the pending collection.
+const COLLECTION_RECIPE_CAP = 24;
+
 // One entry per publication. `key` doubles as the settings toggle in
 // state.mailAiSettings (Settings → Mail AI).
 const RECIPE_SOURCES = [
@@ -16,6 +20,9 @@ const RECIPE_SOURCES = [
     category: "Recipes",
     senderRe: /nytimes\.com/i,
     urlRe: /^https?:\/\/cooking\.nytimes\.com\/recipes\/[a-z0-9][^?#\s"']*/i,
+    // Roundup/collection pages (e.g. /article/best-crunchy-recipes) — opened and
+    // scraped for the /recipes/ links they list.
+    collectionUrlRe: /^https?:\/\/cooking\.nytimes\.com\/(?:article|collections?|guides?)\/[a-z0-9][^?#\s"']*/i,
     slugRe: /\/recipes\/(?:\d+-)?([^/?#]+)/i,
     searchQ: 'from:(nytimes.com) ("NYT Cooking" OR subject:cooking)',
     // Every link in NYT newsletters is an nl.nytimes.com click-tracker with no
@@ -60,7 +67,9 @@ function recipeSourceForSender(from, mailAiSettings) {
 
 // Extracts { url, title, source } for every recipe link of `source` in an
 // email body. Unwraps ?url=-style redirects; follows opaque click-trackers
-// (bounded, parallel) when the source requires it.
+// (bounded, parallel) when the source requires it; and, for sources with a
+// collectionUrlRe, opens roundup/list pages (e.g. "The best crunchy recipes")
+// and scrapes the individual recipe links they contain.
 async function extractRecipes(html, source) {
   const anchors = [];
   const anchorRe = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
@@ -87,16 +96,33 @@ async function extractRecipes(html, source) {
     }
   }
 
+  // Roundup/collection pages linked from the email (e.g. "The best crunchy
+  // recipes") — opened below and scraped for the recipes they list.
+  const collectionUrls = new Set();
+  const noteCollection = (u) => {
+    if (source.collectionUrlRe && source.collectionUrlRe.test(u)) collectionUrls.add(u.replace(/[?#].*$/, ""));
+  };
+
   if (candidates.length) {
     const toResolve = candidates.sort((a, b) => b.weight - a.weight).slice(0, 30);
     const resolved = await Promise.all(toResolve.map(async ({ href, inner }) => {
-      const final = await followRedirects(href);
-      const hit = unwrapParamRedirect(final).match(source.urlRe);
-      return hit ? { url: hit[0], inner } : null;
+      const final = unwrapParamRedirect(await followRedirects(href));
+      const hit = final.match(source.urlRe);
+      if (hit) return { url: hit[0], inner };
+      noteCollection(final); // not a recipe — maybe a roundup page
+      return null;
     }));
     resolved.filter(Boolean).forEach((r) => results.push(r));
   }
+  // Collection links that appear directly in the email (not via a tracker).
+  for (const { href } of anchors) noteCollection(unwrapParamRedirect(href));
+  // Open each roundup page and add the recipes it lists (bounded).
+  if (collectionUrls.size) {
+    const lists = await Promise.all([...collectionUrls].slice(0, 4).map((u) => extractRecipesFromCollectionPage(u, source)));
+    lists.flat().forEach((r) => results.push(r));
+  }
 
+  const seenUrls = new Set();
   return results.map(({ url, inner }) => {
     const anchorTitle = inner
       .replace(/<[^>]+>/g, " ")
@@ -115,8 +141,41 @@ async function extractRecipes(html, source) {
     // for those green beans"). Fall back to the anchor text only when the slug
     // yields nothing usable.
     const title = titleFromSlug(url, source) || (anchorIsJunk ? "" : anchorTitle);
-    return title ? { url, title, source: source.name, category: source.category || "Recipes" } : null;
+    if (!title || seenUrls.has(url)) return null;
+    seenUrls.add(url);
+    return { url, title, source: source.name, category: source.category || "Recipes" };
   }).filter(Boolean);
+}
+
+// Open a roundup/collection page and pull out every recipe link it lists. The
+// pages are server-rendered, so the recipe URLs sit right in the HTML; a plain
+// fetch + scan is enough (no browser/JS needed). Fails soft to [] on any error.
+async function extractRecipesFromCollectionPage(url, source) {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: {
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17 Safari/605.1.15",
+        accept: "text/html"
+      }
+    });
+    clearTimeout(t);
+    if (!res.ok) return [];
+    const html = await res.text();
+    const scan = new RegExp(source.urlRe.source.replace(/^\^/, ""), "gi");
+    const urls = new Set();
+    let m;
+    while ((m = scan.exec(html)) !== null) {
+      // The same links appear in the page's embedded JSON as "…slug\" — the
+      // broad match grabs the trailing backslash/quote; trim it so the JSON copy
+      // collapses onto the clean href copy instead of duplicating as a dead URL.
+      const clean = m[0].replace(/[\\"'<>].*$/, "");
+      if (clean) urls.add(clean);
+    }
+    return [...urls].slice(0, COLLECTION_RECIPE_CAP).map((u) => ({ url: u, inner: "" }));
+  } catch { return []; }
 }
 
 function unwrapParamRedirect(raw) {
