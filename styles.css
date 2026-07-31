@@ -12919,8 +12919,17 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   .mail-sidebar:not(:hover) .mail-label-folder-chevron,
   .mail-sidebar:not(:hover) .mail-label-children,
   .mail-sidebar:not(:hover) .mail-label-divider { display: none; }
+  /* Leaf folders carry an inline padding-left (calc(26px + indent)) for the
+     hierarchy indent; folders with subfolders don't. In the collapsed rail
+     every icon must sit centred, so override that inline padding — !important
+     is required to beat the inline style. Only in the :not(:hover) rail state,
+     so the expanded menu keeps its indentation. */
   .mail-sidebar:not(:hover) .mail-label-item,
-  .mail-sidebar:not(:hover) .mail-label-folder-row { padding-left: 0; justify-content: center; gap: 0; }
+  .mail-sidebar:not(:hover) .mail-label-folder-row { padding-left: 0 !important; padding-right: 0; justify-content: center; gap: 0; }
+  /* The label nav has a 16px right padding (for the expanded label pills); in the
+     rail it shifts every icon ~8px left of the rail centre. The compose button
+     sits outside this nav, which is why it looked centred and the folders didn't. */
+  .mail-sidebar:not(:hover) .mail-label-nav { padding-right: 0; }
   .mail-sidebar:not(:hover) .mail-compose-btn { margin: 4px 10px 12px; padding: 14px 0; justify-content: center; gap: 0; font-size: 0; }
 }
 
@@ -13703,7 +13712,7 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   #exploreMainPage .article-sidebar:not(:hover) .explore-trips-header,
   #exploreMainPage .article-sidebar:not(:hover) #exploreTripList { display: none; }
   :is(#mediaMainPage, #exploreMainPage) .article-sidebar:not(:hover) .article-sidebar-tab {
-    padding-left: 0; margin-right: 0; width: 100%; justify-content: center; gap: 0; border-radius: 0;
+    padding-left: 0; padding-right: 0; margin-right: 0; width: 100%; justify-content: center; gap: 0; border-radius: 0;
   }
 }
 
