@@ -9391,6 +9391,21 @@ function wireMealPlanNotifDelegation() {
   }, { capture: true });
 }
 
+// The recipe-notifications panel is position:fixed so it can be much larger than
+// the little bell it hangs off. Size it to sit just below the bell (top stays
+// where it was) and mirror the bell's right-edge gap on the left and bottom.
+function positionMealPlanNotifPanel() {
+  const bell = elements.plannerGrid.querySelector(".eat-notif-btn");
+  const panel = elements.plannerGrid.querySelector(".eat-notif-panel");
+  if (!bell || !panel) return;
+  const r = bell.getBoundingClientRect();
+  const gap = Math.max(8, Math.round(window.innerWidth - r.right)); // current distance from the right edge
+  panel.style.left = gap + "px";
+  panel.style.right = gap + "px";
+  panel.style.bottom = gap + "px";
+  panel.style.top = Math.round(r.bottom + 6) + "px"; // just under the bell = where it opened before
+}
+
 // ── Mail speed: preloaded inbox list + read-ahead thread cache ───────────────
 // warmMailList fires with the status warm-up at app start, so the inbox list
 // is usually already in flight (or resolved) by the time Mail opens. Once the
@@ -22955,6 +22970,7 @@ function renderPlanner() {
   restorePlannerCarouselState(previousCarouselState, activeDay.id);
   updateTabIndicator(elements.plannerGrid);
   wireMealPlanNotifDelegation();
+  if (mealPlanNotifOpen) positionMealPlanNotifPanel();
 }
 
 function currentPlannerCarouselState() {
