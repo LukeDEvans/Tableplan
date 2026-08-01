@@ -1454,8 +1454,7 @@ function bindEvents() {
       suppressNextWeekLabelClick = false;
       return;
     }
-    // Finance shows a month, navigated by the ‹ › arrows — no week-jump menu.
-    if (activeAppArea === "finance") return;
+    // Finance reuses the same dropdown, but populated with months.
     toggleWeekJumpMenu(event);
   });
   elements.weekLabel.addEventListener("contextmenu", (event) => { if (activeAppArea === "finance") return; openMealPlanContextMenu(event, "week"); });
@@ -1465,6 +1464,8 @@ function bindEvents() {
   elements.weekLabel.addEventListener("pointercancel", cancelMealPlanContextPress);
   elements.weekJumpMenu.addEventListener("click", (event) => {
     event.stopPropagation();
+    const monthButton = event.target.closest("[data-month-jump]");
+    if (monthButton) { jumpToFinanceMonth(monthButton.dataset.monthJump); return; }
     const button = event.target.closest("[data-week-jump]");
     if (button) jumpToWeek(button.dataset.weekJump);
   });
@@ -16227,6 +16228,7 @@ function saveFoodHealthSettings() {
 
 function renderWeekJumpMenu() {
   if (!elements.weekJumpMenu) return;
+  if (activeAppArea === "finance") { renderFinanceMonthMenu(); return; }
   const weeks = weekTimelineOptions();
   elements.weekJumpMenu.innerHTML = `
     <div class="week-jump-panel">
@@ -16235,6 +16237,44 @@ function renderWeekJumpMenu() {
       </div>
     </div>
   `;
+}
+
+// Finance month picker — same dropdown as the meal-plan week jump, but a list of
+// months (24 back through 12 ahead of the current month) to scroll through
+// past/current/future budgets.
+function renderFinanceMonthMenu() {
+  const now = new Date();
+  const currentKey = financeCurrentMonthKey();
+  const options = [];
+  for (let i = -24; i <= 12; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    options.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+  elements.weekJumpMenu.innerHTML = `
+    <div class="week-jump-panel">
+      <div class="week-jump-list">
+        ${options.map((key) => {
+          const [y, m] = key.split("-").map(Number);
+          const label = new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+          const isViewed = key === financeViewMonth;
+          const isCurrent = key === currentKey;
+          return `
+          <button class="week-jump-option ${isViewed ? "is-current" : ""}" type="button" data-month-jump="${escapeHtml(key)}" ${isViewed ? "data-viewed-week" : ""} ${isCurrent ? "data-current-week" : ""}>
+            <span>${escapeHtml(label)}</span>
+            ${isCurrent ? `<small>Current month</small>` : ""}
+          </button>`;
+        }).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function jumpToFinanceMonth(key) {
+  if (!key || !/^\d{4}-\d{2}$/.test(key)) return;
+  financeViewMonth = key;
+  closeWeekJumpMenu();
+  setWeekToolsMode("finance");
+  renderFinancePage();
 }
 
 function weekJumpButtonTemplate(week) {
