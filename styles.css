@@ -18556,14 +18556,19 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  /* Match .fin-stat (Income/Budgeted) so the two rows line up at the same height:
+     same gap, and the caret is pulled out of the flow so the header is just the
+     label line rather than a taller 26px button row. */
+  gap: 2px;
+  position: relative;
 }
 .fin-savings-emergency { border-color: color-mix(in srgb, var(--accent) 40%, var(--window-border)); }
 .fin-savings-retirement { border-color: color-mix(in srgb, var(--accent) 40%, var(--window-border)); }
-.fin-savings-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fin-savings-head { display: flex; align-items: center; padding-right: 30px; }
 .fin-savings-label { font-size: 0.72rem; font-weight: 850; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 .fin-savings-caret {
-  flex: none; width: 26px; height: 26px; padding: 0; line-height: 1;
+  position: absolute; top: 8px; right: 10px;
+  flex: none; width: 24px; height: 24px; padding: 0; line-height: 1;
   border: 1px solid var(--window-border); border-radius: 8px;
   background: var(--window-bg); color: var(--muted); cursor: pointer;
   font-size: 0.8rem; display: flex; align-items: center; justify-content: center;
