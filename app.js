@@ -218,7 +218,7 @@ const STATE_SECTIONS = {
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
@@ -3102,6 +3102,9 @@ function defaultState() {
     financeCashAccountIds: [],
     financeEmergencyAccountIds: [],
     financeRetirementAccountIds: [],
+    // Dismissed "account needs attention" alerts, keyed by alert key -> true.
+    // Auto-cleared when the underlying issue resolves so it can re-alert.
+    financeDismissedAlerts: {},
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -3257,6 +3260,7 @@ function normalizeState(parsed) {
     financeCashAccountIds: (Array.isArray(parsed?.financeCashAccountIds) ? parsed.financeCashAccountIds.filter((x) => typeof x === "string") : []),
     financeEmergencyAccountIds: (Array.isArray(parsed?.financeEmergencyAccountIds) ? parsed.financeEmergencyAccountIds.filter((x) => typeof x === "string") : []),
     financeRetirementAccountIds: (Array.isArray(parsed?.financeRetirementAccountIds) ? parsed.financeRetirementAccountIds.filter((x) => typeof x === "string") : []),
+    financeDismissedAlerts: (parsed?.financeDismissedAlerts && typeof parsed.financeDismissedAlerts === "object") ? parsed.financeDismissedAlerts : {},
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
@@ -5232,6 +5236,7 @@ function mergeStates(newer, older) {
     // labels, splits, renames, sign-flips, return links, or month history.
     "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeMerchantNames",
     "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts",
+    "financeDismissedAlerts",
   ]) {
     merged[key] = unionByKey(newer[key], older[key]);
   }
@@ -7521,11 +7526,11 @@ function financeUnlabeledCount() {
 const FINANCE_STALE_DAYS = 4;
 function financeAccountsNeedingAttention() {
   if (!financeLive) return [];
-  const out = [];
+  const raw = [];
   // Connection-level messages from the bridge ("Connection to X needs attention").
   for (const err of (financeLive.errors || [])) {
     const detail = String(err || "").trim();
-    if (detail) out.push({ kind: "error", label: "Bank connection", detail });
+    if (detail) raw.push({ kind: "error", key: `error:${detail}`, label: "Bank connection", detail });
   }
   // Per-account staleness — only meaningful once the fetch returned accounts.
   const live = financeLive.accounts || [];
@@ -7538,11 +7543,18 @@ function financeAccountsNeedingAttention() {
       if (!la || !la.balanceDate) continue;
       const days = Math.floor((now - new Date(la.balanceDate).getTime()) / 86400000);
       if (days >= FINANCE_STALE_DAYS) {
-        out.push({ kind: "stale", label: acct.name || la.name || "Account", detail: `Balance hasn't updated in ${days} days.` });
+        // Key is per-account (not per day count) so a dismissal sticks as the
+        // days tick up, but clears if the account recovers.
+        raw.push({ kind: "stale", key: `stale:${acct.linkedId}`, label: acct.name || la.name || "Account", detail: `Balance hasn't updated in ${days} days.` });
       }
     }
   }
-  return out;
+  // Drop dismissals whose alert is no longer live (recovered) so a recurrence
+  // re-alerts, then hide the ones still dismissed.
+  const dismissed = (state.financeDismissedAlerts && typeof state.financeDismissedAlerts === "object") ? state.financeDismissedAlerts : {};
+  const liveKeys = new Set(raw.map((r) => r.key));
+  for (const k of Object.keys(dismissed)) { if (!liveKeys.has(k)) delete dismissed[k]; }
+  return raw.filter((r) => !dismissed[r.key]);
 }
 
 // The finance bell / home-tile badge total.
@@ -8628,6 +8640,7 @@ function renderFinancePage() {
         <div class="fin-notif-head">Accounts need attention</div>
         ${attention.slice(0, 8).map((a) => `
         <div class="fin-alert fin-alert-attention">
+          <button class="fin-notif-x" type="button" data-fin-action="dismiss-alert" data-key="${escapeHtml(a.key)}" title="Dismiss" aria-label="Dismiss this alert">×</button>
           <div class="fin-alert-text"><b>${escapeHtml(a.label)}</b> — ${escapeHtml(a.detail)}</div>
           <div class="fin-item-row fin-item-row--tools">
             <button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-finance-settings">Open bank settings</button>
@@ -8815,6 +8828,14 @@ function onFinanceGridClick(e) {
   if (action === "unlink-banks") { unlinkFinanceBanks(); return; }
   if (action === "toggle-notifs") { financeNotifOpen = !financeNotifOpen; renderFinancePage(); return; }
   if (action === "open-finance-settings") { openContextSettingsDialog("finance-accounts"); return; }
+  if (action === "dismiss-alert") {
+    if (!state.financeDismissedAlerts || typeof state.financeDismissedAlerts !== "object") state.financeDismissedAlerts = {};
+    if (btn.dataset.key) state.financeDismissedAlerts[btn.dataset.key] = true;
+    persist();
+    setPageNotifCount("finance", financeBellCount());
+    renderFinancePage();
+    return;
+  }
   if (action === "rename-txn-start") { startRenameTxn(btn.dataset.id); return; }
   if (action === "rename-txn-cancel") { cancelRenameTxn(); return; }
   if (action === "rename-txn-save") { saveRenameFromRow(btn.closest(".fin-txn-row, .fin-txn-detail"), btn.dataset.id); return; }
