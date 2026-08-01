@@ -8545,53 +8545,6 @@ function renderFinancePage() {
     </div>`;
   })();
 
-  // Month-close recap: pure arithmetic from the persisted month history.
-  const recapCard = !lastMo ? "" : (() => {
-    const monthName = new Date(prevMonthKey + "-15T12:00:00").toLocaleDateString(undefined, { month: "long" });
-    const cats = lastMo.cats || {};
-    const totalSpent = Object.values(cats).reduce((s, v) => s + (Number(v) || 0), 0);
-    const catName = (k) => {
-      const [gId, cId] = k.split(":");
-      const g = (state.financeBudgetGroups || []).find((x) => x.id === gId);
-      const c = g?.categories.find((x) => x.id === cId);
-      return c ? c.name : "(removed category)";
-    };
-    const top = Object.entries(cats).sort((a, b) => (b[1] || 0) - (a[1] || 0)).slice(0, 3);
-    const open = financeExpanded.has("card:recap");
-    return `
-    <div class="fin-card" data-fin-card="recap">
-      ${cardHead("card:recap", `${monthName} recap`, formatFinMoney(totalSpent))}
-      ${!open ? "" : `
-      ${(state.financeBudgetGroups || []).map((g) => {
-        const actual = lastMoGroupActual(g) || 0;
-        const budget = financeGroupTotal(g);
-        const over = actual - budget;
-        return `
-        <div class="fin-item-row fin-recap-row">
-          <span class="fin-acct-name">${escapeHtml(g.label)}</span>
-          <span class="fin-cat-actual${over > 0 ? " is-over" : ""}">${formatFinMoney(actual)}</span>
-          <span class="fin-of">of</span>
-          <span class="fin-category-total">${formatFinMoney(budget)}</span>
-          <span class="fin-recap-delta${over > 0 ? " is-over" : ""}">${over > 0 ? "+" : ""}${formatFinMoney(over)}</span>
-        </div>`;
-      }).join("")}
-      <div class="fin-item-row fin-recap-row">
-        <span class="fin-acct-name">Income received</span>
-        <span class="fin-cat-actual">${formatFinMoney(Number(lastMo.income) || 0)}</span>
-        <span class="fin-of">of</span>
-        <span class="fin-category-total">${formatFinMoney(income)}</span>
-      </div>
-      ${top.length ? `
-      <div class="fin-subhead">Biggest categories</div>
-      ${top.map(([k, v]) => `
-        <div class="fin-item-row fin-recap-row">
-          <span class="fin-acct-name">${escapeHtml(catName(k))}</span>
-          <span class="fin-live-bal">${formatFinMoney(Number(v) || 0)}</span>
-        </div>`).join("")}` : ""}
-      <p class="fin-hint">Compared against the current budget — plan changes since ${escapeHtml(monthName)} shift the deltas.</p>`}
-    </div>`;
-  })();
-
   const bellSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
   const notifCount = needsLabelGroups.length + recAlerts.length;
   const alertHtml = (a) => {
@@ -8657,7 +8610,6 @@ function renderFinancePage() {
         ${incomeCard}
         ${groupCards}
         ${txnsCard}
-        ${recapCard}
         ${personalCard}
       </div>
     </section>`;
