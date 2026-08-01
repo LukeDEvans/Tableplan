@@ -18722,6 +18722,11 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-person-row { display: flex; align-items: center; gap: 8px; }
 .fin-person-name { font-weight: 750; flex: 1; }
 .fin-person-amount { font-weight: 850; }
+/* "N × $check" cadence hint next to a biweekly earner's monthly total. */
+.fin-payday-hint { font-size: 0.72rem; font-weight: 700; color: var(--muted); white-space: nowrap; flex: 0 0 auto; }
+.fin-pay-schedule { gap: 6px; }
+.fin-pay-schedule .fin-scenario-select { flex: 1 1 auto; max-width: none; min-width: 0; }
+.fin-pay-anchor { flex: 0 0 auto; max-width: 160px; }
 .fin-scenario-select {
   padding: 4px 8px;
   border: 2px solid var(--window-border);

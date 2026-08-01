@@ -3965,7 +3965,14 @@ function normalizeFinancePeople(raw) {
     scenarios: (Array.isArray(p?.scenarios) ? p.scenarios : []).map((s) => ({
       id: s?.id || createId("fin-scenario"),
       label: s?.label || "",
+      // Per PAY PERIOD when a pay frequency is set (a single paycheck); the whole
+      // month when frequency is "monthly" (the default, = legacy behavior).
       amount: Number(s?.amount) || 0,
+      // "monthly" | "biweekly" | "weekly". Biweekly/weekly multiply by the number
+      // of paydays that land in the viewed month (2 vs 3 for biweekly).
+      payFrequency: ["monthly", "biweekly", "weekly"].includes(s?.payFrequency) ? s.payFrequency : "monthly",
+      // A known payday (YYYY-MM-DD) that anchors the biweekly/weekly cadence.
+      payAnchor: (typeof s?.payAnchor === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s.payAnchor)) ? s.payAnchor : "",
       note: s?.note || ""
     }))
   }));
@@ -7787,8 +7794,71 @@ function financeActiveIncome(person) {
   return person.scenarios.find((s) => s.id === person.activeScenarioId) || person.scenarios[0] || null;
 }
 
-function financeIncomeTotal() {
-  return (state.financePeople || []).reduce((sum, p) => sum + (financeActiveIncome(p)?.amount || 0), 0);
+// ── Pay schedule → paydays per month ─────────────────────────────────────────
+// A scenario's amount is per pay period. Biweekly/weekly cadences land 2 or 3
+// (4 or 5 for weekly) paydays in a month depending on the calendar — that's what
+// makes a month's income vary. Anchored to a known payday (payAnchor).
+function payPeriodStepDays(freq) { return freq === "weekly" ? 7 : freq === "biweekly" ? 14 : 0; }
+
+// Payday date-keys (YYYY-MM-DD) for a scenario within [startKey, endKey] inclusive.
+// Steps by whole calendar days (not fixed ms) so a payday stays at local midnight
+// across DST changes — otherwise the ±1h drift drops a payday on a month's last day.
+function scenarioPaydaysInRange(scenario, startKey, endKey) {
+  const step = payPeriodStepDays(scenario?.payFrequency);
+  if (!step || !scenario?.payAnchor) return [];
+  const start = new Date(startKey + "T00:00:00");
+  const end = new Date(endKey + "T00:00:00");
+  const cursor = new Date(scenario.payAnchor + "T00:00:00");
+  if (isNaN(start) || isNaN(end) || isNaN(cursor)) return [];
+  // Approximate-jump near the window, then land exactly on the first payday >= start.
+  cursor.setDate(cursor.getDate() + Math.floor((start - cursor) / (step * 86400000)) * step);
+  while (cursor < start) cursor.setDate(cursor.getDate() + step);
+  for (;;) { // back up past any payday the jump overshot
+    const prev = new Date(cursor); prev.setDate(prev.getDate() - step);
+    if (prev < start) break;
+    cursor.setTime(prev.getTime());
+  }
+  const out = [];
+  let guard = 0;
+  while (cursor <= end && guard++ < 800) {
+    out.push(dateKeyFromDate(cursor));
+    cursor.setDate(cursor.getDate() + step);
+  }
+  return out;
+}
+
+// How many paydays fall in a given month (YYYY-MM) for this scenario.
+function scenarioPaydaysInMonth(scenario, monthKey) {
+  if ((scenario?.payFrequency || "monthly") === "monthly") return 1;
+  if (!scenario?.payAnchor) return 2; // biweekly/weekly not yet anchored → assume a typical month
+  const [y, m] = monthKey.split("-").map(Number);
+  const endKey = dateKeyFromDate(new Date(y, m, 0)); // last day of the month
+  return scenarioPaydaysInRange(scenario, `${monthKey}-01`, endKey).length;
+}
+
+// A scenario's income for the given month: per-period amount × paydays that month.
+function scenarioMonthlyIncome(scenario, monthKey) {
+  if (!scenario) return 0;
+  if ((scenario.payFrequency || "monthly") === "monthly") return scenario.amount || 0;
+  return (scenario.amount || 0) * scenarioPaydaysInMonth(scenario, monthKey);
+}
+
+function financeIncomeTotal(monthKey) {
+  const mk = monthKey || financeViewMonth;
+  return (state.financePeople || []).reduce((sum, p) => sum + scenarioMonthlyIncome(financeActiveIncome(p), mk), 0);
+}
+
+// Every earner's paydays in a date range: [{ date, person, amount }] — for the
+// calendar's read-only payday dots.
+function financePaydaysInRange(startKey, endKey) {
+  const out = [];
+  for (const p of (state.financePeople || [])) {
+    const s = financeActiveIncome(p);
+    for (const date of scenarioPaydaysInRange(s, startKey, endKey)) {
+      out.push({ date, person: p.name || "", amount: s.amount || 0 });
+    }
+  }
+  return out;
 }
 
 function financeItemsTotal(items) {
@@ -8020,6 +8090,11 @@ function renderFinancePage() {
         const active = financeActiveIncome(p);
         const open = financeExpanded.has(p.id);
         const got = incomeByKey.get(`income:${p.id}`) || 0;
+        const freq = active?.payFrequency || "monthly";
+        const monthly = scenarioMonthlyIncome(active, financeViewMonth);
+        const paydays = active ? scenarioPaydaysInMonth(active, financeViewMonth) : 0;
+        // For biweekly/weekly, show "N × $check" so a 3-check month is visible.
+        const cadenceHint = (freq !== "monthly" && active) ? `${paydays} × ${formatFinMoney(active.amount || 0)}` : "";
         return `
         <div class="fin-person">
           <div class="fin-person-row">
@@ -8028,18 +8103,31 @@ function renderFinancePage() {
               ${p.scenarios.map((s) => `<option value="${s.id}" ${s.id === (active?.id || "") ? "selected" : ""}>${escapeHtml(s.label)}</option>`).join("")}
             </select>
             ${showActuals && got ? `<span class="fin-cat-actual" title="Received this month">${formatFinMoney(got)}</span><span class="fin-of">/</span>` : ""}
-            <span class="fin-person-amount">${formatFinMoney(active?.amount || 0)}</span>
+            ${cadenceHint ? `<span class="fin-payday-hint" title="${paydays} payday${paydays === 1 ? "" : "s"} this month">${escapeHtml(cadenceHint)}</span>` : ""}
+            <span class="fin-person-amount">${formatFinMoney(monthly)}</span>
             <button class="icon-btn fin-expand-btn" type="button" data-fin-action="toggle-expand" data-id="${p.id}" title="Edit scenarios" aria-label="Edit scenarios for ${escapeHtml(p.name)}">${open ? "▴" : "▾"}</button>
           </div>
           ${open ? `
           <div class="fin-person-editor">
-            ${p.scenarios.map((s) => `
+            ${p.scenarios.map((s) => {
+              const sf = s.payFrequency || "monthly";
+              return `
               <div class="fin-item-row">
                 <input class="fin-item-name" type="text" value="${escapeHtml(s.label)}" data-fin-edit="scenario-label" data-person="${p.id}" data-id="${s.id}" placeholder="Scenario" />
-                <input class="fin-item-amount" type="text" inputmode="decimal" value="${escapeHtml(String(s.amount || 0))}" data-fin-edit="scenario-amount" data-person="${p.id}" data-id="${s.id}" />
+                <input class="fin-item-amount" type="text" inputmode="decimal" value="${escapeHtml(String(s.amount || 0))}" data-fin-edit="scenario-amount" data-person="${p.id}" data-id="${s.id}" title="${sf === "monthly" ? "Monthly amount" : "Amount per paycheck"}" />
                 <button class="icon-btn fin-del-btn" type="button" data-fin-action="delete-scenario" data-person="${p.id}" data-id="${s.id}" title="Delete scenario" aria-label="Delete scenario">&times;</button>
               </div>
-              ${s.note ? `<div class="fin-item-note">${escapeHtml(s.note)}</div>` : ""}`).join("")}
+              <div class="fin-item-row fin-pay-schedule">
+                <select class="fin-scenario-select" data-fin-edit="scenario-frequency" data-person="${p.id}" data-id="${s.id}" aria-label="Pay frequency">
+                  <option value="monthly" ${sf === "monthly" ? "selected" : ""}>Monthly total</option>
+                  <option value="biweekly" ${sf === "biweekly" ? "selected" : ""}>Every 2 weeks / paycheck</option>
+                  <option value="weekly" ${sf === "weekly" ? "selected" : ""}>Weekly / paycheck</option>
+                </select>
+                ${sf !== "monthly" ? `<input type="date" class="fin-item-name fin-pay-anchor" data-fin-edit="scenario-anchor" data-person="${p.id}" data-id="${s.id}" value="${escapeHtml(s.payAnchor || "")}" title="A recent payday (anchors the cadence)" aria-label="A recent payday date" />` : ""}
+              </div>
+              ${sf !== "monthly" && !s.payAnchor ? `<div class="fin-item-note">Set a recent payday date to count paychecks per month.</div>` : ""}
+              ${s.note ? `<div class="fin-item-note">${escapeHtml(s.note)}</div>` : ""}`;
+            }).join("")}
             <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-scenario" data-person="${p.id}">+ Scenario</button>
             <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="delete-person" data-person="${p.id}">Remove ${escapeHtml(p.name)}</button>
           </div>` : ""}
@@ -9134,12 +9222,14 @@ function onFinanceGridChange(e) {
   if (kind === "active-scenario") {
     const p = state.financePeople.find((x) => x.id === el.dataset.person);
     if (p) p.activeScenarioId = el.value;
-  } else if (kind === "scenario-label" || kind === "scenario-amount") {
+  } else if (kind === "scenario-label" || kind === "scenario-amount" || kind === "scenario-frequency" || kind === "scenario-anchor") {
     const p = state.financePeople.find((x) => x.id === el.dataset.person);
     const s = p?.scenarios.find((x) => x.id === el.dataset.id);
     if (!s) return;
     if (kind === "scenario-label") s.label = el.value.trim();
-    else s.amount = parseFinAmount(el.value);
+    else if (kind === "scenario-amount") s.amount = parseFinAmount(el.value);
+    else if (kind === "scenario-frequency") s.payFrequency = ["monthly", "biweekly", "weekly"].includes(el.value) ? el.value : "monthly";
+    else if (kind === "scenario-anchor") s.payAnchor = /^\d{4}-\d{2}-\d{2}$/.test(el.value) ? el.value : "";
   } else if (kind === "item-name" || kind === "item-amount") {
     const items = financeScopeItems(el.dataset.scope);
     const it = items?.find((x) => x.id === el.dataset.id);
