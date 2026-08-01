@@ -8841,17 +8841,20 @@ function onFinanceGridClick(e) {
   if (action === "dismiss-alert") {
     if (!state.financeDismissedAlerts || typeof state.financeDismissedAlerts !== "object") state.financeDismissedAlerts = {};
     if (btn.dataset.key) state.financeDismissedAlerts[btn.dataset.key] = true;
+    btn.closest(".fin-alert")?.remove(); // clear it right away, don't wait on the re-render
     persist();
-    setPageNotifCount("finance", financeBellCount());
     renderFinancePage();
+    setPageNotifCount("finance", financeBellCount());
     return;
   }
   if (action === "skip-label-group") {
     if (!state.financeLabelSkips || typeof state.financeLabelSkips !== "object") state.financeLabelSkips = {};
     if (btn.dataset.key) state.financeLabelSkips[btn.dataset.key] = true;
+    btn.closest(".fin-notif-labelrow")?.remove(); // clear it right away, don't wait on the re-render
+    invalidateFinanceLabeled();
     persist();
-    setPageNotifCount("finance", financeBellCount());
     renderFinancePage();
+    setPageNotifCount("finance", financeBellCount());
     return;
   }
   if (action === "rename-txn-start") { startRenameTxn(btn.dataset.id); return; }
