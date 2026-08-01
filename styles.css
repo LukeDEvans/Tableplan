@@ -10634,6 +10634,7 @@ body.touch-drag-active * {
 }
 
 .plan-month-day {
+  position: relative;
   border-right: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
   padding: 4px 3px 3px;
@@ -10644,6 +10645,25 @@ body.touch-drag-active * {
   cursor: pointer;
   transition: background 0.1s;
 }
+
+/* Read-only payday marker (finance pay schedules) on the calendar. */
+.plan-payday-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: #0f9d58;
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 900;
+  line-height: 1;
+  cursor: default;
+  flex: 0 0 auto;
+}
+.plan-month-day .plan-payday-dot { position: absolute; top: 3px; right: 3px; }
 
 .plan-month-day:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
 

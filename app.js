@@ -32785,6 +32785,21 @@ function planEventPillTemplate(event) {
   </div>`;
 }
 
+// Finance paydays grouped by date-key, for the calendar's read-only payday dots.
+function paydaysByDate(startKey, endKey) {
+  const byDay = {};
+  for (const p of financePaydaysInRange(startKey, endKey)) {
+    (byDay[p.date] = byDay[p.date] || []).push(p);
+  }
+  return byDay;
+}
+
+function paydayDotHtml(list) {
+  if (!list || !list.length) return "";
+  const title = list.map((p) => `${p.person || "Payday"}: ${formatFinMoney(p.amount)}`).join(" · ");
+  return `<span class="plan-payday-dot" title="Payday — ${escapeHtml(title)}" aria-label="Payday">$</span>`;
+}
+
 function renderPlanMonthView() {
   const year = planViewDate.getFullYear();
   const month = planViewDate.getMonth();
@@ -32799,6 +32814,7 @@ function renderPlanMonthView() {
   const allEvents = getPlanEventsForRange(rangeStart, rangeEnd);
   const eventsByDay = {};
   allEvents.forEach((e) => { (eventsByDay[e.date] = eventsByDay[e.date] || []).push(e); });
+  const paydaysByDay = paydaysByDate(rangeStart, rangeEnd);
   const headers = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d) => `<div class="plan-month-header-cell">${d}</div>`).join("");
   const cells = days.map((date) => {
     const key = dateKeyFromDate(date);
@@ -32809,6 +32825,7 @@ function renderPlanMonthView() {
     const overflow = dayEvts.length - 3;
     return `<div class="plan-month-day${isToday ? " is-today" : ""}${isOther ? " is-other-month" : ""}" data-plan-day="${escapeHtml(key)}" tabindex="0">
       <span class="plan-day-number">${date.getDate()}</span>
+      ${paydayDotHtml(paydaysByDay[key])}
       <div class="plan-day-events">
         ${visible.map(planEventPillTemplate).join("")}
         ${overflow > 0 ? `<span class="plan-event-overflow">+${overflow} more</span>` : ""}
@@ -32830,11 +32847,13 @@ function renderPlanWeekView() {
   const allEvents = getPlanEventsForRange(rangeStart, rangeEnd);
   const allDay = allEvents.filter((e) => e.allDay);
   const timed = allEvents.filter((e) => !e.allDay && e.startTime);
+  const paydaysByDay = paydaysByDate(rangeStart, rangeEnd);
   const dayHeaders = days.map((d) => {
     const key = dateKeyFromDate(d);
     return `<div class="plan-week-day-head${key === today ? " is-today" : ""}">
       <span class="plan-week-day-name">${d.toLocaleDateString(undefined, { weekday: "short" })}</span>
       <span class="plan-week-day-num${key === today ? " is-today" : ""}">${d.getDate()}</span>
+      ${paydayDotHtml(paydaysByDay[key])}
     </div>`;
   }).join("");
   const allDayCells = days.map((d) => {
