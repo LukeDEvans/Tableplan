@@ -8234,7 +8234,10 @@ function renderFinancePage() {
   // renderFinanceAccountsPanel); it no longer renders as a card here.
 
   const f = financeTxnFilter;
-  let shownTxns = allTxns.slice(); // copy — sorting below must never mutate the cached/shared array
+  // Keep the ledger to the viewed month: in August you see August's charges, and
+  // paging to July shows July's (and only July's), not a rolling 45-day blur.
+  const monthTxns = allTxns.filter((t) => (t.posted || "").slice(0, 7) === monthKey);
+  let shownTxns = monthTxns.slice(); // copy — sorting below must never mutate the cached/shared array
   if (f.q) shownTxns = shownTxns.filter((t) => `${t.description || ""} ${t.displayName || ""}`.toLowerCase().includes(f.q.toLowerCase()));
   if (f.account) shownTxns = shownTxns.filter((t) => t.accountId === f.account);
   if (f.kind === "unlabeled") shownTxns = shownTxns.filter((t) => !t.label);
@@ -8253,7 +8256,7 @@ function renderFinancePage() {
   }
   const txns = shownTxns.slice(0, 60);
   const needsLabelGroups = financeUnlabeledByMerchant(allTxns); // one row per merchant, not one per repeat charge
-  const unlabeledTxnCount = allTxns.filter((t) => !t.label).length; // raw count for the full-ledger card header
+  const unlabeledTxnCount = monthTxns.filter((t) => !t.label).length; // to-label count for the viewed month
   const recAlerts = financeRecurringAlerts();
   // "Scan receipt" — a phone with a receipt on its screen (torn bottom, logo,
   // line items), drawn in the app's stroke-icon style (currentColor, no fill)
@@ -8477,7 +8480,7 @@ function renderFinancePage() {
     </div>`;
   const txnsCard = !financeLinkStatus?.connected ? "" : `
     <div class="fin-card" data-fin-card="txns">
-      ${cardHead("card:txns", "Transactions", `${unlabeledTxnCount ? `${unlabeledTxnCount} to label · ` : ""}${filterActive ? `${shownTxns.length} of ` : ""}${allTxns.length}`)}
+      ${cardHead("card:txns", "Transactions", `${unlabeledTxnCount ? `${unlabeledTxnCount} to label · ` : ""}${filterActive ? `${shownTxns.length} of ` : ""}${monthTxns.length}`)}
       ${!txnsOpen ? "" : `
       <div class="fin-txn-filters">
         <input type="search" class="fin-item-name fin-txn-search" placeholder="Search…" value="${escapeHtml(f.q)}" data-fin-edit="txn-filter-q" aria-label="Search transactions" />
@@ -8507,7 +8510,7 @@ function renderFinancePage() {
         ${filterActive || sortActive ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="txn-filter-clear">Clear</button>` : ""}
       </div>`}
       ${manualFormHtml}
-      ${txns.map((t) => txnRow(t) + (financeDetailTxnId === t.id ? txnDetailHtml(t) : "") + (financeSplitDraft?.txnId === t.id ? splitEditorHtml(t) : "")).join("") || `<div class="empty-state">${filterActive ? "Nothing matches the filters." : "No transactions in the last 30 days."}</div>`}`}
+      ${txns.map((t) => txnRow(t) + (financeDetailTxnId === t.id ? txnDetailHtml(t) : "") + (financeSplitDraft?.txnId === t.id ? splitEditorHtml(t) : "")).join("") || `<div class="empty-state">${filterActive ? "Nothing matches the filters." : `No transactions for ${escapeHtml(new Date(monthKey + "-15T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }))}.`}</div>`}`}
     </div>`;
 
   // Net-worth detail — only rendered when the user clicks the Net worth stat.
