@@ -6597,7 +6597,9 @@ function render() {
   updatePageVisibility();
   const week = weekState();
   const weekTools = elements.weekLabel.closest(".week-tools");
-  if (!weekTools.classList.contains("today-mode") && !weekTools.classList.contains("plan-mode") && !weekTools.classList.contains("shop-mode")) {
+  // Finance shows the viewed month here (set by setWeekToolsMode("finance")) and
+  // is navigated by the ‹ › arrows — don't clobber it with a week range.
+  if (!weekTools.classList.contains("today-mode") && !weekTools.classList.contains("plan-mode") && !weekTools.classList.contains("shop-mode") && !weekTools.classList.contains("finance-mode")) {
     const weekRangeLabel = formatWeekRange(currentWeek, activeAppArea === "do" ? 6 : 7);
     elements.weekLabel.textContent = weekRangeLabel;
     elements.weekLabel.setAttribute("aria-label", `Choose week. Current week is ${weekRangeLabel}`);
@@ -6650,7 +6652,9 @@ function setWeekToolsMode(mode) {
   if (rangeBar) rangeBar.hidden = !isShop;
   if (prevBtn) prevBtn.hidden = isShop;
   if (nextBtn) nextBtn.hidden = isShop;
-  if (prepCopy) prepCopy.hidden = isShop || isFinance;
+  // Finance keeps the label wrapper visible so the viewed month shows between the
+  // arrows; its click handler already suppresses the (week-based) jump menu.
+  if (prepCopy) prepCopy.hidden = isShop;
 
   if (mode === "finance") {
     elements.weekLabel.removeAttribute("aria-label");
