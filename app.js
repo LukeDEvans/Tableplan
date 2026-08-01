@@ -6908,7 +6908,7 @@ async function refreshFinanceLive(force = false) {
   invalidateFinanceLabeled(); // fresh accounts payload — the cache (now decoupled from financeLive) needs a nudge
   updateFinanceMonthActuals();
   updateFinanceRecurring();
-  setPageNotifCount("finance", financeUnlabeledCount() + financeRecurringAlerts().length);
+  setPageNotifCount("finance", financeBellCount());
   if (financeHistory === null) loadFinanceHistory();
   if (financeReceipts === null) loadFinanceReceipts();
   if (activeAppArea === "finance") renderFinancePage();
@@ -7200,7 +7200,7 @@ function recordFinanceTxnLink(returnId, purchaseId) {
   for (let i = 0; i < ids.length - 600; i++) delete state.financeTxnLinks[ids[i]];
   financeReturnLinkSearch = null;
   invalidateFinanceLabeled();
-  setPageNotifCount("finance", financeUnlabeledCount() + financeRecurringAlerts().length);
+  setPageNotifCount("finance", financeBellCount());
   updateFinanceMonthActuals();
   persist();
   renderFinancePage();
@@ -7210,7 +7210,7 @@ function clearFinanceTxnLink(returnId) {
   if (!state.financeTxnLinks) return;
   delete state.financeTxnLinks[returnId];
   invalidateFinanceLabeled();
-  setPageNotifCount("finance", financeUnlabeledCount() + financeRecurringAlerts().length);
+  setPageNotifCount("finance", financeBellCount());
   updateFinanceMonthActuals();
   persist();
   renderFinancePage();
@@ -7233,7 +7233,7 @@ function toggleFinanceTxnSignFlip(txnId) {
     for (let i = 0; i < ids.length - 600; i++) delete flips[ids[i]];
   }
   invalidateFinanceLabeled();
-  setPageNotifCount("finance", financeUnlabeledCount() + financeRecurringAlerts().length);
+  setPageNotifCount("finance", financeBellCount());
   updateFinanceMonthActuals();
   persist();
   renderFinancePage();
@@ -7276,7 +7276,7 @@ function saveManualTxnForm(fields) {
   else if (state.financeTxnLabels) delete state.financeTxnLabels[entry.id];
   invalidateFinanceLabeled();
   financeManualForm = null;
-  setPageNotifCount("finance", financeUnlabeledCount() + financeRecurringAlerts().length);
+  setPageNotifCount("finance", financeBellCount());
   updateFinanceMonthActuals();
   persist();
   renderFinancePage();
@@ -7295,7 +7295,7 @@ function deleteManualTxn(id) {
   }
   invalidateFinanceLabeled();
   financeDetailTxnId = financeDetailTxnId === id ? null : financeDetailTxnId;
-  setPageNotifCount("finance", financeUnlabeledCount() + financeRecurringAlerts().length);
+  setPageNotifCount("finance", financeBellCount());
   updateFinanceMonthActuals();
   persist();
   renderFinancePage();
@@ -7514,6 +7514,42 @@ function financeUnlabeledCount() {
   return financeUnlabeledByMerchant(financeLabeledTxns()).length;
 }
 
+// SimpleFIN connections/accounts that need attention: an explicit bridge error,
+// or a linked account whose balance has gone stale (the feed silently stopped —
+// e.g. a card that still reports a balance but stopped updating). Session-only,
+// so it's empty until the live data has loaded.
+const FINANCE_STALE_DAYS = 4;
+function financeAccountsNeedingAttention() {
+  if (!financeLive) return [];
+  const out = [];
+  // Connection-level messages from the bridge ("Connection to X needs attention").
+  for (const err of (financeLive.errors || [])) {
+    const detail = String(err || "").trim();
+    if (detail) out.push({ kind: "error", label: "Bank connection", detail });
+  }
+  // Per-account staleness — only meaningful once the fetch returned accounts.
+  const live = financeLive.accounts || [];
+  if (live.length) {
+    const liveById = new Map(live.map((a) => [a.id, a]));
+    const now = Date.now();
+    for (const acct of (state.financeAccounts || [])) {
+      if (!acct.linkedId) continue; // manual accounts don't sync
+      const la = liveById.get(acct.linkedId);
+      if (!la || !la.balanceDate) continue;
+      const days = Math.floor((now - new Date(la.balanceDate).getTime()) / 86400000);
+      if (days >= FINANCE_STALE_DAYS) {
+        out.push({ kind: "stale", label: acct.name || la.name || "Account", detail: `Balance hasn't updated in ${days} days.` });
+      }
+    }
+  }
+  return out;
+}
+
+// The finance bell / home-tile badge total.
+function financeBellCount() {
+  return financeBellCount() + financeAccountsNeedingAttention().length;
+}
+
 // Persist this month's per-category totals (and income received) so history
 // survives the rolling transaction window, device restarts, and bridge
 // outages. Derived from labeled transactions; only written when values change.
@@ -7667,7 +7703,7 @@ function recordFinanceTxnSplit(txnId, portions) {
   const ids = Object.keys(labels);
   for (let i = 0; i < ids.length - 600; i++) delete labels[ids[i]];
   invalidateFinanceLabeled();
-  setPageNotifCount("finance", financeUnlabeledCount());
+  setPageNotifCount("finance", financeBellCount());
   updateFinanceMonthActuals();
   persist();
 }
@@ -7692,7 +7728,7 @@ function recordFinanceTxnLabel(txnId, labelKey, description) {
     }
   }
   invalidateFinanceLabeled(); // recompute with the new label
-  setPageNotifCount("finance", financeUnlabeledCount() + financeRecurringAlerts().length);
+  setPageNotifCount("finance", financeBellCount());
   updateFinanceMonthActuals();
   persist();
 }
@@ -8549,7 +8585,8 @@ function renderFinancePage() {
   })();
 
   const bellSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
-  const notifCount = needsLabelGroups.length + recAlerts.length;
+  const attention = financeAccountsNeedingAttention();
+  const notifCount = needsLabelGroups.length + recAlerts.length + attention.length;
   const alertHtml = (a) => {
     if (a.kind === "new") return `
       <div class="fin-alert">
@@ -8587,6 +8624,15 @@ function renderFinancePage() {
       </button>
       ${financeNotifOpen ? `
       <div class="fin-notif-panel">
+        ${attention.length ? `
+        <div class="fin-notif-head">Accounts need attention</div>
+        ${attention.slice(0, 8).map((a) => `
+        <div class="fin-alert fin-alert-attention">
+          <div class="fin-alert-text"><b>${escapeHtml(a.label)}</b> — ${escapeHtml(a.detail)}</div>
+          <div class="fin-item-row fin-item-row--tools">
+            <button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-finance-settings">Open bank settings</button>
+          </div>
+        </div>`).join("")}` : ""}
         ${recAlerts.length ? `
         <div class="fin-notif-head">Recurring charges</div>
         ${recAlerts.slice(0, 8).map(alertHtml).join("")}` : ""}
@@ -8768,6 +8814,7 @@ function onFinanceGridClick(e) {
   if (action === "refresh-live") { refreshFinanceLive(true); return; }
   if (action === "unlink-banks") { unlinkFinanceBanks(); return; }
   if (action === "toggle-notifs") { financeNotifOpen = !financeNotifOpen; renderFinancePage(); return; }
+  if (action === "open-finance-settings") { openContextSettingsDialog("finance-accounts"); return; }
   if (action === "rename-txn-start") { startRenameTxn(btn.dataset.id); return; }
   if (action === "rename-txn-cancel") { cancelRenameTxn(); return; }
   if (action === "rename-txn-save") { saveRenameFromRow(btn.closest(".fin-txn-row, .fin-txn-detail"), btn.dataset.id); return; }
@@ -8819,7 +8866,7 @@ function onFinanceGridClick(e) {
       r.ackAmount = r.lastAmount;
     } else if (action === "recurring-price-keep") r.ackAmount = r.lastAmount;
     else if (action === "recurring-miss-dismiss") r.missAck = new Date().toISOString().slice(0, 7);
-    setPageNotifCount("finance", financeUnlabeledCount() + financeRecurringAlerts().length);
+    setPageNotifCount("finance", financeBellCount());
     persist();
     renderFinancePage();
     return;
@@ -9022,7 +9069,7 @@ function onFinanceGridChange(e) {
     r.lineItemKey = el.value;
     r.newAck = true; // linked (or explicitly unlinked) — the "new" alert is answered
     r.ackAmount = null; // fresh link: let a price mismatch surface
-    setPageNotifCount("finance", financeUnlabeledCount() + financeRecurringAlerts().length);
+    setPageNotifCount("finance", financeBellCount());
     persist();
     renderFinancePage();
     return;

@@ -18948,6 +18948,9 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 }
 .fin-alert { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding: 8px 0 4px; display: flex; flex-direction: column; gap: 4px; }
 .fin-alert-text { font-size: 0.82rem; line-height: 1.35; }
+/* Account/connection problems read as a warning, not a routine alert. */
+.fin-alert-attention { border-left: 3px solid #c2410c; padding-left: 8px; }
+.fin-alert-attention .fin-alert-text b { color: #c2410c; }
 .fin-rec-row { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding-top: 6px; }
 .fin-rec-link-row { padding-bottom: 6px; }
 .fin-recap-row { min-height: 24px; }
