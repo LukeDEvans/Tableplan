@@ -3111,14 +3111,20 @@ input.live-toggle:checked::before,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  box-sizing: border-box;
+  /* Double the old 44px size. flex:0 0 auto + min-height beat the base button's
+     min-height:38 and flex-shrink so they stay true 88×88 squares. */
+  flex: 0 0 auto;
+  width: 88px;
+  height: 88px;
+  min-height: 88px;
   padding: 0;
+  border-radius: 16px;
 }
 
 .planner-icon {
-  width: 20px;
-  height: 20px;
+  width: 40px;
+  height: 40px;
   flex: 0 0 auto;
 }
 
