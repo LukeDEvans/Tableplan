@@ -3226,7 +3226,7 @@ function normalizeState(parsed) {
     financeTxnLabels: (parsed?.financeTxnLabels && typeof parsed.financeTxnLabels === "object") ? parsed.financeTxnLabels : {},
     financeTxnRules: (parsed?.financeTxnRules && typeof parsed.financeTxnRules === "object") ? parsed.financeTxnRules : {},
     financeMonthActuals: (parsed?.financeMonthActuals && typeof parsed.financeMonthActuals === "object") ? parsed.financeMonthActuals : {},
-    financeRecurring: (Array.isArray(parsed?.financeRecurring) ? parsed.financeRecurring : []).map((r) => ({
+    financeRecurring: dedupeFinanceRecurring((Array.isArray(parsed?.financeRecurring) ? parsed.financeRecurring : []).map((r) => ({
       id: r?.id || createId("fin-rec"),
       merchantKey: r?.merchantKey || "",
       name: r?.name || "",
@@ -3238,7 +3238,7 @@ function normalizeState(parsed) {
       ackAmount: Number.isFinite(Number(r?.ackAmount)) && r?.ackAmount !== null ? Number(r.ackAmount) : null,
       missAck: r?.missAck || "",
       newAck: Boolean(r?.newAck)
-    })),
+    }))),
     financeMerchantNames: (parsed?.financeMerchantNames && typeof parsed.financeMerchantNames === "object") ? parsed.financeMerchantNames : {},
     financeTxnLinks: (parsed?.financeTxnLinks && typeof parsed.financeTxnLinks === "object") ? parsed.financeTxnLinks : {},
     financeTxnSignFlips: (parsed?.financeTxnSignFlips && typeof parsed.financeTxnSignFlips === "object") ? parsed.financeTxnSignFlips : {},
@@ -5182,10 +5182,16 @@ function mergeStates(newer, older) {
     // Travel
     "trips", "travelIdeas",
     // Finance (flat id-keyed — the nested ones are deep-merged below)
-    "financeAccounts", "financeRecurring", "financeManualTxns",
+    "financeAccounts", "financeManualTxns",
   ]) {
     merged[key] = unionById(newer[key], older[key], key);
   }
+
+  // Recurring charges are unique per MERCHANT, not per id — unioning by id let
+  // each device's independently-created entry survive, piling up hundreds of
+  // duplicates (each a separate alert). Merge both sides then collapse per
+  // merchant, keeping the answer state.
+  merged.financeRecurring = dedupeFinanceRecurring([...(older.financeRecurring || []), ...(newer.financeRecurring || [])]);
 
   // Finance records with nested child arrays: deep-merged so a just-booted
   // client's empty groups/people/personal budgets can never wipe the cloud's
@@ -7362,8 +7368,42 @@ function financeLineItemOptionsHtml(selected) {
     </optgroup>`).join("");
 }
 
+// Collapse recurring-charge entries to one per merchantKey. Entries are meant to
+// be unique per merchant, but the merge unioned them by id, so independent
+// creation across devices/boots piled up hundreds of duplicates — each firing
+// its own bell alert. Fold duplicates into the most-recently-seen entry while
+// PRESERVING answers: once acknowledged/linked anywhere, it stays answered.
+function dedupeFinanceRecurring(list) {
+  if (!Array.isArray(list)) return [];
+  const byKey = new Map();
+  for (const raw of list) {
+    const key = raw?.merchantKey || "";
+    if (!key) continue; // drop key-less junk that can never match a charge
+    const prev = byKey.get(key);
+    if (!prev) { byKey.set(key, { ...raw }); continue; }
+    // Base = the entry with the most recent charge (its amount/day/name win).
+    const keepRaw = (raw.lastSeen || "") > (prev.lastSeen || "");
+    const base = keepRaw ? { ...raw } : prev;
+    const other = keepRaw ? prev : raw;
+    base.newAck = Boolean(prev.newAck || raw.newAck);
+    base.lineItemKey = base.lineItemKey || other.lineItemKey || "";
+    base.missAck = (prev.missAck || "") > (raw.missAck || "") ? (prev.missAck || "") : (raw.missAck || "");
+    const acks = [prev.ackAmount, raw.ackAmount].filter((v) => v !== null && v !== undefined);
+    base.ackAmount = acks.includes(base.lastAmount) ? base.lastAmount : (acks.length ? acks[0] : null);
+    byKey.set(key, base);
+  }
+  return [...byKey.values()];
+}
+
 function updateFinanceRecurring() {
   if (!financeLive?.accounts?.length) return;
+  // Self-heal any accumulated duplicates before processing (and persist the
+  // collapse so the bloat leaves the synced state for good).
+  const deduped = dedupeFinanceRecurring(state.financeRecurring);
+  if (Array.isArray(state.financeRecurring) && deduped.length !== state.financeRecurring.length) {
+    state.financeRecurring = deduped;
+    persist();
+  }
   const byMerchant = new Map();
   for (const t of financeLabeledTxns()) {
     if ((t.amount || 0) >= 0 || t.pending) continue;
