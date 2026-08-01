@@ -3973,6 +3973,14 @@ function normalizeFinancePeople(raw) {
       payFrequency: ["monthly", "biweekly", "weekly"].includes(s?.payFrequency) ? s.payFrequency : "monthly",
       // A known payday (YYYY-MM-DD) that anchors the biweekly/weekly cadence.
       payAnchor: (typeof s?.payAnchor === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s.payAnchor)) ? s.payAnchor : "",
+      // Pre-deposit paycheck deductions (insurance, taxes, 401k…), each per pay
+      // period. Net = amount − Σ deductions; these ride this scenario's cadence,
+      // so they vary with paycheck count and never touch the account-side budget.
+      deductions: (Array.isArray(s?.deductions) ? s.deductions : []).map((d) => ({
+        id: d?.id || createId("fin-deduction"),
+        label: d?.label || "",
+        amount: Number(d?.amount) || 0
+      })),
       note: s?.note || ""
     }))
   }));
@@ -7836,16 +7844,54 @@ function scenarioPaydaysInMonth(scenario, monthKey) {
   return scenarioPaydaysInRange(scenario, `${monthKey}-01`, endKey).length;
 }
 
-// A scenario's income for the given month: per-period amount × paydays that month.
-function scenarioMonthlyIncome(scenario, monthKey) {
+// Pay periods (paychecks) that land in the viewed month for this scenario.
+function scenarioPeriodsInMonth(scenario, monthKey) {
+  return (scenario?.payFrequency || "monthly") === "monthly" ? 1 : scenarioPaydaysInMonth(scenario, monthKey);
+}
+function scenarioDeductionPerPeriod(scenario) {
+  return (scenario?.deductions || []).reduce((s, d) => s + (Number(d.amount) || 0), 0);
+}
+// Gross (before deductions) for the month = per-period amount × paychecks.
+function scenarioMonthlyGross(scenario, monthKey) {
   if (!scenario) return 0;
-  if ((scenario.payFrequency || "monthly") === "monthly") return scenario.amount || 0;
-  return (scenario.amount || 0) * scenarioPaydaysInMonth(scenario, monthKey);
+  return (scenario.amount || 0) * scenarioPeriodsInMonth(scenario, monthKey);
+}
+// Pre-deposit deductions for the month = per-period deductions × paychecks.
+function scenarioMonthlyDeductions(scenario, monthKey) {
+  if (!scenario) return 0;
+  return scenarioDeductionPerPeriod(scenario) * scenarioPeriodsInMonth(scenario, monthKey);
+}
+// NET (what actually lands in the account) — this is what the budget spends.
+function scenarioMonthlyIncome(scenario, monthKey) {
+  return scenarioMonthlyGross(scenario, monthKey) - scenarioMonthlyDeductions(scenario, monthKey);
 }
 
+// Net income (Unallocated is built on money that actually reaches the account).
 function financeIncomeTotal(monthKey) {
   const mk = monthKey || financeViewMonth;
   return (state.financePeople || []).reduce((sum, p) => sum + scenarioMonthlyIncome(financeActiveIncome(p), mk), 0);
+}
+function financeGrossIncomeTotal(monthKey) {
+  const mk = monthKey || financeViewMonth;
+  return (state.financePeople || []).reduce((sum, p) => sum + scenarioMonthlyGross(financeActiveIncome(p), mk), 0);
+}
+// All pre-deposit paycheck deductions for the month, per line — for the visible
+// "Paycheck deductions" breakdown. [{ person, label, monthly, perPeriod, periods }]
+function financeDeductionLines(monthKey) {
+  const mk = monthKey || financeViewMonth;
+  const out = [];
+  for (const p of (state.financePeople || [])) {
+    const s = financeActiveIncome(p);
+    if (!s) continue;
+    const periods = scenarioPeriodsInMonth(s, mk);
+    for (const d of (s.deductions || [])) {
+      out.push({ person: p.name || "", label: d.label || "Deduction", perPeriod: Number(d.amount) || 0, periods, monthly: (Number(d.amount) || 0) * periods });
+    }
+  }
+  return out;
+}
+function financeDeductionsTotal(monthKey) {
+  return financeDeductionLines(monthKey).reduce((s, d) => s + d.monthly, 0);
 }
 
 // Every earner's paydays in a date range: [{ date, person, amount }] — for the
@@ -7854,8 +7900,9 @@ function financePaydaysInRange(startKey, endKey) {
   const out = [];
   for (const p of (state.financePeople || [])) {
     const s = financeActiveIncome(p);
+    const netPerCheck = (s?.amount || 0) - scenarioDeductionPerPeriod(s); // take-home that lands
     for (const date of scenarioPaydaysInRange(s, startKey, endKey)) {
-      out.push({ date, person: p.name || "", amount: s.amount || 0 });
+      out.push({ date, person: p.name || "", amount: netPerCheck });
     }
   }
   return out;
@@ -8091,10 +8138,14 @@ function renderFinancePage() {
         const open = financeExpanded.has(p.id);
         const got = incomeByKey.get(`income:${p.id}`) || 0;
         const freq = active?.payFrequency || "monthly";
-        const monthly = scenarioMonthlyIncome(active, financeViewMonth);
-        const paydays = active ? scenarioPaydaysInMonth(active, financeViewMonth) : 0;
-        // For biweekly/weekly, show "N × $check" so a 3-check month is visible.
-        const cadenceHint = (freq !== "monthly" && active) ? `${paydays} × ${formatFinMoney(active.amount || 0)}` : "";
+        const net = scenarioMonthlyIncome(active, financeViewMonth);
+        const ded = scenarioMonthlyDeductions(active, financeViewMonth);
+        const paydays = active ? scenarioPeriodsInMonth(active, financeViewMonth) : 0;
+        // Show the paycheck count (so a 3-check month reads) and any deductions.
+        const cadenceHint = [
+          freq !== "monthly" ? `${paydays} check${paydays === 1 ? "" : "s"}` : "",
+          ded ? `− ${formatFinMoney(ded)} ded` : ""
+        ].filter(Boolean).join(" · ");
         return `
         <div class="fin-person">
           <div class="fin-person-row">
@@ -8104,7 +8155,7 @@ function renderFinancePage() {
             </select>
             ${showActuals && got ? `<span class="fin-cat-actual" title="Received this month">${formatFinMoney(got)}</span><span class="fin-of">/</span>` : ""}
             ${cadenceHint ? `<span class="fin-payday-hint" title="${paydays} payday${paydays === 1 ? "" : "s"} this month">${escapeHtml(cadenceHint)}</span>` : ""}
-            <span class="fin-person-amount">${formatFinMoney(monthly)}</span>
+            <span class="fin-person-amount" title="Take-home (net) this month">${formatFinMoney(net)}</span>
             <button class="icon-btn fin-expand-btn" type="button" data-fin-action="toggle-expand" data-id="${p.id}" title="Edit scenarios" aria-label="Edit scenarios for ${escapeHtml(p.name)}">${open ? "▴" : "▾"}</button>
           </div>
           ${open ? `
@@ -8114,7 +8165,7 @@ function renderFinancePage() {
               return `
               <div class="fin-item-row">
                 <input class="fin-item-name" type="text" value="${escapeHtml(s.label)}" data-fin-edit="scenario-label" data-person="${p.id}" data-id="${s.id}" placeholder="Scenario" />
-                <input class="fin-item-amount" type="text" inputmode="decimal" value="${escapeHtml(String(s.amount || 0))}" data-fin-edit="scenario-amount" data-person="${p.id}" data-id="${s.id}" title="${sf === "monthly" ? "Monthly amount" : "Amount per paycheck"}" />
+                <input class="fin-item-amount" type="text" inputmode="decimal" value="${escapeHtml(String(s.amount || 0))}" data-fin-edit="scenario-amount" data-person="${p.id}" data-id="${s.id}" title="Gross ${sf === "monthly" ? "per month" : "per paycheck"} (before deductions)" />
                 <button class="icon-btn fin-del-btn" type="button" data-fin-action="delete-scenario" data-person="${p.id}" data-id="${s.id}" title="Delete scenario" aria-label="Delete scenario">&times;</button>
               </div>
               <div class="fin-item-row fin-pay-schedule">
@@ -8126,6 +8177,17 @@ function renderFinancePage() {
                 ${sf !== "monthly" ? `<input type="date" class="fin-item-name fin-pay-anchor" data-fin-edit="scenario-anchor" data-person="${p.id}" data-id="${s.id}" value="${escapeHtml(s.payAnchor || "")}" title="A recent payday (anchors the cadence)" aria-label="A recent payday date" />` : ""}
               </div>
               ${sf !== "monthly" && !s.payAnchor ? `<div class="fin-item-note">Set a recent payday date to count paychecks per month.</div>` : ""}
+              <div class="fin-deductions">
+                <div class="fin-subhead">Pre-deposit deductions (per ${sf === "monthly" ? "month" : "paycheck"})</div>
+                ${(s.deductions || []).map((d) => `
+                <div class="fin-item-row fin-deduction-row">
+                  <input class="fin-item-name" type="text" value="${escapeHtml(d.label)}" data-fin-edit="deduction-label" data-person="${p.id}" data-scenario="${s.id}" data-id="${d.id}" placeholder="e.g. Dental Insurance" />
+                  <input class="fin-item-amount" type="text" inputmode="decimal" value="${escapeHtml(String(d.amount || 0))}" data-fin-edit="deduction-amount" data-person="${p.id}" data-scenario="${s.id}" data-id="${d.id}" />
+                  <button class="icon-btn fin-del-btn" type="button" data-fin-action="delete-deduction" data-person="${p.id}" data-scenario="${s.id}" data-id="${d.id}" title="Delete deduction" aria-label="Delete deduction">&times;</button>
+                </div>`).join("")}
+                <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-deduction" data-person="${p.id}" data-scenario="${s.id}">+ Deduction</button>
+                ${(s.deductions || []).length ? `<div class="fin-item-note">This month: gross ${formatFinMoney(scenarioMonthlyGross(s, financeViewMonth))} − deductions ${formatFinMoney(scenarioMonthlyDeductions(s, financeViewMonth))} = take-home <b>${formatFinMoney(scenarioMonthlyIncome(s, financeViewMonth))}</b></div>` : ""}
+              </div>
               ${s.note ? `<div class="fin-item-note">${escapeHtml(s.note)}</div>` : ""}`;
             }).join("")}
             <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-scenario" data-person="${p.id}">+ Scenario</button>
@@ -8133,6 +8195,17 @@ function renderFinancePage() {
           </div>` : ""}
         </div>`;
       }).join("") || `<div class="empty-state">No income sources yet.</div>`}
+      ${!incomeOpen ? "" : (() => {
+        const lines = financeDeductionLines(financeViewMonth);
+        if (!lines.length) return "";
+        const total = lines.reduce((s, d) => s + d.monthly, 0);
+        return `
+        <div class="fin-deductions-summary">
+          <div class="fin-subhead">Paycheck deductions (pre-deposit) · ${formatFinMoney(total)}</div>
+          ${lines.map((d) => `<div class="fin-item-row fin-recap-row"><span class="fin-acct-name">${escapeHtml(d.person)}${d.person ? " · " : ""}${escapeHtml(d.label)}${d.periods !== 1 ? ` <small>(${d.periods}×)</small>` : ""}</span><span class="fin-live-bal">${formatFinMoney(d.monthly)}</span></div>`).join("")}
+          <p class="fin-hint">Taken out before the money reaches your account — shown so you can see what you pay, but not counted in Budgeted (that would double-count it).</p>
+        </div>`;
+      })()}
       ${!incomeOpen ? "" : `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-person">+ Person</button>`}
     </div>`;
 
@@ -9070,13 +9143,24 @@ function onFinanceGridClick(e) {
   } else if (action === "add-scenario") {
     const p = state.financePeople.find((x) => x.id === btn.dataset.person);
     if (!p) return;
-    p.scenarios.push({ id: createId("fin-scenario"), label: "New scenario", amount: 0, note: "" });
+    p.scenarios.push({ id: createId("fin-scenario"), label: "New scenario", amount: 0, payFrequency: "monthly", payAnchor: "", deductions: [], note: "" });
   } else if (action === "delete-scenario") {
     const p = state.financePeople.find((x) => x.id === btn.dataset.person);
     if (!p) return;
     p.scenarios = p.scenarios.filter((s) => s.id !== btn.dataset.id);
     recordDeletion("financeScenarios", btn.dataset.id); // tombstone so the delete survives a union merge
     if (p.activeScenarioId === btn.dataset.id) p.activeScenarioId = p.scenarios[0]?.id || "";
+  } else if (action === "add-deduction") {
+    const p = state.financePeople.find((x) => x.id === btn.dataset.person);
+    const s = p?.scenarios.find((x) => x.id === btn.dataset.scenario);
+    if (!s) return;
+    if (!Array.isArray(s.deductions)) s.deductions = [];
+    s.deductions.push({ id: createId("fin-deduction"), label: "", amount: 0 });
+  } else if (action === "delete-deduction") {
+    const p = state.financePeople.find((x) => x.id === btn.dataset.person);
+    const s = p?.scenarios.find((x) => x.id === btn.dataset.scenario);
+    if (!s) return;
+    s.deductions = (s.deductions || []).filter((d) => d.id !== btn.dataset.id);
   } else if (action === "add-category") {
     const g = state.financeBudgetGroups.find((x) => x.id === btn.dataset.group);
     const name = g && prompt("Category name?");
@@ -9230,6 +9314,13 @@ function onFinanceGridChange(e) {
     else if (kind === "scenario-amount") s.amount = parseFinAmount(el.value);
     else if (kind === "scenario-frequency") s.payFrequency = ["monthly", "biweekly", "weekly"].includes(el.value) ? el.value : "monthly";
     else if (kind === "scenario-anchor") s.payAnchor = /^\d{4}-\d{2}-\d{2}$/.test(el.value) ? el.value : "";
+  } else if (kind === "deduction-label" || kind === "deduction-amount") {
+    const p = state.financePeople.find((x) => x.id === el.dataset.person);
+    const s = p?.scenarios.find((x) => x.id === el.dataset.scenario);
+    const d = s?.deductions?.find((x) => x.id === el.dataset.id);
+    if (!d) return;
+    if (kind === "deduction-label") d.label = el.value.trim();
+    else d.amount = parseFinAmount(el.value);
   } else if (kind === "item-name" || kind === "item-amount") {
     const items = financeScopeItems(el.dataset.scope);
     const it = items?.find((x) => x.id === el.dataset.id);
