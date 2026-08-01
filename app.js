@@ -5306,9 +5306,37 @@ function mergePlanWeeks(newer, older) {
     if (Array.isArray(nWeek.manualGroceries) || Array.isArray(oWeek.manualGroceries)) {
       week.manualGroceries = [...new Set([...(oWeek.manualGroceries || []), ...(nWeek.manualGroceries || [])])];
     }
+    // Combined-meal flags: a valid combine ([members]) must survive a merge with
+    // a side that has it reset to false/missing (e.g. a stale device), otherwise
+    // the combined recipe is orphaned. Newer's array wins when present; else keep
+    // older's array; else take whatever's defined.
+    week.combinedMealSections = mergeCombinedMealSections(nWeek.combinedMealSections, oWeek.combinedMealSections);
     result[wk] = week;
   }
   return result;
+}
+
+// Deep-merge combined-meal flags per day/meal. A valid combine (an array of ≥2
+// members) never loses to a false/missing value on the other side — that's how
+// a combined meal got orphaned. Newer's array wins when it has one.
+function mergeCombinedMealSections(newer, older) {
+  const n = newer || {};
+  const o = older || {};
+  const out = {};
+  for (const dayId of new Set([...Object.keys(o), ...Object.keys(n)])) {
+    const nDay = n[dayId] || {};
+    const oDay = o[dayId] || {};
+    const day = {};
+    for (const meal of new Set([...Object.keys(oDay), ...Object.keys(nDay)])) {
+      const nv = nDay[meal];
+      const ov = oDay[meal];
+      const nComb = Array.isArray(nv) && nv.length >= 2;
+      const oComb = Array.isArray(ov) && ov.length >= 2;
+      day[meal] = nComb ? nv : oComb ? ov : (nv !== undefined ? nv : ov);
+    }
+    out[dayId] = day;
+  }
+  return out;
 }
 
 function mergeMealPlanConfig(newer, older) {
@@ -28798,10 +28826,43 @@ function ensurePrepWindowShape(week) {
   if (!week.combinedMealSections || typeof week.combinedMealSections !== "object") week.combinedMealSections = {};
   if (!week.publishedCombinedMealSections || typeof week.publishedCombinedMealSections !== "object") week.publishedCombinedMealSections = {};
   if (!week.mealNotes || typeof week.mealNotes !== "object") week.mealNotes = {};
-  ensureCombinedMealSectionShape(week.combinedMealSections);
-  ensureCombinedMealSectionShape(week.publishedCombinedMealSections);
   ensureMealSlotShape(week.slots);
   if (week.publishedSlots) ensureMealSlotShape(week.publishedSlots);
+  ensureCombinedMealSectionShape(week.combinedMealSections);
+  ensureCombinedMealSectionShape(week.publishedCombinedMealSections);
+  // Self-heal combined meals whose "combined" flag was lost (see the function):
+  // the recipe still lives in e.g. "Combined Dinner", so re-derive the flag from
+  // the slots rather than showing three empty person-dinners.
+  reconcileCombinedSectionsFromSlots(week.slots, week.combinedMealSections);
+  if (week.publishedSlots) reconcileCombinedSectionsFromSlots(week.publishedSlots, week.publishedCombinedMealSections);
+}
+
+// If a combined slot (e.g. "Combined Dinner") holds a meal but its member slots
+// (Luke/Marijane/Sophia Dinner) are empty and the combined flag is missing/false,
+// the day was genuinely combined and lost its flag to a stale-device sync — the
+// recipe would otherwise be orphaned (invisible). Restore the flag from the slot
+// data, which is the source of truth and protected by the slot-level merge.
+function reconcileCombinedSectionsFromSlots(slots, combinedState) {
+  if (!slots || !combinedState) return;
+  prepDays.forEach((day) => {
+    const daySlots = slots[day.id] || {};
+    if (!combinedState[day.id]) combinedState[day.id] = {};
+    Object.keys(combinedMealSections).forEach((combinedMeal) => {
+      const group = combinedMealSections[combinedMeal];
+      if (!group) return;
+      // Already combined → leave it.
+      if (combinedMealMembersForDay(day, combinedState, combinedMeal).length >= 2) return;
+      // Only heal when the combined slot actually holds a meal.
+      if (!slotHasMealSelection(daySlots[combinedMeal])) return;
+      const membersInDay = group.members.filter((m) => day.meals.includes(m));
+      if (membersInDay.length < 2) return;
+      // …and the individual member slots are empty (data lives in the combined
+      // slot). If members hold their own meals it's a real split — don't touch.
+      if (membersInDay.every((m) => !slotHasMealSelection(daySlots[m]))) {
+        combinedState[day.id][combinedMeal] = membersInDay;
+      }
+    });
+  });
 }
 
 function ensureMealSlotShape(slots) {
