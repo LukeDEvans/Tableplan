@@ -18959,6 +18959,10 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   display: flex; align-items: center; justify-content: center;
 }
 .fin-notif-x:hover, .fin-notif-x:focus-visible { color: var(--ink); background: color-mix(in srgb, var(--ink) 8%, transparent); outline: none; }
+/* On a "to label" row the x sits inline at the end, not absolutely-positioned. */
+.fin-notif-labelrow { display: flex; align-items: center; gap: 4px; }
+.fin-notif-labelrow > .fin-txn-row { flex: 1 1 auto; min-width: 0; }
+.fin-notif-x--label { position: static; flex: 0 0 auto; }
 .fin-rec-row { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding-top: 6px; }
 .fin-rec-link-row { padding-bottom: 6px; }
 .fin-recap-row { min-height: 24px; }

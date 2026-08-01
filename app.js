@@ -218,7 +218,7 @@ const STATE_SECTIONS = {
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
 };
 
@@ -3105,6 +3105,9 @@ function defaultState() {
     // Dismissed "account needs attention" alerts, keyed by alert key -> true.
     // Auto-cleared when the underlying issue resolves so it can re-alert.
     financeDismissedAlerts: {},
+    // Merchants the user chose to skip labeling (merchantKey -> true): their
+    // unlabeled charges drop out of the "to label" notifications.
+    financeLabelSkips: {},
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -3261,6 +3264,7 @@ function normalizeState(parsed) {
     financeEmergencyAccountIds: (Array.isArray(parsed?.financeEmergencyAccountIds) ? parsed.financeEmergencyAccountIds.filter((x) => typeof x === "string") : []),
     financeRetirementAccountIds: (Array.isArray(parsed?.financeRetirementAccountIds) ? parsed.financeRetirementAccountIds.filter((x) => typeof x === "string") : []),
     financeDismissedAlerts: (parsed?.financeDismissedAlerts && typeof parsed.financeDismissedAlerts === "object") ? parsed.financeDismissedAlerts : {},
+    financeLabelSkips: (parsed?.financeLabelSkips && typeof parsed.financeLabelSkips === "object") ? parsed.financeLabelSkips : {},
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
@@ -5236,7 +5240,7 @@ function mergeStates(newer, older) {
     // labels, splits, renames, sign-flips, return links, or month history.
     "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeMerchantNames",
     "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts",
-    "financeDismissedAlerts",
+    "financeDismissedAlerts", "financeLabelSkips",
   ]) {
     merged[key] = unionByKey(newer[key], older[key]);
   }
@@ -7504,12 +7508,14 @@ function financeRecurringAlerts() {
 // rule (recordFinanceTxnLabel) that auto-labels every sibling, so the whole
 // group clears at once. The newest posting represents the group.
 function financeUnlabeledByMerchant(txns) {
+  const skips = (state.financeLabelSkips && typeof state.financeLabelSkips === "object") ? state.financeLabelSkips : {};
   const byKey = new Map();
   for (const t of (txns || [])) {
     if (t.label) continue;
     const k = financeMerchantKey(t.description) || `id:${t.id}`;
+    if (skips[k]) continue; // user chose to skip labeling this merchant's charges
     const g = byKey.get(k);
-    if (!g) { byKey.set(k, { rep: t, count: 1 }); continue; }
+    if (!g) { byKey.set(k, { key: k, rep: t, count: 1 }); continue; }
     g.count++;
     if ((t.posted || "") > (g.rep.posted || "")) g.rep = t;
   }
@@ -8650,7 +8656,11 @@ function renderFinancePage() {
         <div class="fin-notif-head">Recurring charges</div>
         ${recAlerts.slice(0, 8).map(alertHtml).join("")}` : ""}
         <div class="fin-notif-head">Transactions to label</div>
-        ${needsLabelGroups.slice(0, 15).map((grp) => txnRow(grp.rep, { compact: true, dupCount: grp.count })).join("") || `<div class="fin-notif-empty">Everything is labeled.</div>`}
+        ${needsLabelGroups.slice(0, 15).map((grp) => `
+        <div class="fin-notif-labelrow">
+          ${txnRow(grp.rep, { compact: true, dupCount: grp.count })}
+          <button class="fin-notif-x fin-notif-x--label" type="button" data-fin-action="skip-label-group" data-key="${escapeHtml(grp.key)}" title="Skip labeling this merchant" aria-label="Skip labeling ${escapeHtml(grp.rep.displayName || grp.rep.description || "this merchant")}">×</button>
+        </div>`).join("") || `<div class="fin-notif-empty">Everything is labeled.</div>`}
         ${needsLabelGroups.length > 15 ? `<div class="fin-notif-more">+ ${needsLabelGroups.length - 15} more in the Transactions card</div>` : ""}
       </div>` : ""}
     </div>`;
@@ -8831,6 +8841,14 @@ function onFinanceGridClick(e) {
   if (action === "dismiss-alert") {
     if (!state.financeDismissedAlerts || typeof state.financeDismissedAlerts !== "object") state.financeDismissedAlerts = {};
     if (btn.dataset.key) state.financeDismissedAlerts[btn.dataset.key] = true;
+    persist();
+    setPageNotifCount("finance", financeBellCount());
+    renderFinancePage();
+    return;
+  }
+  if (action === "skip-label-group") {
+    if (!state.financeLabelSkips || typeof state.financeLabelSkips !== "object") state.financeLabelSkips = {};
+    if (btn.dataset.key) state.financeLabelSkips[btn.dataset.key] = true;
     persist();
     setPageNotifCount("finance", financeBellCount());
     renderFinancePage();
