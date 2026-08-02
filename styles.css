@@ -18735,6 +18735,8 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-del-btn { width: 26px; height: 26px; min-height: 26px; font-size: 1rem; line-height: 1; padding: 0; }
 
 .fin-add-btn { align-self: flex-start; font-size: 0.78rem; padding: 5px 12px; min-height: 30px; }
+/* Transaction-list "Show all N" / "Show fewer" — full-width action under the list. */
+.fin-txn-showall { align-self: stretch; width: 100%; margin-top: 8px; justify-content: center; }
 .fin-danger { color: #b3261e; }
 
 .fin-person { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding: 6px 0; }

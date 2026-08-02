@@ -6971,6 +6971,10 @@ async function linkFinanceBanks() {
 let financeNotifOpen = false;
 const financeTxnFilter = { q: "", kind: "", account: "", sort: "date" };
 let financeTxnFilterOpen = false;
+// The transaction list renders a light default slice (FIN_TXN_LIST_CAP); a
+// "Show all" toggle lifts it so months with more txns than the cap are fully
+// reachable for labeling. Reset on month change so each month starts collapsed.
+let financeTxnListExpanded = false;
 
 const FIN_MERCHANT_STOPWORDS = new Set(["pos", "debit", "credit", "card", "purchase", "ach", "web", "id", "des", "co", "the", "of", "and", "inc", "llc", "com"]);
 function financeMerchantTokens(desc) {
@@ -8476,7 +8480,9 @@ function renderFinancePage() {
   } else if (f.sort === "account") {
     shownTxns.sort((x, y) => (x.account || "").localeCompare(y.account || "") || (y.posted || "").localeCompare(x.posted || ""));
   }
-  const txns = shownTxns.slice(0, 60);
+  const FIN_TXN_LIST_CAP = 60; // keep the default render light; "Show all" lifts it
+  const txnsTruncated = !financeTxnListExpanded && shownTxns.length > FIN_TXN_LIST_CAP;
+  const txns = financeTxnListExpanded ? shownTxns : shownTxns.slice(0, FIN_TXN_LIST_CAP);
   const needsLabelGroups = financeUnlabeledByMerchant(allTxns); // one row per merchant, not one per repeat charge
   const unlabeledTxnCount = monthTxns.filter((t) => !t.label).length; // to-label count for the viewed month
   const recAlerts = financeRecurringAlerts();
@@ -8732,7 +8738,9 @@ function renderFinancePage() {
         ${filterActive || sortActive ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="txn-filter-clear">Clear</button>` : ""}
       </div>`}
       ${manualFormHtml}
-      ${txns.map((t) => txnRow(t) + (financeDetailTxnId === t.id ? txnDetailHtml(t) : "") + (financeSplitDraft?.txnId === t.id ? splitEditorHtml(t) : "")).join("") || `<div class="empty-state">${filterActive ? "Nothing matches the filters." : `No transactions for ${escapeHtml(new Date(monthKey + "-15T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }))}.`}</div>`}`}
+      ${txns.map((t) => txnRow(t) + (financeDetailTxnId === t.id ? txnDetailHtml(t) : "") + (financeSplitDraft?.txnId === t.id ? splitEditorHtml(t) : "")).join("") || `<div class="empty-state">${filterActive ? "Nothing matches the filters." : `No transactions for ${escapeHtml(new Date(monthKey + "-15T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }))}.`}</div>`}
+      ${txnsTruncated ? `<button class="secondary-btn fin-add-btn fin-txn-showall" type="button" data-fin-action="toggle-txn-expand">Show all ${shownTxns.length}</button>`
+        : (financeTxnListExpanded && shownTxns.length > FIN_TXN_LIST_CAP ? `<button class="secondary-btn fin-add-btn fin-txn-showall" type="button" data-fin-action="toggle-txn-expand">Show fewer</button>` : "")}`}
     </div>`;
 
   // Net-worth detail — only rendered when the user clicks the Net worth stat.
@@ -9005,6 +9013,7 @@ function onFinanceGridClick(e) {
   if (action === "refresh-live") { refreshFinanceLive(true); return; }
   if (action === "unlink-banks") { unlinkFinanceBanks(); return; }
   if (action === "toggle-notifs") { financeNotifOpen = !financeNotifOpen; renderFinancePage(); return; }
+  if (action === "toggle-txn-expand") { financeTxnListExpanded = !financeTxnListExpanded; renderFinancePage(); return; }
   if (action === "open-finance-settings") { openContextSettingsDialog("finance-accounts"); return; }
   if (action === "dismiss-alert") {
     if (!state.financeDismissedAlerts || typeof state.financeDismissedAlerts !== "object") state.financeDismissedAlerts = {};
@@ -16492,6 +16501,7 @@ function renderFinanceMonthMenu() {
 function jumpToFinanceMonth(key) {
   if (!key || !/^\d{4}-\d{2}$/.test(key)) return;
   financeViewMonth = key;
+  financeTxnListExpanded = false; // each month starts collapsed at the light default
   closeWeekJumpMenu();
   setWeekToolsMode("finance");
   renderFinancePage();
