@@ -5914,6 +5914,12 @@ function applyStoredState(storedState) {
   applyThemeMode();
   mirrorStateToLocalStorage();
   lastWrittenSections = null; // force full re-upload after any full state replacement
+  // state (incl. financeTxnLabels/rules/notes/sign-flips) was just wholesale
+  // replaced, so any cached labeled-transaction list is stale. Without this, a
+  // cloud pull that lands finance labels AFTER the labeled-txn cache was first
+  // built (from an empty-finance boot) would keep serving unlabeled txns until
+  // the next user action — the "my June labels don't show after reload" bug.
+  invalidateFinanceLabeled();
   render();
 }
 
