@@ -176,6 +176,14 @@ async function gBatchGet(token, paths) {
     `GET /gmail/v1/users/me${p}\r\n`
   ).join("") + `--${boundary}--`;
 
+  // Slower, correct path: fetch each sub-request on its own. This is the
+  // pre-batch behaviour, used as a safety net whenever the batch can't be
+  // trusted (transport error, or a 200 whose body we couldn't parse).
+  const fetchIndividually = () => Promise.all(paths.map(async (p) => {
+    try { const r = await gFetch(token, p); return r.ok ? await r.json() : null; }
+    catch { return null; }
+  }));
+
   let res = null;
   try {
     res = await fetch("https://gmail.googleapis.com/batch/gmail/v1", {
@@ -185,21 +193,14 @@ async function gBatchGet(token, paths) {
     });
   } catch { res = null; }
 
-  if (!res || !res.ok) {
-    // Batch transport failed — fetch each individually so the caller still gets
-    // data (slower, but correct). Note: this is the pre-batch behaviour.
-    return Promise.all(paths.map(async (p) => {
-      try { const r = await gFetch(token, p); return r.ok ? await r.json() : null; }
-      catch { return null; }
-    }));
-  }
+  if (!res || !res.ok) return fetchIndividually();
 
   const text = await res.text();
   const ctMatch = (res.headers.get("content-type") || "").match(/boundary=([^;]+)/);
   const respBoundary = ctMatch ? ctMatch[1].trim().replace(/^"|"$/g, "") : null;
-  const out = new Array(paths.length).fill(null);
-  if (!respBoundary) return out;
+  if (!respBoundary) return fetchIndividually();
 
+  const out = new Array(paths.length).fill(null);
   for (const part of text.split(`--${respBoundary}`)) {
     if (!part.trim() || part.trim() === "--") continue;
     // Gmail echoes each request's Content-ID back prefixed with "response-",
@@ -214,6 +215,12 @@ async function gBatchGet(token, paths) {
     if (start < 0 || end <= start) continue;
     try { out[idx] = JSON.parse(part.slice(start, end + 1)); } catch { /* leave null */ }
   }
+
+  // Fail safe: if we parsed NOTHING out of a non-empty batch, the response
+  // format wasn't what we expected — fall back rather than return an empty
+  // inbox. (A batch where every sub-request legitimately 404s is rare and would
+  // just re-fail individually, i.e. no worse.)
+  if (out.every((x) => x === null)) return fetchIndividually();
   return out;
 }
 
