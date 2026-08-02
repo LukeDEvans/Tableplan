@@ -149,6 +149,74 @@ function gFetch(token, path, method = "GET", body) {
   return fetch(`${GMAIL_BASE}${path}`, opts);
 }
 
+// Bundle many GET sub-requests into ONE HTTP call to Gmail's batch endpoint.
+// `paths` are the same GMAIL_BASE-relative paths gFetch takes (e.g.
+// "/threads/ID?format=metadata"). Returns an array aligned to `paths`: each
+// entry is the parsed JSON body, or null if that sub-request failed/couldn't be
+// matched. This turns a 50-row inbox page (50 round trips) into a single one.
+// Gmail caps a batch at 100 sub-requests, so we chunk; on any transport-level
+// failure we fall back to individual gFetch calls so a bad batch never blanks
+// the list.
+async function gBatchGet(token, paths) {
+  if (!paths.length) return [];
+  const CHUNK = 100;
+  if (paths.length > CHUNK) {
+    const out = [];
+    for (let i = 0; i < paths.length; i += CHUNK) {
+      out.push(...await gBatchGet(token, paths.slice(i, i + CHUNK)));
+    }
+    return out;
+  }
+
+  const boundary = "batch_" + Math.random().toString(36).slice(2);
+  const body = paths.map((p, i) =>
+    `--${boundary}\r\n` +
+    `Content-Type: application/http\r\n` +
+    `Content-ID: <item-${i}>\r\n\r\n` +
+    `GET /gmail/v1/users/me${p}\r\n`
+  ).join("") + `--${boundary}--`;
+
+  let res = null;
+  try {
+    res = await fetch("https://gmail.googleapis.com/batch/gmail/v1", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": `multipart/mixed; boundary=${boundary}` },
+      body
+    });
+  } catch { res = null; }
+
+  if (!res || !res.ok) {
+    // Batch transport failed — fetch each individually so the caller still gets
+    // data (slower, but correct). Note: this is the pre-batch behaviour.
+    return Promise.all(paths.map(async (p) => {
+      try { const r = await gFetch(token, p); return r.ok ? await r.json() : null; }
+      catch { return null; }
+    }));
+  }
+
+  const text = await res.text();
+  const ctMatch = (res.headers.get("content-type") || "").match(/boundary=([^;]+)/);
+  const respBoundary = ctMatch ? ctMatch[1].trim().replace(/^"|"$/g, "") : null;
+  const out = new Array(paths.length).fill(null);
+  if (!respBoundary) return out;
+
+  for (const part of text.split(`--${respBoundary}`)) {
+    if (!part.trim() || part.trim() === "--") continue;
+    // Gmail echoes each request's Content-ID back prefixed with "response-",
+    // which is how we realign responses to request order.
+    const idMatch = part.match(/Content-ID:\s*<?(?:response-)?item-(\d+)>?/i);
+    const idx = idMatch ? Number(idMatch[1]) : -1;
+    if (idx < 0 || idx >= out.length) continue;
+    // The sub-response is HTTP headers, a blank line, then the JSON body; no
+    // braces appear before the body, so first "{" … last "}" is the payload.
+    const start = part.indexOf("{");
+    const end = part.lastIndexOf("}");
+    if (start < 0 || end <= start) continue;
+    try { out[idx] = JSON.parse(part.slice(start, end + 1)); } catch { /* leave null */ }
+  }
+  return out;
+}
+
 function headersMap(headers = []) {
   return Object.fromEntries(headers.map((h) => [h.name.toLowerCase(), h.value]));
 }
@@ -762,6 +830,7 @@ module.exports = {
   getUserId,
   getValidAccessToken,
   gFetch,
+  gBatchGet,
   headersMap,
   extractBody,
   decodeB64,

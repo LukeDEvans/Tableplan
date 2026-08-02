@@ -1,7 +1,7 @@
 const { scanBookingFromEmailText } = require("../../booking-scan");
 const {
   loadUserGmailTokens, saveUserGmailTokens, deleteUserGmailTokens,
-  getUserId, getValidAccessToken, gFetch, headersMap, extractBody,
+  getUserId, getValidAccessToken, gFetch, gBatchGet, headersMap, extractBody,
   htmlToText, cleanSnippet, loadMailSuggestions, saveMailSuggestions, runInboxSweep,
   loadSnoozes, saveSnoozes, findOrCreateSnoozedLabel, modifyWholeThread
 } = require("./_gmail-shared");
@@ -117,53 +117,59 @@ exports.handler = async (event) => {
       return json(502, { error: e.error?.message || `Gmail list failed (${listRes.status}).` });
     }
     const listData = await listRes.json();
+    const threadList = listData.threads || [];
+
+    // The total count, the attachment indicator set, and the per-row thread
+    // metadata all depend only on the thread ids we now have (or on nothing at
+    // all), so fire them concurrently instead of in series.
 
     // Exact folder total: Gmail's resultSizeEstimate is unreliable, but
     // labels.get returns threadsTotal. Only meaningful for a single label with
     // no search query, and only worth fetching on the first page (it doesn't
     // change as you page).
-    let total = null;
-    if (!pageToken && !q && labelIds.length === 1) {
-      try {
-        const lr = await gFetch(gToken, `/labels/${encodeURIComponent(labelIds[0])}`);
-        if (lr.ok) { const ld = await lr.json(); if (typeof ld.threadsTotal === "number") total = ld.threadsTotal; }
-      } catch { /* best-effort; fall back to the page range */ }
-    }
+    const totalP = (!pageToken && !q && labelIds.length === 1)
+      ? gFetch(gToken, `/labels/${encodeURIComponent(labelIds[0])}`)
+          .then((lr) => (lr.ok ? lr.json() : null))
+          .then((ld) => (ld && typeof ld.threadsTotal === "number" ? ld.threadsTotal : null))
+          .catch(() => null)
+      : Promise.resolve(null);
 
     // One cheap ids-only query flags which messages carry attachments (metadata
     // format can't tell us); a thread counts as having one if any message does.
-    let attachmentIds = new Set();
-    try {
-      const ap = new URLSearchParams({ maxResults: "100", q: q ? `(${q}) has:attachment` : "has:attachment" });
-      labelIds.forEach((l) => ap.append("labelIds", l));
-      const ar = await gFetch(gToken, `/messages?${ap}`);
-      if (ar.ok) attachmentIds = new Set((((await ar.json()).messages) || []).map((m) => m.id));
-    } catch { /* indicator only — never block the list */ }
+    const ap = new URLSearchParams({ maxResults: "100", q: q ? `(${q}) has:attachment` : "has:attachment" });
+    labelIds.forEach((l) => ap.append("labelIds", l));
+    const attachmentP = gFetch(gToken, `/messages?${ap}`)
+      .then((ar) => (ar.ok ? ar.json() : null))
+      .then((ad) => new Set(((ad?.messages) || []).map((m) => m.id)))
+      .catch(() => new Set());
 
-    const messages = (await Promise.all(
-      (listData.threads || []).map(async (t) => {
-        const r = await gFetch(gToken, `/threads/${t.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`);
-        if (!r.ok) return null;
-        const d = await r.json();
-        const msgs = d.messages || [];
-        if (!msgs.length) return null;
-        const last = msgs[msgs.length - 1]; // most recent message drives the row
-        const hdrs = headersMap(last.payload?.headers);
-        return {
-          id: last.id,
-          threadId: t.id,
-          count: msgs.length,
-          snippet: cleanSnippet(t.snippet || last.snippet || ""),
-          unread: msgs.some((m) => (m.labelIds || []).includes("UNREAD")),
-          starred: msgs.some((m) => (m.labelIds || []).includes("STARRED")),
-          hasAttachment: msgs.some((m) => attachmentIds.has(m.id)),
-          from: hdrs.from || "",
-          subject: hdrs.subject || "(no subject)",
-          date: hdrs.date || "",
-          internalDate: last.internalDate
-        };
-      })
-    )).filter(Boolean);
+    // Per-row thread metadata, bundled into ONE batch request (one round trip
+    // for the whole page rather than one per row).
+    const detailsP = gBatchGet(gToken, threadList.map((t) =>
+      `/threads/${t.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`));
+
+    const [total, attachmentIds, details] = await Promise.all([totalP, attachmentP, detailsP]);
+
+    const messages = threadList.map((t, i) => {
+      const d = details[i];
+      const msgs = d?.messages || [];
+      if (!msgs.length) return null;
+      const last = msgs[msgs.length - 1]; // most recent message drives the row
+      const hdrs = headersMap(last.payload?.headers);
+      return {
+        id: last.id,
+        threadId: t.id,
+        count: msgs.length,
+        snippet: cleanSnippet(t.snippet || last.snippet || ""),
+        unread: msgs.some((m) => (m.labelIds || []).includes("UNREAD")),
+        starred: msgs.some((m) => (m.labelIds || []).includes("STARRED")),
+        hasAttachment: msgs.some((m) => attachmentIds.has(m.id)),
+        from: hdrs.from || "",
+        subject: hdrs.subject || "(no subject)",
+        date: hdrs.date || "",
+        internalDate: last.internalDate
+      };
+    }).filter(Boolean);
 
     return json(200, { messages, nextPageToken: listData.nextPageToken || null, resultSizeEstimate: listData.resultSizeEstimate ?? null, total });
   }

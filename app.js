@@ -9531,7 +9531,7 @@ let mailSwipeNavWired = false;
 let mailNextPageToken = null;
 // Gmail-style paging (replaces infinite scroll). mailPageTokens[i] is the
 // Gmail pageToken that loads page i (index 0 = undefined = first page).
-const MAIL_PAGE_SIZE = 50;
+const MAIL_PAGE_SIZE = 25;
 let mailPageTokens = [undefined];
 let mailPageIndex = 0;
 let mailTotalEstimate = null;
@@ -9716,6 +9716,9 @@ function positionMealPlanNotifPanel() {
 // mode — never marks anything read) so opening an email is instant.
 let mailListPreload = null; // { promise, at, labelId }
 const mailThreadCache = new Map(); // threadId → { thread, at }
+// Lightweight row data (subject/from) kept from the list so opening a thread can
+// paint its header INSTANTLY while the full body loads — see openMailThread.
+const mailRowSummary = new Map(); // threadId → { subject, from }
 // Message ids the user has opted to load remote images for this session.
 // Remote images are blocked by default (speed + tracking-pixel privacy).
 const mailShownImages = new Set();
@@ -10183,6 +10186,7 @@ function appendMailRows(messages) {
     row.className = `mail-row${m.unread ? " mail-row--unread" : ""}${m.starred ? " mail-row--starred" : ""}`;
     row.dataset.threadId = m.threadId;
     if (m.from) mailThreadSenders.set(m.threadId, mailSenderAddress(m.from));
+    mailRowSummary.set(m.threadId, { subject: m.subject, from: m.from });
     const wakeAt = snoozeView ? mailSnoozeMap[m.threadId] : null;
     const rightHtml = wakeAt
       ? `<span class="mail-row-date mail-row-wake" title="Snoozed until ${escapeHtml(new Date(wakeAt).toLocaleString())}">${escapeHtml(formatSnoozeWhen(new Date(wakeAt)))}</span>`
@@ -10902,8 +10906,13 @@ async function openMailThread(threadId) {
       callGmailApi({ action: "move", threadId, addLabelIds: [], removeLabelIds: ["UNREAD"] });
     }
   } else {
-    elements.mailThread.innerHTML = `<div class="mail-loading">Loading…</div>`;
+    // Optimistic paint: show the subject we already know from the list row (plus
+    // a working back button) the instant the row is tapped, so a cache-miss
+    // still feels immediate while the body loads.
+    renderMailThreadSkeleton(mailRowSummary.get(threadId));
     const data = await callGmailApi({ action: "get", threadId });
+    // A newer tap may have superseded this one while we awaited — don't clobber.
+    if (mailOpenThreadId !== threadId) return;
     if (!data?.thread) { elements.mailThread.innerHTML = `<div class="mail-empty">Failed to load thread.</div>`; return; }
     mailThreadCache.set(threadId, { thread: data.thread, at: Date.now() });
     renderMailThread(data.thread);
@@ -10911,6 +10920,30 @@ async function openMailThread(threadId) {
   elements.mailList.querySelectorAll(".mail-row").forEach((b) => {
     b.classList.toggle("mail-row--active", b.dataset.threadId === threadId);
     if (b.dataset.threadId === threadId) b.classList.remove("mail-row--unread");
+  });
+}
+
+// Instant placeholder shown between tapping a row and the full thread arriving.
+// Paints the real subject (known from the list row) and a working back button so
+// the open feels immediate; renderMailThread replaces it once the body loads.
+function renderMailThreadSkeleton(summary) {
+  const subject = summary?.subject || "";
+  elements.mailThread.innerHTML = `
+    <div class="mail-thread-toolbar">
+      <button class="icon-btn mail-action-btn" type="button" id="mailBackBtn" title="Back" aria-label="Back">
+        ${ldeIcon("back", { size: 22 })}
+      </button>
+    </div>
+    <div class="mail-thread-body">
+      <div class="mail-thread-subject-bar">
+        <h2 class="mail-thread-subject">${escapeHtml(subject)}</h2>
+      </div>
+      <div class="mail-loading">Loading…</div>
+    </div>`;
+  document.getElementById("mailBackBtn").addEventListener("click", () => {
+    elements.mailThread.hidden = true;
+    mailOpenThreadId = null;
+    elements.mailList.querySelectorAll(".mail-row--active").forEach((r) => r.classList.remove("mail-row--active"));
   });
 }
 
