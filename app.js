@@ -202,8 +202,8 @@ let activeSharedStorageProvider = null;
 let rowStorageReady = false;
 let lastCloudSnapshotAt = 0;
 const CLOUD_SNAPSHOT_INTERVAL_MS = 60 * 60 * 1000;
-const CLOUD_SNAPSHOT_KEEP = 25;        // dense recent snapshots
-const CLOUD_SNAPSHOT_HOURLY_MAX = 720; // 1 per hour going back up to 30 days
+const CLOUD_SNAPSHOT_KEEP = 30;        // dense recent snapshots
+const CLOUD_SNAPSHOT_HOURLY_MAX = 72;  // then 1 per hour back ~3 days (plenty for a personal app; snapshots are stripped + bounded)
 
 // Each section is stored as its own Supabase row: id = "{stateId}:{section}"
 const STATE_SECTIONS = {
@@ -5687,12 +5687,57 @@ async function handleCameOnline() {
   }
 }
 
+// A history snapshot exists to restore USER data (budgets, meal plans, recipes,
+// labels). It must NOT carry re-fetchable bulk — podcast show-notes and saved-
+// article full text — which ballooned each row to ~660 kB. Strip exactly what
+// the localStorage mirror strips (podcasts) plus article bodies; keep the
+// finance ledger and everything else intact (that's the whole point of a
+// backup). Unbounded, unstripped snapshots grew this table to 1.4 GB.
+function snapshotPayload(src) {
+  const out = { ...src };
+  if (Array.isArray(out.podcasts)) out.podcasts = stripEpisodeDescriptions(out.podcasts);
+  if (Array.isArray(out.savedArticles)) out.savedArticles = out.savedArticles.map((a) => ({ ...a, text: null }));
+  return out;
+}
+
+// Tiered retention prune shared by BOTH snapshot writers. Keep the N most recent
+// (dense), then 1 per hour back CLOUD_SNAPSHOT_HOURLY_MAX hours; delete the rest.
+// Deletes are CHUNKED — an id=in.(...) URL with thousands of UUIDs exceeds the
+// URL length limit and silently fails, which is exactly how the backlog became
+// unprunable and grew without bound.
+async function pruneCloudSnapshots() {
+  if (!userGroup?.id || !authSession?.access_token) return;
+  const listRes = await fetch(
+    `${supabaseBaseUrl()}/rest/v1/tableplan_state_history?group_id=eq.${encodeURIComponent(userGroup.id)}&select=id,created_at&order=created_at.desc`,
+    { headers: supabaseHeaders() }
+  );
+  if (!listRes.ok) return;
+  const rows = await listRes.json();
+  const seenHours = new Set();
+  const toDelete = [];
+  rows.slice(CLOUD_SNAPSHOT_KEEP).forEach((row) => {
+    const hour = new Date(row.created_at).toISOString().slice(0, 13);
+    if (!seenHours.has(hour) && seenHours.size < CLOUD_SNAPSHOT_HOURLY_MAX) {
+      seenHours.add(hour);
+    } else {
+      toDelete.push(row.id);
+    }
+  });
+  for (let i = 0; i < toDelete.length; i += 100) {
+    const chunk = toDelete.slice(i, i + 100);
+    await fetch(
+      `${supabaseBaseUrl()}/rest/v1/tableplan_state_history?id=in.(${chunk.join(",")})`,
+      { method: "DELETE", headers: supabaseHeaders() }
+    );
+  }
+}
+
 async function maybeWriteCloudSnapshot({ force = false } = {}) {
   if (!userGroup?.id || !authSession?.access_token) return;
   // Fast in-memory check — avoids a network round-trip when the guard is warm.
   if (!force && lastCloudSnapshotAt && Date.now() - lastCloudSnapshotAt < CLOUD_SNAPSHOT_INTERVAL_MS) return;
   // In-memory guard is cold (e.g. fresh page load) — verify against the server so rapid
-  // reloads don't burn through the 25-snapshot quota within minutes.
+  // reloads don't burn through the snapshot quota within minutes.
   if (!force) {
     try {
       const chk = await fetch(
@@ -5713,33 +5758,10 @@ async function maybeWriteCloudSnapshot({ force = false } = {}) {
   const insertRes = await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_state_history`, {
     method: "POST",
     headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
-    body: JSON.stringify({ group_id: userGroup.id, state })
+    body: JSON.stringify({ group_id: userGroup.id, state: snapshotPayload(state) })
   });
   if (!insertRes.ok) return;
-  const listRes = await fetch(
-    `${supabaseBaseUrl()}/rest/v1/tableplan_state_history?group_id=eq.${encodeURIComponent(userGroup.id)}&select=id,created_at&order=created_at.desc`,
-    { headers: supabaseHeaders() }
-  );
-  if (!listRes.ok) return;
-  const rows = await listRes.json();
-  // Tiered retention: keep the 25 most recent (dense), then 1 per hour going back up to 30 days.
-  // rows is sorted newest-first, so the first match in each hour bucket is the one to keep.
-  const seenHours = new Set();
-  const toDelete = [];
-  rows.slice(CLOUD_SNAPSHOT_KEEP).forEach((row) => {
-    const hour = new Date(row.created_at).toISOString().slice(0, 13);
-    if (!seenHours.has(hour) && seenHours.size < CLOUD_SNAPSHOT_HOURLY_MAX) {
-      seenHours.add(hour);
-    } else {
-      toDelete.push(row.id);
-    }
-  });
-  if (toDelete.length) {
-    await fetch(
-      `${supabaseBaseUrl()}/rest/v1/tableplan_state_history?id=in.(${toDelete.join(",")})`,
-      { method: "DELETE", headers: supabaseHeaders() }
-    );
-  }
+  await pruneCloudSnapshots();
 }
 
 let syncHideTimer = null;
@@ -5829,12 +5851,19 @@ async function snapshotBeforeSharedStateReplacement(sharedState, providerLabel) 
 
 async function snapshotCloudStateBeforeOverwrite(sharedState) {
   if (!userGroup?.id || !authSession?.access_token || !sharedState) return;
+  // Share the periodic snapshot's hourly cadence. This runs on EVERY load where
+  // the local copy is newer than the cloud, so without a rate limit a device
+  // that reloads a lot wrote one snapshot per load, unpruned — the bug that grew
+  // this table to 2,141 rows. The periodic writer already covers ongoing backup.
+  if (lastCloudSnapshotAt && Date.now() - lastCloudSnapshotAt < CLOUD_SNAPSHOT_INTERVAL_MS) return;
+  lastCloudSnapshotAt = Date.now();
   try {
-    await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_state_history`, {
+    const res = await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_state_history`, {
       method: "POST",
       headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
-      body: JSON.stringify({ group_id: userGroup.id, state: sharedState }),
+      body: JSON.stringify({ group_id: userGroup.id, state: snapshotPayload(sharedState) }),
     });
+    if (res.ok) await pruneCloudSnapshots();
   } catch (e) {
     console.warn("Could not snapshot cloud state before local overwrite:", e);
   }
