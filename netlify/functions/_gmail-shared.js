@@ -84,17 +84,31 @@ async function listGmailUsers(serviceKey) {
 async function findGmailUserByEmail(serviceKey, email) {
   if (!email) return null;
   const key = email.toLowerCase();
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.gmailidx_${encodeURIComponent(key)}&select=state`, {
-      headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" }
-    });
-    const rows = await res.json().catch(() => []);
-    const userId = rows[0]?.state?.userId;
-    if (userId) {
-      const tokens = await loadUserGmailTokens(serviceKey, userId);
-      if (tokens?.refreshToken && (tokens.email || "").toLowerCase() === key) return { userId, tokens };
-    }
-  } catch { /* fall through to scan */ }
+
+  // Fast path: one keyed read of the email index. CRITICAL: only a *confirmed
+  // miss* — the query succeeded and returned no usable row — may fall back to the
+  // full listGmailUsers() scan. A transient failure (HTTP error, network throw,
+  // token-load error) must NOT scan. The old code wrapped everything in a
+  // try/catch that fell through to the scan on ANY error, so when the DB was
+  // struggling EVERY Pub/Sub notification became a full-table scan — the engine
+  // of both the 2026-07-30 storm and the 2026-08 egress blowout. On a transient
+  // failure we now throw; the caller ACKs the notification and the next one (or
+  // the daily catch-up) recovers once the DB is healthy.
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.gmailidx_${encodeURIComponent(key)}&select=state`, {
+    headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" }
+  });
+  if (!res.ok) throw new Error(`gmail index lookup HTTP ${res.status} — not scanning`);
+  const rows = await res.json();
+  const indexedUserId = rows[0]?.state?.userId || null;
+  if (indexedUserId) {
+    const tokens = await loadUserGmailTokens(serviceKey, indexedUserId);
+    if (tokens?.refreshToken && (tokens.email || "").toLowerCase() === key) return { userId: indexedUserId, tokens };
+    // else: stale index (the user's tokens are gone or changed) — a genuine
+    // miss; fall through to one scan to re-resolve and backfill.
+  }
+
+  // Confirmed miss (or stale index) only: a single full scan to resolve, then
+  // backfill the index so the next notification is a direct read again.
   const users = await listGmailUsers(serviceKey);
   const match = users.find((u) => (u.tokens.email || "").toLowerCase() === key) || null;
   if (match) { try { await saveGmailEmailIndex(serviceKey, match.tokens.email, match.userId); } catch { /* best effort */ } }

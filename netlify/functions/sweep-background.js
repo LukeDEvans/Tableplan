@@ -30,7 +30,16 @@ exports.handler = async (event) => {
 
   let targets = [];
   if (body.email) {
-    const user = await findGmailUserByEmail(serviceKey, body.email);
+    let user = null;
+    try {
+      user = await findGmailUserByEmail(serviceKey, body.email);
+    } catch (e) {
+      // Transient lookup failure — do NOT sweep and do NOT 500 (a 500 here is a
+      // dead-end since the webhook already ACKed, but keep it clean). ACK and let
+      // the next notification retry once the DB is healthy.
+      console.error("[sweep-background] user lookup failed (skipping):", e.message);
+      return { statusCode: 200, body: "" };
+    }
     if (user) targets = [user];
     else console.error("[sweep-background] no connected user for", body.email);
   } else {
