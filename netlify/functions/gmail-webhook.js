@@ -13,7 +13,7 @@ const { findGmailUserByEmail } = require("./_gmail-shared");
 // Re-enabled 2026-07-30 once the sweep gained a concurrency lock + 30s debounce,
 // a direct email→userId lookup (no full scan per notification), and this webhook
 // stopped 500-ing on DB errors (which had triggered a Pub/Sub retry storm).
-const SWEEP_KILL_SWITCH = false;
+const SWEEP_KILL_SWITCH = true;
 
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return { statusCode: 405, body: "" };
