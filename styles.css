@@ -11016,15 +11016,14 @@ body.touch-drag-active * {
 }
 .plan-toggle-row .plan-allday-field { margin: 0; }
 
-/* Actions row: attachment + Save grouped at the bottom-LEFT; Delete pushed to
-   the far right, away from Save. */
-.plan-event-actions { justify-content: flex-start; }
+/* Actions row: Delete at the bottom-left; attachment + Save grouped at the
+   bottom-RIGHT. */
 .plan-event-actions-right {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-left: auto;
 }
-.plan-event-actions #deletePlanEventBtn { order: 2; margin-left: auto; }
 .plan-attach-btn { width: 34px; height: 34px; min-height: 34px; }
 .plan-attach-btn svg { width: 20px; height: 20px; }
 .plan-attach-btn.has-attachment { color: var(--accent, #1a73e8); }
