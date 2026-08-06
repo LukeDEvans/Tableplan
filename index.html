@@ -3110,76 +3110,60 @@
     <!-- Plan: event creation/edit dialog -->
     <dialog class="recipe-dialog plan-event-dialog" id="planEventDialog">
       <form class="recipe-form" id="planEventForm" method="dialog">
-        <div class="recipe-form-head">
-          <h2 id="planEventDialogTitle">New Event</h2>
-          <button class="icon-btn" type="button" id="closePlanEventBtn" aria-label="Close">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-          </button>
-        </div>
+        <button class="icon-btn plan-event-close" type="button" id="closePlanEventBtn" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
         <div class="recipe-form-body">
           <label class="form-field">
-            <span>Title</span>
-            <input type="text" id="planEventTitle" placeholder="Event title" autocomplete="off" />
+            <input type="text" id="planEventTitle" class="plan-title-input" placeholder="Title" autocomplete="off" />
           </label>
           <div class="plan-when-row">
             <label class="form-field plan-when-date">
-              <span>Date</span>
-              <input type="date" id="planEventDate" />
+              <input type="date" id="planEventDate" aria-label="Date" />
             </label>
             <div class="plan-time-fields" id="planTimeFields">
               <label class="form-field">
-                <span>Start</span>
-                <input type="time" id="planEventStart" value="09:00" />
+                <input type="time" id="planEventStart" value="09:00" aria-label="Start time" />
               </label>
               <label class="form-field">
-                <span>End</span>
-                <input type="time" id="planEventEnd" value="10:00" />
+                <input type="time" id="planEventEnd" value="10:00" aria-label="End time" />
               </label>
             </div>
           </div>
-          <label class="form-field plan-allday-field">
-            <input type="checkbox" id="planEventAllDay" />
-            <span>All day</span>
-          </label>
-          <div class="form-field plan-repeat-field">
-            <span>Repeat</span>
-            <select id="planEventRepeat">
-              <option value="">Does not repeat</option>
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-              <option value="yearly">Yearly</option>
-            </select>
-            <div class="plan-repeat-detail" id="planRepeatDetail" hidden>
-              <label class="plan-repeat-inline">Every
-                <input type="number" id="planEventRepeatInterval" min="1" max="365" value="1" />
-                <span id="planRepeatUnit">days</span>
-              </label>
-              <div class="plan-repeat-weekdays" id="planRepeatWeekdays" hidden>
-                <label class="plan-weekday" title="Sunday"><input type="checkbox" name="plan-weekday" value="0" aria-label="Sunday" /><span aria-hidden="true">S</span></label>
-                <label class="plan-weekday" title="Monday"><input type="checkbox" name="plan-weekday" value="1" aria-label="Monday" /><span aria-hidden="true">M</span></label>
-                <label class="plan-weekday" title="Tuesday"><input type="checkbox" name="plan-weekday" value="2" aria-label="Tuesday" /><span aria-hidden="true">T</span></label>
-                <label class="plan-weekday" title="Wednesday"><input type="checkbox" name="plan-weekday" value="3" aria-label="Wednesday" /><span aria-hidden="true">W</span></label>
-                <label class="plan-weekday" title="Thursday"><input type="checkbox" name="plan-weekday" value="4" aria-label="Thursday" /><span aria-hidden="true">T</span></label>
-                <label class="plan-weekday" title="Friday"><input type="checkbox" name="plan-weekday" value="5" aria-label="Friday" /><span aria-hidden="true">F</span></label>
-                <label class="plan-weekday" title="Saturday"><input type="checkbox" name="plan-weekday" value="6" aria-label="Saturday" /><span aria-hidden="true">S</span></label>
-              </div>
-              <label class="plan-repeat-inline">Until
-                <input type="date" id="planEventRepeatUntil" />
-              </label>
+          <div class="plan-toggle-row">
+            <label class="plan-allday-field">
+              <input type="checkbox" id="planEventAllDay" />
+              <span>All day</span>
+            </label>
+            <label class="plan-allday-field plan-repeat-toggle">
+              <input type="checkbox" id="planEventRepeatToggle" />
+              <span>Repeat</span>
+            </label>
+          </div>
+          <!-- Hidden legacy recurrence fields: savePlanEvent still reads these,
+               but the UI is now just the weekday checkboxes below (weekly-only). -->
+          <input type="hidden" id="planEventRepeat" value="" />
+          <input type="hidden" id="planEventRepeatInterval" value="1" />
+          <input type="hidden" id="planEventRepeatUntil" value="" />
+          <div class="plan-repeat-detail" id="planRepeatDetail" hidden>
+            <div class="plan-repeat-weekdays" id="planRepeatWeekdays">
+              <label class="plan-weekday" title="Friday"><input type="checkbox" name="plan-weekday" value="5" aria-label="Friday" /><span aria-hidden="true">F</span></label>
+              <label class="plan-weekday" title="Saturday"><input type="checkbox" name="plan-weekday" value="6" aria-label="Saturday" /><span aria-hidden="true">S</span></label>
+              <label class="plan-weekday" title="Sunday"><input type="checkbox" name="plan-weekday" value="0" aria-label="Sunday" /><span aria-hidden="true">S</span></label>
+              <label class="plan-weekday" title="Monday"><input type="checkbox" name="plan-weekday" value="1" aria-label="Monday" /><span aria-hidden="true">M</span></label>
+              <label class="plan-weekday" title="Tuesday"><input type="checkbox" name="plan-weekday" value="2" aria-label="Tuesday" /><span aria-hidden="true">T</span></label>
+              <label class="plan-weekday" title="Wednesday"><input type="checkbox" name="plan-weekday" value="3" aria-label="Wednesday" /><span aria-hidden="true">W</span></label>
+              <label class="plan-weekday" title="Thursday"><input type="checkbox" name="plan-weekday" value="4" aria-label="Thursday" /><span aria-hidden="true">T</span></label>
             </div>
           </div>
           <div class="form-field plan-location-field">
-            <span>Location</span>
-            <input type="text" id="planEventLocation" placeholder="Add location" autocomplete="off" role="combobox" aria-expanded="false" />
+            <input type="text" id="planEventLocation" placeholder="Location" autocomplete="off" role="combobox" aria-expanded="false" />
             <div class="plan-location-suggestions" id="planEventLocationSuggestions" hidden></div>
           </div>
           <label class="form-field">
-            <span>Notes</span>
-            <textarea id="planEventNotes" rows="1" placeholder="Optional notes"></textarea>
+            <textarea id="planEventNotes" rows="1" placeholder="Notes"></textarea>
           </label>
           <div class="form-field plan-todo-field">
-            <span>To-Do</span>
             <label class="plan-todo-toggle">
               <input type="checkbox" id="planEventAddTodo" />
               <span>Add this event to the To-Do list</span>
@@ -3188,7 +3172,6 @@
             <button class="secondary-btn plan-add-chore-btn" type="button" id="planAddChoreBtn">+ Add chore</button>
           </div>
           <div class="form-field plan-mealplan-field">
-            <span>Meal plan</span>
             <label class="plan-todo-toggle">
               <input type="checkbox" id="planEventAddMealPlan" />
               <span>Show on the meal plan, by time of day</span>
@@ -3198,20 +3181,18 @@
             <span>Calendar</span>
             <div class="plan-evt-cal-chips" id="planEventCalPicker"></div>
           </div>
-          <div class="form-field">
-            <span>Attachment</span>
-            <div class="plan-attachment-row">
-              <button class="secondary-btn" type="button" id="planEventAttachBtn">Attach file</button>
-              <input class="visually-hidden" type="file" id="planEventAttachInput" />
-              <span class="plan-attachment-name" id="planEventAttachName" hidden></span>
-              <button class="icon-btn plan-attachment-remove" type="button" id="planEventAttachRemoveBtn" title="Remove attachment" aria-label="Remove attachment" hidden>×</button>
-            </div>
-          </div>
         </div>
-        <div class="recipe-form-actions">
+        <div class="recipe-form-actions plan-event-actions">
           <button class="secondary-btn" type="button" id="deletePlanEventBtn" hidden>Delete</button>
-          <span></span>
-          <button class="primary-btn" type="button" id="savePlanEventBtn">Save</button>
+          <div class="plan-event-actions-right">
+            <span class="plan-attachment-name" id="planEventAttachName" hidden></span>
+            <button class="icon-btn plan-attachment-remove" type="button" id="planEventAttachRemoveBtn" title="Remove attachment" aria-label="Remove attachment" hidden>×</button>
+            <input class="visually-hidden" type="file" id="planEventAttachInput" />
+            <button class="icon-btn plan-attach-btn" type="button" id="planEventAttachBtn" title="Attach file" aria-label="Attach file">
+              <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+            </button>
+            <button class="primary-btn" type="button" id="savePlanEventBtn">Save</button>
+          </div>
         </div>
       </form>
     </dialog>

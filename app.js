@@ -1591,6 +1591,12 @@ function bindEvents() {
   document.getElementById("travelEmptyTripBtn")?.addEventListener("click", showTravelNewTripDialog);
   // Mail label tabs are rendered dynamically via renderMailLabelTabs()
   elements.closePlanEventBtn.addEventListener("click", () => elements.planEventDialog.close());
+  // Tapping anywhere on the date/time fields opens the native picker (not just the
+  // tiny built-in icon), so Date/Start/End behave like buttons.
+  ["planEventDate", "planEventStart", "planEventEnd"].forEach((id) => {
+    const el = document.getElementById(id);
+    el?.addEventListener("click", () => { try { el.showPicker?.(); } catch { /* not supported */ } });
+  });
   elements.planEventAllDay.addEventListener("change", () => {
     elements.planTimeFields.hidden = elements.planEventAllDay.checked;
   });
@@ -33201,15 +33207,15 @@ function planFormatTime(time) {
   return m === 0 ? `${h12} ${ampm}` : `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
 }
 
+// Repeat is now a single on/off toggle that means "weekly on the checked days".
+// The hidden #planEventRepeat carries "weekly"/"" so savePlanEvent is unchanged.
 function syncPlanRepeatUi() {
-  const sel = document.getElementById("planEventRepeat");
+  const toggle = document.getElementById("planEventRepeatToggle");
+  const hidden = document.getElementById("planEventRepeat");
   const detail = document.getElementById("planRepeatDetail");
-  const unit = document.getElementById("planRepeatUnit");
-  if (!sel || !detail) return;
-  detail.hidden = !sel.value;
-  if (unit) unit.textContent = ({ daily: "days", weekly: "weeks", monthly: "months", yearly: "years" })[sel.value] || "days";
-  const weekdays = document.getElementById("planRepeatWeekdays");
-  if (weekdays) weekdays.hidden = sel.value !== "weekly";
+  const on = Boolean(toggle?.checked);
+  if (hidden) hidden.value = on ? "weekly" : "";
+  if (detail) detail.hidden = !on;
 }
 
 function openPlanEventDialog(date, eventId) {
@@ -33237,7 +33243,6 @@ function openPlanEventDialog(date, eventId) {
       : "";
     planEventAttachment = existing.attachment || null;
     elements.deletePlanEventBtn.hidden = false;
-    document.querySelector("#planEventDialogTitle").textContent = "Edit Event";
   } else {
     elements.planEventTitle.value = "";
     elements.planEventDate.value = date || dateKeyFromDate(new Date());
@@ -33251,12 +33256,14 @@ function openPlanEventDialog(date, eventId) {
     elements.planEventLocation.value = "";
     planEventAttachment = null;
     elements.deletePlanEventBtn.hidden = true;
-    document.querySelector("#planEventDialogTitle").textContent = "New Event";
   }
   // Recurrence controls (edit a recurring event = edit the whole series).
   const rec = existing?.recurrence || null;
-  const repeatSel = document.getElementById("planEventRepeat");
-  if (repeatSel) { repeatSel.value = rec?.freq || ""; repeatSel.onchange = syncPlanRepeatUi; }
+  const repeatToggle = document.getElementById("planEventRepeatToggle");
+  const repeatHidden = document.getElementById("planEventRepeat");
+  const repeatOn = Boolean(rec?.freq);
+  if (repeatToggle) { repeatToggle.checked = repeatOn; repeatToggle.onchange = syncPlanRepeatUi; }
+  if (repeatHidden) repeatHidden.value = repeatOn ? "weekly" : "";
   const intInput = document.getElementById("planEventRepeatInterval");
   if (intInput) intInput.value = rec?.interval || 1;
   const untilInput = document.getElementById("planEventRepeatUntil");
@@ -33336,12 +33343,14 @@ function renderPlanEventAttachment() {
     nameEl.hidden = false;
     nameEl.innerHTML = `<a href="${escapeHtml(planEventAttachment.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(planEventAttachment.name || "Attachment")}</a>`;
     removeBtn.hidden = false;
-    elements.planEventAttachBtn.textContent = "Replace file";
+    elements.planEventAttachBtn.title = "Replace file";
+    elements.planEventAttachBtn.classList.add("has-attachment");
   } else {
     nameEl.hidden = true;
     nameEl.innerHTML = "";
     removeBtn.hidden = true;
-    elements.planEventAttachBtn.textContent = "Attach file";
+    elements.planEventAttachBtn.title = "Attach file";
+    elements.planEventAttachBtn.classList.remove("has-attachment");
   }
 }
 
@@ -33350,7 +33359,7 @@ async function uploadPlanEventAttachment(file) {
   if (file.size > 4 * 1024 * 1024) { alert("Attachments are limited to 4MB."); return; }
   const btn = elements.planEventAttachBtn;
   btn.disabled = true;
-  btn.textContent = "Uploading…";
+  btn.classList.add("is-uploading"); // icon button — show state via class, not text
   try {
     const data = await new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -33365,6 +33374,7 @@ async function uploadPlanEventAttachment(file) {
     alert("Could not attach the file: " + e.message);
   } finally {
     btn.disabled = false;
+    btn.classList.remove("is-uploading");
     renderPlanEventAttachment();
   }
 }

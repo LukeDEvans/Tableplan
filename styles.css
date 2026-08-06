@@ -10989,6 +10989,44 @@ body.touch-drag-active * {
 .plan-repeat-detail { display: flex; flex-wrap: wrap; gap: 10px 16px; margin-top: 8px; }
 .plan-repeat-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; font-weight: 600; }
 .plan-repeat-inline input[type="number"] { width: 62px; }
+
+/* ── New-event dialog redesign ─────────────────────────────────────────────── */
+/* Close button floats in the top-right corner (no header row / title). */
+.plan-event-dialog .recipe-form { position: relative; }
+.plan-event-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  z-index: 2;
+}
+.plan-event-close svg { width: 18px; height: 18px; }
+.plan-event-dialog .recipe-form-body { padding-top: 8px; }
+/* Long titles clear the corner close button. */
+.plan-title-input { padding-right: 34px; }
+
+/* All day (left) + Repeat (right) share one row. */
+.plan-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.plan-toggle-row .plan-allday-field { margin: 0; }
+
+/* Actions row: Delete far left; attachment + Save grouped bottom-right. */
+.plan-event-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.plan-attach-btn { width: 34px; height: 34px; min-height: 34px; }
+.plan-attach-btn svg { width: 20px; height: 20px; }
+.plan-attach-btn.has-attachment { color: var(--accent, #1a73e8); }
+.plan-attach-btn.is-uploading { opacity: 0.5; pointer-events: none; }
 .plan-repeat-inline input[type="date"] { width: auto; }
 .plan-event-recur { opacity: 0.7; font-size: 0.82em; }
 
