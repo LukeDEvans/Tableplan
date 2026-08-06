@@ -11027,6 +11027,32 @@ body.touch-drag-active * {
 .plan-attach-btn svg { width: 20px; height: 20px; }
 .plan-attach-btn.has-attachment { color: var(--accent, #1a73e8); }
 .plan-attach-btn.is-uploading { opacity: 0.5; pointer-events: none; }
+
+/* Borderless fields that read as part of the background (Google Calendar style):
+   no box at rest, just a focus underline. */
+.plan-event-dialog #planEventTitle,
+.plan-event-dialog #planEventDate,
+.plan-event-dialog #planEventStart,
+.plan-event-dialog #planEventEnd,
+.plan-event-dialog #planEventLocation,
+.plan-event-dialog #planEventNotes {
+  border: none;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 4px 0;
+}
+.plan-event-dialog #planEventTitle { padding-right: 34px; font-size: 1.05rem; font-weight: 600; }
+.plan-event-dialog #planEventTitle:focus,
+.plan-event-dialog #planEventDate:focus,
+.plan-event-dialog #planEventStart:focus,
+.plan-event-dialog #planEventEnd:focus,
+.plan-event-dialog #planEventLocation:focus,
+.plan-event-dialog #planEventNotes:focus {
+  outline: none;
+  border-bottom-color: color-mix(in srgb, var(--ink) 22%, transparent);
+}
 .plan-repeat-inline input[type="date"] { width: auto; }
 .plan-event-recur { opacity: 0.7; font-size: 0.82em; }
 
