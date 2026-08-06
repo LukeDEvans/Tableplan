@@ -10510,6 +10510,38 @@ body.touch-drag-active * {
   background: var(--window-bg, #fff);
 }
 
+/* Calendar page: collapsible left sidebar (calendars manager) + calendar body.
+   Mirrors the Mail/Media sidebars — collapse on wide screens, overlay on narrow. */
+.plan-layout { display: flex; flex: 1; min-height: 0; min-width: 0; }
+.plan-layout .plan-calendar { flex: 1; min-width: 0; height: auto; }
+.plan-sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-right: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  padding: 12px;
+  transition: width 0.18s ease;
+}
+.plan-sidebar.is-collapsed { width: 0; padding: 0; overflow: hidden; border-right: 0; }
+.plan-sidebar-head { font-size: 0.9rem; font-weight: 700; margin-bottom: 10px; }
+.plan-sidebar-toggle { flex-shrink: 0; border: none; background: transparent; box-shadow: none; }
+.plan-sidebar-toggle svg { stroke: currentColor; stroke-width: 2; fill: none; width: 20px; height: 20px; }
+
+@media (max-width: 860px) {
+  .plan-layout { position: relative; }
+  .plan-sidebar {
+    position: absolute; top: 0; left: 0; height: 100%;
+    width: 0; padding: 0; overflow: hidden; border-right: 0; z-index: 20;
+    background: var(--window-bg);
+  }
+  .plan-sidebar.is-expanded {
+    width: 260px; padding: 12px; overflow-y: auto;
+    border-right: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+    box-shadow: 2px 0 12px rgba(0,0,0,0.15);
+  }
+}
+
 /* View tab bar + calendar actions (Today / +) share one row inside the window */
 .plan-cal-toolbar {
   display: flex;

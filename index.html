@@ -650,7 +650,13 @@
           </div>
         </section>
         <section class="planner-column do-column" id="planMainPage" aria-label="Plan" hidden>
-          <div class="plan-calendar" id="planCalendar"></div>
+          <div class="plan-layout">
+            <aside class="plan-sidebar is-collapsed" id="planSidebar">
+              <div class="plan-sidebar-head">Calendars</div>
+              <div id="planCalList"></div>
+            </aside>
+            <div class="plan-calendar" id="planCalendar"></div>
+          </div>
         </section>
         <section class="planner-column do-column mail-page" id="mailMainPage" aria-label="Mail" hidden>
           <div class="mail-page-inner">
@@ -3201,20 +3207,6 @@
     </dialog>
 
     <!-- Plan: calendar management dialog -->
-    <dialog class="recipe-dialog plan-cal-dialog" id="planCalDialog">
-      <form class="recipe-form" method="dialog">
-        <div class="recipe-form-head">
-          <h2>Calendars</h2>
-          <button class="icon-btn" type="button" id="closePlanCalBtn" aria-label="Close">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-          </button>
-        </div>
-        <div class="recipe-form-body">
-          <div id="planCalList"></div>
-        </div>
-      </form>
-    </dialog>
-
     <dialog class="recipe-dialog plan-cal-dialog" id="planAddCalDialog">
       <form class="recipe-form" method="dialog">
         <div class="recipe-form-head">

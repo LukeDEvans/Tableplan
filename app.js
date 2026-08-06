@@ -839,13 +839,11 @@ const elements = {
   closePlanEventBtn: document.querySelector("#closePlanEventBtn"),
   savePlanEventBtn: document.querySelector("#savePlanEventBtn"),
   deletePlanEventBtn: document.querySelector("#deletePlanEventBtn"),
-  planCalDialog: document.querySelector("#planCalDialog"),
   planAddCalDialog: document.querySelector("#planAddCalDialog"),
   planCalList: document.querySelector("#planCalList"),
   planNewCalName: document.querySelector("#planNewCalName"),
   planNewCalUrl: document.querySelector("#planNewCalUrl"),
   planNewCalColorPicker: document.querySelector("#planNewCalColorPicker"),
-  closePlanCalBtn: document.querySelector("#closePlanCalBtn"),
   closePlanAddCalBtn: document.querySelector("#closePlanAddCalBtn"),
   addPlanCalBtn: document.querySelector("#addPlanCalBtn"),
   mailMainPage: document.querySelector("#mailMainPage"),
@@ -1626,7 +1624,6 @@ function bindEvents() {
   });
   // planTodayBtn / planAddEventBtn are wired inside renderPlanPage now (they moved
   // into the calendar window), so no static wiring here.
-  elements.closePlanCalBtn.addEventListener("click", () => elements.planCalDialog.close());
   elements.closePlanAddCalBtn.addEventListener("click", () => elements.planAddCalDialog.close());
   elements.addPlanCalBtn.addEventListener("click", addPlanCalendar);
   elements.closeSailLogBtn.addEventListener("click", () => elements.sailLogDialog.close());
@@ -9509,6 +9506,7 @@ function showPlanApp(event) {
   setPageTitle("Calendar");
   setPageHash("schedule");
   fetchAllPlanCalendars();
+  renderPlanCalList(); // populate the left sidebar's calendar manager
   renderPlanPage();
   closePageTitleMenu();
   closeAppMenu();
@@ -32847,6 +32845,9 @@ function renderPlanPage() {
   const swipeAttr = `data-plan-swipe`;
   elements.planCalendar.innerHTML = `
     <div class="plan-cal-toolbar">
+      <button class="icon-btn plan-sidebar-toggle" type="button" id="planSidebarToggle" title="Calendars" aria-label="Toggle calendars">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
       <div class="plan-view-tabs" role="tablist">
         ${["month","week","day","agenda"].map((v) =>
           `<button class="plan-view-tab${planViewMode === v ? " is-active" : ""}" type="button"
@@ -32878,6 +32879,7 @@ function renderPlanPage() {
   });
   // Today / add-event now live inside the calendar window (rendered here), so
   // they're re-wired on every render like the view tabs above.
+  elements.planCalendar.querySelector("#planSidebarToggle")?.addEventListener("click", togglePlanSidebar);
   elements.planCalendar.querySelector("#planTodayBtn")?.addEventListener("click", () => {
     planViewDate = new Date();
     setWeekToolsMode("plan");
@@ -33647,9 +33649,27 @@ function deletePlanEvent() {
   else if (activeAppArea === "eat") renderPlanner();
 }
 
+// The calendars manager now lives in the Calendar page's left sidebar (no more
+// modal). "Manage calendars" just opens the Calendar page and expands it.
 function openPlanCalDialog() {
+  showPlanApp();
   renderPlanCalList();
-  elements.planCalDialog.showModal();
+  openPlanSidebar();
+}
+
+function togglePlanSidebar() {
+  const sidebar = document.getElementById("planSidebar");
+  if (!sidebar) return;
+  // Mirror the Mail/Media sidebars: overlay on narrow screens, collapse on wide.
+  if (window.innerWidth <= 860) sidebar.classList.toggle("is-expanded");
+  else sidebar.classList.toggle("is-collapsed");
+}
+
+function openPlanSidebar() {
+  const sidebar = document.getElementById("planSidebar");
+  if (!sidebar) return;
+  if (window.innerWidth <= 860) sidebar.classList.add("is-expanded");
+  else sidebar.classList.remove("is-collapsed");
 }
 
 function openAddPlanCalDialog() {
