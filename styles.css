@@ -10994,7 +10994,12 @@ body.touch-drag-active * {
 
 /* ── New-event dialog redesign ─────────────────────────────────────────────── */
 /* Close button floats in the top-right corner (no header row / title). */
-.plan-event-dialog .recipe-form { position: relative; }
+/* Match the calendar window: white fill + 2px navy border (theme-aware). */
+.plan-event-dialog .recipe-form {
+  position: relative;
+  background: var(--window-bg);
+  border: 2px solid var(--window-border);
+}
 /* Title and the close X share the very top row. */
 .plan-event-titlebar {
   display: flex;
