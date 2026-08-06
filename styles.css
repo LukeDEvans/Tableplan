@@ -10993,19 +10993,25 @@ body.touch-drag-active * {
 /* ── New-event dialog redesign ─────────────────────────────────────────────── */
 /* Close button floats in the top-right corner (no header row / title). */
 .plan-event-dialog .recipe-form { position: relative; }
+/* Title and the close X share the very top row. */
+.plan-event-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.plan-event-titlebar .plan-title-input { flex: 1; min-width: 0; }
+/* Bare X — no circle/box, just the glyph. */
 .plan-event-close {
-  position: absolute;
-  top: 8px;
-  right: 8px;
+  flex-shrink: 0;
   width: 28px;
   height: 28px;
   min-height: 28px;
-  z-index: 2;
+  border: none;
+  background: transparent;
+  box-shadow: none;
 }
 .plan-event-close svg { width: 18px; height: 18px; }
-.plan-event-dialog .recipe-form-body { padding-top: 8px; }
-/* Long titles clear the corner close button. */
-.plan-title-input { padding-right: 34px; }
+.plan-event-close:hover { background: transparent; color: var(--accent, #1a73e8); }
 
 /* All day (left) + Repeat (right) share one row. */
 .plan-toggle-row {
@@ -11053,7 +11059,7 @@ body.touch-drag-active * {
   border-radius: 0;
   padding: 4px 0;
 }
-.plan-event-dialog #planEventTitle { padding-right: 34px; font-size: 1.05rem; font-weight: 600; }
+.plan-event-dialog #planEventTitle { font-size: 1.05rem; font-weight: 600; }
 .plan-event-dialog #planEventTitle:focus,
 .plan-event-dialog #planEventDate:focus,
 .plan-event-dialog #planEventStart:focus,

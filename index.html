@@ -3110,13 +3110,13 @@
     <!-- Plan: event creation/edit dialog -->
     <dialog class="recipe-dialog plan-event-dialog" id="planEventDialog">
       <form class="recipe-form" id="planEventForm" method="dialog">
-        <button class="icon-btn plan-event-close" type="button" id="closePlanEventBtn" aria-label="Close">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-        </button>
         <div class="recipe-form-body">
-          <label class="form-field">
+          <div class="plan-event-titlebar">
             <input type="text" id="planEventTitle" class="plan-title-input" placeholder="Title" autocomplete="off" />
-          </label>
+            <button class="icon-btn plan-event-close" type="button" id="closePlanEventBtn" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
           <div class="plan-when-row">
             <label class="form-field plan-when-date">
               <input type="date" id="planEventDate" aria-label="Date" />
