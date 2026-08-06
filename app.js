@@ -33253,9 +33253,9 @@ function openPlanEventDialog(date, eventId) {
   } else {
     elements.planEventTitle.value = "";
     elements.planEventDate.value = date || dateKeyFromDate(new Date());
-    // Timed events are the default; "All day" is the opt-in
-    elements.planEventAllDay.checked = false;
-    elements.planTimeFields.hidden = false;
+    // All-day is the default; unchecking it expands the start/end time fields.
+    elements.planEventAllDay.checked = true;
+    elements.planTimeFields.hidden = true;
     elements.planEventStart.value = "09:00";
     elements.planEventEnd.value = "10:00";
     elements.planEventNotes.value = "";
