@@ -32846,12 +32846,13 @@ function renderPlanPage() {
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
       </button>
       <div class="plan-view-tabs" role="tablist">
-        ${["month","week","day","agenda"].map((v) =>
-          `<button class="plan-view-tab${planViewMode === v ? " is-active" : ""}" type="button"
-                   data-plan-view="${v}" role="tab" aria-selected="${planViewMode === v}">
-             ${v.charAt(0).toUpperCase() + v.slice(1)}
-           </button>`
-        ).join("")}
+        ${["month","week","day","agenda"].map((v) => {
+          const full = v.charAt(0).toUpperCase() + v.slice(1);
+          return `<button class="plan-view-tab${planViewMode === v ? " is-active" : ""}" type="button"
+                   data-plan-view="${v}" role="tab" aria-selected="${planViewMode === v}" aria-label="${full}">
+             <span class="vt-full">${full}</span><span class="vt-short" aria-hidden="true">${full.charAt(0)}</span>
+           </button>`;
+        }).join("")}
       </div>
       <div class="plan-view-actions">
         <button class="plan-view-tab" id="planTodayBtn" type="button">Today</button>

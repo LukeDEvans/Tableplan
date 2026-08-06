@@ -10566,6 +10566,23 @@ body.touch-drag-active * {
   flex-shrink: 0;
 }
 
+/* Responsive view-tab labels: full words normally; when tight, Month/Week/Day
+   collapse to their initial while "Agenda" stays spelled out longer (a lone "A"
+   is ambiguous), collapsing to "A" only on the very narrowest screens. */
+.plan-view-tab .vt-short { display: none; }
+@media (max-width: 560px) {
+  .plan-view-tab[data-plan-view="month"] .vt-full,
+  .plan-view-tab[data-plan-view="week"] .vt-full,
+  .plan-view-tab[data-plan-view="day"] .vt-full { display: none; }
+  .plan-view-tab[data-plan-view="month"] .vt-short,
+  .plan-view-tab[data-plan-view="week"] .vt-short,
+  .plan-view-tab[data-plan-view="day"] .vt-short { display: inline; }
+}
+@media (max-width: 420px) {
+  .plan-view-tab[data-plan-view="agenda"] .vt-full { display: none; }
+  .plan-view-tab[data-plan-view="agenda"] .vt-short { display: inline; }
+}
+
 .plan-view-tab {
   padding: 6px 14px;
   border-radius: 99px;
