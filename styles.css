@@ -10925,7 +10925,7 @@ body.touch-drag-active * {
 .plan-when-row {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 5px;
 }
 .plan-when-row .plan-when-date { min-width: 0; }
 .plan-when-row .plan-time-fields {
