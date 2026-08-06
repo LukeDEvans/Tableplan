@@ -11016,13 +11016,15 @@ body.touch-drag-active * {
 }
 .plan-toggle-row .plan-allday-field { margin: 0; }
 
-/* Actions row: Delete far left; attachment + Save grouped bottom-right. */
+/* Actions row: attachment + Save grouped at the bottom-LEFT; Delete pushed to
+   the far right, away from Save. */
+.plan-event-actions { justify-content: flex-start; }
 .plan-event-actions-right {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
 }
+.plan-event-actions #deletePlanEventBtn { order: 2; margin-left: auto; }
 .plan-attach-btn { width: 34px; height: 34px; min-height: 34px; }
 .plan-attach-btn svg { width: 20px; height: 20px; }
 .plan-attach-btn.has-attachment { color: var(--accent, #1a73e8); }
@@ -11139,7 +11141,7 @@ body.touch-drag-active * {
   background: color-mix(in srgb, var(--tomato, #e05252) 70%, transparent);
   color: #fff;
 }
-.plan-add-chore-btn { align-self: flex-start; padding: 6px 12px; font-size: 0.84rem; }
+.plan-add-chore-btn { align-self: flex-start; padding: 0 12px; min-height: 19px; height: 19px; font-size: 0.78rem; line-height: 1; }
 
 .plan-color-picker, .plan-cal-colors {
   display: flex;

@@ -1618,6 +1618,12 @@ function bindEvents() {
   elements.savePlanEventBtn.addEventListener("click", savePlanEvent);
   elements.deletePlanEventBtn.addEventListener("click", deletePlanEvent);
   document.getElementById("planAddChoreBtn")?.addEventListener("click", addPlanChoreRow);
+  // The chore editor (list + "Add chore") only shows once the event is being
+  // added to the To-Do list.
+  document.getElementById("planEventAddTodo")?.addEventListener("change", (e) => {
+    const section = document.getElementById("planChoreSection");
+    if (section) section.hidden = !e.target.checked;
+  });
   // planTodayBtn / planAddEventBtn are wired inside renderPlanPage now (they moved
   // into the calendar window), so no static wiring here.
   elements.closePlanCalBtn.addEventListener("click", () => elements.planCalDialog.close());
@@ -33280,6 +33286,8 @@ function openPlanEventDialog(date, eventId) {
   // To-Do embedding: toggle + editable chore list.
   const addTodo = document.getElementById("planEventAddTodo");
   if (addTodo) addTodo.checked = Boolean(existing?.addToDo);
+  const choreSection = document.getElementById("planChoreSection");
+  if (choreSection) choreSection.hidden = !addTodo?.checked;
   planEventChoresDraft = Array.isArray(existing?.chores) ? [...existing.chores] : [];
   renderPlanChoreList();
 
