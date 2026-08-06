@@ -709,7 +709,6 @@ const elements = {
   menuPublicationsBtn: document.querySelector("#menuPublicationsBtn"),
   menuReadSyncBtn: document.querySelector("#menuReadSyncBtn"),
   menuRecreateHobbiesBtn: document.querySelector("#menuRecreateHobbiesBtn"),
-  menuManageCalendarsBtn: document.querySelector("#menuManageCalendarsBtn"),
   menuFinanceAccountsBtn: document.querySelector("#menuFinanceAccountsBtn"),
   menuFinanceEmergencyBtn: document.querySelector("#menuFinanceEmergencyBtn"),
   importAiDialog: document.querySelector("#importAiDialog"),
@@ -1647,7 +1646,6 @@ function bindEvents() {
   elements.menuWorkoutLibraryBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLibraryDialog));
   elements.menuWorkoutLogsBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLogsDialog));
   elements.menuRecreateHobbiesBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("recreate")));
-  elements.menuManageCalendarsBtn.addEventListener("click", () => openSettingsMenuDialog(openPlanCalDialog));
   elements.menuFinanceAccountsBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("finance-accounts")));
   elements.menuFinanceEmergencyBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("finance-emergency")));
   elements.closeImportAiDialogBtn.addEventListener("click", () => elements.importAiDialog.close());
@@ -17931,7 +17929,6 @@ function updateSettingsMenuOptions() {
   elements.menuPodcastPriorityBtn.hidden = activeAppArea !== "media";
   elements.menuPublicationsBtn.hidden = activeAppArea !== "media";
   elements.menuRecreateHobbiesBtn.hidden = !isRecreate;
-  elements.menuManageCalendarsBtn.hidden = !isPlan;
   const isFinance = activeAppArea === "finance";
   elements.menuFinanceAccountsBtn.hidden = !isFinance;
   elements.menuFinanceEmergencyBtn.hidden = !isFinance;
