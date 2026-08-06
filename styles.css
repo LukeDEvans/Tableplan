@@ -11273,11 +11273,36 @@ body.touch-drag-active * {
 
 /* Calendar management rows */
 .plan-cal-row {
+  position: relative;
+  overflow: hidden;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+}
+/* Visible content; slides left on swipe (mobile) to reveal the actions behind. */
+.plan-cal-front {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+  padding: 5px 0; /* half the old 10px — tighter rows */
+  background: var(--window-bg);
+  position: relative;
+  z-index: 1;
+  transition: transform 0.18s ease;
+}
+/* Edit/Delete sit behind the front, revealed on swipe-left (mobile only). */
+.plan-cal-actions {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  z-index: 0;
+}
+.plan-cal-row.is-swiped .plan-cal-front { transform: translateX(-76px); }
+@media (min-width: 561px) {
+  /* Desktop uses the right-click menu instead of swipe. */
+  .plan-cal-actions { display: none; }
+  .plan-cal-row.is-swiped .plan-cal-front { transform: none; }
+  .plan-cal-row { cursor: context-menu; }
 }
 
 .plan-cal-dot {

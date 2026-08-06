@@ -33705,18 +33705,7 @@ function initPlanCalListDelegation() {
     if (editBtn) { openPlanCalEditMode(editBtn.dataset.calEdit); return; }
 
     const delBtn = e.target.closest("[data-cal-delete]");
-    if (delBtn) {
-      const id = delBtn.dataset.calDelete;
-      const calName = (state.planCalendars || []).find((c) => c.id === id)?.name || "this calendar";
-      if (!confirm(`Remove "${calName}"?`)) return;
-      recordDeletion("planCalendars", id);
-      state.planCalendars = (state.planCalendars || []).filter((c) => c.id !== id);
-      delete planCalendarCache[id];
-      persist();
-      renderPlanCalList();
-      if (activeAppArea === "plan") renderPlanPage();
-      return;
-    }
+    if (delBtn) { deletePlanCalendar(delBtn.dataset.calDelete); return; }
 
     const saveEdit = e.target.closest("[data-save-cal-edit]");
     if (saveEdit) {
@@ -33745,6 +33734,61 @@ function initPlanCalListDelegation() {
     persist();
     if (activeAppArea === "plan") renderPlanPage();
   });
+
+  // Desktop: right-click a calendar row for Edit / Delete.
+  list.addEventListener("contextmenu", (e) => {
+    const row = e.target.closest(".plan-cal-row");
+    if (!row?.dataset.calId) return;
+    e.preventDefault();
+    openPlanCalContextMenu(e, row.dataset.calId);
+  });
+
+  // Mobile: swipe a row left to reveal Edit / Delete (right-swipe hides them).
+  let swRow = null, swX = 0, swDx = 0;
+  list.addEventListener("touchstart", (e) => {
+    const row = e.target.closest(".plan-cal-row");
+    list.querySelectorAll(".plan-cal-row.is-swiped").forEach((r) => { if (r !== row) r.classList.remove("is-swiped"); });
+    swRow = row || null;
+    if (swRow) { swX = e.touches[0].clientX; swDx = 0; }
+  }, { passive: true });
+  list.addEventListener("touchmove", (e) => { if (swRow) swDx = e.touches[0].clientX - swX; }, { passive: true });
+  list.addEventListener("touchend", () => {
+    if (!swRow) return;
+    if (swDx < -40) swRow.classList.add("is-swiped");
+    else if (swDx > 40) swRow.classList.remove("is-swiped");
+    swRow = null;
+  });
+}
+
+function deletePlanCalendar(id) {
+  const calName = (state.planCalendars || []).find((c) => c.id === id)?.name || "this calendar";
+  if (!confirm(`Remove "${calName}"?`)) return;
+  recordDeletion("planCalendars", id);
+  state.planCalendars = (state.planCalendars || []).filter((c) => c.id !== id);
+  delete planCalendarCache[id];
+  persist();
+  renderPlanCalList();
+  if (activeAppArea === "plan") renderPlanPage();
+}
+
+// Desktop right-click menu for a calendar row (reuses the .folder-context-menu
+// styling + its outside-click/Escape auto-close via closeFloatingMenus).
+function openPlanCalContextMenu(event, id) {
+  closeFolderMenu();
+  if (!(state.planCalendars || []).some((c) => c.id === id)) return;
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-ctx-edit>Edit</button>
+    <button type="button" role="menuitem" data-ctx-delete>Delete</button>`;
+  document.body.append(menu);
+  const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+  menu.querySelector("[data-ctx-edit]").addEventListener("click", (ev) => { ev.stopPropagation(); closeFolderMenu(); openPlanCalEditMode(id); });
+  menu.querySelector("[data-ctx-delete]").addEventListener("click", (ev) => { ev.stopPropagation(); closeFolderMenu(); deletePlanCalendar(id); });
 }
 
 function renderPlanCalList() {
@@ -33785,20 +33829,25 @@ function renderPlanCalList() {
 }
 
 function planCalRowHtml(cal) {
+  // Edit/Delete are hidden by default: swipe-left reveals them on touch, and a
+  // right-click opens a menu on desktop (see initPlanCalListDelegation).
   return `
-    <div class="plan-cal-row" id="plan-cal-row-${escapeHtml(cal.id)}">
-      <span class="plan-cal-dot" style="background:${escapeHtml(cal.color)}"></span>
-      <span class="plan-cal-name">${escapeHtml(cal.name)}</span>
-      <label class="plan-cal-toggle">
-        <input type="checkbox" data-cal-toggle="${escapeHtml(cal.id)}" ${cal.enabled ? "checked" : ""} />
-        <span>Show</span>
-      </label>
-      <button class="icon-btn" type="button" data-cal-edit="${escapeHtml(cal.id)}" aria-label="Edit ${escapeHtml(cal.name)}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-      </button>
-      <button class="icon-btn plan-cal-delete" type="button" data-cal-delete="${escapeHtml(cal.id)}" aria-label="Remove ${escapeHtml(cal.name)}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>
-      </button>
+    <div class="plan-cal-row" id="plan-cal-row-${escapeHtml(cal.id)}" data-cal-id="${escapeHtml(cal.id)}">
+      <div class="plan-cal-actions">
+        <button class="icon-btn" type="button" data-cal-edit="${escapeHtml(cal.id)}" aria-label="Edit ${escapeHtml(cal.name)}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button class="icon-btn plan-cal-delete" type="button" data-cal-delete="${escapeHtml(cal.id)}" aria-label="Remove ${escapeHtml(cal.name)}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>
+        </button>
+      </div>
+      <div class="plan-cal-front">
+        <span class="plan-cal-dot" style="background:${escapeHtml(cal.color)}"></span>
+        <span class="plan-cal-name">${escapeHtml(cal.name)}</span>
+        <label class="plan-cal-toggle">
+          <input type="checkbox" data-cal-toggle="${escapeHtml(cal.id)}" ${cal.enabled ? "checked" : ""} />
+        </label>
+      </div>
     </div>
   `;
 }
