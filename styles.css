@@ -10924,14 +10924,13 @@ body.touch-drag-active * {
 /* Date + start/end share one line (Google Calendar style) */
 .plan-when-row {
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
   gap: 10px;
 }
-.plan-when-row .plan-when-date { flex: 1.4; min-width: 0; }
+.plan-when-row .plan-when-date { min-width: 0; }
 .plan-when-row .plan-time-fields {
   display: flex;
   gap: 10px;
-  flex: 2;
   min-width: 0;
 }
 .plan-when-row .plan-time-fields .form-field { flex: 1; min-width: 0; }
