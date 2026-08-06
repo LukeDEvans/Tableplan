@@ -1612,12 +1612,8 @@ function bindEvents() {
   elements.savePlanEventBtn.addEventListener("click", savePlanEvent);
   elements.deletePlanEventBtn.addEventListener("click", deletePlanEvent);
   document.getElementById("planAddChoreBtn")?.addEventListener("click", addPlanChoreRow);
-  document.getElementById("planTodayBtn")?.addEventListener("click", () => {
-    planViewDate = new Date();
-    setWeekToolsMode("plan");
-    renderPlanPage();
-  });
-  document.getElementById("planAddEventBtn")?.addEventListener("click", () => openPlanEventDialog(dateKeyFromDate(new Date())));
+  // planTodayBtn / planAddEventBtn are wired inside renderPlanPage now (they moved
+  // into the calendar window), so no static wiring here.
   elements.closePlanCalBtn.addEventListener("click", () => elements.planCalDialog.close());
   elements.closePlanAddCalBtn.addEventListener("click", () => elements.planAddCalDialog.close());
   elements.addPlanCalBtn.addEventListener("click", addPlanCalendar);
@@ -32838,13 +32834,21 @@ function renderPlanPage() {
   if (!elements.planCalendar) return;
   const swipeAttr = `data-plan-swipe`;
   elements.planCalendar.innerHTML = `
-    <div class="plan-view-tabs" role="tablist">
-      ${["month","week","day","agenda"].map((v) =>
-        `<button class="plan-view-tab${planViewMode === v ? " is-active" : ""}" type="button"
-                 data-plan-view="${v}" role="tab" aria-selected="${planViewMode === v}">
-           ${v.charAt(0).toUpperCase() + v.slice(1)}
-         </button>`
-      ).join("")}
+    <div class="plan-cal-toolbar">
+      <div class="plan-view-tabs" role="tablist">
+        ${["month","week","day","agenda"].map((v) =>
+          `<button class="plan-view-tab${planViewMode === v ? " is-active" : ""}" type="button"
+                   data-plan-view="${v}" role="tab" aria-selected="${planViewMode === v}">
+             ${v.charAt(0).toUpperCase() + v.slice(1)}
+           </button>`
+        ).join("")}
+      </div>
+      <div class="plan-view-actions">
+        <button class="week-today-btn" id="planTodayBtn" type="button">Today</button>
+        <button class="icon-btn" id="planAddEventBtn" type="button" title="Add event" aria-label="Add event">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+        </button>
+      </div>
     </div>
     <div class="plan-view-content" ${swipeAttr}="true">
       ${planViewMode === "month" ? renderPlanMonthView()
@@ -32860,6 +32864,14 @@ function renderPlanPage() {
       renderPlanPage();
     });
   });
+  // Today / add-event now live inside the calendar window (rendered here), so
+  // they're re-wired on every render like the view tabs above.
+  elements.planCalendar.querySelector("#planTodayBtn")?.addEventListener("click", () => {
+    planViewDate = new Date();
+    setWeekToolsMode("plan");
+    renderPlanPage();
+  });
+  elements.planCalendar.querySelector("#planAddEventBtn")?.addEventListener("click", () => openPlanEventDialog(dateKeyFromDate(new Date())));
   elements.planCalendar.querySelectorAll("[data-plan-day]").forEach((cell) => {
     cell.addEventListener("click", (e) => {
       if (e.target.closest("[data-plan-event-id]")) return;

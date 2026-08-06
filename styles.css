@@ -10510,13 +10510,27 @@ body.touch-drag-active * {
   background: var(--window-bg, #fff);
 }
 
-/* View tab bar */
+/* View tab bar + calendar actions (Today / +) share one row inside the window */
+.plan-cal-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  flex-shrink: 0;
+}
 .plan-view-tabs {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 8px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.plan-view-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
   flex-shrink: 0;
 }
 
@@ -10563,7 +10577,7 @@ body.touch-drag-active * {
 /* The household/personal toggle sits IN the tab bar row on the calendar
    page, far right, at the same size/position as every other page's toggle.
    The bar reserves space for it so Today/Manage shift left of it. */
-#planMainPage .plan-view-tabs {
+#planMainPage .plan-cal-toolbar {
   padding-right: 96px;
 }
 
