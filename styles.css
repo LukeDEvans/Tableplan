@@ -11016,19 +11016,22 @@ body.touch-drag-active * {
 }
 .plan-toggle-row .plan-allday-field { margin: 0; }
 
-/* Actions row: Delete at the bottom-left; attachment + Save grouped at the
-   bottom-RIGHT. (.recipe-form-actions has no base styling, so make the row a
-   flex container itself — otherwise margin-left:auto has nothing to align in.) */
+/* Actions: Delete stays in flow at the bottom-left; the attachment + Save group
+   is pulled up to the form's bottom-right corner so it sits beside the
+   To-Do/Meal Plan block instead of in an empty footer row below it. */
 .plan-event-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 0;
 }
 .plan-event-actions-right {
+  position: absolute;
+  right: 18px;
+  bottom: 16px;
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
 }
 .plan-attach-btn { width: 34px; height: 34px; min-height: 34px; }
 .plan-attach-btn svg { width: 20px; height: 20px; }
