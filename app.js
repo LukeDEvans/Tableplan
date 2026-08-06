@@ -32844,7 +32844,7 @@ function renderPlanPage() {
         ).join("")}
       </div>
       <div class="plan-view-actions">
-        <button class="week-today-btn" id="planTodayBtn" type="button">Today</button>
+        <button class="plan-view-tab" id="planTodayBtn" type="button">Today</button>
         <button class="icon-btn" id="planAddEventBtn" type="button" title="Add event" aria-label="Add event">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
         </button>
