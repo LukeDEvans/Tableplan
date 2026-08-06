@@ -11138,7 +11138,8 @@ body.touch-drag-active * {
 
 /* Calendar dropdown under the title — borderless, blends into the window like
    the other fields; sits as a quiet secondary line beneath the bold title. */
-.plan-event-dialog .plan-evt-cal-row { margin-top: 0; }
+.plan-event-dialog .plan-evt-cal-row { margin-top: 0; display: flex; align-items: center; gap: 8px; }
+.plan-cal-select-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .plan-event-dialog .plan-cal-select {
   border: none;
   background: transparent;

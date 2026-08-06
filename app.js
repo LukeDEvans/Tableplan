@@ -1597,6 +1597,7 @@ function bindEvents() {
   elements.planEventAllDay.addEventListener("change", () => {
     elements.planTimeFields.hidden = elements.planEventAllDay.checked;
   });
+  elements.planEventCalPicker?.addEventListener("change", updatePlanEventCalDot);
   elements.planEventLocation?.addEventListener("input", () => {
     planEventSelectedPlace = null; // typing invalidates the previous pick
     clearTimeout(planEventLocationDebounce);
@@ -33416,6 +33417,17 @@ function renderPlanEventCalPicker(selectedCalId) {
     `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`
   ).join("");
   picker.value = selectedCalId || "";
+  updatePlanEventCalDot();
+}
+
+// The dot beside the calendar dropdown shows the selected calendar's color.
+function updatePlanEventCalDot() {
+  const dot = document.getElementById("planEventCalDot");
+  const picker = elements.planEventCalPicker;
+  if (!dot || !picker) return;
+  const cal = (state.planCalendars || []).find((c) => c.id === picker.value);
+  dot.style.background = cal?.color || "transparent";
+  dot.style.visibility = cal ? "visible" : "hidden";
 }
 
 function savePlanEvent() {
