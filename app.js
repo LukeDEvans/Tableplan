@@ -33308,7 +33308,7 @@ let planEventLocationDebounce = null;
 
 async function searchPlanEventLocations() {
   const query = elements.planEventLocation.value.trim();
-  if (query.length < 1) { elements.planEventLocationSuggestions.hidden = true; return; }
+  if (query.length < 2) { elements.planEventLocationSuggestions.hidden = true; return; }
   try {
     const response = await fetch(groceryPlacesApiUrl({ action: "autocomplete", input: query }), groceryPlacesRequestOptions());
     const body = await response.json().catch(() => ({}));
