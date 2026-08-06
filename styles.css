@@ -10925,9 +10925,14 @@ body.touch-drag-active * {
 .plan-when-row {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 2px;
 }
 .plan-when-row .plan-when-date { min-width: 0; }
+/* Trim the date/time inputs' own vertical padding too, so the times sit snug
+   under the date (the row gap alone leaves the borderless fields' 4px padding). */
+.plan-event-dialog .plan-when-row #planEventDate,
+.plan-event-dialog .plan-when-row #planEventStart,
+.plan-event-dialog .plan-when-row #planEventEnd { padding-top: 1px; padding-bottom: 1px; }
 .plan-when-row .plan-time-fields {
   display: flex;
   gap: 10px;
