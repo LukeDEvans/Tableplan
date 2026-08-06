@@ -436,6 +436,12 @@ const MANAGED_PAGES = [
 let lastWrittenSections = null;
 let supabaseClient = null;
 let authSession = null;
+// Localhost-only escape hatch: sign in against the local file backend
+// (server.js /api/state) with a synthetic session, bypassing Supabase entirely,
+// so the app is usable on localhost when the cloud is down or unconfigured.
+// Guarded by canUseLocalBackend() everywhere it's set, so it can NEVER be true
+// off localhost. The data is the LOCAL data/tableplan-state.json, not the cloud.
+let localDevMode = false;
 let userGroup = null;
 let groupMembers = [];
 let adminDisabledPages = [];
@@ -1492,6 +1498,12 @@ function bindEvents() {
   elements.closeAuthBtn.addEventListener("click", () => elements.authDialog.close());
   elements.cancelAuthBtn.addEventListener("click", () => elements.authDialog.close());
   document.getElementById("lockSignInBtn")?.addEventListener("click", () => elements.authDialog.showModal());
+  // Local-dev escape hatch on the gate — only shown on localhost.
+  const lockDevBtn = document.getElementById("lockDevSignInBtn");
+  if (lockDevBtn && canUseLocalBackend()) {
+    lockDevBtn.hidden = false;
+    lockDevBtn.addEventListener("click", signInLocalDev);
+  }
   elements.hydrationContinueBtn?.addEventListener("click", hideHydrationOverlay);
   elements.appMenuBtn.addEventListener("click", handleAppMenuButtonClick);
   elements.appMenu.addEventListener("click", (event) => event.stopPropagation());
@@ -2160,14 +2172,20 @@ async function initializeApp() {
   window.addEventListener("online", handleCameOnline);
   window.addEventListener("offline", () => updateSyncStatus("offline"));
   handleInviteUrlParameter();
-  await initializeSupabaseAuth();
-  if (authSession?.access_token) {
-    await loadAdminConfig();
-    await loadOrCreateUserGroup();
-    await migratePersonalStateIfNeeded();
+  // Localhost dev mode persists across reloads via the live_local_dev flag; when
+  // set, skip Supabase entirely and boot straight against the local backend.
+  if (canUseLocalBackend() && localStorage.getItem("live_local_dev") === "1") {
+    await signInLocalDev();
+  } else {
+    await initializeSupabaseAuth();
+    if (authSession?.access_token) {
+      await loadAdminConfig();
+      await loadOrCreateUserGroup();
+      await migratePersonalStateIfNeeded();
+    }
+    maybeShowHydrationOverlay();
+    await hydrateStateFromSharedStorage();
   }
-  maybeShowHydrationOverlay();
-  await hydrateStateFromSharedStorage();
   await hydrateRecipeRowsFromSupabase();
   resyncAllEventChores(); // roll recurring-event chores forward into the To-Do planner
   applyInitialMealPlanFocus();
@@ -2290,6 +2308,23 @@ function updateAppLockState() {
   }
 }
 
+// Enter local-dev mode: unlock the app gate with a synthetic session and load
+// state from the local file backend (server.js), no Supabase. Persists a flag so
+// reloads stay in dev mode until the user logs out. Localhost-only.
+async function signInLocalDev() {
+  if (!canUseLocalBackend()) return;
+  localDevMode = true;
+  localStorage.setItem("live_local_dev", "1");
+  authSession = { access_token: "local-dev", user: { id: "local-dev", email: "local@dev" } };
+  if (!userGroup) userGroup = { id: "local-dev", display_name: "Local Dev", disabled_pages: [] };
+  authCheckCompleted = true;
+  updateAppLockState();  // access_token present → body.app-authed → gate lifts
+  updateAuthUi();
+  maybeShowHydrationOverlay();
+  await hydrateStateFromSharedStorage(); // loads data/tableplan-state.json via the local provider
+  render();
+}
+
 function openProfileDialog() {
   closeFloatingMenus();
   renderProfileDialog();
@@ -2349,6 +2384,13 @@ function saveProfile() {
 }
 
 async function toggleAuth() {
+  // Local-dev sign-out: drop the flag and reload back to the real gate. No
+  // Supabase client exists in this mode, so this must run before the cloud path.
+  if (localDevMode) {
+    localStorage.removeItem("live_local_dev");
+    window.location.reload();
+    return;
+  }
   if (!supabaseClient && canUseCloudStorage() && window.supabase?.createClient) {
     supabaseClient = window.supabase.createClient(supabaseBaseUrl(), supabaseConfig().anonKey);
   }
@@ -6391,6 +6433,7 @@ async function deleteSupabaseRow(table, id) {
 }
 
 function canUseCloudStorage() {
+  if (localDevMode) return false; // local-dev: force the local file backend, skip every cloud call
   const config = supabaseConfig();
   return Boolean(config.url && config.anonKey && config.stateId);
 }
