@@ -3122,6 +3122,9 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
             </button>
           </div>
+          <div class="form-field plan-evt-cal-row" id="planEventCalRow" hidden>
+            <select class="plan-cal-select" id="planEventCalPicker" aria-label="Calendar"></select>
+          </div>
           <div class="plan-when-row">
             <label class="form-field plan-when-date">
               <input type="date" id="planEventDate" aria-label="Date" />
@@ -3184,10 +3187,6 @@
               <input type="checkbox" id="planEventAddMealPlan" />
               <span>Meal Plan</span>
             </label>
-          </div>
-          <div class="form-field plan-evt-cal-row" id="planEventCalRow" hidden>
-            <span>Calendar</span>
-            <div class="plan-evt-cal-chips" id="planEventCalPicker"></div>
           </div>
         </div>
         <div class="recipe-form-actions plan-event-actions">

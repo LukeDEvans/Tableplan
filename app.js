@@ -33403,26 +33403,19 @@ function renderPlanColorPicker(container, selectedColor, name) {
   `).join("");
 }
 
+// Calendar dropdown below the title — pick which of your own (non-subscribed)
+// calendars the event goes into. Event color follows the chosen calendar on save.
 function renderPlanEventCalPicker(selectedCalId) {
-  const picker = elements.planEventCalPicker;
+  const picker = elements.planEventCalPicker; // a <select>
   const row = elements.planEventCalRow;
   if (!picker || !row) return;
   const nativeCals = (state.planCalendars || []).filter((c) => !c.url);
   if (!nativeCals.length) { row.hidden = true; return; }
   row.hidden = false;
-  picker.innerHTML = [{ id: "", name: "None", color: "#999" }, ...nativeCals].map((c) => `
-    <button class="plan-evt-cal-chip${selectedCalId === c.id || (!selectedCalId && !c.id) ? " is-selected" : ""}"
-            type="button" data-plan-evt-cal="${escapeHtml(c.id)}" style="--chip-color:${escapeHtml(c.color)}">
-      <span class="plan-evt-cal-dot"></span>${escapeHtml(c.name)}
-    </button>
-  `).join("");
-  picker.querySelectorAll("[data-plan-evt-cal]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      picker.querySelectorAll("[data-plan-evt-cal]").forEach((b) => b.classList.remove("is-selected"));
-      btn.classList.add("is-selected");
-      // Event color follows the chosen calendar automatically on save
-    });
-  });
+  picker.innerHTML = [{ id: "", name: "No calendar" }, ...nativeCals].map((c) =>
+    `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`
+  ).join("");
+  picker.value = selectedCalId || "";
 }
 
 function savePlanEvent() {
@@ -33430,7 +33423,7 @@ function savePlanEvent() {
   const date = elements.planEventDate.value.trim();
   if (!title || !date) return;
   const allDay = elements.planEventAllDay.checked;
-  const calId = elements.planEventCalPicker?.querySelector(".is-selected")?.dataset.planEvtCal || null;
+  const calId = elements.planEventCalPicker?.value || null;
   // Color always follows the event's calendar (no per-event picker)
   const cal = calId ? (state.planCalendars || []).find((c) => c.id === calId) : null;
   const existing = editingPlanEventId ? (state.planEvents || []).find((e) => e.id === editingPlanEventId) : null;

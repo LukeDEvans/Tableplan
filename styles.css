@@ -11135,6 +11135,26 @@ body.touch-drag-active * {
   outline: none;
   border-bottom-color: color-mix(in srgb, var(--ink) 22%, transparent);
 }
+
+/* Calendar dropdown under the title — borderless, blends into the window like
+   the other fields; sits as a quiet secondary line beneath the bold title. */
+.plan-event-dialog .plan-evt-cal-row { margin-top: 0; }
+.plan-event-dialog .plan-cal-select {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 2px 22px 2px 0;
+  width: auto;
+  max-width: 100%;
+  min-height: 0;
+  height: auto;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+.plan-event-dialog .plan-cal-select:focus { outline: none; color: var(--ink); }
 .plan-repeat-inline input[type="date"] { width: auto; }
 .plan-event-recur { opacity: 0.7; font-size: 0.82em; }
 
