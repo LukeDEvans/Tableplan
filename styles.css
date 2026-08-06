@@ -11017,7 +11017,13 @@ body.touch-drag-active * {
 .plan-toggle-row .plan-allday-field { margin: 0; }
 
 /* Actions row: Delete at the bottom-left; attachment + Save grouped at the
-   bottom-RIGHT. */
+   bottom-RIGHT. (.recipe-form-actions has no base styling, so make the row a
+   flex container itself — otherwise margin-left:auto has nothing to align in.) */
+.plan-event-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .plan-event-actions-right {
   display: flex;
   align-items: center;
