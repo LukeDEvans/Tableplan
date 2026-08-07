@@ -10968,7 +10968,24 @@ body.touch-drag-active * {
 
 /* ── Plan dialogs ── */
 
-.plan-event-dialog, .plan-cal-dialog { max-width: 440px; }
+.plan-cal-dialog { max-width: 440px; }
+/* Just wide enough for the 7 weekday circles (7×34 + gaps + padding). */
+.plan-event-dialog { max-width: 320px; }
+/* Full-screen on mobile. */
+@media (max-width: 560px) {
+  .plan-event-dialog {
+    width: 100vw;
+    max-width: none;
+    max-height: 100dvh;
+    height: 100dvh;
+  }
+  .plan-event-dialog .recipe-form {
+    max-height: 100dvh;
+    min-height: 100dvh;
+    border-radius: 0;
+    border: 0;
+  }
+}
 
 /* Date + start/end share one line (Google Calendar style) */
 .plan-when-row {
@@ -11077,7 +11094,8 @@ body.touch-drag-active * {
 
 /* Recurrence controls */
 .plan-repeat-field select { width: 100%; }
-.plan-repeat-detail { display: flex; flex-wrap: wrap; gap: 10px 16px; margin-top: 8px; }
+.plan-repeat-detail { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin-top: 8px; }
+.plan-event-dialog .plan-repeat-freq, .plan-event-dialog .plan-repeat-mode { font-weight: 600; max-width: 100%; }
 .plan-repeat-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; font-weight: 600; }
 .plan-repeat-inline input[type="number"] { width: 62px; }
 

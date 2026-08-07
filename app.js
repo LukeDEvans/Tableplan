@@ -1590,6 +1590,10 @@ function bindEvents() {
   document.getElementById("planEventDate")?.addEventListener("click", (e) => {
     try { e.currentTarget.showPicker?.(); } catch { /* not supported */ }
   });
+  // Changing the date refreshes the monthly/yearly "nth weekday" labels.
+  document.getElementById("planEventDate")?.addEventListener("change", () => {
+    if (!document.getElementById("planEventRepeatMode")?.hidden) populatePlanRepeatMode();
+  });
   initPlanTimeSelects();
   // AM/PM toggle buttons flip between AM and PM.
   document.querySelectorAll(".plan-ampm-toggle").forEach((btn) => {
@@ -32723,6 +32727,34 @@ function escapeHtml(value) {
 const PLAN_COLORS = ["#4285f4","#0f9d58","#db4437","#f4b400","#9c27b0","#ff5722","#00bcd4","#607d8b"];
 const PLAN_APP_COLORS = { eat: "#0f9d58", play: "#ff5722", do: "#1976d2", watch: "#7b1fa2" };
 
+const PLAN_ORDINALS = ["first", "second", "third", "fourth", "fifth"];
+const PLAN_WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const PLAN_MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+// Describe a date's "nth weekday" position (e.g. the 3rd Friday). setPos 1..5;
+// isLast marks the final occurrence of that weekday in the month.
+// Function declaration (hoisted) — safe on the top-level render path.
+function planNthWeekdayInfo(d) {
+  const weekday = d.getDay();
+  const dayOfMonth = d.getDate();
+  const setPos = Math.ceil(dayOfMonth / 7);
+  const dim = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  return { weekday, dayOfMonth, setPos, isLast: dayOfMonth + 7 > dim };
+}
+
+// Date of the Nth (setPos; -1 = last) `weekday` in year/month, or null if that
+// occurrence doesn't exist (e.g. a 5th Friday in a short month).
+function planNthWeekdayDate(year, month, weekday, setPos) {
+  const dim = new Date(year, month + 1, 0).getDate();
+  if (setPos === -1) {
+    const last = new Date(year, month, dim);
+    return new Date(year, month, dim - ((last.getDay() - weekday + 7) % 7));
+  }
+  const first = new Date(year, month, 1);
+  const day = 1 + ((weekday - first.getDay() + 7) % 7) + (setPos - 1) * 7;
+  return day > dim ? null : new Date(year, month, day);
+}
+
 function normalizeRecurrence(r) {
   if (!r || typeof r !== "object") return null;
   const freq = ["daily", "weekly", "monthly", "yearly"].includes(r.freq) ? r.freq : null;
@@ -32735,7 +32767,18 @@ function normalizeRecurrence(r) {
     const days = [...new Set(r.byWeekdays.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 0 && n <= 6))].sort((a, b) => a - b);
     if (days.length) byWeekdays = days;
   }
-  return { freq, interval, until, byWeekdays };
+  // Monthly/yearly can repeat on the same day-of-month/date, or on the "nth
+  // weekday" (e.g. the third Friday, or the last Friday).
+  let monthMode = null, byWeekday = null, bySetPos = null;
+  if (freq === "monthly" || freq === "yearly") {
+    monthMode = r.monthMode === "nthWeekday" ? "nthWeekday" : "dayOfMonth";
+    if (monthMode === "nthWeekday") {
+      byWeekday = (Number.isInteger(r.byWeekday) && r.byWeekday >= 0 && r.byWeekday <= 6) ? r.byWeekday : null;
+      bySetPos = [1, 2, 3, 4, 5, -1].includes(Number(r.bySetPos)) ? Number(r.bySetPos) : 1;
+      if (byWeekday === null) { monthMode = "dayOfMonth"; bySetPos = null; }
+    }
+  }
+  return { freq, interval, until, byWeekdays, monthMode, byWeekday, bySetPos };
 }
 
 function normalizePlanEvents(events) {
@@ -32789,6 +32832,25 @@ function expandRecurringOccurrences(e, startKey, endKey) {
         if (weekOffset >= 0 && weekOffset % rec.interval === 0) occ.push(key);
       }
       scan.setDate(scan.getDate() + 1);
+    }
+    return occ;
+  }
+
+  // Monthly / yearly on the Nth weekday (e.g. 3rd Friday, or last Friday). For
+  // yearly the month is fixed to the event's month; for monthly it advances.
+  if ((rec.freq === "monthly" || rec.freq === "yearly") && rec.monthMode === "nthWeekday" && Number.isInteger(rec.byWeekday)) {
+    const endD = new Date(hardEnd + "T00:00:00");
+    let y = base.getFullYear(), m = base.getMonth(), g3 = 0;
+    while (g3++ < 1500) {
+      if (new Date(y, m, 1) > endD) break;
+      const occDate = planNthWeekdayDate(y, m, rec.byWeekday, rec.bySetPos);
+      if (occDate) {
+        const key = dateKeyFromDate(occDate);
+        if (key > hardEnd) break;
+        if (key >= startKey && key >= e.date && !exceptions.has(key)) occ.push(key);
+      }
+      if (rec.freq === "monthly") { m += rec.interval; y += Math.floor(m / 12); m = ((m % 12) + 12) % 12; }
+      else { y += rec.interval; }
     }
     return occ;
   }
@@ -33218,12 +33280,39 @@ function planFormatTime(time) {
 // Repeat is now a single on/off toggle that means "weekly on the checked days".
 // The hidden #planEventRepeat carries "weekly"/"" so savePlanEvent is unchanged.
 function syncPlanRepeatUi() {
-  const toggle = document.getElementById("planEventRepeatToggle");
-  const hidden = document.getElementById("planEventRepeat");
+  const on = Boolean(document.getElementById("planEventRepeatToggle")?.checked);
   const detail = document.getElementById("planRepeatDetail");
-  const on = Boolean(toggle?.checked);
-  if (hidden) hidden.value = on ? "weekly" : "";
   if (detail) detail.hidden = !on;
+  if (!on) return;
+  const freq = document.getElementById("planEventRepeatFreq")?.value || "weekly";
+  const weekdays = document.getElementById("planRepeatWeekdays");
+  const modeSel = document.getElementById("planEventRepeatMode");
+  if (weekdays) weekdays.hidden = freq !== "weekly";       // weekly: day-of-week circles
+  if (modeSel) {
+    modeSel.hidden = freq !== "monthly" && freq !== "yearly"; // monthly/yearly: pattern dropdown
+    if (!modeSel.hidden) populatePlanRepeatMode();
+  }
+}
+
+// Fill the monthly/yearly "pattern" dropdown from the event's date, e.g.
+// "Monthly on day 20" vs "Monthly on the third Friday".
+function populatePlanRepeatMode() {
+  const modeSel = document.getElementById("planEventRepeatMode");
+  const freq = document.getElementById("planEventRepeatFreq")?.value;
+  if (!modeSel || (freq !== "monthly" && freq !== "yearly")) return;
+  const d = new Date((elements.planEventDate?.value || dateKeyFromDate(new Date())) + "T00:00:00");
+  if (isNaN(d)) return;
+  const info = planNthWeekdayInfo(d);
+  const wname = PLAN_WEEKDAY_NAMES[info.weekday];
+  const ord = info.isLast ? "last" : PLAN_ORDINALS[info.setPos - 1];
+  const prev = modeSel.value;
+  if (freq === "monthly") {
+    modeSel.innerHTML = `<option value="dayOfMonth">Monthly on day ${info.dayOfMonth}</option><option value="nthWeekday">Monthly on the ${ord} ${wname}</option>`;
+  } else {
+    const mname = PLAN_MONTH_NAMES[d.getMonth()];
+    modeSel.innerHTML = `<option value="dayOfMonth">Annually on ${mname} ${info.dayOfMonth}</option><option value="nthWeekday">Annually on the ${ord} ${wname} of ${mname}</option>`;
+  }
+  if (prev === "nthWeekday" || prev === "dayOfMonth") modeSel.value = prev;
 }
 
 // Custom time fields: hour + minute dropdowns and an AM/PM toggle button, so we
@@ -33305,15 +33394,11 @@ function openPlanEventDialog(date, eventId) {
   }
   // Recurrence controls (edit a recurring event = edit the whole series).
   const rec = existing?.recurrence || null;
-  const repeatToggle = document.getElementById("planEventRepeatToggle");
-  const repeatHidden = document.getElementById("planEventRepeat");
   const repeatOn = Boolean(rec?.freq);
+  const repeatToggle = document.getElementById("planEventRepeatToggle");
   if (repeatToggle) { repeatToggle.checked = repeatOn; repeatToggle.onchange = syncPlanRepeatUi; }
-  if (repeatHidden) repeatHidden.value = repeatOn ? "weekly" : "";
-  const intInput = document.getElementById("planEventRepeatInterval");
-  if (intInput) intInput.value = rec?.interval || 1;
-  const untilInput = document.getElementById("planEventRepeatUntil");
-  if (untilInput) untilInput.value = rec?.until || "";
+  const freqSel = document.getElementById("planEventRepeatFreq");
+  if (freqSel) { freqSel.value = (rec && rec.freq !== "daily") ? rec.freq : "weekly"; freqSel.onchange = syncPlanRepeatUi; }
   // Weekly weekday checkboxes: use the saved days, else default to the event
   // date's own weekday so a fresh weekly event starts sensibly.
   const eventDay = new Date((existing?.date || date || dateKeyFromDate(new Date())) + "T00:00:00").getDay();
@@ -33322,6 +33407,9 @@ function openPlanEventDialog(date, eventId) {
     cb.checked = defaultDays.includes(Number(cb.value));
   });
   syncPlanRepeatUi();
+  // Restore the monthly/yearly pattern (populatePlanRepeatMode ran via sync).
+  const repeatModeSel = document.getElementById("planEventRepeatMode");
+  if (repeatModeSel && !repeatModeSel.hidden) repeatModeSel.value = rec?.monthMode === "nthWeekday" ? "nthWeekday" : "dayOfMonth";
 
   // To-Do embedding: toggle + editable chore list.
   const addTodo = document.getElementById("planEventAddTodo");
@@ -33483,16 +33571,22 @@ function savePlanEvent() {
   const typedLocation = elements.planEventLocation.value.trim();
   const location = planEventSelectedPlace
     || (typedLocation ? { placeId: null, name: typedLocation, address: "" } : null);
-  const repeatFreq = document.getElementById("planEventRepeat")?.value || "";
-  const byWeekdays = repeatFreq === "weekly"
-    ? [...document.querySelectorAll("#planRepeatWeekdays [name='plan-weekday']:checked")].map((cb) => Number(cb.value))
-    : null;
-  const recurrence = repeatFreq ? normalizeRecurrence({
-    freq: repeatFreq,
-    interval: Number(document.getElementById("planEventRepeatInterval")?.value) || 1,
-    until: (document.getElementById("planEventRepeatUntil")?.value || "").trim() || null,
-    byWeekdays,
-  }) : null;
+  const repeatOn = Boolean(document.getElementById("planEventRepeatToggle")?.checked);
+  const repeatFreq = repeatOn ? (document.getElementById("planEventRepeatFreq")?.value || "weekly") : "";
+  let recurrence = null;
+  if (repeatFreq === "weekly") {
+    const byWeekdays = [...document.querySelectorAll("#planRepeatWeekdays [name='plan-weekday']:checked")].map((cb) => Number(cb.value));
+    recurrence = normalizeRecurrence({ freq: "weekly", interval: 1, byWeekdays });
+  } else if (repeatFreq === "monthly" || repeatFreq === "yearly") {
+    const mode = document.getElementById("planEventRepeatMode")?.value || "dayOfMonth";
+    const baseD = new Date(date + "T00:00:00");
+    if (mode === "nthWeekday" && !isNaN(baseD)) {
+      const info = planNthWeekdayInfo(baseD);
+      recurrence = normalizeRecurrence({ freq: repeatFreq, interval: 1, monthMode: "nthWeekday", byWeekday: info.weekday, bySetPos: info.isLast ? -1 : info.setPos });
+    } else {
+      recurrence = normalizeRecurrence({ freq: repeatFreq, interval: 1, monthMode: "dayOfMonth" });
+    }
+  }
   const addToDo = Boolean(document.getElementById("planEventAddTodo")?.checked);
   const showInMealPlan = Boolean(document.getElementById("planEventAddMealPlan")?.checked);
   const chores = (planEventChoresDraft || []).map((c) => c.trim()).filter(Boolean);
