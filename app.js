@@ -33081,8 +33081,10 @@ function rescheduleOccurrence(seriesId, occDate, newDate) {
   renderPlanPage();
   const label = new Date(newDate + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
   showMailToast(`Moved this occurrence to ${label}`, () => {
-    state.planEvents = state.planEvents.filter((e) => e.id !== oneOff.id);
-    series.exceptions = (series.exceptions || []).filter((d) => d !== occDate);
+    state.planEvents = (state.planEvents || []).filter((e) => e.id !== oneOff.id);
+    // Re-find the series by id (state may have been replaced by a sync).
+    const s = (state.planEvents || []).find((e) => e.id === seriesId);
+    if (s) s.exceptions = (s.exceptions || []).filter((d) => d !== occDate);
     persist();
     renderPlanPage();
   });
@@ -33102,7 +33104,10 @@ function reschedulePlanEvent(id, newDate) {
   renderPlanPage();
   const label = new Date(newDate + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
   showMailToast(`Moved to ${label}`, () => {
-    ev.date = prevDate; ev.endDate = prevEnd;
+    // Re-find by id — a sync may have replaced state.planEvents since the move.
+    const cur = (state.planEvents || []).find((e) => e.id === id);
+    if (!cur) return;
+    cur.date = prevDate; cur.endDate = prevEnd;
     persist();
     renderPlanPage();
   });
