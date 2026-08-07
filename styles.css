@@ -10525,6 +10525,22 @@ body.touch-drag-active * {
 }
 .plan-sidebar.is-collapsed { width: 0; padding: 0; overflow: hidden; border-right: 0; }
 .plan-sidebar-head { font-size: 0.9rem; font-weight: 700; margin-bottom: 10px; }
+.plan-search-wrap { margin-bottom: 14px; }
+.plan-search-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--ink) 15%, transparent);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.9rem;
+  background: var(--window-bg);
+}
+.plan-search-results { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow-y: auto; }
+.plan-search-result { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 8px; border: none; background: transparent; text-align: left; border-radius: 6px; cursor: pointer; }
+.plan-search-result:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.plan-search-result-title { font-weight: 600; font-size: 0.88rem; }
+.plan-search-result-date { font-size: 0.75rem; color: var(--muted); }
+.plan-search-empty { font-size: 0.85rem; color: var(--muted); padding: 6px 8px; }
 .plan-sidebar-toggle { flex-shrink: 0; border: none; background: transparent; box-shadow: none; }
 .plan-sidebar-toggle svg { stroke: currentColor; stroke-width: 2; fill: none; width: 20px; height: 20px; }
 

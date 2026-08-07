@@ -651,6 +651,10 @@
         <section class="planner-column do-column" id="planMainPage" aria-label="Plan" hidden>
           <div class="plan-layout">
             <aside class="plan-sidebar is-collapsed" id="planSidebar">
+              <div class="plan-search-wrap">
+                <input type="search" id="planSearchInput" class="plan-search-input" placeholder="Search events" aria-label="Search events" autocomplete="off" />
+                <div class="plan-search-results" id="planSearchResults" hidden></div>
+              </div>
               <div class="plan-sidebar-head">Calendars</div>
               <div id="planCalList"></div>
             </aside>

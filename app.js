@@ -33895,7 +33895,16 @@ function openAddPlanCalDialog() {
   elements.planAddCalDialog.showModal();
 }
 
+let planSearchDebounce = null;
 function initPlanCalListDelegation() {
+  const searchInput = document.getElementById("planSearchInput");
+  if (searchInput) {
+    searchInput.addEventListener("input", (e) => {
+      clearTimeout(planSearchDebounce);
+      const q = e.target.value;
+      planSearchDebounce = setTimeout(() => renderPlanSearch(q), 150);
+    });
+  }
   const list = elements.planCalList;
   if (!list) return;
 
@@ -34023,6 +34032,38 @@ function openPlanCalContextMenu(event, id) {
   menu.style.top = `${Math.max(10, y)}px`;
   menu.querySelector("[data-ctx-edit]").addEventListener("click", (ev) => { ev.stopPropagation(); closeFolderMenu(); openPlanCalEditMode(id); });
   menu.querySelector("[data-ctx-delete]").addEventListener("click", (ev) => { ev.stopPropagation(); closeFolderMenu(); deletePlanCalendar(id); });
+}
+
+// Sidebar event search: match title/notes/location across planEvents; a result
+// jumps to that event's date and opens it.
+function renderPlanSearch(q) {
+  const box = document.getElementById("planSearchResults");
+  if (!box) return;
+  const query = String(q || "").trim().toLowerCase();
+  if (query.length < 2) { box.hidden = true; box.innerHTML = ""; return; }
+  const matches = (state.planEvents || [])
+    .filter((e) => `${e.title || ""} ${e.notes || ""} ${e.location?.name || ""}`.toLowerCase().includes(query))
+    .sort((a, b) => (a.date || "").localeCompare(b.date || ""))
+    .slice(0, 20);
+  box.hidden = false;
+  box.innerHTML = matches.length
+    ? matches.map((e) => `<button class="plan-search-result" type="button" data-search-event="${escapeHtml(e.id)}" data-search-date="${escapeHtml(e.date)}">
+        <span class="plan-search-result-title">${escapeHtml(e.title)}</span>
+        <span class="plan-search-result-date">${escapeHtml(new Date(e.date + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }))}</span>
+      </button>`).join("")
+    : `<div class="plan-search-empty">No matching events.</div>`;
+  box.querySelectorAll("[data-search-event]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const date = btn.dataset.searchDate;
+      if (date) planViewDate = new Date(date + "T00:00:00");
+      box.hidden = true;
+      const input = document.getElementById("planSearchInput");
+      if (input) input.value = "";
+      setWeekToolsMode("plan");
+      renderPlanPage();
+      openPlanEventDialog(date, btn.dataset.searchEvent);
+    });
+  });
 }
 
 // Sidebar row for an app-data overlay (Meal Plan / Exercise / To-Do). Checked =
