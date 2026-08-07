@@ -442,6 +442,10 @@ let authSession = null;
 // Guarded by canUseLocalBackend() everywhere it's set, so it can NEVER be true
 // off localhost. The data is the LOCAL data/tableplan-state.json, not the cloud.
 let localDevMode = false;
+// Declared here (not next to the auth gate) because signInLocalDev() can run
+// during boot (auto-entered via the live_local_dev flag) before the gate code's
+// line executes — a later `let` would be in its TDZ then. See updateAppLockState.
+let authCheckCompleted = false;
 // Memoized getPlanEventsForRange result ({ key, val }); invalidated on persist,
 // iCal fetch, and full state replacement so it can never go stale.
 let planRangeCache = null;
@@ -2333,7 +2337,7 @@ function updateAuthUi() {
 // so even with JS disabled or before boot, nothing is reachable. Until the
 // first session check completes it shows a neutral "checking" state, so a
 // signed-in user reloading never sees a misleading sign-in prompt.
-let authCheckCompleted = false;
+// (Declared up top with the other early auth state — see the authSession block.)
 
 function updateAppLockState() {
   document.body.classList.toggle("app-authed", !!authSession?.access_token);
