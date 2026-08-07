@@ -1624,6 +1624,13 @@ function bindEvents() {
     if (remRow) remRow.hidden = elements.planEventAllDay.checked;
   });
   elements.planEventCalPicker?.addEventListener("change", updatePlanEventCalDot);
+  // Ask for notification permission the first time a reminder is chosen, so the
+  // reminder can surface even when the tab isn't focused.
+  document.getElementById("planEventReminder")?.addEventListener("change", (e) => {
+    if (e.target.value && window.Notification && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+  });
   elements.planEventLocation?.addEventListener("input", () => {
     planEventSelectedPlace = null; // typing invalidates the previous pick
     clearTimeout(planEventLocationDebounce);
@@ -33059,10 +33066,32 @@ function fireEventReminder(e) {
 
 // Drag-to-reschedule: move a personal event to the dropped-on day.
 let planDragEventId = null;
+let planDragOcc = null; // { id, date } while dragging one recurring occurrence
+
+// Move a single occurrence of a recurring series: tombstone that date on the
+// series (exception) and create a detached one-off copy on the new date.
+function rescheduleOccurrence(seriesId, occDate, newDate) {
+  if (!newDate || !/^\d{4}-\d{2}-\d{2}$/.test(newDate) || occDate === newDate) return;
+  const series = (state.planEvents || []).find((e) => e.id === seriesId);
+  if (!series) return;
+  series.exceptions = [...new Set([...(series.exceptions || []), occDate])];
+  const oneOff = { ...series, id: createId("plan-evt"), date: newDate, endDate: null, recurrence: null, exceptions: [], createdAt: new Date().toISOString() };
+  state.planEvents.push(oneOff);
+  persist();
+  renderPlanPage();
+  const label = new Date(newDate + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  showMailToast(`Moved this occurrence to ${label}`, () => {
+    state.planEvents = state.planEvents.filter((e) => e.id !== oneOff.id);
+    series.exceptions = (series.exceptions || []).filter((d) => d !== occDate);
+    persist();
+    renderPlanPage();
+  });
+}
 function reschedulePlanEvent(id, newDate) {
   if (!newDate || !/^\d{4}-\d{2}-\d{2}$/.test(newDate)) return;
   const ev = (state.planEvents || []).find((e) => e.id === id);
   if (!ev || ev.date === newDate) return;
+  const prevDate = ev.date, prevEnd = ev.endDate;
   if (ev.endDate) { // keep a multi-day span's length when its start moves
     const delta = Math.round((new Date(newDate + "T00:00:00") - new Date(ev.date + "T00:00:00")) / 86400000);
     const nd = new Date(ev.endDate + "T00:00:00"); nd.setDate(nd.getDate() + delta);
@@ -33071,31 +33100,44 @@ function reschedulePlanEvent(id, newDate) {
   ev.date = newDate;
   persist();
   renderPlanPage();
+  const label = new Date(newDate + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  showMailToast(`Moved to ${label}`, () => {
+    ev.date = prevDate; ev.endDate = prevEnd;
+    persist();
+    renderPlanPage();
+  });
 }
 
 function bindPlanEventDrag() {
   const root = elements.planCalendar;
   if (!root) return;
+  const clearDrag = () => { planDragEventId = null; planDragOcc = null; root.querySelectorAll(".plan-drop-target").forEach((c) => c.classList.remove("plan-drop-target")); };
   root.querySelectorAll("[data-evt-movable]").forEach((pill) => {
     pill.addEventListener("dragstart", (e) => {
-      planDragEventId = pill.dataset.planEventId;
+      planDragEventId = pill.dataset.planEventId; planDragOcc = null;
       e.dataTransfer.effectAllowed = "move";
       try { e.dataTransfer.setData("text/plain", planDragEventId); } catch { /* older browsers */ }
       pill.classList.add("is-dragging");
     });
-    pill.addEventListener("dragend", () => {
-      pill.classList.remove("is-dragging");
-      planDragEventId = null;
-      root.querySelectorAll(".plan-drop-target").forEach((c) => c.classList.remove("plan-drop-target"));
+    pill.addEventListener("dragend", () => { pill.classList.remove("is-dragging"); clearDrag(); });
+  });
+  root.querySelectorAll("[data-evt-occ-movable]").forEach((pill) => {
+    pill.addEventListener("dragstart", (e) => {
+      planDragOcc = { id: pill.dataset.planEventId, date: pill.dataset.planEventDate }; planDragEventId = null;
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", "occ"); } catch { /* older browsers */ }
+      pill.classList.add("is-dragging");
     });
+    pill.addEventListener("dragend", () => { pill.classList.remove("is-dragging"); clearDrag(); });
   });
   root.querySelectorAll(".plan-month-day[data-plan-day], .plan-week-allday-cell[data-plan-day], .plan-day-allday[data-plan-day]").forEach((cell) => {
-    cell.addEventListener("dragover", (e) => { if (planDragEventId) { e.preventDefault(); cell.classList.add("plan-drop-target"); } });
+    cell.addEventListener("dragover", (e) => { if (planDragEventId || planDragOcc) { e.preventDefault(); cell.classList.add("plan-drop-target"); } });
     cell.addEventListener("dragleave", () => cell.classList.remove("plan-drop-target"));
     cell.addEventListener("drop", (e) => {
       e.preventDefault();
       cell.classList.remove("plan-drop-target");
       if (planDragEventId) reschedulePlanEvent(planDragEventId, cell.dataset.planDay);
+      else if (planDragOcc) rescheduleOccurrence(planDragOcc.id, planDragOcc.date, cell.dataset.planDay);
     });
   });
 }
@@ -33230,10 +33272,14 @@ function planEventPillTemplate(event) {
   const spanCls = event.spanPos === "start" ? " is-span plan-span-start" : "";
   const dot = `<span class="plan-event-dot" style="background:${escapeHtml(event.color || PLAN_COLORS[0])}"></span>`;
   const time = (!event.allDay && event.startTime) ? `<span class="plan-event-time">${escapeHtml(planFormatTime(event.startTime))}</span>` : "";
-  // Only a plain (personal, non-recurring, single-day) event can be dragged to
-  // another day — synthetic/iCal/recurring/multi-day pills are not reschedulable.
-  const movable = (!event.source || event.source === "personal") && !event.recurrence && !event.occurrenceOf;
-  return `<div class="plan-event-pill${movable ? " is-movable" : ""}${spanCls}"${movable ? ' draggable="true" data-evt-movable="1"' : ""} ${commonAttrs}>
+  // A plain (personal, single-day) event drags whole; a recurring occurrence
+  // drags just that instance (see rescheduleOccurrence). iCal/synthetic/multi-day
+  // pills aren't draggable.
+  const personal = !event.source || event.source === "personal";
+  const movable = personal && !event.recurrence && !event.occurrenceOf;
+  const occMovable = personal && event.recurrence && event.occurrenceOf;
+  const dragAttrs = movable ? ' draggable="true" data-evt-movable="1"' : occMovable ? ' draggable="true" data-evt-occ-movable="1"' : "";
+  return `<div class="plan-event-pill${movable || occMovable ? " is-movable" : ""}${spanCls}"${dragAttrs} ${commonAttrs}>
     ${dot}${time}<span class="plan-event-title">${escapeHtml(event.title)}</span>${event.recurrence || event.occurrenceOf ? '<span class="plan-event-recur" aria-hidden="true">↻</span>' : ""}
   </div>`;
 }
