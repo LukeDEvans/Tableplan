@@ -3136,11 +3136,15 @@
             </label>
             <div class="plan-time-fields" id="planTimeFields">
               <div class="plan-time-field">
-                <input type="text" class="plan-time-input" id="planEventStart" inputmode="numeric" maxlength="5" placeholder="9:00" aria-label="Start time" />
+                <select class="plan-time-select" id="planEventStartHour" aria-label="Start hour"></select>
+                <span class="plan-time-colon">:</span>
+                <select class="plan-time-select" id="planEventStartMin" aria-label="Start minute"></select>
                 <button type="button" class="plan-ampm-toggle" data-ampm-for="planEventStart" aria-label="Toggle AM or PM">AM</button>
               </div>
               <div class="plan-time-field">
-                <input type="text" class="plan-time-input" id="planEventEnd" inputmode="numeric" maxlength="5" placeholder="10:00" aria-label="End time" />
+                <select class="plan-time-select" id="planEventEndHour" aria-label="End hour"></select>
+                <span class="plan-time-colon">:</span>
+                <select class="plan-time-select" id="planEventEndMin" aria-label="End minute"></select>
                 <button type="button" class="plan-ampm-toggle" data-ampm-for="planEventEnd" aria-label="Toggle AM or PM">AM</button>
               </div>
             </div>

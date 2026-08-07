@@ -824,8 +824,6 @@ const elements = {
   planEventDate: document.querySelector("#planEventDate"),
   planEventAllDay: document.querySelector("#planEventAllDay"),
   planTimeFields: document.querySelector("#planTimeFields"),
-  planEventStart: document.querySelector("#planEventStart"),
-  planEventEnd: document.querySelector("#planEventEnd"),
   planEventNotes: document.querySelector("#planEventNotes"),
   planEventLocation: document.querySelector("#planEventLocation"),
   planEventLocationSuggestions: document.querySelector("#planEventLocationSuggestions"),
@@ -1592,6 +1590,7 @@ function bindEvents() {
   document.getElementById("planEventDate")?.addEventListener("click", (e) => {
     try { e.currentTarget.showPicker?.(); } catch { /* not supported */ }
   });
+  initPlanTimeSelects();
   // AM/PM toggle buttons flip between AM and PM.
   document.querySelectorAll(".plan-ampm-toggle").forEach((btn) => {
     btn.addEventListener("click", () => { btn.textContent = btn.textContent === "AM" ? "PM" : "AM"; });
@@ -33227,30 +33226,39 @@ function syncPlanRepeatUi() {
   if (detail) detail.hidden = !on;
 }
 
-// Custom time fields: a plain "h:mm" text input + an AM/PM toggle button, so we
+// Custom time fields: hour + minute dropdowns and an AM/PM toggle button, so we
 // avoid the native time picker's clock icon and AM/PM column. Stored as 24h.
-function setPlanTimeField(inputId, hhmm24) {
-  const input = document.getElementById(inputId);
-  const btn = document.querySelector(`[data-ampm-for="${inputId}"]`);
+function initPlanTimeSelects() {
+  const hours = Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join("");
+  const mins = Array.from({ length: 12 }, (_, i) => { const m = String(i * 5).padStart(2, "0"); return `<option value="${m}">${m}</option>`; }).join("");
+  ["planEventStart", "planEventEnd"].forEach((prefix) => {
+    const h = document.getElementById(prefix + "Hour");
+    const m = document.getElementById(prefix + "Min");
+    if (h) h.innerHTML = hours;
+    if (m) m.innerHTML = mins;
+  });
+}
+function setPlanTimeField(prefix, hhmm24) {
+  const hourSel = document.getElementById(prefix + "Hour");
+  const minSel = document.getElementById(prefix + "Min");
+  const btn = document.querySelector(`[data-ampm-for="${prefix}"]`);
   let [H, M] = String(hhmm24 || "").split(":").map((n) => parseInt(n, 10));
   if (isNaN(H)) { H = 9; M = 0; }
   if (isNaN(M)) M = 0;
   const ampm = H >= 12 ? "PM" : "AM";
   let h12 = H % 12; if (h12 === 0) h12 = 12;
-  if (input) input.value = `${h12}:${String(M).padStart(2, "0")}`;
+  const min = String((Math.round(M / 5) * 5) % 60).padStart(2, "0"); // snap to the 5-min options
+  if (hourSel) hourSel.value = String(h12);
+  if (minSel) minSel.value = min;
   if (btn) btn.textContent = ampm;
 }
-function readPlanTimeField(inputId) {
-  const input = document.getElementById(inputId);
-  const btn = document.querySelector(`[data-ampm-for="${inputId}"]`);
+function readPlanTimeField(prefix) {
+  const hourSel = document.getElementById(prefix + "Hour");
+  const minSel = document.getElementById(prefix + "Min");
+  const btn = document.querySelector(`[data-ampm-for="${prefix}"]`);
   const pm = btn?.textContent === "PM";
-  const raw = String(input?.value || "").trim();
-  const m = raw.match(/^(\d{1,2})(?::?(\d{0,2}))?$/);
-  let h12 = 12, min = 0;
-  if (m) {
-    h12 = Math.min(12, Math.max(1, parseInt(m[1], 10) || 12));
-    min = Math.min(59, Math.max(0, parseInt(m[2] || "0", 10) || 0));
-  }
+  let h12 = parseInt(hourSel?.value, 10); if (isNaN(h12)) h12 = 12;
+  let min = parseInt(minSel?.value, 10); if (isNaN(min)) min = 0;
   let H = h12 % 12;
   if (pm) H += 12;
   return `${String(H).padStart(2, "0")}:${String(min).padStart(2, "0")}`;

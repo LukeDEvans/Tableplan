@@ -10995,15 +10995,26 @@ body.touch-drag-active * {
   min-width: 0;
 }
 .plan-when-row .plan-when-date input { width: 100%; min-width: 0; }
-/* Each time = a plain h:mm input + an AM/PM toggle button. */
-.plan-time-field { display: flex; align-items: center; gap: 8px; }
-.plan-event-dialog .plan-time-input {
-  width: 3.6em;
+/* Each time = hour + minute dropdowns and an AM/PM toggle button. */
+.plan-time-field { display: flex; align-items: center; gap: 4px; }
+.plan-time-colon { font-weight: 700; }
+.plan-event-dialog .plan-time-select {
+  width: auto;
   min-width: 0;
-  text-align: left;
+  min-height: 0;
+  height: auto;
+  padding: 3px 2px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
 }
+.plan-event-dialog .plan-time-select:focus { outline: none; }
 .plan-ampm-toggle {
   flex-shrink: 0;
+  margin-left: 6px;
   padding: 2px 10px;
   min-height: 0;
   font-size: 0.78rem;
