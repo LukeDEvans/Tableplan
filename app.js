@@ -2354,6 +2354,11 @@ function updateAppLockState() {
 // reloads stay in dev mode until the user logs out. Localhost-only.
 async function signInLocalDev() {
   if (!canUseLocalBackend()) return;
+  // When auto-entered on boot (via the live_local_dev flag) this runs during
+  // module evaluation. Yield once so the rest of the module finishes evaluating
+  // first — otherwise touching any module-level `let` declared below here throws
+  // a TDZ ReferenceError (authCheckCompleted, hydrationOverlayShown, …).
+  await Promise.resolve();
   localDevMode = true;
   localStorage.setItem("live_local_dev", "1");
   authSession = { access_token: "local-dev", user: { id: "local-dev", email: "local@dev" } };
@@ -33224,10 +33229,12 @@ function getPlanEventsForRange(startKey, endKey) {
     });
   });
   getAppDataEvents(startKey, endKey).forEach((e) => events.push(e));
-  return events.sort((a, b) => {
+  events.sort((a, b) => {
     if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
     return (a.startTime || "00:00").localeCompare(b.startTime || "00:00");
   });
+  planRangeCache = { key: cacheKey, val: events };
+  return events;
 }
 
 function getAppDataEvents(startKey, endKey) {
@@ -33267,7 +33274,6 @@ function getAppDataEvents(startKey, endKey) {
     if (!title) return;
     events.push({ id: `do-${task.id || title}`, title, date: key, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.do, source: "do", calendarName: "To-Do" });
   });
-  planRangeCache = { key: cacheKey, val: events };
   return events;
 }
 
