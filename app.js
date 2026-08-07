@@ -1344,6 +1344,21 @@ setInterval(() => {
   checkEventReminders();
 }, 60000);
 
+// Creep the day/week "now" line down live without a full re-render; re-render
+// only when it crosses into a new hour (so it moves to the right row).
+setInterval(() => {
+  if (activeAppArea !== "plan" || (planViewMode !== "day" && planViewMode !== "week")) return;
+  const line = elements.planCalendar?.querySelector(".plan-now-line");
+  if (!line) return; // not viewing today
+  const now = new Date();
+  const cellHour = Number(line.closest("[data-plan-hour]")?.dataset.planHour);
+  if (cellHour !== now.getHours()) {
+    if (!document.querySelector("dialog[open]")) renderPlanPage();
+    return;
+  }
+  line.style.top = `${(now.getMinutes() / 60) * 100}%`;
+}, 30000);
+
 function initTouchDragPolyfill() {
   let pending = null; // { sourceEl, startX, startY, timer }
   let active = null;  // { sourceEl, ghost, lastOver }
