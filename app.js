@@ -442,6 +442,9 @@ let authSession = null;
 // Guarded by canUseLocalBackend() everywhere it's set, so it can NEVER be true
 // off localhost. The data is the LOCAL data/tableplan-state.json, not the cloud.
 let localDevMode = false;
+// Memoized getPlanEventsForRange result ({ key, val }); invalidated on persist,
+// iCal fetch, and full state replacement so it can never go stale.
+let planRangeCache = null;
 let userGroup = null;
 let groupMembers = [];
 let adminDisabledPages = [];
@@ -2921,6 +2924,7 @@ function mirrorStateToLocalStorage() {
 
 function persist() {
   state.stateUpdatedAt = new Date().toISOString();
+  planRangeCache = null; // any state change can affect the calendar's merged events
   mirrorStateToLocalStorage();
   saveTripBackup();
   saveStateToSharedStorage();
@@ -6005,6 +6009,7 @@ function applyStoredState(storedState) {
   // built (from an empty-finance boot) would keep serving unlabeled txns until
   // the next user action — the "my June labels don't show after reload" bug.
   invalidateFinanceLabeled();
+  planRangeCache = null; // state fully replaced
   render();
 }
 
@@ -33002,26 +33007,39 @@ const firedEventReminders = new Set();
 function checkEventReminders() {
   const now = new Date();
   const todayKey = dateKeyFromDate(now);
-  let due;
-  try { due = getPlanEventsForRange(todayKey, todayKey); } catch { return; }
-  for (const e of due) {
-    if (e.source !== "personal" || e.allDay || !e.startTime || !Number.isFinite(e.reminder)) continue;
+  // Scan planEvents directly (no iCal / meal / workout / to-do merge — those
+  // aren't reminder-bearing), so the per-minute tick stays cheap.
+  for (const e of (state.planEvents || [])) {
+    if (e.allDay || !e.startTime || !Number.isFinite(e.reminder)) continue;
+    const occurs = planEventOccursOn(e, todayKey) || (e.endDate && e.date <= todayKey && todayKey <= e.endDate);
+    if (!occurs) continue;
     const [h, m] = e.startTime.split(":").map(Number);
     if (!Number.isFinite(h)) continue;
     const start = new Date(now); start.setHours(h, m || 0, 0, 0);
     const diff = now.getTime() - (start.getTime() - e.reminder * 60000);
     if (diff < 0 || diff >= 60000) continue; // reminder falls in this minute
-    const fireKey = `${e.occurrenceOf || e.id}:${todayKey}`;
+    const fireKey = `${e.id}:${todayKey}`;
     if (firedEventReminders.has(fireKey)) continue;
     firedEventReminders.add(fireKey);
-    const body = `${e.title} — ${planFormatTime(e.startTime)}`;
-    showMailToast(body);
-    try {
-      if (window.Notification && Notification.permission === "granted") {
-        new Notification("Upcoming event", { body, icon: "/favicon.svg", tag: `plan-evt-${e.occurrenceOf || e.id}` });
-      }
-    } catch { /* notifications unavailable */ }
+    fireEventReminder(e);
   }
+}
+
+function fireEventReminder(e) {
+  const body = `${e.title} — ${planFormatTime(e.startTime)}`;
+  showMailToast(body);
+  // Prefer the service worker (shows even when the tab is backgrounded); fall
+  // back to a page Notification. Both need granted permission.
+  try {
+    if (window.Notification && Notification.permission === "granted") {
+      const opts = { body, icon: "/favicon.svg", tag: `plan-evt-${e.id}`, data: { url: "/#schedule" } };
+      if (navigator.serviceWorker?.ready) {
+        navigator.serviceWorker.ready.then((reg) => reg.showNotification("Upcoming event", opts)).catch(() => new Notification("Upcoming event", opts));
+      } else {
+        new Notification("Upcoming event", opts);
+      }
+    }
+  } catch { /* notifications unavailable */ }
 }
 
 // Drag-to-reschedule: move a personal event to the dropped-on day.
@@ -33090,6 +33108,8 @@ function openPlanSyntheticEvent(source) {
 }
 
 function getPlanEventsForRange(startKey, endKey) {
+  const cacheKey = `${startKey}|${endKey}|${sectionScope("plan")}`;
+  if (planRangeCache && planRangeCache.key === cacheKey) return planRangeCache.val;
   const events = [];
   const eventColor = (e) => e.color || ((state.planCalendars || []).find((c) => c.id === e.calendarId)?.color) || PLAN_COLORS[0];
   (state.planEvents || []).forEach((e) => {
@@ -33178,6 +33198,7 @@ function getAppDataEvents(startKey, endKey) {
     if (!title) return;
     events.push({ id: `do-${task.id || title}`, title, date: key, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.do, source: "do", calendarName: "To-Do" });
   });
+  planRangeCache = { key: cacheKey, val: events };
   return events;
 }
 
@@ -34249,6 +34270,7 @@ async function fetchOnePlanCalendar(cal) {
     if (!res.ok) return;
     const data = await res.json();
     planCalendarCache[cal.id] = { fetchedAt: new Date(), events: data.events || [] };
+    planRangeCache = null; // fresh iCal events — drop the memoized range
     state.planCalendars = (state.planCalendars || []).map((c) => c.id === cal.id ? { ...c, lastFetched: new Date().toISOString() } : c);
     persist();
     if (activeAppArea === "plan") renderPlanPage();
