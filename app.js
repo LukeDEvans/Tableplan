@@ -1338,6 +1338,7 @@ setInterval(() => {
   if (elements.doPlannerGrid && elements.doPlannerGrid.offsetParent !== null && !doNotifOpen && !document.querySelector("dialog[open]")) {
     renderDoPlanner();
   }
+  checkEventReminders();
 }, 60000);
 
 function initTouchDragPolyfill() {
@@ -1601,6 +1602,8 @@ function bindEvents() {
   });
   elements.planEventAllDay.addEventListener("change", () => {
     elements.planTimeFields.hidden = elements.planEventAllDay.checked;
+    const remRow = document.getElementById("planEventReminderRow");
+    if (remRow) remRow.hidden = elements.planEventAllDay.checked;
   });
   elements.planEventCalPicker?.addEventListener("change", updatePlanEventCalDot);
   elements.planEventLocation?.addEventListener("input", () => {
@@ -32803,6 +32806,8 @@ function normalizePlanEvents(events) {
     // When on, the event shows on the meal plan in whichever meal column(s) its
     // time of day falls into (all-day / untimed events show on every meal).
     showInMealPlan: Boolean(e?.showInMealPlan),
+    reminder: Number.isFinite(e?.reminder) ? e.reminder : null,
+    endDate: (typeof e?.endDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(e.endDate)) ? e.endDate : null,
     createdAt: e?.createdAt || new Date().toISOString()
   })).filter((e) => e.date && e.title) : [];
 }
@@ -32987,6 +32992,35 @@ function scrollPlanGridToNow() {
   const now = new Date();
   const focusHour = hasNow ? (now.getHours() + now.getMinutes() / 60) : 8;
   grid.scrollTop = Math.max(0, focusHour * rowH - grid.clientHeight * 0.35);
+}
+
+// In-app event reminders: fires a toast (+ browser notification when granted)
+// as each timed event's reminder time passes, while the app is open. Runs on
+// the shared per-minute tick; fired reminders are tracked per session.
+const firedEventReminders = new Set();
+function checkEventReminders() {
+  const now = new Date();
+  const todayKey = dateKeyFromDate(now);
+  let due;
+  try { due = getPlanEventsForRange(todayKey, todayKey); } catch { return; }
+  for (const e of due) {
+    if (e.source !== "personal" || e.allDay || !e.startTime || !Number.isFinite(e.reminder)) continue;
+    const [h, m] = e.startTime.split(":").map(Number);
+    if (!Number.isFinite(h)) continue;
+    const start = new Date(now); start.setHours(h, m || 0, 0, 0);
+    const diff = now.getTime() - (start.getTime() - e.reminder * 60000);
+    if (diff < 0 || diff >= 60000) continue; // reminder falls in this minute
+    const fireKey = `${e.occurrenceOf || e.id}:${todayKey}`;
+    if (firedEventReminders.has(fireKey)) continue;
+    firedEventReminders.add(fireKey);
+    const body = `${e.title} — ${planFormatTime(e.startTime)}`;
+    showMailToast(body);
+    try {
+      if (window.Notification && Notification.permission === "granted") {
+        new Notification("Upcoming event", { body, icon: "/favicon.svg", tag: `plan-evt-${e.occurrenceOf || e.id}` });
+      }
+    } catch { /* notifications unavailable */ }
+  }
 }
 
 function bindPlanSwipe(el) {
@@ -33432,6 +33466,11 @@ function openPlanEventDialog(date, eventId) {
   // Restore the monthly/yearly pattern (populatePlanRepeatMode ran via sync).
   const repeatModeSel = document.getElementById("planEventRepeatMode");
   if (repeatModeSel && !repeatModeSel.hidden) repeatModeSel.value = rec?.monthMode === "nthWeekday" ? "nthWeekday" : "dayOfMonth";
+  // Reminder (timed events only — hidden for all-day).
+  const remSel = document.getElementById("planEventReminder");
+  if (remSel) remSel.value = existing?.reminder != null ? String(existing.reminder) : "";
+  const remRow = document.getElementById("planEventReminderRow");
+  if (remRow) remRow.hidden = elements.planEventAllDay.checked;
 
   // To-Do embedding: toggle + editable chore list.
   const addTodo = document.getElementById("planEventAddTodo");
@@ -33612,8 +33651,11 @@ function savePlanEvent() {
   const addToDo = Boolean(document.getElementById("planEventAddTodo")?.checked);
   const showInMealPlan = Boolean(document.getElementById("planEventAddMealPlan")?.checked);
   const chores = (planEventChoresDraft || []).map((c) => c.trim()).filter(Boolean);
+  const remRaw = document.getElementById("planEventReminder")?.value;
+  const reminder = (!allDay && remRaw !== "" && remRaw != null) ? Number(remRaw) : null;
   const eventData = {
     title, date, allDay,
+    reminder,
     startTime: allDay ? null : readPlanTimeField("planEventStart"),
     endTime: allDay ? null : readPlanTimeField("planEventEnd"),
     notes: elements.planEventNotes.value.trim(),

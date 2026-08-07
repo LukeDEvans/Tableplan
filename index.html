@@ -3174,6 +3174,18 @@
             </div>
             <select class="plan-cal-select plan-repeat-mode" id="planEventRepeatMode" aria-label="Repeat pattern" hidden></select>
           </div>
+          <div class="form-field plan-reminder-field" id="planEventReminderRow">
+            <span class="plan-reminder-icon" aria-hidden="true">🔔</span>
+            <select class="plan-cal-select" id="planEventReminder" aria-label="Reminder">
+              <option value="">No reminder</option>
+              <option value="0">At time of event</option>
+              <option value="5">5 minutes before</option>
+              <option value="10">10 minutes before</option>
+              <option value="30">30 minutes before</option>
+              <option value="60">1 hour before</option>
+              <option value="1440">1 day before</option>
+            </select>
+          </div>
           <div class="form-field plan-location-field">
             <svg class="plan-field-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
             <input type="text" id="planEventLocation" placeholder="Location" autocomplete="off" role="combobox" aria-expanded="false" />
