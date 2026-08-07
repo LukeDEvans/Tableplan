@@ -10902,6 +10902,24 @@ body.touch-drag-active * {
 
 .plan-timed-event:hover { background: color-mix(in srgb, var(--evt-color) 32%, transparent); }
 
+/* Current-time indicator in the day/week hour grid. */
+.plan-now-line {
+  position: absolute;
+  left: 0; right: 0;
+  height: 0;
+  border-top: 2px solid #ea4335;
+  z-index: 6;
+  pointer-events: none;
+}
+.plan-now-line::before {
+  content: "";
+  position: absolute;
+  left: -1px; top: -4px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #ea4335;
+}
+
 /* ── Day view ── */
 
 .plan-day { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }

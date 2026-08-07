@@ -32972,6 +32972,19 @@ function renderPlanPage() {
     });
   });
   bindPlanSwipe(elements.planCalendar.querySelector("[data-plan-swipe]"));
+  if (planViewMode === "day" || planViewMode === "week") requestAnimationFrame(scrollPlanGridToNow);
+}
+
+// Scroll the day/week hour grid so "now" (or ~8am on a non-today view) is in
+// view, instead of always starting at midnight.
+function scrollPlanGridToNow() {
+  const grid = elements.planCalendar?.querySelector(".plan-week-grid");
+  if (!grid) return;
+  const rowH = grid.querySelector(".plan-hour-row")?.offsetHeight || 56;
+  const hasNow = Boolean(grid.querySelector(".plan-now-line"));
+  const now = new Date();
+  const focusHour = hasNow ? (now.getHours() + now.getMinutes() / 60) : 8;
+  grid.scrollTop = Math.max(0, focusHour * rowH - grid.clientHeight * 0.35);
 }
 
 function bindPlanSwipe(el) {
@@ -33163,6 +33176,8 @@ function renderPlanWeekView() {
       ${evts.map(planEventPillTemplate).join("")}
     </div>`;
   }).join("");
+  const now = new Date();
+  const nowH = now.getHours(), nowTop = (now.getMinutes() / 60) * 100;
   const hourRows = Array.from({ length: 24 }, (_, h) => {
     const label = h === 0 ? "" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
     const cols = days.map((d) => {
@@ -33172,8 +33187,9 @@ function renderPlanWeekView() {
         const [eh] = (e.startTime || "00:00").split(":").map(Number);
         return eh === h;
       });
+      const nowLine = (key === today && h === nowH) ? `<div class="plan-now-line" style="top:${nowTop}%"></div>` : "";
       return `<div class="plan-week-cell" data-plan-day="${escapeHtml(key)}" data-plan-hour="${h}">
-        ${evts.map((e) => planTimedEventBlock(e)).join("")}
+        ${nowLine}${evts.map((e) => planTimedEventBlock(e)).join("")}
       </div>`;
     }).join("");
     return `<div class="plan-hour-row">
@@ -33197,6 +33213,8 @@ function renderPlanWeekView() {
 function renderPlanDayView() {
   const key = dateKeyFromDate(planViewDate);
   const today = dateKeyFromDate(new Date());
+  const now = new Date();
+  const nowH = now.getHours(), nowTop = (now.getMinutes() / 60) * 100;
   const allEvents = getPlanEventsForRange(key, key);
   const allDay = allEvents.filter((e) => e.allDay);
   const timed = allEvents.filter((e) => !e.allDay && e.startTime);
@@ -33206,10 +33224,11 @@ function renderPlanDayView() {
       const [eh] = (e.startTime || "00:00").split(":").map(Number);
       return eh === h;
     });
+    const nowLine = (key === today && h === nowH) ? `<div class="plan-now-line" style="top:${nowTop}%"></div>` : "";
     return `<div class="plan-hour-row plan-day-hour-row">
       <div class="plan-time-label">${label}</div>
       <div class="plan-day-cell" data-plan-day="${escapeHtml(key)}" data-plan-hour="${h}">
-        ${evts.map((e) => planTimedEventBlock(e)).join("")}
+        ${nowLine}${evts.map((e) => planTimedEventBlock(e)).join("")}
       </div>
     </div>`;
   }).join("");
