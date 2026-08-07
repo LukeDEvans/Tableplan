@@ -33141,7 +33141,10 @@ function getPlanEventsForRange(startKey, endKey) {
       while (g++ < 400) {
         const k = dateKeyFromDate(d);
         if (k > last) break;
-        if (k >= e.date) events.push({ ...e, date: k, occurrenceOf: e.id, source: "personal", color });
+        if (k >= e.date) {
+          const spanPos = k === e.date ? "start" : (k === e.endDate ? "end" : "mid");
+          events.push({ ...e, date: k, occurrenceOf: e.id, source: "personal", color, spanPos });
+        }
         d.setDate(d.getDate() + 1);
       }
     } else if (e.date >= startKey && e.date <= endKey) {
@@ -33218,13 +33221,19 @@ function getAppDataEvents(startKey, endKey) {
 }
 
 function planEventPillTemplate(event) {
+  const commonAttrs = `data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}" style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])}" title="${escapeHtml(event.title)}"`;
+  // Multi-day continuation days render as a title-less bar segment that connects
+  // to the neighbouring days (the title shows only on the start day).
+  if (event.spanPos && event.spanPos !== "start") {
+    return `<div class="plan-event-pill is-span plan-span-${event.spanPos}" ${commonAttrs}></div>`;
+  }
+  const spanCls = event.spanPos === "start" ? " is-span plan-span-start" : "";
   const dot = `<span class="plan-event-dot" style="background:${escapeHtml(event.color || PLAN_COLORS[0])}"></span>`;
   const time = (!event.allDay && event.startTime) ? `<span class="plan-event-time">${escapeHtml(planFormatTime(event.startTime))}</span>` : "";
   // Only a plain (personal, non-recurring, single-day) event can be dragged to
   // another day — synthetic/iCal/recurring/multi-day pills are not reschedulable.
   const movable = (!event.source || event.source === "personal") && !event.recurrence && !event.occurrenceOf;
-  return `<div class="plan-event-pill${movable ? " is-movable" : ""}"${movable ? ' draggable="true" data-evt-movable="1"' : ""} data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}"
-               style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])}" title="${escapeHtml(event.title)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}">
+  return `<div class="plan-event-pill${movable ? " is-movable" : ""}${spanCls}"${movable ? ' draggable="true" data-evt-movable="1"' : ""} ${commonAttrs}>
     ${dot}${time}<span class="plan-event-title">${escapeHtml(event.title)}</span>${event.recurrence || event.occurrenceOf ? '<span class="plan-event-recur" aria-hidden="true">↻</span>' : ""}
   </div>`;
 }

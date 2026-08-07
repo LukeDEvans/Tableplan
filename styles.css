@@ -10792,6 +10792,13 @@ body.touch-drag-active * {
 .plan-event-pill.is-movable { cursor: grab; }
 .plan-event-pill.is-dragging { opacity: 0.4; }
 .plan-drop-target { outline: 2px dashed var(--accent, #1a73e8); outline-offset: -2px; background: color-mix(in srgb, var(--accent, #1a73e8) 12%, transparent); }
+/* Multi-day events read as one connected bar across adjacent day cells (the
+   negative margins bleed each segment to the cell edge; the cell borders leave
+   a faint seam). Title shows only on the start segment. */
+.plan-event-pill.is-span { min-height: 16px; }
+.plan-span-mid { margin: 0 -3px; border-radius: 0; }
+.plan-span-start { margin-right: -3px; border-radius: 4px 0 0 4px; }
+.plan-span-end { margin-left: -3px; border-radius: 0 4px 4px 0; }
 
 .plan-event-dot {
   width: 7px; height: 7px;
