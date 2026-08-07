@@ -10510,8 +10510,10 @@ body.touch-drag-active * {
   background: var(--window-bg, #fff);
 }
 
-/* Calendar page: collapsible left sidebar (calendars manager) + calendar body.
-   Mirrors the Mail/Media sidebars — collapse on wide screens, overlay on narrow. */
+/* Calendar page: full-width top bar over a [sidebar + calendar] row — mirrors the
+   Mail/Media pages. The topbar stays put; the sidebar opens below it. */
+.plan-page-inner { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.plan-topbar { flex-shrink: 0; }
 .plan-layout { display: flex; flex: 1; min-height: 0; min-width: 0; }
 .plan-layout .plan-calendar { flex: 1; min-width: 0; height: auto; }
 .plan-sidebar {
@@ -10525,14 +10527,6 @@ body.touch-drag-active * {
 }
 .plan-sidebar.is-collapsed { width: 0; padding: 0; overflow: hidden; border-right: 0; }
 .plan-sidebar-head { font-size: 0.9rem; font-weight: 700; margin-bottom: 10px; }
-/* Search input + a collapse hamburger on its right. The hamburger shows only on
-   mobile, where the toolbar's hamburger is hidden under the sidebar overlay; the
-   search input shrinks to make room. */
-.plan-search-row { display: flex; align-items: center; gap: 8px; }
-.plan-search-row .plan-search-input { flex: 1; min-width: 0; }
-.plan-sidebar-collapse { display: none; flex-shrink: 0; width: 36px; height: 36px; min-height: 36px; }
-.plan-sidebar-collapse svg { width: 20px; height: 20px; stroke: currentColor; stroke-width: 2; fill: none; }
-@media (max-width: 860px) { .plan-sidebar-collapse { display: inline-flex; } }
 .plan-search-wrap { margin-bottom: 14px; }
 .plan-search-input {
   width: 100%;
@@ -10564,6 +10558,35 @@ body.touch-drag-active * {
     border-right: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
     box-shadow: 2px 0 12px rgba(0,0,0,0.15);
   }
+}
+
+/* Desktop: the calendar sidebar is a slim rail (color dots only) that floats open
+   to the full calendars manager on hover — an overlay, so the calendar never
+   shifts. The topbar hamburger (.is-collapsed) hides it entirely. Mirrors the
+   Media/Explore sidebars. */
+@media (min-width: 861px) {
+  .plan-layout { position: relative; padding-left: 52px; transition: padding-left 0.18s ease; }
+  .plan-layout:has(.plan-sidebar.is-collapsed) { padding-left: 0; }
+
+  .plan-sidebar {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    width: 52px; padding: 12px 0; z-index: 15;
+    background: var(--window-bg, #fff);
+    overflow-x: hidden;
+    transition: width 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease, padding 0.18s ease;
+  }
+  .plan-sidebar.is-collapsed { transform: translateX(-100%); width: 52px; padding: 12px 0; border-right: 0; }
+  .plan-sidebar:hover { width: 240px; padding: 12px; box-shadow: 4px 0 18px rgba(0,0,0,0.13); }
+
+  /* Rail state (not hovered): show only the color dots, centered. */
+  .plan-sidebar:not(:hover) .plan-search-wrap,
+  .plan-sidebar:not(:hover) .plan-sidebar-head,
+  .plan-sidebar:not(:hover) .plan-cal-section-head,
+  .plan-sidebar:not(:hover) .plan-cal-name,
+  .plan-sidebar:not(:hover) .plan-cal-toggle,
+  .plan-sidebar:not(:hover) .plan-cal-empty { display: none; }
+  .plan-sidebar:not(:hover) .plan-cal-section { margin-bottom: 8px; }
+  .plan-sidebar:not(:hover) .plan-cal-front { justify-content: center; gap: 0; padding-left: 0; padding-right: 0; }
 }
 
 /* View tab bar + calendar actions (Today / +) share one row inside the window */

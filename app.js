@@ -826,6 +826,7 @@ const elements = {
   titlePlanBtn: document.querySelector("#titlePlanBtn"),
   planMainPage: document.querySelector("#planMainPage"),
   planCalendar: document.querySelector("#planCalendar"),
+  planTopbar: document.querySelector("#planTopbar"),
   planEventDialog: document.querySelector("#planEventDialog"),
   planEventTitle: document.querySelector("#planEventTitle"),
   planEventDate: document.querySelector("#planEventDate"),
@@ -32947,7 +32948,11 @@ function navigatePlanView(dir) {
 function renderPlanPage() {
   if (!elements.planCalendar) return;
   const swipeAttr = `data-plan-swipe`;
-  elements.planCalendar.innerHTML = `
+  // The toolbar is a full-width top bar ABOVE the sidebar+calendar row (like the
+  // Mail/Media topbars), so the hamburger stays put and the sidebar opens below
+  // it — never covering the hamburger.
+  if (elements.planTopbar) {
+    elements.planTopbar.innerHTML = `
     <div class="plan-cal-toolbar">
       <button class="icon-btn plan-sidebar-toggle" type="button" id="planSidebarToggle" title="Calendars" aria-label="Toggle calendars">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
@@ -32967,7 +32972,9 @@ function renderPlanPage() {
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
         </button>
       </div>
-    </div>
+    </div>`;
+  }
+  elements.planCalendar.innerHTML = `
     <div class="plan-view-content" ${swipeAttr}="true">
       ${planViewMode === "month" ? renderPlanMonthView()
         : planViewMode === "week" ? renderPlanWeekView()
@@ -32975,22 +32982,22 @@ function renderPlanPage() {
         : renderPlanAgendaView()}
     </div>
   `;
-  elements.planCalendar.querySelectorAll("[data-plan-view]").forEach((btn) => {
+  // Toolbar controls live in the top bar now; grid controls stay in the calendar.
+  const topbar = elements.planTopbar;
+  topbar?.querySelectorAll("[data-plan-view]").forEach((btn) => {
     btn.addEventListener("click", () => {
       planViewMode = btn.dataset.planView;
       setWeekToolsMode("plan");
       renderPlanPage();
     });
   });
-  // Today / add-event now live inside the calendar window (rendered here), so
-  // they're re-wired on every render like the view tabs above.
-  elements.planCalendar.querySelector("#planSidebarToggle")?.addEventListener("click", togglePlanSidebar);
-  elements.planCalendar.querySelector("#planTodayBtn")?.addEventListener("click", () => {
+  topbar?.querySelector("#planSidebarToggle")?.addEventListener("click", togglePlanSidebar);
+  topbar?.querySelector("#planTodayBtn")?.addEventListener("click", () => {
     planViewDate = new Date();
     setWeekToolsMode("plan");
     renderPlanPage();
   });
-  elements.planCalendar.querySelector("#planAddEventBtn")?.addEventListener("click", () => openPlanEventDialog(dateKeyFromDate(new Date())));
+  topbar?.querySelector("#planAddEventBtn")?.addEventListener("click", () => openPlanEventDialog(dateKeyFromDate(new Date())));
   elements.planCalendar.querySelectorAll("[data-plan-day]").forEach((cell) => {
     cell.addEventListener("click", (e) => {
       if (e.target.closest("[data-plan-event-id]")) return;
@@ -34057,7 +34064,6 @@ function openAddPlanCalDialog() {
 
 let planSearchDebounce = null;
 function initPlanCalListDelegation() {
-  document.getElementById("planSidebarCollapse")?.addEventListener("click", closePlanSidebar);
   const searchInput = document.getElementById("planSearchInput");
   if (searchInput) {
     searchInput.addEventListener("input", (e) => {
