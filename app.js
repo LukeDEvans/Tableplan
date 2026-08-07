@@ -33054,6 +33054,17 @@ function getPlanEventsForRange(startKey, endKey) {
       expandRecurringOccurrences(e, startKey, endKey).forEach((occDate) => {
         events.push({ ...e, date: occDate, occurrenceOf: e.id, source: "personal", color });
       });
+    } else if (e.endDate && e.endDate > e.date) {
+      // Multi-day: show on each spanned day within the visible range.
+      let d = new Date((e.date > startKey ? e.date : startKey) + "T00:00:00");
+      const last = e.endDate < endKey ? e.endDate : endKey;
+      let g = 0;
+      while (g++ < 400) {
+        const k = dateKeyFromDate(d);
+        if (k > last) break;
+        if (k >= e.date) events.push({ ...e, date: k, occurrenceOf: e.id, source: "personal", color });
+        d.setDate(d.getDate() + 1);
+      }
     } else if (e.date >= startKey && e.date <= endKey) {
       events.push({ ...e, source: "personal", color });
     }
@@ -33471,6 +33482,9 @@ function openPlanEventDialog(date, eventId) {
   if (remSel) remSel.value = existing?.reminder != null ? String(existing.reminder) : "";
   const remRow = document.getElementById("planEventReminderRow");
   if (remRow) remRow.hidden = elements.planEventAllDay.checked;
+  // Optional end date (multi-day events).
+  const endDateEl = document.getElementById("planEventEndDate");
+  if (endDateEl) endDateEl.value = existing?.endDate || "";
 
   // To-Do embedding: toggle + editable chore list.
   const addTodo = document.getElementById("planEventAddTodo");
@@ -33653,9 +33667,11 @@ function savePlanEvent() {
   const chores = (planEventChoresDraft || []).map((c) => c.trim()).filter(Boolean);
   const remRaw = document.getElementById("planEventReminder")?.value;
   const reminder = (!allDay && remRaw !== "" && remRaw != null) ? Number(remRaw) : null;
+  const endDateRaw = document.getElementById("planEventEndDate")?.value || "";
+  const endDate = (endDateRaw && endDateRaw > date) ? endDateRaw : null;
   const eventData = {
     title, date, allDay,
-    reminder,
+    reminder, endDate,
     startTime: allDay ? null : readPlanTimeField("planEventStart"),
     endTime: allDay ? null : readPlanTimeField("planEventEnd"),
     notes: elements.planEventNotes.value.trim(),

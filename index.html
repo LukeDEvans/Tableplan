@@ -3127,9 +3127,11 @@
             <select class="plan-cal-select" id="planEventCalPicker" aria-label="Calendar"></select>
           </div>
           <div class="plan-when-row">
-            <label class="form-field plan-when-date">
-              <input type="date" id="planEventDate" aria-label="Date" />
-            </label>
+            <div class="form-field plan-when-date plan-date-range">
+              <input type="date" id="planEventDate" aria-label="Start date" />
+              <span class="plan-date-sep" aria-hidden="true">→</span>
+              <input type="date" id="planEventEndDate" aria-label="End date" />
+            </div>
             <label class="plan-allday-field">
               <input type="checkbox" class="live-toggle" id="planEventAllDay" />
               <span>All day</span>
