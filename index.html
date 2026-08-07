@@ -655,7 +655,12 @@
                 <input type="search" id="planSearchInput" class="plan-search-input" placeholder="Search events" aria-label="Search events" autocomplete="off" />
                 <div class="plan-search-results" id="planSearchResults" hidden></div>
               </div>
-              <div class="plan-sidebar-head">Calendars</div>
+              <div class="plan-sidebar-head">
+                <span>Calendars</span>
+                <button class="icon-btn plan-sidebar-close" id="planSidebarClose" type="button" title="Close" aria-label="Close calendars">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+              </div>
               <div id="planCalList"></div>
             </aside>
             <div class="plan-calendar" id="planCalendar"></div>

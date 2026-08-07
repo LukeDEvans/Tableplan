@@ -34041,6 +34041,13 @@ function openPlanSidebar() {
   else sidebar.classList.remove("is-collapsed");
 }
 
+function closePlanSidebar() {
+  const sidebar = document.getElementById("planSidebar");
+  if (!sidebar) return;
+  if (window.innerWidth <= 860) sidebar.classList.remove("is-expanded");
+  else sidebar.classList.add("is-collapsed");
+}
+
 function openAddPlanCalDialog() {
   renderPlanColorPicker(elements.planNewCalColorPicker, PLAN_COLORS[2], "planNewCalColor");
   elements.planNewCalName.value = "";
@@ -34050,6 +34057,7 @@ function openAddPlanCalDialog() {
 
 let planSearchDebounce = null;
 function initPlanCalListDelegation() {
+  document.getElementById("planSidebarClose")?.addEventListener("click", closePlanSidebar);
   const searchInput = document.getElementById("planSearchInput");
   if (searchInput) {
     searchInput.addEventListener("input", (e) => {
