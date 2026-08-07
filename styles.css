@@ -11042,6 +11042,24 @@ body.touch-drag-active * {
   color: var(--window-border);
   line-height: 1.4;
 }
+/* On mobile the dialog is full-screen: stretch the time dropdowns across the row
+   and enlarge the tap targets so they're easy to adjust with a finger. */
+@media (max-width: 560px) {
+  .plan-time-field { width: 100%; gap: 8px; }
+  .plan-event-dialog .plan-time-select {
+    flex: 1;
+    min-width: 0;
+    min-height: 44px;
+    padding: 8px 10px;
+    font-size: 1rem;
+    border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
+    border-radius: 10px;
+    background: var(--window-bg);
+    text-align: center;
+    text-align-last: center;
+  }
+  .plan-ampm-toggle { padding: 10px 16px; font-size: 0.95rem; }
+}
 
 /* Location autocomplete */
 .plan-location-field { position: relative; display: flex; align-items: center; gap: 6px; }
