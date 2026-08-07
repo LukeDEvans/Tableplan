@@ -213,7 +213,7 @@ const STATE_SECTIONS = {
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
   media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder"],
-  plan:      ["calendars", "planEvents", "planCalendars"],
+  plan:      ["calendars", "planEvents", "planCalendars", "planHiddenSources"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies"],
@@ -3124,6 +3124,7 @@ function defaultState() {
     ingredientOptions: defaultIngredientOptions(),
     calendars: [],
     planEvents: [],
+    planHiddenSources: {},
     groceryReviewDismissed: {},
     activeCooking: [],
     weeklyEmailSettings: defaultWeeklyEmailSettings(),
@@ -3327,6 +3328,7 @@ function normalizeState(parsed) {
     collapsedDays: parsed?.collapsedDays || {},
     planEvents: normalizePlanEvents(parsed?.planEvents),
     planCalendars: normalizePlanCalendars(parsed?.planCalendars),
+    planHiddenSources: (parsed?.planHiddenSources && typeof parsed.planHiddenSources === "object") ? parsed.planHiddenSources : {},
     mealPlanConfig,
     appName: typeof parsed?.appName === "string" ? parsed.appName.trim() : "",
     travelHome: typeof parsed?.travelHome === "string" ? parsed.travelHome.trim() : "",
@@ -33052,7 +33054,8 @@ function getPlanEventsForRange(startKey, endKey) {
 
 function getAppDataEvents(startKey, endKey) {
   const events = [];
-  const plans = state.plans || {};
+  const hidden = state.planHiddenSources || {}; // sidebar overlay toggles
+  const plans = hidden.eat ? {} : (state.plans || {});
   Object.keys(plans).forEach((weekKey) => {
     const week = plans[weekKey] || {};
     Object.keys(week).forEach((dayOffset) => {
@@ -33072,13 +33075,13 @@ function getAppDataEvents(startKey, endKey) {
       } catch { }
     });
   });
-  (state.workouts || []).forEach((w) => {
+  (hidden.play ? [] : (state.workouts || [])).forEach((w) => {
     (w.logs || []).forEach((log) => {
       if (!log.date || log.date < startKey || log.date > endKey) return;
       events.push({ id: `play-${log.id}`, title: w.title || "Workout", date: log.date, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.play, source: "play", calendarName: "Exercise" });
     });
   });
-  const doTasks = [...(state.doPlans ? Object.values(state.doPlans).flatMap((d) => Object.values(d || {}).flat()) : []), ...(state.doTasks || [])];
+  const doTasks = hidden.do ? [] : [...(state.doPlans ? Object.values(state.doPlans).flatMap((d) => Object.values(d || {}).flat()) : []), ...(state.doTasks || [])];
   doTasks.forEach((task) => {
     const key = task?.date || task?.dueDate;
     if (!key || key < startKey || key > endKey) return;
@@ -33892,11 +33895,20 @@ function initPlanCalListDelegation() {
 
   list.addEventListener("change", (e) => {
     const toggle = e.target.closest("[data-cal-toggle]");
-    if (!toggle) return;
-    const id = toggle.dataset.calToggle;
-    state.planCalendars = (state.planCalendars || []).map((c) => c.id === id ? { ...c, enabled: toggle.checked } : c);
-    persist();
-    if (activeAppArea === "plan") renderPlanPage();
+    if (toggle) {
+      const id = toggle.dataset.calToggle;
+      state.planCalendars = (state.planCalendars || []).map((c) => c.id === id ? { ...c, enabled: toggle.checked } : c);
+      persist();
+      if (activeAppArea === "plan") renderPlanPage();
+      return;
+    }
+    const overlay = e.target.closest("[data-overlay-toggle]");
+    if (overlay) {
+      if (!state.planHiddenSources || typeof state.planHiddenSources !== "object") state.planHiddenSources = {};
+      state.planHiddenSources[overlay.dataset.overlayToggle] = !overlay.checked; // checked = visible
+      persist();
+      if (activeAppArea === "plan") renderPlanPage();
+    }
   });
 
   // Desktop: right-click a calendar row for Edit / Delete.
@@ -33955,6 +33967,22 @@ function openPlanCalContextMenu(event, id) {
   menu.querySelector("[data-ctx-delete]").addEventListener("click", (ev) => { ev.stopPropagation(); closeFolderMenu(); deletePlanCalendar(id); });
 }
 
+// Sidebar row for an app-data overlay (Meal Plan / Exercise / To-Do). Checked =
+// shown; unchecking records the source in state.planHiddenSources.
+function planOverlayRowHtml(source, name, color) {
+  const hidden = state.planHiddenSources || {};
+  return `
+    <div class="plan-cal-row">
+      <div class="plan-cal-front">
+        <span class="plan-cal-dot" style="background:${color}"></span>
+        <span class="plan-cal-name">${escapeHtml(name)}</span>
+        <label class="plan-cal-toggle">
+          <input type="checkbox" data-overlay-toggle="${escapeHtml(source)}" ${hidden[source] ? "" : "checked"} />
+        </label>
+      </div>
+    </div>`;
+}
+
 function renderPlanCalList() {
   const cals = state.planCalendars || [];
   const native = cals.filter((c) => !c.url);
@@ -33986,6 +34014,14 @@ function renderPlanCalList() {
       </div>
       ${subscribed.map((c) => planCalRowHtml(c)).join("")}
       ${!subscribed.length ? `<p class="plan-cal-empty">No iCal subscriptions yet.</p>` : ""}
+    </div>
+    <div class="plan-cal-section">
+      <div class="plan-cal-section-head">
+        <span class="plan-cal-section-title">From the app</span>
+      </div>
+      ${planOverlayRowHtml("eat", "Meal Plan", PLAN_APP_COLORS.eat)}
+      ${planOverlayRowHtml("play", "Exercise", PLAN_APP_COLORS.play)}
+      ${planOverlayRowHtml("do", "To-Do", PLAN_APP_COLORS.do)}
     </div>
   `;
 
