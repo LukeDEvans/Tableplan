@@ -34057,7 +34057,7 @@ function openAddPlanCalDialog() {
 
 let planSearchDebounce = null;
 function initPlanCalListDelegation() {
-  document.getElementById("planSidebarClose")?.addEventListener("click", closePlanSidebar);
+  document.getElementById("planSidebarCollapse")?.addEventListener("click", closePlanSidebar);
   const searchInput = document.getElementById("planSearchInput");
   if (searchInput) {
     searchInput.addEventListener("input", (e) => {

@@ -652,15 +652,15 @@
           <div class="plan-layout">
             <aside class="plan-sidebar is-collapsed" id="planSidebar">
               <div class="plan-search-wrap">
-                <input type="search" id="planSearchInput" class="plan-search-input" placeholder="Search events" aria-label="Search events" autocomplete="off" />
+                <div class="plan-search-row">
+                  <input type="search" id="planSearchInput" class="plan-search-input" placeholder="Search events" aria-label="Search events" autocomplete="off" />
+                  <button class="icon-btn plan-sidebar-collapse" id="planSidebarCollapse" type="button" title="Collapse calendars" aria-label="Collapse calendars">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+                  </button>
+                </div>
                 <div class="plan-search-results" id="planSearchResults" hidden></div>
               </div>
-              <div class="plan-sidebar-head">
-                <span>Calendars</span>
-                <button class="icon-btn plan-sidebar-close" id="planSidebarClose" type="button" title="Close" aria-label="Close calendars">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-                </button>
-              </div>
+              <div class="plan-sidebar-head">Calendars</div>
               <div id="planCalList"></div>
             </aside>
             <div class="plan-calendar" id="planCalendar"></div>

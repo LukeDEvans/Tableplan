@@ -10524,13 +10524,15 @@ body.touch-drag-active * {
   transition: width 0.18s ease;
 }
 .plan-sidebar.is-collapsed { width: 0; padding: 0; overflow: hidden; border-right: 0; }
-.plan-sidebar-head { font-size: 0.9rem; font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
-/* The hamburger is hidden under the sidebar overlay on mobile, so the sidebar
-   carries its own close button there (hidden on desktop, where the hamburger
-   toggles it). */
-.plan-sidebar-close { display: none; width: 30px; height: 30px; min-height: 30px; flex-shrink: 0; }
-.plan-sidebar-close svg { width: 18px; height: 18px; }
-@media (max-width: 860px) { .plan-sidebar-close { display: inline-flex; } }
+.plan-sidebar-head { font-size: 0.9rem; font-weight: 700; margin-bottom: 10px; }
+/* Search input + a collapse hamburger on its right. The hamburger shows only on
+   mobile, where the toolbar's hamburger is hidden under the sidebar overlay; the
+   search input shrinks to make room. */
+.plan-search-row { display: flex; align-items: center; gap: 8px; }
+.plan-search-row .plan-search-input { flex: 1; min-width: 0; }
+.plan-sidebar-collapse { display: none; flex-shrink: 0; width: 36px; height: 36px; min-height: 36px; }
+.plan-sidebar-collapse svg { width: 20px; height: 20px; stroke: currentColor; stroke-width: 2; fill: none; }
+@media (max-width: 860px) { .plan-sidebar-collapse { display: inline-flex; } }
 .plan-search-wrap { margin-bottom: 14px; }
 .plan-search-input {
   width: 100%;
