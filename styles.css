@@ -10789,6 +10789,9 @@ body.touch-drag-active * {
 }
 
 .plan-event-pill:hover { background: color-mix(in srgb, var(--evt-color) 28%, transparent); }
+.plan-event-pill.is-movable { cursor: grab; }
+.plan-event-pill.is-dragging { opacity: 0.4; }
+.plan-drop-target { outline: 2px dashed var(--accent, #1a73e8); outline-offset: -2px; background: color-mix(in srgb, var(--accent, #1a73e8) 12%, transparent); }
 
 .plan-event-dot {
   width: 7px; height: 7px;

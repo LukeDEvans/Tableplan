@@ -32979,6 +32979,7 @@ function renderPlanPage() {
     });
   });
   bindPlanSwipe(elements.planCalendar.querySelector("[data-plan-swipe]"));
+  bindPlanEventDrag();
   if (planViewMode === "day" || planViewMode === "week") requestAnimationFrame(scrollPlanGridToNow);
 }
 
@@ -33021,6 +33022,49 @@ function checkEventReminders() {
       }
     } catch { /* notifications unavailable */ }
   }
+}
+
+// Drag-to-reschedule: move a personal event to the dropped-on day.
+let planDragEventId = null;
+function reschedulePlanEvent(id, newDate) {
+  if (!newDate || !/^\d{4}-\d{2}-\d{2}$/.test(newDate)) return;
+  const ev = (state.planEvents || []).find((e) => e.id === id);
+  if (!ev || ev.date === newDate) return;
+  if (ev.endDate) { // keep a multi-day span's length when its start moves
+    const delta = Math.round((new Date(newDate + "T00:00:00") - new Date(ev.date + "T00:00:00")) / 86400000);
+    const nd = new Date(ev.endDate + "T00:00:00"); nd.setDate(nd.getDate() + delta);
+    ev.endDate = dateKeyFromDate(nd);
+  }
+  ev.date = newDate;
+  persist();
+  renderPlanPage();
+}
+
+function bindPlanEventDrag() {
+  const root = elements.planCalendar;
+  if (!root) return;
+  root.querySelectorAll("[data-evt-movable]").forEach((pill) => {
+    pill.addEventListener("dragstart", (e) => {
+      planDragEventId = pill.dataset.planEventId;
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", planDragEventId); } catch { /* older browsers */ }
+      pill.classList.add("is-dragging");
+    });
+    pill.addEventListener("dragend", () => {
+      pill.classList.remove("is-dragging");
+      planDragEventId = null;
+      root.querySelectorAll(".plan-drop-target").forEach((c) => c.classList.remove("plan-drop-target"));
+    });
+  });
+  root.querySelectorAll(".plan-month-day[data-plan-day], .plan-week-allday-cell[data-plan-day], .plan-day-allday[data-plan-day]").forEach((cell) => {
+    cell.addEventListener("dragover", (e) => { if (planDragEventId) { e.preventDefault(); cell.classList.add("plan-drop-target"); } });
+    cell.addEventListener("dragleave", () => cell.classList.remove("plan-drop-target"));
+    cell.addEventListener("drop", (e) => {
+      e.preventDefault();
+      cell.classList.remove("plan-drop-target");
+      if (planDragEventId) reschedulePlanEvent(planDragEventId, cell.dataset.planDay);
+    });
+  });
 }
 
 function bindPlanSwipe(el) {
@@ -33140,7 +33184,10 @@ function getAppDataEvents(startKey, endKey) {
 function planEventPillTemplate(event) {
   const dot = `<span class="plan-event-dot" style="background:${escapeHtml(event.color || PLAN_COLORS[0])}"></span>`;
   const time = (!event.allDay && event.startTime) ? `<span class="plan-event-time">${escapeHtml(planFormatTime(event.startTime))}</span>` : "";
-  return `<div class="plan-event-pill" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}"
+  // Only a plain (personal, non-recurring, single-day) event can be dragged to
+  // another day — synthetic/iCal/recurring/multi-day pills are not reschedulable.
+  const movable = (!event.source || event.source === "personal") && !event.recurrence && !event.occurrenceOf;
+  return `<div class="plan-event-pill${movable ? " is-movable" : ""}"${movable ? ' draggable="true" data-evt-movable="1"' : ""} data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}"
                style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])}" title="${escapeHtml(event.title)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}">
     ${dot}${time}<span class="plan-event-title">${escapeHtml(event.title)}</span>${event.recurrence || event.occurrenceOf ? '<span class="plan-event-recur" aria-hidden="true">↻</span>' : ""}
   </div>`;
