@@ -10648,10 +10648,6 @@ body.touch-drag-active * {
 }
 
 
-/* The calendar window drops the navy .planner-column border (keeps the soft
-   shadow + rounded corners). */
-#planMainPage { border: 0; }
-
 /* Calendar fills the viewport on desktop */
 @media (min-width: 561px) {
   #planMainPage {
@@ -15943,7 +15939,8 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
    their own inner spacing (topbars, sidebars, lists), so there's no gap to
    preserve. */
 #mediaMainPage.planner-column,
-#mailMainPage.planner-column { padding: 0; }
+#mailMainPage.planner-column,
+#planMainPage.planner-column { padding: 0; }
 
 /* Reading an article is a focused view — hide the Media search/menu/notifications
    top bar while the reader is open (the reader has its own Back button). */
