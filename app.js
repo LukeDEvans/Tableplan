@@ -1588,11 +1588,13 @@ function bindEvents() {
   document.getElementById("travelEmptyTripBtn")?.addEventListener("click", showTravelNewTripDialog);
   // Mail label tabs are rendered dynamically via renderMailLabelTabs()
   elements.closePlanEventBtn.addEventListener("click", () => elements.planEventDialog.close());
-  // Tapping anywhere on the date/time fields opens the native picker (not just the
-  // tiny built-in icon), so Date/Start/End behave like buttons.
-  ["planEventDate", "planEventStart", "planEventEnd"].forEach((id) => {
-    const el = document.getElementById(id);
-    el?.addEventListener("click", () => { try { el.showPicker?.(); } catch { /* not supported */ } });
+  // Tapping the date field opens the native picker (not just the tiny icon).
+  document.getElementById("planEventDate")?.addEventListener("click", (e) => {
+    try { e.currentTarget.showPicker?.(); } catch { /* not supported */ }
+  });
+  // AM/PM toggle buttons flip between AM and PM.
+  document.querySelectorAll(".plan-ampm-toggle").forEach((btn) => {
+    btn.addEventListener("click", () => { btn.textContent = btn.textContent === "AM" ? "PM" : "AM"; });
   });
   elements.planEventAllDay.addEventListener("change", () => {
     elements.planTimeFields.hidden = elements.planEventAllDay.checked;
@@ -33225,6 +33227,35 @@ function syncPlanRepeatUi() {
   if (detail) detail.hidden = !on;
 }
 
+// Custom time fields: a plain "h:mm" text input + an AM/PM toggle button, so we
+// avoid the native time picker's clock icon and AM/PM column. Stored as 24h.
+function setPlanTimeField(inputId, hhmm24) {
+  const input = document.getElementById(inputId);
+  const btn = document.querySelector(`[data-ampm-for="${inputId}"]`);
+  let [H, M] = String(hhmm24 || "").split(":").map((n) => parseInt(n, 10));
+  if (isNaN(H)) { H = 9; M = 0; }
+  if (isNaN(M)) M = 0;
+  const ampm = H >= 12 ? "PM" : "AM";
+  let h12 = H % 12; if (h12 === 0) h12 = 12;
+  if (input) input.value = `${h12}:${String(M).padStart(2, "0")}`;
+  if (btn) btn.textContent = ampm;
+}
+function readPlanTimeField(inputId) {
+  const input = document.getElementById(inputId);
+  const btn = document.querySelector(`[data-ampm-for="${inputId}"]`);
+  const pm = btn?.textContent === "PM";
+  const raw = String(input?.value || "").trim();
+  const m = raw.match(/^(\d{1,2})(?::?(\d{0,2}))?$/);
+  let h12 = 12, min = 0;
+  if (m) {
+    h12 = Math.min(12, Math.max(1, parseInt(m[1], 10) || 12));
+    min = Math.min(59, Math.max(0, parseInt(m[2] || "0", 10) || 0));
+  }
+  let H = h12 % 12;
+  if (pm) H += 12;
+  return `${String(H).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
 function openPlanEventDialog(date, eventId) {
   editingPlanEventId = eventId || null;
   editingPlanEventOccurrenceDate = date || null;
@@ -33241,8 +33272,8 @@ function openPlanEventDialog(date, eventId) {
     elements.planEventDate.value = existing.date;
     elements.planEventAllDay.checked = existing.allDay !== false;
     elements.planTimeFields.hidden = elements.planEventAllDay.checked;
-    elements.planEventStart.value = existing.startTime || "09:00";
-    elements.planEventEnd.value = existing.endTime || "10:00";
+    setPlanTimeField("planEventStart", existing.startTime || "09:00");
+    setPlanTimeField("planEventEnd", existing.endTime || "10:00");
     elements.planEventNotes.value = existing.notes || "";
     planEventSelectedPlace = existing.location || null;
     elements.planEventLocation.value = existing.location
@@ -33256,8 +33287,8 @@ function openPlanEventDialog(date, eventId) {
     // All-day is the default; unchecking it expands the start/end time fields.
     elements.planEventAllDay.checked = true;
     elements.planTimeFields.hidden = true;
-    elements.planEventStart.value = "09:00";
-    elements.planEventEnd.value = "10:00";
+    setPlanTimeField("planEventStart", "09:00");
+    setPlanTimeField("planEventEnd", "10:00");
     elements.planEventNotes.value = "";
     planEventSelectedPlace = null;
     elements.planEventLocation.value = "";
@@ -33459,8 +33490,8 @@ function savePlanEvent() {
   const chores = (planEventChoresDraft || []).map((c) => c.trim()).filter(Boolean);
   const eventData = {
     title, date, allDay,
-    startTime: allDay ? null : (elements.planEventStart.value || null),
-    endTime: allDay ? null : (elements.planEventEnd.value || null),
+    startTime: allDay ? null : readPlanTimeField("planEventStart"),
+    endTime: allDay ? null : readPlanTimeField("planEventEnd"),
     notes: elements.planEventNotes.value.trim(),
     color, calendarId: calId || null,
     location,

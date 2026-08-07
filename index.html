@@ -3131,21 +3131,23 @@
               <input type="date" id="planEventDate" aria-label="Date" />
             </label>
             <label class="plan-allday-field">
-              <input type="checkbox" id="planEventAllDay" />
+              <input type="checkbox" class="live-toggle" id="planEventAllDay" />
               <span>All day</span>
             </label>
             <div class="plan-time-fields" id="planTimeFields">
-              <label class="form-field">
-                <input type="time" id="planEventStart" value="09:00" aria-label="Start time" />
-              </label>
-              <label class="form-field">
-                <input type="time" id="planEventEnd" value="10:00" aria-label="End time" />
-              </label>
+              <div class="plan-time-field">
+                <input type="text" class="plan-time-input" id="planEventStart" inputmode="numeric" maxlength="5" placeholder="9:00" aria-label="Start time" />
+                <button type="button" class="plan-ampm-toggle" data-ampm-for="planEventStart" aria-label="Toggle AM or PM">AM</button>
+              </div>
+              <div class="plan-time-field">
+                <input type="text" class="plan-time-input" id="planEventEnd" inputmode="numeric" maxlength="5" placeholder="10:00" aria-label="End time" />
+                <button type="button" class="plan-ampm-toggle" data-ampm-for="planEventEnd" aria-label="Toggle AM or PM">AM</button>
+              </div>
             </div>
           </div>
           <div class="plan-toggle-row">
             <label class="plan-allday-field plan-repeat-toggle">
-              <input type="checkbox" id="planEventRepeatToggle" />
+              <input type="checkbox" class="live-toggle" id="planEventRepeatToggle" />
               <span>Repeat</span>
             </label>
           </div>
