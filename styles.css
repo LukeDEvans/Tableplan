@@ -10601,29 +10601,26 @@ body.touch-drag-active * {
   .plan-sidebar:hover,
   .plan-sidebar.is-pinned { width: 240px; box-shadow: 4px 0 18px rgba(0,0,0,0.13); }
 
-  /* Rail (not open): fade out the text + header controls, but keep their boxes so
-     nothing moves. Quick fade-out here; delayed fade-in when open (below) so the
-     text appears only once the panel has finished widening. */
+  /* Rail (not open): fade out the text, but keep its box so nothing moves. Quick
+     fade-out here; delayed fade-in when open (below) so text appears only once the
+     panel has finished widening. The add (+) button stays visible at the top. */
   .plan-sidebar .plan-cal-name,
   .plan-sidebar .plan-cal-toggle,
   .plan-sidebar .plan-cal-list-title,
-  .plan-sidebar .plan-cal-add-btn,
   .plan-sidebar .plan-cal-empty { transition: opacity 0.1s ease; }
   .plan-sidebar:not(:hover):not(.is-pinned) .plan-cal-name,
   .plan-sidebar:not(:hover):not(.is-pinned) .plan-cal-toggle,
-  .plan-sidebar:not(:hover):not(.is-pinned) .plan-cal-list-title,
-  .plan-sidebar:not(:hover):not(.is-pinned) .plan-cal-add-btn,
   .plan-sidebar:not(:hover):not(.is-pinned) .plan-cal-empty { opacity: 0; }
   .plan-sidebar:hover .plan-cal-name,
   .plan-sidebar:hover .plan-cal-toggle,
-  .plan-sidebar:hover .plan-cal-list-title,
-  .plan-sidebar:hover .plan-cal-add-btn,
   .plan-sidebar:hover .plan-cal-empty,
   .plan-sidebar.is-pinned .plan-cal-name,
   .plan-sidebar.is-pinned .plan-cal-toggle,
-  .plan-sidebar.is-pinned .plan-cal-list-title,
-  .plan-sidebar.is-pinned .plan-cal-add-btn,
   .plan-sidebar.is-pinned .plan-cal-empty { opacity: 1; transition: opacity 0.12s ease 0.1s; }
+
+  /* Collapsed rail: hide the "Calendars" word and center the + at the top. */
+  .plan-sidebar:not(:hover):not(.is-pinned) .plan-cal-list-title { display: none; }
+  .plan-sidebar:not(:hover):not(.is-pinned) .plan-cal-list-head { justify-content: center; }
 }
 
 /* View tab bar + calendar actions (Today / +) share one row inside the window */

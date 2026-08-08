@@ -34249,18 +34249,18 @@ function renderPlanCalList() {
   const sorted = [...cals].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
   elements.planCalList.innerHTML = `
-    <div class="plan-cal-overlays">
-      ${planOverlayRowHtml("eat", "Meal Plan", PLAN_APP_COLORS.eat)}
-      ${planOverlayRowHtml("play", "Exercise", PLAN_APP_COLORS.play)}
-      ${planOverlayRowHtml("do", "To-Do", PLAN_APP_COLORS.do)}
-    </div>
-    <div class="plan-cal-divider"></div>
     <div class="plan-cal-list-head">
       <span class="plan-cal-list-title">Calendars</span>
       <button class="icon-btn plan-cal-add-btn" type="button" data-add-cal aria-label="Add calendar" title="Add calendar">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       </button>
     </div>
+    <div class="plan-cal-overlays">
+      ${planOverlayRowHtml("eat", "Meal Plan", PLAN_APP_COLORS.eat)}
+      ${planOverlayRowHtml("play", "Exercise", PLAN_APP_COLORS.play)}
+      ${planOverlayRowHtml("do", "To-Do", PLAN_APP_COLORS.do)}
+    </div>
+    <div class="plan-cal-divider"></div>
     ${sorted.map((c) => planCalRowHtml(c)).join("")}
     ${!sorted.length ? `<p class="plan-cal-empty">No calendars yet.</p>` : ""}
   `;
