@@ -596,10 +596,14 @@ h3 {
   pointer-events: none;
 }
 
-.week-tools.today-mode .prep-date-range,
-.week-tools.plan-mode .prep-date-range {
+.week-tools.today-mode .prep-date-range {
   pointer-events: none;
   cursor: default;
+}
+/* Plan mode: the period label opens the month/week/day jump menu, so it must
+   stay clickable (it used to be a non-interactive display label). */
+.week-tools.plan-mode .prep-date-range {
+  cursor: pointer;
 }
 
 /* Plan page: Today + add-event buttons pinned to the top-right */
