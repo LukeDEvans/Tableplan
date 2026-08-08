@@ -1482,8 +1482,8 @@ function bindEvents() {
     // Finance reuses the same dropdown, but populated with months.
     toggleWeekJumpMenu(event);
   });
-  elements.weekLabel.addEventListener("contextmenu", (event) => { if (activeAppArea === "finance") return; openMealPlanContextMenu(event, "week"); });
-  elements.weekLabel.addEventListener("pointerdown", (event) => { if (activeAppArea === "finance") return; startMealPlanContextPress(event, "week"); });
+  elements.weekLabel.addEventListener("contextmenu", (event) => { if (activeAppArea === "finance" || activeAppArea === "plan") return; openMealPlanContextMenu(event, "week"); });
+  elements.weekLabel.addEventListener("pointerdown", (event) => { if (activeAppArea === "finance" || activeAppArea === "plan") return; startMealPlanContextPress(event, "week"); });
   elements.weekLabel.addEventListener("pointermove", handleMealPlanContextPressMove);
   elements.weekLabel.addEventListener("pointerup", cancelMealPlanContextPress);
   elements.weekLabel.addEventListener("pointercancel", cancelMealPlanContextPress);
@@ -1491,6 +1491,8 @@ function bindEvents() {
     event.stopPropagation();
     const monthButton = event.target.closest("[data-month-jump]");
     if (monthButton) { jumpToFinanceMonth(monthButton.dataset.monthJump); return; }
+    const planButton = event.target.closest("[data-plan-jump]");
+    if (planButton) { jumpToPlanPeriod(planButton.dataset.planJump); return; }
     const button = event.target.closest("[data-week-jump]");
     if (button) jumpToWeek(button.dataset.weekJump);
   });
@@ -16587,6 +16589,7 @@ function saveFoodHealthSettings() {
 function renderWeekJumpMenu() {
   if (!elements.weekJumpMenu) return;
   if (activeAppArea === "finance") { renderFinanceMonthMenu(); return; }
+  if (activeAppArea === "plan") { renderPlanJumpMenu(); return; }
   const weeks = weekTimelineOptions();
   elements.weekJumpMenu.innerHTML = `
     <div class="week-jump-panel">
@@ -16634,6 +16637,68 @@ function jumpToFinanceMonth(key) {
   closeWeekJumpMenu();
   setWeekToolsMode("finance");
   renderFinancePage();
+}
+
+// Calendar month/week/day jump list — click the period label to scroll to a
+// past/future period without stepping through with the arrows.
+function planJumpOption(value, label, sub, isViewed, isCurrent) {
+  return `<button class="week-jump-option ${isViewed ? "is-current" : ""}" type="button" data-plan-jump="${escapeHtml(value)}" ${isViewed ? "data-viewed-week" : ""} ${isCurrent ? "data-current-week" : ""}>
+    <span>${escapeHtml(label)}</span>${sub ? `<small>${escapeHtml(sub)}</small>` : ""}
+  </button>`;
+}
+
+function renderPlanJumpMenu() {
+  const now = new Date();
+  const pad2 = (n) => String(n).padStart(2, "0");
+  let opts = "";
+  if (planViewMode === "month") {
+    const viewed = `${planViewDate.getFullYear()}-${pad2(planViewDate.getMonth() + 1)}`;
+    const cur = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`;
+    for (let i = -24; i <= 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const key = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+      const label = d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+      opts += planJumpOption(`month:${key}`, label, key === cur ? "This month" : "", key === viewed, key === cur);
+    }
+  } else if (planViewMode === "week") {
+    const viewed = dateKeyFromDate(planWeekStart(planViewDate));
+    const cur = dateKeyFromDate(planWeekStart(now));
+    for (let i = -26; i <= 52; i++) {
+      const ws = planWeekStart(now); ws.setDate(ws.getDate() + i * 7);
+      const we = new Date(ws); we.setDate(we.getDate() + 6);
+      const key = dateKeyFromDate(ws);
+      const label = `${ws.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${we.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+      opts += planJumpOption(`week:${key}`, label, key === cur ? "This week" : "", key === viewed, key === cur);
+    }
+  } else if (planViewMode === "day") {
+    const viewed = dateKeyFromDate(planViewDate);
+    const cur = dateKeyFromDate(now);
+    for (let i = -14; i <= 45; i++) {
+      const d = new Date(now); d.setDate(d.getDate() + i);
+      const key = dateKeyFromDate(d);
+      const label = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      opts += planJumpOption(`day:${key}`, label, key === cur ? "Today" : "", key === viewed, key === cur);
+    }
+  } else {
+    opts = `<div class="week-jump-empty">Switch to Month, Week, or Day to jump to a date.</div>`;
+  }
+  elements.weekJumpMenu.innerHTML = `<div class="week-jump-panel"><div class="week-jump-list">${opts}</div></div>`;
+}
+
+function jumpToPlanPeriod(value) {
+  const [kind, key] = String(value || "").split(":");
+  if (kind === "month") {
+    const [y, m] = key.split("-").map(Number);
+    if (!y || !m) return;
+    planViewDate = new Date(y, m - 1, 1);
+  } else if (kind === "week" || kind === "day") {
+    const d = new Date(key + "T00:00:00");
+    if (isNaN(d)) return;
+    planViewDate = d;
+  } else return;
+  closeWeekJumpMenu();
+  setWeekToolsMode("plan");
+  renderPlanPage();
 }
 
 function weekJumpButtonTemplate(week) {
@@ -33379,6 +33444,20 @@ function planEventPillTemplate(event) {
   </div>`;
 }
 
+// Month view renders each event as a bare colour dot (chronological order); the
+// title shows as a hover tooltip. Personal single-day events stay draggable.
+function planMonthDotTemplate(event) {
+  const personal = !event.source || event.source === "personal";
+  const movable = personal && !event.recurrence && !event.occurrenceOf;
+  const occMovable = personal && event.recurrence && event.occurrenceOf;
+  const dragAttrs = movable ? ' draggable="true" data-evt-movable="1"' : occMovable ? ' draggable="true" data-evt-occ-movable="1"' : "";
+  const timeLabel = (!event.allDay && event.startTime) ? `${planFormatTime(event.startTime)} · ` : "";
+  const tip = `${timeLabel}${event.title || ""}`;
+  return `<span class="plan-month-dot${movable || occMovable ? " is-movable" : ""}" style="background:${escapeHtml(event.color || PLAN_COLORS[0])}" ` +
+    `data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}" ` +
+    `title="${escapeHtml(tip)}" aria-label="${escapeHtml(tip)}"${dragAttrs}></span>`;
+}
+
 // Finance paydays grouped by date-key, for the calendar's read-only payday dots.
 function paydaysByDate(startKey, endKey) {
   const byDay = {};
@@ -33409,21 +33488,24 @@ function renderPlanMonthView() {
   const eventsByDay = {};
   allEvents.forEach((e) => { (eventsByDay[e.date] = eventsByDay[e.date] || []).push(e); });
   const paydaysByDay = paydaysByDate(rangeStart, rangeEnd);
-  const headers = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d) => `<div class="plan-month-header-cell">${d}</div>`).join("");
+  // Full day names normally; short forms (Su, M, Tu, …) on phones.
+  const dayNames = [["Sun","Su"],["Mon","M"],["Tue","Tu"],["Wed","W"],["Thu","Th"],["Fri","F"],["Sat","Sa"]];
+  const headers = dayNames.map(([full, sh]) =>
+    `<div class="plan-month-header-cell"><span class="dow-full">${full}</span><span class="dow-short" aria-hidden="true">${sh}</span></div>`).join("");
   const cells = days.map((date) => {
     const key = dateKeyFromDate(date);
     const isToday = key === today;
     const isOther = date.getMonth() !== month;
-    const dayEvts = eventsByDay[key] || [];
-    const visible = dayEvts.slice(0, 3);
-    const overflow = dayEvts.length - 3;
+    const dayEvts = eventsByDay[key] || []; // already sorted: all-day first, then by start time
+    const allDayEvts = dayEvts.filter((e) => e.allDay);
+    const timedEvts = dayEvts.filter((e) => !e.allDay);
     return `<div class="plan-month-day${isToday ? " is-today" : ""}${isOther ? " is-other-month" : ""}" data-plan-day="${escapeHtml(key)}" tabindex="0">
-      <span class="plan-day-number">${date.getDate()}</span>
-      ${paydayDotHtml(paydaysByDay[key])}
-      <div class="plan-day-events">
-        ${visible.map(planEventPillTemplate).join("")}
-        ${overflow > 0 ? `<span class="plan-event-overflow">+${overflow} more</span>` : ""}
+      <div class="plan-month-day-head">
+        <span class="plan-day-number">${date.getDate()}</span>
+        ${allDayEvts.length ? `<div class="plan-month-allday">${allDayEvts.map(planMonthDotTemplate).join("")}</div>` : ""}
       </div>
+      ${paydayDotHtml(paydaysByDay[key])}
+      ${timedEvts.length ? `<div class="plan-month-dots">${timedEvts.map(planMonthDotTemplate).join("")}</div>` : ""}
     </div>`;
   }).join("");
   return `<div class="plan-month">

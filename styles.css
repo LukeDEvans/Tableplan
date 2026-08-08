@@ -10759,6 +10759,12 @@ body.touch-drag-active * {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+/* Full weekday names normally; short forms (Su, M, Tu, …) on phones. */
+.plan-month-header-cell .dow-short { display: none; }
+@media (max-width: 560px) {
+  .plan-month-header-cell .dow-full { display: none; }
+  .plan-month-header-cell .dow-short { display: inline; }
+}
 
 .plan-month-grid {
   display: grid;
@@ -10818,13 +10824,21 @@ body.touch-drag-active * {
   font-weight: 600;
   line-height: 1;
   flex-shrink: 0;
-  align-self: flex-start;
 }
 
 .plan-month-day.is-today .plan-day-number {
   background: var(--accent, #1a73e8);
   color: #fff;
 }
+
+/* Day number + all-day event dots share the top row (all-day dots to the right
+   of the number). Timed events are colour dots below, in chronological order. */
+.plan-month-day-head { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.plan-month-allday { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; min-width: 0; }
+.plan-month-dots { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 3px; min-height: 0; overflow: hidden; }
+.plan-month-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; cursor: pointer; }
+.plan-month-dot.is-movable { cursor: grab; }
+.plan-month-dot.is-dragging { opacity: 0.5; }
 
 .plan-day-events {
   display: flex;
