@@ -11058,6 +11058,9 @@ body.touch-drag-active * {
 /* ── Plan dialogs ── */
 
 .plan-cal-dialog { max-width: 440px; }
+/* Title left, close (x) in the top-right corner. */
+.plan-cal-dialog .recipe-form-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.plan-cal-dialog .recipe-form-head h2 { margin: 0; }
 /* Just wide enough for the 7 weekday circles (7×34 + gaps + padding). */
 .plan-event-dialog { max-width: 320px; }
 /* Full-screen on mobile. */
