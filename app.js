@@ -446,9 +446,11 @@ let localDevMode = false;
 // during boot (auto-entered via the live_local_dev flag) before the gate code's
 // line executes — a later `let` would be in its TDZ then. See updateAppLockState.
 let authCheckCompleted = false;
-// Memoized getPlanEventsForRange result ({ key, val }); invalidated on persist,
+// Memoized getPlanEventsForRange results, keyed by range; a small LRU so paging
+// months/weeks and the zoom ladder can reuse recent ranges. Cleared on persist,
 // iCal fetch, and full state replacement so it can never go stale.
-let planRangeCache = null;
+const planRangeCache = new Map();
+const PLAN_RANGE_CACHE_MAX = 8;
 let userGroup = null;
 let groupMembers = [];
 let adminDisabledPages = [];
@@ -2963,7 +2965,7 @@ function mirrorStateToLocalStorage() {
 
 function persist() {
   state.stateUpdatedAt = new Date().toISOString();
-  planRangeCache = null; // any state change can affect the calendar's merged events
+  planRangeCache.clear(); // any state change can affect the calendar's merged events
   mirrorStateToLocalStorage();
   saveTripBackup();
   saveStateToSharedStorage();
@@ -6048,7 +6050,7 @@ function applyStoredState(storedState) {
   // built (from an empty-finance boot) would keep serving unlabeled txns until
   // the next user action — the "my June labels don't show after reload" bug.
   invalidateFinanceLabeled();
-  planRangeCache = null; // state fully replaced
+  planRangeCache.clear(); // state fully replaced
   render();
 }
 
@@ -33039,29 +33041,8 @@ function renderPlanPage() {
         : renderPlanAgendaView()}
     </div>
   `;
-  elements.planCalendar.querySelectorAll("[data-plan-day]").forEach((cell) => {
-    cell.addEventListener("click", (e) => {
-      if (e.target.closest("[data-plan-event-id]")) return;
-      if (e.target.closest(".plan-day-number") && planViewMode === "month") {
-        planViewDate = new Date(cell.dataset.planDay + "T00:00:00");
-        planViewMode = "day";
-        setWeekToolsMode("plan");
-        renderPlanPage();
-        return;
-      }
-      openPlanEventDialog(cell.dataset.planDay);
-    });
-  });
-  elements.planCalendar.querySelectorAll("[data-plan-event-id]").forEach((pill) => {
-    pill.addEventListener("click", (e) => {
-      e.stopPropagation();
-      // Auto-generated events (a logged workout, a planned meal, a to-do) aren't
-      // editable calendar entries — jump to the page they came from instead of
-      // opening a blank New Event editor.
-      if (openPlanSyntheticEvent(pill.dataset.planEventSource)) return;
-      openPlanEventDialog(pill.dataset.planEventDate || null, pill.dataset.planEventId);
-    });
-  });
+  // Day-cell + event clicks are handled by one delegated listener bound once
+  // (see initPlanCalListDelegation) instead of re-binding every cell/pill here.
   bindPlanSwipe(elements.planCalendar.querySelector("[data-plan-swipe]"));
   bindPlanEventDrag();
   if (planViewMode === "day" || planViewMode === "week") requestAnimationFrame(scrollPlanGridToNow);
@@ -33321,7 +33302,8 @@ function openPlanSyntheticEvent(source) {
 
 function getPlanEventsForRange(startKey, endKey) {
   const cacheKey = `${startKey}|${endKey}|${sectionScope("plan")}`;
-  if (planRangeCache && planRangeCache.key === cacheKey) return planRangeCache.val;
+  const hit = planRangeCache.get(cacheKey);
+  if (hit) { planRangeCache.delete(cacheKey); planRangeCache.set(cacheKey, hit); return hit; } // touch = most-recent
   const events = [];
   const eventColor = (e) => e.color || ((state.planCalendars || []).find((c) => c.id === e.calendarId)?.color) || PLAN_COLORS[0];
   // Calendars toggled off in the sidebar hide their events (personal + iCal).
@@ -33378,7 +33360,8 @@ function getPlanEventsForRange(startKey, endKey) {
     if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
     return (a.startTime || "00:00").localeCompare(b.startTime || "00:00");
   });
-  planRangeCache = { key: cacheKey, val: events };
+  planRangeCache.set(cacheKey, events);
+  if (planRangeCache.size > PLAN_RANGE_CACHE_MAX) planRangeCache.delete(planRangeCache.keys().next().value);
   return events;
 }
 
@@ -34275,6 +34258,29 @@ function initPlanCalListDelegation() {
   // Scroll-wheel / pinch zoom between month → week → day (bound once; the grid is
   // re-rendered inside #planCalendar but the host element persists).
   bindPlanZoomNavigation(elements.planCalendar);
+  // Delegated click for the whole calendar grid (bound once): an event opens that
+  // event; the day-number in month view drills into day view; anywhere else on a
+  // day opens the new-event dialog for that date.
+  elements.planCalendar?.addEventListener("click", (e) => {
+    const pill = e.target.closest("[data-plan-event-id]");
+    if (pill) {
+      // Auto-generated events (a logged workout, planned meal, to-do) aren't
+      // editable calendar entries — jump to their source page instead.
+      if (openPlanSyntheticEvent(pill.dataset.planEventSource)) return;
+      openPlanEventDialog(pill.dataset.planEventDate || null, pill.dataset.planEventId);
+      return;
+    }
+    const cell = e.target.closest("[data-plan-day]");
+    if (!cell) return;
+    if (e.target.closest(".plan-day-number") && planViewMode === "month") {
+      planViewDate = new Date(cell.dataset.planDay + "T00:00:00");
+      planViewMode = "day";
+      setWeekToolsMode("plan");
+      renderPlanPage();
+      return;
+    }
+    openPlanEventDialog(cell.dataset.planDay);
+  });
   const list = elements.planCalList;
   if (!list) return;
 
@@ -34528,7 +34534,7 @@ async function fetchOnePlanCalendar(cal) {
     if (!res.ok) return;
     const data = await res.json();
     planCalendarCache[cal.id] = { fetchedAt: new Date(), events: data.events || [] };
-    planRangeCache = null; // fresh iCal events — drop the memoized range
+    planRangeCache.clear(); // fresh iCal events — drop the memoized range
     state.planCalendars = (state.planCalendars || []).map((c) => c.id === cal.id ? { ...c, lastFetched: new Date().toISOString() } : c);
     persist();
     if (activeAppArea === "plan") renderPlanPage();
