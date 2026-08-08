@@ -11449,7 +11449,6 @@ body.touch-drag-active * {
 .plan-cal-row {
   position: relative;
   overflow: hidden;
-  border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
 }
 /* Visible content; slides left on swipe (mobile) to reveal the actions behind. */
 .plan-cal-front {
