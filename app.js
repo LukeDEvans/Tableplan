@@ -32932,6 +32932,9 @@ function normalizeRecurrence(r) {
   if (!freq) return null;
   const interval = Math.max(1, Math.min(365, Math.round(Number(r.interval) || 1)));
   const until = (typeof r.until === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.until)) ? r.until : null;
+  // "Ends after N times" is stored as both count (for the editor) and a derived
+  // until date (so expansion stays purely until-based).
+  const count = (Number.isInteger(r.count) && r.count > 0 && r.count <= 3650) ? r.count : null;
   // Weekly events can repeat on specific days of the week (0 = Sun … 6 = Sat).
   let byWeekdays = null;
   if (freq === "weekly" && Array.isArray(r.byWeekdays)) {
@@ -32949,7 +32952,22 @@ function normalizeRecurrence(r) {
       if (byWeekday === null) { monthMode = "dayOfMonth"; bySetPos = null; }
     }
   }
-  return { freq, interval, until, byWeekdays, monthMode, byWeekday, bySetPos };
+  return { freq, interval, until, count, byWeekdays, monthMode, byWeekday, bySetPos };
+}
+
+// Date of the Nth occurrence of a recurring event, counting from its start.
+// Used to convert an "ends after N times" choice into a concrete until date so
+// occurrence expansion stays purely until-based.
+function planNthOccurrenceDate(baseEvent, count) {
+  if (!baseEvent?.recurrence || !(count >= 1)) return null;
+  const endD = new Date(baseEvent.date + "T00:00:00");
+  if (isNaN(endD)) return null;
+  endD.setFullYear(endD.getFullYear() + 20); // generous horizon; loops are capped internally
+  const occ = expandRecurringOccurrences(
+    { ...baseEvent, recurrence: { ...baseEvent.recurrence, until: null, count: null }, exceptions: [] },
+    baseEvent.date, dateKeyFromDate(endD)
+  );
+  return occ[count - 1] || occ[occ.length - 1] || null;
 }
 
 function normalizePlanEvents(events) {
@@ -33939,6 +33957,19 @@ function syncPlanRepeatUi() {
     modeSel.hidden = freq !== "monthly" && freq !== "yearly"; // monthly/yearly: pattern dropdown
     if (!modeSel.hidden) populatePlanRepeatMode();
   }
+  // "Ends" control: never / on a date / after N times.
+  const ends = document.getElementById("planEventRepeatEnds")?.value || "never";
+  const untilInput = document.getElementById("planEventRepeatUntilInput");
+  const countWrap = document.getElementById("planRepeatCountWrap");
+  if (untilInput) {
+    untilInput.hidden = ends !== "on";
+    // Default the until date to a sensible future value the first time it shows.
+    if (ends === "on" && !untilInput.value) {
+      const d = new Date((elements.planEventDate?.value || dateKeyFromDate(new Date())) + "T00:00:00");
+      if (!isNaN(d)) { d.setMonth(d.getMonth() + 3); untilInput.value = dateKeyFromDate(d); }
+    }
+  }
+  if (countWrap) countWrap.hidden = ends !== "after";
 }
 
 // Fill the monthly/yearly "pattern" dropdown from the event's date, e.g.
@@ -34054,6 +34085,17 @@ function openPlanEventDialog(date, eventId, prefill) {
   if (repeatToggle) { repeatToggle.checked = repeatOn; repeatToggle.onchange = syncPlanRepeatUi; }
   const freqSel = document.getElementById("planEventRepeatFreq");
   if (freqSel) { freqSel.value = (rec && rec.freq !== "daily") ? rec.freq : "weekly"; freqSel.onchange = syncPlanRepeatUi; }
+  // "Ends" control: reflect a stored count ("after N") or until date ("on"),
+  // else "never". The date/count inputs show/hide via syncPlanRepeatUi.
+  const endsSel = document.getElementById("planEventRepeatEnds");
+  if (endsSel) {
+    endsSel.value = rec?.count ? "after" : (rec?.until ? "on" : "never");
+    endsSel.onchange = syncPlanRepeatUi;
+    const untilInput = document.getElementById("planEventRepeatUntilInput");
+    if (untilInput) untilInput.value = (rec?.until && !rec?.count) ? rec.until : "";
+    const countInput = document.getElementById("planEventRepeatCount");
+    if (countInput) countInput.value = rec?.count ? String(rec.count) : "10";
+  }
   // Weekly weekday checkboxes: use the saved days, else default to the event
   // date's own weekday so a fresh weekly event starts sensibly.
   const eventDay = new Date((existing?.date || date || dateKeyFromDate(new Date())) + "T00:00:00").getDay();
@@ -34276,6 +34318,22 @@ async function savePlanEvent() {
       recurrence = normalizeRecurrence({ freq: repeatFreq, interval: 1, monthMode: "dayOfMonth" });
     }
   }
+  // Apply the "Ends" choice: never (open-ended), on a date, or after N times.
+  // "After N" is converted to a concrete until date up front so expansion stays
+  // until-based; the raw count is kept so the editor can re-show "After N".
+  if (recurrence) {
+    const ends = document.getElementById("planEventRepeatEnds")?.value || "never";
+    if (ends === "on") {
+      const raw = document.getElementById("planEventRepeatUntilInput")?.value || "";
+      recurrence = { ...recurrence, until: (raw && raw >= date) ? raw : null, count: null };
+    } else if (ends === "after") {
+      const n = Math.max(1, Math.min(3650, Math.round(Number(document.getElementById("planEventRepeatCount")?.value) || 1)));
+      const until = planNthOccurrenceDate({ date, recurrence: { ...recurrence, until: null, count: null } }, n);
+      recurrence = { ...recurrence, count: n, until: until || null };
+    } else {
+      recurrence = { ...recurrence, until: null, count: null };
+    }
+  }
   const addToDo = Boolean(document.getElementById("planEventAddTodo")?.checked);
   const showInMealPlan = Boolean(document.getElementById("planEventAddMealPlan")?.checked);
   const chores = (planEventChoresDraft || []).map((c) => c.trim()).filter(Boolean);
@@ -34328,7 +34386,8 @@ async function savePlanEvent() {
     savedEvent = {
       ...existing, ...eventData, id: createId("plan-evt"), createdAt: new Date().toISOString(),
       date: anchorDate,
-      recurrence: eventData.recurrence ? { ...eventData.recurrence, until: existing.recurrence.until || null } : null,
+      // eventData.recurrence already carries the user's chosen end (until / count).
+      recurrence: eventData.recurrence || null,
       exceptions: (existing.exceptions || []).filter((d) => d >= splitDate),
       occurrenceOf: undefined,
     };

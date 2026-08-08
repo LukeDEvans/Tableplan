@@ -3203,6 +3203,19 @@
               <label class="plan-weekday" title="Thursday"><input type="checkbox" name="plan-weekday" value="4" aria-label="Thursday" /><span aria-hidden="true">T</span></label>
             </div>
             <select class="plan-cal-select plan-repeat-mode" id="planEventRepeatMode" aria-label="Repeat pattern" hidden></select>
+            <div class="plan-repeat-ends" id="planRepeatEndsRow">
+              <span class="plan-repeat-ends-label">Ends</span>
+              <select class="plan-cal-select plan-repeat-ends-sel" id="planEventRepeatEnds" aria-label="Repeat ends">
+                <option value="never">Never</option>
+                <option value="on">On date</option>
+                <option value="after">After…</option>
+              </select>
+              <input type="date" id="planEventRepeatUntilInput" class="plan-repeat-ends-date" aria-label="Repeat until date" hidden />
+              <span class="plan-repeat-count-wrap" id="planRepeatCountWrap" hidden>
+                <input type="number" min="1" max="365" step="1" id="planEventRepeatCount" class="plan-repeat-count" value="10" aria-label="Number of times to repeat" />
+                <span class="plan-repeat-count-unit">times</span>
+              </span>
+            </div>
           </div>
           <div class="form-field plan-reminder-field" id="planEventReminderRow">
             <span class="plan-reminder-icon" aria-hidden="true">🔔</span>
