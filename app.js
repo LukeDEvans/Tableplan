@@ -34246,7 +34246,7 @@ function updatePlanEventCalDot() {
   dot.style.visibility = cal ? "visible" : "hidden";
 }
 
-function savePlanEvent() {
+async function savePlanEvent() {
   const title = elements.planEventTitle.value.trim();
   const date = elements.planEventDate.value.trim();
   if (!title || !date) return;
@@ -34297,8 +34297,43 @@ function savePlanEvent() {
     chores,
     showInMealPlan,
   };
+  // Editing a repeating event asks which occurrences the change applies to:
+  // just this one, this and everything after it, or the whole series.
+  const isRecurringEdit = Boolean(editingPlanEventId && existing && existing.recurrence);
+  let scope = "all";
+  if (isRecurringEdit) {
+    scope = await chooseRecurrenceScope();
+    if (!scope) return; // cancelled — leave the dialog open, change nothing
+  }
+  // The occurrence the user opened is the split point; the date field itself
+  // shows the series' base date, so a changed date means "move it", not "split
+  // here". dayBefore() ends the trimmed series the day before the split.
+  const splitDate = editingPlanEventOccurrenceDate || existing?.date;
+  const userMovedDate = Boolean(existing && eventData.date !== existing.date);
+  const anchorDate = userMovedDate ? eventData.date : splitDate;
+  const dayBefore = (key) => { const d = new Date(key + "T00:00:00"); d.setDate(d.getDate() - 1); return dateKeyFromDate(d); };
+
   let savedEvent;
-  if (editingPlanEventId) {
+  if (isRecurringEdit && scope === "this") {
+    // Exclude this day from the series and drop in a standalone one-off.
+    state.planEvents = (state.planEvents || []).map((e) =>
+      e.id === editingPlanEventId ? { ...e, exceptions: [...(e.exceptions || []), splitDate] } : e);
+    savedEvent = { ...existing, ...eventData, id: createId("plan-evt"), createdAt: new Date().toISOString(), date: anchorDate, recurrence: null, exceptions: [], occurrenceOf: undefined };
+    state.planEvents = [...(state.planEvents || []), savedEvent];
+  } else if (isRecurringEdit && scope === "following") {
+    // Trim the original series to end before the split, then start a fresh
+    // series from the split date carrying the edits forward.
+    state.planEvents = (state.planEvents || []).map((e) =>
+      e.id === editingPlanEventId ? { ...e, recurrence: { ...e.recurrence, until: dayBefore(splitDate) } } : e);
+    savedEvent = {
+      ...existing, ...eventData, id: createId("plan-evt"), createdAt: new Date().toISOString(),
+      date: anchorDate,
+      recurrence: eventData.recurrence ? { ...eventData.recurrence, until: existing.recurrence.until || null } : null,
+      exceptions: (existing.exceptions || []).filter((d) => d >= splitDate),
+      occurrenceOf: undefined,
+    };
+    state.planEvents = [...(state.planEvents || []), savedEvent];
+  } else if (editingPlanEventId) {
     savedEvent = { ...existing, ...eventData, id: editingPlanEventId };
     state.planEvents = (state.planEvents || []).map((e) =>
       e.id === editingPlanEventId ? savedEvent : e
@@ -34312,6 +34347,39 @@ function savePlanEvent() {
   elements.planEventDialog.close();
   if (activeAppArea === "plan") renderPlanPage();
   else if (activeAppArea === "eat") renderPlanner();
+}
+
+// Ask which occurrences an edit to a repeating event should touch. Resolves to
+// "this" | "following" | "all", or null if the user cancels.
+function chooseRecurrenceScope() {
+  return new Promise((resolve) => {
+    document.getElementById("planScopeChooser")?.remove();
+    const wrap = document.createElement("div");
+    wrap.id = "planScopeChooser";
+    wrap.className = "plan-scope-overlay";
+    wrap.innerHTML = `
+      <div class="plan-scope-box" role="dialog" aria-modal="true" aria-label="Edit repeating event">
+        <p class="plan-scope-title">Edit repeating event</p>
+        <p class="plan-scope-sub">Which events should this change apply to?</p>
+        <div class="plan-scope-actions">
+          <button type="button" data-scope="this">This event</button>
+          <button type="button" data-scope="following">This and following</button>
+          <button type="button" data-scope="all">All events</button>
+          <button type="button" data-scope="cancel" class="plan-scope-cancel">Cancel</button>
+        </div>
+      </div>`;
+    const done = (val) => { document.removeEventListener("keydown", onKey); wrap.remove(); resolve(val); };
+    const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); done(null); } };
+    wrap.addEventListener("click", (e) => {
+      if (e.target === wrap) return done(null);
+      const b = e.target.closest("[data-scope]");
+      if (!b) return;
+      done(b.dataset.scope === "cancel" ? null : b.dataset.scope);
+    });
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(wrap);
+    wrap.querySelector("[data-scope='following']")?.focus();
+  });
 }
 
 // ── Embedding event chores into the To-Do list ────────────────────────────────
