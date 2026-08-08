@@ -33257,7 +33257,14 @@ function bindPlanGridDragCreate(root) {
       const ev2 = (state.planEvents || []).find((x) => x.id === pr.id);
       if (ev2 && pr.moved) {
         const newEnd = fmt(Math.min(1440, pr.endMin));
-        if (newEnd !== ev2.endTime) { ev2.endTime = newEnd; persist(); renderPlanPage(); }
+        if (newEnd !== ev2.endTime) {
+          const prevEnd = ev2.endTime;
+          ev2.endTime = newEnd; persist(); renderPlanPage();
+          showMailToast(`Resized "${ev2.title || "event"}" to end ${planFormatTime(newEnd)}`, () => {
+            const cur = (state.planEvents || []).find((x) => x.id === pr.id);
+            if (cur) { cur.endTime = prevEnd; persist(); renderPlanPage(); }
+          });
+        }
       }
       return;
     }
@@ -34371,6 +34378,11 @@ async function savePlanEvent() {
   const anchorDate = userMovedDate ? eventData.date : splitDate;
   const dayBefore = (key) => { const d = new Date(key + "T00:00:00"); d.setDate(d.getDate() - 1); return dateKeyFromDate(d); };
 
+  // Snapshot for Undo on edits. Every edit branch reassigns state.planEvents to
+  // a fresh array and only ever spreads changed events into new objects, so a
+  // shallow copy of the pre-edit array restores the prior state intact.
+  const editSnapshot = editingPlanEventId ? [...(state.planEvents || [])] : null;
+
   let savedEvent;
   if (isRecurringEdit && scope === "this") {
     // Exclude this day from the series and drop in a standalone one-off.
@@ -34406,6 +34418,14 @@ async function savePlanEvent() {
   elements.planEventDialog.close();
   if (activeAppArea === "plan") renderPlanPage();
   else if (activeAppArea === "eat") renderPlanner();
+  if (editSnapshot) {
+    showMailToast(`Updated "${title}"`, () => {
+      state.planEvents = editSnapshot;
+      persist();
+      if (activeAppArea === "plan") renderPlanPage();
+      else if (activeAppArea === "eat") renderPlanner();
+    });
+  }
 }
 
 // Ask which occurrences a change to a repeating event should touch. Resolves to
@@ -34589,7 +34609,11 @@ function duplicatePlanEvent(id) {
   state.planEvents = [...(state.planEvents || []), copy];
   persist();
   if (activeAppArea === "plan") renderPlanPage();
-  showMailToast(`Duplicated "${e.title}"`);
+  showMailToast(`Duplicated "${e.title}"`, () => {
+    state.planEvents = (state.planEvents || []).filter((x) => x.id !== copy.id);
+    persist();
+    if (activeAppArea === "plan") renderPlanPage();
+  });
 }
 
 // Right-click menu on a personal event: Edit / Duplicate / Delete.
