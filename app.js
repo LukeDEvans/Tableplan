@@ -34501,13 +34501,16 @@ function initPlanCalListDelegation() {
   list.addEventListener("click", (e) => {
     if (e.target.closest("[data-add-cal]")) { openAddPlanCalDialog(); return; }
 
-    // The color dot is a visibility toggle: click flips the calendar on/off.
+    // The color dot is a visibility toggle. Flip just the clicked dot in place
+    // (the list order is unchanged) instead of rebuilding the whole sidebar.
+    const flipDot = (dot, on) => { dot.classList.toggle("is-on", on); dot.classList.toggle("is-off", !on); dot.setAttribute("aria-checked", String(on)); };
     const calDot = e.target.closest("[data-cal-toggle]");
     if (calDot) {
       const id = calDot.dataset.calToggle;
-      state.planCalendars = (state.planCalendars || []).map((c) => c.id === id ? { ...c, enabled: !c.enabled } : c);
+      let now = false;
+      state.planCalendars = (state.planCalendars || []).map((c) => c.id === id ? (now = !c.enabled, { ...c, enabled: now }) : c);
+      flipDot(calDot, now);
       persist();
-      renderPlanCalList();
       if (activeAppArea === "plan") renderPlanPage();
       return;
     }
@@ -34516,8 +34519,8 @@ function initPlanCalListDelegation() {
       const src = overlayDot.dataset.overlayToggle;
       if (!state.planHiddenSources || typeof state.planHiddenSources !== "object") state.planHiddenSources = {};
       state.planHiddenSources[src] = !state.planHiddenSources[src]; // flip visibility
+      flipDot(overlayDot, !state.planHiddenSources[src]);
       persist();
-      renderPlanCalList();
       if (activeAppArea === "plan") renderPlanPage();
       return;
     }
