@@ -11504,7 +11504,10 @@ body.touch-drag-active * {
   padding: 2px 0 4px;
 }
 .plan-cal-list-title { font-size: 0.9rem; font-weight: 700; }
-.plan-cal-add-btn { flex-shrink: 0; width: 28px; height: 28px; min-height: 28px; }
+/* Rounded square (like the add-event button), not a circle: at 28px the default
+   14px radius rounded to a full circle. Fixed size + explicit radius + grid
+   centering keep the + dead-centered. */
+.plan-cal-add-btn { flex-shrink: 0; width: 30px; height: 30px; min-height: 30px; padding: 0; border-radius: 8px; }
 .plan-cal-add-btn svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2; fill: none; }
 .plan-cal-empty { font-size: 0.85rem; color: var(--text-muted, #888); padding: 6px 0; font-style: italic; }
 
