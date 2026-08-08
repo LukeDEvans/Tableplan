@@ -451,6 +451,10 @@ let authCheckCompleted = false;
 // iCal fetch, and full state replacement so it can never go stale.
 const planRangeCache = new Map();
 const PLAN_RANGE_CACHE_MAX = 8;
+// Date-keyed index of app-data calendar events (meal plan / workouts / to-dos),
+// built lazily and cleared whenever planRangeCache is, so navigation doesn't
+// re-scan the whole meal-plan/workout/to-do history each time.
+let planAppDataIndex = null;
 let userGroup = null;
 let groupMembers = [];
 let adminDisabledPages = [];
@@ -2987,6 +2991,7 @@ function mirrorStateToLocalStorage() {
 function persist() {
   state.stateUpdatedAt = new Date().toISOString();
   planRangeCache.clear(); // any state change can affect the calendar's merged events
+  planAppDataIndex = null;
   mirrorStateToLocalStorage();
   saveTripBackup();
   saveStateToSharedStorage();
@@ -6072,6 +6077,7 @@ function applyStoredState(storedState) {
   // the next user action — the "my June labels don't show after reload" bug.
   invalidateFinanceLabeled();
   planRangeCache.clear(); // state fully replaced
+  planAppDataIndex = null;
   render();
 }
 
@@ -33462,43 +33468,54 @@ function getPlanEventsForRange(startKey, endKey) {
   return events;
 }
 
-function getAppDataEvents(startKey, endKey) {
-  const events = [];
-  const hidden = state.planHiddenSources || {}; // sidebar overlay toggles
-  const plans = hidden.eat ? {} : (state.plans || {});
-  Object.keys(plans).forEach((weekKey) => {
-    const week = plans[weekKey] || {};
+// Build the date-keyed index of ALL app-data events (source visibility is applied
+// at query time so toggling an overlay doesn't require a rebuild).
+function buildPlanAppDataIndex() {
+  const byDate = new Map();
+  const push = (key, ev) => { const a = byDate.get(key); if (a) a.push(ev); else byDate.set(key, [ev]); };
+  Object.keys(state.plans || {}).forEach((weekKey) => {
+    const week = state.plans[weekKey] || {};
     Object.keys(week).forEach((dayOffset) => {
       const dayEntries = week[dayOffset] || [];
       if (!dayEntries.length) return;
       try {
-        const weekDate = dateFromWeekKey(weekKey);
-        const d = new Date(weekDate);
+        const d = new Date(dateFromWeekKey(weekKey));
         d.setDate(d.getDate() + Number(dayOffset));
         const key = dateKeyFromDate(d);
-        if (key < startKey || key > endKey) return;
         dayEntries.forEach((entry) => {
           const name = entry.name || entry.recipeName || "";
-          if (!name) return;
-          events.push({ id: `eat-${key}-${entry.id || name}`, title: name, date: key, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.eat, source: "eat", calendarName: "Meal Plan" });
+          if (name) push(key, { id: `eat-${key}-${entry.id || name}`, title: name, date: key, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.eat, source: "eat", calendarName: "Meal Plan" });
         });
       } catch { }
     });
   });
-  (hidden.play ? [] : (state.workouts || [])).forEach((w) => {
+  (state.workouts || []).forEach((w) => {
     (w.logs || []).forEach((log) => {
-      if (!log.date || log.date < startKey || log.date > endKey) return;
-      events.push({ id: `play-${log.id}`, title: w.title || "Workout", date: log.date, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.play, source: "play", calendarName: "Exercise" });
+      if (log.date) push(log.date, { id: `play-${log.id}`, title: w.title || "Workout", date: log.date, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.play, source: "play", calendarName: "Exercise" });
     });
   });
-  const doTasks = hidden.do ? [] : [...(state.doPlans ? Object.values(state.doPlans).flatMap((d) => Object.values(d || {}).flat()) : []), ...(state.doTasks || [])];
+  const doTasks = [...(state.doPlans ? Object.values(state.doPlans).flatMap((d) => Object.values(d || {}).flat()) : []), ...(state.doTasks || [])];
   doTasks.forEach((task) => {
     const key = task?.date || task?.dueDate;
-    if (!key || key < startKey || key > endKey) return;
-    const title = task.title || task.text || task.name;
-    if (!title) return;
-    events.push({ id: `do-${task.id || title}`, title, date: key, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.do, source: "do", calendarName: "To-Do" });
+    const title = task?.title || task?.text || task?.name;
+    if (key && title) push(key, { id: `do-${task.id || title}`, title, date: key, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.do, source: "do", calendarName: "To-Do" });
   });
+  return byDate;
+}
+
+function getAppDataEvents(startKey, endKey) {
+  if (!planAppDataIndex) planAppDataIndex = buildPlanAppDataIndex();
+  const hidden = state.planHiddenSources || {}; // sidebar overlay toggles
+  const events = [];
+  // Walk only the range's days (≈42 for a month) instead of the whole history.
+  const cur = new Date(startKey + "T00:00:00");
+  const end = new Date(endKey + "T00:00:00");
+  let guard = 0;
+  while (cur <= end && guard++ < 800) {
+    const list = planAppDataIndex.get(dateKeyFromDate(cur));
+    if (list) for (const ev of list) { if (!hidden[ev.source]) events.push(ev); }
+    cur.setDate(cur.getDate() + 1);
+  }
   return events;
 }
 
