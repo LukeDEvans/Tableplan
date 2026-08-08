@@ -33259,7 +33259,10 @@ function getPlanEventsForRange(startKey, endKey) {
   if (planRangeCache && planRangeCache.key === cacheKey) return planRangeCache.val;
   const events = [];
   const eventColor = (e) => e.color || ((state.planCalendars || []).find((c) => c.id === e.calendarId)?.color) || PLAN_COLORS[0];
+  // Calendars toggled off in the sidebar hide their events (personal + iCal).
+  const disabledCalIds = new Set((state.planCalendars || []).filter((c) => c.enabled === false).map((c) => c.id));
   (state.planEvents || []).forEach((e) => {
+    if (e.calendarId && disabledCalIds.has(e.calendarId)) return; // calendar hidden
     const color = eventColor(e);
     if (e.recurrence) {
       expandRecurringOccurrences(e, startKey, endKey).forEach((occDate) => {
@@ -33290,6 +33293,7 @@ function getPlanEventsForRange(startKey, endKey) {
     const seen = new Set(events.map((e) => e.id));
     mine.forEach((e) => {
       if (seen.has(e.id)) return;
+      if (e.calendarId && disabledCalIds.has(e.calendarId)) return; // calendar hidden
       const push = (occDate) => events.push({ ...e, date: occDate, occurrenceOf: e.recurrence ? e.id : undefined, source: "personal-overlay", color: e.color || PLAN_COLORS[0], title: `◦ ${e.title}` });
       if (e.recurrence) expandRecurringOccurrences(e, startKey, endKey).forEach(push);
       else if (e.date >= startKey && e.date <= endKey) push(e.date);
