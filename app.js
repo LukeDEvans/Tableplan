@@ -1614,6 +1614,11 @@ function bindEvents() {
   document.getElementById("planEventDate")?.addEventListener("click", (e) => {
     try { e.currentTarget.showPicker?.(); } catch { /* not supported */ }
   });
+  // End date has no native picker button (hidden in CSS to save width), so open
+  // the picker on click here too.
+  document.getElementById("planEventEndDate")?.addEventListener("click", (e) => {
+    try { e.currentTarget.showPicker?.(); } catch { /* not supported */ }
+  });
   // Changing the date refreshes the monthly/yearly "nth weekday" labels.
   document.getElementById("planEventDate")?.addEventListener("change", () => {
     if (!document.getElementById("planEventRepeatMode")?.hidden) populatePlanRepeatMode();

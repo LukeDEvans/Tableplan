@@ -11129,7 +11129,12 @@ body.touch-drag-active * {
   font: inherit;
   font-weight: 600;
   color: var(--ink);
+  cursor: pointer;
 }
+/* Hide the native calendar-picker button: it eats ~20px per input, which pushes
+   the start→end range past the narrow dialog and clips the end date. Clicking the
+   field still opens the picker (showPicker, wired in JS). */
+.plan-event-dialog .plan-date-range input[type="date"]::-webkit-calendar-picker-indicator { display: none; }
 /* Each time = hour + minute dropdowns and an AM/PM toggle button. */
 .plan-time-field { display: flex; align-items: center; gap: 4px; }
 .plan-time-colon { font-weight: 700; }
@@ -11284,12 +11289,10 @@ body.touch-drag-active * {
   min-height: 0;
 }
 .plan-event-actions-right {
-  position: absolute;
-  right: 18px;
-  bottom: 16px;
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-left: auto; /* right-aligned; Delete (when shown) stays on the left */
 }
 .plan-attach-btn { width: 34px; height: 34px; min-height: 34px; }
 .plan-attach-btn svg { width: 20px; height: 20px; }
