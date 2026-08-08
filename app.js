@@ -33007,12 +33007,35 @@ function expandRecurringOccurrences(e, startKey, endKey) {
     return occ;
   }
 
+  // Monthly / yearly on a day-of-month: anchor on the original day so a month or
+  // year that lacks that day (e.g. the 31st in Feb, or Feb 29 in a common year)
+  // is SKIPPED, not rolled forward into the next month (which would drift the day
+  // and drop months entirely).
+  if (rec.freq === "monthly" || rec.freq === "yearly") {
+    const anchorDay = base.getDate();
+    const anchorMonth = base.getMonth();
+    const endD = new Date(hardEnd + "T00:00:00");
+    let y = base.getFullYear(), m = base.getMonth(), g4 = 0;
+    while (g4++ < 2400) {
+      const mm = rec.freq === "yearly" ? anchorMonth : m;
+      if (new Date(y, mm, 1) > endD) break;
+      const dim = new Date(y, mm + 1, 0).getDate(); // days in this month
+      if (anchorDay <= dim) {
+        const key = dateKeyFromDate(new Date(y, mm, anchorDay));
+        if (key > hardEnd) break;
+        if (key >= startKey && key >= e.date && !exceptions.has(key)) occ.push(key);
+      }
+      if (rec.freq === "monthly") { m += rec.interval; y += Math.floor(m / 12); m = ((m % 12) + 12) % 12; }
+      else { y += rec.interval; }
+    }
+    return occ;
+  }
+
+  // Daily / weekly (every N days/weeks). Fast-forward from an old start so we
+  // don't burn the iteration cap before reaching the visible window.
   const d = new Date(base);
-  // Fast-forward day/week series from an old start so we don't burn the
-  // iteration cap before reaching the visible window (e.g. a daily event that
-  // started years ago). Monthly/yearly step coarsely enough already.
   const startD = new Date(startKey + "T00:00:00");
-  if ((rec.freq === "daily" || rec.freq === "weekly") && d < startD) {
+  if (d < startD) {
     const step = (rec.freq === "daily" ? 1 : 7) * rec.interval;
     const jumps = Math.floor((startD - d) / 86400000 / step);
     if (jumps > 0) d.setDate(d.getDate() + jumps * step);
@@ -33024,8 +33047,6 @@ function expandRecurringOccurrences(e, startKey, endKey) {
     if (key >= startKey && !exceptions.has(key)) occ.push(key);
     if (rec.freq === "daily") d.setDate(d.getDate() + rec.interval);
     else if (rec.freq === "weekly") d.setDate(d.getDate() + 7 * rec.interval);
-    else if (rec.freq === "monthly") d.setMonth(d.getMonth() + rec.interval);
-    else if (rec.freq === "yearly") d.setFullYear(d.getFullYear() + rec.interval);
     else break;
   }
   return occ;

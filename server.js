@@ -1095,6 +1095,17 @@ function readIcsDatetime(block, prop) {
   const value = line.slice(line.indexOf(":") + 1).trim();
   const allDay = value.match(/^(\d{4})(\d{2})(\d{2})$/);
   if (allDay) return { date: `${allDay[1]}-${allDay[2]}-${allDay[3]}`, time: null, allDay: true };
+  // UTC ('Z'): convert to the server's LOCAL wall time. This is a single-user
+  // local app, so server-local == the viewer's timezone; without this a 02:00Z
+  // event would show on the wrong day/time near midnight.
+  const utc = value.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})?Z$/);
+  if (utc) {
+    const d = new Date(Date.UTC(+utc[1], +utc[2] - 1, +utc[3], +utc[4], +utc[5], +(utc[6] || 0)));
+    const p = (n) => String(n).padStart(2, "0");
+    return { date: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`, time: `${p(d.getHours())}:${p(d.getMinutes())}`, allDay: false };
+  }
+  // TZID or floating local time: taken as-is. (Full IANA VTIMEZONE conversion
+  // isn't done; for a personal calendar its zone usually matches the viewer's.)
   const dt = value.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/);
   if (dt) return { date: `${dt[1]}-${dt[2]}-${dt[3]}`, time: `${dt[4]}:${dt[5]}`, allDay: false };
   return null;
