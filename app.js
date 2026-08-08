@@ -34195,6 +34195,27 @@ function initPlanCalListDelegation() {
   list.addEventListener("click", (e) => {
     if (e.target.closest("[data-add-cal]")) { openAddPlanCalDialog(); return; }
 
+    // The color dot is a visibility toggle: click flips the calendar on/off.
+    const calDot = e.target.closest("[data-cal-toggle]");
+    if (calDot) {
+      const id = calDot.dataset.calToggle;
+      state.planCalendars = (state.planCalendars || []).map((c) => c.id === id ? { ...c, enabled: !c.enabled } : c);
+      persist();
+      renderPlanCalList();
+      if (activeAppArea === "plan") renderPlanPage();
+      return;
+    }
+    const overlayDot = e.target.closest("[data-overlay-toggle]");
+    if (overlayDot) {
+      const src = overlayDot.dataset.overlayToggle;
+      if (!state.planHiddenSources || typeof state.planHiddenSources !== "object") state.planHiddenSources = {};
+      state.planHiddenSources[src] = !state.planHiddenSources[src]; // flip visibility
+      persist();
+      renderPlanCalList();
+      if (activeAppArea === "plan") renderPlanPage();
+      return;
+    }
+
     const editBtn = e.target.closest("[data-cal-edit]");
     if (editBtn) { openPlanCalEditMode(editBtn.dataset.calEdit); return; }
 
@@ -34218,24 +34239,6 @@ function initPlanCalListDelegation() {
     }
 
     if (e.target.closest("[data-cancel-cal-edit]")) { renderPlanCalList(); return; }
-  });
-
-  list.addEventListener("change", (e) => {
-    const toggle = e.target.closest("[data-cal-toggle]");
-    if (toggle) {
-      const id = toggle.dataset.calToggle;
-      state.planCalendars = (state.planCalendars || []).map((c) => c.id === id ? { ...c, enabled: toggle.checked } : c);
-      persist();
-      if (activeAppArea === "plan") renderPlanPage();
-      return;
-    }
-    const overlay = e.target.closest("[data-overlay-toggle]");
-    if (overlay) {
-      if (!state.planHiddenSources || typeof state.planHiddenSources !== "object") state.planHiddenSources = {};
-      state.planHiddenSources[overlay.dataset.overlayToggle] = !overlay.checked; // checked = visible
-      persist();
-      if (activeAppArea === "plan") renderPlanPage();
-    }
   });
 
   // Desktop: right-click a calendar row for Edit / Delete.
@@ -34333,11 +34336,8 @@ function planOverlayRowHtml(source, name, color) {
   return `
     <div class="plan-cal-row">
       <div class="plan-cal-front">
-        <span class="plan-cal-dot" style="background:${color}"></span>
+        <button type="button" class="plan-cal-dot ${hidden[source] ? "is-off" : "is-on"}" style="--dot-color:${color}" data-overlay-toggle="${escapeHtml(source)}" role="switch" aria-checked="${hidden[source] ? "false" : "true"}" aria-label="Toggle ${escapeHtml(name)}"></button>
         <span class="plan-cal-name">${escapeHtml(name)}</span>
-        <label class="plan-cal-toggle">
-          <input type="checkbox" class="live-toggle" data-overlay-toggle="${escapeHtml(source)}" ${hidden[source] ? "" : "checked"} />
-        </label>
       </div>
     </div>`;
 }
@@ -34381,11 +34381,8 @@ function planCalRowHtml(cal) {
         </button>
       </div>
       <div class="plan-cal-front">
-        <span class="plan-cal-dot" style="background:${escapeHtml(cal.color)}"></span>
+        <button type="button" class="plan-cal-dot ${cal.enabled ? "is-on" : "is-off"}" style="--dot-color:${escapeHtml(cal.color)}" data-cal-toggle="${escapeHtml(cal.id)}" role="switch" aria-checked="${cal.enabled ? "true" : "false"}" aria-label="Toggle ${escapeHtml(cal.name)}"></button>
         <span class="plan-cal-name">${escapeHtml(cal.name)}</span>
-        <label class="plan-cal-toggle">
-          <input type="checkbox" class="live-toggle" data-cal-toggle="${escapeHtml(cal.id)}" ${cal.enabled ? "checked" : ""} />
-        </label>
       </div>
     </div>
   `;
