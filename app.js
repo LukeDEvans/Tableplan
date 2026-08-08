@@ -33692,7 +33692,9 @@ function renderPlanWeekView() {
   const today = dateKeyFromDate(new Date());
   const rangeStart = dateKeyFromDate(days[0]);
   const rangeEnd = dateKeyFromDate(days[6]);
-  const allEvents = getPlanEventsForRange(rangeStart, rangeEnd);
+  // Fetch one extra day before so a Saturday-night overnight event's tail shows on Sunday.
+  const fetchStart = dateKeyFromDate(new Date(days[0].getTime() - 86400000));
+  const allEvents = getPlanEventsForRange(fetchStart, rangeEnd);
   const allDay = allEvents.filter((e) => e.allDay);
   const timed = allEvents.filter((e) => !e.allDay && e.startTime);
   const paydaysByDay = paydaysByDate(rangeStart, rangeEnd);
@@ -33713,21 +33715,17 @@ function renderPlanWeekView() {
   }).join("");
   const now = new Date();
   const nowH = now.getHours(), nowTop = (now.getMinutes() / 60) * 100;
-  // Column layout per day so overlapping events sit side-by-side.
-  const layoutByDay = {};
-  days.forEach((d) => { const k = dateKeyFromDate(d); layoutByDay[k] = packDayEvents(timed.filter((e) => e.date === k)); });
+  // Per-day segments (splitting overnight events) + column layout for overlaps.
+  const segsByDay = {}, layoutByDay = {};
+  days.forEach((d) => { const k = dateKeyFromDate(d); segsByDay[k] = planDaySegments(k, timed); layoutByDay[k] = packDaySegments(segsByDay[k]); });
   const hourRows = Array.from({ length: 24 }, (_, h) => {
     const label = h === 0 ? "" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
     const cols = days.map((d) => {
       const key = dateKeyFromDate(d);
-      const evts = timed.filter((e) => {
-        if (e.date !== key) return false;
-        const [eh] = (e.startTime || "00:00").split(":").map(Number);
-        return eh === h;
-      });
+      const segs = segsByDay[key].filter((s) => Math.floor(s.start / 60) === h);
       const nowLine = (key === today && h === nowH) ? `<div class="plan-now-line" style="top:${nowTop}%"></div>` : "";
       return `<div class="plan-week-cell" data-plan-day="${escapeHtml(key)}" data-plan-hour="${h}">
-        ${nowLine}${evts.map((e) => planTimedEventBlock(e, layoutByDay[key].get(e.id))).join("")}
+        ${nowLine}${segs.map((s) => planTimedEventBlock(s, layoutByDay[key].get(s.event.id))).join("")}
       </div>`;
     }).join("");
     return `<div class="plan-hour-row">
@@ -33753,21 +33751,21 @@ function renderPlanDayView() {
   const today = dateKeyFromDate(new Date());
   const now = new Date();
   const nowH = now.getHours(), nowTop = (now.getMinutes() / 60) * 100;
-  const allEvents = getPlanEventsForRange(key, key);
-  const allDay = allEvents.filter((e) => e.allDay);
+  // Fetch the previous day too so a prior overnight event's tail shows this morning.
+  const prevKey = dateKeyFromDate(new Date(new Date(key + "T00:00:00").getTime() - 86400000));
+  const allEvents = getPlanEventsForRange(prevKey, key);
+  const allDay = allEvents.filter((e) => e.allDay && e.date === key);
   const timed = allEvents.filter((e) => !e.allDay && e.startTime);
-  const layout = packDayEvents(timed); // side-by-side columns for overlaps
+  const segs = planDaySegments(key, timed);
+  const layout = packDaySegments(segs); // side-by-side columns for overlaps
   const hourRows = Array.from({ length: 24 }, (_, h) => {
     const label = h === 0 ? "" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
-    const evts = timed.filter((e) => {
-      const [eh] = (e.startTime || "00:00").split(":").map(Number);
-      return eh === h;
-    });
+    const cells = segs.filter((s) => Math.floor(s.start / 60) === h);
     const nowLine = (key === today && h === nowH) ? `<div class="plan-now-line" style="top:${nowTop}%"></div>` : "";
     return `<div class="plan-hour-row plan-day-hour-row">
       <div class="plan-time-label">${label}</div>
       <div class="plan-day-cell" data-plan-day="${escapeHtml(key)}" data-plan-hour="${h}">
-        ${nowLine}${evts.map((e) => planTimedEventBlock(e, layout.get(e.id))).join("")}
+        ${nowLine}${cells.map((s) => planTimedEventBlock(s, layout.get(s.event.id))).join("")}
       </div>
     </div>`;
   }).join("");
@@ -33818,24 +33816,40 @@ function planEventMinutes(event) {
   const [sh, sm] = (event.startTime || "00:00").split(":").map(Number);
   const [eh, em] = (event.endTime || `${String((sh + 1) % 24).padStart(2, "0")}:${String(sm).padStart(2, "0")}`).split(":").map(Number);
   const start = sh * 60 + sm;
-  return { start, end: Math.max(eh * 60 + em, start + 30) };
+  let end = eh * 60 + em;
+  const crosses = end <= start; // ends at/before it starts → runs into the next day
+  if (crosses) end += 1440;
+  return { start, end: Math.max(end, start + 30), crosses };
 }
 
-// Column-pack a day's timed events so overlapping ones sit side-by-side. Returns
-// a Map of event id -> { col, cols } (cols = width of its overlap cluster).
-function packDayEvents(evts) {
-  const items = evts.map((e) => ({ e, ...planEventMinutes(e) }))
-    .sort((a, b) => a.start - b.start || a.end - b.end);
+// Timed-event segments that fall on `dayKey`. An event that crosses midnight is
+// split into a head (this day → 24:00) and a tail (next day 00:00 → its end),
+// so each day column shows the right slice.
+function planDaySegments(dayKey, timed) {
+  const prevKey = dateKeyFromDate(new Date(new Date(dayKey + "T00:00:00").getTime() - 86400000));
+  const segs = [];
+  timed.forEach((e) => {
+    const { start, end, crosses } = planEventMinutes(e);
+    if (e.date === dayKey) segs.push({ event: e, start, end: Math.min(end, 1440), tail: false });
+    if (e.date === prevKey && crosses) segs.push({ event: e, start: 0, end: end - 1440, tail: true });
+  });
+  return segs;
+}
+
+// Column-pack a day's segments so overlapping ones sit side-by-side. Returns a
+// Map of event id -> { col, cols } (cols = width of its overlap cluster).
+function packDaySegments(segs) {
+  const items = segs.slice().sort((a, b) => a.start - b.start || a.end - b.end);
   const result = new Map();
   let cluster = [], clusterEnd = -1;
   const flush = () => {
-    const lanes = []; // lanes[i] = end time of the last event placed in lane i
+    const lanes = []; // lanes[i] = end time of the last segment placed in lane i
     cluster.forEach((it) => {
       let lane = lanes.findIndex((end) => end <= it.start);
       if (lane === -1) { lane = lanes.length; lanes.push(it.end); } else lanes[lane] = it.end;
       it.lane = lane;
     });
-    cluster.forEach((it) => result.set(it.e.id, { col: it.lane, cols: lanes.length }));
+    cluster.forEach((it) => result.set(it.event.id, { col: it.lane, cols: lanes.length }));
     cluster = [];
   };
   items.forEach((it) => {
@@ -33847,18 +33861,22 @@ function packDayEvents(evts) {
   return result;
 }
 
-function planTimedEventBlock(event, layout) {
-  const { start: startMin, end: endMin } = planEventMinutes(event);
-  const top = ((startMin % 60) / 60) * 100;
-  const height = Math.max(((endMin - startMin) / 60) * 100, 33);
+function planTimedEventBlock(seg, layout) {
+  const event = seg.event;
+  const top = ((seg.start % 60) / 60) * 100;
+  const height = Math.max(((seg.end - seg.start) / 60) * 100, 33);
   const cols = layout?.cols || 1, col = layout?.col || 0;
   // Side-by-side columns when overlapping; full width (CSS default) when alone.
   const colStyle = cols > 1 ? `left:calc(${(col / cols) * 100}% + 1px);width:calc(${100 / cols}% - 3px);right:auto;` : "";
-  return `<div class="plan-timed-event" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}"
-               tabindex="0" role="button" aria-label="${escapeHtml(planFormatTime(event.startTime))} ${escapeHtml(event.title)}"
+  const label = `${planFormatTime(event.startTime)} ${event.title}`;
+  const personal = !event.source || event.source === "personal";
+  // The block's bottom edge is a resize handle for single, non-span personal events.
+  const resizable = personal && !event.spanPos && !seg.tail;
+  return `<div class="plan-timed-event${seg.tail ? " is-overnight-tail" : ""}" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}"
+               tabindex="0" role="button" aria-label="${escapeHtml(label)}"
                style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])};top:${top}%;height:${height}%;${colStyle}"
-               data-tip="${escapeHtml(planFormatTime(event.startTime))} ${escapeHtml(event.title)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}">
-    <span>${escapeHtml(planFormatTime(event.startTime))} ${escapeHtml(event.title)}${event.recurrence || event.occurrenceOf ? " ↻" : ""}</span>
+               data-tip="${escapeHtml(label)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}">
+    <span>${escapeHtml(label)}${event.recurrence || event.occurrenceOf ? " ↻" : ""}</span>${resizable ? `<span class="plan-event-resize" data-resize-event="${escapeHtml(event.id)}" aria-hidden="true"></span>` : ""}
   </div>`;
 }
 

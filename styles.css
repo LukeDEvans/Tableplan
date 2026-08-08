@@ -11047,6 +11047,11 @@ body.touch-drag-active * {
 .plan-timed-event:hover { background: color-mix(in srgb, var(--evt-color) 32%, transparent); }
 .plan-timed-event:focus-visible,
 .plan-event-pill:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; z-index: 3; }
+/* Overnight continuation (the tail of an event that started the previous day). */
+.plan-timed-event.is-overnight-tail { border-top: 2px dotted color-mix(in srgb, var(--evt-color) 60%, transparent); }
+/* Bottom resize handle on a timed event. */
+.plan-event-resize { position: absolute; left: 0; right: 0; bottom: 0; height: 7px; cursor: ns-resize; }
+.plan-timed-event:hover .plan-event-resize { background: color-mix(in srgb, var(--evt-color) 45%, transparent); }
 /* Live preview while dragging to create a timed event. */
 .plan-drag-create {
   --evt-color: var(--accent, #1a73e8);
