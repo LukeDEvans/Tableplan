@@ -625,6 +625,7 @@ let pendingRepMoodKey = null;
 const recordingSession = {};
 let planViewMode = "month";
 let planViewDate = new Date();
+let planDotTooltipEl = null; // hoisted: initPlanDotTooltip runs during init, before its own file position
 const planCalendarCache = {};
 let editingPlanEventId = null;
 let editingPlanEventOccurrenceDate = null; // which occurrence of a recurring event was opened
@@ -33048,6 +33049,54 @@ function renderPlanPage() {
   if (planViewMode === "day" || planViewMode === "week") requestAnimationFrame(scrollPlanGridToNow);
 }
 
+// Coalesce bursts of render requests (e.g. several iCal calendars resolving at
+// once) into a single frame render, instead of re-rendering per event.
+let planRenderQueued = false;
+function schedulePlanRender() {
+  if (planRenderQueued) return;
+  planRenderQueued = true;
+  requestAnimationFrame(() => {
+    planRenderQueued = false;
+    if (activeAppArea === "plan") renderPlanPage();
+  });
+}
+
+// Instant, styled tooltip for month-view dots (native title has a ~0.5s delay).
+// Bound once via delegation on #planCalendar; one reusable element on <body>.
+// (planDotTooltipEl is hoisted to top-level module state — initializeApp runs
+// before this point in the file, so a `let` here would be in its TDZ.)
+function initPlanDotTooltip() {
+  const root = elements.planCalendar;
+  if (!root || root.dataset.tipBound) return;
+  root.dataset.tipBound = "1";
+  const tip = document.createElement("div");
+  tip.className = "plan-dot-tooltip";
+  tip.hidden = true;
+  document.body.appendChild(tip);
+  planDotTooltipEl = tip;
+  const place = (dot) => {
+    tip.textContent = dot.dataset.tip || "";
+    tip.hidden = false;
+    const r = dot.getBoundingClientRect();
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    let left = Math.max(6, Math.min(r.left + r.width / 2 - tw / 2, window.innerWidth - tw - 6));
+    let top = r.top - th - 6;
+    if (top < 6) top = r.bottom + 6; // flip below if no room above
+    tip.style.left = `${left}px`;
+    tip.style.top = `${top}px`;
+  };
+  root.addEventListener("mouseover", (e) => {
+    const dot = e.target.closest(".plan-month-dot[data-tip]");
+    if (dot) place(dot);
+  });
+  root.addEventListener("mouseout", (e) => {
+    if (e.target.closest(".plan-month-dot")) tip.hidden = true;
+  });
+  root.addEventListener("mouseleave", () => { tip.hidden = true; });
+  // Any scroll/render can move the dot out from under the cursor.
+  window.addEventListener("scroll", () => { tip.hidden = true; }, true);
+}
+
 // Scroll the day/week hour grid so "now" (or ~8am on a non-today view) is in
 // view, instead of always starting at midnight.
 function scrollPlanGridToNow() {
@@ -33438,7 +33487,7 @@ function planMonthDotTemplate(event) {
   const tip = `${timeLabel}${event.title || ""}`;
   return `<span class="plan-month-dot${movable || occMovable ? " is-movable" : ""}" style="background:${escapeHtml(event.color || PLAN_COLORS[0])}" ` +
     `data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}" ` +
-    `title="${escapeHtml(tip)}" aria-label="${escapeHtml(tip)}"${dragAttrs}></span>`;
+    `data-tip="${escapeHtml(tip)}" aria-label="${escapeHtml(tip)}"${dragAttrs}></span>`;
 }
 
 // Finance paydays grouped by date-key, for the calendar's read-only payday dots.
@@ -33480,15 +33529,20 @@ function renderPlanMonthView() {
     const isToday = key === today;
     const isOther = date.getMonth() !== month;
     const dayEvts = eventsByDay[key] || []; // already sorted: all-day first, then by start time
-    const allDayEvts = dayEvts.filter((e) => e.allDay);
-    const timedEvts = dayEvts.filter((e) => !e.allDay);
+    const allDayAll = dayEvts.filter((e) => e.allDay);
+    const timedAll = dayEvts.filter((e) => !e.allDay);
+    // Cap the dots so busy days can't silently clip; the remainder shows as "+N"
+    // (which drills into that day). Caps chosen to fit typical desktop + phone cells.
+    const allDayEvts = allDayAll.slice(0, 3);
+    const timedEvts = timedAll.slice(0, 5);
+    const hidden = (allDayAll.length - allDayEvts.length) + (timedAll.length - timedEvts.length);
     return `<div class="plan-month-day${isToday ? " is-today" : ""}${isOther ? " is-other-month" : ""}" data-plan-day="${escapeHtml(key)}" tabindex="0">
       <div class="plan-month-day-head">
         <span class="plan-day-number">${date.getDate()}</span>
         ${allDayEvts.length ? `<div class="plan-month-allday">${allDayEvts.map(planMonthDotTemplate).join("")}</div>` : ""}
       </div>
       ${paydayDotHtml(paydaysByDay[key])}
-      ${timedEvts.length ? `<div class="plan-month-dots">${timedEvts.map(planMonthDotTemplate).join("")}</div>` : ""}
+      ${(timedEvts.length || hidden) ? `<div class="plan-month-dots">${timedEvts.map(planMonthDotTemplate).join("")}${hidden ? `<span class="plan-month-more" role="button" aria-label="${hidden} more — open day">+${hidden}</span>` : ""}</div>` : ""}
     </div>`;
   }).join("");
   return `<div class="plan-month">
@@ -34258,6 +34312,7 @@ function initPlanCalListDelegation() {
   // Scroll-wheel / pinch zoom between month → week → day (bound once; the grid is
   // re-rendered inside #planCalendar but the host element persists).
   bindPlanZoomNavigation(elements.planCalendar);
+  initPlanDotTooltip();
   // Delegated click for the whole calendar grid (bound once): an event opens that
   // event; the day-number in month view drills into day view; anywhere else on a
   // day opens the new-event dialog for that date.
@@ -34272,7 +34327,8 @@ function initPlanCalListDelegation() {
     }
     const cell = e.target.closest("[data-plan-day]");
     if (!cell) return;
-    if (e.target.closest(".plan-day-number") && planViewMode === "month") {
+    // Month view: the day number or the "+N more" chip drill into that day.
+    if (planViewMode === "month" && (e.target.closest(".plan-day-number") || e.target.closest(".plan-month-more"))) {
       planViewDate = new Date(cell.dataset.planDay + "T00:00:00");
       planViewMode = "day";
       setWeekToolsMode("plan");
@@ -34280,6 +34336,19 @@ function initPlanCalListDelegation() {
       return;
     }
     openPlanEventDialog(cell.dataset.planDay);
+  });
+  // Keyboard navigation for the month grid: arrows move day-to-day, Enter/Space
+  // adds an event on the focused day.
+  elements.planCalendar?.addEventListener("keydown", (e) => {
+    if (planViewMode !== "month") return;
+    const cell = e.target.closest(".plan-month-day[data-plan-day]");
+    if (!cell) return;
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPlanEventDialog(cell.dataset.planDay); return; }
+    const delta = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[e.key];
+    if (delta === undefined) return;
+    const cells = [...elements.planCalendar.querySelectorAll(".plan-month-day[data-plan-day]")];
+    const next = cells[cells.indexOf(cell) + delta];
+    if (next) { e.preventDefault(); next.focus(); }
   });
   const list = elements.planCalList;
   if (!list) return;
@@ -34537,7 +34606,7 @@ async function fetchOnePlanCalendar(cal) {
     planRangeCache.clear(); // fresh iCal events — drop the memoized range
     state.planCalendars = (state.planCalendars || []).map((c) => c.id === cal.id ? { ...c, lastFetched: new Date().toISOString() } : c);
     persist();
-    if (activeAppArea === "plan") renderPlanPage();
+    schedulePlanRender(); // coalesce when several subscriptions resolve together
   } catch { }
 }
 
