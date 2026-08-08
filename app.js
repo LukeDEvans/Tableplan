@@ -33643,6 +33643,9 @@ function renderPlanWeekView() {
   }).join("");
   const now = new Date();
   const nowH = now.getHours(), nowTop = (now.getMinutes() / 60) * 100;
+  // Column layout per day so overlapping events sit side-by-side.
+  const layoutByDay = {};
+  days.forEach((d) => { const k = dateKeyFromDate(d); layoutByDay[k] = packDayEvents(timed.filter((e) => e.date === k)); });
   const hourRows = Array.from({ length: 24 }, (_, h) => {
     const label = h === 0 ? "" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
     const cols = days.map((d) => {
@@ -33654,7 +33657,7 @@ function renderPlanWeekView() {
       });
       const nowLine = (key === today && h === nowH) ? `<div class="plan-now-line" style="top:${nowTop}%"></div>` : "";
       return `<div class="plan-week-cell" data-plan-day="${escapeHtml(key)}" data-plan-hour="${h}">
-        ${nowLine}${evts.map((e) => planTimedEventBlock(e)).join("")}
+        ${nowLine}${evts.map((e) => planTimedEventBlock(e, layoutByDay[key].get(e.id))).join("")}
       </div>`;
     }).join("");
     return `<div class="plan-hour-row">
@@ -33683,6 +33686,7 @@ function renderPlanDayView() {
   const allEvents = getPlanEventsForRange(key, key);
   const allDay = allEvents.filter((e) => e.allDay);
   const timed = allEvents.filter((e) => !e.allDay && e.startTime);
+  const layout = packDayEvents(timed); // side-by-side columns for overlaps
   const hourRows = Array.from({ length: 24 }, (_, h) => {
     const label = h === 0 ? "" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
     const evts = timed.filter((e) => {
@@ -33693,7 +33697,7 @@ function renderPlanDayView() {
     return `<div class="plan-hour-row plan-day-hour-row">
       <div class="plan-time-label">${label}</div>
       <div class="plan-day-cell" data-plan-day="${escapeHtml(key)}" data-plan-hour="${h}">
-        ${nowLine}${evts.map((e) => planTimedEventBlock(e)).join("")}
+        ${nowLine}${evts.map((e) => planTimedEventBlock(e, layout.get(e.id))).join("")}
       </div>
     </div>`;
   }).join("");
@@ -33739,15 +33743,49 @@ function renderPlanAgendaView() {
   return `<div class="plan-agenda">${groups}</div>`;
 }
 
-function planTimedEventBlock(event) {
+// Start/end minutes for a timed event (min 30-min duration; wraps midnight safely).
+function planEventMinutes(event) {
   const [sh, sm] = (event.startTime || "00:00").split(":").map(Number);
   const [eh, em] = (event.endTime || `${String((sh + 1) % 24).padStart(2, "0")}:${String(sm).padStart(2, "0")}`).split(":").map(Number);
-  const startMin = sh * 60 + sm;
-  const endMin = Math.max(eh * 60 + em, startMin + 30);
+  const start = sh * 60 + sm;
+  return { start, end: Math.max(eh * 60 + em, start + 30) };
+}
+
+// Column-pack a day's timed events so overlapping ones sit side-by-side. Returns
+// a Map of event id -> { col, cols } (cols = width of its overlap cluster).
+function packDayEvents(evts) {
+  const items = evts.map((e) => ({ e, ...planEventMinutes(e) }))
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+  const result = new Map();
+  let cluster = [], clusterEnd = -1;
+  const flush = () => {
+    const lanes = []; // lanes[i] = end time of the last event placed in lane i
+    cluster.forEach((it) => {
+      let lane = lanes.findIndex((end) => end <= it.start);
+      if (lane === -1) { lane = lanes.length; lanes.push(it.end); } else lanes[lane] = it.end;
+      it.lane = lane;
+    });
+    cluster.forEach((it) => result.set(it.e.id, { col: it.lane, cols: lanes.length }));
+    cluster = [];
+  };
+  items.forEach((it) => {
+    if (cluster.length && it.start >= clusterEnd) flush();
+    cluster.push(it);
+    clusterEnd = Math.max(clusterEnd, it.end);
+  });
+  if (cluster.length) flush();
+  return result;
+}
+
+function planTimedEventBlock(event, layout) {
+  const { start: startMin, end: endMin } = planEventMinutes(event);
   const top = ((startMin % 60) / 60) * 100;
   const height = Math.max(((endMin - startMin) / 60) * 100, 33);
+  const cols = layout?.cols || 1, col = layout?.col || 0;
+  // Side-by-side columns when overlapping; full width (CSS default) when alone.
+  const colStyle = cols > 1 ? `left:calc(${(col / cols) * 100}% + 1px);width:calc(${100 / cols}% - 3px);right:auto;` : "";
   return `<div class="plan-timed-event" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}"
-               style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])};top:${top}%;height:${height}%"
+               style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])};top:${top}%;height:${height}%;${colStyle}"
                title="${escapeHtml(event.title)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}">
     <span>${escapeHtml(planFormatTime(event.startTime))} ${escapeHtml(event.title)}${event.recurrence || event.occurrenceOf ? " ↻" : ""}</span>
   </div>`;
