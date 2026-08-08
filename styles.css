@@ -11047,6 +11047,15 @@ body.touch-drag-active * {
 .plan-timed-event:hover { background: color-mix(in srgb, var(--evt-color) 32%, transparent); }
 .plan-timed-event:focus-visible,
 .plan-event-pill:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; z-index: 3; }
+/* Live preview while dragging to create a timed event. */
+.plan-drag-create {
+  --evt-color: var(--accent, #1a73e8);
+  background: color-mix(in srgb, var(--accent, #1a73e8) 22%, transparent);
+  border: 1px dashed var(--accent, #1a73e8);
+  color: var(--accent-dark, #1a56b3);
+  pointer-events: none;
+  z-index: 4;
+}
 
 /* Current-time indicator in the day/week hour grid. */
 .plan-now-line {

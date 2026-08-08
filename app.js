@@ -630,6 +630,8 @@ const recordingSession = {};
 let planViewMode = "month";
 let planViewDate = new Date();
 let planDotTooltipEl = null; // hoisted: initPlanDotTooltip runs during init, before its own file position
+let planSuppressGridClick = false; // set by a completed drag-to-create so the trailing click doesn't also open the day dialog
+let planDragCreate = null; // active drag-to-create gesture state
 const planCalendarCache = {};
 // Persist parsed iCal events to localStorage so subscribed calendars render
 // instantly on reload (before the network refetch), and survive being offline.
@@ -33163,6 +33165,57 @@ function initPlanDotTooltip() {
   window.addEventListener("scroll", () => { tip.hidden = true; }, true);
 }
 
+// Drag across empty space in the week/day hour grid to create a timed event over
+// that range (bound once). A plain click still opens the day's new-event dialog.
+function bindPlanGridDragCreate(root) {
+  if (!root || root.dataset.dragCreateBound) return;
+  root.dataset.dragCreateBound = "1";
+  const minAt = (cell, clientY) => {
+    const r = cell.getBoundingClientRect();
+    const raw = Number(cell.dataset.planHour) * 60 + ((clientY - r.top) / r.height) * 60;
+    return Math.max(0, Math.min(1440, Math.round(raw / 15) * 15)); // snap to 15 min
+  };
+  const fmt = (m) => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  const paint = (endMin) => {
+    if (!planDragCreate) return;
+    const s = Math.min(planDragCreate.startMin, endMin);
+    const en = Math.max(s + 15, Math.max(planDragCreate.startMin, endMin));
+    planDragCreate.s = s; planDragCreate.en = en;
+    planDragCreate.preview.style.top = `${((s - planDragCreate.startHour * 60) / 60) * 100}%`;
+    planDragCreate.preview.style.height = `${((en - s) / 60) * 100}%`;
+    planDragCreate.preview.innerHTML = `<span>${planFormatTime(fmt(s))} – ${planFormatTime(fmt(en))}</span>`;
+  };
+  root.addEventListener("mousedown", (e) => {
+    if (e.button !== 0 || (planViewMode !== "week" && planViewMode !== "day")) return;
+    if (e.target.closest("[data-plan-event-id]")) return; // starting on an event = don't create
+    const cell = e.target.closest(".plan-week-cell, .plan-day-cell");
+    if (!cell) return;
+    e.preventDefault();
+    const preview = document.createElement("div");
+    preview.className = "plan-timed-event plan-drag-create";
+    cell.appendChild(preview);
+    const startMin = minAt(cell, e.clientY);
+    planDragCreate = { dayKey: cell.dataset.planDay, startHour: Number(cell.dataset.planHour), startMin, s: startMin, en: startMin + 30, preview, moved: false };
+    paint(startMin + 30);
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!planDragCreate) return;
+    planDragCreate.moved = true;
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    const cell = under && under.closest(`[data-plan-hour][data-plan-day="${planDragCreate.dayKey}"]`);
+    paint(cell ? minAt(cell, e.clientY)
+      : Number(planDragCreate.startHour) * 60 + Math.round((((e.clientY - planDragCreate.preview.parentElement.getBoundingClientRect().top) / planDragCreate.preview.parentElement.getBoundingClientRect().height) * 60) / 15) * 15);
+  });
+  document.addEventListener("mouseup", () => {
+    if (!planDragCreate) return;
+    const dc = planDragCreate; planDragCreate = null;
+    dc.preview.remove();
+    if (!dc.moved) return; // a plain click — let the delegated click open the day dialog
+    planSuppressGridClick = true; // the trailing click shouldn't also open the day dialog
+    openPlanEventDialog(dc.dayKey, null, { allDay: false, startTime: fmt(dc.s), endTime: fmt(dc.en) });
+  });
+}
+
 // Scroll the day/week hour grid so "now" (or ~8am on a non-today view) is in
 // view, instead of always starting at midnight.
 function scrollPlanGridToNow() {
@@ -33889,7 +33942,7 @@ function readPlanTimeField(prefix) {
   return `${String(H).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
 
-function openPlanEventDialog(date, eventId) {
+function openPlanEventDialog(date, eventId, prefill) {
   editingPlanEventId = eventId || null;
   editingPlanEventOccurrenceDate = date || null;
   const existing = eventId ? (state.planEvents || []).find((e) => e.id === eventId) : null;
@@ -33927,6 +33980,14 @@ function openPlanEventDialog(date, eventId) {
     elements.planEventLocation.value = "";
     planEventAttachment = null;
     elements.deletePlanEventBtn.hidden = true;
+    // Prefill from drag-to-create / quick-add (title + a timed range).
+    if (prefill) {
+      if (prefill.title != null) elements.planEventTitle.value = prefill.title;
+      if (prefill.date) elements.planEventDate.value = prefill.date;
+      if (prefill.allDay === false) { elements.planEventAllDay.checked = false; elements.planTimeFields.hidden = false; }
+      if (prefill.startTime) setPlanTimeField("planEventStart", prefill.startTime);
+      if (prefill.endTime) setPlanTimeField("planEventEnd", prefill.endTime);
+    }
   }
   // Recurrence controls (edit a recurring event = edit the whole series).
   const rec = existing?.recurrence || null;
@@ -34429,6 +34490,18 @@ function initPlanCalListDelegation() {
       const box = document.getElementById("planSearchResults");
       if (box && !box.matches(":hover")) box.hidden = true;
     }, 120));
+    // Quick-add: Enter on text with a date/time ("Lunch tomorrow 12pm") opens a
+    // prefilled new-event dialog; plain search text (no date/time) is left alone.
+    searchInput.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      const parsed = parsePlanQuickAdd(searchInput.value);
+      if (!parsed) return;
+      e.preventDefault();
+      const box = document.getElementById("planSearchResults");
+      if (box) box.hidden = true;
+      searchInput.value = "";
+      openPlanEventDialog(parsed.date, null, { title: parsed.title, allDay: parsed.allDay, startTime: parsed.startTime, endTime: parsed.endTime });
+    });
   }
   // Top-bar controls are static markup wired once here (renderPlanPage no longer
   // rebuilds the top bar, so these listeners persist).
@@ -34448,10 +34521,12 @@ function initPlanCalListDelegation() {
   // re-rendered inside #planCalendar but the host element persists).
   bindPlanZoomNavigation(elements.planCalendar);
   initPlanDotTooltip();
+  bindPlanGridDragCreate(elements.planCalendar);
   // Delegated click for the whole calendar grid (bound once): an event opens that
   // event; the day-number in month view drills into day view; anywhere else on a
   // day opens the new-event dialog for that date.
   elements.planCalendar?.addEventListener("click", (e) => {
+    if (planSuppressGridClick) { planSuppressGridClick = false; return; } // just finished a drag-to-create
     const pill = e.target.closest("[data-plan-event-id]");
     if (pill) {
       // Auto-generated events (a logged workout, planned meal, to-do) aren't
@@ -34615,6 +34690,46 @@ function openPlanCalContextMenu(event, id) {
 
 // Sidebar event search: match title/notes/location across planEvents; a result
 // jumps to that event's date and opens it.
+// Lightweight natural-language quick-add: parse "Lunch tomorrow 12pm" style text
+// into { title, date, allDay, startTime, endTime }. Returns null unless a date or
+// time was found (so plain search text doesn't accidentally create an event).
+function parsePlanQuickAdd(input) {
+  let text = String(input || "").trim();
+  if (!text) return null;
+  const now = new Date();
+  let date = null, startTime = null;
+  const strip = (re) => { const m = text.match(re); if (m) text = (text.slice(0, m.index) + " " + text.slice(m.index + m[0].length)).replace(/\s+/g, " ").trim(); return m; };
+  const weekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  let m;
+  if (strip(/\btoday\b/i)) date = new Date(now);
+  else if (strip(/\b(tomorrow|tmrw)\b/i)) { date = new Date(now); date.setDate(date.getDate() + 1); }
+  else if ((m = strip(/\b(next\s+)?(sun|mon|tue|wed|thu|fri|sat)[a-z]*\b/i))) {
+    const wd = weekdays.findIndex((w) => w.startsWith(m[2].toLowerCase()));
+    date = new Date(now);
+    let delta = (wd - date.getDay() + 7) % 7;
+    if (delta === 0 || m[1]) delta = delta === 0 ? 7 : delta + (m[1] ? 0 : 0); // "monday" today → next week
+    date.setDate(date.getDate() + delta);
+  } else if ((m = strip(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/))) {
+    const yr = m[3] ? (+m[3] < 100 ? 2000 + +m[3] : +m[3]) : now.getFullYear();
+    date = new Date(yr, +m[1] - 1, +m[2]);
+    if (!m[3] && date < new Date(now.getFullYear(), now.getMonth(), now.getDate())) date.setFullYear(yr + 1);
+  }
+  if (strip(/\bnoon\b/i)) startTime = "12:00";
+  else if (strip(/\bmidnight\b/i)) startTime = "00:00";
+  else if ((m = strip(/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i))) {
+    let h = (+m[1]) % 12; if (m[3].toLowerCase() === "pm") h += 12;
+    startTime = `${String(h).padStart(2, "0")}:${m[2] || "00"}`;
+  } else if ((m = strip(/\bat\s+(\d{1,2}):(\d{2})\b/))) {
+    startTime = `${String(+m[1]).padStart(2, "0")}:${m[2]}`;
+  }
+  if (!date && !startTime) return null; // no date/time → treat as a normal search
+  const title = text.replace(/\s+/g, " ").trim();
+  if (!title) return null;
+  let endTime = null;
+  if (startTime) { const [h, mn] = startTime.split(":").map(Number); endTime = `${String((h + 1) % 24).padStart(2, "0")}:${String(mn).padStart(2, "0")}`; }
+  return { title, date: dateKeyFromDate(date || now), allDay: !startTime, startTime, endTime };
+}
+
 function renderPlanSearch(q) {
   const box = document.getElementById("planSearchResults");
   if (!box) return;
