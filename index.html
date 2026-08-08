@@ -650,13 +650,31 @@
         </section>
         <section class="planner-column do-column" id="planMainPage" aria-label="Plan" hidden>
           <div class="plan-page-inner">
-            <div class="plan-topbar" id="planTopbar"></div>
-            <div class="plan-layout">
-              <aside class="plan-sidebar" id="planSidebar">
+            <div class="plan-topbar" id="planTopbar">
+              <div class="plan-cal-toolbar">
+                <button class="icon-btn plan-sidebar-toggle" type="button" id="planSidebarToggle" title="Calendars" aria-label="Toggle calendars">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+                </button>
                 <div class="plan-search-wrap">
                   <input type="search" id="planSearchInput" class="plan-search-input" placeholder="Search events" aria-label="Search events" autocomplete="off" />
                   <div class="plan-search-results" id="planSearchResults" hidden></div>
                 </div>
+                <div class="plan-view-actions">
+                  <select class="plan-view-select" id="planViewSelect" aria-label="Calendar view">
+                    <option value="month">Month</option>
+                    <option value="week">Week</option>
+                    <option value="day">Day</option>
+                    <option value="agenda">Agenda</option>
+                  </select>
+                  <button class="plan-view-tab" id="planTodayBtn" type="button">Today</button>
+                  <button class="icon-btn" id="planAddEventBtn" type="button" title="Add event" aria-label="Add event">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="plan-layout">
+              <aside class="plan-sidebar" id="planSidebar">
                 <div class="plan-sidebar-head">Calendars</div>
                 <div id="planCalList"></div>
               </aside>

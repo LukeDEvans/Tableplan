@@ -10527,17 +10527,36 @@ body.touch-drag-active * {
 }
 .plan-sidebar.is-collapsed { width: 0; padding: 0; overflow: hidden; border-right: 0; }
 .plan-sidebar-head { font-size: 0.9rem; font-weight: 700; margin-bottom: 10px; }
-.plan-search-wrap { margin-bottom: 14px; }
+/* Search lives in the top bar (to the right of the hamburger); it flexes to fill
+   the space and its results drop as a popover over the calendar. */
+.plan-search-wrap { flex: 1; min-width: 0; position: relative; }
 .plan-search-input {
   width: 100%;
-  padding: 8px 10px;
+  padding: 7px 10px;
   border: 1px solid color-mix(in srgb, var(--ink) 15%, transparent);
   border-radius: 8px;
   font: inherit;
   font-size: 0.9rem;
   background: var(--window-bg);
 }
-.plan-search-results { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow-y: auto; }
+.plan-search-results {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 240px;
+  max-width: min(340px, 90vw);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--window-bg);
+  border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.16);
+  z-index: 40;
+}
 .plan-search-result { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 8px; border: none; background: transparent; text-align: left; border-radius: 6px; cursor: pointer; }
 .plan-search-result:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
 .plan-search-result-title { font-weight: 600; font-size: 0.88rem; }
@@ -10598,37 +10617,32 @@ body.touch-drag-active * {
   border-bottom: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
   flex-shrink: 0;
 }
-.plan-view-tabs {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  flex-wrap: wrap;
-}
 .plan-view-actions {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
   flex-shrink: 0;
 }
 
-/* Responsive view-tab labels: full words normally; when tight, Month/Week/Day
-   collapse to their initial while "Agenda" stays spelled out longer (a lone "A"
-   is ambiguous), collapsing to "A" only on the very narrowest screens. */
-.plan-view-tab .vt-short { display: none; }
-@media (max-width: 560px) {
-  .plan-view-tab[data-plan-view="month"] .vt-full,
-  .plan-view-tab[data-plan-view="week"] .vt-full,
-  .plan-view-tab[data-plan-view="day"] .vt-full { display: none; }
-  .plan-view-tab[data-plan-view="month"] .vt-short,
-  .plan-view-tab[data-plan-view="week"] .vt-short,
-  .plan-view-tab[data-plan-view="day"] .vt-short { display: inline; }
+/* View picker (Month/Week/Day/Agenda) — a compact dropdown just left of Today. */
+.plan-view-select {
+  padding: 6px 26px 6px 12px;
+  border-radius: 99px;
+  border: 1.5px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  background: transparent;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 13px;
 }
-@media (max-width: 420px) {
-  .plan-view-tab[data-plan-view="agenda"] .vt-full { display: none; }
-  .plan-view-tab[data-plan-view="agenda"] .vt-short { display: inline; }
-}
+.plan-view-select:hover { background-color: color-mix(in srgb, var(--ink) 8%, transparent); }
 
 .plan-view-tab {
   padding: 6px 14px;
@@ -10681,18 +10695,10 @@ body.touch-drag-active * {
 
 /* Compact toolbar on mobile so all items fit on one line */
 @media (max-width: 560px) {
-  .plan-view-tabs {
-    padding: 6px 8px;
-    gap: 1px;
-  }
-  .plan-view-tab {
-    padding: 5px 6px;
-    font-size: 0.78rem;
-  }
-  .plan-today-btn {
-    padding: 5px 8px;
-    font-size: 0.75rem;
-  }
+  .plan-cal-toolbar { gap: 6px; padding: 8px; }
+  .plan-view-actions { gap: 4px; }
+  .plan-view-select { padding: 5px 22px 5px 9px; font-size: 0.78rem; background-position: right 6px center; }
+  .plan-view-tab { padding: 5px 8px; font-size: 0.78rem; }
 }
 
 .plan-view-content {

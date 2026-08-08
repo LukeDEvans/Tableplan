@@ -32948,32 +32948,11 @@ function navigatePlanView(dir) {
 function renderPlanPage() {
   if (!elements.planCalendar) return;
   const swipeAttr = `data-plan-swipe`;
-  // The toolbar is a full-width top bar ABOVE the sidebar+calendar row (like the
-  // Mail/Media topbars), so the hamburger stays put and the sidebar opens below
-  // it — never covering the hamburger.
-  if (elements.planTopbar) {
-    elements.planTopbar.innerHTML = `
-    <div class="plan-cal-toolbar">
-      <button class="icon-btn plan-sidebar-toggle" type="button" id="planSidebarToggle" title="Calendars" aria-label="Toggle calendars">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-      </button>
-      <div class="plan-view-tabs" role="tablist">
-        ${["month","week","day","agenda"].map((v) => {
-          const full = v.charAt(0).toUpperCase() + v.slice(1);
-          return `<button class="plan-view-tab${planViewMode === v ? " is-active" : ""}" type="button"
-                   data-plan-view="${v}" role="tab" aria-selected="${planViewMode === v}" aria-label="${full}">
-             <span class="vt-full">${full}</span><span class="vt-short" aria-hidden="true">${full.charAt(0)}</span>
-           </button>`;
-        }).join("")}
-      </div>
-      <div class="plan-view-actions">
-        <button class="plan-view-tab" id="planTodayBtn" type="button">Today</button>
-        <button class="icon-btn" id="planAddEventBtn" type="button" title="Add event" aria-label="Add event">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
-        </button>
-      </div>
-    </div>`;
-  }
+  // The top bar (hamburger, search, view dropdown, Today, +) is static markup in
+  // index.html and wired once (see initPlanCalListDelegation); here we only keep
+  // the view dropdown in sync and render the grid.
+  const viewSelect = document.getElementById("planViewSelect");
+  if (viewSelect && viewSelect.value !== planViewMode) viewSelect.value = planViewMode;
   elements.planCalendar.innerHTML = `
     <div class="plan-view-content" ${swipeAttr}="true">
       ${planViewMode === "month" ? renderPlanMonthView()
@@ -32982,22 +32961,6 @@ function renderPlanPage() {
         : renderPlanAgendaView()}
     </div>
   `;
-  // Toolbar controls live in the top bar now; grid controls stay in the calendar.
-  const topbar = elements.planTopbar;
-  topbar?.querySelectorAll("[data-plan-view]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      planViewMode = btn.dataset.planView;
-      setWeekToolsMode("plan");
-      renderPlanPage();
-    });
-  });
-  topbar?.querySelector("#planSidebarToggle")?.addEventListener("click", togglePlanSidebar);
-  topbar?.querySelector("#planTodayBtn")?.addEventListener("click", () => {
-    planViewDate = new Date();
-    setWeekToolsMode("plan");
-    renderPlanPage();
-  });
-  topbar?.querySelector("#planAddEventBtn")?.addEventListener("click", () => openPlanEventDialog(dateKeyFromDate(new Date())));
   elements.planCalendar.querySelectorAll("[data-plan-day]").forEach((cell) => {
     cell.addEventListener("click", (e) => {
       if (e.target.closest("[data-plan-event-id]")) return;
@@ -34071,7 +34034,26 @@ function initPlanCalListDelegation() {
       const q = e.target.value;
       planSearchDebounce = setTimeout(() => renderPlanSearch(q), 150);
     });
+    // Close the results popover when focus leaves the search box.
+    searchInput.addEventListener("blur", () => setTimeout(() => {
+      const box = document.getElementById("planSearchResults");
+      if (box && !box.matches(":hover")) box.hidden = true;
+    }, 120));
   }
+  // Top-bar controls are static markup wired once here (renderPlanPage no longer
+  // rebuilds the top bar, so these listeners persist).
+  document.getElementById("planSidebarToggle")?.addEventListener("click", togglePlanSidebar);
+  document.getElementById("planViewSelect")?.addEventListener("change", (e) => {
+    planViewMode = e.target.value;
+    setWeekToolsMode("plan");
+    renderPlanPage();
+  });
+  document.getElementById("planTodayBtn")?.addEventListener("click", () => {
+    planViewDate = new Date();
+    setWeekToolsMode("plan");
+    renderPlanPage();
+  });
+  document.getElementById("planAddEventBtn")?.addEventListener("click", () => openPlanEventDialog(dateKeyFromDate(new Date())));
   const list = elements.planCalList;
   if (!list) return;
 
