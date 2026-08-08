@@ -34453,6 +34453,35 @@ function resyncAllEventChores() {
   if (changed) persist();
 }
 
+function duplicatePlanEvent(id) {
+  const e = (state.planEvents || []).find((x) => x.id === id);
+  if (!e) return;
+  const copy = { ...e, id: createId("plan-evt"), title: `${e.title} (copy)`, createdAt: new Date().toISOString() };
+  state.planEvents = [...(state.planEvents || []), copy];
+  persist();
+  if (activeAppArea === "plan") renderPlanPage();
+  showMailToast(`Duplicated "${e.title}"`);
+}
+
+// Right-click menu on a personal event: Edit / Duplicate / Delete.
+function openPlanEventContextMenu(event, id, date) {
+  closeFolderMenu();
+  if (!(state.planEvents || []).some((e) => e.id === id)) return;
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" class="safe-item" data-evt-edit>Edit</button>
+    <button type="button" role="menuitem" class="safe-item" data-evt-dup>Duplicate</button>
+    <button type="button" role="menuitem" class="danger" data-evt-del>Delete</button>`;
+  document.body.append(menu);
+  menu.style.left = `${Math.max(10, Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10))}px`;
+  menu.style.top = `${Math.max(10, Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10))}px`;
+  menu.querySelector("[data-evt-edit]").addEventListener("click", (e) => { e.stopPropagation(); closeFolderMenu(); openPlanEventDialog(date, id); });
+  menu.querySelector("[data-evt-dup]").addEventListener("click", (e) => { e.stopPropagation(); closeFolderMenu(); duplicatePlanEvent(id); });
+  menu.querySelector("[data-evt-del]").addEventListener("click", (e) => { e.stopPropagation(); closeFolderMenu(); editingPlanEventId = id; editingPlanEventOccurrenceDate = date; deletePlanEvent(); });
+}
+
 function deletePlanEvent() {
   if (!editingPlanEventId) return;
   const id = editingPlanEventId;
@@ -34627,6 +34656,15 @@ function initPlanCalListDelegation() {
     const cells = [...elements.planCalendar.querySelectorAll(".plan-month-day[data-plan-day]")];
     const next = cells[cells.indexOf(cell) + delta];
     if (next) { e.preventDefault(); next.focus(); }
+  });
+  // Right-click a personal event → Edit / Duplicate / Delete.
+  elements.planCalendar?.addEventListener("contextmenu", (e) => {
+    const el = e.target.closest("[data-plan-event-id]");
+    if (!el) return;
+    const src = el.dataset.planEventSource;
+    if (src && src !== "personal") return; // iCal / meal / workout / to-do aren't editable
+    e.preventDefault();
+    openPlanEventContextMenu(e, el.dataset.planEventId, el.dataset.planEventDate || null);
   });
   const list = elements.planCalList;
   if (!list) return;
