@@ -32766,7 +32766,15 @@ function escapeHtml(value) {
 
 // ─── Plan Page ────────────────────────────────────────────────────────────────
 
-const PLAN_COLORS = ["#4285f4","#0f9d58","#db4437","#f4b400","#9c27b0","#ff5722","#00bcd4","#607d8b"];
+// Curated palette (harmonious, readable as dots/bars), ordered by hue. Includes
+// the original 8 so pre-existing calendars still highlight a palette swatch; a
+// "custom" chip in the picker covers anything beyond this set.
+const PLAN_COLORS = [
+  "#4285f4","#039be5","#00bcd4","#009688","#0f9d58","#0b8043",
+  "#7cb342","#c0ca33","#f4b400","#f6bf26","#e8710a","#ff5722",
+  "#db4437","#d50000","#e91e63","#ad1457","#9c27b0","#6a1b9a",
+  "#ab47bc","#7986cb","#3f51b5","#795548","#607d8b","#616161",
+];
 const PLAN_APP_COLORS = { eat: "#0f9d58", play: "#ff5722", do: "#1976d2", watch: "#7b1fa2" };
 
 const PLAN_ORDINALS = ["first", "second", "third", "fourth", "fifth"];
@@ -33721,12 +33729,38 @@ function autosizePlanEventNotes() {
 }
 
 function renderPlanColorPicker(container, selectedColor, name) {
-  container.innerHTML = PLAN_COLORS.map((c) => `
-    <label class="plan-color-swatch${c === selectedColor ? " is-selected" : ""}">
+  // A picked color outside the curated palette is a "custom" color: no palette
+  // swatch matches it, so it lives on the custom chip instead.
+  const isCustom = !!selectedColor && !PLAN_COLORS.includes(selectedColor);
+  const customVal = isCustom ? selectedColor : "";
+  const swatches = PLAN_COLORS.map((c) => `
+    <label class="plan-color-swatch">
       <input type="radio" name="${name}" value="${escapeHtml(c)}" ${c === selectedColor ? "checked" : ""} />
       <span style="background:${escapeHtml(c)}"></span>
     </label>
   `).join("");
+  // Custom chip: a native color input overlays a rainbow swatch; picking a color
+  // updates a same-group radio so the existing "input:checked" read still works.
+  const customChip = `
+    <label class="plan-color-swatch plan-color-custom" title="Custom color">
+      <input type="color" class="plan-color-custom-input" value="${escapeHtml(customVal || "#4285f4")}" aria-label="Custom color" />
+      <input type="radio" name="${name}" value="${escapeHtml(customVal)}" ${isCustom ? "checked" : ""} data-custom-radio />
+      <span class="plan-color-custom-swatch"${isCustom ? ` style="background:${escapeHtml(customVal)}"` : ""}></span>
+    </label>`;
+  container.innerHTML = swatches + customChip;
+
+  const colorInput = container.querySelector(".plan-color-custom-input");
+  const customRadio = container.querySelector("[data-custom-radio]");
+  const customSpan = container.querySelector(".plan-color-custom-swatch");
+  colorInput?.addEventListener("input", () => {
+    customRadio.value = colorInput.value;
+    customRadio.checked = true; // radio group unchecks the palette swatches
+    customSpan.style.background = colorInput.value;
+  });
+  // Choosing a palette swatch returns the custom chip to its rainbow "any color" look.
+  container.querySelectorAll("input[type=radio]:not([data-custom-radio])").forEach((r) => {
+    r.addEventListener("change", () => { if (r.checked) customSpan.style.background = ""; });
+  });
 }
 
 // Calendar dropdown below the title — pick which of your own (non-subscribed)

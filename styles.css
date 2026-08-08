@@ -11458,6 +11458,22 @@ body.touch-drag-active * {
   transform: scale(1.15);
 }
 
+/* Custom-color chip: a rainbow swatch with a native color input laid over it so a
+   tap opens the OS picker. Its background is replaced by the chosen color (inline)
+   once one is picked. */
+.plan-color-custom .plan-color-custom-input {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  margin: 0; padding: 0; border: none; opacity: 0; cursor: pointer;
+}
+.plan-color-custom-swatch {
+  display: block;
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  background: conic-gradient(from 90deg, #f44336, #ff9800, #ffeb3b, #4caf50, #00bcd4, #3f51b5, #9c27b0, #f44336);
+  transition: border-color 0.15s, transform 0.1s;
+}
+
 /* Calendar management rows */
 .plan-cal-row {
   position: relative;
