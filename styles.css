@@ -10661,6 +10661,14 @@ body.touch-drag-active * {
   background-size: 13px;
 }
 .plan-view-select:hover { background-color: color-mix(in srgb, var(--ink) 8%, transparent); }
+/* Don't keep the teal focus tint after a selection — the dropdown should look the
+   same focused as not. (Chrome matches :focus-visible on a select even for mouse
+   clicks, so this covers both.) Overrides the global input/select:focus rule. */
+.plan-view-select:focus,
+.plan-view-select:focus-visible {
+  border-color: color-mix(in srgb, var(--ink) 20%, transparent);
+  box-shadow: none;
+}
 
 .plan-view-tab {
   padding: 6px 14px;
