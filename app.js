@@ -33014,6 +33014,93 @@ function scrollPlanGridToNow() {
   grid.scrollTop = Math.max(0, focusHour * rowH - grid.clientHeight * 0.35);
 }
 
+// ── Zoom navigation ──────────────────────────────────────────────────────────
+// Scroll wheel (laptop) and two-finger pinch (mobile) move between calendar zoom
+// levels: month → week → day. Scroll UP / pinch fingers TOGETHER zooms in toward
+// day (centred on the day under the cursor / pinch); scroll DOWN / pinch APART
+// zooms out toward month. (Agenda isn't part of the ladder.)
+const PLAN_ZOOM_LADDER = ["month", "week", "day"];
+const PLAN_WHEEL_THRESHOLD = 60;  // accumulated |deltaY| before one step fires
+const PLAN_ZOOM_COOLDOWN = 380;   // ms between steps, so one flick ≈ one step
+let planWheelAccum = 0;
+let planWheelDir = 0;
+let planZoomCooldownUntil = 0;
+
+function planDayFromPoint(clientX, clientY) {
+  if (clientX == null || clientY == null) return null;
+  const el = document.elementFromPoint(clientX, clientY);
+  const dayEl = el && el.closest("[data-plan-day]");
+  if (!dayEl?.dataset.planDay) return null;
+  const d = new Date(dayEl.dataset.planDay + "T00:00:00");
+  return isNaN(d) ? null : d;
+}
+
+// dir: +1 = zoom in (month→week→day), -1 = zoom out (day→week→month).
+function zoomPlanView(dir, clientX, clientY) {
+  const idx = PLAN_ZOOM_LADDER.indexOf(planViewMode);
+  if (idx === -1) return false;                                   // agenda: ignore
+  const next = idx + dir;
+  if (next < 0 || next >= PLAN_ZOOM_LADDER.length) return false;  // already at a bound
+  // Zooming in re-centres on the day under the cursor / pinch midpoint. Zooming
+  // out keeps planViewDate (the day is already inside the wider period).
+  if (dir > 0) {
+    const d = planDayFromPoint(clientX, clientY);
+    if (d) planViewDate = d;
+  }
+  planViewMode = PLAN_ZOOM_LADDER[next];
+  setWeekToolsMode("plan");
+  renderPlanPage();
+  return true;
+}
+
+function bindPlanZoomNavigation(root) {
+  if (!root || root.dataset.zoomBound) return;
+  root.dataset.zoomBound = "1";
+
+  root.addEventListener("wheel", (e) => {
+    if (PLAN_ZOOM_LADDER.indexOf(planViewMode) === -1) return;   // agenda
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;        // horizontal intent
+    e.preventDefault();                                          // wheel drives zoom, not scroll
+    const now = Date.now();
+    if (now < planZoomCooldownUntil) return;
+    const dir = e.deltaY < 0 ? 1 : -1;                           // up = in, down = out
+    if (dir !== planWheelDir) { planWheelAccum = 0; planWheelDir = dir; }
+    planWheelAccum += Math.abs(e.deltaY);
+    if (planWheelAccum < PLAN_WHEEL_THRESHOLD) return;
+    planWheelAccum = 0;
+    if (zoomPlanView(dir, e.clientX, e.clientY)) planZoomCooldownUntil = now + PLAN_ZOOM_COOLDOWN;
+  }, { passive: false });
+
+  // Two-finger pinch. Distance shrinking (fingers together) → zoom in; growing
+  // (fingers apart) → zoom out. One-finger gestures fall through to swipe/scroll.
+  let pinchDist = 0, pinching = false;
+  const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const mid = (t) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
+  root.addEventListener("touchstart", (e) => {
+    if (e.touches.length === 2 && PLAN_ZOOM_LADDER.indexOf(planViewMode) !== -1) {
+      pinching = true; pinchDist = dist(e.touches);
+    }
+  }, { passive: true });
+  root.addEventListener("touchmove", (e) => {
+    if (!pinching || e.touches.length !== 2) return;
+    e.preventDefault();                                          // suppress two-finger pan
+    const now = Date.now();
+    if (now < planZoomCooldownUntil) return;
+    const d = dist(e.touches);
+    if (!pinchDist) { pinchDist = d; return; }
+    const ratio = d / pinchDist;
+    let dir = 0;
+    if (ratio <= 0.75) dir = 1;         // pinched together → zoom in
+    else if (ratio >= 1.34) dir = -1;   // spread apart → zoom out
+    if (!dir) return;
+    const m = mid(e.touches);
+    if (zoomPlanView(dir, m.x, m.y)) { planZoomCooldownUntil = now + PLAN_ZOOM_COOLDOWN; pinchDist = d; }
+  }, { passive: false });
+  const endPinch = (e) => { if (!e || e.touches.length < 2) { pinching = false; pinchDist = 0; } };
+  root.addEventListener("touchend", endPinch, { passive: true });
+  root.addEventListener("touchcancel", endPinch, { passive: true });
+}
+
 // In-app event reminders: fires a toast (+ browser notification when granted)
 // as each timed event's reminder time passes, while the app is open. Runs on
 // the shared per-minute tick; fired reminders are tracked per session.
@@ -34093,6 +34180,9 @@ function initPlanCalListDelegation() {
     renderPlanPage();
   });
   document.getElementById("planAddEventBtn")?.addEventListener("click", () => openPlanEventDialog(dateKeyFromDate(new Date())));
+  // Scroll-wheel / pinch zoom between month → week → day (bound once; the grid is
+  // re-rendered inside #planCalendar but the host element persists).
+  bindPlanZoomNavigation(elements.planCalendar);
   const list = elements.planCalList;
   if (!list) return;
 
