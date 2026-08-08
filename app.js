@@ -34408,18 +34408,20 @@ async function savePlanEvent() {
   else if (activeAppArea === "eat") renderPlanner();
 }
 
-// Ask which occurrences an edit to a repeating event should touch. Resolves to
+// Ask which occurrences a change to a repeating event should touch. Resolves to
 // "this" | "following" | "all", or null if the user cancels.
-function chooseRecurrenceScope() {
+function chooseRecurrenceScope(mode = "edit") {
+  const title = mode === "delete" ? "Delete repeating event" : "Edit repeating event";
+  const sub = mode === "delete" ? "Which events should be deleted?" : "Which events should this change apply to?";
   return new Promise((resolve) => {
     document.getElementById("planScopeChooser")?.remove();
     const wrap = document.createElement("div");
     wrap.id = "planScopeChooser";
     wrap.className = "plan-scope-overlay";
     wrap.innerHTML = `
-      <div class="plan-scope-box" role="dialog" aria-modal="true" aria-label="Edit repeating event">
-        <p class="plan-scope-title">Edit repeating event</p>
-        <p class="plan-scope-sub">Which events should this change apply to?</p>
+      <div class="plan-scope-box" role="dialog" aria-modal="true" aria-label="${title}">
+        <p class="plan-scope-title">${title}</p>
+        <p class="plan-scope-sub">${sub}</p>
         <div class="plan-scope-actions">
           <button type="button" data-scope="this">This event</button>
           <button type="button" data-scope="following">This and following</button>
@@ -34609,7 +34611,7 @@ function openPlanEventContextMenu(event, id, date) {
   menu.querySelector("[data-evt-del]").addEventListener("click", (e) => { e.stopPropagation(); closeFolderMenu(); editingPlanEventId = id; editingPlanEventOccurrenceDate = date; deletePlanEvent(); });
 }
 
-function deletePlanEvent() {
+async function deletePlanEvent() {
   if (!editingPlanEventId) return;
   const id = editingPlanEventId;
   const existing = (state.planEvents || []).find((e) => e.id === id);
@@ -34624,16 +34626,27 @@ function deletePlanEvent() {
   let undo, verb = "Deleted";
 
   if (existing.recurrence) {
-    // OK = delete the whole series; Cancel = skip just this occurrence.
-    const deleteAll = window.confirm("This is a repeating event.\n\nOK — delete the entire series.\nCancel — delete only this day.");
-    if (deleteAll) {
+    // Repeating: delete just this day, this and everything after, or the series.
+    const scope = await chooseRecurrenceScope("delete");
+    if (!scope) return; // cancelled
+    const occ = editingPlanEventOccurrenceDate || existing.date;
+    if (scope === "all") {
       const snapshot = { ...existing };
       recordDeletion("planEvents", id);
       state.planEvents = (state.planEvents || []).filter((e) => e.id !== id);
       removeEventChoresFromDoList(id);
       undo = restoreWhole(snapshot);
+    } else if (scope === "following") {
+      // Trim the series to end the day before this occurrence, dropping it and
+      // everything after. Undo restores the previous recurrence bound.
+      const prevRec = existing.recurrence;
+      const dayBefore = (key) => { const d = new Date(key + "T00:00:00"); d.setDate(d.getDate() - 1); return dateKeyFromDate(d); };
+      state.planEvents = (state.planEvents || []).map((e) =>
+        e.id === id ? { ...e, recurrence: { ...e.recurrence, until: dayBefore(occ), count: null } } : e);
+      verb = "Removed this and following";
+      undo = () => { const cur = (state.planEvents || []).find((e) => e.id === id); if (cur) { cur.recurrence = prevRec; afterChange(); } };
     } else {
-      const occ = editingPlanEventOccurrenceDate || existing.date;
+      // "this" — exclude just this occurrence.
       state.planEvents = (state.planEvents || []).map((e) =>
         e.id === id ? { ...e, exceptions: [...(e.exceptions || []), occ] } : e);
       verb = "Removed this day";
