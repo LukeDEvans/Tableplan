@@ -34058,31 +34058,7 @@ function initPlanCalListDelegation() {
   if (!list) return;
 
   list.addEventListener("click", (e) => {
-    if (e.target.closest("[data-new-native-cal]")) {
-      const form = document.getElementById("planNewCalForm");
-      const name = document.getElementById("planNewCalName");
-      const colors = document.getElementById("planNewCalColors");
-      if (form) form.hidden = false;
-      if (name) { name.value = ""; }
-      if (colors) renderPlanColorPicker(colors, PLAN_COLORS[0], "planNewNativeCalColor");
-      name?.focus();
-      return;
-    }
-    if (e.target.closest("[data-cancel-native-cal]")) {
-      const form = document.getElementById("planNewCalForm");
-      if (form) form.hidden = true;
-      return;
-    }
-    if (e.target.closest("[data-save-native-cal]")) {
-      const name = document.getElementById("planNewCalName")?.value.trim() || "My Calendar";
-      const color = document.getElementById("planNewCalColors")?.querySelector("input:checked")?.value || PLAN_COLORS[0];
-      state.planCalendars = [...(state.planCalendars || []), { id: createId("plan-cal"), name, url: "", color, enabled: true, lastFetched: null }];
-      persist();
-      renderPlanCalList();
-      if (activeAppArea === "plan") renderPlanPage();
-      return;
-    }
-    if (e.target.closest("[data-add-ics-cal]")) { openAddPlanCalDialog(); return; }
+    if (e.target.closest("[data-add-cal]")) { openAddPlanCalDialog(); return; }
 
     const editBtn = e.target.closest("[data-cal-edit]");
     if (editBtn) { openPlanCalEditMode(editBtn.dataset.calEdit); return; }
@@ -34225,7 +34201,7 @@ function planOverlayRowHtml(source, name, color) {
         <span class="plan-cal-dot" style="background:${color}"></span>
         <span class="plan-cal-name">${escapeHtml(name)}</span>
         <label class="plan-cal-toggle">
-          <input type="checkbox" data-overlay-toggle="${escapeHtml(source)}" ${hidden[source] ? "" : "checked"} />
+          <input type="checkbox" class="live-toggle" data-overlay-toggle="${escapeHtml(source)}" ${hidden[source] ? "" : "checked"} />
         </label>
       </div>
     </div>`;
@@ -34233,47 +34209,25 @@ function planOverlayRowHtml(source, name, color) {
 
 function renderPlanCalList() {
   const cals = state.planCalendars || [];
-  const native = cals.filter((c) => !c.url);
-  const subscribed = cals.filter((c) => c.url);
+  // Personal + subscribed calendars are blended into one alphabetical list.
+  const sorted = [...cals].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
   elements.planCalList.innerHTML = `
-    <div class="plan-cal-section">
-      <div class="plan-cal-section-head">
-        <span class="plan-cal-section-title">My Calendars</span>
-        <button class="plan-cal-text-btn" type="button" data-new-native-cal>+ New</button>
-      </div>
-      ${native.map((c) => planCalRowHtml(c)).join("")}
-      ${!native.length ? `<p class="plan-cal-empty">No calendars yet.</p>` : ""}
-      <div class="plan-cal-edit-row" id="planNewCalForm" hidden>
-        <div class="plan-cal-new-form-inner">
-          <div id="planNewCalColors" class="plan-cal-edit-colors"></div>
-          <input class="plan-cal-edit-name" type="text" id="planNewCalName" placeholder="Calendar name" autocomplete="off" maxlength="40" />
-        </div>
-        <div class="plan-cal-edit-actions">
-          <button class="primary-btn" type="button" data-save-native-cal>Add</button>
-          <button class="secondary-btn" type="button" data-cancel-native-cal>Cancel</button>
-        </div>
-      </div>
-    </div>
-    <div class="plan-cal-section">
-      <div class="plan-cal-section-head">
-        <span class="plan-cal-section-title">Subscribed Calendars</span>
-        <button class="plan-cal-text-btn" type="button" data-add-ics-cal>+ Add URL</button>
-      </div>
-      ${subscribed.map((c) => planCalRowHtml(c)).join("")}
-      ${!subscribed.length ? `<p class="plan-cal-empty">No iCal subscriptions yet.</p>` : ""}
-    </div>
-    <div class="plan-cal-section">
-      <div class="plan-cal-section-head">
-        <span class="plan-cal-section-title">From the app</span>
-      </div>
+    <div class="plan-cal-overlays">
       ${planOverlayRowHtml("eat", "Meal Plan", PLAN_APP_COLORS.eat)}
       ${planOverlayRowHtml("play", "Exercise", PLAN_APP_COLORS.play)}
       ${planOverlayRowHtml("do", "To-Do", PLAN_APP_COLORS.do)}
     </div>
+    <div class="plan-cal-divider"></div>
+    <div class="plan-cal-list-head">
+      <span class="plan-cal-list-title">Calendars</span>
+      <button class="icon-btn plan-cal-add-btn" type="button" data-add-cal aria-label="Add calendar" title="Add calendar">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </div>
+    ${sorted.map((c) => planCalRowHtml(c)).join("")}
+    ${!sorted.length ? `<p class="plan-cal-empty">No calendars yet.</p>` : ""}
   `;
-
-  renderPlanColorPicker(document.getElementById("planNewCalColors"), PLAN_COLORS[0], "planNewNativeCalColor");
 }
 
 function planCalRowHtml(cal) {
@@ -34293,7 +34247,7 @@ function planCalRowHtml(cal) {
         <span class="plan-cal-dot" style="background:${escapeHtml(cal.color)}"></span>
         <span class="plan-cal-name">${escapeHtml(cal.name)}</span>
         <label class="plan-cal-toggle">
-          <input type="checkbox" data-cal-toggle="${escapeHtml(cal.id)}" ${cal.enabled ? "checked" : ""} />
+          <input type="checkbox" class="live-toggle" data-cal-toggle="${escapeHtml(cal.id)}" ${cal.enabled ? "checked" : ""} />
         </label>
       </div>
     </div>
@@ -34327,14 +34281,14 @@ async function addPlanCalendar() {
   const name = elements.planNewCalName.value.trim() || "My Calendar";
   const url = elements.planNewCalUrl.value.trim();
   const color = elements.planNewCalColorPicker.querySelector("input:checked")?.value || PLAN_COLORS[2];
-  if (!url) { elements.planNewCalUrl.focus(); return; }
+  // Blank URL creates a personal calendar; a URL subscribes to an external one.
   const newCal = { id: createId("plan-cal"), name, url, color, enabled: true, lastFetched: null };
   state.planCalendars = [...(state.planCalendars || []), newCal];
   persist();
   maybeWriteCloudSnapshot({ force: true }).catch(() => {});
   elements.planAddCalDialog.close();
   renderPlanCalList();
-  await fetchOnePlanCalendar(newCal);
+  if (url) await fetchOnePlanCalendar(newCal);
   if (activeAppArea === "plan") renderPlanPage();
 }
 
