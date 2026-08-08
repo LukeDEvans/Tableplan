@@ -10621,6 +10621,9 @@ body.touch-drag-active * {
   /* Collapsed rail: hide the "Calendars" word and center the + at the top. */
   .plan-sidebar:not(:hover):not(.is-pinned) .plan-cal-list-title { display: none; }
   .plan-sidebar:not(:hover):not(.is-pinned) .plan-cal-list-head { justify-content: center; }
+  /* Center the color dots in the rail (they glide left as the panel opens). The
+     rail is 52px with 12px padding, so 8px extra left padding centers a 12px dot. */
+  .plan-sidebar:not(:hover):not(.is-pinned) .plan-cal-front { padding-left: 8px; }
 }
 
 /* View tab bar + calendar actions (Today / +) share one row inside the window */
@@ -11485,7 +11488,7 @@ body.touch-drag-active * {
   background: var(--window-bg);
   position: relative;
   z-index: 1;
-  transition: transform 0.18s ease;
+  transition: transform 0.18s ease, padding 0.18s ease;
 }
 /* Edit/Delete sit behind the front, revealed on swipe-left (mobile only). */
 .plan-cal-actions {
