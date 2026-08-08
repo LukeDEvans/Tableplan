@@ -33060,6 +33060,12 @@ function bindPlanZoomNavigation(root) {
   root.addEventListener("wheel", (e) => {
     if (PLAN_ZOOM_LADDER.indexOf(planViewMode) === -1) return;   // agenda
     if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;        // horizontal intent
+    // In week/day, only the top bars (weekday header / all-day) drive zoom; over
+    // the hour grid the wheel scrolls through times of day as usual.
+    if ((planViewMode === "week" || planViewMode === "day") &&
+        !e.target.closest(".plan-week-head-row, .plan-week-allday-row, .plan-day-allday")) {
+      return;
+    }
     e.preventDefault();                                          // wheel drives zoom, not scroll
     const now = Date.now();
     if (now < planZoomCooldownUntil) return;
@@ -33434,7 +33440,7 @@ function renderPlanWeekView() {
   const paydaysByDay = paydaysByDate(rangeStart, rangeEnd);
   const dayHeaders = days.map((d) => {
     const key = dateKeyFromDate(d);
-    return `<div class="plan-week-day-head${key === today ? " is-today" : ""}">
+    return `<div class="plan-week-day-head${key === today ? " is-today" : ""}" data-plan-day="${escapeHtml(key)}">
       <span class="plan-week-day-name">${d.toLocaleDateString(undefined, { weekday: "short" })}</span>
       <span class="plan-week-day-num${key === today ? " is-today" : ""}">${d.getDate()}</span>
       ${paydayDotHtml(paydaysByDay[key])}
