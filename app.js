@@ -33140,11 +33140,11 @@ function initPlanDotTooltip() {
     tip.style.top = `${top}px`;
   };
   root.addEventListener("mouseover", (e) => {
-    const dot = e.target.closest(".plan-month-dot[data-tip]");
+    const dot = e.target.closest("[data-tip]");
     if (dot) place(dot);
   });
   root.addEventListener("mouseout", (e) => {
-    if (e.target.closest(".plan-month-dot")) tip.hidden = true;
+    if (e.target.closest("[data-tip]")) tip.hidden = true;
   });
   root.addEventListener("mouseleave", () => { tip.hidden = true; });
   // Any scroll/render can move the dot out from under the cursor.
@@ -33520,7 +33520,7 @@ function getAppDataEvents(startKey, endKey) {
 }
 
 function planEventPillTemplate(event) {
-  const commonAttrs = `data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}" style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])}" title="${escapeHtml(event.title)}" tabindex="0" role="button" aria-label="${escapeHtml(event.title)}"`;
+  const commonAttrs = `data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}" style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])}" data-tip="${escapeHtml(event.title)}" tabindex="0" role="button" aria-label="${escapeHtml(event.title)}"`;
   // Multi-day continuation days render as a title-less bar segment that connects
   // to the neighbouring days (the title shows only on the start day).
   if (event.spanPos && event.spanPos !== "start") {
@@ -33788,7 +33788,7 @@ function planTimedEventBlock(event, layout) {
   return `<div class="plan-timed-event" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}"
                tabindex="0" role="button" aria-label="${escapeHtml(planFormatTime(event.startTime))} ${escapeHtml(event.title)}"
                style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])};top:${top}%;height:${height}%;${colStyle}"
-               title="${escapeHtml(event.title)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}">
+               data-tip="${escapeHtml(planFormatTime(event.startTime))} ${escapeHtml(event.title)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}">
     <span>${escapeHtml(planFormatTime(event.startTime))} ${escapeHtml(event.title)}${event.recurrence || event.occurrenceOf ? " ↻" : ""}</span>
   </div>`;
 }
@@ -34324,28 +34324,46 @@ function resyncAllEventChores() {
 
 function deletePlanEvent() {
   if (!editingPlanEventId) return;
-  const existing = (state.planEvents || []).find((e) => e.id === editingPlanEventId);
-  if (existing?.recurrence) {
+  const id = editingPlanEventId;
+  const existing = (state.planEvents || []).find((e) => e.id === id);
+  if (!existing) return;
+  const afterChange = () => { persist(); if (activeAppArea === "plan") renderPlanPage(); else if (activeAppArea === "eat") renderPlanner(); };
+  const restoreWhole = (snapshot) => () => {
+    if ((state.planEvents || []).some((e) => e.id === id)) return; // already back
+    if (state.tombstones?.planEvents) state.tombstones.planEvents = state.tombstones.planEvents.filter((x) => x !== String(id));
+    state.planEvents = [...(state.planEvents || []), snapshot];
+    afterChange();
+  };
+  let undo, verb = "Deleted";
+
+  if (existing.recurrence) {
     // OK = delete the whole series; Cancel = skip just this occurrence.
     const deleteAll = window.confirm("This is a repeating event.\n\nOK — delete the entire series.\nCancel — delete only this day.");
     if (deleteAll) {
-      recordDeletion("planEvents", editingPlanEventId);
-      state.planEvents = (state.planEvents || []).filter((e) => e.id !== editingPlanEventId);
-      removeEventChoresFromDoList(editingPlanEventId);
+      const snapshot = { ...existing };
+      recordDeletion("planEvents", id);
+      state.planEvents = (state.planEvents || []).filter((e) => e.id !== id);
+      removeEventChoresFromDoList(id);
+      undo = restoreWhole(snapshot);
     } else {
       const occ = editingPlanEventOccurrenceDate || existing.date;
       state.planEvents = (state.planEvents || []).map((e) =>
-        e.id === editingPlanEventId ? { ...e, exceptions: [...(e.exceptions || []), occ] } : e);
+        e.id === id ? { ...e, exceptions: [...(e.exceptions || []), occ] } : e);
+      verb = "Removed this day";
+      undo = () => { const cur = (state.planEvents || []).find((e) => e.id === id); if (cur) { cur.exceptions = (cur.exceptions || []).filter((x) => x !== occ); afterChange(); } };
     }
   } else {
-    recordDeletion("planEvents", editingPlanEventId);
-    state.planEvents = (state.planEvents || []).filter((e) => e.id !== editingPlanEventId);
-    removeEventChoresFromDoList(editingPlanEventId);
+    const snapshot = { ...existing };
+    recordDeletion("planEvents", id);
+    state.planEvents = (state.planEvents || []).filter((e) => e.id !== id);
+    removeEventChoresFromDoList(id);
+    undo = restoreWhole(snapshot);
   }
   persist();
   elements.planEventDialog.close();
   if (activeAppArea === "plan") renderPlanPage();
   else if (activeAppArea === "eat") renderPlanner();
+  showMailToast(`${verb} "${existing.title || "event"}"`, undo);
 }
 
 // The calendars manager now lives in the Calendar page's left sidebar (no more
