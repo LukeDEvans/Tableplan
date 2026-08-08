@@ -10587,33 +10587,43 @@ body.touch-drag-active * {
   .plan-layout { position: relative; padding-left: 52px; transition: padding-left 0.18s ease; }
   .plan-layout:has(.plan-sidebar.is-collapsed) { padding-left: 0; }
 
+  /* Only the WIDTH changes between rail and open — the row layout, padding and
+     dot positions are identical in both states, so every color dot stays exactly
+     where it was. The names/header just fade; they never reflow or shift things. */
   .plan-sidebar {
     position: absolute; left: 0; top: 0; bottom: 0;
-    width: 52px; padding: 12px 0; z-index: 15;
+    width: 52px; padding: 12px; z-index: 15;
     background: var(--window-bg, #fff);
     overflow-x: hidden;
-    transition: width 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease, padding 0.18s ease;
+    transition: width 0.2s ease, box-shadow 0.2s ease, transform 0.18s ease;
   }
-  .plan-sidebar.is-collapsed { transform: translateX(-100%); width: 52px; padding: 12px 0; border-right: 0; }
-  .plan-sidebar:hover { width: 240px; padding: 12px; box-shadow: 4px 0 18px rgba(0,0,0,0.13); }
+  .plan-sidebar.is-collapsed { transform: translateX(-100%); border-right: 0; }
+  .plan-sidebar:hover,
+  .plan-sidebar.is-pinned { width: 240px; box-shadow: 4px 0 18px rgba(0,0,0,0.13); }
 
-  /* Rail state (not hovered): show only the color dots, centered. */
-  .plan-sidebar:not(:hover) .plan-cal-list-head,
-  .plan-sidebar:not(:hover) .plan-cal-divider,
-  .plan-sidebar:not(:hover) .plan-cal-name,
-  .plan-sidebar:not(:hover) .plan-cal-toggle,
-  .plan-sidebar:not(:hover) .plan-cal-empty { display: none; }
-  .plan-sidebar:not(:hover) .plan-cal-front { justify-content: center; gap: 0; padding-left: 0; padding-right: 0; }
-
-  /* Pinned open (e.g. while inline-editing a calendar) — stays expanded even when
-     the cursor leaves the rail, so the edit form isn't hidden. */
-  .plan-sidebar.is-pinned { width: 240px; padding: 12px; box-shadow: 4px 0 18px rgba(0,0,0,0.13); }
-  .plan-sidebar.is-pinned:not(:hover) .plan-cal-list-head,
-  .plan-sidebar.is-pinned:not(:hover) .plan-cal-toggle { display: flex; }
-  .plan-sidebar.is-pinned:not(:hover) .plan-cal-divider,
-  .plan-sidebar.is-pinned:not(:hover) .plan-cal-name,
-  .plan-sidebar.is-pinned:not(:hover) .plan-cal-empty { display: block; }
-  .plan-sidebar.is-pinned:not(:hover) .plan-cal-front { justify-content: flex-start; gap: 10px; }
+  /* Rail (not open): fade out the text + header controls, but keep their boxes so
+     nothing moves. Quick fade-out here; delayed fade-in when open (below) so the
+     text appears only once the panel has finished widening. */
+  .plan-sidebar .plan-cal-name,
+  .plan-sidebar .plan-cal-toggle,
+  .plan-sidebar .plan-cal-list-title,
+  .plan-sidebar .plan-cal-add-btn,
+  .plan-sidebar .plan-cal-empty { transition: opacity 0.1s ease; }
+  .plan-sidebar:not(:hover):not(.is-pinned) .plan-cal-name,
+  .plan-sidebar:not(:hover):not(.is-pinned) .plan-cal-toggle,
+  .plan-sidebar:not(:hover):not(.is-pinned) .plan-cal-list-title,
+  .plan-sidebar:not(:hover):not(.is-pinned) .plan-cal-add-btn,
+  .plan-sidebar:not(:hover):not(.is-pinned) .plan-cal-empty { opacity: 0; }
+  .plan-sidebar:hover .plan-cal-name,
+  .plan-sidebar:hover .plan-cal-toggle,
+  .plan-sidebar:hover .plan-cal-list-title,
+  .plan-sidebar:hover .plan-cal-add-btn,
+  .plan-sidebar:hover .plan-cal-empty,
+  .plan-sidebar.is-pinned .plan-cal-name,
+  .plan-sidebar.is-pinned .plan-cal-toggle,
+  .plan-sidebar.is-pinned .plan-cal-list-title,
+  .plan-sidebar.is-pinned .plan-cal-add-btn,
+  .plan-sidebar.is-pinned .plan-cal-empty { opacity: 1; transition: opacity 0.12s ease 0.1s; }
 }
 
 /* View tab bar + calendar actions (Today / +) share one row inside the window */
@@ -11487,7 +11497,7 @@ body.touch-drag-active * {
   flex-shrink: 0;
 }
 
-.plan-cal-name { flex: 1; font-weight: 600; font-size: 0.9rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.plan-cal-name { flex: 1; font-weight: 600; font-size: 0.9rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plan-cal-toggle { display: flex; align-items: center; gap: 5px; font-size: 0.8rem; cursor: pointer; flex-shrink: 0; }
 .plan-cal-delete { flex-shrink: 0; color: var(--text-muted, #888); }
 
@@ -11505,7 +11515,7 @@ body.touch-drag-active * {
   justify-content: space-between;
   padding: 2px 0 4px;
 }
-.plan-cal-list-title { font-size: 0.9rem; font-weight: 700; }
+.plan-cal-list-title { font-size: 0.9rem; font-weight: 700; white-space: nowrap; }
 /* Rounded square (like the add-event button), not a circle: at 28px the default
    14px radius rounded to a full circle. Fixed size + explicit radius + grid
    centering keep the + dead-centered. */
