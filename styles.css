@@ -10867,6 +10867,20 @@ body.touch-drag-active * {
 }
 .plan-dot-tooltip[hidden] { display: none; }
 
+/* Respect reduced-motion: the calendar's rail expand, dot glide, zoom and hover
+   transitions become instant. */
+@media (prefers-reduced-motion: reduce) {
+  .plan-sidebar,
+  .plan-layout,
+  .plan-cal-front,
+  .plan-cal-dot,
+  .plan-month-dot,
+  .plan-color-swatch span,
+  .plan-view-content {
+    transition: none !important;
+  }
+}
+
 .plan-day-events {
   display: flex;
   flex-direction: column;
@@ -11601,6 +11615,10 @@ body.touch-drag-active * {
 .plan-cal-add-btn { flex-shrink: 0; width: 30px; height: 30px; min-height: 30px; padding: 0; border-radius: 8px; }
 .plan-cal-add-btn svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2; fill: none; }
 .plan-cal-empty { font-size: 0.85rem; color: var(--text-muted, #888); padding: 6px 0; font-style: italic; }
+/* iCal "last synced" line in the calendar edit form. */
+.plan-cal-synced { font-size: 0.72rem; color: var(--text-muted, #888); padding: 2px 0 4px; }
+.plan-cal-link-btn { border: 0; background: none; padding: 0; font: inherit; font-size: 0.72rem; color: var(--accent, #1a73e8); cursor: pointer; }
+.plan-cal-link-btn:hover { text-decoration: underline; }
 
 /* Inline edit row */
 .plan-cal-edit-row { padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); }

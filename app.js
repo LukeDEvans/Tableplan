@@ -1367,6 +1367,14 @@ setInterval(() => {
   line.style.top = `${(now.getMinutes() / 60) * 100}%`;
 }, 30000);
 
+// Keep subscribed (iCal) calendars fresh in the background so they don't drift
+// until a manual reload. Re-render is coalesced inside fetchOnePlanCalendar.
+setInterval(() => {
+  if (!canUseLocalBackend()) return;
+  if (!(state.planCalendars || []).some((c) => c.url && c.enabled)) return;
+  fetchAllPlanCalendars();
+}, 15 * 60 * 1000);
+
 function initTouchDragPolyfill() {
   let pending = null; // { sourceEl, startX, startY, timer }
   let active = null;  // { sourceEl, ghost, lastOver }
@@ -1500,6 +1508,18 @@ function bindEvents() {
     if (button) jumpToWeek(button.dataset.weekJump);
   });
   elements.weekJumpMenu.addEventListener("wheel", (event) => event.stopPropagation(), { passive: true });
+  // Arrow-key navigation within the jump menu (Enter/click already select).
+  elements.weekJumpMenu.addEventListener("keydown", (event) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const opts = [...elements.weekJumpMenu.querySelectorAll(".week-jump-option")];
+    if (!opts.length) return;
+    event.preventDefault();
+    const i = opts.indexOf(document.activeElement);
+    const target = event.key === "ArrowDown" ? opts[Math.min(opts.length - 1, i + 1)]
+      : event.key === "ArrowUp" ? opts[Math.max(0, i - 1)]
+      : event.key === "Home" ? opts[0] : opts[opts.length - 1];
+    target?.focus({ preventScroll: false });
+  });
   elements.authButton.addEventListener("click", openProfileDialog);
   document.querySelector("#closeProfileBtn").addEventListener("click", () => elements.profileDialog.close());
   document.querySelector("#saveProfileBtn").addEventListener("click", saveProfile);
@@ -16776,7 +16796,14 @@ function toggleWeekJumpMenu(event) {
   elements.weekLabel.setAttribute("aria-expanded", String(willOpen));
   if (willOpen) {
     renderWeekJumpMenu();
-    window.requestAnimationFrame(scrollCurrentWeekIntoView);
+    window.requestAnimationFrame(() => {
+      scrollCurrentWeekIntoView();
+      // Move focus into the menu (on the viewed option) so arrow keys work.
+      (elements.weekJumpMenu.querySelector("[data-viewed-week]")
+        || elements.weekJumpMenu.querySelector(".week-jump-option"))?.focus({ preventScroll: true });
+    });
+  } else {
+    elements.weekLabel.focus({ preventScroll: true });
   }
 }
 
@@ -34377,6 +34404,13 @@ function initPlanCalListDelegation() {
       return;
     }
 
+    const refreshBtn = e.target.closest("[data-refresh-cal]");
+    if (refreshBtn) {
+      const c = (state.planCalendars || []).find((x) => x.id === refreshBtn.dataset.refreshCal);
+      if (c) fetchOnePlanCalendar(c).then(() => renderPlanCalList());
+      return;
+    }
+
     const editBtn = e.target.closest("[data-cal-edit]");
     if (editBtn) { openPlanCalEditMode(editBtn.dataset.calEdit); return; }
 
@@ -34549,6 +34583,16 @@ function planCalRowHtml(cal) {
   `;
 }
 
+function planRelativeTime(iso) {
+  const then = iso ? new Date(iso).getTime() : NaN;
+  if (isNaN(then)) return "never";
+  const s = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (s < 60) return "just now";
+  const m = Math.round(s / 60); if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60); if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
 function openPlanCalEditMode(id) {
   const row = document.getElementById(`plan-cal-row-${id}`);
   if (!row) return;
@@ -34565,6 +34609,7 @@ function openPlanCalEditMode(id) {
         <div id="${escapeHtml(colorPickerId)}" class="plan-cal-edit-colors"></div>
         <input class="plan-cal-edit-name" type="text" id="${escapeHtml(nameId)}" value="${escapeHtml(cal.name)}" autocomplete="off" maxlength="40" />
       </div>
+      ${cal.url ? `<div class="plan-cal-synced">Synced ${escapeHtml(planRelativeTime(cal.lastFetched))} · <button class="plan-cal-link-btn" type="button" data-refresh-cal="${escapeHtml(id)}">Refresh now</button></div>` : ""}
       <div class="plan-cal-edit-actions">
         <button class="primary-btn" type="button" data-save-cal-edit="${escapeHtml(id)}">Save</button>
         <button class="secondary-btn" type="button" data-cancel-cal-edit="${escapeHtml(id)}">Cancel</button>
