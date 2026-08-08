@@ -34148,8 +34148,8 @@ function openPlanCalContextMenu(event, id) {
   menu.className = "folder-context-menu";
   menu.setAttribute("role", "menu");
   menu.innerHTML = `
-    <button type="button" role="menuitem" data-ctx-edit>Edit</button>
-    <button type="button" role="menuitem" data-ctx-delete>Delete</button>`;
+    <button type="button" role="menuitem" class="safe-item" data-ctx-edit>Edit</button>
+    <button type="button" role="menuitem" class="danger" data-ctx-delete>Delete</button>`;
   document.body.append(menu);
   const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
   const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
@@ -34209,6 +34209,8 @@ function planOverlayRowHtml(source, name, color) {
 
 function renderPlanCalList() {
   const cals = state.planCalendars || [];
+  // Leaving any inline-edit state; release the sidebar hover-rail pin.
+  document.getElementById("planSidebar")?.classList.remove("is-pinned");
   // Personal + subscribed calendars are blended into one alphabetical list.
   const sorted = [...cals].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
@@ -34259,6 +34261,9 @@ function openPlanCalEditMode(id) {
   if (!row) return;
   const cal = (state.planCalendars || []).find((c) => c.id === id);
   if (!cal) return;
+  // Keep the sidebar expanded while editing so the inline form isn't hidden when
+  // the cursor leaves the desktop hover-rail (cleared on next renderPlanCalList).
+  document.getElementById("planSidebar")?.classList.add("is-pinned");
   const colorPickerId = `cal-edit-color-${id}`;
   const nameId = `cal-edit-name-${id}`;
   row.innerHTML = `

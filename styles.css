@@ -10604,6 +10604,16 @@ body.touch-drag-active * {
   .plan-sidebar:not(:hover) .plan-cal-toggle,
   .plan-sidebar:not(:hover) .plan-cal-empty { display: none; }
   .plan-sidebar:not(:hover) .plan-cal-front { justify-content: center; gap: 0; padding-left: 0; padding-right: 0; }
+
+  /* Pinned open (e.g. while inline-editing a calendar) — stays expanded even when
+     the cursor leaves the rail, so the edit form isn't hidden. */
+  .plan-sidebar.is-pinned { width: 240px; padding: 12px; box-shadow: 4px 0 18px rgba(0,0,0,0.13); }
+  .plan-sidebar.is-pinned:not(:hover) .plan-cal-list-head,
+  .plan-sidebar.is-pinned:not(:hover) .plan-cal-toggle { display: flex; }
+  .plan-sidebar.is-pinned:not(:hover) .plan-cal-divider,
+  .plan-sidebar.is-pinned:not(:hover) .plan-cal-name,
+  .plan-sidebar.is-pinned:not(:hover) .plan-cal-empty { display: block; }
+  .plan-sidebar.is-pinned:not(:hover) .plan-cal-front { justify-content: flex-start; gap: 10px; }
 }
 
 /* View tab bar + calendar actions (Today / +) share one row inside the window */
