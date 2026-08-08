@@ -632,6 +632,7 @@ let planViewDate = new Date();
 let planDotTooltipEl = null; // hoisted: initPlanDotTooltip runs during init, before its own file position
 let planSuppressGridClick = false; // set by a completed drag-to-create so the trailing click doesn't also open the day dialog
 let planDragCreate = null; // active drag-to-create gesture state
+let planResize = null; // active event-resize gesture state
 const planCalendarCache = {};
 // Persist parsed iCal events to localStorage so subscribed calendars render
 // instantly on reload (before the network refetch), and survive being offline.
@@ -33185,8 +33186,26 @@ function bindPlanGridDragCreate(root) {
     planDragCreate.preview.style.height = `${((en - s) / 60) * 100}%`;
     planDragCreate.preview.innerHTML = `<span>${planFormatTime(fmt(s))} – ${planFormatTime(fmt(en))}</span>`;
   };
+  // Minute of the day at a pointer Y, from the grid's own geometry (robust to
+  // scroll position and to the pointer being over an event rather than a cell).
+  const minInGrid = (grid, rowH, clientY) => {
+    const contentY = (clientY - grid.getBoundingClientRect().top) + grid.scrollTop;
+    return Math.max(0, Math.min(1440, Math.round(((contentY / rowH) * 60) / 15) * 15));
+  };
   root.addEventListener("mousedown", (e) => {
     if (e.button !== 0 || (planViewMode !== "week" && planViewMode !== "day")) return;
+    // Resize: dragging a timed event's bottom handle changes its end time.
+    const handle = e.target.closest("[data-resize-event]");
+    if (handle) {
+      e.preventDefault(); e.stopPropagation();
+      const block = handle.closest(".plan-timed-event");
+      const cell = block.closest("[data-plan-hour][data-plan-day]");
+      const ev2 = (state.planEvents || []).find((x) => x.id === handle.dataset.resizeEvent);
+      const grid = block.closest(".plan-week-grid");
+      if (!ev2 || !cell || !grid) return;
+      planResize = { id: ev2.id, startMin: planEventMinutes(ev2).start, block, grid, rowH: grid.querySelector(".plan-hour-row")?.offsetHeight || 56, endMin: planEventMinutes(ev2).end };
+      return;
+    }
     if (e.target.closest("[data-plan-event-id]")) return; // starting on an event = don't create
     const cell = e.target.closest(".plan-week-cell, .plan-day-cell");
     if (!cell) return;
@@ -33199,6 +33218,13 @@ function bindPlanGridDragCreate(root) {
     paint(startMin + 30);
   });
   document.addEventListener("mousemove", (e) => {
+    if (planResize) {
+      const m = minInGrid(planResize.grid, planResize.rowH, e.clientY);
+      planResize.endMin = Math.max(planResize.startMin + 15, m);
+      planResize.moved = true;
+      planResize.block.style.height = `${((planResize.endMin - planResize.startMin) / 60) * 100}%`; // live
+      return;
+    }
     if (!planDragCreate) return;
     planDragCreate.moved = true;
     const under = document.elementFromPoint(e.clientX, e.clientY);
@@ -33207,6 +33233,16 @@ function bindPlanGridDragCreate(root) {
       : Number(planDragCreate.startHour) * 60 + Math.round((((e.clientY - planDragCreate.preview.parentElement.getBoundingClientRect().top) / planDragCreate.preview.parentElement.getBoundingClientRect().height) * 60) / 15) * 15);
   });
   document.addEventListener("mouseup", () => {
+    if (planResize) {
+      const pr = planResize; planResize = null;
+      if (pr.moved) planSuppressGridClick = true; // don't let the trailing click open the event
+      const ev2 = (state.planEvents || []).find((x) => x.id === pr.id);
+      if (ev2 && pr.moved) {
+        const newEnd = fmt(Math.min(1440, pr.endMin));
+        if (newEnd !== ev2.endTime) { ev2.endTime = newEnd; persist(); renderPlanPage(); }
+      }
+      return;
+    }
     if (!planDragCreate) return;
     const dc = planDragCreate; planDragCreate = null;
     dc.preview.remove();
