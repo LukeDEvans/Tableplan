@@ -1049,17 +1049,36 @@ function sendSmtpEmail({ user, password, from, to, subject, html }) {
   });
 }
 
+// Per-URL cache of the last successful parse + validators, so background refreshes
+// send conditional requests and skip re-downloading/parsing unchanged feeds.
+const icsCache = new Map(); // calUrl -> { etag, lastModified, events }
+
 async function handleIcsProxy(url, response) {
   const calUrl = String(url.searchParams.get("url") || "").trim();
   if (!calUrl) { sendJson(response, 400, { error: "Missing url." }); return; }
   let parsed;
   try { parsed = new URL(calUrl); } catch { sendJson(response, 400, { error: "Invalid URL." }); return; }
   if (parsed.protocol !== "https:") { sendJson(response, 400, { error: "Only https URLs are supported." }); return; }
-  const fetched = await fetch(calUrl, {
-    headers: { accept: "text/calendar,text/plain,*/*;q=0.8", "user-agent": "Mozilla/5.0 EatPlanSync/1.0" }
-  });
-  if (!fetched.ok) { sendJson(response, fetched.status, { error: `Calendar returned ${fetched.status}.` }); return; }
-  sendJson(response, 200, { events: parsePlanIcs(await fetched.text()) });
+  const cached = icsCache.get(calUrl);
+  const headers = { accept: "text/calendar,text/plain,*/*;q=0.8", "user-agent": "Mozilla/5.0 EatPlanSync/1.0" };
+  if (cached?.etag) headers["if-none-match"] = cached.etag;
+  if (cached?.lastModified) headers["if-modified-since"] = cached.lastModified;
+  let fetched;
+  try {
+    fetched = await fetch(calUrl, { headers });
+  } catch (err) {
+    if (cached) { sendJson(response, 200, { events: cached.events, stale: true }); return; } // offline: serve last good
+    throw err;
+  }
+  if (fetched.status === 304 && cached) { sendJson(response, 200, { events: cached.events, notModified: true }); return; }
+  if (!fetched.ok) {
+    if (cached) { sendJson(response, 200, { events: cached.events, stale: true }); return; }
+    sendJson(response, fetched.status, { error: `Calendar returned ${fetched.status}.` });
+    return;
+  }
+  const events = parsePlanIcs(await fetched.text());
+  icsCache.set(calUrl, { etag: fetched.headers.get("etag") || "", lastModified: fetched.headers.get("last-modified") || "", events });
+  sendJson(response, 200, { events });
 }
 
 function parsePlanIcs(text) {

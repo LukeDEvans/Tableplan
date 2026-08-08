@@ -631,6 +631,17 @@ let planViewMode = "month";
 let planViewDate = new Date();
 let planDotTooltipEl = null; // hoisted: initPlanDotTooltip runs during init, before its own file position
 const planCalendarCache = {};
+// Persist parsed iCal events to localStorage so subscribed calendars render
+// instantly on reload (before the network refetch), and survive being offline.
+function loadPlanIcsCache() {
+  try {
+    const obj = JSON.parse(localStorage.getItem("live_plan_ics_cache") || "{}");
+    Object.keys(obj).forEach((id) => { planCalendarCache[id] = obj[id]; });
+  } catch { /* ignore corrupt/absent cache */ }
+}
+function savePlanIcsCache() {
+  try { localStorage.setItem("live_plan_ics_cache", JSON.stringify(planCalendarCache)); } catch { /* quota/serialization */ }
+}
 let editingPlanEventId = null;
 let editingPlanEventOccurrenceDate = null; // which occurrence of a recurring event was opened
 // Which meal-plan context cards are expanded, keyed "dayId|columnLabel". Transient
@@ -2238,6 +2249,7 @@ function closeDialogOnBackdropClick(event) {
 }
 
 async function initializeApp() {
+  loadPlanIcsCache(); // hydrate subscribed-calendar events so they render instantly
   initDoPlannerDelegation();
   initTasksPageDelegation();
   initPlanCalListDelegation();
@@ -34754,6 +34766,7 @@ async function fetchOnePlanCalendar(cal) {
     if (!res.ok) return;
     const data = await res.json();
     planCalendarCache[cal.id] = { fetchedAt: new Date(), events: data.events || [] };
+    savePlanIcsCache(); // persist so it renders instantly on next reload
     planRangeCache.clear(); // fresh iCal events — drop the memoized range
     state.planCalendars = (state.planCalendars || []).map((c) => c.id === cal.id ? { ...c, lastFetched: new Date().toISOString() } : c);
     persist();
