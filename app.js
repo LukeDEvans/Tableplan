@@ -33520,7 +33520,7 @@ function getAppDataEvents(startKey, endKey) {
 }
 
 function planEventPillTemplate(event) {
-  const commonAttrs = `data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}" style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])}" title="${escapeHtml(event.title)}"`;
+  const commonAttrs = `data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}" style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])}" title="${escapeHtml(event.title)}" tabindex="0" role="button" aria-label="${escapeHtml(event.title)}"`;
   // Multi-day continuation days render as a title-less bar segment that connects
   // to the neighbouring days (the title shows only on the start day).
   if (event.spanPos && event.spanPos !== "start") {
@@ -33552,7 +33552,7 @@ function planMonthDotTemplate(event) {
   const tip = `${timeLabel}${event.title || ""}`;
   return `<span class="plan-month-dot${movable || occMovable ? " is-movable" : ""}" style="background:${escapeHtml(event.color || PLAN_COLORS[0])}" ` +
     `data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}" ` +
-    `data-tip="${escapeHtml(tip)}" aria-label="${escapeHtml(tip)}"${dragAttrs}></span>`;
+    `data-tip="${escapeHtml(tip)}" tabindex="0" role="button" aria-label="${escapeHtml(tip)}"${dragAttrs}></span>`;
 }
 
 // Finance paydays grouped by date-key, for the calendar's read-only payday dots.
@@ -33601,7 +33601,8 @@ function renderPlanMonthView() {
     const allDayEvts = allDayAll.slice(0, 3);
     const timedEvts = timedAll.slice(0, 5);
     const hidden = (allDayAll.length - allDayEvts.length) + (timedAll.length - timedEvts.length);
-    return `<div class="plan-month-day${isToday ? " is-today" : ""}${isOther ? " is-other-month" : ""}" data-plan-day="${escapeHtml(key)}" tabindex="0">
+    const aria = `${date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}${dayEvts.length ? `, ${dayEvts.length} event${dayEvts.length > 1 ? "s" : ""}` : ""}`;
+    return `<div class="plan-month-day${isToday ? " is-today" : ""}${isOther ? " is-other-month" : ""}" data-plan-day="${escapeHtml(key)}" tabindex="0" role="gridcell" aria-label="${escapeHtml(aria)}">
       <div class="plan-month-day-head">
         <span class="plan-day-number">${date.getDate()}</span>
         ${allDayEvts.length ? `<div class="plan-month-allday">${allDayEvts.map(planMonthDotTemplate).join("")}</div>` : ""}
@@ -33612,7 +33613,7 @@ function renderPlanMonthView() {
   }).join("");
   return `<div class="plan-month">
     <div class="plan-month-header">${headers}</div>
-    <div class="plan-month-grid">${cells}</div>
+    <div class="plan-month-grid" role="grid" aria-label="Month calendar">${cells}</div>
   </div>`;
 }
 
@@ -33785,6 +33786,7 @@ function planTimedEventBlock(event, layout) {
   // Side-by-side columns when overlapping; full width (CSS default) when alone.
   const colStyle = cols > 1 ? `left:calc(${(col / cols) * 100}% + 1px);width:calc(${100 / cols}% - 3px);right:auto;` : "";
   return `<div class="plan-timed-event" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}"
+               tabindex="0" role="button" aria-label="${escapeHtml(planFormatTime(event.startTime))} ${escapeHtml(event.title)}"
                style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])};top:${top}%;height:${height}%;${colStyle}"
                title="${escapeHtml(event.title)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}">
     <span>${escapeHtml(planFormatTime(event.startTime))} ${escapeHtml(event.title)}${event.recurrence || event.occurrenceOf ? " ↻" : ""}</span>
@@ -34443,6 +34445,16 @@ function initPlanCalListDelegation() {
   // Keyboard navigation for the month grid: arrows move day-to-day, Enter/Space
   // adds an event on the focused day.
   elements.planCalendar?.addEventListener("keydown", (e) => {
+    // Enter/Space on a focused event opens it (works in every view).
+    if (e.key === "Enter" || e.key === " ") {
+      const evtEl = e.target.closest("[data-plan-event-id]");
+      if (evtEl) {
+        e.preventDefault();
+        if (openPlanSyntheticEvent(evtEl.dataset.planEventSource)) return;
+        openPlanEventDialog(evtEl.dataset.planEventDate || null, evtEl.dataset.planEventId);
+        return;
+      }
+    }
     if (planViewMode !== "month") return;
     const cell = e.target.closest(".plan-month-day[data-plan-day]");
     if (!cell) return;

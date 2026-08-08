@@ -11045,6 +11045,8 @@ body.touch-drag-active * {
 }
 
 .plan-timed-event:hover { background: color-mix(in srgb, var(--evt-color) 32%, transparent); }
+.plan-timed-event:focus-visible,
+.plan-event-pill:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; z-index: 3; }
 
 /* Current-time indicator in the day/week hour grid. */
 .plan-now-line {
