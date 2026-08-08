@@ -1092,20 +1092,77 @@ function parsePlanIcs(text) {
       const start = readIcsDatetime(block, "DTSTART");
       if (!start.date) return null;
       const end = readIcsDatetime(block, "DTEND") || computeIcsEnd(start, readIcsProperty(block, "DURATION"));
+      // All-day DTEND is EXCLUSIVE (the day after the last day), so subtract one to
+      // get the inclusive last day; a timed DTEND is the actual end.
+      let endDate = null;
+      if (end?.allDay && end.date) {
+        const inclusive = icsAddDays(end.date, -1);
+        if (inclusive > start.date) endDate = inclusive;
+      } else if (end?.date && end.date !== start.date) {
+        endDate = end.date;
+      }
       return {
         uid: readIcsProperty(block, "UID") || `ics-${Math.random().toString(36).slice(2)}`,
         title: summary,
         date: start.date,
         startTime: start.time || null,
         endTime: end.time || null,
-        endDate: (end.date && end.date !== start.date) ? end.date : null,
+        endDate,
         allDay: start.allDay,
         notes: cleanHolidaySummary(readIcsProperty(block, "DESCRIPTION")),
         location: cleanHolidaySummary(readIcsProperty(block, "LOCATION")),
-        recurring: /RRULE/i.test(block)
+        recurrence: parseIcsRrule(block, start.date),
+        exceptions: parseIcsExdates(block)
       };
     })
     .filter(Boolean);
+}
+
+// Parse an RRULE into the app's recurrence shape (freq/interval/until/byWeekdays/
+// monthMode/byWeekday/bySetPos) so the client expands it like a personal event.
+function parseIcsRrule(block, startDate) {
+  const line = block.split("\n").find((l) => l.startsWith("RRULE:") || l.startsWith("RRULE;"));
+  if (!line) return null;
+  const rule = Object.fromEntries(line.slice(line.indexOf(":") + 1).split(";").map((kv) => { const [k, v] = kv.split("="); return [String(k).toUpperCase(), v]; }));
+  const freq = { DAILY: "daily", WEEKLY: "weekly", MONTHLY: "monthly", YEARLY: "yearly" }[String(rule.FREQ || "").toUpperCase()];
+  if (!freq) return null;
+  const interval = Math.max(1, parseInt(rule.INTERVAL, 10) || 1);
+  const dayMap = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
+  const rec = { freq, interval };
+  const untilM = rule.UNTIL && String(rule.UNTIL).match(/^(\d{4})(\d{2})(\d{2})/);
+  if (untilM) rec.until = `${untilM[1]}-${untilM[2]}-${untilM[3]}`;
+  else if (rule.COUNT && startDate) { // approximate COUNT as an until date
+    const n = parseInt(rule.COUNT, 10);
+    if (n > 0) {
+      const d = new Date(`${startDate}T00:00:00`);
+      if (freq === "daily") d.setDate(d.getDate() + (n - 1) * interval);
+      else if (freq === "weekly") d.setDate(d.getDate() + (n - 1) * interval * 7);
+      else if (freq === "monthly") d.setMonth(d.getMonth() + (n - 1) * interval);
+      else d.setFullYear(d.getFullYear() + (n - 1) * interval);
+      const p = (x) => String(x).padStart(2, "0");
+      rec.until = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+    }
+  }
+  if (rule.BYDAY) {
+    const parts = String(rule.BYDAY).split(",");
+    if (freq === "weekly") {
+      const days = [...new Set(parts.map((x) => dayMap[x.replace(/[-\d]/g, "").toUpperCase()]).filter((x) => x != null))].sort((a, b) => a - b);
+      if (days.length) rec.byWeekdays = days;
+    } else {
+      const m = parts[0].match(/^(-?\d+)?([A-Z]{2})$/i);
+      if (m && m[1] != null && dayMap[m[2].toUpperCase()] != null) { rec.monthMode = "nthWeekday"; rec.byWeekday = dayMap[m[2].toUpperCase()]; rec.bySetPos = parseInt(m[1], 10); }
+    }
+  }
+  return rec;
+}
+
+function parseIcsExdates(block) {
+  const out = [];
+  block.split("\n").forEach((l) => {
+    if (!/^EXDATE[;:]/i.test(l)) return;
+    l.slice(l.indexOf(":") + 1).split(",").forEach((v) => { const m = v.trim().match(/^(\d{4})(\d{2})(\d{2})/); if (m) out.push(`${m[1]}-${m[2]}-${m[3]}`); });
+  });
+  return out;
 }
 
 function readIcsDatetime(block, prop) {
@@ -1123,11 +1180,37 @@ function readIcsDatetime(block, prop) {
     const p = (n) => String(n).padStart(2, "0");
     return { date: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`, time: `${p(d.getHours())}:${p(d.getMinutes())}`, allDay: false };
   }
-  // TZID or floating local time: taken as-is. (Full IANA VTIMEZONE conversion
-  // isn't done; for a personal calendar its zone usually matches the viewer's.)
   const dt = value.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/);
+  // TZID: convert the wall-clock time in that IANA zone to the server's local time.
+  const tzid = (line.match(/[;:]TZID=([^:;]+)/i) || [])[1];
+  if (dt && tzid) {
+    const local = icsTzidToLocal(+dt[1], +dt[2], +dt[3], +dt[4], +dt[5], tzid);
+    if (local) {
+      const p = (n) => String(n).padStart(2, "0");
+      return { date: `${local.getFullYear()}-${p(local.getMonth() + 1)}-${p(local.getDate())}`, time: `${p(local.getHours())}:${p(local.getMinutes())}`, allDay: false };
+    }
+  }
+  // Floating local time (no zone): taken as-is.
   if (dt) return { date: `${dt[1]}-${dt[2]}-${dt[3]}`, time: `${dt[4]}:${dt[5]}`, allDay: false };
   return null;
+}
+
+// Offset (minutes ahead of UTC) that `tzid` is at the given UTC instant.
+function tzOffsetMinutes(instantMs, tzid) {
+  const dtf = new Intl.DateTimeFormat("en-US", { timeZone: tzid, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const p = Object.fromEntries(dtf.formatToParts(new Date(instantMs)).map((x) => [x.type, x.value]));
+  return (Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - instantMs) / 60000;
+}
+
+// Wall-clock (y,mo,d,h,mi) in IANA `tzid` → a Date at the correct UTC instant,
+// which then reads out in the server's local zone. Two passes handle DST edges.
+function icsTzidToLocal(y, mo, d, h, mi, tzid) {
+  try {
+    const guess = Date.UTC(y, mo - 1, d, h, mi);
+    let inst = guess - tzOffsetMinutes(guess, tzid) * 60000;
+    inst = guess - tzOffsetMinutes(inst, tzid) * 60000;
+    return new Date(inst);
+  } catch { return null; }
 }
 
 function computeIcsEnd(start, duration) {
@@ -1148,7 +1231,8 @@ function computeIcsEnd(start, duration) {
 function icsAddDays(dateStr, days) {
   const d = new Date(`${dateStr}T00:00:00`);
   d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  const p = (n) => String(n).padStart(2, "0"); // local components (toISOString is UTC → off-by-one in +offset zones)
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 function icsAddHour(time, h) {

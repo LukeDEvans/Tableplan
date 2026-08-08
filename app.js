@@ -33518,8 +33518,12 @@ function getPlanEventsForRange(startKey, endKey) {
     const cached = planCalendarCache[cal.id];
     if (!cached) return;
     cached.events.forEach((e) => {
-      if (e.date >= startKey && e.date <= endKey) {
-        events.push({ ...e, id: `${cal.id}:${e.uid}`, source: "ical", calendarId: cal.id, color: cal.color, calendarName: cal.name });
+      const base = { ...e, id: `${cal.id}:${e.uid}`, source: "ical", calendarId: cal.id, color: cal.color, calendarName: cal.name };
+      if (e.recurrence?.freq) {
+        // Subscribed recurring events (holidays, birthdays, …) expand like personal ones.
+        expandRecurringOccurrences(base, startKey, endKey).forEach((occ) => events.push({ ...base, date: occ, occurrenceOf: base.id }));
+      } else if (e.date >= startKey && e.date <= endKey) {
+        events.push(base);
       }
     });
   });
