@@ -11449,7 +11449,11 @@ body.touch-drag-active * {
   width: 100%; padding: 9px 12px; border-radius: 10px;
   border: 1px solid var(--border, #d5dbe2); background: var(--card-bg, #fff); color: inherit; font-size: 0.95rem;
 }
-.contacts-add-btn { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+/* Standard "add" button: a compact white, navy-bordered rounded square holding
+   a + (matches the calendar's add-calendar button). Use `icon-btn std-add-btn`.
+   The white bg / navy border / ink glyph come from .icon-btn. */
+.std-add-btn { flex: 0 0 auto; width: 34px; height: 34px; min-height: 34px; padding: 0; border-radius: 8px; }
+.std-add-btn svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2; fill: none; }
 .contacts-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px;
   align-content: start; overflow-y: auto; min-height: 0; padding-bottom: 8px;
