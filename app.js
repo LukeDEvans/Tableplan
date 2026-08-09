@@ -34439,24 +34439,20 @@ function getAppDataEvents(startKey, endKey) {
     if (list) for (const ev of list) { if (!hidden[ev.source]) events.push(ev); }
     cur.setDate(cur.getDate() + 1);
   }
-  // Birthdays & important dates — a hard-coded, read-only calendar built from
-  // Contacts. Each contact date recurs every year; a stored year adds an age /
-  // "N yr" count.
+  // Birthdays — a hard-coded, read-only calendar built from Contacts. Each
+  // contact's birthday recurs every year; a stored year adds an age. (Other
+  // important dates live on the contact but are intentionally not shown here.)
   if (!hidden.birthday) {
     const sY = +startKey.slice(0, 4), eY = +endKey.slice(0, 4);
-    const pushOccurrences = (c, dateStr, eid, emoji, label, sinceUnit) => {
-      const mmdd = dateStr.length > 5 ? dateStr.slice(5) : dateStr;
+    (state.contacts || []).forEach((c) => {
+      if (!c.birthday) return;
+      const mmdd = c.birthday.length > 5 ? c.birthday.slice(5) : c.birthday;
       for (let y = sY; y <= eY; y++) {
         const key = `${y}-${mmdd}`;
         if (key < startKey || key > endKey) continue;
-        const since = dateStr.length > 5 ? (y - +dateStr.slice(0, 4)) : null;
-        const suffix = since != null && since >= 0 ? ` (${since}${sinceUnit ? " " + sinceUnit : ""})` : "";
-        events.push({ id: eid, title: `${emoji} ${label}${suffix}`, date: key, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.birthday, source: "birthday", calendarName: "Birthdays & dates", contactId: c.id });
+        const age = c.birthday.length > 5 ? (y - +c.birthday.slice(0, 4)) : null;
+        events.push({ id: `bday-${c.id}`, title: `🎂 ${c.name}${age != null && age >= 0 ? ` (${age})` : ""}`, date: key, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.birthday, source: "birthday", calendarName: "Birthdays", contactId: c.id });
       }
-    };
-    (state.contacts || []).forEach((c) => {
-      if (c.birthday) pushOccurrences(c, c.birthday, `bday-${c.id}`, "🎂", c.name, "");
-      (c.dates || []).forEach((d, idx) => pushOccurrences(c, d.value, `bdate-${c.id}-${idx}`, "🎉", `${c.name} — ${d.label}`, "yr"));
     });
   }
   return events;
@@ -35949,7 +35945,7 @@ function renderPlanCalList() {
       ${planOverlayRowHtml("eat", "Meal Plan", PLAN_APP_COLORS.eat)}
       ${planOverlayRowHtml("play", "Exercise", PLAN_APP_COLORS.play)}
       ${planOverlayRowHtml("do", "To-Do", PLAN_APP_COLORS.do)}
-      ${planOverlayRowHtml("birthday", "Birthdays & dates", PLAN_APP_COLORS.birthday)}
+      ${planOverlayRowHtml("birthday", "Birthdays", PLAN_APP_COLORS.birthday)}
     </div>
     <div class="plan-cal-divider"></div>
     ${sorted.map((c) => planCalRowHtml(c)).join("")}
