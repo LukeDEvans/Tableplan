@@ -5389,6 +5389,8 @@ function mergeStates(newer, older) {
     "trips", "travelIdeas",
     // Finance (flat id-keyed — the nested ones are deep-merged below)
     "financeAccounts", "financeManualTxns",
+    // Contacts (address book)
+    "contacts",
   ]) {
     merged[key] = unionById(newer[key], older[key], key);
   }
@@ -33645,6 +33647,7 @@ function deleteContact() {
   const id = editingContactId;
   const snapshot = (state.contacts || []).find((c) => c.id === id);
   if (!snapshot) return;
+  recordDeletion("contacts", id); // tombstone so the delete survives a cross-device merge
   state.contacts = (state.contacts || []).filter((c) => c.id !== id);
   persist();
   elements.contactEditDialog.close();
@@ -33652,6 +33655,7 @@ function deleteContact() {
   if (activeAppArea === "plan") renderPlanPage();
   showMailToast(`Deleted "${snapshot.name}"`, () => {
     if (!(state.contacts || []).some((c) => c.id === id)) {
+      if (state.tombstones?.contacts) state.tombstones.contacts = state.tombstones.contacts.filter((x) => x !== String(id));
       state.contacts = [...(state.contacts || []), snapshot];
       persist();
       renderContactsPage();
