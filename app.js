@@ -1626,8 +1626,19 @@ function bindEvents() {
   document.getElementById("contactViewEditBtn")?.addEventListener("click", () => { const id = viewingContactId; elements.contactViewDialog.close(); if (id) openContactDialog(id); });
   document.getElementById("contactViewDeleteBtn")?.addEventListener("click", () => { editingContactId = viewingContactId; elements.contactViewDialog.close(); deleteContact(); });
   document.getElementById("contactViewBody")?.addEventListener("click", (e) => { const cp = e.target.closest("[data-copy]"); if (cp) copyContactValue(cp.dataset.copy); });
-  document.getElementById("contactsExportBtn")?.addEventListener("click", exportContactsVcf);
-  document.getElementById("contactsImportBtn")?.addEventListener("click", () => document.getElementById("contactsImportInput")?.click());
+  const contactsMenu = document.getElementById("contactsMenu");
+  const contactsMenuBtn = document.getElementById("contactsMenuBtn");
+  const closeContactsMenu = () => { if (contactsMenu) contactsMenu.hidden = true; contactsMenuBtn?.setAttribute("aria-expanded", "false"); };
+  contactsMenuBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = contactsMenu.hidden;
+    contactsMenu.hidden = !open;
+    contactsMenuBtn.setAttribute("aria-expanded", String(open));
+  });
+  document.addEventListener("click", (e) => { if (contactsMenu && !contactsMenu.hidden && !e.target.closest("#contactsMenu, #contactsMenuBtn")) closeContactsMenu(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && contactsMenu && !contactsMenu.hidden) closeContactsMenu(); });
+  document.getElementById("contactsExportBtn")?.addEventListener("click", () => { closeContactsMenu(); exportContactsVcf(); });
+  document.getElementById("contactsImportBtn")?.addEventListener("click", () => { closeContactsMenu(); document.getElementById("contactsImportInput")?.click(); });
   document.getElementById("contactsImportInput")?.addEventListener("change", (e) => { const f = e.target.files?.[0]; if (f) f.text().then(importContactsVcf); e.target.value = ""; });
   document.getElementById("homeExploreBtn")?.addEventListener("click", showExploreApp);
   elements.titleExploreBtn?.addEventListener("click", showExploreApp);

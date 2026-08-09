@@ -693,15 +693,18 @@
               <div class="contacts-search-wrap">
                 <input type="search" id="contactsSearchInput" class="contacts-search-input" placeholder="Search contacts…" aria-label="Search contacts" autocomplete="off" />
               </div>
-              <select id="contactsGroupFilter" class="plan-cal-select contacts-group-filter" aria-label="Filter by group">
+              <select id="contactsGroupFilter" class="contacts-group-filter" aria-label="Filter by group">
                 <option value="">All groups</option>
               </select>
-              <button class="icon-btn contacts-io-btn" type="button" id="contactsImportBtn" aria-label="Import vCard" title="Import contacts (.vcf)">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M8 11l4 4 4-4M4 21h16"/></svg>
-              </button>
-              <button class="icon-btn contacts-io-btn" type="button" id="contactsExportBtn" aria-label="Export vCard" title="Export contacts (.vcf)">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21V9M8 13l4-4 4 4M4 3h16"/></svg>
-              </button>
+              <div class="contacts-menu-wrap">
+                <button class="icon-btn contacts-menu-btn" type="button" id="contactsMenuBtn" aria-label="Contacts options" aria-haspopup="true" aria-expanded="false" title="Options">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>
+                </button>
+                <div class="contacts-menu" id="contactsMenu" role="menu" hidden>
+                  <button type="button" id="contactsImportBtn" role="menuitem">Import contacts…</button>
+                  <button type="button" id="contactsExportBtn" role="menuitem">Export contacts…</button>
+                </div>
+              </div>
               <input type="file" id="contactsImportInput" accept=".vcf,text/vcard,text/x-vcard" hidden />
               <button class="icon-btn std-add-btn" type="button" id="contactsAddBtn" aria-label="Add contact" title="Add contact">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
