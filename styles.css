@@ -11416,8 +11416,10 @@ body.touch-drag-active * {
   .std-form-dialog { width: 100vw; max-width: none; height: 100dvh; max-height: 100dvh; }
   .std-form-dialog .recipe-form { min-height: 100dvh; max-height: 100dvh; border-radius: 0; border: 0; }
 }
-/* Bare-X close in the header — just the glyph, no circle/box. */
+/* Bare-X close pinned to the window's top-right corner — just the glyph. */
+.std-form-dialog .recipe-form-head { padding-right: 30px; }
 .std-form-dialog .recipe-form-head .icon-btn {
+  position: absolute; top: 12px; right: 12px; z-index: 1;
   width: 28px; height: 28px; min-height: 28px;
   border: none; background: transparent; box-shadow: none;
 }

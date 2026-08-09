@@ -3327,10 +3327,16 @@
           </button>
         </div>
         <div class="recipe-form-body">
-          <label class="form-field">
-            <span>Name</span>
-            <input type="text" id="contactName" placeholder="Full name" autocomplete="off" />
-          </label>
+          <div class="contact-field-row">
+            <label class="form-field">
+              <span>First name</span>
+              <input type="text" id="contactFirstName" placeholder="First" autocomplete="off" />
+            </label>
+            <label class="form-field">
+              <span>Last name</span>
+              <input type="text" id="contactLastName" placeholder="Last" autocomplete="off" />
+            </label>
+          </div>
           <div class="contact-field-row">
             <label class="form-field">
               <span>Phone</span>
@@ -3350,9 +3356,10 @@
               <select id="contactBirthDay" class="plan-cal-select" aria-label="Birth day">
                 <option value="">Day</option>
               </select>
-              <input type="number" id="contactBirthYear" class="contact-birth-year" min="1900" max="2100" step="1" placeholder="Year" aria-label="Birth year (optional)" />
+              <select id="contactBirthYear" class="plan-cal-select contact-birth-year" aria-label="Birth year (optional)">
+                <option value="">Year*</option>
+              </select>
             </div>
-            <span class="muted-label">Year is optional — leave it blank to store just the day.</span>
           </div>
           <div class="form-field">
             <span>Addresses</span>

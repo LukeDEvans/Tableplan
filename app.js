@@ -33152,9 +33152,20 @@ function normalizePlanCalendars(calendars) {
 // Contacts (address book). Birthday is stored as "MM-DD" (no year) or
 // "YYYY-MM-DD" (with year), so the birthday calendar can show an age.
 function normalizeContacts(list) {
-  return Array.isArray(list) ? list.map((c) => ({
+  return Array.isArray(list) ? list.map((c) => {
+    let firstName = String(c?.firstName ?? "").trim();
+    let lastName = String(c?.lastName ?? "").trim();
+    // Migrate older single-"name" records: first token → first, rest → last.
+    if (!firstName && !lastName && c?.name) {
+      const parts = String(c.name).trim().split(/\s+/);
+      firstName = parts.shift() || "";
+      lastName = parts.join(" ");
+    }
+    const name = `${firstName} ${lastName}`.trim() || String(c?.name || "").trim();
+    return {
     id: c?.id || createId("contact"),
-    name: String(c?.name || "").trim(),
+    firstName, lastName,
+    name,
     phone: String(c?.phone || "").trim(),
     email: String(c?.email || "").trim(),
     birthday: (typeof c?.birthday === "string" && /^(\d{4}-)?(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(c.birthday)) ? c.birthday : "",
@@ -33165,7 +33176,8 @@ function normalizeContacts(list) {
     })).filter((a) => a.value) : [],
     notes: String(c?.notes || "").trim(),
     createdAt: c?.createdAt || new Date().toISOString(),
-  })).filter((c) => c.name) : [];
+  };
+  }).filter((c) => c.name) : [];
 }
 
 // ── Contacts page ─────────────────────────────────────────────────────────────
@@ -33228,6 +33240,11 @@ function populateContactBirthdaySelects() {
     CONTACT_MONTHS.forEach((name, i) => { const o = document.createElement("option"); o.value = String(i + 1); o.textContent = name; moSel.appendChild(o); });
     moSel.addEventListener("change", () => refreshContactBirthDays());
   }
+  const yrSel = document.getElementById("contactBirthYear");
+  if (yrSel && yrSel.options.length <= 1) {
+    const now = new Date().getFullYear();
+    for (let y = 2000; y <= now; y++) { const o = document.createElement("option"); o.value = String(y); o.textContent = String(y); yrSel.appendChild(o); }
+  }
   refreshContactBirthDays();
 }
 
@@ -33260,7 +33277,8 @@ function openContactDialog(id) {
   const $ = (i) => document.getElementById(i);
   $("contactDialogTitle").textContent = c ? "Edit Contact" : "New Contact";
   populateContactBirthdaySelects();
-  $("contactName").value = c?.name || "";
+  $("contactFirstName").value = c?.firstName || "";
+  $("contactLastName").value = c?.lastName || "";
   $("contactPhone").value = c?.phone || "";
   $("contactEmail").value = c?.email || "";
   const bday = c?.birthday || "";
@@ -33269,14 +33287,20 @@ function openContactDialog(id) {
   $("contactBirthMonth").value = mo ? String(+mo) : "";
   refreshContactBirthDays();
   $("contactBirthDay").value = day ? String(+day) : "";
-  $("contactBirthYear").value = bday.length > 5 ? bday.slice(0, 4) : "";
+  const yr = bday.length > 5 ? bday.slice(0, 4) : "";
+  const yrSel = $("contactBirthYear");
+  // The menu starts at 2000; keep an existing out-of-range year selectable.
+  if (yr && ![...yrSel.options].some((o) => o.value === yr)) {
+    const o = document.createElement("option"); o.value = yr; o.textContent = yr; yrSel.appendChild(o);
+  }
+  yrSel.value = yr;
   const list = $("contactAddressList");
   list.innerHTML = "";
   (c?.addresses || []).forEach((a) => addContactAddressRow(a.label, a.value));
   $("contactNotes").value = c?.notes || "";
   $("deleteContactBtn").hidden = !c;
   elements.contactEditDialog.showModal();
-  $("contactName").focus();
+  $("contactFirstName").focus();
 }
 
 function readContactAddresses() {
@@ -33289,15 +33313,17 @@ function readContactAddresses() {
 
 function saveContact() {
   const $ = (i) => document.getElementById(i);
-  const name = $("contactName").value.trim();
-  if (!name) { $("contactName").focus(); return; }
+  const firstName = $("contactFirstName").value.trim();
+  const lastName = $("contactLastName").value.trim();
+  const name = `${firstName} ${lastName}`.trim();
+  if (!name) { $("contactFirstName").focus(); return; }
   const mo = $("contactBirthMonth").value, day = $("contactBirthDay").value, yr = $("contactBirthYear").value.trim();
   let birthday = "";
   if (mo && day) {
     const mmdd = `${String(+mo).padStart(2, "0")}-${String(+day).padStart(2, "0")}`;
     birthday = (yr && +yr >= 1900 && +yr <= 2100) ? `${yr}-${mmdd}` : mmdd;
   }
-  const data = { name, phone: $("contactPhone").value.trim(), email: $("contactEmail").value.trim(), birthday, addresses: readContactAddresses(), notes: $("contactNotes").value.trim() };
+  const data = { firstName, lastName, name, phone: $("contactPhone").value.trim(), email: $("contactEmail").value.trim(), birthday, addresses: readContactAddresses(), notes: $("contactNotes").value.trim() };
   if (editingContactId) {
     state.contacts = (state.contacts || []).map((c) => c.id === editingContactId ? { ...c, ...data } : c);
   } else {
