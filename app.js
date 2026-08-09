@@ -34194,8 +34194,9 @@ function openPlanEventDialog(date, eventId, prefill) {
       if (prefill.endTime) setPlanTimeField("planEventEnd", prefill.endTime);
     }
   }
-  // Recurrence controls (edit a recurring event = edit the whole series).
-  const rec = existing?.recurrence || null;
+  // Recurrence controls (edit a recurring event = edit the whole series). A
+  // quick-add can also seed these via prefill.recurrence ("standup every mon").
+  const rec = existing?.recurrence || prefill?.recurrence || null;
   const repeatOn = Boolean(rec?.freq);
   const repeatToggle = document.getElementById("planEventRepeatToggle");
   if (repeatToggle) { repeatToggle.checked = repeatOn; repeatToggle.onchange = syncPlanRepeatUi; }
@@ -34866,7 +34867,7 @@ function initPlanCalListDelegation() {
       const box = document.getElementById("planSearchResults");
       if (box) box.hidden = true;
       searchInput.value = "";
-      openPlanEventDialog(parsed.date, null, { title: parsed.title, allDay: parsed.allDay, startTime: parsed.startTime, endTime: parsed.endTime });
+      openPlanEventDialog(parsed.date, null, { title: parsed.title, allDay: parsed.allDay, startTime: parsed.startTime, endTime: parsed.endTime, recurrence: parsed.recurrence });
     });
   }
   // Top-bar controls are static markup wired once here (renderPlanPage no longer
@@ -35076,6 +35077,41 @@ function parsePlanQuickAdd(input) {
   const strip = (re) => { const m = text.match(re); if (m) text = (text.slice(0, m.index) + " " + text.slice(m.index + m[0].length)).replace(/\s+/g, " ").trim(); return m; };
   const weekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
   let m;
+  // Recurrence phrases ("every weekday", "every mon & thu", "every 2 weeks",
+  // "daily", "weekly"…) are parsed FIRST so a following weekday isn't also read
+  // as a one-off date. Result feeds the dialog's repeat controls via prefill.
+  let recurrence = null;
+  const WD = { sun: 0, sunday: 0, mon: 1, monday: 1, tue: 2, tues: 2, tuesday: 2, wed: 3, weds: 3, wednesday: 3, thu: 4, thur: 4, thurs: 4, thursday: 4, fri: 5, friday: 5, sat: 6, saturday: 6 };
+  const dayTok = "sun|sunday|mon|monday|tue|tues|tuesday|wed|weds|wednesday|thu|thur|thurs|thursday|fri|friday|sat|saturday";
+  if (strip(/\bevery\s+weekday\b/i) || strip(/\bweekdays\b/i)) {
+    recurrence = { freq: "weekly", interval: 1, byWeekdays: [1, 2, 3, 4, 5] };
+  } else if (strip(/\bevery\s+weekend\b/i) || strip(/\bweekends\b/i)) {
+    recurrence = { freq: "weekly", interval: 1, byWeekdays: [0, 6] };
+  } else if ((m = strip(/\bevery\s+(\d{1,3})\s+(day|week|month|year)s?\b/i))) {
+    recurrence = { freq: { day: "daily", week: "weekly", month: "monthly", year: "yearly" }[m[2].toLowerCase()], interval: Math.max(1, +m[1]) };
+  } else if ((m = strip(new RegExp(`\\bevery\\s+((?:${dayTok})(?:\\s*(?:,|and|&)\\s*(?:${dayTok}))*)\\b`, "i")))) {
+    const days = m[1].split(/\s*(?:,|and|&)\s*/).map((s) => WD[s.toLowerCase()]).filter((n) => Number.isInteger(n));
+    if (days.length) recurrence = { freq: "weekly", interval: 1, byWeekdays: [...new Set(days)].sort((a, b) => a - b) };
+  } else if (strip(/\b(daily|everyday|every\s*day)\b/i)) {
+    recurrence = { freq: "daily", interval: 1 };
+  } else if (strip(/\b(weekly|every\s+week)\b/i)) {
+    recurrence = { freq: "weekly", interval: 1 }; // weekday defaults from the resolved date
+  } else if (strip(/\b(monthly|every\s+month)\b/i)) {
+    recurrence = { freq: "monthly", interval: 1 };
+  } else if (strip(/\b(yearly|annually|every\s+year)\b/i)) {
+    recurrence = { freq: "yearly", interval: 1 };
+  }
+  if (recurrence) {
+    let um;
+    if ((um = strip(/\buntil\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/i))) {
+      const yr = um[3] ? (+um[3] < 100 ? 2000 + +um[3] : +um[3]) : now.getFullYear();
+      const ud = new Date(yr, +um[1] - 1, +um[2]);
+      if (!um[3] && ud < now) ud.setFullYear(yr + 1);
+      recurrence.until = dateKeyFromDate(ud);
+    } else if ((um = strip(/\b(?:for\s+)?(\d{1,3})\s*(?:times|occurrences?)\b/i))) {
+      recurrence.count = Math.max(1, +um[1]);
+    }
+  }
   if (strip(/\btoday\b/i)) date = new Date(now);
   else if (strip(/\b(tomorrow|tmrw)\b/i)) { date = new Date(now); date.setDate(date.getDate() + 1); }
   else if ((m = strip(/\b(next\s+)?(sun|mon|tue|wed|thu|fri|sat)[a-z]*\b/i))) {
@@ -35097,12 +35133,12 @@ function parsePlanQuickAdd(input) {
   } else if ((m = strip(/\bat\s+(\d{1,2}):(\d{2})\b/))) {
     startTime = `${String(+m[1]).padStart(2, "0")}:${m[2]}`;
   }
-  if (!date && !startTime) return null; // no date/time → treat as a normal search
+  if (!date && !startTime && !recurrence) return null; // nothing actionable → normal search
   const title = text.replace(/\s+/g, " ").trim();
   if (!title) return null;
   let endTime = null;
   if (startTime) { const [h, mn] = startTime.split(":").map(Number); endTime = `${String((h + 1) % 24).padStart(2, "0")}:${String(mn).padStart(2, "0")}`; }
-  return { title, date: dateKeyFromDate(date || now), allDay: !startTime, startTime, endTime };
+  return { title, date: dateKeyFromDate(date || now), allDay: !startTime, startTime, endTime, recurrence };
 }
 
 function renderPlanSearch(q) {
