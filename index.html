@@ -693,6 +693,21 @@
               <div class="contacts-search-wrap">
                 <input type="search" id="contactsSearchInput" class="contacts-search-input" placeholder="Search contacts…" aria-label="Search contacts" autocomplete="off" />
               </div>
+              <select id="contactsSortSelect" class="plan-cal-select contacts-sort" aria-label="Sort contacts">
+                <option value="first">First name</option>
+                <option value="last">Last name</option>
+                <option value="birthday">Birthday</option>
+              </select>
+              <select id="contactsGroupFilter" class="plan-cal-select contacts-group-filter" aria-label="Filter by group">
+                <option value="">All groups</option>
+              </select>
+              <button class="icon-btn contacts-io-btn" type="button" id="contactsImportBtn" aria-label="Import vCard" title="Import contacts (.vcf)">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M8 11l4 4 4-4M4 21h16"/></svg>
+              </button>
+              <button class="icon-btn contacts-io-btn" type="button" id="contactsExportBtn" aria-label="Export vCard" title="Export contacts (.vcf)">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21V9M8 13l4-4 4 4M4 3h16"/></svg>
+              </button>
+              <input type="file" id="contactsImportInput" accept=".vcf,text/vcard,text/x-vcard" hidden />
               <button class="icon-btn std-add-btn" type="button" id="contactsAddBtn" aria-label="Add contact" title="Add contact">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
               </button>
@@ -3326,6 +3341,14 @@
           </button>
         </div>
         <div class="recipe-form-body">
+          <div class="contact-photo-row">
+            <span class="contact-avatar contact-photo-preview" id="contactPhotoPreview" aria-hidden="true"></span>
+            <div class="contact-photo-actions">
+              <button type="button" class="secondary-btn" id="contactPhotoBtn">Add photo</button>
+              <button type="button" class="secondary-btn contact-photo-remove" id="contactPhotoRemoveBtn" hidden>Remove</button>
+            </div>
+            <input type="file" id="contactPhotoInput" accept="image/*" hidden />
+          </div>
           <div class="contact-field-row">
             <label class="form-field">
               <input type="text" id="contactFirstName" placeholder="First name" autocomplete="off" />
@@ -3334,13 +3357,15 @@
               <input type="text" id="contactLastName" placeholder="Last name" autocomplete="off" />
             </label>
           </div>
-          <div class="contact-field-row">
-            <label class="form-field">
-              <input type="tel" id="contactPhone" placeholder="Phone" autocomplete="off" />
-            </label>
-            <label class="form-field">
-              <input type="email" id="contactEmail" placeholder="Email" autocomplete="off" />
-            </label>
+          <div class="form-field">
+            <span>Phone</span>
+            <div class="contact-multi-list" id="contactPhoneList"></div>
+            <button type="button" class="secondary-btn contact-add-row-btn" id="contactAddPhoneBtn">+ Add phone</button>
+          </div>
+          <div class="form-field">
+            <span>Email</span>
+            <div class="contact-multi-list" id="contactEmailList"></div>
+            <button type="button" class="secondary-btn contact-add-row-btn" id="contactAddEmailBtn">+ Add email</button>
           </div>
           <div class="form-field">
             <span>Birthday</span>
@@ -3357,10 +3382,19 @@
             </div>
           </div>
           <div class="form-field">
-            <span>Addresses</span>
-            <div class="contact-address-list" id="contactAddressList"></div>
-            <button type="button" class="secondary-btn contact-add-address-btn" id="contactAddAddressBtn">+ Add address</button>
+            <span>Important dates</span>
+            <div class="contact-multi-list" id="contactDateList"></div>
+            <button type="button" class="secondary-btn contact-add-row-btn" id="contactAddDateBtn">+ Add date</button>
           </div>
+          <div class="form-field">
+            <span>Addresses</span>
+            <div class="contact-multi-list" id="contactAddressList"></div>
+            <button type="button" class="secondary-btn contact-add-row-btn" id="contactAddAddressBtn">+ Add address</button>
+          </div>
+          <label class="form-field">
+            <span>Groups</span>
+            <input type="text" id="contactGroups" placeholder="Family, Friends, Work" autocomplete="off" />
+          </label>
           <label class="form-field">
             <span>Notes</span>
             <textarea id="contactNotes" rows="3" placeholder="Anything worth remembering…"></textarea>

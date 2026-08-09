@@ -11473,19 +11473,30 @@ body.touch-drag-active * {
   display: grid; place-items: center; font-weight: 700; font-size: 0.9rem;
   background: color-mix(in srgb, var(--accent, #1a73e8) 18%, transparent); color: var(--accent, #1a73e8);
 }
+.contact-avatar.has-photo { background-size: cover; background-position: center; color: transparent; }
 .contact-card-name { font-weight: 600; font-size: 1.02rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contact-card-groups { display: flex; flex-wrap: wrap; gap: 4px; }
+.contact-group-chip { font-size: 0.68rem; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--accent, #1a73e8) 14%, transparent); color: var(--accent, #1a73e8); }
 .contact-card-body { display: flex; flex-direction: column; gap: 4px; font-size: 0.86rem; min-width: 0; }
 .contact-card-row { display: flex; gap: 7px; align-items: baseline; min-width: 0; }
 .contact-row-ico { flex: 0 0 auto; width: 16px; text-align: center; opacity: 0.85; }
 .contact-row-val { min-width: 0; overflow-wrap: anywhere; }
 .contact-card-row a { color: var(--accent, #1a73e8); text-decoration: none; }
 .contact-card-row a:hover { text-decoration: underline; }
-.contact-addr-label { font-weight: 600; opacity: 0.7; margin-right: 3px; }
+.contact-row-tag { font-weight: 600; opacity: 0.6; margin-right: 3px; }
 .contact-card-notes { font-size: 0.82rem; opacity: 0.72; white-space: pre-wrap; overflow-wrap: anywhere; border-top: 1px solid var(--border, #e2e6ea); padding-top: 6px; margin-top: 2px; }
 .contact-row-muted { opacity: 0.5; }
+/* Toolbar controls */
+.contacts-sort, .contacts-group-filter { flex: 0 0 auto; max-width: 160px; }
+.contacts-io-btn { width: 34px; height: 34px; min-height: 34px; padding: 0; border-radius: 8px; }
+.contacts-io-btn svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2; fill: none; }
 /* Editor dialog */
 .contact-dialog .contact-field-row { display: flex; gap: 10px; flex-wrap: wrap; }
 .contact-dialog .contact-field-row .form-field { flex: 1 1 160px; }
+.contact-photo-row { display: flex; align-items: center; gap: 12px; }
+.contact-photo-preview { width: 56px; height: 56px; font-size: 1.1rem; }
+.contact-photo-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.contact-photo-actions .secondary-btn { padding: 6px 12px; }
 .contact-birthday-row { display: flex; gap: 8px; align-items: center; }
 .contact-birthday-row .plan-cal-select { flex: 1 1 auto; min-width: 0; }
 /* Day only shows 1–2 digit numbers, so it needn't be as wide as Month; Year is
@@ -11496,12 +11507,14 @@ body.touch-drag-active * {
 /* Save always sits in the bottom-right corner, even when Delete is hidden. */
 .contact-dialog #saveContactBtn { margin-left: auto; }
 .contact-birth-year { width: 84px; flex: 0 0 auto; color: inherit; }
-.contact-address-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
-.contact-address-row { display: flex; gap: 10px; align-items: center; }
-.contact-addr-label-input { width: 84px; flex: 0 0 auto; font-weight: 600; color: inherit; }
-.contact-addr-value-input { flex: 1 1 auto; min-width: 0; color: inherit; }
-.contact-addr-remove { flex: 0 0 auto; }
-.contact-add-address-btn { align-self: flex-start; }
+/* Generic labelled rows: phone / email / important date / address. */
+.contact-multi-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.contact-multi-row { display: flex; gap: 10px; align-items: center; }
+.contact-multi-row .contact-row-label { width: 84px; flex: 0 0 auto; font-weight: 600; color: inherit; }
+.contact-multi-row .contact-row-value { flex: 1 1 auto; min-width: 0; color: inherit; }
+.contact-multi-row .contact-row-remove { flex: 0 0 auto; width: 30px; height: 30px; min-height: 30px; }
+.contact-multi-row .contact-row-remove svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2; fill: none; }
+.contact-add-row-btn { align-self: flex-start; padding: 6px 12px; }
 
 /* ── New-event dialog redesign ─────────────────────────────────────────────── */
 /* Close button floats in the top-right corner (no header row / title). */
