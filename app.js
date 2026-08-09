@@ -633,6 +633,7 @@ let planDotTooltipEl = null; // hoisted: initPlanDotTooltip runs during init, be
 let planSuppressGridClick = false; // set by a completed drag-to-create so the trailing click doesn't also open the day dialog
 let planDragCreate = null; // active drag-to-create gesture state
 let planResize = null; // active event-resize gesture state
+let planMoveTimed = null; // active drag-to-move gesture for a timed grid event
 const planCalendarCache = {};
 // Persist parsed iCal events to localStorage so subscribed calendars render
 // instantly on reload (before the network refetch), and survive being offline.
@@ -33230,6 +33231,23 @@ function bindPlanGridDragCreate(root) {
       planResize = { id: ev2.id, startMin: planEventMinutes(ev2).start, block, grid, rowH: grid.querySelector(".plan-hour-row")?.offsetHeight || 56, endMin: planEventMinutes(ev2).end };
       return;
     }
+    // Move: dragging a personal timed event's body reschedules it to a new time
+    // (and, for non-recurring single-day events, a new day). Armed here but only
+    // activated once the pointer actually moves, so a plain click still opens it.
+    const moveBlock = e.target.closest(".plan-timed-event.is-movable");
+    if (moveBlock && !moveBlock.classList.contains("is-overnight-tail")) {
+      const ev2 = (state.planEvents || []).find((x) => x.id === moveBlock.dataset.planEventId);
+      if (ev2) {
+        const m = planEventMinutes(ev2);
+        planMoveTimed = {
+          id: ev2.id, block: moveBlock, downX: e.clientX, downY: e.clientY, moved: false,
+          durationMin: Math.max(15, m.end - m.start),
+          lockDay: Boolean(ev2.recurrence || ev2.endDate), // series/spans keep their day
+          origDay: ev2.date, preview: null, newStart: m.start, newDay: ev2.date,
+        };
+        return;
+      }
+    }
     if (e.target.closest("[data-plan-event-id]")) return; // starting on an event = don't create
     const cell = e.target.closest(".plan-week-cell, .plan-day-cell");
     if (!cell) return;
@@ -33247,6 +33265,31 @@ function bindPlanGridDragCreate(root) {
       planResize.endMin = Math.max(planResize.startMin + 15, m);
       planResize.moved = true;
       planResize.block.style.height = `${((planResize.endMin - planResize.startMin) / 60) * 100}%`; // live
+      return;
+    }
+    if (planMoveTimed) {
+      const pr = planMoveTimed;
+      if (!pr.moved) {
+        if (Math.hypot(e.clientX - pr.downX, e.clientY - pr.downY) < 4) return; // still a click
+        pr.moved = true;
+        pr.block.classList.add("is-drag-source"); // dim the original in place
+        pr.preview = document.createElement("div");
+        pr.preview.className = "plan-timed-event plan-drag-create";
+        pr.preview.innerHTML = "<span></span>";
+      }
+      e.preventDefault();
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      const overCell = under && under.closest("[data-plan-hour][data-plan-day]");
+      if (!overCell) return;
+      pr.newStart = Math.min(1440 - 15, minAt(overCell, e.clientY));
+      pr.newDay = pr.lockDay ? pr.origDay : overCell.dataset.planDay;
+      const destHour = Math.floor(pr.newStart / 60);
+      const destCell = root.querySelector(`[data-plan-hour="${destHour}"][data-plan-day="${CSS.escape(pr.newDay)}"]`) || overCell;
+      pr.preview.style.top = `${((pr.newStart % 60) / 60) * 100}%`;
+      pr.preview.style.height = `${Math.max((pr.durationMin / 60) * 100, 33)}%`;
+      const endM = Math.min(1440, pr.newStart + pr.durationMin);
+      pr.preview.querySelector("span").textContent = `${planFormatTime(fmt(pr.newStart))} – ${planFormatTime(fmt(endM))}`;
+      if (pr.preview.parentElement !== destCell) destCell.appendChild(pr.preview);
       return;
     }
     if (!planDragCreate) return;
@@ -33269,6 +33312,31 @@ function bindPlanGridDragCreate(root) {
           showMailToast(`Resized "${ev2.title || "event"}" to end ${planFormatTime(newEnd)}`, () => {
             const cur = (state.planEvents || []).find((x) => x.id === pr.id);
             if (cur) { cur.endTime = prevEnd; persist(); renderPlanPage(); }
+          });
+        }
+      }
+      return;
+    }
+    if (planMoveTimed) {
+      const pr = planMoveTimed; planMoveTimed = null;
+      pr.preview?.remove();
+      pr.block.classList.remove("is-drag-source");
+      if (!pr.moved) return; // a plain click — let the delegated click open the event
+      planSuppressGridClick = true;
+      const ev2 = (state.planEvents || []).find((x) => x.id === pr.id);
+      if (ev2) {
+        const newStartTime = fmt(pr.newStart);
+        const newEndTime = fmt(Math.min(1440, pr.newStart + pr.durationMin));
+        const dayChanged = !pr.lockDay && pr.newDay && pr.newDay !== ev2.date;
+        if (newStartTime !== ev2.startTime || dayChanged) {
+          const prev = { startTime: ev2.startTime, endTime: ev2.endTime, date: ev2.date };
+          ev2.startTime = newStartTime; ev2.endTime = newEndTime;
+          if (dayChanged) ev2.date = pr.newDay;
+          persist(); renderPlanPage();
+          const where = dayChanged ? `${new Date(pr.newDay + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${planFormatTime(newStartTime)}` : planFormatTime(newStartTime);
+          showMailToast(`Moved "${ev2.title || "event"}" to ${where}`, () => {
+            const cur = (state.planEvents || []).find((x) => x.id === pr.id);
+            if (cur) { cur.startTime = prev.startTime; cur.endTime = prev.endTime; cur.date = prev.date; persist(); renderPlanPage(); }
           });
         }
       }
@@ -33944,7 +34012,7 @@ function planTimedEventBlock(seg, layout) {
   const personal = !event.source || event.source === "personal";
   // The block's bottom edge is a resize handle for single, non-span personal events.
   const resizable = personal && !event.spanPos && !seg.tail;
-  return `<div class="plan-timed-event${seg.tail ? " is-overnight-tail" : ""}" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}"
+  return `<div class="plan-timed-event${seg.tail ? " is-overnight-tail" : ""}${resizable ? " is-movable" : ""}" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}"
                tabindex="0" role="button" aria-label="${escapeHtml(label)}"
                style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])};top:${top}%;height:${height}%;${colStyle}"
                data-tip="${escapeHtml(label)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}">

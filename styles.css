@@ -11078,6 +11078,8 @@ body.touch-drag-active * {
 /* Overnight continuation (the tail of an event that started the previous day). */
 .plan-timed-event.is-overnight-tail { border-top: 2px dotted color-mix(in srgb, var(--evt-color) 60%, transparent); }
 /* Bottom resize handle on a timed event. */
+.plan-timed-event.is-movable { cursor: grab; }
+.plan-timed-event.is-drag-source { opacity: 0.4; }
 .plan-event-resize { position: absolute; left: 0; right: 0; bottom: 0; height: 7px; cursor: ns-resize; }
 .plan-timed-event:hover .plan-event-resize { background: color-mix(in srgb, var(--evt-color) 45%, transparent); }
 /* "Edit repeating event" scope chooser (this / this-and-following / all). */
