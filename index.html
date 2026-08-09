@@ -3186,14 +3186,18 @@
               <span>Repeat</span>
             </label>
           </div>
-          <input type="hidden" id="planEventRepeatInterval" value="1" />
           <input type="hidden" id="planEventRepeatUntil" value="" />
           <div class="plan-repeat-detail" id="planRepeatDetail" hidden>
-            <select class="plan-cal-select plan-repeat-freq" id="planEventRepeatFreq" aria-label="Repeat frequency">
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-              <option value="yearly">Annually</option>
-            </select>
+            <div class="plan-repeat-every">
+              <span class="plan-repeat-every-label">Every</span>
+              <input type="number" min="1" max="365" step="1" id="planEventRepeatInterval" class="plan-repeat-interval" value="1" aria-label="Repeat interval" />
+              <select class="plan-cal-select plan-repeat-freq" id="planEventRepeatFreq" aria-label="Repeat unit">
+                <option value="daily">day</option>
+                <option value="weekly">week</option>
+                <option value="monthly">month</option>
+                <option value="yearly">year</option>
+              </select>
+            </div>
             <div class="plan-repeat-weekdays" id="planRepeatWeekdays">
               <label class="plan-weekday" title="Friday"><input type="checkbox" name="plan-weekday" value="5" aria-label="Friday" /><span aria-hidden="true">F</span></label>
               <label class="plan-weekday" title="Saturday"><input type="checkbox" name="plan-weekday" value="6" aria-label="Saturday" /><span aria-hidden="true">S</span></label>

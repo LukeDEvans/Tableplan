@@ -11371,6 +11371,10 @@ body.touch-drag-active * {
 .plan-event-dialog .plan-repeat-freq, .plan-event-dialog .plan-repeat-mode { font-weight: 600; max-width: 100%; }
 .plan-repeat-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; font-weight: 600; }
 .plan-repeat-inline input[type="number"] { width: 62px; }
+/* "Every N <unit>" repeat interval row. */
+.plan-repeat-every { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 0.9rem; }
+.plan-repeat-every-label { font-weight: 600; opacity: 0.8; }
+.plan-repeat-interval { width: 64px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border, #d5dbe2); background: var(--card-bg, #fff); color: inherit; }
 /* "Ends" row: never / on a date / after N times. */
 .plan-repeat-ends { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 0.9rem; }
 .plan-repeat-ends-label { font-weight: 600; opacity: 0.8; }
