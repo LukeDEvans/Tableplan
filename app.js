@@ -220,6 +220,7 @@ const STATE_SECTIONS = {
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
+  contacts:  ["contacts"],
 };
 
 // ── Household vs personal data scoping ────────────────────────────────────────
@@ -253,6 +254,7 @@ const SECTION_SCOPE = {
   inventory: "household", // Stock: one shared record of where things are
   travel: "toggle",
   finance: "household",   // one shared household budget
+  contacts: "household",  // one shared address book (feeds the birthday calendar)
 };
 const SCOPE_PREFS_KEY = "live-section-scopes-v1";
 const SHADOW_KEY = "live-shadow-sections-v1";
@@ -429,6 +431,7 @@ const MANAGED_PAGES = [
   { key: "plan",      label: "Calendar" },
   { key: "inventory", label: "Inventory" },
   { key: "finance",   label: "Finance" },
+  { key: "contacts",  label: "Contacts" },
 ];
 
 // JSON snapshot of each section as of the last successful Supabase write.
@@ -846,6 +849,13 @@ const elements = {
   titleFinanceBtn: document.querySelector("#titleFinanceBtn"),
   homePlanBtn: document.querySelector("#homePlanBtn"),
   titlePlanBtn: document.querySelector("#titlePlanBtn"),
+  homeContactsBtn: document.querySelector("#homeContactsBtn"),
+  titleContactsBtn: document.querySelector("#titleContactsBtn"),
+  contactsMainPage: document.querySelector("#contactsMainPage"),
+  contactsGrid: document.querySelector("#contactsGrid"),
+  contactsSearchInput: document.querySelector("#contactsSearchInput"),
+  contactsAddBtn: document.querySelector("#contactsAddBtn"),
+  contactEditDialog: document.querySelector("#contactEditDialog"),
   planMainPage: document.querySelector("#planMainPage"),
   planCalendar: document.querySelector("#planCalendar"),
   planTopbar: document.querySelector("#planTopbar"),
@@ -1596,6 +1606,15 @@ function bindEvents() {
   elements.titleRecreateBtn.addEventListener("click", showRecreateApp);
   elements.homePlanBtn.addEventListener("click", showPlanApp);
   elements.titlePlanBtn.addEventListener("click", showPlanApp);
+  elements.homeContactsBtn?.addEventListener("click", showContactsApp);
+  elements.titleContactsBtn?.addEventListener("click", showContactsApp);
+  elements.contactsAddBtn?.addEventListener("click", () => openContactDialog(null));
+  elements.contactsSearchInput?.addEventListener("input", () => renderContactsPage());
+  elements.closeContactDialogBtn = document.getElementById("closeContactDialogBtn");
+  document.getElementById("closeContactDialogBtn")?.addEventListener("click", () => elements.contactEditDialog.close());
+  document.getElementById("saveContactBtn")?.addEventListener("click", saveContact);
+  document.getElementById("deleteContactBtn")?.addEventListener("click", deleteContact);
+  document.getElementById("contactAddAddressBtn")?.addEventListener("click", () => addContactAddressRow());
   document.getElementById("homeExploreBtn")?.addEventListener("click", showExploreApp);
   elements.titleExploreBtn?.addEventListener("click", showExploreApp);
   elements.homeFinanceBtn?.addEventListener("click", showFinanceApp);
@@ -2310,6 +2329,7 @@ function handleHashNavigation() {
     recreate: showRecreateApp,
     finance: showFinanceApp,
     schedule: showPlanApp,
+    contacts: showContactsApp,
     settings: showSettingsApp,
     home: showHomeApp,
     read: showMediaApp,
@@ -3221,6 +3241,7 @@ function defaultState() {
     calendars: [],
     planEvents: [],
     planHiddenSources: {},
+    contacts: [],
     groceryReviewDismissed: {},
     activeCooking: [],
     weeklyEmailSettings: defaultWeeklyEmailSettings(),
@@ -3425,6 +3446,7 @@ function normalizeState(parsed) {
     planEvents: normalizePlanEvents(parsed?.planEvents),
     planCalendars: normalizePlanCalendars(parsed?.planCalendars),
     planHiddenSources: (parsed?.planHiddenSources && typeof parsed.planHiddenSources === "object") ? parsed.planHiddenSources : {},
+    contacts: normalizeContacts(parsed?.contacts),
     mealPlanConfig,
     appName: typeof parsed?.appName === "string" ? parsed.appName.trim() : "",
     travelHome: typeof parsed?.travelHome === "string" ? parsed.travelHome.trim() : "",
@@ -6928,6 +6950,7 @@ function hideAllPages() {
   // Guarded: a stale cached shell without this section must not break nav
   if (elements.financeMainPage) elements.financeMainPage.hidden = true;
   elements.planMainPage.hidden = true;
+  if (elements.contactsMainPage) elements.contactsMainPage.hidden = true;
   elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
   document.getElementById("exploreMainPage").hidden = true;
@@ -9612,6 +9635,21 @@ function showPlanApp(event) {
   fetchAllPlanCalendars();
   renderPlanCalList(); // populate the left sidebar's calendar manager
   renderPlanPage();
+  closePageTitleMenu();
+  closeAppMenu();
+}
+
+function showContactsApp(event) {
+  event?.stopPropagation();
+  if (!isPageEnabled("contacts")) { showHomeApp(); return; }
+  activeAppArea = "contacts";
+  hideAllPages();
+  elements.contactsMainPage.hidden = false;
+  elements.weekLabel.closest(".week-tools").hidden = true; // no date bar on Contacts
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("Contacts");
+  setPageHash("contacts");
+  renderContactsPage();
   closePageTitleMenu();
   closeAppMenu();
 }
@@ -18010,6 +18048,7 @@ function updatePageTitleMenu() {
   elements.titleRecreateBtn.hidden = activeAppArea === "recreate" || !isPagePersonallyEnabled("recreate");
   if (elements.titleFinanceBtn) elements.titleFinanceBtn.hidden = activeAppArea === "finance" || !isPagePersonallyEnabled("finance");
   elements.titlePlanBtn.hidden = activeAppArea === "plan" || !isPagePersonallyEnabled("plan");
+  if (elements.titleContactsBtn) elements.titleContactsBtn.hidden = activeAppArea === "contacts" || !isPagePersonallyEnabled("contacts");
   elements.titleMailBtn.hidden = activeAppArea === "mail" || !isPagePersonallyEnabled("mail");
   if (elements.titleExploreBtn) elements.titleExploreBtn.hidden = activeAppArea === "explore" || !isPagePersonallyEnabled("explore");
   const menu = elements.pageTitleMenu;
@@ -18029,6 +18068,7 @@ function updatePageVisibility() {
   elements.homeRecreateBtn.hidden = !isPagePersonallyEnabled("recreate");
   if (elements.homeFinanceBtn) elements.homeFinanceBtn.hidden = !isPagePersonallyEnabled("finance");
   elements.homePlanBtn.hidden = !isPagePersonallyEnabled("plan");
+  if (elements.homeContactsBtn) elements.homeContactsBtn.hidden = !isPagePersonallyEnabled("contacts");
   elements.homeMailBtn.hidden = !isPagePersonallyEnabled("mail");
   const exploreBtn = document.getElementById("homeExploreBtn");
   if (exploreBtn) exploreBtn.hidden = !isPagePersonallyEnabled("explore");
@@ -32903,7 +32943,7 @@ const PLAN_COLORS = [
   "#db4437","#d50000","#e91e63","#ad1457","#9c27b0","#6a1b9a",
   "#ab47bc","#7986cb","#3f51b5","#795548","#607d8b","#616161",
 ];
-const PLAN_APP_COLORS = { eat: "#0f9d58", play: "#ff5722", do: "#1976d2", watch: "#7b1fa2" };
+const PLAN_APP_COLORS = { eat: "#0f9d58", play: "#ff5722", do: "#1976d2", watch: "#7b1fa2", birthday: "#e91e63" };
 
 const PLAN_ORDINALS = ["first", "second", "third", "fourth", "fifth"];
 const PLAN_WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -33107,6 +33147,186 @@ function normalizePlanCalendars(calendars) {
     enabled: c?.enabled !== false,
     lastFetched: c?.lastFetched || null
   })).filter((c) => c.id) : [];
+}
+
+// Contacts (address book). Birthday is stored as "MM-DD" (no year) or
+// "YYYY-MM-DD" (with year), so the birthday calendar can show an age.
+function normalizeContacts(list) {
+  return Array.isArray(list) ? list.map((c) => ({
+    id: c?.id || createId("contact"),
+    name: String(c?.name || "").trim(),
+    phone: String(c?.phone || "").trim(),
+    email: String(c?.email || "").trim(),
+    birthday: (typeof c?.birthday === "string" && /^(\d{4}-)?(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(c.birthday)) ? c.birthday : "",
+    addresses: Array.isArray(c?.addresses) ? c.addresses.map((a) => ({
+      id: a?.id || createId("addr"),
+      label: String(a?.label || "Home").trim() || "Home",
+      value: String(a?.value || "").trim(),
+    })).filter((a) => a.value) : [],
+    notes: String(c?.notes || "").trim(),
+    createdAt: c?.createdAt || new Date().toISOString(),
+  })).filter((c) => c.name) : [];
+}
+
+// ── Contacts page ─────────────────────────────────────────────────────────────
+const CONTACT_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const CONTACT_MONTH_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+let editingContactId = null;
+
+function contactInitials(name) {
+  return (name || "").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("") || "?";
+}
+
+// "MM-DD" → "March 5"; "YYYY-MM-DD" → "March 5, 1990".
+function formatContactBirthday(bday) {
+  if (!bday) return "";
+  const mmdd = bday.length > 5 ? bday.slice(5) : bday;
+  const [mo, day] = mmdd.split("-").map(Number);
+  const label = `${CONTACT_MONTHS[mo - 1]} ${day}`;
+  return bday.length > 5 ? `${label}, ${bday.slice(0, 4)}` : label;
+}
+
+function renderContactsPage() {
+  const grid = elements.contactsGrid;
+  if (!grid) return;
+  const q = (elements.contactsSearchInput?.value || "").trim().toLowerCase();
+  let contacts = [...(state.contacts || [])].sort((a, b) => a.name.localeCompare(b.name));
+  if (q) contacts = contacts.filter((c) => `${c.name} ${c.email} ${c.phone} ${c.notes} ${(c.addresses || []).map((a) => a.value).join(" ")}`.toLowerCase().includes(q));
+  if (!contacts.length) {
+    grid.innerHTML = `<div class="contacts-empty">${q ? "No contacts match your search." : "No contacts yet — add someone to get started."}</div>`;
+    return;
+  }
+  grid.innerHTML = contacts.map(contactCardHtml).join("");
+  grid.querySelectorAll("[data-contact-id]").forEach((card) => {
+    const open = () => openContactDialog(card.dataset.contactId);
+    card.addEventListener("click", (e) => { if (e.target.closest("a")) return; open(); }); // let tel:/mailto: links work
+    card.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+  });
+}
+
+function contactCardHtml(c) {
+  const line = (ico, html) => `<div class="contact-card-row"><span class="contact-row-ico" aria-hidden="true">${ico}</span><span class="contact-row-val">${html}</span></div>`;
+  const rows = [];
+  if (c.birthday) rows.push(line("🎂", escapeHtml(formatContactBirthday(c.birthday))));
+  if (c.phone) rows.push(line("📞", `<a href="tel:${escapeHtml(c.phone.replace(/[^+\d]/g, ""))}">${escapeHtml(c.phone)}</a>`));
+  if (c.email) rows.push(line("✉️", `<a href="mailto:${escapeHtml(c.email)}">${escapeHtml(c.email)}</a>`));
+  (c.addresses || []).forEach((a) => rows.push(line("📍", `<span class="contact-addr-label">${escapeHtml(a.label)}</span> ${escapeHtml(a.value)}`)));
+  if (c.notes) rows.push(`<div class="contact-card-notes">${escapeHtml(c.notes)}</div>`);
+  return `<div class="contact-card" role="button" tabindex="0" data-contact-id="${escapeHtml(c.id)}" aria-label="Edit ${escapeHtml(c.name)}">
+    <div class="contact-card-head">
+      <span class="contact-avatar" aria-hidden="true">${escapeHtml(contactInitials(c.name))}</span>
+      <span class="contact-card-name">${escapeHtml(c.name)}</span>
+    </div>
+    <div class="contact-card-body">${rows.join("") || '<div class="contact-card-row contact-row-muted">No details yet</div>'}</div>
+  </div>`;
+}
+
+// Fill the month/day birthday selects; day options track the chosen month.
+function populateContactBirthdaySelects() {
+  const moSel = document.getElementById("contactBirthMonth");
+  if (moSel && moSel.options.length <= 1) {
+    CONTACT_MONTHS.forEach((name, i) => { const o = document.createElement("option"); o.value = String(i + 1); o.textContent = name; moSel.appendChild(o); });
+    moSel.addEventListener("change", () => refreshContactBirthDays());
+  }
+  refreshContactBirthDays();
+}
+
+function refreshContactBirthDays() {
+  const daySel = document.getElementById("contactBirthDay");
+  if (!daySel) return;
+  const mo = Number(document.getElementById("contactBirthMonth")?.value) || 0;
+  const max = mo ? CONTACT_MONTH_DAYS[mo - 1] : 31;
+  const prev = daySel.value;
+  daySel.innerHTML = '<option value="">Day</option>' + Array.from({ length: max }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join("");
+  if (prev && Number(prev) <= max) daySel.value = prev;
+}
+
+function addContactAddressRow(label = "Home", value = "") {
+  const list = document.getElementById("contactAddressList");
+  if (!list) return;
+  const row = document.createElement("div");
+  row.className = "contact-address-row";
+  row.innerHTML = `
+    <input type="text" class="contact-addr-label-input" placeholder="Label" value="${escapeHtml(label)}" aria-label="Address label" />
+    <input type="text" class="contact-addr-value-input" placeholder="Address" value="${escapeHtml(value)}" aria-label="Address" />
+    <button type="button" class="icon-btn contact-addr-remove" aria-label="Remove address"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>`;
+  row.querySelector(".contact-addr-remove").addEventListener("click", () => row.remove());
+  list.appendChild(row);
+}
+
+function openContactDialog(id) {
+  editingContactId = id || null;
+  const c = id ? (state.contacts || []).find((x) => x.id === id) : null;
+  const $ = (i) => document.getElementById(i);
+  $("contactDialogTitle").textContent = c ? "Edit Contact" : "New Contact";
+  populateContactBirthdaySelects();
+  $("contactName").value = c?.name || "";
+  $("contactPhone").value = c?.phone || "";
+  $("contactEmail").value = c?.email || "";
+  const bday = c?.birthday || "";
+  const mmdd = bday.length > 5 ? bday.slice(5) : bday;
+  const [mo, day] = mmdd ? mmdd.split("-") : ["", ""];
+  $("contactBirthMonth").value = mo ? String(+mo) : "";
+  refreshContactBirthDays();
+  $("contactBirthDay").value = day ? String(+day) : "";
+  $("contactBirthYear").value = bday.length > 5 ? bday.slice(0, 4) : "";
+  const list = $("contactAddressList");
+  list.innerHTML = "";
+  (c?.addresses || []).forEach((a) => addContactAddressRow(a.label, a.value));
+  $("contactNotes").value = c?.notes || "";
+  $("deleteContactBtn").hidden = !c;
+  elements.contactEditDialog.showModal();
+  $("contactName").focus();
+}
+
+function readContactAddresses() {
+  return [...document.querySelectorAll("#contactAddressList .contact-address-row")].map((row) => ({
+    id: createId("addr"),
+    label: row.querySelector(".contact-addr-label-input").value.trim() || "Home",
+    value: row.querySelector(".contact-addr-value-input").value.trim(),
+  })).filter((a) => a.value);
+}
+
+function saveContact() {
+  const $ = (i) => document.getElementById(i);
+  const name = $("contactName").value.trim();
+  if (!name) { $("contactName").focus(); return; }
+  const mo = $("contactBirthMonth").value, day = $("contactBirthDay").value, yr = $("contactBirthYear").value.trim();
+  let birthday = "";
+  if (mo && day) {
+    const mmdd = `${String(+mo).padStart(2, "0")}-${String(+day).padStart(2, "0")}`;
+    birthday = (yr && +yr >= 1900 && +yr <= 2100) ? `${yr}-${mmdd}` : mmdd;
+  }
+  const data = { name, phone: $("contactPhone").value.trim(), email: $("contactEmail").value.trim(), birthday, addresses: readContactAddresses(), notes: $("contactNotes").value.trim() };
+  if (editingContactId) {
+    state.contacts = (state.contacts || []).map((c) => c.id === editingContactId ? { ...c, ...data } : c);
+  } else {
+    state.contacts = [...(state.contacts || []), { id: createId("contact"), createdAt: new Date().toISOString(), ...data }];
+  }
+  persist();
+  elements.contactEditDialog.close();
+  renderContactsPage();
+  if (activeAppArea === "plan") renderPlanPage(); // birthday calendar may have changed
+}
+
+function deleteContact() {
+  if (!editingContactId) return;
+  const id = editingContactId;
+  const snapshot = (state.contacts || []).find((c) => c.id === id);
+  if (!snapshot) return;
+  state.contacts = (state.contacts || []).filter((c) => c.id !== id);
+  persist();
+  elements.contactEditDialog.close();
+  renderContactsPage();
+  if (activeAppArea === "plan") renderPlanPage();
+  showMailToast(`Deleted "${snapshot.name}"`, () => {
+    if (!(state.contacts || []).some((c) => c.id === id)) {
+      state.contacts = [...(state.contacts || []), snapshot];
+      persist();
+      renderContactsPage();
+      if (activeAppArea === "plan") renderPlanPage();
+    }
+  });
 }
 
 function navigatePlanView(dir) {
@@ -33599,6 +33819,7 @@ function openPlanSyntheticEvent(source) {
     case "eat": showEatApp(); return true;
     case "do": showDoApp(); return true;
     case "ical": showMailToast("This event comes from a linked calendar and is read-only."); return true;
+    case "birthday": showContactsApp(); return true;
     default: return false;
   }
 }
@@ -33719,6 +33940,21 @@ function getAppDataEvents(startKey, endKey) {
     const list = planAppDataIndex.get(dateKeyFromDate(cur));
     if (list) for (const ev of list) { if (!hidden[ev.source]) events.push(ev); }
     cur.setDate(cur.getDate() + 1);
+  }
+  // Birthdays — a hard-coded, read-only calendar built from Contacts. Each
+  // contact's day recurs every year; the age shows when a birth year is stored.
+  if (!hidden.birthday) {
+    const sY = +startKey.slice(0, 4), eY = +endKey.slice(0, 4);
+    (state.contacts || []).forEach((c) => {
+      if (!c.birthday) return;
+      const mmdd = c.birthday.length > 5 ? c.birthday.slice(5) : c.birthday;
+      for (let y = sY; y <= eY; y++) {
+        const key = `${y}-${mmdd}`;
+        if (key < startKey || key > endKey) continue;
+        const age = c.birthday.length > 5 ? (y - +c.birthday.slice(0, 4)) : null;
+        events.push({ id: `bday-${c.id}-${y}`, title: `🎂 ${c.name}${age != null ? ` (${age})` : ""}`, date: key, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.birthday, source: "birthday", calendarName: "Birthdays", contactId: c.id });
+      }
+    });
   }
   return events;
 }
@@ -34896,6 +35132,13 @@ function initPlanCalListDelegation() {
     if (planSuppressGridClick) { planSuppressGridClick = false; return; } // just finished a drag-to-create
     const pill = e.target.closest("[data-plan-event-id]");
     if (pill) {
+      // A birthday jumps straight to that contact's card.
+      if (pill.dataset.planEventSource === "birthday") {
+        const cid = pill.dataset.planEventId.replace(/^bday-/, "").replace(/-\d{4}$/, "");
+        showContactsApp();
+        if ((state.contacts || []).some((c) => c.id === cid)) openContactDialog(cid);
+        return;
+      }
       // Auto-generated events (a logged workout, planned meal, to-do) aren't
       // editable calendar entries — jump to their source page instead.
       if (openPlanSyntheticEvent(pill.dataset.planEventSource)) return;
@@ -35202,6 +35445,7 @@ function renderPlanCalList() {
       ${planOverlayRowHtml("eat", "Meal Plan", PLAN_APP_COLORS.eat)}
       ${planOverlayRowHtml("play", "Exercise", PLAN_APP_COLORS.play)}
       ${planOverlayRowHtml("do", "To-Do", PLAN_APP_COLORS.do)}
+      ${planOverlayRowHtml("birthday", "Birthdays", PLAN_APP_COLORS.birthday)}
     </div>
     <div class="plan-cal-divider"></div>
     ${sorted.map((c) => planCalRowHtml(c)).join("")}

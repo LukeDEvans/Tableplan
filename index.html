@@ -126,6 +126,7 @@
                 <button type="button" id="titleMailBtn">Mail</button>
                 <button type="button" id="titleExploreBtn">Explore</button>
                 <button type="button" id="titleFinanceBtn">Finance</button>
+                <button type="button" id="titleContactsBtn">Contacts</button>
               </div>
             </div>
           </div>
@@ -236,6 +237,7 @@
                 <button type="button" id="homeInventoryBtn">Inventory</button>
                 <button type="button" id="homeDoBtn">To-Do</button>
                 <button type="button" id="homeWatchBtn">Watch</button>
+                <button type="button" id="homeContactsBtn">Contacts</button>
               </nav>
             </div>
             <div class="home-briefing" id="homeBriefing" hidden>
@@ -683,6 +685,20 @@
               </aside>
               <div class="plan-calendar" id="planCalendar"></div>
             </div>
+          </div>
+        </section>
+        <section class="planner-column do-column contacts-page" id="contactsMainPage" aria-label="Contacts" hidden>
+          <div class="contacts-page-inner">
+            <div class="contacts-toolbar">
+              <div class="contacts-search-wrap">
+                <input type="search" id="contactsSearchInput" class="contacts-search-input" placeholder="Search contacts…" aria-label="Search contacts" autocomplete="off" />
+              </div>
+              <button class="primary-btn contacts-add-btn" type="button" id="contactsAddBtn">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                <span>Add contact</span>
+              </button>
+            </div>
+            <div class="contacts-grid" id="contactsGrid"></div>
           </div>
         </section>
         <section class="planner-column do-column mail-page" id="mailMainPage" aria-label="Mail" hidden>
@@ -3298,6 +3314,59 @@
         <div class="dialog-actions">
           <span></span>
           <button class="primary-btn" type="button" id="addPlanCalBtn">Add</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="recipe-dialog contact-dialog" id="contactEditDialog">
+      <form class="recipe-form" method="dialog">
+        <div class="recipe-form-head">
+          <h2 id="contactDialogTitle">New Contact</h2>
+          <button class="icon-btn" type="button" id="closeContactDialogBtn" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="recipe-form-body">
+          <label class="form-field">
+            <span>Name</span>
+            <input type="text" id="contactName" placeholder="Full name" autocomplete="off" />
+          </label>
+          <div class="contact-field-row">
+            <label class="form-field">
+              <span>Phone</span>
+              <input type="tel" id="contactPhone" placeholder="(555) 123-4567" autocomplete="off" />
+            </label>
+            <label class="form-field">
+              <span>Email</span>
+              <input type="email" id="contactEmail" placeholder="name@example.com" autocomplete="off" />
+            </label>
+          </div>
+          <div class="form-field">
+            <span>Birthday</span>
+            <div class="contact-birthday-row">
+              <select id="contactBirthMonth" class="plan-cal-select" aria-label="Birth month">
+                <option value="">Month</option>
+              </select>
+              <select id="contactBirthDay" class="plan-cal-select" aria-label="Birth day">
+                <option value="">Day</option>
+              </select>
+              <input type="number" id="contactBirthYear" class="contact-birth-year" min="1900" max="2100" step="1" placeholder="Year" aria-label="Birth year (optional)" />
+            </div>
+            <span class="muted-label">Year is optional — leave it blank to store just the day.</span>
+          </div>
+          <div class="form-field">
+            <span>Addresses</span>
+            <div class="contact-address-list" id="contactAddressList"></div>
+            <button type="button" class="secondary-btn contact-add-address-btn" id="contactAddAddressBtn">+ Add address</button>
+          </div>
+          <label class="form-field">
+            <span>Notes</span>
+            <textarea id="contactNotes" rows="3" placeholder="Anything worth remembering…"></textarea>
+          </label>
+        </div>
+        <div class="dialog-actions">
+          <button class="danger-btn" type="button" id="deleteContactBtn" hidden>Delete</button>
+          <button class="primary-btn" type="button" id="saveContactBtn">Save</button>
         </div>
       </form>
     </dialog>

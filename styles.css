@@ -11401,6 +11401,57 @@ body.touch-drag-active * {
 :root[data-theme="dark"] .plan-conflict-warning { color: #f5c96b; }
 :root[data-theme="light"] .plan-conflict-warning { color: #8a5a00; }
 
+/* ── Contacts page ─────────────────────────────────────────────────────────── */
+.contacts-page-inner { display: flex; flex-direction: column; gap: 14px; height: 100%; min-height: 0; padding: 14px clamp(10px, 3vw, 28px) 20px; }
+.contacts-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.contacts-search-wrap { flex: 1 1 220px; min-width: 0; }
+.contacts-search-input {
+  width: 100%; padding: 9px 12px; border-radius: 10px;
+  border: 1px solid var(--border, #d5dbe2); background: var(--card-bg, #fff); color: inherit; font-size: 0.95rem;
+}
+.contacts-add-btn { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.contacts-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px;
+  align-content: start; overflow-y: auto; min-height: 0; padding-bottom: 8px;
+}
+.contacts-empty { grid-column: 1 / -1; text-align: center; padding: 40px 16px; opacity: 0.6; }
+.contact-card {
+  display: flex; flex-direction: column; gap: 8px; text-align: left; width: 100%;
+  background: var(--card-bg, #fff); border: 1px solid var(--border, #d5dbe2); border-radius: 14px;
+  padding: 14px; cursor: pointer; color: inherit;
+  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+}
+.contact-card:hover { border-color: color-mix(in srgb, var(--accent, #1a73e8) 55%, var(--border, #d5dbe2)); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.1); transform: translateY(-1px); }
+.contact-card:focus-visible { outline: 2px solid var(--accent, #1a73e8); outline-offset: 2px; }
+.contact-card-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.contact-avatar {
+  flex: 0 0 auto; width: 38px; height: 38px; border-radius: 50%;
+  display: grid; place-items: center; font-weight: 700; font-size: 0.9rem;
+  background: color-mix(in srgb, var(--accent, #1a73e8) 18%, transparent); color: var(--accent, #1a73e8);
+}
+.contact-card-name { font-weight: 600; font-size: 1.02rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contact-card-body { display: flex; flex-direction: column; gap: 4px; font-size: 0.86rem; min-width: 0; }
+.contact-card-row { display: flex; gap: 7px; align-items: baseline; min-width: 0; }
+.contact-row-ico { flex: 0 0 auto; width: 16px; text-align: center; opacity: 0.85; }
+.contact-row-val { min-width: 0; overflow-wrap: anywhere; }
+.contact-card-row a { color: var(--accent, #1a73e8); text-decoration: none; }
+.contact-card-row a:hover { text-decoration: underline; }
+.contact-addr-label { font-weight: 600; opacity: 0.7; margin-right: 3px; }
+.contact-card-notes { font-size: 0.82rem; opacity: 0.72; white-space: pre-wrap; overflow-wrap: anywhere; border-top: 1px solid var(--border, #e2e6ea); padding-top: 6px; margin-top: 2px; }
+.contact-row-muted { opacity: 0.5; }
+/* Editor dialog */
+.contact-dialog .contact-field-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.contact-dialog .contact-field-row .form-field { flex: 1 1 160px; }
+.contact-birthday-row { display: flex; gap: 8px; align-items: center; }
+.contact-birthday-row .plan-cal-select { flex: 1 1 auto; min-width: 0; }
+.contact-birth-year { width: 84px; flex: 0 0 auto; padding: 8px; border-radius: 8px; border: 1px solid var(--border, #d5dbe2); background: var(--card-bg, #fff); color: inherit; }
+.contact-address-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.contact-address-row { display: flex; gap: 8px; align-items: center; }
+.contact-addr-label-input { width: 92px; flex: 0 0 auto; padding: 8px; border-radius: 8px; border: 1px solid var(--border, #d5dbe2); background: var(--card-bg, #fff); color: inherit; }
+.contact-addr-value-input { flex: 1 1 auto; min-width: 0; padding: 8px; border-radius: 8px; border: 1px solid var(--border, #d5dbe2); background: var(--card-bg, #fff); color: inherit; }
+.contact-addr-remove { flex: 0 0 auto; }
+.contact-add-address-btn { align-self: flex-start; }
+
 /* ── New-event dialog redesign ─────────────────────────────────────────────── */
 /* Close button floats in the top-right corner (no header row / title). */
 /* Match the calendar window: white fill + 2px navy border (theme-aware). */
