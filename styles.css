@@ -11401,6 +11401,44 @@ body.touch-drag-active * {
 :root[data-theme="dark"] .plan-conflict-warning { color: #f5c96b; }
 :root[data-theme="light"] .plan-conflict-warning { color: #8a5a00; }
 
+/* ── Standard form dialog ──────────────────────────────────────────────────────
+   The app-wide standard for form/editor dialogs, extracted from the calendar's
+   new-event window: a bordered "window" on --window-bg, compact max width,
+   full-screen on phones, borderless focus-underline fields, and a bare-X close.
+   Add `std-form-dialog` to a `.recipe-dialog` to adopt it. */
+.std-form-dialog { max-width: 340px; }
+.std-form-dialog .recipe-form {
+  position: relative;
+  background: var(--window-bg);
+  border: 2px solid var(--window-border);
+}
+@media (max-width: 560px) {
+  .std-form-dialog { width: 100vw; max-width: none; height: 100dvh; max-height: 100dvh; }
+  .std-form-dialog .recipe-form { min-height: 100dvh; max-height: 100dvh; border-radius: 0; border: 0; }
+}
+/* Bare-X close in the header — just the glyph, no circle/box. */
+.std-form-dialog .recipe-form-head .icon-btn {
+  width: 28px; height: 28px; min-height: 28px;
+  border: none; background: transparent; box-shadow: none;
+}
+.std-form-dialog .recipe-form-head .icon-btn:hover { background: transparent; color: var(--accent, #1a73e8); }
+/* Borderless fields that read as part of the window (Google Calendar style):
+   no box at rest, just a focus underline. */
+.std-form-dialog .recipe-form-body input:not([type="checkbox"]):not([type="radio"]),
+.std-form-dialog .recipe-form-body textarea,
+.std-form-dialog .recipe-form-body select {
+  border: none; border-bottom: 1px solid transparent;
+  background: transparent; box-shadow: none; border-radius: 0;
+  padding: 4px 0;
+}
+.std-form-dialog .recipe-form-body input:not([type="checkbox"]):not([type="radio"]):focus,
+.std-form-dialog .recipe-form-body textarea:focus,
+.std-form-dialog .recipe-form-body select:focus {
+  outline: none;
+  border-bottom-color: color-mix(in srgb, var(--ink) 22%, transparent);
+}
+.std-form-dialog .form-field > span { font-size: 0.78rem; font-weight: 600; opacity: 0.7; }
+
 /* ── Contacts page ─────────────────────────────────────────────────────────── */
 .contacts-page-inner { display: flex; flex-direction: column; gap: 14px; height: 100%; min-height: 0; padding: 14px clamp(10px, 3vw, 28px) 20px; }
 .contacts-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -11444,11 +11482,11 @@ body.touch-drag-active * {
 .contact-dialog .contact-field-row .form-field { flex: 1 1 160px; }
 .contact-birthday-row { display: flex; gap: 8px; align-items: center; }
 .contact-birthday-row .plan-cal-select { flex: 1 1 auto; min-width: 0; }
-.contact-birth-year { width: 84px; flex: 0 0 auto; padding: 8px; border-radius: 8px; border: 1px solid var(--border, #d5dbe2); background: var(--card-bg, #fff); color: inherit; }
-.contact-address-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
-.contact-address-row { display: flex; gap: 8px; align-items: center; }
-.contact-addr-label-input { width: 92px; flex: 0 0 auto; padding: 8px; border-radius: 8px; border: 1px solid var(--border, #d5dbe2); background: var(--card-bg, #fff); color: inherit; }
-.contact-addr-value-input { flex: 1 1 auto; min-width: 0; padding: 8px; border-radius: 8px; border: 1px solid var(--border, #d5dbe2); background: var(--card-bg, #fff); color: inherit; }
+.contact-birth-year { width: 84px; flex: 0 0 auto; color: inherit; }
+.contact-address-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.contact-address-row { display: flex; gap: 10px; align-items: center; }
+.contact-addr-label-input { width: 84px; flex: 0 0 auto; font-weight: 600; color: inherit; }
+.contact-addr-value-input { flex: 1 1 auto; min-width: 0; color: inherit; }
 .contact-addr-remove { flex: 0 0 auto; }
 .contact-add-address-btn { align-self: flex-start; }
 
