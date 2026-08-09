@@ -3381,9 +3381,13 @@
             <span>Notes</span>
             <textarea id="contactNotes" rows="3" placeholder="Anything worth remembering…"></textarea>
             <div class="contact-dates-block">
-              <span class="contact-subhead">Important dates</span>
+              <div class="contact-dates-head">
+                <span class="contact-subhead">Important dates</span>
+                <button type="button" class="icon-btn contact-dates-add" id="contactAddDateBtn" aria-label="Add date" title="Add date">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                </button>
+              </div>
               <div class="contact-multi-list" id="contactDateList"></div>
-              <button type="button" class="secondary-btn contact-add-row-btn" id="contactAddDateBtn">+ Add date</button>
             </div>
           </div>
         </div>
