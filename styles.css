@@ -11378,6 +11378,22 @@ body.touch-drag-active * {
 .plan-repeat-count-wrap { display: inline-flex; align-items: center; gap: 6px; }
 .plan-repeat-count { width: 64px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border, #d5dbe2); background: var(--card-bg, #fff); color: inherit; }
 .plan-repeat-count-unit { opacity: 0.8; }
+/* Non-blocking overlap heads-up in the event dialog. */
+.plan-conflict-warning {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 10px; border-radius: 8px;
+  font-size: 0.82rem; font-weight: 600;
+  color: #8a5a00;
+  background: color-mix(in srgb, #f5a623 18%, transparent);
+  border: 1px solid color-mix(in srgb, #f5a623 45%, transparent);
+}
+.plan-conflict-warning[hidden] { display: none; }
+.plan-conflict-icon { flex: 0 0 auto; }
+@media (prefers-color-scheme: dark) {
+  .plan-conflict-warning { color: #f5c96b; }
+}
+:root[data-theme="dark"] .plan-conflict-warning { color: #f5c96b; }
+:root[data-theme="light"] .plan-conflict-warning { color: #8a5a00; }
 
 /* ── New-event dialog redesign ─────────────────────────────────────────────── */
 /* Close button floats in the top-right corner (no header row / title). */

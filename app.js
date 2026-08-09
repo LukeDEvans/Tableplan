@@ -1665,16 +1665,22 @@ function bindEvents() {
   // Changing the date refreshes the monthly/yearly "nth weekday" labels.
   document.getElementById("planEventDate")?.addEventListener("change", () => {
     if (!document.getElementById("planEventRepeatMode")?.hidden) populatePlanRepeatMode();
+    updatePlanConflictCue();
   });
   initPlanTimeSelects();
   // AM/PM toggle buttons flip between AM and PM.
   document.querySelectorAll(".plan-ampm-toggle").forEach((btn) => {
-    btn.addEventListener("click", () => { btn.textContent = btn.textContent === "AM" ? "PM" : "AM"; });
+    btn.addEventListener("click", () => { btn.textContent = btn.textContent === "AM" ? "PM" : "AM"; updatePlanConflictCue(); });
+  });
+  // Any change to the start/end hour/minute selects re-checks for overlaps.
+  ["planEventStartHour", "planEventStartMin", "planEventEndHour", "planEventEndMin"].forEach((tid) => {
+    document.getElementById(tid)?.addEventListener("change", updatePlanConflictCue);
   });
   elements.planEventAllDay.addEventListener("change", () => {
     elements.planTimeFields.hidden = elements.planEventAllDay.checked;
     const remRow = document.getElementById("planEventReminderRow");
     if (remRow) remRow.hidden = elements.planEventAllDay.checked;
+    updatePlanConflictCue();
   });
   elements.planEventCalPicker?.addEventListener("change", updatePlanEventCalDot);
   // Ask for notification permission the first time a reminder is chosen, so the
@@ -34043,6 +34049,28 @@ function readPlanTimeField(prefix) {
   return `${String(H).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
 
+// Non-blocking heads-up when the event being created/edited overlaps another
+// timed event on the same day. Purely informational — it never prevents saving.
+function updatePlanConflictCue() {
+  const el = document.getElementById("planConflictWarning");
+  if (!el) return;
+  const date = elements.planEventDate?.value;
+  if (!date || elements.planEventAllDay?.checked) { el.hidden = true; return; }
+  const toMin = (t) => { const [h, m] = String(t || "").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+  const s = toMin(readPlanTimeField("planEventStart"));
+  let e = toMin(readPlanTimeField("planEventEnd"));
+  if (!(e > s)) e = s + 1; // guard against zero/negative spans
+  const clashes = getPlanEventsForRange(date, date).filter((ev) =>
+    ev.date === date && !ev.allDay && ev.startTime && ev.endTime &&
+    ev.id !== editingPlanEventId && ev.occurrenceOf !== editingPlanEventId &&
+    s < toMin(ev.endTime) && toMin(ev.startTime) < e);
+  if (!clashes.length) { el.hidden = true; return; }
+  const names = clashes.slice(0, 3).map((c) => c.title || "an event").join(", ");
+  const more = clashes.length > 3 ? ` +${clashes.length - 3} more` : "";
+  el.innerHTML = `<span class="plan-conflict-icon" aria-hidden="true">⚠</span> Overlaps ${escapeHtml(names)}${escapeHtml(more)}`;
+  el.hidden = false;
+}
+
 function openPlanEventDialog(date, eventId, prefill) {
   editingPlanEventId = eventId || null;
   editingPlanEventOccurrenceDate = date || null;
@@ -34143,6 +34171,7 @@ function openPlanEventDialog(date, eventId, prefill) {
   elements.planEventLocationSuggestions.hidden = true;
   renderPlanEventAttachment();
   renderPlanEventCalPicker(selectedCalId);
+  updatePlanConflictCue();
   elements.planEventDialog.showModal();
   autosizePlanEventNotes();
 }
