@@ -10839,13 +10839,41 @@ body.touch-drag-active * {
 /* Day number + all-day event dots share the top row (all-day dots to the right
    of the number). Timed events are colour dots below, in chronological order. */
 .plan-month-day-head { display: flex; align-items: center; gap: 5px; min-width: 0; }
-.plan-month-allday { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; min-width: 0; }
-.plan-month-dots { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 3px; min-height: 0; overflow: hidden; }
-.plan-month-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; cursor: pointer; }
-.plan-month-dot.is-movable { cursor: grab; }
-.plan-month-dot.is-dragging { opacity: 0.5; }
+/* Month event chips: a colour dot + title (+ start time for timed events) when
+   the cell is wide enough, collapsing to bare colour dots on phones below. */
+.plan-month-events { display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow: hidden; margin-top: 1px; }
+.plan-month-chip {
+  display: flex; align-items: center; gap: 4px;
+  min-width: 0; max-width: 100%;
+  padding: 1px 4px; border-radius: 4px;
+  font-size: 0.7rem; line-height: 1.35;
+  color: var(--text, #1f2933); cursor: pointer;
+}
+.plan-month-chip.is-movable { cursor: grab; }
+.plan-month-chip.is-dragging { opacity: 0.5; }
+.plan-month-chip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--evt-color); flex: 0 0 auto; }
+.plan-month-chip-time { flex: 0 0 auto; font-weight: 600; opacity: 0.78; font-variant-numeric: tabular-nums; }
+.plan-month-chip-title { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.plan-month-chip-recur { flex: 0 0 auto; opacity: 0.55; font-size: 0.62rem; }
+.plan-month-chip:hover { background: color-mix(in srgb, var(--evt-color) 18%, transparent); }
+.plan-month-chip:focus-visible { outline: 2px solid var(--accent, #1a73e8); outline-offset: -1px; }
+/* All-day chips read as a filled colour bar. */
+.plan-month-chip.is-allday { background: color-mix(in srgb, var(--evt-color) 90%, transparent); color: #fff; padding: 1px 6px; }
+.plan-month-chip.is-allday .plan-month-chip-dot { display: none; }
+.plan-month-chip.is-allday:hover { background: var(--evt-color); }
+/* Phones: chips collapse back to compact colour dots (titles are unreadable in
+   a ~50px column). */
+@media (max-width: 560px) {
+  .plan-month-events { flex-direction: row; flex-wrap: wrap; align-content: flex-start; gap: 3px; }
+  .plan-month-chip, .plan-month-chip.is-allday {
+    width: 8px; height: 8px; padding: 0; border-radius: 50%;
+    background: var(--evt-color); color: transparent; overflow: hidden; flex: 0 0 auto;
+  }
+  .plan-month-chip > * { display: none; }
+  .plan-month-more { align-self: center; padding-left: 0; }
+}
 /* "+N" overflow chip for busy days (drills into the day). */
-.plan-month-more { align-self: center; font-size: 0.62rem; font-weight: 700; line-height: 8px; color: var(--text-muted, #888); cursor: pointer; }
+.plan-month-more { align-self: flex-start; font-size: 0.62rem; font-weight: 700; line-height: 1.4; color: var(--text-muted, #888); cursor: pointer; padding-left: 4px; }
 .plan-month-more:hover { color: var(--accent, #1a73e8); }
 /* Instant hover tooltip for month dots (theme-independent dark chip). */
 .plan-dot-tooltip {
@@ -10874,7 +10902,7 @@ body.touch-drag-active * {
   .plan-layout,
   .plan-cal-front,
   .plan-cal-dot,
-  .plan-month-dot,
+  .plan-month-chip,
   .plan-color-swatch span,
   .plan-view-content {
     transition: none !important;

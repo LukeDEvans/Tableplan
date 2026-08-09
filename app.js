@@ -33671,18 +33671,25 @@ function planEventPillTemplate(event) {
   </div>`;
 }
 
-// Month view renders each event as a bare colour dot (chronological order); the
-// title shows as a hover tooltip. Personal single-day events stay draggable.
-function planMonthDotTemplate(event) {
+// Month view renders each event as a compact chip: a colour dot plus the title
+// (and start time for timed events) when the cell is wide enough, collapsing to
+// a bare colour dot on phones (see .plan-month-chip CSS). All-day chips fill
+// with the event colour. Personal single-day events stay draggable.
+function planMonthChipTemplate(event) {
   const personal = !event.source || event.source === "personal";
   const movable = personal && !event.recurrence && !event.occurrenceOf;
   const occMovable = personal && event.recurrence && event.occurrenceOf;
   const dragAttrs = movable ? ' draggable="true" data-evt-movable="1"' : occMovable ? ' draggable="true" data-evt-occ-movable="1"' : "";
-  const timeLabel = (!event.allDay && event.startTime) ? `${planFormatTime(event.startTime)} · ` : "";
-  const tip = `${timeLabel}${event.title || ""}`;
-  return `<span class="plan-month-dot${movable || occMovable ? " is-movable" : ""}" style="background:${escapeHtml(event.color || PLAN_COLORS[0])}" ` +
+  const timeLabel = (!event.allDay && event.startTime) ? planFormatTime(event.startTime) : "";
+  const tip = `${timeLabel ? timeLabel + " · " : ""}${event.title || ""}`;
+  const recur = (event.recurrence || event.occurrenceOf) ? '<span class="plan-month-chip-recur" aria-hidden="true">↻</span>' : "";
+  const cls = `plan-month-chip${event.allDay ? " is-allday" : ""}${movable || occMovable ? " is-movable" : ""}`;
+  return `<span class="${cls}" style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])}" ` +
     `data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}" ` +
-    `data-tip="${escapeHtml(tip)}" tabindex="0" role="button" aria-label="${escapeHtml(tip)}"${dragAttrs}></span>`;
+    `data-tip="${escapeHtml(tip)}" tabindex="0" role="button" aria-label="${escapeHtml(tip)}"${dragAttrs}>` +
+    `<span class="plan-month-chip-dot" aria-hidden="true"></span>` +
+    (timeLabel ? `<span class="plan-month-chip-time">${escapeHtml(timeLabel)}</span>` : "") +
+    `<span class="plan-month-chip-title">${escapeHtml(event.title || "")}</span>${recur}</span>`;
 }
 
 // Finance paydays grouped by date-key, for the calendar's read-only payday dots.
@@ -33724,21 +33731,19 @@ function renderPlanMonthView() {
     const isToday = key === today;
     const isOther = date.getMonth() !== month;
     const dayEvts = eventsByDay[key] || []; // already sorted: all-day first, then by start time
-    const allDayAll = dayEvts.filter((e) => e.allDay);
-    const timedAll = dayEvts.filter((e) => !e.allDay);
-    // Cap the dots so busy days can't silently clip; the remainder shows as "+N"
-    // (which drills into that day). Caps chosen to fit typical desktop + phone cells.
-    const allDayEvts = allDayAll.slice(0, 3);
-    const timedEvts = timedAll.slice(0, 5);
-    const hidden = (allDayAll.length - allDayEvts.length) + (timedAll.length - timedEvts.length);
+    // Unified chip list (all-day first, then timed). Cap so busy days can't
+    // silently clip; the remainder shows as "+N" (which drills into that day).
+    // 5 titled rows fit a desktop cell, and the chips collapse to dots on phones.
+    const MONTH_CHIP_CAP = 5;
+    const shown = dayEvts.slice(0, MONTH_CHIP_CAP);
+    const hidden = dayEvts.length - shown.length;
     const aria = `${date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}${dayEvts.length ? `, ${dayEvts.length} event${dayEvts.length > 1 ? "s" : ""}` : ""}`;
     return `<div class="plan-month-day${isToday ? " is-today" : ""}${isOther ? " is-other-month" : ""}" data-plan-day="${escapeHtml(key)}" tabindex="0" role="gridcell" aria-label="${escapeHtml(aria)}">
       <div class="plan-month-day-head">
         <span class="plan-day-number">${date.getDate()}</span>
-        ${allDayEvts.length ? `<div class="plan-month-allday">${allDayEvts.map(planMonthDotTemplate).join("")}</div>` : ""}
       </div>
       ${paydayDotHtml(paydaysByDay[key])}
-      ${(timedEvts.length || hidden) ? `<div class="plan-month-dots">${timedEvts.map(planMonthDotTemplate).join("")}${hidden ? `<span class="plan-month-more" role="button" aria-label="${hidden} more — open day">+${hidden}</span>` : ""}</div>` : ""}
+      ${(shown.length || hidden) ? `<div class="plan-month-events">${shown.map(planMonthChipTemplate).join("")}${hidden ? `<span class="plan-month-more" role="button" aria-label="${hidden} more — open day">+${hidden}</span>` : ""}</div>` : ""}
     </div>`;
   }).join("");
   return `<div class="plan-month">
