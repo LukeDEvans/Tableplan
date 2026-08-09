@@ -1615,13 +1615,10 @@ function bindEvents() {
   document.getElementById("closeContactDialogBtn")?.addEventListener("click", () => elements.contactEditDialog.close());
   document.getElementById("saveContactBtn")?.addEventListener("click", saveContact);
   document.getElementById("deleteContactBtn")?.addEventListener("click", deleteContact);
-  document.getElementById("contactAddPhoneBtn")?.addEventListener("click", () => addContactRow("contactPhoneList", { label: "Mobile", labelPh: "Mobile", valuePh: "Phone number" }));
-  document.getElementById("contactAddEmailBtn")?.addEventListener("click", () => addContactRow("contactEmailList", { label: "Email", labelPh: "Email", valuePh: "name@example.com" }));
   document.getElementById("contactAddDateBtn")?.addEventListener("click", () => addContactRow("contactDateList", { label: "Anniversary", labelPh: "Anniversary", valueType: "date" }));
-  document.getElementById("contactAddAddressBtn")?.addEventListener("click", () => addContactRow("contactAddressList", { label: "Home", labelPh: "Home", valuePh: "Address" }));
-  document.getElementById("contactPhotoBtn")?.addEventListener("click", () => document.getElementById("contactPhotoInput")?.click());
   document.getElementById("contactPhotoInput")?.addEventListener("change", (e) => { handleContactPhotoFile(e.target.files?.[0]); e.target.value = ""; });
-  document.getElementById("contactPhotoRemoveBtn")?.addEventListener("click", () => { contactPhotoDraft = ""; renderContactPhotoPreview(); });
+  document.getElementById("contactPhotoPreview")?.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); openContactPhotoMenu(); });
+  document.getElementById("contactPhotoPreview")?.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); openContactPhotoMenu(); });
   document.getElementById("closeContactViewBtn")?.addEventListener("click", () => elements.contactViewDialog.close());
   document.getElementById("contactViewEditBtn")?.addEventListener("click", () => { const id = viewingContactId; elements.contactViewDialog.close(); if (id) openContactDialog(id); });
   document.getElementById("contactViewDeleteBtn")?.addEventListener("click", () => { editingContactId = viewingContactId; elements.contactViewDialog.close(); deleteContact(); });
@@ -33428,17 +33425,89 @@ function refreshContactBirthDays() {
 
 // Generic labelled row (phone / email / address / date). valueType "date" gives
 // a date picker; anything else is a text box.
+const CONTACT_PLUS_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+const CONTACT_X_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+const CONTACT_DRAG_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>';
+let contactDragRow = null;
+
+// Add a labelled row. Reorderable lists (data-reorder="1": phone/email/address)
+// get a drag handle plus a leading "+" on the first row / "×" on the rest;
+// other lists (important dates) get a plain "×" remove per row.
 function addContactRow(listId, { label = "", value = "", labelPh = "Label", valuePh = "", valueType = "text" } = {}) {
   const list = document.getElementById(listId);
   if (!list) return;
+  const reorder = list.dataset.reorder === "1";
   const row = document.createElement("div");
   row.className = "contact-multi-row";
-  row.innerHTML = `
+  const handle = reorder ? `<button type="button" class="contact-row-drag" aria-label="Drag to reorder" title="Drag to reorder" draggable="true">${CONTACT_DRAG_SVG}</button>` : "";
+  row.innerHTML = `${handle}
     <input type="text" class="contact-row-label" placeholder="${escapeHtml(labelPh)}" value="${escapeHtml(label)}" aria-label="Label" />
     <input type="${valueType}" class="contact-row-value" placeholder="${escapeHtml(valuePh)}" value="${escapeHtml(value)}" aria-label="${escapeHtml(valuePh || "Value")}" />
-    <button type="button" class="icon-btn contact-row-remove" aria-label="Remove"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>`;
-  row.querySelector(".contact-row-remove").addEventListener("click", () => row.remove());
+    <button type="button" class="icon-btn contact-row-action contact-row-remove" aria-label="Remove">${CONTACT_X_SVG}</button>`;
   list.appendChild(row);
+  if (reorder) {
+    setupContactRowDrag(row, list);
+    refreshContactReorderList(list);
+  } else {
+    row.querySelector(".contact-row-action").addEventListener("click", () => row.remove());
+  }
+}
+
+// In a reorderable list the first row's button is "+" (add another); the rest
+// are "×" (remove). Drag handles show only when there's more than one row.
+function refreshContactReorderList(list) {
+  const rows = [...list.querySelectorAll(".contact-multi-row")];
+  rows.forEach((row, i) => {
+    const btn = row.querySelector(".contact-row-action");
+    const drag = row.querySelector(".contact-row-drag");
+    if (drag) drag.style.visibility = rows.length > 1 ? "visible" : "hidden";
+    const isFirst = i === 0;
+    btn.classList.toggle("contact-row-add", isFirst);
+    btn.classList.toggle("contact-row-remove", !isFirst);
+    btn.innerHTML = isFirst ? CONTACT_PLUS_SVG : CONTACT_X_SVG;
+    btn.setAttribute("aria-label", isFirst ? "Add another" : "Remove");
+    btn.onclick = isFirst
+      ? () => addContactRow(list.id, { labelPh: list.dataset.labelPh || "Label", valuePh: list.dataset.valuePh || "", valueType: list.dataset.valueType || "text" })
+      : () => { row.remove(); refreshContactReorderList(list); };
+  });
+}
+
+function setupContactRowDrag(row, list) {
+  const handle = row.querySelector(".contact-row-drag");
+  if (!handle) return;
+  handle.addEventListener("dragstart", (e) => { contactDragRow = row; row.classList.add("is-dragging"); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", ""); } catch { /* older browsers */ } });
+  handle.addEventListener("dragend", () => { row.classList.remove("is-dragging"); contactDragRow = null; refreshContactReorderList(list); });
+  if (!list.dataset.dragBound) {
+    list.dataset.dragBound = "1";
+    list.addEventListener("dragover", (e) => {
+      if (!contactDragRow || contactDragRow.parentElement !== list) return;
+      e.preventDefault();
+      const after = contactDragAfter(list, e.clientY);
+      if (after == null) list.appendChild(contactDragRow);
+      else if (after !== contactDragRow) list.insertBefore(contactDragRow, after);
+    });
+  }
+}
+
+function contactDragAfter(list, y) {
+  let best = null, bestOffset = -Infinity;
+  list.querySelectorAll(".contact-multi-row:not(.is-dragging)").forEach((row) => {
+    const box = row.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    if (offset < 0 && offset > bestOffset) { bestOffset = offset; best = row; }
+  });
+  return best;
+}
+
+function populateContactList(listId, items, opts) {
+  const list = document.getElementById(listId);
+  if (!list) return;
+  list.dataset.labelPh = opts.labelPh || "Label";
+  list.dataset.valuePh = opts.valuePh || "";
+  list.dataset.valueType = opts.valueType || "text";
+  list.innerHTML = "";
+  const rows = (items && items.length) ? items : [{ label: opts.defLabel || "", value: "" }];
+  rows.forEach((r) => addContactRow(listId, { label: r.label, value: r.value, labelPh: opts.labelPh, valuePh: opts.valuePh, valueType: opts.valueType }));
 }
 
 function readContactRows(listId, defLabel) {
@@ -33471,18 +33540,35 @@ function handleContactPhotoFile(file) {
 
 function renderContactPhotoPreview() {
   const prev = document.getElementById("contactPhotoPreview");
-  const rm = document.getElementById("contactPhotoRemoveBtn");
-  const addBtn = document.getElementById("contactPhotoBtn");
   if (!prev) return;
   if (contactPhotoDraft) {
     prev.style.backgroundImage = `url('${contactPhotoDraft}')`;
     prev.classList.add("has-photo"); prev.textContent = "";
-    if (rm) rm.hidden = false; if (addBtn) addBtn.textContent = "Change photo";
   } else {
     prev.style.backgroundImage = ""; prev.classList.remove("has-photo");
     prev.textContent = contactInitials(`${document.getElementById("contactFirstName")?.value || ""} ${document.getElementById("contactLastName")?.value || ""}`.trim());
-    if (rm) rm.hidden = true; if (addBtn) addBtn.textContent = "Add photo";
   }
+}
+
+// Right-click (or click) the photo circle → menu with Add/Change/Remove photo.
+function openContactPhotoMenu() {
+  const row = document.querySelector("#contactEditDialog .contact-photo-row");
+  if (!row) return;
+  row.querySelector(".contact-photo-menu")?.remove();
+  const menu = document.createElement("div");
+  menu.className = "contact-photo-menu";
+  const has = !!contactPhotoDraft;
+  menu.innerHTML = `<button type="button" data-photo="add">${has ? "Change photo" : "Add photo"}</button>${has ? `<button type="button" data-photo="remove">Remove photo</button>` : ""}`;
+  row.appendChild(menu);
+  const close = () => { menu.remove(); document.removeEventListener("click", onDoc, true); };
+  const onDoc = (e) => { if (!e.target.closest(".contact-photo-menu") && e.target.id !== "contactPhotoPreview") close(); };
+  menu.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-photo]"); if (!b) return;
+    if (b.dataset.photo === "add") document.getElementById("contactPhotoInput").click();
+    else { contactPhotoDraft = ""; renderContactPhotoPreview(); }
+    close();
+  });
+  setTimeout(() => document.addEventListener("click", onDoc, true), 0);
 }
 
 function openContactDialog(id) {
@@ -33495,15 +33581,13 @@ function openContactDialog(id) {
   $("contactLastName").value = c?.lastName || "";
   contactPhotoDraft = c?.photo || "";
   renderContactPhotoPreview();
-  // Phones / emails / dates / addresses (at least one empty phone + email on a new contact).
-  const phoneList = $("contactPhoneList"); phoneList.innerHTML = "";
-  (c?.phones?.length ? c.phones : [{ label: "Mobile", value: "" }]).forEach((p) => addContactRow("contactPhoneList", { label: p.label, value: p.value, labelPh: "Mobile", valuePh: "Phone number" }));
-  const emailList = $("contactEmailList"); emailList.innerHTML = "";
-  (c?.emails?.length ? c.emails : [{ label: "Email", value: "" }]).forEach((e) => addContactRow("contactEmailList", { label: e.label, value: e.value, labelPh: "Email", valuePh: "name@example.com" }));
+  // Phone / email / address are reorderable lists that always show at least one
+  // row (so the leading "+" is available). Dates use plain add/remove rows.
+  populateContactList("contactPhoneList", c?.phones, { labelPh: "Mobile", valuePh: "Phone number", defLabel: "Mobile" });
+  populateContactList("contactEmailList", c?.emails, { labelPh: "Email", valuePh: "name@example.com", defLabel: "Email" });
+  populateContactList("contactAddressList", c?.addresses, { labelPh: "Home", valuePh: "Address", defLabel: "Home" });
   const dateList = $("contactDateList"); dateList.innerHTML = "";
   (c?.dates || []).forEach((d) => addContactRow("contactDateList", { label: d.label, value: d.value.length > 5 ? d.value : "", labelPh: "Anniversary", valueType: "date" }));
-  const addrList = $("contactAddressList"); addrList.innerHTML = "";
-  (c?.addresses || []).forEach((a) => addContactRow("contactAddressList", { label: a.label, value: a.value, labelPh: "Home", valuePh: "Address" }));
   const bday = c?.birthday || "";
   const mmdd = bday.length > 5 ? bday.slice(5) : bday;
   const [mo, day] = mmdd ? mmdd.split("-") : ["", ""];

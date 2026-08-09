@@ -3336,11 +3336,7 @@
         </div>
         <div class="recipe-form-body">
           <div class="contact-photo-row">
-            <span class="contact-avatar contact-photo-preview" id="contactPhotoPreview" aria-hidden="true"></span>
-            <div class="contact-photo-actions">
-              <button type="button" class="secondary-btn" id="contactPhotoBtn">Add photo</button>
-              <button type="button" class="secondary-btn contact-photo-remove" id="contactPhotoRemoveBtn" hidden>Remove</button>
-            </div>
+            <button type="button" class="contact-avatar contact-photo-preview" id="contactPhotoPreview" aria-label="Photo options" title="Click for photo options"></button>
             <input type="file" id="contactPhotoInput" accept="image/*" hidden />
           </div>
           <div class="contact-field-row">
@@ -3353,13 +3349,15 @@
           </div>
           <div class="form-field">
             <span>Phone</span>
-            <div class="contact-multi-list" id="contactPhoneList"></div>
-            <button type="button" class="secondary-btn contact-add-row-btn" id="contactAddPhoneBtn">+ Add phone</button>
+            <div class="contact-multi-list" id="contactPhoneList" data-reorder="1"></div>
           </div>
           <div class="form-field">
             <span>Email</span>
-            <div class="contact-multi-list" id="contactEmailList"></div>
-            <button type="button" class="secondary-btn contact-add-row-btn" id="contactAddEmailBtn">+ Add email</button>
+            <div class="contact-multi-list" id="contactEmailList" data-reorder="1"></div>
+          </div>
+          <div class="form-field">
+            <span>Addresses</span>
+            <div class="contact-multi-list" id="contactAddressList" data-reorder="1"></div>
           </div>
           <div class="form-field">
             <span>Birthday</span>
@@ -3375,24 +3373,19 @@
               </select>
             </div>
           </div>
-          <div class="form-field">
-            <span>Important dates</span>
-            <div class="contact-multi-list" id="contactDateList"></div>
-            <button type="button" class="secondary-btn contact-add-row-btn" id="contactAddDateBtn">+ Add date</button>
-          </div>
-          <div class="form-field">
-            <span>Addresses</span>
-            <div class="contact-multi-list" id="contactAddressList"></div>
-            <button type="button" class="secondary-btn contact-add-row-btn" id="contactAddAddressBtn">+ Add address</button>
-          </div>
           <label class="form-field">
             <span>Groups</span>
             <input type="text" id="contactGroups" placeholder="Family, Friends, Work" autocomplete="off" />
           </label>
-          <label class="form-field">
+          <div class="form-field">
             <span>Notes</span>
             <textarea id="contactNotes" rows="3" placeholder="Anything worth remembering…"></textarea>
-          </label>
+            <div class="contact-dates-block">
+              <span class="contact-subhead">Important dates</span>
+              <div class="contact-multi-list" id="contactDateList"></div>
+              <button type="button" class="secondary-btn contact-add-row-btn" id="contactAddDateBtn">+ Add date</button>
+            </div>
+          </div>
         </div>
         <div class="dialog-actions">
           <button class="danger-btn" type="button" id="deleteContactBtn" hidden>Delete</button>

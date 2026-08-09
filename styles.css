@@ -11520,10 +11520,18 @@ body.touch-drag-active * {
 /* Editor dialog */
 .contact-dialog .contact-field-row { display: flex; gap: 10px; flex-wrap: wrap; }
 .contact-dialog .contact-field-row .form-field { flex: 1 1 160px; }
-.contact-photo-row { display: flex; align-items: center; gap: 12px; }
-.contact-photo-preview { width: 56px; height: 56px; font-size: 1.1rem; }
-.contact-photo-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.contact-photo-actions .secondary-btn { padding: 6px 12px; }
+.contact-photo-row { display: flex; align-items: center; gap: 12px; position: relative; }
+.contact-photo-preview { width: 56px; height: 56px; font-size: 1.1rem; cursor: pointer; border: none; padding: 0; }
+.contact-photo-preview:focus-visible { outline: 2px solid var(--accent, #1a73e8); outline-offset: 2px; }
+.contact-photo-menu {
+  position: absolute; top: 60px; left: 0; z-index: 10;
+  min-width: 150px; padding: 6px;
+  background: var(--card-bg, #fff); border: 1px solid var(--border, #d5dbe2);
+  border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.contact-photo-menu button { text-align: left; padding: 8px 10px; border: none; background: none; border-radius: 6px; color: inherit; cursor: pointer; font-size: 0.9rem; }
+.contact-photo-menu button:hover { background: var(--hover-bg, #f0f3f7); }
 .contact-birthday-row { display: flex; gap: 8px; align-items: center; }
 .contact-birthday-row .plan-cal-select { flex: 1 1 auto; min-width: 0; }
 /* Day only shows 1–2 digit numbers, so it needn't be as wide as Month; Year is
@@ -11536,12 +11544,23 @@ body.touch-drag-active * {
 .contact-birth-year { width: 84px; flex: 0 0 auto; color: inherit; }
 /* Generic labelled rows: phone / email / important date / address. */
 .contact-multi-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
-.contact-multi-row { display: flex; gap: 10px; align-items: center; }
+.contact-multi-row { display: flex; gap: 8px; align-items: center; }
+.contact-multi-row.is-dragging { opacity: 0.4; }
+.contact-multi-row .contact-row-drag {
+  flex: 0 0 auto; width: 22px; height: 30px; padding: 0;
+  border: none; background: none; color: var(--text-muted, #9aa0a8);
+  cursor: grab; display: grid; place-items: center;
+}
+.contact-multi-row .contact-row-drag:active { cursor: grabbing; }
+.contact-multi-row .contact-row-drag svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2; fill: none; }
 .contact-multi-row .contact-row-label { width: 84px; flex: 0 0 auto; font-weight: 600; color: inherit; }
 .contact-multi-row .contact-row-value { flex: 1 1 auto; min-width: 0; color: inherit; }
-.contact-multi-row .contact-row-remove { flex: 0 0 auto; width: 30px; height: 30px; min-height: 30px; }
-.contact-multi-row .contact-row-remove svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2; fill: none; }
-.contact-add-row-btn { align-self: flex-start; padding: 6px 12px; }
+.contact-multi-row .contact-row-action { flex: 0 0 auto; width: 30px; height: 30px; min-height: 30px; }
+.contact-multi-row .contact-row-action svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2; fill: none; }
+.contact-add-row-btn { align-self: flex-start; padding: 6px 12px; margin-top: 4px; }
+/* Important dates tucked into the Notes section. */
+.contact-dates-block { margin-top: 10px; display: flex; flex-direction: column; }
+.contact-subhead { font-size: 0.78rem; font-weight: 600; opacity: 0.7; margin-bottom: 4px; }
 
 /* ── New-event dialog redesign ─────────────────────────────────────────────── */
 /* Close button floats in the top-right corner (no header row / title). */
