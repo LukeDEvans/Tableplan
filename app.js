@@ -1611,7 +1611,6 @@ function bindEvents() {
   elements.titleContactsBtn?.addEventListener("click", showContactsApp);
   elements.contactsAddBtn?.addEventListener("click", () => openContactDialog(null));
   elements.contactsSearchInput?.addEventListener("input", () => renderContactsPage());
-  document.getElementById("contactsSortSelect")?.addEventListener("change", () => renderContactsPage());
   document.getElementById("contactsGroupFilter")?.addEventListener("change", () => renderContactsPage());
   document.getElementById("closeContactDialogBtn")?.addEventListener("click", () => elements.contactEditDialog.close());
   document.getElementById("saveContactBtn")?.addEventListener("click", saveContact);
@@ -33261,7 +33260,7 @@ function renderContactsPage() {
   }
   const q = (elements.contactsSearchInput?.value || "").trim().toLowerCase();
   const group = filterSel?.value || "";
-  const sort = document.getElementById("contactsSortSelect")?.value || "first";
+  const sort = "last"; // always sort by last name (favorites still lead)
   let contacts = [...all];
   if (group) contacts = contacts.filter((c) => (c.groups || []).includes(group));
   if (q) contacts = contacts.filter((c) => `${c.name} ${(c.emails || []).map((e) => e.value).join(" ")} ${(c.phones || []).map((p) => p.value).join(" ")} ${c.notes} ${(c.addresses || []).map((a) => a.value).join(" ")} ${(c.groups || []).join(" ")}`.toLowerCase().includes(q));

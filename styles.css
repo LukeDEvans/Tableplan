@@ -11510,7 +11510,7 @@ body.touch-drag-active * {
 .contact-card-notes { font-size: 0.82rem; opacity: 0.72; white-space: pre-wrap; overflow-wrap: anywhere; border-top: 1px solid var(--border, #e2e6ea); padding-top: 6px; margin-top: 2px; }
 .contact-row-muted { opacity: 0.5; }
 /* Toolbar controls */
-.contacts-sort, .contacts-group-filter { flex: 0 0 auto; max-width: 160px; }
+.contacts-group-filter { flex: 0 0 auto; max-width: 160px; }
 .contacts-io-btn { width: 34px; height: 34px; min-height: 34px; padding: 0; border-radius: 8px; }
 .contacts-io-btn svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2; fill: none; }
 /* Editor dialog */
