@@ -11484,6 +11484,13 @@ body.touch-drag-active * {
 .contact-dialog .contact-field-row .form-field { flex: 1 1 160px; }
 .contact-birthday-row { display: flex; gap: 8px; align-items: center; }
 .contact-birthday-row .plan-cal-select { flex: 1 1 auto; min-width: 0; }
+/* Day only shows 1–2 digit numbers, so it needn't be as wide as Month; Year is
+   fixed too (id selectors beat the generic .plan-cal-select flex rule). Month
+   keeps flex:1 and takes the remaining width. */
+.contact-birthday-row #contactBirthDay { flex: 0 0 auto; width: 68px; }
+.contact-birthday-row #contactBirthYear { flex: 0 0 auto; width: 88px; }
+/* Save always sits in the bottom-right corner, even when Delete is hidden. */
+.contact-dialog #saveContactBtn { margin-left: auto; }
 .contact-birth-year { width: 84px; flex: 0 0 auto; color: inherit; }
 .contact-address-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
 .contact-address-row { display: flex; gap: 10px; align-items: center; }
