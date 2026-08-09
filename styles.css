@@ -11474,9 +11474,32 @@ body.touch-drag-active * {
   background: color-mix(in srgb, var(--accent, #1a73e8) 18%, transparent); color: var(--accent, #1a73e8);
 }
 .contact-avatar.has-photo { background-size: cover; background-position: center; color: transparent; }
-.contact-card-name { font-weight: 600; font-size: 1.02rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contact-card-name { flex: 1 1 auto; min-width: 0; font-weight: 600; font-size: 1.02rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .contact-card-groups { display: flex; flex-wrap: wrap; gap: 4px; }
 .contact-group-chip { font-size: 0.68rem; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--accent, #1a73e8) 14%, transparent); color: var(--accent, #1a73e8); }
+/* Favorite star (pins a contact to the top). */
+.contact-fav-btn { flex: 0 0 auto; margin-left: auto; width: 26px; height: 26px; padding: 0; border: none; background: none; cursor: pointer; display: grid; place-items: center; color: var(--text-muted, #b7bcc4); }
+.contact-fav-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.contact-fav-btn:hover { color: #f5b301; }
+.contact-fav-btn.is-fav { color: #f5b301; }
+.contact-fav-btn.is-fav svg { fill: currentColor; }
+/* Inline copy button beside a phone/email value. */
+.contact-copy { border: none; background: none; padding: 0 2px; margin-left: 2px; cursor: pointer; color: var(--text-muted, #9aa0a8); vertical-align: middle; }
+.contact-copy svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; }
+.contact-copy:hover { color: var(--accent, #1a73e8); }
+/* Body layout: grid + A–Z rail. */
+.contacts-body { display: flex; flex: 1; min-height: 0; gap: 4px; }
+.contacts-body .contacts-grid { flex: 1 1 auto; }
+.contacts-rail { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; padding: 2px; overflow: hidden; }
+.contacts-rail[hidden] { display: none; }
+.contact-rail-letter { font-size: 0.62rem; font-weight: 700; line-height: 1.15; color: var(--text-muted, #9aa0a8); background: none; border: none; cursor: pointer; padding: 0 3px; }
+.contact-rail-letter:hover { color: var(--accent, #1a73e8); }
+/* Sticky letter / Favorites section headers. */
+.contact-section-head { grid-column: 1 / -1; position: sticky; top: 0; z-index: 2; font-size: 0.74rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted, #888); padding: 8px 2px 4px; background: var(--surface, #fff); }
+/* Read-only detail view. */
+.contact-view-head { display: flex; justify-content: center; margin: 2px 0 8px; }
+.contact-view-head .contact-avatar { width: 64px; height: 64px; font-size: 1.4rem; }
+.contact-view-dialog .contact-card-body { font-size: 0.9rem; gap: 6px; }
 .contact-card-body { display: flex; flex-direction: column; gap: 4px; font-size: 0.86rem; min-width: 0; }
 .contact-card-row { display: flex; gap: 7px; align-items: baseline; min-width: 0; }
 .contact-row-ico { flex: 0 0 auto; width: 16px; text-align: center; opacity: 0.85; }

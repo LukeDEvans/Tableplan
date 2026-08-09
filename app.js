@@ -856,6 +856,7 @@ const elements = {
   contactsSearchInput: document.querySelector("#contactsSearchInput"),
   contactsAddBtn: document.querySelector("#contactsAddBtn"),
   contactEditDialog: document.querySelector("#contactEditDialog"),
+  contactViewDialog: document.querySelector("#contactViewDialog"),
   planMainPage: document.querySelector("#planMainPage"),
   planCalendar: document.querySelector("#planCalendar"),
   planTopbar: document.querySelector("#planTopbar"),
@@ -1622,6 +1623,10 @@ function bindEvents() {
   document.getElementById("contactPhotoBtn")?.addEventListener("click", () => document.getElementById("contactPhotoInput")?.click());
   document.getElementById("contactPhotoInput")?.addEventListener("change", (e) => { handleContactPhotoFile(e.target.files?.[0]); e.target.value = ""; });
   document.getElementById("contactPhotoRemoveBtn")?.addEventListener("click", () => { contactPhotoDraft = ""; renderContactPhotoPreview(); });
+  document.getElementById("closeContactViewBtn")?.addEventListener("click", () => elements.contactViewDialog.close());
+  document.getElementById("contactViewEditBtn")?.addEventListener("click", () => { const id = viewingContactId; elements.contactViewDialog.close(); if (id) openContactDialog(id); });
+  document.getElementById("contactViewDeleteBtn")?.addEventListener("click", () => { editingContactId = viewingContactId; elements.contactViewDialog.close(); deleteContact(); });
+  document.getElementById("contactViewBody")?.addEventListener("click", (e) => { const cp = e.target.closest("[data-copy]"); if (cp) copyContactValue(cp.dataset.copy); });
   document.getElementById("contactsExportBtn")?.addEventListener("click", exportContactsVcf);
   document.getElementById("contactsImportBtn")?.addEventListener("click", () => document.getElementById("contactsImportInput")?.click());
   document.getElementById("contactsImportInput")?.addEventListener("change", (e) => { const f = e.target.files?.[0]; if (f) f.text().then(importContactsVcf); e.target.value = ""; });
@@ -33188,6 +33193,7 @@ function normalizeContacts(list) {
     return {
       id: c?.id || createId("contact"),
       firstName, lastName, name,
+      favorite: Boolean(c?.favorite),
       photo: (typeof c?.photo === "string" && c.photo.startsWith("data:image")) ? c.photo : "",
       phones, emails,
       birthday: (typeof c?.birthday === "string" && CONTACT_DATE_RE.test(c.birthday)) ? c.birthday : "",
@@ -33230,6 +33236,17 @@ function contactDaysUntil(dateStr) {
   return Math.round((next - today) / 86400000);
 }
 
+const CONTACT_STAR_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L4.5 9.7l5.9-.9z"/></svg>';
+const CONTACT_COPY_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+let contactsGridBound = false;
+
+// The letter a contact files under for the A–Z index, given the active sort.
+function contactSortLetter(c, sort) {
+  const s = (sort === "last" ? (c.lastName || c.name) : c.name).trim();
+  const ch = (s[0] || "#").toUpperCase();
+  return /[A-Z]/.test(ch) ? ch : "#";
+}
+
 function renderContactsPage() {
   const grid = elements.contactsGrid;
   if (!grid) return;
@@ -33248,21 +33265,84 @@ function renderContactsPage() {
   let contacts = [...all];
   if (group) contacts = contacts.filter((c) => (c.groups || []).includes(group));
   if (q) contacts = contacts.filter((c) => `${c.name} ${(c.emails || []).map((e) => e.value).join(" ")} ${(c.phones || []).map((p) => p.value).join(" ")} ${c.notes} ${(c.addresses || []).map((a) => a.value).join(" ")} ${(c.groups || []).join(" ")}`.toLowerCase().includes(q));
-  contacts.sort((a, b) => {
+  const sortFn = (a, b) => {
     if (sort === "last") return (a.lastName || "").localeCompare(b.lastName || "") || (a.firstName || "").localeCompare(b.firstName || "");
     if (sort === "birthday") return contactDaysUntil(a.birthday) - contactDaysUntil(b.birthday) || a.name.localeCompare(b.name);
     return a.name.localeCompare(b.name);
-  });
+  };
   if (!contacts.length) {
     grid.innerHTML = `<div class="contacts-empty">${(q || group) ? "No contacts match." : "No contacts yet — add someone to get started."}</div>`;
+    renderContactsRail([]);
+    bindContactsGrid();
     return;
   }
-  grid.innerHTML = contacts.map(contactCardHtml).join("");
-  grid.querySelectorAll("[data-contact-id]").forEach((card) => {
-    const open = () => openContactDialog(card.dataset.contactId);
-    card.addEventListener("click", (e) => { if (e.target.closest("a")) return; open(); }); // let tel:/mailto:/map links work
-    card.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+  const favs = contacts.filter((c) => c.favorite).sort(sortFn);
+  const rest = contacts.filter((c) => !c.favorite).sort(sortFn);
+  const useLetters = sort !== "birthday";
+  const head = (label, key) => `<div class="contact-section-head" data-section="${escapeHtml(key)}">${escapeHtml(label)}</div>`;
+  const railKeys = [];
+  let html = "";
+  if (favs.length) { html += head("★ Favorites", "fav"); railKeys.push({ key: "fav", label: "★" }); html += favs.map(contactCardHtml).join(""); }
+  if (useLetters) {
+    let cur = null;
+    rest.forEach((c) => {
+      const L = contactSortLetter(c, sort);
+      if (L !== cur) { cur = L; html += head(L, `L-${L}`); railKeys.push({ key: `L-${L}`, label: L }); }
+      html += contactCardHtml(c);
+    });
+  } else {
+    html += rest.map(contactCardHtml).join("");
+  }
+  grid.innerHTML = html;
+  renderContactsRail(railKeys);
+  bindContactsGrid();
+}
+
+// One delegated set of handlers on the grid (bound once): star toggle, copy
+// button, tel:/mailto:/map links pass through, otherwise open the detail view.
+function bindContactsGrid() {
+  const grid = elements.contactsGrid;
+  if (!grid || contactsGridBound) return;
+  contactsGridBound = true;
+  grid.addEventListener("click", (e) => {
+    const fav = e.target.closest("[data-fav-toggle]");
+    if (fav) { e.stopPropagation(); toggleContactFavorite(fav.dataset.favToggle); return; }
+    const cp = e.target.closest("[data-copy]");
+    if (cp) { e.stopPropagation(); copyContactValue(cp.dataset.copy); return; }
+    if (e.target.closest("a")) return;
+    const card = e.target.closest(".contact-card[data-contact-id]");
+    if (card) openContactView(card.dataset.contactId);
   });
+  grid.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const card = e.target.closest(".contact-card[data-contact-id]");
+    if (card && e.target === card) { e.preventDefault(); openContactView(card.dataset.contactId); }
+  });
+}
+
+function renderContactsRail(keys) {
+  const rail = document.getElementById("contactsRail");
+  if (!rail) return;
+  rail.innerHTML = keys.map((k) => `<button type="button" class="contact-rail-letter" data-rail="${escapeHtml(k.key)}">${escapeHtml(k.label)}</button>`).join("");
+  rail.hidden = keys.length < 2;
+  rail.querySelectorAll("[data-rail]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      elements.contactsGrid?.querySelector(`.contact-section-head[data-section="${CSS.escape(btn.dataset.rail)}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+  });
+}
+
+function toggleContactFavorite(id) {
+  state.contacts = (state.contacts || []).map((c) => c.id === id ? { ...c, favorite: !c.favorite } : c);
+  persist();
+  renderContactsPage();
+}
+
+function copyContactValue(text) {
+  if (!text) return;
+  const done = () => showMailToast("Copied");
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done).catch(() => showMailToast("Couldn't copy"));
+  else done();
 }
 
 function contactAvatarHtml(c) {
@@ -33271,25 +33351,50 @@ function contactAvatarHtml(c) {
     : `<span class="contact-avatar" aria-hidden="true">${escapeHtml(contactInitials(c.name))}</span>`;
 }
 
-function contactCardHtml(c) {
+// Detail rows shared by the card and the read-only view. `copy` adds a copy
+// button beside phone/email values.
+function contactDetailRowsHtml(c, { copy = false } = {}) {
   const line = (ico, html) => `<div class="contact-card-row"><span class="contact-row-ico" aria-hidden="true">${ico}</span><span class="contact-row-val">${html}</span></div>`;
-  const labelled = (label, html) => `${label ? `<span class="contact-row-tag">${escapeHtml(label)}</span> ` : ""}${html}`;
+  const tag = (label) => label ? `<span class="contact-row-tag">${escapeHtml(label)}</span> ` : "";
+  const copyBtn = (v) => copy ? ` <button type="button" class="contact-copy" data-copy="${escapeHtml(v)}" aria-label="Copy" title="Copy">${CONTACT_COPY_SVG}</button>` : "";
   const rows = [];
   if (c.birthday) rows.push(line("🎂", escapeHtml(formatContactBirthday(c.birthday))));
-  (c.dates || []).forEach((d) => rows.push(line("🎉", labelled(d.label, escapeHtml(formatContactBirthday(d.value))))));
-  (c.phones || []).forEach((p) => rows.push(line("📞", labelled(p.label, `<a href="tel:${escapeHtml(p.value.replace(/[^+\d]/g, ""))}">${escapeHtml(p.value)}</a>`))));
-  (c.emails || []).forEach((e) => rows.push(line("✉️", labelled(e.label, `<a href="mailto:${escapeHtml(e.value)}">${escapeHtml(e.value)}</a>`))));
-  (c.addresses || []).forEach((a) => rows.push(line("📍", labelled(a.label, `<a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a.value)}" target="_blank" rel="noopener">${escapeHtml(a.value)}</a>`))));
+  (c.dates || []).forEach((d) => rows.push(line("🎉", `${tag(d.label)}${escapeHtml(formatContactBirthday(d.value))}`)));
+  (c.phones || []).forEach((p) => rows.push(line("📞", `${tag(p.label)}<a href="tel:${escapeHtml(p.value.replace(/[^+\d]/g, ""))}">${escapeHtml(p.value)}</a>${copyBtn(p.value)}`)));
+  (c.emails || []).forEach((e) => rows.push(line("✉️", `${tag(e.label)}<a href="mailto:${escapeHtml(e.value)}">${escapeHtml(e.value)}</a>${copyBtn(e.value)}`)));
+  (c.addresses || []).forEach((a) => rows.push(line("📍", `${tag(a.label)}<a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a.value)}" target="_blank" rel="noopener">${escapeHtml(a.value)}</a>`)));
   if (c.notes) rows.push(`<div class="contact-card-notes">${escapeHtml(c.notes)}</div>`);
+  return rows.join("");
+}
+
+function contactCardHtml(c) {
+  const rows = contactDetailRowsHtml(c, { copy: true });
   const groups = (c.groups || []).length ? `<div class="contact-card-groups">${c.groups.map((g) => `<span class="contact-group-chip">${escapeHtml(g)}</span>`).join("")}</div>` : "";
-  return `<div class="contact-card" role="button" tabindex="0" data-contact-id="${escapeHtml(c.id)}" aria-label="Edit ${escapeHtml(c.name)}">
+  const star = `<button type="button" class="contact-fav-btn${c.favorite ? " is-fav" : ""}" data-fav-toggle="${escapeHtml(c.id)}" aria-pressed="${c.favorite ? "true" : "false"}" aria-label="${c.favorite ? "Remove favorite" : "Add favorite"}" title="${c.favorite ? "Unfavorite" : "Favorite"}">${CONTACT_STAR_SVG}</button>`;
+  return `<div class="contact-card" role="button" tabindex="0" data-contact-id="${escapeHtml(c.id)}" aria-label="View ${escapeHtml(c.name)}">
     <div class="contact-card-head">
       ${contactAvatarHtml(c)}
       <span class="contact-card-name">${escapeHtml(c.name)}</span>
+      ${star}
     </div>
     ${groups}
-    <div class="contact-card-body">${rows.join("") || '<div class="contact-card-row contact-row-muted">No details yet</div>'}</div>
+    <div class="contact-card-body">${rows || '<div class="contact-card-row contact-row-muted">No details yet</div>'}</div>
   </div>`;
+}
+
+let viewingContactId = null;
+function openContactView(id) {
+  const c = (state.contacts || []).find((x) => x.id === id);
+  if (!c) return;
+  viewingContactId = id;
+  document.getElementById("contactViewName").textContent = c.name;
+  const groups = (c.groups || []).length ? `<div class="contact-card-groups">${c.groups.map((g) => `<span class="contact-group-chip">${escapeHtml(g)}</span>`).join("")}</div>` : "";
+  const rows = contactDetailRowsHtml(c, { copy: true });
+  document.getElementById("contactViewBody").innerHTML = `
+    <div class="contact-view-head">${contactAvatarHtml(c)}</div>
+    ${groups}
+    <div class="contact-card-body">${rows || '<div class="contact-card-row contact-row-muted">No details yet</div>'}</div>`;
+  elements.contactViewDialog.showModal();
 }
 
 // Fill the month/day birthday selects; day options track the chosen month.
@@ -33496,7 +33601,80 @@ function exportContactsVcf() {
   showMailToast(`Exported ${cs.length} contact${cs.length !== 1 ? "s" : ""}`);
 }
 
-function importContactsVcf(text) {
+// A parsed contact matches an existing one if names match, or they share an
+// email or phone number.
+function findExistingContactMatch(p, contacts) {
+  const norm = (s) => String(s || "").trim().toLowerCase();
+  const digits = (s) => String(s || "").replace(/\D/g, "");
+  const pName = norm(p.name);
+  const pEmails = (p.emails || []).map((e) => norm(e.value)).filter(Boolean);
+  const pPhones = (p.phones || []).map((ph) => digits(ph.value)).filter(Boolean);
+  return contacts.find((c) => {
+    if (pName && norm(c.name) === pName) return true;
+    if (pEmails.some((v) => (c.emails || []).some((e) => norm(e.value) === v))) return true;
+    if (pPhones.some((v) => (c.phones || []).some((ph) => digits(ph.value) === v))) return true;
+    return false;
+  });
+}
+
+function mergeContactInto(existing, parsed) {
+  const unionRows = (a, b) => {
+    const out = [...(a || [])];
+    const seen = new Set(out.map((r) => r.value.toLowerCase()));
+    (b || []).forEach((r) => { const k = r.value.toLowerCase(); if (!seen.has(k)) { out.push({ ...r, id: createId("crow") }); seen.add(k); } });
+    return out;
+  };
+  const firstName = existing.firstName || parsed.firstName;
+  const lastName = existing.lastName || parsed.lastName;
+  return {
+    ...existing,
+    firstName, lastName,
+    name: `${firstName} ${lastName}`.trim() || existing.name || parsed.name,
+    photo: existing.photo || parsed.photo,
+    phones: unionRows(existing.phones, parsed.phones),
+    emails: unionRows(existing.emails, parsed.emails),
+    birthday: existing.birthday || parsed.birthday,
+    dates: unionRows(existing.dates, parsed.dates),
+    addresses: unionRows(existing.addresses, parsed.addresses),
+    groups: [...new Set([...(existing.groups || []), ...(parsed.groups || [])])],
+    notes: existing.notes || parsed.notes,
+  };
+}
+
+// Chooser for how to handle duplicates found during import. Resolves to
+// "merge" | "skip" | "new", or null on cancel.
+function chooseImportMode(dupes, news) {
+  return new Promise((resolve) => {
+    document.getElementById("planScopeChooser")?.remove();
+    const wrap = document.createElement("div");
+    wrap.id = "planScopeChooser";
+    wrap.className = "plan-scope-overlay";
+    wrap.innerHTML = `
+      <div class="plan-scope-box" role="dialog" aria-modal="true" aria-label="Import contacts">
+        <p class="plan-scope-title">Import contacts</p>
+        <p class="plan-scope-sub">${dupes} imported contact${dupes !== 1 ? "s" : ""} ${dupes === 1 ? "looks" : "look"} like ${dupes === 1 ? "a duplicate" : "duplicates"} of existing ones${news ? `, and ${news} ${news !== 1 ? "are" : "is"} new` : ""}. How should the duplicates be handled?</p>
+        <div class="plan-scope-actions">
+          <button type="button" data-imp="merge">Merge into existing</button>
+          <button type="button" data-imp="skip">Skip duplicates</button>
+          <button type="button" data-imp="new">Import all as new</button>
+          <button type="button" data-imp="cancel" class="plan-scope-cancel">Cancel</button>
+        </div>
+      </div>`;
+    const done = (v) => { document.removeEventListener("keydown", onKey); wrap.remove(); resolve(v); };
+    const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); done(null); } };
+    wrap.addEventListener("click", (e) => {
+      if (e.target === wrap) return done(null);
+      const b = e.target.closest("[data-imp]");
+      if (!b) return;
+      done(b.dataset.imp === "cancel" ? null : b.dataset.imp);
+    });
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(wrap);
+    wrap.querySelector('[data-imp="merge"]')?.focus();
+  });
+}
+
+async function importContactsVcf(text) {
   const blocks = String(text || "").split(/BEGIN:VCARD/i).slice(1);
   const parsed = [];
   blocks.forEach((block) => {
@@ -33522,14 +33700,41 @@ function importContactsVcf(text) {
     if (c.name) parsed.push(c);
   });
   if (!parsed.length) { showMailToast("No contacts found in that file"); return; }
-  const added = normalizeContacts(parsed).map((c) => ({ ...c, id: createId("contact") }));
-  state.contacts = [...(state.contacts || []), ...added];
+  const incoming = normalizeContacts(parsed); // ids + row shapes normalized
+  const existing = state.contacts || [];
+  const tagged = incoming.map((p) => ({ p, match: findExistingContactMatch(p, existing) }));
+  const dupes = tagged.filter((t) => t.match);
+  const news = tagged.filter((t) => !t.match);
+  let mode = "new";
+  if (dupes.length) {
+    mode = await chooseImportMode(dupes.length, news.length);
+    if (!mode) return; // cancelled — import nothing
+  }
+  const snapshot = [...existing];
+  let addedN = 0, mergedN = 0, skippedN = 0;
+  let next = [...existing];
+  const addAsNew = (p) => { next.push({ ...p, id: createId("contact") }); addedN++; };
+  if (mode === "merge") {
+    const mergedById = new Map();
+    dupes.forEach(({ p, match }) => { mergedById.set(match.id, mergeContactInto(mergedById.get(match.id) || match, p)); mergedN++; });
+    next = next.map((c) => mergedById.get(c.id) || c);
+    news.forEach(({ p }) => addAsNew(p));
+  } else if (mode === "skip") {
+    news.forEach(({ p }) => addAsNew(p));
+    skippedN = dupes.length;
+  } else {
+    tagged.forEach(({ p }) => addAsNew(p));
+  }
+  state.contacts = next;
   persist();
   renderContactsPage();
   if (activeAppArea === "plan") renderPlanPage();
-  showMailToast(`Imported ${added.length} contact${added.length !== 1 ? "s" : ""}`, () => {
-    const ids = new Set(added.map((a) => a.id));
-    state.contacts = (state.contacts || []).filter((c) => !ids.has(c.id));
+  const parts = [];
+  if (addedN) parts.push(`imported ${addedN}`);
+  if (mergedN) parts.push(`merged ${mergedN}`);
+  if (skippedN) parts.push(`skipped ${skippedN}`);
+  showMailToast(parts.length ? parts.join(", ").replace(/^./, (ch) => ch.toUpperCase()) : "Nothing imported", () => {
+    state.contacts = snapshot;
     persist(); renderContactsPage(); if (activeAppArea === "plan") renderPlanPage();
   });
 }
@@ -35347,7 +35552,7 @@ function initPlanCalListDelegation() {
         const eid = pill.dataset.planEventId;
         const c = (state.contacts || []).find((x) => eid === `bday-${x.id}` || eid.startsWith(`bdate-${x.id}-`));
         showContactsApp();
-        if (c) openContactDialog(c.id);
+        if (c) openContactView(c.id);
         return;
       }
       // Auto-generated events (a logged workout, planned meal, to-do) aren't

@@ -712,7 +712,10 @@
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
               </button>
             </div>
-            <div class="contacts-grid" id="contactsGrid"></div>
+            <div class="contacts-body">
+              <div class="contacts-grid" id="contactsGrid"></div>
+              <div class="contacts-rail" id="contactsRail" hidden aria-label="Jump to letter"></div>
+            </div>
           </div>
         </section>
         <section class="planner-column do-column mail-page" id="mailMainPage" aria-label="Mail" hidden>
@@ -3405,6 +3408,22 @@
           <button class="primary-btn" type="button" id="saveContactBtn">Save</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog class="recipe-dialog contact-dialog contact-view-dialog std-form-dialog" id="contactViewDialog">
+      <div class="recipe-form">
+        <div class="recipe-form-head">
+          <h2 id="contactViewName">Contact</h2>
+          <button class="icon-btn" type="button" id="closeContactViewBtn" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="recipe-form-body" id="contactViewBody"></div>
+        <div class="dialog-actions">
+          <button class="danger-btn" type="button" id="contactViewDeleteBtn">Delete</button>
+          <button class="primary-btn" type="button" id="contactViewEditBtn">Edit</button>
+        </div>
+      </div>
     </dialog>
 
     <dialog class="recipe-dialog auth-dialog" id="familyMembersDialog">
