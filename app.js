@@ -212,7 +212,7 @@ const STATE_SECTIONS = {
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries"],
   plan:      ["calendars", "planEvents", "planCalendars", "planHiddenSources"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
@@ -3204,6 +3204,8 @@ function defaultState() {
     podcastAutoSkipped: [],
     podcastSkipAds: false,
     publicationTiers: {},
+    podcastBundleSeries: {},
+    podcastReleasedSeries: {},
     inventoryBoxes: [],
     inventoryItems: [],
     inventoryRoomVisibility: {},
@@ -3475,6 +3477,8 @@ function normalizeState(parsed) {
     podcastSavedCategories: Array.isArray(parsed?.podcastSavedCategories) ? parsed.podcastSavedCategories : [],
     podcastSavedEpisodeCategories: (parsed?.podcastSavedEpisodeCategories !== null && typeof parsed?.podcastSavedEpisodeCategories === "object" && !Array.isArray(parsed?.podcastSavedEpisodeCategories)) ? parsed.podcastSavedEpisodeCategories : {},
     podcastShowTiers: (parsed?.podcastShowTiers !== null && typeof parsed?.podcastShowTiers === "object" && !Array.isArray(parsed?.podcastShowTiers)) ? parsed.podcastShowTiers : {},
+    podcastBundleSeries: (parsed?.podcastBundleSeries !== null && typeof parsed?.podcastBundleSeries === "object" && !Array.isArray(parsed?.podcastBundleSeries)) ? parsed.podcastBundleSeries : {},
+    podcastReleasedSeries: (parsed?.podcastReleasedSeries !== null && typeof parsed?.podcastReleasedSeries === "object" && !Array.isArray(parsed?.podcastReleasedSeries)) ? parsed.podcastReleasedSeries : {},
     podcastEpisodeTiers: (parsed?.podcastEpisodeTiers !== null && typeof parsed?.podcastEpisodeTiers === "object" && !Array.isArray(parsed?.podcastEpisodeTiers)) ? parsed.podcastEpisodeTiers : {},
     podcastSkipAds: Boolean(parsed?.podcastSkipAds),
     mediaAllPinnedOrder: Array.isArray(parsed?.mediaAllPinnedOrder) ? parsed.mediaAllPinnedOrder : [],
@@ -5435,6 +5439,7 @@ function mergeStates(newer, older) {
     "podcastSavedEpisodeCategories",
     "podcastProgress", "podcastShowTiers", "podcastEpisodeTiers",
     "podcastPlaylistItems", "articleReadDates", "publicationTiers",
+    "podcastBundleSeries", "podcastReleasedSeries",
     // Finance per-transaction metadata (keyed by txn id / merchant key / month).
     // Union-merged so a sync between two devices never drops one device's
     // labels, splits, renames, sign-flips, return links, or month history.
@@ -38015,6 +38020,85 @@ function showPublicationsModal() {
   render();
 }
 
+// ── Multi-part series bundling ────────────────────────────────────────────────
+// Some shows release a story across numbered parts ("… (Part 3)", "Part 3 of
+// 6", "Pt. 3/6"). For shows the user opts into (state.podcastBundleSeries) we
+// hold every part of an unfinished series out of the playlist until the series
+// looks complete — all N parts present when a total is stated, or no new part
+// for 7 days — with a manual "Release now" override (state.podcastReleasedSeries).
+const SERIES_PART_RE = /\b(?:part|pt\.?)\s*(\d{1,3})\b(?:\s*(?:of|\/)\s*(\d{1,3}))?/i;
+const BUNDLE_GAP_MS = 7 * 24 * 60 * 60 * 1000;
+
+function parseSeriesPart(title) {
+  if (!title) return null;
+  const s = String(title);
+  const m = s.match(SERIES_PART_RE);
+  if (!m) return null;
+  const part = parseInt(m[1], 10);
+  if (!part) return null;
+  const total = m[2] ? parseInt(m[2], 10) : null;
+  // Series name = the title minus the part clause (and any brackets around it).
+  const seriesName = s
+    .replace(/[([]\s*(?:part|pt\.?)\s*\d{1,3}\s*(?:(?:of|\/)\s*\d{1,3})?\s*[)\]]/i, "")
+    .replace(SERIES_PART_RE, "")
+    .replace(/[\s:–—\-|,]+$/, "")
+    .replace(/^[\s:–—\-|,]+/, "")
+    .trim() || s.trim();
+  return { seriesName, part, total };
+}
+
+function bundleSeriesId(showId, seriesName) {
+  return showId + "::" + seriesName.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+// Group one show's episodes into detected multi-part series, flagging each as
+// complete / released / held. Returned for both the playlist filter and the
+// show-view "waiting" cards.
+function getBundleSeriesGroups(show) {
+  const groups = new Map();
+  for (const ep of (show.episodes || [])) {
+    const info = parseSeriesPart(ep.title);
+    if (!info) continue;
+    const sid = bundleSeriesId(show.id, info.seriesName);
+    let g = groups.get(sid);
+    if (!g) { g = { seriesId: sid, name: info.seriesName, total: null, eps: [] }; groups.set(sid, g); }
+    if (info.total) g.total = Math.max(g.total || 0, info.total);
+    g.eps.push({ id: ep.id, part: info.part, pubDate: ep.pubDate, title: ep.title });
+  }
+  const released = state.podcastReleasedSeries || {};
+  const now = Date.now();
+  const out = [];
+  for (const g of groups.values()) {
+    g.eps.sort((a, b) => a.part - b.part);
+    const parts = new Set(g.eps.map((e) => e.part));
+    let complete = false;
+    if (g.total && Array.from({ length: g.total }, (_, i) => i + 1).every((n) => parts.has(n))) {
+      complete = true; // every stated part is present
+    } else {
+      const newest = Math.max(0, ...g.eps.map((e) => Date.parse(e.pubDate) || 0));
+      if (newest && (now - newest) > BUNDLE_GAP_MS) complete = true; // stalled → assume done
+    }
+    g.released = !!released[g.seriesId];
+    g.complete = complete;
+    g.held = !complete && !g.released;
+    out.push(g);
+  }
+  return out;
+}
+
+// Episode ids to withhold from the playlist (unfinished series in opted-in shows).
+function getBundleHeldEpisodeIds() {
+  const held = new Set();
+  const bundleOn = state.podcastBundleSeries || {};
+  for (const show of (state.podcasts || [])) {
+    if (!bundleOn[show.id]) continue;
+    for (const g of getBundleSeriesGroups(show)) {
+      if (g.held) for (const e of g.eps) held.add(e.id);
+    }
+  }
+  return held;
+}
+
 function getAutoPlaylist(forceIncludeArticles = false) {
   const tiers = state.podcastShowTiers || {};
   const epTiers = state.podcastEpisodeTiers || {};
@@ -38025,9 +38109,10 @@ function getAutoPlaylist(forceIncludeArticles = false) {
   const cutoff = Date.now() - windowOpt.ms;
 
   const skipped = new Set(state.podcastAutoSkipped || []);
+  const held = getBundleHeldEpisodeIds();
   const episodes = (state.podcasts || []).flatMap(p =>
     (p.episodes || [])
-      .filter(e => !progress[e.id]?.played && !skipped.has(e.id) && e.pubDate && new Date(e.pubDate).getTime() >= cutoff)
+      .filter(e => !progress[e.id]?.played && !skipped.has(e.id) && !held.has(e.id) && e.pubDate && new Date(e.pubDate).getTime() >= cutoff)
       .map(e => ({ ...e, showId: p.id, showTitle: p.title, showArt: p.art }))
   );
 
@@ -39278,6 +39363,30 @@ function renderPodcastShowEpisodes(showId) {
   const episodes = show.episodes.map(e => ({ ...e, showId: show.id, showTitle: show.title, showArt: show.art }));
   const hasPlaylists = (state.podcastPlaylists || []).length > 0;
 
+  const bundleOn = !!(state.podcastBundleSeries || {})[show.id];
+  const waiting = bundleOn ? getBundleSeriesGroups(show).filter(g => g.held) : [];
+
+  const bundleControls = `
+    <div class="podcast-bundle-controls">
+      <label class="podcast-bundle-toggle">
+        <input type="checkbox" class="live-toggle" id="podcastBundleToggle" ${bundleOn ? "checked" : ""}>
+        <span>Bundle multi-part series</span>
+      </label>
+      <p class="podcast-bundle-hint">Hold each numbered series out of your playlist until every part is out — or no new part appears for a week.</p>
+    </div>`;
+
+  const waitingHtml = waiting.length ? `
+    <div class="podcast-bundle-waiting">
+      ${waiting.map(g => `
+        <div class="podcast-bundle-card" data-series-id="${escapeHtml(g.seriesId)}">
+          <div class="podcast-bundle-card-main">
+            <div class="podcast-bundle-card-title">${escapeHtml(g.name)}</div>
+            <div class="podcast-bundle-card-meta">${g.eps.length} part${g.eps.length === 1 ? "" : "s"} so far${g.total ? ` of ${g.total}` : ""} · held from playlist</div>
+          </div>
+          <button class="secondary-btn podcast-bundle-release" type="button" data-release-series="${escapeHtml(g.seriesId)}">Release now</button>
+        </div>`).join("")}
+    </div>` : "";
+
   listEl.innerHTML = `
     <div class="podcast-show-episodes-header">
       <button class="icon-btn" type="button" id="podcastShowBackBtn" aria-label="Back to shows">
@@ -39288,6 +39397,8 @@ function renderPodcastShowEpisodes(showId) {
         <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
       </button>
     </div>
+    ${bundleControls}
+    ${waitingHtml}
     ${episodes.map(e => podcastEpisodeRowHtml(e, { showShowTitle: false, hasPlaylists })).join("")}`;
 
   listEl.querySelector("#podcastShowBackBtn")?.addEventListener("click", () => {
@@ -39295,6 +39406,25 @@ function renderPodcastShowEpisodes(showId) {
     renderPodcastShowsGrid();
   });
   listEl.querySelector("#podcastShowMenuBtn")?.addEventListener("click", (e) => openMediaShareMenu(e, "show", show.id));
+
+  listEl.querySelector("#podcastBundleToggle")?.addEventListener("change", (e) => {
+    if (!state.podcastBundleSeries || typeof state.podcastBundleSeries !== "object") state.podcastBundleSeries = {};
+    if (e.target.checked) state.podcastBundleSeries[show.id] = true;
+    else delete state.podcastBundleSeries[show.id];
+    persist();
+    renderPodcastShowEpisodes(showId);
+  });
+
+  listEl.querySelectorAll("[data-release-series]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (!state.podcastReleasedSeries || typeof state.podcastReleasedSeries !== "object") state.podcastReleasedSeries = {};
+      state.podcastReleasedSeries[btn.dataset.releaseSeries] = true;
+      persist();
+      showMailToast("Series released to your playlist");
+      renderPodcastShowEpisodes(showId);
+    });
+  });
+
   wirePodcastEpisodeRows(listEl);
 }
 
