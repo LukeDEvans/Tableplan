@@ -37655,9 +37655,11 @@ function showPodcastPriorityModal() {
     d.className = "priority-show-card";
     d.draggable = true;
     d.dataset.showId = show.id;
+    d.title = show.title || "";
+    d.setAttribute("aria-label", show.title || "Show");
     d.innerHTML = show.art
-      ? `<img class="priority-show-art" src="${escapeHtml(show.art)}" alt="" loading="lazy"><span class="priority-show-name">${escapeHtml(show.title)}</span>`
-      : `<div class="priority-show-art priority-show-art--placeholder"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div><span class="priority-show-name">${escapeHtml(show.title)}</span>`;
+      ? `<img class="priority-show-art" src="${escapeHtml(show.art)}" alt="${escapeHtml(show.title || "")}" loading="lazy">`
+      : `<div class="priority-show-art priority-show-art--placeholder"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div>`;
     d.addEventListener("dragstart", (e) => { dragItemId = show.id; dragItemKind = "show"; d.classList.add("is-dragging"); e.dataTransfer.effectAllowed = "move"; });
     d.addEventListener("dragend", () => { dragItemId = null; dragItemKind = null; d.classList.remove("is-dragging"); overlay.querySelectorAll(".priority-drop-zone").forEach(z => z.classList.remove("drag-over")); });
     wireCardTouch(d);
@@ -37666,13 +37668,15 @@ function showPodcastPriorityModal() {
 
   function pubCard(pub) {
     const d = document.createElement("div");
-    d.className = "priority-show-card";
+    d.className = "priority-show-card priority-show-card--article";
     d.draggable = true;
     d.dataset.pubKey = pub.key;
+    d.title = `${pub.label} (Article)`;
+    d.setAttribute("aria-label", `${pub.label} — Article`);
     const logoUrl = pub.domain ? publicationLogoUrl(pub.domain) : null;
     d.innerHTML = logoUrl
-      ? `<img class="priority-show-art" src="${escapeHtml(logoUrl)}" alt="" loading="lazy" onerror="this.style.display='none'"><span class="priority-show-name">${escapeHtml(pub.label)}</span><span class="priority-show-badge">Article</span>`
-      : `<div class="priority-show-art priority-show-art--placeholder"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></div><span class="priority-show-name">${escapeHtml(pub.label)}</span><span class="priority-show-badge">Article</span>`;
+      ? `<img class="priority-show-art" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(pub.label || "")}" loading="lazy" onerror="this.style.display='none'">`
+      : `<div class="priority-show-art priority-show-art--placeholder"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></div>`;
     d.addEventListener("dragstart", (e) => { dragItemId = pub.key; dragItemKind = "pub"; d.classList.add("is-dragging"); e.dataTransfer.effectAllowed = "move"; });
     d.addEventListener("dragend", () => { dragItemId = null; dragItemKind = null; d.classList.remove("is-dragging"); overlay.querySelectorAll(".priority-drop-zone").forEach(z => z.classList.remove("drag-over")); });
     wireCardTouch(d);

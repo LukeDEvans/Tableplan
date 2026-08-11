@@ -15337,7 +15337,7 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
 .priority-sort-btn.is-active { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent, #92400E); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .priority-sort-btn:hover:not(.is-active) { background: color-mix(in srgb, var(--ink) 5%, transparent); color: var(--ink); }
 
-.priority-tiers-body { overflow-y: auto; flex: 1; }
+.priority-tiers-body { overflow-y: auto; overflow-x: hidden; flex: 1; }
 .priority-tiers-row {
   display: flex;
   flex-wrap: wrap;
@@ -15405,13 +15405,14 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
 .priority-tier-label-text { font-size: 0.8rem; font-weight: 600; color: var(--ink); }
 .priority-tier-sub { font-size: 0.72rem; color: var(--text-muted, #888); }
 .priority-drop-zone {
-  min-height: 80px;
+  min-height: 72px;
   border: 2px dashed color-mix(in srgb, var(--ink) 15%, transparent);
   border-radius: 10px;
-  padding: 6px;
+  padding: 8px;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  flex-flow: row wrap;
+  align-content: flex-start;
+  gap: 8px;
   transition: border-color 0.15s, background 0.15s;
   flex: 1;
 }
@@ -15425,34 +15426,55 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   text-align: center;
   padding: 12px 0;
   pointer-events: none;
+  width: 100%;
+  flex: 0 0 100%;
 }
+/* Thumbnail-only tiles: name is conveyed via title/aria-label (hover), so the
+   art alone identifies the show. Fixed square tiles wrap within the drop zone,
+   fitting the modal width with no horizontal scroll. */
 .priority-show-card {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  position: relative;
+  width: 52px;
+  height: 52px;
+  padding: 0;
   background: var(--surface, #fff);
   border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
   border-radius: 8px;
   cursor: grab;
   user-select: none;
+  flex: 0 0 auto;
+  overflow: hidden;
 }
 .priority-show-card:active { cursor: grabbing; }
 .priority-show-card.is-dragging { opacity: 0.4; }
+/* Small corner marker distinguishes article publications from podcast shows
+   now that the text label is gone. */
+.priority-show-card--article::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--accent, #92400E);
+  box-shadow: 0 0 0 1.5px var(--surface, #fff);
+  pointer-events: none;
+}
 /* Mobile: stack the tiers vertically at full width so each tier reads as its
-   own list (one show per line) instead of cramped side-by-side columns. */
+   own row of thumbnails instead of cramped side-by-side columns. */
 @media (max-width: 640px) {
   .priority-tiers-row { flex-direction: column; flex-wrap: nowrap; gap: 16px; padding: 14px 14px 0; }
   .priority-tier-col { min-width: 0; width: 100%; }
   .priority-add-tier-btn { margin-top: 4px; align-self: stretch; text-align: center; }
-  .priority-show-card { padding: 9px 10px; }
+  .priority-show-card { width: 48px; height: 48px; }
 }
 .priority-show-art {
-  width: 32px;
-  height: 32px;
-  border-radius: 5px;
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
   object-fit: cover;
-  flex-shrink: 0;
+  display: block;
 }
 .priority-show-art--placeholder {
   display: flex;
@@ -15460,15 +15482,6 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   justify-content: center;
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--text-muted, #888);
-}
-.priority-show-name {
-  font-size: 0.8rem;
-  font-weight: 500;
-  color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
 }
 .priority-untiered-section {
   padding: 12px 20px 0;
