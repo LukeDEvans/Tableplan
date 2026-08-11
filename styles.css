@@ -19362,6 +19362,35 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-stat-btn { cursor: pointer; text-align: left; font: inherit; align-items: flex-start; transition: border-color 0.12s; }
 .fin-stat-btn:hover, .fin-stat-btn.is-open { border-color: var(--accent); }
 
+/* Collapsed savings cards line up to the same height as the KPI stat tiles. */
+.fin-stat, .fin-savings-card { min-height: 66px; }
+
+/* Monthly budget card: the three KPI figures, Budgeted expands the detail. */
+.fin-budget-title h3 { margin: 0; font-size: 1rem; }
+.fin-budget-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+}
+.fin-budget-toggle .fin-stat-label { display: inline-flex; align-items: center; gap: 4px; }
+.fin-budget-caret { font-size: 0.8rem; color: var(--muted); }
+/* Nested Income/Needs/Wants stack as a plain list inside the budget card. */
+.fin-budget-nested { grid-template-columns: 1fr; margin-top: 2px; }
+
+/* Transactions card head holds the notifications bell where the count used to
+   be; center it (the generic card head is baseline-aligned). */
+.fin-txns-head { align-items: center; }
+.fin-txns-head h3 { flex: 1; }
+/* The notifications panel now nests in-flow inside the Transactions card
+   instead of floating as a dropdown. */
+[data-fin-card="txns"] .fin-notif-panel {
+  position: static;
+  width: auto;
+  max-height: none;
+  box-shadow: none;
+  margin-top: 4px;
+}
+
 /* Savings snapshot cards — above and separate from the budget cards */
 .fin-savings-row {
   display: grid;
@@ -19576,9 +19605,9 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-account-add .fin-item-name { flex: 1 1 130px; }
 
 @media (max-width: 700px) {
-  .fin-summary { grid-template-columns: 1fr 1fr; gap: 6px; }
-  .fin-stat { padding: 10px; }
-  .fin-stat-value { font-size: 1.05rem; }
+  .fin-summary, .fin-budget-kpis { grid-template-columns: 1fr 1fr; gap: 6px; }
+  .fin-stat, .fin-savings-card { padding: 10px; min-height: 58px; }
+  .fin-stat-value, .fin-savings-value { font-size: 1.05rem; }
   .fin-personal-cols { grid-template-columns: 1fr; }
 }
 

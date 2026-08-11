@@ -8903,6 +8903,70 @@ function renderFinancePage() {
       <div class="fin-item-row">${txnSelect(t)}</div>
     </div>`;
   };
+  // Finance notifications — the bell lives in the Transactions card head (in
+  // place of the old "N to label · M" subtitle) and its panel nests inside the
+  // Transactions card. Defined here so the Transactions card can embed them.
+  const bellSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
+  const attention = financeAccountsNeedingAttention();
+  const notifCount = needsLabelGroups.length + recAlerts.length + attention.length;
+  const alertHtml = (a) => {
+    if (a.kind === "new") return `
+      <div class="fin-alert">
+        <div class="fin-alert-text">New recurring charge: <b>${escapeHtml(a.r.name)}</b> · ${formatFinMoney(a.r.lastAmount)} around day ${a.r.expectedDay}</div>
+        <div class="fin-item-row fin-item-row--tools">
+          <select class="fin-scenario-select fin-editor-select" data-fin-edit="recurring-link" data-id="${a.r.id}" aria-label="Budget line for ${escapeHtml(a.r.name)}">
+            <option value="">link to budget line…</option>
+            ${financeLineItemOptionsHtml("")}
+          </select>
+          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-ignore" data-id="${a.r.id}">Ignore</button>
+          <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="recurring-not" data-id="${a.r.id}">Not recurring</button>
+        </div>
+      </div>`;
+    if (a.kind === "price") return `
+      <div class="fin-alert">
+        <div class="fin-alert-text"><b>${escapeHtml(a.r.name)}</b> charged ${formatFinMoney(a.r.lastAmount)} — the "${escapeHtml(a.li.c.name)} · ${escapeHtml(a.li.it.name)}" line budgets ${formatFinMoney(a.li.it.amount)}</div>
+        <div class="fin-item-row fin-item-row--tools">
+          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-price-update" data-id="${a.r.id}">Update line to ${formatFinMoney(a.r.lastAmount)}</button>
+          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-price-keep" data-id="${a.r.id}">Keep budget</button>
+        </div>
+      </div>`;
+    return `
+      <div class="fin-alert">
+        <div class="fin-alert-text"><b>${escapeHtml(a.r.name)}</b> (~day ${a.r.expectedDay}, usually ${formatFinMoney(a.r.lastAmount)}) hasn't appeared this month</div>
+        <div class="fin-item-row fin-item-row--tools">
+          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-miss-dismiss" data-id="${a.r.id}">Dismiss</button>
+        </div>
+      </div>`;
+  };
+  const notifBell = !financeLinkStatus?.connected ? "" : `
+    <button class="icon-btn fin-notif-btn" type="button" data-fin-action="toggle-notifs" title="Finance items that need attention" aria-label="Finance notifications">
+      ${bellSvg}
+      ${notifCount ? `<span class="fin-notif-badge">${notifCount}</span>` : ""}
+    </button>`;
+  const notifPanel = (!financeLinkStatus?.connected || !financeNotifOpen) ? "" : `
+    <div class="fin-notif-panel">
+      ${attention.length ? `
+      <div class="fin-notif-head">Accounts need attention</div>
+      ${attention.slice(0, 8).map((a) => `
+      <div class="fin-alert fin-alert-attention">
+        <button class="fin-notif-x" type="button" data-fin-action="dismiss-alert" data-key="${escapeHtml(a.key)}" title="Dismiss" aria-label="Dismiss this alert">×</button>
+        <div class="fin-alert-text"><b>${escapeHtml(a.label)}</b> — ${escapeHtml(a.detail)}</div>
+        <div class="fin-item-row fin-item-row--tools">
+          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-finance-settings">Open bank settings</button>
+        </div>
+      </div>`).join("")}` : ""}
+      ${recAlerts.length ? `
+      <div class="fin-notif-head">Recurring charges</div>
+      ${recAlerts.slice(0, 8).map(alertHtml).join("")}` : ""}
+      <div class="fin-notif-head">Transactions to label</div>
+      ${needsLabelGroups.slice(0, 15).map((grp) => `
+      <div class="fin-notif-labelrow">
+        ${txnRow(grp.rep, { compact: true, dupCount: grp.count })}
+        <button class="fin-notif-x fin-notif-x--label" type="button" data-fin-action="skip-label-group" data-key="${escapeHtml(grp.key)}" title="Skip labeling this merchant" aria-label="Skip labeling ${escapeHtml(grp.rep.displayName || grp.rep.description || "this merchant")}">×</button>
+      </div>`).join("") || `<div class="fin-notif-empty">Everything is labeled.</div>`}
+      ${needsLabelGroups.length > 15 ? `<div class="fin-notif-more">+ ${needsLabelGroups.length - 15} more in the Transactions card</div>` : ""}
+    </div>`;
+
   const txnsOpen = financeExpanded.has("card:txns");
   const filterActive = Boolean(f.q || f.kind || f.account);
   const sortActive = f.sort !== "date";
@@ -8930,7 +8994,12 @@ function renderFinancePage() {
     </div>`;
   const txnsCard = !financeLinkStatus?.connected ? "" : `
     <div class="fin-card" data-fin-card="txns">
-      ${cardHead("card:txns", "Transactions", `${unlabeledTxnCount ? `${unlabeledTxnCount} to label · ` : ""}${filterActive ? `${shownTxns.length} of ` : ""}${monthTxns.length}`)}
+      <div class="fin-card-head fin-txns-head" data-fin-action="toggle-expand" data-id="card:txns" role="button" tabindex="0" aria-expanded="${txnsOpen}">
+        <h3>Transactions</h3>
+        ${notifBell}
+        <span class="fin-card-caret">${txnsOpen ? "▴" : "▾"}</span>
+      </div>
+      ${notifPanel}
       ${!txnsOpen ? "" : `
       <div class="fin-txn-filters">
         <input type="search" class="fin-item-name fin-txn-search" placeholder="Search…" value="${escapeHtml(f.q)}" data-fin-edit="txn-filter-q" aria-label="Search transactions" />
@@ -8968,7 +9037,8 @@ function renderFinancePage() {
   // Net-worth detail — only rendered when the user clicks the Net worth stat.
   // Absorbs the old standalone trend card: a composition breakdown by account
   // kind plus the daily-snapshot sparkline.
-  const netWorthCard = (netWorth === null || !financeExpanded.has("card:networth")) ? "" : (() => {
+  const netWorthCard = netWorth === null ? "" : (() => {
+    const nwOpen = financeExpanded.has("card:networth");
     const histDays = financeHistory ? Object.keys(financeHistory).sort() : [];
     let trend = "";
     if (histDays.length >= 2) {
@@ -8990,98 +9060,46 @@ function renderFinancePage() {
     const breakdownRow = (label, val) => val === null ? "" :
       `<div class="fin-item-row fin-nw-row"><span class="fin-acct-name">${label}</span><span class="fin-live-bal${val < 0 ? " is-neg" : ""}">${formatFinMoney(val)}</span></div>`;
     return `
-    <div class="fin-card" data-fin-card="networth">
+    <div class="fin-card fin-networth-line" data-fin-card="networth">
       ${cardHead("card:networth", "Net worth", `<span class="fin-cat-actual${netWorth < 0 ? " is-over" : ""}">${formatFinMoney(netWorth)}</span>`)}
+      ${!nwOpen ? "" : `
       ${breakdownRow("Cash", cashOnHand)}
       ${breakdownRow("Investments", investmentTotal)}
       ${breakdownRow("Retirement", retirementTotal)}
       ${breakdownRow("Debt", debtTotal)}
-      <div class="fin-nw-trend">${trend}</div>
+      <div class="fin-nw-trend">${trend}</div>`}
     </div>`;
   })();
 
-  const bellSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
-  const attention = financeAccountsNeedingAttention();
-  const notifCount = needsLabelGroups.length + recAlerts.length + attention.length;
-  const alertHtml = (a) => {
-    if (a.kind === "new") return `
-      <div class="fin-alert">
-        <div class="fin-alert-text">New recurring charge: <b>${escapeHtml(a.r.name)}</b> · ${formatFinMoney(a.r.lastAmount)} around day ${a.r.expectedDay}</div>
-        <div class="fin-item-row fin-item-row--tools">
-          <select class="fin-scenario-select fin-editor-select" data-fin-edit="recurring-link" data-id="${a.r.id}" aria-label="Budget line for ${escapeHtml(a.r.name)}">
-            <option value="">link to budget line…</option>
-            ${financeLineItemOptionsHtml("")}
-          </select>
-          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-ignore" data-id="${a.r.id}">Ignore</button>
-          <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="recurring-not" data-id="${a.r.id}">Not recurring</button>
-        </div>
-      </div>`;
-    if (a.kind === "price") return `
-      <div class="fin-alert">
-        <div class="fin-alert-text"><b>${escapeHtml(a.r.name)}</b> charged ${formatFinMoney(a.r.lastAmount)} — the "${escapeHtml(a.li.c.name)} · ${escapeHtml(a.li.it.name)}" line budgets ${formatFinMoney(a.li.it.amount)}</div>
-        <div class="fin-item-row fin-item-row--tools">
-          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-price-update" data-id="${a.r.id}">Update line to ${formatFinMoney(a.r.lastAmount)}</button>
-          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-price-keep" data-id="${a.r.id}">Keep budget</button>
-        </div>
-      </div>`;
-    return `
-      <div class="fin-alert">
-        <div class="fin-alert-text"><b>${escapeHtml(a.r.name)}</b> (~day ${a.r.expectedDay}, usually ${formatFinMoney(a.r.lastAmount)}) hasn't appeared this month</div>
-        <div class="fin-item-row fin-item-row--tools">
-          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-miss-dismiss" data-id="${a.r.id}">Dismiss</button>
-        </div>
-      </div>`;
-  };
-  const notifBlock = !financeLinkStatus?.connected ? "" : `
-    <div class="fin-notif-wrap">
-      <button class="icon-btn fin-notif-btn" type="button" data-fin-action="toggle-notifs" title="Finance items that need attention" aria-label="Finance notifications">
-        ${bellSvg}
-        ${notifCount ? `<span class="fin-notif-badge">${notifCount}</span>` : ""}
-      </button>
-      ${financeNotifOpen ? `
-      <div class="fin-notif-panel">
-        ${attention.length ? `
-        <div class="fin-notif-head">Accounts need attention</div>
-        ${attention.slice(0, 8).map((a) => `
-        <div class="fin-alert fin-alert-attention">
-          <button class="fin-notif-x" type="button" data-fin-action="dismiss-alert" data-key="${escapeHtml(a.key)}" title="Dismiss" aria-label="Dismiss this alert">×</button>
-          <div class="fin-alert-text"><b>${escapeHtml(a.label)}</b> — ${escapeHtml(a.detail)}</div>
-          <div class="fin-item-row fin-item-row--tools">
-            <button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-finance-settings">Open bank settings</button>
-          </div>
-        </div>`).join("")}` : ""}
-        ${recAlerts.length ? `
-        <div class="fin-notif-head">Recurring charges</div>
-        ${recAlerts.slice(0, 8).map(alertHtml).join("")}` : ""}
-        <div class="fin-notif-head">Transactions to label</div>
-        ${needsLabelGroups.slice(0, 15).map((grp) => `
-        <div class="fin-notif-labelrow">
-          ${txnRow(grp.rep, { compact: true, dupCount: grp.count })}
-          <button class="fin-notif-x fin-notif-x--label" type="button" data-fin-action="skip-label-group" data-key="${escapeHtml(grp.key)}" title="Skip labeling this merchant" aria-label="Skip labeling ${escapeHtml(grp.rep.displayName || grp.rep.description || "this merchant")}">×</button>
-        </div>`).join("") || `<div class="fin-notif-empty">Everything is labeled.</div>`}
-        ${needsLabelGroups.length > 15 ? `<div class="fin-notif-more">+ ${needsLabelGroups.length - 15} more in the Transactions card</div>` : ""}
-      </div>` : ""}
-    </div>`;
-
-  grid.innerHTML = `
-    <section class="fin-panel">
-      <div class="fin-summary-row">
-        <div class="fin-summary">
-          <div class="fin-stat"><span class="fin-stat-label">Income</span><span class="fin-stat-value">${formatFinMoney(income)}</span></div>
-          <div class="fin-stat"><span class="fin-stat-label">Budgeted</span><span class="fin-stat-value">${formatFinMoney(expenses)}</span></div>
-          <div class="fin-stat"><span class="fin-stat-label">Unallocated</span><span class="fin-stat-value${cashFlow < 0 ? " is-neg" : ""}">${formatFinMoney(cashFlow)}</span></div>
-          ${netWorth === null ? "" : `<button class="fin-stat fin-stat-btn${financeExpanded.has("card:networth") ? " is-open" : ""}" type="button" data-fin-action="toggle-expand" data-id="card:networth" aria-expanded="${financeExpanded.has("card:networth")}" title="Net worth details"><span class="fin-stat-label">Net worth</span><span class="fin-stat-value${netWorth < 0 ? " is-neg" : ""}">${formatFinMoney(netWorth)}</span></button>`}
-        </div>
-        ${notifBlock}
+  // Monthly budget card — the three KPI figures, with a caret on Budgeted that
+  // expands to reveal the detailed Income, Needs, and Wants cards nested inside.
+  const budgetedOpen = financeExpanded.has("card:budgeted");
+  const monthlyBudgetCard = `
+    <div class="fin-card fin-monthly-budget" data-fin-card="monthly-budget">
+      <div class="fin-budget-title"><h3>Monthly budget</h3></div>
+      <div class="fin-budget-kpis">
+        <div class="fin-stat"><span class="fin-stat-label">Income</span><span class="fin-stat-value">${formatFinMoney(income)}</span></div>
+        <button class="fin-stat fin-stat-btn fin-budget-toggle${budgetedOpen ? " is-open" : ""}" type="button" data-fin-action="toggle-expand" data-id="card:budgeted" aria-expanded="${budgetedOpen}" title="Show income, needs, and wants">
+          <span class="fin-stat-label">Budgeted <span class="fin-budget-caret">${budgetedOpen ? "▴" : "▾"}</span></span>
+          <span class="fin-stat-value">${formatFinMoney(expenses)}</span>
+        </button>
+        <div class="fin-stat"><span class="fin-stat-label">Unallocated</span><span class="fin-stat-value${cashFlow < 0 ? " is-neg" : ""}">${formatFinMoney(cashFlow)}</span></div>
       </div>
-      ${savingsRow}
-      ${netWorthCard}
-      <div class="fin-cards">
+      ${!budgetedOpen ? "" : `<div class="fin-cards fin-budget-nested">
         ${incomeCard}
         ${groupCards}
-        ${txnsCard}
-        ${personalCard}
-      </div>
+      </div>`}
+    </div>`;
+
+  // Order (top → bottom): Transactions, Monthly budget, Savings snapshot,
+  // Personal, then Net worth as its own full-width line at the very bottom.
+  grid.innerHTML = `
+    <section class="fin-panel">
+      ${txnsCard}
+      ${monthlyBudgetCard}
+      ${savingsRow}
+      ${personalCard}
+      ${netWorthCard}
     </section>`;
 
   if (!financeGridWired) {
@@ -9100,7 +9118,11 @@ function renderFinancePage() {
     });
     document.addEventListener("click", (e) => {
       if (!financeNotifOpen) return;
-      if (e.target.closest(".fin-notif-wrap")) return;
+      // The bell and its panel now live inside the Transactions card head/body
+      // rather than a shared .fin-notif-wrap; keep the panel open for clicks on
+      // either, and for the toggle-expand card head (so opening the txn list
+      // doesn't also dismiss the notifications).
+      if (e.target.closest(".fin-notif-btn, .fin-notif-panel, .fin-txns-head")) return;
       financeNotifOpen = false;
       renderFinancePage();
     }, { capture: true });
