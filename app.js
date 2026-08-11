@@ -37895,7 +37895,7 @@ function showPodcastPriorityModal() {
     state.mediaAllPinnedOrder = [];
     persist();
     ev.currentTarget.hidden = true;
-    if (activeMediaTab === "queue") renderMediaAllList();
+    renderActiveMediaView();
     showMailToast("Playlist order reset");
   });
 
@@ -37911,8 +37911,11 @@ function showPodcastPriorityModal() {
     state.mediaAllPinnedOrder = [];
     persist();
     overlay.remove();
-    if (activePodcastTab === "playlist") renderPodcastQueueEpisodes();
-    if (activeMediaTab === "queue") renderMediaAllList();
+    // Refresh whatever media view is on screen so the new hierarchy/window is
+    // reflected immediately — covers the blended queue, the podcast playlist
+    // sub-tab, and article/book tabs (whose order also depends on the
+    // publication tiers edited here), not just the two former special cases.
+    renderActiveMediaView();
   });
 }
 
