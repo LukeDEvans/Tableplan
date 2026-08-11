@@ -13498,7 +13498,10 @@ body:has(#mailMainPage:not([hidden])) .app-shell { height: 100%; box-sizing: bor
 body:has(#mailMainPage:not([hidden])) .workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 
-.mail-page { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+/* `.workspace > section` (specificity 0,1,1) sets overflow-y:auto on every
+   page; beat it here (0,2,0) so the mail page never scrolls as one unit — its
+   inner panels (folder list, message list) own their own scrolling. */
+.mail-page.mail-page { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .mail-page-inner { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
 
 /* Connect view */
@@ -13556,12 +13559,13 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 .mail-sidebar {
   width: 256px;
   flex-shrink: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   padding: 8px 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  scrollbar-width: thin;
+  /* The folder list (.mail-label-nav) is the scroll region; the sidebar itself
+     stays fixed so Compose is always visible. */
+  overflow: hidden;
   transition: width 0.2s;
 }
 .mail-sidebar.is-collapsed { width: 0; }
@@ -13569,6 +13573,7 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-shrink: 0;
   margin: 4px 8px 12px;
   padding: 16px 24px;
   border-radius: 16px;
@@ -13585,7 +13590,9 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 }
 .mail-compose-btn:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.18), 0 4px 16px rgba(0,0,0,0.1); }
 .mail-compose-btn svg { width: 20px; height: 20px; stroke: var(--ink); stroke-width: 1.5; fill: none; flex-shrink: 0; }
-.mail-label-nav { display: flex; flex-direction: column; padding-right: 16px; }
+/* The folder list scrolls independently of the message pane and the rest of
+   the page; min-height:0 lets it shrink below its content so overflow engages. */
+.mail-label-nav { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; padding-right: 16px; }
 .mail-label-item {
   display: flex;
   align-items: center;

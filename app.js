@@ -8899,6 +8899,19 @@ function renderFinancePage() {
         <div><span class="fin-hint">Status</span><div>${t.pending ? "Pending" : "Posted"}</div></div>
       </div>
       ${returnLinkHtml(t)}
+      ${(() => {
+        const rc = financeReceiptForTxn(t);
+        if (!rc?.id) return "";
+        // Deep-link to the original order-confirmation email in Gmail (the
+        // receipt stores the Gmail message id). Lets you open the actual email
+        // behind a matched transaction, not just its extracted line items.
+        const url = `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(rc.id)}`;
+        return `
+        <div class="fin-return-box fin-receipt-email">
+          <span class="fin-hint">Order email${rc.merchant ? ` · ${escapeHtml(rc.merchant)}` : ""}${(rc.items || []).length ? ` · ${rc.items.length} item${rc.items.length === 1 ? "" : "s"}` : ""}</span>
+          <a class="secondary-btn fin-add-btn" href="${url}" target="_blank" rel="noopener noreferrer">View email</a>
+        </div>`;
+      })()}
       <span class="fin-hint">Budget label</span>
       <div class="fin-item-row">${txnSelect(t)}</div>
     </div>`;
