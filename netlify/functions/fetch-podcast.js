@@ -46,7 +46,7 @@ function parseRSS(xml) {
     const chaptersUrl = getAttr(item, "podcast:chapters", "url") || "";
     episodes.push({
       id: guid,
-      title: getText(item, "title"),
+      title: getText(item, "title") || getText(item, "itunes:title"),
       description: getText(item, "itunes:summary") || getText(item, "description"),
       pubDate: getText(item, "pubDate"),
       duration: parseDuration(getText(item, "itunes:duration")),
@@ -61,12 +61,21 @@ function parseRSS(xml) {
 
 function getText(xml, tag) {
   const t = tag.replace(":", "\\:");
-  const cdataRe = new RegExp(`<${t}[^>]*><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/${t}>`, "i");
-  const textRe = new RegExp(`<${t}[^>]*>([^<]*)<\\/${t}>`, "i");
-  const cm = cdataRe.exec(xml);
-  if (cm) return cm[1].trim();
-  const tm = textRe.exec(xml);
-  return tm ? decodeEntities(tm[1].trim()) : "";
+  // Grab the full inner content of the first matching tag (non-greedy), then
+  // normalize it. Being tolerant here matters: real-world feeds (Rick Steves
+  // among them) wrap titles in CDATA that may be preceded by whitespace, nest
+  // inline markup inside the tag, or use hex entities — all of which the old
+  // strict CDATA/`[^<]*` patterns dropped on the floor, yielding empty titles.
+  const re = new RegExp(`<${t}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${t}>`, "i");
+  const m = re.exec(xml);
+  if (!m) return "";
+  let inner = m[1].trim();
+  // Unwrap any CDATA section(s); their contents are literal, so no decoding.
+  if (inner.indexOf("<![CDATA[") !== -1) {
+    return inner.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").trim();
+  }
+  // Plain text: strip stray inline tags, then decode entities.
+  return decodeEntities(inner.replace(/<[^>]+>/g, "").trim());
 }
 
 function getAttr(xml, tag, attr) {
@@ -86,9 +95,11 @@ function parseDuration(str) {
 
 function decodeEntities(str) {
   return str
-    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
     .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
 }
 
 function json(statusCode, body) {
