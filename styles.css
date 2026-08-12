@@ -16326,6 +16326,10 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 .playlist-art-btn .media-all-art { width: 58px; height: 58px; aspect-ratio: 1 / 1; object-fit: cover; margin: 0; border-radius: 8px; }
 .playlist-row .article-row-main { justify-content: center; gap: 2px; }
 .playlist-row-date { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-muted, #888); }
+/* Resume slot pinned to the top of the playlist. */
+.playlist-row-continue { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; color: var(--accent, #32b496); display: flex; align-items: center; gap: 5px; }
+.playlist-row-continue::before { content: ""; width: 0; height: 0; border-style: solid; border-width: 4px 0 4px 6px; border-color: transparent transparent transparent currentColor; }
+#mediaAllList .playlist-row.is-resume { background: color-mix(in srgb, var(--accent, #32b496) 7%, transparent); border-radius: 10px; }
 .playlist-row-title { font-size: 0.92rem; font-weight: 600; line-height: 1.3; }
 .playlist-play-row { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
 .playlist-play-btn {

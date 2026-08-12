@@ -38134,6 +38134,46 @@ function getBundleHeldEpisodeIds() {
   return held;
 }
 
+// The started-but-unfinished episode you most recently listened to. Surfaced at
+// the very top of the playlist so a lower-tier resume isn't buried under newer
+// higher-tier episodes when you come back the next day.
+function currentInProgressEpisodeId() {
+  const prog = state.podcastProgress || {};
+  // Prefer whatever is loaded in the player right now, if it's mid-episode.
+  if (openPodcastEpisodeId) {
+    const p = prog[openPodcastEpisodeId];
+    if (p && !p.played && (p.position || 0) > 0) return openPodcastEpisodeId;
+  }
+  // Otherwise the most-recently-listened started-but-unfinished episode that
+  // still belongs to a subscribed show.
+  const known = new Set();
+  for (const show of (state.podcasts || [])) for (const ep of (show.episodes || [])) known.add(ep.id);
+  let best = null, bestAt = "";
+  for (const [id, p] of Object.entries(prog)) {
+    if (!p || p.played || !((p.position || 0) > 0) || !known.has(id)) continue;
+    const at = p.lastPlayedAt || "";
+    if (best === null || at > bestAt) { best = id; bestAt = at; }
+  }
+  return best;
+}
+
+function playlistItemForEpisodeId(id) {
+  const { episode, show } = findPodcastEpisode(id) || {};
+  if (!episode) return null;
+  return { ...episode, type: "podcast", showId: show?.id || "", showTitle: show?.title || "", showArt: show?.art || "" };
+}
+
+// Move (or inject, if the time window excluded it) the resume episode to the
+// front of a playlist array.
+function hoistResumeEpisode(list) {
+  const curId = currentInProgressEpisodeId();
+  if (!curId) return list;
+  const idx = list.findIndex((i) => i.id === curId);
+  if (idx > 0) { const [it] = list.splice(idx, 1); list.unshift(it); }
+  else if (idx === -1) { const inj = playlistItemForEpisodeId(curId); if (inj) list.unshift(inj); }
+  return list;
+}
+
 function getAutoPlaylist(forceIncludeArticles = false) {
   const tiers = state.podcastShowTiers || {};
   const epTiers = state.podcastEpisodeTiers || {};
@@ -38177,12 +38217,13 @@ function getAutoPlaylist(forceIncludeArticles = false) {
   };
   const newestFirst = (state.podcastPrioritySort ?? "oldest") === "newest";
 
-  return items.sort((a, b) => {
+  const sorted = items.sort((a, b) => {
     const ta = effectiveTier(a), tb = effectiveTier(b);
     if (ta !== tb) return ta - tb;
     const dateA = new Date(a.pubDate), dateB = new Date(b.pubDate);
     return newestFirst ? dateB - dateA : dateA - dateB;
   });
+  return hoistResumeEpisode(sorted);
 }
 
 // ── "All" blended listen list ────────────────────────────────────────────────
@@ -38208,11 +38249,17 @@ function getAllListenList() {
     }));
 
   const pinned = state.mediaAllPinnedOrder || [];
-  if (!pinned.length) return items;
-  const pos = new Map(pinned.map((id, i) => [id, i]));
-  const inPinned = items.filter((i) => pos.has(i.id)).sort((a, b) => pos.get(a.id) - pos.get(b.id));
-  const rest = items.filter((i) => !pos.has(i.id));
-  return [...inPinned, ...rest];
+  let list;
+  if (!pinned.length) {
+    list = items;
+  } else {
+    const pos = new Map(pinned.map((id, i) => [id, i]));
+    const inPinned = items.filter((i) => pos.has(i.id)).sort((a, b) => pos.get(a.id) - pos.get(b.id));
+    const rest = items.filter((i) => !pos.has(i.id));
+    list = [...inPinned, ...rest];
+  }
+  // The resume episode wins the very top slot even over a manual pin order.
+  return hoistResumeEpisode(list);
 }
 
 function renderMediaAllList() {
@@ -38229,12 +38276,15 @@ function renderMediaAllList() {
   // under the title (Apple-Podcasts style). Tiering silently sorts the list
   // (via getAutoPlaylist) — no tier headers, no show-name/type text.
   const progress = state.podcastProgress || {};
+  const resumeId = currentInProgressEpisodeId();
   let html = "";
   items.forEach((e) => {
     const isPod = e.type === "podcast";
     const isArt = e.type === "article";
     const isBook = e.type === "book";
+    const isResume = e.id === resumeId;
     const dur = (!isArt && !isBook) ? (e.duration || progress[e.id]?.duration || 0) : 0;
+    const remain = (isResume && dur && progress[e.id]?.position) ? Math.max(0, dur - progress[e.id].position) : 0;
     const art = e.showArt
       ? `<img class="media-all-art" src="${escapeHtml(e.showArt)}" alt="" loading="lazy" onerror="this.style.display='none'">`
       : `<span class="media-all-art media-all-art--icon">${isBook ? "📚" : isArt ? "📰" : "🎧"}</span>`;
@@ -38242,10 +38292,12 @@ function renderMediaAllList() {
       : isArt ? !!(state.savedArticles || []).find((a) => a.id === e.id && a.pinned)
       : false;
     html += `
-    <div class="article-row playlist-row podcast-episode-row podcast-draggable-row${e.id === mediaAllQueueId ? " article-row--active" : ""}" data-all-id="${escapeHtml(e.id)}" data-all-type="${escapeHtml(e.type)}"${isPod ? ` data-episode-id="${escapeHtml(e.id)}"` : ""}${e.showId ? ` data-show-id="${escapeHtml(e.showId)}"` : ""} draggable="true" role="button" tabindex="0">
+    <div class="article-row playlist-row podcast-episode-row podcast-draggable-row${isResume ? " is-resume" : ""}${e.id === mediaAllQueueId ? " article-row--active" : ""}" data-all-id="${escapeHtml(e.id)}" data-all-type="${escapeHtml(e.type)}"${isPod ? ` data-episode-id="${escapeHtml(e.id)}"` : ""}${e.showId ? ` data-show-id="${escapeHtml(e.showId)}"` : ""} draggable="true" role="button" tabindex="0">
       <button class="playlist-art-btn" type="button" data-all-art="${escapeHtml(e.id)}" tabindex="-1" aria-label="${isPod ? "Go to show" : "Open"}">${art}</button>
       <div class="article-row-main">
-        ${e.pubDate ? `<div class="playlist-row-date">${escapeHtml(formatArticleDate(e.pubDate))}</div>` : ""}
+        ${isResume
+          ? `<div class="playlist-row-continue">Continue${remain ? ` · ${formatPodcastDuration(remain)} left` : ""}</div>`
+          : (e.pubDate ? `<div class="playlist-row-date">${escapeHtml(formatArticleDate(e.pubDate))}</div>` : "")}
         <div class="article-row-title playlist-row-title">${escapeHtml(e.title || "")}</div>
         ${!isBook ? `<div class="playlist-play-row">
           <button class="playlist-play-btn" type="button" data-all-play="${escapeHtml(e.id)}" aria-label="Play">
@@ -39682,7 +39734,8 @@ function schedulePodcastPositionSave(episode) {
     state.podcastProgress[episode.id] = {
       ...(state.podcastProgress[episode.id] || {}),
       position: Math.floor(podcastAudio.currentTime),
-      duration: Math.floor(podcastAudio.duration || episode.duration || 0)
+      duration: Math.floor(podcastAudio.duration || episode.duration || 0),
+      lastPlayedAt: new Date().toISOString()
     };
     persist();
   }, 5000);
