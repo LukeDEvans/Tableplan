@@ -15949,20 +15949,19 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: var(--accent, #92400E);
-  color: white;
+  background: none;
+  color: var(--window-border);   /* midnight blue, theme-aware */
   border: none;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
-  transition: transform 0.1s, opacity 0.12s;
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent, #92400E) 40%, transparent);
+  transition: background 0.12s, transform 0.1s;
 }
-.mini-player-play-btn:hover { opacity: 0.9; }
+.mini-player-play-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .mini-player-play-btn:active { transform: scale(0.93); }
-.mini-player-play-btn svg { display: block; }
+.mini-player-play-btn svg { display: block; width: 28px; height: 28px; }
 
 /* Nudge body content up so it isn't hidden behind the fixed bar (progress 3px
    + body 60px). */
