@@ -1347,6 +1347,8 @@ let doNotifOpen = false;
 let mealPlanRecipes = null;
 let mealPlanNotifOpen = false;
 let mealPlanNotifWired = false;
+// Which recipe card is centered in swipe view (index into mealPlanRecipes).
+let mealPlanSwipeIndex = 0;
 
 // ── Page notification dots ───────────────────────────────────────────────────
 // Landing links and the page-title menu show a red dot for pages with
@@ -5597,7 +5599,9 @@ function mergeMealPlanConfig(newer, older) {
   const oTypeById = new Map(oTypes.map((t) => [t.id, t]));
   const authoritativeTypes = nTypes.length ? nTypes : oTypes;
   const mealTypes = authoritativeTypes.map((n) => ({ ...(oTypeById.get(n.id) || {}), ...n }));
-  return { members, mealTypes };
+  // notifView is a plain scalar preference — the most recent writer wins.
+  const notifView = newer.notifView || older.notifView;
+  return { members, mealTypes, notifView };
 }
 
 function mergeDoPlans(newer, older, tombstones) {
@@ -6653,7 +6657,11 @@ function defaultMealPlanConfig() {
       { id: "mealtype-breakfast", label: "Breakfast" },
       { id: "mealtype-lunch", label: "Lunch" },
       { id: "mealtype-dinner", label: "Dinner" }
-    ]
+    ],
+    // How the recipe-notifications window presents: "list" (compact rows) or
+    // "swipe" (one full-window card at a time — swipe left to dismiss, right to
+    // add, up/down to browse). Swipe is only offered on touch devices.
+    notifView: "list"
   };
 }
 
@@ -6668,9 +6676,11 @@ function normalizeMealPlanConfig(config) {
   const mealTypes = rawTypes.length
     ? rawTypes.map(t => ({ id: String(t?.id || createId("mealtype")), label: String(t?.label || "").trim() })).filter(t => t.label)
     : defaults.mealTypes;
+  const notifView = config?.notifView === "swipe" ? "swipe" : "list";
   return {
     members: members.length ? members : defaults.members,
-    mealTypes: mealTypes.length ? mealTypes : defaults.mealTypes
+    mealTypes: mealTypes.length ? mealTypes : defaults.mealTypes,
+    notifView
   };
 }
 
@@ -9916,28 +9926,161 @@ function warmMealPlanRecipes() {
   });
 }
 
+// A touch device — swipe view is only offered here; desktop always sees the
+// list (see mealPlanUsesSwipeView).
+function isCoarsePointer() {
+  return (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) || ("ontouchstart" in window);
+}
+
+// The notifications window renders as a swipe deck only when the user opted in
+// (Meal Plan Settings) AND they're on a touch device.
+function mealPlanUsesSwipeView() {
+  return normalizeMealPlanConfig(state.mealPlanConfig).notifView === "swipe" && isCoarsePointer();
+}
+
+// Which swipe card is centered, so any renderPlanner() (including the async
+// ones fired by a background import) can land the deck back on the same recipe
+// rather than snapping to the top. Updated as the deck scrolls; restored in
+// restoreMealPlanSwipeScroll() after each render.
+function restoreMealPlanSwipeScroll() {
+  const deck = elements.plannerGrid.querySelector(".eat-swipe-deck");
+  if (!deck) return;
+  const idx = Math.min(mealPlanSwipeIndex, deck.children.length - 1);
+  if (idx > 0) deck.scrollTop = idx * deck.clientHeight;
+}
+
 function dismissMealPlanRecipe(url) {
   if (!mealPlanRecipes) return;
-  // Keep the notifications panel where the user was scrolled — renderPlanner()
-  // rebuilds the whole grid, which would otherwise snap the panel back to top.
-  const savedScroll = elements.plannerGrid.querySelector(".eat-notif-panel")?.scrollTop || 0;
+  // Keep the notifications window where the user was scrolled — renderPlanner()
+  // rebuilds the whole grid, which would otherwise snap it back to the top. In
+  // list view the panel itself scrolls; swipe view is handled by index (above).
+  const panel = elements.plannerGrid.querySelector(".eat-notif-panel:not(.eat-notif-panel-swipe)");
+  const savedScroll = panel?.scrollTop || 0;
   mealPlanRecipes = mealPlanRecipes.filter((r) => r.url !== url);
   setPageNotifCount("eat", mealPlanRecipes.length);
   renderPlanner();
-  const panel = elements.plannerGrid.querySelector(".eat-notif-panel");
-  if (panel) panel.scrollTop = savedScroll;
+  const newPanel = elements.plannerGrid.querySelector(".eat-notif-panel:not(.eat-notif-panel-swipe)");
+  if (newPanel) newPanel.scrollTop = savedScroll;
   callGmailApi({ action: "dismissRecipe", url });
 }
 
+// List view: opens the import dialog so the recipe can be reviewed before saving.
 function addMealPlanRecipe(url) {
   dismissMealPlanRecipe(url); // leaves the list the moment you act on it
   mealPlanNotifOpen = false;
   openImportDialog(url, true);
 }
 
+// Swipe view: adds the recipe straight to the book (no dialog) and stays in the
+// cards so triage can continue uninterrupted.
+function swipeAddMealPlanRecipe(url) {
+  const recipe = (mealPlanRecipes || []).find((r) => r.url === url);
+  dismissMealPlanRecipe(url); // remove from the deck + server-side dismiss
+  if (!recipe) return;
+  importMealPlanRecipeDirect(recipe).then((ok) => {
+    showMailToast(ok
+      ? `Added “${recipe.title || "recipe"}” to your recipe book.`
+      : `Couldn't read “${recipe.title || "that recipe"}” — open it to add manually.`);
+  });
+}
+
+// Fetch a pending recipe's structured data and save it directly to the book,
+// mirroring saveRecipeFromForm's recipe shape (see openImportedRecipe for the
+// interactive path). Returns true on success. The pending notif thumbnail
+// (recipe.image) becomes the dish photo since the parser doesn't return one.
+async function importMealPlanRecipeDirect(recipe) {
+  const url = normalizeRecipeUrlInput(recipe.url) || recipe.url;
+  try {
+    const fetched = await fetchRecipeWithBestAvailableMethod(url);
+    if (!fetched?.name && !(fetched?.ingredients || []).length) return false;
+    const id = createId("recipe");
+    const prepTime = (fetched.prepTime || "").trim();
+    const cookTime = (fetched.cookTime || "").trim();
+    const servings = Number(fetched.servings) || 1;
+    const saved = {
+      id,
+      name: (fetched.name || recipe.title || "Untitled recipe").trim(),
+      prepTime,
+      cookTime,
+      time: combinedRecipeTime({ prepTime, cookTime }) || (fetched.time || "").trim(),
+      servings,
+      defaultServings: servings,
+      folderId: "",
+      sourceUrl: (fetched.sourceUrl || url || "").trim(),
+      photoUrl: recipe.image || fetched.photoUrl || "",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      cookLog: [],
+      tags: [],
+      ingredients: normalizeIngredients(fetched.ingredients),
+      nutrition: normalizeNutritionFacts(fetched.nutrition),
+      nutritionEstimate: null,
+      ingredientNutritionMatches: [],
+      steps: normalizeInstructionSteps(fetched.steps).join("\n")
+    };
+    activeRecipes().push(saved);
+    persist();
+    saveRecipeRow(saved);
+    render();
+    if (saved.ingredients?.length) autoEstimateNutrition(saved.id);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function mealPlanNotifListBodyHtml(recipes) {
+  return `
+    <div class="eat-notif-head">New recipes</div>
+    ${recipes.length ? recipes.map((r) => `
+      <div class="eat-notif-row">
+        ${r.image ? `<a class="eat-notif-thumb-link" href="${escapeHtml(r.url)}" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true"><img class="eat-notif-thumb" src="${escapeHtml(r.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.closest('.eat-notif-thumb-link').remove()"></a>` : ""}
+        <div class="eat-notif-text">
+          <a class="eat-notif-item-title" href="${escapeHtml(r.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(r.title)}">${escapeHtml(r.title)}</a>
+          ${r.source ? `<span class="eat-notif-source">${escapeHtml(r.source)}</span>` : ""}
+        </div>
+        <div class="eat-notif-actions">
+          <button class="secondary-btn eat-notif-add" type="button" data-eat-notif-add="${escapeHtml(r.url)}">Add</button>
+          <button class="icon-btn eat-notif-dismiss" type="button" data-eat-notif-dismiss="${escapeHtml(r.url)}" title="Dismiss" aria-label="Dismiss">&times;</button>
+        </div>
+      </div>`).join("") : `<div class="eat-notif-empty">No new recipes.</div>`}`;
+}
+
+// Swipe view: one full-window card per recipe in a vertical scroll-snap deck.
+// Native up/down scroll browses between cards; a horizontal drag on a card
+// (wired in wireMealPlanNotifDelegation) dismisses left / adds right.
+function mealPlanNotifSwipeBodyHtml(recipes) {
+  if (!recipes.length) return `<div class="eat-notif-head">New recipes</div><div class="eat-notif-empty">No new recipes.</div>`;
+  return `
+    <div class="eat-swipe-deck" data-eat-swipe-deck>
+      ${recipes.map((r) => `
+        <div class="eat-swipe-card" data-swipe-url="${escapeHtml(r.url)}">
+          <div class="eat-swipe-action eat-swipe-action-del" aria-hidden="true">Dismiss</div>
+          <div class="eat-swipe-action eat-swipe-action-add" aria-hidden="true">Add</div>
+          <div class="eat-swipe-card-inner">
+            <div class="eat-swipe-media">
+              ${r.image
+                ? `<img src="${escapeHtml(r.image)}" alt="" referrerpolicy="no-referrer" loading="lazy" onerror="this.remove()">`
+                : ""}
+              <span class="eat-swipe-media-fallback" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 2v7a3 3 0 0 0 6 0V2M6 2v20M17 2c-1.7 0-3 2.7-3 6s1.3 5 3 5 3 .6 3 2v7"/></svg>
+              </span>
+            </div>
+            <div class="eat-swipe-meta">
+              <div class="eat-swipe-title">${escapeHtml(r.title)}</div>
+              ${r.source ? `<div class="eat-swipe-source">${escapeHtml(r.source)}</div>` : ""}
+              <a class="eat-swipe-view" href="${escapeHtml(r.url)}" target="_blank" rel="noopener noreferrer">View recipe ↗</a>
+            </div>
+            <div class="eat-swipe-hint"><span>← Dismiss</span><span>↑ ↓ browse</span><span>Add →</span></div>
+          </div>
+        </div>`).join("")}
+    </div>`;
+}
+
 function mealPlanNotifBellHtml() {
   const recipes = mealPlanRecipes || [];
   const count = recipes.length;
+  const swipe = mealPlanUsesSwipeView();
   const bellSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
   return `
     <div class="eat-notif-wrap">
@@ -9946,20 +10089,8 @@ function mealPlanNotifBellHtml() {
         ${count ? `<span class="eat-notif-badge">${count}</span>` : ""}
       </button>
       ${mealPlanNotifOpen ? `
-      <div class="eat-notif-panel">
-        <div class="eat-notif-head">New recipes</div>
-        ${recipes.length ? recipes.map((r) => `
-          <div class="eat-notif-row">
-            ${r.image ? `<a class="eat-notif-thumb-link" href="${escapeHtml(r.url)}" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true"><img class="eat-notif-thumb" src="${escapeHtml(r.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.closest('.eat-notif-thumb-link').remove()"></a>` : ""}
-            <div class="eat-notif-text">
-              <a class="eat-notif-item-title" href="${escapeHtml(r.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(r.title)}">${escapeHtml(r.title)}</a>
-              ${r.source ? `<span class="eat-notif-source">${escapeHtml(r.source)}</span>` : ""}
-            </div>
-            <div class="eat-notif-actions">
-              <button class="secondary-btn eat-notif-add" type="button" data-eat-notif-add="${escapeHtml(r.url)}">Add</button>
-              <button class="icon-btn eat-notif-dismiss" type="button" data-eat-notif-dismiss="${escapeHtml(r.url)}" title="Dismiss" aria-label="Dismiss">&times;</button>
-            </div>
-          </div>`).join("") : `<div class="eat-notif-empty">No new recipes.</div>`}
+      <div class="eat-notif-panel${swipe ? " eat-notif-panel-swipe" : ""}">
+        ${swipe ? mealPlanNotifSwipeBodyHtml(recipes) : mealPlanNotifListBodyHtml(recipes)}
       </div>` : ""}
     </div>`;
 }
@@ -9968,7 +10099,7 @@ function wireMealPlanNotifDelegation() {
   if (mealPlanNotifWired) return;
   mealPlanNotifWired = true;
   elements.plannerGrid.addEventListener("click", (e) => {
-    if (e.target.closest("[data-eat-notif-toggle]")) { mealPlanNotifOpen = !mealPlanNotifOpen; renderPlanner(); return; }
+    if (e.target.closest("[data-eat-notif-toggle]")) { mealPlanNotifOpen = !mealPlanNotifOpen; if (mealPlanNotifOpen) mealPlanSwipeIndex = 0; renderPlanner(); return; }
     const add = e.target.closest("[data-eat-notif-add]");
     if (add) { addMealPlanRecipe(add.dataset.eatNotifAdd); return; }
     const dismiss = e.target.closest("[data-eat-notif-dismiss]");
@@ -9980,6 +10111,69 @@ function wireMealPlanNotifDelegation() {
     mealPlanNotifOpen = false;
     renderPlanner();
   }, { capture: true });
+
+  // Track the centered card as the deck scrolls. scroll doesn't bubble, but the
+  // capture phase still reaches this ancestor listener on the way to the deck.
+  elements.plannerGrid.addEventListener("scroll", (e) => {
+    const deck = e.target.closest?.(".eat-swipe-deck");
+    if (!deck || !deck.clientHeight) return;
+    mealPlanSwipeIndex = Math.round(deck.scrollTop / deck.clientHeight);
+  }, { capture: true });
+
+  // Swipe-card gestures (touch only). A horizontal drag past threshold flings
+  // the card off and acts on it; a vertical drag is left to the deck's native
+  // scroll-snap so up/down browses between recipes.
+  let swipeCard = null, swipeStartX = 0, swipeStartY = 0, swipeAxis = null;
+  const swipeLabels = (card) => ({
+    add: card.querySelector(".eat-swipe-action-add"),
+    del: card.querySelector(".eat-swipe-action-del"),
+    inner: card.querySelector(".eat-swipe-card-inner")
+  });
+  elements.plannerGrid.addEventListener("touchstart", (e) => {
+    const card = e.target.closest(".eat-swipe-card");
+    swipeCard = card || null;
+    if (!card) return;
+    swipeStartX = e.touches[0].clientX;
+    swipeStartY = e.touches[0].clientY;
+    swipeAxis = null;
+  }, { passive: true });
+  elements.plannerGrid.addEventListener("touchmove", (e) => {
+    if (!swipeCard) return;
+    const dx = e.touches[0].clientX - swipeStartX;
+    const dy = e.touches[0].clientY - swipeStartY;
+    if (!swipeAxis) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      swipeAxis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+    }
+    if (swipeAxis !== "x") return; // vertical → let the deck scroll natively
+    e.preventDefault(); // we own this horizontal gesture now
+    const { add, del, inner } = swipeLabels(swipeCard);
+    if (inner) { inner.style.transition = "none"; inner.style.transform = `translateX(${dx}px) rotate(${dx * 0.02}deg)`; }
+    const t = Math.min(1, Math.abs(dx) / 120);
+    if (add) add.style.opacity = dx > 0 ? t : 0;
+    if (del) del.style.opacity = dx < 0 ? t : 0;
+  }, { passive: false });
+  elements.plannerGrid.addEventListener("touchend", (e) => {
+    if (!swipeCard) return;
+    const card = swipeCard; const axis = swipeAxis;
+    swipeCard = null; swipeAxis = null;
+    if (axis !== "x") return;
+    const dx = e.changedTouches[0].clientX - swipeStartX;
+    const { add, del, inner } = swipeLabels(card);
+    const url = card.dataset.swipeUrl;
+    const THRESH = 90;
+    if (dx > THRESH) {
+      if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = "translateX(120%) rotate(6deg)"; }
+      setTimeout(() => swipeAddMealPlanRecipe(url), 170); // let the fling show before the re-render
+    } else if (dx < -THRESH) {
+      if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = "translateX(-120%) rotate(-6deg)"; }
+      setTimeout(() => dismissMealPlanRecipe(url), 170);
+    } else {
+      if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = ""; }
+      if (add) add.style.opacity = 0;
+      if (del) del.style.opacity = 0;
+    }
+  }, { passive: true });
 }
 
 // The recipe-notifications panel is position:fixed so it can be much larger than
@@ -21932,6 +22126,8 @@ function renderMealTypesList() {
     btn.addEventListener("click", () => btn.closest("[data-mealtype-row]").remove());
   });
   bindConfigListDrag(list, "[data-mealtype-row]");
+  const swipeToggle = elements.mealPlanSettingsDialog.querySelector("#mealPlanSwipeToggle");
+  if (swipeToggle) swipeToggle.checked = config.notifView === "swipe";
 }
 
 function addMealType() {
@@ -21999,7 +22195,9 @@ function saveMealPlanMealTypes() {
   });
   if (!newTypes.length) { alert("At least one meal type is required."); return; }
   const oldConfig = normalizeMealPlanConfig(state.mealPlanConfig);
-  state.mealPlanConfig = normalizeMealPlanConfig({ ...state.mealPlanConfig, mealTypes: newTypes });
+  const swipeToggle = elements.mealPlanSettingsDialog.querySelector("#mealPlanSwipeToggle");
+  const notifView = swipeToggle?.checked ? "swipe" : "list";
+  state.mealPlanConfig = normalizeMealPlanConfig({ ...state.mealPlanConfig, mealTypes: newTypes, notifView });
   const newConfig = normalizeMealPlanConfig(state.mealPlanConfig);
   recomputeMealPlanLayout();
   applyMealPlanConfigChange(oldConfig, newConfig);
@@ -23728,7 +23926,7 @@ function renderPlanner() {
   restorePlannerCarouselState(previousCarouselState, activeDay.id);
   updateTabIndicator(elements.plannerGrid);
   wireMealPlanNotifDelegation();
-  if (mealPlanNotifOpen) positionMealPlanNotifPanel();
+  if (mealPlanNotifOpen) { positionMealPlanNotifPanel(); restoreMealPlanSwipeScroll(); }
 }
 
 function currentPlannerCarouselState() {

@@ -7159,7 +7159,7 @@ textarea {
   text-align: center;
 }
 
-.recipe-form label:not(.travel-leg-mode-radio):not(.toggle-switch):not(.act-endloc-toggle):not(.group-page-toggle-row):not(.add-task-time-row):not(.plan-todo-toggle) {
+.recipe-form label:not(.travel-leg-mode-radio):not(.toggle-switch):not(.act-endloc-toggle):not(.group-page-toggle-row):not(.add-task-time-row):not(.plan-todo-toggle):not(.mealplan-notifview-row) {
   display: grid;
   gap: 6px;
   color: #4f493f;
@@ -20139,6 +20139,94 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .eat-notif-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
 .eat-notif-add { flex: 0 0 auto; font-size: 0.72rem; padding: 4px 10px; min-height: 26px; }
 .eat-notif-dismiss { flex: 0 0 auto; width: 24px; height: 24px; color: var(--muted); }
+
+/* Swipe view: the panel becomes a fixed-height frame whose inner deck scrolls
+   one full-window card at a time. */
+.eat-notif-panel-swipe { padding: 0; overflow: hidden; display: flex; }
+.eat-swipe-deck {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-snap-type: y mandatory;
+  -webkit-overflow-scrolling: touch;
+}
+.eat-swipe-card {
+  position: relative;
+  height: 100%;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+  overflow: hidden;
+}
+/* Action hints revealed behind the card as it's dragged sideways. */
+.eat-swipe-action {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 45%;
+  display: flex;
+  align-items: center;
+  font-size: 1.4rem;
+  font-weight: 850;
+  letter-spacing: 0.02em;
+  color: #fff;
+  opacity: 0;
+  pointer-events: none;
+  text-transform: uppercase;
+}
+.eat-swipe-action-add { right: 0; justify-content: flex-end; padding-right: 26px; background: linear-gradient(90deg, transparent, var(--accent)); }
+.eat-swipe-action-del { left: 0; justify-content: flex-start; padding-left: 26px; background: linear-gradient(-90deg, transparent, #c0524b); }
+.eat-swipe-card-inner {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--window-bg);
+  will-change: transform;
+  touch-action: pan-y;
+}
+.eat-swipe-media {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  overflow: hidden;
+}
+.eat-swipe-media img { width: 100%; height: 100%; object-fit: cover; }
+.eat-swipe-media-fallback { position: absolute; color: var(--muted); opacity: 0.5; }
+.eat-swipe-media img ~ .eat-swipe-media-fallback { display: none; }
+.eat-swipe-meta { flex: 0 0 auto; padding: 16px 18px 6px; display: flex; flex-direction: column; gap: 6px; }
+.eat-swipe-title { font-size: 1.15rem; font-weight: 850; line-height: 1.25; color: var(--ink); }
+.eat-swipe-source { font-size: 0.78rem; font-weight: 700; color: var(--muted); }
+.eat-swipe-view { font-size: 0.82rem; font-weight: 700; color: var(--accent); text-decoration: none; }
+.eat-swipe-view:hover { text-decoration: underline; }
+.eat-swipe-hint {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 18px 16px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+/* Meal Plan Settings — list/swipe view toggle row. */
+.mealplan-notifview-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--ink);
+}
 
 /* Portrait-only guard: the app's pages aren't laid out for landscape, so on a
    phone held sideways cover the UI with a rotate prompt. Belt-and-suspenders
