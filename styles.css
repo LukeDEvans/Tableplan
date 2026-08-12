@@ -15840,115 +15840,98 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   z-index: 900;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
+/* Thin non-interactive episode-progress line pinned to the top edge. */
+.mini-player-progress {
+  height: 3px;
+  width: 100%;
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
+  flex-shrink: 0;
+}
+.mini-player-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent, #92400E);
+  transition: width 0.25s linear;
+}
 .mini-player-body {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 16px 12px;
-  height: 68px;
-}
-/* Seek scale + elapsed / remaining (now the top row), shared by podcasts and
-   article read-aloud. */
-.mini-player-seek {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 16px 2px;
-}
-.mini-player-time {
-  font-size: 0.7rem;
-  color: var(--text-muted, #888);
-  font-variant-numeric: tabular-nums;
-  min-width: 5ch;
-  flex-shrink: 0;
-}
-.mini-player-time-right { text-align: right; }
-.mini-player-seek-bar {
-  flex: 1;
-  min-width: 0;
-  height: 4px;
-  -webkit-appearance: none;
-  appearance: none;
-  background: color-mix(in srgb, var(--ink) 14%, transparent);
-  border-radius: 3px;
-  cursor: pointer;
-}
-.mini-player-seek-bar::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--accent, #92400E);
-  cursor: pointer;
-}
-.mini-player-seek-bar::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
-  border: none;
-  border-radius: 50%;
-  background: var(--accent, #92400E);
-  cursor: pointer;
-}
-.mini-player-left {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: none;
-  border: none;
+  align-items: stretch;   /* lets the art fill the full bar height */
+  height: 60px;
   padding: 0;
-  text-align: left;
-  cursor: pointer;
-  border-radius: 8px;
-  transition: background 0.1s;
 }
-.mini-player-left:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
-.mini-player-art {
-  width: 44px;
-  height: 44px;
-  border-radius: 7px;
-  object-fit: cover;
+/* Episode art: flush to the bottom-left corner, full height, square, no margin. */
+.mini-player-art-btn {
   flex-shrink: 0;
-}
-.mini-player-text { min-width: 0; }
-.mini-player-title {
-  flex: 1 1 0;
-  min-width: 0;
-  font-size: 0.86rem;
-  font-weight: 600;
-  white-space: nowrap;
+  height: 100%;
+  aspect-ratio: 1 / 1;
+  padding: 0;
+  border: none;
+  background: color-mix(in srgb, var(--accent, #92400E) 12%, transparent);
+  color: var(--accent, #92400E);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+.mini-player-art {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 0;
+  display: block;
+}
+.mini-player-art[hidden] + .mini-player-art-fallback { display: flex; }
+.mini-player-art-fallback { display: none; align-items: center; justify-content: center; }
+.mini-player-art:not([hidden]) ~ .mini-player-art-fallback { display: none; }
+/* Title — clips its overflow; the inner span slides (marquee) when it can't fit. */
+.mini-player-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+}
+.mini-player-title-inner {
+  display: inline-block;
+  white-space: nowrap;
+  font-size: 0.9rem;
+  font-weight: 600;
   color: var(--ink, #222);
   line-height: 1.3;
+  will-change: transform;
 }
-/* Show / publication — pushed to the far right so it isn't clipped in the
-   phone's corner; balances the title on the left with the controls centered. */
-.mini-player-show {
-  flex: 1 1 0;
-  min-width: 0;
-  text-align: right;
-  font-size: 0.78rem;
-  color: var(--text-muted, #888);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.mini-player-title.is-scrolling {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+}
+.mini-player-title.is-scrolling .mini-player-title-inner {
+  animation: mini-marquee var(--marquee-dur, 12s) ease-in-out infinite;
+}
+@keyframes mini-marquee {
+  0%, 12%  { transform: translateX(0); }
+  50%, 62% { transform: translateX(var(--marquee-shift, 0)); }
+  100%     { transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mini-player-title.is-scrolling .mini-player-title-inner { animation: none; }
 }
 .mini-player-controls {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  padding: 0 12px 0 4px;
 }
-/* Rewind / fast-forward — bigger and clearly tappable. */
+/* Rewind 10s — thin circular arrow with a centered "10". */
 .mini-player-skip-btn {
-  width: 46px;
-  height: 46px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   border: none;
   background: none;
@@ -15963,8 +15946,8 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
 .mini-player-skip-btn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .mini-player-skip-btn:active { transform: scale(0.92); }
 .mini-player-play-btn {
-  width: 54px;
-  height: 54px;
+  width: 48px;
+  height: 48px;
   border-radius: 50%;
   background: var(--accent, #92400E);
   color: white;
@@ -15975,24 +15958,23 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   cursor: pointer;
   flex-shrink: 0;
   transition: transform 0.1s, opacity 0.12s;
-  margin: 0 2px;
   box-shadow: 0 2px 8px color-mix(in srgb, var(--accent, #92400E) 40%, transparent);
 }
 .mini-player-play-btn:hover { opacity: 0.9; }
 .mini-player-play-btn:active { transform: scale(0.93); }
 .mini-player-play-btn svg { display: block; }
 
-/* Nudge body up so content isn't permanently hidden behind the (taller) bar */
-body.has-mini-player .app-shell { padding-bottom: 108px; }
+/* Nudge body content up so it isn't hidden behind the fixed bar (progress 3px
+   + body 60px). */
+body.has-mini-player .app-shell { padding-bottom: 84px; }
 body.has-mini-player .article-list,
 body.has-mini-player .podcast-list-panel .article-list,
-body.has-mini-player .mail-list { padding-bottom: 108px; }
+body.has-mini-player .mail-list { padding-bottom: 84px; }
 
 @media (max-width: 640px) {
-  .mini-player-body { padding: 6px 12px 12px; height: 66px; gap: 8px; }
-  .mini-player-art { width: 40px; height: 40px; }
-  /* Keep the title from crowding the controls on a narrow phone. */
-  .mini-player-left { flex: 1 1 0; }
+  .mini-player-body { height: 56px; }
+  .mini-player-play-btn { width: 46px; height: 46px; }
+  .mini-player-skip-btn { width: 42px; height: 42px; }
 }
 
 /* ── AI Recipe Toolbar ────────────────────────────────────────────────────── */

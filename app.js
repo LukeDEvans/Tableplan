@@ -39764,23 +39764,22 @@ function setMiniPlayer(title, subtitle, art) {
   const el = document.getElementById("miniPlayer");
   if (!el) return;
   const t = document.getElementById("miniPlayerTitle");
-  const s = document.getElementById("miniPlayerShow");
   const a = document.getElementById("miniPlayerArt");
   if (t) t.textContent = title;
-  if (s) s.textContent = subtitle;
   if (a) { a.src = art || ""; a.hidden = !art; }
   el.hidden = false;
   document.body.classList.add("has-mini-player");
   updateMiniPlayerPlayBtn();
   updateMiniPlayerProgress();
+  setupMiniPlayerMarquee();
 }
 
 function hideMiniPlayer() {
   const el = document.getElementById("miniPlayer");
   if (el) el.hidden = true;
   document.body.classList.remove("has-mini-player");
-  const seek = document.getElementById("miniPlayerSeek");
-  if (seek) seek.value = 0;
+  const fill = document.getElementById("miniPlayerProgressFill");
+  if (fill) fill.style.width = "0%";
 }
 
 function updateMiniPlayerPlayBtn() {
@@ -39794,29 +39793,36 @@ function updateMiniPlayerPlayBtn() {
     : `<polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>`;
 }
 
-let miniPlayerScrubbing = false;
 function updateMiniPlayerProgress() {
-  if (miniPlayerScrubbing) return;
   const cur = nowPlayingElapsed();
   const total = nowPlayingTotal();
-  const seek = document.getElementById("miniPlayerSeek");
-  const curEl = document.getElementById("miniPlayerCurTime");
-  const remEl = document.getElementById("miniPlayerRemTime");
-  if (seek) seek.value = total ? Math.round((cur / total) * 1000) : 0;
-  if (curEl) curEl.textContent = formatPodcastDuration(Math.floor(cur));
-  if (remEl) remEl.textContent = total ? "-" + formatPodcastDuration(Math.max(0, Math.floor(total - cur))) : "--:--";
+  const fill = document.getElementById("miniPlayerProgressFill");
+  if (fill) fill.style.width = (total ? Math.min(100, Math.max(0, (cur / total) * 100)) : 0) + "%";
+}
+
+// Slide the title across (ping-pong marquee) only when it overflows its space.
+function setupMiniPlayerMarquee() {
+  const wrap = document.getElementById("miniPlayerTitleWrap");
+  const inner = document.getElementById("miniPlayerTitle");
+  if (!wrap || !inner) return;
+  wrap.classList.remove("is-scrolling");
+  inner.style.removeProperty("--marquee-shift");
+  inner.style.removeProperty("--marquee-dur");
+  requestAnimationFrame(() => {
+    const overflow = inner.scrollWidth - wrap.clientWidth;
+    if (overflow > 6) {
+      const shift = overflow + 12; // drift a touch past the end before returning
+      inner.style.setProperty("--marquee-shift", `-${shift}px`);
+      inner.style.setProperty("--marquee-dur", `${Math.max(9, Math.round(shift / 28) + 6)}s`);
+      wrap.classList.add("is-scrolling");
+    }
+  });
 }
 
 function wireMiniPlayer() {
   document.getElementById("miniPlayerPlayPause")?.addEventListener("click", nowPlayingToggle);
-  document.getElementById("miniPlayerSkipBack")?.addEventListener("click", () => nowPlayingSkip(-15));
-  document.getElementById("miniPlayerSkipFwd")?.addEventListener("click", () => nowPlayingSkip(30));
+  document.getElementById("miniPlayerSkipBack")?.addEventListener("click", () => nowPlayingSkip(-10));
   document.getElementById("miniPlayerInfoBtn")?.addEventListener("click", nowPlayingOpen);
-  const seek = document.getElementById("miniPlayerSeek");
-  if (seek) {
-    seek.addEventListener("input", () => { miniPlayerScrubbing = true; });
-    seek.addEventListener("change", () => { nowPlayingSeekFraction(Number(seek.value) / 1000); miniPlayerScrubbing = false; });
-  }
 }
 
 function goToOpenEpisode() {

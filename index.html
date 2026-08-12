@@ -3463,21 +3463,28 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <!-- Persistent mini-player (shown whenever podcast audio is loaded) -->
     <div class="mini-player" id="miniPlayer" hidden aria-label="Now playing" role="region">
-      <div class="mini-player-seek">
-        <span class="mini-player-time" id="miniPlayerCurTime">0:00</span>
-        <input type="range" class="mini-player-seek-bar" id="miniPlayerSeek" min="0" max="1000" value="0" step="1" aria-label="Seek">
-        <span class="mini-player-time mini-player-time-right" id="miniPlayerRemTime">0:00</span>
+      <!-- Thin non-interactive progress line across the very top -->
+      <div class="mini-player-progress" aria-hidden="true">
+        <div class="mini-player-progress-fill" id="miniPlayerProgressFill"></div>
       </div>
       <div class="mini-player-body">
-        <button class="mini-player-left" type="button" id="miniPlayerInfoBtn" aria-label="Open what's playing">
+        <!-- Episode art: flush far-left, full height of the bar, no margin -->
+        <button class="mini-player-art-btn" type="button" id="miniPlayerInfoBtn" aria-label="Open what's playing">
           <img class="mini-player-art" id="miniPlayerArt" src="" alt="" hidden>
-          <div class="mini-player-title" id="miniPlayerTitle"></div>
+          <span class="mini-player-art-fallback" id="miniPlayerArtFallback" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+          </span>
         </button>
+        <!-- Title scrolls (marquee) when it can't fit -->
+        <div class="mini-player-title" id="miniPlayerTitleWrap">
+          <span class="mini-player-title-inner" id="miniPlayerTitle"></span>
+        </div>
         <div class="mini-player-controls">
-          <button class="mini-player-skip-btn" type="button" id="miniPlayerSkipBack" title="Back 15 seconds" aria-label="Skip back 15 seconds">
-            <svg viewBox="0 0 24 24" aria-hidden="true" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 5V1L7 6l5 5V7a7 7 0 1 1-7 7"/>
-              <text x="12.5" y="17" font-size="7" fill="currentColor" stroke="none" font-weight="700" text-anchor="middle">15</text>
+          <button class="mini-player-skip-btn" type="button" id="miniPlayerSkipBack" title="Back 10 seconds" aria-label="Skip back 10 seconds">
+            <svg viewBox="0 0 24 24" aria-hidden="true" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/>
+              <path d="M3 3v5h5"/>
+              <text x="12.6" y="15.4" font-size="8.5" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none">10</text>
             </svg>
           </button>
           <button class="mini-player-play-btn" type="button" id="miniPlayerPlayPause" aria-label="Play">
@@ -3485,14 +3492,7 @@
               <polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>
             </svg>
           </button>
-          <button class="mini-player-skip-btn" type="button" id="miniPlayerSkipFwd" title="Forward 30 seconds" aria-label="Skip forward 30 seconds">
-            <svg viewBox="0 0 24 24" aria-hidden="true" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 5V1l5 5-5 5V7a7 7 0 1 0 7 7"/>
-              <text x="11.5" y="17" font-size="7" fill="currentColor" stroke="none" font-weight="700" text-anchor="middle">30</text>
-            </svg>
-          </button>
         </div>
-        <div class="mini-player-show" id="miniPlayerShow"></div>
       </div>
     </div>
 
