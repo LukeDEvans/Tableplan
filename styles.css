@@ -15935,7 +15935,7 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   border-radius: 50%;
   border: none;
   background: none;
-  color: var(--ink, #222);
+  color: var(--window-border);   /* navy, matching play/pause */
   display: flex;
   align-items: center;
   justify-content: center;
