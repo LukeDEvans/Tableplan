@@ -39844,6 +39844,7 @@ function updateMiniPlayerPlayBtn() {
   icon.innerHTML = playing
     ? `<rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/>`
     : `<polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>`;
+  updateNowPlayingModal();
 }
 
 function updateMiniPlayerProgress() {
@@ -39851,6 +39852,7 @@ function updateMiniPlayerProgress() {
   const total = nowPlayingTotal();
   const fill = document.getElementById("miniPlayerProgressFill");
   if (fill) fill.style.width = (total ? Math.min(100, Math.max(0, (cur / total) * 100)) : 0) + "%";
+  updateNowPlayingModal();
 }
 
 // Slide the title across (ping-pong marquee) only when it overflows its space.
@@ -39875,7 +39877,112 @@ function setupMiniPlayerMarquee() {
 function wireMiniPlayer() {
   document.getElementById("miniPlayerPlayPause")?.addEventListener("click", nowPlayingToggle);
   document.getElementById("miniPlayerSkipBack")?.addEventListener("click", () => nowPlayingSkip(-10));
-  document.getElementById("miniPlayerInfoBtn")?.addEventListener("click", nowPlayingOpen);
+  // Tapping anywhere on the bar except the rewind / play-pause controls opens
+  // the full Now-Playing window.
+  document.getElementById("miniPlayer")?.addEventListener("click", (e) => {
+    if (e.target.closest(".mini-player-controls")) return;
+    openNowPlayingModal();
+  });
+}
+
+// ── Now-Playing modal: full info about the current audio, over any page ───────
+function nowPlayingInfo() {
+  const kind = nowPlayingKind();
+  if (kind === "podcast") {
+    const found = findPodcastEpisode(openPodcastEpisodeId);
+    const ep = found?.episode, sh = found?.show;
+    if (!ep) return null;
+    return {
+      art: ep.art || sh?.art || "",
+      title: ep.title || "",
+      show: sh?.title || "",
+      date: ep.pubDate ? formatArticleDate(ep.pubDate) : "",
+      desc: String(ep.description || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+    };
+  }
+  if (kind === "tts") {
+    const a = listenArticle;
+    return {
+      art: a ? articleArtUrl(a) : "",
+      title: a?.title || "Now playing",
+      show: a?.author || a?.publication || "",
+      date: a?.pubDate ? formatArticleDate(a.pubDate) : "",
+      desc: String(a?.text || a?.excerpt || "").replace(/\s+/g, " ").trim().slice(0, 2000),
+    };
+  }
+  return null;
+}
+
+function openNowPlayingModal() {
+  const info = nowPlayingInfo();
+  if (!info) return;
+  document.getElementById("nowPlayingOverlay")?.remove();
+  const overlay = document.createElement("div");
+  overlay.id = "nowPlayingOverlay";
+  overlay.className = "np-overlay";
+  overlay.innerHTML = `
+    <div class="np-modal" role="dialog" aria-modal="true" aria-label="Now playing">
+      <button class="np-close" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+      <div class="np-head">
+        ${info.art ? `<img class="np-art" src="${escapeHtml(info.art)}" alt="" onerror="this.style.display='none'">` : `<div class="np-art np-art--ph"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div>`}
+        <div class="np-meta">
+          ${info.show ? `<div class="np-show">${escapeHtml(info.show)}</div>` : ""}
+          <h2 class="np-title">${escapeHtml(info.title)}</h2>
+          ${info.date ? `<div class="np-date">${escapeHtml(info.date)}</div>` : ""}
+        </div>
+      </div>
+      <div class="np-seek-row">
+        <span class="np-time" id="npCur">0:00</span>
+        <input type="range" class="np-seek" id="npSeek" min="0" max="1000" value="0" step="1" aria-label="Seek">
+        <span class="np-time np-time-right" id="npRem">-0:00</span>
+      </div>
+      <div class="np-controls">
+        <button class="np-ctrl" id="npBack" type="button" aria-label="Back 10 seconds">
+          <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.3a8.4 8.4 0 1 1-7.9 5.4"/><path d="M12 2 8 4.3 12 6.6Z" fill="currentColor" stroke="none"/><text x="12" y="15.6" font-size="8.4" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none">10</text></svg>
+        </button>
+        <button class="np-play" id="npPlay" type="button" aria-label="Play"></button>
+        <button class="np-ctrl" id="npFwd" type="button" aria-label="Forward 30 seconds">
+          <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.3a8.4 8.4 0 1 0 7.9 5.4"/><path d="M12 2 16 4.3 12 6.6Z" fill="currentColor" stroke="none"/><text x="12" y="15.6" font-size="8" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none">30</text></svg>
+        </button>
+      </div>
+      <div class="np-desc${info.desc ? "" : " np-desc--empty"}">${info.desc ? escapeHtml(info.desc) : "No description available."}</div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.querySelector(".np-close").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  document.addEventListener("keydown", function onEsc(e) {
+    if (e.key === "Escape") { close(); document.removeEventListener("keydown", onEsc); }
+  });
+  overlay.querySelector("#npPlay").addEventListener("click", () => { nowPlayingToggle(); updateNowPlayingModal(); });
+  overlay.querySelector("#npBack").addEventListener("click", () => nowPlayingSkip(-10));
+  overlay.querySelector("#npFwd").addEventListener("click", () => nowPlayingSkip(30));
+  const seek = overlay.querySelector("#npSeek");
+  seek.addEventListener("input", () => { overlay.dataset.scrubbing = "1"; });
+  seek.addEventListener("change", () => { nowPlayingSeekFraction(Number(seek.value) / 1000); delete overlay.dataset.scrubbing; updateNowPlayingModal(); });
+  updateNowPlayingModal();
+}
+
+function updateNowPlayingModal() {
+  const overlay = document.getElementById("nowPlayingOverlay");
+  if (!overlay) return;
+  const cur = nowPlayingElapsed(), total = nowPlayingTotal();
+  const seek = overlay.querySelector("#npSeek");
+  if (seek && overlay.dataset.scrubbing !== "1") seek.value = total ? Math.round((cur / total) * 1000) : 0;
+  const c = overlay.querySelector("#npCur"), r = overlay.querySelector("#npRem");
+  if (c) c.textContent = formatPodcastDuration(Math.floor(cur));
+  if (r) r.textContent = total ? "-" + formatPodcastDuration(Math.max(0, Math.floor(total - cur))) : "--:--";
+  const play = overlay.querySelector("#npPlay");
+  if (play) {
+    const playing = nowPlayingIsPlaying();
+    play.setAttribute("aria-label", playing ? "Pause" : "Play");
+    play.innerHTML = playing
+      ? `<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/></svg>`
+      : `<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4" fill="currentColor"/></svg>`;
+  }
 }
 
 function goToOpenEpisode() {
