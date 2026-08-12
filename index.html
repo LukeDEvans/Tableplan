@@ -692,20 +692,25 @@
         <section class="planner-column do-column contacts-page" id="contactsMainPage" aria-label="Contacts" hidden>
           <div class="contacts-page-inner">
             <div class="contacts-toolbar">
+              <button class="icon-btn mail-sidebar-toggle contacts-sidebar-toggle" type="button" id="contactsSidebarToggle" title="Toggle groups" aria-label="Toggle groups">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+              </button>
               <div class="contacts-search-wrap">
                 <input type="search" id="contactsSearchInput" class="contacts-search-input" placeholder="Search contacts…" aria-label="Search contacts" autocomplete="off" />
               </div>
-              <select id="contactsGroupFilter" class="contacts-group-filter" aria-label="Filter by group">
-                <option value="">All groups</option>
-              </select>
               <input type="file" id="contactsImportInput" accept=".vcf,text/vcard,text/x-vcard" hidden />
               <button class="icon-btn std-add-btn" type="button" id="contactsAddBtn" aria-label="Add contact" title="Add contact">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
               </button>
             </div>
-            <div class="contacts-body">
-              <div class="contacts-grid" id="contactsGrid"></div>
-              <div class="contacts-rail" id="contactsRail" hidden aria-label="Jump to letter"></div>
+            <div class="contacts-layout">
+              <aside class="contacts-sidebar" id="contactsSidebar" aria-label="Contact groups">
+                <nav class="contacts-group-nav" id="contactsGroupNav" role="tablist"></nav>
+              </aside>
+              <div class="contacts-body">
+                <div class="contacts-grid" id="contactsGrid"></div>
+                <div class="contacts-rail" id="contactsRail" hidden aria-label="Jump to letter"></div>
+              </div>
             </div>
           </div>
         </section>

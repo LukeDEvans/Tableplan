@@ -11445,6 +11445,83 @@ body.touch-drag-active * {
 .contacts-page-inner { display: flex; flex-direction: column; gap: 14px; height: 100%; min-height: 0; padding: 14px clamp(10px, 3vw, 28px) 20px; }
 .contacts-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .contacts-search-wrap { flex: 1 1 220px; min-width: 0; }
+
+/* ── Group sidebar (folder-style single-select, like the Mail label list) ──── */
+.contacts-layout { display: flex; flex: 1; min-height: 0; gap: 12px; position: relative; }
+.contacts-sidebar {
+  width: 210px;
+  flex-shrink: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+}
+/* The group list scrolls independently of the grid and the rest of the page. */
+.contacts-group-nav { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; gap: 1px; padding-right: 6px; }
+.contacts-group-row { display: flex; align-items: center; position: relative; }
+.contacts-group-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 7px 12px;
+  border: none;
+  background: none;
+  border-radius: 0 999px 999px 0;
+  font-family: inherit;
+  font-size: 0.875rem;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s;
+}
+.contacts-group-item:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.contacts-group-item.is-active { background: color-mix(in srgb, var(--accent, #1a73e8) 14%, transparent); font-weight: 700; }
+.contacts-group-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contacts-group-count { flex-shrink: 0; font-size: 0.75rem; color: var(--text-muted, #888); font-weight: 600; }
+.contacts-group-item.is-active .contacts-group-count { color: inherit; }
+.contacts-group-menu {
+  flex-shrink: 0;
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: none; cursor: pointer;
+  border-radius: 50%;
+  color: var(--text-muted, #888);
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s;
+}
+.contacts-group-row:hover .contacts-group-menu, .contacts-group-menu:focus-visible { opacity: 1; }
+.contacts-group-menu:hover { background: color-mix(in srgb, var(--ink) 12%, transparent); color: var(--ink); }
+.contacts-group-menu svg { width: 16px; height: 16px; fill: currentColor; }
+.contacts-group-divider { height: 1px; background: color-mix(in srgb, var(--ink) 10%, transparent); margin: 6px 8px; flex-shrink: 0; }
+.contacts-group-empty { font-size: 0.8rem; color: var(--text-muted, #888); padding: 4px 12px; }
+.contacts-group-new { color: var(--text-muted, #888); margin-top: 4px; }
+.contacts-group-new-icon { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2; fill: none; flex-shrink: 0; }
+.contacts-group-menu-popover { position: fixed; right: auto; top: auto; z-index: 400; }
+/* Desktop keeps the sidebar always open; the hamburger is mobile-only. */
+.contacts-sidebar-toggle { display: none; }
+@media (max-width: 860px) {
+  .contacts-sidebar-toggle { display: inline-flex; }
+  .contacts-sidebar {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 0;
+    z-index: 20;
+    background: var(--surface, #fff);
+    border-right: none;
+    transition: width 0.18s ease;
+  }
+  .contacts-sidebar.is-expanded {
+    width: 232px;
+    border-right: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+    box-shadow: 2px 0 12px rgba(0,0,0,0.12);
+    padding: 4px 0;
+  }
+  /* Touch has no hover, so the per-group ⋯ menu is always shown there. */
+  .contacts-group-menu { opacity: 1; }
+}
 .contacts-search-input {
   width: 100%; padding: 9px 12px; border-radius: 10px;
   border: 1px solid var(--border, #d5dbe2); background: var(--card-bg, #fff); color: inherit; font-size: 0.95rem;

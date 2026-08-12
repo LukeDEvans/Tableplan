@@ -220,7 +220,7 @@ const STATE_SECTIONS = {
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
-  contacts:  ["contacts"],
+  contacts:  ["contacts", "contactGroups"],
 };
 
 // ── Household vs personal data scoping ────────────────────────────────────────
@@ -1613,7 +1613,9 @@ function bindEvents() {
   elements.titleContactsBtn?.addEventListener("click", showContactsApp);
   elements.contactsAddBtn?.addEventListener("click", () => openContactDialog(null));
   elements.contactsSearchInput?.addEventListener("input", () => renderContactsPage());
-  document.getElementById("contactsGroupFilter")?.addEventListener("change", () => renderContactsPage());
+  document.getElementById("contactsSidebarToggle")?.addEventListener("click", () => {
+    document.getElementById("contactsSidebar")?.classList.toggle("is-expanded");
+  });
   document.getElementById("closeContactDialogBtn")?.addEventListener("click", () => elements.contactEditDialog.close());
   document.getElementById("saveContactBtn")?.addEventListener("click", saveContact);
   document.getElementById("deleteContactBtn")?.addEventListener("click", deleteContact);
@@ -3257,6 +3259,7 @@ function defaultState() {
     planEvents: [],
     planHiddenSources: {},
     contacts: [],
+    contactGroups: [],
     groceryReviewDismissed: {},
     activeCooking: [],
     weeklyEmailSettings: defaultWeeklyEmailSettings(),
@@ -3462,6 +3465,7 @@ function normalizeState(parsed) {
     planCalendars: normalizePlanCalendars(parsed?.planCalendars),
     planHiddenSources: (parsed?.planHiddenSources && typeof parsed.planHiddenSources === "object") ? parsed.planHiddenSources : {},
     contacts: normalizeContacts(parsed?.contacts),
+    contactGroups: normalizeContactGroups(parsed?.contactGroups),
     mealPlanConfig,
     appName: typeof parsed?.appName === "string" ? parsed.appName.trim() : "",
     travelHome: typeof parsed?.travelHome === "string" ? parsed.travelHome.trim() : "",
@@ -5425,6 +5429,7 @@ function mergeStates(newer, older) {
   merged.pantry = unionStrings(newer.pantry, older.pantry);
   merged.persistentManualGroceries = unionStrings(newer.persistentManualGroceries, older.persistentManualGroceries);
   merged.recipeTags = unionStrings(newer.recipeTags, older.recipeTags);
+  merged.contactGroups = unionStrings(newer.contactGroups, older.contactGroups);
   merged.readArticleIds = unionStrings(newer.readArticleIds, older.readArticleIds);
   merged.podcastSaved = unionStrings(newer.podcastSaved, older.podcastSaved);
   merged.podcastQueue = unionStrings(newer.podcastQueue, older.podcastQueue);
@@ -33447,11 +33452,30 @@ function normalizeContacts(list) {
   }).filter((c) => c.name) : [];
 }
 
+// The explicit groups registry lets a group exist (and stay selectable in the
+// sidebar) even with zero contacts in it — the way an empty email folder or an
+// unused calendar still shows. Deduped, trimmed, non-empty.
+function normalizeContactGroups(list) {
+  return Array.isArray(list) ? [...new Set(list.map((g) => String(g || "").trim()).filter(Boolean))] : [];
+}
+
+// The sidebar's group list = the registry UNIONED with every group actually in
+// use on a contact, so pre-existing groups (added before the registry existed,
+// or typed straight into the contact editor) still appear. Sorted A–Z.
+function allContactGroups() {
+  const set = new Set(normalizeContactGroups(state.contactGroups));
+  (state.contacts || []).forEach((c) => (c.groups || []).forEach((g) => { const t = String(g || "").trim(); if (t) set.add(t); }));
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
 // ── Contacts page ─────────────────────────────────────────────────────────────
 const CONTACT_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const CONTACT_MONTH_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 let editingContactId = null;
 let contactPhotoDraft = "";
+// Which group the sidebar has selected ("" = All Contacts). Single-select
+// navigation, mirroring the Mail folder list.
+let contactsSelectedGroup = "";
 
 function contactInitials(name) {
   return (name || "").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("") || "?";
@@ -33492,16 +33516,13 @@ function renderContactsPage() {
   const grid = elements.contactsGrid;
   if (!grid) return;
   const all = state.contacts || [];
-  // Populate the group filter from the groups actually in use (keep selection).
-  const filterSel = document.getElementById("contactsGroupFilter");
-  if (filterSel) {
-    const groups = [...new Set(all.flatMap((c) => c.groups || []))].sort((a, b) => a.localeCompare(b));
-    const prev = filterSel.value;
-    filterSel.innerHTML = `<option value="">All groups</option>` + groups.map((g) => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join("");
-    filterSel.value = groups.includes(prev) ? prev : "";
-  }
+  // The group sidebar (folder-style single-select) replaces the old dropdown.
+  renderContactsGroupSidebar();
   const q = (elements.contactsSearchInput?.value || "").trim().toLowerCase();
-  const group = filterSel?.value || "";
+  // A selected group that no longer exists (renamed/deleted elsewhere) falls
+  // back to "All Contacts".
+  if (contactsSelectedGroup && !allContactGroups().includes(contactsSelectedGroup)) contactsSelectedGroup = "";
+  const group = contactsSelectedGroup;
   const sort = "last"; // always sort by last name (favorites still lead)
   let contacts = [...all];
   if (group) contacts = contacts.filter((c) => (c.groups || []).includes(group));
@@ -33571,6 +33592,123 @@ function renderContactsRail(keys) {
       elements.contactsGrid?.querySelector(`.contact-section-head[data-section="${CSS.escape(btn.dataset.rail)}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" });
     });
   });
+}
+
+// The group sidebar — folder-style single-select navigation, like the Mail
+// label list. "All Contacts" plus one item per group (with a live count), a
+// New-group button, and a per-group ⋯ menu for rename/delete.
+function renderContactsGroupSidebar() {
+  const nav = document.getElementById("contactsGroupNav");
+  if (!nav) return;
+  const all = state.contacts || [];
+  const groups = allContactGroups();
+  const countIn = (g) => all.filter((c) => (c.groups || []).includes(g)).length;
+  const item = (group, label, count) => {
+    const active = contactsSelectedGroup === group;
+    const menu = group
+      ? `<button class="contacts-group-menu" type="button" data-group-menu="${escapeHtml(group)}" aria-label="Group options" title="Group options"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>`
+      : "";
+    return `
+      <div class="contacts-group-row">
+        <button class="contacts-group-item${active ? " is-active" : ""}" type="button" data-group="${escapeHtml(group)}" role="tab" aria-selected="${active}">
+          <span class="contacts-group-name">${escapeHtml(label)}</span>
+          ${count != null ? `<span class="contacts-group-count">${count}</span>` : ""}
+        </button>
+        ${menu}
+      </div>`;
+  };
+  nav.innerHTML =
+    item("", "All Contacts", all.length) +
+    `<div class="contacts-group-divider"></div>` +
+    (groups.length ? groups.map((g) => item(g, g, countIn(g))).join("") : `<p class="contacts-group-empty">No groups yet.</p>`) +
+    `<button class="contacts-group-item contacts-group-new" type="button" id="contactsNewGroupBtn">
+      <svg viewBox="0 0 24 24" class="contacts-group-new-icon" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      <span>New group</span>
+    </button>`;
+
+  nav.querySelectorAll(".contacts-group-item[data-group]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      contactsSelectedGroup = btn.dataset.group || "";
+      renderContactsPage();
+      // On mobile the sidebar is an overlay drawer — collapse it once a group
+      // is chosen so the grid is visible right away.
+      if (window.innerWidth <= 860) document.getElementById("contactsSidebar")?.classList.remove("is-expanded");
+    });
+  });
+  document.getElementById("contactsNewGroupBtn")?.addEventListener("click", createContactGroup);
+  nav.querySelectorAll("[data-group-menu]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const r = btn.getBoundingClientRect();
+      showContactGroupMenu(r.right, r.bottom, btn.dataset.groupMenu);
+    });
+  });
+}
+
+function createContactGroup() {
+  const name = prompt("New group name")?.trim();
+  if (!name) return;
+  const existing = allContactGroups();
+  if (existing.some((g) => g.toLowerCase() === name.toLowerCase())) {
+    // Reuse the existing group rather than making a case-variant duplicate.
+    contactsSelectedGroup = existing.find((g) => g.toLowerCase() === name.toLowerCase());
+  } else {
+    state.contactGroups = [...normalizeContactGroups(state.contactGroups), name];
+    contactsSelectedGroup = name;
+    persist();
+  }
+  renderContactsPage();
+}
+
+function renameContactGroup(oldName) {
+  const name = prompt("Rename group", oldName)?.trim();
+  if (!name || name === oldName) return;
+  const clash = allContactGroups().some((g) => g.toLowerCase() === name.toLowerCase() && g.toLowerCase() !== oldName.toLowerCase());
+  if (clash && !confirm(`A group named "${name}" already exists. Merge "${oldName}" into it?`)) return;
+  // Rename in the registry…
+  state.contactGroups = normalizeContactGroups((normalizeContactGroups(state.contactGroups)).map((g) => g === oldName ? name : g));
+  // …and on every contact that carries the old name.
+  state.contacts = (state.contacts || []).map((c) => {
+    if (!(c.groups || []).includes(oldName)) return c;
+    return { ...c, groups: [...new Set(c.groups.map((g) => g === oldName ? name : g))] };
+  });
+  if (contactsSelectedGroup === oldName) contactsSelectedGroup = name;
+  persist();
+  renderContactsPage();
+}
+
+function deleteContactGroup(name) {
+  if (!confirm(`Delete the group "${name}"?\n\nThe contacts themselves aren't deleted — they just leave this group.`)) return;
+  state.contactGroups = normalizeContactGroups(state.contactGroups).filter((g) => g !== name);
+  state.contacts = (state.contacts || []).map((c) => {
+    if (!(c.groups || []).includes(name)) return c;
+    return { ...c, groups: c.groups.filter((g) => g !== name) };
+  });
+  if (contactsSelectedGroup === name) contactsSelectedGroup = "";
+  persist();
+  renderContactsPage();
+}
+
+// Rename/Delete popover for a group, anchored to its ⋯ button. Mirrors the Mail
+// folder menu.
+function showContactGroupMenu(x, y, name) {
+  document.getElementById("contactsGroupMenu")?.remove();
+  const menu = document.createElement("div");
+  menu.id = "contactsGroupMenu";
+  menu.className = "mail-more-menu contacts-group-menu-popover";
+  menu.style.left = Math.min(x, window.innerWidth - 190) + "px";
+  menu.style.top = Math.min(y, window.innerHeight - 110) + "px";
+  menu.innerHTML = `
+    <button class="mail-more-option" type="button" data-group-act="rename">Rename group</button>
+    <button class="mail-more-option" type="button" data-group-act="delete">Delete group</button>`;
+  document.body.appendChild(menu);
+  menu.addEventListener("click", (e) => {
+    const act = e.target.closest("[data-group-act]")?.dataset.groupAct;
+    menu.remove();
+    if (act === "rename") renameContactGroup(name);
+    else if (act === "delete") deleteContactGroup(name);
+  });
+  setTimeout(() => document.addEventListener("click", () => menu.remove(), { once: true }), 0);
 }
 
 function toggleContactFavorite(id) {
@@ -33873,6 +34011,13 @@ function saveContact() {
     state.contacts = (state.contacts || []).map((c) => c.id === editingContactId ? { ...c, ...data } : c);
   } else {
     state.contacts = [...(state.contacts || []), { id: createId("contact"), createdAt: new Date().toISOString(), ...data }];
+  }
+  // Register any newly-typed groups so they persist (and stay selectable in the
+  // sidebar) even if this is later their only contact and it's removed.
+  if (groups.length) {
+    const known = new Set(normalizeContactGroups(state.contactGroups));
+    const added = groups.filter((g) => !known.has(g));
+    if (added.length) state.contactGroups = [...normalizeContactGroups(state.contactGroups), ...added];
   }
   persist();
   elements.contactEditDialog.close();
