@@ -14437,7 +14437,19 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
    than flashing in on the synthetic tap-hover. */
 @media (hover: none), (pointer: coarse) {
   .podcast-episode-row:not(.podcast-draggable-row):hover .article-row-actions { display: none; }
-  .podcast-episode-row.podcast-episode-row--swiped .article-row-actions { display: flex; }
+  /* Swipe-revealed actions dock to the FULL row height as a solid panel, the
+     same way the mail list presents archive/snooze/trash — rather than a small
+     cluster floating over a gradient. */
+  .podcast-episode-row.podcast-episode-row--swiped .article-row-actions {
+    display: flex;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    transform: none;
+    padding-left: 4px;
+    padding-right: 4px;
+    background: color-mix(in srgb, var(--ink) 6%, var(--surface, #fff));
+  }
   .podcast-episode-row.podcast-episode-row--swiped { background: color-mix(in srgb, var(--ink) 3%, transparent); }
   /* Playlist rows show their actions inline on touch (they reorder by
      long-press instead of swiping). */
@@ -16416,7 +16428,16 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
     padding-left: 24px;
     background: linear-gradient(to right, transparent, var(--paper, #fff) 30%);
   }
-  #mediaAllList .playlist-row.podcast-episode-row--swiped .article-row-actions { display: flex; }
+  #mediaAllList .playlist-row.podcast-episode-row--swiped .article-row-actions {
+    display: flex;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    transform: none;
+    padding-left: 4px;
+    padding-right: 4px;
+    background: color-mix(in srgb, var(--ink) 6%, var(--surface, #fff));
+  }
   #mediaAllList .playlist-row.podcast-episode-row--swiped { background: color-mix(in srgb, var(--ink) 3%, transparent); }
 }
 
