@@ -13960,6 +13960,10 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   position: relative;
   z-index: 1;
   touch-action: pan-y;
+  /* Safety net: with the sender name never shrinking, an absurdly long name
+     clips at the row's edge instead of pushing the date off-screen / scrolling
+     the page. Real names are short, so this never triggers in practice. */
+  overflow: hidden;
 }
 .mail-row.mail-row--active .mail-row-front { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .mail-row--unread .mail-row-front { background: color-mix(in srgb, var(--ink) 1.5%, transparent); }
@@ -14018,15 +14022,14 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 /* Sender takes only the width its name needs (capped), so a short sender sits
    right up against the " - " and subject — no fixed gap. */
 .mail-row-from {
-  /* Show the full sender name — the subject shrinks first (see its higher
-     flex-shrink below); this keeps a tiny shrink only as an overflow safety
-     for pathologically long names on a narrow phone. */
-  flex: 0 1 auto;
-  min-width: 0;
+  /* Always show the FULL sender name, never truncated. flex-shrink:0 is key:
+     flexbox shrinks items proportionally and simultaneously, so any non-zero
+     shrink here would ellipsize the name alongside the subject rather than
+     after it. With shrink 0 the name keeps its full width and the subject
+     (which has all the shrink) gives up space and ellipsizes instead. */
+  flex: 0 0 auto;
   font-size: 0.855rem;
   font-weight: 400;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--ink);
   padding-left: 2px;
