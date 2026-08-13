@@ -33711,6 +33711,50 @@ function showContactGroupMenu(x, y, name) {
   setTimeout(() => document.addEventListener("click", () => menu.remove(), { once: true }), 0);
 }
 
+// The contact editor's Groups field: a multi-select checklist of existing
+// groups (a contact can be in several) plus an "Add a group…" pill that opens a
+// window to create one. Mirrors the recipe-tag chooser's pill style.
+function renderContactGroupsPicker(selected) {
+  const wrap = document.getElementById("contactGroups");
+  if (!wrap) return;
+  const sel = new Set((selected || []).map((g) => String(g).trim()).filter(Boolean));
+  // All known groups, plus any this contact already carries that aren't yet in
+  // the registry (so nothing silently drops).
+  const groups = [...new Set([...allContactGroups(), ...sel])].sort((a, b) => a.localeCompare(b));
+  wrap.innerHTML = groups.map((g) => `
+    <label class="tag-choice">
+      <input type="checkbox" value="${escapeHtml(g)}" ${sel.has(g) ? "checked" : ""} />
+      <span>${escapeHtml(g)}</span>
+    </label>`).join("") +
+    `<button type="button" class="tag-choice contact-group-add-choice" id="contactGroupAddBtn">
+      <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      <span>Add a group…</span>
+    </button>`;
+  wrap.querySelector("#contactGroupAddBtn")?.addEventListener("click", addGroupFromContactPicker);
+}
+
+// The groups currently ticked in the editor's picker.
+function currentContactPickerSelection() {
+  return [...document.querySelectorAll("#contactGroups input:checked")].map((i) => i.value);
+}
+
+// "Add a group…" — create a group and tick it, keeping whatever was already
+// ticked. Registers it immediately so it's available everywhere (like the
+// sidebar's New group).
+function addGroupFromContactPicker() {
+  const name = prompt("New group name")?.trim();
+  if (!name) return;
+  const match = allContactGroups().find((g) => g.toLowerCase() === name.toLowerCase());
+  const finalName = match || name;
+  if (!match) {
+    state.contactGroups = [...normalizeContactGroups(state.contactGroups), name];
+    persist();
+  }
+  const selected = new Set(currentContactPickerSelection());
+  selected.add(finalName);
+  renderContactGroupsPicker([...selected]);
+}
+
 function toggleContactFavorite(id) {
   state.contacts = (state.contacts || []).map((c) => c.id === id ? { ...c, favorite: !c.favorite } : c);
   persist();
@@ -33976,7 +34020,7 @@ function openContactDialog(id) {
   const yrSel = $("contactBirthYear");
   if (yr && ![...yrSel.options].some((o) => o.value === yr)) { const o = document.createElement("option"); o.value = yr; o.textContent = yr; yrSel.appendChild(o); }
   yrSel.value = yr;
-  $("contactGroups").value = (c?.groups || []).join(", ");
+  renderContactGroupsPicker(c?.groups || []);
   $("contactNotes").value = c?.notes || "";
   $("deleteContactBtn").hidden = !c;
   elements.contactEditDialog.showModal();
@@ -33995,7 +34039,7 @@ function saveContact() {
     const mmdd = `${String(+mo).padStart(2, "0")}-${String(+day).padStart(2, "0")}`;
     birthday = (yr && +yr >= 1900 && +yr <= 2100) ? `${yr}-${mmdd}` : mmdd;
   }
-  const groups = [...new Set($("contactGroups").value.split(",").map((g) => g.trim()).filter(Boolean))];
+  const groups = [...new Set(currentContactPickerSelection().map((g) => g.trim()).filter(Boolean))];
   const data = {
     firstName, lastName, name,
     photo: contactPhotoDraft || "",

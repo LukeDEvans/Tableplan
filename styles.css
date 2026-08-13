@@ -11497,7 +11497,10 @@ body.touch-drag-active * {
 .contacts-group-menu svg { width: 16px; height: 16px; fill: currentColor; }
 .contacts-group-divider { height: 1px; background: color-mix(in srgb, var(--ink) 10%, transparent); margin: 6px 8px; flex-shrink: 0; }
 .contacts-group-empty { font-size: 0.8rem; color: var(--text-muted, #888); padding: 4px 12px; }
-.contacts-group-new { color: var(--text-muted, #888); margin-top: 4px; }
+/* Only as wide/tall as its own text — it's a direct child of the column nav,
+   where the inherited flex:1 (meant for the row layout) would otherwise grow it
+   to fill the whole sidebar and make the entire empty area a tap target. */
+.contacts-group-new { color: var(--text-muted, #888); margin-top: 4px; flex: 0 0 auto; align-self: flex-start; }
 .contacts-group-new-icon { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2; fill: none; flex-shrink: 0; }
 .contacts-group-menu-popover { position: fixed; right: auto; top: auto; z-index: 400; }
 /* Desktop keeps the sidebar always open; the hamburger is mobile-only. */
@@ -11630,7 +11633,7 @@ body.touch-drag-active * {
 }
 .contact-multi-row .contact-row-drag:active { cursor: grabbing; }
 .contact-multi-row .contact-row-drag svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2; fill: none; }
-.contact-multi-row .contact-row-label { width: 84px; flex: 0 0 auto; font-weight: 600; color: inherit; }
+.contact-multi-row .contact-row-label { width: 108px; flex: 0 0 auto; font-weight: 600; color: inherit; }
 .contact-multi-row .contact-row-value { flex: 1 1 auto; min-width: 0; color: inherit; }
 .contact-multi-row .contact-row-action { flex: 0 0 auto; width: 30px; height: 30px; min-height: 30px; }
 .contact-multi-row .contact-row-action svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2; fill: none; }
@@ -11640,6 +11643,12 @@ body.touch-drag-active * {
 .contact-subhead { font-size: 0.78rem; font-weight: 600; opacity: 0.7; }
 .contact-dates-add { flex: 0 0 auto; width: 28px; height: 28px; min-height: 28px; padding: 0; border-radius: 8px; }
 .contact-dates-add svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2; fill: none; }
+/* Groups picker: multi-select pills + an "Add a group…" action pill. */
+.contact-groups-picker { margin-top: 2px; }
+.contact-groups-picker:empty { display: none; }
+.contact-group-add-choice { background: none; border: 1px dashed color-mix(in srgb, var(--accent) 60%, transparent); color: var(--accent-dark); cursor: pointer; font-family: inherit; }
+.contact-group-add-choice:hover { background: var(--accent-soft); }
+.contact-group-add-choice svg { stroke: currentColor; stroke-width: 2.2; fill: none; }
 
 /* ── New-event dialog redesign ─────────────────────────────────────────────── */
 /* Close button floats in the top-right corner (no header row / title). */
