@@ -19993,6 +19993,32 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-notif-labelrow { display: flex; align-items: center; gap: 4px; }
 .fin-notif-labelrow > .fin-txn-row { flex: 1 1 auto; min-width: 0; }
 .fin-notif-x--label { position: static; flex: 0 0 auto; }
+/* "Review" launcher next to the "Transactions to label" heading. */
+.fin-notif-head--review { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fin-notif-review-btn { border: 1.5px solid var(--window-border); background: none; color: var(--window-border); font: inherit; font-weight: 800; font-size: 0.72rem; padding: 3px 10px; border-radius: 999px; cursor: pointer; text-transform: none; letter-spacing: 0; }
+.fin-notif-review-btn:hover { background: color-mix(in srgb, var(--window-border) 10%, transparent); }
+
+/* ── Transaction review: full-window swipe deck for labeling ─────────────────── */
+.fin-review-overlay { position: fixed; inset: 0; z-index: 120; display: flex; align-items: flex-end; justify-content: center; background: rgba(0,0,0,0.5); }
+.fin-review-modal { width: min(560px, 100%); height: 92vh; display: flex; flex-direction: column; background: var(--window-bg); border-radius: 18px 18px 0 0; overflow: hidden; box-shadow: 0 -8px 40px rgba(0,0,0,0.25); }
+@media (min-width: 620px) { .fin-review-overlay { align-items: center; } .fin-review-modal { border-radius: 16px; height: min(760px, 92vh); } }
+.fin-review-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); }
+.fin-review-title { font-weight: 850; font-size: 1rem; color: var(--ink); }
+.fin-review-close { width: 34px; height: 34px; border-radius: 50%; border: none; background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--ink); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.fin-review-close:hover { background: color-mix(in srgb, var(--ink) 12%, transparent); }
+.fin-review-deck { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scroll-snap-type: y mandatory; -webkit-overflow-scrolling: touch; }
+.fin-review-empty { height: 100%; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; color: var(--muted); font-weight: 600; }
+.fin-review-card { position: relative; height: 100%; scroll-snap-align: center; scroll-snap-stop: always; overflow: hidden; }
+.fin-review-action { position: absolute; top: 0; bottom: 0; width: 45%; display: flex; align-items: center; font-size: 1.4rem; font-weight: 850; color: #fff; opacity: 0; pointer-events: none; text-transform: uppercase; }
+.fin-review-action-done { right: 0; justify-content: flex-end; padding-right: 26px; background: linear-gradient(90deg, transparent, var(--accent)); }
+.fin-review-action-snooze { left: 0; justify-content: flex-start; padding-left: 26px; background: linear-gradient(-90deg, transparent, #c9902b); }
+.fin-review-card-inner { position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; background: var(--window-bg); will-change: transform; touch-action: pan-y; }
+.fin-review-amount { font-size: 2.4rem; font-weight: 850; color: var(--accent-dark); }
+.fin-review-amount.is-neg { color: var(--ink); }
+.fin-review-merchant { font-size: 1.25rem; font-weight: 800; color: var(--ink); line-height: 1.25; }
+.fin-review-meta { font-size: 0.85rem; font-weight: 600; color: var(--muted); }
+.fin-review-label { max-width: 320px; width: 100%; font-size: 1rem; padding: 12px 14px; margin-top: 8px; }
+.fin-review-hint { position: absolute; left: 0; right: 0; bottom: 18px; display: flex; justify-content: space-between; padding: 0 20px; font-size: 0.72rem; font-weight: 700; color: var(--muted); }
 .fin-rec-row { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding-top: 6px; }
 .fin-rec-link-row { padding-bottom: 6px; }
 .fin-recap-row { min-height: 24px; }
