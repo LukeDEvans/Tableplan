@@ -19773,6 +19773,11 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   .fin-stat, .fin-savings-card { padding: 10px; min-height: 58px; }
   .fin-stat-value, .fin-savings-value { font-size: 1.05rem; }
   .fin-personal-cols { grid-template-columns: 1fr; }
+  /* Income sources: the scenario dropdown is too wide to share the row with the
+     name + amount on a phone, so wrap it to its own full-width line below. */
+  .fin-person-row { flex-wrap: wrap; row-gap: 4px; }
+  .fin-person-row .fin-scenario-select { order: 9; flex: 1 1 100%; max-width: none; }
+  .fin-person-name { min-width: 0; }
 }
 
 /* Finance: pick-one categories (income-scenario style) */
