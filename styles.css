@@ -20291,7 +20291,12 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 
 /* Swipe view: the panel becomes a fixed-height frame whose inner deck scrolls
    one full-window card at a time. */
-.eat-notif-panel-swipe { padding: 0; overflow: hidden; display: flex; }
+.eat-notif-panel-swipe { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+/* List / Cards view switch at the top of the recipe-notifications window. */
+.eat-notif-viewswitch { display: flex; gap: 4px; flex: 0 0 auto; padding: 8px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); }
+.eat-notif-panel:not(.eat-notif-panel-swipe) .eat-notif-viewswitch { padding: 0 0 8px; }
+.eat-notif-viewbtn { flex: 1; padding: 7px 10px; border: 1.5px solid var(--window-border); background: none; color: var(--window-border); font: inherit; font-weight: 800; font-size: 0.8rem; border-radius: 8px; cursor: pointer; }
+.eat-notif-viewbtn.is-active { background: var(--window-border); color: #fff; }
 .eat-swipe-deck {
   flex: 1;
   min-height: 0;

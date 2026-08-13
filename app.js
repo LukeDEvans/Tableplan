@@ -10252,6 +10252,10 @@ function mealPlanNotifBellHtml() {
       </button>
       ${mealPlanNotifOpen ? `
       <div class="eat-notif-panel${swipe ? " eat-notif-panel-swipe" : ""}">
+        ${isCoarsePointer() ? `<div class="eat-notif-viewswitch" role="group" aria-label="Notifications view">
+          <button type="button" class="eat-notif-viewbtn${!swipe ? " is-active" : ""}" data-eat-notif-view="list">List</button>
+          <button type="button" class="eat-notif-viewbtn${swipe ? " is-active" : ""}" data-eat-notif-view="swipe">Cards</button>
+        </div>` : ""}
         ${swipe ? mealPlanNotifSwipeBodyHtml(recipes) : mealPlanNotifListBodyHtml(recipes)}
       </div>` : ""}
     </div>`;
@@ -10262,6 +10266,17 @@ function wireMealPlanNotifDelegation() {
   mealPlanNotifWired = true;
   elements.plannerGrid.addEventListener("click", (e) => {
     if (e.target.closest("[data-eat-notif-toggle]")) { mealPlanNotifOpen = !mealPlanNotifOpen; if (mealPlanNotifOpen) mealPlanSwipeIndex = 0; renderPlanner(); return; }
+    const viewBtn = e.target.closest("[data-eat-notif-view]");
+    if (viewBtn) {
+      const v = viewBtn.dataset.eatNotifView === "swipe" ? "swipe" : "list";
+      if (normalizeMealPlanConfig(state.mealPlanConfig).notifView !== v) {
+        state.mealPlanConfig = normalizeMealPlanConfig({ ...state.mealPlanConfig, notifView: v });
+        persist();
+        mealPlanSwipeIndex = 0;
+        renderPlanner();
+      }
+      return;
+    }
     const add = e.target.closest("[data-eat-notif-add]");
     if (add) { addMealPlanRecipe(add.dataset.eatNotifAdd); return; }
     const dismiss = e.target.closest("[data-eat-notif-dismiss]");
