@@ -8374,13 +8374,11 @@ function renderFinancePage() {
     </div>`;
 
   const incomeOpen = financeExpanded.has("card:income");
-  const incomeHead = showActuals
-    ? `<span class="fin-cat-actual">${formatFinMoney(incomeActual)}</span> <span class="fin-of">of</span> ${formatFinMoney(income)}/mo`
-    : `${formatFinMoney(income)}/mo`;
-  const incomeCard = `
-    <div class="fin-card" data-fin-card="income">
-      ${cardHead("card:income", "Income", incomeHead)}
-      ${!incomeOpen ? "" : (state.financePeople || []).map((p) => {
+  // Income detail (people + scenarios). Header-less: it renders under the
+  // clickable Income KPI inside the Monthly budget card, which is its heading.
+  const incomeBreakdown = `
+    <div class="fin-card fin-income-detail" data-fin-card="income">
+      ${(state.financePeople || []).map((p) => {
         const active = financeActiveIncome(p);
         const open = financeExpanded.has(p.id);
         const got = incomeByKey.get(`income:${p.id}`) || 0;
@@ -8442,7 +8440,7 @@ function renderFinancePage() {
           </div>` : ""}
         </div>`;
       }).join("") || `<div class="empty-state">No income sources yet.</div>`}
-      ${!incomeOpen ? "" : (() => {
+      ${(() => {
         const lines = financeDeductionLines(financeViewMonth);
         if (!lines.length) return "";
         const total = lines.reduce((s, d) => s + d.monthly, 0);
@@ -8453,7 +8451,7 @@ function renderFinancePage() {
           <p class="fin-hint">Taken out before the money reaches your account — shown so you can see what you pay, but not counted in Budgeted (that would double-count it).</p>
         </div>`;
       })()}
-      ${!incomeOpen ? "" : `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-person">+ Person</button>`}
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-person">+ Person</button>
     </div>`;
 
   const groupCards = (state.financeBudgetGroups || []).map((g) => {
@@ -9102,21 +9100,30 @@ function renderFinancePage() {
   // Monthly budget card — the three KPI figures, with a caret on Budgeted that
   // expands to reveal the detailed Income, Needs, and Wants cards nested inside.
   const budgetedOpen = financeExpanded.has("card:budgeted");
+  const monthlyOpen = financeExpanded.has("card:monthly");
+  // Collapsed: just the "budgeted / income" headline. Expanded: the three KPI
+  // cards. Income and Budgeted are each clickable and reveal their own detail
+  // (income sources / budget groups); Unallocated is a read-out.
+  const budgetKpiBtn = (id, label, value, open) => `
+        <button class="fin-stat fin-stat-btn fin-budget-toggle${open ? " is-open" : ""}" type="button" data-fin-action="toggle-expand" data-id="${id}" aria-expanded="${open}">
+          <span class="fin-stat-label">${label} <span class="fin-budget-caret">${open ? "▴" : "▾"}</span></span>
+          <span class="fin-stat-value">${value}</span>
+        </button>`;
   const monthlyBudgetCard = `
     <div class="fin-card fin-monthly-budget" data-fin-card="monthly-budget">
-      <div class="fin-budget-title"><h3>Monthly budget</h3></div>
+      <div class="fin-card-head fin-budget-head" data-fin-action="toggle-expand" data-id="card:monthly" role="button" tabindex="0" aria-expanded="${monthlyOpen}">
+        <h3>Monthly budget</h3>
+        <span class="fin-card-total">${formatFinMoney(expenses)} <span class="fin-of">/</span> ${formatFinMoney(income)}</span>
+        <span class="fin-card-caret">${monthlyOpen ? "▴" : "▾"}</span>
+      </div>
+      ${!monthlyOpen ? "" : `
       <div class="fin-budget-kpis">
-        <div class="fin-stat"><span class="fin-stat-label">Income</span><span class="fin-stat-value">${formatFinMoney(income)}</span></div>
-        <button class="fin-stat fin-stat-btn fin-budget-toggle${budgetedOpen ? " is-open" : ""}" type="button" data-fin-action="toggle-expand" data-id="card:budgeted" aria-expanded="${budgetedOpen}" title="Show income, needs, and wants">
-          <span class="fin-stat-label">Budgeted <span class="fin-budget-caret">${budgetedOpen ? "▴" : "▾"}</span></span>
-          <span class="fin-stat-value">${formatFinMoney(expenses)}</span>
-        </button>
+        ${budgetKpiBtn("card:income", "Income", formatFinMoney(income), incomeOpen)}
+        ${budgetKpiBtn("card:budgeted", "Budgeted", formatFinMoney(expenses), budgetedOpen)}
         <div class="fin-stat"><span class="fin-stat-label">Unallocated</span><span class="fin-stat-value${cashFlow < 0 ? " is-neg" : ""}">${formatFinMoney(cashFlow)}</span></div>
       </div>
-      ${!budgetedOpen ? "" : `<div class="fin-cards fin-budget-nested">
-        ${incomeCard}
-        ${groupCards}
-      </div>`}
+      ${incomeOpen ? `<div class="fin-cards fin-budget-nested">${incomeBreakdown}</div>` : ""}
+      ${budgetedOpen ? `<div class="fin-cards fin-budget-nested">${groupCards}</div>` : ""}`}
     </div>`;
 
   // Order (top → bottom): Transactions, Monthly budget, Savings snapshot,
