@@ -9809,6 +9809,10 @@ function showMailApp(event, hashParams) {
   elements.mailMainPage.hidden = false;
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
+  // Always arrive with the folder drawer closed — never a stale open one from a
+  // previous visit (removing is-expanded closes the mobile drawer; harmless on
+  // desktop, which uses is-collapsed instead).
+  document.getElementById("mailSidebar")?.classList.remove("is-expanded");
   setPageTitle("Mail");
   setPageHash("mail");
   closePageTitleMenu();
@@ -9823,6 +9827,9 @@ let mailGmailConnected = false;
 let mailAccountEmail = ""; // this account's own address, to exclude self on reply-all
 let mailStatusPromise = null; // pre-fetched status so Mail page loads instantly
 let mailOpenThreadId = null;
+// The messages currently shown in the open thread (display order), so the "…"
+// menu's Display images can re-render each body with remote images enabled.
+let mailThreadDisplayMessages = [];
 // Set by renderMailThread to the current thread's compose opener so the "…"
 // menu (a separate function) can trigger reply/forward for the open thread.
 let mailReplyForwardTrigger = null;
@@ -10571,7 +10578,15 @@ async function fetchAndRenderMailPage({ fresh = false } = {}) {
   mailLastPageCount = messages.length;
   elements.mailList.innerHTML = "";
   if (!messages.length) {
-    elements.mailList.innerHTML = `<div class="mail-empty">${mailPageIndex === 0 ? "No messages." : "No more messages."}</div>`;
+    if (mailPageIndex === 0) {
+      // "<Folder> empty", centered in the window — read the active folder's
+      // display name from the sidebar (falls back to a generic label).
+      const sysFolderNames = { INBOX: "Inbox", STARRED: "Starred", SENT: "Sent", DRAFT: "Drafts", SPAM: "Spam", TRASH: "Trash", IMPORTANT: "Important" };
+      const folderName = document.querySelector(".mail-label-item.is-active span")?.textContent?.trim() || sysFolderNames[currentMailbox] || "Folder";
+      elements.mailList.innerHTML = `<div class="mail-empty mail-empty-folder">${escapeHtml(folderName)} empty</div>`;
+    } else {
+      elements.mailList.innerHTML = `<div class="mail-empty">No more messages.</div>`;
+    }
     renderMailListToolbar();
     return;
   }
@@ -11509,6 +11524,7 @@ function renderMailThread(thread) {
       </div>
     </div>`;
   elements.mailThread.innerHTML = html;
+  mailThreadDisplayMessages = displayOrder; // referenced by displayAllMailImages
   mountMailMessageFrames(elements.mailThread, displayOrder);
   // Collapsed messages expand (and lazily mount their body) on header click
   elements.mailThread.querySelectorAll("[data-msg-toggle]").forEach((metaEl) => {
@@ -11681,7 +11697,16 @@ function showMailMoreMenu(thread, lastMsg) {
   const menu = document.createElement("div");
   menu.id = "mailMoreMenu";
   menu.className = "mail-more-menu";
-  menu.innerHTML = `
+  // Offer "Display images" here (rather than an inline banner) only when the
+  // open thread still has blocked remote images.
+  const hasBlockedImages = [...elements.mailThread.querySelectorAll(".mail-msg-frame")].some((f) => Number(f.dataset.blockedImages) > 0);
+  const displayImagesOption = hasBlockedImages ? `
+    <button class="mail-more-option" type="button" data-action="display-images">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+      Display images
+    </button>
+    <div class="mail-more-divider"></div>` : "";
+  menu.innerHTML = displayImagesOption + `
     <button class="mail-more-option" type="button" data-action="reply">
       <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
       Reply
@@ -11712,9 +11737,9 @@ function showMailMoreMenu(thread, lastMsg) {
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
       Create event
     </button>
-    <button class="mail-more-option" type="button" data-action="read-as-article">
+    <button class="mail-more-option" type="button" data-action="move-to-media">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-      Read as article
+      Move to Listen
     </button>
     <div class="mail-more-divider"></div>
     <button class="mail-more-option" type="button" data-action="label">
@@ -11726,14 +11751,15 @@ function showMailMoreMenu(thread, lastMsg) {
     if (!opt) return;
     menu.remove();
     const action = opt.dataset.action;
-    if (action === "reply") mailReplyForwardTrigger?.("reply");
+    if (action === "display-images") displayAllMailImages();
+    else if (action === "reply") mailReplyForwardTrigger?.("reply");
     else if (action === "reply-all") mailReplyForwardTrigger?.("reply-all");
     else if (action === "forward") mailReplyForwardTrigger?.("forward");
     else if (action === "spam") spamMailThread(thread);
     else if (action === "unread") markMailUnread(thread);
     else if (action === "add-task") addEmailToTasks(lastMsg?.subject || "(no subject)");
     else if (action === "create-event") createEventFromEmail(lastMsg?.subject || "");
-    else if (action === "read-as-article") saveMailAsArticle(thread, lastMsg);
+    else if (action === "move-to-media") moveMailToMedia(thread, lastMsg);
     else if (action === "label") showMailMovePicker(thread);
   });
   btn.closest(".mail-more-wrap").appendChild(menu);
@@ -11856,7 +11882,10 @@ function emailToReaderHtml(html) {
   return div.textContent.trim().length >= 200 ? result : sanitizeMailHtml(html);
 }
 
-function saveMailAsArticle(thread, lastMsg) {
+// "Move to Listen": save the email into the Listen (Media) reading queue, then
+// trash the email and return to the message list — the email lives in Listen
+// now, not the inbox.
+async function moveMailToMedia(thread, lastMsg) {
   if (!lastMsg) return;
   const id = "email-" + thread.id;
   const sanitized = lastMsg.body?.includes("<")
@@ -11871,7 +11900,7 @@ function saveMailAsArticle(thread, lastMsg) {
     author: parseDisplayName(lastMsg.from),
     date: lastMsg.date ? new Date(lastMsg.date).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "",
     publication: "email",
-    // Recorded at the email's ARRIVAL time, not when it was saved to Media,
+    // Recorded at the email's ARRIVAL time, not when it was saved to Listen,
     // so it sorts among articles by when it actually showed up.
     savedAt: (() => {
       const arrived = lastMsg.internalDate ? new Date(Number(lastMsg.internalDate))
@@ -11881,9 +11910,11 @@ function saveMailAsArticle(thread, lastMsg) {
     text: sanitized
   });
   persist();
-  showMediaApp();
-  switchMediaTab("all");
-  openArticle(id, "articleList");
+  // Trash the email and drop back to the list (optimistic — the row goes now).
+  const removeIds = (currentMailbox && !["TRASH", "ALL"].includes(currentMailbox)) ? [currentMailbox] : [];
+  afterMailThreadAction(thread.id);
+  showMailToast("Moved to Listen");
+  callGmailApi({ action: "move", threadId: thread.id, addLabelIds: ["TRASH"], removeLabelIds: removeIds });
 }
 
 // Optimistically remove an inbox row, run the forward label change, and offer
@@ -12334,26 +12365,10 @@ function mountMailMessageFrames(container, messages) {
 function mountMailMessageBody(holder, msg) {
   if (msg.body?.includes("<")) {
     const showImages = mailShownImages.has(msg.id);
+    // Remote images are blocked by default (privacy + speed); the reader turns
+    // them on via the "…" menu's Display images (see showMailMoreMenu /
+    // displayAllMailImages), which re-renders the thread with src restored.
     const frame = buildMailBodyFrame(msg.body, { showImages });
-    // Remote images are blocked by default — offer a one-tap "Display images"
-    // (kept for the session) when this message had any.
-    if (!showImages && Number(frame.dataset.blockedImages) > 0) {
-      const bar = document.createElement("div");
-      bar.className = "mail-images-blocked-bar";
-      const label = document.createElement("span");
-      label.textContent = "Images aren't shown.";
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "mail-show-images-btn";
-      btn.textContent = "Display images";
-      btn.addEventListener("click", () => {
-        mailShownImages.add(msg.id);
-        holder.innerHTML = "";
-        mountMailMessageBody(holder, msg); // re-render with images loaded
-      });
-      bar.append(label, btn);
-      holder.appendChild(bar);
-    }
     holder.appendChild(frame);
   } else {
     const pre = document.createElement("pre");
@@ -12362,6 +12377,19 @@ function mountMailMessageBody(holder, msg) {
     wireMailAddressLinks(pre);
     holder.appendChild(pre);
   }
+}
+
+// Turn on remote images for the whole open thread (the "…" → Display images
+// action) and re-render each already-mounted message body with src restored.
+function displayAllMailImages() {
+  (mailThreadDisplayMessages || []).forEach((msg) => { if (msg?.id) mailShownImages.add(msg.id); });
+  elements.mailThread.querySelectorAll("[data-msg-idx]").forEach((holder) => {
+    if (holder.hidden || !holder.dataset.mounted) return; // collapsed bodies mount fresh (with images) on expand
+    const msg = mailThreadDisplayMessages[Number(holder.dataset.msgIdx)];
+    if (!msg) return;
+    holder.innerHTML = "";
+    mountMailMessageBody(holder, msg);
+  });
 }
 
 function buildMailBodyFrame(html, { showImages = false } = {}) {
@@ -12391,7 +12419,12 @@ function buildMailBodyFrame(html, { showImages = false } = {}) {
     '<meta name="color-scheme" content="light">' +
     '<style>:root{color-scheme:light}html,body{margin:0;padding:0}' +
     'body{font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#202124;background:#fff;word-break:break-word}' +
-    'img{max-width:100%;height:auto}table{max-width:100%}</style></head><body>' +
+    'img{max-width:100%;height:auto}table{max-width:100%}' +
+    // A blocked/broken remote image has no src — browsers draw an ugly alt-text
+    // box for it ("Article Image"). Collapse those so the email reads cleanly;
+    // they reappear when the reader taps Display images (which re-renders with
+    // src restored). figure captions that belong to a hidden image go too.
+    'img:not([src]){display:none!important}figure:has(> img:not([src])) figcaption,figure:has(> a > img:not([src])) figcaption{display:none}</style></head><body>' +
     bodyHtml +
     "</body></html>";
 

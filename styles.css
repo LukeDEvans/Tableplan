@@ -14027,6 +14027,8 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 
 /* Email list rows — Gmail single-line format */
 .mail-loading, .mail-empty { padding: 20px 16px; color: var(--text-muted, #888); font-size: 0.88rem; }
+/* Empty folder: centered in the middle of the list window (e.g. "Inbox empty"). */
+.mail-empty-folder { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 55vh; font-size: 1.02rem; font-weight: 600; }
 .mail-row {
   position: relative;
   overflow: hidden;
