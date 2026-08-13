@@ -425,7 +425,7 @@ const MANAGED_PAGES = [
   { key: "do",        label: "To-Do" },
   { key: "play",      label: "Exercise" },
   { key: "watch",     label: "Watch" },
-  { key: "read",      label: "Media" },
+  { key: "read",      label: "Listen" },
   { key: "recreate",  label: "Recreate" },
   { key: "explore",   label: "Explore" },
   { key: "plan",      label: "Calendar" },
@@ -9759,7 +9759,7 @@ function showMediaApp(event) {
   // No date bar on Media (like Mail/Explore) — hide the week-tools row.
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Media");
+  setPageTitle("Listen");
   setPageHash("media");
   initMediaPage();
   closePageTitleMenu();
@@ -12839,7 +12839,7 @@ function currentMainPageTitle() {
   if (activeAppArea === "plan") return "Calendar";
   if (activeAppArea === "inventory") return "Inventory";
   if (activeAppArea === "watch") return "Watch";
-  if (activeAppArea === "media") return "Media";
+  if (activeAppArea === "media") return "Listen";
   if (activeAppArea === "shop") return "Shop";
   if (activeAppArea === "recreate") return "Recreate";
   if (activeAppArea === "finance") return "Finance";
@@ -38713,11 +38713,13 @@ function renderMediaAllList() {
 
   const rowType = (el) => el.closest("[data-all-type]")?.dataset.allType;
   // Row body → the item's "page": podcast episode page, article reader, or book.
+  // Tapping a row opens details only; playback starts from the play button (or
+  // the panel's own play button) — so autoplay:false for podcasts.
   const openRow = (row) => {
     const id = row.dataset.allId;
     if (row.dataset.allType === "book") openMediaAllBook(id);
     else if (row.dataset.allType === "article") openArticle(id, "articleList");
-    else openPodcastEpisode(id);
+    else openPodcastEpisode(id, { autoplay: false });
   };
   const inControls = (el) => el.closest(".article-row-actions, .playlist-drag-handle, .playlist-art-btn, .playlist-play-btn");
   listEl.querySelectorAll("[data-all-id]").forEach((row) => {
@@ -39904,7 +39906,7 @@ function renderPodcastShowEpisodes(showId) {
 
 // ── Player ────────────────────────────────────────────────────────────────────
 
-function openPodcastEpisode(episodeId) {
+function openPodcastEpisode(episodeId, { autoplay = true } = {}) {
   const { episode, show } = findPodcastEpisode(episodeId);
   if (!episode) return;
 
@@ -39932,7 +39934,7 @@ function openPodcastEpisode(episodeId) {
     r.classList.toggle("article-row--active", r.dataset.episodeId === episodeId);
   });
 
-  startPodcastPlayback(episode, show);
+  startPodcastPlayback(episode, show, { autoplay });
   updatePodcastMarkBtn();
 }
 
@@ -40013,7 +40015,7 @@ function showAdSkippedToast() {
   adSkipToastTimer = setTimeout(() => toast.classList.remove("ad-skipped-toast--visible"), 2000);
 }
 
-function startPodcastPlayback(episode, show) {
+function startPodcastPlayback(episode, show, { autoplay = true } = {}) {
   stopPodcastAudio();
   stopListen(); // stop any article read-aloud so they don't overlap
 
@@ -40081,7 +40083,11 @@ function startPodcastPlayback(episode, show) {
 
   showMiniPlayer(episode, show);
 
-  podcastAudio.play().catch(() => {});
+  // autoplay:false loads the episode into the player (panel + mini-player, ready
+  // to play) but stays paused — used when a playlist row is tapped just to open
+  // the episode's details rather than start it.
+  if (autoplay) podcastAudio.play().catch(() => {});
+  else { updatePodcastPlayBtn(); updateMiniPlayerPlayBtn(); }
 
   const podcastArt = episode.art || show?.art || "";
   if ("mediaSession" in navigator) {
@@ -40273,6 +40279,16 @@ function wireMiniPlayer() {
 }
 
 // ── Now-Playing modal: full info about the current audio, over any page ───────
+// Article/email bodies are stored as raw HTML; the modal shows a readable text
+// extract, not literal <img>/<p> tags. Strip tags then decode entities via a
+// textarea (which never loads images or runs script).
+function plainTextFromHtml(html) {
+  const noTags = String(html || "").replace(/<[^>]+>/g, " ");
+  if (!/&[a-z#0-9]+;/i.test(noTags)) return noTags.replace(/\s+/g, " ").trim();
+  const ta = document.createElement("textarea");
+  ta.innerHTML = noTags;
+  return (ta.value || "").replace(/\s+/g, " ").trim();
+}
 function nowPlayingInfo() {
   const kind = nowPlayingKind();
   if (kind === "podcast") {
@@ -40284,7 +40300,7 @@ function nowPlayingInfo() {
       title: ep.title || "",
       show: sh?.title || "",
       date: ep.pubDate ? formatArticleDate(ep.pubDate) : "",
-      desc: String(ep.description || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+      desc: plainTextFromHtml(ep.description),
     };
   }
   if (kind === "tts") {
@@ -40294,7 +40310,7 @@ function nowPlayingInfo() {
       title: a?.title || "Now playing",
       show: a?.author || a?.publication || "",
       date: a?.pubDate ? formatArticleDate(a.pubDate) : "",
-      desc: String(a?.text || a?.excerpt || "").replace(/\s+/g, " ").trim().slice(0, 2000),
+      desc: plainTextFromHtml(a?.text || a?.excerpt).slice(0, 2000),
     };
   }
   return null;
@@ -40309,6 +40325,7 @@ function openNowPlayingModal() {
   overlay.className = "np-overlay";
   overlay.innerHTML = `
     <div class="np-modal" role="dialog" aria-modal="true" aria-label="Now playing">
+      <div class="np-grabber" aria-hidden="true"></div>
       <button class="np-close" type="button" aria-label="Close">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
@@ -40334,6 +40351,9 @@ function openNowPlayingModal() {
           <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.3a8.4 8.4 0 1 0 7.9 5.4"/><path d="M12 2 16 4.3 12 6.6Z" fill="currentColor" stroke="none"/><text x="12" y="15.6" font-size="8" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none">30</text></svg>
         </button>
       </div>
+      <div class="np-extra">
+        <button class="np-speed" id="npSpeed" type="button" aria-label="Playback speed"></button>
+      </div>
       <div class="np-desc${info.desc ? "" : " np-desc--empty"}">${info.desc ? escapeHtml(info.desc) : "No description available."}</div>
     </div>`;
   document.body.appendChild(overlay);
@@ -40347,10 +40367,52 @@ function openNowPlayingModal() {
   overlay.querySelector("#npPlay").addEventListener("click", () => { nowPlayingToggle(); updateNowPlayingModal(); });
   overlay.querySelector("#npBack").addEventListener("click", () => nowPlayingSkip(-10));
   overlay.querySelector("#npFwd").addEventListener("click", () => nowPlayingSkip(30));
+  // Playback speed: a pill that cycles through the same steps as the reader's
+  // speed menu; setMediaPlaybackSpeed applies it to whichever audio is playing.
+  overlay.querySelector("#npSpeed").addEventListener("click", () => {
+    const steps = [0.75, 1, 1.25, 1.5, 2];
+    const i = steps.findIndex((s) => Math.abs(s - mediaPlaybackSpeed) < 0.01);
+    setMediaPlaybackSpeed(steps[(i + 1) % steps.length]);
+    updateNowPlayingModal();
+  });
   const seek = overlay.querySelector("#npSeek");
   seek.addEventListener("input", () => { overlay.dataset.scrubbing = "1"; });
   seek.addEventListener("change", () => { nowPlayingSeekFraction(Number(seek.value) / 1000); delete overlay.dataset.scrubbing; updateNowPlayingModal(); });
+  wireNowPlayingSwipeDown(overlay, close);
   updateNowPlayingModal();
+}
+
+// Swipe the modal down to dismiss it (a drag on the sheet that isn't over the
+// seek slider). Follows the finger, then closes past a threshold or snaps back.
+function wireNowPlayingSwipeDown(overlay, close) {
+  const modal = overlay.querySelector(".np-modal");
+  let startY = 0, startX = 0, dragging = false, decided = false, dy = 0;
+  modal.addEventListener("touchstart", (e) => {
+    if (e.target.closest("#npSeek")) return; // let the scrubber own vertical too
+    startY = e.touches[0].clientY; startX = e.touches[0].clientX;
+    dragging = true; decided = false; dy = 0;
+    modal.style.transition = "none";
+  }, { passive: true });
+  modal.addEventListener("touchmove", (e) => {
+    if (!dragging) return;
+    dy = e.touches[0].clientY - startY;
+    const dx = e.touches[0].clientX - startX;
+    if (!decided) {
+      if (Math.abs(dy) < 6 && Math.abs(dx) < 6) return;
+      decided = true;
+      if (Math.abs(dx) > Math.abs(dy)) { dragging = false; return; } // horizontal — ignore
+    }
+    if (dy > 0) { e.preventDefault(); modal.style.transform = `translateY(${dy}px)`; overlay.style.background = `rgba(0,0,0,${Math.max(0, 0.5 - dy / 700)})`; }
+  }, { passive: false });
+  const end = () => {
+    if (!dragging && !decided) return;
+    dragging = false;
+    modal.style.transition = "transform 0.2s ease";
+    if (dy > 110) { modal.style.transform = `translateY(100%)`; setTimeout(close, 180); }
+    else { modal.style.transform = ""; overlay.style.background = ""; }
+  };
+  modal.addEventListener("touchend", end, { passive: true });
+  modal.addEventListener("touchcancel", end, { passive: true });
 }
 
 function updateNowPlayingModal() {
@@ -40370,6 +40432,8 @@ function updateNowPlayingModal() {
       ? `<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/></svg>`
       : `<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4" fill="currentColor"/></svg>`;
   }
+  const speed = overlay.querySelector("#npSpeed");
+  if (speed) speed.textContent = `${mediaPlaybackSpeed}×`;
 }
 
 function goToOpenEpisode() {
@@ -41786,6 +41850,12 @@ async function generateTtsUrls(article) {
 
 // Audio prefetched for upcoming All-queue items: articleId → Promise<urls>
 const ttsPrefetchCache = new Map();
+// Resolved (not just in-flight) TTS data for the next queue article, keyed by
+// id. Having the URLs available SYNCHRONOUSLY is what lets the article→article
+// hand-off run inside the audio "ended" handler (see beginNextResolvedArticleSync)
+// so read-aloud keeps going while the app is backgrounded — an async
+// startListenTTS would defer the play() past an await, which iOS won't run.
+const ttsResolvedUrls = new Map();
 
 // While something is playing, generate the NEXT queue article's audio in the
 // background so the hand-off between items is gapless.
@@ -41797,7 +41867,10 @@ function prefetchNextQueueAudio() {
     if (item.type === "article" && !ttsPrefetchCache.has(id)) {
       const article = (state.savedArticles || []).find((a) => a.id === id);
       if (article) {
-        ttsPrefetchCache.set(id, generateTtsUrls(article).catch((e) => {
+        ttsPrefetchCache.set(id, generateTtsUrls(article).then((data) => {
+          if (data?.urls?.length) ttsResolvedUrls.set(id, data); // now available synchronously
+          return data;
+        }).catch((e) => {
           ttsPrefetchCache.delete(id); // failed prefetch → regenerate on demand
           console.warn("TTS prefetch failed:", e.message);
           return null;
@@ -41806,6 +41879,47 @@ function prefetchNextQueueAudio() {
     }
     return; // only look at the immediate next playable item
   }
+}
+
+// Synchronously start the next queue article (if it's already prefetched) from
+// inside the current article's "ended" handler, so playback continues in the
+// background. Returns false when there's no resolved next article — the caller
+// then falls back to the normal async advance. Mirrors startListenTTS's tail,
+// minus the async fetch and the podcast/stop bookkeeping (nothing else is
+// playing at this point — the article just ended).
+function beginNextResolvedArticleSync(finishedId) {
+  if (!mediaAllQueueId || mediaAllQueueId !== finishedId) return false;
+  const byId = new Map(getAllListenList().map((i) => [i.id, i]));
+  let nextIdx = -1, nextItem = null;
+  for (let i = 0; i < mediaAllQueueRest.length; i++) {
+    const it = byId.get(mediaAllQueueRest[i]);
+    if (it && it.type !== "book") { nextIdx = i; nextItem = it; break; }
+  }
+  if (!nextItem || nextItem.type !== "article") return false; // podcasts advance elsewhere
+  const data = ttsResolvedUrls.get(nextItem.id);
+  if (!data || !data.urls || !data.urls.length) return false; // not ready → async fallback
+  const article = (state.savedArticles || []).find((a) => a.id === nextItem.id);
+  if (!article) return false;
+  mediaAllQueueRest.splice(0, nextIdx + 1);
+  mediaAllQueueId = nextItem.id;
+  ttsResolvedUrls.delete(nextItem.id);
+  ttsPrefetchCache.delete(nextItem.id);
+  const myGenId = ++listenGenId;
+  listenArticle = article;
+  listenAllUrls = [...data.urls];
+  listenTimings = Array.isArray(data.timings) ? data.timings : null;
+  listenIntroWords = data.introWords || 0;
+  listenWordAbsTimes = null;
+  clearWordHighlight();
+  listenChunkDurations = [];
+  listenChunkOffsets = [];
+  listenTotalDuration = 0;
+  showMiniPlayerForArticle(article);
+  playChunkAt(0); // synchronous src+play() — the whole point
+  loadListenChunkDurations(listenAllUrls, myGenId);
+  if (activeMediaTab === "queue") renderMediaAllList();
+  prefetchNextQueueAudio();
+  return true;
 }
 
 async function startListenTTS(article) {
@@ -41828,6 +41942,7 @@ async function startListenTTS(article) {
 
   let data = null;
   const prefetched = ttsPrefetchCache.get(article.id);
+  ttsResolvedUrls.delete(article.id);
   if (prefetched) {
     data = await prefetched;
     ttsPrefetchCache.delete(article.id);
@@ -41865,15 +41980,17 @@ async function startListenTTS(article) {
 function playChunkAt(idx, offsetSec = 0) {
   if (idx >= listenAllUrls.length) {
     // Finished the whole article.
+    const finished = listenArticle;
+    markArticleRead(finished?.id);
+    // Continue to the next queue article SYNCHRONOUSLY when it's already
+    // prefetched, so read-aloud keeps going while the app is backgrounded.
+    // Falls back to the async advance when nothing is ready yet.
+    if (beginNextResolvedArticleSync(finished?.id)) return;
     listenSpeaking = false;
     listenAudio = null;
     listenNextAudio = null;
     updateListenPlayBtn();
     updateMiniPlayerPlayBtn();
-    const finished = listenArticle;
-    markArticleRead(finished?.id);
-    // Play the next item in the blended queue; otherwise fall back to the
-    // next article in the current list.
     if (!advanceMediaAllQueue(finished?.id)) {
       if (!advanceListenArticle()) { hideMiniPlayer(); listenArticle = null; }
     }

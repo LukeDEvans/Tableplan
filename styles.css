@@ -16122,14 +16122,20 @@ body.has-mini-player .mail-list { padding-bottom: 84px; }
 .np-seek { flex: 1; min-width: 0; height: 4px; -webkit-appearance: none; appearance: none; background: color-mix(in srgb, var(--ink) 15%, transparent); border-radius: 3px; cursor: pointer; }
 .np-seek::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; border-radius: 50%; background: var(--window-border); cursor: pointer; }
 .np-seek::-moz-range-thumb { width: 15px; height: 15px; border: none; border-radius: 50%; background: var(--window-border); cursor: pointer; }
-.np-controls { display: flex; align-items: center; justify-content: center; gap: 24px; margin: 6px 0 18px; }
+.np-controls { display: flex; align-items: center; justify-content: center; gap: 24px; margin: 6px 0 12px; }
 .np-ctrl { width: 48px; height: 48px; border-radius: 50%; border: none; background: none; color: var(--window-border); cursor: pointer; display: flex; align-items: center; justify-content: center; }
 .np-ctrl:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .np-play { width: 62px; height: 62px; border-radius: 50%; border: none; background: none; color: var(--window-border); cursor: pointer; display: flex; align-items: center; justify-content: center; }
 .np-play:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .np-play svg, .np-ctrl svg { display: block; }
-.np-desc { font-size: 0.9rem; line-height: 1.55; color: color-mix(in srgb, var(--ink) 82%, transparent); white-space: pre-wrap; }
+.np-desc { font-size: 0.9rem; line-height: 1.55; color: color-mix(in srgb, var(--ink) 82%, transparent); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 .np-desc--empty { color: var(--text-muted, #888); font-style: italic; }
+/* Drag-handle affordance + swipe-down-to-close (wireNowPlayingSwipeDown). */
+.np-grabber { width: 40px; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--ink) 18%, transparent); margin: -8px auto 12px; }
+/* Playback-speed pill, cycles 0.75×–2×. */
+.np-extra { display: flex; justify-content: center; margin: 0 0 16px; }
+.np-speed { min-width: 52px; padding: 6px 14px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--window-border) 40%, transparent); background: none; color: var(--window-border); font-weight: 800; font-size: 0.85rem; font-family: inherit; cursor: pointer; font-variant-numeric: tabular-nums; }
+.np-speed:hover { background: color-mix(in srgb, var(--window-border) 10%, transparent); }
 
 /* ── AI Recipe Toolbar ────────────────────────────────────────────────────── */
 .recipe-ai-toolbar {
