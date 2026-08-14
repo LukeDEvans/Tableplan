@@ -207,6 +207,33 @@ describe("location search is restricted to U.S. results (mocked fetch)", () => {
   });
 });
 
+describe("UV/AQI enrichment adapter (mocked fetch)", () => {
+  it("returns rounded UV + US AQI tagged with the provider", async () => {
+    global.fetch = vi.fn(async (url) => ({
+      ok: true,
+      json: async () => (String(url).includes("air-quality") ? { current: { us_aqi: 61 } } : { current: { uv_index: 5.37 } })
+    }));
+    const e = await T.enrichUvAqi(40, -105);
+    expect(e.uvIndex).toBe(5.4);
+    expect(e.airQualityIndex).toBe(61);
+    expect(e.provider).toBe("OPEN_METEO");
+  });
+
+  it("returns null when neither value is available (never invents)", async () => {
+    global.fetch = vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) }));
+    expect(await T.enrichUvAqi(40, -105)).toBeNull();
+  });
+
+  it("keeps one value when only the other provider fails", async () => {
+    global.fetch = vi.fn(async (url) => String(url).includes("air-quality")
+      ? { ok: false, status: 500, json: async () => ({}) }
+      : { ok: true, json: async () => ({ current: { uv_index: 3 } }) });
+    const e = await T.enrichUvAqi(40, -105);
+    expect(e.uvIndex).toBe(3);
+    expect(e.airQualityIndex).toBeNull();
+  });
+});
+
 describe("radar capabilities discovery (mocked fetch)", () => {
   it("reads the drawable layer id from the LegendURL, not a hard-coded guess", async () => {
     const xml = `<WMS_Capabilities><Capability><Request><GetMap/></Request></Capability>

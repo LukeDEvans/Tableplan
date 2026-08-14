@@ -10023,6 +10023,8 @@ function wxClock(iso, tz) { return wxFmt(iso, tz, { hour: "numeric", minute: "2-
 function wxTempStr(n) { return n == null ? "—" : `${Math.round(n)}°`; }
 function wxNum(n, suffix = "") { return n == null ? "—" : `${n}${suffix}`; }
 function wxAgo(iso) { const m = Math.round((Date.now() - new Date(iso)) / 60000); if (!isFinite(m)) return ""; if (m < 1) return "just now"; if (m < 60) return `${m} min ago`; const h = Math.round(m / 60); return `${h} hr ago`; }
+function wxUvLabel(uv) { if (uv == null) return "—"; const c = uv < 3 ? "Low" : uv < 6 ? "Moderate" : uv < 8 ? "High" : uv < 11 ? "Very high" : "Extreme"; return `${uv} · ${c}`; }
+function wxAqiLabel(aqi) { if (aqi == null) return "—"; const c = aqi <= 50 ? "Good" : aqi <= 100 ? "Moderate" : aqi <= 150 ? "Unhealthy (sensitive)" : aqi <= 200 ? "Unhealthy" : aqi <= 300 ? "Very unhealthy" : "Hazardous"; return `${aqi} · ${c}`; }
 const WX_SEVERITY_CLASS = { Extreme: "wx-sev-extreme", Severe: "wx-sev-severe", Moderate: "wx-sev-moderate", Minor: "wx-sev-minor" };
 
 // ── Render ──────────────────────────────────────────────────────────────────
@@ -10129,9 +10131,10 @@ function wxDashboard(s, tz) {
     ["Visibility", c.visibilityMiles != null ? `${c.visibilityMiles} mi` : "—"],
     ["Precip (1h)", c.precipitationInches != null ? `${c.precipitationInches} in` : "—"],
     ["Sun ↑/↓", sun],
-    ["UV index", c.uvIndex == null ? "—" : c.uvIndex],
-    ["Air quality", c.airQualityIndex == null ? "—" : c.airQualityIndex]
+    ["UV index", wxUvLabel(c.uvIndex)],
+    ["Air quality", wxAqiLabel(c.airQualityIndex)]
   ].map(([k, v]) => `<div class="wx-detail-cell"><span class="wx-detail-k">${k}</span><span class="wx-detail-v">${escapeHtml(String(v))}</span></div>`).join("");
+  const uvAqiNote = c.uvAqiProvenance ? `<div class="wx-source-note">UV &amp; air quality via Open-Meteo</div>` : "";
 
   const hourStrip = (s.hourly || []).slice(0, 12).map((h) => `
     <div class="wx-hour">
@@ -10174,6 +10177,7 @@ function wxDashboard(s, tz) {
     ${wxRadarPreview(s)}
     <div class="wx-section-label">Now</div>
     <div class="wx-detail-grid">${detail}</div>
+    ${uvAqiNote}
     ${wxDisclosure("hourly", "Hourly forecast", hourlyOpen, `<div class="wx-hourly-list">${hourlyFull}</div>`)}
     ${wxDisclosure("daily", "7-day forecast", dailyOpen, `<div class="wx-daily-list">${dailyFull}</div>`)}
     ${wxProductsSection(s)}

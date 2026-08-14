@@ -99,15 +99,30 @@ address — set a real contact before relying on it in production.
 > `test/weather-*.test.js` so this feature's suite stays green. Fixing/removing
 > the legacy tests is out of scope for the weather work.
 
-## Phase 2 (do not start until Phase 1 is stable)
+## Phase 2
 
-- [ ] Radar animation + timeline controls; reduced-motion behavior.
-- [ ] Overlay registry from live WMS GetCapabilities: temperature, precip
-      probability/amount, snowfall, wind/gust, cloud cover (only expose layers
-      that resolve).
-- [ ] Optional UV/AQI adapters (only with a deliberately configured, trustworthy
-      source).
+- [x] **UV + air-quality enrichment adapter** — NWS carries neither, so both come
+      from an explicitly-labeled provider (Open-Meteo: free, no key). Fetched in
+      parallel inside `buildSnapshot` (failure-isolated → fields stay null, never
+      invented), tagged `current.uvAqiProvenance = { provider: "OPEN_METEO" }`,
+      and shown with category labels (UV Low/Moderate/…; AQI Good/Moderate/…) plus
+      a "via Open-Meteo" note. Unit-tested (mocked) + verified live.
+- [ ] Radar animation + timeline controls. **Blocked upstream:** NOAA's current
+      IDP radar service exposes only a single live frame (no time dimension /
+      `radar_base_reflectivity_time` is gone), so there is no reliable NOAA frame
+      source to animate. Revisit if NOAA restores a time-enabled radar WMS, or
+      decide to accept a non-NOAA frame provider (e.g. RainViewer).
+- [ ] Overlay registry (temperature, precip prob/amount, snowfall, wind/gust,
+      cloud cover) from live GetCapabilities. **Thin upstream right now:** the IDP
+      `NDFD` folder currently offers essentially only `NDFD_temp` (numbered,
+      ambiguous sublayers); precip/wind/gust/sky are not cleanly exposed. Per the
+      brief we only expose layers that resolve, so this is deferred until the set
+      is worth a discovery-driven registry (temperature + NOHRSC snow are the
+      realistic candidates).
 - [ ] Alert-notification worker (scheduled Netlify function) after opt-in +
       delivery are defined; dedup by alert id + sent time; minimal state only.
-- [ ] Weather-aware sailing/calendar/insight selectors (separate focused changes)
-      — migrate sailing off its direct Open-Meteo calls onto the shared service.
+      (App already has VAPID/web-push + a scheduled-function pattern to build on.)
+- [ ] Weather-aware sailing/calendar/insight selectors (separate focused changes).
+      Note: sailing also needs marine (wave) + cloud-cover %, which the NWS-based
+      service doesn't provide — migrating it needs a small design decision (keep
+      marine via a separate adapter vs. add those fields), so it's its own change.

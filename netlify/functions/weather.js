@@ -127,11 +127,12 @@ async function buildSnapshot(lat, lon, label, timezone) {
 
   // 2. Fetch the dependent resources concurrently; one failure must not blank
   //    the whole page, so each is captured independently.
-  const [dailyRes, hourlyRes, obsRes, alertsRes] = await Promise.allSettled([
+  const [dailyRes, hourlyRes, obsRes, alertsRes, enrichRes] = await Promise.allSettled([
     nwsFetch(p.forecast, { accept: "application/geo+json" }),
     nwsFetch(p.forecastHourly, { accept: "application/geo+json" }),
     fetchLatestObservation(p.observationStations, lat, lon),
-    nwsFetch(`${NWS_BASE}/alerts/active?point=${round(lat)},${round(lon)}`, { accept: "application/geo+json" })
+    nwsFetch(`${NWS_BASE}/alerts/active?point=${round(lat)},${round(lon)}`, { accept: "application/geo+json" }),
+    enrichUvAqi(lat, lon) // optional; failure leaves UV/AQI null
   ]);
 
   let daily = [];
@@ -154,6 +155,12 @@ async function buildSnapshot(lat, lon, label, timezone) {
   const sun = sunTimes(lat, lon, new Date());
   current.sunrise = sun.sunrise;
   current.sunset = sun.sunset;
+  // UV + air quality from the explicitly-labeled enrichment provider.
+  if (enrichRes.status === "fulfilled" && enrichRes.value) {
+    current.uvIndex = enrichRes.value.uvIndex;
+    current.airQualityIndex = enrichRes.value.airQualityIndex;
+    current.uvAqiProvenance = { provider: enrichRes.value.provider, fetchedAt: enrichRes.value.fetchedAt };
+  }
 
   let alerts = [];
   if (alertsRes.status === "fulfilled") alerts = normalizeAlerts(alertsRes.value?.features || []);
@@ -217,6 +224,34 @@ async function getProduct(office, type) {
     issued: full?.issuanceTime || first.issuanceTime || null,
     text: full?.productText || null
   };
+}
+
+// ── Optional enrichment adapter: UV index + air quality ──────────────────────
+// NWS observations don't carry UV or AQI, so these come from a separate,
+// explicitly-labeled provider (Open-Meteo — free, no key, trustworthy). Never
+// invented or silently substituted; failures leave the fields null. Kept behind
+// this one adapter so the provider can be swapped without touching the model.
+async function enrichUvAqi(lat, lon) {
+  const round = (n) => Math.round(n * 10000) / 10000;
+  const pull = async (url, field) => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timer);
+      if (!res.ok) return null;
+      const v = (await res.json())?.current?.[field];
+      return typeof v === "number" ? v : null;
+    } catch { return null; }
+  };
+  const [uv, aqi] = await Promise.all([
+    pull(`https://api.open-meteo.com/v1/forecast?latitude=${round(lat)}&longitude=${round(lon)}&current=uv_index&timezone=auto`, "uv_index"),
+    pull(`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${round(lat)}&longitude=${round(lon)}&current=us_aqi&timezone=auto`, "us_aqi")
+  ]);
+  const uvIndex = uv == null ? null : Math.round(uv * 10) / 10;
+  const airQualityIndex = aqi == null ? null : Math.round(aqi);
+  if (uvIndex == null && airQualityIndex == null) return null;
+  return { uvIndex, airQualityIndex, provider: "OPEN_METEO", fetchedAt: new Date().toISOString() };
 }
 
 // ── Radar layer discovery (NOAA IDP WMS GetCapabilities) ─────────────────────
@@ -467,4 +502,4 @@ function shortPath(url) { try { return new URL(url).pathname; } catch { return u
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 // Exported for unit tests (Vitest or node) — pure, no network.
-module.exports._test = { conv, normalizeCurrent, currentFromForecast, normalizeHourly, normalizeDaily, normalizeAlerts, cardinal, cardinalToDegrees, parseWindMph, cToF, haversineMiles, sunTimes, zoneId, nwsFetch, searchLocations, getRadarCapabilities };
+module.exports._test = { conv, normalizeCurrent, currentFromForecast, normalizeHourly, normalizeDaily, normalizeAlerts, cardinal, cardinalToDegrees, parseWindMph, cToF, haversineMiles, sunTimes, zoneId, nwsFetch, searchLocations, getRadarCapabilities, enrichUvAqi };
