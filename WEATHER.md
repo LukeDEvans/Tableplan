@@ -75,8 +75,14 @@ address — set a real contact before relying on it in production.
       strip, alert cards (severity-colored + expandable), static radar preview.
 - [x] Progressive disclosure: hourly-through-tomorrow, 7-day, detailed grid,
       on-demand NWS product text (AFD/HWO/LSR/PNS).
-- [ ] Leaflet expanded map: base map + one stable radar layer + alert polygons
-      + legend/timestamp. (radar is currently a static RIDGE loop that links out)
+- [x] Leaflet expanded map (increment 3): theme-aware CARTO base map + one
+      stable NOAA base-reflectivity radar layer (discovered via GetCapabilities,
+      not hard-coded) + active NWS alert polygons from snapshot geometry +
+      reflectivity legend + attribution + radar/alerts toggles + loading and
+      radar-offline states. Leaflet is lazy-loaded from CDN on first map open;
+      tile/radar hosts are excluded from the service-worker cache (sw.js
+      SKIP_HOSTS) so tiles/frames are never stored. Single current frame — no
+      time dimension, so no animation yet (Phase 2).
 - [ ] Tests (Vitest, pending decision) for conversion, timezone/DST, alert sort,
       cache TTL, in-flight dedup, no-render-loop; production build verification.
 

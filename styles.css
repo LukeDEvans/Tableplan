@@ -20494,3 +20494,22 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .wx-error, .wx-note, .wx-skeleton, .wx-inline-warn { padding: 16px; color: var(--muted); font-size: 0.9rem; }
 .wx-inline-warn { color: #c0392b; font-weight: 600; padding: 8px 2px; }
 .wx-warnings { font-size: 0.72rem; color: var(--muted); border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding-top: 8px; }
+
+/* Weather radar map (Leaflet, lazy-loaded) */
+.wx-radar-preview { position: relative; width: 100%; border: none; padding: 0; cursor: pointer; text-align: left; }
+.wx-radar-expand { position: absolute; right: 8px; bottom: 8px; background: rgba(0,0,0,0.6); color: #fff; font-size: 0.72rem; font-weight: 700; padding: 3px 8px; border-radius: 6px; }
+.wx-map-overlay { position: fixed; inset: 0; z-index: 130; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.55); }
+.wx-map-modal { width: min(920px, 100%); height: min(92vh, 100%); display: flex; flex-direction: column; background: var(--window-bg); border-radius: 14px; overflow: hidden; box-shadow: 0 12px 48px rgba(0,0,0,0.3); }
+@media (max-width: 620px) { .wx-map-modal { width: 100%; height: 100%; border-radius: 0; } }
+.wx-map-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); }
+.wx-map-title { font-weight: 800; font-size: 0.92rem; color: var(--ink); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wx-map-toggles { display: flex; gap: 12px; flex: 0 0 auto; }
+.wx-map-toggle { font-size: 0.8rem; font-weight: 700; color: var(--ink); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.wx-map-toggle.is-disabled { opacity: 0.4; }
+.wx-map-close { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%; border: none; background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--ink); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.wx-map-canvas { flex: 1; min-height: 0; position: relative; background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.wx-map-canvas .leaflet-container { width: 100%; height: 100%; background: transparent; }
+.wx-map-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); font-weight: 600; text-align: center; padding: 20px; }
+.wx-map-foot { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); }
+.wx-map-legend { height: 26px; width: auto; max-width: 55%; object-fit: contain; background: #fff; border-radius: 4px; padding: 2px; }
+.wx-map-valid { font-size: 0.72rem; color: var(--muted); font-weight: 600; }

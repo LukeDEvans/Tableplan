@@ -47,6 +47,10 @@ exports.handler = async (event) => {
       const product = await getProduct(String(q.office || ""), String(q.type || ""));
       return respond(200, { product }, 600);
     }
+    if (action === "capabilities") {
+      const caps = await getRadarCapabilities();
+      return respond(200, caps, caps.available ? 3 * 3600 : 120); // GetCapabilities changes slowly; short cache when offline
+    }
     // Default: the full normalized snapshot for a coordinate.
     const lat = Number(q.lat), lon = Number(q.lon);
     if (!isFinite(lat) || !isFinite(lon)) return respond(400, { error: "lat and lon are required." });
@@ -213,6 +217,34 @@ async function getProduct(office, type) {
     issued: full?.issuanceTime || first.issuanceTime || null,
     text: full?.productText || null
   };
+}
+
+// ── Radar layer discovery (NOAA IDP WMS GetCapabilities) ─────────────────────
+// The drawable layer id is read from the service's own LegendURL rather than
+// hard-coded, per the brief. National quality-controlled base reflectivity;
+// single current frame (no time dimension → no animation this phase).
+const RADAR_WMS = "https://mapservices.weather.noaa.gov/eventdriven/services/radar/radar_base_reflectivity/MapServer/WMSServer";
+async function getRadarCapabilities() {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(`${RADAR_WMS}?service=WMS&version=1.3.0&request=GetCapabilities`, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) return { available: false };
+    const xml = await res.text();
+    if (!/GetMap/i.test(xml)) return { available: false };
+    const legendHref = decodeURIComponent(xml.match(/<LegendURL[^>]*>[\s\S]*?href="([^"]+)"/i)?.[1] || "");
+    const layer = legendHref.match(/[?&]layer=([^&]+)/i)?.[1] || "1";
+    return {
+      available: true,
+      wmsUrl: RADAR_WMS,
+      layer,
+      format: "image/png",
+      version: "1.3.0",
+      legendUrl: `${RADAR_WMS}?request=GetLegendGraphic&version=1.3.0&format=image/png&layer=${layer}`,
+      attribution: "Radar © NOAA/NWS"
+    };
+  } catch { return { available: false }; }
 }
 
 // ── Location search (Open-Meteo geocoding, U.S. only) ────────────────────────

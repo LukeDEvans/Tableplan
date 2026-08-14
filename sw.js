@@ -1,6 +1,8 @@
-const CACHE = "live-v16";
+const CACHE = "live-v17";
 const PRECACHE = ["/", "/favicon.svg"];
-const SKIP_HOSTS = ["supabase.co", "googleapis.com", "gstatic.com"];
+// Weather map tiles / radar frames must never be cached here (they'd bloat the
+// cache and serve stale radar) — pass them straight through to the network.
+const SKIP_HOSTS = ["supabase.co", "googleapis.com", "gstatic.com", "cartocdn.com", "mapservices.weather.noaa.gov", "radar.weather.gov", "openstreetmap.org"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

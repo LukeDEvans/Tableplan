@@ -10201,12 +10201,14 @@ function wxDisclosure(id, title, open, inner) {
 function wxRadarPreview(s) {
   const site = s.radarStation;
   if (!site) return "";
+  // Lightweight static preview; tapping opens the interactive Leaflet map.
   return `
     <div class="wx-section-label">Radar</div>
-    <a class="wx-radar-preview" href="https://radar.weather.gov/?settings=v1_eyJhZ2VuZGEiOnsiaWQiOm51bGwsImNlbnRlciI6WzAsMF0sImxvY2F0aW9uIjpudWxsfX0%3D#/" target="_blank" rel="noopener noreferrer" title="Open full radar (interactive map coming soon)">
+    <button class="wx-radar-preview" type="button" data-wx-action="open-map" title="Open interactive radar map">
       <img src="https://radar.weather.gov/ridge/standard/${escapeHtml(site)}_loop.gif" alt="Radar loop for ${escapeHtml(site)}" loading="lazy" onerror="this.closest('.wx-radar-preview').classList.add('is-broken')">
-      <span class="wx-radar-fallback">Open radar for ${escapeHtml(site)} ↗</span>
-    </a>`;
+      <span class="wx-radar-fallback">Open radar map</span>
+      <span class="wx-radar-expand">⤢ Expand</span>
+    </button>`;
 }
 
 function wxProductsSection(s) {
@@ -10249,6 +10251,7 @@ function wireWeatherPage() {
     else if (action === "save-current") { const l = weatherActiveLocation; if (l) { state.weatherLocations = [...(state.weatherLocations || []), { id: l.id, label: l.label, latitude: l.latitude, longitude: l.longitude, timezone: l.timezone }]; state.weatherActiveLocationId = l.id; persist(); renderWeatherPage(); } }
     else if (action === "toggle") { const id = btn.dataset.id; weatherExpanded.has(id) ? weatherExpanded.delete(id) : weatherExpanded.add(id); renderWeatherPage(); }
     else if (action === "product") { toggleWeatherProduct(btn.dataset.office, btn.dataset.type); }
+    else if (action === "open-map") { openWeatherRadarMap(); }
   });
   root.addEventListener("input", (e) => {
     if (!e.target.closest("#wxSearchInput")) return;
@@ -10287,6 +10290,114 @@ async function toggleWeatherProduct(office, type) {
     catch { weatherProductText.set(key, "none"); }
   }
   if (activeAppArea === "weather") renderWeatherPage();
+}
+
+// ── Interactive radar map (Leaflet, lazy-loaded from CDN on first open) ───────
+const WX_ALERT_STROKE = { Extreme: "#7b1113", Severe: "#c0392b", Moderate: "#d68910", Minor: "#2e86c1" };
+let weatherLeafletPromise = null;
+function ensureLeaflet() {
+  if (window.L) return Promise.resolve(window.L);
+  if (weatherLeafletPromise) return weatherLeafletPromise;
+  weatherLeafletPromise = new Promise((resolve, reject) => {
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css";
+    document.head.appendChild(css);
+    const js = document.createElement("script");
+    js.src = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js";
+    js.onload = () => resolve(window.L);
+    js.onerror = () => { weatherLeafletPromise = null; reject(new Error("Leaflet failed to load")); };
+    document.head.appendChild(js);
+  });
+  return weatherLeafletPromise;
+}
+
+let weatherMapInstance = null;
+async function openWeatherRadarMap() {
+  const loc = weatherActiveLocation;
+  const s = weatherSnapshot;
+  if (!loc) return;
+  document.getElementById("wxMapOverlay")?.remove();
+  const overlay = document.createElement("div");
+  overlay.id = "wxMapOverlay";
+  overlay.className = "wx-map-overlay";
+  overlay.innerHTML = `
+    <div class="wx-map-modal" role="dialog" aria-modal="true" aria-label="Radar map">
+      <div class="wx-map-bar">
+        <span class="wx-map-title">Radar — ${escapeHtml(s?.location?.label || loc.label)}</span>
+        <div class="wx-map-toggles">
+          <label class="wx-map-toggle"><input type="checkbox" id="wxMapRadar" checked> Radar</label>
+          <label class="wx-map-toggle" id="wxMapAlertsWrap"><input type="checkbox" id="wxMapAlerts" checked> Alerts</label>
+        </div>
+        <button class="wx-map-close" type="button" aria-label="Close radar map"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+      <div class="wx-map-canvas" id="wxMapCanvas"><div class="wx-map-msg">Loading map…</div></div>
+      <div class="wx-map-foot">
+        <img class="wx-map-legend" id="wxMapLegend" alt="Radar reflectivity scale" hidden>
+        <span class="wx-map-valid" id="wxMapValid"></span>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => { try { weatherMapInstance?.remove(); } catch {} weatherMapInstance = null; overlay.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  overlay.querySelector(".wx-map-close").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+
+  let L;
+  try { L = await ensureLeaflet(); }
+  catch { const cv = document.getElementById("wxMapCanvas"); if (cv) cv.innerHTML = `<div class="wx-map-msg">Map couldn't load — check your connection.</div>`; return; }
+  if (!document.getElementById("wxMapOverlay")) return; // closed while loading
+
+  const canvas = document.getElementById("wxMapCanvas");
+  canvas.innerHTML = "";
+  const dark = document.documentElement.dataset.theme === "dark"
+    || (!document.documentElement.dataset.theme && window.matchMedia?.("(prefers-color-scheme: dark)").matches);
+  const map = L.map(canvas, { zoomControl: true, attributionControl: true }).setView([loc.latitude, loc.longitude], 8);
+  weatherMapInstance = map;
+  L.tileLayer(
+    dark ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+         : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+    { attribution: "© OpenStreetMap © CARTO", subdomains: "abcd", maxZoom: 18 }
+  ).addTo(map);
+  L.marker([loc.latitude, loc.longitude]).addTo(map);
+
+  // Radar layer, discovered via GetCapabilities (never leave a broken toggle).
+  let radarLayer = null;
+  const valid = document.getElementById("wxMapValid");
+  try {
+    const cap = await weatherRequest({ action: "capabilities" }, 3 * 60 * 60 * 1000);
+    if (weatherMapInstance !== map) return; // closed/reopened
+    if (cap?.available) {
+      radarLayer = L.tileLayer.wms(cap.wmsUrl, { layers: cap.layer, format: cap.format, version: cap.version, transparent: true, opacity: 0.75, attribution: cap.attribution }).addTo(map);
+      const legend = document.getElementById("wxMapLegend");
+      if (cap.legendUrl && legend) { legend.src = cap.legendUrl; legend.hidden = false; }
+      if (valid) valid.textContent = "Base reflectivity · latest · " + cap.attribution;
+    } else {
+      if (valid) valid.textContent = "Radar temporarily offline";
+      document.getElementById("wxMapRadar").disabled = true;
+    }
+  } catch {
+    if (valid) valid.textContent = "Radar temporarily offline";
+    const rc = document.getElementById("wxMapRadar"); if (rc) rc.disabled = true;
+  }
+
+  // Active alert polygons from the snapshot geometry (already normalized).
+  let alertLayer = null;
+  const feats = (s?.alerts || []).filter((a) => a.geometry).map((a) => ({ type: "Feature", geometry: a.geometry, properties: { event: a.event, severity: a.severity } }));
+  if (feats.length) {
+    alertLayer = L.geoJSON({ type: "FeatureCollection", features: feats }, {
+      style: (f) => ({ color: WX_ALERT_STROKE[f.properties.severity] || "#c0392b", weight: 2, fillOpacity: 0.15 }),
+      onEachFeature: (f, lyr) => lyr.bindPopup(`<b>${escapeHtml(f.properties.event)}</b><br>${escapeHtml(f.properties.severity)}`)
+    }).addTo(map);
+  } else {
+    document.getElementById("wxMapAlertsWrap")?.classList.add("is-disabled");
+    const ac = document.getElementById("wxMapAlerts"); if (ac) ac.disabled = true;
+  }
+
+  document.getElementById("wxMapRadar")?.addEventListener("change", (e) => { if (!radarLayer) return; e.target.checked ? radarLayer.addTo(map) : map.removeLayer(radarLayer); });
+  document.getElementById("wxMapAlerts")?.addEventListener("change", (e) => { if (!alertLayer) return; e.target.checked ? alertLayer.addTo(map) : map.removeLayer(alertLayer); });
+  setTimeout(() => { try { map.invalidateSize(); } catch {} }, 60); // correct sizing after the overlay lays out
 }
 
 function showContactsApp(event) {
