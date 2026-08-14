@@ -6,6 +6,7 @@ import * as LiveMealPlanServings from './meal-plan-servings.js';
 import * as LiveReceiptDomain from './receipt-domain.js';
 import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
+import { createWeatherCache } from './weather-cache.js';
 
 const STORAGE_KEY = "tableplan-state-v1";
 const TRAVEL_LOGISTIC_ICONS = { flight: "✈️", hotel: "🏨", car: "🚗", train: "🚆", ferry: "⛴️", other: "📌" };
@@ -9885,22 +9886,13 @@ function weatherApiUrl(params) {
   return "";
 }
 const WEATHER_TTL = { snapshot: 12 * 60 * 1000, search: 10 * 60 * 1000, product: 12 * 60 * 1000 };
-const weatherCache = new Map();    // key -> { at, data }
-const weatherInflight = new Map(); // key -> Promise (in-flight de-dup)
+const weatherCache = createWeatherCache(); // TTL cache + in-flight de-dup (tested in weather-cache.test.js)
 async function weatherRequest(params, ttl) {
-  const key = JSON.stringify(params);
-  const cached = weatherCache.get(key);
-  if (cached && Date.now() - cached.at < ttl) return cached.data;
-  if (weatherInflight.has(key)) return weatherInflight.get(key);
-  const p = (async () => {
+  return weatherCache.request(JSON.stringify(params), ttl, async () => {
     const res = await fetch(weatherApiUrl(params));
     if (!res.ok) { const e = new Error(`weather ${res.status}`); e.status = res.status; try { e.body = await res.json(); } catch {} throw e; }
-    const data = await res.json();
-    weatherCache.set(key, { at: Date.now(), data });
-    return data;
-  })().finally(() => weatherInflight.delete(key));
-  weatherInflight.set(key, p);
-  return p;
+    return res.json();
+  });
 }
 // Shared service (consumed by the page now; sailing/calendar/briefing later).
 async function getWeatherSnapshot(location, opts = {}) {
@@ -9909,8 +9901,8 @@ async function getWeatherSnapshot(location, opts = {}) {
   if (location.timezone) params.timezone = location.timezone;
   try { return await weatherRequest(params, opts.maxAgeMs ?? WEATHER_TTL.snapshot); }
   catch (err) {
-    const cached = weatherCache.get(JSON.stringify(params)); // serve stale on upstream failure
-    if (cached) return { ...cached.data, isStale: true, warnings: [...(cached.data.warnings || []), "Showing recently cached data."] };
+    const cached = weatherCache.peek(JSON.stringify(params)); // serve stale on upstream failure
+    if (cached) return { ...cached, isStale: true, warnings: [...(cached.warnings || []), "Showing recently cached data."] };
     throw err;
   }
 }

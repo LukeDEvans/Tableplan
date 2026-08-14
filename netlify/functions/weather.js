@@ -467,5 +467,4 @@ function shortPath(url) { try { return new URL(url).pathname; } catch { return u
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 // Exported for unit tests (Vitest or node) — pure, no network.
-module.exports = exports;
-module.exports._test = { conv, normalizeCurrent, normalizeHourly, normalizeDaily, normalizeAlerts, cardinal, cardinalToDegrees, parseWindMph, cToF, haversineMiles, sunTimes, zoneId };
+module.exports._test = { conv, normalizeCurrent, currentFromForecast, normalizeHourly, normalizeDaily, normalizeAlerts, cardinal, cardinalToDegrees, parseWindMph, cToF, haversineMiles, sunTimes, zoneId, nwsFetch, searchLocations, getRadarCapabilities };

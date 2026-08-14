@@ -83,8 +83,21 @@ address — set a real contact before relying on it in production.
       tile/radar hosts are excluded from the service-worker cache (sw.js
       SKIP_HOSTS) so tiles/frames are never stored. Single current frame — no
       time dimension, so no animation yet (Phase 2).
-- [ ] Tests (Vitest, pending decision) for conversion, timezone/DST, alert sort,
-      cache TTL, in-flight dedup, no-render-loop; production build verification.
+- [x] Tests (**Vitest**) — `npm test` runs 26 tests covering NWS unitCode
+      conversion, wind cardinal, zone parsing, station provenance + forecast-
+      derived labeling, null measurements, hourly/daily normalization, alert
+      sort/geometry/expiration, sun times + timezone/DST formatting, nwsFetch
+      retry/timeout/error-typing (mocked), U.S.-only search (mocked), radar
+      capability discovery (mocked), and the TTL cache + in-flight de-dup +
+      stale-peek behavior. The de-dup/cache logic was extracted to
+      `weather-cache.js` so the shipped code is what's tested.
+- [x] Production build verified — `npm run build` (vite) passes with the new
+      `weather-cache.js` module bundled.
+
+> Note: the repo also has older `test/*.js` files that predate the source being
+> ES modules and have no runner; `vitest.config.mjs` scopes `npm test` to
+> `test/weather-*.test.js` so this feature's suite stays green. Fixing/removing
+> the legacy tests is out of scope for the weather work.
 
 ## Phase 2 (do not start until Phase 1 is stable)
 
