@@ -162,6 +162,7 @@ async function buildSnapshot(lat, lon, label, timezone) {
   return {
     location,
     office,
+    radarStation: p.radarStation || null,
     grid: p.gridId ? { office: p.gridId, x: p.gridX, y: p.gridY } : null,
     zones: { forecast: zoneId(p.forecastZone), county: zoneId(p.county), fire: zoneId(p.fireWeatherZone) },
     current,

@@ -219,7 +219,7 @@ const STATE_SECTIONS = {
   recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes"],
-  config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings"],
+  config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId"],
   contacts:  ["contacts", "contactGroups"],
 };
 
@@ -852,6 +852,10 @@ const elements = {
   homeContactsBtn: document.querySelector("#homeContactsBtn"),
   titleContactsBtn: document.querySelector("#titleContactsBtn"),
   contactsMainPage: document.querySelector("#contactsMainPage"),
+  homeWeatherBtn: document.querySelector("#homeWeatherBtn"),
+  titleWeatherBtn: document.querySelector("#titleWeatherBtn"),
+  weatherMainPage: document.querySelector("#weatherMainPage"),
+  weatherPageInner: document.querySelector("#weatherPageInner"),
   contactsGrid: document.querySelector("#contactsGrid"),
   contactsSearchInput: document.querySelector("#contactsSearchInput"),
   contactsAddBtn: document.querySelector("#contactsAddBtn"),
@@ -1611,6 +1615,8 @@ function bindEvents() {
   elements.titlePlanBtn.addEventListener("click", showPlanApp);
   elements.homeContactsBtn?.addEventListener("click", showContactsApp);
   elements.titleContactsBtn?.addEventListener("click", showContactsApp);
+  elements.homeWeatherBtn?.addEventListener("click", showWeatherApp);
+  elements.titleWeatherBtn?.addEventListener("click", showWeatherApp);
   elements.contactsAddBtn?.addEventListener("click", () => openContactDialog(null));
   elements.contactsSearchInput?.addEventListener("input", () => renderContactsPage());
   document.getElementById("contactsSidebarToggle")?.addEventListener("click", () => {
@@ -2345,6 +2351,7 @@ function handleHashNavigation() {
     finance: showFinanceApp,
     schedule: showPlanApp,
     contacts: showContactsApp,
+    weather: showWeatherApp,
     settings: showSettingsApp,
     home: showHomeApp,
     read: showMediaApp,
@@ -3260,6 +3267,8 @@ function defaultState() {
     planHiddenSources: {},
     contacts: [],
     contactGroups: [],
+    weatherLocations: [],
+    weatherActiveLocationId: "",
     groceryReviewDismissed: {},
     activeCooking: [],
     weeklyEmailSettings: defaultWeeklyEmailSettings(),
@@ -3468,6 +3477,8 @@ function normalizeState(parsed) {
     planHiddenSources: (parsed?.planHiddenSources && typeof parsed.planHiddenSources === "object") ? parsed.planHiddenSources : {},
     contacts: normalizeContacts(parsed?.contacts),
     contactGroups: normalizeContactGroups(parsed?.contactGroups),
+    weatherLocations: Array.isArray(parsed?.weatherLocations) ? parsed.weatherLocations.filter((l) => l && isFinite(l.latitude) && isFinite(l.longitude)) : [],
+    weatherActiveLocationId: typeof parsed?.weatherActiveLocationId === "string" ? parsed.weatherActiveLocationId : "",
     mealPlanConfig,
     appName: typeof parsed?.appName === "string" ? parsed.appName.trim() : "",
     travelHome: typeof parsed?.travelHome === "string" ? parsed.travelHome.trim() : "",
@@ -5498,6 +5509,10 @@ function mergeStates(newer, older) {
   merged.emailPrefs = newer.emailPrefs || older.emailPrefs || "";
   merged.appName = newer.appName || older.appName || "";
   merged.travelHome = newer.travelHome || older.travelHome || "";
+  // Saved weather locations + active selection: last writer wins (a small
+  // personal preference list, not id-merged history).
+  merged.weatherLocations = newer.weatherLocations || older.weatherLocations || [];
+  merged.weatherActiveLocationId = newer.weatherActiveLocationId || older.weatherActiveLocationId || "";
   merged.voiceCommandSecret = newer.voiceCommandSecret || older.voiceCommandSecret || "";
 
   // ── Email schedule: preserve configured schedule over fresh-device defaults
@@ -6986,6 +7001,8 @@ function hideAllPages() {
   if (elements.financeMainPage) elements.financeMainPage.hidden = true;
   elements.planMainPage.hidden = true;
   if (elements.contactsMainPage) elements.contactsMainPage.hidden = true;
+  if (elements.weatherMainPage) elements.weatherMainPage.hidden = true;
+  if (typeof stopWeatherRefreshLoop === "function") stopWeatherRefreshLoop(); // pause weather polling when leaving
   elements.settingsMainPage.hidden = true;
   elements.mailMainPage.hidden = true;
   document.getElementById("exploreMainPage").hidden = true;
@@ -9855,6 +9872,421 @@ function showPlanApp(event) {
   renderPlanPage();
   closePageTitleMenu();
   closeAppMenu();
+}
+
+// ══ Weather ═══════════════════════════════════════════════════════════════════
+// Normalized weather service (backed by netlify/functions/weather.js) + page.
+// Other modules must consume getWeatherSnapshot()/its selectors, never raw
+// NOAA. See WEATHER.md.
+function weatherApiUrl(params) {
+  const qs = new URLSearchParams(params).toString();
+  if (canUseLocalBackend()) return `/api/weather?${qs}`;
+  if (window.location.protocol.startsWith("http")) return `/.netlify/functions/weather?${qs}`;
+  return "";
+}
+const WEATHER_TTL = { snapshot: 12 * 60 * 1000, search: 10 * 60 * 1000, product: 12 * 60 * 1000 };
+const weatherCache = new Map();    // key -> { at, data }
+const weatherInflight = new Map(); // key -> Promise (in-flight de-dup)
+async function weatherRequest(params, ttl) {
+  const key = JSON.stringify(params);
+  const cached = weatherCache.get(key);
+  if (cached && Date.now() - cached.at < ttl) return cached.data;
+  if (weatherInflight.has(key)) return weatherInflight.get(key);
+  const p = (async () => {
+    const res = await fetch(weatherApiUrl(params));
+    if (!res.ok) { const e = new Error(`weather ${res.status}`); e.status = res.status; try { e.body = await res.json(); } catch {} throw e; }
+    const data = await res.json();
+    weatherCache.set(key, { at: Date.now(), data });
+    return data;
+  })().finally(() => weatherInflight.delete(key));
+  weatherInflight.set(key, p);
+  return p;
+}
+// Shared service (consumed by the page now; sailing/calendar/briefing later).
+async function getWeatherSnapshot(location, opts = {}) {
+  const params = { action: "snapshot", lat: location.latitude, lon: location.longitude };
+  if (location.label) params.label = location.label;
+  if (location.timezone) params.timezone = location.timezone;
+  try { return await weatherRequest(params, opts.maxAgeMs ?? WEATHER_TTL.snapshot); }
+  catch (err) {
+    const cached = weatherCache.get(JSON.stringify(params)); // serve stale on upstream failure
+    if (cached) return { ...cached.data, isStale: true, warnings: [...(cached.data.warnings || []), "Showing recently cached data."] };
+    throw err;
+  }
+}
+async function getCurrentConditions(location) { return (await getWeatherSnapshot(location)).current; }
+async function getHourlyForecast(location) { return (await getWeatherSnapshot(location)).hourly; }
+async function getDailyForecast(location) { return (await getWeatherSnapshot(location)).daily; }
+async function getActiveAlerts(location) { return (await getWeatherSnapshot(location)).alerts; }
+async function getWeatherProducts(location) { return (await getWeatherSnapshot(location)).products; }
+async function getWeatherProductText(office, type) { return (await weatherRequest({ action: "product", office, type }, WEATHER_TTL.product)).product; }
+async function searchWeatherLocations(query) { const q = String(query || "").trim(); if (q.length < 3) return []; return (await weatherRequest({ action: "search", q }, WEATHER_TTL.search)).results || []; }
+function getMapLayerCatalog() { return []; } // Phase 2 (WMS GetCapabilities)
+
+// ── Weather page state ────────────────────────────────────────────────────────
+let weatherActiveLocation = null;   // WeatherLocation currently displayed
+let weatherCurrentGeoLoc = null;    // session-only geolocation result (id "current")
+let weatherSnapshot = null;
+let weatherStatus = "idle";         // idle | loading | geolocating | ready | error
+let weatherErrorMsg = "";
+let weatherGenId = 0;               // cancels stale loads on location change / leave
+let weatherRefreshTimer = null;
+let weatherPickerOpen = false;
+let weatherSearchResults = [];
+let weatherSearchTimer = null;
+let weatherSearchBusy = false;
+let weatherSearchGen = 0;           // separate from weatherGenId so a search never cancels a snapshot load
+const weatherExpanded = new Set();  // expanded disclosure section ids
+const weatherProductText = new Map(); // `${office}:${type}` -> product | "loading" | "none"
+let weatherWired = false;
+
+function showWeatherApp(event) {
+  event?.stopPropagation();
+  if (!isPageEnabled("weather")) { showHomeApp(); return; }
+  activeAppArea = "weather";
+  hideAllPages();
+  elements.weatherMainPage.hidden = false;
+  elements.weekLabel.closest(".week-tools").hidden = true;
+  elements.activeCookingSection.hidden = true;
+  setPageTitle("Weather");
+  setPageHash("weather");
+  closePageTitleMenu();
+  closeAppMenu();
+  initWeatherPage();
+}
+
+function initWeatherPage() {
+  const saved = state.weatherLocations || [];
+  const activeId = state.weatherActiveLocationId;
+  let loc = saved.find((l) => l.id === activeId) || null;
+  if (!loc && activeId === "current" && weatherCurrentGeoLoc) loc = weatherCurrentGeoLoc;
+  if (loc) setWeatherLocation(loc, { persistChoice: false });
+  else if (weatherActiveLocation) loadWeatherSnapshot();
+  else if (saved.length) setWeatherLocation(saved[0], { persistChoice: false });
+  else { weatherStatus = "idle"; renderWeatherPage(); useCurrentWeatherLocation(); }
+  startWeatherRefreshLoop();
+}
+
+function setWeatherLocation(loc, { persistChoice = true } = {}) {
+  weatherActiveLocation = loc;
+  if (persistChoice) { state.weatherActiveLocationId = loc.id; persist(); }
+  weatherSnapshot = null;
+  weatherPickerOpen = false;
+  loadWeatherSnapshot();
+}
+
+async function loadWeatherSnapshot() {
+  if (!weatherActiveLocation) { renderWeatherPage(); return; }
+  const gen = ++weatherGenId;
+  weatherStatus = weatherSnapshot ? "ready" : "loading"; // keep old data visible while refreshing
+  weatherErrorMsg = "";
+  renderWeatherPage();
+  try {
+    const snap = await getWeatherSnapshot(weatherActiveLocation);
+    if (gen !== weatherGenId || activeAppArea !== "weather") return; // superseded / left page
+    weatherSnapshot = snap;
+    weatherStatus = "ready";
+  } catch (err) {
+    if (gen !== weatherGenId || activeAppArea !== "weather") return;
+    weatherErrorMsg = err?.body?.error || (err?.status === 404 ? "This location is outside NWS coverage (U.S. only)." : "Weather is unavailable right now.");
+    weatherStatus = weatherSnapshot ? "ready" : "error";
+  }
+  renderWeatherPage();
+}
+
+function useCurrentWeatherLocation() {
+  if (!navigator.geolocation) { weatherStatus = "error"; weatherErrorMsg = "Location isn't available on this device — search for a place instead."; renderWeatherPage(); return; }
+  weatherStatus = "geolocating"; weatherErrorMsg = ""; renderWeatherPage();
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      weatherCurrentGeoLoc = { id: "current", label: "Current location", latitude: pos.coords.latitude, longitude: pos.coords.longitude, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, isCurrentLocation: true };
+      state.weatherActiveLocationId = "current"; persist();
+      setWeatherLocation(weatherCurrentGeoLoc, { persistChoice: false });
+    },
+    (err) => {
+      weatherStatus = weatherSnapshot ? "ready" : "idle";
+      weatherErrorMsg = err.code === err.PERMISSION_DENIED ? "Location permission denied — search for a place or pick a saved one." : "Couldn't get your location — search instead.";
+      weatherPickerOpen = !weatherSnapshot; // open the picker so they can act
+      renderWeatherPage();
+    },
+    { enableHighAccuracy: false, timeout: 10000, maximumAge: 5 * 60 * 1000 }
+  );
+}
+
+function startWeatherRefreshLoop() {
+  stopWeatherRefreshLoop();
+  // Foreground-only refresh; paused when the tab is hidden or the user leaves.
+  weatherRefreshTimer = setInterval(() => {
+    if (activeAppArea !== "weather" || document.hidden || !weatherActiveLocation) return;
+    loadWeatherSnapshot();
+  }, 90 * 1000);
+}
+function stopWeatherRefreshLoop() { if (weatherRefreshTimer) { clearInterval(weatherRefreshTimer); weatherRefreshTimer = null; } }
+
+// ── Formatting helpers ──────────────────────────────────────────────────────
+function wxFmt(iso, tz, opts) { try { return new Date(iso).toLocaleString("en-US", { timeZone: tz, ...opts }); } catch { return ""; } }
+function wxHourLabel(iso, tz) { return wxFmt(iso, tz, { hour: "numeric" }); }
+function wxWeekday(iso, tz) { return wxFmt(iso, tz, { weekday: "short" }); }
+function wxClock(iso, tz) { return wxFmt(iso, tz, { hour: "numeric", minute: "2-digit" }); }
+function wxTempStr(n) { return n == null ? "—" : `${Math.round(n)}°`; }
+function wxNum(n, suffix = "") { return n == null ? "—" : `${n}${suffix}`; }
+function wxAgo(iso) { const m = Math.round((Date.now() - new Date(iso)) / 60000); if (!isFinite(m)) return ""; if (m < 1) return "just now"; if (m < 60) return `${m} min ago`; const h = Math.round(m / 60); return `${h} hr ago`; }
+const WX_SEVERITY_CLASS = { Extreme: "wx-sev-extreme", Severe: "wx-sev-severe", Moderate: "wx-sev-moderate", Minor: "wx-sev-minor" };
+
+// ── Render ──────────────────────────────────────────────────────────────────
+function renderWeatherPage() {
+  const el = elements.weatherPageInner;
+  if (!el) return;
+  wireWeatherPage();
+  const loc = weatherActiveLocation;
+  const s = weatherSnapshot;
+  const tz = s?.location?.timezone || loc?.timezone || "America/New_York";
+  const label = s?.location?.label || loc?.label || "Weather";
+  const updated = s ? `Updated ${wxAgo(s.fetchedAt)}` : "";
+  const header = `
+    <div class="wx-header">
+      <button class="wx-location-btn" type="button" data-wx-action="toggle-picker" aria-expanded="${weatherPickerOpen}">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
+        <span class="wx-location-name">${escapeHtml(label)}</span>
+        <span class="wx-caret">▾</span>
+      </button>
+      <div class="wx-updated">${s?.isStale ? `<span class="wx-stale">Stale</span> ` : ""}${escapeHtml(updated)}</div>
+    </div>`;
+
+  let body;
+  if (weatherStatus === "geolocating") body = `<div class="wx-note">Finding your location…</div>`;
+  else if (!loc) body = wxEmptyState();
+  else if (weatherStatus === "error" && !s) body = `<div class="wx-error">${escapeHtml(weatherErrorMsg || "Weather unavailable.")}</div>`;
+  else if (!s) body = `<div class="wx-skeleton">Loading weather…</div>`;
+  else body = wxDashboard(s, tz);
+
+  el.innerHTML = header + (weatherPickerOpen ? wxPicker() : "") + (weatherErrorMsg && s ? `<div class="wx-inline-warn">${escapeHtml(weatherErrorMsg)}</div>` : "") + body;
+}
+
+function wxEmptyState() {
+  return `
+    <div class="wx-empty">
+      <p>See current conditions, forecasts, and alerts for any U.S. location.</p>
+      <button class="primary-btn" type="button" data-wx-action="use-current">Use my location</button>
+      <button class="secondary-btn" type="button" data-wx-action="toggle-picker">Search a place</button>
+    </div>`;
+}
+
+function wxPicker() {
+  const saved = state.weatherLocations || [];
+  const savedHtml = saved.length ? saved.map((l) => `
+    <div class="wx-saved-row">
+      <button class="wx-saved-pick" type="button" data-wx-action="select-saved" data-id="${escapeHtml(l.id)}">${escapeHtml(l.label)}</button>
+      <button class="icon-btn wx-saved-remove" type="button" data-wx-action="remove-saved" data-id="${escapeHtml(l.id)}" aria-label="Remove ${escapeHtml(l.label)}">&times;</button>
+    </div>`).join("") : `<div class="wx-picker-empty">No saved locations yet.</div>`;
+  const results = weatherSearchResults.map((r) => `
+    <button class="wx-search-result" type="button" data-wx-action="select-result" data-id="${escapeHtml(r.id)}">${escapeHtml(r.label)}</button>`).join("");
+  const canSave = weatherActiveLocation && weatherActiveLocation.id !== "current" && !saved.some((l) => l.id === weatherActiveLocation.id);
+  return `
+    <div class="wx-picker">
+      <button class="wx-picker-current" type="button" data-wx-action="use-current">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg> Use my location
+      </button>
+      <div class="wx-search-wrap">
+        <input type="search" class="wx-search-input" id="wxSearchInput" placeholder="Search a U.S. city…" autocomplete="off" value="" />
+        ${weatherSearchBusy ? `<span class="wx-search-busy">…</span>` : ""}
+      </div>
+      ${results ? `<div class="wx-search-results">${results}</div>` : ""}
+      <div class="wx-picker-label">Saved</div>
+      ${savedHtml}
+      ${canSave ? `<button class="secondary-btn wx-save-current" type="button" data-wx-action="save-current">+ Save “${escapeHtml(weatherActiveLocation.label)}”</button>` : ""}
+      <div class="wx-attribution">Search by Open-Meteo / GeoNames · Weather by NWS/NOAA</div>
+    </div>`;
+}
+
+function wxAlertCard(a) {
+  const cls = WX_SEVERITY_CLASS[a.severity] || "wx-sev-minor";
+  const open = weatherExpanded.has(`alert:${a.id}`);
+  return `
+    <div class="wx-alert ${cls}">
+      <button class="wx-alert-head" type="button" data-wx-action="toggle" data-id="alert:${escapeHtml(a.id)}" aria-expanded="${open}">
+        <span class="wx-alert-sev">${escapeHtml(a.severity)}</span>
+        <span class="wx-alert-event">${escapeHtml(a.event)}</span>
+        <span class="wx-caret">${open ? "▴" : "▾"}</span>
+      </button>
+      ${open ? `<div class="wx-alert-body">
+        ${a.headline ? `<div class="wx-alert-headline">${escapeHtml(a.headline)}</div>` : ""}
+        ${a.affectedArea ? `<div class="wx-alert-area">${escapeHtml(a.affectedArea)}</div>` : ""}
+        ${a.expires ? `<div class="wx-alert-expires">Until ${escapeHtml(wxClock(a.expires, weatherActiveLocation?.timezone || "America/New_York"))}</div>` : ""}
+        <div class="wx-alert-desc">${escapeHtml(a.description || "")}</div>
+        ${a.instructions ? `<div class="wx-alert-instr"><b>What to do:</b> ${escapeHtml(a.instructions)}</div>` : ""}
+      </div>` : ""}
+    </div>`;
+}
+
+function wxDashboard(s, tz) {
+  const c = s.current || {};
+  const prov = c.provenance || {};
+  const provLine = prov.isForecastDerived
+    ? "Forecast data — no recent station observation"
+    : `${escapeHtml(prov.stationName || prov.stationId || "Nearby station")}${prov.stationDistanceMiles != null ? ` · ${prov.stationDistanceMiles} mi` : ""}${prov.observedAt ? ` · ${escapeHtml(wxAgo(prov.observedAt))}` : ""}`;
+  const today = s.daily?.[0];
+  const alertsHtml = (s.alerts || []).length ? `<div class="wx-alerts">${s.alerts.map(wxAlertCard).join("")}</div>` : "";
+  const sun = c.sunrise && c.sunset ? `${wxClock(c.sunrise, tz)} / ${wxClock(c.sunset, tz)}` : "—";
+  const detail = [
+    ["Humidity", wxNum(c.humidityPercent, "%")],
+    ["Dew point", wxTempStr(c.dewPointF)],
+    ["Wind", c.windMph != null ? `${c.windMph} mph ${c.windDirectionCardinal || ""}`.trim() : "—"],
+    ["Gusts", c.windGustMph != null ? `${c.windGustMph} mph` : "—"],
+    ["Pressure", wxNum(c.pressureInHg, " inHg")],
+    ["Visibility", c.visibilityMiles != null ? `${c.visibilityMiles} mi` : "—"],
+    ["Precip (1h)", c.precipitationInches != null ? `${c.precipitationInches} in` : "—"],
+    ["Sun ↑/↓", sun],
+    ["UV index", c.uvIndex == null ? "—" : c.uvIndex],
+    ["Air quality", c.airQualityIndex == null ? "—" : c.airQualityIndex]
+  ].map(([k, v]) => `<div class="wx-detail-cell"><span class="wx-detail-k">${k}</span><span class="wx-detail-v">${escapeHtml(String(v))}</span></div>`).join("");
+
+  const hourStrip = (s.hourly || []).slice(0, 12).map((h) => `
+    <div class="wx-hour">
+      <div class="wx-hour-t">${escapeHtml(wxHourLabel(h.startTime, tz))}</div>
+      <div class="wx-hour-temp">${wxTempStr(h.temperatureF)}</div>
+      <div class="wx-hour-pop">${h.precipProbabilityPercent ? `${h.precipProbabilityPercent}%` : "&nbsp;"}</div>
+    </div>`).join("");
+
+  const hourlyOpen = weatherExpanded.has("sec:hourly");
+  const hourlyFull = (s.hourly || []).slice(0, 24).map((h) => `
+    <div class="wx-hourly-row">
+      <span class="wx-hourly-time">${escapeHtml(wxFmt(h.startTime, tz, { weekday: "short", hour: "numeric" }))}</span>
+      <span class="wx-hourly-temp">${wxTempStr(h.temperatureF)}</span>
+      <span class="wx-hourly-pop">${h.precipProbabilityPercent ? `${h.precipProbabilityPercent}%` : ""}</span>
+      <span class="wx-hourly-desc">${escapeHtml(h.description || "")}</span>
+    </div>`).join("");
+
+  const dailyOpen = weatherExpanded.has("sec:daily");
+  const dailyFull = (s.daily || []).map((d) => `
+    <div class="wx-daily-row">
+      <span class="wx-daily-name">${escapeHtml(d.name)}</span>
+      <span class="wx-daily-temp">${wxTempStr(d.temperatureF)}</span>
+      <span class="wx-daily-pop">${d.precipProbabilityPercent ? `${d.precipProbabilityPercent}%` : ""}</span>
+      <span class="wx-daily-desc">${escapeHtml(d.description || "")}</span>
+    </div>`).join("");
+
+  return `
+    ${alertsHtml}
+    <div class="wx-current">
+      <div class="wx-temp-big">${wxTempStr(c.temperatureF)}</div>
+      <div class="wx-current-meta">
+        <div class="wx-desc">${escapeHtml(c.description || today?.description || "")}</div>
+        <div class="wx-feels">Feels like ${wxTempStr(c.apparentTemperatureF)}</div>
+        <div class="wx-prov">${provLine}</div>
+      </div>
+    </div>
+    ${today ? `<div class="wx-today">${escapeHtml(today.name)}: ${escapeHtml(today.detailedForecast || today.description || "")}</div>` : ""}
+    <div class="wx-section-label">Next hours</div>
+    <div class="wx-hours-strip">${hourStrip}</div>
+    ${wxRadarPreview(s)}
+    <div class="wx-section-label">Now</div>
+    <div class="wx-detail-grid">${detail}</div>
+    ${wxDisclosure("hourly", "Hourly forecast", hourlyOpen, `<div class="wx-hourly-list">${hourlyFull}</div>`)}
+    ${wxDisclosure("daily", "7-day forecast", dailyOpen, `<div class="wx-daily-list">${dailyFull}</div>`)}
+    ${wxProductsSection(s)}
+    ${(s.warnings || []).length ? `<div class="wx-warnings">${s.warnings.map((w) => `<div>• ${escapeHtml(w)}</div>`).join("")}</div>` : ""}`;
+}
+
+function wxDisclosure(id, title, open, inner) {
+  return `
+    <div class="wx-disclosure">
+      <button class="wx-disclosure-head" type="button" data-wx-action="toggle" data-id="sec:${id}" aria-expanded="${open}">
+        <span>${escapeHtml(title)}</span><span class="wx-caret">${open ? "▴" : "▾"}</span>
+      </button>
+      ${open ? inner : ""}
+    </div>`;
+}
+
+function wxRadarPreview(s) {
+  const site = s.radarStation;
+  if (!site) return "";
+  return `
+    <div class="wx-section-label">Radar</div>
+    <a class="wx-radar-preview" href="https://radar.weather.gov/?settings=v1_eyJhZ2VuZGEiOnsiaWQiOm51bGwsImNlbnRlciI6WzAsMF0sImxvY2F0aW9uIjpudWxsfX0%3D#/" target="_blank" rel="noopener noreferrer" title="Open full radar (interactive map coming soon)">
+      <img src="https://radar.weather.gov/ridge/standard/${escapeHtml(site)}_loop.gif" alt="Radar loop for ${escapeHtml(site)}" loading="lazy" onerror="this.closest('.wx-radar-preview').classList.add('is-broken')">
+      <span class="wx-radar-fallback">Open radar for ${escapeHtml(site)} ↗</span>
+    </a>`;
+}
+
+function wxProductsSection(s) {
+  const products = s.products || [];
+  if (!products.length) return "";
+  return products.map((p) => {
+    const id = `prod:${p.office}:${p.type}`;
+    const open = weatherExpanded.has(id);
+    let inner = "";
+    if (open) {
+      const cached = weatherProductText.get(`${p.office}:${p.type}`);
+      if (cached === "loading" || cached === undefined) inner = `<div class="wx-note">Loading…</div>`;
+      else if (cached === "none" || !cached?.text) inner = `<div class="wx-note">Not currently issued for ${escapeHtml(p.office)}.</div>`;
+      else inner = `<div class="wx-product-meta">Issued ${escapeHtml(wxClock(cached.issued, s.location.timezone))}</div><pre class="wx-product-text">${escapeHtml(cached.text)}</pre>`;
+    }
+    return `
+      <div class="wx-disclosure">
+        <button class="wx-disclosure-head" type="button" data-wx-action="product" data-office="${escapeHtml(p.office)}" data-type="${escapeHtml(p.type)}" aria-expanded="${open}">
+          <span>${escapeHtml(p.name)}</span><span class="wx-caret">${open ? "▴" : "▾"}</span>
+        </button>
+        ${open ? inner : ""}
+      </div>`;
+  }).join("");
+}
+
+// ── Wiring (delegated, bound once) ──────────────────────────────────────────
+function wireWeatherPage() {
+  if (weatherWired) return;
+  weatherWired = true;
+  const root = elements.weatherPageInner;
+  root.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-wx-action]");
+    if (!btn) return;
+    const action = btn.dataset.wxAction;
+    if (action === "toggle-picker") { weatherPickerOpen = !weatherPickerOpen; renderWeatherPage(); }
+    else if (action === "use-current") { weatherPickerOpen = false; useCurrentWeatherLocation(); }
+    else if (action === "select-saved") { const l = (state.weatherLocations || []).find((x) => x.id === btn.dataset.id); if (l) setWeatherLocation(l); }
+    else if (action === "select-result") { const r = weatherSearchResults.find((x) => x.id === btn.dataset.id); if (r) { weatherSearchResults = []; setWeatherLocation(r); } }
+    else if (action === "remove-saved") { state.weatherLocations = (state.weatherLocations || []).filter((x) => x.id !== btn.dataset.id); persist(); renderWeatherPage(); }
+    else if (action === "save-current") { const l = weatherActiveLocation; if (l) { state.weatherLocations = [...(state.weatherLocations || []), { id: l.id, label: l.label, latitude: l.latitude, longitude: l.longitude, timezone: l.timezone }]; state.weatherActiveLocationId = l.id; persist(); renderWeatherPage(); } }
+    else if (action === "toggle") { const id = btn.dataset.id; weatherExpanded.has(id) ? weatherExpanded.delete(id) : weatherExpanded.add(id); renderWeatherPage(); }
+    else if (action === "product") { toggleWeatherProduct(btn.dataset.office, btn.dataset.type); }
+  });
+  root.addEventListener("input", (e) => {
+    if (!e.target.closest("#wxSearchInput")) return;
+    const q = e.target.value;
+    clearTimeout(weatherSearchTimer);
+    if (q.trim().length < 3) { weatherSearchResults = []; weatherSearchBusy = false; return; }
+    weatherSearchTimer = setTimeout(() => runWeatherSearch(q), 350);
+  });
+}
+
+async function runWeatherSearch(q) {
+  const mine = ++weatherSearchGen; // abort superseded searches without touching snapshot loads
+  weatherSearchBusy = true;
+  try {
+    const results = await searchWeatherLocations(q);
+    if (mine !== weatherSearchGen || activeAppArea !== "weather") return;
+    weatherSearchResults = results;
+  } catch { weatherSearchResults = []; }
+  weatherSearchBusy = false;
+  // Re-render but keep focus/value in the search box.
+  const val = document.getElementById("wxSearchInput")?.value || "";
+  renderWeatherPage();
+  const input = document.getElementById("wxSearchInput");
+  if (input) { input.value = val; input.focus(); }
+}
+
+async function toggleWeatherProduct(office, type) {
+  const id = `prod:${office}:${type}`;
+  if (weatherExpanded.has(id)) { weatherExpanded.delete(id); renderWeatherPage(); return; }
+  weatherExpanded.add(id);
+  const key = `${office}:${type}`;
+  if (!weatherProductText.has(key)) {
+    weatherProductText.set(key, "loading");
+    renderWeatherPage();
+    try { const prod = await getWeatherProductText(office, type); weatherProductText.set(key, prod || "none"); }
+    catch { weatherProductText.set(key, "none"); }
+  }
+  if (activeAppArea === "weather") renderWeatherPage();
 }
 
 function showContactsApp(event) {

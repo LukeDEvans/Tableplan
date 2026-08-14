@@ -65,15 +65,18 @@ address — set a real contact before relying on it in production.
 - [x] U.S.-only location search (Open-Meteo) + on-demand NWS products (AFD/HWO/
       LSR/PNS).
 - [x] Live-API smoke tests (snapshot / search / product / out-of-coverage).
-- [ ] Client shared weather service (`getWeatherSnapshot` + cache/dedup/no-loop).
-- [ ] Weather route/page + nav entry; current-location flow + search + saved
-      locations.
-- [ ] Dashboard: current conditions, today summary, next-hours strip, alert
-      banner, radar preview.
-- [ ] Progressive disclosure: hourly-through-tomorrow, 7-day, detailed grid,
-      NWS product text.
+- [x] Client shared weather service (`getWeatherSnapshot` + selectors, TTL
+      cache, in-flight de-dup, stale-on-failure, gen-counter cancellation so no
+      runaway loads; 90s foreground refresh paused when hidden/away).
+- [x] Weather route/page + nav entry; current-location flow (one-time
+      geolocation w/ denied/timeout handling) + U.S. search (debounced) + saved
+      locations (add/select/remove, synced in `state.weatherLocations`).
+- [x] Dashboard: current conditions w/ provenance, today summary, next-hours
+      strip, alert cards (severity-colored + expandable), static radar preview.
+- [x] Progressive disclosure: hourly-through-tomorrow, 7-day, detailed grid,
+      on-demand NWS product text (AFD/HWO/LSR/PNS).
 - [ ] Leaflet expanded map: base map + one stable radar layer + alert polygons
-      + legend/timestamp.
+      + legend/timestamp. (radar is currently a static RIDGE loop that links out)
 - [ ] Tests (Vitest, pending decision) for conversion, timezone/DST, alert sort,
       cache TTL, in-flight dedup, no-render-loop; production build verification.
 
