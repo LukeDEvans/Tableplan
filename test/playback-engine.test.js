@@ -185,4 +185,17 @@ describe("playback engine — guards", () => {
     const eng = engineWith(makeFakeAudio());
     expect(() => eng.load({ id: "x", providerId: "p", segments: [] })).toThrow(/segment/);
   });
+
+  it("stop() detaches handlers so a late ended can't fire into feature code", () => {
+    const a = makeFakeAudio();
+    const eng = engineWith(a);
+    const onEnded = vi.fn();
+    eng.on("ended", onEnded);
+    eng.load({ id: "x", providerId: "podcast", segments: [{ url: "u1", duration: 10 }] });
+    eng.stop();
+    expect(a.paused).toBe(true);
+    a._end(); // a stray end arriving after stop must be inert
+    expect(onEnded).not.toHaveBeenCalled();
+    expect(eng.isActive()).toBe(false);
+  });
 });

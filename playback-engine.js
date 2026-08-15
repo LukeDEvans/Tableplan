@@ -172,7 +172,15 @@ export function createPlaybackEngine({ createAudio } = {}) {
     skip(delta) { this.seekTo(logicalPosition() + delta); },
     setRate(r) { rate = r || 1; applyRate(); },
     getRate() { return rate; },
-    stop() { if (el) { el.pause(); } source = null; segIndex = 0; },
+    stop() {
+      // Pause and detach the engine's handlers so a stopped source can't fire a
+      // stray ended/timeupdate into feature code. A later load() rebinds them.
+      if (el) {
+        el.pause();
+        el.onended = el.onplay = el.onpause = el.onerror = el.ontimeupdate = el.onloadedmetadata = null;
+      }
+      source = null; segIndex = 0;
+    },
     // Host fills in a segment duration once known (e.g. TTS resolves it async),
     // sharpening the seek scale without reloading.
     setSegmentDuration(i, d) { if (source && source.segments[i] && d > 0) source.segments[i].duration = d; },
