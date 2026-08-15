@@ -9,6 +9,7 @@
 
 import { hashBytes, makeBlobAsset, newBlobId } from "./blob.js";
 import { parseMusicXml } from "./musicxml-parser.js";
+import { extractMusicXml, isZip } from "./mxl.js";
 import { mintMeasureIdentity } from "./measure-identity.js";
 import { makeWork, makeMovement, makeScoreEdition, makeRepresentation } from "./domain.js";
 
@@ -23,8 +24,12 @@ const stripExt = (n) => String(n || "Untitled").replace(/\.[^.]+$/, "");
  * @returns       { work, edition, movement, representation, model, blobId, warnings }
  */
 export async function importMusicXmlFile(file, storage, opts = {}) {
-  const bytes = file.bytes instanceof Uint8Array ? file.bytes : new Uint8Array(file.bytes);
-  const mimeType = file.mimeType || MUSICXML_MIME;
+  const rawBytes = file.bytes instanceof Uint8Array ? file.bytes : new Uint8Array(file.bytes);
+  const wasCompressed = isZip(rawBytes);
+  // Normalize .mxl (zip) → plain MusicXML; a .xml/.musicxml passes through. We
+  // store the extracted plain XML so the parser and renderer only see plain XML.
+  const bytes = extractMusicXml(rawBytes);
+  const mimeType = MUSICXML_MIME;
 
   // 1. Store the owned bytes, addressed by a stable blobId, and catalog them.
   const blobId = newBlobId();
@@ -33,7 +38,7 @@ export async function importMusicXmlFile(file, storage, opts = {}) {
   const asset = makeBlobAsset({
     blobId, hash, size: bytes.byteLength, mimeType, ownership: "owned",
     locations: [{ kind: "idb", key: blobId }],
-    provenance: { source: "user-upload", filename: String(file.name || "") },
+    provenance: { source: "user-upload", filename: String(file.name || ""), originalFormat: wasCompressed ? "mxl" : "musicxml" },
   });
   await storage.put("blobAssets", blobId, asset);
 
