@@ -38357,7 +38357,7 @@ function wireMediaTabs() {
   document.getElementById("confirmPdfImportBtn")?.addEventListener("click", confirmPdfImport);
 }
 
-const MEDIA_SERVICE_TABS = ["books", "podcasts", "music"];
+const MEDIA_SERVICE_TABS = ["books", "podcasts", "music", "radio"];
 
 function switchMediaTab(tab) {
   activeMediaTab = tab;
@@ -38383,6 +38383,7 @@ function switchMediaTab(tab) {
   const podcastsPanel = document.getElementById("mediaPodcastsPanel");
   const allPanel = document.getElementById("mediaAllPanel");
   const musicPanel = document.getElementById("mediaMusicPanel");
+  const radioPanel = document.getElementById("mediaRadioPanel");
 
   if (booksPanel) booksPanel.hidden = true;
   if (listPanel) listPanel.hidden = true;
@@ -38390,6 +38391,7 @@ function switchMediaTab(tab) {
   if (podcastsPanel) podcastsPanel.hidden = true;
   if (allPanel) allPanel.hidden = true;
   if (musicPanel) musicPanel.hidden = true;
+  if (radioPanel) radioPanel.hidden = true;
   const searchPanel = document.getElementById("mediaSearchPanel");
   if (searchPanel) searchPanel.hidden = true;
   // Leaving to a folder clears an active top-bar search.
@@ -38414,6 +38416,9 @@ function switchMediaTab(tab) {
   } else if (tab === "music") {
     if (musicPanel) musicPanel.hidden = false;
     initMusicPanel();
+  } else if (tab === "radio") {
+    if (radioPanel) radioPanel.hidden = false;
+    initRadioPanel();
   } else {
     const isArticleTab = getReadPublications().some(p => p.key === tab);
     if (listPanel) listPanel.hidden = false;
@@ -38489,6 +38494,21 @@ const musicArtUrls = new Map();// artwork blobId → object URL (built once, reu
 // On-demand Discover (streaming providers — music-streaming.js + adapters)
 let musicTabMode = "saved";    // "saved" | "discover" | "library"
 let musicOpenPlaylistId = null; // when viewing a single playlist in Saved
+
+// Radio (live audio) — separate domain from music; shares the one engine.
+let radioAudio = null;         // shared element while a radio stream is active, else null
+let radioCurStation = null;    // station object currently tuned
+let radioStreamCandidates = [];// ordered stream URLs for fallback
+let radioStreamIdx = 0;
+let radioReconnectTries = 0;   // guards live-stream reconnect loops
+let radioMod = null, radioRegistry = null, radioCatalog = null;
+let radioPanelWired = false;
+let radioSearchQuery = "";
+let radioSearchResults = null; // { stations, providerStatuses } | null
+let radioSearchLoading = false;
+let radioSearchToken = 0;
+let radioSearchDebounce = null;
+let radioViewIndex = new Map();
 let musicStreamMod = null;     // lazy music-streaming.js
 let musicProviderRegistry = null;
 let musicSearchQuery = "";
@@ -41242,7 +41262,7 @@ function getMediaEngine() {
       updatePodcastProgressUI(podcastCurEpisode);
       updateMiniPlayerProgress();
       schedulePodcastPositionSave(podcastCurEpisode);
-    } else if (kind() === "music") {
+    } else if (kind() === "music" || kind() === "radio") {
       updateMiniPlayerProgress();
     } else {
       updateMiniPlayerProgress();
@@ -41260,6 +41280,11 @@ function getMediaEngine() {
       setMediaSessionPlaybackState("playing");
       updateMiniPlayerPlayBtn();
       if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
+    } else if (kind() === "radio") {
+      radioReconnectTries = 0; // a successful play resets the reconnect counter
+      setMediaSessionPlaybackState("playing");
+      updateMiniPlayerPlayBtn();
+      if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel();
     } else {
       listenSpeaking = true;
       setMediaSessionPlaybackState("playing");
@@ -41277,6 +41302,10 @@ function getMediaEngine() {
       setMediaSessionPlaybackState("paused");
       updateMiniPlayerPlayBtn();
       if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
+    } else if (kind() === "radio") {
+      setMediaSessionPlaybackState("paused");
+      updateMiniPlayerPlayBtn();
+      if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel();
     } else {
       listenSpeaking = false;
       setMediaSessionPlaybackState("paused");
@@ -41294,11 +41323,13 @@ function getMediaEngine() {
   mediaEngine.on("ended", () => {
     if (kind() === "podcast") onPodcastEnded();
     else if (kind() === "music") onMusicEnded();
+    else if (kind() === "radio") onRadioEnded();
     else onListenArticleFinished();
   });
   mediaEngine.on("error", () => {
     if (kind() === "podcast") showVoiceToast("Audio failed to load — check your connection and try again");
     else if (kind() === "music") { showVoiceToast("Couldn't play this track"); updateMiniPlayerPlayBtn(); }
+    else if (kind() === "radio") onRadioError();
     else { listenSpeaking = false; updateListenPlayBtn(); updateMiniPlayerPlayBtn(); }
   });
   // Ad-skip is podcast-only: reschedule when position/rate changes. Passive
@@ -41323,6 +41354,7 @@ function startPodcastPlayback(episode, show, { autoplay = true } = {}) {
   stopPodcastAudio();
   stopListen(); // stop any article read-aloud so they don't overlap
   stopMusicPlayback(); // …or a music track
+  stopRadio(); // …or a live radio stream
 
   const progress = (state.podcastProgress || {})[episode.id] || {};
   const startPos = progress.played ? 0 : (progress.position || 0);
@@ -41523,6 +41555,7 @@ function musicArtUrlFor(track) {
 function playMusicDescriptor(desc, url, { isBlob = false } = {}) {
   stopPodcastAudio();   // never overlap with a podcast…
   stopListen();         // …or an article read-aloud
+  stopRadio();          // …or a live radio stream
   if (musicCurUrl && musicCurUrl !== url) { try { URL.revokeObjectURL(musicCurUrl); } catch { /* noop */ } }
   musicCurUrl = isBlob ? url : null;
   musicCurTrack = desc;
@@ -42402,6 +42435,231 @@ function openAddToPlaylistMenu(recording) {
 
 const MUSIC_X_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
 
+// ── Radio (live audio) ────────────────────────────────────────────────────────
+// A station plays through the ONE shared engine as a live single-segment source
+// (providerId "radio"). The MPR catalog is bundled data, so the tab, stations
+// and favourites work offline; only live playback needs the network.
+async function getRadio() {
+  if (radioRegistry) return radioRegistry;
+  const [dom, mpr, rb] = await Promise.all([import("./radio.js"), import("./radio-provider-mpr.js"), import("./radio-provider-radiobrowser.js")]);
+  radioMod = dom;
+  radioRegistry = dom.createRadioRegistry([mpr.createMprProvider(), rb.createRadioBrowserProvider()]);
+  return radioRegistry;
+}
+async function ensureRadioCatalog() {
+  if (radioCatalog) return radioCatalog;
+  const reg = await getRadio();
+  radioCatalog = await reg.listStations();
+  return radioCatalog;
+}
+const RADIO_PROVIDER_LABELS = { mpr: "MPR", radiobrowser: "Radio Browser" };
+const radioProviderLabel = (id) => RADIO_PROVIDER_LABELS[id] || id;
+const radioStationSubtitle = (st) => st && (st.category || st.programGroup || "Live radio");
+
+function playRadioStation(station) {
+  if (!station) return;
+  stopPodcastAudio(); stopListen(); stopMusicPlayback(); // never overlap
+  radioCurStation = station;
+  radioStreamCandidates = (radioMod ? radioMod.streamCandidates(station) : (station.streams || [])).map((s) => s.url).filter(Boolean);
+  radioStreamIdx = 0; radioReconnectTries = 0;
+  if (!radioStreamCandidates.length) { showVoiceToast("This station has no playable stream."); return; }
+  radioLoadCurrentStream();
+  pushRadioHistory(station);
+}
+function radioLoadCurrentStream() {
+  const url = radioStreamCandidates[radioStreamIdx];
+  const engine = getMediaEngine();
+  radioAudio = ensureMediaAudioEl();
+  engine.load({ id: radioCurStation.id, providerId: "radio", segments: [{ url }], startPosition: 0, rate: 1 }, { autoplay: true });
+  setMiniPlayer(radioCurStation.name, radioStationSubtitle(radioCurStation), radioCurStation.logoUrl || "");
+  setRadioMediaSession(radioCurStation);
+  if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel();
+}
+function radioTryNextStream() { if (radioStreamIdx < radioStreamCandidates.length - 1) { radioStreamIdx++; radioLoadCurrentStream(); return true; } return false; }
+function onRadioEnded() { // a live stream "ending" = a dropped connection → reconnect a couple of times, else give up
+  if (radioReconnectTries < 2) { radioReconnectTries++; radioLoadCurrentStream(); return; }
+  if (!radioTryNextStream()) stopRadio();
+}
+function onRadioError() { if (!radioTryNextStream()) { showVoiceToast(`${radioCurStation ? radioCurStation.name : "Station"} is unavailable right now.`); stopRadio(); } }
+
+function stopRadio() {
+  if (mediaEngine && radioAudio) mediaEngine.stop();
+  radioAudio = null; radioCurStation = null; radioStreamCandidates = []; radioStreamIdx = 0;
+  setMediaSessionPlaybackState("none"); hideMiniPlayer();
+  if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel();
+}
+function toggleRadioPlayPause() { if (!radioAudio) return; if (radioAudio.paused) radioAudio.play().catch(() => {}); else radioAudio.pause(); }
+
+function setRadioMediaSession(station) {
+  if (!("mediaSession" in navigator)) return;
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({ title: station.name, artist: radioStationSubtitle(station), album: "Radio", artwork: station.logoUrl ? [{ src: station.logoUrl }] : undefined });
+    navigator.mediaSession.setActionHandler("play", () => radioAudio?.play().catch(() => {}));
+    navigator.mediaSession.setActionHandler("pause", () => radioAudio?.pause());
+    navigator.mediaSession.setActionHandler("stop", stopRadio);
+    try { navigator.mediaSession.setActionHandler("seekbackward", null); navigator.mediaSession.setActionHandler("seekforward", null); navigator.mediaSession.setActionHandler("nexttrack", null); } catch { /* live: no seek/next */ }
+  } catch { /* MediaMetadata unsupported */ }
+}
+
+// Recently played / last played — local, provider-independent station snapshots.
+function pushRadioHistory(station) {
+  if (!station || !station.id) return;
+  const snap = { id: station.id, name: station.name, shortName: station.shortName || null, category: station.category || null, programGroup: station.programGroup || null, logoUrl: station.logoUrl || null, streams: station.streams || [], providerId: station.providerId, providerRefs: station.providerRefs || [], at: Date.now() };
+  const hist = (state.radioHistory || []).filter((h) => h.id !== station.id);
+  hist.unshift(snap);
+  state.radioHistory = hist.slice(0, 30);
+  persist();
+}
+// Favourite STATION ("easy access to this station"). Followed PROGRAMS are a
+// separate concept (state.radioFollowedPrograms) reserved for when reliable
+// program data exists — not surfaced in v1.
+function isRadioFav(id) { return (state.radioFavorites || []).some((s) => s.id === id); }
+function toggleRadioFav(station) {
+  if (!station) return;
+  const favs = state.radioFavorites || [];
+  const i = favs.findIndex((s) => s.id === station.id);
+  if (i >= 0) favs.splice(i, 1);
+  else favs.unshift({ id: station.id, name: station.name, shortName: station.shortName || null, category: station.category || null, programGroup: station.programGroup || null, logoUrl: station.logoUrl || null, streams: station.streams || [], providerId: station.providerId, providerRefs: station.providerRefs || [] });
+  state.radioFavorites = favs.slice(0, 100);
+  persist();
+  renderRadioPanel();
+}
+
+function queueRadioSearch(q) { clearTimeout(radioSearchDebounce); radioSearchDebounce = setTimeout(() => doRadioSearch(q), 380); }
+async function doRadioSearch(query) {
+  const q = String(query || ""); radioSearchQuery = q;
+  const token = ++radioSearchToken;
+  if (!q.trim()) { radioSearchResults = null; radioSearchLoading = false; updateRadioBody(); return; }
+  radioSearchLoading = true; updateRadioBody();
+  try {
+    const reg = await getRadio();
+    const res = await reg.search(q, { limit: 20 });
+    if (token !== radioSearchToken) return;
+    radioSearchResults = res;
+  } catch (e) { if (token === radioSearchToken) radioSearchResults = { stations: [], providerStatuses: [] }; console.warn("radio search failed", e); }
+  finally { if (token === radioSearchToken) { radioSearchLoading = false; updateRadioBody(); } }
+}
+
+// ── Radio rendering ───────────────────────────────────────────────────────────
+const RADIO_ICON_SVG = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 10h16a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z"/><circle cx="8" cy="15" r="2.4"/><line x1="14" y1="13.5" x2="19" y2="13.5"/><line x1="14" y1="16.5" x2="17" y2="16.5"/><path d="M7 10l10-5"/></svg>`;
+function radioStationThumb(st) {
+  return st && st.logoUrl
+    ? `<img class="music-thumb music-thumb--sm" src="${escapeHtml(st.logoUrl)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
+    : `<span class="music-thumb music-thumb--sm music-thumb--ph" aria-hidden="true">${RADIO_ICON_SVG}</span>`;
+}
+function radioStationRow(st) {
+  if (!st || !st.id) return "";
+  radioViewIndex.set(st.id, st);
+  const active = radioCurStation && radioCurStation.id === st.id;
+  const playing = active && radioAudio && !radioAudio.paused && !radioAudio.ended;
+  const fav = isRadioFav(st.id);
+  return `<div class="music-row${active ? " is-active" : ""}" data-radio-play="${escapeHtml(st.id)}" role="button" tabindex="0" aria-label="${escapeHtml(st.name)}">
+      <span class="music-row-icon" aria-hidden="true">${active ? (playing ? MUSIC_PAUSE_SVG : MUSIC_PLAY_SVG) : radioStationThumb(st)}</span>
+      <span class="music-row-main"><span class="music-row-title">${escapeHtml(st.name)}</span><span class="music-row-sub">${escapeHtml(radioStationSubtitle(st))}${st.providerId && st.providerId !== "mpr" ? ` · ${escapeHtml(radioProviderLabel(st.providerId))}` : ""}</span></span>
+      <button class="music-fav-btn${fav ? " is-on" : ""}" type="button" data-radio-fav="${escapeHtml(st.id)}" aria-label="${fav ? "Remove favourite station" : "Favourite station"}" aria-pressed="${fav}">${musicFavSvg(fav)}</button>
+    </div>`;
+}
+
+function radioNowCard() {
+  if (radioCurStation) {
+    const playing = radioAudio && !radioAudio.paused && !radioAudio.ended;
+    return `<div class="radio-now" data-radio-open="${escapeHtml(radioCurStation.id)}">
+        ${radioStationThumb(radioCurStation)}
+        <span class="radio-now-meta"><span class="radio-now-label"><span class="radio-live-dot"></span>Live now</span><span class="radio-now-title">${escapeHtml(radioCurStation.name)}</span><span class="radio-now-sub">${escapeHtml(radioStationSubtitle(radioCurStation))}</span></span>
+        <button class="radio-now-btn" type="button" data-radio-toggle aria-label="${playing ? "Pause" : "Play"}">${playing ? MUSIC_PAUSE_SVG : MUSIC_PLAY_SVG}</button>
+        <button class="radio-now-btn radio-now-stop" type="button" data-radio-stop aria-label="Stop">${MUSIC_X_SVG}</button>
+      </div>`;
+  }
+  const last = (state.radioHistory || [])[0];
+  if (last) {
+    radioViewIndex.set(last.id, last);
+    return `<div class="radio-now radio-now--last" data-radio-play="${escapeHtml(last.id)}" role="button" tabindex="0">
+        ${radioStationThumb(last)}
+        <span class="radio-now-meta"><span class="radio-now-label">Last played</span><span class="radio-now-title">${escapeHtml(last.name)}</span><span class="radio-now-sub">${escapeHtml(relativeDayRadio(last.at))}${last.category ? " · " + escapeHtml(last.category) : ""}</span></span>
+        <button class="radio-now-btn" type="button" data-radio-play="${escapeHtml(last.id)}" aria-label="Resume">${MUSIC_PLAY_SVG}</button>
+      </div>`;
+  }
+  return "";
+}
+function relativeDayRadio(ts) {
+  if (!ts) return "";
+  const d = Math.floor((Date.now() - ts) / 86400000);
+  if (d <= 0) return "Today"; if (d === 1) return "Yesterday"; if (d < 7) return `${d} days ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
+function radioHomeHtml() {
+  radioViewIndex = new Map();
+  const favs = state.radioFavorites || [];
+  const hist = (state.radioHistory || []).filter((h) => !radioCurStation || h.id !== radioCurStation.id).slice(0, 6);
+  const cat = radioCatalog || [];
+  const favHtml = favs.length ? `<h4 class="music-section-h">Your stations</h4><div class="music-list">${favs.map(radioStationRow).join("")}</div>` : "";
+  // Browse the MPR catalog grouped by category (News / Music / Classical).
+  const order = ["News", "Music", "Classical"];
+  const groups = {};
+  for (const s of cat) { const k = s.category || "Other"; (groups[k] = groups[k] || []).push(s); }
+  const catHtml = cat.length ? Object.keys(groups).sort((a, b) => (order.indexOf(a) + 1 || 9) - (order.indexOf(b) + 1 || 9)).map((k) =>
+    `<h4 class="music-section-h">${escapeHtml(k)}</h4><div class="music-list">${groups[k].map(radioStationRow).join("")}</div>`).join("")
+    : `<p class="music-status">Loading stations…</p>`;
+  const histHtml = hist.length ? `<h4 class="music-section-h">Recently played</h4><div class="music-list">${hist.map(radioStationRow).join("")}</div>` : "";
+  return `${radioNowCard()}${favHtml}${catHtml}${histHtml}`;
+}
+function radioBodyHtml() {
+  if (radioSearchLoading) return `<p class="music-status">Searching…</p>`;
+  if (radioSearchResults) {
+    radioViewIndex = new Map();
+    const { stations, providerStatuses } = radioSearchResults;
+    const failed = (providerStatuses || []).filter((s) => !s.ok);
+    const note = failed.length ? `<p class="music-provider-note">${failed.map((s) => escapeHtml(radioProviderLabel(s.provider))).join(", ")} unavailable.</p>` : "";
+    if (!stations.length) return note + `<p class="music-status">No stations for “${escapeHtml(radioSearchQuery)}”.</p>`;
+    return note + `<div class="music-list">${stations.map(radioStationRow).join("")}</div>`;
+  }
+  return radioHomeHtml();
+}
+function updateRadioBody() { const el = document.getElementById("radioBody"); if (el) el.innerHTML = radioBodyHtml(); else if (activeMediaTab === "radio") renderRadioPanel(); }
+
+function renderRadioPanel() {
+  const panel = document.getElementById("mediaRadioPanel");
+  if (!panel) return;
+  panel.innerHTML = `
+    <div class="podcast-playlist-bar music-bar"><div class="music-bar-title">Radio</div><div class="podcast-tabs-actions"></div></div>
+    <div class="music-discover">
+      <div class="music-search-bar">
+        <svg class="music-search-ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input type="search" id="radioSearchInput" class="music-search-input" placeholder="Search stations…" autocomplete="off" spellcheck="false" value="${escapeHtml(radioSearchQuery)}">
+      </div>
+      <div id="radioBody" class="music-discover-results">${radioBodyHtml()}</div>
+    </div>`;
+  const input = panel.querySelector("#radioSearchInput");
+  if (input && document.activeElement !== input) input.value = radioSearchQuery;
+}
+
+function initRadioPanel() {
+  const panel = document.getElementById("mediaRadioPanel");
+  if (!panel) return;
+  if (!radioPanelWired) {
+    radioPanelWired = true;
+    panel.addEventListener("click", (e) => {
+      const fav = e.target.closest("[data-radio-fav]");
+      if (fav) { e.stopPropagation(); toggleRadioFav(radioViewIndex.get(fav.dataset.radioFav)); return; }
+      if (e.target.closest("[data-radio-stop]")) { stopRadio(); return; }
+      if (e.target.closest("[data-radio-toggle]")) { toggleRadioPlayPause(); return; }
+      const play = e.target.closest("[data-radio-play]");
+      if (play) { const st = radioViewIndex.get(play.dataset.radioPlay); if (st) { if (radioCurStation && radioCurStation.id === st.id && radioAudio) toggleRadioPlayPause(); else playRadioStation(st); } return; }
+      const open = e.target.closest("[data-radio-open]");
+      if (open) { /* now-card body tap: toggle */ toggleRadioPlayPause(); return; }
+    });
+    panel.addEventListener("keydown", (e) => {
+      const row = e.target.closest?.("[data-radio-play]");
+      if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); const st = radioViewIndex.get(row.dataset.radioPlay); if (st) playRadioStation(st); return; }
+      if (e.target.id === "radioSearchInput" && e.key === "Enter") { e.preventDefault(); clearTimeout(radioSearchDebounce); doRadioSearch(e.target.value); }
+    });
+    panel.addEventListener("input", (e) => { if (e.target.id === "radioSearchInput") queueRadioSearch(e.target.value); });
+  }
+  renderRadioPanel();
+  if (!radioCatalog) ensureRadioCatalog().then(() => { if (activeMediaTab === "radio") renderRadioPanel(); }).catch((err) => console.warn("radio catalog load failed", err));
+}
+
 function createNewMusicPlaylist() {
   if (!musicLibModelMod) { getMusicCanon().then(createNewMusicPlaylist); return; }
   const name = prompt("Playlist name", "New playlist"); if (name == null) return;
@@ -42427,33 +42685,39 @@ function deleteMusicPlaylist(id) {
 
 function nowPlayingKind() {
   if (podcastAudio) return "podcast";
+  if (radioAudio) return "radio";
   if (musicAudio) return "music";
   if (listenAudio || listenLoading || listenArticle) return "tts";
   return null;
 }
-// The shared element while a podcast OR a music track is active (both drive the
-// bar the same element-based way); null during TTS, which uses its own readout.
-function nowPlayingEl() { return podcastAudio || musicAudio || null; }
+// The shared element while a podcast / radio / music item is active (all drive
+// the bar the same element-based way); null during TTS, which has its own readout.
+function nowPlayingEl() { return podcastAudio || radioAudio || musicAudio || null; }
 function nowPlayingIsPlaying() {
   const el = nowPlayingEl();
   if (el) return !el.paused && !el.ended;
   return !!(listenSpeaking && listenAudio && !listenAudio.paused);
 }
 function nowPlayingElapsed() { const el = nowPlayingEl(); return el ? (el.currentTime || 0) : listenElapsed(); }
-function nowPlayingTotal() { const el = nowPlayingEl(); return el ? (el.duration || 0) : (listenTotalDuration || 0); }
+// Live radio has no finite duration → 0 (the bar shows no progress for it).
+function nowPlayingTotal() { const el = nowPlayingEl(); if (el) return Number.isFinite(el.duration) ? el.duration : 0; return listenTotalDuration || 0; }
+function nowPlayingIsLive() { return nowPlayingKind() === "radio"; }
 function nowPlayingToggle() {
   const k = nowPlayingKind();
   if (k === "podcast") togglePodcastPlayPause();
+  else if (k === "radio") toggleRadioPlayPause();
   else if (k === "music") toggleMusicPlayPause();
   else toggleListenPlayPause();
 }
 function nowPlayingSkip(sec) {
   const k = nowPlayingKind();
+  if (k === "radio") return; // live: no skip
   if (k === "podcast") skipPodcast(sec);
   else if (k === "music") skipMusic(sec);
   else listenSkip(sec);
 }
 function nowPlayingSeekFraction(f) {
+  if (nowPlayingKind() === "radio") return; // live: no seek
   const el = nowPlayingEl();
   if (el) { if (el.duration) el.currentTime = f * el.duration; }
   else if (listenTotalDuration) { listenSeekToTime(f * listenTotalDuration); }
@@ -42461,6 +42725,7 @@ function nowPlayingSeekFraction(f) {
 function nowPlayingOpen() {
   const k = nowPlayingKind();
   if (k === "podcast") { goToOpenEpisode(); return; }
+  if (k === "radio") { showMediaApp(); switchMediaTab("radio"); return; }
   if (k === "music") { showMediaApp(); switchMediaTab("music"); return; }
   if (listenArticle) { showMediaApp(); openArticle(listenArticle.id, "articleList"); }
 }
@@ -42577,6 +42842,17 @@ function nowPlayingInfo() {
       show: t.artist || "",
       date: t.album || "",
       desc: "",
+    };
+  }
+  if (kind === "radio") {
+    const s = radioCurStation;
+    if (!s) return null;
+    return {
+      art: s.logoUrl || "",
+      title: s.name || "Radio",
+      show: radioStationSubtitle(s),
+      date: "Live",
+      desc: s.description || "",
     };
   }
   if (kind === "tts") {
@@ -44234,6 +44510,7 @@ function onListenArticleFinished() {
 async function startListenTTS(article) {
   unlockListenAudio(); // bless the audio element NOW, while still in the user's tap
   stopMusicPlayback(); // don't overlap a playing music track
+  stopRadio();         // …or a live radio stream
   // Articles saved without body text (e.g. NutritionFacts links) fetch on
   // demand instead of silently failing to play (item 4).
   if (article && !article.text) {

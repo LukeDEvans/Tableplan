@@ -20788,3 +20788,20 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .music-menu-row:hover { background: var(--accent-soft); }
 .music-menu-count { font-size: 0.74rem; color: var(--muted); font-weight: 600; }
 .music-menu-new { color: var(--accent-dark); }
+
+/* Radio — now-playing / last-played card */
+.radio-now { display: flex; align-items: center; gap: 12px; margin: 8px 12px 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); cursor: pointer; }
+.radio-now--last { background: var(--surface); }
+.radio-now:hover { border-color: var(--accent); }
+.radio-now .music-thumb--sm { width: 52px; height: 52px; }
+.radio-now-meta { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.radio-now-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.radio-now-title { font-weight: 700; font-size: 1.02rem; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.radio-now-sub { font-size: 0.8rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.radio-live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tomato); box-shadow: 0 0 0 0 rgba(201,77,50,.5); animation: radioLivePulse 1.8s ease-out infinite; }
+@keyframes radioLivePulse { 0% { box-shadow: 0 0 0 0 rgba(201,77,50,.5); } 70% { box-shadow: 0 0 0 7px rgba(201,77,50,0); } 100% { box-shadow: 0 0 0 0 rgba(201,77,50,0); } }
+@media (prefers-reduced-motion: reduce) { .radio-live-dot { animation: none; } }
+.radio-now-btn { flex: 0 0 auto; width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; border: none; background: var(--accent); color: #fff; border-radius: 50%; cursor: pointer; }
+.radio-now-btn:hover { background: var(--accent-dark); }
+.radio-now-stop { width: 34px; height: 34px; background: transparent; color: var(--muted); }
+.radio-now-stop:hover { background: var(--tomato-soft); color: var(--tomato); }

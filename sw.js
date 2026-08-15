@@ -5,7 +5,9 @@ const PRECACHE = ["/", "/favicon.svg"];
 const SKIP_HOSTS = ["supabase.co", "googleapis.com", "gstatic.com", "cartocdn.com", "mapservices.weather.noaa.gov", "radar.weather.gov", "openstreetmap.org",
   // On-demand Music streams from these directly; never let the SW cache audio
   // (large, range-based, and licence-restricted) or their search/art responses.
-  "archive.org", "api.jamendo.com", "jamendo.com"];
+  "archive.org", "api.jamendo.com", "jamendo.com",
+  // Radio: MPR/APMG stream CDN + Radio Browser directory/streams.
+  "publicradio.org", "api.radio-browser.info"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -52,7 +54,10 @@ self.addEventListener("fetch", (event) => {
     caches.open(CACHE).then(async (cache) => {
       const cached = await cache.match(request);
       const fetchAndCache = fetch(request).then((res) => {
-        if (res.ok) cache.put(request, res.clone());
+        // Never cache audio streams (live radio, media) — they're large, often
+        // range/chunked, and would buffer indefinitely.
+        const ct = res.headers.get("content-type") || "";
+        if (res.ok && !/^audio\//i.test(ct) && !/(mpegurl|octet-stream)/i.test(ct)) cache.put(request, res.clone());
         return res;
       }).catch(() => null);
       if (cached) {
