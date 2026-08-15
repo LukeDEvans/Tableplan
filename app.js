@@ -33435,6 +33435,12 @@ async function mountCadenceViewer(host) {
     cadenceLayout = cadenceRenderer.render();
     if (cadenceZoom !== 1) { cadenceRenderer.setZoom(cadenceZoom); cadenceLayout = cadenceRenderer.getLayoutIndex(); }
     host.addEventListener("click", (e) => onCadenceScoreClick(e, host, C));
+    // Surface extraction health: the score drew, but if no notes mapped then
+    // tap-to-position and follow can't work — say so instead of failing silently.
+    if (!cadenceLayout.notes.length) {
+      const readout = document.getElementById("cadencePosReadout");
+      if (readout) readout.textContent = "Heads up: this score rendered, but its notes couldn't be mapped — tapping and follow won't work on it.";
+    }
     // Load this work's practice history and refresh the practice section.
     try { cadenceWorkSessions = await C.listSessions(cadenceStorage, { workId: cadenceActiveWorkId }); refreshCadencePractice(); } catch { /* noop */ }
   } catch (e) {
@@ -33503,29 +33509,6 @@ function bindCadence(grid) {
 
 function renderPianoPanel() {
   if (cadenceActiveWorkId) return renderCadenceViewer();
-  const songs = state.pianoSongs || [];
-  const songsHtml = songs.length
-    ? songs.map((s) => `
-      <div class="piano-song-row" data-piano-song-id="${escapeHtml(s.id)}">
-        <label class="piano-song-check">
-          <input type="checkbox" ${s.learned ? "checked" : ""} data-piano-song-learned="${escapeHtml(s.id)}" />
-          <span class="piano-song-title${s.learned ? " is-learned" : ""}">${escapeHtml(s.title)}</span>
-        </label>
-        <div class="piano-song-actions">
-          ${s.sheetMusicUrl ? `<a href="${escapeHtml(s.sheetMusicUrl)}" target="_blank" class="icon-btn piano-song-link" title="Open sheet music" aria-label="Open sheet music">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="m10 14 11-11"/></svg>
-          </a>` : ""}
-          <button class="icon-btn piano-song-edit-btn" type="button" data-piano-song-edit="${escapeHtml(s.id)}" title="Edit">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5Z"/></svg>
-          </button>
-          <button class="icon-btn piano-song-delete-btn" type="button" data-piano-song-delete="${escapeHtml(s.id)}" title="Delete">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-          </button>
-        </div>
-      </div>
-    `).join("")
-    : `<p class="piano-empty-state">No songs yet. Add one below.</p>`;
-
   return `
     <div class="piano-panel">
       <div class="piano-metronome">
@@ -33703,45 +33686,6 @@ function bindPianoControls() {
       renderRecreatePage();
     });
   });
-}
-
-function renderPianoSongsList() {
-  const list = document.getElementById("pianoSongsList");
-  if (!list) return;
-  const songs = state.pianoSongs || [];
-  if (!songs.length) { list.innerHTML = `<p class="piano-empty-state">No songs yet. Add one below.</p>`; return; }
-  list.innerHTML = songs.map((s) => `
-    <div class="piano-song-row" data-piano-song-id="${escapeHtml(s.id)}">
-      <label class="piano-song-check">
-        <input type="checkbox" ${s.learned ? "checked" : ""} data-piano-song-learned="${escapeHtml(s.id)}" />
-        <span class="piano-song-title${s.learned ? " is-learned" : ""}">${escapeHtml(s.title)}</span>
-      </label>
-      <div class="piano-song-actions">
-        ${s.sheetMusicUrl ? `<a href="${escapeHtml(s.sheetMusicUrl)}" target="_blank" class="icon-btn piano-song-link" title="Open sheet music" aria-label="Open sheet music">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="m10 14 11-11"/></svg>
-        </a>` : ""}
-        <button class="icon-btn piano-song-edit-btn" type="button" data-piano-song-edit="${escapeHtml(s.id)}" title="Edit">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5Z"/></svg>
-        </button>
-        <button class="icon-btn piano-song-delete-btn" type="button" data-piano-song-delete="${escapeHtml(s.id)}" title="Delete">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-        </button>
-      </div>
-    </div>
-  `).join("");
-}
-
-function openPianoSongEdit(id) {
-  const song = (state.pianoSongs || []).find((s) => s.id === id);
-  if (!song) return;
-  const title = prompt("Song title:", song.title);
-  if (title === null) return;
-  const url = prompt("Sheet music URL (leave blank if none):", song.sheetMusicUrl);
-  if (url === null) return;
-  song.title = title.trim() || song.title;
-  song.sheetMusicUrl = url.trim();
-  persist();
-  renderPianoSongsList();
 }
 
 // ── Metronome engine ────────────────────────────────────────
