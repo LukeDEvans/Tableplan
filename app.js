@@ -33101,7 +33101,7 @@ let cadenceFollowInput = null;
 
 async function getCadence() {
   if (cadenceMod) return cadenceMod;
-  const [storage, imp, rend, model, osmd, practice, follow, midi] = await Promise.all([
+  const [storage, imp, rend, model, osmd, practice, follow, midi, mic] = await Promise.all([
     import("./music/storage.js"),
     import("./music/import.js"),
     import("./music/score-renderer.js"),
@@ -33110,6 +33110,7 @@ async function getCadence() {
     import("./music/practice.js"),
     import("./music/following-engine.js"),
     import("./music/input-midi.js"),
+    import("./music/input-mic.js"),
   ]);
   cadenceStorage = cadenceStorage || storage.createIdbStorage("cadence");
   cadenceMod = {
@@ -33119,6 +33120,7 @@ async function getCadence() {
     saveSession: practice.saveSession, listSessions: practice.listSessions,
     deleteSession: practice.deleteSession, workStats: practice.workStats,
     createFollowingEngine: follow.createFollowingEngine, createMidiInputProvider: midi.createMidiInputProvider,
+    createMicInputProvider: mic.createMicInputProvider,
   };
   return cadenceMod;
 }
@@ -33222,7 +33224,7 @@ function renderCadenceViewer() {
           <option value="continuous"${cadenceViewMode === "continuous" ? " selected" : ""}>Scroll</option>
           <option value="paged"${cadenceViewMode === "paged" ? " selected" : ""}>Paged</option>
         </select>
-        <button class="icon-btn cadence-follow-btn${cadenceFollow ? " is-active" : ""}" type="button" data-cadence-follow title="Auto-follow with MIDI" aria-label="Auto-follow with MIDI" aria-pressed="${cadenceFollow ? "true" : "false"}">
+        <button class="icon-btn cadence-follow-btn${cadenceFollow ? " is-active" : ""}" type="button" data-cadence-follow title="Auto-follow (MIDI or microphone)" aria-label="Auto-follow with MIDI or microphone" aria-pressed="${cadenceFollow ? "true" : "false"}">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 12a8 8 0 0 1 8-8M20 12a8 8 0 0 1-8 8"/><path d="M12 4 9 7h6zM12 20l3-3H9z"/></svg>
         </button>
       </div>
@@ -33329,20 +33331,34 @@ async function toggleCadenceFollow() {
   try {
     const C = await getCadence();
     if (!cadenceModel) return;
-    const input = C.createMidiInputProvider();
-    if (!(await input.isAvailable())) { setCadenceFollowStatus("MIDI input isn't available in this browser."); return; }
     const engine = C.createFollowingEngine();
     engine.load(cadenceModel, { context: cadenceActiveCtx });
-    const count = await input.start((ev) => {
-      const s = engine.push(ev);
-      if (s.matched && s.position) applyFollowPosition(s.position);
-    });
+    const sink = (ev) => { const s = engine.push(ev); if (s.matched && s.position) applyFollowPosition(s.position); };
+
+    // Prefer a connected MIDI keyboard; otherwise listen through the microphone.
+    let input = null, label = "";
+    const midi = C.createMidiInputProvider();
+    if (await midi.isAvailable()) {
+      const count = await midi.start(sink);
+      if (count > 0) { input = midi; label = "MIDI"; } else { midi.stop(); }
+    }
+    if (!input) {
+      const mic = C.createMicInputProvider();
+      if (await mic.isAvailable()) {
+        setCadenceFollowStatus("Listening… allow microphone access");
+        await mic.start(sink);
+        input = mic; label = "microphone";
+      }
+    }
+    if (!input) { setCadenceFollowStatus("No MIDI keyboard or microphone available."); return; }
+
     cadenceFollowEngine = engine; cadenceFollowInput = input; cadenceFollow = true;
     updateFollowButton();
-    setCadenceFollowStatus(count ? "Following — play along" : "Connect a MIDI keyboard to follow along");
+    setCadenceFollowStatus(`Following (${label}) — play along`);
   } catch (e) {
     console.warn("Cadence follow failed:", e);
-    setCadenceFollowStatus("Couldn't start MIDI following.");
+    stopCadenceFollow();
+    setCadenceFollowStatus("Couldn't start following — was input permission denied?");
   }
 }
 
