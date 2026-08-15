@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   makeWork, makeScoreEdition, makeRepresentation, makePracticeSession,
-  makeSessionMetric, makeAnnotation, makeRelationship, movementOrderOf,
+  makeAnnotation, makeRelationship, movementOrderOf,
 } from "../music/domain.js";
 
 describe("domain factories — normalization & defaults", () => {
@@ -28,12 +28,10 @@ describe("domain factories — normalization & defaults", () => {
 });
 
 describe("versioned & anchored user data", () => {
-  it("session metric carries schemaVersion, unit, and producer version", () => {
-    const m = makeSessionMetric({ sessionId: "s1", type: "avgTempo", value: 92, unit: "bpm", producedBy: "tempo-v0", producerVersion: "0.1.0" });
-    expect(m.schemaVersion).toBe(1);
-    expect(m.unit).toBe("bpm");
-    expect(m.producedBy).toBe("tempo-v0");
-    expect(m.producerVersion).toBe("0.1.0");
+  it("session metrics are stored inline, versioned (schemaVersion/unit/producer)", () => {
+    const s = makePracticeSession({ workId: "w1", metrics: [{ type: "accuracy", value: 0.9, unit: "ratio", producedBy: "following-naive-v0", producerVersion: "0.1" }] });
+    expect(s.metrics).toHaveLength(1);
+    expect(s.metrics[0]).toMatchObject({ type: "accuracy", value: 0.9, unit: "ratio", schemaVersion: 1, producedBy: "following-naive-v0", producerVersion: "0.1" });
   });
   it("annotation defaults to a musical anchor and an 'ok' status", () => {
     const a = makeAnnotation({ workId: "w1", type: "fingering", anchor: { at: { measureIndex: 3 } } });

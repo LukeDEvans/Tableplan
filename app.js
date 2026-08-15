@@ -33117,6 +33117,7 @@ async function getCadence() {
   cadenceStorage = cadenceStorage || storage.createIdbStorage("cadence");
   cadenceMod = {
     importMusicXmlFile: imp.importMusicXmlFile, loadWork: imp.loadWork, listWorks: imp.listWorks,
+    readRepresentationXml: imp.readRepresentationXml, deleteWork: imp.deleteWork,
     hitTestPosition: rend.hitTestPosition, positionToRect: rend.positionToRect, offsetToDisplayBeat: model.offsetToDisplayBeat,
     createOsmdRenderer: osmd.createOsmdRenderer,
     saveSession: practice.saveSession, listSessions: practice.listSessions,
@@ -33452,9 +33453,8 @@ async function mountCadenceViewer(host) {
     const C = await getCadence();
     const w = await C.loadWork(cadenceStorage, cadenceActiveWorkId);
     if (!w || !w.model) { host.innerHTML = `<p class="piano-empty-state">Couldn't load this score.</p>`; return; }
-    const rec = await cadenceStorage.get("bytes", w.representation.blobId);
-    if (!rec) { host.innerHTML = `<p class="piano-empty-state">This score's file isn't on this device.</p>`; return; }
-    const xml = new TextDecoder().decode(rec.bytes);
+    const xml = await C.readRepresentationXml(cadenceStorage, w.representation);
+    if (xml == null) { host.innerHTML = `<p class="piano-empty-state">This score's file isn't on this device.</p>`; return; }
     cadenceModel = w.model;
     const ctx = { workId: w.work.id, movementId: w.work.movements[0].id, editionId: w.work.editions[0].id };
     cadenceActiveCtx = ctx;
@@ -33495,14 +33495,7 @@ function onCadenceScoreClick(e, host, C) {
 async function deleteCadenceWork(id) {
   try {
     const C = await getCadence();
-    const w = await C.loadWork(cadenceStorage, id);
-    if (w?.representation) {
-      await cadenceStorage.delete("bytes", w.representation.blobId);
-      await cadenceStorage.delete("blobAssets", w.representation.blobId);
-      await cadenceStorage.delete("scoreModels", w.representation.id);
-      await cadenceStorage.delete("representations", w.representation.id);
-    }
-    await cadenceStorage.delete("works", id);
+    await C.deleteWork(cadenceStorage, id);
     cadenceLibrary = (cadenceLibrary || []).filter((x) => x.id !== id);
   } catch (e) { console.warn("Cadence delete failed:", e); }
   renderRecreatePage();

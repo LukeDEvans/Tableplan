@@ -124,22 +124,9 @@ export function makePracticeSession(p = {}) {
   };
 }
 
-/** Metric attached to a session — versioned so historical values stay interpretable. */
-export function makeSessionMetric(p = {}) {
-  return {
-    entity: "sessionMetric",
-    id: str(p.id) || uid("metric"),
-    sessionId: str(p.sessionId),
-    type: str(p.type),
-    range: p.range || null,
-    value: p.value ?? null,
-    unit: str(p.unit) || null,                 // "bpm" | "cents" | "ratio" | "ms" | …
-    schemaVersion: num(p.schemaVersion, 1),    // this metric type's shape version
-    producedBy: str(p.producedBy) || "user",   // algorithm/producer id
-    producerVersion: str(p.producerVersion) || null, // producer's own version
-    producedAt: str(p.producedAt) || nowIso(),
-  };
-}
+// Session metrics are stored inline on the session as a versioned metrics[]
+// array (see makePracticeSession) — the analyzer builds those records directly,
+// so there is no standalone SessionMetric factory.
 
 export function makeRecording(p = {}) {
   return {

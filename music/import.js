@@ -97,3 +97,25 @@ export async function listWorks(storage) {
   const works = await storage.getAll("works");
   return works.map((w) => ({ id: w.id, title: w.title, composer: w.composer }));
 }
+
+/** Decode a representation's stored MusicXML bytes to a string, or null if the
+ * bytes aren't on this device. Keeps store-name/byte-shape knowledge out of the UI. */
+export async function readRepresentationXml(storage, representation) {
+  if (!representation?.blobId) return null;
+  const rec = await storage.get("bytes", representation.blobId);
+  if (!rec || !rec.bytes) return null;
+  return new TextDecoder().decode(rec.bytes);
+}
+
+/** Delete a Work and every record it owns (bytes, blob catalog, score model,
+ * representation, work). The one place that knows how a Work fans across stores. */
+export async function deleteWork(storage, workId) {
+  const w = await loadWork(storage, workId);
+  if (w?.representation) {
+    await storage.delete("bytes", w.representation.blobId);
+    await storage.delete("blobAssets", w.representation.blobId);
+    await storage.delete("scoreModels", w.representation.id);
+    await storage.delete("representations", w.representation.id);
+  }
+  await storage.delete("works", workId);
+}
