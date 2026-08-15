@@ -129,7 +129,22 @@ export function createInternetArchiveProvider(opts = {}, deps = {}) {
 
     async getPlayable(track) {
       if (track && track.playable && track.playable.url) return track.playable;
+      const ref = (track && track.providerRefs || []).find((r) => r.provider === id);
+      if (ref) { const s = await this.resolveRef(ref); if (s) return s; }
       throw new Error("track has no playable source");
+    },
+
+    // Reconstruct a stream URL from a stored ProviderReference alone (no network),
+    // so a saved recording resolves even when the original search result is gone.
+    // IA track refs are "identifier/filename"; album-level refs have no file.
+    async resolveRef(ref) {
+      const ext = String(ref && ref.externalId || "");
+      const slash = ext.indexOf("/");
+      if (slash < 0) return null; // album-level ref, not a single playable track
+      const identifier = ext.slice(0, slash);
+      const file = ext.slice(slash + 1);
+      const fmt = file.split(".").pop();
+      return { provider: id, url: streamUrl(identifier, file), container: /mp3/i.test(fmt) ? "mp3" : /ogg/i.test(fmt) ? "ogg" : null, mimeType: mimeOf(fmt === "mp3" ? "MP3" : fmt), streamable: true };
     },
   };
 

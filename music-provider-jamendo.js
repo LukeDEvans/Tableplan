@@ -66,7 +66,17 @@ export function createJamendoProvider(config = {}, deps = {}) {
 
     async getPlayable(track) {
       if (track && track.playable && track.playable.url) return track.playable;
+      const ref = (track && track.providerRefs || []).find((r) => r.provider === "jamendo");
+      if (ref) { const s = await this.resolveRef(ref); if (s) return s; }
       throw new Error("jamendo track has no playable source");
+    },
+
+    // Best-effort stream reconstruction from a track id (Jamendo's mp3 delivery
+    // endpoint). Used for provider fallback of a saved recording.
+    async resolveRef(ref) {
+      const trackId = String(ref && ref.externalId || "");
+      if (!trackId) return null;
+      return { provider: "jamendo", url: `https://mp3d.jamendo.com/?trackid=${encodeURIComponent(trackId)}&format=mp32`, container: "mp3", mimeType: "audio/mpeg", streamable: true };
     },
   };
 }
