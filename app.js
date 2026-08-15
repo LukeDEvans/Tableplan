@@ -39463,7 +39463,15 @@ function renderMediaAllList() {
     const id = row.dataset.allId;
     if (row.dataset.allType === "book") openMediaAllBook(id);
     else if (row.dataset.allType === "article") openArticle(id, "articleList");
-    else openPodcastEpisode(id, { autoplay: false });
+    else {
+      // The episode player panel lives inside the Podcasts tab, so switch to it
+      // first — otherwise "open details" from the All list would set a panel
+      // that stays invisible under the hidden Podcasts tab. autoplay:false opens
+      // it paused (tap = view details; the play button starts it).
+      activeMediaTab = "podcasts";
+      switchMediaTab("podcasts");
+      openPodcastEpisode(id, { autoplay: false });
+    }
   };
   const inControls = (el) => el.closest(".article-row-actions, .playlist-drag-handle, .playlist-art-btn, .playlist-play-btn");
   listEl.querySelectorAll("[data-all-id]").forEach((row) => {
