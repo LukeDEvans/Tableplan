@@ -536,8 +536,10 @@ function setMediaPlaybackSpeed(v) {
   const rate = (v && v >= 0.5 && v <= 3) ? v : 1;
   mediaPlaybackSpeed = rate;
   try { localStorage.setItem(PLAYBACK_SPEED_KEY, String(rate)); } catch { /* private mode */ }
-  if (typeof listenAudio !== "undefined" && listenAudio) listenAudio.playbackRate = rate;
-  if (typeof podcastAudio !== "undefined" && podcastAudio) podcastAudio.playbackRate = rate;
+  // Route through the engine so its internal rate stays current — otherwise a
+  // mid-playback speed change would revert at the next TTS chunk boundary (the
+  // engine re-applies its rate on every segment).
+  if (typeof mediaEngine !== "undefined" && mediaEngine) mediaEngine.setRate(rate);
   syncSpeedSelectsUi();
 }
 function syncSpeedSelectsUi() {
@@ -553,27 +555,35 @@ function syncSpeedSelectsUi() {
 // Priming this element with a silent clip on the tap "unlocks" it for the rest
 // of the session — the fix for "won't play until I leave and come back".
 const SILENT_AUDIO_URI = "data:audio/wav;base64,UklGRmQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YUAAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA";
-let listenAudioEl = null;
-let listenAudioUnlocked = false;
+// THE single persistent, gesture-unlocked <audio> element for ALL playback —
+// podcasts and article TTS share it (they're mutually exclusive). Reusing one
+// blessed element is what lets iOS keep playing after async work and while the
+// screen is locked. The unified engine (getMediaEngine) owns it.
+let mediaAudioEl = null;
+let mediaAudioUnlocked = false;
 // Articles we've already auto-fetched text for this session (avoid re-hammering
 // the fetch endpoint when a fetch legitimately returns nothing).
 const articleAutoFetchTried = new Set();
-function ensureListenAudioEl() {
-  if (!listenAudioEl) { listenAudioEl = new Audio(); listenAudioEl.preload = "auto"; }
-  return listenAudioEl;
+function ensureMediaAudioEl() {
+  if (!mediaAudioEl) { mediaAudioEl = new Audio(); mediaAudioEl.preload = "auto"; }
+  return mediaAudioEl;
 }
-function unlockListenAudio() {
-  if (listenAudioUnlocked) return;
-  const el = ensureListenAudioEl();
+// Backwards-compatible aliases — both playback paths share the one element now.
+function ensureListenAudioEl() { return ensureMediaAudioEl(); }
+function ensurePodcastAudioEl() { return ensureMediaAudioEl(); }
+function unlockMediaAudio() {
+  if (mediaAudioUnlocked) return;
+  const el = ensureMediaAudioEl();
   try {
     el.muted = true;
     el.src = SILENT_AUDIO_URI;
     const p = el.play();
-    const settle = () => { listenAudioUnlocked = true; try { el.pause(); } catch { /* noop */ } el.currentTime = 0; el.muted = false; };
+    const settle = () => { mediaAudioUnlocked = true; try { el.pause(); } catch { /* noop */ } el.currentTime = 0; el.muted = false; };
     if (p && p.then) p.then(settle).catch(() => { el.muted = false; });
     else settle();
   } catch { el.muted = false; }
 }
+function unlockListenAudio() { return unlockMediaAudio(); }
 let pendingMealRecipeSelection = null;
 let pendingMealIngredientSelection = null;
 let pendingAutoRuleRecipeSelection = null;
@@ -38084,9 +38094,8 @@ let podcastSavedCatInputActive = false;
 let podcastTabInputActive = false;
 let openPodcastEpisodeId = null;
 let podcastPanelWired = false;
-let podcastAudio = null;       // the persistent element while an episode is active, else null
-let podcastAudioEl = null;     // the reusable, gesture-unlocked <audio> element (survives stop)
-let podcastCurEpisode = null;  // episode currently loaded into podcastAudioEl
+let podcastAudio = null;       // mode flag: the shared element while a podcast is active, else null
+let podcastCurEpisode = null;  // episode currently loaded into the shared media element
 let podcastCurShow = null;
 let podcastPendingSeek = 0;    // resume position to apply once metadata loads
 let podcastSaveTimer = null;
@@ -40813,57 +40822,81 @@ function showAdSkippedToast() {
   adSkipToastTimer = setTimeout(() => toast.classList.remove("ad-skipped-toast--visible"), 2000);
 }
 
-// The one persistent <audio> element for podcasts. Reused across episodes: it's
-// first played inside the user's tap (which unlocks it on iOS), so reusing it
-// lets the queue auto-advance to the next episode even while the phone is
-// locked — a freshly-created Audio() would have its play() blocked in the
-// background. The unified engine owns this element (sets src + lifecycle
-// handlers + segment advance); the rest of the podcast code keeps reading it via
-// podcastAudio and driving simple transport (play/pause/currentTime) directly.
-function ensurePodcastAudioEl() {
-  if (!podcastAudioEl) { podcastAudioEl = new Audio(); podcastAudioEl.preload = "auto"; }
-  return podcastAudioEl;
+// THE one playback engine for the whole app. It owns the single shared media
+// element and drives every source; feature behavior is dispatched by the
+// current source's providerId, so podcast and article TTS (and any future
+// provider) run through the same engine and the same element.
+let mediaEngine = null;
+function getMediaEngine() {
+  if (mediaEngine) return mediaEngine;
+  mediaEngine = createPlaybackEngine({ createAudio: ensureMediaAudioEl });
+  const kind = () => mediaEngine.state().providerId; // active source's provider
+  mediaEngine.on("loaded", () => { if (kind() === "podcast") updatePodcastProgressUI(podcastCurEpisode); });
+  mediaEngine.on("timeupdate", () => {
+    if (kind() === "podcast") {
+      updatePodcastProgressUI(podcastCurEpisode);
+      updateMiniPlayerProgress();
+      schedulePodcastPositionSave(podcastCurEpisode);
+    } else {
+      updateMiniPlayerProgress();
+      highlightCurrentWord();
+    }
+  });
+  mediaEngine.on("play", () => {
+    mediaAudioUnlocked = true; // any real play blesses the shared element (iOS)
+    if (kind() === "podcast") {
+      updatePodcastPlayBtn();
+      updateMiniPlayerPlayBtn();
+      setMediaSessionPlaybackState("playing");
+      scheduleAdSkips(podcastCurrentChapters, mediaAudioEl);
+    } else {
+      listenSpeaking = true;
+      setMediaSessionPlaybackState("playing");
+      updateListenPlayBtn();
+      updateMiniPlayerPlayBtn();
+    }
+  });
+  mediaEngine.on("pause", () => {
+    if (kind() === "podcast") {
+      updatePodcastPlayBtn();
+      updateMiniPlayerPlayBtn();
+      setMediaSessionPlaybackState("paused");
+      clearAdSkipTimers();
+    } else {
+      listenSpeaking = false;
+      setMediaSessionPlaybackState("paused");
+      updateListenPlayBtn();
+      updateMiniPlayerPlayBtn();
+    }
+  });
+  mediaEngine.on("segment", (s) => {
+    if (kind() !== "tts") return; // chunk warming is a TTS concern
+    listenChunkIdx = s.segIndex;
+    if (listenNextAudio) { listenNextAudio.src = ""; listenNextAudio = null; }
+    const next = s.segIndex + 1;
+    if (listenAllUrls[next]) listenNextAudio = makeListenChunk(listenAllUrls[next]);
+  });
+  mediaEngine.on("ended", () => { if (kind() === "podcast") onPodcastEnded(); else onListenArticleFinished(); });
+  mediaEngine.on("error", () => {
+    if (kind() === "podcast") showVoiceToast("Audio failed to load — check your connection and try again");
+    else { listenSpeaking = false; updateListenPlayBtn(); updateMiniPlayerPlayBtn(); }
+  });
+  // Ad-skip is podcast-only: reschedule when position/rate changes. Passive
+  // listeners on the shared element (never clash with the engine's onX handlers)
+  // that no-op unless a podcast is the active source.
+  const el = ensureMediaAudioEl();
+  el.addEventListener("seeked", () => { if (kind() === "podcast") scheduleAdSkips(podcastCurrentChapters, el); });
+  el.addEventListener("ratechange", () => { if (kind() === "podcast") scheduleAdSkips(podcastCurrentChapters, el); });
+  return mediaEngine;
 }
 
-let podcastEngine = null;
-function getPodcastEngine() {
-  if (podcastEngine) return podcastEngine;
-  podcastEngine = createPlaybackEngine({ createAudio: ensurePodcastAudioEl });
-  // Feature behavior hangs off the engine's events instead of raw audio.onX, so
-  // it's identical whether a podcast, music track, or audiobook is the source.
-  podcastEngine.on("loaded", () => updatePodcastProgressUI(podcastCurEpisode));
-  podcastEngine.on("timeupdate", () => {
-    updatePodcastProgressUI(podcastCurEpisode);
-    updateMiniPlayerProgress();
-    schedulePodcastPositionSave(podcastCurEpisode);
-  });
-  podcastEngine.on("play", () => {
-    updatePodcastPlayBtn();
-    updateMiniPlayerPlayBtn();
-    setMediaSessionPlaybackState("playing");
-    scheduleAdSkips(podcastCurrentChapters, podcastAudioEl);
-  });
-  podcastEngine.on("pause", () => {
-    updatePodcastPlayBtn();
-    updateMiniPlayerPlayBtn();
-    setMediaSessionPlaybackState("paused");
-    clearAdSkipTimers();
-  });
-  podcastEngine.on("ended", () => {
-    clearAdSkipTimers();
-    setPodcastEpisodePlayed(podcastCurEpisode.id, true);
-    updatePodcastPlayBtn();
-    updateMiniPlayerPlayBtn();
-    advanceMediaAllQueue(podcastCurEpisode.id); // seamless hand-off when playing the All queue
-  });
-  podcastEngine.on("error", () => showVoiceToast("Audio failed to load — check your connection and try again"));
-  // Ad-skip is a podcast-only concern: reschedule whenever the position or rate
-  // changes. Passive listeners on the shared element, so they never clash with
-  // the engine's onX handlers.
-  const el = ensurePodcastAudioEl();
-  el.addEventListener("seeked", () => scheduleAdSkips(podcastCurrentChapters, el));
-  el.addEventListener("ratechange", () => scheduleAdSkips(podcastCurrentChapters, el));
-  return podcastEngine;
+// Podcast episode reached its end (engine 'ended' with a podcast source).
+function onPodcastEnded() {
+  clearAdSkipTimers();
+  setPodcastEpisodePlayed(podcastCurEpisode.id, true);
+  updatePodcastPlayBtn();
+  updateMiniPlayerPlayBtn();
+  advanceMediaAllQueue(podcastCurEpisode.id); // seamless hand-off when playing the All queue
 }
 
 function startPodcastPlayback(episode, show, { autoplay = true } = {}) {
@@ -40877,14 +40910,14 @@ function startPodcastPlayback(episode, show, { autoplay = true } = {}) {
   podcastCurEpisode = episode;
   podcastCurShow = show;
 
-  const engine = getPodcastEngine();
-  podcastAudio = ensurePodcastAudioEl(); // keep existing readers/controls working
+  const engine = getMediaEngine();
+  podcastAudio = ensureMediaAudioEl(); // mode flag → the shared element; keeps existing readers/controls working
 
   if (episode.chaptersUrl) {
     loadEpisodeChapters(episode).then(ch => {
       if (podcastCurEpisode !== episode) return; // episode changed before chapters resolved
       podcastCurrentChapters = ch;
-      scheduleAdSkips(ch, podcastAudioEl);
+      scheduleAdSkips(ch, mediaAudioEl);
     });
   }
 
@@ -40984,7 +41017,7 @@ function skipPodcast(seconds) {
 function stopPodcastAudio() {
   clearAdSkipTimers();
   if (podcastSaveTimer) { clearTimeout(podcastSaveTimer); podcastSaveTimer = null; }
-  if (podcastEngine) podcastEngine.stop(); // pause + clear the engine's current source
+  if (mediaEngine) mediaEngine.stop(); // pause + clear the engine's current source
   if (podcastAudio) { podcastAudio.pause(); podcastAudio = null; }
   hideMiniPlayer();
 }
@@ -42445,7 +42478,6 @@ function populateReadListenSettings() {
 // ─── TTS audio ────────────────────────────────────────────────────────────────
 
 let listenAudio = null;
-let listenEngine = null;       // unified playback engine driving the TTS chunks
 let listenNextAudio = null;    // next chunk, preloaded while the current one plays
 let listenAllUrls = [];        // every TTS chunk URL for the article being read
 let listenChunkIdx = 0;        // index of the chunk currently playing
@@ -42489,7 +42521,7 @@ async function loadListenChunkDurations(urls, genId) {
   listenTotalDuration = acc;
   // Hand the measured durations to the engine so its logical position + seek
   // scale sharpen to match (word-timing still uses listenChunkOffsets below).
-  if (listenEngine) durations.forEach((d, i) => listenEngine.setSegmentDuration(i, d));
+  if (mediaEngine) durations.forEach((d, i) => mediaEngine.setSegmentDuration(i, d));
   computeWordAbsTimes();
   updateMiniPlayerProgress();
 }
@@ -42598,18 +42630,18 @@ function highlightCurrentWord() {
 // Seconds elapsed across the whole article (finished chunks + position in the
 // current one).
 function listenElapsed() {
-  if (!listenAudio || !listenEngine) return 0;
-  return listenEngine.state().position; // logical position across all chunks
+  if (!listenAudio || !mediaEngine) return 0;
+  return mediaEngine.state().position; // logical position across all chunks
 }
 
 // Jump to an absolute time across the whole article. The engine maps the target
 // onto the right chunk + in-chunk offset (crossing chunk boundaries as needed).
 function listenSeekToTime(t) {
   listenFollowSuppressed = false; // an explicit seek re-centers on the spoken word
-  if (!listenAllUrls.length || !listenEngine) return;
+  if (!listenAllUrls.length || !mediaEngine) return;
   const total = listenTotalDuration || 0;
   const target = Math.max(0, total ? Math.min(t, total - 0.25) : t);
-  listenEngine.seekTo(target);
+  mediaEngine.seekTo(target);
 }
 
 function listenSkip(seconds) {
@@ -42728,35 +42760,11 @@ function beginNextResolvedArticleSync(finishedId) {
   listenAudio = ensureListenAudioEl();
   listenAudio.muted = false;
   loadListenChunkDurations(listenAllUrls, myGenId);
-  getListenEngine().load(buildTtsSource(article, listenAllUrls), { autoplay: true }); // synchronous src+play() — the whole point
+  getMediaEngine().load(buildTtsSource(article, listenAllUrls), { autoplay: true }); // synchronous src+play() — the whole point
   setListenMediaSession(article);
   if (activeMediaTab === "queue") renderMediaAllList();
   prefetchNextQueueAudio();
   return true;
-}
-
-// One unified engine drives the article/email read-aloud, owning the persistent
-// gesture-unlocked listen element. A reading is a multi-segment source (one TTS
-// chunk per segment); the engine handles the gapless chunk hand-off, logical
-// position, and cross-chunk seeking. Feature behavior (word highlighting,
-// mini-player, background queue-advance) hangs off the engine's events.
-function getListenEngine() {
-  if (listenEngine) return listenEngine;
-  listenEngine = createPlaybackEngine({ createAudio: ensureListenAudioEl });
-  listenEngine.on("play", () => { listenSpeaking = true; setMediaSessionPlaybackState("playing"); updateListenPlayBtn(); updateMiniPlayerPlayBtn(); });
-  listenEngine.on("pause", () => { listenSpeaking = false; setMediaSessionPlaybackState("paused"); updateListenPlayBtn(); updateMiniPlayerPlayBtn(); });
-  listenEngine.on("error", () => { listenSpeaking = false; updateListenPlayBtn(); updateMiniPlayerPlayBtn(); });
-  listenEngine.on("timeupdate", () => { updateMiniPlayerProgress(); highlightCurrentWord(); });
-  listenEngine.on("segment", (s) => {
-    listenChunkIdx = s.segIndex;
-    // Warm the following chunk's URL into the browser cache for a near-seamless
-    // hand-off (buffer only, never played).
-    if (listenNextAudio) { listenNextAudio.src = ""; listenNextAudio = null; }
-    const next = s.segIndex + 1;
-    if (listenAllUrls[next]) listenNextAudio = makeListenChunk(listenAllUrls[next]);
-  });
-  listenEngine.on("ended", () => onListenArticleFinished());
-  return listenEngine;
 }
 
 // A TTS reading as a PlayableSource: one chunk URL per segment.
@@ -42773,8 +42781,8 @@ function setListenMediaSession(article) {
   });
   setMediaSessionPlaybackState("playing");
   // AirPod / lock-screen / headset controls reach the article audio.
-  navigator.mediaSession.setActionHandler("play", () => getListenEngine().play());
-  navigator.mediaSession.setActionHandler("pause", () => getListenEngine().pause());
+  navigator.mediaSession.setActionHandler("play", () => getMediaEngine().play());
+  navigator.mediaSession.setActionHandler("pause", () => getMediaEngine().pause());
   navigator.mediaSession.setActionHandler("stop", stopListen);
   navigator.mediaSession.setActionHandler("seekbackward", () => listenSkip(-15));
   navigator.mediaSession.setActionHandler("seekforward", () => listenSkip(30));
@@ -42794,7 +42802,7 @@ function onListenArticleFinished() {
   updateMiniPlayerPlayBtn();
   if (!advanceMediaAllQueue(finished?.id)) {
     // Nothing else queued — a successful advance re-drives the engine itself.
-    if (!advanceListenArticle()) { listenEngine.stop(); hideMiniPlayer(); listenArticle = null; }
+    if (!advanceListenArticle()) { mediaEngine.stop(); hideMiniPlayer(); listenArticle = null; }
   }
 }
 
@@ -42855,7 +42863,7 @@ async function startListenTTS(article) {
   // The engine points the blessed element at chunk 0 and plays synchronously
   // within this call (still the user's gesture on first play), then advances
   // through the remaining chunks gaplessly on its own.
-  getListenEngine().load(buildTtsSource(article, listenAllUrls), { autoplay: true });
+  getMediaEngine().load(buildTtsSource(article, listenAllUrls), { autoplay: true });
   setListenMediaSession(article);
 }
 
@@ -42891,14 +42899,14 @@ function toggleListenPlayPause() {
     return;
   }
   if (!listenAudio) return;
-  getListenEngine().toggle(); // 'play'/'pause' events update speaking + buttons + mediaSession
+  getMediaEngine().toggle(); // 'play'/'pause' events update speaking + buttons + mediaSession
 }
 
 function stopListen() {
   listenGenId++;
   // Engine pauses the element, detaches its handlers, and clears the source;
   // the element (and its iOS "blessing") is kept for reuse.
-  if (listenEngine) listenEngine.stop();
+  if (mediaEngine) mediaEngine.stop();
   listenAudio = null;
   setMediaSessionPlaybackState("none");
   if (listenNextAudio) { listenNextAudio.src = ""; listenNextAudio = null; }
