@@ -13021,6 +13021,11 @@ body.touch-drag-active * {
   background: var(--surface);
   color: var(--ink);
 }
+.cadence-follow-btn.is-active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
 .cadence-zoom { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
 .cadence-zoom .icon-btn { width: 30px; height: 30px; padding: 0; font-size: 1.1rem; line-height: 1; }
 .cadence-zoom-val { min-width: 40px; text-align: center; font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; }

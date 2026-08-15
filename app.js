@@ -33095,24 +33095,30 @@ let cadencePracticeTimer = null;   // 1s tick interval for the elapsed label
 let cadenceWorkSessions = null;    // sessions for the open work
 let cadenceLastPosition = null;    // last tapped ScorePosition (anchors a session)
 let cadenceActiveCtx = null;       // { workId, movementId, editionId } of the open score
+let cadenceFollow = false;         // auto-follow (score following) on?
+let cadenceFollowEngine = null;
+let cadenceFollowInput = null;
 
 async function getCadence() {
   if (cadenceMod) return cadenceMod;
-  const [storage, imp, rend, model, osmd, practice] = await Promise.all([
+  const [storage, imp, rend, model, osmd, practice, follow, midi] = await Promise.all([
     import("./music/storage.js"),
     import("./music/import.js"),
     import("./music/score-renderer.js"),
     import("./music/score-model.js"),
     import("./music/renderers/osmd-adapter.js"),
     import("./music/practice.js"),
+    import("./music/following-engine.js"),
+    import("./music/input-midi.js"),
   ]);
   cadenceStorage = cadenceStorage || storage.createIdbStorage("cadence");
   cadenceMod = {
     importMusicXmlFile: imp.importMusicXmlFile, loadWork: imp.loadWork, listWorks: imp.listWorks,
-    hitTestPosition: rend.hitTestPosition, offsetToDisplayBeat: model.offsetToDisplayBeat,
+    hitTestPosition: rend.hitTestPosition, positionToRect: rend.positionToRect, offsetToDisplayBeat: model.offsetToDisplayBeat,
     createOsmdRenderer: osmd.createOsmdRenderer,
     saveSession: practice.saveSession, listSessions: practice.listSessions,
     deleteSession: practice.deleteSession, workStats: practice.workStats,
+    createFollowingEngine: follow.createFollowingEngine, createMidiInputProvider: midi.createMidiInputProvider,
   };
   return cadenceMod;
 }
@@ -33157,6 +33163,8 @@ async function ensureCadenceLibrary() {
 
 function resetCadenceViewer() {
   try { cadenceRenderer?.destroy?.(); } catch { /* noop */ }
+  try { cadenceFollowInput?.stop?.(); } catch { /* noop */ }
+  cadenceFollowInput = null; cadenceFollowEngine = null; cadenceFollow = false;
   if (cadencePracticeTimer) { clearInterval(cadencePracticeTimer); cadencePracticeTimer = null; }
   cadencePracticeStart = null; cadenceWorkSessions = null; cadenceLastPosition = null; cadenceActiveCtx = null;
   cadenceRenderer = null; cadenceLayout = null; cadenceModel = null; cadenceActiveWorkId = null;
@@ -33214,6 +33222,9 @@ function renderCadenceViewer() {
           <option value="continuous"${cadenceViewMode === "continuous" ? " selected" : ""}>Scroll</option>
           <option value="paged"${cadenceViewMode === "paged" ? " selected" : ""}>Paged</option>
         </select>
+        <button class="icon-btn cadence-follow-btn${cadenceFollow ? " is-active" : ""}" type="button" data-cadence-follow title="Auto-follow with MIDI" aria-label="Auto-follow with MIDI" aria-pressed="${cadenceFollow ? "true" : "false"}">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 12a8 8 0 0 1 8-8M20 12a8 8 0 0 1-8 8"/><path d="M12 4 9 7h6zM12 20l3-3H9z"/></svg>
+        </button>
       </div>
       <div class="cadence-score-host" id="cadenceScoreHost"><p class="piano-empty-state">Rendering…</p></div>
       <div class="cadence-pos-readout" id="cadencePosReadout" aria-live="polite"></div>
@@ -33312,6 +33323,61 @@ function changeCadenceZoom(dir) {
   if (cadenceRenderer) { cadenceRenderer.setZoom(cadenceZoom); cadenceLayout = cadenceRenderer.getLayoutIndex(); }
 }
 
+// ── Auto-follow (score following) ─────────────────────────────────────────────
+async function toggleCadenceFollow() {
+  if (cadenceFollow) { stopCadenceFollow(); return; }
+  try {
+    const C = await getCadence();
+    if (!cadenceModel) return;
+    const input = C.createMidiInputProvider();
+    if (!(await input.isAvailable())) { setCadenceFollowStatus("MIDI input isn't available in this browser."); return; }
+    const engine = C.createFollowingEngine();
+    engine.load(cadenceModel, { context: cadenceActiveCtx });
+    const count = await input.start((ev) => {
+      const s = engine.push(ev);
+      if (s.matched && s.position) applyFollowPosition(s.position);
+    });
+    cadenceFollowEngine = engine; cadenceFollowInput = input; cadenceFollow = true;
+    updateFollowButton();
+    setCadenceFollowStatus(count ? "Following — play along" : "Connect a MIDI keyboard to follow along");
+  } catch (e) {
+    console.warn("Cadence follow failed:", e);
+    setCadenceFollowStatus("Couldn't start MIDI following.");
+  }
+}
+
+function stopCadenceFollow() {
+  try { cadenceFollowInput?.stop?.(); } catch { /* noop */ }
+  cadenceFollowInput = null; cadenceFollowEngine = null; cadenceFollow = false;
+  updateFollowButton();
+  setCadenceFollowStatus("");
+}
+
+function updateFollowButton() {
+  const btn = document.querySelector("[data-cadence-follow]");
+  if (btn) { btn.classList.toggle("is-active", cadenceFollow); btn.setAttribute("aria-pressed", cadenceFollow ? "true" : "false"); }
+}
+
+function setCadenceFollowStatus(msg) {
+  const readout = document.getElementById("cadencePosReadout");
+  if (readout && msg) readout.textContent = msg;
+}
+
+// The follower emits a canonical position; the presentation layer maps it to
+// pixels — highlight the note and keep it comfortably in view.
+function applyFollowPosition(pos) {
+  if (!cadenceRenderer) return;
+  cadenceRenderer.highlight(pos);
+  try {
+    const rect = cadenceMod?.positionToRect?.(cadenceLayout, pos);
+    const host = document.getElementById("cadenceScoreHost");
+    if (rect && host) {
+      const target = Math.max(0, rect.y - host.clientHeight * 0.35);
+      if (Math.abs(host.scrollTop - target) > 24) host.scrollTo({ top: target, behavior: "smooth" });
+    }
+  } catch { /* noop */ }
+}
+
 function openCadenceWork(id) { cadenceActiveWorkId = id; cadenceLayout = null; cadenceModel = null; renderRecreatePage(); }
 function closeCadenceWork() { resetCadenceViewer(); renderRecreatePage(); }
 
@@ -33400,6 +33466,7 @@ function bindCadence(grid) {
     });
     grid.querySelectorAll("[data-cadence-zoom]").forEach((b) =>
       b.addEventListener("click", () => changeCadenceZoom(Number(b.dataset.cadenceZoom))));
+    grid.querySelector("[data-cadence-follow]")?.addEventListener("click", toggleCadenceFollow);
     const host = grid.querySelector("#cadenceScoreHost");
     if (host && !host.dataset.mounted) mountCadenceViewer(host);
     const practiceEl = grid.querySelector("#cadencePractice");
