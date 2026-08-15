@@ -33079,26 +33079,36 @@ function bindRecreateControls() {
 // code-split (dynamic import) so they only load the first time a score is used —
 // no boot cost, offline-capable once loaded. Scores persist locally in
 // IndexedDB (offline-owned); metadata sync is a later concern.
+// App/library-level state (persists across opening/closing individual scores).
 let cadenceMod = null;
 let cadenceStorage = null;
 let cadenceLibrary = null;         // [{id,title,composer}] or null = not yet loaded
 let cadenceLibraryLoading = false;
-let cadenceActiveWorkId = null;    // a score is open in the viewer
-let cadenceRenderer = null;
-let cadenceLayout = null;
-let cadenceModel = null;
 let cadenceViewMode = localStorage.getItem("cadence-view-mode") || "continuous";
 let cadenceZoom = parseFloat(localStorage.getItem("cadence-zoom")) || 1;
 let cadenceImporting = false;
-let cadencePracticeStart = null;   // ms timestamp while a practice session is running
-let cadencePracticeTimer = null;   // 1s tick interval for the elapsed label
-let cadenceWorkSessions = null;    // sessions for the open work
-let cadenceLastPosition = null;    // last tapped ScorePosition (anchors a session)
-let cadenceActiveCtx = null;       // { workId, movementId, editionId } of the open score
-let cadenceFollow = false;         // auto-follow (score following) on?
-let cadenceFollowEngine = null;
-let cadenceFollowInput = null;
-let cadenceAccuracy = null;        // accuracy analyzer while practicing with follow
+
+// Per-open-score state, kept in ONE object so resetCadenceViewer() can drop it
+// all at once — no risk of leaking a stale field (renderer/follow/practice/etc.)
+// from one score into the next. Accessed as cadenceView.<field> throughout.
+function freshCadenceView() {
+  return {
+    activeWorkId: null,   // the open score, or null → library view
+    renderer: null,       // OSMD adapter
+    layout: null,         // LayoutIndex from the last render
+    model: null,          // ScoreModel of the open score
+    activeCtx: null,      // { workId, movementId, editionId }
+    lastPosition: null,   // last tapped ScorePosition (anchors a session)
+    follow: false,        // auto-follow on?
+    followEngine: null,
+    followInput: null,
+    accuracy: null,       // accuracy analyzer while practicing with follow
+    practiceStart: null,  // ms timestamp while a practice session runs
+    practiceTimer: null,  // 1s tick interval for the elapsed label
+    workSessions: null,   // sessions for the open work
+  };
+}
+let cadenceView = freshCadenceView();
 
 async function getCadence() {
   if (cadenceMod) return cadenceMod;
@@ -33149,8 +33159,8 @@ function cadenceRelDay(iso) {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 function cadenceElapsedLabel() {
-  if (cadencePracticeStart == null) return "0:00";
-  const s = Math.floor((Date.now() - cadencePracticeStart) / 1000);
+  if (cadenceView.practiceStart == null) return "0:00";
+  const s = Math.floor((Date.now() - cadenceView.practiceStart) / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
@@ -33163,16 +33173,16 @@ async function ensureCadenceLibrary() {
     cadenceLibrary = works.map((w) => ({ ...w, _stats: stats[w.id] || null }));
   } catch (e) { cadenceLibrary = []; console.warn("Cadence library load failed:", e); }
   cadenceLibraryLoading = false;
-  if (activeAppArea === "recreate" && activeRecreateHobby === "piano" && !cadenceActiveWorkId) renderRecreatePage();
+  if (activeAppArea === "recreate" && activeRecreateHobby === "piano" && !cadenceView.activeWorkId) renderRecreatePage();
 }
 
 function resetCadenceViewer() {
-  try { cadenceRenderer?.destroy?.(); } catch { /* noop */ }
-  try { cadenceFollowInput?.stop?.(); } catch { /* noop */ }
-  cadenceFollowInput = null; cadenceFollowEngine = null; cadenceFollow = false; cadenceAccuracy = null;
-  if (cadencePracticeTimer) { clearInterval(cadencePracticeTimer); cadencePracticeTimer = null; }
-  cadencePracticeStart = null; cadenceWorkSessions = null; cadenceLastPosition = null; cadenceActiveCtx = null;
-  cadenceRenderer = null; cadenceLayout = null; cadenceModel = null; cadenceActiveWorkId = null;
+  // Release the live resources, then drop the whole per-score state in one shot
+  // — a fresh object can't carry a stale field into the next score.
+  try { cadenceView.renderer?.destroy?.(); } catch { /* noop */ }
+  try { cadenceView.followInput?.stop?.(); } catch { /* noop */ }
+  if (cadenceView.practiceTimer) clearInterval(cadenceView.practiceTimer);
+  cadenceView = freshCadenceView();
 }
 
 function cadenceScoreIconSvg() {
@@ -33210,7 +33220,7 @@ function cadenceLibrarySectionHtml() {
 }
 
 function renderCadenceViewer() {
-  const work = (cadenceLibrary || []).find((w) => w.id === cadenceActiveWorkId);
+  const work = (cadenceLibrary || []).find((w) => w.id === cadenceView.activeWorkId);
   return `
     <div class="cadence-viewer">
       <div class="cadence-viewer-bar">
@@ -33227,7 +33237,7 @@ function renderCadenceViewer() {
           <option value="continuous"${cadenceViewMode === "continuous" ? " selected" : ""}>Scroll</option>
           <option value="paged"${cadenceViewMode === "paged" ? " selected" : ""}>Paged</option>
         </select>
-        <button class="icon-btn cadence-follow-btn${cadenceFollow ? " is-active" : ""}" type="button" data-cadence-follow title="Auto-follow (MIDI or microphone)" aria-label="Auto-follow with MIDI or microphone" aria-pressed="${cadenceFollow ? "true" : "false"}">
+        <button class="icon-btn cadence-follow-btn${cadenceView.follow ? " is-active" : ""}" type="button" data-cadence-follow title="Auto-follow (MIDI or microphone)" aria-label="Auto-follow with MIDI or microphone" aria-pressed="${cadenceView.follow ? "true" : "false"}">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 12a8 8 0 0 1 8-8M20 12a8 8 0 0 1-8 8"/><path d="M12 4 9 7h6zM12 20l3-3H9z"/></svg>
         </button>
       </div>
@@ -33238,8 +33248,8 @@ function renderCadenceViewer() {
 }
 
 function cadencePracticeSectionHtml() {
-  const practicing = cadencePracticeStart != null;
-  const sessions = cadenceWorkSessions || [];
+  const practicing = cadenceView.practiceStart != null;
+  const sessions = cadenceView.workSessions || [];
   const total = sessions.reduce((m, s) => m + (s.durationMs || 0), 0);
   const list = sessions.slice(0, 6).map((s) => `
       <div class="cadence-session-row">
@@ -33275,7 +33285,7 @@ function bindCadencePractice(container) {
       try {
         const C = await getCadence();
         await C.deleteSession(cadenceStorage, btn.dataset.cadenceSessionDel);
-        cadenceWorkSessions = await C.listSessions(cadenceStorage, { workId: cadenceActiveWorkId });
+        cadenceView.workSessions = await C.listSessions(cadenceStorage, { workId: cadenceView.activeWorkId });
         cadenceLibrary = null; // stats changed — reload library summaries next time
         refreshCadencePractice();
       } catch (e) { console.warn("Cadence delete session failed:", e); }
@@ -33284,15 +33294,15 @@ function bindCadencePractice(container) {
 }
 
 function toggleCadencePractice() {
-  if (cadencePracticeStart == null) {
-    cadencePracticeStart = Date.now();
-    cadencePracticeTimer = setInterval(() => {
+  if (cadenceView.practiceStart == null) {
+    cadenceView.practiceStart = Date.now();
+    cadenceView.practiceTimer = setInterval(() => {
       const el = document.getElementById("cadencePracticeElapsed");
       if (el) el.textContent = cadenceElapsedLabel();
     }, 1000);
     // Start an accuracy analyzer for this session — it accumulates only if follow
     // is (or gets) turned on; otherwise it stays empty and no metrics are saved.
-    getCadence().then((C) => { cadenceAccuracy = C.createAccuracyTracker(); }).catch(() => { cadenceAccuracy = null; });
+    getCadence().then((C) => { cadenceView.accuracy = C.createAccuracyTracker(); }).catch(() => { cadenceView.accuracy = null; });
     refreshCadencePractice();
   } else {
     stopAndSaveCadencePractice();
@@ -33300,12 +33310,12 @@ function toggleCadencePractice() {
 }
 
 async function stopAndSaveCadencePractice() {
-  const start = cadencePracticeStart;
-  cadencePracticeStart = null;
-  if (cadencePracticeTimer) { clearInterval(cadencePracticeTimer); cadencePracticeTimer = null; }
+  const start = cadenceView.practiceStart;
+  cadenceView.practiceStart = null;
+  if (cadenceView.practiceTimer) { clearInterval(cadenceView.practiceTimer); cadenceView.practiceTimer = null; }
   refreshCadencePractice(); // show the stopped state immediately
   const durationMs = Date.now() - start;
-  const tracker = cadenceAccuracy; cadenceAccuracy = null;
+  const tracker = cadenceView.accuracy; cadenceView.accuracy = null;
   if (durationMs < 3000) return; // ignore an accidental start/stop
   try {
     const C = await getCadence();
@@ -33323,17 +33333,17 @@ async function stopAndSaveCadencePractice() {
       ];
     }
     await C.saveSession(cadenceStorage, {
-      workId: cadenceActiveCtx?.workId || cadenceActiveWorkId,
-      movementId: cadenceActiveCtx?.movementId || null,
-      editionId: cadenceActiveCtx?.editionId || null,
+      workId: cadenceView.activeCtx?.workId || cadenceView.activeWorkId,
+      movementId: cadenceView.activeCtx?.movementId || null,
+      editionId: cadenceView.activeCtx?.editionId || null,
       startedAt: new Date(start).toISOString(),
       endedAt: new Date().toISOString(),
       durationMs,
       inputSource: summary ? "follow" : "manual",
-      startPosition: cadenceLastPosition || null,
+      startPosition: cadenceView.lastPosition || null,
       metrics,
     });
-    cadenceWorkSessions = await C.listSessions(cadenceStorage, { workId: cadenceActiveWorkId });
+    cadenceView.workSessions = await C.listSessions(cadenceStorage, { workId: cadenceView.activeWorkId });
     cadenceLibrary = null; // stats changed — library summaries refresh on return
     refreshCadencePractice();
     if (summary) {
@@ -33349,20 +33359,20 @@ function changeCadenceZoom(dir) {
   try { localStorage.setItem("cadence-zoom", String(cadenceZoom)); } catch { /* private mode */ }
   const val = document.getElementById("cadenceZoomVal");
   if (val) val.textContent = `${Math.round(cadenceZoom * 100)}%`;
-  if (cadenceRenderer) { cadenceRenderer.setZoom(cadenceZoom); cadenceLayout = cadenceRenderer.getLayoutIndex(); }
+  if (cadenceView.renderer) { cadenceView.renderer.setZoom(cadenceZoom); cadenceView.layout = cadenceView.renderer.getLayoutIndex(); }
 }
 
 // ── Auto-follow (score following) ─────────────────────────────────────────────
 async function toggleCadenceFollow() {
-  if (cadenceFollow) { stopCadenceFollow(); return; }
+  if (cadenceView.follow) { stopCadenceFollow(); return; }
   try {
     const C = await getCadence();
-    if (!cadenceModel) return;
+    if (!cadenceView.model) return;
     const engine = C.createFollowingEngine();
-    engine.load(cadenceModel, { context: cadenceActiveCtx });
+    engine.load(cadenceView.model, { context: cadenceView.activeCtx });
     const sink = (ev) => {
       const s = engine.push(ev);
-      if (cadenceAccuracy) cadenceAccuracy.observe(s, ev); // accumulate accuracy when practicing
+      if (cadenceView.accuracy) cadenceView.accuracy.observe(s, ev); // accumulate accuracy when practicing
       if (s.matched && s.position) applyFollowPosition(s.position);
     };
 
@@ -33383,7 +33393,7 @@ async function toggleCadenceFollow() {
     }
     if (!input) { setCadenceFollowStatus("No MIDI keyboard or microphone available."); return; }
 
-    cadenceFollowEngine = engine; cadenceFollowInput = input; cadenceFollow = true;
+    cadenceView.followEngine = engine; cadenceView.followInput = input; cadenceView.follow = true;
     updateFollowButton();
     setCadenceFollowStatus(`Following (${label}) — play along`);
   } catch (e) {
@@ -33394,15 +33404,15 @@ async function toggleCadenceFollow() {
 }
 
 function stopCadenceFollow() {
-  try { cadenceFollowInput?.stop?.(); } catch { /* noop */ }
-  cadenceFollowInput = null; cadenceFollowEngine = null; cadenceFollow = false;
+  try { cadenceView.followInput?.stop?.(); } catch { /* noop */ }
+  cadenceView.followInput = null; cadenceView.followEngine = null; cadenceView.follow = false;
   updateFollowButton();
   setCadenceFollowStatus("");
 }
 
 function updateFollowButton() {
   const btn = document.querySelector("[data-cadence-follow]");
-  if (btn) { btn.classList.toggle("is-active", cadenceFollow); btn.setAttribute("aria-pressed", cadenceFollow ? "true" : "false"); }
+  if (btn) { btn.classList.toggle("is-active", cadenceView.follow); btn.setAttribute("aria-pressed", cadenceView.follow ? "true" : "false"); }
 }
 
 function setCadenceFollowStatus(msg) {
@@ -33413,10 +33423,10 @@ function setCadenceFollowStatus(msg) {
 // The follower emits a canonical position; the presentation layer maps it to
 // pixels — highlight the note and keep it comfortably in view.
 function applyFollowPosition(pos) {
-  if (!cadenceRenderer) return;
-  cadenceRenderer.highlight(pos);
+  if (!cadenceView.renderer) return;
+  cadenceView.renderer.highlight(pos);
   try {
-    const rect = cadenceMod?.positionToRect?.(cadenceLayout, pos);
+    const rect = cadenceMod?.positionToRect?.(cadenceView.layout, pos);
     const host = document.getElementById("cadenceScoreHost");
     if (rect && host) {
       const target = Math.max(0, rect.y - host.clientHeight * 0.35);
@@ -33425,7 +33435,7 @@ function applyFollowPosition(pos) {
   } catch { /* noop */ }
 }
 
-function openCadenceWork(id) { cadenceActiveWorkId = id; cadenceLayout = null; cadenceModel = null; renderRecreatePage(); }
+function openCadenceWork(id) { cadenceView.activeWorkId = id; cadenceView.layout = null; cadenceView.model = null; renderRecreatePage(); }
 function closeCadenceWork() { resetCadenceViewer(); renderRecreatePage(); }
 
 async function handleCadenceImport(file) {
@@ -33447,32 +33457,32 @@ async function handleCadenceImport(file) {
 
 async function mountCadenceViewer(host) {
   host.dataset.mounted = "1";
-  try { cadenceRenderer?.destroy?.(); } catch { /* noop */ }
-  cadenceRenderer = null;
+  try { cadenceView.renderer?.destroy?.(); } catch { /* noop */ }
+  cadenceView.renderer = null;
   try {
     const C = await getCadence();
-    const w = await C.loadWork(cadenceStorage, cadenceActiveWorkId);
+    const w = await C.loadWork(cadenceStorage, cadenceView.activeWorkId);
     if (!w || !w.model) { host.innerHTML = `<p class="piano-empty-state">Couldn't load this score.</p>`; return; }
     const xml = await C.readRepresentationXml(cadenceStorage, w.representation);
     if (xml == null) { host.innerHTML = `<p class="piano-empty-state">This score's file isn't on this device.</p>`; return; }
-    cadenceModel = w.model;
+    cadenceView.model = w.model;
     const ctx = { workId: w.work.id, movementId: w.work.movements[0].id, editionId: w.work.editions[0].id };
-    cadenceActiveCtx = ctx;
+    cadenceView.activeCtx = ctx;
     const measureIds = w.work.editions[0].representations[0].measureIdentity.ids;
     host.innerHTML = "";
-    cadenceRenderer = await C.createOsmdRenderer(host, ctx, measureIds);
-    await cadenceRenderer.load(xml, { mode: cadenceViewMode });
-    cadenceLayout = cadenceRenderer.render();
-    if (cadenceZoom !== 1) { cadenceRenderer.setZoom(cadenceZoom); cadenceLayout = cadenceRenderer.getLayoutIndex(); }
+    cadenceView.renderer = await C.createOsmdRenderer(host, ctx, measureIds);
+    await cadenceView.renderer.load(xml, { mode: cadenceViewMode });
+    cadenceView.layout = cadenceView.renderer.render();
+    if (cadenceZoom !== 1) { cadenceView.renderer.setZoom(cadenceZoom); cadenceView.layout = cadenceView.renderer.getLayoutIndex(); }
     host.addEventListener("click", (e) => onCadenceScoreClick(e, host, C));
     // Surface extraction health: the score drew, but if no notes mapped then
     // tap-to-position and follow can't work — say so instead of failing silently.
-    if (!cadenceLayout.notes.length) {
+    if (!cadenceView.layout.notes.length) {
       const readout = document.getElementById("cadencePosReadout");
       if (readout) readout.textContent = "Heads up: this score rendered, but its notes couldn't be mapped — tapping and follow won't work on it.";
     }
     // Load this work's practice history and refresh the practice section.
-    try { cadenceWorkSessions = await C.listSessions(cadenceStorage, { workId: cadenceActiveWorkId }); refreshCadencePractice(); } catch { /* noop */ }
+    try { cadenceView.workSessions = await C.listSessions(cadenceStorage, { workId: cadenceView.activeWorkId }); refreshCadencePractice(); } catch { /* noop */ }
   } catch (e) {
     console.warn("Cadence render failed:", e);
     host.innerHTML = `<p class="piano-empty-state">Couldn't render this score.<br><small>${escapeHtml(e?.message || String(e))}</small></p>`;
@@ -33480,14 +33490,14 @@ async function mountCadenceViewer(host) {
 }
 
 function onCadenceScoreClick(e, host, C) {
-  if (!cadenceLayout || !cadenceRenderer) return;
+  if (!cadenceView.layout || !cadenceView.renderer) return;
   const r = host.getBoundingClientRect();
-  const pos = C.hitTestPosition(cadenceLayout, e.clientX - r.left + host.scrollLeft, e.clientY - r.top + host.scrollTop);
+  const pos = C.hitTestPosition(cadenceView.layout, e.clientX - r.left + host.scrollLeft, e.clientY - r.top + host.scrollTop);
   const readout = document.getElementById("cadencePosReadout");
   if (!pos) { if (readout) readout.textContent = ""; return; }
-  cadenceLastPosition = pos;
-  cadenceRenderer.highlight(pos);
-  const timeSig = cadenceModel?.measures?.[pos.measureIndex]?.timeSig || [4, 4];
+  cadenceView.lastPosition = pos;
+  cadenceView.renderer.highlight(pos);
+  const timeSig = cadenceView.model?.measures?.[pos.measureIndex]?.timeSig || [4, 4];
   const beat = C.offsetToDisplayBeat(pos.offset, timeSig);
   if (readout) readout.textContent = `Measure ${pos.measureIndex + 1} · beat ${beat.toFixed(2)}`;
 }
@@ -33502,12 +33512,12 @@ async function deleteCadenceWork(id) {
 }
 
 function bindCadence(grid) {
-  if (cadenceActiveWorkId) {
+  if (cadenceView.activeWorkId) {
     grid.querySelector("[data-cadence-close]")?.addEventListener("click", closeCadenceWork);
     grid.querySelector("[data-cadence-mode]")?.addEventListener("change", (e) => {
       cadenceViewMode = e.target.value;
       try { localStorage.setItem("cadence-view-mode", cadenceViewMode); } catch { /* private mode */ }
-      if (cadenceRenderer) { cadenceRenderer.setMode(cadenceViewMode); cadenceLayout = cadenceRenderer.getLayoutIndex(); }
+      if (cadenceView.renderer) { cadenceView.renderer.setMode(cadenceViewMode); cadenceView.layout = cadenceView.renderer.getLayoutIndex(); }
     });
     grid.querySelectorAll("[data-cadence-zoom]").forEach((b) =>
       b.addEventListener("click", () => changeCadenceZoom(Number(b.dataset.cadenceZoom))));
@@ -33531,7 +33541,7 @@ function bindCadence(grid) {
 }
 
 function renderPianoPanel() {
-  if (cadenceActiveWorkId) return renderCadenceViewer();
+  if (cadenceView.activeWorkId) return renderCadenceViewer();
   return `
     <div class="piano-panel">
       <div class="piano-metronome">
