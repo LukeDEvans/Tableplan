@@ -153,6 +153,11 @@ const server = http.createServer(async (request, response) => {
       await handleBackup(request, response);
       return;
     }
+    if (url.pathname === "/api/weather") {
+      // url passed so ?lat/lon/q reach event.queryStringParameters (weather.js reads them)
+      await handleNetlifyFunction("./netlify/functions/weather", request, response, url);
+      return;
+    }
     if (url.pathname === "/api/admin-data") {
       await handleNetlifyFunction("./netlify/functions/admin-data", request, response);
       return;
