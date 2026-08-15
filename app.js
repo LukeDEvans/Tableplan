@@ -39360,12 +39360,18 @@ let mediaAllQueueRest = [];   // ordered ids remaining after the current item
 let mediaAllSwipedRow = null; // playlist row currently revealing its swipe actions (touch)
 
 function getAllListenList() {
-  const items = getAutoPlaylist(true).map((e) => (e.type === "article" ? e : { ...e, type: e.type || "podcast" }));
+  // Each item carries an explicit providerId so the play-queue routes through
+  // the provider registry without ever inferring from a display "type" (see
+  // providerIdForItem). type stays for the presentation layer below.
+  const items = getAutoPlaylist(true).map((e) => (e.type === "article"
+    ? { ...e, providerId: "tts" }
+    : { ...e, type: e.type || "podcast", providerId: "podcast" }));
   (state.readingItems || [])
     .filter((b) => b.status && b.status !== "finished")
     .forEach((b) => items.push({
       id: b.id,
       type: "book",
+      providerId: "book",
       title: b.title || "Book",
       showTitle: (b.authors || []).join(", ") || (b.format === "audiobook" ? "Audiobook" : "Book"),
       format: b.format || "book",
