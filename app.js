@@ -33089,31 +33089,66 @@ let cadenceLayout = null;
 let cadenceModel = null;
 let cadenceViewMode = "continuous";
 let cadenceImporting = false;
+let cadencePracticeStart = null;   // ms timestamp while a practice session is running
+let cadencePracticeTimer = null;   // 1s tick interval for the elapsed label
+let cadenceWorkSessions = null;    // sessions for the open work
+let cadenceLastPosition = null;    // last tapped ScorePosition (anchors a session)
+let cadenceActiveCtx = null;       // { workId, movementId, editionId } of the open score
 
 async function getCadence() {
   if (cadenceMod) return cadenceMod;
-  const [storage, imp, rend, model, osmd] = await Promise.all([
+  const [storage, imp, rend, model, osmd, practice] = await Promise.all([
     import("./music/storage.js"),
     import("./music/import.js"),
     import("./music/score-renderer.js"),
     import("./music/score-model.js"),
     import("./music/renderers/osmd-adapter.js"),
+    import("./music/practice.js"),
   ]);
   cadenceStorage = cadenceStorage || storage.createIdbStorage("cadence");
   cadenceMod = {
     importMusicXmlFile: imp.importMusicXmlFile, loadWork: imp.loadWork, listWorks: imp.listWorks,
     hitTestPosition: rend.hitTestPosition, offsetToDisplayBeat: model.offsetToDisplayBeat,
     createOsmdRenderer: osmd.createOsmdRenderer,
+    saveSession: practice.saveSession, listSessions: practice.listSessions,
+    deleteSession: practice.deleteSession, workStats: practice.workStats,
   };
   return cadenceMod;
+}
+
+// Sync formatting helpers (so the practice UI renders without waiting on the
+// lazy module). music/practice.js has the canonical versions for the service.
+function cadenceFmtDur(ms) {
+  const s = Math.round((ms || 0) / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? `${h}h ${r}m` : `${h}h`;
+}
+function cadenceRelDay(iso) {
+  if (!iso) return "";
+  const d = new Date(iso), n = new Date();
+  const s0 = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((s0(n) - s0(d)) / 86400000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return d.toLocaleDateString(undefined, { weekday: "short" });
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+function cadenceElapsedLabel() {
+  if (cadencePracticeStart == null) return "0:00";
+  const s = Math.floor((Date.now() - cadencePracticeStart) / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
 async function ensureCadenceLibrary() {
   if (cadenceLibrary || cadenceLibraryLoading) return;
   cadenceLibraryLoading = true;
   try {
-    const { listWorks } = await getCadence();
-    cadenceLibrary = await listWorks(cadenceStorage);
+    const { listWorks, workStats } = await getCadence();
+    const [works, stats] = await Promise.all([listWorks(cadenceStorage), workStats(cadenceStorage)]);
+    cadenceLibrary = works.map((w) => ({ ...w, _stats: stats[w.id] || null }));
   } catch (e) { cadenceLibrary = []; console.warn("Cadence library load failed:", e); }
   cadenceLibraryLoading = false;
   if (activeAppArea === "recreate" && activeRecreateHobby === "piano" && !cadenceActiveWorkId) renderRecreatePage();
@@ -33121,6 +33156,8 @@ async function ensureCadenceLibrary() {
 
 function resetCadenceViewer() {
   try { cadenceRenderer?.destroy?.(); } catch { /* noop */ }
+  if (cadencePracticeTimer) { clearInterval(cadencePracticeTimer); cadencePracticeTimer = null; }
+  cadencePracticeStart = null; cadenceWorkSessions = null; cadenceLastPosition = null; cadenceActiveCtx = null;
   cadenceRenderer = null; cadenceLayout = null; cadenceModel = null; cadenceActiveWorkId = null;
 }
 
@@ -33138,6 +33175,7 @@ function cadenceLibrarySectionHtml() {
         <span class="cadence-work-meta">
           <span class="cadence-work-title">${escapeHtml(w.title || "Untitled")}</span>
           ${w.composer ? `<span class="cadence-work-composer">${escapeHtml(w.composer)}</span>` : ""}
+          ${w._stats ? `<span class="cadence-work-sub">${escapeHtml(cadenceFmtDur(w._stats.totalMs))} practiced · ${escapeHtml(cadenceRelDay(w._stats.lastAt))}</span>` : ""}
         </span>
         <button class="icon-btn piano-song-delete-btn" type="button" data-cadence-delete="${escapeHtml(w.id)}" title="Delete score" aria-label="Delete score">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -33173,7 +33211,91 @@ function renderCadenceViewer() {
       </div>
       <div class="cadence-score-host" id="cadenceScoreHost"><p class="piano-empty-state">Rendering…</p></div>
       <div class="cadence-pos-readout" id="cadencePosReadout" aria-live="polite"></div>
+      <div id="cadencePractice">${cadencePracticeSectionHtml()}</div>
     </div>`;
+}
+
+function cadencePracticeSectionHtml() {
+  const practicing = cadencePracticeStart != null;
+  const sessions = cadenceWorkSessions || [];
+  const total = sessions.reduce((m, s) => m + (s.durationMs || 0), 0);
+  const list = sessions.slice(0, 6).map((s) => `
+      <div class="cadence-session-row">
+        <span class="cadence-session-day">${escapeHtml(cadenceRelDay(s.startedAt))}</span>
+        <span class="cadence-session-dur">${escapeHtml(cadenceFmtDur(s.durationMs || 0))}</span>
+        <span class="cadence-session-note">${escapeHtml(s.notes || "")}</span>
+        <button class="icon-btn piano-song-delete-btn" type="button" data-cadence-session-del="${escapeHtml(s.id)}" title="Delete session" aria-label="Delete session">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>`).join("");
+  return `
+    <div class="cadence-practice-bar">
+      <button class="primary-btn cadence-practice-btn${practicing ? " is-recording" : ""}" type="button" data-cadence-practice-toggle>
+        ${practicing ? `<span class="cadence-rec-dot" aria-hidden="true"></span> Stop · <span id="cadencePracticeElapsed">${cadenceElapsedLabel()}</span>` : "Start practice"}
+      </button>
+      ${sessions.length ? `<span class="cadence-practice-total">${sessions.length} session${sessions.length > 1 ? "s" : ""} · ${escapeHtml(cadenceFmtDur(total))}</span>` : ""}
+    </div>
+    ${list ? `<div class="cadence-session-list">${list}</div>` : ""}`;
+}
+
+function refreshCadencePractice() {
+  const el = document.getElementById("cadencePractice");
+  if (!el) return;
+  el.innerHTML = cadencePracticeSectionHtml();
+  bindCadencePractice(el);
+}
+
+function bindCadencePractice(container) {
+  container.querySelector("[data-cadence-practice-toggle]")?.addEventListener("click", toggleCadencePractice);
+  container.querySelectorAll("[data-cadence-session-del]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      try {
+        const C = await getCadence();
+        await C.deleteSession(cadenceStorage, btn.dataset.cadenceSessionDel);
+        cadenceWorkSessions = await C.listSessions(cadenceStorage, { workId: cadenceActiveWorkId });
+        cadenceLibrary = null; // stats changed — reload library summaries next time
+        refreshCadencePractice();
+      } catch (e) { console.warn("Cadence delete session failed:", e); }
+    });
+  });
+}
+
+function toggleCadencePractice() {
+  if (cadencePracticeStart == null) {
+    cadencePracticeStart = Date.now();
+    cadencePracticeTimer = setInterval(() => {
+      const el = document.getElementById("cadencePracticeElapsed");
+      if (el) el.textContent = cadenceElapsedLabel();
+    }, 1000);
+    refreshCadencePractice();
+  } else {
+    stopAndSaveCadencePractice();
+  }
+}
+
+async function stopAndSaveCadencePractice() {
+  const start = cadencePracticeStart;
+  cadencePracticeStart = null;
+  if (cadencePracticeTimer) { clearInterval(cadencePracticeTimer); cadencePracticeTimer = null; }
+  refreshCadencePractice(); // show the stopped state immediately
+  const durationMs = Date.now() - start;
+  if (durationMs < 3000) return; // ignore an accidental start/stop
+  try {
+    const C = await getCadence();
+    await C.saveSession(cadenceStorage, {
+      workId: cadenceActiveCtx?.workId || cadenceActiveWorkId,
+      movementId: cadenceActiveCtx?.movementId || null,
+      editionId: cadenceActiveCtx?.editionId || null,
+      startedAt: new Date(start).toISOString(),
+      endedAt: new Date().toISOString(),
+      durationMs,
+      inputSource: "manual",
+      startPosition: cadenceLastPosition || null,
+    });
+    cadenceWorkSessions = await C.listSessions(cadenceStorage, { workId: cadenceActiveWorkId });
+    cadenceLibrary = null; // stats changed — library summaries refresh on return
+    refreshCadencePractice();
+  } catch (e) { console.warn("Cadence save session failed:", e); }
 }
 
 function openCadenceWork(id) { cadenceActiveWorkId = id; cadenceLayout = null; cadenceModel = null; renderRecreatePage(); }
@@ -33209,12 +33331,15 @@ async function mountCadenceViewer(host) {
     const xml = new TextDecoder().decode(rec.bytes);
     cadenceModel = w.model;
     const ctx = { workId: w.work.id, movementId: w.work.movements[0].id, editionId: w.work.editions[0].id };
+    cadenceActiveCtx = ctx;
     const measureIds = w.work.editions[0].representations[0].measureIdentity.ids;
     host.innerHTML = "";
     cadenceRenderer = await C.createOsmdRenderer(host, ctx, measureIds);
     await cadenceRenderer.load(xml, { mode: cadenceViewMode });
     cadenceLayout = cadenceRenderer.render();
     host.addEventListener("click", (e) => onCadenceScoreClick(e, host, C));
+    // Load this work's practice history and refresh the practice section.
+    try { cadenceWorkSessions = await C.listSessions(cadenceStorage, { workId: cadenceActiveWorkId }); refreshCadencePractice(); } catch { /* noop */ }
   } catch (e) {
     console.warn("Cadence render failed:", e);
     host.innerHTML = `<p class="piano-empty-state">Couldn't render this score.<br><small>${escapeHtml(e?.message || String(e))}</small></p>`;
@@ -33227,6 +33352,7 @@ function onCadenceScoreClick(e, host, C) {
   const pos = C.hitTestPosition(cadenceLayout, e.clientX - r.left + host.scrollLeft, e.clientY - r.top + host.scrollTop);
   const readout = document.getElementById("cadencePosReadout");
   if (!pos) { if (readout) readout.textContent = ""; return; }
+  cadenceLastPosition = pos;
   cadenceRenderer.highlight(pos);
   const timeSig = cadenceModel?.measures?.[pos.measureIndex]?.timeSig || [4, 4];
   const beat = C.offsetToDisplayBeat(pos.offset, timeSig);
@@ -33258,6 +33384,8 @@ function bindCadence(grid) {
     });
     const host = grid.querySelector("#cadenceScoreHost");
     if (host && !host.dataset.mounted) mountCadenceViewer(host);
+    const practiceEl = grid.querySelector("#cadencePractice");
+    if (practiceEl) bindCadencePractice(practiceEl);
     return;
   }
   ensureCadenceLibrary();
