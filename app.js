@@ -38357,7 +38357,7 @@ function wireMediaTabs() {
   document.getElementById("confirmPdfImportBtn")?.addEventListener("click", confirmPdfImport);
 }
 
-const MEDIA_SERVICE_TABS = ["books", "podcasts"];
+const MEDIA_SERVICE_TABS = ["books", "podcasts", "music"];
 
 function switchMediaTab(tab) {
   activeMediaTab = tab;
@@ -38382,12 +38382,14 @@ function switchMediaTab(tab) {
   const syncSettingsBtn = document.getElementById("articleSyncSettingsBtn");
   const podcastsPanel = document.getElementById("mediaPodcastsPanel");
   const allPanel = document.getElementById("mediaAllPanel");
+  const musicPanel = document.getElementById("mediaMusicPanel");
 
   if (booksPanel) booksPanel.hidden = true;
   if (listPanel) listPanel.hidden = true;
   if (readerPanel) readerPanel.hidden = true;
   if (podcastsPanel) podcastsPanel.hidden = true;
   if (allPanel) allPanel.hidden = true;
+  if (musicPanel) musicPanel.hidden = true;
   const searchPanel = document.getElementById("mediaSearchPanel");
   if (searchPanel) searchPanel.hidden = true;
   // Leaving to a folder clears an active top-bar search.
@@ -38409,6 +38411,9 @@ function switchMediaTab(tab) {
   } else if (tab === "podcasts") {
     if (podcastsPanel) podcastsPanel.hidden = false;
     initPodcastPanel();
+  } else if (tab === "music") {
+    if (musicPanel) musicPanel.hidden = false;
+    initMusicPanel();
   } else {
     const isArticleTab = getReadPublications().some(p => p.key === tab);
     if (listPanel) listPanel.hidden = false;
@@ -38466,6 +38471,19 @@ let podcastCurEpisode = null;  // episode currently loaded into the shared media
 let podcastCurShow = null;
 let podcastPendingSeek = 0;    // resume position to apply once metadata loads
 let podcastSaveTimer = null;
+
+// Music (Listen → Music). musicAudio mirrors podcastAudio: the shared element
+// while a music track is active, else null. See the music playback block below.
+let musicAudio = null;
+let musicCurTrack = null;      // track loaded into the shared element
+let musicQueueRest = [];       // remaining track ids to auto-advance through
+let musicCurUrl = null;        // object URL for the current local blob (revoked on change)
+let musicLibrary = [];         // cached flat track list for the panel
+let musicImporting = false;    // an import is in flight (drives the panel status)
+let musicLibMod = null;        // lazy-loaded music-library.js module
+let musicLib = null;           // the MusicLibrary instance (source registry)
+let musicPanelWired = false;   // click/change delegation attached once
+let musicLibraryLoaded = false;// library fetched from storage at least once
 
 function initPodcastPanel() {
   wirePodcastPanel();
@@ -40244,6 +40262,12 @@ registerMediaProvider({
   play: () => {},
   isCurrent: () => false,
 });
+registerMediaProvider({
+  id: "music",
+  canPlay: () => true,
+  play: (item) => playMusicTrackById(item.id),
+  isCurrent: (item) => !!musicCurTrack && musicCurTrack.id === item.id,
+});
 
 function playAllQueueFrom(id) {
   const items = getAllListenList();
@@ -41204,6 +41228,8 @@ function getMediaEngine() {
       updatePodcastProgressUI(podcastCurEpisode);
       updateMiniPlayerProgress();
       schedulePodcastPositionSave(podcastCurEpisode);
+    } else if (kind() === "music") {
+      updateMiniPlayerProgress();
     } else {
       updateMiniPlayerProgress();
       highlightCurrentWord();
@@ -41216,6 +41242,10 @@ function getMediaEngine() {
       updateMiniPlayerPlayBtn();
       setMediaSessionPlaybackState("playing");
       scheduleAdSkips(podcastCurrentChapters, mediaAudioEl);
+    } else if (kind() === "music") {
+      setMediaSessionPlaybackState("playing");
+      updateMiniPlayerPlayBtn();
+      if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
     } else {
       listenSpeaking = true;
       setMediaSessionPlaybackState("playing");
@@ -41229,6 +41259,10 @@ function getMediaEngine() {
       updateMiniPlayerPlayBtn();
       setMediaSessionPlaybackState("paused");
       clearAdSkipTimers();
+    } else if (kind() === "music") {
+      setMediaSessionPlaybackState("paused");
+      updateMiniPlayerPlayBtn();
+      if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
     } else {
       listenSpeaking = false;
       setMediaSessionPlaybackState("paused");
@@ -41243,9 +41277,14 @@ function getMediaEngine() {
     const next = s.segIndex + 1;
     if (listenAllUrls[next]) listenNextAudio = makeListenChunk(listenAllUrls[next]);
   });
-  mediaEngine.on("ended", () => { if (kind() === "podcast") onPodcastEnded(); else onListenArticleFinished(); });
+  mediaEngine.on("ended", () => {
+    if (kind() === "podcast") onPodcastEnded();
+    else if (kind() === "music") onMusicEnded();
+    else onListenArticleFinished();
+  });
   mediaEngine.on("error", () => {
     if (kind() === "podcast") showVoiceToast("Audio failed to load — check your connection and try again");
+    else if (kind() === "music") { showVoiceToast("Couldn't play this track"); updateMiniPlayerPlayBtn(); }
     else { listenSpeaking = false; updateListenPlayBtn(); updateMiniPlayerPlayBtn(); }
   });
   // Ad-skip is podcast-only: reschedule when position/rate changes. Passive
@@ -41269,6 +41308,7 @@ function onPodcastEnded() {
 function startPodcastPlayback(episode, show, { autoplay = true } = {}) {
   stopPodcastAudio();
   stopListen(); // stop any article read-aloud so they don't overlap
+  stopMusicPlayback(); // …or a music track
 
   const progress = (state.podcastProgress || {})[episode.id] || {};
   const startPos = progress.played ? 0 : (progress.position || 0);
@@ -41389,32 +41429,270 @@ function stopPodcastAudio() {
   hideMiniPlayer();
 }
 
-// ── Unified now-playing bar (podcasts + article/email TTS) ───────────────────
-// One persistent bottom bar drives whichever kind of audio is active, so both
+// ── Music playback (Listen → Music) ──────────────────────────────────────────
+// A music track is a single-segment PlayableSource routed through the one shared
+// engine, exactly like a podcast episode. musicAudio is the mode flag; the
+// now-playing bar and engine handlers dispatch on providerId "music".
+
+// Lazy-load the library on first use so it stays out of the initial bundle.
+async function getMusicLib() {
+  if (musicLib) return musicLib;
+  if (!musicLibMod) musicLibMod = await import("./music-library.js");
+  const { createIdbMusicStore, createMemoryMusicStore, createLocalMusicSource, createMusicLibrary } = musicLibMod;
+  let store;
+  try { store = createIdbMusicStore(); } catch { store = createMemoryMusicStore(); }
+  // Source registry: local now; a server source (Jellyfin, …) appends here later
+  // behind the same contract with no change to the provider, queue, or UI.
+  musicLib = createMusicLibrary({ sources: [createLocalMusicSource(store)] });
+  return musicLib;
+}
+
+// DOM-side duration probe injected into the (DOM-free) library at import time.
+function probeAudioDurationMs(bytes, mimeType) {
+  return new Promise((resolve) => {
+    try {
+      const url = URL.createObjectURL(new Blob([bytes], { type: mimeType || "audio/mpeg" }));
+      const a = new Audio();
+      a.preload = "metadata";
+      let settled = false;
+      const done = (ms) => { if (settled) return; settled = true; try { URL.revokeObjectURL(url); } catch { /* noop */ } resolve(ms); };
+      a.onloadedmetadata = () => done(Number.isFinite(a.duration) ? Math.round(a.duration * 1000) : null);
+      a.onerror = () => done(null);
+      setTimeout(() => done(null), 5000);
+      a.src = url;
+    } catch { resolve(null); }
+  });
+}
+
+async function refreshMusicLibrary() {
+  const lib = await getMusicLib();
+  musicLibrary = await lib.listAllTracks();
+  return musicLibrary;
+}
+
+async function startMusicPlayback(track, queueRest = []) {
+  if (!track) return;
+  stopPodcastAudio();   // never overlap with a podcast…
+  stopListen();         // …or an article read-aloud
+  let url;
+  try { url = await (await getMusicLib()).resolvePlayable(track); }
+  catch (e) { console.warn("music resolve failed", e); showVoiceToast("Couldn't play this track — the audio isn't on this device"); return; }
+  if (musicCurUrl && musicCurUrl !== url) { try { URL.revokeObjectURL(musicCurUrl); } catch { /* noop */ } }
+  musicCurUrl = typeof url === "string" && url.startsWith("blob:") ? url : null;
+  musicCurTrack = track;
+  musicQueueRest = Array.isArray(queueRest) ? queueRest.slice() : [];
+  const engine = getMediaEngine();
+  musicAudio = ensureMediaAudioEl(); // mode flag → the shared element
+  engine.load({ id: track.id, providerId: "music", segments: [{ url }], startPosition: 0, rate: mediaPlaybackSpeed }, { autoplay: true });
+  setMiniPlayer(track.title || "Untitled", track.artist || track.album || "", "");
+  setMusicMediaSession(track);
+  if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
+}
+
+// Play a track from the current library view and queue the rest of the list
+// after it (so tapping a song plays on through the list).
+function playMusicTrackById(id) {
+  const list = musicLibrary || [];
+  const i = list.findIndex((t) => t.id === id);
+  if (i < 0) return;
+  startMusicPlayback(list[i], list.slice(i + 1).map((t) => t.id));
+}
+function playAllMusic() { const list = musicLibrary || []; if (list.length) startMusicPlayback(list[0], list.slice(1).map((t) => t.id)); }
+
+function onMusicEnded() {
+  updateMiniPlayerPlayBtn();
+  while (musicQueueRest.length) {
+    const nextId = musicQueueRest.shift();
+    const t = (musicLibrary || []).find((x) => x.id === nextId);
+    if (t) { startMusicPlayback(t, musicQueueRest); return; }
+  }
+  stopMusicPlayback(); // queue drained
+}
+
+function stopMusicPlayback() {
+  if (mediaEngine && musicAudio) mediaEngine.stop();
+  if (musicCurUrl) { try { URL.revokeObjectURL(musicCurUrl); } catch { /* noop */ } musicCurUrl = null; }
+  musicAudio = null;
+  musicCurTrack = null;
+  musicQueueRest = [];
+  setMediaSessionPlaybackState("none");
+  hideMiniPlayer();
+  if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
+}
+
+function toggleMusicPlayPause() {
+  if (!musicAudio) return;
+  if (musicAudio.paused) musicAudio.play().catch(() => {});
+  else musicAudio.pause();
+}
+function skipMusic(seconds) {
+  if (!musicAudio) return;
+  musicAudio.currentTime = Math.max(0, Math.min((musicAudio.currentTime || 0) + seconds, musicAudio.duration || Infinity));
+}
+
+function setMusicMediaSession(track) {
+  if (!("mediaSession" in navigator)) return;
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: track.title || "Untitled",
+      artist: track.artist || "",
+      album: track.album || "Music",
+    });
+    navigator.mediaSession.setActionHandler("play", () => musicAudio?.play().catch(() => {}));
+    navigator.mediaSession.setActionHandler("pause", () => musicAudio?.pause());
+    navigator.mediaSession.setActionHandler("seekbackward", () => skipMusic(-10));
+    navigator.mediaSession.setActionHandler("seekforward", () => skipMusic(10));
+    navigator.mediaSession.setActionHandler("nexttrack", () => onMusicEnded());
+  } catch { /* MediaMetadata unsupported — ignore */ }
+}
+
+// ── Music panel (Listen → Music) ──────────────────────────────────────────────
+const MUSIC_PLAY_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4" fill="currentColor"/></svg>`;
+const MUSIC_PAUSE_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/></svg>`;
+const MUSIC_PLUS_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
+
+function initMusicPanel() {
+  const panel = document.getElementById("mediaMusicPanel");
+  if (!panel) return;
+  if (!musicPanelWired) {
+    musicPanelWired = true;
+    panel.addEventListener("click", (e) => {
+      if (e.target.closest("[data-music-import]")) { panel.querySelector("#musicFileInput")?.click(); return; }
+      if (e.target.closest("[data-music-play-all]")) { playAllMusic(); return; }
+      const del = e.target.closest("[data-music-delete]");
+      if (del) { e.stopPropagation(); deleteMusicTrack(del.dataset.musicDelete); return; }
+      const row = e.target.closest("[data-music-track]");
+      if (row) {
+        const id = row.dataset.musicTrack;
+        if (musicCurTrack && musicCurTrack.id === id && musicAudio) toggleMusicPlayPause();
+        else playMusicTrackById(id);
+      }
+    });
+    panel.addEventListener("keydown", (e) => {
+      const row = e.target.closest?.("[data-music-track]");
+      if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); playMusicTrackById(row.dataset.musicTrack); }
+    });
+    panel.addEventListener("change", (e) => {
+      const inp = e.target.closest("#musicFileInput");
+      if (inp && inp.files && inp.files.length) { handleMusicImport(inp.files); inp.value = ""; }
+    });
+  }
+  renderMusicPanel();
+  if (!musicLibraryLoaded) { musicLibraryLoaded = true; refreshMusicLibrary().then(renderMusicPanel).catch((e) => console.warn("music library load failed", e)); }
+}
+
+function renderMusicPanel() {
+  const panel = document.getElementById("mediaMusicPanel");
+  if (!panel) return;
+  const list = musicLibrary || [];
+  const rows = list.map((t) => {
+    const active = !!(musicCurTrack && musicCurTrack.id === t.id);
+    const playing = active && musicAudio && !musicAudio.paused && !musicAudio.ended;
+    const sub = [t.artist, t.album].filter(Boolean).join(" · ");
+    const dur = t.durationMs ? formatPodcastDuration(Math.round(t.durationMs / 1000)) : "";
+    return `<div class="music-row${active ? " is-active" : ""}" data-music-track="${escapeHtml(t.id)}" role="button" tabindex="0" aria-label="${escapeHtml(t.title || "Untitled")}">
+      <span class="music-row-icon" aria-hidden="true">${playing ? MUSIC_PAUSE_SVG : MUSIC_PLAY_SVG}</span>
+      <span class="music-row-main">
+        <span class="music-row-title">${escapeHtml(t.title || "Untitled")}</span>
+        ${sub ? `<span class="music-row-sub">${escapeHtml(sub)}</span>` : ""}
+      </span>
+      ${dur ? `<span class="music-row-dur">${escapeHtml(dur)}</span>` : ""}
+      <button class="music-row-del" type="button" data-music-delete="${escapeHtml(t.id)}" title="Remove track" aria-label="Remove track">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>`;
+  }).join("");
+  panel.innerHTML = `
+    <div class="podcast-playlist-bar music-bar">
+      <div class="music-bar-title">Music${list.length ? ` <span class="music-count">${list.length}</span>` : ""}</div>
+      <div class="podcast-tabs-actions">
+        ${list.length ? `<button class="podcast-tabs-action-btn" type="button" data-music-play-all title="Play all" aria-label="Play all">${MUSIC_PLAY_SVG}</button>` : ""}
+        <button class="icon-btn std-add-btn" type="button" data-music-import title="Import audio" aria-label="Import audio files">${MUSIC_PLUS_SVG}</button>
+      </div>
+    </div>
+    <input type="file" id="musicFileInput" accept="audio/*,.mp3,.m4a,.aac,.ogg,.oga,.opus,.wav,.flac" multiple hidden />
+    <div class="music-body">
+      ${musicImporting ? `<p class="music-status">Importing…</p>` : ""}
+      ${list.length
+        ? `<div class="music-list">${rows}</div>`
+        : (musicImporting ? "" : `<div class="music-empty">
+            <div class="music-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
+            <p class="music-empty-title">No music yet</p>
+            <p class="music-empty-sub">Import audio files from this device to start your library.</p>
+            <button class="primary-btn" type="button" data-music-import>Import audio</button>
+          </div>`)}
+    </div>`;
+}
+
+async function handleMusicImport(fileList) {
+  const files = [...fileList];
+  if (!files.length) return;
+  musicImporting = true; renderMusicPanel();
+  try {
+    const lib = await getMusicLib();
+    for (const f of files) {
+      try { await lib.importAudioFile(f, { probeDurationMs: probeAudioDurationMs }); }
+      catch (e) { console.warn("music import failed:", f.name, e); }
+    }
+    musicLibraryLoaded = true;
+    await refreshMusicLibrary();
+  } finally {
+    musicImporting = false;
+    renderMusicPanel();
+  }
+}
+
+async function deleteMusicTrack(id) {
+  const t = (musicLibrary || []).find((x) => x.id === id);
+  if (!t) return;
+  if (musicCurTrack && musicCurTrack.id === id) stopMusicPlayback();
+  try { await (await getMusicLib()).deleteTrack(t); }
+  catch (e) { console.warn("music delete failed", e); }
+  await refreshMusicLibrary();
+  renderMusicPanel();
+}
+
+// ── Unified now-playing bar (podcasts + article/email TTS + music) ────────────
+// One persistent bottom bar drives whichever kind of audio is active, so all
 // share the same play/pause, skip, seek scale and elapsed/remaining readout.
 
 function nowPlayingKind() {
   if (podcastAudio) return "podcast";
+  if (musicAudio) return "music";
   if (listenAudio || listenLoading || listenArticle) return "tts";
   return null;
 }
+// The shared element while a podcast OR a music track is active (both drive the
+// bar the same element-based way); null during TTS, which uses its own readout.
+function nowPlayingEl() { return podcastAudio || musicAudio || null; }
 function nowPlayingIsPlaying() {
-  if (podcastAudio) return !podcastAudio.paused && !podcastAudio.ended;
+  const el = nowPlayingEl();
+  if (el) return !el.paused && !el.ended;
   return !!(listenSpeaking && listenAudio && !listenAudio.paused);
 }
-function nowPlayingElapsed() { return podcastAudio ? (podcastAudio.currentTime || 0) : listenElapsed(); }
-function nowPlayingTotal() { return podcastAudio ? (podcastAudio.duration || 0) : (listenTotalDuration || 0); }
-function nowPlayingToggle() { nowPlayingKind() === "podcast" ? togglePodcastPlayPause() : toggleListenPlayPause(); }
-function nowPlayingSkip(sec) { nowPlayingKind() === "podcast" ? skipPodcast(sec) : listenSkip(sec); }
+function nowPlayingElapsed() { const el = nowPlayingEl(); return el ? (el.currentTime || 0) : listenElapsed(); }
+function nowPlayingTotal() { const el = nowPlayingEl(); return el ? (el.duration || 0) : (listenTotalDuration || 0); }
+function nowPlayingToggle() {
+  const k = nowPlayingKind();
+  if (k === "podcast") togglePodcastPlayPause();
+  else if (k === "music") toggleMusicPlayPause();
+  else toggleListenPlayPause();
+}
+function nowPlayingSkip(sec) {
+  const k = nowPlayingKind();
+  if (k === "podcast") skipPodcast(sec);
+  else if (k === "music") skipMusic(sec);
+  else listenSkip(sec);
+}
 function nowPlayingSeekFraction(f) {
-  if (nowPlayingKind() === "podcast") {
-    if (podcastAudio && podcastAudio.duration) podcastAudio.currentTime = f * podcastAudio.duration;
-  } else if (listenTotalDuration) {
-    listenSeekToTime(f * listenTotalDuration);
-  }
+  const el = nowPlayingEl();
+  if (el) { if (el.duration) el.currentTime = f * el.duration; }
+  else if (listenTotalDuration) { listenSeekToTime(f * listenTotalDuration); }
 }
 function nowPlayingOpen() {
-  if (nowPlayingKind() === "podcast") { goToOpenEpisode(); return; }
+  const k = nowPlayingKind();
+  if (k === "podcast") { goToOpenEpisode(); return; }
+  if (k === "music") { showMediaApp(); switchMediaTab("music"); return; }
   if (listenArticle) { showMediaApp(); openArticle(listenArticle.id, "articleList"); }
 }
 
@@ -41519,6 +41797,17 @@ function nowPlayingInfo() {
       show: sh?.title || "",
       date: ep.pubDate ? formatArticleDate(ep.pubDate) : "",
       desc: plainTextFromHtml(ep.description),
+    };
+  }
+  if (kind === "music") {
+    const t = musicCurTrack;
+    if (!t) return null;
+    return {
+      art: "",
+      title: t.title || "Untitled",
+      show: t.artist || "",
+      date: t.album || "",
+      desc: "",
     };
   }
   if (kind === "tts") {
@@ -43175,6 +43464,7 @@ function onListenArticleFinished() {
 
 async function startListenTTS(article) {
   unlockListenAudio(); // bless the audio element NOW, while still in the user's tap
+  stopMusicPlayback(); // don't overlap a playing music track
   // Articles saved without body text (e.g. NutritionFacts links) fetch on
   // demand instead of silently failing to play (item 4).
   if (article && !article.text) {
