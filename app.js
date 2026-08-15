@@ -7,6 +7,7 @@ import * as LiveReceiptDomain from './receipt-domain.js';
 import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
 import { createWeatherCache } from './weather-cache.js';
+import { createPlaybackEngine } from './playback-engine.js';
 
 const STORAGE_KEY = "tableplan-state-v1";
 const TRAVEL_LOGISTIC_ICONS = { flight: "✈️", hotel: "🏨", car: "🚗", train: "🚆", ferry: "⛴️", other: "📌" };
@@ -40804,6 +40805,59 @@ function showAdSkippedToast() {
   adSkipToastTimer = setTimeout(() => toast.classList.remove("ad-skipped-toast--visible"), 2000);
 }
 
+// The one persistent <audio> element for podcasts. Reused across episodes: it's
+// first played inside the user's tap (which unlocks it on iOS), so reusing it
+// lets the queue auto-advance to the next episode even while the phone is
+// locked — a freshly-created Audio() would have its play() blocked in the
+// background. The unified engine owns this element (sets src + lifecycle
+// handlers + segment advance); the rest of the podcast code keeps reading it via
+// podcastAudio and driving simple transport (play/pause/currentTime) directly.
+function ensurePodcastAudioEl() {
+  if (!podcastAudioEl) { podcastAudioEl = new Audio(); podcastAudioEl.preload = "auto"; }
+  return podcastAudioEl;
+}
+
+let podcastEngine = null;
+function getPodcastEngine() {
+  if (podcastEngine) return podcastEngine;
+  podcastEngine = createPlaybackEngine({ createAudio: ensurePodcastAudioEl });
+  // Feature behavior hangs off the engine's events instead of raw audio.onX, so
+  // it's identical whether a podcast, music track, or audiobook is the source.
+  podcastEngine.on("loaded", () => updatePodcastProgressUI(podcastCurEpisode));
+  podcastEngine.on("timeupdate", () => {
+    updatePodcastProgressUI(podcastCurEpisode);
+    updateMiniPlayerProgress();
+    schedulePodcastPositionSave(podcastCurEpisode);
+  });
+  podcastEngine.on("play", () => {
+    updatePodcastPlayBtn();
+    updateMiniPlayerPlayBtn();
+    setMediaSessionPlaybackState("playing");
+    scheduleAdSkips(podcastCurrentChapters, podcastAudioEl);
+  });
+  podcastEngine.on("pause", () => {
+    updatePodcastPlayBtn();
+    updateMiniPlayerPlayBtn();
+    setMediaSessionPlaybackState("paused");
+    clearAdSkipTimers();
+  });
+  podcastEngine.on("ended", () => {
+    clearAdSkipTimers();
+    setPodcastEpisodePlayed(podcastCurEpisode.id, true);
+    updatePodcastPlayBtn();
+    updateMiniPlayerPlayBtn();
+    advanceMediaAllQueue(podcastCurEpisode.id); // seamless hand-off when playing the All queue
+  });
+  podcastEngine.on("error", () => showVoiceToast("Audio failed to load — check your connection and try again"));
+  // Ad-skip is a podcast-only concern: reschedule whenever the position or rate
+  // changes. Passive listeners on the shared element, so they never clash with
+  // the engine's onX handlers.
+  const el = ensurePodcastAudioEl();
+  el.addEventListener("seeked", () => scheduleAdSkips(podcastCurrentChapters, el));
+  el.addEventListener("ratechange", () => scheduleAdSkips(podcastCurrentChapters, el));
+  return podcastEngine;
+}
+
 function startPodcastPlayback(episode, show, { autoplay = true } = {}) {
   stopPodcastAudio();
   stopListen(); // stop any article read-aloud so they don't overlap
@@ -40815,68 +40869,34 @@ function startPodcastPlayback(episode, show, { autoplay = true } = {}) {
   podcastCurEpisode = episode;
   podcastCurShow = show;
 
-  // Reuse ONE persistent <audio> element across episodes. It's first played
-  // inside the user's tap (which unlocks it on iOS), so reusing the same
-  // element lets the queue auto-advance to the next episode even while the
-  // phone is locked — a freshly-created Audio() would have its play() blocked
-  // in the background. Handlers are assigned via onX so they never stack.
-  if (!podcastAudioEl) { podcastAudioEl = new Audio(); podcastAudioEl.preload = "auto"; }
-  podcastAudio = podcastAudioEl;
-  const audio = podcastAudio;
-  podcastPendingSeek = startPos > 10 ? startPos : 0;
+  const engine = getPodcastEngine();
+  podcastAudio = ensurePodcastAudioEl(); // keep existing readers/controls working
 
   if (episode.chaptersUrl) {
     loadEpisodeChapters(episode).then(ch => {
       if (podcastCurEpisode !== episode) return; // episode changed before chapters resolved
       podcastCurrentChapters = ch;
-      scheduleAdSkips(ch, audio);
+      scheduleAdSkips(ch, podcastAudioEl);
     });
   }
 
-  audio.onloadedmetadata = () => {
-    if (podcastPendingSeek) { try { audio.currentTime = podcastPendingSeek; } catch { /* not seekable yet */ } podcastPendingSeek = 0; }
-    updatePodcastProgressUI(podcastCurEpisode);
-  };
-  audio.onerror = () => showVoiceToast("Audio failed to load — check your connection and try again");
-  audio.ontimeupdate = () => {
-    updatePodcastProgressUI(podcastCurEpisode);
-    updateMiniPlayerProgress();
-    schedulePodcastPositionSave(podcastCurEpisode);
-  };
-  audio.onseeked = () => scheduleAdSkips(podcastCurrentChapters, audio);
-  audio.onratechange = () => scheduleAdSkips(podcastCurrentChapters, audio);
-  audio.onended = () => {
-    clearAdSkipTimers();
-    setPodcastEpisodePlayed(podcastCurEpisode.id, true);
-    updatePodcastPlayBtn();
-    updateMiniPlayerPlayBtn();
-    advanceMediaAllQueue(podcastCurEpisode.id); // seamless hand-off when playing the All queue
-  };
-  audio.onplay = () => {
-    updatePodcastPlayBtn();
-    updateMiniPlayerPlayBtn();
-    setMediaSessionPlaybackState("playing");
-    scheduleAdSkips(podcastCurrentChapters, audio);
-  };
-  audio.onpause = () => {
-    updatePodcastPlayBtn();
-    updateMiniPlayerPlayBtn();
-    setMediaSessionPlaybackState("paused");
-    clearAdSkipTimers();
-  };
-
-  // Point the reused element at this episode, then (re)apply the rate — some
-  // browsers reset playbackRate when the source changes.
-  audio.src = episode.audioUrl;
-  audio.playbackRate = mediaPlaybackSpeed;
+  // A podcast episode is a single-segment PlayableSource. The engine points the
+  // reused element at it, applies the rate (browsers reset it on src change),
+  // and resumes past a >10s saved position once metadata is ready.
+  engine.load({
+    id: episode.id,
+    providerId: "podcast",
+    segments: [{ url: episode.audioUrl }],
+    startPosition: startPos > 10 ? startPos : 0,
+    rate: mediaPlaybackSpeed,
+  }, { autoplay });
 
   showMiniPlayer(episode, show);
 
   // autoplay:false loads the episode into the player (panel + mini-player, ready
   // to play) but stays paused — used when a playlist row is tapped just to open
   // the episode's details rather than start it.
-  if (autoplay) podcastAudio.play().catch(() => {});
-  else { updatePodcastPlayBtn(); updateMiniPlayerPlayBtn(); }
+  if (!autoplay) { updatePodcastPlayBtn(); updateMiniPlayerPlayBtn(); }
 
   const podcastArt = episode.art || show?.art || "";
   if ("mediaSession" in navigator) {
@@ -40956,6 +40976,7 @@ function skipPodcast(seconds) {
 function stopPodcastAudio() {
   clearAdSkipTimers();
   if (podcastSaveTimer) { clearTimeout(podcastSaveTimer); podcastSaveTimer = null; }
+  if (podcastEngine) podcastEngine.stop(); // pause + clear the engine's current source
   if (podcastAudio) { podcastAudio.pause(); podcastAudio = null; }
   hideMiniPlayer();
 }

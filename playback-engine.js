@@ -40,7 +40,7 @@ export function createPlaybackEngine({ createAudio } = {}) {
   let rate = 1;              // playback rate applied to every segment
   let pendingSeekOffset = 0; // in-segment offset to apply once metadata is ready
   const listeners = {
-    play: [], pause: [], ended: [], segment: [], timeupdate: [], error: [],
+    play: [], pause: [], ended: [], segment: [], timeupdate: [], error: [], loaded: [],
   };
 
   function emit(event, payload) {
@@ -102,6 +102,7 @@ export function createPlaybackEngine({ createAudio } = {}) {
         try { a.currentTime = pendingSeekOffset; } catch { /* not seekable yet */ }
         pendingSeekOffset = 0;
       }
+      emit("loaded", snapshot());
     };
   }
 
