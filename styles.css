@@ -20681,3 +20681,29 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .music-album-artist { font-size: 0.78rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .music-row-no { width: 20px; text-align: center; font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .music-row-no--dot { color: var(--line); }
+
+/* Slice 3: Jellyfin music-server config */
+.music-server-note { font-size: 0.76rem; color: var(--muted); padding: 2px 12px 8px; }
+.podcast-tabs-action-btn.is-on { color: var(--accent-dark); background: var(--accent-soft); border-radius: 8px; }
+
+.music-cfg-overlay { position: fixed; inset: 0; background: rgba(20,16,8,.44); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
+.music-cfg {
+  position: relative; width: min(420px, 100%); background: var(--window-bg); color: var(--ink);
+  border: 1.5px solid var(--window-border); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 22px 20px 18px; display: flex; flex-direction: column; gap: 12px;
+}
+.music-cfg-x { position: absolute; top: 12px; right: 12px; background: none; border: none; color: var(--muted); cursor: pointer; padding: 2px; }
+.music-cfg-x:hover { color: var(--ink); }
+.music-cfg-title { font-size: 1.1rem; font-weight: 700; margin: 0; }
+.music-cfg-sub { font-size: 0.82rem; color: var(--muted); margin: 0; line-height: 1.45; }
+.music-cfg-field { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; color: var(--muted); }
+.music-cfg-field span em { font-style: normal; opacity: .7; }
+.music-cfg-field input {
+  border: none; border-bottom: 1.5px solid var(--line); background: transparent; color: var(--ink);
+  font-size: 0.95rem; padding: 5px 2px; border-radius: 0;
+}
+.music-cfg-field input:focus { outline: none; border-bottom-color: var(--accent); }
+.music-cfg-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.9rem; color: var(--ink); font-weight: 600; margin-top: 2px; }
+.music-cfg-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
+.music-cfg-cancel { background: none; border: none; color: var(--muted); font-weight: 600; cursor: pointer; padding: 8px 12px; border-radius: 8px; }
+.music-cfg-cancel:hover { background: var(--accent-soft); color: var(--ink); }

@@ -21,7 +21,7 @@ export function uid(prefix = "trk") {
 import { readTags } from "./music-tags.js";
 
 const str = (v, d = "") => (v == null ? d : String(v));
-const numOrNull = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+const numOrNull = (v) => { if (v == null || v === "") return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
 
 /** Best-effort display title from a filename: drop the extension, turn
  *  separators into spaces, strip a leading track number ("01 - Foo"). */

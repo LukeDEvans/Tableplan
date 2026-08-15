@@ -41442,11 +41442,21 @@ async function getMusicLib() {
   const { createIdbMusicStore, createMemoryMusicStore, createLocalMusicSource, createMusicLibrary } = musicLibMod;
   let store;
   try { store = createIdbMusicStore(); } catch { store = createMemoryMusicStore(); }
-  // Source registry: local now; a server source (Jellyfin, …) appends here later
-  // behind the same contract with no change to the provider, queue, or UI.
-  musicLib = createMusicLibrary({ sources: [createLocalMusicSource(store)] });
+  // Source registry: local always; the Jellyfin server source appends behind the
+  // same contract when configured+enabled (its own lazy chunk, loaded only then).
+  const sources = [createLocalMusicSource(store)];
+  const jf = state.jellyfin;
+  if (jf && jf.enabled && jf.url && jf.apiKey) {
+    try {
+      const { createJellyfinSource } = await import("./music-jellyfin.js");
+      sources.push(createJellyfinSource({ url: jf.url, apiKey: jf.apiKey, userId: jf.userId }));
+    } catch (e) { console.warn("jellyfin source unavailable", e); }
+  }
+  musicLib = createMusicLibrary({ sources });
   return musicLib;
 }
+// Rebuild the source registry after the Jellyfin config changes.
+function resetMusicLib() { musicLib = null; musicLibraryLoaded = false; }
 
 // DOM-side duration probe injected into the (DOM-free) library at import time.
 function probeAudioDurationMs(bytes, mimeType) {
@@ -41485,7 +41495,12 @@ async function preloadMusicArtwork(list) {
     } catch { /* leave uncached — row shows the placeholder */ }
   }
 }
-function musicArtUrlFor(track) { const id = track?.artworkRef?.blobId; return (id && musicArtUrls.get(id)) || ""; }
+function musicArtUrlFor(track) {
+  const ref = track?.artworkRef;
+  if (!ref) return "";
+  if (ref.kind === "url") return ref.url || "";          // server art (Jellyfin): a direct URL
+  return (ref.blobId && musicArtUrls.get(ref.blobId)) || ""; // local art: cached blob → object URL
+}
 
 async function startMusicPlayback(track, queueRest = []) {
   if (!track) return;
@@ -41569,6 +41584,7 @@ function setMusicMediaSession(track) {
 const MUSIC_PLAY_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4" fill="currentColor"/></svg>`;
 const MUSIC_PAUSE_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/></svg>`;
 const MUSIC_PLUS_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
+const MUSIC_SERVER_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="3" width="20" height="8" rx="1.5"/><rect x="2" y="13" width="20" height="8" rx="1.5"/><line x1="6" y1="7" x2="6.01" y2="7"/><line x1="6" y1="17" x2="6.01" y2="17"/></svg>`;
 
 function initMusicPanel() {
   const panel = document.getElementById("mediaMusicPanel");
@@ -41577,6 +41593,7 @@ function initMusicPanel() {
     musicPanelWired = true;
     panel.addEventListener("click", (e) => {
       if (e.target.closest("[data-music-import]")) { panel.querySelector("#musicFileInput")?.click(); return; }
+      if (e.target.closest("[data-music-config]")) { openJellyfinSettings(); return; }
       if (e.target.closest("[data-music-play-all]")) { playAllMusic(); return; }
       const del = e.target.closest("[data-music-delete]");
       if (del) { e.stopPropagation(); deleteMusicTrack(del.dataset.musicDelete); return; }
@@ -41665,9 +41682,11 @@ function renderMusicPanel() {
       <div class="music-bar-title">Music${list.length ? ` <span class="music-count">${list.length}</span>` : ""}</div>
       <div class="podcast-tabs-actions">
         ${list.length ? `<button class="podcast-tabs-action-btn" type="button" data-music-play-all title="Play all" aria-label="Play all">${MUSIC_PLAY_SVG}</button>` : ""}
+        <button class="podcast-tabs-action-btn${musicJellyfinEnabled() ? " is-on" : ""}" type="button" data-music-config title="Music server (Jellyfin)" aria-label="Connect a music server">${MUSIC_SERVER_SVG}</button>
         <button class="icon-btn std-add-btn" type="button" data-music-import title="Import audio" aria-label="Import audio files">${MUSIC_PLUS_SVG}</button>
       </div>
     </div>
+    ${musicJellyfinEnabled() ? `<div class="music-server-note" data-music-server-note>${escapeHtml(musicServerStatusText())}</div>` : ""}
     <input type="file" id="musicFileInput" accept="audio/*,.mp3,.m4a,.aac,.ogg,.oga,.opus,.wav,.flac" multiple hidden />
     <div class="music-body">
       ${musicImporting ? `<p class="music-status">Importing…</p>` : ""}
@@ -41710,6 +41729,71 @@ async function deleteMusicTrack(id) {
   catch (e) { console.warn("music delete failed", e); }
   await refreshMusicLibrary();
   renderMusicPanel();
+}
+
+// ── Jellyfin music server (config lives in state.jellyfin; scaffold for Slice 3) ─
+function musicJellyfinEnabled() { const j = state.jellyfin; return !!(j && j.enabled && j.url && j.apiKey); }
+function musicServerStatusText() {
+  if (!musicJellyfinEnabled()) return "";
+  const jfCount = (musicLibrary || []).filter((t) => t.sourceId === "jellyfin").length;
+  return jfCount ? `Jellyfin · ${jfCount} track${jfCount === 1 ? "" : "s"}` : "Jellyfin · connecting…";
+}
+
+function openJellyfinSettings() {
+  document.getElementById("musicCfgOverlay")?.remove();
+  const j = state.jellyfin || {};
+  const overlay = document.createElement("div");
+  overlay.id = "musicCfgOverlay";
+  overlay.className = "music-cfg-overlay";
+  overlay.innerHTML = `
+    <div class="music-cfg" role="dialog" aria-modal="true" aria-label="Music server">
+      <button class="music-cfg-x" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+      <h3 class="music-cfg-title">Music server</h3>
+      <p class="music-cfg-sub">Connect a Jellyfin server to browse its music alongside your local library. Playback needs the server reachable over <strong>HTTPS</strong> from this app.</p>
+      <label class="music-cfg-field"><span>Server URL</span>
+        <input type="url" id="jfUrl" placeholder="https://jellyfin.example.com" value="${escapeHtml(j.url || "")}" autocomplete="off" spellcheck="false"></label>
+      <label class="music-cfg-field"><span>API key</span>
+        <input type="password" id="jfKey" placeholder="Jellyfin API key" value="${escapeHtml(j.apiKey || "")}" autocomplete="off" spellcheck="false"></label>
+      <label class="music-cfg-field"><span>User ID <em>(optional)</em></span>
+        <input type="text" id="jfUser" placeholder="Jellyfin user id" value="${escapeHtml(j.userId || "")}" autocomplete="off" spellcheck="false"></label>
+      <label class="music-cfg-toggle"><span>Enable this server</span>
+        <input type="checkbox" class="live-toggle" id="jfEnabled" ${j.enabled ? "checked" : ""}></label>
+      <div class="music-cfg-actions">
+        <button class="music-cfg-cancel" type="button" data-jf-cancel>Cancel</button>
+        <button class="primary-btn" type="button" data-jf-save>Save</button>
+      </div>
+    </div>`;
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  overlay.querySelector(".music-cfg-x").addEventListener("click", close);
+  overlay.querySelector("[data-jf-cancel]").addEventListener("click", close);
+  overlay.querySelector("[data-jf-save]").addEventListener("click", () => {
+    const url = overlay.querySelector("#jfUrl").value.trim();
+    const apiKey = overlay.querySelector("#jfKey").value.trim();
+    const userId = overlay.querySelector("#jfUser").value.trim();
+    const enabled = overlay.querySelector("#jfEnabled").checked;
+    saveJellyfinConfig({ url, apiKey, userId, enabled });
+    close();
+  });
+  document.body.appendChild(overlay);
+  overlay.querySelector("#jfUrl")?.focus();
+}
+
+async function saveJellyfinConfig(cfg) {
+  state.jellyfin = { url: cfg.url || "", apiKey: cfg.apiKey || "", userId: cfg.userId || "", enabled: !!cfg.enabled };
+  persist();
+  resetMusicLib();
+  renderMusicPanel();               // reflect the new button/note state immediately
+  try {
+    musicLibraryLoaded = true;
+    await refreshMusicLibrary();     // pulls server tracks (or silently falls back to local)
+  } catch (e) { console.warn("music refresh after config failed", e); }
+  renderMusicPanel();
+  if (cfg.enabled && cfg.url && cfg.apiKey && !(musicLibrary || []).some((t) => t.sourceId === "jellyfin")) {
+    showVoiceToast("Saved. No tracks from the server yet — check the URL/key, and that it's reachable over HTTPS.");
+  }
 }
 
 // ── Unified now-playing bar (podcasts + article/email TTS + music) ────────────
