@@ -20757,3 +20757,34 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .music-item-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
 .music-attr { font-size: 0.7rem; color: var(--muted); }
 .music-provider-note { font-size: 0.76rem; color: var(--tomato); padding: 4px 14px; }
+
+/* Music phase 2: canonical works, saved library, playlists */
+.music-add-btn { flex: 0 0 auto; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: none; background: transparent; color: var(--muted); border-radius: 8px; cursor: pointer; }
+.music-add-btn:hover { background: var(--accent-soft); color: var(--accent-dark); }
+.music-thumb--sm { width: 38px; height: 38px; }
+
+.music-work { margin: 4px 0 14px; }
+.music-work-head { display: flex; align-items: center; gap: 10px; padding: 4px 12px 6px; border-bottom: 1px solid var(--line); }
+.music-work-meta { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.music-work-title { font-weight: 700; font-size: 0.95rem; color: var(--ink); }
+.music-work-sub { font-size: 0.78rem; color: var(--muted); }
+.music-work-items { padding-top: 2px; }
+.music-work-items .music-result { padding-left: 18px; }
+
+.music-saved { padding: 4px 4px 16px; }
+.music-saved-sec { margin-bottom: 8px; }
+
+.music-pl-item { display: flex; align-items: center; }
+.music-pl-item .music-row { flex: 1 1 auto; min-width: 0; }
+.music-pl-move { display: flex; flex-direction: column; gap: 2px; padding-right: 8px; }
+.music-pl-move button { width: 22px; height: 18px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 5px; cursor: pointer; font-size: 0.6rem; line-height: 1; padding: 0; }
+.music-pl-move button:disabled { opacity: .35; cursor: default; }
+.music-pl-move button:not(:disabled):hover { border-color: var(--accent); color: var(--accent-dark); }
+
+.music-item-badges .music-chip { padding: 4px 10px; font-size: 0.76rem; }
+
+.music-menu { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; max-height: 46vh; overflow-y: auto; }
+.music-menu-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border: none; background: transparent; color: var(--ink); border-radius: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 600; text-align: left; }
+.music-menu-row:hover { background: var(--accent-soft); }
+.music-menu-count { font-size: 0.74rem; color: var(--muted); font-weight: 600; }
+.music-menu-new { color: var(--accent-dark); }

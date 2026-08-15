@@ -38487,7 +38487,8 @@ let musicLibraryLoaded = false;// library fetched from storage at least once
 const musicArtUrls = new Map();// artwork blobId → object URL (built once, reused across renders)
 
 // On-demand Discover (streaming providers — music-streaming.js + adapters)
-let musicTabMode = "library";  // "library" | "discover"
+let musicTabMode = "saved";    // "saved" | "discover" | "library"
+let musicOpenPlaylistId = null; // when viewing a single playlist in Saved
 let musicStreamMod = null;     // lazy music-streaming.js
 let musicProviderRegistry = null;
 let musicSearchQuery = "";
@@ -41555,10 +41556,11 @@ async function startStreamingTrack(canonical) {
   return true;
 }
 
-async function playMusicQueueItem(item, rest) {
+async function playMusicQueueItem(item, rest, opts = {}) {
   musicQueueRest = Array.isArray(rest) ? rest.slice() : [];
   let ok = false;
   if (item.kind === "stream") ok = await startStreamingTrack(item.track);
+  else if (item.kind === "recording") ok = await startRecordingResolved(item.recording, { queueMode: !opts.interactive });
   else { const t = (musicLibrary || []).find((x) => x.id === item.id); ok = t ? await startLibraryTrack(t) : false; }
   if (!ok) onMusicEnded(); // couldn't play → skip to the next queued item
 }
@@ -41627,7 +41629,7 @@ function setMusicMediaSession(desc) {
 // Recently played — normalized descriptors kept in local state (no provider lock-in).
 function pushMusicHistory(desc) {
   if (!desc || !desc.id) return;
-  const entry = { id: desc.id, title: desc.title || "", artist: desc.artist || "", album: desc.album || "", artworkUrl: desc.artworkUrl || "", kind: desc.kind || "", canonical: desc.canonical || null, at: Date.now() };
+  const entry = { id: desc.id, title: desc.title || "", artist: desc.artist || "", album: desc.album || "", artworkUrl: desc.artworkUrl || "", kind: desc.kind || "", canonical: desc.canonical || null, recording: desc.recording || null, at: Date.now() };
   const hist = (state.musicHistory || []).filter((h) => h.id !== desc.id);
   hist.unshift(entry);
   state.musicHistory = hist.slice(0, 40);
@@ -41646,13 +41648,32 @@ function initMusicPanel() {
   if (!musicPanelWired) {
     musicPanelWired = true;
     panel.addEventListener("click", (e) => {
-      // Mode switch (Library / Discover)
+      // Mode switch (Saved / Discover / Library)
       const modeBtn = e.target.closest("[data-music-mode]");
-      if (modeBtn) { musicTabMode = modeBtn.dataset.musicMode; renderMusicPanel(); if (musicTabMode === "discover") panel.querySelector("#musicSearchInput")?.focus(); return; }
+      if (modeBtn) { enterMusicMode(modeBtn.dataset.musicMode); return; }
+
+      // ── Favourite / add-to-playlist (both Discover & Saved) ──
+      const fav = e.target.closest("[data-music-fav]");
+      if (fav) { e.stopPropagation(); musicToggleFav(fav.dataset.favType, musicViewIndex.get(fav.dataset.musicFav)); return; }
+      const add = e.target.closest("[data-music-add]");
+      if (add) { e.stopPropagation(); const r = canonicalRecordingFromView(add.dataset.musicAdd) || musicViewIndex.get(add.dataset.musicAdd); openAddToPlaylistMenu(r); return; }
+
+      // ── Saved / playlist actions ──
+      if (e.target.closest("[data-music-new-playlist]")) { createNewMusicPlaylist(); return; }
+      const openPl = e.target.closest("[data-open-playlist]");
+      if (openPl) { musicOpenPlaylistId = openPl.dataset.openPlaylist; renderMusicPanel(); return; }
+      if (e.target.closest("[data-playlist-back]")) { musicOpenPlaylistId = null; renderMusicPanel(); return; }
+      const plPlay = e.target.closest("[data-playlist-play]"); if (plPlay) { playPlaylist(plPlay.dataset.playlistPlay, 0, false); return; }
+      const plShuf = e.target.closest("[data-playlist-shuffle]"); if (plShuf) { playPlaylist(plShuf.dataset.playlistShuffle, 0, true); return; }
+      const plRen = e.target.closest("[data-playlist-rename]"); if (plRen) { renameMusicPlaylist(plRen.dataset.playlistRename); return; }
+      const plDel = e.target.closest("[data-playlist-delete]"); if (plDel) { deleteMusicPlaylist(plDel.dataset.playlistDelete); return; }
+      const plItemRemove = e.target.closest("[data-pl-remove]"); if (plItemRemove) { e.stopPropagation(); const [pid, idx] = plItemRemove.dataset.plRemove.split(":"); saveMusicLibrary(musicLibModelMod.removeFromPlaylist(getMusicLibraryState(), pid, +idx)); renderMusicPanel(); return; }
+      const plMove = e.target.closest("[data-pl-move]"); if (plMove) { e.stopPropagation(); const [pid, idx, dir] = plMove.dataset.plMove.split(":"); const i = +idx; saveMusicLibrary(musicLibModelMod.reorderPlaylist(getMusicLibraryState(), pid, i, dir === "up" ? i - 1 : i + 1)); renderMusicPanel(); return; }
+      const plItemPlay = e.target.closest("[data-pl-play]"); if (plItemPlay) { const [pid, idx] = plItemPlay.dataset.plPlay.split(":"); playPlaylist(pid, +idx, false); return; }
+      const playRec = e.target.closest("[data-play-recording]"); if (playRec) { const r = musicViewIndex.get(playRec.dataset.playRecording); if (r) playCanonicalRecording(r); return; }
+      const workSearch = e.target.closest("[data-work-search]"); if (workSearch) { const q = workSearch.dataset.workSearch; enterMusicMode("discover"); musicSearchQuery = q; setTimeout(() => { const si = document.getElementById("musicSearchInput"); if (si) si.value = q; doMusicSearch(q); }, 0); return; }
 
       // ── Discover actions ──
-      const fav = e.target.closest("[data-music-fav]");
-      if (fav) { e.stopPropagation(); toggleMusicFavorite(musicViewIndex.get(fav.dataset.musicFav)); return; }
       if (e.target.closest("[data-music-back]")) { closeMusicItem(); return; }
       const cat = e.target.closest("[data-music-cat]");
       if (cat) { musicSearchQuery = cat.dataset.musicCat; const si = panel.querySelector("#musicSearchInput"); if (si) si.value = musicSearchQuery; doMusicSearch(musicSearchQuery); return; }
@@ -41696,8 +41717,23 @@ function initMusicPanel() {
       if (inp && inp.files && inp.files.length) { handleMusicImport(inp.files); inp.value = ""; }
     });
   }
+  enterMusicMode(musicTabMode);
+}
+
+// Enter a Music sub-mode, lazy-loading the pieces that mode needs.
+function enterMusicMode(mode) {
+  musicTabMode = mode;
+  musicOpenPlaylistId = null;
   renderMusicPanel();
-  if (!musicLibraryLoaded) { musicLibraryLoaded = true; refreshMusicLibrary().then(renderMusicPanel).catch((e) => console.warn("music library load failed", e)); }
+  if (mode === "saved") {
+    getMusicCanon().then(renderMusicPanel).catch((e) => console.warn("music canon load failed", e));
+  } else if (mode === "discover") {
+    Promise.all([getMusicCanon(), getMusicProviders()]).then(() => renderMusicPanel()).catch((e) => console.warn("music discover load failed", e));
+    setTimeout(() => document.getElementById("musicSearchInput")?.focus(), 0);
+  } else if (mode === "library" && !musicLibraryLoaded) {
+    musicLibraryLoaded = true;
+    refreshMusicLibrary().then(renderMusicPanel).catch((e) => console.warn("music library load failed", e));
+  }
 }
 
 // Group a sorted track list into albums (contiguous, since the list is sorted
@@ -41757,12 +41793,20 @@ function musicAlbumGroup(g) {
 
 function musicModeTabs() {
   const tab = (mode, label) => `<button class="music-mode-tab${musicTabMode === mode ? " is-active" : ""}" type="button" role="tab" aria-selected="${musicTabMode === mode}" data-music-mode="${mode}">${label}</button>`;
-  return `<div class="music-mode-tabs" role="tablist" aria-label="Music mode">${tab("library", "Library")}${tab("discover", "Discover")}</div>`;
+  return `<div class="music-mode-tabs" role="tablist" aria-label="Music mode">${tab("saved", "Saved")}${tab("discover", "Discover")}${tab("library", "Library")}</div>`;
 }
 
 function renderMusicPanel() {
   const panel = document.getElementById("mediaMusicPanel");
   if (!panel) return;
+  if (musicTabMode === "saved") {
+    panel.innerHTML = `
+      <div class="podcast-playlist-bar music-bar">${musicModeTabs()}<div class="podcast-tabs-actions">
+        <button class="podcast-tabs-action-btn" type="button" data-music-new-playlist title="New playlist" aria-label="New playlist">${MUSIC_PLUS_SVG}</button>
+      </div></div>
+      ${renderMusicSavedBody()}`;
+    return;
+  }
   if (musicTabMode === "discover") {
     panel.innerHTML = `
       <div class="podcast-playlist-bar music-bar">${musicModeTabs()}<div class="podcast-tabs-actions"></div></div>
@@ -41911,6 +41955,56 @@ async function getMusicProviders() {
   return musicProviderRegistry;
 }
 
+// Canonical layer (entities/matching), library model (favorites/playlists), and
+// source resolver (fallback) — lazy-loaded on first Saved/Discover use.
+let musicCanonMod = null, musicLibModelMod = null, musicResolverMod = null;
+async function getMusicCanon() {
+  if (musicCanonMod) return { canon: musicCanonMod, lib: musicLibModelMod, resolver: musicResolverMod };
+  const [canon, lib, resolver] = await Promise.all([
+    import("./music-canonical.js"), import("./music-library-model.js"), import("./music-source-resolver.js"),
+  ]);
+  musicCanonMod = canon; musicLibModelMod = lib; musicResolverMod = resolver;
+  migrateMusicLibraryOnce();
+  return { canon, lib, resolver };
+}
+
+// Personal library lives at state.musicLibrary = { favorites, playlists }.
+function getMusicLibraryState() {
+  if (!state.musicLibrary || typeof state.musicLibrary !== "object") state.musicLibrary = { favorites: [], playlists: [] };
+  if (!Array.isArray(state.musicLibrary.favorites)) state.musicLibrary.favorites = [];
+  if (!Array.isArray(state.musicLibrary.playlists)) state.musicLibrary.playlists = [];
+  return state.musicLibrary;
+}
+function saveMusicLibrary(lib) { state.musicLibrary = lib; persist(); }
+
+// One-time migration of the old provider-record favorites (state.musicFavorites)
+// into canonical recording favorites.
+let musicLibraryMigrated = false;
+function migrateMusicLibraryOnce() {
+  if (musicLibraryMigrated) return;
+  musicLibraryMigrated = true;
+  const old = state.musicFavorites;
+  if (!Array.isArray(old) || !old.length || !musicCanonMod || !musicLibModelMod) return;
+  let lib = getMusicLibraryState();
+  for (const rec of old) {
+    try {
+      if (rec.entity === "album") lib = musicLibModelMod.addFavorite(lib, "album", rec);
+      else lib = musicLibModelMod.addFavorite(lib, "recording", musicCanonMod.deriveRecordingFromRecord(rec));
+    } catch { /* skip a bad legacy entry */ }
+  }
+  state.musicFavorites = []; // migrated
+  saveMusicLibrary(lib);
+}
+
+// Canonical favorite helpers (sync — used in render; modules are loaded before
+// Saved/Discover render). type ∈ work|recording|album|artist|composer.
+function musicIsFav(type, entity) { return musicLibModelMod ? musicLibModelMod.isFavorite(getMusicLibraryState(), type, entity) : false; }
+function musicToggleFav(type, entity) {
+  if (!musicLibModelMod || !entity) return;
+  saveMusicLibrary(musicLibModelMod.toggleFavorite(getMusicLibraryState(), type, entity));
+  if (musicTabMode === "saved") renderMusicPanel(); else updateDiscoverResults();
+}
+
 const MUSIC_PROVIDER_LABELS = { internetarchive: "Internet Archive", musopen: "Musopen", jamendo: "Jamendo" };
 const MUSIC_CATEGORIES = [
   { label: "Classical", q: "classical" }, { label: "Piano", q: "piano" },
@@ -41980,20 +42074,11 @@ async function openMusicItem(album) {
 }
 function closeMusicItem() { musicOpenItem = null; updateDiscoverResults(); }
 
-// Favorites & history — normalized, provider-independent, in local state.
-function isMusicFavorite(id) { return (state.musicFavorites || []).some((f) => f.id === id); }
-function toggleMusicFavorite(item) {
-  if (!item) return;
-  const favs = state.musicFavorites || [];
-  const i = favs.findIndex((f) => f.id === item.id);
-  if (i >= 0) favs.splice(i, 1); else favs.unshift(item);
-  state.musicFavorites = favs.slice(0, 200);
-  persist(); updateDiscoverResults();
-}
 function replayMusicHistory(id) {
   const h = (state.musicHistory || []).find((x) => x.id === id);
   if (!h) return;
-  if (h.kind === "stream" && h.canonical) playStreamingTrack(h.canonical, []);
+  if (h.kind === "recording" && h.recording) playCanonicalRecording(h.recording);
+  else if (h.kind === "stream" && h.canonical) playStreamingTrack(h.canonical, []);
   else if (h.kind === "library") playMusicTrackById(h.id);
 }
 
@@ -42017,20 +42102,55 @@ function musicThumb(url, cls = "") {
     : `<span class="music-thumb music-thumb--ph ${cls}" aria-hidden="true">${MUSIC_ALBUM_PH_SVG}</span>`;
 }
 
+// Canonical Recording derived from an indexed provider record (stable identity
+// via providerRefs, so favouriting/adding is consistent across re-renders).
+function canonicalRecordingFromView(id) {
+  const it = musicViewIndex.get(id);
+  if (!it || !musicCanonMod) return null;
+  return it.entity === "recording" ? it : musicCanonMod.deriveRecordingFromRecord(it);
+}
+function musicFavBtn(type, entity) {
+  if (!entity) return "";
+  indexMusicItem(entity);
+  const on = musicIsFav(type, entity);
+  return `<button class="music-fav-btn${on ? " is-on" : ""}" type="button" data-music-fav="${escapeHtml(entity.id)}" data-fav-type="${type}" aria-label="${on ? "Remove favourite" : "Add favourite"}" aria-pressed="${on}">${musicFavSvg(on)}</button>`;
+}
+const MUSIC_ADD_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
+function musicAddBtn(id) { return `<button class="music-add-btn" type="button" data-music-add="${escapeHtml(id)}" aria-label="Add to playlist" title="Add to playlist">${MUSIC_ADD_SVG}</button>`; }
+
 function musicResultRow(item) {
   indexMusicItem(item);
   const isTrack = item.entity === "track";
   const sub = isTrack ? (item.artists?.[0]?.name || item.composer?.name || "") : (item.artist || item.composer || "");
-  const fav = isMusicFavorite(item.id);
+  const favType = isTrack ? "recording" : "album";
+  const favEnt = isTrack ? canonicalRecordingFromView(item.id) : item;
   return `<div class="music-result" data-music-open="${escapeHtml(item.id)}" role="button" tabindex="0">
       ${musicThumb(item.artworkUrl)}
       <span class="music-result-main">
         <span class="music-result-title">${escapeHtml(item.title)}</span>
         <span class="music-result-sub">${sub ? escapeHtml(sub) + " · " : ""}${musicProviderBadge(item.provider)}${musicLicenseBadge(item.license)}</span>
       </span>
-      <button class="music-fav-btn${fav ? " is-on" : ""}" type="button" data-music-fav="${escapeHtml(item.id)}" aria-label="${fav ? "Remove favourite" : "Add favourite"}" aria-pressed="${fav}">${musicFavSvg(fav)}</button>
+      ${isTrack ? musicAddBtn(item.id) : ""}
+      ${musicFavBtn(favType, favEnt)}
       <span class="music-result-go" aria-hidden="true">${isTrack ? MUSIC_PLAY_SVG : "›"}</span>
     </div>`;
+}
+
+function musicWorkGroupHtml(group) {
+  const w = group.work;
+  indexMusicItem(w);
+  const sub = [w.composer, w.catalog].filter(Boolean).join(" · ");
+  return `<section class="music-work">
+      <header class="music-work-head">
+        ${musicThumb(group.items[0] && group.items[0].artworkUrl, "music-thumb--sm")}
+        <span class="music-work-meta">
+          <span class="music-work-title">${escapeHtml(w.title)}</span>
+          ${sub ? `<span class="music-work-sub">${escapeHtml(sub)}</span>` : ""}
+        </span>
+        ${musicFavBtn("work", w)}
+      </header>
+      <div class="music-work-items">${group.items.map(musicResultRow).join("")}</div>
+    </section>`;
 }
 
 function musicStreamTrackRow(track) {
@@ -42039,12 +42159,12 @@ function musicStreamTrackRow(track) {
   const playing = active && musicAudio && !musicAudio.paused && !musicAudio.ended;
   const dur = track.durationMs ? formatPodcastDuration(Math.round(track.durationMs / 1000)) : "";
   const no = track.trackNo != null ? `<span class="music-row-no">${track.trackNo}</span>` : `<span class="music-row-no music-row-no--dot">•</span>`;
-  const fav = isMusicFavorite(track.id);
   return `<div class="music-row${active ? " is-active" : ""}" data-stream-play="${escapeHtml(track.id)}" role="button" tabindex="0" aria-label="${escapeHtml(track.title)}">
       <span class="music-row-icon" aria-hidden="true">${active ? (playing ? MUSIC_PAUSE_SVG : MUSIC_PLAY_SVG) : no}</span>
       <span class="music-row-main"><span class="music-row-title">${escapeHtml(track.title)}</span>${track.movement ? `<span class="music-row-sub">${escapeHtml(track.movement)}</span>` : ""}</span>
       ${dur ? `<span class="music-row-dur">${escapeHtml(dur)}</span>` : ""}
-      <button class="music-fav-btn${fav ? " is-on" : ""}" type="button" data-music-fav="${escapeHtml(track.id)}" aria-label="Favourite">${musicFavSvg(fav)}</button>
+      ${musicAddBtn(track.id)}
+      ${musicFavBtn("recording", canonicalRecordingFromView(track.id))}
     </div>`;
 }
 
@@ -42070,19 +42190,17 @@ function musicOpenItemHtml() {
 function musicDiscoverHomeHtml() {
   const chips = MUSIC_CATEGORIES.map((c) => `<button class="music-chip" type="button" data-music-cat="${escapeHtml(c.q)}">${escapeHtml(c.label)}</button>`).join("");
   const hist = (state.musicHistory || []).slice(0, 8);
-  const favs = (state.musicFavorites || []).slice(0, 12);
-  const histHtml = hist.length ? `<h4 class="music-section-h">Recently played</h4><div class="music-list">${hist.map((h) => {
-    indexMusicItem(h.canonical || h);
-    return `<div class="music-row" data-music-replay="${escapeHtml(h.id)}" role="button" tabindex="0">
-        <span class="music-row-icon" aria-hidden="true">${MUSIC_PLAY_SVG}</span>
-        <span class="music-row-main"><span class="music-row-title">${escapeHtml(h.title || "Untitled")}</span>${h.artist ? `<span class="music-row-sub">${escapeHtml(h.artist)}</span>` : ""}</span>
-      </div>`;
-  }).join("")}</div>` : "";
-  const favHtml = favs.length ? `<h4 class="music-section-h">Favourites</h4><div class="music-list">${favs.map((f) => musicResultRow(f)).join("")}</div>` : "";
+  const histHtml = hist.length ? `<h4 class="music-section-h">Recently played</h4><div class="music-list">${hist.map(musicHistoryRow).join("")}</div>` : "";
   return `<div class="music-discover-home">
       <div class="music-chips">${chips}</div>
-      ${histHtml}${favHtml}
-      ${!hist.length && !favs.length ? `<p class="music-empty-sub music-discover-hint">Search for a composer, work, or mood — or tap a category above. Free & open recordings from the Internet Archive and Musopen, streamed from the source.</p>` : ""}
+      ${histHtml}
+      ${!hist.length ? `<p class="music-empty-sub music-discover-hint">Search for a composer, work, or mood — or tap a category above. One search across the Internet Archive and Musopen; results group under the Work, streamed from the source.</p>` : ""}
+    </div>`;
+}
+function musicHistoryRow(h) {
+  return `<div class="music-row" data-music-replay="${escapeHtml(h.id)}" role="button" tabindex="0">
+      <span class="music-row-icon" aria-hidden="true">${MUSIC_PLAY_SVG}</span>
+      <span class="music-row-main"><span class="music-row-title">${escapeHtml(h.title || "Untitled")}</span>${h.artist ? `<span class="music-row-sub">${escapeHtml(h.artist)}</span>` : ""}</span>
     </div>`;
 }
 
@@ -42095,6 +42213,13 @@ function discoverResultsHtml() {
     const failed = (providerStatuses || []).filter((s) => !s.ok);
     const note = failed.length ? `<p class="music-provider-note">${failed.map((s) => escapeHtml(MUSIC_PROVIDER_LABELS[s.provider] || s.provider)).join(", ")} unavailable — showing the rest.</p>` : "";
     if (!items.length) return note + `<p class="music-status">No results for “${escapeHtml(musicSearchQuery)}”.</p>`;
+    // Consolidate provider hits under canonical Works; ungroupable items stay loose.
+    if (musicCanonMod) {
+      const { groups, loose } = musicCanonMod.consolidateSearchResults(items);
+      const g = groups.map(musicWorkGroupHtml).join("");
+      const l = loose.length ? `<div class="music-results">${loose.map(musicResultRow).join("")}</div>` : "";
+      return note + g + l;
+    }
     return note + `<div class="music-results">${items.map(musicResultRow).join("")}</div>`;
   }
   return musicDiscoverHomeHtml();
@@ -42114,6 +42239,186 @@ function updateDiscoverResults() {
   const el = document.getElementById("musicDiscoverResults");
   if (el) el.innerHTML = discoverResultsHtml();
   else if (musicTabMode === "discover") renderMusicPanel();
+}
+
+// ── Saved (personal library: favourites + playlists + recently played) ─────────
+function musicRecordingRow(recording, opts = {}) {
+  indexMusicItem(recording);
+  const active = musicCurTrack && (musicCurTrack.id === recording.id || (musicCurTrack.recording && musicCurTrack.recording.id === recording.id));
+  const artist = recording.performers?.[0]?.name || recording.composer || recording.workTitle || "";
+  const provs = (recording.providerRefs || []).map((r) => MUSIC_PROVIDER_LABELS[r.provider] || r.provider);
+  const provBadge = provs.length ? `<span class="music-badge music-badge--provider">${escapeHtml(provs[0])}${provs.length > 1 ? ` +${provs.length - 1}` : ""}</span>` : "";
+  const playAttr = opts.playlistId != null ? `data-pl-play="${escapeHtml(opts.playlistId)}:${opts.index}"` : `data-play-recording="${escapeHtml(recording.id)}"`;
+  return `<div class="music-row${active ? " is-active" : ""}" ${playAttr} role="button" tabindex="0" aria-label="${escapeHtml(recording.title)}">
+      <span class="music-row-icon" aria-hidden="true">${MUSIC_PLAY_SVG}</span>
+      <span class="music-row-main"><span class="music-row-title">${escapeHtml(recording.title || recording.workTitle || "Recording")}</span><span class="music-row-sub">${artist ? escapeHtml(artist) + " · " : ""}${provBadge}</span></span>
+      ${opts.playlistId != null
+        ? `<button class="music-add-btn" type="button" data-pl-remove="${escapeHtml(opts.playlistId)}:${opts.index}" aria-label="Remove from playlist" title="Remove">${MUSIC_X_SVG}</button>`
+        : `${musicAddBtn(recording.id)}${musicFavBtn("recording", recording)}`}
+    </div>`;
+}
+
+function renderMusicSavedBody() {
+  if (!musicLibModelMod) return `<div class="music-body"><p class="music-status">Loading…</p></div>`;
+  if (musicOpenPlaylistId) return renderPlaylistView(musicOpenPlaylistId);
+  musicViewIndex = new Map();
+  const lib = getMusicLibraryState();
+  const works = lib.favorites.filter((f) => f.type === "work");
+  const recs = lib.favorites.filter((f) => f.type === "recording" || f.type === "album");
+  const hist = (state.musicHistory || []).slice(0, 10);
+  const pls = lib.playlists;
+
+  const plHtml = `<div class="music-saved-sec"><h4 class="music-section-h">Playlists</h4>${pls.length
+    ? `<div class="music-list">${pls.map((p) => `<div class="music-row" data-open-playlist="${escapeHtml(p.id)}" role="button" tabindex="0">
+          <span class="music-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.2"/><circle cx="3.5" cy="12" r="1.2"/><circle cx="3.5" cy="18" r="1.2"/></svg></span>
+          <span class="music-row-main"><span class="music-row-title">${escapeHtml(p.name)}</span><span class="music-row-sub">${p.items.length} track${p.items.length === 1 ? "" : "s"}</span></span>
+          <span class="music-result-go" aria-hidden="true">›</span>
+        </div>`).join("")}</div>`
+    : `<p class="music-empty-sub" style="padding:6px 14px">No playlists yet — use + above, or add a recording from Discover.</p>`}</div>`;
+
+  const worksHtml = works.length ? `<div class="music-saved-sec"><h4 class="music-section-h">Favourite works</h4><div class="music-list">${works.map((f) => {
+    const w = f.entity; indexMusicItem(w);
+    const q = [w.composer, w.catalog || w.title].filter(Boolean).join(" ");
+    return `<div class="music-row" data-work-search="${escapeHtml(q)}" role="button" tabindex="0">
+        <span class="music-row-icon" aria-hidden="true">${MUSIC_ALBUM_PH_SVG}</span>
+        <span class="music-row-main"><span class="music-row-title">${escapeHtml(w.title)}</span><span class="music-row-sub">${escapeHtml([w.composer, w.catalog].filter(Boolean).join(" · "))}</span></span>
+        ${musicFavBtn("work", w)}
+      </div>`;
+  }).join("")}</div></div>` : "";
+
+  const recsHtml = recs.length ? `<div class="music-saved-sec"><h4 class="music-section-h">Favourite recordings</h4><div class="music-list">${recs.map((f) => musicRecordingRow(f.entity)).join("")}</div></div>` : "";
+  const histHtml = hist.length ? `<div class="music-saved-sec"><h4 class="music-section-h">Recently played</h4><div class="music-list">${hist.map(musicHistoryRow).join("")}</div></div>` : "";
+
+  const empty = !pls.length && !works.length && !recs.length && !hist.length;
+  return `<div class="music-saved">
+      ${empty ? `<div class="music-empty"><div class="music-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
+        <p class="music-empty-title">Your saved music lives here</p>
+        <p class="music-empty-sub">Favourite works & recordings and build playlists from <strong>Discover</strong> — they stay yours even if a provider changes.</p></div>`
+    : plHtml + worksHtml + recsHtml + histHtml}
+    </div>`;
+}
+
+function renderPlaylistView(id) {
+  musicViewIndex = new Map();
+  const p = musicLibModelMod.getPlaylist(getMusicLibraryState(), id);
+  if (!p) { musicOpenPlaylistId = null; return renderMusicSavedBody(); }
+  const head = `<div class="music-item-head">
+      <button class="music-back-btn" type="button" data-playlist-back aria-label="Back"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <span class="music-item-meta"><span class="music-item-title">${escapeHtml(p.name)}</span><span class="music-item-artist">${p.items.length} track${p.items.length === 1 ? "" : "s"}</span></span>
+      <span class="music-item-badges">
+        ${p.items.length ? `<button class="music-chip" type="button" data-playlist-play="${escapeHtml(p.id)}">▶ Play</button><button class="music-chip" type="button" data-playlist-shuffle="${escapeHtml(p.id)}">⇄ Shuffle</button>` : ""}
+        <button class="music-chip" type="button" data-playlist-rename="${escapeHtml(p.id)}">Rename</button>
+        <button class="music-chip" type="button" data-playlist-delete="${escapeHtml(p.id)}">Delete</button>
+      </span>
+    </div>`;
+  if (!p.items.length) return head + `<p class="music-status">Empty playlist. Add recordings from Discover with the + button.</p>`;
+  const rows = p.items.map((r, i) => `<div class="music-pl-item">${musicRecordingRow(r, { playlistId: p.id, index: i })}
+      <span class="music-pl-move">
+        <button type="button" data-pl-move="${escapeHtml(p.id)}:${i}:up" aria-label="Move up" ${i === 0 ? "disabled" : ""}>▲</button>
+        <button type="button" data-pl-move="${escapeHtml(p.id)}:${i}:down" aria-label="Move down" ${i === p.items.length - 1 ? "disabled" : ""}>▼</button>
+      </span></div>`).join("");
+  return head + `<div class="music-list">${rows}</div>`;
+}
+
+// ── Resolver-backed playback + provider fallback ──────────────────────────────
+function playRecordingDescriptor(recording, source) {
+  const artist = recording.performers?.[0]?.name || recording.composer || recording.workTitle || "";
+  playMusicDescriptor({ id: recording.id || `rec:${source.url}`, title: recording.title || recording.workTitle || "Recording", artist, album: recording.album, artworkUrl: recording.artworkUrl || "", kind: "recording", recording }, source.url, { isBlob: false });
+}
+
+async function startRecordingResolved(recording, { queueMode = false } = {}) {
+  let resolver, reg;
+  try { ({ resolver } = await getMusicCanon()); reg = await getMusicProviders(); }
+  catch { return false; }
+  let res = await resolver.resolvePlayableSource(recording, { registry: reg, allowAlternate: false });
+  if (res.status !== "exact") res = await resolver.resolvePlayableSource(recording, { registry: reg, allowAlternate: true });
+  if (res.status === "exact") { playRecordingDescriptor(recording, res.source); return true; }
+  if (res.status === "alternate") {
+    if (queueMode) return false;            // in a queue, skip rather than interrupt with a prompt
+    promptAlternateRecording(recording, res); return true; // handled (user decides)
+  }
+  if (!queueMode) showVoiceToast("This recording isn’t available from any known source right now.");
+  return false;
+}
+
+// Explicit user play of a canonical recording (favourite / history).
+function playCanonicalRecording(recording, restRecordings = []) {
+  playMusicQueueItem({ kind: "recording", recording }, (restRecordings || []).map((r) => ({ kind: "recording", recording: r })), { interactive: true });
+}
+function playPlaylist(id, startIndex = 0, shuffle = false) {
+  const p = musicLibModelMod && musicLibModelMod.getPlaylist(getMusicLibraryState(), id);
+  if (!p || !p.items.length) return;
+  let items = p.items.slice();
+  if (shuffle) { for (let i = items.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [items[i], items[j]] = [items[j], items[i]]; } startIndex = 0; }
+  playMusicQueueItem({ kind: "recording", recording: items[startIndex] }, items.slice(startIndex + 1).map((r) => ({ kind: "recording", recording: r })), { interactive: true });
+}
+
+function promptAlternateRecording(recording, res) {
+  const alt = res.alternateRecording || {};
+  const altPerf = alt.performers?.[0]?.name || alt.composer || "another performer";
+  document.getElementById("musicCfgOverlay")?.remove();
+  const ov = document.createElement("div");
+  ov.id = "musicCfgOverlay"; ov.className = "music-cfg-overlay";
+  ov.innerHTML = `<div class="music-cfg" role="dialog" aria-modal="true" aria-label="Recording unavailable">
+      <h3 class="music-cfg-title">Recording unavailable</h3>
+      <p class="music-cfg-sub">The saved recording of <strong>${escapeHtml(recording.workTitle || recording.title || "this work")}</strong> couldn’t be reached from any known source. A different performance is available${altPerf ? ` (${escapeHtml(altPerf)})` : ""}.</p>
+      <div class="music-cfg-actions"><button class="music-cfg-cancel" type="button" data-alt-cancel>Cancel</button><button class="primary-btn" type="button" data-alt-play>Play alternate</button></div>
+    </div>`;
+  const close = () => ov.remove();
+  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+  ov.querySelector("[data-alt-cancel]").addEventListener("click", close);
+  ov.querySelector("[data-alt-play]").addEventListener("click", () => { close(); playRecordingDescriptor(res.alternateRecording, res.source); });
+  document.body.appendChild(ov);
+}
+
+// ── Add-to-playlist ───────────────────────────────────────────────────────────
+function openAddToPlaylistMenu(recording) {
+  if (!recording || !musicLibModelMod) return;
+  const lib = getMusicLibraryState();
+  document.getElementById("musicCfgOverlay")?.remove();
+  const ov = document.createElement("div");
+  ov.id = "musicCfgOverlay"; ov.className = "music-cfg-overlay";
+  const rows = lib.playlists.map((p) => `<button class="music-menu-row" type="button" data-add-to="${escapeHtml(p.id)}">${escapeHtml(p.name)}<span class="music-menu-count">${p.items.length}</span></button>`).join("");
+  ov.innerHTML = `<div class="music-cfg" role="dialog" aria-modal="true" aria-label="Add to playlist">
+      <h3 class="music-cfg-title">Add to playlist</h3>
+      <div class="music-menu">${rows || `<p class="music-empty-sub">No playlists yet.</p>`}<button class="music-menu-row music-menu-new" type="button" data-add-new>+ New playlist…</button></div>
+      <div class="music-cfg-actions"><button class="music-cfg-cancel" type="button" data-add-cancel>Close</button></div>
+    </div>`;
+  const close = () => ov.remove();
+  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+  ov.querySelector("[data-add-cancel]").addEventListener("click", close);
+  ov.querySelectorAll("[data-add-to]").forEach((b) => b.addEventListener("click", () => {
+    saveMusicLibrary(musicLibModelMod.addToPlaylist(getMusicLibraryState(), b.dataset.addTo, recording));
+    showVoiceToast("Added to playlist"); close();
+  }));
+  ov.querySelector("[data-add-new]").addEventListener("click", () => {
+    const name = prompt("Playlist name", "New playlist"); if (name == null) return;
+    const { library, playlist } = musicLibModelMod.createPlaylist(getMusicLibraryState(), name);
+    saveMusicLibrary(musicLibModelMod.addToPlaylist(library, playlist.id, recording));
+    showVoiceToast("Added to new playlist"); close();
+  });
+  document.body.appendChild(ov);
+}
+
+const MUSIC_X_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+
+function createNewMusicPlaylist() {
+  if (!musicLibModelMod) { getMusicCanon().then(createNewMusicPlaylist); return; }
+  const name = prompt("Playlist name", "New playlist"); if (name == null) return;
+  const { library, playlist } = musicLibModelMod.createPlaylist(getMusicLibraryState(), name);
+  saveMusicLibrary(library);
+  musicOpenPlaylistId = playlist.id; renderMusicPanel();
+}
+function renameMusicPlaylist(id) {
+  const p = musicLibModelMod && musicLibModelMod.getPlaylist(getMusicLibraryState(), id); if (!p) return;
+  const name = prompt("Rename playlist", p.name); if (name == null) return;
+  saveMusicLibrary(musicLibModelMod.renamePlaylist(getMusicLibraryState(), id, name)); renderMusicPanel();
+}
+function deleteMusicPlaylist(id) {
+  const p = musicLibModelMod && musicLibModelMod.getPlaylist(getMusicLibraryState(), id); if (!p) return;
+  if (!confirm(`Delete playlist “${p.name}”?`)) return;
+  saveMusicLibrary(musicLibModelMod.deletePlaylist(getMusicLibraryState(), id));
+  musicOpenPlaylistId = null; renderMusicPanel();
 }
 
 // ── Unified now-playing bar (podcasts + article/email TTS + music) ────────────

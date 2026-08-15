@@ -1,11 +1,14 @@
 # Music architecture (Media → Music tab)
 
-The Music tab has **two layers that share one playback engine**:
+The Music tab has **three modes over shared systems, one playback engine**:
 
-| Layer | What it is | Modules | Data |
+| Mode | What it is | Modules | Data |
 |---|---|---|---|
-| **Library** | Music you *own* — local file uploads + a Jellyfin server | `music-library.js`, `music-tags.js`, `music-jellyfin.js` | audio **bytes** in IndexedDB (local) / streamed from Jellyfin |
-| **Discover** | Music you *stream on demand* from free/open providers | `music-streaming.js`, `music-provider-*.js` | **nothing stored** — normalized metadata only, streamed from the source |
+| **Saved** | Your personal library — favourites (Works/Recordings) + playlists + recently played, all **canonical & provider-independent** | `music-canonical.js`, `music-library-model.js` | `state.musicLibrary` (local) |
+| **Discover** | Stream on demand from free/open providers; results **consolidated under canonical Works** | `music-streaming.js`, `music-provider-*.js`, `music-canonical.js` | nothing stored — metadata only, streamed from source |
+| **Library** | Music you *own* — local uploads + a Jellyfin server | `music-library.js`, `music-tags.js`, `music-jellyfin.js` | audio **bytes** in IndexedDB / Jellyfin |
+
+Playback of a saved Recording goes through `music-source-resolver.js` (provider fallback). See §11–13 below.
 
 Both reduce every playable to the same shape and hand it to the **one shared engine** (`playback-engine.js` via `mediaEngine` in `app.js`), so a local file, a Jellyfin track, and an Internet Archive recording all play through the same element, mini-player, lock-screen controls, and queue — and keep playing as you navigate the app.
 
@@ -60,11 +63,49 @@ A provider is a plain object:
 
 ### Adding a provider
 1. Write `music-provider-<name>.js` exporting `create<Name>Provider(config, {fetchJson})` returning the interface above; map its API to the normalized types; keep the raw schema inside the file.
-2. Register it in `getMusicProviders()` (`app.js`) — push into the `providers` array (gate on config if it needs a key).
-3. Add a label to `MUSIC_PROVIDER_LABELS`. Add tests with a mocked `fetchJson`.
-That's it — search/UI/playback/favorites work with no other changes.
+2. Implement **`resolveRef(ref)`** — reconstruct a `PlayableSource` from a stored `{provider, externalId}` alone (no search). This is what makes saved recordings survive and provider fallback work.
+3. Register it in `getMusicProviders()` (`app.js`) — push into the `providers` array (gate on config if it needs a key).
+4. Add a label to `MUSIC_PROVIDER_LABELS`. Add tests with a mocked `fetchJson`.
+That's it — search, consolidation, favourites, playlists, playback, and fallback all work with no other changes (provider id stays an implementation detail; canonical entities carry the identity).
 
 ---
+
+## 3b. Canonical entities & resolution (`music-canonical.js`)
+
+The provider layer (§1: `CanonicalTrack`/`Album`) is **a provider's record** of something. Above it sit the app's own entities, which provider records **resolve to** via ProviderReferences — provider ids are never canonical ids:
+
+- **Work** — the composition (own `work_…` id; composer, title, catalog/opus/number, key, workType, instrument, movements).
+- **Movement** — a section of a Work.
+- **Recording** — a particular performance (own `rec_…` id; workId, performers, ensemble, conductor, album, duration, `providerRefs[]`).
+- **PlayableSource** (§1) — the actual stream.
+
+Each canonical entity keeps **provenance** (`{provider, providerId, matchType: auto|manual|possible, confidence, matchedOn[], metadata}`) so associations are **reversible and auditable**, and `canonicalFields` (user edits) that win over provider data. `enrichWork()` merges new provider metadata into empty fields only — never clobbering user edits.
+
+**Matching is deterministic and conservative** (`matchWork`, `matchRecording`). Strong signals only:
+- composer identity (surname + compatible given names / initials),
+- catalog id (`Op. 27 No. 2`→`op27no2`, `BWV 1007`, `K. 545`),
+- structured work identity (composer + workType + number + instrument),
+- normalized title, and a small **nickname** table (`Moonlight`→Sonata No. 14).
+
+**Conflict guards reject** different catalog ids or different numbers, so *different works never merge* and *different performances never merge* (a performer mismatch blocks a recording match). **False positives are worse than duplicates.** `consolidateSearchResults(items)` buckets provider hits by a deterministic grouping key into `{ groups:[{work, items}], loose:[] }` for the Discover UI (§17) — no fuzzy transitive merging; ambiguous items stay loose.
+
+## 3c. Personal library & playlists (`music-library-model.js`)
+
+Pure ops over `state.musicLibrary = { favorites, playlists }` (local-first; no cloud):
+- **Favorites reference canonical entities** (`{ key, type: work|recording|album|artist|composer, entity }`). `favoriteKey` is content-derived and stable: Works key on composer+catalog (provider-independent); recordings/albums on their provider-ref (identity of that found performance). So a favourite survives provider id/metadata changes.
+- **Playlists** hold canonical Recordings (each with `providerRefs`), so one playlist mixes providers. `add/remove/reorder/rename/delete`, de-duped by recording key.
+
+Migration: the old provider-record `state.musicFavorites` is migrated once into canonical recording favourites on first Saved/Discover use.
+
+## 3d. Source resolution & provider fallback (`music-source-resolver.js`)
+
+A saved Recording is canonical; the **currently-playable source is separate and dynamic**. `resolvePlayableSource(recording, { registry, preferredProvider, allowAlternate })` tries refs in order (preferred → origin → rest) and returns a **typed** result:
+
+- **`exact`** — the same recording (its own ref, or the *same performance* found on another provider via search). Play it.
+- **`alternate`** — the exact recording is unreachable, but a *different performance of the same Work* exists. **Offered to the user, never silently substituted** (§13) — the app shows a "Recording unavailable — play another performance?" prompt.
+- **`unavailable`** — nothing resolves right now.
+
+Providers implement `resolveRef(ref)` to reconstruct a stream URL from a stored reference **without a search** (IA: `identifier/filename`→download URL; Jamendo: track-id→mp3 endpoint). A provider failing is **skipped, never deleted** — availability is dynamic (§18). In a playlist queue, unresolvable/alternate items are skipped (not removed); an explicit single play prompts for the alternate.
 
 ## 4. Playback flow
 
@@ -130,4 +171,7 @@ Live **Radio** will share the engine, session, favorites, history, and controls,
 ---
 
 ## 10. Tests
-`test/music-streaming.test.js` (domain normalization, aggregated-search isolation), `test/music-provider-ia.test.js` (IA search/`getItem` mapping, format de-dup, ZIP-only handling), plus the Library-layer suites (`music-library`, `music-tags`, `music-jellyfin`). Run `npm test`.
+Provider/streaming: `test/music-streaming.test.js`, `test/music-provider-ia.test.js`. Canonical layer: `test/music-canonical.test.js` (composer identity, catalog/number conflicts, nickname resolution, consolidation, enrichment), `test/music-library-model.test.js` (canonical favourites survive provider changes; multi-provider playlists), `test/music-source-resolver.test.js` (exact via own ref / secondary provider / search; provider-down skip; exact-vs-alternate; different-work rejection; unavailable). Plus the Library-layer suites (`music-library`, `music-tags`, `music-jellyfin`). Run `npm test`.
+
+## 11. Connection to the piano/score system
+Canonical `Work`/`Movement`/`Recording` align by shape with the Cadence score domain (`music/domain.js`). A future score-following/practice/annotation system references the same canonical Work; reconcile a score's Work with a listening Work via `matchWork` + `providerRefs` (no entity store is forced today — the seam is `consolidateSearchResults`/`enrichWork`).

@@ -23,14 +23,20 @@ export function normalizeLibrary(lib) {
   return { favorites: Array.isArray(l.favorites) ? l.favorites : [], playlists: Array.isArray(l.playlists) ? l.playlists : [] };
 }
 
-// Stable identity for a favorited entity — its canonical id, or a derived key
-// (so the same work/recording isn't favorited twice even before it has an id).
+// Stable, content-derived identity for a favorited entity (NOT the random
+// canonical id, which changes each derivation). Works key on composer + catalog
+// (provider-independent, canonical); recordings/albums key on their stable
+// provider reference (the identity of that specific found performance/release);
+// people key on name. So isFavorite matches across re-renders and provider
+// metadata changes.
+const low = (s) => String(s || "").toLowerCase().trim();
 export function favoriteKey(type, entity) {
   if (!entity) return `${type}:?`;
-  if (entity.id) return `${type}:${entity.id}`;
-  if (type === "work") return `work:${(entity.composer || "").toLowerCase()}|${entity.catalogId || entity.title || ""}`.toLowerCase();
-  if (type === "composer" || type === "artist") return `${type}:${(entity.name || entity).toString().toLowerCase()}`;
-  return `${type}:${(entity.title || entity.name || "").toString().toLowerCase()}`;
+  if (type === "work") return `work:${low(entity.composer)}|${entity.catalogId || low(entity.title) || entity.id || "?"}`;
+  if (type === "composer" || type === "artist") return `${type}:${low(entity.name || entity)}`;
+  const r = entity.providerRefs && entity.providerRefs[0];
+  if (type === "recording" || type === "album") return r ? `${type}:${r.provider}:${r.externalId}` : `${type}:${entity.id || low(entity.title)}`;
+  return `${type}:${entity.id || low(entity.title || entity.name)}`;
 }
 
 // ── favorites ─────────────────────────────────────────────────────────────────
