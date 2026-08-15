@@ -33087,7 +33087,8 @@ let cadenceActiveWorkId = null;    // a score is open in the viewer
 let cadenceRenderer = null;
 let cadenceLayout = null;
 let cadenceModel = null;
-let cadenceViewMode = "continuous";
+let cadenceViewMode = localStorage.getItem("cadence-view-mode") || "continuous";
+let cadenceZoom = parseFloat(localStorage.getItem("cadence-zoom")) || 1;
 let cadenceImporting = false;
 let cadencePracticeStart = null;   // ms timestamp while a practice session is running
 let cadencePracticeTimer = null;   // 1s tick interval for the elapsed label
@@ -33204,6 +33205,11 @@ function renderCadenceViewer() {
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
         </button>
         <div class="cadence-viewer-title">${escapeHtml(work?.title || "Score")}</div>
+        <div class="cadence-zoom">
+          <button class="icon-btn" type="button" data-cadence-zoom="-1" aria-label="Zoom out">−</button>
+          <span class="cadence-zoom-val" id="cadenceZoomVal">${Math.round(cadenceZoom * 100)}%</span>
+          <button class="icon-btn" type="button" data-cadence-zoom="1" aria-label="Zoom in">+</button>
+        </div>
         <select class="cadence-mode-select" data-cadence-mode aria-label="Display mode">
           <option value="continuous"${cadenceViewMode === "continuous" ? " selected" : ""}>Scroll</option>
           <option value="paged"${cadenceViewMode === "paged" ? " selected" : ""}>Paged</option>
@@ -33298,6 +33304,14 @@ async function stopAndSaveCadencePractice() {
   } catch (e) { console.warn("Cadence save session failed:", e); }
 }
 
+function changeCadenceZoom(dir) {
+  cadenceZoom = Math.min(2, Math.max(0.5, Math.round((cadenceZoom + dir * 0.1) * 10) / 10));
+  try { localStorage.setItem("cadence-zoom", String(cadenceZoom)); } catch { /* private mode */ }
+  const val = document.getElementById("cadenceZoomVal");
+  if (val) val.textContent = `${Math.round(cadenceZoom * 100)}%`;
+  if (cadenceRenderer) { cadenceRenderer.setZoom(cadenceZoom); cadenceLayout = cadenceRenderer.getLayoutIndex(); }
+}
+
 function openCadenceWork(id) { cadenceActiveWorkId = id; cadenceLayout = null; cadenceModel = null; renderRecreatePage(); }
 function closeCadenceWork() { resetCadenceViewer(); renderRecreatePage(); }
 
@@ -33337,6 +33351,7 @@ async function mountCadenceViewer(host) {
     cadenceRenderer = await C.createOsmdRenderer(host, ctx, measureIds);
     await cadenceRenderer.load(xml, { mode: cadenceViewMode });
     cadenceLayout = cadenceRenderer.render();
+    if (cadenceZoom !== 1) { cadenceRenderer.setZoom(cadenceZoom); cadenceLayout = cadenceRenderer.getLayoutIndex(); }
     host.addEventListener("click", (e) => onCadenceScoreClick(e, host, C));
     // Load this work's practice history and refresh the practice section.
     try { cadenceWorkSessions = await C.listSessions(cadenceStorage, { workId: cadenceActiveWorkId }); refreshCadencePractice(); } catch { /* noop */ }
@@ -33380,8 +33395,11 @@ function bindCadence(grid) {
     grid.querySelector("[data-cadence-close]")?.addEventListener("click", closeCadenceWork);
     grid.querySelector("[data-cadence-mode]")?.addEventListener("change", (e) => {
       cadenceViewMode = e.target.value;
+      try { localStorage.setItem("cadence-view-mode", cadenceViewMode); } catch { /* private mode */ }
       if (cadenceRenderer) { cadenceRenderer.setMode(cadenceViewMode); cadenceLayout = cadenceRenderer.getLayoutIndex(); }
     });
+    grid.querySelectorAll("[data-cadence-zoom]").forEach((b) =>
+      b.addEventListener("click", () => changeCadenceZoom(Number(b.dataset.cadenceZoom))));
     const host = grid.querySelector("#cadenceScoreHost");
     if (host && !host.dataset.mounted) mountCadenceViewer(host);
     const practiceEl = grid.querySelector("#cadencePractice");
