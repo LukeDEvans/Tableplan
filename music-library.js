@@ -18,6 +18,8 @@ export function uid(prefix = "trk") {
   _n += 1;
   return `${prefix}_${Date.now().toString(36)}${_n.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
+import { readTags } from "./music-tags.js";
+
 const str = (v, d = "") => (v == null ? d : String(v));
 const numOrNull = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
 
@@ -42,18 +44,25 @@ export function makeTrack(p = {}) {
     title: str(p.title) || "Untitled",
     artist: str(p.artist),
     album: str(p.album),
+    trackNo: numOrNull(p.trackNo),
     durationMs: numOrNull(p.durationMs),
-    artworkRef: p.artworkRef ?? null,      // {kind, ...} for embedded/remote art (Slice 2)
+    artworkRef: p.artworkRef && typeof p.artworkRef === "object" ? p.artworkRef : null, // {kind:"blob", blobId} → art in the "artwork" store
     locator: p.locator && typeof p.locator === "object" ? p.locator : null,
     addedAt: numOrNull(p.addedAt) ?? Date.now(),
   };
 }
 
-/** Library sort: artist, then album, then title (case-insensitive). Untagged
- *  uploads (no artist) sort after named ones. */
+/** Library sort: artist, then album, then track number, then title (all
+ *  case-insensitive). Untagged uploads (no artist) sort after named ones. */
 export function compareTracks(a, b) {
-  const k = (t) => `${(t.artist ? t.artist.toLowerCase() : "~~~")} ${(t.album || "").toLowerCase()} ${(t.title || "").toLowerCase()}`;
-  return k(a) < k(b) ? -1 : k(a) > k(b) ? 1 : 0;
+  const ar = a.artist ? a.artist.toLowerCase() : "~~~", br = b.artist ? b.artist.toLowerCase() : "~~~";
+  if (ar !== br) return ar < br ? -1 : 1;
+  const al = (a.album || "").toLowerCase(), bl = (b.album || "").toLowerCase();
+  if (al !== bl) return al < bl ? -1 : 1;
+  const an = a.trackNo ?? Infinity, bn = b.trackNo ?? Infinity;
+  if (an !== bn) return an - bn;
+  const at = (a.title || "").toLowerCase(), bt = (b.title || "").toLowerCase();
+  return at < bt ? -1 : at > bt ? 1 : 0;
 }
 
 // ── in-memory store (tests / fallback) ──────────────────────────────────────
@@ -73,9 +82,9 @@ export function createMemoryMusicStore() {
 // ── IndexedDB store (browser) ────────────────────────────────────────────────
 // Its own database, independent of the Cadence score store, with two object
 // stores: "audio" (blob records) and "tracks" (metadata records).
-export function createIdbMusicStore(dbName = "live-music", version = 1) {
+export function createIdbMusicStore(dbName = "live-music", version = 2) {
   if (typeof indexedDB === "undefined") throw new Error("IndexedDB unavailable");
-  const NAMES = ["audio", "tracks"];
+  const NAMES = ["audio", "tracks", "artwork"]; // artwork added in v2 (upgrade creates missing stores)
   let dbp = null;
   const open = () => (dbp = dbp || new Promise((resolve, reject) => {
     const req = indexedDB.open(dbName, version);
@@ -127,11 +136,35 @@ export function createLocalMusicSource(store) {
       const bytes = new Uint8Array(buf);
       const mimeType = str(file.type) || "audio/mpeg";
       await store.put("audio", id, { bytes, mimeType });
+      // Embedded tags (best-effort; never throws) fill in title/artist/album/
+      // track and cover art, falling back to the filename for the title.
+      const tags = readTags(bytes);
+      let artworkRef = null;
+      if (tags.artwork && tags.artwork.bytes && tags.artwork.bytes.length) {
+        const artId = uid("art");
+        // .slice() detaches the cover from the (large) file buffer so IDB stores
+        // only the image, not the whole song's bytes twice.
+        await store.put("artwork", artId, { bytes: tags.artwork.bytes.slice(), mimeType: tags.artwork.mime || "image/jpeg" });
+        artworkRef = { kind: "blob", blobId: artId };
+      }
       let durationMs = null;
       if (typeof probeDurationMs === "function") { try { durationMs = await probeDurationMs(bytes, mimeType); } catch { /* leave null */ } }
-      const track = makeTrack({ id, sourceId: SOURCE_ID, title: titleFromFilename(file.name), durationMs, locator: { kind: "blob", blobId: id } });
+      const track = makeTrack({
+        id, sourceId: SOURCE_ID,
+        title: tags.title || titleFromFilename(file.name),
+        artist: tags.artist, album: tags.album, trackNo: tags.trackNo,
+        durationMs, artworkRef, locator: { kind: "blob", blobId: id },
+      });
       await store.put("tracks", id, track);
       return track;
+    },
+    /** Cover-art bytes for a track, or null. Pure (no object URLs — the app
+     *  turns bytes into a URL) so this stays DOM-free and testable. */
+    async getArtworkBytes(track) {
+      const artId = track?.artworkRef?.blobId;
+      if (!artId) return null;
+      const rec = await store.get("artwork", artId);
+      return rec && rec.bytes ? { bytes: rec.bytes, mime: rec.mimeType || "image/jpeg" } : null;
     },
     /** Turn a local track into a playable object URL (caller revokes it). */
     async resolvePlayable(track) {
@@ -145,6 +178,8 @@ export function createLocalMusicSource(store) {
     async deleteTrack(track) {
       const blobId = track?.locator?.blobId;
       if (blobId) await store.delete("audio", blobId);
+      const artId = track?.artworkRef?.blobId;
+      if (artId) await store.delete("artwork", artId);
       await store.delete("tracks", track.id);
     },
   };
@@ -169,6 +204,10 @@ export function createMusicLibrary({ sources = [] } = {}) {
       const s = sourceFor(track);
       if (!s) throw new Error(`no source for track ${track?.id}`);
       return s.resolvePlayable(track);
+    },
+    async getArtworkBytes(track) {
+      const s = sourceFor(track);
+      return s?.getArtworkBytes ? s.getArtworkBytes(track) : null;
     },
     /** Imports always land in the local source. */
     async importAudioFile(file, opts) {

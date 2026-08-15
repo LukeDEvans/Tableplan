@@ -20669,3 +20669,15 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .music-empty-title { font-weight: 700; color: var(--ink); font-size: 1rem; }
 .music-empty-sub { font-size: 0.85rem; max-width: 260px; }
 .music-empty .primary-btn { margin-top: 10px; }
+
+/* Slice 2: album grouping + cover art */
+.music-albums { display: flex; flex-direction: column; gap: 18px; padding-top: 4px; }
+.music-album { display: flex; flex-direction: column; }
+.music-album-head { display: flex; align-items: center; gap: 12px; padding: 4px 12px 8px; }
+.music-album-cover { width: 46px; height: 46px; border-radius: 8px; object-fit: cover; flex: 0 0 auto; box-shadow: 0 2px 6px rgba(0,0,0,.14); background: var(--accent-soft); }
+.music-album-cover--ph { display: inline-flex; align-items: center; justify-content: center; color: var(--accent-dark); box-shadow: none; border: 1px solid var(--line); }
+.music-album-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.music-album-title { font-weight: 700; font-size: 0.95rem; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.music-album-artist { font-size: 0.78rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.music-row-no { width: 20px; text-align: center; font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.music-row-no--dot { color: var(--line); }

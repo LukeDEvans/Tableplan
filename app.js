@@ -38484,6 +38484,7 @@ let musicLibMod = null;        // lazy-loaded music-library.js module
 let musicLib = null;           // the MusicLibrary instance (source registry)
 let musicPanelWired = false;   // click/change delegation attached once
 let musicLibraryLoaded = false;// library fetched from storage at least once
+const musicArtUrls = new Map();// artwork blobId → object URL (built once, reused across renders)
 
 function initPodcastPanel() {
   wirePodcastPanel();
@@ -41467,8 +41468,24 @@ function probeAudioDurationMs(bytes, mimeType) {
 async function refreshMusicLibrary() {
   const lib = await getMusicLib();
   musicLibrary = await lib.listAllTracks();
+  await preloadMusicArtwork(musicLibrary);
   return musicLibrary;
 }
+
+// Resolve cover-art bytes to object URLs once and cache them, so the panel can
+// read art synchronously while it re-renders (avoids per-render URL churn/leaks).
+async function preloadMusicArtwork(list) {
+  const lib = await getMusicLib();
+  for (const t of list) {
+    const id = t.artworkRef?.blobId;
+    if (!id || musicArtUrls.has(id)) continue;
+    try {
+      const a = await lib.getArtworkBytes(t);
+      if (a && a.bytes) musicArtUrls.set(id, URL.createObjectURL(new Blob([a.bytes], { type: a.mime || "image/jpeg" })));
+    } catch { /* leave uncached — row shows the placeholder */ }
+  }
+}
+function musicArtUrlFor(track) { const id = track?.artworkRef?.blobId; return (id && musicArtUrls.get(id)) || ""; }
 
 async function startMusicPlayback(track, queueRest = []) {
   if (!track) return;
@@ -41484,7 +41501,7 @@ async function startMusicPlayback(track, queueRest = []) {
   const engine = getMediaEngine();
   musicAudio = ensureMediaAudioEl(); // mode flag → the shared element
   engine.load({ id: track.id, providerId: "music", segments: [{ url }], startPosition: 0, rate: mediaPlaybackSpeed }, { autoplay: true });
-  setMiniPlayer(track.title || "Untitled", track.artist || track.album || "", "");
+  setMiniPlayer(track.title || "Untitled", track.artist || track.album || "", musicArtUrlFor(track));
   setMusicMediaSession(track);
   if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
 }
@@ -41533,10 +41550,12 @@ function skipMusic(seconds) {
 function setMusicMediaSession(track) {
   if (!("mediaSession" in navigator)) return;
   try {
+    const art = musicArtUrlFor(track);
     navigator.mediaSession.metadata = new MediaMetadata({
       title: track.title || "Untitled",
       artist: track.artist || "",
       album: track.album || "Music",
+      artwork: art ? [{ src: art }] : undefined,
     });
     navigator.mediaSession.setActionHandler("play", () => musicAudio?.play().catch(() => {}));
     navigator.mediaSession.setActionHandler("pause", () => musicAudio?.pause());
@@ -41581,27 +41600,66 @@ function initMusicPanel() {
   if (!musicLibraryLoaded) { musicLibraryLoaded = true; refreshMusicLibrary().then(renderMusicPanel).catch((e) => console.warn("music library load failed", e)); }
 }
 
-function renderMusicPanel() {
-  const panel = document.getElementById("mediaMusicPanel");
-  if (!panel) return;
-  const list = musicLibrary || [];
-  const rows = list.map((t) => {
-    const active = !!(musicCurTrack && musicCurTrack.id === t.id);
-    const playing = active && musicAudio && !musicAudio.paused && !musicAudio.ended;
-    const sub = [t.artist, t.album].filter(Boolean).join(" · ");
-    const dur = t.durationMs ? formatPodcastDuration(Math.round(t.durationMs / 1000)) : "";
-    return `<div class="music-row${active ? " is-active" : ""}" data-music-track="${escapeHtml(t.id)}" role="button" tabindex="0" aria-label="${escapeHtml(t.title || "Untitled")}">
-      <span class="music-row-icon" aria-hidden="true">${playing ? MUSIC_PAUSE_SVG : MUSIC_PLAY_SVG}</span>
+// Group a sorted track list into albums (contiguous, since the list is sorted
+// by artist→album→track). Untagged singles collect under one trailing group.
+function groupMusicByAlbum(list) {
+  const groups = [];
+  let cur = null;
+  for (const t of list) {
+    const album = t.album || "";
+    const artist = t.artist || "";
+    if (!cur || cur.album !== album || cur.artist !== artist) {
+      cur = { album, artist, tracks: [] };
+      groups.push(cur);
+    }
+    cur.tracks.push(t);
+  }
+  return groups;
+}
+
+function musicTrackRow(t) {
+  const active = !!(musicCurTrack && musicCurTrack.id === t.id);
+  const playing = active && musicAudio && !musicAudio.paused && !musicAudio.ended;
+  const dur = t.durationMs ? formatPodcastDuration(Math.round(t.durationMs / 1000)) : "";
+  const no = t.trackNo != null ? `<span class="music-row-no">${t.trackNo}</span>` : `<span class="music-row-no music-row-no--dot">•</span>`;
+  return `<div class="music-row${active ? " is-active" : ""}" data-music-track="${escapeHtml(t.id)}" role="button" tabindex="0" aria-label="${escapeHtml(t.title || "Untitled")}">
+      <span class="music-row-icon" aria-hidden="true">${active ? (playing ? MUSIC_PAUSE_SVG : MUSIC_PLAY_SVG) : no}</span>
       <span class="music-row-main">
         <span class="music-row-title">${escapeHtml(t.title || "Untitled")}</span>
-        ${sub ? `<span class="music-row-sub">${escapeHtml(sub)}</span>` : ""}
       </span>
       ${dur ? `<span class="music-row-dur">${escapeHtml(dur)}</span>` : ""}
       <button class="music-row-del" type="button" data-music-delete="${escapeHtml(t.id)}" title="Remove track" aria-label="Remove track">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>`;
-  }).join("");
+}
+
+const MUSIC_ALBUM_PH_SVG = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.2"/></svg>`;
+
+function musicAlbumGroup(g) {
+  const cover = g.tracks.map(musicArtUrlFor).find(Boolean) || "";
+  const title = g.album || "Singles";
+  const sub = g.artist || (g.album ? "" : "Untagged uploads");
+  const coverHtml = cover
+    ? `<img class="music-album-cover" src="${escapeHtml(cover)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+    : `<span class="music-album-cover music-album-cover--ph" aria-hidden="true">${MUSIC_ALBUM_PH_SVG}</span>`;
+  return `<section class="music-album">
+      <header class="music-album-head">
+        ${coverHtml}
+        <span class="music-album-meta">
+          <span class="music-album-title">${escapeHtml(title)}</span>
+          ${sub ? `<span class="music-album-artist">${escapeHtml(sub)}</span>` : ""}
+        </span>
+      </header>
+      <div class="music-list">${g.tracks.map(musicTrackRow).join("")}</div>
+    </section>`;
+}
+
+function renderMusicPanel() {
+  const panel = document.getElementById("mediaMusicPanel");
+  if (!panel) return;
+  const list = musicLibrary || [];
+  const groups = groupMusicByAlbum(list).map(musicAlbumGroup).join("");
   panel.innerHTML = `
     <div class="podcast-playlist-bar music-bar">
       <div class="music-bar-title">Music${list.length ? ` <span class="music-count">${list.length}</span>` : ""}</div>
@@ -41614,7 +41672,7 @@ function renderMusicPanel() {
     <div class="music-body">
       ${musicImporting ? `<p class="music-status">Importing…</p>` : ""}
       ${list.length
-        ? `<div class="music-list">${rows}</div>`
+        ? `<div class="music-albums">${groups}</div>`
         : (musicImporting ? "" : `<div class="music-empty">
             <div class="music-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
             <p class="music-empty-title">No music yet</p>
@@ -41646,6 +41704,8 @@ async function deleteMusicTrack(id) {
   const t = (musicLibrary || []).find((x) => x.id === id);
   if (!t) return;
   if (musicCurTrack && musicCurTrack.id === id) stopMusicPlayback();
+  const artId = t.artworkRef?.blobId;
+  if (artId && musicArtUrls.has(artId)) { try { URL.revokeObjectURL(musicArtUrls.get(artId)); } catch { /* noop */ } musicArtUrls.delete(artId); }
   try { await (await getMusicLib()).deleteTrack(t); }
   catch (e) { console.warn("music delete failed", e); }
   await refreshMusicLibrary();
@@ -41803,7 +41863,7 @@ function nowPlayingInfo() {
     const t = musicCurTrack;
     if (!t) return null;
     return {
-      art: "",
+      art: musicArtUrlFor(t),
       title: t.title || "Untitled",
       show: t.artist || "",
       date: t.album || "",

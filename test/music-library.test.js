@@ -120,3 +120,51 @@ describe("library — source registry", () => {
     expect((await lib.listAllTracks()).map((x) => x.title)).toEqual(["Added"]);
   });
 });
+
+// A fake File whose bytes are a real ID3v2.3 tag (title/artist/album/track + APIC).
+function id3File(name, img = new Uint8Array([0xff, 0xd8, 1, 2, 3])) {
+  const ascii = (s) => new Uint8Array([...s].map((c) => c.charCodeAt(0)));
+  const beU32 = (n) => new Uint8Array([(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255]);
+  const ss = (n) => new Uint8Array([(n >>> 21) & 0x7f, (n >>> 14) & 0x7f, (n >>> 7) & 0x7f, n & 0x7f]);
+  const cat = (...ps) => { const a = ps.map((x) => (x instanceof Uint8Array ? x : new Uint8Array(x))); const o = new Uint8Array(a.reduce((s, p) => s + p.length, 0)); let k = 0; for (const p of a) { o.set(p, k); k += p.length; } return o; };
+  const tf = (id, txt) => { const body = cat([3], new TextEncoder().encode(txt)); return cat(ascii(id), beU32(body.length), [0, 0], body); };
+  const apic = (() => { const body = cat([0], ascii("image/jpeg"), [0], [3], [0], img); return cat(ascii("APIC"), beU32(body.length), [0, 0], body); })();
+  const frames = cat(tf("TIT2", "Real Title"), tf("TPE1", "Real Artist"), tf("TALB", "Real Album"), tf("TRCK", "4"), apic);
+  const bytes = cat(ascii("ID3"), [3, 0, 0], ss(frames.length), frames);
+  return { name, type: "audio/mpeg", async arrayBuffer() { return bytes.buffer; } };
+}
+
+describe("local source — tag & artwork extraction", () => {
+  it("reads embedded tags + cover art on import, overriding the filename", async () => {
+    const store = createMemoryMusicStore();
+    const src = createLocalMusicSource(store);
+    const t = await src.importAudioFile(id3File("99 - ignored.mp3"));
+    expect(t.title).toBe("Real Title");
+    expect(t.artist).toBe("Real Artist");
+    expect(t.album).toBe("Real Album");
+    expect(t.trackNo).toBe(4);
+    expect(t.artworkRef).not.toBeNull();
+    const art = await src.getArtworkBytes(t);
+    expect(art.mime).toBe("image/jpeg");
+    expect([...art.bytes]).toEqual([0xff, 0xd8, 1, 2, 3]);
+  });
+
+  it("deleteTrack removes the artwork blob too", async () => {
+    const store = createMemoryMusicStore();
+    const src = createLocalMusicSource(store);
+    const t = await src.importAudioFile(id3File("x.mp3"));
+    await src.deleteTrack(t);
+    expect(await src.getArtworkBytes(t)).toBeNull();
+  });
+});
+
+describe("compareTracks — track numbers", () => {
+  it("orders by track number within an album (numeric, not lexical)", () => {
+    const list = [
+      makeTrack({ artist: "A", album: "X", trackNo: 2, title: "b" }),
+      makeTrack({ artist: "A", album: "X", trackNo: 10, title: "a" }),
+      makeTrack({ artist: "A", album: "X", trackNo: 1, title: "z" }),
+    ].sort(compareTracks);
+    expect(list.map((t) => t.trackNo)).toEqual([1, 2, 10]);
+  });
+});
