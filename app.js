@@ -39801,11 +39801,64 @@ function setupMediaAllDrag(listEl, items) {
   });
 }
 
+// ── Generic playback: media provider registry ────────────────────────────────
+// A MediaProvider knows how to drive playback for one *kind* of media source
+// (article TTS, podcasts, books, later music/audiobooks). The queue and the
+// now-playing facade talk only to this registry — they never switch on a media
+// type. Adding a new source == registering one provider object here, with no
+// edits to the queue or the engine.
+//
+// Provider contract:
+//   id              unique string; also the item's providerId once queue items
+//                   carry it (Phase 1). Until then, providerIdForItem() maps the
+//                   legacy item.type onto a provider id.
+//   canPlay(item)   → bool. A source that can't play a given item (a book, an
+//                   unresolved ref) declines, and the queue skips it.
+//   play(item,opts) start/replace playback for this item. opts.autoplay.
+//   isCurrent(item) → bool. Is this item the provider's active source right now.
+const MEDIA_PROVIDERS = {};
+function registerMediaProvider(p) { MEDIA_PROVIDERS[p.id] = p; }
+function providerIdForItem(item) {
+  if (item.providerId) return item.providerId; // explicit wins (Phase 1+ items)
+  if (item.type === "article") return "tts";
+  if (item.type === "book") return "book";
+  return "podcast"; // legacy default for episode items
+}
+function providerForItem(item) { return item ? MEDIA_PROVIDERS[providerIdForItem(item)] || null : null; }
+function mediaItemPlayable(item) { const p = providerForItem(item); return !!(p && p.canPlay(item)); }
+function playMediaItem(item, opts = {}) { const p = providerForItem(item); if (p && p.canPlay(item)) p.play(item, opts); }
+
+// Existing engines wrapped as providers — no behavior change; each play() calls
+// the same function the type-switch used to call directly.
+registerMediaProvider({
+  id: "tts",
+  canPlay: () => true, // articles are always playable; body text is fetched on demand
+  play: (item) => {
+    // Play in place — stay on the playlist. The reader opens only when the row
+    // itself is tapped (or via the now-playing bar's open button).
+    const article = (state.savedArticles || []).find((a) => a.id === item.id);
+    if (article) startListenTTS(article);
+  },
+  isCurrent: (item) => !!listenArticle && listenArticle.id === item.id,
+});
+registerMediaProvider({
+  id: "podcast",
+  canPlay: () => true,
+  play: (item, { autoplay = true } = {}) => openPodcastEpisode(item.id, { autoplay }), // plays + shows player + registers queue-advance
+  isCurrent: (item) => !!podcastAudio && podcastCurEpisode?.id === item.id,
+});
+registerMediaProvider({
+  id: "book",
+  canPlay: () => false, // books are visible in the list but not (yet) playable
+  play: () => {},
+  isCurrent: () => false,
+});
+
 function playAllQueueFrom(id) {
   const items = getAllListenList();
   const start = items.findIndex((i) => i.id === id);
   for (let j = Math.max(start, 0); j < items.length; j++) {
-    if (items[j].type === "book") continue; // books are visible but not playable
+    if (!mediaItemPlayable(items[j])) continue; // skip non-playable items (e.g. books)
     mediaAllQueueId = items[j].id;
     mediaAllQueueRest = items.slice(j + 1).map((i) => i.id);
     playMediaAllItem(items[j]);
@@ -39815,14 +39868,7 @@ function playAllQueueFrom(id) {
 }
 
 function playMediaAllItem(item) {
-  if (item.type === "article") {
-    // Play in place — stay on the playlist. The reader opens only when the row
-    // itself is tapped (or via the now-playing bar's open button).
-    const article = (state.savedArticles || []).find((a) => a.id === item.id);
-    if (article) startListenTTS(article);
-  } else {
-    openPodcastEpisode(item.id); // plays + shows the player; registers the queue-advance handler
-  }
+  playMediaItem(item); // registry routes to the right provider by type
   // Warm up the next item's audio while this one plays
   prefetchNextQueueAudio();
 }
@@ -39836,7 +39882,7 @@ function advanceMediaAllQueue(finishedId) {
   while (mediaAllQueueRest.length) {
     const nextId = mediaAllQueueRest.shift();
     const item = byId.get(nextId);
-    if (item && item.type !== "book") {
+    if (item && mediaItemPlayable(item)) {
       mediaAllQueueId = item.id;
       playMediaAllItem(item);
       if (activeMediaTab === "queue") renderMediaAllList();
