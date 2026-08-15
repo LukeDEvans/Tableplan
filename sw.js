@@ -2,7 +2,10 @@ const CACHE = "live-v17";
 const PRECACHE = ["/", "/favicon.svg"];
 // Weather map tiles / radar frames must never be cached here (they'd bloat the
 // cache and serve stale radar) — pass them straight through to the network.
-const SKIP_HOSTS = ["supabase.co", "googleapis.com", "gstatic.com", "cartocdn.com", "mapservices.weather.noaa.gov", "radar.weather.gov", "openstreetmap.org"];
+const SKIP_HOSTS = ["supabase.co", "googleapis.com", "gstatic.com", "cartocdn.com", "mapservices.weather.noaa.gov", "radar.weather.gov", "openstreetmap.org",
+  // On-demand Music streams from these directly; never let the SW cache audio
+  // (large, range-based, and licence-restricted) or their search/art responses.
+  "archive.org", "api.jamendo.com", "jamendo.com"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

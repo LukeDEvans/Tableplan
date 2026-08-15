@@ -38486,6 +38486,18 @@ let musicPanelWired = false;   // click/change delegation attached once
 let musicLibraryLoaded = false;// library fetched from storage at least once
 const musicArtUrls = new Map();// artwork blobId → object URL (built once, reused across renders)
 
+// On-demand Discover (streaming providers — music-streaming.js + adapters)
+let musicTabMode = "library";  // "library" | "discover"
+let musicStreamMod = null;     // lazy music-streaming.js
+let musicProviderRegistry = null;
+let musicSearchQuery = "";
+let musicSearchResults = null; // { query, items, providerStatuses } | null
+let musicSearchLoading = false;
+let musicSearchToken = 0;      // guards against out-of-order search responses
+let musicOpenItem = null;      // { album, tracks } expanded from a result
+let musicOpenItemLoading = false;
+const musicItemCache = new Map(); // albumId → { album, tracks } (metadata cache)
+
 function initPodcastPanel() {
   wirePodcastPanel();
   // Render the content for whichever tab is active (default "recent"), not a
@@ -41502,42 +41514,74 @@ function musicArtUrlFor(track) {
   return (ref.blobId && musicArtUrls.get(ref.blobId)) || ""; // local art: cached blob → object URL
 }
 
-async function startMusicPlayback(track, queueRest = []) {
-  if (!track) return;
+// Both the local library and the streaming providers reduce to the same thing:
+// a "now-playing descriptor" {id,title,artist,album,artworkUrl} plus a URL for
+// the one shared engine. The queue holds tagged refs so library and streaming
+// tracks interleave and auto-advance through the same path.
+//   queue item: { kind:"library", id } | { kind:"stream", track }
+function playMusicDescriptor(desc, url, { isBlob = false } = {}) {
   stopPodcastAudio();   // never overlap with a podcast…
   stopListen();         // …or an article read-aloud
-  let url;
-  try { url = await (await getMusicLib()).resolvePlayable(track); }
-  catch (e) { console.warn("music resolve failed", e); showVoiceToast("Couldn't play this track — the audio isn't on this device"); return; }
   if (musicCurUrl && musicCurUrl !== url) { try { URL.revokeObjectURL(musicCurUrl); } catch { /* noop */ } }
-  musicCurUrl = typeof url === "string" && url.startsWith("blob:") ? url : null;
-  musicCurTrack = track;
-  musicQueueRest = Array.isArray(queueRest) ? queueRest.slice() : [];
+  musicCurUrl = isBlob ? url : null;
+  musicCurTrack = desc;
   const engine = getMediaEngine();
   musicAudio = ensureMediaAudioEl(); // mode flag → the shared element
-  engine.load({ id: track.id, providerId: "music", segments: [{ url }], startPosition: 0, rate: mediaPlaybackSpeed }, { autoplay: true });
-  setMiniPlayer(track.title || "Untitled", track.artist || track.album || "", musicArtUrlFor(track));
-  setMusicMediaSession(track);
+  engine.load({ id: desc.id, providerId: "music", segments: [{ url }], startPosition: 0, rate: mediaPlaybackSpeed }, { autoplay: true });
+  setMiniPlayer(desc.title || "Untitled", desc.artist || desc.album || "", desc.artworkUrl || "");
+  setMusicMediaSession(desc);
+  pushMusicHistory(desc);
   if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
 }
 
-// Play a track from the current library view and queue the rest of the list
-// after it (so tapping a song plays on through the list).
+async function startLibraryTrack(track) {
+  let url;
+  try { url = await (await getMusicLib()).resolvePlayable(track); }
+  catch (e) { console.warn("music resolve failed", e); showVoiceToast("Couldn't play this track — the audio isn't on this device"); return false; }
+  playMusicDescriptor({ id: track.id, title: track.title, artist: track.artist, album: track.album, artworkUrl: musicArtUrlFor(track), kind: "library" }, url, { isBlob: true });
+  return true;
+}
+
+async function startStreamingTrack(canonical) {
+  let src = canonical.playable;
+  try {
+    const reg = await getMusicProviders();
+    const p = reg.get(canonical.provider);
+    if (p && p.getPlayable) src = await p.getPlayable(canonical);
+  } catch (e) { console.warn("stream resolve failed", e); }
+  if (!src || !src.url) { showVoiceToast("This track isn't streamable right now"); return false; }
+  const artist = canonical.artists?.[0]?.name || canonical.composer?.name || canonical.album || "";
+  playMusicDescriptor({ id: canonical.id, title: canonical.title, artist, album: canonical.album, artworkUrl: canonical.artworkUrl || "", kind: "stream", canonical }, src.url, { isBlob: false });
+  return true;
+}
+
+async function playMusicQueueItem(item, rest) {
+  musicQueueRest = Array.isArray(rest) ? rest.slice() : [];
+  let ok = false;
+  if (item.kind === "stream") ok = await startStreamingTrack(item.track);
+  else { const t = (musicLibrary || []).find((x) => x.id === item.id); ok = t ? await startLibraryTrack(t) : false; }
+  if (!ok) onMusicEnded(); // couldn't play → skip to the next queued item
+}
+
+// Library entry points (also used by the "music" media-provider registration).
 function playMusicTrackById(id) {
   const list = musicLibrary || [];
   const i = list.findIndex((t) => t.id === id);
   if (i < 0) return;
-  startMusicPlayback(list[i], list.slice(i + 1).map((t) => t.id));
+  playMusicQueueItem({ kind: "library", id }, list.slice(i + 1).map((t) => ({ kind: "library", id: t.id })));
 }
-function playAllMusic() { const list = musicLibrary || []; if (list.length) startMusicPlayback(list[0], list.slice(1).map((t) => t.id)); }
+function playAllMusic() {
+  const list = musicLibrary || [];
+  if (list.length) playMusicQueueItem({ kind: "library", id: list[0].id }, list.slice(1).map((t) => ({ kind: "library", id: t.id })));
+}
+// Streaming entry point (Discover): play a canonical track, queueing the rest.
+function playStreamingTrack(track, restTracks = []) {
+  playMusicQueueItem({ kind: "stream", track }, (restTracks || []).map((t) => ({ kind: "stream", track: t })));
+}
 
 function onMusicEnded() {
   updateMiniPlayerPlayBtn();
-  while (musicQueueRest.length) {
-    const nextId = musicQueueRest.shift();
-    const t = (musicLibrary || []).find((x) => x.id === nextId);
-    if (t) { startMusicPlayback(t, musicQueueRest); return; }
-  }
+  if (musicQueueRest.length) { const next = musicQueueRest.shift(); playMusicQueueItem(next, musicQueueRest); return; }
   stopMusicPlayback(); // queue drained
 }
 
@@ -41562,14 +41606,14 @@ function skipMusic(seconds) {
   musicAudio.currentTime = Math.max(0, Math.min((musicAudio.currentTime || 0) + seconds, musicAudio.duration || Infinity));
 }
 
-function setMusicMediaSession(track) {
+function setMusicMediaSession(desc) {
   if (!("mediaSession" in navigator)) return;
   try {
-    const art = musicArtUrlFor(track);
+    const art = desc.artworkUrl || "";
     navigator.mediaSession.metadata = new MediaMetadata({
-      title: track.title || "Untitled",
-      artist: track.artist || "",
-      album: track.album || "Music",
+      title: desc.title || "Untitled",
+      artist: desc.artist || "",
+      album: desc.album || "Music",
       artwork: art ? [{ src: art }] : undefined,
     });
     navigator.mediaSession.setActionHandler("play", () => musicAudio?.play().catch(() => {}));
@@ -41578,6 +41622,16 @@ function setMusicMediaSession(track) {
     navigator.mediaSession.setActionHandler("seekforward", () => skipMusic(10));
     navigator.mediaSession.setActionHandler("nexttrack", () => onMusicEnded());
   } catch { /* MediaMetadata unsupported — ignore */ }
+}
+
+// Recently played — normalized descriptors kept in local state (no provider lock-in).
+function pushMusicHistory(desc) {
+  if (!desc || !desc.id) return;
+  const entry = { id: desc.id, title: desc.title || "", artist: desc.artist || "", album: desc.album || "", artworkUrl: desc.artworkUrl || "", kind: desc.kind || "", canonical: desc.canonical || null, at: Date.now() };
+  const hist = (state.musicHistory || []).filter((h) => h.id !== desc.id);
+  hist.unshift(entry);
+  state.musicHistory = hist.slice(0, 40);
+  persist();
 }
 
 // ── Music panel (Listen → Music) ──────────────────────────────────────────────
@@ -41592,6 +41646,31 @@ function initMusicPanel() {
   if (!musicPanelWired) {
     musicPanelWired = true;
     panel.addEventListener("click", (e) => {
+      // Mode switch (Library / Discover)
+      const modeBtn = e.target.closest("[data-music-mode]");
+      if (modeBtn) { musicTabMode = modeBtn.dataset.musicMode; renderMusicPanel(); if (musicTabMode === "discover") panel.querySelector("#musicSearchInput")?.focus(); return; }
+
+      // ── Discover actions ──
+      const fav = e.target.closest("[data-music-fav]");
+      if (fav) { e.stopPropagation(); toggleMusicFavorite(musicViewIndex.get(fav.dataset.musicFav)); return; }
+      if (e.target.closest("[data-music-back]")) { closeMusicItem(); return; }
+      const cat = e.target.closest("[data-music-cat]");
+      if (cat) { musicSearchQuery = cat.dataset.musicCat; const si = panel.querySelector("#musicSearchInput"); if (si) si.value = musicSearchQuery; doMusicSearch(musicSearchQuery); return; }
+      const replay = e.target.closest("[data-music-replay]");
+      if (replay) { replayMusicHistory(replay.dataset.musicReplay); return; }
+      const streamRow = e.target.closest("[data-stream-play]");
+      if (streamRow) {
+        const id = streamRow.dataset.streamPlay;
+        if (musicCurTrack && musicCurTrack.id === id && musicAudio) { toggleMusicPlayPause(); return; }
+        const t = musicViewIndex.get(id);
+        const rest = (musicOpenItem?.tracks || []).slice((musicOpenItem?.tracks || []).findIndex((x) => x.id === id) + 1);
+        if (t) playStreamingTrack(t, rest);
+        return;
+      }
+      const openRow = e.target.closest("[data-music-open]");
+      if (openRow) { openMusicItem(musicViewIndex.get(openRow.dataset.musicOpen)); return; }
+
+      // ── Library actions ──
       if (e.target.closest("[data-music-import]")) { panel.querySelector("#musicFileInput")?.click(); return; }
       if (e.target.closest("[data-music-config]")) { openJellyfinSettings(); return; }
       if (e.target.closest("[data-music-play-all]")) { playAllMusic(); return; }
@@ -41606,7 +41685,11 @@ function initMusicPanel() {
     });
     panel.addEventListener("keydown", (e) => {
       const row = e.target.closest?.("[data-music-track]");
-      if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); playMusicTrackById(row.dataset.musicTrack); }
+      if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); playMusicTrackById(row.dataset.musicTrack); return; }
+      if (e.target.id === "musicSearchInput" && e.key === "Enter") { e.preventDefault(); clearTimeout(musicSearchDebounce); doMusicSearch(e.target.value); }
+    });
+    panel.addEventListener("input", (e) => {
+      if (e.target.id === "musicSearchInput") queueMusicSearch(e.target.value);
     });
     panel.addEventListener("change", (e) => {
       const inp = e.target.closest("#musicFileInput");
@@ -41672,14 +41755,27 @@ function musicAlbumGroup(g) {
     </section>`;
 }
 
+function musicModeTabs() {
+  const tab = (mode, label) => `<button class="music-mode-tab${musicTabMode === mode ? " is-active" : ""}" type="button" role="tab" aria-selected="${musicTabMode === mode}" data-music-mode="${mode}">${label}</button>`;
+  return `<div class="music-mode-tabs" role="tablist" aria-label="Music mode">${tab("library", "Library")}${tab("discover", "Discover")}</div>`;
+}
+
 function renderMusicPanel() {
   const panel = document.getElementById("mediaMusicPanel");
   if (!panel) return;
+  if (musicTabMode === "discover") {
+    panel.innerHTML = `
+      <div class="podcast-playlist-bar music-bar">${musicModeTabs()}<div class="podcast-tabs-actions"></div></div>
+      ${renderMusicDiscoverBody()}`;
+    const input = panel.querySelector("#musicSearchInput");
+    if (input && document.activeElement !== input) { input.value = musicSearchQuery; }
+    return;
+  }
   const list = musicLibrary || [];
   const groups = groupMusicByAlbum(list).map(musicAlbumGroup).join("");
   panel.innerHTML = `
     <div class="podcast-playlist-bar music-bar">
-      <div class="music-bar-title">Music${list.length ? ` <span class="music-count">${list.length}</span>` : ""}</div>
+      ${musicModeTabs()}
       <div class="podcast-tabs-actions">
         ${list.length ? `<button class="podcast-tabs-action-btn" type="button" data-music-play-all title="Play all" aria-label="Play all">${MUSIC_PLAY_SVG}</button>` : ""}
         <button class="podcast-tabs-action-btn${musicJellyfinEnabled() ? " is-on" : ""}" type="button" data-music-config title="Music server (Jellyfin)" aria-label="Connect a music server">${MUSIC_SERVER_SVG}</button>
@@ -41694,8 +41790,8 @@ function renderMusicPanel() {
         ? `<div class="music-albums">${groups}</div>`
         : (musicImporting ? "" : `<div class="music-empty">
             <div class="music-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
-            <p class="music-empty-title">No music yet</p>
-            <p class="music-empty-sub">Import audio files from this device to start your library.</p>
+            <p class="music-empty-title">Your library is empty</p>
+            <p class="music-empty-sub">Import audio files from this device, or switch to <strong>Discover</strong> to stream free & open music.</p>
             <button class="primary-btn" type="button" data-music-import>Import audio</button>
           </div>`)}
     </div>`;
@@ -41794,6 +41890,230 @@ async function saveJellyfinConfig(cfg) {
   if (cfg.enabled && cfg.url && cfg.apiKey && !(musicLibrary || []).some((t) => t.sourceId === "jellyfin")) {
     showVoiceToast("Saved. No tracks from the server yet — check the URL/key, and that it's reachable over HTTPS.");
   }
+}
+
+// ── Music → Discover (on-demand streaming from free/open providers) ────────────
+// The provider registry (music-streaming.js + adapters) is lazy-loaded on first
+// Discover use so none of it — nor any provider request — happens for users who
+// only use the local Library.
+async function getMusicProviders() {
+  if (musicProviderRegistry) return musicProviderRegistry;
+  const [stream, ia, jam] = await Promise.all([
+    import("./music-streaming.js"),
+    import("./music-provider-internetarchive.js"),
+    import("./music-provider-jamendo.js"),
+  ]);
+  musicStreamMod = stream;
+  const providers = [ia.createInternetArchiveProvider(), ia.createMusopenProvider()];
+  const jc = state.jamendo;
+  if (jc && jc.clientId) providers.push(jam.createJamendoProvider({ clientId: jc.clientId }));
+  musicProviderRegistry = stream.createMusicProviderRegistry(providers);
+  return musicProviderRegistry;
+}
+
+const MUSIC_PROVIDER_LABELS = { internetarchive: "Internet Archive", musopen: "Musopen", jamendo: "Jamendo" };
+const MUSIC_CATEGORIES = [
+  { label: "Classical", q: "classical" }, { label: "Piano", q: "piano" },
+  { label: "Ambient", q: "ambient" }, { label: "Meditation", q: "meditation" },
+  { label: "Relaxation", q: "relaxation" }, { label: "Instrumental", q: "instrumental" },
+  { label: "Nature", q: "nature soundscape" },
+];
+
+// A per-render lookup so DOM handlers resolve an item by id without embedding JSON.
+let musicViewIndex = new Map();
+const indexMusicItem = (it) => { if (it && it.id) musicViewIndex.set(it.id, it); return it; };
+
+// Conservative cross-provider dedup: collapse items that point at the same
+// external identifier (e.g. an IA item also surfaced via Musopen), merging refs.
+function dedupeMusicItems(items) {
+  const seen = new Map(); const out = [];
+  for (const it of items) {
+    const key = it.providerRefs?.[0]?.externalId || it.id;
+    if (seen.has(key)) { seen.get(key).providerRefs = [...seen.get(key).providerRefs, ...it.providerRefs]; continue; }
+    seen.set(key, it); out.push(it);
+  }
+  return out;
+}
+
+let musicSearchDebounce = null;
+function queueMusicSearch(q) {
+  clearTimeout(musicSearchDebounce);
+  musicSearchDebounce = setTimeout(() => doMusicSearch(q), 380);
+}
+
+async function doMusicSearch(query) {
+  const q = String(query || "");
+  musicSearchQuery = q;
+  musicOpenItem = null;
+  const token = ++musicSearchToken;
+  if (!q.trim()) { musicSearchResults = null; musicSearchLoading = false; updateDiscoverResults(); return; }
+  musicSearchLoading = true; updateDiscoverResults();
+  try {
+    const reg = await getMusicProviders();
+    const res = await reg.search(q, { limit: 25 });
+    if (token !== musicSearchToken) return; // a newer search superseded this one
+    res.items = dedupeMusicItems(res.items);
+    musicSearchResults = res;
+  } catch (e) {
+    if (token === musicSearchToken) musicSearchResults = { query: q, items: [], providerStatuses: [] };
+    console.warn("music search failed", e);
+  } finally {
+    if (token === musicSearchToken) { musicSearchLoading = false; updateDiscoverResults(); }
+  }
+}
+
+async function openMusicItem(album) {
+  if (!album) return;
+  if (album.entity === "track") { playStreamingTrack(album, []); return; } // a track result plays directly
+  if (musicItemCache.has(album.id)) { musicOpenItem = musicItemCache.get(album.id); updateDiscoverResults(); return; }
+  musicOpenItem = { album, tracks: null }; musicOpenItemLoading = true; updateDiscoverResults();
+  try {
+    const reg = await getMusicProviders();
+    const p = reg.get(album.provider);
+    const detail = p && p.getItem ? await p.getItem(album) : { album, tracks: [] };
+    musicItemCache.set(album.id, detail);
+    musicOpenItem = detail;
+  } catch (e) {
+    console.warn("open item failed", e);
+    musicOpenItem = { album, tracks: [], error: "Couldn't load this item." };
+  } finally { musicOpenItemLoading = false; updateDiscoverResults(); }
+}
+function closeMusicItem() { musicOpenItem = null; updateDiscoverResults(); }
+
+// Favorites & history — normalized, provider-independent, in local state.
+function isMusicFavorite(id) { return (state.musicFavorites || []).some((f) => f.id === id); }
+function toggleMusicFavorite(item) {
+  if (!item) return;
+  const favs = state.musicFavorites || [];
+  const i = favs.findIndex((f) => f.id === item.id);
+  if (i >= 0) favs.splice(i, 1); else favs.unshift(item);
+  state.musicFavorites = favs.slice(0, 200);
+  persist(); updateDiscoverResults();
+}
+function replayMusicHistory(id) {
+  const h = (state.musicHistory || []).find((x) => x.id === id);
+  if (!h) return;
+  if (h.kind === "stream" && h.canonical) playStreamingTrack(h.canonical, []);
+  else if (h.kind === "library") playMusicTrackById(h.id);
+}
+
+// ── Discover rendering ────────────────────────────────────────────────────────
+function musicProviderBadge(providerId) {
+  const label = MUSIC_PROVIDER_LABELS[providerId] || providerId || "";
+  return label ? `<span class="music-badge music-badge--provider">${escapeHtml(label)}</span>` : "";
+}
+function musicLicenseBadge(license) {
+  if (!license) return "";
+  if (license.isPublicDomain) return `<span class="music-badge music-badge--pd" title="${escapeHtml(license.url || "Public domain")}">Public Domain</span>`;
+  if (/^cc/i.test(license.type)) return `<span class="music-badge music-badge--cc" title="${escapeHtml(license.url || "Creative Commons")}">CC</span>`;
+  if (license.url) return `<span class="music-badge" title="${escapeHtml(license.url)}">Licensed</span>`;
+  return "";
+}
+const musicFavSvg = (on) => `<svg viewBox="0 0 24 24" width="17" height="17" fill="${on ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 21s-7.5-4.6-10-9.3C.4 8.4 2 5 5.2 5c2 0 3.3 1.1 4.1 2.3C10.5 6.1 11.8 5 13.8 5 17 5 18.6 8.4 17 11.7 14.5 16.4 12 21 12 21z"/></svg>`;
+
+function musicThumb(url, cls = "") {
+  return url
+    ? `<img class="music-thumb ${cls}" src="${escapeHtml(url)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
+    : `<span class="music-thumb music-thumb--ph ${cls}" aria-hidden="true">${MUSIC_ALBUM_PH_SVG}</span>`;
+}
+
+function musicResultRow(item) {
+  indexMusicItem(item);
+  const isTrack = item.entity === "track";
+  const sub = isTrack ? (item.artists?.[0]?.name || item.composer?.name || "") : (item.artist || item.composer || "");
+  const fav = isMusicFavorite(item.id);
+  return `<div class="music-result" data-music-open="${escapeHtml(item.id)}" role="button" tabindex="0">
+      ${musicThumb(item.artworkUrl)}
+      <span class="music-result-main">
+        <span class="music-result-title">${escapeHtml(item.title)}</span>
+        <span class="music-result-sub">${sub ? escapeHtml(sub) + " · " : ""}${musicProviderBadge(item.provider)}${musicLicenseBadge(item.license)}</span>
+      </span>
+      <button class="music-fav-btn${fav ? " is-on" : ""}" type="button" data-music-fav="${escapeHtml(item.id)}" aria-label="${fav ? "Remove favourite" : "Add favourite"}" aria-pressed="${fav}">${musicFavSvg(fav)}</button>
+      <span class="music-result-go" aria-hidden="true">${isTrack ? MUSIC_PLAY_SVG : "›"}</span>
+    </div>`;
+}
+
+function musicStreamTrackRow(track) {
+  indexMusicItem(track);
+  const active = musicCurTrack && musicCurTrack.id === track.id;
+  const playing = active && musicAudio && !musicAudio.paused && !musicAudio.ended;
+  const dur = track.durationMs ? formatPodcastDuration(Math.round(track.durationMs / 1000)) : "";
+  const no = track.trackNo != null ? `<span class="music-row-no">${track.trackNo}</span>` : `<span class="music-row-no music-row-no--dot">•</span>`;
+  const fav = isMusicFavorite(track.id);
+  return `<div class="music-row${active ? " is-active" : ""}" data-stream-play="${escapeHtml(track.id)}" role="button" tabindex="0" aria-label="${escapeHtml(track.title)}">
+      <span class="music-row-icon" aria-hidden="true">${active ? (playing ? MUSIC_PAUSE_SVG : MUSIC_PLAY_SVG) : no}</span>
+      <span class="music-row-main"><span class="music-row-title">${escapeHtml(track.title)}</span>${track.movement ? `<span class="music-row-sub">${escapeHtml(track.movement)}</span>` : ""}</span>
+      ${dur ? `<span class="music-row-dur">${escapeHtml(dur)}</span>` : ""}
+      <button class="music-fav-btn${fav ? " is-on" : ""}" type="button" data-music-fav="${escapeHtml(track.id)}" aria-label="Favourite">${musicFavSvg(fav)}</button>
+    </div>`;
+}
+
+function musicOpenItemHtml() {
+  const { album, tracks, error } = musicOpenItem;
+  indexMusicItem(album);
+  const composer = album.composer || album.artist || "";
+  const head = `<div class="music-item-head">
+      <button class="music-back-btn" type="button" data-music-back aria-label="Back to results"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></button>
+      ${musicThumb(album.artworkUrl, "music-thumb--lg")}
+      <span class="music-item-meta">
+        <span class="music-item-title">${escapeHtml(album.title)}</span>
+        ${composer ? `<span class="music-item-artist">${escapeHtml(composer)}</span>` : ""}
+        <span class="music-item-badges">${musicProviderBadge(album.provider)}${musicLicenseBadge(album.license)}${album.license && album.license.attribution ? `<span class="music-attr">${escapeHtml(album.license.attribution)}</span>` : ""}</span>
+      </span>
+    </div>`;
+  if (musicOpenItemLoading && !tracks) return head + `<p class="music-status">Loading tracks…</p>`;
+  if (error) return head + `<p class="music-status">${escapeHtml(error)}</p>`;
+  if (!tracks || !tracks.length) return head + `<p class="music-status">No individually streamable tracks in this item.</p>`;
+  return head + `<div class="music-list">${tracks.map(musicStreamTrackRow).join("")}</div>`;
+}
+
+function musicDiscoverHomeHtml() {
+  const chips = MUSIC_CATEGORIES.map((c) => `<button class="music-chip" type="button" data-music-cat="${escapeHtml(c.q)}">${escapeHtml(c.label)}</button>`).join("");
+  const hist = (state.musicHistory || []).slice(0, 8);
+  const favs = (state.musicFavorites || []).slice(0, 12);
+  const histHtml = hist.length ? `<h4 class="music-section-h">Recently played</h4><div class="music-list">${hist.map((h) => {
+    indexMusicItem(h.canonical || h);
+    return `<div class="music-row" data-music-replay="${escapeHtml(h.id)}" role="button" tabindex="0">
+        <span class="music-row-icon" aria-hidden="true">${MUSIC_PLAY_SVG}</span>
+        <span class="music-row-main"><span class="music-row-title">${escapeHtml(h.title || "Untitled")}</span>${h.artist ? `<span class="music-row-sub">${escapeHtml(h.artist)}</span>` : ""}</span>
+      </div>`;
+  }).join("")}</div>` : "";
+  const favHtml = favs.length ? `<h4 class="music-section-h">Favourites</h4><div class="music-list">${favs.map((f) => musicResultRow(f)).join("")}</div>` : "";
+  return `<div class="music-discover-home">
+      <div class="music-chips">${chips}</div>
+      ${histHtml}${favHtml}
+      ${!hist.length && !favs.length ? `<p class="music-empty-sub music-discover-hint">Search for a composer, work, or mood — or tap a category above. Free & open recordings from the Internet Archive and Musopen, streamed from the source.</p>` : ""}
+    </div>`;
+}
+
+function discoverResultsHtml() {
+  musicViewIndex = new Map();
+  if (musicOpenItem) return musicOpenItemHtml();
+  if (musicSearchLoading) return `<p class="music-status">Searching…</p>`;
+  if (musicSearchResults) {
+    const { items, providerStatuses } = musicSearchResults;
+    const failed = (providerStatuses || []).filter((s) => !s.ok);
+    const note = failed.length ? `<p class="music-provider-note">${failed.map((s) => escapeHtml(MUSIC_PROVIDER_LABELS[s.provider] || s.provider)).join(", ")} unavailable — showing the rest.</p>` : "";
+    if (!items.length) return note + `<p class="music-status">No results for “${escapeHtml(musicSearchQuery)}”.</p>`;
+    return note + `<div class="music-results">${items.map(musicResultRow).join("")}</div>`;
+  }
+  return musicDiscoverHomeHtml();
+}
+
+function renderMusicDiscoverBody() {
+  return `<div class="music-discover">
+      <div class="music-search-bar">
+        <svg class="music-search-ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input type="search" id="musicSearchInput" class="music-search-input" placeholder="Search composers, works, moods…" autocomplete="off" spellcheck="false" value="${escapeHtml(musicSearchQuery)}">
+      </div>
+      <div id="musicDiscoverResults" class="music-discover-results">${discoverResultsHtml()}</div>
+    </div>`;
+}
+
+function updateDiscoverResults() {
+  const el = document.getElementById("musicDiscoverResults");
+  if (el) el.innerHTML = discoverResultsHtml();
+  else if (musicTabMode === "discover") renderMusicPanel();
 }
 
 // ── Unified now-playing bar (podcasts + article/email TTS + music) ────────────
@@ -41947,7 +42267,7 @@ function nowPlayingInfo() {
     const t = musicCurTrack;
     if (!t) return null;
     return {
-      art: musicArtUrlFor(t),
+      art: t.artworkUrl || "",
       title: t.title || "Untitled",
       show: t.artist || "",
       date: t.album || "",
