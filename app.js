@@ -33098,6 +33098,7 @@ let cadenceActiveCtx = null;       // { workId, movementId, editionId } of the o
 let cadenceFollow = false;         // auto-follow (score following) on?
 let cadenceFollowEngine = null;
 let cadenceFollowInput = null;
+let cadenceAccuracy = null;        // accuracy analyzer while practicing with follow
 
 async function getCadence() {
   if (cadenceMod) return cadenceMod;
@@ -33112,6 +33113,7 @@ async function getCadence() {
     import("./music/input-midi.js"),
     import("./music/input-mic.js"),
   ]);
+  const accuracy = await import("./music/accuracy.js");
   cadenceStorage = cadenceStorage || storage.createIdbStorage("cadence");
   cadenceMod = {
     importMusicXmlFile: imp.importMusicXmlFile, loadWork: imp.loadWork, listWorks: imp.listWorks,
@@ -33120,7 +33122,7 @@ async function getCadence() {
     saveSession: practice.saveSession, listSessions: practice.listSessions,
     deleteSession: practice.deleteSession, workStats: practice.workStats,
     createFollowingEngine: follow.createFollowingEngine, createMidiInputProvider: midi.createMidiInputProvider,
-    createMicInputProvider: mic.createMicInputProvider,
+    createMicInputProvider: mic.createMicInputProvider, createAccuracyTracker: accuracy.createAccuracyTracker,
   };
   return cadenceMod;
 }
@@ -33166,7 +33168,7 @@ async function ensureCadenceLibrary() {
 function resetCadenceViewer() {
   try { cadenceRenderer?.destroy?.(); } catch { /* noop */ }
   try { cadenceFollowInput?.stop?.(); } catch { /* noop */ }
-  cadenceFollowInput = null; cadenceFollowEngine = null; cadenceFollow = false;
+  cadenceFollowInput = null; cadenceFollowEngine = null; cadenceFollow = false; cadenceAccuracy = null;
   if (cadencePracticeTimer) { clearInterval(cadencePracticeTimer); cadencePracticeTimer = null; }
   cadencePracticeStart = null; cadenceWorkSessions = null; cadenceLastPosition = null; cadenceActiveCtx = null;
   cadenceRenderer = null; cadenceLayout = null; cadenceModel = null; cadenceActiveWorkId = null;
@@ -33242,6 +33244,7 @@ function cadencePracticeSectionHtml() {
       <div class="cadence-session-row">
         <span class="cadence-session-day">${escapeHtml(cadenceRelDay(s.startedAt))}</span>
         <span class="cadence-session-dur">${escapeHtml(cadenceFmtDur(s.durationMs || 0))}</span>
+        ${(() => { const a = (s.metrics || []).find((m) => m.type === "accuracy"); return a ? `<span class="cadence-session-acc" title="Score-following accuracy">${Math.round(a.value * 100)}%</span>` : ""; })()}
         <span class="cadence-session-note">${escapeHtml(s.notes || "")}</span>
         <button class="icon-btn piano-song-delete-btn" type="button" data-cadence-session-del="${escapeHtml(s.id)}" title="Delete session" aria-label="Delete session">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -33286,6 +33289,9 @@ function toggleCadencePractice() {
       const el = document.getElementById("cadencePracticeElapsed");
       if (el) el.textContent = cadenceElapsedLabel();
     }, 1000);
+    // Start an accuracy analyzer for this session — it accumulates only if follow
+    // is (or gets) turned on; otherwise it stays empty and no metrics are saved.
+    getCadence().then((C) => { cadenceAccuracy = C.createAccuracyTracker(); }).catch(() => { cadenceAccuracy = null; });
     refreshCadencePractice();
   } else {
     stopAndSaveCadencePractice();
@@ -33298,9 +33304,23 @@ async function stopAndSaveCadencePractice() {
   if (cadencePracticeTimer) { clearInterval(cadencePracticeTimer); cadencePracticeTimer = null; }
   refreshCadencePractice(); // show the stopped state immediately
   const durationMs = Date.now() - start;
+  const tracker = cadenceAccuracy; cadenceAccuracy = null;
   if (durationMs < 3000) return; // ignore an accidental start/stop
   try {
     const C = await getCadence();
+    // If follow ran during the session, turn its data into versioned metrics.
+    let metrics = [], summary = null;
+    if (tracker && tracker.count() > 0) {
+      summary = tracker.summary();
+      const producedBy = "following-naive-v0", producerVersion = "0.1";
+      metrics = [
+        { type: "accuracy", value: summary.accuracy, unit: "ratio", producedBy, producerVersion },
+        { type: "notesPlayed", value: summary.played, unit: "count", producedBy, producerVersion },
+        { type: "wrongNotes", value: summary.wrong, unit: "count", producedBy, producerVersion },
+        { type: "missedNotes", value: summary.missed, unit: "count", producedBy, producerVersion },
+        { type: "troubleSpots", value: summary.troubleSpots, producedBy, producerVersion },
+      ];
+    }
     await C.saveSession(cadenceStorage, {
       workId: cadenceActiveCtx?.workId || cadenceActiveWorkId,
       movementId: cadenceActiveCtx?.movementId || null,
@@ -33308,12 +33328,18 @@ async function stopAndSaveCadencePractice() {
       startedAt: new Date(start).toISOString(),
       endedAt: new Date().toISOString(),
       durationMs,
-      inputSource: "manual",
+      inputSource: summary ? "follow" : "manual",
       startPosition: cadenceLastPosition || null,
+      metrics,
     });
     cadenceWorkSessions = await C.listSessions(cadenceStorage, { workId: cadenceActiveWorkId });
     cadenceLibrary = null; // stats changed — library summaries refresh on return
     refreshCadencePractice();
+    if (summary) {
+      const acc = Math.round(summary.accuracy * 100);
+      const ts = summary.troubleSpots.length;
+      setCadenceFollowStatus(`Saved · ${acc}% accuracy · ${summary.played} notes${ts ? ` · ${ts} tricky bar${ts > 1 ? "s" : ""}` : ""}`);
+    }
   } catch (e) { console.warn("Cadence save session failed:", e); }
 }
 
@@ -33333,7 +33359,11 @@ async function toggleCadenceFollow() {
     if (!cadenceModel) return;
     const engine = C.createFollowingEngine();
     engine.load(cadenceModel, { context: cadenceActiveCtx });
-    const sink = (ev) => { const s = engine.push(ev); if (s.matched && s.position) applyFollowPosition(s.position); };
+    const sink = (ev) => {
+      const s = engine.push(ev);
+      if (cadenceAccuracy) cadenceAccuracy.observe(s, ev); // accumulate accuracy when practicing
+      if (s.matched && s.position) applyFollowPosition(s.position);
+    };
 
     // Prefer a connected MIDI keyboard; otherwise listen through the microphone.
     let input = null, label = "";

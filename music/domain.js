@@ -108,6 +108,17 @@ export function makePracticeSession(p = {}) {
     sectionsPracticed: arr(p.sectionsPracticed),
     recordingId: str(p.recordingId) || null,
     notes: str(p.notes),
+    // Extensible analysis records attached to the session (accuracy, tempo, …),
+    // each versioned so historical values stay interpretable.
+    metrics: arr(p.metrics).map((m) => ({
+      type: str(m?.type),
+      value: m?.value ?? null,
+      unit: str(m?.unit) || null,
+      range: m?.range || null,
+      schemaVersion: num(m?.schemaVersion, 1),
+      producedBy: str(m?.producedBy) || null,
+      producerVersion: str(m?.producerVersion) || null,
+    })),
     context: obj(p.context),
     createdAt: str(p.createdAt) || startedAt,
   };
