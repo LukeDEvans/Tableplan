@@ -32985,6 +32985,7 @@ function renderRecreatePage() {
   `;
   elements.recreatePlannerGrid.querySelector("[data-recreate-back]")?.addEventListener("click", () => {
     stopMetronome();
+    resetCadenceViewer();
     activeRecreateHobby = null;
     renderRecreatePage();
   });
@@ -33055,6 +33056,7 @@ function bindRecreateControls() {
   elements.recreatePlannerGrid.querySelectorAll("[data-hobby-tab]").forEach((btn) => {
     btn.addEventListener("click", () => {
       stopMetronome();
+      resetCadenceViewer();
       activeRecreateHobby = btn.dataset.hobbyTab;
       renderRecreatePage();
     });
@@ -33072,7 +33074,206 @@ function bindRecreateControls() {
 
 // ── Piano panel ────────────────────────────────────────────
 
+// ── Cadence: music / piano-score subsystem ────────────────────────────────────
+// The domain, storage, parser, and OSMD renderer live in music/*.js and are
+// code-split (dynamic import) so they only load the first time a score is used —
+// no boot cost, offline-capable once loaded. Scores persist locally in
+// IndexedDB (offline-owned); metadata sync is a later concern.
+let cadenceMod = null;
+let cadenceStorage = null;
+let cadenceLibrary = null;         // [{id,title,composer}] or null = not yet loaded
+let cadenceLibraryLoading = false;
+let cadenceActiveWorkId = null;    // a score is open in the viewer
+let cadenceRenderer = null;
+let cadenceLayout = null;
+let cadenceModel = null;
+let cadenceViewMode = "continuous";
+let cadenceImporting = false;
+
+async function getCadence() {
+  if (cadenceMod) return cadenceMod;
+  const [storage, imp, rend, model, osmd] = await Promise.all([
+    import("./music/storage.js"),
+    import("./music/import.js"),
+    import("./music/score-renderer.js"),
+    import("./music/score-model.js"),
+    import("./music/renderers/osmd-adapter.js"),
+  ]);
+  cadenceStorage = cadenceStorage || storage.createIdbStorage("cadence");
+  cadenceMod = {
+    importMusicXmlFile: imp.importMusicXmlFile, loadWork: imp.loadWork, listWorks: imp.listWorks,
+    hitTestPosition: rend.hitTestPosition, offsetToDisplayBeat: model.offsetToDisplayBeat,
+    createOsmdRenderer: osmd.createOsmdRenderer,
+  };
+  return cadenceMod;
+}
+
+async function ensureCadenceLibrary() {
+  if (cadenceLibrary || cadenceLibraryLoading) return;
+  cadenceLibraryLoading = true;
+  try {
+    const { listWorks } = await getCadence();
+    cadenceLibrary = await listWorks(cadenceStorage);
+  } catch (e) { cadenceLibrary = []; console.warn("Cadence library load failed:", e); }
+  cadenceLibraryLoading = false;
+  if (activeAppArea === "recreate" && activeRecreateHobby === "piano" && !cadenceActiveWorkId) renderRecreatePage();
+}
+
+function resetCadenceViewer() {
+  try { cadenceRenderer?.destroy?.(); } catch { /* noop */ }
+  cadenceRenderer = null; cadenceLayout = null; cadenceModel = null; cadenceActiveWorkId = null;
+}
+
+function cadenceScoreIconSvg() {
+  return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`;
+}
+
+function cadenceLibrarySectionHtml() {
+  let inner;
+  if (cadenceLibrary == null) inner = `<p class="piano-empty-state">Loading scores…</p>`;
+  else if (!cadenceLibrary.length) inner = `<p class="piano-empty-state">No scores yet. Import a MusicXML file to get started.</p>`;
+  else inner = cadenceLibrary.map((w) => `
+      <div class="cadence-work-row" data-cadence-open="${escapeHtml(w.id)}" role="button" tabindex="0">
+        <span class="cadence-work-icon" aria-hidden="true">${cadenceScoreIconSvg()}</span>
+        <span class="cadence-work-meta">
+          <span class="cadence-work-title">${escapeHtml(w.title || "Untitled")}</span>
+          ${w.composer ? `<span class="cadence-work-composer">${escapeHtml(w.composer)}</span>` : ""}
+        </span>
+        <button class="icon-btn piano-song-delete-btn" type="button" data-cadence-delete="${escapeHtml(w.id)}" title="Delete score" aria-label="Delete score">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>`).join("");
+  return `
+      <div class="piano-songs-section cadence-scores-section">
+        <div class="piano-songs-head">
+          <span class="settings-subheading">Scores</span>
+          <button class="icon-btn std-add-btn" type="button" data-cadence-import title="Import a MusicXML score" aria-label="Import score">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+        <div class="cadence-library">${inner}</div>
+        ${cadenceImporting ? `<p class="cadence-import-status">Importing…</p>` : ""}
+        <input type="file" id="cadenceFileInput" accept=".xml,.musicxml,.mxl" hidden />
+      </div>`;
+}
+
+function renderCadenceViewer() {
+  const work = (cadenceLibrary || []).find((w) => w.id === cadenceActiveWorkId);
+  return `
+    <div class="cadence-viewer">
+      <div class="cadence-viewer-bar">
+        <button class="icon-btn" type="button" data-cadence-close title="Back to scores" aria-label="Back to scores">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        </button>
+        <div class="cadence-viewer-title">${escapeHtml(work?.title || "Score")}</div>
+        <select class="cadence-mode-select" data-cadence-mode aria-label="Display mode">
+          <option value="continuous"${cadenceViewMode === "continuous" ? " selected" : ""}>Scroll</option>
+          <option value="paged"${cadenceViewMode === "paged" ? " selected" : ""}>Paged</option>
+        </select>
+      </div>
+      <div class="cadence-score-host" id="cadenceScoreHost"><p class="piano-empty-state">Rendering…</p></div>
+      <div class="cadence-pos-readout" id="cadencePosReadout" aria-live="polite"></div>
+    </div>`;
+}
+
+function openCadenceWork(id) { cadenceActiveWorkId = id; cadenceLayout = null; cadenceModel = null; renderRecreatePage(); }
+function closeCadenceWork() { resetCadenceViewer(); renderRecreatePage(); }
+
+async function handleCadenceImport(file) {
+  cadenceImporting = true; renderRecreatePage();
+  try {
+    const { importMusicXmlFile, listWorks } = await getCadence();
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const res = await importMusicXmlFile({ name: file.name, bytes }, cadenceStorage, {});
+    cadenceLibrary = await listWorks(cadenceStorage);
+    cadenceImporting = false;
+    openCadenceWork(res.work.id); // jump straight into the freshly imported score
+  } catch (e) {
+    cadenceImporting = false;
+    console.warn("Cadence import failed:", e);
+    alert("Couldn't import that score — is it a MusicXML file?\n\n" + (e?.message || e));
+    renderRecreatePage();
+  }
+}
+
+async function mountCadenceViewer(host) {
+  host.dataset.mounted = "1";
+  try { cadenceRenderer?.destroy?.(); } catch { /* noop */ }
+  cadenceRenderer = null;
+  try {
+    const C = await getCadence();
+    const w = await C.loadWork(cadenceStorage, cadenceActiveWorkId);
+    if (!w || !w.model) { host.innerHTML = `<p class="piano-empty-state">Couldn't load this score.</p>`; return; }
+    const rec = await cadenceStorage.get("bytes", w.representation.blobId);
+    if (!rec) { host.innerHTML = `<p class="piano-empty-state">This score's file isn't on this device.</p>`; return; }
+    const xml = new TextDecoder().decode(rec.bytes);
+    cadenceModel = w.model;
+    const ctx = { workId: w.work.id, movementId: w.work.movements[0].id, editionId: w.work.editions[0].id };
+    const measureIds = w.work.editions[0].representations[0].measureIdentity.ids;
+    host.innerHTML = "";
+    cadenceRenderer = await C.createOsmdRenderer(host, ctx, measureIds);
+    await cadenceRenderer.load(xml, { mode: cadenceViewMode });
+    cadenceLayout = cadenceRenderer.render();
+    host.addEventListener("click", (e) => onCadenceScoreClick(e, host, C));
+  } catch (e) {
+    console.warn("Cadence render failed:", e);
+    host.innerHTML = `<p class="piano-empty-state">Couldn't render this score.<br><small>${escapeHtml(e?.message || String(e))}</small></p>`;
+  }
+}
+
+function onCadenceScoreClick(e, host, C) {
+  if (!cadenceLayout || !cadenceRenderer) return;
+  const r = host.getBoundingClientRect();
+  const pos = C.hitTestPosition(cadenceLayout, e.clientX - r.left + host.scrollLeft, e.clientY - r.top + host.scrollTop);
+  const readout = document.getElementById("cadencePosReadout");
+  if (!pos) { if (readout) readout.textContent = ""; return; }
+  cadenceRenderer.highlight(pos);
+  const timeSig = cadenceModel?.measures?.[pos.measureIndex]?.timeSig || [4, 4];
+  const beat = C.offsetToDisplayBeat(pos.offset, timeSig);
+  if (readout) readout.textContent = `Measure ${pos.measureIndex + 1} · beat ${beat.toFixed(2)}`;
+}
+
+async function deleteCadenceWork(id) {
+  try {
+    const C = await getCadence();
+    const w = await C.loadWork(cadenceStorage, id);
+    if (w?.representation) {
+      await cadenceStorage.delete("bytes", w.representation.blobId);
+      await cadenceStorage.delete("blobAssets", w.representation.blobId);
+      await cadenceStorage.delete("scoreModels", w.representation.id);
+      await cadenceStorage.delete("representations", w.representation.id);
+    }
+    await cadenceStorage.delete("works", id);
+    cadenceLibrary = (cadenceLibrary || []).filter((x) => x.id !== id);
+  } catch (e) { console.warn("Cadence delete failed:", e); }
+  renderRecreatePage();
+}
+
+function bindCadence(grid) {
+  if (cadenceActiveWorkId) {
+    grid.querySelector("[data-cadence-close]")?.addEventListener("click", closeCadenceWork);
+    grid.querySelector("[data-cadence-mode]")?.addEventListener("change", (e) => {
+      cadenceViewMode = e.target.value;
+      if (cadenceRenderer) { cadenceRenderer.setMode(cadenceViewMode); cadenceLayout = cadenceRenderer.getLayoutIndex(); }
+    });
+    const host = grid.querySelector("#cadenceScoreHost");
+    if (host && !host.dataset.mounted) mountCadenceViewer(host);
+    return;
+  }
+  ensureCadenceLibrary();
+  grid.querySelector("[data-cadence-import]")?.addEventListener("click", () => grid.querySelector("#cadenceFileInput")?.click());
+  grid.querySelector("#cadenceFileInput")?.addEventListener("change", (e) => { const f = e.target.files?.[0]; if (f) handleCadenceImport(f); });
+  grid.querySelectorAll("[data-cadence-open]").forEach((row) => {
+    row.addEventListener("click", (e) => { if (e.target.closest("[data-cadence-delete]")) return; openCadenceWork(row.dataset.cadenceOpen); });
+    row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openCadenceWork(row.dataset.cadenceOpen); } });
+  });
+  grid.querySelectorAll("[data-cadence-delete]").forEach((btn) => {
+    btn.addEventListener("click", (e) => { e.stopPropagation(); deleteCadenceWork(btn.dataset.cadenceDelete); });
+  });
+}
+
 function renderPianoPanel() {
+  if (cadenceActiveWorkId) return renderCadenceViewer();
   const songs = state.pianoSongs || [];
   const songsHtml = songs.length
     ? songs.map((s) => `
@@ -33186,18 +33387,7 @@ function renderPianoPanel() {
         <div class="metronome-hint" id="metronomeHint">${metronomeIsPlaying ? "Tap to stop" : "Tap to start"}</div>
       </div>
 
-      <div class="piano-songs-section">
-        <div class="piano-songs-head">
-          <span class="settings-subheading">Songs</span>
-        </div>
-        <div class="piano-songs-list" id="pianoSongsList">${songsHtml}</div>
-        <form class="piano-add-song-form inline-form" id="pianoAddSongForm">
-          <input type="text" id="pianoAddSongInput" placeholder="Song title" autocomplete="off" required />
-          <button class="icon-btn" type="submit" title="Add song" aria-label="Add song">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-          </button>
-        </form>
-      </div>
+      ${cadenceLibrarySectionHtml()}
 
       <div class="piano-songs-section piano-log-section">
         <div class="piano-songs-head">
@@ -33261,19 +33451,10 @@ function bindPianoControls() {
   bob?.addEventListener("click", (e) => e.stopPropagation());
   positionMetronomeBob();
 
-  // Song list controls
-  grid.querySelector("#pianoAddSongForm")?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const input = grid.querySelector("#pianoAddSongInput");
-    const title = input?.value.trim();
-    if (!title) return;
-    if (!Array.isArray(state.pianoSongs)) state.pianoSongs = [];
-    state.pianoSongs.push({ id: createId("piano"), title, learned: false, sheetMusicUrl: "" });
-    persist();
-    input.value = "";
-    renderPianoSongsList();
-  });
+  // Scores (Cadence): library + score viewer
+  bindCadence(grid);
 
+  // Practice log
   grid.querySelector("#pianoLogForm")?.addEventListener("submit", (e) => {
     e.preventDefault();
     const date = grid.querySelector("#pianoLogDate")?.value;
@@ -33292,26 +33473,6 @@ function bindPianoControls() {
       persist();
       renderRecreatePage();
     });
-  });
-
-  grid.querySelector("#pianoSongsList")?.addEventListener("change", (e) => {
-    const learnedInput = e.target.closest("[data-piano-song-learned]");
-    if (learnedInput) {
-      const song = (state.pianoSongs || []).find((s) => s.id === learnedInput.dataset.pianoSongLearned);
-      if (song) { song.learned = learnedInput.checked; persist(); renderPianoSongsList(); }
-    }
-  });
-
-  grid.querySelector("#pianoSongsList")?.addEventListener("click", (e) => {
-    const editBtn = e.target.closest("[data-piano-song-edit]");
-    if (editBtn) { openPianoSongEdit(editBtn.dataset.pianoSongEdit); return; }
-    const delBtn = e.target.closest("[data-piano-song-delete]");
-    if (delBtn) {
-      recordDeletion("pianoSongs", delBtn.dataset.pianoSongDelete);
-      state.pianoSongs = (state.pianoSongs || []).filter((s) => s.id !== delBtn.dataset.pianoSongDelete);
-      persist();
-      renderPianoSongsList();
-    }
   });
 }
 

@@ -12982,6 +12982,65 @@ body.touch-drag-active * {
   border: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
+/* ── Cadence: score library + viewer ─────────────────────────────────────── */
+.cadence-library { display: flex; flex-direction: column; gap: 6px; }
+.cadence-work-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: rgba(255, 253, 246, 0.6);
+  border: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+  cursor: pointer;
+}
+.cadence-work-row:hover { border-color: var(--accent); }
+.cadence-work-icon { color: var(--accent); display: inline-flex; flex: 0 0 auto; }
+.cadence-work-meta { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.cadence-work-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cadence-work-composer { color: var(--muted); font-size: 0.82rem; }
+.cadence-import-status { color: var(--muted); font-size: 0.85rem; margin: 0; }
+
+.cadence-viewer { display: flex; flex-direction: column; gap: 10px; }
+.cadence-viewer-bar { display: flex; align-items: center; gap: 10px; }
+.cadence-viewer-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 700;
+  font-size: 1.05rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cadence-mode-select {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+.cadence-score-host {
+  position: relative;
+  overflow: auto;
+  max-height: 68vh;
+  /* Sheet paper — kept light in both themes so OSMD's black engraving stays legible. */
+  background: #fffdf8;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+.cadence-score-host svg { max-width: 100%; }
+.cadence-score-host .piano-empty-state { color: #6f6a60; }
+.cadence-pos-readout {
+  min-height: 1.2em;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .piano-song-check {
   display: flex;
   align-items: center;
