@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "fast-xml-parser": "^5.10.1",
     "web-push": "^3.6.7"
   },
   "devDependencies": {
