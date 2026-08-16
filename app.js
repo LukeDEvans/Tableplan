@@ -47139,11 +47139,29 @@ function extractTripEmoji(rawName) {
   return { emoji: m[0], name: stripped };
 }
 
+// Compact numeric date for the sidebar: day/month/'yy (no leading zeros).
+// "2026-07-24" → "24/7/'26". Ranges collapse shared month/year so they fit:
+//   same month+year → "24–26/7/'26";  same year → "24/7–2/8/'26".
+function tripDateParts(dateKey) {
+  const [yr, mo, da] = String(dateKey || "").split("-");
+  return { y: (yr || "").slice(2), m: parseInt(mo, 10), d: parseInt(da, 10) };
+}
+function formatTripDateRange(start, end) {
+  if (!start) return "";
+  const s = tripDateParts(start);
+  if (!Number.isFinite(s.d) || !Number.isFinite(s.m)) return "";
+  if (!end || end === start) return `${s.d}/${s.m}/'${s.y}`;
+  const e = tripDateParts(end);
+  if (s.y === e.y && s.m === e.m) return `${s.d}–${e.d}/${s.m}/'${s.y}`;
+  if (s.y === e.y) return `${s.d}/${s.m}–${e.d}/${e.m}/'${s.y}`;
+  return `${s.d}/${s.m}/'${s.y}–${e.d}/${e.m}/'${e.y}`;
+}
+
 function exploreTripTabHtml(trip) {
   const status = TravelModel.deriveStatus(trip);
   const meta = TravelModel.TRIP_STATUS_META[status] || {};
   const dates = trip.startDate
-    ? formatTravelDate(trip.startDate) + (trip.endDate ? " – " + formatTravelDate(trip.endDate) : "")
+    ? formatTripDateRange(trip.startDate, trip.endDate)
     : (status === "idea" ? "Idea" : "No dates");
   // A name emoji (e.g. "🇹🇷 Türkiye") becomes the trip's icon; otherwise fall
   // back to the lifecycle-status glyph.
