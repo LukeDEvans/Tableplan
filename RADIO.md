@@ -67,7 +67,9 @@ Played**. A search box queries the registry (MPR catalog + Radio Browser). It is
 
 ## Local vs provider data (local-first)
 - **App owns** (in `state`, `persist()`): `radioFavorites` (favourite *stations*),
-  `radioHistory` (recently played / last played station snapshots),
+  **recently/last-played via the unified `state.mediaHistory`** (`media-history.js`,
+  shared with music/podcasts — radio reads `getRecentMedia({kind:"radio"})`; each
+  entry's `ref` is a station snapshot for replay),
   `radioFollowedPrograms` (followed programs, bridged to podcast subscriptions),
   and user-added stations later.
 - **Provider owns** (replaceable): station metadata, stream URLs, program/schedule

@@ -133,7 +133,7 @@ The queue interleaves library and streaming items; `onMusicEnded` advances it; a
 ## 5. Favorites, history, playlists
 
 Stored in **local sectioned `state`** (persisted via `persist()`), normalized and provider-independent:
-- `state.musicHistory` — recently played descriptors (+ the canonical track for stream replay), capped at 40.
+- **Recently played** lives in the **unified `state.mediaHistory`** (see `media-history.js`) shared with podcasts/radio, not a music-only list; music reads it via `getRecentMedia({kind:"music"})`. Each entry's `ref` carries what replay needs (`{mkind, canonical, recording}`).
 - `state.musicFavorites` — favorited canonical tracks/albums, capped at 200.
 
 No Supabase tables were added; this matches how the rest of the app stores user data and keeps favorites/history provider-agnostic. Playlists are not built yet but the normalized items + `providerRefs` make a `state.musicPlaylists[]` of canonical items a straightforward later addition.

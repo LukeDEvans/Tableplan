@@ -8,6 +8,7 @@ import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
 import { createWeatherCache } from './weather-cache.js';
 import { createPlaybackEngine } from './playback-engine.js';
+import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 
 const STORAGE_KEY = "tableplan-state-v1";
 const TRAVEL_LOGISTIC_ICONS = { flight: "✈️", hotel: "🏨", car: "🚗", train: "🚆", ferry: "⛴️", other: "📌" };
@@ -41386,6 +41387,7 @@ function startPodcastPlayback(episode, show, { autoplay = true } = {}) {
   }, { autoplay });
 
   showMiniPlayer(episode, show);
+  recordMediaHistory({ kind: "podcast", id: episode.id, title: episode.title || "", subtitle: (show && show.title) || "", artworkUrl: episode.art || (show && show.art) || "", ref: { episodeId: episode.id, showId: show && show.id } });
 
   // autoplay:false loads the episode into the player (panel + mini-player, ready
   // to play) but stays paused — used when a playlist row is tapped just to open
@@ -41659,14 +41661,30 @@ function setMusicMediaSession(desc) {
   } catch { /* MediaMetadata unsupported — ignore */ }
 }
 
-// Recently played — normalized descriptors kept in local state (no provider lock-in).
+// ── Unified media history (state.mediaHistory) — one store, all kinds ─────────
+let mediaHistoryMigrated = false;
+function migrateMediaHistoryOnce() {
+  if (mediaHistoryMigrated) return;
+  mediaHistoryMigrated = true;
+  if (!Array.isArray(state.mediaHistory)) state.mediaHistory = [];
+  if ((state.musicHistory && state.musicHistory.length) || (state.radioHistory && state.radioHistory.length)) {
+    state.mediaHistory = migrateLegacyMediaHistory(state.mediaHistory, { music: state.musicHistory, radio: state.radioHistory });
+    state.musicHistory = []; state.radioHistory = []; // folded into the unified store
+    persist();
+  }
+}
+function recordMediaHistory(entry) {
+  migrateMediaHistoryOnce();
+  state.mediaHistory = pushMediaHistoryEntry(state.mediaHistory, entry);
+  persist();
+}
+// Cross-app recency service (also the query surface for future AI/unified UI).
+function getRecentMedia(opts = {}) { migrateMediaHistoryOnce(); return recentMediaHistory(state.mediaHistory, opts); }
+
+// Recently played — each kind records a normalized entry into the ONE store.
 function pushMusicHistory(desc) {
   if (!desc || !desc.id) return;
-  const entry = { id: desc.id, title: desc.title || "", artist: desc.artist || "", album: desc.album || "", artworkUrl: desc.artworkUrl || "", kind: desc.kind || "", canonical: desc.canonical || null, recording: desc.recording || null, at: Date.now() };
-  const hist = (state.musicHistory || []).filter((h) => h.id !== desc.id);
-  hist.unshift(entry);
-  state.musicHistory = hist.slice(0, 40);
-  persist();
+  recordMediaHistory({ kind: "music", id: desc.id, title: desc.title, subtitle: desc.artist, artworkUrl: desc.artworkUrl, ref: { mkind: desc.kind || "", canonical: desc.canonical || null, recording: desc.recording || null } });
 }
 
 // ── Music panel (Listen → Music) ──────────────────────────────────────────────
@@ -42108,11 +42126,12 @@ async function openMusicItem(album) {
 function closeMusicItem() { musicOpenItem = null; updateDiscoverResults(); }
 
 function replayMusicHistory(id) {
-  const h = (state.musicHistory || []).find((x) => x.id === id);
+  const h = getRecentMedia({ kind: "music" }).find((x) => x.id === id);
   if (!h) return;
-  if (h.kind === "recording" && h.recording) playCanonicalRecording(h.recording);
-  else if (h.kind === "stream" && h.canonical) playStreamingTrack(h.canonical, []);
-  else if (h.kind === "library") playMusicTrackById(h.id);
+  const r = h.ref || {};
+  if (r.mkind === "recording" && r.recording) playCanonicalRecording(r.recording);
+  else if (r.mkind === "stream" && r.canonical) playStreamingTrack(r.canonical, []);
+  else playMusicTrackById(h.id);
 }
 
 // ── Discover rendering ────────────────────────────────────────────────────────
@@ -42222,7 +42241,7 @@ function musicOpenItemHtml() {
 
 function musicDiscoverHomeHtml() {
   const chips = MUSIC_CATEGORIES.map((c) => `<button class="music-chip" type="button" data-music-cat="${escapeHtml(c.q)}">${escapeHtml(c.label)}</button>`).join("");
-  const hist = (state.musicHistory || []).slice(0, 8);
+  const hist = getRecentMedia({ kind: "music", limit: 8 });
   const histHtml = hist.length ? `<h4 class="music-section-h">Recently played</h4><div class="music-list">${hist.map(musicHistoryRow).join("")}</div>` : "";
   return `<div class="music-discover-home">
       <div class="music-chips">${chips}</div>
@@ -42233,7 +42252,7 @@ function musicDiscoverHomeHtml() {
 function musicHistoryRow(h) {
   return `<div class="music-row" data-music-replay="${escapeHtml(h.id)}" role="button" tabindex="0">
       <span class="music-row-icon" aria-hidden="true">${MUSIC_PLAY_SVG}</span>
-      <span class="music-row-main"><span class="music-row-title">${escapeHtml(h.title || "Untitled")}</span>${h.artist ? `<span class="music-row-sub">${escapeHtml(h.artist)}</span>` : ""}</span>
+      <span class="music-row-main"><span class="music-row-title">${escapeHtml(h.title || "Untitled")}</span>${h.subtitle ? `<span class="music-row-sub">${escapeHtml(h.subtitle)}</span>` : ""}</span>
     </div>`;
 }
 
@@ -42298,7 +42317,7 @@ function renderMusicSavedBody() {
   const lib = getMusicLibraryState();
   const works = lib.favorites.filter((f) => f.type === "work");
   const recs = lib.favorites.filter((f) => f.type === "recording" || f.type === "album");
-  const hist = (state.musicHistory || []).slice(0, 10);
+  const hist = getRecentMedia({ kind: "music", limit: 10 });
   const pls = lib.playlists;
 
   const plHtml = `<div class="music-saved-sec"><h4 class="music-section-h">Playlists</h4>${pls.length
@@ -42554,15 +42573,14 @@ function setRadioMediaSession(station) {
   } catch { /* MediaMetadata unsupported */ }
 }
 
-// Recently played / last played — local, provider-independent station snapshots.
+// Recently played / last played — records into the unified store; ref carries a
+// station snapshot so the row can replay it (provider-independent, offline).
 function pushRadioHistory(station) {
   if (!station || !station.id) return;
-  const snap = { id: station.id, name: station.name, shortName: station.shortName || null, category: station.category || null, programGroup: station.programGroup || null, logoUrl: station.logoUrl || null, streams: station.streams || [], providerId: station.providerId, providerRefs: station.providerRefs || [], at: Date.now() };
-  const hist = (state.radioHistory || []).filter((h) => h.id !== station.id);
-  hist.unshift(snap);
-  state.radioHistory = hist.slice(0, 30);
-  persist();
+  const snap = { id: station.id, name: station.name, shortName: station.shortName || null, category: station.category || null, programGroup: station.programGroup || null, logoUrl: station.logoUrl || null, streams: station.streams || [], providerId: station.providerId, providerRefs: station.providerRefs || [] };
+  recordMediaHistory({ kind: "radio", id: station.id, title: station.name, subtitle: station.category, artworkUrl: station.logoUrl, ref: snap });
 }
+function radioRecentEntries() { return getRecentMedia({ kind: "radio" }); }
 // Favourite STATION ("easy access to this station"). Followed PROGRAMS are a
 // separate concept (state.radioFollowedPrograms) reserved for when reliable
 // program data exists — not surfaced in v1.
@@ -42637,12 +42655,13 @@ function radioNowCard() {
         <button class="radio-now-btn radio-now-stop" type="button" data-radio-stop aria-label="Stop">${MUSIC_X_SVG}</button>
       </div>`;
   }
-  const last = (state.radioHistory || [])[0];
-  if (last) {
+  const lastE = radioRecentEntries()[0];
+  const last = lastE && (lastE.ref || null);
+  if (last && last.id) {
     radioViewIndex.set(last.id, last);
     return `<div class="radio-now radio-now--last" data-radio-play="${escapeHtml(last.id)}" role="button" tabindex="0">
         ${radioStationThumb(last)}
-        <span class="radio-now-meta"><span class="radio-now-label">Last played</span><span class="radio-now-title">${escapeHtml(last.name)}</span><span class="radio-now-sub">${escapeHtml(relativeDayRadio(last.at))}${last.category ? " · " + escapeHtml(last.category) : ""}</span></span>
+        <span class="radio-now-meta"><span class="radio-now-label">Last played</span><span class="radio-now-title">${escapeHtml(last.name)}</span><span class="radio-now-sub">${escapeHtml(relativeDayRadio(lastE.at))}${last.category ? " · " + escapeHtml(last.category) : ""}</span></span>
         <button class="radio-now-btn" type="button" data-radio-play="${escapeHtml(last.id)}" aria-label="Resume">${MUSIC_PLAY_SVG}</button>
       </div>`;
   }
@@ -42658,7 +42677,7 @@ function relativeDayRadio(ts) {
 function radioHomeHtml() {
   radioViewIndex = new Map();
   const favs = state.radioFavorites || [];
-  const hist = (state.radioHistory || []).filter((h) => !radioCurStation || h.id !== radioCurStation.id).slice(0, 6);
+  const hist = radioRecentEntries().map((e) => e.ref).filter((s) => s && s.id && (!radioCurStation || s.id !== radioCurStation.id)).slice(0, 6);
   const cat = radioCatalog || [];
   const favHtml = favs.length ? `<h4 class="music-section-h">Your stations</h4><div class="music-list">${favs.map(radioStationRow).join("")}</div>` : "";
   // Browse the MPR catalog grouped by category (News / Music / Classical).
