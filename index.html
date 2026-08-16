@@ -487,12 +487,22 @@
         <!-- ── Explore page ──────────────────────────────────────────────── -->
         <section class="planner-column do-column article-read-page" id="exploreMainPage" aria-label="Explore" hidden>
           <div class="article-page-inner">
+            <div class="mail-topbar media-topbar">
+              <button class="icon-btn mail-sidebar-toggle" type="button" id="exploreSidebarToggle" title="Toggle trips" aria-label="Toggle trips list">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+              </button>
+              <div class="mail-search-wrap">
+                <svg class="mail-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                <input class="mail-search-input" id="exploreSearchInput" type="search" placeholder="Search trips" aria-label="Search trips" />
+              </div>
+              <div class="mail-topbar-right">
+                <button class="icon-btn" type="button" id="exploreAddTripBtn" title="New trip" aria-label="New trip">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
+              </div>
+            </div>
           <div class="article-layout">
               <div class="article-sidebar" id="exMediaSidebar">
-                <div class="explore-trips-header">
-                  <span class="article-sidebar-section-label">Trips</span>
-                  <button class="travel-new-btn" type="button" id="exploreAddTripBtn">+ Trip</button>
-                </div>
                 <div id="exploreTripList"></div>
               </div>
               <div class="article-content" id="exMediaContent">
@@ -509,9 +519,6 @@
                 <div class="explore-trip-view" id="exploreTripView" hidden>
                   <div class="travel-detail-header" id="exploreTripHeader">
                     <div class="travel-detail-title-row">
-                      <button class="icon-btn explore-trip-menu-btn" type="button" id="exploreTripMenuBtn" title="Show trips" aria-label="Show trips list">
-                        <svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-                      </button>
                       <h2 class="travel-detail-name" id="exploreDetailName" contenteditable="true" spellcheck="true"></h2>
                       <div class="travel-detail-header-actions">
                         <select class="travel-status-select" id="exploreStatusSelect">

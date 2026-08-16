@@ -1695,19 +1695,8 @@ function bindEvents() {
       sidebar.classList.toggle("is-collapsed");
     }
   });
-  document.getElementById("exploreTripMenuBtn")?.addEventListener("click", () => {
-    const sidebar = document.getElementById("exMediaSidebar");
-    if (!sidebar) return;
-    if (window.innerWidth <= 680) {
-      // Mobile: slide-over overlay (is-collapsed outranks it in specificity — clear it)
-      sidebar.classList.remove("is-collapsed");
-      sidebar.classList.toggle("is-expanded");
-    } else {
-      // Desktop: collapse/expand the docked sidebar
-      sidebar.classList.remove("is-expanded");
-      sidebar.classList.toggle("is-collapsed");
-    }
-  });
+  // Explore's trips sidebar is toggled by the topbar hamburger (#exploreSidebarToggle),
+  // wired in wireExploreTabs — matching the Media/Mail sidebars.
   // Travel page buttons
   document.getElementById("travelNewTripBtn")?.addEventListener("click", showTravelNewTripDialog);
   document.getElementById("travelEmptyTripBtn")?.addEventListener("click", showTravelNewTripDialog);
@@ -47119,16 +47108,27 @@ function showExploreApp(event) {
   }
 }
 
-function renderExploreSidebar(preserveSelectedId) {
+let exploreTripQuery = "";
+
+// listOnly re-renders just the trips list (used by live search) without opening
+// or closing the trip view — so filtering never disturbs the open trip.
+function renderExploreSidebar(preserveSelectedId, { listOnly = false } = {}) {
   const list = document.getElementById("exploreTripList");
   if (!list) return;
   const trips = travelTrips();
   if (!trips.length) {
     list.innerHTML = `<p class="explore-sidebar-empty">No trips yet</p>`;
-    showExploreTripEmpty();
+    if (!listOnly) showExploreTripEmpty();
     return;
   }
-  const sorted = [...trips].sort((a, b) => TravelModel.compareForHome(a, b));
+  const q = exploreTripQuery.trim().toLowerCase();
+  const sorted = [...trips]
+    .filter(t => !q || `${t.name || ""} ${t.destination || ""}`.toLowerCase().includes(q))
+    .sort((a, b) => TravelModel.compareForHome(a, b));
+  if (!sorted.length) {
+    list.innerHTML = `<p class="explore-sidebar-empty">No trips match “${escapeHtml(exploreTripQuery.trim())}”</p>`;
+    return;
+  }
   list.innerHTML = sorted.map(trip => {
     const status = TravelModel.deriveStatus(trip);
     const meta = TravelModel.TRIP_STATUS_META[status] || {};
@@ -47152,9 +47152,13 @@ function renderExploreSidebar(preserveSelectedId) {
     });
     btn.addEventListener("contextmenu", e => openExploreTripMenu(e, btn.dataset.exploreTripId));
   });
+  // Keep the open trip highlighted in the list (search re-renders don't reopen it).
+  const openId = preserveSelectedId || (listOnly ? exploreOpenTripId : null);
+  if (openId) list.querySelector(`[data-explore-trip-id="${openId}"]`)?.classList.add("is-active");
+  if (listOnly) return;
   if (preserveSelectedId) {
     const active = list.querySelector(`[data-explore-trip-id="${preserveSelectedId}"]`);
-    if (active) { active.classList.add("is-active"); openExploreTrip(preserveSelectedId); return; }
+    if (active) { openExploreTrip(preserveSelectedId); return; }
   }
   showExploreTripEmpty();
 }
@@ -47163,7 +47167,8 @@ function showExploreTripEmpty() {
   exploreOpenTripId = null;
   document.getElementById("exploreTripEmpty").hidden = false;
   document.getElementById("exploreTripView").hidden = true;
-  // No hamburger exists without an open trip — make sure the trips list is reachable
+  // With nothing selected, show the trips list (desktop docked, mobile drawer).
+  // The topbar hamburger toggles it thereafter.
   const sidebar = document.getElementById("exMediaSidebar");
   sidebar?.classList.remove("is-collapsed");
   if (window.innerWidth <= 680) sidebar?.classList.add("is-expanded");
@@ -47175,11 +47180,10 @@ function openExploreTrip(tripId) {
   if (exploreOpenTripId !== tripId) exploreActiveDayKey = ""; // new trip starts on Day 1
   exploreOpenTripId = tripId;
   localStorage.setItem("live-explore-last-trip", tripId); // reopen this trip on next visit
-  // Selecting a trip hides the trips menu: slide-over closes on mobile,
-  // docked sidebar collapses on desktop (hamburger next to the title reopens it)
+  // Like Media/Mail: the docked sidebar stays visible on desktop (the topbar
+  // hamburger controls it); on mobile, picking a trip closes the slide-over.
   const tripSidebar = document.getElementById("exMediaSidebar");
-  tripSidebar?.classList.remove("is-expanded");
-  if (window.innerWidth > 680) tripSidebar?.classList.add("is-collapsed");
+  if (window.innerWidth <= 680) tripSidebar?.classList.remove("is-expanded");
   document.getElementById("exploreTripEmpty").hidden = true;
   document.getElementById("exploreTripView").hidden = false;
 
@@ -47357,6 +47361,22 @@ function wireExploreTabs() {
   const content = document.getElementById("exMediaContent");
   if (!content || content._wired) return;
   content._wired = true;
+
+  // Topbar hamburger toggles the trips sidebar (matches Media/Mail): a docked
+  // collapse on desktop, a slide-over drawer on mobile.
+  document.getElementById("exploreSidebarToggle")?.addEventListener("click", () => {
+    const sidebar = document.getElementById("exMediaSidebar");
+    if (!sidebar) return;
+    if (window.innerWidth <= 680) { sidebar.classList.remove("is-collapsed"); sidebar.classList.toggle("is-expanded"); }
+    else { sidebar.classList.remove("is-expanded"); sidebar.classList.toggle("is-collapsed"); }
+  });
+
+  // Topbar search filters the trips list live.
+  const searchInput = document.getElementById("exploreSearchInput");
+  searchInput?.addEventListener("input", () => {
+    exploreTripQuery = searchInput.value;
+    renderExploreSidebar(exploreOpenTripId, { listOnly: true });
+  });
 
   document.getElementById("exploreAddTripBtn")?.addEventListener("click", () => {
     showTravelNewTripDialog();
