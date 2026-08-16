@@ -12774,10 +12774,23 @@ function buildIngestEntityCard(entity, source, dialog) {
   };
   renderActions();
 
-  const done = (label) => { card.classList.add("ingest-card--done"); actions.innerHTML = `<span class="ingest-done">✓ ${escapeHtml(label)}</span>`; };
+  // After a commit, show the result and — for a dated+timed item — an opt-in
+  // "Add to calendar" (Calendar stays canonical; nothing is added automatically).
+  const done = (label) => {
+    card.classList.add("ingest-card--done");
+    const canCal = entity.startDate && entity.startTime && entity.kind !== "other";
+    actions.innerHTML = `<span class="ingest-done">✓ ${escapeHtml(label)}</span>` +
+      (canCal ? `<button class="secondary-btn compact-btn" type="button" data-cal>📅 Add to calendar</button>` : "");
+    actions.querySelector("[data-cal]")?.addEventListener("click", (ev) => {
+      addEntityToCalendar(entity);
+      ev.target.textContent = "✓ On calendar";
+      ev.target.disabled = true;
+    });
+  };
 
   card.addEventListener("click", (e) => {
     if (e.target.closest("[data-open-src]")) { openSourceEmail(source); return; }
+    if (e.target.closest("[data-cal]")) return; // handled by its own listener
     const btn = e.target.closest("[data-act]");
     if (!btn) return;
     const act = btn.dataset.act;
@@ -12880,6 +12893,23 @@ function proposeEntityChange(entity, trip, existing, source) {
   persist();
   if (typeof refreshExploreNotifications === "function") refreshExploreNotifications();
   return entity.intent === "cancel" ? "Cancellation proposed — review in Explore" : "Change proposed — review in Explore";
+}
+
+// Opt-in: add an imported entity to the household Calendar as a canonical plan
+// event (Calendar stays the owner; we never duplicate automatically).
+function addEntityToCalendar(entity) {
+  const span = TravelIngest.entitySpan(entity);
+  if (!span.start || !entity.startTime) return;
+  const meta = TravelIngest.KIND_META[entity.kind] || {};
+  const title = entity.title || meta.label || "Trip event";
+  state.planEvents = [...(state.planEvents || []), {
+    id: createId("plan-evt"), createdAt: new Date().toISOString(),
+    title, date: span.start, allDay: false,
+    startTime: entity.startTime, endTime: (entity.kind === "lodging" ? null : entity.endTime) || null,
+    notes: "From trip itinerary", color: "#32b496", calendarId: null,
+  }];
+  persist();
+  if (typeof showMailToast === "function") showMailToast(`Added “${title}” to your calendar`);
 }
 
 function openSourceEmail(source) {
