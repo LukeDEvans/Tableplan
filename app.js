@@ -16,6 +16,7 @@ import * as TravelOptimize from './travel-optimize.js';
 import * as TravelRefs from './travel-refs.js';
 import * as TravelGeo from './travel-geo.js';
 import * as TravelMode from './travel-mode.js';
+import * as TravelIngest from './travel-ingest.js';
 
 const STORAGE_KEY = "tableplan-state-v1";
 const TRAVEL_LOGISTIC_ICONS = { flight: "✈️", hotel: "🏨", car: "🚗", train: "🚆", ferry: "⛴️", other: "📌" };
@@ -12463,6 +12464,10 @@ function showMailMoreMenu(thread, lastMsg) {
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
       Send to Media
     </button>
+    <button class="mail-more-option" type="button" data-action="send-to-explore">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+      Send to Explore
+    </button>
     <div class="mail-more-divider"></div>
     <button class="mail-more-option" type="button" data-action="label">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
@@ -12482,6 +12487,7 @@ function showMailMoreMenu(thread, lastMsg) {
     else if (action === "add-task") addEmailToTasks(lastMsg?.subject || "(no subject)");
     else if (action === "create-event") createEventFromEmail(lastMsg?.subject || "");
     else if (action === "move-to-media") moveMailToMedia(thread, lastMsg);
+    else if (action === "send-to-explore") sendMailToExplore(thread, lastMsg);
     else if (action === "label") showMailMovePicker(thread);
   });
   btn.closest(".mail-more-wrap").appendChild(menu);
@@ -12637,6 +12643,249 @@ async function moveMailToMedia(thread, lastMsg) {
   afterMailThreadAction(thread.id);
   showMailToast("Sent to Media");
   callGmailApi({ action: "move", threadId: thread.id, addLabelIds: ["TRASH"], removeLabelIds: removeIds });
+}
+
+// ── Send to Explore: interpret a travel email/thread into structured info ─────
+// Provider-agnostic: the whole thread is interpreted server-side into normalized
+// entities (travel-ingest.js), the user reviews, then commits canonical Explore
+// objects that feed the itinerary/routing engine. AI proposes; the user commits.
+function sendMailToExplore(thread, lastMsg) {
+  if (!thread) return;
+  const source = {
+    kind: "email", threadId: thread.id, messageId: lastMsg?.id || "",
+    subject: lastMsg?.subject || "", from: lastMsg?.from || "",
+  };
+  showTravelIngestDialog(thread, source);
+}
+
+function ingestDatesLabel(entity) {
+  const s = TravelIngest.entitySpan(entity);
+  if (!s.start) return "";
+  return formatTravelDate(s.start) + (s.end && s.end !== s.start ? " – " + formatTravelDate(s.end) : "");
+}
+
+// Compact, honest field summary for an entity card; inferred fields get a tag.
+function ingestFieldRows(entity) {
+  const rows = [];
+  const inferred = (f) => (entity.provenance && entity.provenance[f] === "inferred")
+    ? ' <span class="ingest-tag ingest-tag--inferred">Inferred</span>' : "";
+  const row = (label, value, f) => value ? `<div class="ingest-field"><span class="ingest-field-label">${escapeHtml(label)}</span><span class="ingest-field-value">${escapeHtml(value)}${f ? inferred(f) : ""}</span></div>` : "";
+  const s = TravelIngest.entitySpan(entity);
+  if (entity.kind === "flight" && entity.segments.length) {
+    rows.push(row("Route", entity.segments.map(g => (g.from || g.fromName)).concat(entity.segments[entity.segments.length - 1].to || entity.segments[entity.segments.length - 1].toName).join(" → ")));
+    rows.push(row("Departs", [entity.segments[0].departDate, entity.segments[0].departTime].filter(Boolean).join(" · "), "startDate"));
+  } else {
+    if (s.start) rows.push(row(entity.kind === "lodging" ? "Check-in" : "When", [ingestDatesLabel(entity), entity.startTime].filter(Boolean).join(" · "), "startDate"));
+    if (entity.kind === "lodging" && entity.endTime) rows.push(row("Check-out time", entity.endTime, "endTime"));
+  }
+  if (entity.guests) rows.push(row("Guests", String(entity.guests), "guests"));
+  if (entity.confirmation) rows.push(row("Confirmation", entity.confirmation));
+  if (entity.location || entity.address) rows.push(row("Location", entity.address || entity.location, "location"));
+  if (entity.host) rows.push(row("Host", entity.host));
+  if (entity.price) rows.push(row("Price", (entity.currency ? entity.currency + " " : "") + entity.price));
+  if (entity.notes) rows.push(row("Notes", entity.notes));
+  return rows.filter(Boolean).join("");
+}
+
+async function showTravelIngestDialog(thread, source) {
+  const d = document.createElement("dialog");
+  d.className = "recipe-dialog auth-dialog ingest-dialog";
+  d.innerHTML =
+    `<div class="recipe-form">` +
+      `<div class="ingest-head"><h3 style="margin:0">Send to Explore</h3>` +
+      `<button class="icon-btn" id="ingestClose" type="button" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>` +
+      `<div id="ingestBody"><div class="mail-loading">Reading this email for travel information…</div></div>` +
+    `</div>`;
+  document.body.appendChild(d);
+  d.showModal();
+  d.querySelector("#ingestClose").addEventListener("click", () => d.remove());
+  d.addEventListener("close", () => d.remove());
+  const body = d.querySelector("#ingestBody");
+
+  if (!navigator.onLine) {
+    body.innerHTML = `<div class="mail-empty">You're offline. Interpreting travel information needs a connection — try again when you're back online.</div>`;
+    return;
+  }
+
+  const data = await callGmailApi({ action: "interpretThread", threadId: thread.id });
+  if (!d.isConnected) return;
+  if (!data) {
+    body.innerHTML = `<div class="mail-empty">${escapeHtml(lastGmailApiError || "Couldn't read the email. Connect Gmail on the Mail page first.")}</div>`;
+    return;
+  }
+  const entities = TravelIngest.normalizeEntities(data.entities);
+
+  if (!entities.length) {
+    body.innerHTML =
+      `<div class="ingest-none"><div class="ingest-none-icon">🧭</div>` +
+      `<p>No structured travel information detected in this email.</p>` +
+      `<div class="ingest-none-actions"><button class="secondary-btn" id="ingestNoteBtn" type="button">Save as trip note</button>` +
+      `<button class="secondary-btn" id="ingestCancelBtn" type="button">Cancel</button></div></div>`;
+    body.querySelector("#ingestCancelBtn").addEventListener("click", () => d.remove());
+    body.querySelector("#ingestNoteBtn").addEventListener("click", () => {
+      const note = { kind: "other", title: source.subject || "Travel note", notes: "", provenance: {}, segments: [], confidence: "medium" };
+      chooseTripForEntity(note, source, (t) => { saveEntityAsTripNote(note, t, source); showMailToast("Saved as trip note"); d.remove(); });
+    });
+    return;
+  }
+
+  body.innerHTML =
+    `<p class="ingest-intro">Live found ${entities.length} item${entities.length === 1 ? "" : "s"}. Review before anything is added — nothing changes your trips until you confirm.</p>` +
+    `<div class="ingest-cards" id="ingestCards"></div>`;
+  const cards = body.querySelector("#ingestCards");
+  entities.forEach(entity => cards.appendChild(buildIngestEntityCard(entity, source, d)));
+}
+
+function buildIngestEntityCard(entity, source, dialog) {
+  const meta = TravelIngest.KIND_META[entity.kind] || TravelIngest.KIND_META.other;
+  const match = TravelIngest.matchTrip(entity, state.trips || []);
+  const card = document.createElement("div");
+  card.className = "ingest-card";
+  const confTag = entity.confidence === "high" ? "" : `<span class="ingest-tag ingest-tag--${entity.confidence}">${entity.confidence === "low" ? "Uncertain" : "Review"}</span>`;
+  const cancelBanner = entity.intent === "cancel" ? `<div class="ingest-cancel-banner">⚠ This looks like a cancellation.</div>` : "";
+
+  card.innerHTML =
+    cancelBanner +
+    `<div class="ingest-card-head"><span class="ingest-card-icon">${meta.icon}</span>` +
+      `<div><div class="ingest-card-title">${escapeHtml(entity.title || meta.label)} ${confTag}</div>` +
+      `<div class="ingest-card-sub">${escapeHtml(meta.label)}${entity.provider ? " · " + escapeHtml(entity.provider) : ""}</div></div></div>` +
+    `<div class="ingest-fields">${ingestFieldRows(entity)}</div>` +
+    (source.subject ? `<div class="ingest-source">Source: ${escapeHtml(source.subject)} <button class="ingest-source-open" type="button" data-open-src>Open email</button></div>` : "") +
+    `<div class="ingest-actions" data-actions></div>`;
+
+  const actions = card.querySelector("[data-actions]");
+  const renderActions = () => {
+    if (entity.kind === "other") {
+      actions.innerHTML = `<button class="primary-btn compact-btn" data-act="note" type="button">Save as trip note</button><button class="secondary-btn compact-btn" data-act="dismiss" type="button">Dismiss</button>`;
+    } else if (match.best) {
+      const t = match.best.trip;
+      actions.innerHTML =
+        `<button class="primary-btn compact-btn" data-act="add" type="button">Add to ${escapeHtml(t.name || "trip")}</button>` +
+        `<button class="secondary-btn compact-btn" data-act="choose" type="button">Choose another</button>` +
+        `<button class="secondary-btn compact-btn" data-act="create" type="button">Create trip</button>`;
+    } else {
+      const sug = TravelIngest.suggestNewTrip(entity);
+      actions.innerHTML =
+        (sug ? `<button class="primary-btn compact-btn" data-act="create" type="button">Create trip${sug.destination ? " · " + escapeHtml(sug.destination) : ""}</button>` : "") +
+        `<button class="secondary-btn compact-btn" data-act="choose" type="button">Add to a trip…</button>` +
+        `<button class="secondary-btn compact-btn" data-act="dismiss" type="button">Dismiss</button>`;
+    }
+  };
+  renderActions();
+
+  const done = (label) => { card.classList.add("ingest-card--done"); actions.innerHTML = `<span class="ingest-done">✓ ${escapeHtml(label)}</span>`; };
+
+  card.addEventListener("click", (e) => {
+    if (e.target.closest("[data-open-src]")) { openSourceEmail(source); return; }
+    const btn = e.target.closest("[data-act]");
+    if (!btn) return;
+    const act = btn.dataset.act;
+    if (act === "add") { const res = commitEntityToTrip(entity, match.best.trip, source); done(res); }
+    else if (act === "create") { const trip = createTripFromEntity(entity, source); if (trip) done("Created trip and added"); }
+    else if (act === "choose") { chooseTripForEntity(entity, source, (t) => done(commitEntityToTrip(entity, t, source))); }
+    else if (act === "note") { saveEntityAsTripNote(entity, match.best?.trip || null, source); done("Saved as note"); }
+    else if (act === "dismiss") { card.remove(); }
+  });
+  return card;
+}
+
+// Commit an entity's canonical placements into a trip's days (feeds the
+// itinerary/routing engine). Returns a short result label. Modifications/
+// cancellations of already-imported items are handled in the proposals flow.
+function commitEntityToTrip(entity, trip, source) {
+  if (!trip) return "No trip";
+  if (!Array.isArray(state.trips)) state.trips = [];
+  const existing = TravelIngest.findExistingItem(entity, trip);
+  if (existing && entity.intent !== "new") {
+    return reconcileExistingEntity(entity, trip, existing, source);
+  }
+  const placements = TravelIngest.entityToPlacements(entity, source);
+  if (!placements.length) { saveEntityAsTripNote(entity, trip, source); return "Saved as note"; }
+  placements.forEach(p => {
+    const item = Object.assign({ id: createId("ti") }, p.item);
+    tripDayItems(trip, p.dateKey, p.section).push(item);
+  });
+  trip.updatedAt = new Date().toISOString();
+  persist();
+  if (activeAppArea === "explore" && exploreOpenTripId === trip.id) renderExploreTripPanel("itinerary", trip);
+  return "Added to " + (trip.name || "trip");
+}
+
+// Placeholder until Phase 3 (proposals): if the entity matches an existing item
+// and isn't a plain new reservation, still record it non-destructively.
+function reconcileExistingEntity(entity, trip, existing, source) {
+  return proposeEntityChange(entity, trip, existing, source);
+}
+
+function createTripFromEntity(entity, source) {
+  const sug = TravelIngest.suggestNewTrip(entity);
+  const trip = defaultTrip(sug ? { name: sug.name, destination: sug.destination, startDate: sug.startDate, endDate: sug.endDate, status: "booked" } : {});
+  if (!Array.isArray(state.trips)) state.trips = [];
+  state.trips.push(trip);
+  commitEntityToTrip(entity, trip, source);
+  if (activeAppArea === "explore") renderExploreSidebar(trip.id);
+  return trip;
+}
+
+function saveEntityAsTripNote(entity, trip, source) {
+  const target = trip || createTripFromEntity({ ...entity, kind: "other" }, source);
+  if (!Array.isArray(target.refs)) target.refs = [];
+  const title = (entity.title || TravelIngest.KIND_META[entity.kind]?.label || "Travel note") + (ingestDatesLabel(entity) ? " · " + ingestDatesLabel(entity) : "");
+  target.refs = TravelRefs.addRef(target.refs, TravelRefs.makeRef(TravelRefs.REF_KINDS.NOTE, { title, subtitle: entity.notes, meta: { source } }));
+  target.updatedAt = new Date().toISOString();
+  persist();
+}
+
+// Pick (or create) a trip for an entity — a compact list of existing trips plus
+// "New trip". Calls onPick(trip) with the chosen/created trip.
+function chooseTripForEntity(entity, source, onPick) {
+  const trips = [...(state.trips || [])].sort((a, b) => TravelModel.compareForHome(a, b));
+  const d = document.createElement("dialog");
+  d.className = "recipe-dialog auth-dialog";
+  d.innerHTML =
+    `<div class="recipe-form"><h3 style="margin:0 0 12px">Add to which trip?</h3>` +
+    `<div class="ingest-trip-list">` +
+      trips.map(t => {
+        const status = TravelModel.deriveStatus(t);
+        const dates = t.startDate ? formatTravelDate(t.startDate) : (status === "idea" ? "Idea" : "No dates");
+        return `<button class="ingest-trip-choice" type="button" data-trip-id="${escapeHtml(t.id)}"><span>${escapeHtml(t.name || "Untitled")}</span><span class="ingest-trip-dates">${escapeHtml(dates)}</span></button>`;
+      }).join("") +
+    `</div>` +
+    `<div style="display:flex;gap:8px;justify-content:space-between;margin-top:14px">` +
+      `<button class="secondary-btn" id="ingestChooseCreate" type="button">+ New trip</button>` +
+      `<button class="secondary-btn" id="ingestChooseCancel" type="button">Cancel</button>` +
+    `</div></div>`;
+  document.body.appendChild(d);
+  d.showModal();
+  d.addEventListener("close", () => d.remove());
+  d.querySelector("#ingestChooseCancel").addEventListener("click", () => d.remove());
+  d.querySelector("#ingestChooseCreate").addEventListener("click", () => { const t = createTripFromEntity(entity, source); d.remove(); onPick && onPick(t); });
+  d.querySelectorAll("[data-trip-id]").forEach(btn => btn.addEventListener("click", () => {
+    const t = (state.trips || []).find(x => x.id === btn.dataset.tripId);
+    d.remove();
+    if (t) onPick && onPick(t);
+  }));
+}
+
+// Record a proposed change (modification/cancellation of an already-imported
+// item) without touching canonical data. Surfaced in the Explore review inbox
+// (Phase 3). Returns a short label for the ingest card.
+function proposeEntityChange(entity, trip, existing, source) {
+  if (!Array.isArray(trip.proposals)) trip.proposals = [];
+  const proposal = TravelIngest.entityToProposal(entity, existing, source);
+  // Don't stack identical pending proposals for the same target.
+  const dup = trip.proposals.find(p => p.status === "pending" && p.targetItemId === proposal.targetItemId && p.type === proposal.type);
+  if (!dup) trip.proposals.push(proposal);
+  trip.updatedAt = new Date().toISOString();
+  persist();
+  if (typeof refreshExploreNotifications === "function") refreshExploreNotifications();
+  return entity.intent === "cancel" ? "Cancellation proposed — review in Explore" : "Change proposed — review in Explore";
+}
+
+function openSourceEmail(source) {
+  if (!source || !source.threadId) return;
+  showMailApp();
+  openMailThread(source.threadId);
 }
 
 // Optimistically remove an inbox row, run the forward label change, and offer
