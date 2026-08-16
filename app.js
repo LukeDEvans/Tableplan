@@ -15,6 +15,7 @@ import * as TravelModel from './travel-model.js';
 import * as TravelOptimize from './travel-optimize.js';
 import * as TravelRefs from './travel-refs.js';
 import * as TravelGeo from './travel-geo.js';
+import * as TravelMode from './travel-mode.js';
 
 const STORAGE_KEY = "tableplan-state-v1";
 const TRAVEL_LOGISTIC_ICONS = { flight: "✈️", hotel: "🏨", car: "🚗", train: "🚆", ferry: "⛴️", other: "📌" };
@@ -47110,6 +47111,12 @@ function showExploreApp(event) {
   wireExploreTabs();
   // Reopen the most recently viewed trip (survives reloads via localStorage)
   renderExploreSidebar(exploreOpenTripId || localStorage.getItem("live-explore-last-trip"));
+  // Restore Travel Mode if it was active for a still-traveling trip.
+  if (activeTravelTripId) {
+    const t = (state.trips || []).find(x => x.id === activeTravelTripId);
+    if (t && TravelModel.isTraveling(t)) enterTravelMode(t.id);
+    else { activeTravelTripId = null; try { localStorage.removeItem("live-travel-mode-trip"); } catch { /* ignore */ } }
+  }
 }
 
 function renderExploreSidebar(preserveSelectedId) {
@@ -47220,12 +47227,20 @@ function openExploreTrip(tripId) {
     ? `<span class="travel-meta-chip" id="exploreEditHomeBtn" title="Home base — new trips start and finish here">🏠 ${escapeHtml(state.travelHome)}</span>`
     : `<span class="travel-meta-chip" id="exploreEditHomeBtn" title="Set your home base — new trips start and finish here">🏠 Set home</span>`;
 
+  // Travel Mode is offered as the trip nears/enters its dates.
+  const showTravelModeBtn = TravelModel.isTraveling(trip) || TravelModel.startsWithin(trip, 2);
+  const travelModeBtn = showTravelModeBtn
+    ? `<button class="travel-ai-btn travel-mode-btn" id="exploreTravelModeBtn" type="button" title="Enter Travel Mode">🧭 Travel Mode</button>`
+    : "";
+
   document.getElementById("exploreDetailMeta").innerHTML =
     `<span class="travel-meta-chip" id="exploreEditDatesBtn" title="Edit dates">📅 ${escapeHtml(dateStr)}${nightsStr}</span>` +
     `<span class="travel-meta-chip" id="exploreEditPartyBtn" title="Edit party">👥 ${escapeHtml(partyStr)}</span>` +
     destChip +
     homeChip +
+    travelModeBtn +
     `<button class="travel-ai-btn" id="exploreAskAiBtn" type="button" title="Plan with AI">✨ Ask AI</button>`;
+  document.getElementById("exploreTravelModeBtn")?.addEventListener("click", () => enterTravelMode(trip.id));
 
   document.getElementById("exploreEditDatesBtn")?.addEventListener("click", () => showTravelEditDatesDialog(trip));
   document.getElementById("exploreEditPartyBtn")?.addEventListener("click", () => showTravelEditPartyDialog(trip));
@@ -48023,6 +48038,130 @@ function buildItineraryAddControl(trip, dateKey, rerender) {
   return wrap;
 }
 
+// ── Travel Mode: the runtime travel operating environment ────────────────────
+// When active, Explore stops being a planner and answers "what do we need to
+// know right now?" — NOW / NEXT / LATER, glanceable by anyone in the household.
+// Explicit to enter, always easy to exit. State: an ephemeral active-trip id in
+// localStorage (session/device local, not synced) plus the trip's own lifecycle.
+let activeTravelTripId = (() => { try { return localStorage.getItem("live-travel-mode-trip") || null; } catch { return null; } })();
+let travelModeTimer = null;
+
+function isTravelModeActive() { return !!activeTravelTripId && !!document.getElementById("travelModeOverlay"); }
+
+function enterTravelMode(tripId) {
+  const trip = (state.trips || []).find(t => t.id === tripId);
+  if (!trip) return;
+  activeTravelTripId = tripId;
+  try { localStorage.setItem("live-travel-mode-trip", tripId); } catch { /* full */ }
+  renderTravelModeOverlay(trip);
+  // Tick every minute to keep NOW/NEXT and the "leave by" honest.
+  if (travelModeTimer) clearInterval(travelModeTimer);
+  travelModeTimer = setInterval(() => {
+    const t = (state.trips || []).find(x => x.id === activeTravelTripId);
+    if (t && document.getElementById("travelModeOverlay")) renderTravelModeOverlay(t);
+  }, 60000);
+}
+
+function exitTravelMode() {
+  activeTravelTripId = null;
+  try { localStorage.removeItem("live-travel-mode-trip"); } catch { /* ignore */ }
+  if (travelModeTimer) { clearInterval(travelModeTimer); travelModeTimer = null; }
+  document.getElementById("travelModeOverlay")?.remove();
+}
+
+// Best-effort current conditions for the trip, from the first geocoded stop.
+// Never blocks the view — resolves to null when weather/coords are unavailable.
+async function travelModeWeather(trip) {
+  try {
+    const cache = trip.geocache || {};
+    const firstCoord = Object.values(cache).find(v => v && Number.isFinite(v.lat) && Number.isFinite(v.lng));
+    if (!firstCoord || typeof getCurrentConditions !== "function") return null;
+    const cond = await getCurrentConditions({ id: "trip", latitude: firstCoord.lat, longitude: firstCoord.lng, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+    if (!cond) return null;
+    const temp = Math.round(cond.temperature ?? cond.temp ?? cond.temperature_2m);
+    return Number.isFinite(temp) ? { temp, icon: cond.icon || "" } : null;
+  } catch { return null; }
+}
+
+function travelModeStopRow(stop, state_) {
+  const mark = state_ === "done" ? "✓" : state_ === "current" ? "→" : "○";
+  const timeLabel = stop.time ? stop.time : "";
+  return `<div class="tm-stop tm-stop--${state_}"><span class="tm-stop-mark">${mark}</span>` +
+    `<span class="tm-stop-icon">${stop.icon || "📍"}</span>` +
+    `<span class="tm-stop-title">${escapeHtml(stop.title)}</span>` +
+    `<span class="tm-stop-time">${escapeHtml(timeLabel)}</span></div>`;
+}
+
+function renderTravelModeOverlay(trip) {
+  let overlay = document.getElementById("travelModeOverlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "travelModeOverlay";
+    overlay.className = "travel-mode-overlay";
+    document.body.appendChild(overlay);
+  }
+  const now = new Date();
+  const snap = TravelMode.travelSnapshot(trip, now);
+  const dateLabel = now.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+
+  // NEXT block content
+  const focus = snap.next || (snap.lookahead && snap.lookahead.stop) || null;
+  const focusIsTomorrow = !snap.next && snap.lookahead;
+  const trans = snap.incomingTransition;
+
+  const nextHtml = focus
+    ? `<div class="tm-next-card">` +
+        `<div class="tm-next-label">${focusIsTomorrow ? "NEXT · Day " + snap.lookahead.dayNumber : "NEXT"}</div>` +
+        `<div class="tm-next-main"><span class="tm-next-icon">${focus.icon || "📍"}</span>` +
+          `<span class="tm-next-title">${escapeHtml(focus.title)}</span></div>` +
+        (focus.time ? `<div class="tm-next-time">${escapeHtml(focus.time)}</div>` : "") +
+        (focus.location ? `<div class="tm-next-loc">📍 ${escapeHtml(focus.location)}</div>` : "") +
+        `<div class="tm-next-route" id="tmRoute"></div>` +
+        (focus.location ? `<a class="primary-btn tm-start-route" href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(focus.location)}" target="_blank" rel="noopener">Start route ↗</a>` : "") +
+      `</div>`
+    : `<div class="tm-next-card tm-next-card--rest"><div class="tm-next-label">You're all set</div><div class="tm-next-main">Nothing left on the schedule ${snap.onTrip ? "today" : ""}. Enjoy.</div></div>`;
+
+  const todayHtml = snap.onTrip && snap.entries.length
+    ? `<div class="tm-today"><div class="tm-today-label">Today</div>${snap.entries.map(e => travelModeStopRow(e.stop, e.state)).join("")}</div>`
+    : "";
+
+  const status = snap.beforeTrip ? "Trip hasn't started yet" : snap.afterTrip ? "Trip complete" : `Day ${snap.dayNumber}`;
+
+  overlay.innerHTML =
+    `<div class="tm-inner">` +
+      `<div class="tm-head">` +
+        `<div class="tm-head-left"><div class="tm-trip-name">${escapeHtml(trip.name || "Trip")}</div>` +
+          `<div class="tm-date">${escapeHtml(status)} · ${escapeHtml(dateLabel)}<span id="tmWeather"></span></div></div>` +
+        `<button class="tm-exit" type="button" id="tmExitBtn">Exit</button>` +
+      `</div>` +
+      nextHtml +
+      todayHtml +
+      `<div class="tm-actions">` +
+        `<button class="secondary-btn" type="button" id="tmMapBtn">🗺 Map</button>` +
+        `<button class="secondary-btn" type="button" id="tmPlanBtn">📋 Full plan</button>` +
+      `</div>` +
+    `</div>`;
+
+  overlay.querySelector("#tmExitBtn").addEventListener("click", exitTravelMode);
+  overlay.querySelector("#tmMapBtn").addEventListener("click", () => { exitTravelMode(); setActiveExploreTab("map"); renderExploreTripPanel("map", trip); });
+  overlay.querySelector("#tmPlanBtn").addEventListener("click", () => { exitTravelMode(); setActiveExploreTab("itinerary"); renderExploreTripPanel("itinerary", trip); });
+
+  // Async: leave-by for the incoming transition, and weather.
+  if (trans && !trans.planned) {
+    TravelTransitions.resolveTransition(trans, { fetchTimes: fetchTravelTimes, hasCar: tripHasCarOnDay(trip, snap.dateKey) }).then(r => {
+      const box = overlay.querySelector("#tmRoute");
+      if (!box || !box.isConnected || r.routing.status !== "ok") return;
+      const best = (r.routing.rows || []).find(x => x.recommended) || {};
+      box.innerHTML = `<span class="tm-route-mode">${best.icon || "→"}</span> ${escapeHtml(best.label || "")} ${escapeHtml(TravelTransitions.formatDuration(best.durationMin))}` +
+        (r.routing.leaveBy ? ` <strong>· Leave by ${escapeHtml(r.routing.leaveBy)}</strong>` : "");
+    });
+  }
+  travelModeWeather(trip).then(w => {
+    const box = overlay.querySelector("#tmWeather");
+    if (box && box.isConnected && w) box.textContent = `  ·  ${w.icon ? w.icon + " " : "☀ "}${w.temp}°`;
+  });
+}
+
 // Prefetch a symmetric travel-time lookup across a day's located points, then
 // hand back a synchronous distanceFn the pure optimizer can use. Uses the same
 // cached travel-time backend the transitions do; unknown pairs resolve to null.
@@ -48167,7 +48306,14 @@ function renderTripItinerary(trip, panel) {
   const defaultOpenIdx = currentIdx >= 0 ? currentIdx : 0;
   const rerender = () => renderTripItinerary(trip, panel);
 
-  panel.innerHTML = `<div class="itin-days" id="itinDays"></div>`;
+  // Offer Travel Mode when the trip is happening or about to (unless already in it).
+  const offerTravelMode = (TravelModel.isTraveling(trip) || TravelModel.startsWithin(trip, 1)) && !isTravelModeActive();
+  const bannerHtml = offerTravelMode
+    ? `<div class="itin-tm-banner"><span class="itin-tm-banner-text">${TravelModel.isTraveling(trip) ? "You're on this trip." : "Your trip is about to begin."} Switch to Travel Mode for a simpler, at-a-glance view.</span>` +
+      `<button class="primary-btn compact-btn" type="button" id="itinEnterTravelMode">Enter Travel Mode</button></div>`
+    : "";
+  panel.innerHTML = bannerHtml + `<div class="itin-days" id="itinDays"></div>`;
+  panel.querySelector("#itinEnterTravelMode")?.addEventListener("click", () => enterTravelMode(trip.id));
   const container = panel.querySelector("#itinDays");
 
   dayKeys.forEach((dateKey, i) => {
