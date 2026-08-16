@@ -12,6 +12,7 @@ import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHisto
 import * as TravelItinerary from './travel-itinerary.js';
 import * as TravelTransitions from './travel-transitions.js';
 import * as TravelModel from './travel-model.js';
+import * as TravelOptimize from './travel-optimize.js';
 
 const STORAGE_KEY = "tableplan-state-v1";
 const TRAVEL_LOGISTIC_ICONS = { flight: "✈️", hotel: "🏨", car: "🚗", train: "🚆", ferry: "⛴️", other: "📌" };
@@ -47986,6 +47987,122 @@ function buildItineraryAddControl(trip, dateKey, rerender) {
   return wrap;
 }
 
+// Prefetch a symmetric travel-time lookup across a day's located points, then
+// hand back a synchronous distanceFn the pure optimizer can use. Uses the same
+// cached travel-time backend the transitions do; unknown pairs resolve to null.
+async function buildDayDistanceFn(locations) {
+  const uniq = [...new Set(locations.filter(Boolean))];
+  const map = new Map();
+  await Promise.all(uniq.flatMap(a => uniq.map(async b => {
+    const key = a + "|" + b;
+    if (a === b) { map.set(key, 0); return; }
+    let d = null;
+    try {
+      const times = await fetchTravelTimes(a, b);
+      if (times) d = times.drive?.durationMin ?? times.transit?.durationMin ?? times.walk?.durationMin ?? null;
+    } catch { d = null; }
+    map.set(key, d);
+  })));
+  return (a, b) => (map.has(a + "|" + b) ? map.get(a + "|" + b) : null);
+}
+
+// Household calendar events for a day, shaped for the conflict detector.
+function tripCalendarEventsForDay(dateKey) {
+  try {
+    const events = syncedCalendarEventsForDate(new Date(dateKey + "T12:00:00")) || [];
+    return events
+      .filter(e => !e.allDay && e.startTime)
+      .map(e => ({ title: e.summary || e.title || "Event", start: e.startTime, end: e.endTime || e.startTime }));
+  } catch { return []; }
+}
+
+// Review-change dialog for a reorder suggestion: shows CURRENT vs SUGGESTED and
+// only ever changes the plan when the user taps Apply. Never silent.
+function showReorderReviewDialog(trip, dateKey, suggestion, rerender) {
+  const list = arr => arr.map((s, i) => `<li><span class="reorder-num">${i + 1}</span>${escapeHtml(s.title)}</li>`).join("");
+  const d = document.createElement("dialog");
+  d.className = "recipe-dialog auth-dialog reorder-dialog";
+  d.innerHTML =
+    `<div class="recipe-form">` +
+      `<h3 style="margin:0 0 6px">Reorder to save ~${suggestion.savedMin} min</h3>` +
+      `<p class="reorder-reason">${escapeHtml(suggestion.reason)}.</p>` +
+      `<div class="reorder-cols">` +
+        `<div class="reorder-col"><p class="muted-label">Current</p><ol class="reorder-list">${list(suggestion.current)}</ol></div>` +
+        `<div class="reorder-arrow" aria-hidden="true">→</div>` +
+        `<div class="reorder-col reorder-col--suggested"><p class="muted-label">Suggested</p><ol class="reorder-list">${list(suggestion.suggested)}</ol></div>` +
+      `</div>` +
+      `<div class="reorder-save">Save ~${suggestion.savedMin} minutes of travel</div>` +
+      `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">` +
+        `<button type="button" class="secondary-btn" id="reorderKeep">Keep current</button>` +
+        `<button type="button" class="primary-btn" id="reorderApply">Apply</button>` +
+      `</div>` +
+    `</div>`;
+  document.body.appendChild(d);
+  d.showModal();
+  d.querySelector("#reorderKeep").addEventListener("click", () => d.remove());
+  d.querySelector("#reorderApply").addEventListener("click", () => {
+    // Realize the new order by writing dayOrder onto each moved item.
+    const byId = new Map();
+    Object.values(trip.days || {}).forEach(day => Object.values(day).forEach(arr => {
+      if (Array.isArray(arr)) arr.forEach(it => { if (it && it.id) byId.set(it.id, it); });
+    }));
+    suggestion.apply.forEach(({ id, dayOrder }) => { const it = byId.get(id); if (it) it.dayOrder = dayOrder; });
+    persist();
+    d.remove();
+    rerender();
+  });
+  d.addEventListener("close", () => d.remove());
+}
+
+// Evaluate a day and render any propose-only suggestion cards into `mountEl`.
+// Reorder needs routing distances (prefetched); calendar/overpacked are free.
+async function renderDaySuggestions(trip, dateKey, timeline, mountEl, rerender) {
+  if (!mountEl || !mountEl.isConnected) return;
+  const stops = timeline.filter(e => e.kind === "stop");
+  const movableLocated = stops.filter(s => s.movable && !s.time && s.location);
+
+  let distanceFn = () => null;
+  // Only pay for routing when a reorder is even possible (2–5 flexible stops).
+  if (movableLocated.length >= 2 && movableLocated.length <= 5) {
+    const locs = stops.map(s => s.location).filter(Boolean);
+    distanceFn = await buildDayDistanceFn(locs);
+    if (!mountEl.isConnected) return;
+  }
+  const events = tripCalendarEventsForDay(dateKey);
+  const suggestions = TravelOptimize.evaluateDay(timeline, { distanceFn, events });
+  if (!suggestions.length) { mountEl.innerHTML = ""; return; }
+
+  mountEl.innerHTML = "";
+  suggestions.forEach(sg => {
+    const card = document.createElement("div");
+    card.className = "itin-suggest itin-suggest--" + sg.type;
+    if (sg.type === "reorder") {
+      card.innerHTML =
+        `<span class="itin-suggest-icon">💡</span>` +
+        `<span class="itin-suggest-body"><strong>Possible improvement</strong>` +
+        `<span class="itin-suggest-text">Reordering could save ~${sg.savedMin} min of travel.</span></span>` +
+        `<button class="secondary-btn compact-btn" type="button">Review change</button>`;
+      card.querySelector("button").addEventListener("click", () => showReorderReviewDialog(trip, dateKey, sg, rerender));
+    } else if (sg.type === "calendar") {
+      card.innerHTML =
+        `<span class="itin-suggest-icon">⚠</span>` +
+        `<span class="itin-suggest-body"><strong>Calendar conflict</strong>` +
+        `<span class="itin-suggest-text">“${escapeHtml(sg.stopTitle)}” at ${escapeHtml(sg.stopTime)} overlaps “${escapeHtml(sg.eventTitle)}” (${escapeHtml(sg.eventTime)}).</span></span>`;
+    } else if (sg.type === "overpacked") {
+      card.innerHTML =
+        `<span class="itin-suggest-icon">🧭</span>` +
+        `<span class="itin-suggest-body"><strong>Full day</strong>` +
+        `<span class="itin-suggest-text">${escapeHtml(sg.reason)}.</span></span>`;
+    } else if (sg.type === "tight") {
+      card.innerHTML =
+        `<span class="itin-suggest-icon">⏱</span>` +
+        `<span class="itin-suggest-body"><strong>Tight connection</strong>` +
+        `<span class="itin-suggest-text">${escapeHtml(sg.fromTitle)} → ${escapeHtml(sg.toTitle)}: only ${sg.gapMin} min for a ${sg.needMin}-min hop.</span></span>`;
+    }
+    mountEl.appendChild(card);
+  });
+}
+
 function renderTripItinerary(trip, panel) {
   const dayKeys = TravelItinerary.tripDayKeys(trip);
 
@@ -48052,6 +48169,10 @@ function renderTripItinerary(trip, panel) {
     const renderBody = () => {
       bodyWrap.innerHTML = "";
       const timeline = TravelItinerary.buildDayTimeline(trip, dateKey);
+      // Propose-only suggestions sit at the top of the day (filled async).
+      const suggestMount = document.createElement("div");
+      suggestMount.className = "itin-suggests";
+      bodyWrap.appendChild(suggestMount);
       if (!timeline.length) {
         const empty = document.createElement("div");
         empty.className = "itin-day-empty-note";
@@ -48064,6 +48185,7 @@ function renderTripItinerary(trip, panel) {
         });
       }
       bodyWrap.appendChild(buildItineraryAddControl(trip, dateKey, rerender));
+      renderDaySuggestions(trip, dateKey, timeline, suggestMount, rerender);
     };
 
     const applyExpanded = () => {
