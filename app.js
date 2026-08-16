@@ -47503,6 +47503,13 @@ function formatTravelDate(d) {
   return new Date(+y, +m - 1, +day).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+// Day-first, full month: "2026-06-23" → "23 June 2026".
+function formatTravelDateLong(d) {
+  if (!d) return "";
+  const [y, m, day] = d.split("-");
+  return new Date(+y, +m - 1, +day).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+}
+
 function travelActivityEndTime(startTime, durationMin) {
   if (!startTime || !durationMin) return "";
   const [h, m] = startTime.split(":").map(Number);
@@ -47718,13 +47725,13 @@ function openExploreTrip(tripId) {
 
   // Meta row
   const dateStr = trip.startDate
-    ? `${formatTravelDate(trip.startDate)}${trip.endDate ? " – " + formatTravelDate(trip.endDate) : ""}`
+    ? `${formatTravelDateLong(trip.startDate)}${trip.endDate ? " - " + formatTravelDateLong(trip.endDate) : ""}`
     : "No dates set";
   const nights = (trip.startDate && trip.endDate)
     ? Math.round((new Date(trip.endDate) - new Date(trip.startDate)) / 86400000)
     : null;
   const partyStr = (trip.party || []).join(", ") || "Solo";
-  const nightsStr = nights ? ` · ${nights} night${nights === 1 ? "" : "s"}` : "";
+  const nightsStr = nights ? ` (${nights} night${nights === 1 ? "" : "s"})` : "";
   const destChip = trip.destination
     ? `<span class="travel-meta-chip">📍 ${escapeHtml(trip.destination)}</span>`
     : `<span class="travel-meta-chip" id="exploreEditDestBtn" title="Edit destination">📍 Add destination</span>`;
