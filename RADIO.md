@@ -37,6 +37,7 @@ Capabilities (`RADIO_CAP`): `LIST, SEARCH, BY_TAG, BY_COUNTRY, NOW_PLAYING, SCHE
 |---|---|---|---|
 | **MPR** | `mpr` | Curated **bundled catalog** of MPR services + YourClassical specialty streams | `radio-provider-mpr.js`. Offline-capable (data, not an API). Streams on official `*.stream.publicradio.org` CDN, **AAC primary + MP3 fallback** where published. No scraping. |
 | **Radio Browser** | `radiobrowser` | General internet-radio discovery (search/tag/country) | `radio-provider-radiobrowser.js`. Injectable fetch. Used for on-demand search only — **not** a giant directory dump in the home. |
+| **User** | `user` | Stations the user adds (any stream URL) | `radio-provider-user.js`. Reads live from `state.radioUserStations`, so a new station appears without a registry rebuild. `userAdded: true`; coexists with provider stations; add via the **+** in the Radio bar, delete from the row. |
 
 MPR stations (v1): **MPR News, The Current, YourClassical MPR, Radio Heartland,
 Carbon Sound**, plus YourClassical **Relax, Peaceful Piano, Choral, Chamber
@@ -71,7 +72,7 @@ Played**. A search box queries the registry (MPR catalog + Radio Browser). It is
   shared with music/podcasts — radio reads `getRecentMedia({kind:"radio"})`; each
   entry's `ref` is a station snapshot for replay),
   `radioFollowedPrograms` (followed programs, bridged to podcast subscriptions),
-  and user-added stations later.
+  and `radioUserStations` (user-added stations).
 - **Provider owns** (replaceable): station metadata, stream URLs, program/schedule
   data, provider ids. Stored snapshots carry enough (`providerRefs`, `streams`) to
   keep working and be refreshed.
@@ -105,9 +106,9 @@ being unreachable is isolated (search degrades, home still renders).
   `Program.feedUrl` (no duplicate episode storage).
 
 ## Architected for later (not built)
-Radio Browser discovery UI, user-added-station UI, richer program pages
-(schedule/next-airing), multi-station programs, Calendar (`ScheduleEntry` is
-Calendar-ready), AI queries
+Radio Browser discovery UI (browse-by-genre/country), richer program pages
+(schedule/next-airing — **blocked**: no scrape-free schedule source), multi-station
+programs, Calendar (`ScheduleEntry` is Calendar-ready), AI queries
 (query the registry/domain, not providers), location-aware discovery
 (`Station.location`), followed-program notifications, external-device playback.
 None are blocked by the current design.

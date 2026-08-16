@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { makeStation, makeRadioStream, pickStream, streamCandidates, createRadioRegistry, RADIO_CAP } from "../radio.js";
 import { createMprProvider } from "../radio-provider-mpr.js";
 import { createRadioBrowserProvider } from "../radio-provider-radiobrowser.js";
+import { createUserRadioProvider } from "../radio-provider-user.js";
 
 describe("radio domain", () => {
   it("normalizes a station with multiple stream candidates", () => {
@@ -95,6 +96,27 @@ describe("Radio Browser provider — mocked", () => {
   it("supports byTag", async () => {
     const p = createRadioBrowserProvider({}, fake);
     expect((await p.byTag("jazz"))[0].streams[0].format).toBe("aac");
+  });
+});
+
+describe("user-added stations provider", () => {
+  it("maps user records to normalized userAdded stations, live from the store", async () => {
+    let store = [{ id: "user_1", name: "My Jazz", streamUrl: "https://s/jazz.mp3", category: "Jazz" }];
+    const p = createUserRadioProvider({ getStations: () => store });
+    let stations = await p.listStations();
+    expect(stations).toHaveLength(1);
+    expect(stations[0]).toMatchObject({ id: "user_1", providerId: "user", userAdded: true, name: "My Jazz" });
+    expect(stations[0].streams[0].url).toBe("https://s/jazz.mp3");
+    store = [...store, { id: "user_2", name: "Another", streamUrl: "https://s/a.aac" }];
+    expect(await p.listStations()).toHaveLength(2); // reads live — no rebuild
+    expect((await p.search("jazz")).map((s) => s.id)).toEqual(["user_1"]);
+  });
+
+  it("participates in the registry alongside MPR", async () => {
+    const reg = createRadioRegistry([createMprProvider(), createUserRadioProvider({ getStations: () => [{ id: "u1", name: "Mine", streamUrl: "https://s/x.mp3" }] })]);
+    const stations = await reg.listStations();
+    expect(stations.some((s) => s.name === "Mine" && s.userAdded)).toBe(true);
+    expect(stations.some((s) => s.name === "MPR News")).toBe(true);
   });
 });
 

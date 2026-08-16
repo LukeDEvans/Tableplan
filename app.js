@@ -42463,9 +42463,13 @@ const MUSIC_X_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none"
 // and favourites work offline; only live playback needs the network.
 async function getRadio() {
   if (radioRegistry) return radioRegistry;
-  const [dom, mpr, rb] = await Promise.all([import("./radio.js"), import("./radio-provider-mpr.js"), import("./radio-provider-radiobrowser.js")]);
+  const [dom, mpr, rb, usr] = await Promise.all([import("./radio.js"), import("./radio-provider-mpr.js"), import("./radio-provider-radiobrowser.js"), import("./radio-provider-user.js")]);
   radioMod = dom;
-  radioRegistry = dom.createRadioRegistry([mpr.createMprProvider(), rb.createRadioBrowserProvider()]);
+  radioRegistry = dom.createRadioRegistry([
+    mpr.createMprProvider(),
+    usr.createUserRadioProvider({ getStations: () => state.radioUserStations || [] }), // reads live → no rebuild
+    rb.createRadioBrowserProvider(),
+  ]);
   return radioRegistry;
 }
 async function ensureRadioCatalog() {
@@ -42584,6 +42588,58 @@ function pushRadioHistory(station) {
   recordMediaHistory({ kind: "radio", id: station.id, title: station.name, subtitle: station.category, artworkUrl: station.logoUrl, ref: snap });
 }
 function radioRecentEntries() { return getRecentMedia({ kind: "radio" }); }
+
+// ── User-added stations (any stream URL; coexist with provider stations) ──────
+function openAddRadioStation() {
+  document.getElementById("musicCfgOverlay")?.remove();
+  const ov = document.createElement("div");
+  ov.id = "musicCfgOverlay"; ov.className = "music-cfg-overlay";
+  ov.innerHTML = `<div class="music-cfg" role="dialog" aria-modal="true" aria-label="Add a station">
+      <button class="music-cfg-x" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      <h3 class="music-cfg-title">Add a station</h3>
+      <p class="music-cfg-sub">Paste any live stream URL. HTTPS streams play in-app; HTTP-only streams are blocked by the browser on a secure page.</p>
+      <label class="music-cfg-field"><span>Name</span><input type="text" id="raName" placeholder="My station" autocomplete="off"></label>
+      <label class="music-cfg-field"><span>Stream URL</span><input type="url" id="raUrl" placeholder="https://…/stream.mp3" autocomplete="off" spellcheck="false"></label>
+      <label class="music-cfg-field"><span>Category <em>(optional)</em></span><input type="text" id="raCat" placeholder="e.g. Jazz" autocomplete="off"></label>
+      <div class="music-cfg-actions"><button class="music-cfg-cancel" type="button" data-ra-cancel>Cancel</button><button class="primary-btn" type="button" data-ra-save>Add station</button></div>
+    </div>`;
+  const close = () => ov.remove();
+  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+  ov.querySelector(".music-cfg-x").addEventListener("click", close);
+  ov.querySelector("[data-ra-cancel]").addEventListener("click", close);
+  ov.querySelector("[data-ra-save]").addEventListener("click", () => {
+    const name = ov.querySelector("#raName").value.trim();
+    const url = ov.querySelector("#raUrl").value.trim();
+    const category = ov.querySelector("#raCat").value.trim();
+    if (!url) { showVoiceToast("A stream URL is required."); return; }
+    saveRadioUserStation({ name: name || "My station", streamUrl: url, category });
+    close();
+  });
+  document.body.appendChild(ov);
+  ov.querySelector("#raName")?.focus();
+}
+async function saveRadioUserStation(rec) {
+  const id = `user_${(typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : Date.now().toString(36)}`;
+  if (!Array.isArray(state.radioUserStations)) state.radioUserStations = [];
+  state.radioUserStations.unshift({ id, name: rec.name, streamUrl: rec.streamUrl, category: rec.category || null, addedAt: Date.now() });
+  persist();
+  radioCatalog = null; // invalidate so listStations picks up the new one
+  await ensureRadioCatalog();
+  renderRadioPanel();
+  showVoiceToast(`Added ${rec.name}`);
+}
+async function deleteRadioUserStation(id) {
+  const st = (state.radioUserStations || []).find((s) => s.id === id);
+  if (!st) return;
+  if (!confirm(`Remove “${st.name}”?`)) return;
+  if (radioCurStation && radioCurStation.id === id) stopRadio();
+  state.radioUserStations = (state.radioUserStations || []).filter((s) => s.id !== id);
+  state.radioFavorites = (state.radioFavorites || []).filter((s) => s.id !== id); // drop any favourite ref
+  persist();
+  radioCatalog = null;
+  await ensureRadioCatalog();
+  renderRadioPanel();
+}
 // Favourite STATION ("easy access to this station"). Followed PROGRAMS are a
 // separate concept (state.radioFollowedPrograms) reserved for when reliable
 // program data exists — not surfaced in v1.
@@ -42629,7 +42685,8 @@ function radioStationRow(st) {
   const fav = isRadioFav(st.id);
   return `<div class="music-row${active ? " is-active" : ""}" data-radio-play="${escapeHtml(st.id)}" role="button" tabindex="0" aria-label="${escapeHtml(st.name)}">
       <span class="music-row-icon" aria-hidden="true">${active ? (playing ? MUSIC_PAUSE_SVG : MUSIC_PLAY_SVG) : radioStationThumb(st)}</span>
-      <span class="music-row-main"><span class="music-row-title">${escapeHtml(st.name)}</span><span class="music-row-sub">${escapeHtml(radioStationSubtitle(st))}${st.providerId && st.providerId !== "mpr" ? ` · ${escapeHtml(radioProviderLabel(st.providerId))}` : ""}</span></span>
+      <span class="music-row-main"><span class="music-row-title">${escapeHtml(st.name)}</span><span class="music-row-sub">${escapeHtml(radioStationSubtitle(st))}${st.providerId && st.providerId !== "mpr" && st.providerId !== "user" ? ` · ${escapeHtml(radioProviderLabel(st.providerId))}` : ""}</span></span>
+      ${st.userAdded ? `<button class="music-row-del" type="button" data-radio-delete="${escapeHtml(st.id)}" title="Remove station" aria-label="Remove station">${MUSIC_X_SVG}</button>` : ""}
       <button class="music-fav-btn${fav ? " is-on" : ""}" type="button" data-radio-fav="${escapeHtml(st.id)}" aria-label="${fav ? "Remove favourite station" : "Favourite station"}" aria-pressed="${fav}">${musicFavSvg(fav)}</button>
     </div>`;
 }
@@ -42715,7 +42772,9 @@ function renderRadioPanel() {
   const panel = document.getElementById("mediaRadioPanel");
   if (!panel) return;
   panel.innerHTML = `
-    <div class="podcast-playlist-bar music-bar"><div class="music-bar-title">Radio</div><div class="podcast-tabs-actions"></div></div>
+    <div class="podcast-playlist-bar music-bar"><div class="music-bar-title">Radio</div><div class="podcast-tabs-actions">
+      <button class="icon-btn std-add-btn" type="button" data-radio-add title="Add a station" aria-label="Add a station by stream URL">${MUSIC_PLUS_SVG}</button>
+    </div></div>
     <div class="music-discover">
       <div class="music-search-bar">
         <svg class="music-search-ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
@@ -42733,6 +42792,9 @@ function initRadioPanel() {
   if (!radioPanelWired) {
     radioPanelWired = true;
     panel.addEventListener("click", (e) => {
+      if (e.target.closest("[data-radio-add]")) { openAddRadioStation(); return; }
+      const del = e.target.closest("[data-radio-delete]");
+      if (del) { e.stopPropagation(); deleteRadioUserStation(del.dataset.radioDelete); return; }
       const fav = e.target.closest("[data-radio-fav]");
       if (fav) { e.stopPropagation(); toggleRadioFav(radioViewIndex.get(fav.dataset.radioFav)); return; }
       const follow = e.target.closest("[data-radio-follow]");
