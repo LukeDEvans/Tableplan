@@ -17,6 +17,37 @@ orchestration layer** over the rest of Live: it references canonical objects
 | `travel-refs.js` | The **association layer**: reference canonical Live objects by id (dedupe, grouping, shop buckets, ranking). Never copies. |
 | `travel-geo.js` | **Spatial core**: per-trip geocode cache, day palette, bounds, cached place resolution via an injected geocoder (offline-safe). |
 | `travel-mode.js` | The **runtime** NOW/NEXT/LATER snapshot (time-injected). |
+| `travel-ingest.js` | **Email → travel info** (pure): normalize interpreter entities, map to `trip.days` items, trip-matching, dedup/update detection, diffs, proposals. |
+| `travel-interpret.js` | **Server** thread interpreter (CommonJS): one general Claude prompt → normalized entities with intent/provenance. Sibling of `booking-scan.js`. |
+
+## Send to Explore (email travel-information ingestion)
+
+Parallel to Mail's "Send to Media". A travel email/thread → normalized,
+provider-agnostic travel info → matched to a trip → **reviewed** → committed
+canonical `trip.days` objects that feed the itinerary/routing engine, with the
+original email retained as source. **High extraction, low commitment: AI
+proposes, the user commits.** Three concepts stay distinct:
+
+- **Extracted** — normalized `TravelEntity` from the interpreter (ephemeral).
+- **Proposed change** — a diff against an already-committed item → `trip.proposals[]`,
+  surfaced in the **Explore review inbox** (the `#exploreNotificationsBtn` bell).
+- **Committed** — a `trip.days` item with `item.source` provenance.
+
+Flow: mail more-menu **Send to Explore** → `sendMailToExplore` → gmail.js
+`interpretThread` (fetches the whole thread server-side, bodies never leave the
+server) → `interpretTravelThread` (one prompt, reads the thread as a temporal
+sequence: later supersedes earlier; flags `intent` new/modify/cancel) →
+`normalizeEntities` → review dialog (`showTravelIngestDialog`) → `matchTrip` →
+`commitEntityToTrip`. Re-sent/modified/cancelled reservations are recognized by
+`findExistingItem` (confirmation, else provider+date+location) and become
+proposals, never duplicates or silent edits. Applied cancellations set
+`item.cancelled` (kept as history; `dayItems` filters them from the plan).
+Provider-agnostic: **no per-provider parsers** — Airbnb/United/etc. are just test
+cases of one general interpreter. Extensible: a new category is a new
+`entityToPlacements` branch; the review UI is generic.
+
+New nested trip fields (sync-free): `item.source`, `trip.proposals[]`,
+`item.cancelled`. `booking-scan.js` and Move to Media are untouched.
 
 Rendering, dialogs, and provider wiring live in `app.js` and call these modules.
 
