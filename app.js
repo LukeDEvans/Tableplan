@@ -47171,7 +47171,6 @@ function renderExploreSidebar(preserveSelectedId, { listOnly = false } = {}) {
       `<div class="explore-cat-head" title="${escapeHtml(cat.label)}">` +
         `<span class="explore-cat-icon">${cat.icon}</span>` +
         `<span class="explore-cat-label">${escapeHtml(cat.label)}</span>` +
-        `<span class="explore-cat-count">${items.length}</span>` +
       `</div>` +
       `<div class="explore-cat-trips">${items.map(exploreTripTabHtml).join("")}</div>` +
     `</div>`;
@@ -47239,12 +47238,8 @@ function openExploreTrip(tripId) {
   };
 
   // Delete
-  document.getElementById("exploreDeleteTripBtn").onclick = () => {
-    if (!confirm(`Delete trip "${trip.name}"?`)) return;
-    state.trips = (state.trips || []).filter(t => t.id !== trip.id);
-    persist();
-    renderExploreSidebar();
-  };
+  // Delete lives on the trip's right-click menu in the sidebar (openExploreTripMenu);
+  // print is retired. Both header buttons were removed.
 
   // Meta row
   const dateStr = trip.startDate
@@ -47295,7 +47290,6 @@ function openExploreTrip(tripId) {
   });
   document.getElementById("exploreScanBookingBtn").onclick = () => showTravelScanBookingDialog(trip);
   document.getElementById("exploreScanEmailBtn").onclick = () => showTravelEmailScanDialog(trip);
-  document.getElementById("explorePrintBtn").onclick = () => printTripItinerary(trip);
 
   // Reset to the itinerary — the trip's center of gravity — and render it.
   setActiveExploreTab("itinerary");
@@ -47408,6 +47402,11 @@ function wireExploreTabs() {
   searchInput?.addEventListener("input", () => {
     exploreTripQuery = searchInput.value;
     renderExploreSidebar(exploreOpenTripId, { listOnly: true });
+  });
+
+  // Notifications button — placeholder for now (matches the Media page).
+  document.getElementById("exploreNotificationsBtn")?.addEventListener("click", () => {
+    showMailToast("Trip notifications are coming soon.");
   });
 
   document.getElementById("exploreAddTripBtn")?.addEventListener("click", () => {
@@ -47977,16 +47976,60 @@ function tripHasCarOnDay(trip, dateKey) {
 
 function itineraryStopIcon(stop) { return stop.icon || "📍"; }
 
-function openItineraryStopDetail(stop, trip, rerender) {
-  const typeMap = { activity: "activity", food: "food", "lodging-in": "lodging", "lodging-out": "lodging", "lodging-stay": "lodging", leg: "travel" };
-  const type = typeMap[stop.type] || "activity";
-  const edit = () => {
-    if (type === "activity") showActivityDialog(trip, stop.ownerDateKey, "activities", rerender, stop.raw);
-    else if (type === "food") showFoodDialog(trip, stop.ownerDateKey, "food", rerender, stop.raw);
+const ITIN_STOP_TYPE_MAP = { activity: "activity", food: "food", "lodging-in": "lodging", "lodging-out": "lodging", "lodging-stay": "lodging", leg: "travel" };
+
+// The edit action for a stop — opens the right editing dialog for its kind.
+function itineraryStopEdit(stop, trip, rerender) {
+  const type = ITIN_STOP_TYPE_MAP[stop.type] || "activity";
+  return () => {
+    if (type === "food") showFoodDialog(trip, stop.ownerDateKey, "food", rerender, stop.raw);
     else if (type === "lodging") showLodgingDialog(trip, stop.ownerDateKey, "lodging", rerender, stop.raw);
-    else showTravelLegDialog(trip, stop.ownerDateKey, "travel", rerender, stop.raw);
+    else if (type === "travel") showTravelLegDialog(trip, stop.ownerDateKey, "travel", rerender, stop.raw);
+    else showActivityDialog(trip, stop.ownerDateKey, "activities", rerender, stop.raw);
   };
-  showItemDetailView(type, stop.raw, trip, stop.ownerDateKey, edit);
+}
+
+function deleteItineraryStop(stop, trip, rerender) {
+  if (!confirm(`Remove “${stop.title}” from the itinerary?`)) return;
+  const arr = tripDayItems(trip, stop.ownerDateKey, stop.section);
+  const idx = arr.findIndex(x => x && x.id === stop.id);
+  if (idx > -1) arr.splice(idx, 1);
+  persist();
+  rerender();
+}
+
+function openItineraryStopDetail(stop, trip, rerender) {
+  const type = ITIN_STOP_TYPE_MAP[stop.type] || "activity";
+  showItemDetailView(type, stop.raw, trip, stop.ownerDateKey, itineraryStopEdit(stop, trip, rerender));
+}
+
+// Right-click / ⋯ menu for an itinerary item: edit, attach a booking image
+// (scan a photo or pull from email), and remove.
+function openItineraryStopMenu(event, stop, trip, rerender) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeFolderMenu();
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML =
+    `<button type="button" role="menuitem" data-act="edit">✏ Edit</button>` +
+    `<button type="button" role="menuitem" data-act="scan">📷 Add booking image (scan)</button>` +
+    `<button type="button" role="menuitem" data-act="email">✉️ Booking image from email</button>` +
+    `<button type="button" role="menuitem" class="danger" data-act="delete">🗑 Remove from trip</button>`;
+  document.body.append(menu);
+  const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+  const act = a => {
+    closeFolderMenu();
+    if (a === "edit") itineraryStopEdit(stop, trip, rerender)();
+    else if (a === "scan") showAttachmentsDialog(trip, stop.raw, rerender);
+    else if (a === "email") showTravelEmailScanDialog(trip);
+    else if (a === "delete") deleteItineraryStop(stop, trip, rerender);
+  };
+  menu.querySelectorAll("[data-act]").forEach(b => b.addEventListener("click", e => { e.stopPropagation(); act(b.dataset.act); }));
 }
 
 // Build one STOP card for the itinerary timeline.
@@ -48003,8 +48046,16 @@ function buildItineraryStopCard(stop, trip, rerender) {
       (stop.subtitle ? `<span class="itin-stop-sub">${escapeHtml(stop.subtitle)}</span>` : "") +
       (stop.location ? `<span class="itin-stop-loc">📍 ${escapeHtml(stop.location)}</span>` : "") +
     `</span>` +
-    (stop.hasReservation ? `<span class="itin-stop-badge" title="Has a reservation/booking">✓</span>` : "");
-  el.addEventListener("click", e => { if (e.target.closest("a")) return; openItineraryStopDetail(stop, trip, rerender); });
+    `<span class="itin-stop-actions">` +
+      (stop.hasReservation ? `<span class="itin-stop-badge" title="Has a reservation/booking">✓</span>` : "") +
+      `<button class="itin-stop-menu-btn" type="button" title="More" aria-label="More actions">⋯</button>` +
+    `</span>`;
+  el.addEventListener("click", e => {
+    if (e.target.closest("a")) return;
+    if (e.target.closest(".itin-stop-menu-btn")) { openItineraryStopMenu(e, stop, trip, rerender); return; }
+    openItineraryStopDetail(stop, trip, rerender);
+  });
+  el.addEventListener("contextmenu", e => openItineraryStopMenu(e, stop, trip, rerender));
   return el;
 }
 
