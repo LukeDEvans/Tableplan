@@ -428,7 +428,7 @@ const MANAGED_PAGES = [
   { key: "do",        label: "To-Do" },
   { key: "play",      label: "Exercise" },
   { key: "watch",     label: "Watch" },
-  { key: "read",      label: "Listen" },
+  { key: "read",      label: "Media" },
   { key: "recreate",  label: "Recreate" },
   { key: "explore",   label: "Explore" },
   { key: "plan",      label: "Calendar" },
@@ -812,8 +812,7 @@ const elements = {
   settingsMainPage: document.querySelector("#settingsMainPage"),
   playMainPage: document.querySelector("#playMainPage"),
   playPlannerGrid: document.querySelector("#playPlannerGrid"),
-  watchMainPage: document.querySelector("#watchMainPage"),
-  watchPlannerGrid: document.querySelector("#watchPlannerGrid"),
+  watchPlannerGrid: document.querySelector("#watchPlannerGrid"), // now inside the Media page's Watch tab panel
   shopMainPage: document.querySelector("#shopMainPage"),
   shopReceiptsList: document.querySelector("#shopReceiptsList"),
   openShopReceiptsBtn: document.querySelector("#openShopReceiptsBtn"),
@@ -7005,7 +7004,6 @@ function hideAllPages() {
   document.querySelector("[data-section='mealPrep']").hidden = true;
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
-  elements.watchMainPage.hidden = true;
   elements.mediaMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
@@ -7066,22 +7064,14 @@ function showPlayApp(event) {
   closeAppMenu();
 }
 
+// Watch is no longer a standalone page — it lives inside Media as a sidebar tab.
+// This redirect keeps every entry point (home/title buttons, the "watch" hash,
+// voice commands, deep links) working, landing on Media → Watch.
 function showWatchApp(event) {
   event?.stopPropagation();
-  if (!isPageEnabled("watch")) {
-    showHomeApp();
-    return;
-  }
-  activeAppArea = "watch";
-  hideAllPages();
-  elements.watchMainPage.hidden = false;
-  setWeekToolsMode("today");
-  elements.activeCookingSection.hidden = true;
-  setPageTitle("Watch");
+  showMediaApp();
+  switchMediaTab("watch");
   setPageHash("watch");
-  renderWatchPlanner();
-  closePageTitleMenu();
-  closeAppMenu();
 }
 
 function showRecreateApp(event) {
@@ -10460,7 +10450,7 @@ function showMediaApp(event) {
   // No date bar on Media (like Mail/Explore) — hide the week-tools row.
   elements.weekLabel.closest(".week-tools").hidden = true;
   elements.activeCookingSection.hidden = true;
-  setPageTitle("Listen");
+  setPageTitle("Media");
   setPageHash("media");
   initMediaPage();
   closePageTitleMenu();
@@ -13588,7 +13578,7 @@ function currentMainPageTitle() {
   if (activeAppArea === "plan") return "Calendar";
   if (activeAppArea === "inventory") return "Inventory";
   if (activeAppArea === "watch") return "Watch";
-  if (activeAppArea === "media") return "Listen";
+  if (activeAppArea === "media") return "Media";
   if (activeAppArea === "shop") return "Shop";
   if (activeAppArea === "recreate") return "Recreate";
   if (activeAppArea === "finance") return "Finance";
@@ -19042,7 +19032,7 @@ function updatePageTitleMenu() {
   elements.titleMealPlanBtn.hidden = activeAppArea === "eat" || !isPagePersonallyEnabled("eat");
   elements.titleExercisePlanBtn.hidden = activeAppArea === "play" || !isPagePersonallyEnabled("play");
   elements.titleToDoListBtn.hidden = activeAppArea === "do" || !isPagePersonallyEnabled("do");
-  elements.titleWatchBtn.hidden = activeAppArea === "watch" || !isPagePersonallyEnabled("watch");
+  elements.titleWatchBtn.hidden = true; // Watch moved into the Media page's sidebar — no top-level nav button
   elements.titleReadBtn.hidden = activeAppArea === "media" || !isPagePersonallyEnabled("read");
   elements.titleShopBtn.hidden = activeAppArea === "shop" || !isPagePersonallyEnabled("shop");
   elements.titleInventoryBtn.hidden = activeAppArea === "inventory" || !isPagePersonallyEnabled("inventory");
@@ -19062,7 +19052,7 @@ function updatePageVisibility() {
   elements.homeEatBtn.hidden = !isPagePersonallyEnabled("eat");
   elements.homePlayBtn.hidden = !isPagePersonallyEnabled("play");
   elements.homeDoBtn.hidden = !isPagePersonallyEnabled("do");
-  elements.homeWatchBtn.hidden = !isPagePersonallyEnabled("watch");
+  elements.homeWatchBtn.hidden = true; // Watch moved into the Media page's sidebar — no home-screen button
   elements.homeReadBtn.hidden = !isPagePersonallyEnabled("read");
   elements.homeShopBtn.hidden = !isPagePersonallyEnabled("shop");
   elements.homeInventoryBtn.hidden = !isPagePersonallyEnabled("inventory");
@@ -19136,7 +19126,7 @@ function updateSettingsMenuOptions() {
   elements.menuIngredientOptionsBtn.hidden = !isEat;
   elements.menuFoodHealthSettingsBtn.hidden = !isEat;
   elements.menuMealPlanSettingsBtn.hidden = !isEat;
-  elements.menuWatchTheatersBtn.hidden = activeAppArea !== "watch";
+  elements.menuWatchTheatersBtn.hidden = !(activeAppArea === "media" && activeMediaTab === "watch");
   elements.menuRecurringTasksBtn.hidden = !isDo;
   elements.menuWorkoutLibraryBtn.hidden = !isPlay;
   elements.menuWorkoutLogsBtn.hidden = !isPlay;
@@ -38358,7 +38348,7 @@ function wireMediaTabs() {
   document.getElementById("confirmPdfImportBtn")?.addEventListener("click", confirmPdfImport);
 }
 
-const MEDIA_SERVICE_TABS = ["books", "podcasts", "music", "radio"];
+const MEDIA_SERVICE_TABS = ["books", "podcasts", "music", "radio", "watch"];
 
 function switchMediaTab(tab) {
   activeMediaTab = tab;
@@ -38385,6 +38375,7 @@ function switchMediaTab(tab) {
   const allPanel = document.getElementById("mediaAllPanel");
   const musicPanel = document.getElementById("mediaMusicPanel");
   const radioPanel = document.getElementById("mediaRadioPanel");
+  const watchPanel = document.getElementById("mediaWatchPanel");
 
   if (booksPanel) booksPanel.hidden = true;
   if (listPanel) listPanel.hidden = true;
@@ -38393,6 +38384,7 @@ function switchMediaTab(tab) {
   if (allPanel) allPanel.hidden = true;
   if (musicPanel) musicPanel.hidden = true;
   if (radioPanel) radioPanel.hidden = true;
+  if (watchPanel) watchPanel.hidden = true;
   const searchPanel = document.getElementById("mediaSearchPanel");
   if (searchPanel) searchPanel.hidden = true;
   // Leaving to a folder clears an active top-bar search.
@@ -38420,6 +38412,9 @@ function switchMediaTab(tab) {
   } else if (tab === "radio") {
     if (radioPanel) radioPanel.hidden = false;
     initRadioPanel();
+  } else if (tab === "watch") {
+    if (watchPanel) watchPanel.hidden = false;
+    renderWatchPlanner(); // self-contained (renders category tabs + list + wiring into #watchPlannerGrid)
   } else {
     const isArticleTab = getReadPublications().some(p => p.key === tab);
     if (listPanel) listPanel.hidden = false;
@@ -46735,7 +46730,7 @@ async function executeChatTool(name, input) {
           const removed = watchItemsList()[idx];
           state.watchItems = watchItemsList().filter((_, i) => i !== idx);
           persist();
-          if (activeAppArea === "watch") render();
+          if (activeAppArea === "media" && activeMediaTab === "watch") renderWatchPlanner();
           return `Removed "${removed.title}" from watchlist.`;
         }
         if (list === "reading") {

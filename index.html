@@ -124,7 +124,7 @@
                 <button type="button" id="titleInventoryBtn">Inventory</button>
                 <button type="button" id="titleToDoListBtn">To-Do</button>
                 <button type="button" id="titleWatchBtn">Watch</button>
-                <button type="button" id="titleReadBtn">Listen</button>
+                <button type="button" id="titleReadBtn">Media</button>
                 <button type="button" id="titleMailBtn">Mail</button>
                 <button type="button" id="titleExploreBtn">Explore</button>
                 <button type="button" id="titleFinanceBtn">Finance</button>
@@ -231,7 +231,7 @@
                 <button type="button" id="homePlayBtn">Exercise</button>
                 <button type="button" id="homeMailBtn">Mail</button>
                 <button type="button" id="homeEatBtn">Meal Plan</button>
-                <button type="button" id="homeReadBtn">Listen</button>
+                <button type="button" id="homeReadBtn">Media</button>
                 <button type="button" id="homeRecreateBtn">Recreate</button>
                 <button type="button" id="homeExploreBtn">Explore</button>
                 <button type="button" id="homeFinanceBtn">Finance</button>
@@ -267,10 +267,7 @@
         <section class="planner-column do-column" id="playMainPage" aria-label="Exercise plan" hidden>
           <div class="planner-grid" id="playPlannerGrid"></div>
         </section>
-        <section class="planner-column do-column" id="watchMainPage" aria-label="Watch list" hidden>
-          <div class="planner-grid" id="watchPlannerGrid"></div>
-        </section>
-        <section class="planner-column do-column article-read-page" id="mediaMainPage" aria-label="Listen" hidden>
+        <section class="planner-column do-column article-read-page" id="mediaMainPage" aria-label="Media" hidden>
           <div class="article-page-inner">
             <div class="mail-topbar media-topbar">
               <button class="icon-btn mail-sidebar-toggle" type="button" id="mediaSidebarToggle" title="Toggle menu" aria-label="Toggle folders menu">
@@ -304,6 +301,10 @@
                 <button class="article-sidebar-tab" type="button" data-media-tab="radio" role="tab" aria-selected="false">
                   <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M4 10h16a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z"/><circle cx="8" cy="15" r="2.4"/><line x1="14" y1="13.5" x2="19" y2="13.5"/><line x1="14" y1="16.5" x2="17" y2="16.5"/><path d="M7 10l10-5"/></svg>
                   <span>Radio</span>
+                </button>
+                <button class="article-sidebar-tab" type="button" data-media-tab="watch" role="tab" aria-selected="false">
+                  <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                  <span>Watch</span>
                 </button>
                 <button class="article-sidebar-tab" type="button" data-media-tab="all" role="tab" aria-selected="false">
                   <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M4 4h13a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H4z"/><path d="M19 8h1a1 1 0 0 1 1 1v9a2 2 0 0 1-2 2"/><line x1="7" y1="8" x2="14" y2="8"/><line x1="7" y1="12" x2="14" y2="12"/><line x1="7" y1="16" x2="11" y2="16"/></svg>
@@ -384,6 +385,9 @@
                 </div>
                 <div class="podcast-panel" id="mediaMusicPanel" hidden></div>
                 <div class="podcast-panel" id="mediaRadioPanel" hidden></div>
+                <div class="podcast-panel" id="mediaWatchPanel" hidden>
+                  <div class="planner-grid" id="watchPlannerGrid"></div>
+                </div>
                 <div class="podcast-panel" id="mediaPodcastsPanel" hidden>
                   <div class="podcast-playlist-bar" id="podcastPlaylistBar"></div>
                   <div class="podcast-content" id="podcastContent">
