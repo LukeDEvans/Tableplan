@@ -47140,21 +47140,22 @@ function extractTripEmoji(rawName) {
 }
 
 // Compact numeric date for the sidebar: day/month/'yy (no leading zeros).
-// "2026-07-24" → "24/7/'26". Ranges collapse shared month/year so they fit:
-//   same month+year → "24–26/7/'26";  same year → "24/7–2/8/'26".
+// "2026-07-24" → "24/7/'26". Start and end are shown in full, separated:
+//   "24/7/'26 - 26/7/'26".
 function tripDateParts(dateKey) {
   const [yr, mo, da] = String(dateKey || "").split("-");
   return { y: (yr || "").slice(2), m: parseInt(mo, 10), d: parseInt(da, 10) };
 }
+function formatTripDateShort(dateKey) {
+  const p = tripDateParts(dateKey);
+  return Number.isFinite(p.d) && Number.isFinite(p.m) ? `${p.d}/${p.m}/'${p.y}` : "";
+}
 function formatTripDateRange(start, end) {
-  if (!start) return "";
-  const s = tripDateParts(start);
-  if (!Number.isFinite(s.d) || !Number.isFinite(s.m)) return "";
-  if (!end || end === start) return `${s.d}/${s.m}/'${s.y}`;
-  const e = tripDateParts(end);
-  if (s.y === e.y && s.m === e.m) return `${s.d}–${e.d}/${s.m}/'${s.y}`;
-  if (s.y === e.y) return `${s.d}/${s.m}–${e.d}/${e.m}/'${s.y}`;
-  return `${s.d}/${s.m}/'${s.y}–${e.d}/${e.m}/'${e.y}`;
+  const s = formatTripDateShort(start);
+  if (!s) return "";
+  if (!end || end === start) return s;
+  const e = formatTripDateShort(end);
+  return e ? `${s} - ${e}` : s;
 }
 
 function exploreTripTabHtml(trip) {
