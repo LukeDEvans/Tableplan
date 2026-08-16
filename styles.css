@@ -19653,6 +19653,8 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .travel-dialog-field select,
 .travel-dialog-field textarea { font-size: 0.875rem; }
 .travel-party-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.travel-party-add { display: flex; gap: 8px; margin-top: 8px; }
+.travel-party-add .text-input { flex: 1; }
 .travel-party-chip {
   font-size: 0.78rem;
   padding: 3px 8px;

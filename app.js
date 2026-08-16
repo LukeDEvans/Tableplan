@@ -25,8 +25,44 @@ const TRAVEL_PACKING_CATS = ["documents", "clothing", "electronics", "health", "
 // Travel party choices come from the household (plus generic groups) — no
 // hardcoded personal names anywhere in the app.
 function travelPartyOptions() {
-  const members = normalizeMealPlanConfig(state.mealPlanConfig).members.map((m) => m.label).filter(Boolean);
-  return [...members, "Friends", "Family"];
+  // Permanent chips for each household member; extra people are added by name.
+  return normalizeMealPlanConfig(state.mealPlanConfig).members.map((m) => m.label).filter(Boolean);
+}
+
+// HTML for the "add a person" row under a party-chips picker.
+function partyAdderHtml() {
+  return '<div class="travel-party-add">' +
+    '<input type="text" class="text-input" data-party-add-input placeholder="Add someone…" autocomplete="off" />' +
+    '<button type="button" class="secondary-btn compact-btn" data-party-add-btn>Add</button></div>';
+}
+
+// Wire the "add a person" row: typing a name (Enter or Add) appends a selected
+// chip to `chipsEl`. Deduplicates case-insensitively; re-selecting an existing
+// name just highlights it.
+function wirePartyAdder(dialog, chipsEl) {
+  const input = dialog.querySelector("[data-party-add-input]");
+  const btn = dialog.querySelector("[data-party-add-btn]");
+  if (!input || !chipsEl) return;
+  const add = () => {
+    const name = input.value.trim();
+    if (!name) return;
+    const existing = Array.from(chipsEl.querySelectorAll(".travel-party-chip"))
+      .find(c => c.dataset.party.toLowerCase() === name.toLowerCase());
+    if (existing) { existing.classList.add("is-selected"); }
+    else {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "travel-party-chip is-selected";
+      chip.dataset.party = name;
+      chip.textContent = name;
+      chip.addEventListener("click", () => chip.classList.toggle("is-selected"));
+      chipsEl.appendChild(chip);
+    }
+    input.value = "";
+    input.focus();
+  };
+  btn?.addEventListener("click", add);
+  input.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); add(); } });
 }
 let exploreOpenTripId = null;
 let exploreActiveDayKey = ""; // selected day in the trip day tabs
@@ -47781,7 +47817,7 @@ function showTravelEditTripDialog(tripId) {
         <div class="travel-dialog-field" style="flex:1"><label>Start date</label><input id="teStart" type="date" class="text-input" value="${escapeHtml(trip.startDate || "")}" /></div>
         <div class="travel-dialog-field" style="flex:1"><label>End date</label><input id="teEnd" type="date" class="text-input" value="${escapeHtml(trip.endDate || "")}" /></div>
       </div>
-      <div class="travel-dialog-field"><label>Who's coming?</label><div class="travel-party-chips" id="tePartyChips">${partyChipsHtml}</div></div>
+      <div class="travel-dialog-field"><label>Who's coming?</label><div class="travel-party-chips" id="tePartyChips">${partyChipsHtml}</div>${partyAdderHtml()}</div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
         <button type="button" class="secondary-btn" id="teCancel">Cancel</button>
         <button type="button" class="primary-btn" id="teSave">Save</button>
@@ -47792,6 +47828,7 @@ function showTravelEditTripDialog(tripId) {
   d.querySelectorAll(".travel-party-chip").forEach(btn => {
     btn.addEventListener("click", () => btn.classList.toggle("is-selected"));
   });
+  wirePartyAdder(d, d.querySelector("#tePartyChips"));
   d.querySelector("#teCancel").addEventListener("click", () => d.remove());
   d.querySelector("#teSave").addEventListener("click", () => {
     const name = d.querySelector("#teTripName").value.trim();
@@ -51313,7 +51350,7 @@ function showTravelNewTripDialog() {
     '<div class="travel-dialog-field" style="flex:1"><label>Start date</label><input id="tnStart" type="date" class="text-input" /></div>' +
     '<div class="travel-dialog-field" style="flex:1"><label>End date</label><input id="tnEnd" type="date" class="text-input" /></div>' +
     '</div>' +
-    '<div class="travel-dialog-field"><label>Who\'s coming?</label><div class="travel-party-chips" id="tnPartyChips">' + partyChipsHtml + '</div></div>' +
+    '<div class="travel-dialog-field"><label>Who\'s coming?</label><div class="travel-party-chips" id="tnPartyChips">' + partyChipsHtml + '</div>' + partyAdderHtml() + '</div>' +
     '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
     '<button type="button" class="secondary-btn" id="tnCancel">Cancel</button>' +
     '<button type="button" class="primary-btn" id="tnCreate">Create</button>' +
@@ -51324,6 +51361,7 @@ function showTravelNewTripDialog() {
   d.querySelectorAll(".travel-party-chip").forEach(function(btn) {
     btn.addEventListener("click", function() { btn.classList.toggle("is-selected"); });
   });
+  wirePartyAdder(d, d.querySelector("#tnPartyChips"));
   d.querySelector("#tnCancel").addEventListener("click", function() { d.remove(); });
   d.querySelector("#tnCreate").addEventListener("click", function() {
     try {
@@ -51422,6 +51460,7 @@ function showTravelEditPartyDialog(trip) {
     '<div class="recipe-form">' +
     '<h3 style="margin:0 0 14px">Who\'s Coming?</h3>' +
     '<div class="travel-party-chips" id="tepChips">' + chipsHtml + '</div>' +
+    partyAdderHtml() +
     '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">' +
     '<button type="button" class="secondary-btn" id="tepCancel">Cancel</button>' +
     '<button type="button" class="primary-btn" id="tepSave">Save</button>' +
@@ -51430,6 +51469,7 @@ function showTravelEditPartyDialog(trip) {
   document.body.appendChild(d);
   d.showModal();
   d.querySelectorAll(".travel-party-chip").forEach(function(btn) { btn.addEventListener("click", function() { btn.classList.toggle("is-selected"); }); });
+  wirePartyAdder(d, d.querySelector("#tepChips"));
   d.querySelector("#tepCancel").addEventListener("click", function() { d.remove(); });
   d.querySelector("#tepSave").addEventListener("click", function() {
     trip.party = Array.from(d.querySelectorAll(".travel-party-chip.is-selected")).map(function(b) { return b.dataset.party; });
