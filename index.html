@@ -518,6 +518,7 @@
                           <option value="idea">Idea</option>
                           <option value="planning">Planning</option>
                           <option value="booked">Booked</option>
+                          <option value="traveling">Traveling</option>
                           <option value="completed">Completed</option>
                         </select>
                         <button class="icon-btn" type="button" id="exploreScanBookingBtn" title="Scan booking confirmation">📷</button>
@@ -533,15 +534,22 @@
                     <div class="travel-detail-meta" id="exploreDetailMeta"></div>
                   </div>
                   <div class="watch-category-tabs explore-tabs" role="tablist" id="exploreTabsNav">
-                    <button class="watch-category-tab explore-tab is-active" type="button" role="tab" data-explore-tab="overview" aria-selected="true">Overview</button>
-                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="travel" aria-selected="false">Transportation</button>
-                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="lodging" aria-selected="false">Lodging</button>
-                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="activities" aria-selected="false">Activities</button>
-                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="food" aria-selected="false">Food</button>
-                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="budget" aria-selected="false">Budget</button>
-                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="packing" aria-selected="false">Packing</button>
-                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="notes" aria-selected="false">Notes</button>
-                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="map" aria-selected="false">Map</button>
+                    <button class="watch-category-tab explore-tab is-active" type="button" role="tab" data-explore-tab="itinerary" aria-selected="true">Itinerary</button>
+                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="ideas" aria-selected="false">Ideas</button>
+                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="prepare" aria-selected="false">Prepare</button>
+                    <div class="explore-more-wrap">
+                      <button class="watch-category-tab explore-tab explore-more-btn" type="button" id="exploreMoreBtn" aria-haspopup="true" aria-expanded="false">More ▾</button>
+                      <div class="explore-more-menu" id="exploreMoreMenu" role="menu" hidden>
+                        <button class="explore-more-item" type="button" role="menuitem" data-explore-tab="travel">✈ Transportation</button>
+                        <button class="explore-more-item" type="button" role="menuitem" data-explore-tab="lodging">🏨 Lodging</button>
+                        <button class="explore-more-item" type="button" role="menuitem" data-explore-tab="activities">🎯 Activities</button>
+                        <button class="explore-more-item" type="button" role="menuitem" data-explore-tab="food">🍽 Food</button>
+                        <button class="explore-more-item" type="button" role="menuitem" data-explore-tab="budget">💰 Budget</button>
+                        <button class="explore-more-item" type="button" role="menuitem" data-explore-tab="packing">🧳 Packing</button>
+                        <button class="explore-more-item" type="button" role="menuitem" data-explore-tab="notes">📝 Notes</button>
+                        <button class="explore-more-item" type="button" role="menuitem" data-explore-tab="map">🗺 Map</button>
+                      </div>
+                    </div>
                   </div>
                   <div class="explore-trip-panel" id="exploreTripPanel"></div>
                 </div>

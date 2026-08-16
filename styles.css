@@ -16498,7 +16498,142 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 
 /* ── Explore page tabs ───────────────────────────────────────────────────── */
 #exMediaContent { flex-direction: column; }
-.explore-tabs { flex: none; }
+.explore-tabs { flex: none; position: relative; }
+
+/* "More ▾" dropdown holding the secondary planning workspaces */
+.explore-more-wrap { position: relative; display: inline-flex; }
+.explore-more-menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 40;
+  min-width: 180px; padding: 6px;
+  background: var(--window-bg); border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent);
+  border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,0.18);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.explore-more-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border: none; border-radius: 8px; background: none;
+  font-size: 0.9rem; color: var(--ink); text-align: left; cursor: pointer;
+}
+.explore-more-item:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.explore-more-item.is-active { background: color-mix(in srgb, var(--accent) 16%, transparent); font-weight: 600; }
+
+/* Explore sidebar trip tabs with lifecycle status */
+.explore-trip-tab { display: flex; align-items: center; gap: 10px; }
+.explore-trip-status { font-size: 1rem; flex-shrink: 0; }
+.explore-trip-tab-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.explore-trip-name { font-weight: 600; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explore-trip-dates { font-size: 0.72rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explore-trip-tab--traveling { box-shadow: inset 3px 0 0 var(--accent); }
+.explore-trip-tab--completed .explore-trip-name { color: var(--muted); }
+
+/* ── Itinerary: the center of gravity ────────────────────────────────────── */
+.itin-days { display: flex; flex-direction: column; gap: 10px; padding: 10px 10px 24px; overflow-y: auto; }
+.itin-day {
+  border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  border-radius: var(--radius); background: var(--surface); overflow: hidden;
+}
+.itin-day--today { border-color: color-mix(in srgb, var(--accent) 55%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent); }
+.itin-day-head {
+  width: 100%; display: grid; grid-template-columns: auto auto 1fr auto; align-items: center; gap: 10px;
+  padding: 12px 14px; border: none; background: none; cursor: pointer; text-align: left; color: var(--ink);
+}
+.itin-day-caret { transition: transform 0.15s ease; color: var(--muted); font-size: 0.85rem; }
+.itin-day.is-open .itin-day-caret { transform: rotate(90deg); }
+.itin-day-num { font-weight: 700; font-size: 0.9rem; white-space: nowrap; }
+.itin-day-today-tag {
+  font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  color: #fff; background: var(--accent); padding: 1px 6px; border-radius: 999px; margin-left: 4px;
+}
+.itin-day-date { color: var(--muted); font-size: 0.84rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.itin-day-chips { justify-self: end; font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
+.itin-day-open { color: var(--accent-dark, var(--accent)); font-weight: 700; }
+.itin-day-free { font-style: italic; opacity: 0.8; }
+.itin-day-body { padding: 4px 12px 14px; display: flex; flex-direction: column; }
+.itin-day-empty-note { padding: 14px 6px; color: var(--muted); font-size: 0.85rem; font-style: italic; }
+
+/* Stop card */
+.itin-stop {
+  display: grid; grid-template-columns: 54px 24px 1fr auto; align-items: start; gap: 10px;
+  padding: 10px 8px; border-radius: 10px; cursor: pointer;
+}
+.itin-stop:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.itin-stop-time { font-variant-numeric: tabular-nums; font-size: 0.78rem; color: var(--muted); font-weight: 600; padding-top: 2px; white-space: nowrap; }
+.itin-stop-icon { font-size: 1.1rem; line-height: 1.3; }
+.itin-stop-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.itin-stop-title { font-weight: 600; font-size: 0.92rem; }
+.itin-stop-sub, .itin-stop-loc { font-size: 0.76rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.itin-stop-badge { color: var(--accent-dark, var(--accent)); font-weight: 700; align-self: center; }
+.itin-stop--leg { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+
+/* Transition row — the connective element between two stops */
+.itin-transition {
+  display: flex; align-items: center; margin-left: 60px; padding: 2px 8px 2px 0; cursor: pointer;
+  min-height: 30px; position: relative;
+}
+.itin-transition::before {
+  content: ""; position: absolute; left: -18px; top: 0; bottom: 0; width: 2px;
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
+}
+.itin-transition-line { display: inline-flex; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--muted); flex-wrap: wrap; }
+.itin-transition-line--loading { opacity: 0.7; }
+.itin-transition-mode { font-size: 1rem; }
+.itin-transition-text { color: var(--ink); }
+.itin-transition-text--muted { color: var(--muted); font-style: italic; }
+.itin-transition-tag {
+  font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--accent-dark, var(--accent)); background: color-mix(in srgb, var(--accent) 14%, transparent);
+  padding: 1px 7px; border-radius: 999px;
+}
+.itin-transition-tag--open { color: var(--muted); background: color-mix(in srgb, var(--ink) 10%, transparent); }
+.itin-transition--planned .itin-transition-tag { color: var(--muted); background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.itin-transition-warn { color: #d9822b; }
+.itin-transition:hover .itin-transition-text { text-decoration: underline; }
+
+.itin-add-wrap { margin: 8px 0 2px 60px; }
+.itin-add-btn { font-size: 0.8rem; }
+
+/* Undated / idea state */
+.itin-undated { text-align: center; padding: 48px 24px; max-width: 440px; margin: 0 auto; }
+.itin-undated-icon { font-size: 2.4rem; }
+.itin-undated-title { font-weight: 700; font-size: 1.1rem; margin: 10px 0 4px; }
+.itin-undated-sub { color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
+.itin-undated-actions { display: flex; gap: 8px; justify-content: center; margin-top: 18px; flex-wrap: wrap; }
+
+/* Ideas / Saved */
+.itin-ideas { padding: 14px 12px 24px; max-width: 620px; }
+.itin-ideas-intro { color: var(--muted); font-size: 0.85rem; line-height: 1.5; margin-bottom: 12px; }
+.itin-ideas-add { display: flex; gap: 8px; margin-bottom: 12px; }
+.itin-ideas-add .text-input { flex: 1; }
+.itin-ideas-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.itin-idea-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent); border-radius: 10px; background: var(--surface);
+}
+.itin-idea-title { font-size: 0.9rem; }
+.itin-ideas-empty { color: var(--muted); font-style: italic; font-size: 0.88rem; }
+
+/* Prepare / readiness */
+.itin-prepare { padding: 20px 14px 24px; max-width: 560px; }
+.itin-ready-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 16px; }
+.itin-ready-pct { font-size: 2.2rem; font-weight: 800; color: var(--accent-dark, var(--accent)); font-variant-numeric: tabular-nums; }
+.itin-ready-label { color: var(--muted); font-size: 0.95rem; }
+.itin-ready-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.itin-ready-row { display: grid; grid-template-columns: 24px 1fr auto; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--surface); border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); }
+.itin-ready-row.is-ok .itin-ready-mark { color: var(--accent-dark, var(--accent)); }
+.itin-ready-row.is-open .itin-ready-mark { color: #d9822b; }
+.itin-ready-mark { font-weight: 700; text-align: center; }
+.itin-ready-name { font-weight: 600; font-size: 0.9rem; }
+.itin-ready-detail { color: var(--muted); font-size: 0.8rem; text-align: right; }
+.itin-prepare-hint { color: var(--muted); font-size: 0.82rem; font-style: italic; margin-top: 16px; }
+
+@media (max-width: 680px) {
+  .itin-stop { grid-template-columns: 46px 20px 1fr auto; gap: 8px; }
+  .itin-transition { margin-left: 46px; }
+  .itin-transition::before { left: -14px; }
+  .itin-add-wrap { margin-left: 46px; }
+  .itin-day-head { grid-template-columns: auto 1fr auto; }
+  .itin-day-date { display: none; }
+}
 
 /* ── Explore overview day cards ──────────────────────────────────────────── */
 .trip-overview-scroll {

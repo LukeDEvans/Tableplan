@@ -9,6 +9,9 @@ import { icon as ldeIcon } from './live-icons.js';
 import { createWeatherCache } from './weather-cache.js';
 import { createPlaybackEngine } from './playback-engine.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
+import * as TravelItinerary from './travel-itinerary.js';
+import * as TravelTransitions from './travel-transitions.js';
+import * as TravelModel from './travel-model.js';
 
 const STORAGE_KEY = "tableplan-state-v1";
 const TRAVEL_LOGISTIC_ICONS = { flight: "✈️", hotel: "🏨", car: "🚗", train: "🚆", ferry: "⛴️", other: "📌" };
@@ -3539,7 +3542,17 @@ function normalizeState(parsed) {
   migratePlayExercisesToWorkouts(normalized);
   cleanupAutoAppliedFutureMealDefaults(normalized);
   syncPublishedWeekArchiveFromPlans(normalized);
+  migrateTravelIdeasToTripsOnce(normalized);
   return normalized;
+}
+
+// Fold legacy standalone travel ideas into the unified trip lifecycle as
+// undated "idea" trips (idempotent, non-destructive — the original
+// travelIdeas array is left intact). One lifecycle: IDEA→PLANNING→…→COMPLETED.
+function migrateTravelIdeasToTripsOnce(targetState) {
+  if (!Array.isArray(targetState.trips)) targetState.trips = [];
+  const added = TravelModel.migrateIdeasToTrips(targetState);
+  if (added.length) targetState.trips.push(...added);
 }
 
 const MAX_TOMBSTONES_PER_KEY = 200;
@@ -47034,6 +47047,8 @@ function defaultTrip(overrides = {}) {
     expenses: [],
     packingList: [],
     notes: "",
+    saved: [],   // lightweight trip-associated ideas (not yet scheduled)
+    refs: [],     // typed references to canonical Live objects (media/shop/…)
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...overrides
@@ -47103,11 +47118,22 @@ function renderExploreSidebar(preserveSelectedId) {
     showExploreTripEmpty();
     return;
   }
-  list.innerHTML = trips.map(trip => `
-    <button class="article-sidebar-tab" type="button" data-explore-trip-id="${trip.id}">
-      <svg class="article-sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
-      <span>${escapeHtml(trip.name || "Untitled")}</span>
-    </button>`).join("");
+  const sorted = [...trips].sort((a, b) => TravelModel.compareForHome(a, b));
+  list.innerHTML = sorted.map(trip => {
+    const status = TravelModel.deriveStatus(trip);
+    const meta = TravelModel.TRIP_STATUS_META[status] || {};
+    const dates = trip.startDate
+      ? formatTravelDate(trip.startDate) + (trip.endDate ? " – " + formatTravelDate(trip.endDate) : "")
+      : (status === "idea" ? "Idea" : "No dates");
+    return `
+    <button class="article-sidebar-tab explore-trip-tab explore-trip-tab--${meta.tone || status}" type="button" data-explore-trip-id="${trip.id}">
+      <span class="explore-trip-status" title="${escapeHtml(meta.label || status)}" aria-hidden="true">${meta.icon || "✈"}</span>
+      <span class="explore-trip-tab-body">
+        <span class="explore-trip-name">${escapeHtml(trip.name || "Untitled")}</span>
+        <span class="explore-trip-dates">${escapeHtml(dates)}</span>
+      </span>
+    </button>`;
+  }).join("");
   list.querySelectorAll("[data-explore-trip-id]").forEach(btn => {
     btn.addEventListener("click", () => {
       list.querySelectorAll(".article-sidebar-tab").forEach(b => b.classList.remove("is-active"));
@@ -47217,14 +47243,10 @@ function openExploreTrip(tripId) {
   document.getElementById("exploreScanEmailBtn").onclick = () => showTravelEmailScanDialog(trip);
   document.getElementById("explorePrintBtn").onclick = () => printTripItinerary(trip);
 
-  // Reset to overview tab and render it
-  const nav = document.getElementById("exploreTabsNav");
-  nav?.querySelectorAll(".explore-tab").forEach(b => {
-    const isOverview = b.dataset.exploreTab === "overview";
-    b.classList.toggle("is-active", isOverview);
-    b.setAttribute("aria-selected", String(isOverview));
-  });
-  renderExploreTripPanel("overview", trip);
+  // Reset to the itinerary — the trip's center of gravity — and render it.
+  setActiveExploreTab("itinerary");
+  document.getElementById("exploreMoreMenu")?.setAttribute("hidden", "");
+  renderExploreTripPanel("itinerary", trip);
 }
 
 function openExploreTripMenu(event, tripId) {
@@ -47335,17 +47357,54 @@ function wireExploreTabs() {
   document.getElementById("exploreEmptyIdeaBtn")?.addEventListener("click", showTravelNewIdeaDialog);
 
   content.addEventListener("click", e => {
-    const btn = e.target.closest(".explore-tab");
+    // The "More ▾" button toggles its dropdown rather than switching panels.
+    const moreBtn = e.target.closest("#exploreMoreBtn");
+    if (moreBtn) {
+      const menu = document.getElementById("exploreMoreMenu");
+      const open = menu.hidden;
+      menu.hidden = !open;
+      moreBtn.setAttribute("aria-expanded", String(open));
+      return;
+    }
+    // A primary tab (Itinerary/Ideas/Prepare) or a More-menu item both carry
+    // data-explore-tab; a plain .explore-tab without one (the More button) is
+    // handled above.
+    const btn = e.target.closest("[data-explore-tab]");
     if (!btn) return;
-    const nav = document.getElementById("exploreTabsNav");
-    nav?.querySelectorAll(".explore-tab").forEach(b => {
-      b.classList.toggle("is-active", b === btn);
-      b.setAttribute("aria-selected", String(b === btn));
-    });
     const tab = btn.dataset.exploreTab;
+    const menu = document.getElementById("exploreMoreMenu");
+    if (menu) { menu.hidden = true; document.getElementById("exploreMoreBtn")?.setAttribute("aria-expanded", "false"); }
+    setActiveExploreTab(tab);
     const trip = (state.trips || []).find(t => t.id === exploreOpenTripId);
     if (trip) renderExploreTripPanel(tab, trip);
   });
+
+  // Close the More menu on an outside click.
+  document.addEventListener("click", e => {
+    const menu = document.getElementById("exploreMoreMenu");
+    if (menu && !menu.hidden && !e.target.closest(".explore-more-wrap")) {
+      menu.hidden = true;
+      document.getElementById("exploreMoreBtn")?.setAttribute("aria-expanded", "false");
+    }
+  });
+}
+
+// Reflect the active tab across the primary tab row and the More menu. When a
+// More-menu workspace is active, the "More ▾" button carries the active style so
+// the user can see where they are.
+const EXPLORE_MORE_TABS = new Set(["travel", "lodging", "activities", "food", "budget", "packing", "notes", "map"]);
+function setActiveExploreTab(tab) {
+  const nav = document.getElementById("exploreTabsNav");
+  if (!nav) return;
+  const inMore = EXPLORE_MORE_TABS.has(tab);
+  nav.querySelectorAll(".explore-tab").forEach(b => {
+    const isMoreBtn = b.id === "exploreMoreBtn";
+    const active = isMoreBtn ? inMore : (b.dataset.exploreTab === tab);
+    b.classList.toggle("is-active", active);
+    b.setAttribute("aria-selected", String(active));
+  });
+  nav.querySelectorAll(".explore-more-item").forEach(b =>
+    b.classList.toggle("is-active", b.dataset.exploreTab === tab));
 }
 
 const EXPLORE_TAB_SECTIONS = {
@@ -47779,9 +47838,336 @@ function renderTravelPacking(trip, panel) {
   });
 }
 
+// ── The itinerary: the trip's center of gravity ──────────────────────────────
+// A chronological, day-based view built from the pure projection
+// (travel-itinerary.js): each day is a collapsible section of STOP cards woven
+// with first-class TRANSITION rows, and every transition proactively resolves
+// its A→B routing (travel-transitions.js) against the existing travel-time
+// backend. Days collapse/expand; the current day starts open.
+
+// Per-trip expand state for day sections: { "<tripId>:<dateKey>": true }.
+let exploreItinExpanded = {};
+
+// Does the household have a car available on this day? Drives the routing
+// recommendation (drive vs transit). Scans travel legs with a car/automobile
+// mode whose date range covers the day.
+function tripHasCarOnDay(trip, dateKey) {
+  const CAR_MODES = new Set(["automobile", "car-own", "car-rental"]);
+  const days = trip.days || {};
+  for (const ok of Object.keys(days)) {
+    for (const leg of (days[ok]?.travel || [])) {
+      if (!CAR_MODES.has(leg.mode)) continue;
+      const from = leg.departDate || ok, to = leg.arriveDate || leg.departDate || ok;
+      if (dateKey >= from && dateKey <= to) return true;
+    }
+  }
+  return false;
+}
+
+function itineraryStopIcon(stop) { return stop.icon || "📍"; }
+
+function openItineraryStopDetail(stop, trip, rerender) {
+  const typeMap = { activity: "activity", food: "food", "lodging-in": "lodging", "lodging-out": "lodging", "lodging-stay": "lodging", leg: "travel" };
+  const type = typeMap[stop.type] || "activity";
+  const edit = () => {
+    if (type === "activity") showActivityDialog(trip, stop.ownerDateKey, "activities", rerender, stop.raw);
+    else if (type === "food") showFoodDialog(trip, stop.ownerDateKey, "food", rerender, stop.raw);
+    else if (type === "lodging") showLodgingDialog(trip, stop.ownerDateKey, "lodging", rerender, stop.raw);
+    else showTravelLegDialog(trip, stop.ownerDateKey, "travel", rerender, stop.raw);
+  };
+  showItemDetailView(type, stop.raw, trip, stop.ownerDateKey, edit);
+}
+
+// Build one STOP card for the itinerary timeline.
+function buildItineraryStopCard(stop, trip, rerender) {
+  const el = document.createElement("div");
+  el.className = "itin-stop itin-stop--" + (stop.type || "generic");
+  if (stop.hasReservation) el.classList.add("itin-stop--reserved");
+  const timeLabel = stop.time ? (stop.endTime ? `${stop.time}–${stop.endTime}` : stop.time) : "";
+  el.innerHTML =
+    `<span class="itin-stop-time">${escapeHtml(timeLabel || "—")}</span>` +
+    `<span class="itin-stop-icon" aria-hidden="true">${itineraryStopIcon(stop)}</span>` +
+    `<span class="itin-stop-body">` +
+      `<span class="itin-stop-title">${escapeHtml(stop.title)}</span>` +
+      (stop.subtitle ? `<span class="itin-stop-sub">${escapeHtml(stop.subtitle)}</span>` : "") +
+      (stop.location ? `<span class="itin-stop-loc">📍 ${escapeHtml(stop.location)}</span>` : "") +
+    `</span>` +
+    (stop.hasReservation ? `<span class="itin-stop-badge" title="Has a reservation/booking">✓</span>` : "");
+  el.addEventListener("click", e => { if (e.target.closest("a")) return; openItineraryStopDetail(stop, trip, rerender); });
+  return el;
+}
+
+// Build one TRANSITION row (the connective element between two stops). Renders a
+// skeleton immediately, then resolves routing and updates in place. Tapping an
+// open transition opens the route chooser; a planned one opens its leg.
+function buildItineraryTransitionRow(transition, trip, dateKey, rerender) {
+  const row = document.createElement("div");
+  row.className = "itin-transition" + (transition.planned ? " itin-transition--planned" : "");
+
+  const render = (routing) => {
+    let inner;
+    if (transition.planned && transition.explicitLeg) {
+      const leg = transition.explicitLeg;
+      const meta = TravelTransitions.MODE_META;
+      const modeKey = Object.keys(meta).find(k => meta[k].legMode === leg.mode) || "drive";
+      inner = `<span class="itin-transition-line"><span class="itin-transition-mode">${(meta[modeKey] || {}).icon || "🔀"}</span>` +
+        `<span class="itin-transition-text">${escapeHtml((meta[modeKey] || {}).label || "Planned")}${leg.from || leg.to ? "" : ""}</span>` +
+        `<span class="itin-transition-tag">Planned</span></span>`;
+    } else if (!routing || routing.status === "pending") {
+      inner = `<span class="itin-transition-line itin-transition-line--loading"><span class="itin-transition-mode">⏱</span><span class="itin-transition-text">Finding the best way…</span></span>`;
+    } else if (routing.status === "unavailable") {
+      inner = `<span class="itin-transition-line"><span class="itin-transition-mode">↓</span><span class="itin-transition-text itin-transition-text--muted">Plan how to get there</span><span class="itin-transition-tag itin-transition-tag--open">+ Plan</span></span>`;
+    } else {
+      const best = (routing.rows || []).find(r => r.recommended) || {};
+      const dur = TravelTransitions.formatDuration(best.durationMin);
+      const leaveBy = routing.leaveBy ? ` · leave by ${routing.leaveBy}` : "";
+      const tight = routing.buffer && routing.buffer.ok === false;
+      inner = `<span class="itin-transition-line"><span class="itin-transition-mode">${best.icon || "↓"}</span>` +
+        `<span class="itin-transition-text">${escapeHtml(best.label || "")} ${escapeHtml(dur)}${escapeHtml(leaveBy)}</span>` +
+        `<span class="itin-transition-tag">Recommended</span>` +
+        (tight ? `<span class="itin-transition-warn" title="Tight — not much buffer">⚠</span>` : "") +
+        `</span>`;
+    }
+    row.innerHTML = inner;
+  };
+
+  render(transition.planned ? null : { status: "pending" });
+
+  row.addEventListener("click", () => {
+    if (transition.planned && transition.explicitLeg) {
+      showItemDetailView("travel", transition.explicitLeg, trip, dateKey, () =>
+        showTravelLegDialog(trip, dateKey, "travel", rerender, transition.explicitLeg));
+    } else {
+      const a = { label: transition.fromStop.title, loc: transition.fromLocation };
+      const b = { label: transition.toStop.title, loc: transition.toLocation };
+      showConnectionRouteDialog(trip, dateKey, a, b, tripHasCarOnDay(trip, dateKey), rerender);
+    }
+  });
+
+  // Resolve routing for open transitions (planned ones already show their mode).
+  if (!transition.planned) {
+    TravelTransitions.resolveTransition(transition, {
+      fetchTimes: fetchTravelTimes,
+      hasCar: tripHasCarOnDay(trip, dateKey),
+    }).then(resolved => { if (row.isConnected) render(resolved.routing); });
+  }
+  return row;
+}
+
+// A per-day "add a stop" control reusing the existing item dialogs.
+function buildItineraryAddControl(trip, dateKey, rerender) {
+  const wrap = document.createElement("div");
+  wrap.className = "itin-add-wrap";
+  wrap.innerHTML = `<button class="secondary-btn compact-btn itin-add-btn" type="button">+ Add to this day</button>`;
+  wrap.querySelector("button").addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeFolderMenu();
+    const menu = document.createElement("div");
+    menu.className = "folder-context-menu";
+    menu.setAttribute("role", "menu");
+    menu.innerHTML = `
+      <button type="button" role="menuitem" data-add="activity">🎯 Activity</button>
+      <button type="button" role="menuitem" data-add="food">🍽 Food / meal</button>
+      <button type="button" role="menuitem" data-add="lodging">🏨 Lodging</button>
+      <button type="button" role="menuitem" data-add="travel">✈ Transport leg</button>`;
+    document.body.append(menu);
+    const r = wrap.getBoundingClientRect();
+    menu.style.left = `${Math.max(10, Math.min(r.left, window.innerWidth - menu.offsetWidth - 10))}px`;
+    menu.style.top = `${Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 10)}px`;
+    menu.querySelectorAll("[data-add]").forEach(b => b.addEventListener("click", () => {
+      const kind = b.dataset.add;
+      closeFolderMenu();
+      if (kind === "activity") showActivityDialog(trip, dateKey, "activities", rerender, null);
+      else if (kind === "food") showFoodDialog(trip, dateKey, "food", rerender, null);
+      else if (kind === "lodging") showLodgingDialog(trip, dateKey, "lodging", rerender, null);
+      else showTravelLegDialog(trip, dateKey, "travel", rerender, null);
+    }));
+  });
+  return wrap;
+}
+
+function renderTripItinerary(trip, panel) {
+  const dayKeys = TravelItinerary.tripDayKeys(trip);
+
+  // Idea / undated trip: no day grid — invite dates, point to Ideas/Saved.
+  if (!dayKeys.length) {
+    const isIdea = TravelModel.isIdea(trip);
+    panel.innerHTML =
+      `<div class="itin-undated">` +
+        `<div class="itin-undated-icon">${isIdea ? "💡" : "🗓️"}</div>` +
+        `<p class="itin-undated-title">${isIdea ? "This is a travel idea" : "No dates yet"}</p>` +
+        `<p class="itin-undated-sub">${isIdea
+          ? "Collect places, restaurants and inspiration under <strong>Ideas</strong>. When you're ready, set dates to turn it into a day-by-day plan."
+          : "Set trip dates to build a day-by-day itinerary. You can still gather ideas in the meantime."}</p>` +
+        `<div class="itin-undated-actions">` +
+          `<button class="primary-btn" type="button" id="itinSetDatesBtn">Set dates</button>` +
+          `<button class="secondary-btn" type="button" id="itinGoIdeasBtn">Go to Ideas</button>` +
+        `</div>` +
+      `</div>`;
+    panel.querySelector("#itinSetDatesBtn")?.addEventListener("click", () => showTravelEditDatesDialog(trip));
+    panel.querySelector("#itinGoIdeasBtn")?.addEventListener("click", () => { setActiveExploreTab("ideas"); renderExploreTripPanel("ideas", trip); });
+    return;
+  }
+
+  const today = TravelModel.todayKey();
+  const currentIdx = dayKeys.indexOf(today);
+  const defaultOpenIdx = currentIdx >= 0 ? currentIdx : 0;
+  const rerender = () => renderTripItinerary(trip, panel);
+
+  panel.innerHTML = `<div class="itin-days" id="itinDays"></div>`;
+  const container = panel.querySelector("#itinDays");
+
+  dayKeys.forEach((dateKey, i) => {
+    const d = new Date(dateKey + "T00:00:00");
+    const dateLabel = d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+    const summary = TravelItinerary.daySummary(trip, dateKey);
+    const expandKey = trip.id + ":" + dateKey;
+    if (exploreItinExpanded[expandKey] === undefined) exploreItinExpanded[expandKey] = (i === defaultOpenIdx);
+    const isToday = dateKey === today;
+
+    const section = document.createElement("section");
+    section.className = "itin-day" + (isToday ? " itin-day--today" : "") + (summary.isEmpty ? " itin-day--empty" : "");
+
+    const chips = [];
+    if (summary.activities) chips.push(`${summary.activities} 🎯`);
+    if (summary.meals) chips.push(`${summary.meals} 🍽`);
+    if (summary.legs) chips.push(`${summary.legs} ✈`);
+    if (summary.openTransitions) chips.push(`<span class="itin-day-open">${summary.openTransitions} to plan</span>`);
+
+    const head = document.createElement("button");
+    head.className = "itin-day-head";
+    head.type = "button";
+    head.setAttribute("aria-expanded", String(exploreItinExpanded[expandKey]));
+    head.innerHTML =
+      `<span class="itin-day-caret" aria-hidden="true">▸</span>` +
+      `<span class="itin-day-num">Day ${i + 1}${isToday ? ` <span class="itin-day-today-tag">Today</span>` : ""}</span>` +
+      `<span class="itin-day-date">${escapeHtml(dateLabel)}</span>` +
+      `<span class="itin-day-chips">${summary.isEmpty ? "<span class='itin-day-free'>Free day</span>" : chips.join(" · ")}</span>`;
+    section.appendChild(head);
+
+    const bodyWrap = document.createElement("div");
+    bodyWrap.className = "itin-day-body";
+    section.appendChild(bodyWrap);
+
+    const renderBody = () => {
+      bodyWrap.innerHTML = "";
+      const timeline = TravelItinerary.buildDayTimeline(trip, dateKey);
+      if (!timeline.length) {
+        const empty = document.createElement("div");
+        empty.className = "itin-day-empty-note";
+        empty.innerHTML = `<span>Nothing planned yet — an open day is an opportunity.</span>`;
+        bodyWrap.appendChild(empty);
+      } else {
+        timeline.forEach(entry => {
+          if (entry.kind === "stop") bodyWrap.appendChild(buildItineraryStopCard(entry, trip, rerender));
+          else bodyWrap.appendChild(buildItineraryTransitionRow(entry, trip, dateKey, rerender));
+        });
+      }
+      bodyWrap.appendChild(buildItineraryAddControl(trip, dateKey, rerender));
+    };
+
+    const applyExpanded = () => {
+      const open = exploreItinExpanded[expandKey];
+      section.classList.toggle("is-open", open);
+      head.setAttribute("aria-expanded", String(open));
+      bodyWrap.hidden = !open;
+      if (open && !bodyWrap._rendered) { renderBody(); bodyWrap._rendered = true; }
+    };
+    head.addEventListener("click", () => {
+      exploreItinExpanded[expandKey] = !exploreItinExpanded[expandKey];
+      applyExpanded();
+    });
+    applyExpanded();
+    container.appendChild(section);
+  });
+
+  // Bring the current day into view.
+  panel.querySelector(".itin-day--today")?.scrollIntoView({ block: "nearest" });
+}
+
+// ── Ideas (Saved) — minimal in M1, expanded in a later milestone ─────────────
+function renderTripIdeas(trip, panel) {
+  if (!Array.isArray(trip.saved)) trip.saved = [];
+  const rerender = () => renderTripIdeas(trip, panel);
+  const items = trip.saved;
+  panel.innerHTML =
+    `<div class="itin-ideas">` +
+      `<div class="itin-ideas-intro">Saved things for this trip — places, food, links, inspiration. Not scheduled until you add them to a day.</div>` +
+      `<div class="itin-ideas-add">` +
+        `<input type="text" id="tripIdeaInput" class="text-input" placeholder="Save an idea…" autocomplete="off" />` +
+        `<button class="primary-btn icon-primary-btn" type="button" id="tripIdeaAddBtn" aria-label="Save idea"><span aria-hidden="true">+</span></button>` +
+      `</div>` +
+      (items.length
+        ? `<ul class="itin-ideas-list">${items.map(it => `
+            <li class="itin-idea-row" data-id="${escapeHtml(it.id)}">
+              <span class="itin-idea-title">${escapeHtml(it.title)}</span>
+              <button class="icon-btn itin-idea-del" type="button" data-del="${escapeHtml(it.id)}" title="Remove" aria-label="Remove">×</button>
+            </li>`).join("")}</ul>`
+        : `<p class="itin-ideas-empty">No saved ideas yet.</p>`) +
+    `</div>`;
+  const add = (title) => {
+    const t = String(title || "").trim();
+    if (!t) return;
+    trip.saved.push({ id: createId("saved"), title: t, createdAt: new Date().toISOString() });
+    persist();
+    rerender();
+    panel.querySelector("#tripIdeaInput")?.focus();
+  };
+  panel.querySelector("#tripIdeaAddBtn")?.addEventListener("click", () => add(panel.querySelector("#tripIdeaInput")?.value));
+  panel.querySelector("#tripIdeaInput")?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); add(e.target.value); } });
+  panel.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", () => {
+    trip.saved = trip.saved.filter(x => x.id !== b.dataset.del);
+    persist(); rerender();
+  }));
+}
+
+// ── Prepare (readiness) — minimal in M1, expanded in a later milestone ───────
+function renderTripPrepare(trip, panel) {
+  const dayKeys = TravelItinerary.tripDayKeys(trip);
+  const legs = [], lodgings = [];
+  let openTransitions = 0;
+  Object.values(trip.days || {}).forEach(day => {
+    (day.travel || []).forEach(l => legs.push(l));
+    (day.lodging || []).forEach(l => lodgings.push(l));
+  });
+  dayKeys.forEach(k => { openTransitions += TravelItinerary.daySummary(trip, k).openTransitions; });
+  const packing = Array.isArray(trip.packing) ? trip.packing : [];
+  const packedRatio = packing.length ? packing.filter(p => p.checked).length / packing.length : 0;
+
+  const checks = [
+    { label: "Transportation", ok: legs.length > 0, detail: legs.length ? `${legs.length} leg(s) planned` : "No travel legs yet" },
+    { label: "Lodging", ok: lodgings.length > 0, detail: lodgings.length ? `${lodgings.length} stay(s)` : "No lodging yet" },
+    { label: "Getting around", ok: openTransitions === 0, detail: openTransitions ? `${openTransitions} connection(s) to plan` : "All connections planned" },
+    { label: "Packing", ok: packing.length > 0 && packedRatio === 1, detail: packing.length ? `${Math.round(packedRatio * 100)}% packed` : "No packing list yet" },
+  ];
+  const ready = Math.round((checks.filter(c => c.ok).length / checks.length) * 100);
+
+  panel.innerHTML =
+    `<div class="itin-prepare">` +
+      `<div class="itin-ready-head">` +
+        `<div class="itin-ready-pct">${ready}%</div>` +
+        `<div class="itin-ready-label">ready${trip.name ? " for " + escapeHtml(trip.name) : ""}</div>` +
+      `</div>` +
+      `<ul class="itin-ready-list">${checks.map(c => `
+        <li class="itin-ready-row ${c.ok ? "is-ok" : "is-open"}">
+          <span class="itin-ready-mark">${c.ok ? "✓" : "⚠"}</span>
+          <span class="itin-ready-name">${escapeHtml(c.label)}</span>
+          <span class="itin-ready-detail">${escapeHtml(c.detail)}</span>
+        </li>`).join("")}</ul>` +
+      `<p class="itin-prepare-hint">Packing, reservations, documents and shopping come together here as the trip fills in.</p>` +
+    `</div>`;
+}
+
 function renderExploreTripPanel(tab, trip) {
   const panel = document.getElementById("exploreTripPanel");
   if (!panel) return;
+
+  // Primary experience: the itinerary is the center of gravity; Ideas and
+  // Prepare sit beside it; the old category tabs live under "More".
+  if (tab === "overview") tab = "itinerary"; // legacy alias
+  if (tab === "itinerary") { renderTripItinerary(trip, panel); return; }
+  if (tab === "ideas")     { renderTripIdeas(trip, panel);     return; }
+  if (tab === "prepare")   { renderTripPrepare(trip, panel);   return; }
 
   if (tab === "budget")  { renderTravelBudget(trip, panel); return; }
   if (tab === "notes")   { renderTravelNotes(trip, panel);  return; }
@@ -50110,12 +50496,15 @@ function showTravelNewIdeaDialog() {
   d.querySelector("#tiSave").addEventListener("click", () => {
     const dest = d.querySelector("#tiDest").value.trim();
     if (!dest) { d.querySelector("#tiDest").focus(); return; }
-    const idea = defaultTravelIdea(dest);
-    idea.description = d.querySelector("#tiNotes").value.trim();
-    if (!Array.isArray(state.travelIdeas)) state.travelIdeas = [];
-    state.travelIdeas.push(idea);
+    // Ideas are first-class trips (status "idea", no dates) so they share one
+    // lifecycle and appear in the trips list immediately.
+    const trip = defaultTrip({ name: dest, destination: dest, status: TravelModel.TRIP_STATUS.IDEA });
+    trip.notes = d.querySelector("#tiNotes").value.trim();
+    if (!Array.isArray(state.trips)) state.trips = [];
+    state.trips.push(trip);
     persist();
     d.remove();
+    if (activeAppArea === "explore") { renderExploreSidebar(trip.id); }
   });
 }
 
