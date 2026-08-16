@@ -48121,9 +48121,10 @@ function buildHourlyGrid(gridItems) {
   return grid;
 }
 
-function showItemDetailView(type, item, trip, ownerDateKey, onEdit) {
-  const dlg = document.createElement("dialog");
-  dlg.className = "item-detail-dialog";
+// Build an item's presentation (icon, title, subtitle, detail rows) from its
+// type + fields. Shared by the modal detail view and the itinerary's inline
+// expand-in-place, so both show identical information.
+function itemDetailContent(type, item) {
   const fmtDate = ds => ds ? new Date(ds + "T12:00:00").toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric" }) : "";
   const row = (label, value, link) =>
     `<div class="item-detail-row"><span class="item-detail-label">${escapeHtml(label)}</span><span class="item-detail-value">${
@@ -48211,6 +48212,13 @@ function showItemDetailView(type, item, trip, ownerDateKey, onEdit) {
     if (item.notes) rows.push(row("Notes", item.notes));
     bodyHtml = rows.join("");
   }
+  return { icon, title, subtitle, bodyHtml };
+}
+
+function showItemDetailView(type, item, trip, ownerDateKey, onEdit) {
+  const dlg = document.createElement("dialog");
+  dlg.className = "item-detail-dialog";
+  const { icon, title, subtitle, bodyHtml } = itemDetailContent(type, item);
 
   dlg.innerHTML =
     `<div class="item-detail-header">` +
@@ -48460,10 +48468,9 @@ function deleteItineraryStop(stop, trip, rerender) {
   rerender();
 }
 
-function openItineraryStopDetail(stop, trip, rerender) {
-  const type = ITIN_STOP_TYPE_MAP[stop.type] || "activity";
-  showItemDetailView(type, stop.raw, trip, stop.ownerDateKey, itineraryStopEdit(stop, trip, rerender));
-}
+// Which itinerary stops are expanded (by item id). Ephemeral per session;
+// survives re-renders so an open item stays open after an edit.
+const exploreItinStopOpen = new Set();
 
 // Right-click / ⋯ menu for an itinerary item: edit, attach a booking image
 // (scan a photo or pull from email), and remove.
@@ -48494,28 +48501,59 @@ function openItineraryStopMenu(event, stop, trip, rerender) {
   menu.querySelectorAll("[data-act]").forEach(b => b.addEventListener("click", e => { e.stopPropagation(); act(b.dataset.act); }));
 }
 
-// Build one STOP card for the itinerary timeline.
+// Build one STOP card for the itinerary timeline. Collapsed it shows only the
+// time + title; clicking expands it in place to show every field (the same
+// information the old detail popup held), plus Edit / Add-to-calendar actions.
 function buildItineraryStopCard(stop, trip, rerender) {
   const el = document.createElement("div");
   el.className = "itin-stop itin-stop--" + (stop.type || "generic");
   if (stop.hasReservation) el.classList.add("itin-stop--reserved");
+  const detailType = ITIN_STOP_TYPE_MAP[stop.type] || "activity";
   const timeLabel = stop.time ? (stop.endTime ? `${stop.time}–${stop.endTime}` : stop.time) : "";
+  const isOpen = stop.id && exploreItinStopOpen.has(stop.id);
+  if (isOpen) el.classList.add("is-expanded");
+
   el.innerHTML =
-    `<span class="itin-stop-time">${escapeHtml(timeLabel || "—")}</span>` +
-    `<span class="itin-stop-icon" aria-hidden="true">${itineraryStopIcon(stop)}</span>` +
-    `<span class="itin-stop-body">` +
+    `<div class="itin-stop-head">` +
+      `<span class="itin-stop-time">${escapeHtml(timeLabel || "—")}</span>` +
+      `<span class="itin-stop-icon" aria-hidden="true">${itineraryStopIcon(stop)}</span>` +
       `<span class="itin-stop-title">${escapeHtml(stop.title)}</span>` +
-      (stop.subtitle ? `<span class="itin-stop-sub">${escapeHtml(stop.subtitle)}</span>` : "") +
-      (stop.location ? `<span class="itin-stop-loc">📍 ${escapeHtml(stop.location)}</span>` : "") +
-    `</span>` +
-    `<span class="itin-stop-actions">` +
-      (stop.hasReservation ? `<span class="itin-stop-badge" title="Has a reservation/booking">✓</span>` : "") +
-      `<button class="itin-stop-menu-btn" type="button" title="More" aria-label="More actions">⋯</button>` +
-    `</span>`;
-  el.addEventListener("click", e => {
+      `<span class="itin-stop-actions">` +
+        (stop.hasReservation ? `<span class="itin-stop-badge" title="Has a reservation/booking">✓</span>` : "") +
+        `<button class="itin-stop-menu-btn" type="button" title="More" aria-label="More actions">⋯</button>` +
+        `<span class="itin-stop-caret" aria-hidden="true">▸</span>` +
+      `</span>` +
+    `</div>` +
+    `<div class="itin-stop-detail"></div>`;
+
+  const detailEl = el.querySelector(".itin-stop-detail");
+  const renderDetail = () => {
+    const { bodyHtml } = itemDetailContent(detailType, stop.raw);
+    const canCal = itemDetailCalendarInfo(detailType, stop.raw, stop.ownerDateKey);
+    detailEl.innerHTML =
+      (bodyHtml || `<div class="item-detail-row"><span class="item-detail-value" style="color:var(--muted)">No extra details.</span></div>`) +
+      `<div class="itin-stop-detail-actions">` +
+        (canCal ? `<button class="secondary-btn compact-btn" type="button" data-stop-cal>📅 Add to calendar</button>` : "") +
+        `<button class="secondary-btn compact-btn" type="button" data-stop-edit>✏ Edit</button>` +
+      `</div>`;
+    detailEl.querySelector("[data-stop-edit]")?.addEventListener("click", () => itineraryStopEdit(stop, trip, rerender)());
+    detailEl.querySelector("[data-stop-cal]")?.addEventListener("click", (e) => {
+      addStopToCalendar(detailType, stop.raw, stop.ownerDateKey);
+      e.target.textContent = "✓ On calendar"; e.target.disabled = true;
+    });
+  };
+  if (isOpen) renderDetail();
+
+  const toggle = () => {
+    const open = el.classList.toggle("is-expanded");
+    if (stop.id) { if (open) exploreItinStopOpen.add(stop.id); else exploreItinStopOpen.delete(stop.id); }
+    if (open) renderDetail(); else detailEl.innerHTML = "";
+  };
+
+  el.querySelector(".itin-stop-head").addEventListener("click", e => {
     if (e.target.closest("a")) return;
     if (e.target.closest(".itin-stop-menu-btn")) { openItineraryStopMenu(e, stop, trip, rerender); return; }
-    openItineraryStopDetail(stop, trip, rerender);
+    toggle();
   });
   el.addEventListener("contextmenu", e => openItineraryStopMenu(e, stop, trip, rerender));
   return el;
