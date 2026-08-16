@@ -47121,7 +47121,7 @@ const EXPLORE_CATEGORIES = [
   { key: "wishlist", label: "Wishlist",
     icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
     match: s => s === "idea" },
-  { key: "past", label: "Past",
+  { key: "past", label: "Past", noHeader: true,
     icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
     match: s => s === "completed" },
 ];
@@ -47167,11 +47167,13 @@ function renderExploreSidebar(preserveSelectedId, { listOnly = false } = {}) {
     const items = visible.filter(t => cat.match(TravelModel.deriveStatus(t)))
       .sort((a, b) => TravelModel.compareForHome(a, b));
     if (!items.length) return "";
-    return `<div class="explore-cat-group" data-cat="${cat.key}">` +
+    const head = cat.noHeader ? "" :
       `<div class="explore-cat-head" title="${escapeHtml(cat.label)}">` +
         `<span class="explore-cat-icon">${cat.icon}</span>` +
         `<span class="explore-cat-label">${escapeHtml(cat.label)}</span>` +
-      `</div>` +
+      `</div>`;
+    return `<div class="explore-cat-group" data-cat="${cat.key}">` +
+      head +
       `<div class="explore-cat-trips">${items.map(exploreTripTabHtml).join("")}</div>` +
     `</div>`;
   }).join("");

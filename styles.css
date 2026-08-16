@@ -16952,7 +16952,8 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
    preserve. */
 #mediaMainPage.planner-column,
 #mailMainPage.planner-column,
-#planMainPage.planner-column { padding: 0; }
+#planMainPage.planner-column,
+#exploreMainPage.planner-column { padding: 0; }
 
 /* Reading an article is a focused view — hide the Media search/menu/notifications
    top bar while the reader is open (the reader has its own Back button). */
