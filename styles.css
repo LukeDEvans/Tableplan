@@ -16666,6 +16666,22 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
   .itin-shop-buckets { grid-template-columns: 1fr; }
 }
 
+/* Planning map (Leaflet) */
+.travel-map-wrap { display: flex; flex-direction: column; height: 100%; }
+.travel-leaflet-map { width: 100%; height: 340px; border-radius: 12px; overflow: hidden; z-index: 0; background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.travel-map-listwrap { padding: 12px 4px 24px; }
+.travel-map-links { display: flex; flex-direction: column; gap: 4px; }
+.travel-map-link-row { display: grid; grid-template-columns: 24px 1fr; grid-template-areas: "icon title" "icon sub"; gap: 0 8px; padding: 8px 10px; border-radius: 8px; text-decoration: none; color: var(--ink); }
+.travel-map-link-row:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.travel-map-link-icon { grid-area: icon; align-self: center; }
+.travel-map-link-title { grid-area: title; font-weight: 600; font-size: 0.88rem; }
+.travel-map-link-sub { grid-area: sub; color: var(--muted); font-size: 0.76rem; }
+.travel-map-pin span {
+  display: flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+  border-radius: 50%; color: #fff; font-weight: 700; font-size: 0.78rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.35); border: 2px solid #fff;
+}
+
 /* Prepare / readiness */
 .itin-prepare { padding: 20px 14px 24px; max-width: 560px; }
 .itin-ready-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 16px; }

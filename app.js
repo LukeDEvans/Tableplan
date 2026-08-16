@@ -14,6 +14,7 @@ import * as TravelTransitions from './travel-transitions.js';
 import * as TravelModel from './travel-model.js';
 import * as TravelOptimize from './travel-optimize.js';
 import * as TravelRefs from './travel-refs.js';
+import * as TravelGeo from './travel-geo.js';
 
 const STORAGE_KEY = "tableplan-state-v1";
 const TRAVEL_LOGISTIC_ICONS = { flight: "✈️", hotel: "🏨", car: "🚗", train: "🚆", ferry: "⛴️", other: "📌" };
@@ -49122,174 +49123,113 @@ async function fetchTravelMapUrl(params) {
   } catch { return null; }
 }
 
+// ── Planning map (interactive Leaflet) ───────────────────────────────────────
+// Plots the trip's real located stops (from trip.days) on an interactive map,
+// geocoding each place once into a per-trip cache (trip.geocache). Markers are
+// day-coloured and numbered; each day's stops are joined by a path. Degrades to
+// a list of Google Maps links when geocoding or Leaflet is unavailable — the map
+// never hard-depends on any one service. See travel-geo.js for the pure core.
+
+// Best-effort geocoder (OpenStreetMap Nominatim). Returns {lat,lng} or null.
+// Sequential callers (TravelGeo.resolvePlaces) keep this within usage limits;
+// results are cached on the trip so a place is only ever geocoded once.
+async function geocodeAddress(address) {
+  const q = String(address || "").trim();
+  if (!q) return null;
+  try {
+    const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" + encodeURIComponent(q);
+    const res = await fetch(url, { headers: { "Accept": "application/json" } });
+    if (!res.ok) return null;
+    const arr = await res.json();
+    const hit = Array.isArray(arr) && arr[0];
+    if (!hit) return null;
+    const lat = parseFloat(hit.lat), lng = parseFloat(hit.lon);
+    return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+  } catch { return null; }
+}
+
+// Collect the trip's located places with a day index and order, from the real
+// itinerary projection.
+function collectTripMapPlaces(trip) {
+  const dayKeys = TravelItinerary.tripDayKeys(trip);
+  const keys = dayKeys.length ? dayKeys : Object.keys(trip.days || {});
+  const places = [];
+  keys.forEach((dateKey, dayIndex) => {
+    TravelItinerary.buildDayTimeline(trip, dateKey)
+      .filter(e => e.kind === "stop" && e.location)
+      .forEach((s, order) => places.push({ location: s.location, title: s.title, type: s.type, icon: s.icon, dayIndex: dayKeys.length ? dayIndex : 0, order }));
+  });
+  return places;
+}
+
+let _travelMapInstance = null;
 async function renderTravelMap(trip, el = null) {
-  el = el || document.getElementById("travelTabMap");
+  el = el || document.getElementById("exploreTripPanel");
   if (!el) return;
+  el.innerHTML = '<div class="travel-map-loading" style="padding:32px;text-align:center">Building the map…</div>';
 
-  el.innerHTML = '<div class="travel-map-loading" style="padding:32px;text-align:center">Building maps…</div>';
+  const places = collectTripMapPlaces(trip);
+  const linksList = () => {
+    const uniq = [...new Map(places.map(p => [p.location.toLowerCase(), p])).values()];
+    return uniq.length
+      ? '<div class="travel-map-links">' + uniq.map(p =>
+          '<a class="travel-map-link-row" href="https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(p.location) + '" target="_blank" rel="noopener">' +
+          '<span class="travel-map-link-icon">' + (p.icon || '📍') + '</span><span class="travel-map-link-title">' + escapeHtml(p.title) + '</span>' +
+          '<span class="travel-map-link-sub">' + escapeHtml(p.location) + '</span></a>').join('') + '</div>'
+      : '';
+  };
 
-  const sections = [];
-  const TRANSIT_ICON = { walk:'\U0001F6B6', rideshare:'\U0001F4F1', taxi:'\U0001F695', metro:'\U0001F687', bus:'\U0001F68C', tram:'\U0001F68A', drive:'\U0001F697', bike:'\U0001F6B2', ferry:'⛴️', other:'\U0001F4CC' };
-
-  // ── 1. Trip overview map: extract major stops from flight segments ──
-  const flightSegs = [];
-  (trip.logistics || []).forEach(function(l) {
-    if (l.type === "flight" && Array.isArray(l.segments)) {
-      l.segments.forEach(function(s) {
-        const from = s.fromName || s.from;
-        const to   = s.toName   || s.to;
-        if (from && to && s.departDate) flightSegs.push({ from, to, date: s.departDate });
-      });
-    }
-  });
-  flightSegs.sort((a, b) => a.date.localeCompare(b.date));
-
-  let overviewStops = [];
-  if (flightSegs.length) {
-    flightSegs.forEach(function(seg, i) {
-      if (i === 0) overviewStops.push(seg.from);
-      const last = overviewStops[overviewStops.length - 1] || "";
-      if (!last.toLowerCase().includes(seg.to.toLowerCase().split(" ")[0])) overviewStops.push(seg.to);
-    });
-  }
-  // Fallback: unique day locations in order
-  if (overviewStops.length < 2) {
-    const seen = new Set();
-    (trip.itinerary || []).forEach(d => { if (d.location && !seen.has(d.location)) { seen.add(d.location); overviewStops.push(d.location); } });
-  }
-  // Fallback: trip destination
-  if (!overviewStops.length && trip.destination) overviewStops = [trip.destination];
-
-  if (overviewStops.length === 1) {
-    sections.push({
-      label: "\U0001F30D Overview",
-      subtitle: overviewStops[0],
-      params: { type: "search", query: overviewStops[0] },
-      mapsLink: "https://maps.google.com/?q=" + encodeURIComponent(overviewStops[0]),
-      isOverview: true
-    });
-  } else if (overviewStops.length >= 2) {
-    sections.push({
-      label: "\U0001F30D Overview",
-      subtitle: overviewStops.join(" → "),
-      params: { type: "directions", origin: overviewStops[0], destination: overviewStops[overviewStops.length - 1], waypoints: overviewStops.slice(1, -1), mode: "flying" },
-      mapsLink: "https://www.google.com/maps/dir/" + overviewStops.map(encodeURIComponent).join("/"),
-      isOverview: true
-    });
-  }
-
-  // ── 2. Per-day route maps: accommodation → activities → accommodation ──
-  function stayForDate(dateKey) {
-    return (trip.stays || []).find(function(s) {
-      return s.checkIn && s.checkOut && dateKey && dateKey >= s.checkIn && dateKey <= s.checkOut && (s.address || s.name);
-    });
-  }
-
-  (trip.itinerary || []).forEach(function(day) {
-    var acts = (day.activities || []).filter(function(a) { return a.address || a.location; });
-    var actLocs = acts.map(function(a) { return a.address || a.location; });
-    var transits = day.transits || [];
-
-    // Bookend with accommodation
-    var stay = stayForDate(day.date);
-    var stayLoc = stay ? (stay.address || stay.name) : null;
-    var stayLabel = stay ? (stay.name || "Accommodation") : null;
-
-    // Full waypoint list for the map: [stay?, ...actLocs, stay?]
-    var locs = stayLoc ? [stayLoc].concat(actLocs).concat([stayLoc]) : actLocs;
-    if (!locs.length && day.location) locs = [day.location];
-    if (!locs.length) return;
-
-    var label = day.date ? formatTravelDate(day.date) : "";
-    var dayTitle = label + (day.location ? (label ? " — " : "") + day.location : "");
-
-    // Route summary HTML
-    var summaryItems = [];
-    if (stayLabel) summaryItems.push({ name: stayLabel, loc: stayLoc, isAccom: true });
-    acts.forEach(function(a) { summaryItems.push({ name: a.title || a.location, loc: a.address || a.location, isAccom: false }); });
-    if (stayLabel) summaryItems.push({ name: stayLabel, loc: stayLoc, isAccom: true });
-
-    var routeHtml = summaryItems.map(function(item, i) {
-      var row = '<div class="map-route-stop' + (item.isAccom ? ' map-route-stop--accom' : '') + '">' +
-        '<span class="map-route-stop-name">' + escapeHtml(item.name || "") + '</span>' +
-        (item.loc && item.loc !== item.name ? '<span class="map-route-stop-loc">' + escapeHtml(item.loc) + '</span>' : '') +
-        '</div>';
-      if (i < summaryItems.length - 1) {
-        // Transit between act[i-1] and act[i] (shift by accommodation offset)
-        var trIdx = stayLoc ? i - 1 : i;
-        var tr = (trIdx >= 0 && trIdx < acts.length - 1) ? (transits[trIdx] || {}) : {};
-        var icon = TRANSIT_ICON[tr.mode] || "↓";
-        var needed = !tr.mode && !item.isAccom && !(summaryItems[i+1] || {}).isAccom;
-        row += '<div class="map-route-transit' + (needed ? ' map-route-transit--needed' : '') + '">' +
-          '<span class="map-route-transit-icon">' + icon + '</span>' +
-          '<span class="map-route-transit-label">' +
-            (tr.mode ? tr.mode.charAt(0).toUpperCase() + tr.mode.slice(1) : (needed ? "Transit not set" : "↓")) +
-            (tr.durationMin ? ' · ' + tr.durationMin + ' min' : '') +
-            (tr.notes ? ' · ' + escapeHtml(tr.notes) : '') +
-          '</span></div>';
-      }
-      return row;
-    }).join('');
-
-    if (locs.length === 1) {
-      sections.push({ label: dayTitle || locs[0], routeHtml, params: { type: "place", query: locs[0] }, mapsLink: "https://maps.google.com/?q=" + encodeURIComponent(locs[0]) });
-    } else {
-      sections.push({
-        label: dayTitle || label,
-        routeHtml,
-        params: { type: "directions", origin: locs[0], destination: locs[locs.length - 1], waypoints: locs.slice(1, -1), mode: "walking" },
-        mapsLink: "https://www.google.com/maps/dir/" + locs.map(encodeURIComponent).join("/")
-      });
-    }
-  });
-
-  if (!sections.length) {
-    el.innerHTML =
-      '<div class="travel-map-empty">' +
-      '<p style="margin:0 0 8px;font-weight:600">No locations yet</p>' +
-      '<p style="margin:0;font-size:0.82rem">Add flight segments, stays, or activity addresses to see maps here.</p>' +
-      '</div>';
+  if (!places.length) {
+    el.innerHTML = '<div class="travel-map-empty" style="padding:32px;text-align:center;color:var(--muted)">' +
+      '<div style="font-size:2rem">🗺</div><p>Add activities, lodging or food with locations to see them on the map.</p></div>';
     return;
   }
 
-  // Render skeletons
-  el.innerHTML = sections.map(function(s, i) {
-    return '<div class="travel-map-section' + (s.isOverview ? ' travel-map-section--overview' : '') + '" id="travelMapSection' + i + '">' +
-      '<div class="travel-map-section-header">' +
-        '<div>' +
-          '<span class="travel-map-section-title">' + escapeHtml(s.label) + '</span>' +
-          (s.subtitle ? '<div class="travel-map-section-subtitle">' + escapeHtml(s.subtitle) + '</div>' : '') +
-        '</div>' +
-        '<a href="' + s.mapsLink + '" target="_blank" rel="noopener" class="travel-map-link">Open ↗</a>' +
-      '</div>' +
-      (s.routeHtml ? '<div class="map-route-summary">' + s.routeHtml + '</div>' : '') +
-      '<div class="travel-map-iframe-wrap"><div class="travel-map-loading">Loading map…</div></div>' +
-    '</div>';
-  }).join('');
+  // Resolve coordinates once, cached on the trip (nested → syncs for free).
+  if (!trip.geocache || typeof trip.geocache !== "object") trip.geocache = {};
+  let resolved;
+  try {
+    resolved = await TravelGeo.resolvePlaces(places, { geocode: geocodeAddress, cache: trip.geocache, maxRequests: 12 });
+    trip.geocache = resolved.cache;
+    persist();
+  } catch { resolved = { located: [] }; }
 
-  // Inject iframes
-  for (var i = 0; i < sections.length; i++) {
-    var wrap = el.querySelector('#travelMapSection' + i + ' .travel-map-iframe-wrap');
-    if (!wrap) continue;
-    try {
-      var mapUrl = await fetchTravelMapUrl(sections[i].params);
-      if (mapUrl) {
-        var h = sections[i].isOverview ? 340 : 260;
-        wrap.innerHTML = '<iframe class="travel-map-iframe" style="height:' + h + 'px" src="' + mapUrl + '" allowfullscreen loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>';
-      } else {
-        wrap.innerHTML =
-          '<a class="travel-map-fallback" href="' + sections[i].mapsLink + '" target="_blank" rel="noopener">' +
-            '<span class="travel-map-fallback-icon">\U0001F5FA️</span>' +
-            '<span>View in Google Maps ↗</span>' +
-          '</a>';
-      }
-    } catch {
-      wrap.innerHTML =
-        '<a class="travel-map-fallback" href="' + sections[i].mapsLink + '" target="_blank" rel="noopener">' +
-          '<span class="travel-map-fallback-icon">\U0001F5FA️</span>' +
-          '<span>View in Google Maps ↗</span>' +
-        '</a>';
-    }
+  el.innerHTML =
+    '<div class="travel-map-wrap">' +
+      '<div id="travelLeafletMap" class="travel-leaflet-map"></div>' +
+      '<div class="travel-map-listwrap"><div class="itin-section-label">Places</div>' + linksList() + '</div>' +
+    '</div>';
+
+  const located = resolved.located || [];
+  if (!located.length) { document.getElementById("travelLeafletMap")?.remove(); return; }
+
+  try {
+    await ensureLeaflet();
+    const L = window.L;
+    const mapEl = document.getElementById("travelLeafletMap");
+    if (!mapEl || !L) return;
+    if (_travelMapInstance) { try { _travelMapInstance.remove(); } catch {} _travelMapInstance = null; }
+    const b = TravelGeo.boundsOf(located);
+    const map = L.map(mapEl, { scrollWheelZoom: false }).setView([b.center.lat, b.center.lng], 13);
+    _travelMapInstance = map;
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+
+    const byDay = {};
+    located.forEach(p => { (byDay[p.dayIndex] = byDay[p.dayIndex] || []).push(p); });
+    Object.keys(byDay).forEach(di => {
+      const color = TravelGeo.dayColor(Number(di));
+      const dayPts = byDay[di].sort((a, c) => a.order - c.order);
+      if (dayPts.length > 1) L.polyline(dayPts.map(p => [p.lat, p.lng]), { color, weight: 3, opacity: 0.7 }).addTo(map);
+      dayPts.forEach((p, i) => {
+        const icon = L.divIcon({ className: "travel-map-pin", html: '<span style="background:' + color + '">' + (i + 1) + '</span>', iconSize: [26, 26] });
+        L.marker([p.lat, p.lng], { icon }).addTo(map).bindPopup('<strong>' + escapeHtml(p.title) + '</strong><br>' + escapeHtml(p.location));
+      });
+    });
+
+    if (located.length > 1) map.fitBounds(located.map(p => [p.lat, p.lng]), { padding: [30, 30] });
+    setTimeout(() => { try { map.invalidateSize(); } catch {} }, 120);
+  } catch {
+    document.getElementById("travelLeafletMap")?.remove();
   }
 }
 
