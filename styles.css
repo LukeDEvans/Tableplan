@@ -13797,7 +13797,8 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 .mail-compose-btn svg { width: 20px; height: 20px; stroke: var(--ink); stroke-width: 1.5; fill: none; flex-shrink: 0; }
 /* The folder list scrolls independently of the message pane and the rest of
    the page; min-height:0 lets it shrink below its content so overflow engages. */
-.mail-label-nav { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; padding-right: 16px; }
+.mail-label-nav { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; -ms-overflow-style: none; padding-right: 16px; }
+.mail-label-nav::-webkit-scrollbar { width: 0; height: 0; display: none; }
 .mail-label-item {
   display: flex;
   align-items: center;
