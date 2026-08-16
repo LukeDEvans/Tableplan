@@ -87,7 +87,12 @@ being unreachable is isolated (search degrades, home still renders).
 
 ## Data-source limitations (MPR/APMG, verified)
 - **Streams**: reliable — official `*.stream.publicradio.org` CDN. This is v1's
-  real data. (Carbon Sound's stream host is best-effort; it degrades if wrong.)
+  real data. Two caveats: **(a) Carbon Sound** has no officially-exposed stream
+  URL (HD2/app-based); its two candidates are an UNVERIFIED best-effort inference
+  and degrade gracefully if wrong (homepage set for reference). **(b) YourClassical
+  specialty streams are AAC-only** — **Firefox**'s weak raw-AAC/Icecast support
+  may prevent playback there (Chrome/Safari/Edge fine); the major services carry
+  MP3 fallbacks and are safe everywhere.
 - **Now-playing metadata**: **not available** to an in-browser player without an
   ICY-reading proxy (avoided) or HTML scraping (forbidden). `nowPlaying()` returns
   null; a station stays playable. Revisit if APMG exposes a public JSON now-playing

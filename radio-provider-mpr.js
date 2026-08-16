@@ -29,10 +29,17 @@ const MAJOR = [
   { slug: "the-current", name: "The Current", shortName: "The Current", category: "Music", description: "New, local and influential music from The Current.", streams: [aac("current", "current"), mp3("current", "current")] },
   { slug: "yourclassical", name: "YourClassical MPR", shortName: "YourClassical", category: "Classical", programGroup: "YourClassical", description: "Classical music all day from YourClassical MPR.", streams: [aac("cms", "cms"), mp3("cms", "cms")] },
   { slug: "radio-heartland", name: "Radio Heartland", shortName: "Heartland", category: "Music", description: "Acoustic, Americana and roots music.", streams: [aac("rh", "rh"), mp3("rh", "rh")] },
-  { slug: "carbon-sound", name: "Carbon Sound", shortName: "Carbon", category: "Music", description: "Amplifying BIPOC artists and culture.", streams: [mp3("carbon", "carbon")] }, // best-effort host; degrades if unavailable
+  // Carbon Sound's public stream URL is NOT officially exposed (HD2/app-based);
+  // these two candidates are a best-effort inference from the APM slug pattern
+  // and are UNVERIFIED — if wrong, the station simply fails to play gracefully.
+  { slug: "carbon-sound", name: "Carbon Sound", shortName: "Carbon", category: "Music", description: "Amplifying BIPOC artists and culture.", streams: [aac("carbon", "carbon"), mp3("carbon", "carbon")], homepage: "https://www.carbonsound.fm/" },
 ];
 
-// ── YourClassical specialty streams (AAC, official CDN) ───────────────────────
+// ── YourClassical specialty streams ───────────────────────────────────────────
+// AAC only (the official published format). NOTE: Firefox has weak raw-AAC/
+// Icecast support, so these may not play there; Chrome/Safari/Edge are fine. We
+// deliberately do NOT add guessed MP3 fallbacks — pickStream prefers MP3, so an
+// unverified .mp3 would be tried first and regress these verified AAC streams.
 const YC = [
   { slug: "yc-relax", name: "YourClassical Relax", shortName: "Relax", host: "relax", file: "relax", description: "Calm, soothing classical." },
   { slug: "yc-peaceful-piano", name: "YourClassical Peaceful Piano", shortName: "Peaceful Piano", host: "peacefulpiano", file: "peacefulpiano", description: "Solo piano to focus and unwind." },
@@ -75,7 +82,7 @@ function station(slug, m) {
     category: m.category, programGroup: m.programGroup || null,
     streams: m.streams,
     tags: ["mpr", ...(m.programGroup ? [m.programGroup.toLowerCase()] : []), ...(m.category ? [m.category.toLowerCase()] : [])],
-    homepage: "https://www.mpr.org/",
+    homepage: m.homepage || "https://www.mpr.org/",
     location: { country: "US", region: "Minnesota" },
     providerRefs: [{ provider: "mpr", externalId: slug }],
     metadataAt: null, // curated/static — no network fetch
