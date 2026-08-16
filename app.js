@@ -215,14 +215,14 @@ const STATE_SECTIONS = {
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
   plan:      ["calendars", "planEvents", "planCalendars", "planHiddenSources"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes"],
-  config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId"],
+  config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin"],
   contacts:  ["contacts", "contactGroups"],
 };
 
@@ -3368,6 +3368,16 @@ function normalizeState(parsed) {
       : defaultReadPublications(),
     articleSortOrder: parsed?.articleSortOrder === "oldest" ? "oldest" : "newest",
     readArticleIds: Array.isArray(parsed?.readArticleIds) ? parsed.readArticleIds : [],
+    // Media: unified listening history + music library + radio (all in the media
+    // section so they sync; newer-wins on merge — see mergeStates).
+    mediaHistory: Array.isArray(parsed?.mediaHistory) ? parsed.mediaHistory : [],
+    musicLibrary: (parsed?.musicLibrary && typeof parsed.musicLibrary === "object")
+      ? { favorites: Array.isArray(parsed.musicLibrary.favorites) ? parsed.musicLibrary.favorites : [], playlists: Array.isArray(parsed.musicLibrary.playlists) ? parsed.musicLibrary.playlists : [] }
+      : { favorites: [], playlists: [] },
+    radioFavorites: Array.isArray(parsed?.radioFavorites) ? parsed.radioFavorites : [],
+    radioFollowedPrograms: Array.isArray(parsed?.radioFollowedPrograms) ? parsed.radioFollowedPrograms : [],
+    radioUserStations: Array.isArray(parsed?.radioUserStations) ? parsed.radioUserStations : [],
+    jellyfin: (parsed?.jellyfin && typeof parsed.jellyfin === "object") ? parsed.jellyfin : null,
     inventoryBoxes: ensureDefaultInventoryRooms(normalizeInventoryBoxes(parsed?.inventoryBoxes)),
     inventoryItems: normalizeInventoryItems(parsed?.inventoryItems),
     inventoryRoomVisibility: normalizeInventoryRoomVisibility(parsed?.inventoryRoomVisibility),
