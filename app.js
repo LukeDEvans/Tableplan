@@ -42768,7 +42768,7 @@ function renderRadioPanel() {
   const panel = document.getElementById("mediaRadioPanel");
   if (!panel) return;
   panel.innerHTML = `
-    <div class="podcast-playlist-bar music-bar"><div class="music-bar-title">Radio</div><div class="podcast-tabs-actions">
+    <div class="podcast-playlist-bar music-bar"><div class="podcast-tabs-actions">
       <button class="icon-btn std-add-btn" type="button" data-radio-add title="Add a station" aria-label="Add a station by stream URL">${MUSIC_PLUS_SVG}</button>
     </div></div>
     <div class="music-discover">
