@@ -47126,17 +47126,34 @@ const EXPLORE_CATEGORIES = [
     match: s => s === "completed" },
 ];
 
+// Pull a leading/embedded emoji out of a trip name (flags like 🇹🇷 are two
+// regional-indicator code points; others may carry variation selectors or ZWJ
+// sequences). The emoji becomes the trip's icon; the cleaned name is displayed.
+function extractTripEmoji(rawName) {
+  const name = String(rawName || "");
+  // ️ = variation selector-16, ‍ = zero-width joiner (emoji sequences).
+  const src = "\\p{Regional_Indicator}\\p{Regional_Indicator}|\\p{Extended_Pictographic}(?:\\uFE0F|\\u200D\\p{Extended_Pictographic})*";
+  const m = name.match(new RegExp(src, "u"));
+  if (!m) return { emoji: "", name: name.trim() };
+  const stripped = name.replace(new RegExp(src, "gu"), "").replace(/\s{2,}/g, " ").trim();
+  return { emoji: m[0], name: stripped };
+}
+
 function exploreTripTabHtml(trip) {
   const status = TravelModel.deriveStatus(trip);
   const meta = TravelModel.TRIP_STATUS_META[status] || {};
   const dates = trip.startDate
     ? formatTravelDate(trip.startDate) + (trip.endDate ? " – " + formatTravelDate(trip.endDate) : "")
     : (status === "idea" ? "Idea" : "No dates");
+  // A name emoji (e.g. "🇹🇷 Türkiye") becomes the trip's icon; otherwise fall
+  // back to the lifecycle-status glyph.
+  const { emoji, name: cleanName } = extractTripEmoji(trip.name || "Untitled");
+  const icon = emoji || meta.icon || "✈";
   return `
     <button class="article-sidebar-tab explore-trip-tab explore-trip-tab--${meta.tone || status}" type="button" data-explore-trip-id="${trip.id}">
-      <span class="explore-trip-status" title="${escapeHtml(meta.label || status)}" aria-hidden="true">${meta.icon || "✈"}</span>
+      <span class="explore-trip-status" title="${escapeHtml(meta.label || status)}" aria-hidden="true">${icon}</span>
       <span class="explore-trip-tab-body">
-        <span class="explore-trip-name">${escapeHtml(trip.name || "Untitled")}</span>
+        <span class="explore-trip-name">${escapeHtml(cleanName || "Untitled")}</span>
         <span class="explore-trip-dates">${escapeHtml(dates)}</span>
       </span>
     </button>`;
@@ -47290,8 +47307,8 @@ function openExploreTrip(tripId) {
     const dest = trip.destination ? " to " + trip.destination : "";
     sendChatMessage(`I'm planning my trip "${trip.name}"${dest}. What should I know? Help me with itinerary ideas, things to do, local tips, and anything else useful. Use my trip data for context.`);
   });
-  document.getElementById("exploreScanBookingBtn").onclick = () => showTravelScanBookingDialog(trip);
-  document.getElementById("exploreScanEmailBtn").onclick = () => showTravelEmailScanDialog(trip);
+  // Booking scanning (photo / email) now lives on each itinerary item's
+  // right-click menu, so the header buttons were removed.
 
   // Reset to the itinerary — the trip's center of gravity — and render it.
   setActiveExploreTab("itinerary");

@@ -14859,10 +14859,15 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   /* Explore rail: keep each category's folder ICON visible (like Mail); hide the
      labels and the individual trip rows until the rail is hovered open. */
   #exploreMainPage .article-sidebar:not(:hover) .explore-cat-label,
-  #exploreMainPage .article-sidebar:not(:hover) .explore-cat-trips,
   #exploreMainPage .article-sidebar:not(:hover) .explore-sidebar-empty { display: none; }
   #exploreMainPage .article-sidebar:not(:hover) .explore-cat-head { justify-content: center; padding-left: 0; padding-right: 0; gap: 0; }
   #exploreMainPage .article-sidebar:not(:hover) .explore-cat-icon { color: var(--muted); }
+  /* Rail: each trip shows just its icon (its name emoji, or its status glyph),
+     centered under the category folder icon. */
+  #exploreMainPage .article-sidebar:not(:hover) .explore-trip-status { display: inline-flex !important; align-items: center; justify-content: center; font-size: 1.1rem; }
+  /* New-trip button collapses to the standard rounded-square "+" (navy border). */
+  #exploreMainPage .article-sidebar:not(:hover) .explore-new-trip-btn { width: 34px; height: 34px; padding: 0; margin: 10px auto; justify-content: center; border-radius: 8px; }
+  #exploreMainPage .article-sidebar:not(:hover) .explore-new-trip-label { display: none; }
 }
 
 /* ─── End Article/Listen pages ──────────────────────────────────────────────── */
@@ -16540,8 +16545,19 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 .explore-cat-icon svg { width: 19px; height: 19px; }
 .explore-cat-label { flex: 1; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted, #888); }
 .explore-cat-trips { display: flex; flex-direction: column; }
-.explore-new-trip-btn { color: var(--accent-dark, var(--accent)); font-weight: 600; }
-.explore-new-trip-btn .article-sidebar-icon { stroke: currentColor; }
+
+/* New-trip button: a rectangular "+ New" when the sidebar is open, collapsing to
+   the app-standard rounded-square "+" with the midnight-blue window border in the
+   rail (see std-add-btn). */
+.explore-new-trip-btn {
+  display: inline-flex; align-items: center; gap: 8px; align-self: flex-start;
+  margin: 10px 12px; padding: 7px 14px;
+  border: 2px solid var(--window-border); border-radius: 10px;
+  background: var(--surface, #fff); color: var(--ink); cursor: pointer;
+  font-weight: 600; font-size: 0.9rem; white-space: nowrap;
+}
+.explore-new-trip-btn:hover { background: color-mix(in srgb, var(--window-border) 8%, transparent); }
+.explore-new-trip-plus { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2.2; fill: none; flex-shrink: 0; }
 
 /* ── Itinerary: the center of gravity ────────────────────────────────────── */
 .itin-days { display: flex; flex-direction: column; gap: 10px; padding: 10px 10px 24px; overflow-y: auto; }

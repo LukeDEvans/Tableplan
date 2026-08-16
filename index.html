@@ -504,9 +504,9 @@
             </div>
           <div class="article-layout">
               <div class="article-sidebar" id="exMediaSidebar">
-                <button class="article-sidebar-tab explore-new-trip-btn" type="button" id="exploreAddTripBtn">
-                  <svg viewBox="0 0 24 24" class="article-sidebar-icon" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
-                  <span>New trip</span>
+                <button class="explore-new-trip-btn" type="button" id="exploreAddTripBtn" title="New trip" aria-label="New trip">
+                  <svg class="explore-new-trip-plus" viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  <span class="explore-new-trip-label">New</span>
                 </button>
                 <div id="exploreTripList"></div>
               </div>
@@ -533,8 +533,6 @@
                           <option value="traveling">Traveling</option>
                           <option value="completed">Completed</option>
                         </select>
-                        <button class="icon-btn" type="button" id="exploreScanBookingBtn" title="Scan booking confirmation">📷</button>
-                        <button class="icon-btn" type="button" id="exploreScanEmailBtn" title="Scan email for bookings">✉️</button>
                       </div>
                     </div>
                     <div class="travel-detail-meta" id="exploreDetailMeta"></div>
