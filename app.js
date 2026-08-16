@@ -13,6 +13,7 @@ import * as TravelItinerary from './travel-itinerary.js';
 import * as TravelTransitions from './travel-transitions.js';
 import * as TravelModel from './travel-model.js';
 import * as TravelOptimize from './travel-optimize.js';
+import * as TravelRefs from './travel-refs.js';
 
 const STORAGE_KEY = "tableplan-state-v1";
 const TRAVEL_LOGISTIC_ICONS = { flight: "✈️", hotel: "🏨", car: "🚗", train: "🚆", ferry: "⛴️", other: "📌" };
@@ -47688,6 +47689,7 @@ function showItemDetailView(type, item, trip, ownerDateKey, onEdit) {
     `</div>` +
     (bodyHtml ? `<div class="item-detail-body">${bodyHtml}</div>` : "") +
     `<div class="item-detail-footer">` +
+      (itemDetailCalendarInfo(type, item, ownerDateKey) ? `<button class="secondary-btn item-detail-cal" type="button">📅 Add to Calendar</button>` : "") +
       `<button class="secondary-btn item-detail-edit" type="button">✏ Edit</button>` +
     `</div>`;
 
@@ -47695,8 +47697,41 @@ function showItemDetailView(type, item, trip, ownerDateKey, onEdit) {
   dlg.showModal();
   dlg.querySelector(".item-detail-close").addEventListener("click", () => dlg.close());
   dlg.querySelector(".item-detail-edit").addEventListener("click", () => { dlg.close(); onEdit(); });
+  dlg.querySelector(".item-detail-cal")?.addEventListener("click", (e) => {
+    addStopToCalendar(type, item, ownerDateKey);
+    e.target.textContent = "✓ Added to Calendar";
+    e.target.disabled = true;
+  });
   dlg.addEventListener("click", e => { if (e.target === dlg) dlg.close(); });
   dlg.addEventListener("close", () => dlg.remove());
+}
+
+// A timed itinerary item can be added to the household Calendar as a real,
+// canonical plan event (opt-in — Calendar stays the owner; we never duplicate
+// events automatically). Returns the {date,startTime,title} or null if it lacks
+// a usable time.
+function itemDetailCalendarInfo(type, item, ownerDateKey) {
+  if (!ownerDateKey || !/^\d{4}-\d{2}-\d{2}$/.test(ownerDateKey)) return null;
+  let time = "", title = "";
+  if (type === "activity") { time = item.activityTime; title = item.name || item.title; }
+  else if (type === "food") { time = item.reservationTime; title = item.name || item.title; }
+  else if (type === "travel") { time = item.departTime; title = [item.from, item.to].filter(Boolean).join(" → "); }
+  if (!time || !/^\d{1,2}:\d{2}/.test(time)) return null;
+  return { date: item.departDate || ownerDateKey, startTime: time, title: title || "Trip event" };
+}
+
+function addStopToCalendar(type, item, ownerDateKey) {
+  const info = itemDetailCalendarInfo(type, item, ownerDateKey);
+  if (!info) return;
+  const endTime = (type === "activity" && item.duration) ? travelActivityEndTime(info.startTime, item.duration) : null;
+  state.planEvents = [...(state.planEvents || []), {
+    id: createId("plan-evt"), createdAt: new Date().toISOString(),
+    title: info.title, date: info.date, allDay: false,
+    startTime: info.startTime, endTime: endTime || null,
+    notes: "From trip itinerary", color: "#32b496", calendarId: null,
+  }];
+  persist();
+  if (typeof showMailToast === "function") showMailToast(`Added “${info.title}” to your calendar`);
 }
 
 // ── Travel-time suggestions (Google Distance Matrix via travel-time fn) ──────
@@ -48207,77 +48242,174 @@ function renderTripItinerary(trip, panel) {
   panel.querySelector(".itin-day--today")?.scrollIntoView({ block: "nearest" });
 }
 
-// ── Ideas (Saved) — minimal in M1, expanded in a later milestone ─────────────
+// ── Trip references: associations to canonical Live objects (never copies) ───
+function addTripRef(trip, ref) {
+  trip.refs = TravelRefs.addRef(trip.refs, ref);
+  trip.updatedAt = new Date().toISOString();
+  persist();
+}
+function removeTripRef(trip, id) {
+  trip.refs = TravelRefs.removeRef(trip.refs, id);
+  persist();
+}
+
+// Rank canonical items from the rest of Live for "bring it along" enrichment,
+// excluding ones already saved to the trip. Returns { watch, podcast, article }.
+function tripEnrichmentCandidates(trip) {
+  const dest = trip.destination || trip.name || "";
+  const savedIds = new Set((trip.refs || []).filter(r => r.refId).map(r => r.kind + ":" + r.refId));
+  const notSaved = (kind, id) => !savedIds.has(kind + ":" + String(id));
+  const watch = TravelRefs.rankCandidates((state.watchItems || []).filter(w => notSaved("watch", w.id)), dest, { getText: w => `${w.title || ""} ${w.overview || ""}`, getTime: w => w.createdAt, limit: 5 });
+  const podcast = TravelRefs.rankCandidates((state.podcasts || []).filter(p => notSaved("podcast", p.id)), dest, { getText: p => `${p.title || ""} ${p.description || ""}`, getTime: p => p.lastFetched, limit: 5 });
+  const article = TravelRefs.rankCandidates((state.savedArticles || []).filter(a => notSaved("article", a.id)), dest, { getText: a => `${a.title || ""} ${a.publication || ""}`, getTime: a => a.savedAt || a.createdAt, limit: 5 });
+  return { watch, podcast, article };
+}
+
 function renderTripIdeas(trip, panel) {
   if (!Array.isArray(trip.saved)) trip.saved = [];
+  if (!Array.isArray(trip.refs)) trip.refs = [];
   const rerender = () => renderTripIdeas(trip, panel);
-  const items = trip.saved;
+
+  // Saved enrichment refs (Watch/Listen/Read/Links/Notes) grouped by kind.
+  const enrichKinds = ["watch", "podcast", "article", "book", "link", "note"];
+  const savedRefs = (trip.refs || []).filter(r => enrichKinds.includes(r.kind));
+  const grouped = TravelRefs.groupByKind(savedRefs);
+  const savedHtml = Object.keys(grouped).map(kind => {
+    const meta = TravelRefs.REF_KIND_META[kind] || {};
+    return `<div class="itin-ref-group"><div class="itin-ref-group-head">${meta.icon || "•"} ${escapeHtml(meta.label || kind)}</div>` +
+      grouped[kind].map(r => `<div class="itin-ref-row" data-ref-id="${escapeHtml(r.id)}"><span class="itin-ref-title">${escapeHtml(r.title)}</span><button class="icon-btn itin-ref-del" type="button" data-ref-del="${escapeHtml(r.id)}" title="Remove" aria-label="Remove">×</button></div>`).join("") +
+      `</div>`;
+  }).join("");
+
+  // "Bring it along" — canonical items from the rest of Live, ranked to the trip.
+  const cand = tripEnrichmentCandidates(trip);
+  const enrichSection = (kind, label, ranked) => {
+    if (!ranked.length) return "";
+    const meta = TravelRefs.REF_KIND_META[kind] || {};
+    return `<div class="itin-enrich-section"><div class="itin-enrich-head">${meta.icon || ""} ${escapeHtml(label)}</div>` +
+      ranked.map(({ item, matched }) => {
+        const t = item.title || item.name || "Untitled";
+        return `<div class="itin-enrich-row"><span class="itin-enrich-title">${escapeHtml(t)}${matched ? ` <span class="itin-enrich-match">for your trip</span>` : ""}</span>` +
+          `<button class="secondary-btn compact-btn itin-enrich-save" type="button" data-enrich-kind="${kind}" data-enrich-id="${escapeHtml(String(item.id))}" data-enrich-title="${escapeHtml(t)}">Save</button></div>`;
+      }).join("") + `</div>`;
+  };
+  const enrichHtml = [
+    enrichSection("watch", "Watch — related films & shows", cand.watch),
+    enrichSection("podcast", "Listen — related podcasts", cand.podcast),
+    enrichSection("article", "Read — related articles", cand.article),
+  ].filter(Boolean).join("");
+
   panel.innerHTML =
     `<div class="itin-ideas">` +
-      `<div class="itin-ideas-intro">Saved things for this trip — places, food, links, inspiration. Not scheduled until you add them to a day.</div>` +
+      `<div class="itin-ideas-intro">Save things for this trip — places, food, links, inspiration. Not scheduled until you add them to a day.</div>` +
       `<div class="itin-ideas-add">` +
         `<input type="text" id="tripIdeaInput" class="text-input" placeholder="Save an idea…" autocomplete="off" />` +
         `<button class="primary-btn icon-primary-btn" type="button" id="tripIdeaAddBtn" aria-label="Save idea"><span aria-hidden="true">+</span></button>` +
       `</div>` +
-      (items.length
-        ? `<ul class="itin-ideas-list">${items.map(it => `
+      (trip.saved.length
+        ? `<ul class="itin-ideas-list">${trip.saved.map(it => `
             <li class="itin-idea-row" data-id="${escapeHtml(it.id)}">
               <span class="itin-idea-title">${escapeHtml(it.title)}</span>
               <button class="icon-btn itin-idea-del" type="button" data-del="${escapeHtml(it.id)}" title="Remove" aria-label="Remove">×</button>
             </li>`).join("")}</ul>`
         : `<p class="itin-ideas-empty">No saved ideas yet.</p>`) +
+      (savedHtml ? `<div class="itin-refs-saved"><div class="itin-section-label">Saved to this trip</div>${savedHtml}</div>` : "") +
+      (enrichHtml ? `<div class="itin-enrich"><div class="itin-section-label">Bring it along</div><p class="itin-enrich-intro">From the rest of Live, chosen for this trip. Saving links them here — nothing is copied.</p>${enrichHtml}</div>` : "") +
     `</div>`;
+
   const add = (title) => {
     const t = String(title || "").trim();
     if (!t) return;
     trip.saved.push({ id: createId("saved"), title: t, createdAt: new Date().toISOString() });
-    persist();
-    rerender();
+    persist(); rerender();
     panel.querySelector("#tripIdeaInput")?.focus();
   };
   panel.querySelector("#tripIdeaAddBtn")?.addEventListener("click", () => add(panel.querySelector("#tripIdeaInput")?.value));
   panel.querySelector("#tripIdeaInput")?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); add(e.target.value); } });
   panel.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", () => {
-    trip.saved = trip.saved.filter(x => x.id !== b.dataset.del);
-    persist(); rerender();
+    trip.saved = trip.saved.filter(x => x.id !== b.dataset.del); persist(); rerender();
+  }));
+  panel.querySelectorAll("[data-ref-del]").forEach(b => b.addEventListener("click", () => { removeTripRef(trip, b.dataset.refDel); rerender(); }));
+  panel.querySelectorAll(".itin-enrich-save").forEach(b => b.addEventListener("click", () => {
+    addTripRef(trip, TravelRefs.makeRef(b.dataset.enrichKind, { refId: b.dataset.enrichId, title: b.dataset.enrichTitle }));
+    rerender();
   }));
 }
 
-// ── Prepare (readiness) — minimal in M1, expanded in a later milestone ───────
+// ── Prepare (readiness) ──────────────────────────────────────────────────────
+// A calm coordination view — never a project-management board. Derives readiness
+// from the itinerary and pulls trip shopping (trip-owned needs) and packing
+// (with Inventory suggestions) together without duplicating Shop or Inventory.
 function renderTripPrepare(trip, panel) {
+  if (!Array.isArray(trip.refs)) trip.refs = [];
+  if (!Array.isArray(trip.packing)) trip.packing = [];
+  const rerender = () => renderTripPrepare(trip, panel);
   const dayKeys = TravelItinerary.tripDayKeys(trip);
   const legs = [], lodgings = [];
-  let openTransitions = 0;
+  let openTransitions = 0, reservations = 0;
   Object.values(trip.days || {}).forEach(day => {
-    (day.travel || []).forEach(l => legs.push(l));
-    (day.lodging || []).forEach(l => lodgings.push(l));
+    (day.travel || []).forEach(l => { legs.push(l); if (l.flightNumber || l.confirmationNo) reservations++; });
+    (day.lodging || []).forEach(l => { lodgings.push(l); if (l.confirmationNo) reservations++; });
+    (day.activities || []).forEach(a => { if (a.confirmationNo) reservations++; });
+    (day.food || []).forEach(f => { if (f.reservationNo || f.reservationTime) reservations++; });
   });
   dayKeys.forEach(k => { openTransitions += TravelItinerary.daySummary(trip, k).openTransitions; });
-  const packing = Array.isArray(trip.packing) ? trip.packing : [];
+  const packing = trip.packing;
   const packedRatio = packing.length ? packing.filter(p => p.checked).length / packing.length : 0;
+  const shop = TravelRefs.shopByBucket(trip.refs);
+  const shopCount = shop.before.length + shop.during.length + shop["bring-home"].length;
 
   const checks = [
     { label: "Transportation", ok: legs.length > 0, detail: legs.length ? `${legs.length} leg(s) planned` : "No travel legs yet" },
     { label: "Lodging", ok: lodgings.length > 0, detail: lodgings.length ? `${lodgings.length} stay(s)` : "No lodging yet" },
+    { label: "Reservations", ok: reservations > 0, detail: reservations ? `${reservations} on file` : "None recorded" },
     { label: "Getting around", ok: openTransitions === 0, detail: openTransitions ? `${openTransitions} connection(s) to plan` : "All connections planned" },
     { label: "Packing", ok: packing.length > 0 && packedRatio === 1, detail: packing.length ? `${Math.round(packedRatio * 100)}% packed` : "No packing list yet" },
+    { label: "Shopping", ok: shopCount === 0, detail: shopCount ? `${shopCount} item(s) to get` : "Nothing to buy" },
   ];
   const ready = Math.round((checks.filter(c => c.ok).length / checks.length) * 100);
 
+  const bucketHtml = TravelRefs.SHOP_BUCKETS.map(bk => {
+    const items = shop[bk];
+    return `<div class="itin-shop-bucket"><div class="itin-shop-bucket-head">${escapeHtml(TravelRefs.SHOP_BUCKET_LABELS[bk])}</div>` +
+      (items.length ? items.map(r => `<div class="itin-shop-row" data-shop-id="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span><button class="icon-btn" type="button" data-shop-del="${escapeHtml(r.id)}" title="Remove" aria-label="Remove">×</button></div>`).join("") : `<div class="itin-shop-empty">—</div>`) +
+      `<div class="itin-shop-add"><input type="text" class="text-input compact-input" data-shop-input="${bk}" placeholder="Add…" autocomplete="off" /></div>` +
+      `</div>`;
+  }).join("");
+
+  // Packing suggestions from Inventory: owned items not yet on the packing list.
+  const owned = (typeof inventoryItemList === "function" ? inventoryItemList() : (state.inventoryItems || []));
+  const packingTitles = new Set(packing.map(p => String(p.title || "").toLowerCase()));
+  const suggestable = (owned || []).filter(it => it && it.name && !packingTitles.has(String(it.name).toLowerCase())).slice(0, 8);
+
   panel.innerHTML =
     `<div class="itin-prepare">` +
-      `<div class="itin-ready-head">` +
-        `<div class="itin-ready-pct">${ready}%</div>` +
-        `<div class="itin-ready-label">ready${trip.name ? " for " + escapeHtml(trip.name) : ""}</div>` +
-      `</div>` +
+      `<div class="itin-ready-head"><div class="itin-ready-pct">${ready}%</div><div class="itin-ready-label">ready${trip.name ? " for " + escapeHtml(trip.name) : ""}</div></div>` +
       `<ul class="itin-ready-list">${checks.map(c => `
         <li class="itin-ready-row ${c.ok ? "is-ok" : "is-open"}">
           <span class="itin-ready-mark">${c.ok ? "✓" : "⚠"}</span>
           <span class="itin-ready-name">${escapeHtml(c.label)}</span>
           <span class="itin-ready-detail">${escapeHtml(c.detail)}</span>
         </li>`).join("")}</ul>` +
-      `<p class="itin-prepare-hint">Packing, reservations, documents and shopping come together here as the trip fills in.</p>` +
+      `<div class="itin-prepare-block"><div class="itin-section-label">🛍️ Trip shopping</div><div class="itin-shop-buckets">${bucketHtml}</div></div>` +
+      (suggestable.length
+        ? `<div class="itin-prepare-block"><div class="itin-section-label">🧳 From your Stock</div><p class="itin-enrich-intro">Things you already own — tap to add to packing.</p><div class="itin-pack-suggest">${suggestable.map(it => `<button class="chip-btn itin-pack-chip" type="button" data-pack-add="${escapeHtml(it.name)}">+ ${escapeHtml(it.name)}</button>`).join("")}</div></div>`
+        : "") +
     `</div>`;
+
+  panel.querySelectorAll("[data-shop-input]").forEach(inp => inp.addEventListener("keydown", e => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const t = e.target.value.trim();
+    if (!t) return;
+    addTripRef(trip, TravelRefs.makeRef(TravelRefs.REF_KINDS.SHOP, { title: t, bucket: e.target.dataset.shopInput }));
+    rerender();
+  }));
+  panel.querySelectorAll("[data-shop-del]").forEach(b => b.addEventListener("click", () => { removeTripRef(trip, b.dataset.shopDel); rerender(); }));
+  panel.querySelectorAll("[data-pack-add]").forEach(b => b.addEventListener("click", () => {
+    trip.packing.push({ id: createId("pack"), title: b.dataset.packAdd, checked: false });
+    persist(); rerender();
+  }));
 }
 
 function renderExploreTripPanel(tab, trip) {
