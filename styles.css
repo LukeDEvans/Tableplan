@@ -20708,10 +20708,7 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .music-cfg-cancel { background: none; border: none; color: var(--muted); font-weight: 600; cursor: pointer; padding: 8px 12px; border-radius: 8px; }
 .music-cfg-cancel:hover { background: var(--accent-soft); color: var(--ink); }
 
-/* Music → Discover (on-demand streaming) */
-.music-mode-tabs { display: inline-flex; gap: 2px; background: var(--accent-soft); border-radius: 999px; padding: 3px; }
-.music-mode-tab { border: none; background: transparent; color: var(--muted); font-weight: 700; font-size: 0.82rem; padding: 5px 14px; border-radius: 999px; cursor: pointer; }
-.music-mode-tab.is-active { background: var(--surface-strong); color: var(--accent-dark); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+/* Music → Discover (on-demand streaming) — mode tabs reuse .watch-category-tab */
 
 .music-discover { display: flex; flex-direction: column; }
 .music-search-bar { display: flex; align-items: center; gap: 8px; margin: 8px 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }

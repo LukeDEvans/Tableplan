@@ -41841,8 +41841,9 @@ function musicAlbumGroup(g) {
 }
 
 function musicModeTabs() {
-  const tab = (mode, label) => `<button class="music-mode-tab${musicTabMode === mode ? " is-active" : ""}" type="button" role="tab" aria-selected="${musicTabMode === mode}" data-music-mode="${mode}">${label}</button>`;
-  return `<div class="music-mode-tabs" role="tablist" aria-label="Music mode">${tab("saved", "Saved")}${tab("discover", "Discover")}${tab("library", "Library")}</div>`;
+  // Match the Podcasts tab style (.watch-category-tabs / .watch-category-tab).
+  const tab = (mode, label) => `<button class="watch-category-tab${musicTabMode === mode ? " is-active" : ""}" type="button" role="tab" aria-selected="${musicTabMode === mode}" data-music-mode="${mode}">${label}</button>`;
+  return `<div class="watch-category-tabs" role="tablist" aria-label="Music mode">${tab("saved", "Saved")}${tab("discover", "Discover")}${tab("library", "Library")}</div>`;
 }
 
 function renderMusicPanel() {
