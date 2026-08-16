@@ -2496,6 +2496,8 @@ function renderProfileDialog() {
   elements.profileDialog.querySelector(".profile-avatar-large").textContent = initials || "?";
   elements.profileDialog.querySelector("#profileNameInput").value = member?.label || userGroup?.display_name || "";
   elements.profileDialog.querySelector("#profileDobInput").value = member?.dob || "";
+  const homeInput = elements.profileDialog.querySelector("#profileHomeInput");
+  if (homeInput) homeInput.value = state.travelHome || "";
 
   const emailEl = elements.profileDialog.querySelector("#profileEmailDisplay");
   emailEl.textContent = email || (isLoggedIn ? "" : "Not signed in");
@@ -2509,6 +2511,10 @@ function saveProfile() {
   const dialog = elements.profileDialog;
   const newName = dialog.querySelector("#profileNameInput").value.trim();
   const newDob = dialog.querySelector("#profileDobInput").value.trim();
+
+  // Home address (used by Explore as each trip's start/finish anchor).
+  const newHome = (dialog.querySelector("#profileHomeInput")?.value || "").trim();
+  if (newHome !== (state.travelHome || "")) { state.travelHome = newHome; persist(); }
 
   const member = getCurrentProfileMember();
   if (member && newName) {
@@ -47685,10 +47691,6 @@ function openExploreTrip(tripId) {
     ? `<span class="travel-meta-chip">📍 ${escapeHtml(trip.destination)}</span>`
     : `<span class="travel-meta-chip" id="exploreEditDestBtn" title="Edit destination">📍 Add destination</span>`;
 
-  const homeChip = state.travelHome
-    ? `<span class="travel-meta-chip" id="exploreEditHomeBtn" title="Home base — new trips start and finish here">🏠 ${escapeHtml(state.travelHome)}</span>`
-    : `<span class="travel-meta-chip" id="exploreEditHomeBtn" title="Set your home base — new trips start and finish here">🏠 Set home</span>`;
-
   // Travel Mode is offered as the trip nears/enters its dates.
   const showTravelModeBtn = TravelModel.isTraveling(trip) || TravelModel.startsWithin(trip, 2);
   const travelModeBtn = showTravelModeBtn
@@ -47699,20 +47701,12 @@ function openExploreTrip(tripId) {
     `<span class="travel-meta-chip" id="exploreEditDatesBtn" title="Edit dates">📅 ${escapeHtml(dateStr)}${nightsStr}</span>` +
     `<span class="travel-meta-chip" id="exploreEditPartyBtn" title="Edit party">👥 ${escapeHtml(partyStr)}</span>` +
     destChip +
-    homeChip +
     travelModeBtn +
     `<button class="travel-ai-btn" id="exploreAskAiBtn" type="button" title="Plan with AI">✨ Ask AI</button>`;
   document.getElementById("exploreTravelModeBtn")?.addEventListener("click", () => enterTravelMode(trip.id));
 
   document.getElementById("exploreEditDatesBtn")?.addEventListener("click", () => showTravelEditDatesDialog(trip));
   document.getElementById("exploreEditPartyBtn")?.addEventListener("click", () => showTravelEditPartyDialog(trip));
-  document.getElementById("exploreEditHomeBtn")?.addEventListener("click", () => {
-    const val = window.prompt("Home base (city or airport) — new trip legs start and finish here:", state.travelHome || "");
-    if (val === null) return;
-    state.travelHome = val.trim();
-    persist();
-    openExploreTrip(trip.id);
-  });
   document.getElementById("exploreEditDestBtn")?.addEventListener("click", () => showTravelEditDestDialog(trip));
   document.getElementById("exploreAskAiBtn")?.addEventListener("click", () => {
     openAiPanel();
