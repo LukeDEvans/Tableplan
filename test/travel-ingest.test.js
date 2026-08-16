@@ -3,6 +3,18 @@ import {
   normalizeEntity, normalizeEntities, entitySpan, entityToPlacements,
   matchTrip, suggestNewTrip, dateOverlap, findExistingItem, diffItem, entityToProposal,
 } from "../travel-ingest.js";
+import { buildDayTimeline } from "../travel-itinerary.js";
+
+// Commit an entity's placements into a fresh trip.days structure (mirrors what
+// the app's commitEntityToTrip does) so we can prove imports feed the itinerary.
+function commitInto(trip, entity, source) {
+  entityToPlacements(entity, source).forEach((p, i) => {
+    (trip.days[p.dateKey] = trip.days[p.dateKey] || {});
+    (trip.days[p.dateKey][p.section] = trip.days[p.dateKey][p.section] || []);
+    trip.days[p.dateKey][p.section].push({ id: "imp" + i, ...p.item });
+  });
+  return trip;
+}
 
 const airbnb = {
   kind: "lodging", intent: "new", confidence: 0.9,
@@ -160,5 +172,36 @@ describe("diffItem + entityToProposal", () => {
 describe("entitySpan", () => {
   it("uses startDate for a single-day entity", () => {
     expect(entitySpan(normalizeEntity({ kind: "restaurant", startDate: "2026-06-19" }))).toEqual({ start: "2026-06-19", end: "2026-06-19" });
+  });
+});
+
+// Extensibility: the SAME pipeline that commits lodging also commits flights and
+// restaurants, and each becomes a real itinerary stop with no code changes.
+describe("imported entities feed the itinerary (extensibility)", () => {
+  it("a flight import becomes a leg stop on its departure day", () => {
+    const trip = { id: "t", startDate: "2026-06-14", endDate: "2026-06-24", days: {} };
+    const flight = normalizeEntity({ kind: "flight", title: "UA MSP→FRA", confirmation: "AB12", segments: [
+      { flightNumber: "UA400", from: "MSP", fromName: "Minneapolis", to: "FRA", toName: "Frankfurt", departDate: "2026-06-14", departTime: "16:00", arriveDate: "2026-06-15", arriveTime: "08:00" },
+    ] });
+    commitInto(trip, flight, { threadId: "th1" });
+    const stops = buildDayTimeline(trip, "2026-06-14").filter(e => e.kind === "stop");
+    expect(stops.some(s => s.type === "leg" && /Minneapolis|Frankfurt/.test(s.title))).toBe(true);
+  });
+
+  it("a restaurant import becomes a food stop at its reservation time", () => {
+    const trip = { id: "t", startDate: "2026-06-18", endDate: "2026-06-21", days: {} };
+    const resto = normalizeEntity({ kind: "restaurant", title: "Mikla", confirmation: "R9", startDate: "2026-06-19", startTime: "19:30", address: "Beyoğlu" });
+    commitInto(trip, resto, { threadId: "th2" });
+    const stops = buildDayTimeline(trip, "2026-06-19").filter(e => e.kind === "stop");
+    expect(stops.find(s => s.type === "food")).toMatchObject({ time: "19:30", title: "Mikla" });
+  });
+
+  it("dedups a re-sent flight by confirmation number", () => {
+    const trip = { id: "t", days: {} };
+    const flight = normalizeEntity({ kind: "flight", confirmation: "AB12", segments: [
+      { flightNumber: "UA400", from: "MSP", to: "FRA", departDate: "2026-06-14" },
+    ] });
+    commitInto(trip, flight, {});
+    expect(findExistingItem(flight, trip)).toBeTruthy(); // same confirmation → recognized, not duplicated
   });
 });
