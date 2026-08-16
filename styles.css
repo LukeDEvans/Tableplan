@@ -16614,9 +16614,11 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 }
 .itin-day--today { border-color: color-mix(in srgb, var(--accent) 55%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent); }
 .itin-day-head {
-  width: 100%; display: grid; grid-template-columns: auto auto 1fr auto; align-items: center; gap: 10px;
+  width: 100%; display: grid; grid-template-columns: auto auto 1fr auto auto; align-items: center; gap: 10px;
   padding: 12px 14px; border: none; background: none; cursor: pointer; text-align: left; color: var(--ink);
 }
+.itin-day-add { width: 28px; height: 28px; min-height: 28px; }
+.itin-day-add svg { width: 15px; height: 15px; }
 .itin-day-caret { transition: transform 0.15s ease; color: var(--muted); font-size: 0.85rem; }
 .itin-day.is-open .itin-day-caret { transform: rotate(90deg); }
 .itin-day-num { font-weight: 700; font-size: 0.9rem; white-space: nowrap; }
@@ -16831,7 +16833,7 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
   .itin-transition { margin-left: 46px; }
   .itin-transition::before { left: -14px; }
   .itin-add-wrap { margin-left: 46px; }
-  .itin-day-head { grid-template-columns: auto 1fr auto; }
+  .itin-day-head { grid-template-columns: auto 1fr auto auto; }
   .itin-day-date { display: none; }
 }
 

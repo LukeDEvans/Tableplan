@@ -48617,35 +48617,29 @@ function buildItineraryTransitionRow(transition, trip, dateKey, rerender) {
 }
 
 // A per-day "add a stop" control reusing the existing item dialogs.
-function buildItineraryAddControl(trip, dateKey, rerender) {
-  const wrap = document.createElement("div");
-  wrap.className = "itin-add-wrap";
-  wrap.innerHTML = `<button class="secondary-btn compact-btn itin-add-btn" type="button">+ Add to this day</button>`;
-  wrap.querySelector("button").addEventListener("click", (e) => {
-    e.stopPropagation();
+// Open the "add to this day" chooser anchored to a "+" button.
+function openDayAddMenu(anchorEl, trip, dateKey, rerender) {
+  closeFolderMenu();
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-add="activity">🎯 Activity</button>
+    <button type="button" role="menuitem" data-add="food">🍽 Food / meal</button>
+    <button type="button" role="menuitem" data-add="lodging">🏨 Lodging</button>
+    <button type="button" role="menuitem" data-add="travel">✈ Transport leg</button>`;
+  document.body.append(menu);
+  const r = anchorEl.getBoundingClientRect();
+  menu.style.left = `${Math.max(10, Math.min(r.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 10))}px`;
+  menu.style.top = `${Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 10)}px`;
+  menu.querySelectorAll("[data-add]").forEach(b => b.addEventListener("click", () => {
+    const kind = b.dataset.add;
     closeFolderMenu();
-    const menu = document.createElement("div");
-    menu.className = "folder-context-menu";
-    menu.setAttribute("role", "menu");
-    menu.innerHTML = `
-      <button type="button" role="menuitem" data-add="activity">🎯 Activity</button>
-      <button type="button" role="menuitem" data-add="food">🍽 Food / meal</button>
-      <button type="button" role="menuitem" data-add="lodging">🏨 Lodging</button>
-      <button type="button" role="menuitem" data-add="travel">✈ Transport leg</button>`;
-    document.body.append(menu);
-    const r = wrap.getBoundingClientRect();
-    menu.style.left = `${Math.max(10, Math.min(r.left, window.innerWidth - menu.offsetWidth - 10))}px`;
-    menu.style.top = `${Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 10)}px`;
-    menu.querySelectorAll("[data-add]").forEach(b => b.addEventListener("click", () => {
-      const kind = b.dataset.add;
-      closeFolderMenu();
-      if (kind === "activity") showActivityDialog(trip, dateKey, "activities", rerender, null);
-      else if (kind === "food") showFoodDialog(trip, dateKey, "food", rerender, null);
-      else if (kind === "lodging") showLodgingDialog(trip, dateKey, "lodging", rerender, null);
-      else showTravelLegDialog(trip, dateKey, "travel", rerender, null);
-    }));
-  });
-  return wrap;
+    if (kind === "activity") showActivityDialog(trip, dateKey, "activities", rerender, null);
+    else if (kind === "food") showFoodDialog(trip, dateKey, "food", rerender, null);
+    else if (kind === "lodging") showLodgingDialog(trip, dateKey, "lodging", rerender, null);
+    else showTravelLegDialog(trip, dateKey, "travel", rerender, null);
+  }));
 }
 
 // ── Travel Mode: the runtime travel operating environment ────────────────────
@@ -48943,15 +48937,21 @@ function renderTripItinerary(trip, panel) {
     if (summary.legs) chips.push(`${summary.legs} ✈`);
     if (summary.openTransitions) chips.push(`<span class="itin-day-open">${summary.openTransitions} to plan</span>`);
 
-    const head = document.createElement("button");
+    const head = document.createElement("div");
     head.className = "itin-day-head";
-    head.type = "button";
+    head.setAttribute("role", "button");
     head.setAttribute("aria-expanded", String(exploreItinExpanded[expandKey]));
     head.innerHTML =
       `<span class="itin-day-caret" aria-hidden="true">▸</span>` +
       `<span class="itin-day-num">Day ${i + 1}${isToday ? ` <span class="itin-day-today-tag">Today</span>` : ""}</span>` +
       `<span class="itin-day-date">${escapeHtml(dateLabel)}</span>` +
-      `<span class="itin-day-chips">${summary.isEmpty ? "<span class='itin-day-free'>Free day</span>" : chips.join(" · ")}</span>`;
+      `<span class="itin-day-chips">${summary.isEmpty ? "<span class='itin-day-free'>Free day</span>" : chips.join(" · ")}</span>` +
+      `<button class="icon-btn std-add-btn itin-day-add" type="button" title="Add to this day" aria-label="Add to this day">` +
+        `<svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`;
+    head.querySelector(".itin-day-add").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openDayAddMenu(e.currentTarget, trip, dateKey, rerender);
+    });
     section.appendChild(head);
 
     const bodyWrap = document.createElement("div");
@@ -48976,7 +48976,6 @@ function renderTripItinerary(trip, panel) {
           else bodyWrap.appendChild(buildItineraryTransitionRow(entry, trip, dateKey, rerender));
         });
       }
-      bodyWrap.appendChild(buildItineraryAddControl(trip, dateKey, rerender));
       renderDaySuggestions(trip, dateKey, timeline, suggestMount, rerender);
     };
 
@@ -48987,9 +48986,12 @@ function renderTripItinerary(trip, panel) {
       bodyWrap.hidden = !open;
       if (open && !bodyWrap._rendered) { renderBody(); bodyWrap._rendered = true; }
     };
-    head.addEventListener("click", () => {
-      exploreItinExpanded[expandKey] = !exploreItinExpanded[expandKey];
-      applyExpanded();
+    head.tabIndex = 0;
+    const toggleDay = () => { exploreItinExpanded[expandKey] = !exploreItinExpanded[expandKey]; applyExpanded(); };
+    head.addEventListener("click", toggleDay);
+    head.addEventListener("keydown", (e) => {
+      if (e.target.closest(".itin-day-add")) return;
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleDay(); }
     });
     applyExpanded();
     container.appendChild(section);
