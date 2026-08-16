@@ -10,10 +10,12 @@ const { findGmailUserByEmail } = require("./_gmail-shared");
 // EMERGENCY KILL-SWITCH (incident 2026-07-30): when true, ACK every Pub/Sub
 // notification immediately without scanning users or starting a sweep. Flip to
 // true + redeploy to instantly halt all Gmail sweeping if it ever misbehaves.
-// Re-enabled 2026-07-30 once the sweep gained a concurrency lock + 30s debounce,
-// a direct email→userId lookup (no full scan per notification), and this webhook
-// stopped 500-ing on DB errors (which had triggered a Pub/Sub retry storm).
-const SWEEP_KILL_SWITCH = true;
+// Re-enabled once the sweep gained a concurrency lock + 30s debounce, a direct
+// email→userId lookup (no full scan per notification), the webhook stopped
+// 500-ing on DB errors (Pub/Sub retry storm), and full-scans were restricted to
+// a confirmed index miss (de95773 — the egress-storm root cause). Recipe
+// newsletters (NYT Cooking, Bon Appétit, …) weren't being filed while off.
+const SWEEP_KILL_SWITCH = false;
 
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return { statusCode: 405, body: "" };
