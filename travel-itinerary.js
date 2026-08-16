@@ -46,7 +46,9 @@ export function addMinutes(t, delta) {
 function dayItems(trip, dateKey, section) {
   const day = trip && trip.days && trip.days[dateKey];
   const val = day && day[section];
-  return Array.isArray(val) ? val : [];
+  // Cancelled items (e.g. an accepted cancellation from an imported email) stay
+  // in the store as history but drop out of the plan and its routing.
+  return Array.isArray(val) ? val.filter(it => it && !it.cancelled) : [];
 }
 
 function isLeg(item)      { return !!(item && (item.mode || item.from || item.to)); }

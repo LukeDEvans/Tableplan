@@ -139,6 +139,19 @@ describe("buildDayTimeline transitions", () => {
   });
 });
 
+describe("cancelled items", () => {
+  it("are dropped from the plan (kept as history in the store)", () => {
+    const t = trip({ [D1]: { activities: [
+      { id: "a1", itemType: "activity", name: "Live", activityTime: "10:00", startLocation: "A" },
+      { id: "a2", itemType: "activity", name: "Cancelled", activityTime: "14:00", startLocation: "B", cancelled: true },
+    ] } });
+    const stops = collectDayStops(t, D1);
+    expect(stops.map(s => s.title)).toEqual(["Live"]);
+    // still present in the raw store
+    expect(t.days[D1].activities).toHaveLength(2);
+  });
+});
+
 describe("tripDayKeys", () => {
   it("returns inclusive day list", () => {
     expect(tripDayKeys(trip({}))).toEqual([D1, D2, D3]);

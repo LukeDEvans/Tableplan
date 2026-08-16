@@ -1383,6 +1383,7 @@ const PAGE_NOTIF_BUTTONS = {
   finance: ["homeFinanceBtn", "titleFinanceBtn"],
   do: ["homeDoBtn", "titleToDoListBtn"],
   eat: ["homeEatBtn", "titleMealPlanBtn"],
+  explore: ["homeExploreBtn", "titleExploreBtn"],
 };
 
 function setPageNotifCount(page, count) {
@@ -12795,9 +12796,14 @@ function buildIngestEntityCard(entity, source, dialog) {
 function commitEntityToTrip(entity, trip, source) {
   if (!trip) return "No trip";
   if (!Array.isArray(state.trips)) state.trips = [];
+  // Already-imported? Recognize an update/cancellation instead of duplicating.
   const existing = TravelIngest.findExistingItem(entity, trip);
-  if (existing && entity.intent !== "new") {
-    return reconcileExistingEntity(entity, trip, existing, source);
+  if (existing) {
+    if (entity.intent === "cancel") return proposeEntityChange(entity, trip, existing, source);
+    const incoming = TravelIngest.entityToPlacements(entity, source)[0]?.item;
+    const changes = incoming ? TravelIngest.diffItem(existing.item, incoming, Object.keys(incoming)) : [];
+    if (!changes.length) return "Already in this trip";
+    return proposeEntityChange(entity, trip, existing, source);
   }
   const placements = TravelIngest.entityToPlacements(entity, source);
   if (!placements.length) { saveEntityAsTripNote(entity, trip, source); return "Saved as note"; }
@@ -12809,12 +12815,6 @@ function commitEntityToTrip(entity, trip, source) {
   persist();
   if (activeAppArea === "explore" && exploreOpenTripId === trip.id) renderExploreTripPanel("itinerary", trip);
   return "Added to " + (trip.name || "trip");
-}
-
-// Placeholder until Phase 3 (proposals): if the entity matches an existing item
-// and isn't a plain new reservation, still record it non-destructively.
-function reconcileExistingEntity(entity, trip, existing, source) {
-  return proposeEntityChange(entity, trip, existing, source);
 }
 
 function createTripFromEntity(entity, source) {
@@ -12886,6 +12886,119 @@ function openSourceEmail(source) {
   if (!source || !source.threadId) return;
   showMailApp();
   openMailThread(source.threadId);
+}
+
+// ── Explore review inbox: proposed changes (never silent) ────────────────────
+// Modifications/cancellations of already-imported reservations land here as
+// pending proposals; the user Applies or Dismisses. Surfaced on the Explore bell.
+function allPendingProposals() {
+  const out = [];
+  (state.trips || []).forEach(trip => (trip.proposals || []).forEach(p => {
+    if (p && p.status === "pending") out.push({ trip, proposal: p });
+  }));
+  return out;
+}
+
+function refreshExploreNotifications() {
+  const pending = allPendingProposals();
+  const badge = document.getElementById("exploreNotifBadge");
+  const btn = document.getElementById("exploreNotificationsBtn");
+  if (btn) btn.hidden = false;
+  if (badge) { badge.hidden = pending.length === 0; badge.textContent = pending.length > 9 ? "9+" : String(pending.length); }
+  setPageNotifCount("explore", pending.length);
+}
+
+function findTripItemRaw(trip, id, section, dateKey) {
+  const direct = trip.days?.[dateKey]?.[section];
+  if (Array.isArray(direct)) { const it = direct.find(x => x && x.id === id); if (it) return it; }
+  for (const dk of Object.keys(trip.days || {})) {
+    for (const sec of Object.keys(trip.days[dk] || {})) {
+      const arr = trip.days[dk][sec];
+      if (Array.isArray(arr)) { const it = arr.find(x => x && x.id === id); if (it) return it; }
+    }
+  }
+  return null;
+}
+
+function openExploreProposalsPanel() {
+  const pending = allPendingProposals();
+  const d = document.createElement("dialog");
+  d.className = "recipe-dialog auth-dialog ingest-dialog";
+  const typeLabel = { modify: "Possible update", cancel: "Cancellation", itinerary: "Itinerary update" };
+  d.innerHTML =
+    `<div class="recipe-form"><div class="ingest-head"><h3 style="margin:0">Review inbox</h3>` +
+    `<button class="icon-btn" id="propPanelClose" type="button" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>` +
+    (pending.length
+      ? `<div class="explore-proposals">` + pending.map(({ trip, proposal }) =>
+          `<div class="explore-proposal-row" data-prop-id="${escapeHtml(proposal.id)}" data-trip-id="${escapeHtml(trip.id)}">` +
+            `<div class="explore-proposal-body"><div class="explore-proposal-title">${proposal.type === "cancel" ? "⚠ " : "💡 "}${escapeHtml(typeLabel[proposal.type] || "Change")}: ${escapeHtml(proposal.title || "")}</div>` +
+            `<div class="explore-proposal-sub">${escapeHtml(trip.name || "Trip")}${proposal.source?.subject ? " · " + escapeHtml(proposal.source.subject) : ""}</div></div>` +
+            `<button class="secondary-btn compact-btn" type="button" data-review>Review</button></div>`
+        ).join("") + `</div>`
+      : `<div class="mail-empty">No proposed changes to review.</div>`) +
+    `</div>`;
+  document.body.appendChild(d);
+  d.showModal();
+  d.addEventListener("close", () => d.remove());
+  d.querySelector("#propPanelClose").addEventListener("click", () => d.remove());
+  d.querySelectorAll(".explore-proposal-row").forEach(row => row.querySelector("[data-review]")?.addEventListener("click", () => {
+    const trip = (state.trips || []).find(t => t.id === row.dataset.tripId);
+    const proposal = trip?.proposals?.find(p => p.id === row.dataset.propId);
+    if (trip && proposal) { d.remove(); showProposalReviewDialog(trip, proposal); }
+  }));
+}
+
+function showProposalReviewDialog(trip, proposal) {
+  const d = document.createElement("dialog");
+  d.className = "recipe-dialog auth-dialog ingest-dialog";
+  const isCancel = proposal.type === "cancel";
+  const changesHtml = (proposal.changes || []).map(c =>
+    `<div class="prop-diff-row"><span class="prop-diff-field">${escapeHtml(prettyFieldName(c.field))}</span>` +
+    `<span class="prop-diff-from">${escapeHtml(c.from || "—")}</span><span class="prop-diff-arrow">→</span>` +
+    `<span class="prop-diff-to">${escapeHtml(c.to)}</span></div>`).join("");
+  d.innerHTML =
+    `<div class="recipe-form"><h3 style="margin:0 0 6px">${isCancel ? "Reservation cancelled" : "Possible update"}</h3>` +
+    `<p class="ingest-intro">${escapeHtml(proposal.title || "")} · ${escapeHtml(trip.name || "Trip")}</p>` +
+    (isCancel
+      ? `<div class="ingest-cancel-banner">The confirmation email says this reservation was cancelled. Remove it from the plan? It stays in your history.</div>`
+      : `<div class="prop-diff">${changesHtml || '<p class="mail-empty">No field changes detected.</p>'}</div>`) +
+    (proposal.source?.subject ? `<div class="ingest-source">Source: ${escapeHtml(proposal.source.subject)} <button class="ingest-source-open" type="button" data-open-src>Open email</button></div>` : "") +
+    `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">` +
+      `<button class="secondary-btn" id="propDismiss" type="button">${isCancel ? "Keep it" : "Keep current"}</button>` +
+      `<button class="primary-btn" id="propApply" type="button">${isCancel ? "Remove reservation" : "Apply update"}</button>` +
+    `</div></div>`;
+  document.body.appendChild(d);
+  d.showModal();
+  d.addEventListener("close", () => d.remove());
+  d.querySelector("[data-open-src]")?.addEventListener("click", () => openSourceEmail(proposal.source));
+  d.querySelector("#propDismiss").addEventListener("click", () => { resolveProposal(trip, proposal, "dismissed"); d.remove(); });
+  d.querySelector("#propApply").addEventListener("click", () => { applyProposal(trip, proposal); d.remove(); });
+}
+
+function applyProposal(trip, proposal) {
+  const item = findTripItemRaw(trip, proposal.targetItemId, proposal.section, proposal.ownerDateKey);
+  if (item) {
+    if (proposal.type === "cancel") { item.cancelled = true; item.cancelledAt = new Date().toISOString(); }
+    else (proposal.changes || []).forEach(c => { item[c.field] = c.to; });
+    if (!item.source && proposal.source) item.source = proposal.source;
+  }
+  resolveProposal(trip, proposal, "applied");
+  if (activeAppArea === "explore" && exploreOpenTripId === trip.id) renderExploreTripPanel("itinerary", trip);
+}
+
+function resolveProposal(trip, proposal, status) {
+  proposal.status = status;
+  proposal.resolvedAt = new Date().toISOString();
+  trip.updatedAt = new Date().toISOString();
+  persist();
+  refreshExploreNotifications();
+}
+
+function prettyFieldName(f) {
+  const map = { checkInDate: "Check-in", checkOutDate: "Check-out", checkInTime: "Check-in time", checkOutTime: "Check-out time",
+    departDate: "Departs", departTime: "Departure time", arriveDate: "Arrives", arriveTime: "Arrival time",
+    reservationTime: "Reservation", activityTime: "Time", confirmationNo: "Confirmation", address: "Address", notes: "Notes", name: "Name", title: "Name" };
+  return map[f] || f.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase());
 }
 
 // Optimistically remove an inbox row, run the forward label change, and offer
@@ -47347,6 +47460,7 @@ function showExploreApp(event) {
   closePageTitleMenu();
   closeAppMenu();
   wireExploreTabs();
+  refreshExploreNotifications();
   // Reopen the most recently viewed trip (survives reloads via localStorage)
   renderExploreSidebar(exploreOpenTripId || localStorage.getItem("live-explore-last-trip"));
   // Restore Travel Mode if it was active for a still-traveling trip.
@@ -47691,10 +47805,8 @@ function wireExploreTabs() {
     renderExploreSidebar(exploreOpenTripId, { listOnly: true });
   });
 
-  // Notifications button — placeholder for now (matches the Media page).
-  document.getElementById("exploreNotificationsBtn")?.addEventListener("click", () => {
-    showMailToast("Trip notifications are coming soon.");
-  });
+  // Notifications button opens the Explore review inbox (proposed changes).
+  document.getElementById("exploreNotificationsBtn")?.addEventListener("click", openExploreProposalsPanel);
 
   document.getElementById("exploreAddTripBtn")?.addEventListener("click", () => {
     showTravelNewTripDialog();

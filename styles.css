@@ -16593,6 +16593,19 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 .ingest-trip-choice:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .ingest-trip-dates { font-size: 0.76rem; color: var(--muted); }
 
+/* Explore review inbox (proposed changes) */
+.explore-proposals { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
+.explore-proposal-row { display: flex; align-items: center; gap: 10px; justify-content: space-between; border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent); border-radius: 10px; padding: 10px 12px; }
+.explore-proposal-body { min-width: 0; }
+.explore-proposal-title { font-size: 0.88rem; font-weight: 600; }
+.explore-proposal-sub { font-size: 0.76rem; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prop-diff { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 2px; }
+.prop-diff-row { display: grid; grid-template-columns: 110px 1fr auto 1fr; align-items: center; gap: 8px; font-size: 0.86rem; }
+.prop-diff-field { color: var(--muted); font-weight: 600; }
+.prop-diff-from { color: var(--muted); text-decoration: line-through; overflow: hidden; text-overflow: ellipsis; }
+.prop-diff-arrow { color: var(--muted); }
+.prop-diff-to { font-weight: 700; color: var(--accent-dark, var(--accent)); overflow: hidden; text-overflow: ellipsis; }
+
 /* ── Itinerary: the center of gravity ────────────────────────────────────── */
 .itin-days { display: flex; flex-direction: column; gap: 10px; padding: 10px 10px 24px; overflow-y: auto; }
 .itin-day {
