@@ -41248,91 +41248,94 @@ function showAdSkippedToast() {
   adSkipToastTimer = setTimeout(() => toast.classList.remove("ad-skipped-toast--visible"), 2000);
 }
 
+// Per-kind media behavior — the ONE dispatch table the engine handlers and the
+// now-playing bar route through, instead of parallel podcast/radio/music/tts
+// if/else ladders. Adding a media type is one entry here. `active`/`el` power the
+// now-playing bar (it detects the current kind from the mode flags); the engine
+// handlers dispatch on the loaded source's providerId (kind()). Each field is the
+// exact behavior that used to be inline. Arrow bodies run at playback time, so
+// referencing functions/consts defined later in the file is fine.
+const MEDIA_KINDS = {
+  podcast: {
+    active: () => !!podcastAudio,
+    el: () => podcastAudio,
+    onLoaded: () => updatePodcastProgressUI(podcastCurEpisode),
+    onTimeupdate: () => { updatePodcastProgressUI(podcastCurEpisode); updateMiniPlayerProgress(); schedulePodcastPositionSave(podcastCurEpisode); },
+    onPlay: () => { updatePodcastPlayBtn(); updateMiniPlayerPlayBtn(); setMediaSessionPlaybackState("playing"); scheduleAdSkips(podcastCurrentChapters, mediaAudioEl); },
+    onPause: () => { updatePodcastPlayBtn(); updateMiniPlayerPlayBtn(); setMediaSessionPlaybackState("paused"); clearAdSkipTimers(); },
+    onEnded: () => onPodcastEnded(),
+    onError: () => showVoiceToast("Audio failed to load — check your connection and try again"),
+    toggle: () => togglePodcastPlayPause(),
+    skip: (sec) => skipPodcast(sec),
+    open: () => goToOpenEpisode(),
+    info: () => { const f = findPodcastEpisode(openPodcastEpisodeId); const ep = f?.episode, sh = f?.show; if (!ep) return null; return { art: ep.art || sh?.art || "", title: ep.title || "", show: sh?.title || "", date: ep.pubDate ? formatArticleDate(ep.pubDate) : "", desc: plainTextFromHtml(ep.description) }; },
+  },
+  radio: {
+    live: true,
+    active: () => !!radioAudio,
+    el: () => radioAudio,
+    onTimeupdate: () => updateMiniPlayerProgress(),
+    onPlay: () => { radioReconnectTries = 0; setMediaSessionPlaybackState("playing"); updateMiniPlayerPlayBtn(); if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel(); },
+    onPause: () => { setMediaSessionPlaybackState("paused"); updateMiniPlayerPlayBtn(); if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel(); },
+    onEnded: () => onRadioEnded(),
+    onError: () => onRadioError(),
+    toggle: () => toggleRadioPlayPause(),
+    skip: () => {}, // live: no skip
+    open: () => { showMediaApp(); switchMediaTab("radio"); },
+    info: () => { const s = radioCurStation; if (!s) return null; return { art: s.logoUrl || "", title: s.name || "Radio", show: radioStationSubtitle(s), date: "Live", desc: s.description || "" }; },
+  },
+  music: {
+    active: () => !!musicAudio,
+    el: () => musicAudio,
+    onTimeupdate: () => updateMiniPlayerProgress(),
+    onPlay: () => { setMediaSessionPlaybackState("playing"); updateMiniPlayerPlayBtn(); if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel(); },
+    onPause: () => { setMediaSessionPlaybackState("paused"); updateMiniPlayerPlayBtn(); if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel(); },
+    onEnded: () => onMusicEnded(),
+    onError: () => { showVoiceToast("Couldn't play this track"); updateMiniPlayerPlayBtn(); },
+    toggle: () => toggleMusicPlayPause(),
+    skip: (sec) => skipMusic(sec),
+    open: () => { showMediaApp(); switchMediaTab("music"); },
+    info: () => { const t = musicCurTrack; if (!t) return null; return { art: t.artworkUrl || "", title: t.title || "Untitled", show: t.artist || "", date: t.album || "", desc: "" }; },
+  },
+  tts: {
+    active: () => !!(listenAudio || listenLoading || listenArticle),
+    el: () => null, // TTS uses its own elapsed/total readout, not the shared element
+    onTimeupdate: () => { updateMiniPlayerProgress(); highlightCurrentWord(); },
+    onPlay: () => { listenSpeaking = true; setMediaSessionPlaybackState("playing"); updateListenPlayBtn(); updateMiniPlayerPlayBtn(); },
+    onPause: () => { listenSpeaking = false; setMediaSessionPlaybackState("paused"); updateListenPlayBtn(); updateMiniPlayerPlayBtn(); },
+    onEnded: () => onListenArticleFinished(),
+    onError: () => { listenSpeaking = false; updateListenPlayBtn(); updateMiniPlayerPlayBtn(); },
+    toggle: () => toggleListenPlayPause(),
+    skip: (sec) => listenSkip(sec),
+    open: () => { if (listenArticle) { showMediaApp(); openArticle(listenArticle.id, "articleList"); } },
+    info: () => { const a = listenArticle; return { art: a ? articleArtUrl(a) : "", title: a?.title || "Now playing", show: a?.author || a?.publication || "", date: a?.pubDate ? formatArticleDate(a.pubDate) : "", desc: plainTextFromHtml(a?.text || a?.excerpt).slice(0, 2000) }; },
+  },
+};
+const NOW_PLAYING_ORDER = ["podcast", "radio", "music", "tts"];
+
 // THE one playback engine for the whole app. It owns the single shared media
 // element and drives every source; feature behavior is dispatched by the
-// current source's providerId, so podcast and article TTS (and any future
-// provider) run through the same engine and the same element.
+// current source's providerId through MEDIA_KINDS, so podcast, radio, music and
+// article TTS (and any future provider) run through the same engine and element.
 let mediaEngine = null;
 function getMediaEngine() {
   if (mediaEngine) return mediaEngine;
   mediaEngine = createPlaybackEngine({ createAudio: ensureMediaAudioEl });
   const kind = () => mediaEngine.state().providerId; // active source's provider
-  mediaEngine.on("loaded", () => { if (kind() === "podcast") updatePodcastProgressUI(podcastCurEpisode); });
-  mediaEngine.on("timeupdate", () => {
-    if (kind() === "podcast") {
-      updatePodcastProgressUI(podcastCurEpisode);
-      updateMiniPlayerProgress();
-      schedulePodcastPositionSave(podcastCurEpisode);
-    } else if (kind() === "music" || kind() === "radio") {
-      updateMiniPlayerProgress();
-    } else {
-      updateMiniPlayerProgress();
-      highlightCurrentWord();
-    }
-  });
-  mediaEngine.on("play", () => {
-    mediaAudioUnlocked = true; // any real play blesses the shared element (iOS)
-    if (kind() === "podcast") {
-      updatePodcastPlayBtn();
-      updateMiniPlayerPlayBtn();
-      setMediaSessionPlaybackState("playing");
-      scheduleAdSkips(podcastCurrentChapters, mediaAudioEl);
-    } else if (kind() === "music") {
-      setMediaSessionPlaybackState("playing");
-      updateMiniPlayerPlayBtn();
-      if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
-    } else if (kind() === "radio") {
-      radioReconnectTries = 0; // a successful play resets the reconnect counter
-      setMediaSessionPlaybackState("playing");
-      updateMiniPlayerPlayBtn();
-      if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel();
-    } else {
-      listenSpeaking = true;
-      setMediaSessionPlaybackState("playing");
-      updateListenPlayBtn();
-      updateMiniPlayerPlayBtn();
-    }
-  });
-  mediaEngine.on("pause", () => {
-    if (kind() === "podcast") {
-      updatePodcastPlayBtn();
-      updateMiniPlayerPlayBtn();
-      setMediaSessionPlaybackState("paused");
-      clearAdSkipTimers();
-    } else if (kind() === "music") {
-      setMediaSessionPlaybackState("paused");
-      updateMiniPlayerPlayBtn();
-      if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
-    } else if (kind() === "radio") {
-      setMediaSessionPlaybackState("paused");
-      updateMiniPlayerPlayBtn();
-      if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel();
-    } else {
-      listenSpeaking = false;
-      setMediaSessionPlaybackState("paused");
-      updateListenPlayBtn();
-      updateMiniPlayerPlayBtn();
-    }
-  });
+  const h = () => MEDIA_KINDS[kind()] || null;
+  mediaEngine.on("loaded", () => h()?.onLoaded?.());
+  mediaEngine.on("timeupdate", () => h()?.onTimeupdate?.());
+  mediaEngine.on("play", () => { mediaAudioUnlocked = true; h()?.onPlay?.(); });
+  mediaEngine.on("pause", () => h()?.onPause?.());
   mediaEngine.on("segment", (s) => {
-    if (kind() !== "tts") return; // chunk warming is a TTS concern
+    if (kind() !== "tts") return; // chunk warming is a TTS concern (kept inline)
     listenChunkIdx = s.segIndex;
     if (listenNextAudio) { listenNextAudio.src = ""; listenNextAudio = null; }
     const next = s.segIndex + 1;
     if (listenAllUrls[next]) listenNextAudio = makeListenChunk(listenAllUrls[next]);
   });
-  mediaEngine.on("ended", () => {
-    if (kind() === "podcast") onPodcastEnded();
-    else if (kind() === "music") onMusicEnded();
-    else if (kind() === "radio") onRadioEnded();
-    else onListenArticleFinished();
-  });
-  mediaEngine.on("error", () => {
-    if (kind() === "podcast") showVoiceToast("Audio failed to load — check your connection and try again");
-    else if (kind() === "music") { showVoiceToast("Couldn't play this track"); updateMiniPlayerPlayBtn(); }
-    else if (kind() === "radio") onRadioError();
-    else { listenSpeaking = false; updateListenPlayBtn(); updateMiniPlayerPlayBtn(); }
-  });
+  mediaEngine.on("ended", () => h()?.onEnded?.());
+  mediaEngine.on("error", () => h()?.onError?.());
   // Ad-skip is podcast-only: reschedule when position/rate changes. Passive
   // listeners on the shared element (never clash with the engine's onX handlers)
   // that no-op unless a podcast is the active source.
@@ -42779,16 +42782,11 @@ function deleteMusicPlaylist(id) {
 // One persistent bottom bar drives whichever kind of audio is active, so all
 // share the same play/pause, skip, seek scale and elapsed/remaining readout.
 
-function nowPlayingKind() {
-  if (podcastAudio) return "podcast";
-  if (radioAudio) return "radio";
-  if (musicAudio) return "music";
-  if (listenAudio || listenLoading || listenArticle) return "tts";
-  return null;
-}
+// The active kind is detected from the mode flags via the MEDIA_KINDS registry.
+function nowPlayingKind() { for (const k of NOW_PLAYING_ORDER) if (MEDIA_KINDS[k].active()) return k; return null; }
 // The shared element while a podcast / radio / music item is active (all drive
 // the bar the same element-based way); null during TTS, which has its own readout.
-function nowPlayingEl() { return podcastAudio || radioAudio || musicAudio || null; }
+function nowPlayingEl() { const k = nowPlayingKind(); return k ? MEDIA_KINDS[k].el() : null; }
 function nowPlayingIsPlaying() {
   const el = nowPlayingEl();
   if (el) return !el.paused && !el.ended;
@@ -42797,33 +42795,16 @@ function nowPlayingIsPlaying() {
 function nowPlayingElapsed() { const el = nowPlayingEl(); return el ? (el.currentTime || 0) : listenElapsed(); }
 // Live radio has no finite duration → 0 (the bar shows no progress for it).
 function nowPlayingTotal() { const el = nowPlayingEl(); if (el) return Number.isFinite(el.duration) ? el.duration : 0; return listenTotalDuration || 0; }
-function nowPlayingIsLive() { return nowPlayingKind() === "radio"; }
-function nowPlayingToggle() {
-  const k = nowPlayingKind();
-  if (k === "podcast") togglePodcastPlayPause();
-  else if (k === "radio") toggleRadioPlayPause();
-  else if (k === "music") toggleMusicPlayPause();
-  else toggleListenPlayPause();
-}
-function nowPlayingSkip(sec) {
-  const k = nowPlayingKind();
-  if (k === "radio") return; // live: no skip
-  if (k === "podcast") skipPodcast(sec);
-  else if (k === "music") skipMusic(sec);
-  else listenSkip(sec);
-}
+function nowPlayingIsLive() { const k = nowPlayingKind(); return !!(k && MEDIA_KINDS[k].live); }
+function nowPlayingToggle() { const k = nowPlayingKind(); MEDIA_KINDS[k]?.toggle?.(); }
+function nowPlayingSkip(sec) { const k = nowPlayingKind(); MEDIA_KINDS[k]?.skip?.(sec); } // radio's skip is a no-op (live)
 function nowPlayingSeekFraction(f) {
-  if (nowPlayingKind() === "radio") return; // live: no seek
+  if (nowPlayingIsLive()) return; // live: no seek
   const el = nowPlayingEl();
   if (el) { if (el.duration) el.currentTime = f * el.duration; }
   else if (listenTotalDuration) { listenSeekToTime(f * listenTotalDuration); }
 }
-function nowPlayingOpen() {
-  const k = nowPlayingKind();
-  if (k === "podcast") { goToOpenEpisode(); return; }
-  if (k === "radio") { showMediaApp(); switchMediaTab("radio"); return; }
-  if (k === "music") { showMediaApp(); switchMediaTab("music"); return; }
-  if (listenArticle) { showMediaApp(); openArticle(listenArticle.id, "articleList"); }
+function nowPlayingOpen() { const k = nowPlayingKind(); MEDIA_KINDS[k]?.open?.();
 }
 
 function showMiniPlayer(episode, show) {
@@ -42915,54 +42896,7 @@ function plainTextFromHtml(html) {
   ta.innerHTML = noTags;
   return (ta.value || "").replace(/\s+/g, " ").trim();
 }
-function nowPlayingInfo() {
-  const kind = nowPlayingKind();
-  if (kind === "podcast") {
-    const found = findPodcastEpisode(openPodcastEpisodeId);
-    const ep = found?.episode, sh = found?.show;
-    if (!ep) return null;
-    return {
-      art: ep.art || sh?.art || "",
-      title: ep.title || "",
-      show: sh?.title || "",
-      date: ep.pubDate ? formatArticleDate(ep.pubDate) : "",
-      desc: plainTextFromHtml(ep.description),
-    };
-  }
-  if (kind === "music") {
-    const t = musicCurTrack;
-    if (!t) return null;
-    return {
-      art: t.artworkUrl || "",
-      title: t.title || "Untitled",
-      show: t.artist || "",
-      date: t.album || "",
-      desc: "",
-    };
-  }
-  if (kind === "radio") {
-    const s = radioCurStation;
-    if (!s) return null;
-    return {
-      art: s.logoUrl || "",
-      title: s.name || "Radio",
-      show: radioStationSubtitle(s),
-      date: "Live",
-      desc: s.description || "",
-    };
-  }
-  if (kind === "tts") {
-    const a = listenArticle;
-    return {
-      art: a ? articleArtUrl(a) : "",
-      title: a?.title || "Now playing",
-      show: a?.author || a?.publication || "",
-      date: a?.pubDate ? formatArticleDate(a.pubDate) : "",
-      desc: plainTextFromHtml(a?.text || a?.excerpt).slice(0, 2000),
-    };
-  }
-  return null;
-}
+function nowPlayingInfo() { const k = nowPlayingKind(); return (k && MEDIA_KINDS[k].info) ? MEDIA_KINDS[k].info() : null; }
 
 function openNowPlayingModal() {
   const info = nowPlayingInfo();
