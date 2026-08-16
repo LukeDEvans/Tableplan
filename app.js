@@ -29,11 +29,13 @@ function travelPartyOptions() {
   return normalizeMealPlanConfig(state.mealPlanConfig).members.map((m) => m.label).filter(Boolean);
 }
 
-// HTML for the "add a person" row under a party-chips picker.
+// HTML for the "add a person" row under a party-chips picker. Uses the app-wide
+// standard add button (icon-btn std-add-btn — a navy-bordered rounded-square "+").
 function partyAdderHtml() {
   return '<div class="travel-party-add">' +
     '<input type="text" class="text-input" data-party-add-input placeholder="Add someone…" autocomplete="off" />' +
-    '<button type="button" class="secondary-btn compact-btn" data-party-add-btn>Add</button></div>';
+    '<button type="button" class="icon-btn std-add-btn" data-party-add-btn aria-label="Add person" title="Add person">' +
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button></div>';
 }
 
 // Wire the "add a person" row: typing a name (Enter or Add) appends a selected
