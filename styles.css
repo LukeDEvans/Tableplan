@@ -16503,8 +16503,8 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 /* "More ▾" dropdown holding the secondary planning workspaces */
 .explore-more-wrap { position: relative; display: inline-flex; }
 .explore-more-menu {
-  position: absolute; right: 0; top: calc(100% + 4px); z-index: 40;
-  min-width: 180px; padding: 6px;
+  position: fixed; z-index: 4000;
+  min-width: 190px; padding: 6px;
   background: var(--window-bg); border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent);
   border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,0.18);
   display: flex; flex-direction: column; gap: 2px;

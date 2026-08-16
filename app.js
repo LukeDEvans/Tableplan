@@ -47382,6 +47382,13 @@ function wireExploreTabs() {
       const open = menu.hidden;
       menu.hidden = !open;
       moreBtn.setAttribute("aria-expanded", String(open));
+      // The tab strip is an overflow:hidden horizontal scroller, which would
+      // clip an in-flow dropdown — position the menu as a fixed popover instead.
+      if (open) {
+        const r = moreBtn.getBoundingClientRect();
+        menu.style.top = `${Math.round(r.bottom + 4)}px`;
+        menu.style.left = `${Math.round(Math.min(r.left, window.innerWidth - 200))}px`;
+      }
       return;
     }
     // A primary tab (Itinerary/Ideas/Prepare) or a More-menu item both carry
