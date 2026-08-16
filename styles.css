@@ -14863,8 +14863,8 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   #exploreMainPage .article-sidebar:not(:hover) .explore-cat-head { justify-content: center; padding-left: 0; padding-right: 0; gap: 0; }
   #exploreMainPage .article-sidebar:not(:hover) .explore-cat-icon { color: var(--muted); }
   /* Rail: each trip shows just its icon (its name emoji, or its status glyph),
-     centered under the category folder icon. */
-  #exploreMainPage .article-sidebar:not(:hover) .explore-trip-status { display: inline-flex !important; align-items: center; justify-content: center; font-size: 1.1rem; }
+     centered under the category folder icon — same size as when expanded. */
+  #exploreMainPage .article-sidebar:not(:hover) .explore-trip-status { display: inline-flex !important; }
   /* New-trip button collapses to the standard rounded-square "+" (navy border). */
   #exploreMainPage .article-sidebar:not(:hover) .explore-new-trip-btn { width: 34px; height: 34px; padding: 0; margin: 10px auto; justify-content: center; border-radius: 8px; }
   #exploreMainPage .article-sidebar:not(:hover) .explore-new-trip-label { display: none; }
@@ -16527,12 +16527,14 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 .explore-more-item:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .explore-more-item.is-active { background: color-mix(in srgb, var(--accent) 16%, transparent); font-weight: 600; }
 
-/* Explore sidebar trip tabs with lifecycle status */
-.explore-trip-tab { display: flex; align-items: center; gap: 10px; }
-.explore-trip-status { font-size: 1rem; flex-shrink: 0; }
-.explore-trip-tab-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.explore-trip-name { font-weight: 600; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.explore-trip-dates { font-size: 0.72rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Explore sidebar trip tabs with lifecycle status. A fixed row height and a
+   fixed icon slot keep every icon at the same position whether the sidebar is a
+   rail or expanded — so nothing shifts on hover. */
+.explore-trip-tab { display: flex; align-items: center; gap: 10px; min-height: 48px; }
+.explore-trip-status { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; font-size: 1.05rem; line-height: 1; flex-shrink: 0; }
+.explore-trip-tab-body { display: flex; flex-direction: column; gap: 0; min-width: 0; }
+.explore-trip-name { font-weight: 600; font-size: 0.9rem; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explore-trip-dates { font-size: 0.72rem; line-height: 1.25; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .explore-trip-tab--traveling { box-shadow: inset 3px 0 0 var(--accent); }
 .explore-trip-tab--completed .explore-trip-name { color: var(--muted); }
 
@@ -16551,7 +16553,7 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
    rail (see std-add-btn). */
 .explore-new-trip-btn {
   display: inline-flex; align-items: center; gap: 8px; align-self: flex-start;
-  margin: 10px 12px; padding: 7px 14px;
+  height: 34px; box-sizing: border-box; margin: 10px 12px; padding: 0 14px;
   border: 2px solid var(--window-border); border-radius: 10px;
   background: var(--surface, #fff); color: var(--ink); cursor: pointer;
   font-weight: 600; font-size: 0.9rem; white-space: nowrap;
