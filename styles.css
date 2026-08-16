@@ -16526,6 +16526,37 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 .explore-trip-tab--traveling { box-shadow: inset 3px 0 0 var(--accent); }
 .explore-trip-tab--completed .explore-trip-name { color: var(--muted); }
 
+/* Sidebar categories (folders) — Upcoming / Wishlist / Past. Each header's icon
+   is what stays visible in the collapsed rail. */
+#exploreMainPage .explore-cat-group { display: flex; flex-direction: column; margin-bottom: 4px; }
+.explore-cat-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px 4px 16px; }
+.explore-cat-icon { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex-shrink: 0; color: var(--muted); }
+.explore-cat-icon svg { width: 19px; height: 19px; }
+.explore-cat-label { flex: 1; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted, #888); }
+.explore-cat-count { font-size: 0.68rem; font-weight: 600; color: var(--muted); background: color-mix(in srgb, var(--ink) 8%, transparent); border-radius: 999px; padding: 1px 7px; }
+.explore-cat-trips { display: flex; flex-direction: column; }
+
+/* Desktop: the topbar hamburger collapses the sidebar to a category-icon RAIL
+   (like Mail's folder rail) instead of hiding it — the icons stay visible, and
+   hovering floats the full grouped list open over the content. */
+@media (min-width: 861px) {
+  #exploreMainPage .article-layout { position: relative; }
+  #exploreMainPage .article-sidebar.is-collapsed {
+    width: 52px; padding: 8px 0; overflow: hidden;
+    position: absolute; left: 0; top: 0; bottom: 0; z-index: 15;
+    background: var(--paper, #fff);
+    border-right: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+    transition: width 0.18s ease, box-shadow 0.18s ease;
+  }
+  #exploreMainPage .article-layout:has(.article-sidebar.is-collapsed) { padding-left: 52px; }
+  #exploreMainPage .article-sidebar.is-collapsed:hover { width: 256px; box-shadow: 4px 0 18px rgba(0,0,0,0.13); }
+  #exploreMainPage .article-sidebar.is-collapsed:not(:hover) .explore-cat-label,
+  #exploreMainPage .article-sidebar.is-collapsed:not(:hover) .explore-cat-count,
+  #exploreMainPage .article-sidebar.is-collapsed:not(:hover) .explore-cat-trips,
+  #exploreMainPage .article-sidebar.is-collapsed:not(:hover) .explore-sidebar-empty { display: none; }
+  #exploreMainPage .article-sidebar.is-collapsed:not(:hover) .explore-cat-head { justify-content: center; padding: 10px 0; }
+}
+
 /* ── Itinerary: the center of gravity ────────────────────────────────────── */
 .itin-days { display: flex; flex-direction: column; gap: 10px; padding: 10px 10px 24px; overflow-y: auto; }
 .itin-day {

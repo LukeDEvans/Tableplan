@@ -47110,6 +47110,38 @@ function showExploreApp(event) {
 
 let exploreTripQuery = "";
 
+// Sidebar categories, each a "folder" with an icon that stays visible in the
+// collapsed rail (like Mail's label icons). A trip's derived lifecycle status
+// picks its category: Upcoming (planning/booked/traveling), Wishlist (ideas),
+// Past (completed).
+const EXPLORE_CATEGORIES = [
+  { key: "upcoming", label: "Upcoming",
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>`,
+    match: s => s !== "idea" && s !== "completed" },
+  { key: "wishlist", label: "Wishlist",
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
+    match: s => s === "idea" },
+  { key: "past", label: "Past",
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
+    match: s => s === "completed" },
+];
+
+function exploreTripTabHtml(trip) {
+  const status = TravelModel.deriveStatus(trip);
+  const meta = TravelModel.TRIP_STATUS_META[status] || {};
+  const dates = trip.startDate
+    ? formatTravelDate(trip.startDate) + (trip.endDate ? " – " + formatTravelDate(trip.endDate) : "")
+    : (status === "idea" ? "Idea" : "No dates");
+  return `
+    <button class="article-sidebar-tab explore-trip-tab explore-trip-tab--${meta.tone || status}" type="button" data-explore-trip-id="${trip.id}">
+      <span class="explore-trip-status" title="${escapeHtml(meta.label || status)}" aria-hidden="true">${meta.icon || "✈"}</span>
+      <span class="explore-trip-tab-body">
+        <span class="explore-trip-name">${escapeHtml(trip.name || "Untitled")}</span>
+        <span class="explore-trip-dates">${escapeHtml(dates)}</span>
+      </span>
+    </button>`;
+}
+
 // listOnly re-renders just the trips list (used by live search) without opening
 // or closing the trip view — so filtering never disturbs the open trip.
 function renderExploreSidebar(preserveSelectedId, { listOnly = false } = {}) {
@@ -47122,27 +47154,27 @@ function renderExploreSidebar(preserveSelectedId, { listOnly = false } = {}) {
     return;
   }
   const q = exploreTripQuery.trim().toLowerCase();
-  const sorted = [...trips]
-    .filter(t => !q || `${t.name || ""} ${t.destination || ""}`.toLowerCase().includes(q))
-    .sort((a, b) => TravelModel.compareForHome(a, b));
-  if (!sorted.length) {
+  const visible = trips.filter(t => !q || `${t.name || ""} ${t.destination || ""}`.toLowerCase().includes(q));
+  if (!visible.length) {
     list.innerHTML = `<p class="explore-sidebar-empty">No trips match “${escapeHtml(exploreTripQuery.trim())}”</p>`;
+    if (!listOnly) showExploreTripEmpty();
     return;
   }
-  list.innerHTML = sorted.map(trip => {
-    const status = TravelModel.deriveStatus(trip);
-    const meta = TravelModel.TRIP_STATUS_META[status] || {};
-    const dates = trip.startDate
-      ? formatTravelDate(trip.startDate) + (trip.endDate ? " – " + formatTravelDate(trip.endDate) : "")
-      : (status === "idea" ? "Idea" : "No dates");
-    return `
-    <button class="article-sidebar-tab explore-trip-tab explore-trip-tab--${meta.tone || status}" type="button" data-explore-trip-id="${trip.id}">
-      <span class="explore-trip-status" title="${escapeHtml(meta.label || status)}" aria-hidden="true">${meta.icon || "✈"}</span>
-      <span class="explore-trip-tab-body">
-        <span class="explore-trip-name">${escapeHtml(trip.name || "Untitled")}</span>
-        <span class="explore-trip-dates">${escapeHtml(dates)}</span>
-      </span>
-    </button>`;
+  // Group into categories; each non-empty category renders a folder header
+  // (icon + label + count, the icon staying visible in the collapsed rail),
+  // followed by its trips.
+  list.innerHTML = EXPLORE_CATEGORIES.map(cat => {
+    const items = visible.filter(t => cat.match(TravelModel.deriveStatus(t)))
+      .sort((a, b) => TravelModel.compareForHome(a, b));
+    if (!items.length) return "";
+    return `<div class="explore-cat-group" data-cat="${cat.key}">` +
+      `<div class="explore-cat-head" title="${escapeHtml(cat.label)}">` +
+        `<span class="explore-cat-icon">${cat.icon}</span>` +
+        `<span class="explore-cat-label">${escapeHtml(cat.label)}</span>` +
+        `<span class="explore-cat-count">${items.length}</span>` +
+      `</div>` +
+      `<div class="explore-cat-trips">${items.map(exploreTripTabHtml).join("")}</div>` +
+    `</div>`;
   }).join("");
   list.querySelectorAll("[data-explore-trip-id]").forEach(btn => {
     btn.addEventListener("click", () => {
