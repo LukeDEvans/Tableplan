@@ -56,6 +56,18 @@ function buildCatalog() {
   }
   return stations;
 }
+// ── programs (on-demand bridge) ───────────────────────────────────────────────
+// Curated MPR/APMG programs with VERIFIED official podcast RSS feeds
+// (feeds.publicradio.org). Following a program subscribes its feed in the app's
+// existing podcast system — episodes are NOT stored twice. Adding a program is a
+// one-line edit once its feed slug is verified.
+const FEED = (slug) => `https://feeds.publicradio.org/public_feeds/${slug}/rss/rss`;
+const PROGRAMS = [
+  { slug: "minnesota-now", name: "Minnesota Now", host: "Nina Moini", station: "mprnews", feed: "minnesota-now", description: "Live, down-to-earth interviews on Minnesota news and culture." },
+  { slug: "mpr-news-update", name: "Minnesota Today", host: "MPR News", station: "mprnews", feed: "mpr-news-update", description: "Your daily MPR News update." },
+  { slug: "daily-download", name: "YourClassical Daily Download", host: "YourClassical MPR", station: "yourclassical", feed: "daily-download", description: "A free classical track every weekday." },
+];
+
 function station(slug, m) {
   return {
     id: `mpr:${slug}`, providerId: "mpr", slug,
@@ -75,10 +87,17 @@ export function createMprProvider() {
   return {
     id: "mpr",
     label: "Minnesota Public Radio",
-    capabilities: new Set([RADIO_CAP.LIST, RADIO_CAP.SEARCH, RADIO_CAP.NOW_PLAYING, RADIO_CAP.SCHEDULE]),
+    capabilities: new Set([RADIO_CAP.LIST, RADIO_CAP.SEARCH, RADIO_CAP.PROGRAMS, RADIO_CAP.NOW_PLAYING, RADIO_CAP.SCHEDULE]),
 
     async isAvailable() { return true; },       // catalog is bundled → always available (offline too)
     async listStations() { return catalog.slice(); },
+    async listPrograms() {
+      return PROGRAMS.map((p) => ({
+        id: `mpr:prog:${p.slug}`, providerId: "mpr", name: p.name, host: p.host, description: p.description,
+        stationIds: [`mpr:${p.station}`], feedUrl: FEED(p.feed),
+        providerRefs: [{ provider: "mpr", externalId: p.slug }],
+      }));
+    },
     async getStation(id) { return catalog.find((s) => s.id === id || s.providerRefs[0].externalId === id) || null; },
     async search(query) {
       const q = String(query || "").toLowerCase().trim();

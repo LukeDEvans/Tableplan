@@ -60,6 +60,17 @@ describe("MPR provider — curated catalog", () => {
     expect(await p.nowPlaying()).toBeNull();
     expect(await p.schedule()).toEqual([]);
   });
+
+  it("lists programs with verified feed URLs bound to a station (on-demand bridge)", async () => {
+    const p = createMprProvider();
+    const progs = await p.listPrograms();
+    const names = progs.map((x) => x.name);
+    expect(names).toContain("Minnesota Now");
+    expect(names).toContain("YourClassical Daily Download");
+    const mn = progs.find((x) => x.name === "Minnesota Now");
+    expect(mn.feedUrl).toBe("https://feeds.publicradio.org/public_feeds/minnesota-now/rss/rss");
+    expect(mn.stationIds).toContain("mpr:mprnews");
+  });
 });
 
 describe("Radio Browser provider — mocked", () => {
@@ -101,5 +112,11 @@ describe("radio registry — aggregation + isolation", () => {
     const reg = createRadioRegistry([createMprProvider()]);
     const st = (await reg.listStations())[0];
     expect(await reg.nowPlaying(st)).toBeNull();
+  });
+  it("aggregates programs across PROGRAMS-capable providers", async () => {
+    const reg = createRadioRegistry([createMprProvider()]);
+    const progs = await reg.listPrograms();
+    expect(progs.length).toBeGreaterThanOrEqual(3);
+    expect(progs[0].entity).toBe("program");
   });
 });

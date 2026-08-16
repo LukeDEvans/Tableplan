@@ -53,6 +53,11 @@ A station plays as a **live single-segment source** with `providerId:"radio"` th
 - The now-playing bar/modal gain a **`radio` kind** — LIVE (no seek/skip; `nowPlayingTotal` returns 0 for the infinite-duration stream). Lock-screen/MediaSession shows the station; play/pause/stop only.
 - Continues across in-app navigation; background playback follows the platform/PWA behaviour of the shared element.
 
+## Programs & on-demand (the podcast bridge)
+Programs are first-class (`makeProgram`: name, host, `stationIds[]`, `feedUrl`, refs). The MPR provider ships a curated set with **verified official RSS feeds** (`feeds.publicradio.org/public_feeds/<slug>/rss/rss`): **Minnesota Now**, **Minnesota Today** (MPR News Update), **YourClassical Daily Download**. Adding one is a one-line edit once its slug is verified.
+
+**Following or opening a program bridges into the EXISTING podcast system** — `ensurePodcastSubscribed(feedUrl)` reuses the app's `fetch-podcast` function and pushes a normal show into `state.podcasts`, so **episodes are stored and played by the podcast subsystem, never duplicated**. Opening a program jumps to the Podcasts show view; "listen live" tunes the program's associated station. Following records the program in `state.radioFollowedPrograms` (distinct from favourite stations) and subscribes its feed; unfollowing leaves any podcast subscription intact. This is the reliable-data-source half of the live↔on-demand relationship (now-playing/schedule remain deferred — no scrape-free source).
+
 ## Radio tab UI
 `switchMediaTab("radio")` → `initRadioPanel()`. Home shows, in order: a **Currently
 Playing / Last Played** card (Resume), **Your Stations** (favourites), the MPR
@@ -63,15 +68,15 @@ Played**. A search box queries the registry (MPR catalog + Radio Browser). It is
 ## Local vs provider data (local-first)
 - **App owns** (in `state`, `persist()`): `radioFavorites` (favourite *stations*),
   `radioHistory` (recently played / last played station snapshots),
-  `radioFollowedPrograms` (reserved — see below), and user-added stations later.
+  `radioFollowedPrograms` (followed programs, bridged to podcast subscriptions),
+  and user-added stations later.
 - **Provider owns** (replaceable): station metadata, stream URLs, program/schedule
   data, provider ids. Stored snapshots carry enough (`providerRefs`, `streams`) to
   keep working and be refreshed.
 
 **Favourite Station** ("easy access to this station") and **Followed Program**
-("I care about this show wherever it airs") are deliberately distinct concepts.
-Favourite Station is implemented; Followed Program's state key is reserved and
-surfaced later when reliable program data exists.
+("I care about this show wherever it airs") are deliberately distinct concepts —
+both implemented. Following a program also subscribes its podcast feed (above).
 
 ## Offline behaviour
 The MPR catalog is bundled, so **the Radio tab, station list and favourites work
@@ -93,13 +98,15 @@ being unreachable is isolated (search degrades, home still renders).
   `Program.feedUrl` (no duplicate episode storage).
 
 ## Architected for later (not built)
-Radio Browser discovery UI, user-added-station UI, program/episode pages, live↔
-on-demand linking, Calendar (`ScheduleEntry` is Calendar-ready), AI queries
+Radio Browser discovery UI, user-added-station UI, richer program pages
+(schedule/next-airing), multi-station programs, Calendar (`ScheduleEntry` is
+Calendar-ready), AI queries
 (query the registry/domain, not providers), location-aware discovery
 (`Station.location`), followed-program notifications, external-device playback.
 None are blocked by the current design.
 
 ## Tests
 `test/radio.test.js` — domain normalization, stream preference/fallback ordering,
-MPR catalog (major + YourClassical, offline, graceful null metadata), Radio
-Browser mapping (mocked fetch), registry aggregation + failure isolation.
+MPR catalog (major + YourClassical, offline, graceful null metadata), MPR
+programs with verified feed URLs, Radio Browser mapping (mocked fetch), registry
+aggregation (stations + programs) + failure isolation.

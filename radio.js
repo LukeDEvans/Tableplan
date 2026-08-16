@@ -144,6 +144,14 @@ export function createRadioRegistry(providers = []) {
       });
       return { stations: stations.map(makeStation), providerStatuses };
     },
+    /** Programs (on-demand shows) from PROGRAMS-capable providers (isolated). */
+    async listPrograms() {
+      const out = [];
+      await Promise.all(list.filter((p) => has(p, RADIO_CAP.PROGRAMS)).map(async (p) => {
+        try { out.push(...arr(await p.listPrograms())); } catch { /* isolated */ }
+      }));
+      return out.map(makeProgram);
+    },
     /** Best-effort now-playing (only if a provider supports it); null otherwise. */
     async nowPlaying(station) {
       const p = byId.get(station && station.providerId);

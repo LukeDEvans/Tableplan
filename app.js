@@ -38501,7 +38501,7 @@ let radioCurStation = null;    // station object currently tuned
 let radioStreamCandidates = [];// ordered stream URLs for fallback
 let radioStreamIdx = 0;
 let radioReconnectTries = 0;   // guards live-stream reconnect loops
-let radioMod = null, radioRegistry = null, radioCatalog = null;
+let radioMod = null, radioRegistry = null, radioCatalog = null, radioPrograms = null;
 let radioPanelWired = false;
 let radioSearchQuery = "";
 let radioSearchResults = null; // { stations, providerStatuses } | null
@@ -42450,7 +42450,60 @@ async function ensureRadioCatalog() {
   if (radioCatalog) return radioCatalog;
   const reg = await getRadio();
   radioCatalog = await reg.listStations();
+  try { radioPrograms = await reg.listPrograms(); } catch { radioPrograms = []; }
   return radioCatalog;
+}
+
+// ── On-demand bridge: follow a program → the EXISTING podcast system ───────────
+// Following/opening a program subscribes its RSS feed as a normal podcast show,
+// so episodes are stored/played by the podcast subsystem — never duplicated.
+async function ensurePodcastSubscribed(feedUrl, meta = {}) {
+  if (!feedUrl) return null;
+  const existing = (state.podcasts || []).find((p) => p.url === feedUrl);
+  if (existing) return existing;
+  const fetched = await callNetlifyFunction("fetch-podcast", { url: feedUrl });
+  if (!fetched || fetched.error) throw new Error((fetched && fetched.error) || "feed fetch failed");
+  const id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `pod_${Date.now()}`;
+  const show = { id, url: feedUrl, title: fetched.title || meta.title || "Program", description: fetched.description || "", art: fetched.art || meta.art || "", episodes: fetched.episodes || [], lastFetched: new Date().toISOString() };
+  if (!Array.isArray(state.podcasts)) state.podcasts = [];
+  state.podcasts.push(show);
+  persist();
+  return show;
+}
+
+function isRadioFollowed(id) { return (state.radioFollowedPrograms || []).some((p) => p.id === id); }
+async function toggleRadioFollow(program) {
+  if (!program) return;
+  const list = state.radioFollowedPrograms || [];
+  const i = list.findIndex((p) => p.id === program.id);
+  if (i >= 0) { list.splice(i, 1); state.radioFollowedPrograms = list; persist(); renderRadioPanel(); return; } // unfollow keeps any podcast subscription
+  list.unshift({ id: program.id, name: program.name, host: program.host || null, description: program.description || null, feedUrl: program.feedUrl || null, stationIds: program.stationIds || [], providerId: program.providerId || null, providerRefs: program.providerRefs || [] });
+  state.radioFollowedPrograms = list.slice(0, 100);
+  persist(); renderRadioPanel();
+  if (program.feedUrl) {
+    try { await ensurePodcastSubscribed(program.feedUrl, { title: program.name }); showVoiceToast(`Following ${program.name} — episodes added to Podcasts`); }
+    catch { showVoiceToast(`Following ${program.name}. Episodes will load when you're online.`); }
+  }
+}
+
+// Open a program's on-demand episodes in the existing Podcasts view.
+async function openRadioProgram(program) {
+  if (!program || !program.feedUrl) { showVoiceToast("This program has no on-demand feed."); return; }
+  showVoiceToast(`Loading ${program.name}…`);
+  let show = null;
+  try { show = await ensurePodcastSubscribed(program.feedUrl, { title: program.name }); }
+  catch (e) { console.warn("program feed load failed", e); }
+  if (!show) { showVoiceToast("Couldn't load episodes — check your connection."); return; }
+  activeMediaTab = "podcasts"; switchMediaTab("podcasts");
+  activePodcastTab = "shows";
+  try { renderPodcastPlaylistBar(); } catch { /* noop */ }
+  openPodcastShow(show.id);
+}
+// "Listen live" from a program → tune the associated station.
+function radioListenLive(program) {
+  const stId = (program.stationIds || [])[0];
+  const st = (radioCatalog || []).find((s) => s.id === stId);
+  if (st) playRadioStation(st); else showVoiceToast("No live station for this program.");
 }
 const RADIO_PROVIDER_LABELS = { mpr: "MPR", radiobrowser: "Radio Browser" };
 const radioProviderLabel = (id) => RADIO_PROVIDER_LABELS[id] || id;
@@ -42560,6 +42613,20 @@ function radioStationRow(st) {
     </div>`;
 }
 
+const RADIO_PROGRAM_SVG = `<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>`;
+const musicFollowSvg = (on) => `<svg viewBox="0 0 24 24" width="17" height="17" fill="${on ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>`;
+function radioProgramRow(prog) {
+  if (!prog || !prog.id) return "";
+  radioViewIndex.set(prog.id, prog);
+  const followed = isRadioFollowed(prog.id);
+  return `<div class="music-row" data-radio-program="${escapeHtml(prog.id)}" role="button" tabindex="0" aria-label="${escapeHtml(prog.name)}">
+      <span class="music-row-icon" aria-hidden="true">${RADIO_PROGRAM_SVG}</span>
+      <span class="music-row-main"><span class="music-row-title">${escapeHtml(prog.name)}</span><span class="music-row-sub">${escapeHtml([prog.host, "On-demand episodes"].filter(Boolean).join(" · "))}</span></span>
+      <button class="music-fav-btn${followed ? " is-on" : ""}" type="button" data-radio-follow="${escapeHtml(prog.id)}" aria-label="${followed ? "Unfollow program" : "Follow program"}" aria-pressed="${followed}">${musicFollowSvg(followed)}</button>
+      <span class="music-result-go" aria-hidden="true">›</span>
+    </div>`;
+}
+
 function radioNowCard() {
   if (radioCurStation) {
     const playing = radioAudio && !radioAudio.paused && !radioAudio.ended;
@@ -42602,7 +42669,11 @@ function radioHomeHtml() {
     `<h4 class="music-section-h">${escapeHtml(k)}</h4><div class="music-list">${groups[k].map(radioStationRow).join("")}</div>`).join("")
     : `<p class="music-status">Loading stations…</p>`;
   const histHtml = hist.length ? `<h4 class="music-section-h">Recently played</h4><div class="music-list">${hist.map(radioStationRow).join("")}</div>` : "";
-  return `${radioNowCard()}${favHtml}${catHtml}${histHtml}`;
+  const followed = state.radioFollowedPrograms || [];
+  const followedHtml = followed.length ? `<h4 class="music-section-h">Followed programs</h4><div class="music-list">${followed.map(radioProgramRow).join("")}</div>` : "";
+  const browseProgs = (radioPrograms || []).filter((p) => !isRadioFollowed(p.id));
+  const programsHtml = browseProgs.length ? `<h4 class="music-section-h">Programs</h4><div class="music-list">${browseProgs.map(radioProgramRow).join("")}</div>` : "";
+  return `${radioNowCard()}${favHtml}${followedHtml}${catHtml}${programsHtml}${histHtml}`;
 }
 function radioBodyHtml() {
   if (radioSearchLoading) return `<p class="music-status">Searching…</p>`;
@@ -42642,14 +42713,20 @@ function initRadioPanel() {
     panel.addEventListener("click", (e) => {
       const fav = e.target.closest("[data-radio-fav]");
       if (fav) { e.stopPropagation(); toggleRadioFav(radioViewIndex.get(fav.dataset.radioFav)); return; }
+      const follow = e.target.closest("[data-radio-follow]");
+      if (follow) { e.stopPropagation(); toggleRadioFollow(radioViewIndex.get(follow.dataset.radioFollow)); return; }
       if (e.target.closest("[data-radio-stop]")) { stopRadio(); return; }
       if (e.target.closest("[data-radio-toggle]")) { toggleRadioPlayPause(); return; }
+      const prog = e.target.closest("[data-radio-program]");
+      if (prog) { openRadioProgram(radioViewIndex.get(prog.dataset.radioProgram)); return; }
       const play = e.target.closest("[data-radio-play]");
       if (play) { const st = radioViewIndex.get(play.dataset.radioPlay); if (st) { if (radioCurStation && radioCurStation.id === st.id && radioAudio) toggleRadioPlayPause(); else playRadioStation(st); } return; }
       const open = e.target.closest("[data-radio-open]");
       if (open) { /* now-card body tap: toggle */ toggleRadioPlayPause(); return; }
     });
     panel.addEventListener("keydown", (e) => {
+      const prog = e.target.closest?.("[data-radio-program]");
+      if (prog && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openRadioProgram(radioViewIndex.get(prog.dataset.radioProgram)); return; }
       const row = e.target.closest?.("[data-radio-play]");
       if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); const st = radioViewIndex.get(row.dataset.radioPlay); if (st) playRadioStation(st); return; }
       if (e.target.id === "radioSearchInput" && e.key === "Enter") { e.preventDefault(); clearTimeout(radioSearchDebounce); doRadioSearch(e.target.value); }
