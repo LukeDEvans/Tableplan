@@ -197,8 +197,13 @@ let appHiddenAt = 0; // when the tab/PWA was last hidden (stale-resume reload ch
 let sharedStorageRetryTimer = null;
 let sharedStorageRetryCount = 0;
 const SHARED_STORAGE_RETRY_DELAYS = [5000, 15000, 45000, 120000, 300000]; // 5s, 15s, 45s, 2m, 5m — last entry repeats
-const SHARED_STORAGE_DEBOUNCE_MS  = 2000;  // wait 2s after last change before writing
-const SHARED_STORAGE_MIN_INTERVAL_MS = 8000; // never write more often than every 8s
+const SHARED_STORAGE_DEBOUNCE_MS  = 5000;  // wait 5s after last change before writing (coalesces bursts)
+// Never write more often than every 30s. State sections can be large (the media
+// row carries saved-article text) and high-churn keys like podcastProgress tick
+// every few seconds during playback, so a tight interval rewrote a multi-MB row
+// constantly and drained the DB's Disk IO budget. Local writes stay instant; the
+// cloud is a backup/cross-device mirror where 30s latency is fine.
+const SHARED_STORAGE_MIN_INTERVAL_MS = 30000;
 let lastSharedStorageWriteAt = 0;
 let localBackupTimer = null;
 let activeSharedStorageProvider = null;
