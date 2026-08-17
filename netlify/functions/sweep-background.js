@@ -9,7 +9,7 @@ const { listGmailUsers, findGmailUserByEmail, runInboxSweep } = require("./_gmai
 
 // EMERGENCY KILL-SWITCH (incident 2026-07-30) — see gmail-webhook.js. Keep in
 // sync with that flag; set both to true + redeploy to instantly halt sweeping.
-const SWEEP_KILL_SWITCH = false;
+const SWEEP_KILL_SWITCH = true;
 
 exports.handler = async (event) => {
   const expected = (process.env.PUBSUB_VERIFICATION_TOKEN || "").trim();

@@ -15,7 +15,7 @@ const { findGmailUserByEmail } = require("./_gmail-shared");
 // 500-ing on DB errors (Pub/Sub retry storm), and full-scans were restricted to
 // a confirmed index miss (de95773 — the egress-storm root cause). Recipe
 // newsletters (NYT Cooking, Bon Appétit, …) weren't being filed while off.
-const SWEEP_KILL_SWITCH = false;
+const SWEEP_KILL_SWITCH = true;
 
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return { statusCode: 405, body: "" };
