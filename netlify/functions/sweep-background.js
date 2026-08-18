@@ -1,15 +1,13 @@
-// Netlify BACKGROUND function (the "-background" filename suffix gives it a
-// 15-minute execution limit instead of ~26 seconds). All inbox sweeping is
-// delegated here: converting newsletters to articles with Claude can take
-// minutes for a batch, which killed sweeps that ran inline in the webhook and
-// the daily cron — the platform 504'd them before any state was saved.
-// Callers get an immediate 202 and the sweep continues in the background.
-// POST body { email } sweeps one user; empty body sweeps all connected users.
-const { listGmailUsers, findGmailUserByEmail, runInboxSweep } = require("./_gmail-shared");
+// Netlify BACKGROUND function (15-minute limit): runs the actual inbox sweep,
+// which can take minutes for a batch of AI conversions. Spawned by the webhook
+// ONLY after the atomic claim already won (body { userId, preClaimed:true }), or
+// invoked with an empty body for the daily catch-up over all connected users
+// (each of which then claims for itself).
+const { listGmailUsers, loadUserGmailTokens, runInboxSweep } = require("./_gmail-shared");
+const { lookupAccount } = require("./_mail-jobs");
 
-// EMERGENCY KILL-SWITCH (incident 2026-07-30) — see gmail-webhook.js. Keep in
-// sync with that flag; set both to true + redeploy to instantly halt sweeping.
-const SWEEP_KILL_SWITCH = true;
+// EMERGENCY KILL-SWITCH — see gmail-webhook.js. Keep both in sync.
+const SWEEP_KILL_SWITCH = false;
 
 exports.handler = async (event) => {
   const expected = (process.env.PUBSUB_VERIFICATION_TOKEN || "").trim();
@@ -26,32 +24,33 @@ exports.handler = async (event) => {
   }
 
   let body = {};
-  try { body = JSON.parse(event.body || "{}"); } catch { /* sweep all users */ }
+  try { body = JSON.parse(event.body || "{}"); } catch { /* catch-up all users */ }
 
+  // targets: [{ userId, tokens, preClaimed }]
   let targets = [];
-  if (body.email) {
-    let user = null;
-    try {
-      user = await findGmailUserByEmail(serviceKey, body.email);
-    } catch (e) {
-      // Transient lookup failure — do NOT sweep and do NOT 500 (a 500 here is a
-      // dead-end since the webhook already ACKed, but keep it clean). ACK and let
-      // the next notification retry once the DB is healthy.
-      console.error("[sweep-background] user lookup failed (skipping):", e.message);
-      return { statusCode: 200, body: "" };
+  try {
+    if (body.userId) {
+      const tokens = await loadUserGmailTokens(serviceKey, body.userId);
+      if (tokens?.refreshToken) targets = [{ userId: body.userId, tokens, preClaimed: body.preClaimed === true }];
+    } else if (body.email) {
+      const userId = await lookupAccount(serviceKey, body.email);
+      const tokens = userId ? await loadUserGmailTokens(serviceKey, userId) : null;
+      if (userId && tokens?.refreshToken) targets = [{ userId, tokens, preClaimed: false }];
+    } else {
+      targets = (await listGmailUsers(serviceKey)).map((u) => ({ ...u, preClaimed: false }));
     }
-    if (user) targets = [user];
-    else console.error("[sweep-background] no connected user for", body.email);
-  } else {
-    targets = await listGmailUsers(serviceKey);
+  } catch (e) {
+    // Never 500 (the caller already ACKed). Skip; the next trigger recovers.
+    console.error("[sweep-background] target resolution failed (skipping):", e.message);
+    return { statusCode: 200, body: "" };
   }
 
-  for (const { userId, tokens } of targets) {
+  for (const { userId, tokens, preClaimed } of targets) {
     try {
-      const result = await runInboxSweep(tokens, serviceKey, userId, { anthropicKey });
-      console.log(`[sweep-background] ${tokens.email}: scanned ${result.scanned}, added ${result.added}`);
+      // If the claim wasn't held for us, runInboxSweep claims atomically itself.
+      await runInboxSweep(tokens, serviceKey, userId, { anthropicKey, preClaimed });
     } catch (e) {
-      console.error(`[sweep-background] ${tokens.email} failed:`, e.message);
+      console.error(`[sweep-background] ${tokens?.email || userId} failed:`, e.message);
     }
   }
   return { statusCode: 200, body: "" };

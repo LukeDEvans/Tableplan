@@ -12,6 +12,7 @@ const SWEEP_STALE_MS = 5 * 60_000;      // an in-progress lock older than this i
 const { scanBookingFromEmailText } = require("../../booking-scan");
 const { claudeCall } = require("./_claude");
 const { recipeSourceForSender, extractRecipes, handleExtractedRecipes, aiTrashTestMode, findAiTrashLabelId, disposeProcessedEmail, enabledRecipeSources } = require("./_recipe-digest");
+const MailJobs = require("./_mail-jobs");
 const { newsSourceForMessage, convertNewsEmailToArticle, saveArticleToMediaSection } = require("./_news-articles");
 
 // ─── Token storage (Supabase tableplan_states, id = gmail_<userId>) ──────────
@@ -35,9 +36,13 @@ async function saveUserGmailTokens(serviceKey, userId, tokens) {
     },
     body: JSON.stringify({ id: `gmail_${userId}`, state: tokens })
   });
-  // Maintain the email→userId index so the webhook can look this user up
-  // directly instead of scanning every gmail_ row on every notification.
-  if (tokens?.email) { try { await saveGmailEmailIndex(serviceKey, tokens.email, userId); } catch { /* best effort */ } }
+  // Maintain the email→userId mapping so the webhook can look this user up
+  // directly. mail_accounts is the isolated dedicated table the new engine uses;
+  // gmailidx_ is kept in sync for the legacy path during the transition.
+  if (tokens?.email) {
+    try { await MailJobs.upsertAccount(serviceKey, tokens.email, userId); } catch { /* best effort */ }
+    try { await saveGmailEmailIndex(serviceKey, tokens.email, userId); } catch { /* best effort */ }
+  }
 }
 
 // email → { userId } index (id = gmailidx_<lowercased-email>), so a Pub/Sub
@@ -468,256 +473,242 @@ async function fetchHistoryDelta(gToken, startHistoryId) {
   return { ids: [...ids], historyId: latest };
 }
 
-// Fetch new inbox mail since the stored checkpoint, triage each message with
+// Fetch new inbox mail since the durable checkpoint, triage each message with
 // Claude, and append pending suggestions. Shared by the Pub/Sub webhook, the
 // daily re-arm catch-up, and the manual "check now" action.
-async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey } = {}) {
+//
+// Durability model (see supabase-mail-jobs.sql + _mail-jobs.js): a single ATOMIC
+// claim gates all work; per-message idempotency + bounded retries live in the
+// mail_processed table; a per-user rate cap is the circuit breaker. This runs
+// against dedicated, isolated tables so a notification burst can never become a
+// read storm on tableplan_states again.
+async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey, preClaimed } = {}) {
   if (!anthropicKey) throw new Error("ANTHROPIC_API_KEY not configured.");
 
-  const sugg = await loadMailSuggestions(serviceKey, userId);
+  // The one gate. Unless the caller already claimed (the webhook does, so it
+  // only spawns this function when a sweep is actually due), win the atomic
+  // claim or return immediately — debounced / in-progress / rate-capped all
+  // resolve here in a single cheap conditional on an isolated table.
+  if (!preClaimed) {
+    const claimed = await MailJobs.claimSweep(serviceKey, userId);
+    if (!claimed) return { scanned: 0, added: 0, skipped: "not-claimed" };
+  }
 
-  // ── Concurrency + debounce guard (prevents the 2026-07-30 self-amplifying
-  //    sweep→notification→sweep storm). Cheap, and runs before any Gmail/AI work. ──
-  const nowMs = Date.now();
-  const startedMs = sugg.sweepStartedAt ? new Date(sugg.sweepStartedAt).getTime() : 0;
-  const lastMs = sugg.lastSweepAt ? new Date(sugg.lastSweepAt).getTime() : 0;
-  if (startedMs && nowMs - startedMs < SWEEP_STALE_MS) return { scanned: 0, added: 0, skipped: "in-progress" };
-  if (lastMs && nowMs - lastMs < SWEEP_MIN_INTERVAL_MS) return { scanned: 0, added: 0, skipped: "debounced" };
-  // Claim the slot up front so concurrent invocations back off. Fail closed if
-  // the write doesn't land — never pile sweeps onto a struggling database.
-  sugg.sweepStartedAt = new Date(nowMs).toISOString();
-  if (!(await saveMailSuggestions(serviceKey, userId, sugg))) return { scanned: 0, added: 0, skipped: "store-unavailable" };
-
-  const { token: gToken, invalidGrant } = await getValidAccessToken(tokens, serviceKey, userId);
-  if (invalidGrant) throw new Error("Gmail connection expired — please reconnect.");
-  if (!gToken) throw new Error("Could not get Gmail access token.");
-
-  let messageIds = [];
+  const t0 = Date.now();
   let newHistoryId = "";
+  let scanned = 0, addedCount = 0, disposed = 0;
+  try {
+    const { token: gToken, invalidGrant } = await getValidAccessToken(tokens, serviceKey, userId);
+    if (invalidGrant) throw new Error("Gmail connection expired — please reconnect.");
+    if (!gToken) throw new Error("Could not get Gmail access token.");
 
-  if (sugg.lastHistoryId) {
-    const delta = await fetchHistoryDelta(gToken, sugg.lastHistoryId);
-    if (delta) {
-      messageIds = delta.ids;
-      newHistoryId = delta.historyId;
+    // New inbox mail since the durable history checkpoint (mail_sweep_state).
+    const checkpoint = await MailJobs.getSweepCheckpoint(serviceKey, userId);
+    let messageIds = [];
+    if (checkpoint) {
+      const delta = await fetchHistoryDelta(gToken, checkpoint);
+      if (delta) { messageIds = delta.ids; newHistoryId = delta.historyId; }
     }
-  }
-  if (!newHistoryId) {
-    // First run, or the checkpoint expired: look at the last day of inbox mail
-    const params = new URLSearchParams({ maxResults: "10", q: "in:inbox newer_than:1d" });
-    const r = await gFetch(gToken, `/messages?${params}`);
-    if (!r.ok) throw new Error(`Gmail list failed (${r.status})`);
-    const data = await r.json();
-    messageIds = (data.messages || []).map((m) => m.id);
-    const profRes = await gFetch(gToken, "/profile");
-    const prof = await profRes.json().catch(() => ({}));
-    newHistoryId = String(prof.historyId || "");
-  }
-
-  // Messages that previously failed conversion re-enter the sweep here —
-  // the history checkpoint has moved past them, so this is their only way back
-  messageIds = [...new Set([...(sugg.retryIds || []), ...messageIds])];
-
-  const processed = new Set(sugg.processedIds);
-  const fresh = messageIds.filter((id) => !processed.has(id)).slice(0, 10);
-
-  // Bounded retries: count each attempt, and give up on a message once it has
-  // been tried MAX_MSG_ATTEMPTS times. This is the hard stop against a
-  // conversion that keeps failing (or a sweep that dies before checkpointing)
-  // reconverting the same email forever and burning tokens on every trigger.
-  const MAX_MSG_ATTEMPTS = 2;
-  const attempts = { ...sugg.attempts };
-  for (const id of fresh) attempts[id] = (attempts[id] || 0) + 1;
-  const giveUp = new Set(fresh.filter((id) => attempts[id] > MAX_MSG_ATTEMPTS));
-
-  // Mail AI feature flags (config state section)
-  const appCfg = await loadAppConfig(serviceKey, userId);
-  const mailAi = appCfg?.mailAiSettings || {};
-  const testMode = aiTrashTestMode(mailAi);
-  const autoDeleteSimplefin = mailAi.autoDeleteSimplefin === true;
-  const aiTrashLabelId = ((enabledRecipeSources(mailAi).length || autoDeleteSimplefin) && testMode)
-    ? await findAiTrashLabelId(gFetch, gToken)
-    : null;
-  const receiptCtx = anthropicKey ? await loadReceiptContext(serviceKey, userId, mailAi) : null;
-
-  // Messages are processed in parallel so the sweep stays within the Netlify
-  // function time limit even at the 10-message cap. Each returns
-  // { suggestions, retry? } — retry leaves the message unprocessed so the
-  // next sweep tries again (e.g. a transient conversion failure).
-  const perMessage = await Promise.all(fresh.map(async (messageId) => {
-    // Exhausted its retries — give up (mark processed) without any Claude work.
-    if (giveUp.has(messageId)) { console.warn(`[sweep] giving up on ${messageId} after ${MAX_MSG_ATTEMPTS} attempts`); return { suggestions: [] }; }
-    const r = await gFetch(gToken, `/messages/${messageId}?format=full`);
-    if (!r.ok) {
-      // 404/410 → the message was deleted; retrying forever would pin a dead
-      // ID in the queue. Treat it as processed so it ages out. Other errors
-      // (auth, rate limit, 5xx) are transient and do warrant a retry.
-      const gone = r.status === 404 || r.status === 410;
-      return { suggestions: [], retry: !gone };
-    }
-    const msg = await r.json();
-    const hdrs = headersMap(msg.payload?.headers);
-    const fromSelf = tokens.email && (hdrs.from || "").toLowerCase().includes(tokens.email.toLowerCase());
-    if (fromSelf) return { suggestions: [] };
-
-    // Opt-in: auto-delete SimpleFIN Bridge's "Transaction data accessed from
-    // new IP" alerts, which fire on every account sync. Matched narrowly (this
-    // sender + this subject) so no other SimpleFIN mail is ever touched.
-    if (autoDeleteSimplefin &&
-        /(^|[<@.])simplefin\.org\b/i.test(hdrs.from || "") &&
-        /transaction data accessed/i.test(hdrs.subject || "")) {
-      const filed = await disposeProcessedEmail(gFetch, gToken, messageId, { testMode, aiTrashLabelId });
-      if (!filed) return { suggestions: [], retry: true }; // e.g. AI-trash label missing — try again next sweep
-      console.log(`[simplefin-autodelete] disposed ${messageId} (${testMode ? "AI trash" : "trash"})`);
-      return { suggestions: [] };
+    if (!newHistoryId) {
+      // First run, or the checkpoint expired: look at the last day of inbox mail.
+      const params = new URLSearchParams({ maxResults: "10", q: "in:inbox newer_than:1d" });
+      const r = await gFetch(gToken, `/messages?${params}`);
+      if (!r.ok) throw new Error(`Gmail list failed (${r.status})`);
+      const data = await r.json();
+      messageIds = (data.messages || []).map((m) => m.id);
+      const profRes = await gFetch(gToken, "/profile");
+      const prof = await profRes.json().catch(() => ({}));
+      newHistoryId = String(prof.historyId || "");
     }
 
-    const rawBody = extractBody(msg.payload) || "";
+    // Mail AI feature flags (config state section) + suggestions list — read
+    // once, only after the claim wins (never per notification).
+    const appCfg = await loadAppConfig(serviceKey, userId);
+    const mailAi = appCfg?.mailAiSettings || {};
+    const testMode = aiTrashTestMode(mailAi);
+    const autoDeleteSimplefin = mailAi.autoDeleteSimplefin === true;
+    const aiTrashLabelId = ((enabledRecipeSources(mailAi).length || autoDeleteSimplefin) && testMode)
+      ? await findAiTrashLabelId(gFetch, gToken)
+      : null;
+    const receiptCtx = await loadReceiptContext(serviceKey, userId, mailAi);
+    const sugg = await loadMailSuggestions(serviceKey, userId);
 
-    // Recipe digests: collect recipe links and file the email away right away
-    // (the collection is persisted before disposal, so nothing can be lost)
-    const recipeSource = recipeSourceForSender(hdrs.from, mailAi);
-    if (recipeSource) {
-      try {
-        const recipes = await extractRecipes(rawBody, recipeSource);
-        if (recipes.length) {
-          const result = await handleExtractedRecipes(serviceKey, userId, mailAi, anthropicKey, recipes);
-          await disposeProcessedEmail(gFetch, gToken, messageId, { testMode, aiTrashLabelId });
-          console.log(`[recipe-digest] ${recipeSource.name}: queued ${result.queued}, filtered ${result.filtered}, health ${result.health} from message ${messageId} (${testMode ? "AI trash" : "trash"})`);
-          return { suggestions: [] };
-        }
-      } catch (e) {
-        console.error(`[recipe-digest] ${recipeSource.name} failed — email left in place for retry:`, e.message);
-        return { suggestions: [], retry: true };
+    // Bounded, DB-claimed, idempotent batch: new candidates + carried-over
+    // still-pending, oldest first, attempts recorded, over-cap quarantined.
+    const fresh = await MailJobs.takeMessages(serviceKey, userId, messageIds, {
+      max: MailJobs.MSG_MAX_ATTEMPTS, limit: MailJobs.MSG_BATCH_LIMIT
+    });
+    scanned = fresh.length;
+
+    // Messages are processed in parallel so the sweep stays within the Netlify
+    // function time limit even at the batch cap. Each returns
+    // { suggestions, retry?, receipt?, disposed? } — retry leaves the message
+    // pending (retried next sweep until the DB quarantines it at the cap).
+    const perMessage = await Promise.all(fresh.map(async (messageId) => {
+      const r = await gFetch(gToken, `/messages/${messageId}?format=full`);
+      if (!r.ok) {
+        // 404/410 → deleted: treat as handled so it ages out. Others transient.
+        const gone = r.status === 404 || r.status === 410;
+        return { suggestions: [], retry: !gone };
       }
-    }
+      const msg = await r.json();
+      const hdrs = headersMap(msg.payload?.headers);
+      const fromSelf = tokens.email && (hdrs.from || "").toLowerCase().includes(tokens.email.toLowerCase());
+      if (fromSelf) return { suggestions: [] };
 
-    // News → listenable article (The Morning, The world in brief). The
-    // article is saved into the media section BEFORE the email is filed away.
-    const newsSource = newsSourceForMessage(hdrs.from, hdrs.subject, mailAi);
-    if (newsSource) {
-      try {
-        const articleHtml = await convertNewsEmailToArticle(anthropicKey, newsSource, {
-          subject: hdrs.subject || "", date: hdrs.date || "", html: rawBody
-        });
-        const article = {
-          id: "news-" + messageId,
-          url: null,
-          title: hdrs.subject || newsSource.name,
-          author: newsSource.publication,
-          date: hdrs.date ? new Date(hdrs.date).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "",
-          publication: "email",
-          // Recorded at the email's arrival time so it sorts by when it
-          // actually showed up, not when the sweep converted it.
-          savedAt: (hdrs.date && !isNaN(new Date(hdrs.date)) ? new Date(hdrs.date) : new Date()).toISOString(),
-          text: articleHtml
-        };
-        await saveArticleToMediaSection(serviceKey, userId, article);
-        await disposeProcessedEmail(gFetch, gToken, messageId, { testMode, aiTrashLabelId });
-        console.log(`[news-article] ${newsSource.name}: saved "${article.title}" (${testMode ? "AI trash" : "trash"})`);
-        return { suggestions: [] };
-      } catch (e) {
-        console.error(`[news-article] ${newsSource.name} failed — email left in place for retry:`, e.message);
-        return { suggestions: [], retry: true };
+      // Opt-in: auto-delete SimpleFIN Bridge's "Transaction data accessed from
+      // new IP" alerts. Matched narrowly so no other SimpleFIN mail is touched.
+      if (autoDeleteSimplefin &&
+          /(^|[<@.])simplefin\.org\b/i.test(hdrs.from || "") &&
+          /transaction data accessed/i.test(hdrs.subject || "")) {
+        const filed = await disposeProcessedEmail(gFetch, gToken, messageId, { testMode, aiTrashLabelId });
+        if (!filed) return { suggestions: [], retry: true };
+        console.log(`[simplefin-autodelete] disposed ${messageId} (${testMode ? "AI trash" : "trash"})`);
+        return { suggestions: [], disposed: true };
       }
-    }
 
-    // Triage only the NEW text of the message: replies quote the whole
-    // thread, and triaging the quoted part re-suggests old action items
-    // (e.g. an RSVP request re-flagged on every follow-up).
-    const bodyText = stripQuotedReply(htmlToText(rawBody));
-    const emailMeta = { subject: hdrs.subject || "(no subject)", from: hdrs.from || "", date: hdrs.date || "" };
+      const rawBody = extractBody(msg.payload) || "";
 
-    let receipt = null;
-    if (receiptCtx && RECEIPT_HINT_RE.test(`${emailMeta.subject} ${emailMeta.from}`)) {
-      try {
-        receipt = await extractReceipt(anthropicKey, { ...emailMeta, bodyText, categories: receiptCtx.categories });
-        if (receipt) {
-          receipt.id = messageId;
-          console.log(`[receipt] extracted ${receipt.merchant || "?"} $${receipt.total} (${receipt.items.length} items)`);
-        }
-      } catch (e) {
-        console.error("[receipt] extraction failed:", e.message);
-      }
-    }
-
-    let ideas = [];
-    try {
-      ideas = await triageEmail(anthropicKey, { ...emailMeta, bodyText });
-    } catch (e) {
-      console.error("Triage failed for message", messageId, e.message);
-      return { suggestions: [], retry: true, receipt };
-    }
-
-    const out = [];
-    for (let i = 0; i < ideas.length; i++) {
-      const idea = ideas[i];
-      const suggestion = {
-        id: `sg_${messageId}_${i}`,
-        messageId,
-        threadId: msg.threadId || "",
-        kind: idea.kind,
-        title: idea.title,
-        details: idea.details,
-        dueDate: idea.dueDate,
-        emailSubject: emailMeta.subject,
-        emailFrom: emailMeta.from,
-        emailDate: emailMeta.date,
-        status: "pending",
-        createdAt: new Date().toISOString()
-      };
-      if (idea.kind === "add_booking") {
+      // Recipe digests: collect recipe links (idempotent — URL-keyed), then file.
+      const recipeSource = recipeSourceForSender(hdrs.from, mailAi);
+      if (recipeSource) {
         try {
-          const emailText = `Subject: ${emailMeta.subject}\nFrom: ${emailMeta.from}\nDate: ${emailMeta.date}\n\n${bodyText}`;
-          const booking = await scanBookingFromEmailText(emailText, { apiKey: anthropicKey });
-          if (!booking) continue; // triage was wrong — not actually a confirmation
-          suggestion.booking = booking;
+          const recipes = await extractRecipes(rawBody, recipeSource);
+          if (recipes.length) {
+            const result = await handleExtractedRecipes(serviceKey, userId, mailAi, anthropicKey, recipes);
+            await disposeProcessedEmail(gFetch, gToken, messageId, { testMode, aiTrashLabelId });
+            console.log(`[recipe-digest] ${recipeSource.name}: queued ${result.queued}, filtered ${result.filtered}, health ${result.health} from ${messageId} (${testMode ? "AI trash" : "trash"})`);
+            return { suggestions: [], disposed: true };
+          }
         } catch (e) {
-          console.error("Booking extraction failed for message", messageId, e.message);
-          continue;
+          console.error(`[recipe-digest] ${recipeSource.name} failed — left for retry:`, e.message);
+          return { suggestions: [], retry: true };
         }
       }
-      out.push(suggestion);
+
+      // News → listenable article, saved before the email is filed away.
+      const newsSource = newsSourceForMessage(hdrs.from, hdrs.subject, mailAi);
+      if (newsSource) {
+        try {
+          const articleHtml = await convertNewsEmailToArticle(anthropicKey, newsSource, {
+            subject: hdrs.subject || "", date: hdrs.date || "", html: rawBody
+          });
+          const article = {
+            id: "news-" + messageId,
+            url: null,
+            title: hdrs.subject || newsSource.name,
+            author: newsSource.publication,
+            date: hdrs.date ? new Date(hdrs.date).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "",
+            publication: "email",
+            savedAt: (hdrs.date && !isNaN(new Date(hdrs.date)) ? new Date(hdrs.date) : new Date()).toISOString(),
+            text: articleHtml
+          };
+          await saveArticleToMediaSection(serviceKey, userId, article);
+          await disposeProcessedEmail(gFetch, gToken, messageId, { testMode, aiTrashLabelId });
+          console.log(`[news-article] ${newsSource.name}: saved "${article.title}" (${testMode ? "AI trash" : "trash"})`);
+          return { suggestions: [], disposed: true };
+        } catch (e) {
+          console.error(`[news-article] ${newsSource.name} failed — left for retry:`, e.message);
+          return { suggestions: [], retry: true };
+        }
+      }
+
+      // Triage only the NEW text (replies quote the whole thread).
+      const bodyText = stripQuotedReply(htmlToText(rawBody));
+      const emailMeta = { subject: hdrs.subject || "(no subject)", from: hdrs.from || "", date: hdrs.date || "" };
+
+      let receipt = null;
+      if (receiptCtx && RECEIPT_HINT_RE.test(`${emailMeta.subject} ${emailMeta.from}`)) {
+        try {
+          receipt = await extractReceipt(anthropicKey, { ...emailMeta, bodyText, categories: receiptCtx.categories });
+          if (receipt) {
+            receipt.id = messageId;
+            console.log(`[receipt] extracted ${receipt.merchant || "?"} $${receipt.total} (${receipt.items.length} items)`);
+          }
+        } catch (e) {
+          console.error("[receipt] extraction failed:", e.message);
+        }
+      }
+
+      let ideas = [];
+      try {
+        ideas = await triageEmail(anthropicKey, { ...emailMeta, bodyText });
+      } catch (e) {
+        console.error("Triage failed for message", messageId, e.message);
+        return { suggestions: [], retry: true, receipt };
+      }
+
+      const out = [];
+      for (let i = 0; i < ideas.length; i++) {
+        const idea = ideas[i];
+        const suggestion = {
+          id: `sg_${messageId}_${i}`,
+          messageId,
+          threadId: msg.threadId || "",
+          kind: idea.kind,
+          title: idea.title,
+          details: idea.details,
+          dueDate: idea.dueDate,
+          emailSubject: emailMeta.subject,
+          emailFrom: emailMeta.from,
+          emailDate: emailMeta.date,
+          status: "pending",
+          createdAt: new Date().toISOString()
+        };
+        if (idea.kind === "add_booking") {
+          try {
+            const emailText = `Subject: ${emailMeta.subject}\nFrom: ${emailMeta.from}\nDate: ${emailMeta.date}\n\n${bodyText}`;
+            const booking = await scanBookingFromEmailText(emailText, { apiKey: anthropicKey });
+            if (!booking) continue;
+            suggestion.booking = booking;
+          } catch (e) {
+            console.error("Booking extraction failed for message", messageId, e.message);
+            continue;
+          }
+        }
+        out.push(suggestion);
+      }
+      return { suggestions: out, receipt };
+    }));
+
+    // Successfully-handled messages → done; retry=true ones stay pending.
+    const doneIds = fresh.filter((_, i) => !perMessage[i].retry);
+    await MailJobs.markDone(serviceKey, doneIds);
+    disposed = perMessage.filter((r) => r.disposed).length;
+
+    // Receipts → finance section (unchanged).
+    const receipts = perMessage.map((r) => r.receipt).filter(Boolean);
+    if (receipts.length && receiptCtx) {
+      try { await saveFinanceReceipts(serviceKey, receiptCtx.groupId, receipts); }
+      catch (e) { console.error("[receipt] save failed:", e.message); }
     }
-    return { suggestions: out, receipt };
-  }));
-  const added = perMessage.flatMap((r) => r.suggestions);
-  const receipts = perMessage.map((r) => r.receipt).filter(Boolean);
-  if (receipts.length && receiptCtx) {
-    try { await saveFinanceReceipts(serviceKey, receiptCtx.groupId, receipts); }
-    catch (e) { console.error("[receipt] save failed:", e.message); }
+
+    // Merge new suggestions (thread/title dedupe) and write the suggestions row
+    // ONLY when it actually changed — no self-invalidating writes.
+    const added = perMessage.flatMap((r) => r.suggestions);
+    const existingIds = new Set(sugg.suggestions.map((s) => s.id));
+    const normTitle = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const isDuplicate = (s) => sugg.suggestions.some((e) =>
+      (s.threadId && e.threadId && e.threadId === s.threadId && e.kind === s.kind) ||
+      (e.kind === s.kind && normTitle(e.title) === normTitle(s.title))
+    );
+    const newOnes = added.filter((s) => !existingIds.has(s.id) && !isDuplicate(s));
+    addedCount = newOnes.length;
+    if (newOnes.length) {
+      const merged = [...newOnes, ...sugg.suggestions].slice(0, 100);
+      await saveMailSuggestions(serviceKey, userId, { suggestions: merged, watchExpiration: sugg.watchExpiration });
+    }
+
+    MailJobs.logSweep({ user: String(userId).slice(0, 8), scanned, added: addedCount, disposed, ms: Date.now() - t0, result: "ok" });
+    return { scanned, added: addedCount };
+  } catch (e) {
+    MailJobs.logSweep({ user: String(userId).slice(0, 8), scanned, ms: Date.now() - t0, result: "error", error: e.message });
+    throw e;
+  } finally {
+    // Always release the lock + advance the checkpoint, even on error.
+    await MailJobs.releaseSweep(serviceKey, userId, newHistoryId).catch(() => {});
+    if (Math.random() < 0.05) await MailJobs.pruneProcessed(serviceKey, 14);
   }
-  // Messages flagged retry stay out of processedIds so the next sweep retries them
-  const processedNow = fresh.filter((_, i) => !perMessage[i].retry);
-
-  const existingIds = new Set(sugg.suggestions.map((s) => s.id));
-  // Thread-level dedupe: one suggestion of a given kind per email thread,
-  // counting resolved ones too — dismissing an RSVP nag means follow-ups in
-  // that thread never re-raise it. Same-title dedupe catches thread repeats
-  // recorded before suggestions carried a threadId.
-  const normTitle = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  const isDuplicate = (s) => sugg.suggestions.some((e) =>
-    (s.threadId && e.threadId && e.threadId === s.threadId && e.kind === s.kind) ||
-    (e.kind === s.kind && normTitle(e.title) === normTitle(s.title))
-  );
-  const merged = [...added.filter((s) => !existingIds.has(s.id) && !isDuplicate(s)), ...sugg.suggestions].slice(0, 100);
-  const nextRetry = fresh.filter((_, i) => perMessage[i].retry && !giveUp.has(fresh[i])).slice(0, 20);
-  // Keep attempt counts only for messages still in the retry queue, so the map
-  // can't grow without bound.
-  const nextAttempts = {};
-  for (const id of nextRetry) nextAttempts[id] = attempts[id];
-  await saveMailSuggestions(serviceKey, userId, {
-    lastHistoryId: newHistoryId || sugg.lastHistoryId,
-    watchExpiration: sugg.watchExpiration,
-    processedIds: [...processedNow, ...sugg.processedIds].slice(0, 300),
-    retryIds: nextRetry,
-    attempts: nextAttempts,
-    suggestions: merged,
-    lastSweepAt: new Date().toISOString(), // debounce stamp
-    sweepStartedAt: 0                       // release the in-progress lock
-  });
-
-  return { scanned: fresh.length, added: added.length };
 }
 
 // App config (the user's "<groupId>:config" state section — feature flags etc.)

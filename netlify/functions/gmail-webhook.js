@@ -1,21 +1,22 @@
 // Receives Gmail push notifications via Google Cloud Pub/Sub.
-// Pub/Sub POSTs { message: { data: base64({ emailAddress, historyId }) } }
-// whenever new mail arrives for a watched inbox. The actual sweep is handed
-// to sweep-background (15-minute limit) because AI newsletter conversion
-// blows this function's ~26s budget. Always ACK (200) — returning an error
-// makes Pub/Sub retry aggressively, and our checkpoint means a missed
-// notification is recovered by the next one anyway.
-const { findGmailUserByEmail } = require("./_gmail-shared");
+// Pub/Sub POSTs { message: { data: base64({ emailAddress, historyId }) } }.
+//
+// The per-notification cost is now bounded and ISOLATED: one PK read on
+// mail_accounts + one atomic claim on mail_sweep_state (both tiny dedicated
+// tables, never the hot tableplan_states). The heavy sweep-background function
+// is spawned ONLY when the atomic claim wins — so a notification burst (incl.
+// the disposal→notification feedback loop) collapses into cheap no-op claims
+// that cannot exhaust the connection pool. See supabase-mail-jobs.sql.
+//
+// Always ACK 200: a non-2xx makes Pub/Sub retry aggressively, and the durable
+// checkpoint means a missed notification is recovered by the next one anyway.
+const { lookupAccount, claimSweep } = require("./_mail-jobs");
 
-// EMERGENCY KILL-SWITCH (incident 2026-07-30): when true, ACK every Pub/Sub
-// notification immediately without scanning users or starting a sweep. Flip to
-// true + redeploy to instantly halt all Gmail sweeping if it ever misbehaves.
-// Re-enabled once the sweep gained a concurrency lock + 30s debounce, a direct
-// email→userId lookup (no full scan per notification), the webhook stopped
-// 500-ing on DB errors (Pub/Sub retry storm), and full-scans were restricted to
-// a confirmed index miss (de95773 — the egress-storm root cause). Recipe
-// newsletters (NYT Cooking, Bon Appétit, …) weren't being filed while off.
-const SWEEP_KILL_SWITCH = true;
+// EMERGENCY KILL-SWITCH: when true, ACK every notification without any DB work
+// or sweep. Manual override retained on top of the architectural safeguards
+// (isolated tables + atomic claim + per-window circuit breaker). Flip true +
+// redeploy to halt. Re-enabled (false) once the durable engine landed.
+const SWEEP_KILL_SWITCH = false;
 
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return { statusCode: 405, body: "" };
@@ -36,38 +37,28 @@ exports.handler = async (event) => {
   }
 
   const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
-  const anthropicKey = (process.env.ANTHROPIC_API_KEY || "").trim();
-  if (!serviceKey || !anthropicKey) {
-    console.error("gmail-webhook: missing SUPABASE_SERVICE_ROLE_KEY or ANTHROPIC_API_KEY");
-    return { statusCode: 200, body: "" };
-  }
+  if (!serviceKey) { console.error("gmail-webhook: missing SUPABASE_SERVICE_ROLE_KEY"); return { statusCode: 200, body: "" }; }
 
-  // Never let a DB error 500 this endpoint: Pub/Sub retries non-2xx
-  // aggressively, and when the lookup (listGmailUsers) is failing because the
-  // database is overloaded, those retries snowball into a connection-pool
-  // storm. Always ACK; the next notification or the daily catch-up recovers.
-  let user;
+  // Isolated lookup + atomic claim. Any error → ACK anyway (never 500 → no
+  // Pub/Sub retry storm). If the claim doesn't win, we're debounced / a sweep is
+  // already running / the circuit breaker tripped — do nothing, the storm ends here.
   try {
-    user = await findGmailUserByEmail(serviceKey, notif.emailAddress);
-  } catch (e) {
-    console.error("gmail-webhook: user lookup failed (acking anyway):", e.message);
-    return { statusCode: 200, body: "" };
-  }
-  if (!user) {
-    console.error("gmail-webhook: no connected user for", notif.emailAddress);
-    return { statusCode: 200, body: "" };
-  }
+    const userId = await lookupAccount(serviceKey, notif.emailAddress);
+    if (!userId) { console.error("gmail-webhook: no connected user for", notif.emailAddress); return { statusCode: 200, body: "" }; }
 
-  try {
-    // Background functions ACK with 202 immediately and keep running
+    const claimed = await claimSweep(serviceKey, userId);
+    if (!claimed) return { statusCode: 200, body: "" };
+
+    // Claim won → hand the (now-guaranteed-due) sweep to the 15-minute background
+    // function, which runs with preClaimed=true and releases the lock at the end.
     const base = (process.env.URL || "").replace(/\/$/, "");
     await fetch(`${base}/.netlify/functions/sweep-background?token=${encodeURIComponent(expected)}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: notif.emailAddress })
-    });
+      body: JSON.stringify({ userId, preClaimed: true })
+    }).catch((e) => console.error("gmail-webhook: could not start background sweep:", e.message));
   } catch (e) {
-    console.error("gmail-webhook: could not start background sweep:", e.message);
+    console.error("gmail-webhook: handler error (acking anyway):", e.message);
   }
   return { statusCode: 200, body: "" };
 };
