@@ -7,7 +7,7 @@ import { defineConfig } from "vitest/config";
 // `npm test` stays green.
 export default defineConfig({
   test: {
-    include: ["test/weather-*.test.js", "test/playback-engine.test.js", "test/music-*.test.js", "test/radio*.test.js", "test/media-*.test.js"],
+    include: ["test/weather-*.test.js", "test/playback-engine.test.js", "test/music-*.test.js", "test/radio*.test.js", "test/media-*.test.js", "test/mail-*.test.js"],
     environment: "node"
   }
 });

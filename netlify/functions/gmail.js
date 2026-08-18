@@ -200,7 +200,7 @@ exports.handler = async (event) => {
       await fetch(`${base}/.netlify/functions/sweep-background?token=${encodeURIComponent(bgToken)}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: tokens.email })
+        body: JSON.stringify({ userId }) // sweep-background claims atomically for this user
       });
       const data = await loadMailSuggestions(serviceKey, userId);
       return json(200, { started: true, scanned: 0, added: 0, suggestions: data.suggestions });
