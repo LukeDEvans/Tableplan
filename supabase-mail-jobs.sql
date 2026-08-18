@@ -26,8 +26,15 @@ create table if not exists public.mail_sweep_state (
   last_sweep_at  timestamptz,               -- when the last sweep finished (debounce)
   window_start   timestamptz not null default now(),
   window_count   int not null default 0,    -- sweeps in the current rolling hour (rate cap)
+  enabled        boolean not null default true, -- zero-deploy kill switch (see mail_claim_sweep)
   updated_at     timestamptz not null default now()
 );
+alter table public.mail_sweep_state add column if not exists enabled boolean not null default true;
+
+-- EMERGENCY STOP (no deploy, no Netlify credit): halt all sweeping instantly with
+--   update public.mail_sweep_state set enabled = false;   -- (all users)
+-- Re-enable with  set enabled = true;  Checked inside the atomic claim below, which
+-- already runs on every notification, so it costs nothing extra.
 
 -- Per-message idempotency + bounded retries + quarantine (replaces the
 -- processedIds[]/attempts{}/retryIds[] arrays). A message is worked at most
@@ -71,6 +78,11 @@ begin
 
   -- Serialize concurrent claims for this user on the row lock.
   select * into v_row from public.mail_sweep_state where user_id = p_user for update;
+
+  -- Emergency kill switch (no deploy needed): halt all sweeping for this user.
+  if v_row.enabled is not true then
+    return false;
+  end if;
 
   -- Rolling 1-hour window for the circuit breaker.
   if v_row.window_start is null or v_now - v_row.window_start > interval '1 hour' then

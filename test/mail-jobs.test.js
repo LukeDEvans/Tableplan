@@ -35,6 +35,14 @@ describe("sweepClaimDecision (mirrors the atomic SQL gate)", () => {
     const s = { last_sweep_at: ago(5_000), locked_at: ago(5_000), window_start: ago(1_000), window_count: 999 };
     expect(jobs.sweepClaimDecision(s, NOW, opts).reason).toBe("debounced");
   });
+  it("the DB kill switch (enabled=false) denies even an otherwise-claimable state, and beats every other gate", () => {
+    expect(jobs.sweepClaimDecision({ enabled: false }, NOW, opts)).toMatchObject({ allow: false, reason: "disabled" });
+    // absent column ⇒ enabled (matches DB default true)
+    expect(jobs.sweepClaimDecision({ enabled: true }, NOW, opts).allow).toBe(true);
+    expect(jobs.sweepClaimDecision({}, NOW, opts).allow).toBe(true);
+    // disabled wins over a would-be-fresh claim
+    expect(jobs.sweepClaimDecision({ enabled: false, last_sweep_at: ago(999_000) }, NOW, opts).reason).toBe("disabled");
+  });
 });
 
 describe("claimSweep wrapper", () => {

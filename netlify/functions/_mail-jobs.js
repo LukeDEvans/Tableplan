@@ -109,6 +109,9 @@ function sweepClaimDecision(state, nowMs, opts = {}) {
   let wStart = wStartMs;
   if (!wStartMs || nowMs - wStartMs > 3600_000) { wStart = nowMs; wCount = 0; }
 
+  // Zero-deploy kill switch: a false `enabled` column halts all sweeping (absent
+  // column ⇒ treated as enabled, matching the DB default of true).
+  if (s.enabled === false) return { allow: false, reason: "disabled" };
   if (s.last_sweep_at && nowMs - t(s.last_sweep_at) < minIntervalMs) return { allow: false, reason: "debounced" };
   if (s.locked_at && nowMs - t(s.locked_at) < staleMs) return { allow: false, reason: "in-progress" };
   if (wCount >= cap) return { allow: false, reason: "rate-capped" };
