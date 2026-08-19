@@ -3674,6 +3674,44 @@ input.live-toggle:checked::before,
 
 /* Per-store sweep (broom) button */
 .grocery-store-clear { flex: 0 0 auto; color: var(--muted); }
+
+/* ── Shop redesign: spaces nav · Next Stop · Other · Checklist ─────────────── */
+/* Simple heading label for Next Stop (no collapse control). */
+.grocery-store-name {
+  font-weight: 650;
+  font-size: 0.95rem;
+  padding: 0 2px 6px;
+}
+.grocery-nextstop-name { color: var(--accent-dark); }
+.grocery-nextstop-section .grocery-store-heading {
+  border-bottom-color: color-mix(in srgb, var(--accent) 72%, var(--line));
+}
+
+/* "Add to Next Stop" toggle in the add-item form. */
+.grocery-nextstop-toggle[aria-pressed="true"] {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Checklist space. */
+.shop-checklist { display: flex; flex-direction: column; gap: 4px; }
+.shop-checklist-hint { margin: 2px 2px 8px; }
+.shop-checklist-list { display: flex; flex-direction: column; }
+.shop-checklist-row.is-checked .grocery-name {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.shop-checklist-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.shop-checklist-submit[disabled] { opacity: 0.45; cursor: default; }
 .grocery-store-clear:hover, .grocery-store-clear:focus-visible { color: var(--accent-dark); background: color-mix(in srgb, var(--accent-soft) 40%, transparent); }
 .grocery-store-solo-actions { display: flex; justify-content: flex-end; padding: 0 2px 6px; }
 
