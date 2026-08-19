@@ -36,31 +36,11 @@ async function saveUserGmailTokens(serviceKey, userId, tokens) {
     },
     body: JSON.stringify({ id: `gmail_${userId}`, state: tokens })
   });
-  // Maintain the email→userId mapping so the webhook can look this user up
-  // directly. mail_accounts is the isolated dedicated table the new engine uses;
-  // gmailidx_ is kept in sync for the legacy path during the transition.
+  // Maintain the email→userId mapping (isolated mail_accounts table) so the
+  // Pub/Sub webhook can resolve this user from just the notification's address.
   if (tokens?.email) {
     try { await MailJobs.upsertAccount(serviceKey, tokens.email, userId); } catch { /* best effort */ }
-    try { await saveGmailEmailIndex(serviceKey, tokens.email, userId); } catch { /* best effort */ }
   }
-}
-
-// email → { userId } index (id = gmailidx_<lowercased-email>), so a Pub/Sub
-// notification (which only carries the address) resolves to a user with a
-// single keyed read instead of a full-table scan.
-async function saveGmailEmailIndex(serviceKey, email, userId) {
-  const key = String(email || "").toLowerCase();
-  if (!key) return;
-  await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
-    method: "POST",
-    headers: {
-      apikey: serviceKey,
-      authorization: `Bearer ${serviceKey}`,
-      "content-type": "application/json",
-      prefer: "resolution=merge-duplicates,return=minimal"
-    },
-    body: JSON.stringify({ id: `gmailidx_${key}`, state: { userId, email: key } })
-  });
 }
 
 async function deleteUserGmailTokens(serviceKey, userId) {
@@ -79,45 +59,6 @@ async function listGmailUsers(serviceKey) {
   return rows
     .filter((r) => r.id.startsWith("gmail_") && r.state?.refreshToken)
     .map((r) => ({ userId: r.id.slice("gmail_".length), tokens: r.state }));
-}
-
-// Find the user whose connected Gmail address matches (used by the Pub/Sub webhook,
-// whose notifications only carry the email address). Fast path: the email index
-// (one keyed read). Fallback: a full scan, but only when the index misses — and
-// it backfills the index so the next lookup is direct. The old unconditional
-// full scan on every notification was the engine of the 2026-07-30 storm.
-async function findGmailUserByEmail(serviceKey, email) {
-  if (!email) return null;
-  const key = email.toLowerCase();
-
-  // Fast path: one keyed read of the email index. CRITICAL: only a *confirmed
-  // miss* — the query succeeded and returned no usable row — may fall back to the
-  // full listGmailUsers() scan. A transient failure (HTTP error, network throw,
-  // token-load error) must NOT scan. The old code wrapped everything in a
-  // try/catch that fell through to the scan on ANY error, so when the DB was
-  // struggling EVERY Pub/Sub notification became a full-table scan — the engine
-  // of both the 2026-07-30 storm and the 2026-08 egress blowout. On a transient
-  // failure we now throw; the caller ACKs the notification and the next one (or
-  // the daily catch-up) recovers once the DB is healthy.
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.gmailidx_${encodeURIComponent(key)}&select=state`, {
-    headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" }
-  });
-  if (!res.ok) throw new Error(`gmail index lookup HTTP ${res.status} — not scanning`);
-  const rows = await res.json();
-  const indexedUserId = rows[0]?.state?.userId || null;
-  if (indexedUserId) {
-    const tokens = await loadUserGmailTokens(serviceKey, indexedUserId);
-    if (tokens?.refreshToken && (tokens.email || "").toLowerCase() === key) return { userId: indexedUserId, tokens };
-    // else: stale index (the user's tokens are gone or changed) — a genuine
-    // miss; fall through to one scan to re-resolve and backfill.
-  }
-
-  // Confirmed miss (or stale index) only: a single full scan to resolve, then
-  // backfill the index so the next notification is a direct read again.
-  const users = await listGmailUsers(serviceKey);
-  const match = users.find((u) => (u.tokens.email || "").toLowerCase() === key) || null;
-  if (match) { try { await saveGmailEmailIndex(serviceKey, match.tokens.email, match.userId); } catch { /* best effort */ } }
-  return match;
 }
 
 async function getUserId(accessToken, serviceKey) {
@@ -838,7 +779,6 @@ module.exports = {
   saveUserGmailTokens,
   deleteUserGmailTokens,
   listGmailUsers,
-  findGmailUserByEmail,
   getUserId,
   getValidAccessToken,
   gFetch,
