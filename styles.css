@@ -13053,6 +13053,12 @@ body.touch-drag-active * {
   font-size: 0.78rem;
   font-variant-numeric: tabular-nums;
 }
+.cadence-work-cloud {
+  color: var(--accent, #a6772e);
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
 
 /* Practice timer + history */
 .cadence-practice-bar {

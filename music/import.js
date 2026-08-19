@@ -107,6 +107,43 @@ export async function readRepresentationXml(storage, representation) {
   return new TextDecoder().decode(rec.bytes);
 }
 
+/**
+ * Rebuild a Work's LOCAL cache from canonical metadata that arrived via sync,
+ * so the offline render path (loadWork / readRepresentationXml) works unchanged
+ * on a device that never did the original import. Ids are preserved — this is a
+ * cache-fill, not a new import. `bytes` may be null (metadata-only): the Work
+ * record still lands so the library can show it as "not on this device yet".
+ *
+ * @param storage   StoragePort
+ * @param canonical { work, blobAsset?, bytes?:Uint8Array }
+ * @returns         { work, representation }
+ */
+export async function hydrateWorkLocally(storage, { work, blobAsset = null, bytes = null }) {
+  const edition = work?.editions?.[0];
+  const representation = edition?.representations?.[0] || null;
+  if (!representation) { await storage.put("works", work.id, work); return { work, representation: null }; }
+
+  const mimeType = blobAsset?.mimeType || MUSICXML_MIME;
+  if (bytes) {
+    const bytesU8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    await storage.put("bytes", representation.blobId, { bytes: bytesU8, mimeType });
+    // Re-derive the ScoreModel cache from the bytes, keyed by the SAME
+    // representation id (measure identity already rode along on the record).
+    const xml = new TextDecoder().decode(bytesU8);
+    const model = parseMusicXml(xml);
+    model.id = `sm_${representation.id}`;
+    model.representationId = representation.id;
+    model.parseVersion = representation.parseVersion || 0;
+    await storage.put("scoreModels", representation.id, model);
+  }
+  if (blobAsset) await storage.put("blobAssets", representation.blobId, blobAsset);
+  await storage.put("works", work.id, work);
+  await storage.put("representations", representation.id, {
+    ...representation, workId: work.id, editionId: edition.id, movementId: work.movements?.[0]?.id || null,
+  });
+  return { work, representation };
+}
+
 /** Delete a Work and every record it owns (bytes, blob catalog, score model,
  * representation, work). The one place that knows how a Work fans across stores. */
 export async function deleteWork(storage, workId) {

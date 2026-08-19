@@ -225,6 +225,10 @@ const STATE_SECTIONS = {
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies"],
+  // Cadence (piano-score subsystem): canonical metadata syncs here as small
+  // id-keyed collections; score BYTES live in the private cadence-blobs bucket,
+  // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
+  cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations"],
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin"],
@@ -251,6 +255,7 @@ const SECTION_SCOPE = {
   config: "household",    // app settings stay shared
   play: "personal",       // Exercise is exclusively individual
   recreate: "personal",   // Recreate is exclusively individual
+  cadence: "personal",    // Piano scores & practice are individual
   grocery: "toggle",
   do: "toggle",
   watch: "toggle",
@@ -3243,6 +3248,11 @@ function defaultState() {
     pianoLog: [],
     recreateHobbies: { sailing: true, piano: true },
     pianoSongs: [],
+    // Cadence canonical metadata (bytes live in the cadence-blobs bucket).
+    cadenceWorks: [],
+    cadenceBlobs: [],
+    cadenceSessions: [],
+    cadenceAnnotations: [],
     trips: [],
     travelIdeas: [],
     workouts: [],
@@ -3392,6 +3402,12 @@ function normalizeState(parsed) {
     pianoLog: normalizePianoLog(parsed?.pianoLog),
     recreateHobbies: normalizeRecreateHobbies(parsed?.recreateHobbies),
     pianoSongs: normalizePianoSongs(parsed?.pianoSongs),
+    // Cadence records are re-normalized by the music/* domain factories when the
+    // subsystem loads; here we only guard the container shape (keep it dumb/sync).
+    cadenceWorks: Array.isArray(parsed?.cadenceWorks) ? parsed.cadenceWorks : [],
+    cadenceBlobs: Array.isArray(parsed?.cadenceBlobs) ? parsed.cadenceBlobs : [],
+    cadenceSessions: Array.isArray(parsed?.cadenceSessions) ? parsed.cadenceSessions : [],
+    cadenceAnnotations: Array.isArray(parsed?.cadenceAnnotations) ? parsed.cadenceAnnotations : [],
     trips: Array.isArray(parsed?.trips) ? parsed.trips : [],
     travelIdeas: Array.isArray(parsed?.travelIdeas) ? parsed.travelIdeas : [],
     workouts: normalizeWorkouts(parsed?.workouts),
@@ -5420,6 +5436,9 @@ function mergeStates(newer, older) {
     // Watch / Read / Recreate
     "watchItems", "readingItems",
     "pianoSongs", "sailingLog", "sailingBoats", "pianoLog",
+    // Cadence: Works, blob catalog, sessions, annotations (all carry an `id`;
+    // blob records use id = blobId). Union so neither device loses a score.
+    "cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations",
     // Inventory & shopping
     "inventoryBoxes", "inventoryItems",
     "groceryStores", "groceryPriceObservations", "priceHistory",
@@ -33129,19 +33148,157 @@ async function getCadence() {
     import("./music/input-midi.js"),
     import("./music/input-mic.js"),
   ]);
-  const accuracy = await import("./music/accuracy.js");
+  const [accuracy, cloud] = await Promise.all([
+    import("./music/accuracy.js"),
+    import("./music/cloud-blob.js"),
+  ]);
   cadenceStorage = cadenceStorage || storage.createIdbStorage("cadence");
   cadenceMod = {
     importMusicXmlFile: imp.importMusicXmlFile, loadWork: imp.loadWork, listWorks: imp.listWorks,
     readRepresentationXml: imp.readRepresentationXml, deleteWork: imp.deleteWork,
+    hydrateWorkLocally: imp.hydrateWorkLocally,
     hitTestPosition: rend.hitTestPosition, positionToRect: rend.positionToRect, offsetToDisplayBeat: model.offsetToDisplayBeat,
     createOsmdRenderer: osmd.createOsmdRenderer,
     saveSession: practice.saveSession, listSessions: practice.listSessions,
     deleteSession: practice.deleteSession, workStats: practice.workStats,
     createFollowingEngine: follow.createFollowingEngine, createMidiInputProvider: midi.createMidiInputProvider,
     createMicInputProvider: mic.createMicInputProvider, createAccuracyTracker: accuracy.createAccuracyTracker,
+    uploadBlob: cloud.uploadBlob, downloadBlob: cloud.downloadBlob, cloudLocation: cloud.cloudLocation,
   };
   return cadenceMod;
+}
+
+// ── Cadence ⇄ synced-state bridge (Phase 1 cross-device sync) ─────────────────
+// Canonical metadata (Works, blob catalog, sessions, annotations) lives in the
+// synced `cadence` state section and rides the existing per-section CAS+merge
+// transport. Score BYTES live in the private cadence-blobs bucket (content-
+// addressed) plus an IndexedDB cache. IndexedDB is a CACHE here, not the source
+// of truth — so a score imported on one device becomes available on the others.
+let cadenceBackfilled = false;
+
+// Upsert a record into an id-keyed synced collection (mirrors unionById's grain).
+function cadenceUpsert(arrKey, record) {
+  if (!record || record.id == null) return false;
+  if (!Array.isArray(state[arrKey])) state[arrKey] = [];
+  const i = state[arrKey].findIndex((r) => r && r.id === record.id);
+  if (i >= 0) state[arrKey][i] = record; else state[arrKey].push(record);
+  return true;
+}
+
+// Blob catalog records use id = blobId (unionById keys on `id`); store a copy
+// carrying both so the merge works and consumers still see `blobId`.
+function cadenceBlobRecord(asset) {
+  return asset && asset.blobId ? { id: asset.blobId, ...asset } : null;
+}
+
+// Upload a blob's cached bytes to the cloud (content-addressed) and record the
+// cloud location on the catalog. Best-effort: offline / signed-out / failure
+// leaves the blob local-only (metadata still syncs; bytes upload on a later run).
+async function cadenceUploadBlobBytes(C, asset) {
+  if (!asset || !asset.blobId || !asset.hash) return asset;
+  try {
+    if (!supabaseClient || !authSession?.access_token) return asset; // sync bytes later
+    if ((asset.locations || []).some((l) => l.kind === "cloud")) return asset; // already up
+    const rec = await cadenceStorage.get("bytes", asset.blobId);
+    if (!rec?.bytes) return asset;
+    const userId = authSession.user?.id || "personal";
+    const { bucket, path } = await C.uploadBlob(supabaseClient, {
+      userId, hash: asset.hash, bytes: rec.bytes, mimeType: asset.mimeType,
+    });
+    const updated = { ...asset, locations: [...(asset.locations || []), C.cloudLocation({ bucket, path })] };
+    await cadenceStorage.put("blobAssets", asset.blobId, updated);
+    return updated;
+  } catch (e) { console.warn("Cadence blob upload failed (kept local):", e); return asset; }
+}
+
+// Mirror an imported Work + its blob catalog entry into synced state.
+function cadenceMirrorWork(work, asset) {
+  cadenceUpsert("cadenceWorks", work);
+  const blobRec = cadenceBlobRecord(asset);
+  if (blobRec) cadenceUpsert("cadenceBlobs", blobRec);
+  persist();
+}
+
+// Per-work practice rollup from the SYNCED sessions (the canonical superset), so
+// the library shows practice time even for works whose bytes aren't downloaded.
+function cadenceStatsFromState() {
+  const byWork = {};
+  for (const s of (state.cadenceSessions || [])) {
+    if (!s?.workId) continue;
+    const w = (byWork[s.workId] ||= { count: 0, totalMs: 0, lastAt: null });
+    w.count += 1; w.totalMs += s.durationMs || 0;
+    if (!w.lastAt || String(s.startedAt || "") > w.lastAt) w.lastAt = s.startedAt || null;
+  }
+  return byWork;
+}
+
+// One-time: push any pre-existing LOCAL scores/sessions (imported before sync
+// existed) up into synced state + the cloud, so this device's current library
+// actually reaches the others. Idempotent — skips anything already mirrored.
+async function cadenceBackfillLocalToState(C) {
+  if (cadenceBackfilled) return;
+  try {
+    const [works, sessions] = await Promise.all([
+      C.listWorks(cadenceStorage),
+      C.listSessions(cadenceStorage, {}),
+    ]);
+    let changed = false;
+    for (const wm of works) {
+      if ((state.cadenceWorks || []).some((x) => x.id === wm.id)) continue;
+      const full = await C.loadWork(cadenceStorage, wm.id);
+      if (!full?.work) continue;
+      let asset = full.representation ? await cadenceStorage.get("blobAssets", full.representation.blobId) : null;
+      asset = await cadenceUploadBlobBytes(C, asset);
+      cadenceUpsert("cadenceWorks", full.work);
+      const blobRec = cadenceBlobRecord(asset);
+      if (blobRec) cadenceUpsert("cadenceBlobs", blobRec);
+      changed = true;
+    }
+    for (const s of sessions) {
+      if ((state.cadenceSessions || []).some((x) => x.id === s.id)) continue;
+      cadenceUpsert("cadenceSessions", s);
+      changed = true;
+    }
+    if (changed) persist();
+    cadenceBackfilled = true; // only mark done on success, so a transient failure retries next load
+  } catch (e) { console.warn("Cadence backfill failed (will retry next load):", e); }
+}
+
+// The merged library: locally-cached works ∪ synced works. `_local` marks whether
+// the bytes are already on this device (else opening triggers a download).
+function cadenceMergedLibrary(localWorks = []) {
+  const stats = cadenceStatsFromState();
+  const byId = new Map();
+  for (const w of localWorks) byId.set(w.id, { id: w.id, title: w.title, composer: w.composer, _local: true, _stats: stats[w.id] || null });
+  for (const w of (state.cadenceWorks || [])) {
+    if (byId.has(w.id)) continue;
+    byId.set(w.id, { id: w.id, title: w.title, composer: w.composer, _local: false, _stats: stats[w.id] || null });
+  }
+  return [...byId.values()];
+}
+
+// Ensure a Work's bytes + model are present locally before rendering. If it came
+// from another device (synced metadata only), download the bytes from the blob's
+// cloud location and rebuild the local cache. No-op when already fully local.
+async function cadenceEnsureLocalWork(C, workId) {
+  try {
+    const local = await C.loadWork(cadenceStorage, workId).catch(() => null);
+    if (local?.model && local?.representation && await cadenceStorage.has("bytes", local.representation.blobId)) return;
+  } catch { /* fall through to hydrate */ }
+  const work = (state.cadenceWorks || []).find((x) => x.id === workId);
+  if (!work) return; // nothing to hydrate from (purely local + missing → handled upstream)
+  const rep = work.editions?.[0]?.representations?.[0] || null;
+  const asset = rep ? (state.cadenceBlobs || []).find((b) => b.blobId === rep.blobId || b.id === rep.blobId) || null : null;
+  let bytes = null;
+  if (rep) { const cached = await cadenceStorage.get("bytes", rep.blobId).catch(() => null); if (cached?.bytes) bytes = cached.bytes; }
+  if (!bytes && asset) {
+    const cloud = (asset.locations || []).find((l) => l.kind === "cloud");
+    if (cloud && supabaseClient) {
+      try { bytes = await C.downloadBlob(supabaseClient, { bucket: cloud.bucket, path: cloud.path }); }
+      catch (e) { console.warn("Cadence blob download failed:", e); }
+    }
+  }
+  await C.hydrateWorkLocally(cadenceStorage, { work, blobAsset: asset, bytes });
 }
 
 // Sync formatting helpers (so the practice UI renders without waiting on the
@@ -33174,9 +33331,10 @@ async function ensureCadenceLibrary() {
   if (cadenceLibrary || cadenceLibraryLoading) return;
   cadenceLibraryLoading = true;
   try {
-    const { listWorks, workStats } = await getCadence();
-    const [works, stats] = await Promise.all([listWorks(cadenceStorage), workStats(cadenceStorage)]);
-    cadenceLibrary = works.map((w) => ({ ...w, _stats: stats[w.id] || null }));
+    const C = await getCadence();
+    await cadenceBackfillLocalToState(C);           // one-time: lift existing local scores into sync
+    const localWorks = await C.listWorks(cadenceStorage);
+    cadenceLibrary = cadenceMergedLibrary(localWorks); // local ∪ synced-from-other-devices
   } catch (e) { cadenceLibrary = []; console.warn("Cadence library load failed:", e); }
   cadenceLibraryLoading = false;
   if (activeAppArea === "recreate" && activeRecreateHobby === "piano" && !cadenceView.activeWorkId) renderRecreatePage();
@@ -33205,6 +33363,7 @@ function cadenceLibrarySectionHtml() {
         <span class="cadence-work-meta">
           <span class="cadence-work-title">${escapeHtml(w.title || "Untitled")}</span>
           ${w.composer ? `<span class="cadence-work-composer">${escapeHtml(w.composer)}</span>` : ""}
+          ${w._local === false ? `<span class="cadence-work-cloud" title="On your other device — opens after download">☁ Tap to download</span>` : ""}
           ${w._stats ? `<span class="cadence-work-sub">${escapeHtml(cadenceFmtDur(w._stats.totalMs))} practiced · ${escapeHtml(cadenceRelDay(w._stats.lastAt))}</span>` : ""}
         </span>
         <button class="icon-btn piano-song-delete-btn" type="button" data-cadence-delete="${escapeHtml(w.id)}" title="Delete score" aria-label="Delete score">
@@ -33338,7 +33497,7 @@ async function stopAndSaveCadencePractice() {
         { type: "troubleSpots", value: summary.troubleSpots, producedBy, producerVersion },
       ];
     }
-    await C.saveSession(cadenceStorage, {
+    const savedSession = await C.saveSession(cadenceStorage, {
       workId: cadenceView.activeCtx?.workId || cadenceView.activeWorkId,
       movementId: cadenceView.activeCtx?.movementId || null,
       editionId: cadenceView.activeCtx?.editionId || null,
@@ -33349,6 +33508,7 @@ async function stopAndSaveCadencePractice() {
       startPosition: cadenceView.lastPosition || null,
       metrics,
     });
+    cadenceUpsert("cadenceSessions", savedSession); persist(); // sync practice history
     cadenceView.workSessions = await C.listSessions(cadenceStorage, { workId: cadenceView.activeWorkId });
     cadenceLibrary = null; // stats changed — library summaries refresh on return
     refreshCadencePractice();
@@ -33447,10 +33607,17 @@ function closeCadenceWork() { resetCadenceViewer(); renderRecreatePage(); }
 async function handleCadenceImport(file) {
   cadenceImporting = true; renderRecreatePage();
   try {
-    const { importMusicXmlFile, listWorks } = await getCadence();
+    const C = await getCadence();
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const res = await importMusicXmlFile({ name: file.name, bytes }, cadenceStorage, {});
-    cadenceLibrary = await listWorks(cadenceStorage);
+    const res = await C.importMusicXmlFile({ name: file.name, bytes }, cadenceStorage, {});
+    // Upload the owned bytes to the cloud (content-addressed) + record the cloud
+    // location, then mirror the canonical metadata into synced state so the score
+    // reaches this user's other devices.
+    let asset = await cadenceStorage.get("blobAssets", res.blobId);
+    asset = await cadenceUploadBlobBytes(C, asset);
+    cadenceMirrorWork(res.work, asset);
+    const localWorks = await C.listWorks(cadenceStorage);
+    cadenceLibrary = cadenceMergedLibrary(localWorks);
     cadenceImporting = false;
     openCadenceWork(res.work.id); // jump straight into the freshly imported score
   } catch (e) {
@@ -33467,10 +33634,14 @@ async function mountCadenceViewer(host) {
   cadenceView.renderer = null;
   try {
     const C = await getCadence();
+    // If this score arrived as synced metadata from another device, fetch its
+    // bytes from the cloud and rebuild the local cache before rendering.
+    host.innerHTML = `<p class="piano-empty-state">Loading score…</p>`;
+    await cadenceEnsureLocalWork(C, cadenceView.activeWorkId);
     const w = await C.loadWork(cadenceStorage, cadenceView.activeWorkId);
     if (!w || !w.model) { host.innerHTML = `<p class="piano-empty-state">Couldn't load this score.</p>`; return; }
     const xml = await C.readRepresentationXml(cadenceStorage, w.representation);
-    if (xml == null) { host.innerHTML = `<p class="piano-empty-state">This score's file isn't on this device.</p>`; return; }
+    if (xml == null) { host.innerHTML = `<p class="piano-empty-state">This score's file isn't on this device yet — reconnect to sync it.</p>`; return; }
     cadenceView.model = w.model;
     const ctx = { workId: w.work.id, movementId: w.work.movements[0].id, editionId: w.work.editions[0].id };
     cadenceView.activeCtx = ctx;
@@ -33512,6 +33683,21 @@ async function deleteCadenceWork(id) {
   try {
     const C = await getCadence();
     await C.deleteWork(cadenceStorage, id);
+    // Remove from synced state + tombstone so the deletion propagates and a
+    // stale peer can't resurrect the score. (Cloud bytes are content-addressed
+    // and may be shared; leave them for a later cleanup pass.)
+    const work = (state.cadenceWorks || []).find((w) => w.id === id);
+    state.cadenceWorks = (state.cadenceWorks || []).filter((w) => w.id !== id);
+    recordDeletion("cadenceWorks", id);
+    const blobId = work?.editions?.[0]?.representations?.[0]?.blobId;
+    if (blobId) {
+      state.cadenceBlobs = (state.cadenceBlobs || []).filter((b) => b.blobId !== blobId && b.id !== blobId);
+      recordDeletion("cadenceBlobs", blobId);
+    }
+    const doomed = (state.cadenceSessions || []).filter((s) => s.workId === id);
+    state.cadenceSessions = (state.cadenceSessions || []).filter((s) => s.workId !== id);
+    for (const s of doomed) recordDeletion("cadenceSessions", s.id);
+    persist();
     cadenceLibrary = (cadenceLibrary || []).filter((x) => x.id !== id);
   } catch (e) { console.warn("Cadence delete failed:", e); }
   renderRecreatePage();
