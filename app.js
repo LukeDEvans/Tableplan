@@ -27637,6 +27637,25 @@ function groceryRowStoreOrder(row, locations) {
   return Number.isFinite(order) ? order : Number.MAX_SAFE_INTEGER;
 }
 
+// Experimental (spec #42): a subtle line of contextual source info under the
+// item name — "Meal Plan · 6", "Checklist", etc. Quiet by design; remove this
+// one helper + the <small> in the template if it ever feels cluttered.
+function groceryRowSourceLabel(row) {
+  if (!Array.isArray(row.sources) || !row.sources.length) return "";
+  const order = ["mealplan", "checklist", "manual"];
+  return row.sources
+    .slice()
+    .sort((a, b) => order.indexOf(a) - order.indexOf(b))
+    .map((s) => {
+      if (s === "mealplan") {
+        const c = row.sourceMeta?.mealplan?.count;
+        return c && c > 1 ? `Meal Plan · ${c}` : "Meal Plan";
+      }
+      return s === "checklist" ? "Checklist" : "Manual";
+    })
+    .join(" · ");
+}
+
 function groceryItemTemplate(row) {
   return `
     <div class="grocery-item-wrap" data-grocery-wrap-key="${escapeHtml(row.key)}">
@@ -27645,6 +27664,7 @@ function groceryItemTemplate(row) {
         <span class="grocery-name">
           ${escapeHtml(row.displayName || row.item)}
           ${row.notes?.length ? `<small>${escapeHtml(row.notes.join(" · "))}</small>` : ""}
+          ${groceryRowSourceLabel(row) ? `<small class="grocery-source-tag">${escapeHtml(groceryRowSourceLabel(row))}</small>` : ""}
           ${row.priceEstimate ? `
             <small>${formatCurrency(row.priceEstimate.cost)} estimated · ${row.priceEstimate.source === "receipt" ? `based on receipt ${escapeHtml(formatReceiptObservationDate(row.priceEstimate.observedAt))}` : "manual estimate"}</small>
           ` : ""}

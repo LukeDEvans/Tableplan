@@ -3683,6 +3683,9 @@ input.live-toggle:checked::before,
   padding: 0 2px 6px;
 }
 .grocery-nextstop-name { color: var(--accent-dark); }
+
+/* Subtle per-item source context (experimental). */
+.grocery-source-tag { color: var(--muted); font-size: 0.72rem; letter-spacing: 0.02em; }
 .grocery-nextstop-section .grocery-store-heading {
   border-bottom-color: color-mix(in srgb, var(--accent) 72%, var(--line));
 }
