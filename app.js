@@ -28028,7 +28028,9 @@ function attachPointerDragToTargets(handleEl, scrollContainer, targetSelector, o
   const onDown = (e) => {
     if (dragging) return;
     dragging = true;
-    handleEl.setPointerCapture?.(e.pointerId);
+    // Pointer capture keeps events flowing to the handle mid-drag; guard it —
+    // a synthetic or already-released pointer would otherwise throw and abort.
+    try { handleEl.setPointerCapture?.(e.pointerId); } catch { /* no active pointer */ }
     document.body.classList.add("shop-move-dragging");
     ghost = handleEl.cloneNode(true);
     ghost.classList.add("shop-move-ghost");
