@@ -1,4 +1,5 @@
 import * as LiveGroceryCatalog from './grocery-catalog.js';
+import * as LiveGrocerySources from './grocery-sources.js';
 import * as LiveDailyDozen from './daily-dozen.js';
 import * as LiveFoodHealth from './food-health.js';
 import * as LiveFoodHealthChecklists from './food-health-checklists.js';
@@ -216,7 +217,7 @@ const CLOUD_SNAPSHOT_HOURLY_MAX = 72;  // then 1 per hour back ~3 days (plenty f
 // Each section is stored as its own Supabase row: id = "{stateId}:{section}"
 const STATE_SECTIONS = {
   eat:       ["recipes", "trashedRecipes", "folders", "plans", "publishedWeeks", "recipeTags", "ingredientOptions", "autoGenerateRules", "mealPlanConfig", "activeCooking"],
-  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory"],
+  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems"],
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
@@ -3253,6 +3254,8 @@ function defaultState() {
     grocerySkippedStores: {},
     groceryItemWeekOverride: {},
     groceryCleared: {},
+    groceryChecklist: { config: [], provisional: {}, submissions: {} },
+    nextStopItems: [],
     recipeTags: defaultRecipeTags(),
     groceryBaseItems: defaultGroceryBaseItems(),
     groceryCatalogVersion: 1,
@@ -3402,6 +3405,8 @@ function normalizeState(parsed) {
     grocerySkippedStores: parsed?.grocerySkippedStores && typeof parsed.grocerySkippedStores === "object" ? parsed.grocerySkippedStores : {},
     groceryItemWeekOverride: parsed?.groceryItemWeekOverride && typeof parsed.groceryItemWeekOverride === "object" ? parsed.groceryItemWeekOverride : {},
     groceryCleared: parsed?.groceryCleared && typeof parsed.groceryCleared === "object" ? parsed.groceryCleared : {},
+    groceryChecklist: normalizeGroceryChecklist(parsed?.groceryChecklist),
+    nextStopItems: LiveGrocerySources.normalizeNextStopItems(parsed?.nextStopItems),
     recipeTags: normalizeRecipeTags(parsed?.recipeTags),
     groceryBaseItems: Array.isArray(parsed?.groceryBaseItems) ? normalizeGroceryBaseItems(parsed.groceryBaseItems) : defaultGroceryBaseItems(),
     groceryCatalogVersion: Number(parsed?.groceryCatalogVersion) || 0,
@@ -4993,6 +4998,26 @@ function normalizePersistentManualGroceries(parsed) {
     .map(String)
     .filter(Boolean)
     .sort((a, b) => normalize(a).localeCompare(normalize(b)));
+}
+
+// The Checklist source (Shop → Settings → Checklist): a configured, ordered list
+// of recurring household items, plus per-cycle provisional answers and submitted
+// snapshots. Cycle-keyed so the Friday reset is implicit (a new cycle has no
+// submission until the user submits). See grocery-sources.js for the pure logic.
+function normalizeGroceryChecklist(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  const seen = new Set();
+  const config = (Array.isArray(src.config) ? src.config : [])
+    .map((entry) => {
+      const name = String((entry && entry.name) || (typeof entry === "string" ? entry : "")).trim();
+      if (!name) return null;
+      const id = String((entry && entry.id) || "").trim() || `cl_${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+      return { id, name };
+    })
+    .filter((entry) => entry && !seen.has(entry.id) && seen.add(entry.id));
+  const provisional = src.provisional && typeof src.provisional === "object" ? src.provisional : {};
+  const submissions = src.submissions && typeof src.submissions === "object" ? src.submissions : {};
+  return { config, provisional, submissions };
 }
 
 function normalizeStoreCoordinate(value) {
@@ -31080,6 +31105,126 @@ function buildGroceryItemsWithManual(week = weekState()) {
 
 function buildGroceryRowsWithManual(week = weekState()) {
   return aggregateGroceryRows([...buildRawGroceryRows(week), ...manualGroceryItems(week).map(manualGroceryRow)]);
+}
+
+// ── Shop sources (Checklist · Next Stop) + the active-needs projection ─────────
+// Shop is a dynamic projection of active household needs. Meal Plan and Manual
+// are the existing sources; the Checklist is the third. reconcileSources (pure,
+// grocery-sources.js) merges all sources into ONE active need per canonical key,
+// tagged with the sources that contribute to it, so satisfying/removing one
+// source never deletes a need another source still requires (source independence).
+
+function groceryChecklistState() {
+  if (!state.groceryChecklist || typeof state.groceryChecklist !== "object") {
+    state.groceryChecklist = { config: [], provisional: {}, submissions: {} };
+  }
+  const cl = state.groceryChecklist;
+  if (!Array.isArray(cl.config)) cl.config = [];
+  if (!cl.provisional || typeof cl.provisional !== "object") cl.provisional = {};
+  if (!cl.submissions || typeof cl.submissions !== "object") cl.submissions = {};
+  return cl;
+}
+function groceryChecklistConfig() { return groceryChecklistState().config; }
+function groceryChecklistCurrentSubmission() { return groceryChecklistState().submissions[groceryCycleKey()] || null; }
+// Provisional answers for the current cycle default to what was last submitted
+// (reopening mid-cycle shows your submitted state), else empty (fresh Friday).
+function groceryChecklistCurrentAnswers() {
+  const cl = groceryChecklistState();
+  const cycle = groceryCycleKey();
+  if (cl.provisional[cycle] && typeof cl.provisional[cycle] === "object") return cl.provisional[cycle];
+  const sub = cl.submissions[cycle];
+  return sub && sub.checked ? { ...sub.checked } : {};
+}
+function setGroceryChecklistAnswer(id, checked) {
+  const cl = groceryChecklistState();
+  const cycle = groceryCycleKey();
+  if (!cl.provisional[cycle] || typeof cl.provisional[cycle] !== "object") cl.provisional[cycle] = { ...groceryChecklistCurrentAnswers() };
+  cl.provisional[cycle][id] = !!checked;
+  persist();
+}
+function groceryChecklistHasPendingChanges() {
+  return LiveGrocerySources.checklistHasPendingChanges(groceryChecklistConfig(), groceryChecklistCurrentSubmission(), groceryChecklistCurrentAnswers());
+}
+// Commit the Checklist for the current cycle: unchecked items become/keep
+// Checklist-source needs; checked items drop their Checklist contribution. Other
+// sources are untouched. Marks the cycle submitted (Friday will start fresh).
+function submitGroceryChecklist() {
+  const cl = groceryChecklistState();
+  const cycle = groceryCycleKey();
+  const submission = LiveGrocerySources.buildChecklistSubmission(groceryChecklistConfig(), groceryChecklistCurrentAnswers(), new Date().toISOString());
+  cl.submissions[cycle] = submission;
+  cl.provisional[cycle] = { ...submission.checked };
+  persist();
+  renderShopPage();
+}
+// The Checklist's committed contribution as grocery rows (reuse the manual-row
+// shaping so Checklist needs share identity/normalization with everything else).
+function checklistSourceRows() {
+  return LiveGrocerySources.checklistContribution(groceryChecklistConfig(), groceryChecklistCurrentSubmission())
+    .map((entry) => ({ ...manualGroceryRow(entry.name), checklistId: entry.id }));
+}
+
+// Next Stop: store-independent, date-independent persistent intents. Never
+// regenerate; live in their own list; removed only on purchase or explicit
+// removal. They deliberately bypass store routing/optimization entirely.
+function nextStopItemsList() {
+  if (!Array.isArray(state.nextStopItems)) state.nextStopItems = [];
+  return state.nextStopItems;
+}
+function addNextStopItem(name, quantity = "") {
+  const clean = String(name || "").trim();
+  if (!clean) return false;
+  const list = nextStopItemsList();
+  if (list.some((it) => normalize(it.name) === normalize(clean))) return false;
+  list.push({ id: `ns_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`, name: clean, quantity: String(quantity || "").trim() });
+  state.nextStopItems = LiveGrocerySources.normalizeNextStopItems(list);
+  return true;
+}
+function removeNextStopItem(id) {
+  state.nextStopItems = nextStopItemsList().filter((it) => it.id !== id);
+}
+
+// Meal-plan per-week skip keys within the active shopping window (existing
+// behavior: a recipe's ingredient can be skipped for a planned week).
+function plannedSkippedGroceryKeys() {
+  const skippedKeys = new Set();
+  Object.entries(state.plans || {}).forEach(([key, weekPlan]) => {
+    if (!weekPlan) return;
+    const ws = dateFromWeekKey(key);
+    if (isNaN(ws.getTime())) return;
+    const wsISO = dateKeyFromDate(ws);
+    const weDate = new Date(ws); weDate.setDate(ws.getDate() + 7);
+    const weISO = dateKeyFromDate(weDate);
+    if (weISO < groceryRangeStart || wsISO > groceryRangeEnd) return;
+    (weekPlan.skippedGroceryKeys || []).forEach((k) => skippedKeys.add(k));
+  });
+  return skippedKeys;
+}
+
+// The unified active-needs list: every source reconciled into one row per item,
+// tagged with its contributing sources, with pantry staples and meal-plan-only
+// week-skips removed (but kept if an explicit Manual/Checklist source wants them).
+function buildActiveNeedRows() {
+  const scope = sectionScope("grocery");
+  const mealplanRaw = scope === "personal" ? [] : buildRawGroceryRowsForRange(groceryRangeStart, groceryRangeEnd);
+  const manualRaw = manualGroceryItems().map(manualGroceryRow);
+  const checklistRaw = checklistSourceRows();
+  const { rows } = LiveGrocerySources.reconcileSources([
+    { source: LiveGrocerySources.SOURCE.MEALPLAN, rows: mealplanRaw },
+    { source: LiveGrocerySources.SOURCE.CHECKLIST, rows: checklistRaw },
+    { source: LiveGrocerySources.SOURCE.MANUAL, rows: manualRaw }
+  ], { mergeRows: aggregateGroceryRows, keyOf: (r) => r.key || canonicalGroceryItemKey(r.item) });
+
+  const pantrySet = new Set((state.pantry || []).map(groceryRowKey));
+  const skippedKeys = plannedSkippedGroceryKeys();
+  const hasExplicitSource = (row) => row.sources.includes("manual") || row.sources.includes("checklist");
+  return rows.filter((row) => {
+    // Pantry staples are hidden unless an explicit source (Manual/Checklist) asks for them.
+    if (pantrySet.has(groceryRowKey(row.item)) && !hasExplicitSource(row)) return false;
+    // A meal-plan-only week-skip drops the need; an explicit source keeps it.
+    if (skippedKeys.has(row.key) && !hasExplicitSource(row)) return false;
+    return true;
+  });
 }
 
 function manualGroceryRow(value) {
