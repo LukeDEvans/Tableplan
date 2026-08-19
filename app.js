@@ -738,6 +738,7 @@ const elements = {
   menuAutoRulesBtn: document.querySelector("#menuAutoRulesBtn"),
   menuTagsBtn: document.querySelector("#menuTagsBtn"),
   menuGroceryListBtn: document.querySelector("#menuGroceryListBtn"),
+  menuGroceryChecklistBtn: document.querySelector("#menuGroceryChecklistBtn"),
   menuGroceryPricingBtn: document.querySelector("#menuGroceryPricingBtn"),
   menuGroceryItemsBtn: document.querySelector("#menuGroceryItemsBtn"),
   menuInventoryRoomsBtn: document.querySelector("#menuInventoryRoomsBtn"),
@@ -1786,6 +1787,7 @@ function bindEvents() {
   elements.menuAutoRulesBtn.addEventListener("click", () => openSettingsMenuDialog(openAutoRulesDialog));
   elements.menuTagsBtn.addEventListener("click", () => openSettingsMenuDialog(openTagsDialog));
   elements.menuGroceryListBtn.addEventListener("click", () => openSettingsMenuDialog(openGroceryStoresDialog));
+  elements.menuGroceryChecklistBtn?.addEventListener("click", () => openSettingsMenuDialog(openGroceryChecklistDialog));
   elements.menuGroceryPricingBtn.addEventListener("click", () => openSettingsMenuDialog(openGroceryPricingDialog));
   elements.menuGroceryItemsBtn.addEventListener("click", () => openSettingsMenuDialog(openGroceryLibraryDialog));
   elements.menuInventoryRoomsBtn.addEventListener("click", () => openSettingsMenuDialog(openInventoryRoomsDialog));
@@ -5021,7 +5023,7 @@ function normalizeGroceryChecklist(raw) {
     .filter((entry) => entry && !seen.has(entry.id) && seen.add(entry.id));
   const provisional = src.provisional && typeof src.provisional === "object" ? src.provisional : {};
   const submissions = src.submissions && typeof src.submissions === "object" ? src.submissions : {};
-  return { config, provisional, submissions };
+  return { config, provisional, submissions, seeded: Boolean(src.seeded) };
 }
 
 function normalizeStoreCoordinate(value) {
@@ -19169,6 +19171,7 @@ function updateSettingsMenuOptions() {
   elements.menuAutoRulesBtn.hidden = !isEat;
   elements.menuTagsBtn.hidden = !isEat;
   elements.menuGroceryListBtn.hidden = !isShop;
+  if (elements.menuGroceryChecklistBtn) elements.menuGroceryChecklistBtn.hidden = !isShop;
   elements.menuGroceryPricingBtn.hidden = !isShop;
   elements.menuGroceryItemsBtn.hidden = !isEat;
   elements.menuIngredientOptionsBtn.hidden = !isEat;
@@ -31254,12 +31257,14 @@ function purchaseNextStopItem(id) {
 // The Checklist space: the configured weekly items with provisional checks and a
 // Submit button. Checking marks "don't need"; nothing hits Shop until Submit.
 function renderShopChecklistSpace() {
+  ensureGroceryChecklistSeeded();
   const config = groceryChecklistConfig();
   const answers = groceryChecklistCurrentAnswers();
   const pending = groceryChecklistHasPendingChanges();
   const submission = groceryChecklistCurrentSubmission();
   if (!config.length) {
-    elements.groceryList.innerHTML = `<div class="empty-state">No checklist items yet. Add recurring household items in Shop settings → Checklist.</div>`;
+    elements.groceryList.innerHTML = `<div class="empty-state">No checklist items yet.<br><button class="secondary-btn" type="button" data-open-checklist-config style="margin-top:10px">Configure checklist</button></div>`;
+    elements.groceryList.querySelector("[data-open-checklist-config]")?.addEventListener("click", openGroceryChecklistDialog);
     return;
   }
   elements.groceryList.innerHTML = `
@@ -31274,16 +31279,125 @@ function renderShopChecklistSpace() {
         `).join("")}
       </div>
       <div class="shop-checklist-footer">
-        <span class="muted-label">${submission ? "Submitted this week" : "Not submitted yet this week"}${pending ? " · unsaved changes" : ""}</span>
+        <button class="grocery-cleanup-link" type="button" data-open-checklist-config>Configure</button>
+        <span class="muted-label shop-checklist-status">${submission ? "Submitted this week" : "Not submitted yet this week"}${pending ? " · unsaved changes" : ""}</span>
         <button class="primary-btn shop-checklist-submit" type="button" data-checklist-submit ${pending ? "" : "disabled"}>Submit</button>
       </div>
     </div>
   `;
+  elements.groceryList.querySelector("[data-open-checklist-config]")?.addEventListener("click", openGroceryChecklistDialog);
   elements.groceryList.querySelectorAll("[data-checklist-toggle]").forEach((cb) => {
     cb.addEventListener("change", () => { setGroceryChecklistAnswer(cb.dataset.checklistToggle, cb.checked); renderGroceries(); });
   });
   const submitBtn = elements.groceryList.querySelector("[data-checklist-submit]");
   if (submitBtn) submitBtn.addEventListener("click", submitGroceryChecklist);
+}
+
+// ── Checklist configuration (Shop → Settings → Checklist) ─────────────────────
+function addGroceryChecklistItem(name) {
+  const clean = String(name || "").trim();
+  if (!clean) return false;
+  const cl = groceryChecklistState();
+  if (cl.config.some((e) => normalize(e.name) === normalize(clean))) return false;
+  cl.config.push({ id: `cl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`, name: clean });
+  persist();
+  return true;
+}
+function removeGroceryChecklistItem(id) {
+  const cl = groceryChecklistState();
+  cl.config = cl.config.filter((e) => e.id !== id);
+  persist();
+}
+function moveGroceryChecklistItem(id, dir) {
+  const cl = groceryChecklistState();
+  const i = cl.config.findIndex((e) => e.id === id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= cl.config.length) return;
+  [cl.config[i], cl.config[j]] = [cl.config[j], cl.config[i]];
+  persist();
+}
+// One-time migration: seed the new Checklist config from the existing Inventory
+// "track on weekly checklist" (trackWeekly) items, so nothing the household
+// already relied on is lost. Runs once (guarded by cl.seeded), never overwrites.
+function seedGroceryChecklistFromInventory() {
+  const cl = groceryChecklistState();
+  let added = 0;
+  inventoryItemList().filter((i) => i.trackWeekly).forEach((i) => { if (addGroceryChecklistItem(i.name)) added++; });
+  return added;
+}
+function ensureGroceryChecklistSeeded() {
+  const cl = groceryChecklistState();
+  if (cl.seeded) return;
+  if (!cl.config.length) seedGroceryChecklistFromInventory();
+  cl.seeded = true;
+  persist();
+}
+
+let groceryChecklistDialogEl = null;
+function openGroceryChecklistDialog() {
+  if (!groceryChecklistDialogEl) {
+    groceryChecklistDialogEl = document.createElement("dialog");
+    groceryChecklistDialogEl.className = "recipe-dialog std-form-dialog grocery-checklist-config-dialog";
+    document.body.appendChild(groceryChecklistDialogEl);
+    groceryChecklistDialogEl.addEventListener("click", (e) => { if (e.target === groceryChecklistDialogEl) groceryChecklistDialogEl.close(); });
+  }
+  ensureGroceryChecklistSeeded();
+  renderGroceryChecklistConfig();
+  if (!groceryChecklistDialogEl.open) groceryChecklistDialogEl.showModal();
+}
+function renderGroceryChecklistConfig() {
+  const dlg = groceryChecklistDialogEl;
+  if (!dlg) return;
+  const config = groceryChecklistConfig();
+  const trackWeeklyCount = inventoryItemList().filter((i) => i.trackWeekly).length;
+  const canSeed = trackWeeklyCount > 0;
+  dlg.innerHTML = `
+    <div class="recipe-form std-form">
+      <div class="dialog-head">
+        <div>
+          <h2 style="margin:0">Checklist</h2>
+          <p class="muted-label" style="margin:2px 0 0">Recurring weekly items you review on the Shop page. Restarts every Friday.</p>
+        </div>
+        <button class="icon-btn" type="button" data-checklist-config-close aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <form class="inline-form std-add-btn-form" data-checklist-add-form>
+        <input type="text" data-checklist-add-input placeholder="Add checklist item" autocomplete="off" maxlength="64" />
+        <button class="icon-btn std-add-btn" type="submit" aria-label="Add item"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+      </form>
+      <div class="grocery-checklist-config-list">
+        ${config.length ? config.map((e, i) => `
+          <div class="grocery-checklist-config-row" data-checklist-config-id="${escapeHtml(e.id)}">
+            <span class="grocery-checklist-config-name">${escapeHtml(e.name)}</span>
+            <div class="grocery-checklist-config-actions">
+              <button class="icon-btn" type="button" data-checklist-move="up" ${i === 0 ? "disabled" : ""} aria-label="Move up"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg></button>
+              <button class="icon-btn" type="button" data-checklist-move="down" ${i === config.length - 1 ? "disabled" : ""} aria-label="Move down"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+              <button class="icon-btn" type="button" data-checklist-remove aria-label="Remove"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg></button>
+            </div>
+          </div>
+        `).join("") : `<p class="empty-state">No items yet. Add recurring household items above${canSeed ? ", or import the ones you already track in Inventory." : "."}</p>`}
+      </div>
+      ${canSeed ? `<button class="secondary-btn" type="button" data-checklist-seed>Import ${trackWeeklyCount} from Inventory</button>` : ""}
+    </div>
+  `;
+  dlg.querySelector("[data-checklist-config-close]").addEventListener("click", () => dlg.close());
+  dlg.querySelector("[data-checklist-add-form]").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const input = dlg.querySelector("[data-checklist-add-input]");
+    if (addGroceryChecklistItem(input.value)) { input.value = ""; renderGroceryChecklistConfig(); syncShopAfterChecklistConfig(); }
+    dlg.querySelector("[data-checklist-add-input]").focus();
+  });
+  dlg.querySelectorAll("[data-checklist-config-id]").forEach((row) => {
+    const id = row.dataset.checklistConfigId;
+    row.querySelector("[data-checklist-remove]").addEventListener("click", () => { removeGroceryChecklistItem(id); renderGroceryChecklistConfig(); syncShopAfterChecklistConfig(); });
+    row.querySelectorAll("[data-checklist-move]").forEach((btn) => btn.addEventListener("click", () => { moveGroceryChecklistItem(id, btn.dataset.checklistMove === "up" ? -1 : 1); renderGroceryChecklistConfig(); }));
+  });
+  const seedBtn = dlg.querySelector("[data-checklist-seed]");
+  if (seedBtn) seedBtn.addEventListener("click", () => { seedGroceryChecklistFromInventory(); renderGroceryChecklistConfig(); syncShopAfterChecklistConfig(); });
+}
+function syncShopAfterChecklistConfig() {
+  if (activeAppArea === "shop" && shopSpace === "checklist") renderGroceries();
 }
 
 // Meal-plan per-week skip keys within the active shopping window (existing
