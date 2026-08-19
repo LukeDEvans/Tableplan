@@ -27677,6 +27677,7 @@ function openGroceryItemMenu(event) {
   menu.className = "folder-context-menu grocery-library-context-menu";
   menu.setAttribute("role", "menu");
   menu.innerHTML = `
+    <button type="button" role="menuitem" data-move-grocery-item>Move to store…</button>
     <button type="button" role="menuitem" data-edit-grocery-item>Edit</button>
     <button type="button" role="menuitem" data-store-rank-grocery-item>Preferred stores</button>
     <button type="button" role="menuitem" data-delete-grocery-item>Delete</button>
@@ -27686,6 +27687,10 @@ function openGroceryItemMenu(event) {
   const y = Math.min(event.clientY || 10, window.innerHeight - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
+  menu.querySelector("[data-move-grocery-item]").addEventListener("click", () => {
+    closeFolderMenu();
+    openGroceryMoveSheet(key);
+  });
   menu.querySelector("[data-edit-grocery-item]").addEventListener("click", () => {
     closeFolderMenu();
     editGroceryItem(key);
@@ -27795,6 +27800,256 @@ function addStoreToRank() {
   persist();
   renderStoreRankList();
   renderGroceries();
+}
+
+// ── Move interaction: mobile-first store reassignment ─────────────────────────
+// A full-screen sheet: the item pinned at the top + large, vertically-listed
+// store destinations (in preference order) + Other. Tap a destination to assign;
+// you can also drag the pinned chip onto a destination, and the list autoscrolls
+// so off-screen targets stay reachable (attachPointerDragToTargets).
+let groceryMoveSheetEl = null;
+let groceryMoveDragCleanup = null;
+
+function groceryMoveItemLabel(itemKey) {
+  const gw = selectedGroceryWeek();
+  const row = gw ? buildGroceryRowsWithManual(gw.week).find((r) => r.key === itemKey) : null;
+  return row?.displayName || row?.item || itemKey.replace(/-/g, " ");
+}
+
+function currentEffectiveStoreForItem(itemKey) {
+  const skippedIds = skippedGroceryStoreIds();
+  const enabledIds = new Set(groceryStores().filter((s) => s.enabled !== false && !skippedIds.has(s.id)).map((s) => s.id));
+  return resolveItemEffectiveStoreId(itemKey, groceryItemLocations(), enabledIds) || "";
+}
+
+function openGroceryMoveSheet(itemKey) {
+  const skippedIds = skippedGroceryStoreIds();
+  const enabledStores = groceryStores().filter((s) => s.enabled !== false && !skippedIds.has(s.id));
+  const loc = groceryItemLocations()[itemKey];
+  const rank = loc?.storeRank?.length ? loc.storeRank : (loc?.storeId ? [loc.storeId] : []);
+  const currentStoreId = currentEffectiveStoreForItem(itemKey);
+  const destinations = LiveGrocerySources.moveDestinations({ stores: enabledStores, rank, currentStoreId });
+  const label = groceryMoveItemLabel(itemKey);
+
+  if (!groceryMoveSheetEl) {
+    groceryMoveSheetEl = document.createElement("div");
+    groceryMoveSheetEl.className = "shop-move-sheet";
+    document.body.appendChild(groceryMoveSheetEl);
+  }
+  const sheet = groceryMoveSheetEl;
+  sheet.innerHTML = `
+    <div class="shop-move-panel" role="dialog" aria-label="Move ${escapeHtml(label)}">
+      <div class="shop-move-head">
+        <div class="shop-move-chip" data-move-chip>Moving: <strong>${escapeHtml(label)}</strong></div>
+        <button class="icon-btn" type="button" data-move-cancel aria-label="Cancel">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="shop-move-targets" data-move-targets>
+        ${destinations.map((d) => `
+          <button class="shop-move-target${d.current ? " is-current" : ""}" type="button" data-move-target="${escapeHtml(d.id)}">
+            <span>${escapeHtml(d.name)}</span>
+            ${d.current ? `<span class="shop-move-current-tag">Current</span>` : ""}
+          </button>
+        `).join("")}
+      </div>
+    </div>
+  `;
+  sheet.classList.add("is-open");
+  sheet.querySelector("[data-move-cancel]").addEventListener("click", closeGroceryMoveSheet);
+  sheet.addEventListener("click", (e) => { if (e.target === sheet) closeGroceryMoveSheet(); });
+  sheet.querySelectorAll("[data-move-target]").forEach((btn) => {
+    btn.addEventListener("click", () => requestGroceryItemMove(itemKey, btn.dataset.moveTarget));
+  });
+  const chip = sheet.querySelector("[data-move-chip]");
+  const targetsEl = sheet.querySelector("[data-move-targets]");
+  groceryMoveDragCleanup = attachPointerDragToTargets(chip, targetsEl, "[data-move-target]", (el) => {
+    if (el) requestGroceryItemMove(itemKey, el.dataset.moveTarget);
+  });
+}
+
+function closeGroceryMoveSheet() {
+  if (groceryMoveDragCleanup) { groceryMoveDragCleanup(); groceryMoveDragCleanup = null; }
+  if (groceryMoveSheetEl) { groceryMoveSheetEl.classList.remove("is-open"); groceryMoveSheetEl.innerHTML = ""; }
+}
+
+// Direct move, or the temp/permanent confirmation when reassigning an item that
+// already has a valid store (spec #13/#14). Auto-reroute on skip never lands here.
+function requestGroceryItemMove(itemKey, targetStoreId) {
+  const currentStoreId = currentEffectiveStoreForItem(itemKey);
+  if (targetStoreId === currentStoreId) { closeGroceryMoveSheet(); return; }
+  if (LiveGrocerySources.moveNeedsConfirmation({ currentStoreId, targetStoreId })) {
+    openMoveConfirmDialog(itemKey, targetStoreId);
+    return;
+  }
+  // From Other → a store: establish it as the preferred store (nothing to protect).
+  // To Other: clear the preference so the item drops into Other.
+  if (targetStoreId === "") clearItemStorePreference(itemKey);
+  else setItemStorePermanent(itemKey, targetStoreId);
+  closeGroceryMoveSheet();
+  persist();
+  renderGroceries();
+}
+
+// This-week-only: a cycle-scoped override; the target is also placed into the
+// item's fallback ordering (appended) while the original preferred store stays
+// primary (spec #18). This is explicit intent, so it survives unskip.
+function setItemStoreThisWeek(itemKey, storeId) {
+  setGroceryItemStoreForTrip(itemKey, storeId);
+  const locations = groceryItemLocations();
+  const loc = locations[itemKey] || { storeId: "", storeRank: [], order: 0 };
+  const rank = [...(loc.storeRank || (loc.storeId ? [loc.storeId] : []))];
+  if (!rank.includes(storeId)) rank.push(storeId);
+  locations[itemKey] = { ...loc, storeId: rank[0] || storeId, storeRank: rank };
+  state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
+}
+
+// Permanent: the target becomes the primary preferred store; the this-week
+// override is cleared so the permanent choice takes effect immediately.
+function setItemStorePermanent(itemKey, storeId) {
+  const locations = groceryItemLocations();
+  const loc = locations[itemKey] || { storeId: "", storeRank: [], order: 0 };
+  const priorRank = loc.storeRank || (loc.storeId ? [loc.storeId] : []);
+  const rank = [storeId, ...priorRank.filter((id) => id !== storeId)];
+  locations[itemKey] = { ...loc, storeId, storeRank: rank };
+  state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
+  clearGroceryItemWeekOverride(itemKey);
+}
+
+function clearItemStorePreference(itemKey) {
+  const locations = groceryItemLocations();
+  if (locations[itemKey]) {
+    locations[itemKey] = { ...locations[itemKey], storeId: "", storeRank: [] };
+    state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
+  }
+  clearGroceryItemWeekOverride(itemKey);
+}
+
+// Merge-safe clear of the this-trip override (overwrite with "" rather than delete).
+function clearGroceryItemWeekOverride(itemKey) {
+  if (!state.groceryItemWeekOverride || typeof state.groceryItemWeekOverride !== "object") return;
+  const key = groceryItemWeekOverrideKey(itemKey);
+  if (key in state.groceryItemWeekOverride) state.groceryItemWeekOverride[key] = "";
+}
+
+let groceryMoveConfirmEl = null;
+function openMoveConfirmDialog(itemKey, targetStoreId) {
+  const store = groceryStores().find((s) => s.id === targetStoreId);
+  if (!store) return;
+  const label = groceryMoveItemLabel(itemKey);
+  if (!groceryMoveConfirmEl) {
+    groceryMoveConfirmEl = document.createElement("dialog");
+    groceryMoveConfirmEl.className = "recipe-dialog std-form-dialog shop-move-confirm-dialog";
+    document.body.appendChild(groceryMoveConfirmEl);
+    groceryMoveConfirmEl.addEventListener("click", (e) => { if (e.target === groceryMoveConfirmEl) groceryMoveConfirmEl.close(); });
+  }
+  const dlg = groceryMoveConfirmEl;
+  dlg.innerHTML = `
+    <div class="recipe-form std-form">
+      <h2 style="margin:0 0 14px">Move ${escapeHtml(label)} to ${escapeHtml(store.name)}?</h2>
+      <div class="shop-move-confirm-actions">
+        <button class="shop-move-choice" type="button" data-move-week>
+          <strong>This week only</strong>
+          <small>Use ${escapeHtml(store.name)} for this shopping cycle; keep the usual preference.</small>
+        </button>
+        <button class="shop-move-choice is-primary" type="button" data-move-permanent>
+          <strong>Make permanent</strong>
+          <small>Always prefer ${escapeHtml(store.name)} for ${escapeHtml(label)}.</small>
+        </button>
+      </div>
+      <details class="shop-move-prefs">
+        <summary>Preferred store order</summary>
+        <p class="muted-label" style="margin:8px 0 0">Reorder this item's fallback stores.</p>
+        <button class="grocery-cleanup-link" type="button" data-move-edit-prefs>Edit preferred stores…</button>
+      </details>
+      <div class="shop-move-confirm-foot">
+        <button class="secondary-btn" type="button" data-move-confirm-cancel>Cancel</button>
+      </div>
+    </div>
+  `;
+  dlg.querySelector("[data-move-week]").addEventListener("click", () => {
+    setItemStoreThisWeek(itemKey, targetStoreId); persist(); dlg.close(); closeGroceryMoveSheet(); renderGroceries();
+  });
+  dlg.querySelector("[data-move-permanent]").addEventListener("click", () => {
+    setItemStorePermanent(itemKey, targetStoreId); persist(); dlg.close(); closeGroceryMoveSheet(); renderGroceries();
+  });
+  dlg.querySelector("[data-move-confirm-cancel]").addEventListener("click", () => dlg.close());
+  dlg.querySelector("[data-move-edit-prefs]").addEventListener("click", () => { dlg.close(); closeGroceryMoveSheet(); openStoreRankDialog(itemKey); });
+  if (!dlg.open) dlg.showModal();
+}
+
+// ── Shared pointer-drag with autoscroll (the app-wide drag-scroll fix) ─────────
+// Drag `handleEl`; a floating ghost follows the pointer; the destination under it
+// (matching `targetSelector` inside `scrollContainer`) is highlighted; and the
+// container autoscrolls near its edges (autoscrollVelocity) so destinations that
+// start off-screen stay reachable mid-drag — reliably, on touch. Returns a
+// cleanup function. Pointer Events + setPointerCapture ⇒ works for mouse + touch.
+function attachPointerDragToTargets(handleEl, scrollContainer, targetSelector, onDrop) {
+  if (!handleEl || !scrollContainer) return () => {};
+  let dragging = false, ghost = null, current = null, rafId = 0, lastY = 0;
+
+  const targetUnder = (x, y) => {
+    const el = document.elementFromPoint(x, y);
+    const t = el && el.closest(targetSelector);
+    return t && scrollContainer.contains(t) ? t : null;
+  };
+  const setCurrent = (t) => {
+    if (current === t) return;
+    if (current) current.classList.remove("is-drop-target");
+    current = t;
+    if (current) current.classList.add("is-drop-target");
+  };
+  const autoscrollLoop = () => {
+    if (!dragging) return;
+    const v = LiveGrocerySources.autoscrollVelocity(lastY, scrollContainer.getBoundingClientRect());
+    if (v) { scrollContainer.scrollTop += v; setCurrent(targetUnder(ghost?._x ?? 0, lastY)); }
+    rafId = requestAnimationFrame(autoscrollLoop);
+  };
+  const onDown = (e) => {
+    if (dragging) return;
+    dragging = true;
+    handleEl.setPointerCapture?.(e.pointerId);
+    document.body.classList.add("shop-move-dragging");
+    ghost = handleEl.cloneNode(true);
+    ghost.classList.add("shop-move-ghost");
+    document.body.appendChild(ghost);
+    moveGhost(e.clientX, e.clientY);
+    lastY = e.clientY;
+    rafId = requestAnimationFrame(autoscrollLoop);
+  };
+  const moveGhost = (x, y) => { if (ghost) { ghost._x = x; ghost.style.left = `${x}px`; ghost.style.top = `${y}px`; } };
+  const onMove = (e) => {
+    if (!dragging) return;
+    e.preventDefault();
+    lastY = e.clientY;
+    moveGhost(e.clientX, e.clientY);
+    setCurrent(targetUnder(e.clientX, e.clientY));
+  };
+  const onUp = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    cancelAnimationFrame(rafId);
+    document.body.classList.remove("shop-move-dragging");
+    const dropped = targetUnder(e.clientX, e.clientY);
+    if (ghost) { ghost.remove(); ghost = null; }
+    if (current) current.classList.remove("is-drop-target");
+    const target = dropped || current;
+    current = null;
+    if (target && typeof onDrop === "function") onDrop(target);
+  };
+  handleEl.addEventListener("pointerdown", onDown);
+  handleEl.addEventListener("pointermove", onMove);
+  handleEl.addEventListener("pointerup", onUp);
+  handleEl.addEventListener("pointercancel", onUp);
+  return () => {
+    cancelAnimationFrame(rafId);
+    if (ghost) ghost.remove();
+    document.body.classList.remove("shop-move-dragging");
+    handleEl.removeEventListener("pointerdown", onDown);
+    handleEl.removeEventListener("pointermove", onMove);
+    handleEl.removeEventListener("pointerup", onUp);
+    handleEl.removeEventListener("pointercancel", onUp);
+  };
 }
 
 function learnGroceryItemMerge(row) {

@@ -118,6 +118,51 @@ function normalizeNextStopItems(items) {
   return out;
 }
 
+// ── Store move interaction ────────────────────────────────────────────────────
+// Ordered destinations for the move sheet: the item's preferred stores first (in
+// rank order), then the remaining enabled stores, then Other. Skipped/disabled
+// stores are excluded by the caller (it passes only enabled stores). Pure.
+function moveDestinations({ stores = [], rank = [], currentStoreId = "" }) {
+  const byId = new Map(stores.map((s) => [s.id, s]));
+  const seen = new Set();
+  const out = [];
+  for (const id of rank) {
+    if (byId.has(id) && !seen.has(id)) { seen.add(id); out.push({ id, name: byId.get(id).name }); }
+  }
+  for (const s of stores) {
+    if (!seen.has(s.id)) { seen.add(s.id); out.push({ id: s.id, name: s.name }); }
+  }
+  out.push({ id: "", name: "Other" });
+  return out.map((d) => ({ ...d, current: d.id === currentStoreId }));
+}
+
+// A manual move shows the temp/permanent confirmation ONLY when the item already
+// resolves to a valid store and the target is a different store (spec #13/#14).
+// Moving from Other (no current store) or to Other is a direct action.
+function moveNeedsConfirmation({ currentStoreId, targetStoreId }) {
+  return Boolean(currentStoreId) && Boolean(targetStoreId) && currentStoreId !== targetStoreId;
+}
+
+// ── Drag autoscroll (pure math for the shared pointer-drag utility) ────────────
+// Given the pointer's Y, a scrollable container's rect, an activation band, and a
+// max speed, return px/frame to scroll (negative = up). Zero in the middle; ramps
+// to maxSpeed at the very edge. This is what makes a destination list reliably
+// scrollable while an item is being dragged, including toward off-screen targets.
+function autoscrollVelocity(pointerY, rect, band = 64, maxSpeed = 18) {
+  if (!rect || band <= 0) return 0;
+  const topDist = pointerY - rect.top;
+  const bottomDist = rect.bottom - pointerY;
+  if (topDist < band) {
+    const t = Math.max(0, Math.min(1, (band - topDist) / band));
+    return -Math.ceil(t * maxSpeed);
+  }
+  if (bottomDist < band) {
+    const t = Math.max(0, Math.min(1, (band - bottomDist) / band));
+    return Math.ceil(t * maxSpeed);
+  }
+  return 0;
+}
+
 export {
   SOURCE,
   reconcileSources,
@@ -125,5 +170,8 @@ export {
   checklistContribution,
   buildChecklistSubmission,
   checklistHasPendingChanges,
-  normalizeNextStopItems
+  normalizeNextStopItems,
+  moveDestinations,
+  moveNeedsConfirmation,
+  autoscrollVelocity
 };

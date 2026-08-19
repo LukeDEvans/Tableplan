@@ -98,6 +98,55 @@ describe("checklist reconciliation", () => {
   });
 });
 
+describe("moveDestinations — store ordering for the move sheet", () => {
+  const stores = [{ id: "cost", name: "Costco" }, { id: "tj", name: "Trader Joe's" }, { id: "tgt", name: "Target" }];
+  it("lists preferred stores first (rank order), then remaining stores, then Other", () => {
+    const d = S.moveDestinations({ stores, rank: ["tj", "cost"], currentStoreId: "tj" });
+    expect(d.map((x) => x.id)).toEqual(["tj", "cost", "tgt", ""]);
+    expect(d.find((x) => x.id === "tj").current).toBe(true);
+    expect(d.at(-1)).toMatchObject({ id: "", name: "Other" });
+  });
+  it("handles no rank (all stores in given order + Other)", () => {
+    expect(S.moveDestinations({ stores, rank: [], currentStoreId: "" }).map((x) => x.id)).toEqual(["cost", "tj", "tgt", ""]);
+  });
+  it("ignores rank ids that are not enabled stores", () => {
+    expect(S.moveDestinations({ stores, rank: ["gone", "tgt"] }).map((x) => x.id)).toEqual(["tgt", "cost", "tj", ""]);
+  });
+});
+
+describe("moveNeedsConfirmation — temp/permanent gate", () => {
+  it("confirms only when reassigning an already-assigned item to a different store", () => {
+    expect(S.moveNeedsConfirmation({ currentStoreId: "cost", targetStoreId: "tj" })).toBe(true);
+  });
+  it("no confirmation from Other (no current store) — direct assign", () => {
+    expect(S.moveNeedsConfirmation({ currentStoreId: "", targetStoreId: "tj" })).toBe(false);
+  });
+  it("no confirmation when moving to Other, or to the same store", () => {
+    expect(S.moveNeedsConfirmation({ currentStoreId: "cost", targetStoreId: "" })).toBe(false);
+    expect(S.moveNeedsConfirmation({ currentStoreId: "cost", targetStoreId: "cost" })).toBe(false);
+  });
+});
+
+describe("autoscrollVelocity — reliable drag-scroll math", () => {
+  const rect = { top: 100, bottom: 500 };
+  it("is zero in the middle of the container", () => {
+    expect(S.autoscrollVelocity(300, rect)).toBe(0);
+  });
+  it("scrolls up (negative) near the top edge, faster the closer to the edge", () => {
+    const nearTop = S.autoscrollVelocity(110, rect);
+    const atTop = S.autoscrollVelocity(100, rect);
+    expect(nearTop).toBeLessThan(0);
+    expect(atTop).toBeLessThanOrEqual(nearTop);
+  });
+  it("scrolls down (positive) near the bottom edge", () => {
+    expect(S.autoscrollVelocity(495, rect)).toBeGreaterThan(0);
+  });
+  it("respects maxSpeed and returns 0 with no rect", () => {
+    expect(Math.abs(S.autoscrollVelocity(100, rect, 64, 18))).toBeLessThanOrEqual(18);
+    expect(S.autoscrollVelocity(100, null)).toBe(0);
+  });
+});
+
 describe("normalizeNextStopItems", () => {
   it("accepts strings and objects, dedupes by name, assigns ids", () => {
     const out = S.normalizeNextStopItems(["Sriracha", { name: "Batteries", quantity: "AA" }, "sriracha"]);
