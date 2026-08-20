@@ -228,7 +228,7 @@ const STATE_SECTIONS = {
   // Cadence (piano-score subsystem): canonical metadata syncs here as small
   // id-keyed collections; score BYTES live in the private cadence-blobs bucket,
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
-  cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents"],
+  cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin"],
@@ -3254,6 +3254,7 @@ function defaultState() {
     cadenceSessions: [],
     cadenceAnnotations: [],
     cadenceEvents: [],
+    cadenceSections: [],
     trips: [],
     travelIdeas: [],
     workouts: [],
@@ -3410,6 +3411,7 @@ function normalizeState(parsed) {
     cadenceSessions: Array.isArray(parsed?.cadenceSessions) ? parsed.cadenceSessions : [],
     cadenceAnnotations: Array.isArray(parsed?.cadenceAnnotations) ? parsed.cadenceAnnotations : [],
     cadenceEvents: Array.isArray(parsed?.cadenceEvents) ? parsed.cadenceEvents : [],
+    cadenceSections: Array.isArray(parsed?.cadenceSections) ? parsed.cadenceSections : [],
     trips: Array.isArray(parsed?.trips) ? parsed.trips : [],
     travelIdeas: Array.isArray(parsed?.travelIdeas) ? parsed.travelIdeas : [],
     workouts: normalizeWorkouts(parsed?.workouts),
@@ -5440,7 +5442,7 @@ function mergeStates(newer, older) {
     "pianoSongs", "sailingLog", "sailingBoats", "pianoLog",
     // Cadence: Works, blob catalog, sessions, annotations (all carry an `id`;
     // blob records use id = blobId). Union so neither device loses a score.
-    "cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents",
+    "cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections",
     // Inventory & shopping
     "inventoryBoxes", "inventoryItems",
     "groceryStores", "groceryPriceObservations", "priceHistory",
@@ -33130,6 +33132,7 @@ function freshCadenceView() {
     followEngine: null,
     followInput: null,
     followSamples: [],    // {position, tMs} captured while practicing → tempo/alignment
+    activeSection: null,  // section id being deliberately practiced (tags the session)
     accuracy: null,       // accuracy analyzer while practicing with follow
     practiceStart: null,  // ms timestamp while a practice session runs
     practiceTimer: null,  // 1s tick interval for the elapsed label
@@ -33159,6 +33162,7 @@ async function getCadence() {
     import("./music/alignment.js"),
     import("./music/compare.js"),
   ]);
+  const section = await import("./music/section.js");
   cadenceStorage = cadenceStorage || storage.createIdbStorage("cadence");
   cadenceMod = {
     importMusicXmlFile: imp.importMusicXmlFile, loadWork: imp.loadWork, listWorks: imp.listWorks,
@@ -33176,6 +33180,7 @@ async function getCadence() {
     serializeToMusicXml: xmlexport.serializeToMusicXml,
     buildAlignment: align.buildAlignment, averageTempo: align.averageTempo, tempoCurve: align.tempoCurve, tempoByMeasure: align.tempoByMeasure,
     attemptSummary: compare.attemptSummary, comparePerformances: compare.comparePerformances, comparisonHeadline: compare.comparisonHeadline,
+    makeSection: section.makeSection, sectionStats: section.sectionStats, sectionTag: section.sectionTag,
   };
   return cadenceMod;
 }
@@ -33456,6 +33461,69 @@ function cadenceCompareLine(sessions) {
   catch { return ""; }
 }
 
+// ── Deliberate practice: sections (music/section.js) ─────────────────────────
+function cadenceSectionsForWork(workId) {
+  return (state.cadenceSections || []).filter((s) => s && s.workId === workId).slice()
+    .sort((a, b) => (a.startMeasure - b.startMeasure) || (a.endMeasure - b.endMeasure));
+}
+
+function cadenceSectionsHtml() {
+  const sections = cadenceSectionsForWork(cadenceView.activeWorkId);
+  const sessions = cadenceView.workSessions || [];
+  const rows = sections.map((sec) => {
+    const st = (cadenceMod && cadenceMod.sectionStats) ? cadenceMod.sectionStats(sec, sessions) : { attempts: 0, bestTempo: null, targetReached: false };
+    const active = cadenceView.activeSection === sec.id;
+    const tgt = sec.targetTempo ? ` / ${sec.targetTempo}` : "";
+    const best = st.bestTempo != null ? `${Math.round(st.bestTempo)}${tgt} BPM` : (sec.targetTempo ? `—${tgt} BPM` : "—");
+    return `
+      <div class="cadence-section-row${active ? " is-active" : ""}">
+        <span class="cadence-section-label">${escapeHtml(sec.label)}</span>
+        <span class="cadence-section-stat">${st.attempts} attempt${st.attempts === 1 ? "" : "s"} · best ${escapeHtml(best)}${st.targetReached ? " ✓" : ""}</span>
+        <button class="cadence-section-practice${active ? " is-active" : ""}" type="button" data-cadence-section-practice="${escapeHtml(sec.id)}">${active ? "Practicing" : "Practice"}</button>
+        <button class="icon-btn piano-song-delete-btn" type="button" data-cadence-section-del="${escapeHtml(sec.id)}" title="Delete section" aria-label="Delete section"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+      </div>`;
+  }).join("");
+  return `
+    <div class="cadence-sections">
+      <div class="cadence-sections-head"><span class="settings-subheading">Practice sections</span></div>
+      ${rows || `<p class="cadence-sections-empty">Add a measure range to drill a tricky passage toward a target tempo.</p>`}
+      <form class="cadence-section-add" data-cadence-section-add>
+        <input type="number" min="1" inputmode="numeric" placeholder="From" data-sec-start aria-label="From measure" />
+        <input type="number" min="1" inputmode="numeric" placeholder="To" data-sec-end aria-label="To measure" />
+        <input type="number" min="20" max="400" inputmode="numeric" placeholder="Target BPM" data-sec-tempo aria-label="Target tempo (optional)" />
+        <button class="icon-btn std-add-btn" type="submit" title="Add section" aria-label="Add section"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+      </form>
+    </div>`;
+}
+
+function addCadenceSection(startM, endM, tempo) {
+  const s = Number(startM), e = Number(endM);
+  if (!Number.isFinite(s) || !Number.isFinite(e) || !cadenceMod?.makeSection) return;
+  const sec = cadenceMod.makeSection({
+    workId: cadenceView.activeWorkId, editionId: cadenceView.activeCtx?.editionId || null,
+    startMeasure: s, endMeasure: e, targetTempo: tempo,
+  });
+  cadenceUpsert("cadenceSections", sec); persist();
+  refreshCadencePractice();
+}
+
+function deleteCadenceSection(id) {
+  state.cadenceSections = (state.cadenceSections || []).filter((x) => x.id !== id);
+  recordDeletion("cadenceSections", id);
+  if (cadenceView.activeSection === id) cadenceView.activeSection = null;
+  persist(); refreshCadencePractice();
+}
+
+function toggleCadenceSectionPractice(id) {
+  cadenceView.activeSection = cadenceView.activeSection === id ? null : id;
+  const readout = document.getElementById("cadencePosReadout");
+  if (readout) {
+    const sec = cadenceView.activeSection ? (state.cadenceSections || []).find((x) => x.id === id) : null;
+    readout.textContent = sec ? `Practicing ${sec.label}${sec.targetTempo ? ` · target ${sec.targetTempo} BPM` : ""}` : "";
+  }
+  refreshCadencePractice();
+}
+
 function cadencePracticeSectionHtml() {
   const practicing = cadenceView.practiceStart != null;
   const sessions = cadenceView.workSessions || [];
@@ -33483,7 +33551,8 @@ function cadencePracticeSectionHtml() {
         MusicXML
       </button>
     </div>
-    ${list ? `<div class="cadence-session-list">${list}</div>` : ""}`;
+    ${list ? `<div class="cadence-session-list">${list}</div>` : ""}
+    ${cadenceSectionsHtml()}`;
 }
 
 function refreshCadencePractice() {
@@ -33515,6 +33584,15 @@ async function exportCadenceMusicXml() {
 function bindCadencePractice(container) {
   container.querySelector("[data-cadence-practice-toggle]")?.addEventListener("click", toggleCadencePractice);
   container.querySelector("[data-cadence-export]")?.addEventListener("click", exportCadenceMusicXml);
+  container.querySelector("[data-cadence-section-add]")?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const f = e.currentTarget;
+    addCadenceSection(f.querySelector("[data-sec-start]")?.value, f.querySelector("[data-sec-end]")?.value, f.querySelector("[data-sec-tempo]")?.value);
+  });
+  container.querySelectorAll("[data-cadence-section-practice]").forEach((b) =>
+    b.addEventListener("click", () => toggleCadenceSectionPractice(b.dataset.cadenceSectionPractice)));
+  container.querySelectorAll("[data-cadence-section-del]").forEach((b) =>
+    b.addEventListener("click", () => deleteCadenceSection(b.dataset.cadenceSectionDel)));
   container.querySelectorAll("[data-cadence-session-del]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       try {
@@ -33606,6 +33684,11 @@ async function stopAndSaveCadencePractice() {
       } catch (e) { console.warn("Cadence recording save failed:", e); }
     }
 
+    // If a section was active, tag the session so it counts toward that section's
+    // deliberate-practice progress (music/section.js).
+    const activeSec = cadenceView.activeSection ? (state.cadenceSections || []).find((x) => x.id === cadenceView.activeSection) : null;
+    const sectionsPracticed = activeSec && C.sectionTag ? [C.sectionTag(activeSec)] : [];
+
     const savedSession = await C.saveSession(cadenceStorage, {
       workId: cadenceView.activeCtx?.workId || cadenceView.activeWorkId,
       movementId: cadenceView.activeCtx?.movementId || null,
@@ -33616,6 +33699,7 @@ async function stopAndSaveCadencePractice() {
       inputSource: summary ? "follow" : "manual",
       startPosition: cadenceView.lastPosition || null,
       recordingId,
+      sectionsPracticed,
       metrics,
     });
     cadenceUpsert("cadenceSessions", savedSession); persist(); // sync practice history

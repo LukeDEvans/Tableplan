@@ -13095,6 +13095,18 @@ body.touch-drag-active * {
   cursor: pointer;
 }
 .cadence-export-btn:hover { color: var(--ink); border-color: var(--line-strong, #d3ccbe); }
+/* Deliberate practice: sections */
+.cadence-sections { margin-top: 14px; }
+.cadence-sections-head { margin-bottom: 4px; }
+.cadence-sections-empty { font-size: 0.82rem; color: var(--muted); margin: 4px 0 8px; }
+.cadence-section-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 7px 0; border-top: 1px solid var(--line, #e4e0d8); }
+.cadence-section-label { font-weight: 600; font-size: 0.9rem; flex: 0 0 auto; }
+.cadence-section-stat { font-size: 0.78rem; color: var(--muted); flex: 1 1 auto; font-variant-numeric: tabular-nums; }
+.cadence-section-practice { font: inherit; font-size: 0.78rem; font-weight: 600; padding: 4px 11px; border-radius: 999px; border: 1px solid var(--line, #e4e0d8); background: transparent; color: var(--muted); cursor: pointer; flex: 0 0 auto; }
+.cadence-section-practice.is-active { background: var(--accent-soft); color: var(--accent-dark); border-color: transparent; }
+.cadence-section-add { display: flex; gap: 6px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+.cadence-section-add input { width: 4.5rem; flex: 0 0 auto; font: inherit; font-size: 0.85rem; padding: 5px 8px; border: 1px solid var(--line, #e4e0d8); border-radius: 8px; background: var(--surface, #fff); color: var(--ink); }
+.cadence-section-add input[data-sec-tempo] { width: 7.5rem; }
 .cadence-practice-btn.is-recording {
   background: var(--crit, #b23a3a);
   border-color: var(--crit, #b23a3a);
