@@ -38505,11 +38505,11 @@ function playDiscoverRadio(key) {
 
 async function getMediaHub() {
   if (mediaHub) return mediaHub;
-  const [prov, search, tmdbP, jellyP, ytP, musicP, mstate, watchA, sources, radioP, podP] = await Promise.all([
+  const [prov, search, tmdbP, jellyP, ytP, musicP, mstate, watchA, sources, radioP, podP, coord] = await Promise.all([
     import("./media-provider.js"), import("./media-search.js"), import("./media-provider-tmdb.js"),
     import("./media-provider-jellyfin.js"), import("./media-provider-youtube.js"), import("./media-provider-music.js"),
     import("./media-state.js"), import("./media-watch-adapter.js"), import("./media-sources.js"),
-    import("./media-provider-radio.js"), import("./media-provider-podcast.js"),
+    import("./media-provider-radio.js"), import("./media-provider-podcast.js"), import("./playback-coordinator.js"),
   ]);
   const authFetchJson = async (url, { signal } = {}) => {
     const r = await fetch(url, { signal, headers: { Authorization: `Bearer ${authSession?.access_token || ""}`, Accept: "application/json" } });
@@ -38544,9 +38544,53 @@ async function getMediaHub() {
   const connectedIds = [...(state.mediaServices || []), "music", "podcast", "radio"]; // your streamers + always-available audio
   if (jf.enabled && jf.url && jf.apiKey && jf.userId) connectedIds.push("jellyfin");
   const registry = prov.createMediaProviderRegistry([...prov.PROVIDER_CATALOG, tmdb, jellyfin, youtube, music, podcast, radio], { connectedIds });
-  mediaHub = { search, tmdb, searchProviders, registry, mstate, watchA, sources };
+  mediaHub = { search, tmdb, searchProviders, registry, mstate, watchA, sources, coord };
   return mediaHub;
 }
+
+// Play any canonical MediaItem through the RIGHT existing engine — maps a resolved
+// PlaybackTarget to an actual player. Backs the cross-app Media API's play verb.
+// Records unified history.
+function hubPlayItem(item, hub) {
+  if (!item) return { ok: false, reason: "no item" };
+  try { state.mediaHistory = hub.mstate.recordPlayback(state.mediaHistory || [], item); persist(); } catch { /* noop */ }
+  if (item.kind === "music") { discoverItemsByKey.set(`${item.kind}:${item.id}`, item); playDiscoverMusic(`${item.kind}:${item.id}`); return { ok: true, mode: "native" }; }
+  if (item.kind === "podcast") { discoverItemsByKey.set(`${item.kind}:${item.id}`, item); playDiscoverPodcast(`${item.kind}:${item.id}`); return { ok: true, mode: "native" }; }
+  if (item.kind === "radio") { discoverItemsByKey.set(`${item.kind}:${item.id}`, item); playDiscoverRadio(`${item.kind}:${item.id}`); return { ok: true, mode: "native" }; }
+  const target = hub.coord.chooseTarget(item, hub.registry);
+  if (!target) return { ok: false, reason: "no target" };
+  if (target.mode === "native" || target.mode === "embedded") {
+    const p = item.userState && item.userState.progress;
+    const startPos = p && p.kind === "position" && p.position ? p.position : 0;
+    openVideoSurface(target.uri, target.mode, item.title || "", startPos);
+    return { ok: true, mode: target.mode };
+  }
+  if (target.uri) { window.open(target.uri, "_blank", "noopener"); return { ok: true, mode: "handoff" }; }
+  return { ok: false, reason: "no uri" };
+}
+
+// Cross-app Media verbs (design §22) — a small, stable surface other modules and
+// the assistant can call: search / whereToWatch / continue / recentlyPlayed /
+// saved / play / open. Read verbs return plain canonical items; act verbs route
+// through the proven engines. Exposed on window.LiveMedia.
+async function mediaApi() {
+  const hub = await getMediaHub();
+  const universal = async (q, limit = 20) => (await hub.search.universalSearch(q, { providers: hub.searchProviders, limit })).items;
+  return {
+    search: (q, limit) => universal(q, limit),
+    whereToWatch: async (q, limit = 5) => {
+      const items = await universal(q, limit);
+      const enriched = await hub.search.enrichWithAvailability(items, hub.tmdb);
+      return enriched.map((it) => hub.search.discoverView(it, hub.registry));
+    },
+    continueList: (opts = {}) => discoverContinueItems(hub, opts.limit || 12),
+    recentlyPlayed: (opts = {}) => hub.mstate.historyItems(state.mediaHistory || [], { limit: opts.limit || 12, kind: opts.kind }),
+    saved: (opts = {}) => hub.mstate.savedList(state.mediaSaved || [], opts).map(savedRecordToItem),
+    play: (item) => hubPlayItem(item, hub),
+    open: (q) => goToDiscoverSearch(q),
+  };
+}
+if (typeof window !== "undefined") window.LiveMedia = { api: mediaApi };
 
 // Drop the cached hub so a services/config change is picked up on the next search.
 function resetMediaHub() { mediaHub = null; }
