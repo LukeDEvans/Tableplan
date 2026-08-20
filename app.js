@@ -8,6 +8,7 @@ import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
 import { createWeatherCache } from './weather-cache.js';
 import { createPlaybackEngine } from './playback-engine.js';
+import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones } from './state-sync.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 
 const STORAGE_KEY = "tableplan-state-v1";
@@ -5288,14 +5289,7 @@ function trashedRecipes() {
   return state.trashedRecipes;
 }
 
-function mergeTombstones(a, b) {
-  const result = {};
-  const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
-  for (const key of keys) {
-    result[key] = [...new Set([...(a?.[key] || []), ...(b?.[key] || [])])];
-  }
-  return result;
-}
+// mergeTombstones is imported from ./state-sync.js (extracted, unit-tested).
 
 // ── Finance deep merges ──────────────────────────────────────────────────────
 // The localStorage mirror deliberately omits finance (the household ledger is
@@ -5395,23 +5389,17 @@ function mergeStates(newer, older) {
   // Merge tombstones first so unionById can filter against the combined set
   merged.tombstones = mergeTombstones(newer.tombstones, older.tombstones);
 
+  // Core merge primitives live in ./state-sync.js (extracted + unit-tested). The
+  // unionById wrapper resolves this merge's per-key tombstone set (from the
+  // combined tombstones above) and delegates; string/key unions alias directly.
   function unionById(a, b, tombstoneKey = null) {
     const tombstoned = tombstoneKey && merged.tombstones?.[tombstoneKey]?.length
       ? new Set(merged.tombstones[tombstoneKey])
       : null;
-    const map = new Map((b || []).filter((x) => x?.id != null).map((x) => [x.id, x]));
-    (a || []).filter((x) => x?.id != null).forEach((x) => map.set(x.id, x));
-    const arr = [...map.values()];
-    return tombstoned ? arr.filter(x => !tombstoned.has(String(x.id))) : arr;
+    return syncUnionById(a, b, tombstoned);
   }
-
-  function unionStrings(a, b) {
-    return [...new Set([...(a || []), ...(b || [])].map(String).filter(Boolean))];
-  }
-
-  function unionByKey(a, b) {
-    return { ...(b || {}), ...(a || {}) };
-  }
+  const unionStrings = syncUnionStrings;
+  const unionByKey = syncUnionByKey;
 
   // ── ID-keyed arrays: union so neither device loses additions ──────────────
   for (const key of [
