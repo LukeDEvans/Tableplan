@@ -9337,10 +9337,16 @@ body.touch-drag-active * {
 .discover-service-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 2px; border-bottom: 1px solid var(--line, #e4e0d8); font-size: 0.9rem; }
 .video-surface-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.86); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px; }
 .video-surface { width: min(960px, 100%); display: flex; flex-direction: column; gap: 8px; }
-.video-surface-bar { display: flex; align-items: center; justify-content: space-between; color: #fff; }
+.video-surface-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #fff; }
 .video-surface-title { font-weight: 600; font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.video-surface-close { color: #fff; }
+.video-surface-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.video-surface-close, .video-surface-min, .video-surface-max { color: #fff; }
 .video-surface-video, .video-surface-frame { width: 100%; aspect-ratio: 16 / 9; background: #000; border: 0; border-radius: 10px; }
+/* Minimized: a persistent corner player; no backdrop, page stays interactive. */
+.video-surface-overlay.is-mini { inset: auto; right: 16px; bottom: 16px; background: transparent; padding: 0; display: block; pointer-events: none; }
+.video-surface-overlay.is-mini .video-surface { width: min(340px, 80vw); pointer-events: auto; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45); border-radius: 12px; background: #000; padding: 6px; }
+.video-surface-overlay.is-mini .video-surface-title { font-size: 0.8rem; }
+@media (max-width: 420px) { .video-surface-overlay.is-mini .video-surface { width: min(240px, 70vw); } }
 .discover-hint { color: var(--muted); font-size: 0.85rem; padding: 10px 2px; }
 .discover-hint--warn { color: var(--accent-dark, #a6772e); }
 .discover-results { display: flex; flex-direction: column; gap: 10px; }

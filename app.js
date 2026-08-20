@@ -38878,9 +38878,15 @@ function openVideoSurface(uri, mode, title, startPos = 0) {
   overlay.innerHTML =
     `<div class="video-surface">` +
       `<div class="video-surface-bar"><span class="video-surface-title">${escapeHtml(title || "Now playing")}</span>` +
-      `<button class="icon-btn video-surface-close" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>` +
+      `<span class="video-surface-actions">` +
+        `<button class="icon-btn video-surface-min" type="button" aria-label="Minimize" title="Minimize"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="19" x2="19" y2="19"/></svg></button>` +
+        `<button class="icon-btn video-surface-max" type="button" aria-label="Expand" title="Expand" hidden><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 14v6h6M20 10V4h-6"/></svg></button>` +
+        `<button class="icon-btn video-surface-close" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>` +
+      `</span></div>` +
       inner +
     `</div>`;
+  // The overlay lives on <body>, so app navigation never touches it — minimizing
+  // keeps the SAME video/iframe element playing across tab switches (design §11).
   document.body.appendChild(overlay);
   // Native <video>: resume past a >10s saved position once metadata is ready
   // (mirrors the podcast resume rule). Embedded frames handle their own resume.
@@ -38888,10 +38894,18 @@ function openVideoSurface(uri, mode, title, startPos = 0) {
     const vid = overlay.querySelector("video");
     if (vid) vid.addEventListener("loadedmetadata", () => { try { vid.currentTime = startPos; } catch { /* noop */ } }, { once: true });
   }
-  const close = () => { try { overlay.querySelector("video")?.pause(); } catch { /* noop */ } overlay.remove(); };
+  const close = () => { try { overlay.querySelector("video")?.pause(); } catch { /* noop */ } overlay.remove(); document.removeEventListener("keydown", esc); };
+  const setMini = (mini) => {
+    overlay.classList.toggle("is-mini", mini);
+    overlay.querySelector(".video-surface-min").hidden = mini;
+    overlay.querySelector(".video-surface-max").hidden = !mini;
+  };
+  function esc(e) { if (e.key === "Escape") { if (overlay.classList.contains("is-mini")) close(); else setMini(true); } }
   overlay.querySelector(".video-surface-close").addEventListener("click", close);
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
-  document.addEventListener("keydown", function esc(e) { if (e.key === "Escape") { close(); document.removeEventListener("keydown", esc); } });
+  overlay.querySelector(".video-surface-min").addEventListener("click", () => setMini(true));
+  overlay.querySelector(".video-surface-max").addEventListener("click", () => setMini(false));
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) setMini(true); }); // backdrop → minimize, keep playing
+  document.addEventListener("keydown", esc);
 }
 
 // Horizontal publication tab bar for the Saved Articles view (styled like the
