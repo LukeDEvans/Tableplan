@@ -227,7 +227,7 @@ const STATE_SECTIONS = {
   recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies"],
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes"],
-  config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin"],
+  config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices"],
   contacts:  ["contacts", "contactGroups"],
 };
 
@@ -3383,6 +3383,8 @@ function normalizeState(parsed) {
     radioFollowedPrograms: Array.isArray(parsed?.radioFollowedPrograms) ? parsed.radioFollowedPrograms : [],
     radioUserStations: Array.isArray(parsed?.radioUserStations) ? parsed.radioUserStations : [],
     jellyfin: (parsed?.jellyfin && typeof parsed.jellyfin === "object") ? parsed.jellyfin : null,
+    // Streaming services the household subscribes to → "Your services" in Discover.
+    mediaServices: Array.isArray(parsed?.mediaServices) ? parsed.mediaServices.map(String) : [],
     inventoryBoxes: ensureDefaultInventoryRooms(normalizeInventoryBoxes(parsed?.inventoryBoxes)),
     inventoryItems: normalizeInventoryItems(parsed?.inventoryItems),
     inventoryRoomVisibility: normalizeInventoryRoomVisibility(parsed?.inventoryRoomVisibility),
@@ -38474,11 +38476,53 @@ async function getMediaHub() {
   const jellyfin = jellyP.createJellyfinMediaProvider({ url: jf.url, apiKey: jf.apiKey, userId: jf.userId }); // direct fetch (server CORS)
   const youtube = ytP.createYouTubeProvider({}); // inactive until a key/proxy is configured
   const searchProviders = [tmdb, jellyfin, youtube];
-  const connectedIds = [];
+  const connectedIds = [...(state.mediaServices || [])];       // the streamers you subscribe to
   if (jf.enabled && jf.url && jf.apiKey && jf.userId) connectedIds.push("jellyfin");
   const registry = prov.createMediaProviderRegistry([...prov.PROVIDER_CATALOG, tmdb, jellyfin, youtube], { connectedIds });
   mediaHub = { search, tmdb, searchProviders, registry };
   return mediaHub;
+}
+
+// Drop the cached hub so a services/config change is picked up on the next search.
+function resetMediaHub() { mediaHub = null; }
+
+// The commercial streamers the user can mark as subscribed (the catalog's
+// handoff-only providers). Kept in sync with media-provider.js PROVIDER_CATALOG.
+const DISCOVER_SERVICE_OPTIONS = [
+  ["netflix", "Netflix"], ["disney", "Disney+"], ["max", "Max"], ["hulu", "Hulu"],
+  ["prime", "Prime Video"], ["paramount", "Paramount+"], ["appletv", "Apple TV"],
+  ["peacock", "Peacock"], ["espn", "ESPN"], ["xfinity", "Xfinity Stream"],
+];
+
+function openDiscoverServicesDialog() {
+  const have = new Set(state.mediaServices || []);
+  const d = document.createElement("dialog");
+  d.className = "recipe-dialog auth-dialog";
+  d.innerHTML =
+    `<div class="recipe-form"><h3 style="margin:0 0 4px">Your services</h3>` +
+    `<p class="ingest-intro" style="margin:0 0 12px">Mark the streaming services you subscribe to. Titles on these show under <b>Your services</b> in Discover.</p>` +
+    `<div class="discover-services-list">` +
+      DISCOVER_SERVICE_OPTIONS.map(([id, label]) =>
+        `<label class="discover-service-row"><span>${escapeHtml(label)}</span>` +
+        `<input type="checkbox" class="live-toggle" data-svc="${escapeHtml(id)}"${have.has(id) ? " checked" : ""}></label>`).join("") +
+    `</div>` +
+    `<div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="primary-btn" id="discoverSvcDone" type="button">Done</button></div></div>`;
+  document.body.appendChild(d);
+  d.showModal();
+  d.addEventListener("close", () => d.remove());
+  d.querySelectorAll("[data-svc]").forEach((cb) => cb.addEventListener("change", () => {
+    const id = cb.dataset.svc;
+    const set = new Set(state.mediaServices || []);
+    if (cb.checked) set.add(id); else set.delete(id);
+    state.mediaServices = [...set];
+    persist();
+    resetMediaHub(); // rebuild the registry with the new connected set
+  }));
+  d.querySelector("#discoverSvcDone").addEventListener("click", () => {
+    d.remove();
+    const q = document.getElementById("discoverSearchInput")?.value.trim();
+    if (q) runDiscoverSearch(q); // re-render with the updated Your/Other split
+  });
 }
 
 function renderDiscoverPanel() {
@@ -38486,12 +38530,16 @@ function renderDiscoverPanel() {
   if (!panel) return;
   if (!panel.dataset.built) {
     panel.innerHTML =
-      `<div class="discover-head"><input type="search" class="discover-search-input" id="discoverSearchInput" placeholder="Search movies, shows, videos…" aria-label="Search all media" autocomplete="off" /></div>` +
+      `<div class="discover-head">` +
+        `<input type="search" class="discover-search-input" id="discoverSearchInput" placeholder="Search movies, shows, videos…" aria-label="Search all media" autocomplete="off" />` +
+        `<button class="icon-btn discover-services-btn" id="discoverServicesBtn" type="button" title="Your services" aria-label="Your services"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>` +
+      `</div>` +
       `<div class="discover-results" id="discoverResults"><p class="discover-hint">Search across your services and beyond — find something, then Play or Open it.</p></div>`;
     panel.dataset.built = "1";
     const input = panel.querySelector("#discoverSearchInput");
     let t = null;
     input.addEventListener("input", () => { clearTimeout(t); const q = input.value.trim(); t = setTimeout(() => runDiscoverSearch(q), 360); });
+    panel.querySelector("#discoverServicesBtn").addEventListener("click", openDiscoverServicesDialog);
   }
   document.getElementById("discoverSearchInput")?.focus();
 }
@@ -38521,10 +38569,15 @@ function renderDiscoverResults(items, providerStatuses, hub) {
   if (!items.length) { results.innerHTML = `<p class="discover-hint">No results.</p>`; return; }
   const views = items.map((it) => hub.search.discoverView(it, hub.registry));
   results.innerHTML = views.map(discoverCardHtml).join("");
-  // Play/Open → open the coordinator's chosen target (handoff/browser; in-app
-  // video playback is a later phase — for now Play launches the provider too).
+  // Play/Open. In-app targets (Jellyfin native stream / YouTube embed) open the
+  // in-app video surface; hand-offs (streamers, browser) open the provider.
   results.querySelectorAll("[data-open-uri]").forEach((btn) => {
-    btn.addEventListener("click", () => { const uri = btn.dataset.openUri; if (uri) window.open(uri, "_blank", "noopener"); });
+    btn.addEventListener("click", () => {
+      const uri = btn.dataset.openUri; if (!uri) return;
+      const mode = btn.dataset.mode;
+      if (mode === "native" || mode === "embedded") openVideoSurface(uri, mode, btn.dataset.title || "");
+      else window.open(uri, "_blank", "noopener");
+    });
   });
   const failed = (providerStatuses || []).filter((s) => !s.ok).map((s) => s.provider);
   if (failed.length) {
@@ -38535,22 +38588,49 @@ function renderDiscoverResults(items, providerStatuses, hub) {
   }
 }
 
-function discoverServiceBtn(entry) {
+function discoverServiceBtn(entry, title) {
   const cls = entry.action === "play" ? "discover-svc discover-svc--play" : "discover-svc discover-svc--open";
   const label = entry.action === "play" ? `▶ ${escapeHtml(entry.label)}` : escapeHtml(entry.label);
-  return `<button class="${cls}" type="button" data-open-uri="${escapeHtml(entry.uri || "")}" ${entry.uri ? "" : "disabled"}>${label}</button>`;
+  return `<button class="${cls}" type="button" data-open-uri="${escapeHtml(entry.uri || "")}" data-mode="${escapeHtml(entry.mode || "")}" data-title="${escapeHtml(title || "")}" ${entry.uri ? "" : "disabled"}>${label}</button>`;
 }
 
 function discoverCardHtml(v) {
   const art = v.artworkUrl
     ? `<img class="discover-art" src="${escapeHtml(v.artworkUrl)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
     : `<div class="discover-art discover-art--ph"></div>`;
-  const yours = v.yours.length ? `<div class="discover-svc-group"><span class="discover-svc-label">Your services</span>${v.yours.map(discoverServiceBtn).join("")}</div>` : "";
-  const others = v.others.length ? `<div class="discover-svc-group"><span class="discover-svc-label">Other services</span>${v.others.map(discoverServiceBtn).join("")}</div>` : "";
+  const yours = v.yours.length ? `<div class="discover-svc-group"><span class="discover-svc-label">Your services</span>${v.yours.map((e) => discoverServiceBtn(e, v.title)).join("")}</div>` : "";
+  const others = v.others.length ? `<div class="discover-svc-group"><span class="discover-svc-label">Other services</span>${v.others.map((e) => discoverServiceBtn(e, v.title)).join("")}</div>` : "";
   const none = !v.hasTargets ? `<div class="discover-svc-none">No known way to watch yet.</div>` : "";
   return `<div class="discover-card">${art}<div class="discover-meta">` +
     `<div class="discover-title">${escapeHtml(v.title)}${v.year ? ` <span class="discover-year">${escapeHtml(v.year)}</span>` : ""}</div>` +
     `<div class="discover-sub">${escapeHtml(v.subtitle || "")}</div>${yours}${others}${none}</div></div>`;
+}
+
+// In-app video surface — a modal that plays a Jellyfin native stream in a
+// <video> or a YouTube embed in an <iframe>. Pauses app audio so the two don't
+// overlap. DRM/provider-controlled players stay provider-controlled (design §10);
+// this only owns the surrounding surface (design §11). Persistent video Now-
+// Playing is a later phase; this is the focused in-app player.
+function openVideoSurface(uri, mode, title) {
+  document.getElementById("videoSurfaceOverlay")?.remove();
+  try { if (typeof mediaEngine !== "undefined" && mediaEngine) mediaEngine.pause(); } catch { /* no audio active */ }
+  const overlay = document.createElement("div");
+  overlay.id = "videoSurfaceOverlay";
+  overlay.className = "video-surface-overlay";
+  const inner = mode === "embedded"
+    ? `<iframe class="video-surface-frame" src="${escapeHtml(uri)}${uri.includes("?") ? "&" : "?"}autoplay=1" title="${escapeHtml(title || "Video")}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`
+    : `<video class="video-surface-video" src="${escapeHtml(uri)}" controls autoplay playsinline></video>`;
+  overlay.innerHTML =
+    `<div class="video-surface">` +
+      `<div class="video-surface-bar"><span class="video-surface-title">${escapeHtml(title || "Now playing")}</span>` +
+      `<button class="icon-btn video-surface-close" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>` +
+      inner +
+    `</div>`;
+  document.body.appendChild(overlay);
+  const close = () => { try { overlay.querySelector("video")?.pause(); } catch { /* noop */ } overlay.remove(); };
+  overlay.querySelector(".video-surface-close").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  document.addEventListener("keydown", function esc(e) { if (e.key === "Escape") { close(); document.removeEventListener("keydown", esc); } });
 }
 
 // Horizontal publication tab bar for the Saved Articles view (styled like the

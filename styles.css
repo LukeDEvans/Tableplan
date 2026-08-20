@@ -9311,9 +9311,11 @@ body.touch-drag-active * {
 }
 
 /* ── Discover (universal media search) ── */
-.discover-head { padding: 4px 2px 12px; }
+.discover-head { display: flex; gap: 8px; align-items: center; padding: 4px 2px 12px; }
+.discover-services-btn { flex: 0 0 auto; }
 .discover-search-input {
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   font: inherit;
   font-size: 0.95rem;
   padding: 10px 14px;
@@ -9322,6 +9324,14 @@ body.touch-drag-active * {
   background: var(--surface, #fff);
   color: var(--ink);
 }
+.discover-services-list { display: flex; flex-direction: column; }
+.discover-service-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 2px; border-bottom: 1px solid var(--line, #e4e0d8); font-size: 0.9rem; }
+.video-surface-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.86); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.video-surface { width: min(960px, 100%); display: flex; flex-direction: column; gap: 8px; }
+.video-surface-bar { display: flex; align-items: center; justify-content: space-between; color: #fff; }
+.video-surface-title { font-weight: 600; font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.video-surface-close { color: #fff; }
+.video-surface-video, .video-surface-frame { width: 100%; aspect-ratio: 16 / 9; background: #000; border: 0; border-radius: 10px; }
 .discover-hint { color: var(--muted); font-size: 0.85rem; padding: 10px 2px; }
 .discover-hint--warn { color: var(--accent-dark, #a6772e); }
 .discover-results { display: flex; flex-direction: column; gap: 10px; }
