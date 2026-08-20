@@ -38457,12 +38457,23 @@ function switchMediaTab(tab) {
 // spine is untouched. Modules are code-split (loaded on first Discover use).
 let mediaHub = null;
 let discoverSearchToken = 0;
+let discoverItemsByKey = new Map(); // mediaKey → MediaItem, for the Play bridge
+
+// Play a music result through the EXISTING audio engine (openMusicItem: a track
+// plays directly, an album opens in Music). We never re-implement music playback.
+async function playDiscoverMusic(key) {
+  const item = discoverItemsByKey.get(key);
+  if (!item || !item.source) return;
+  showMediaApp();
+  switchMediaTab("music");
+  try { await openMusicItem(item.source); } catch (e) { console.warn("Discover music play failed:", e); }
+}
 
 async function getMediaHub() {
   if (mediaHub) return mediaHub;
-  const [prov, search, tmdbP, jellyP, ytP] = await Promise.all([
+  const [prov, search, tmdbP, jellyP, ytP, musicP] = await Promise.all([
     import("./media-provider.js"), import("./media-search.js"), import("./media-provider-tmdb.js"),
-    import("./media-provider-jellyfin.js"), import("./media-provider-youtube.js"),
+    import("./media-provider-jellyfin.js"), import("./media-provider-youtube.js"), import("./media-provider-music.js"),
   ]);
   const authFetchJson = async (url, { signal } = {}) => {
     const r = await fetch(url, { signal, headers: { Authorization: `Bearer ${authSession?.access_token || ""}`, Accept: "application/json" } });
@@ -38475,10 +38486,14 @@ async function getMediaHub() {
   const jf = state.jellyfin || {};
   const jellyfin = jellyP.createJellyfinMediaProvider({ url: jf.url, apiKey: jf.apiKey, userId: jf.userId }); // direct fetch (server CORS)
   const youtube = ytP.createYouTubeProvider({}); // inactive until a key/proxy is configured
-  const searchProviders = [tmdb, jellyfin, youtube];
-  const connectedIds = [...(state.mediaServices || [])];       // the streamers you subscribe to
+  // Music: reuse the existing music registry's aggregated search (IA/Jamendo) so
+  // Discover is universal (audio + video). Play hands back to the audio engine.
+  const musicReg = await getMusicProviders();
+  const music = musicP.createMusicMediaProvider({ search: async (q, opts) => ((await musicReg.search(q, opts)).items || []) });
+  const searchProviders = [tmdb, jellyfin, youtube, music];
+  const connectedIds = [...(state.mediaServices || []), "music"]; // your streamers + always-available music
   if (jf.enabled && jf.url && jf.apiKey && jf.userId) connectedIds.push("jellyfin");
-  const registry = prov.createMediaProviderRegistry([...prov.PROVIDER_CATALOG, tmdb, jellyfin, youtube], { connectedIds });
+  const registry = prov.createMediaProviderRegistry([...prov.PROVIDER_CATALOG, tmdb, jellyfin, youtube, music], { connectedIds });
   mediaHub = { search, tmdb, searchProviders, registry };
   return mediaHub;
 }
@@ -38567,12 +38582,14 @@ function renderDiscoverResults(items, providerStatuses, hub) {
   const results = document.getElementById("discoverResults");
   if (!results) return;
   if (!items.length) { results.innerHTML = `<p class="discover-hint">No results.</p>`; return; }
+  discoverItemsByKey = new Map(items.map((it) => [`${it.kind}:${it.id}`, it])); // for the Play bridge
   const views = items.map((it) => hub.search.discoverView(it, hub.registry));
   results.innerHTML = views.map(discoverCardHtml).join("");
-  // Play/Open. In-app targets (Jellyfin native stream / YouTube embed) open the
-  // in-app video surface; hand-offs (streamers, browser) open the provider.
-  results.querySelectorAll("[data-open-uri]").forEach((btn) => {
+  // Play/Open. Music → the audio engine; Jellyfin native / YouTube embed → the
+  // in-app video surface; hand-offs (streamers, browser) → open the provider.
+  results.querySelectorAll(".discover-svc").forEach((btn) => {
     btn.addEventListener("click", () => {
+      if (btn.dataset.provider === "music") { playDiscoverMusic(btn.dataset.key); return; }
       const uri = btn.dataset.openUri; if (!uri) return;
       const mode = btn.dataset.mode;
       if (mode === "native" || mode === "embedded") openVideoSurface(uri, mode, btn.dataset.title || "");
@@ -38588,18 +38605,18 @@ function renderDiscoverResults(items, providerStatuses, hub) {
   }
 }
 
-function discoverServiceBtn(entry, title) {
+function discoverServiceBtn(entry, title, key) {
   const cls = entry.action === "play" ? "discover-svc discover-svc--play" : "discover-svc discover-svc--open";
   const label = entry.action === "play" ? `▶ ${escapeHtml(entry.label)}` : escapeHtml(entry.label);
-  return `<button class="${cls}" type="button" data-open-uri="${escapeHtml(entry.uri || "")}" data-mode="${escapeHtml(entry.mode || "")}" data-title="${escapeHtml(title || "")}" ${entry.uri ? "" : "disabled"}>${label}</button>`;
+  return `<button class="${cls}" type="button" data-open-uri="${escapeHtml(entry.uri || "")}" data-mode="${escapeHtml(entry.mode || "")}" data-provider="${escapeHtml(entry.providerId || "")}" data-key="${escapeHtml(key || "")}" data-title="${escapeHtml(title || "")}" ${entry.action === "none" ? "disabled" : ""}>${label}</button>`;
 }
 
 function discoverCardHtml(v) {
   const art = v.artworkUrl
     ? `<img class="discover-art" src="${escapeHtml(v.artworkUrl)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
     : `<div class="discover-art discover-art--ph"></div>`;
-  const yours = v.yours.length ? `<div class="discover-svc-group"><span class="discover-svc-label">Your services</span>${v.yours.map((e) => discoverServiceBtn(e, v.title)).join("")}</div>` : "";
-  const others = v.others.length ? `<div class="discover-svc-group"><span class="discover-svc-label">Other services</span>${v.others.map((e) => discoverServiceBtn(e, v.title)).join("")}</div>` : "";
+  const yours = v.yours.length ? `<div class="discover-svc-group"><span class="discover-svc-label">Your services</span>${v.yours.map((e) => discoverServiceBtn(e, v.title, v.key)).join("")}</div>` : "";
+  const others = v.others.length ? `<div class="discover-svc-group"><span class="discover-svc-label">Other services</span>${v.others.map((e) => discoverServiceBtn(e, v.title, v.key)).join("")}</div>` : "";
   const none = !v.hasTargets ? `<div class="discover-svc-none">No known way to watch yet.</div>` : "";
   return `<div class="discover-card">${art}<div class="discover-meta">` +
     `<div class="discover-title">${escapeHtml(v.title)}${v.year ? ` <span class="discover-year">${escapeHtml(v.year)}</span>` : ""}</div>` +
