@@ -13119,6 +13119,15 @@ body.touch-drag-active * {
   color: var(--accent-dark);
   background: var(--accent-soft);
 }
+.cadence-session-tempo {
+  flex: 0 0 auto;
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--muted);
+  border: 1px solid var(--line, #e4e0d8);
+}
 .cadence-session-note { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .cadence-session-row .piano-song-delete-btn { flex: 0 0 auto; opacity: 0.55; }
 .cadence-session-row:hover .piano-song-delete-btn { opacity: 1; }

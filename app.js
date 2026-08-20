@@ -33129,6 +33129,7 @@ function freshCadenceView() {
     follow: false,        // auto-follow on?
     followEngine: null,
     followInput: null,
+    followSamples: [],    // {position, tMs} captured while practicing → tempo/alignment
     accuracy: null,       // accuracy analyzer while practicing with follow
     practiceStart: null,  // ms timestamp while a practice session runs
     practiceTimer: null,  // 1s tick interval for the elapsed label
@@ -33150,11 +33151,12 @@ async function getCadence() {
     import("./music/input-midi.js"),
     import("./music/input-mic.js"),
   ]);
-  const [accuracy, cloud, events, xmlexport] = await Promise.all([
+  const [accuracy, cloud, events, xmlexport, align] = await Promise.all([
     import("./music/accuracy.js"),
     import("./music/cloud-blob.js"),
     import("./music/events.js"),
     import("./music/musicxml-export.js"),
+    import("./music/alignment.js"),
   ]);
   cadenceStorage = cadenceStorage || storage.createIdbStorage("cadence");
   cadenceMod = {
@@ -33170,6 +33172,7 @@ async function getCadence() {
     uploadBlob: cloud.uploadBlob, downloadBlob: cloud.downloadBlob, cloudLocation: cloud.cloudLocation,
     makeEvent: events.makeEvent, appendEvent: events.appendEvent, EVENT: events.EVENT,
     serializeToMusicXml: xmlexport.serializeToMusicXml,
+    buildAlignment: align.buildAlignment, averageTempo: align.averageTempo, tempoCurve: align.tempoCurve,
   };
   return cadenceMod;
 }
@@ -33436,6 +33439,7 @@ function cadencePracticeSectionHtml() {
         <span class="cadence-session-day">${escapeHtml(cadenceRelDay(s.startedAt))}</span>
         <span class="cadence-session-dur">${escapeHtml(cadenceFmtDur(s.durationMs || 0))}</span>
         ${(() => { const a = (s.metrics || []).find((m) => m.type === "accuracy"); return a ? `<span class="cadence-session-acc" title="Score-following accuracy">${Math.round(a.value * 100)}%</span>` : ""; })()}
+        ${(() => { const tm = (s.metrics || []).find((m) => m.type === "tempo"); return tm ? `<span class="cadence-session-tempo" title="Average tempo">${Math.round(tm.value)} BPM</span>` : ""; })()}
         <span class="cadence-session-note">${escapeHtml(s.notes || "")}</span>
         <button class="icon-btn piano-song-delete-btn" type="button" data-cadence-session-del="${escapeHtml(s.id)}" title="Delete session" aria-label="Delete session">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -33500,6 +33504,7 @@ function bindCadencePractice(container) {
 function toggleCadencePractice() {
   if (cadenceView.practiceStart == null) {
     cadenceView.practiceStart = Date.now();
+    cadenceView.followSamples = []; // fresh capture for this session's tempo/alignment
     cadenceView.practiceTimer = setInterval(() => {
       const el = document.getElementById("cadencePracticeElapsed");
       if (el) el.textContent = cadenceElapsedLabel();
@@ -33523,11 +33528,11 @@ async function stopAndSaveCadencePractice() {
   if (durationMs < 3000) return; // ignore an accidental start/stop
   try {
     const C = await getCadence();
+    const producedBy = "following-naive-v0", producerVersion = "0.1";
     // If follow ran during the session, turn its data into versioned metrics.
     let metrics = [], summary = null;
     if (tracker && tracker.count() > 0) {
       summary = tracker.summary();
-      const producedBy = "following-naive-v0", producerVersion = "0.1";
       metrics = [
         { type: "accuracy", value: summary.accuracy, unit: "ratio", producedBy, producerVersion },
         { type: "notesPlayed", value: summary.played, unit: "count", producedBy, producerVersion },
@@ -33536,6 +33541,19 @@ async function stopAndSaveCadencePractice() {
         { type: "troubleSpots", value: summary.troubleSpots, producedBy, producerVersion },
       ];
     }
+    // Tempo from the timeline alignment of what was played (music/alignment.js).
+    const samples = cadenceView.followSamples || [];
+    if (samples.length >= 2 && cadenceView.model) {
+      try {
+        const al = C.buildAlignment(samples, cadenceView.model, {
+          movementId: cadenceView.activeCtx?.movementId || null,
+          editionId: cadenceView.activeCtx?.editionId || null,
+        });
+        const bpm = C.averageTempo(al);
+        if (bpm != null) metrics.push({ type: "tempo", value: bpm, unit: "bpm", producedBy, producerVersion });
+      } catch (e) { console.warn("Cadence tempo metric failed:", e); }
+    }
+    cadenceView.followSamples = []; // consumed
     const savedSession = await C.saveSession(cadenceStorage, {
       workId: cadenceView.activeCtx?.workId || cadenceView.activeWorkId,
       movementId: cadenceView.activeCtx?.movementId || null,
@@ -33579,7 +33597,13 @@ async function toggleCadenceFollow() {
     const sink = (ev) => {
       const s = engine.push(ev);
       if (cadenceView.accuracy) cadenceView.accuracy.observe(s, ev); // accumulate accuracy when practicing
-      if (s.matched && s.position) applyFollowPosition(s.position);
+      if (s.matched && s.position) {
+        applyFollowPosition(s.position);
+        // Capture the matched position + wall-clock time while a session runs →
+        // timeline alignment + tempo (music/alignment.js). Deltas only, so the
+        // absolute clock is fine.
+        if (cadenceView.practiceStart != null) cadenceView.followSamples.push({ position: s.position, tMs: Date.now() });
+      }
     };
 
     // Prefer a connected MIDI keyboard; otherwise listen through the microphone.
