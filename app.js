@@ -42860,19 +42860,47 @@ function nowPlayingKind() { for (const k of NOW_PLAYING_ORDER) if (MEDIA_KINDS[k
 // The shared element while a podcast / radio / music item is active (all drive
 // the bar the same element-based way); null during TTS, which has its own readout.
 function nowPlayingEl() { const k = nowPlayingKind(); return k ? MEDIA_KINDS[k].el() : null; }
+// The engine is the ONE source of truth for the active kind's LOGICAL playback
+// state. Every kind (podcast/music/radio/tts) loads through getMediaEngine(), so
+// state().position/duration span all segments: a single-segment source reports
+// exactly the element's currentTime/duration (offsets()[0] === 0), while
+// multi-chunk TTS reports its position across the whole article — no bespoke
+// per-chunk tracking needed. Guarded on providerId so, during a load/transition
+// (a kind flagged active before its source is loaded), we cleanly fall back to
+// the element / TTS readout below.
+function nowPlayingEngineState() {
+  if (typeof mediaEngine === "undefined" || !mediaEngine) return null;
+  const s = mediaEngine.state();
+  const k = nowPlayingKind();
+  return (k && s && s.providerId === k) ? s : null;
+}
 function nowPlayingIsPlaying() {
+  const s = nowPlayingEngineState();
+  if (s) return !!s.playing;
   const el = nowPlayingEl();
   if (el) return !el.paused && !el.ended;
   return !!(listenSpeaking && listenAudio && !listenAudio.paused);
 }
-function nowPlayingElapsed() { const el = nowPlayingEl(); return el ? (el.currentTime || 0) : listenElapsed(); }
+function nowPlayingElapsed() {
+  const s = nowPlayingEngineState();
+  if (s) return s.position || 0;
+  const el = nowPlayingEl(); return el ? (el.currentTime || 0) : listenElapsed();
+}
 // Live radio has no finite duration → 0 (the bar shows no progress for it).
-function nowPlayingTotal() { const el = nowPlayingEl(); if (el) return Number.isFinite(el.duration) ? el.duration : 0; return listenTotalDuration || 0; }
+function nowPlayingTotal() {
+  const s = nowPlayingEngineState();
+  if (s) return Number.isFinite(s.duration) ? s.duration : 0;
+  const el = nowPlayingEl(); if (el) return Number.isFinite(el.duration) ? el.duration : 0; return listenTotalDuration || 0;
+}
 function nowPlayingIsLive() { const k = nowPlayingKind(); return !!(k && MEDIA_KINDS[k].live); }
 function nowPlayingToggle() { const k = nowPlayingKind(); MEDIA_KINDS[k]?.toggle?.(); }
 function nowPlayingSkip(sec) { const k = nowPlayingKind(); MEDIA_KINDS[k]?.skip?.(sec); } // radio's skip is a no-op (live)
 function nowPlayingSeekFraction(f) {
   if (nowPlayingIsLive()) return; // live: no seek
+  // Logical seek through the engine (crosses chunk boundaries for multi-segment
+  // TTS; identical to an element seek for single-segment podcast/music).
+  const s = nowPlayingEngineState();
+  if (s && s.duration) { mediaEngine.seekTo(f * s.duration); return; }
   const el = nowPlayingEl();
   if (el) { if (el.duration) el.currentTime = f * el.duration; }
   else if (listenTotalDuration) { listenSeekToTime(f * listenTotalDuration); }
