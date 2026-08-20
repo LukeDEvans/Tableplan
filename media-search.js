@@ -9,7 +9,7 @@
 //   query → eligible providers (capability-gated) → provider.search()
 //         → canonical MediaItems → dedupe/merge → aggregate result
 
-import { contentKey } from "./media-model.js";
+import { contentKey, mediaKey } from "./media-model.js";
 import { MEDIA_CAP, hasCapability } from "./media-provider.js";
 import { playAction } from "./playback-coordinator.js";
 
@@ -133,4 +133,20 @@ export function describeAvailability(item, registry) {
     (connected ? yours : others).push(entry);
   }
   return { yours, others };
+}
+
+/** A render-ready view model for one Discover result — pure, so the UI layer is
+ *  a thin map from this to DOM. Keeps all availability/action logic out of app.js. */
+export function discoverView(item, registry) {
+  const { yours, others } = describeAvailability(item, registry);
+  return {
+    key: mediaKey(item),
+    kind: item.kind,
+    title: item.title,
+    subtitle: item.subtitle || "",
+    year: item.year || "",
+    artworkUrl: item.artworkUrl || "",
+    yours, others,
+    hasTargets: (yours.length + others.length) > 0,
+  };
 }

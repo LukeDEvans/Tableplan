@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { universalSearch, dedupeItems, eligibleProviders, describeAvailability, enrichWithAvailability } from "../media-search.js";
+import { universalSearch, dedupeItems, eligibleProviders, describeAvailability, enrichWithAvailability, discoverView } from "../media-search.js";
 import { makeMediaItem, PLAYBACK_MODE } from "../media-model.js";
 import { createMediaProviderRegistry, MEDIA_CAP } from "../media-provider.js";
 import { createYouTubeProvider } from "../media-provider-youtube.js";
@@ -91,6 +91,25 @@ describe("describeAvailability — Your vs Other services, Play vs Open (via coo
   it("derives Play/Open from the Playback Coordinator (not re-implemented)", () => {
     expect(d.yours[0]).toMatchObject({ action: "play", mode: PLAYBACK_MODE.NATIVE });
     expect(d.others.find((e) => e.providerId === "netflix")).toMatchObject({ action: "handoff", mode: PLAYBACK_MODE.DEEPLINK });
+  });
+});
+
+describe("discoverView — render-ready view model", () => {
+  const reg = createMediaProviderRegistry(undefined, { connectedIds: ["jellyfin"] });
+  it("flattens an item + availability into a UI-agnostic shape", () => {
+    const item = makeMediaItem({ kind: "video", id: "tmdb_1", title: "Dune", year: "2021", providerRefs: [
+      { providerId: "tmdb", externalId: "1" },
+      { providerId: "jellyfin", uri: "http://jelly/1" },
+      { providerId: "netflix", deepLink: "https://netflix.com/1" },
+    ] });
+    const v = discoverView(item, reg);
+    expect(v).toMatchObject({ key: "video:tmdb_1", title: "Dune", year: "2021", hasTargets: true });
+    expect(v.yours.map((e) => e.providerId)).toEqual(["jellyfin"]);
+    expect(v.others.map((e) => e.providerId)).toEqual(["netflix"]);
+  });
+  it("hasTargets is false when only the tmdb anchor is present (not yet enriched)", () => {
+    const item = makeMediaItem({ kind: "video", id: "tmdb_2", title: "X", providerRefs: [{ providerId: "tmdb", externalId: "2" }] });
+    expect(discoverView(item, reg).hasTargets).toBe(false);
   });
 });
 

@@ -38363,7 +38363,7 @@ function wireMediaTabs() {
   document.getElementById("confirmPdfImportBtn")?.addEventListener("click", confirmPdfImport);
 }
 
-const MEDIA_SERVICE_TABS = ["books", "podcasts", "music", "radio", "watch"];
+const MEDIA_SERVICE_TABS = ["books", "podcasts", "music", "radio", "watch", "discover"];
 
 function switchMediaTab(tab) {
   activeMediaTab = tab;
@@ -38391,6 +38391,7 @@ function switchMediaTab(tab) {
   const musicPanel = document.getElementById("mediaMusicPanel");
   const radioPanel = document.getElementById("mediaRadioPanel");
   const watchPanel = document.getElementById("mediaWatchPanel");
+  const discoverPanel = document.getElementById("mediaDiscoverPanel");
 
   if (booksPanel) booksPanel.hidden = true;
   if (listPanel) listPanel.hidden = true;
@@ -38400,6 +38401,7 @@ function switchMediaTab(tab) {
   if (musicPanel) musicPanel.hidden = true;
   if (radioPanel) radioPanel.hidden = true;
   if (watchPanel) watchPanel.hidden = true;
+  if (discoverPanel) discoverPanel.hidden = true;
   const searchPanel = document.getElementById("mediaSearchPanel");
   if (searchPanel) searchPanel.hidden = true;
   // Leaving to a folder clears an active top-bar search.
@@ -38430,6 +38432,9 @@ function switchMediaTab(tab) {
   } else if (tab === "watch") {
     if (watchPanel) watchPanel.hidden = false;
     renderWatchPlanner(); // self-contained (renders category tabs + list + wiring into #watchPlannerGrid)
+  } else if (tab === "discover") {
+    if (discoverPanel) discoverPanel.hidden = false;
+    renderDiscoverPanel();
   } else {
     const isArticleTab = getReadPublications().some(p => p.key === tab);
     if (listPanel) listPanel.hidden = false;
@@ -38441,6 +38446,111 @@ function switchMediaTab(tab) {
     renderMediaPubTabs(); // top publication bar, active tab highlighted
     renderArticleList("articleList", tab);
   }
+}
+
+// ── Discover: universal media search across providers ─────────────────────────
+// Search once → results normalized into canonical MediaItems (media-search.js),
+// grouped by access (Your services / Other services) with capability-aware
+// Play/Open derived from the Playback Coordinator. Provider-agnostic; the audio
+// spine is untouched. Modules are code-split (loaded on first Discover use).
+let mediaHub = null;
+let discoverSearchToken = 0;
+
+async function getMediaHub() {
+  if (mediaHub) return mediaHub;
+  const [prov, search, tmdbP, jellyP, ytP] = await Promise.all([
+    import("./media-provider.js"), import("./media-search.js"), import("./media-provider-tmdb.js"),
+    import("./media-provider-jellyfin.js"), import("./media-provider-youtube.js"),
+  ]);
+  const authFetchJson = async (url, { signal } = {}) => {
+    const r = await fetch(url, { signal, headers: { Authorization: `Bearer ${authSession?.access_token || ""}`, Accept: "application/json" } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  };
+  const tmdb = tmdbP.createTmdbProvider(
+    { searchUrl: (q) => tmdbSearchUrl(q), providersUrl: (id, t) => tmdbWatchProvidersUrl(id, t) },
+    { fetchJson: authFetchJson });
+  const jf = state.jellyfin || {};
+  const jellyfin = jellyP.createJellyfinMediaProvider({ url: jf.url, apiKey: jf.apiKey, userId: jf.userId }); // direct fetch (server CORS)
+  const youtube = ytP.createYouTubeProvider({}); // inactive until a key/proxy is configured
+  const searchProviders = [tmdb, jellyfin, youtube];
+  const connectedIds = [];
+  if (jf.enabled && jf.url && jf.apiKey && jf.userId) connectedIds.push("jellyfin");
+  const registry = prov.createMediaProviderRegistry([...prov.PROVIDER_CATALOG, tmdb, jellyfin, youtube], { connectedIds });
+  mediaHub = { search, tmdb, searchProviders, registry };
+  return mediaHub;
+}
+
+function renderDiscoverPanel() {
+  const panel = document.getElementById("mediaDiscoverPanel");
+  if (!panel) return;
+  if (!panel.dataset.built) {
+    panel.innerHTML =
+      `<div class="discover-head"><input type="search" class="discover-search-input" id="discoverSearchInput" placeholder="Search movies, shows, videos…" aria-label="Search all media" autocomplete="off" /></div>` +
+      `<div class="discover-results" id="discoverResults"><p class="discover-hint">Search across your services and beyond — find something, then Play or Open it.</p></div>`;
+    panel.dataset.built = "1";
+    const input = panel.querySelector("#discoverSearchInput");
+    let t = null;
+    input.addEventListener("input", () => { clearTimeout(t); const q = input.value.trim(); t = setTimeout(() => runDiscoverSearch(q), 360); });
+  }
+  document.getElementById("discoverSearchInput")?.focus();
+}
+
+async function runDiscoverSearch(query) {
+  const results = document.getElementById("discoverResults");
+  if (!results) return;
+  const token = ++discoverSearchToken;
+  if (!query) { results.innerHTML = `<p class="discover-hint">Search across your services and beyond — find something, then Play or Open it.</p>`; return; }
+  results.innerHTML = `<p class="discover-hint">Searching…</p>`;
+  try {
+    const hub = await getMediaHub();
+    const { items, providerStatuses } = await hub.search.universalSearch(query, { providers: hub.searchProviders, limit: 20 });
+    if (token !== discoverSearchToken) return; // out-of-order guard
+    const enriched = await hub.search.enrichWithAvailability(items, hub.tmdb); // "where can I watch this"
+    if (token !== discoverSearchToken) return;
+    renderDiscoverResults(enriched, providerStatuses, hub);
+  } catch (e) {
+    if (token !== discoverSearchToken) return;
+    results.innerHTML = `<p class="discover-hint">Couldn't search right now. ${escapeHtml(e?.message || "")}</p>`;
+  }
+}
+
+function renderDiscoverResults(items, providerStatuses, hub) {
+  const results = document.getElementById("discoverResults");
+  if (!results) return;
+  if (!items.length) { results.innerHTML = `<p class="discover-hint">No results.</p>`; return; }
+  const views = items.map((it) => hub.search.discoverView(it, hub.registry));
+  results.innerHTML = views.map(discoverCardHtml).join("");
+  // Play/Open → open the coordinator's chosen target (handoff/browser; in-app
+  // video playback is a later phase — for now Play launches the provider too).
+  results.querySelectorAll("[data-open-uri]").forEach((btn) => {
+    btn.addEventListener("click", () => { const uri = btn.dataset.openUri; if (uri) window.open(uri, "_blank", "noopener"); });
+  });
+  const failed = (providerStatuses || []).filter((s) => !s.ok).map((s) => s.provider);
+  if (failed.length) {
+    const note = document.createElement("p");
+    note.className = "discover-hint discover-hint--warn";
+    note.textContent = `Some sources didn't respond: ${failed.join(", ")}.`;
+    results.appendChild(note);
+  }
+}
+
+function discoverServiceBtn(entry) {
+  const cls = entry.action === "play" ? "discover-svc discover-svc--play" : "discover-svc discover-svc--open";
+  const label = entry.action === "play" ? `▶ ${escapeHtml(entry.label)}` : escapeHtml(entry.label);
+  return `<button class="${cls}" type="button" data-open-uri="${escapeHtml(entry.uri || "")}" ${entry.uri ? "" : "disabled"}>${label}</button>`;
+}
+
+function discoverCardHtml(v) {
+  const art = v.artworkUrl
+    ? `<img class="discover-art" src="${escapeHtml(v.artworkUrl)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
+    : `<div class="discover-art discover-art--ph"></div>`;
+  const yours = v.yours.length ? `<div class="discover-svc-group"><span class="discover-svc-label">Your services</span>${v.yours.map(discoverServiceBtn).join("")}</div>` : "";
+  const others = v.others.length ? `<div class="discover-svc-group"><span class="discover-svc-label">Other services</span>${v.others.map(discoverServiceBtn).join("")}</div>` : "";
+  const none = !v.hasTargets ? `<div class="discover-svc-none">No known way to watch yet.</div>` : "";
+  return `<div class="discover-card">${art}<div class="discover-meta">` +
+    `<div class="discover-title">${escapeHtml(v.title)}${v.year ? ` <span class="discover-year">${escapeHtml(v.year)}</span>` : ""}</div>` +
+    `<div class="discover-sub">${escapeHtml(v.subtitle || "")}</div>${yours}${others}${none}</div></div>`;
 }
 
 // Horizontal publication tab bar for the Saved Articles view (styled like the
