@@ -31727,6 +31727,13 @@ function watchProviderOrShowtimesHtml(item) {
   }
   const providers = item.streamingProviders;
   if (!providers) return "";
+  // Watch⇄Media UI merge: once the media hub is loaded, render the SAME
+  // Coordinator-driven availability the Discover cards use — "Your services" vs
+  // "Other services" with provider-aware Open (and in-app Play where possible) —
+  // instead of the bespoke link list. Falls back to the links below until the hub
+  // is ready (loaded once, then the planner re-renders).
+  const hubHtml = watchHubProvidersHtml(item);
+  if (hubHtml) return hubHtml;
   const freeOptions = [...(providers?.flatrate || []), ...(providers?.free || []), ...(providers?.ads || [])];
   const rentOptions = providers?.rent || [];
   const justWatchUrl = providers?.link || null;
@@ -31983,6 +31990,9 @@ function watchEpisodesTemplate(item, seasonNum, episodes, watchedEps) {
 }
 
 function bindWatchControls(root = document) {
+  // Hub-powered Play/Open buttons on Watch cards (present once the media hub is
+  // loaded) — same activation as Discover, via the shared handler.
+  if (mediaHub) root.querySelectorAll(".discover-svc").forEach((btn) => btn.addEventListener("click", () => discoverSvcActivate(btn, mediaHub)));
   root.querySelectorAll("[data-watch-delete]").forEach((btn) => {
     btn.addEventListener("click", () => deleteWatchItem(btn.dataset.watchDelete));
   });
@@ -38735,6 +38745,34 @@ function discoverVideoToTmdbResult(item) {
     posterPath: null, year: item.year || null, overview: null, totalSeasons: null,
   };
 }
+// Watch card → the hub's Coordinator view (Your/Other services + Play/Open),
+// reusing the exact Discover button markup. Returns "" until the hub is loaded
+// (then triggers a one-time load + planner re-render), so the bespoke links show
+// meanwhile. Only used when streamingProviders are already present on the item.
+let watchHubLoading = false;
+function watchHubProvidersHtml(item) {
+  if (!mediaHub) { ensureHubForWatch(); return ""; }
+  let view;
+  try {
+    const canonical = mediaHub.watchA.watchItemToMediaItem(item);
+    if (!canonical) return "";
+    discoverItemsByKey.set(`${canonical.kind}:${canonical.id}`, canonical);
+    view = mediaHub.search.discoverView(canonical, mediaHub.registry);
+  } catch { return ""; }
+  if (!view || !view.hasTargets) return ""; // nothing resolved → keep the fallback
+  const group = (label, entries) => entries.length
+    ? `<div class="discover-svc-group"><span class="discover-svc-label">${label}</span>${entries.map((e) => discoverServiceBtn(e, view.title, view.key)).join("")}</div>`
+    : "";
+  return `<div class="watch-providers watch-providers--hub">${group("Your services", view.yours)}${group("Other services", view.others)}</div>`;
+}
+function ensureHubForWatch() {
+  if (mediaHub || watchHubLoading) return;
+  watchHubLoading = true;
+  getMediaHub()
+    .then(() => { watchHubLoading = false; if (activeAppArea === "media" && activeMediaTab === "watch") renderWatchPlanner(); })
+    .catch(() => { watchHubLoading = false; });
+}
+
 // Toggle a video's watchlist membership; returns whether it is now saved.
 function toggleWatchlistSave(item) {
   const existing = videoInWatchlist(item.meta.tmdbId);
@@ -38777,21 +38815,26 @@ function wireDiscoverButtons(container, hub) {
     btn.classList.toggle("is-saved", now);
     btn.setAttribute("aria-pressed", String(now));
   }));
-  container.querySelectorAll(".discover-svc").forEach((btn) => btn.addEventListener("click", () => {
-    const item = discoverItemsByKey.get(btn.dataset.key);
-    if (item) { try { state.mediaHistory = hub.mstate.recordPlayback(state.mediaHistory || [], item); persist(); } catch { /* noop */ } }
-    if (btn.dataset.provider === "music") { playDiscoverMusic(btn.dataset.key); return; }
-    if (btn.dataset.provider === "podcast") { playDiscoverPodcast(btn.dataset.key); return; }
-    if (btn.dataset.provider === "radio") { playDiscoverRadio(btn.dataset.key); return; }
-    const uri = btn.dataset.openUri; if (!uri) return;
-    const mode = btn.dataset.mode;
-    if (mode === "native" || mode === "embedded") {
-      const p = item && item.userState && item.userState.progress;
-      const startPos = p && p.kind === "position" && p.position ? p.position : 0; // Jellyfin resume tick
-      openVideoSurface(uri, mode, btn.dataset.title || "", startPos);
-    }
-    else window.open(uri, "_blank", "noopener");
-  }));
+  container.querySelectorAll(".discover-svc").forEach((btn) => btn.addEventListener("click", () => discoverSvcActivate(btn, hub)));
+}
+
+// Activate a Play/Open service button — the single handler shared by Discover
+// cards AND (via the Watch⇄Media UI merge) the Watch section's cards, so both
+// surfaces play/hand-off through the same Coordinator-resolved targets.
+function discoverSvcActivate(btn, hub) {
+  const item = discoverItemsByKey.get(btn.dataset.key);
+  if (item) { try { state.mediaHistory = hub.mstate.recordPlayback(state.mediaHistory || [], item); persist(); } catch { /* noop */ } }
+  if (btn.dataset.provider === "music") { playDiscoverMusic(btn.dataset.key); return; }
+  if (btn.dataset.provider === "podcast") { playDiscoverPodcast(btn.dataset.key); return; }
+  if (btn.dataset.provider === "radio") { playDiscoverRadio(btn.dataset.key); return; }
+  const uri = btn.dataset.openUri; if (!uri) return;
+  const mode = btn.dataset.mode;
+  if (mode === "native" || mode === "embedded") {
+    const p = item && item.userState && item.userState.progress;
+    const startPos = p && p.kind === "position" && p.position ? p.position : 0; // Jellyfin resume tick
+    openVideoSurface(uri, mode, btn.dataset.title || "", startPos);
+  }
+  else window.open(uri, "_blank", "noopener");
 }
 
 function renderDiscoverResults(items, providerStatuses, hub) {
