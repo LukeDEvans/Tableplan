@@ -38521,7 +38521,11 @@ async function getMediaHub() {
     { fetchJson: authFetchJson });
   const jf = state.jellyfin || {};
   const jellyfin = jellyP.createJellyfinMediaProvider({ url: jf.url, apiKey: jf.apiKey, userId: jf.userId }); // direct fetch (server CORS)
-  const youtube = ytP.createYouTubeProvider({}); // inactive until a key/proxy is configured
+  // YouTube via the session-verified proxy (key stays server-side). Returns empty
+  // until YOUTUBE_API_KEY is set at deploy — no user-facing error meanwhile.
+  const youtube = ytP.createYouTubeProvider(
+    { base: "/.netlify/functions/youtube-search", proxied: true },
+    { fetchJson: authFetchJson });
   // Music: reuse the existing music registry's aggregated search (IA/Jamendo) so
   // Discover is universal (audio + video). Play hands back to the audio engine.
   const musicReg = await getMusicProviders();
