@@ -46,6 +46,30 @@ describe("createJellyfinMediaProvider", () => {
   });
 });
 
+describe("Jellyfin continue-watching + library index (design §12 / Watch merge)", () => {
+  it("resume() hits /Items/Resume and maps in-progress items with position", async () => {
+    let hit = "";
+    const jf = createJellyfinMediaProvider(cfg, { fetchJson: async (u) => { hit = u; return { Items: [ITEMS.Items[0]] }; } });
+    const items = await jf.resume();
+    expect(hit).toContain("/Items/Resume");
+    expect(items[0].userState.progress).toMatchObject({ kind: "position", position: 600 });
+  });
+
+  it("libraryItems() surfaces ProviderIds so a tmdbId index can be built", async () => {
+    const withTmdb = { Items: [{ Id: "m1", Name: "Dune", Type: "Movie", ProviderIds: { Tmdb: "438631" } }] };
+    const jf = createJellyfinMediaProvider(cfg, { fetchJson: async () => withTmdb });
+    const items = await jf.libraryItems();
+    expect(items[0].meta.tmdbId).toBe("438631");
+    expect(items[0].providerRefs[0].uri).toContain("/Videos/m1/stream"); // native copy ready for in-app Play
+  });
+
+  it("unconfigured → resume/library are empty (no calls)", async () => {
+    const jf = createJellyfinMediaProvider({}, {});
+    expect(await jf.resume()).toEqual([]);
+    expect(await jf.libraryItems()).toEqual([]);
+  });
+});
+
 describe("Jellyfin result → Playback Coordinator", () => {
   const jf = createJellyfinMediaProvider(cfg, { fetchJson: async () => ITEMS });
 

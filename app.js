@@ -5439,6 +5439,10 @@ function mergeStates(newer, older) {
     "savedArticles",
     // Unified Saved media (Watch-Later/Listen-Later/Favourites; id === mediaKey)
     "mediaSaved",
+    // Unified recently-played history (entries carry a stable id; union so a play
+    // on one device is never lost when the other device syncs. recentHistory
+    // re-sorts by `at` on read; pushHistory re-caps on the next play).
+    "mediaHistory",
     // Podcasts: subscribed shows, playlists, saved tabs
     "podcasts", "podcastPlaylists", "podcastSavedCategories",
     // Travel
@@ -38554,7 +38558,29 @@ async function getMediaHub() {
   const connectedIds = [...(state.mediaServices || []), "music", "podcast", "radio"]; // your streamers + always-available audio
   if (jf.enabled && jf.url && jf.apiKey && jf.userId) connectedIds.push("jellyfin");
   const registry = prov.createMediaProviderRegistry([...prov.PROVIDER_CATALOG, tmdb, jellyfin, youtube, music, podcast, radio], { connectedIds });
-  mediaHub = { search, tmdb, searchProviders, registry, mstate, watchA, sources, coord };
+  // A tmdbId → native Jellyfin copy index, built once from the library, so ANY
+  // title the user owns resolves to an in-app Play across the hub (Watch cards
+  // especially). Lazy + cached; empty if Jellyfin isn't configured/reachable.
+  let jfIndex = null;
+  mediaHub = {
+    search, tmdb, searchProviders, registry, mstate, watchA, sources, coord, jellyfin,
+    jellyfinResume: () => (jellyfin.configured ? jellyfin.resume().catch(() => []) : Promise.resolve([])),
+    async ensureJellyfinIndex() {
+      if (jfIndex) return jfIndex;
+      const map = new Map();
+      try {
+        if (jellyfin.configured) {
+          for (const it of await jellyfin.libraryItems()) {
+            const t = it.meta && it.meta.tmdbId;
+            if (t) map.set(String(t), it);
+          }
+        }
+      } catch { /* leave empty */ }
+      jfIndex = map;
+      return jfIndex;
+    },
+    jellyfinItemForTmdb: (tmdbId) => (jfIndex ? jfIndex.get(String(tmdbId)) || null : null),
+  };
   return mediaHub;
 }
 
@@ -38603,7 +38629,7 @@ async function mediaApi() {
 if (typeof window !== "undefined") window.LiveMedia = { api: mediaApi };
 
 // Drop the cached hub so a services/config change is picked up on the next search.
-function resetMediaHub() { mediaHub = null; }
+function resetMediaHub() { mediaHub = null; watchHubReady = false; watchHubLoading = false; }
 
 // The commercial streamers the user can mark as subscribed (the catalog's
 // handoff-only providers). Kept in sync with media-provider.js PROVIDER_CATALOG.
@@ -38750,12 +38776,21 @@ function discoverVideoToTmdbResult(item) {
 // (then triggers a one-time load + planner re-render), so the bespoke links show
 // meanwhile. Only used when streamingProviders are already present on the item.
 let watchHubLoading = false;
+let watchHubReady = false; // hub loaded AND the Jellyfin owned-title index built
 function watchHubProvidersHtml(item) {
-  if (!mediaHub) { ensureHubForWatch(); return ""; }
+  if (!watchHubReady || !mediaHub) { ensureHubForWatch(); return ""; }
   let view;
   try {
     const canonical = mediaHub.watchA.watchItemToMediaItem(item);
     if (!canonical) return "";
+    // #5: if the user OWNS this title on Jellyfin, prepend its native copy so the
+    // Coordinator offers an in-app ▶ Play (with the Jellyfin resume position),
+    // not just streamer Open buttons.
+    const owned = canonical.meta && canonical.meta.tmdbId ? mediaHub.jellyfinItemForTmdb(canonical.meta.tmdbId) : null;
+    if (owned) {
+      canonical.providerRefs = [...owned.providerRefs, ...canonical.providerRefs];
+      if (owned.userState && owned.userState.progress) canonical.userState = { ...canonical.userState, progress: owned.userState.progress };
+    }
     discoverItemsByKey.set(`${canonical.kind}:${canonical.id}`, canonical);
     view = mediaHub.search.discoverView(canonical, mediaHub.registry);
   } catch { return ""; }
@@ -38766,10 +38801,10 @@ function watchHubProvidersHtml(item) {
   return `<div class="watch-providers watch-providers--hub">${group("Your services", view.yours)}${group("Other services", view.others)}</div>`;
 }
 function ensureHubForWatch() {
-  if (mediaHub || watchHubLoading) return;
+  if (watchHubReady || watchHubLoading) return;
   watchHubLoading = true;
   getMediaHub()
-    .then(() => { watchHubLoading = false; if (activeAppArea === "media" && activeMediaTab === "watch") renderWatchPlanner(); })
+    .then(async (hub) => { try { await hub.ensureJellyfinIndex(); } catch { /* index optional */ } watchHubLoading = false; watchHubReady = true; if (activeAppArea === "media" && activeMediaTab === "watch") renderWatchPlanner(); })
     .catch(() => { watchHubLoading = false; });
 }
 
@@ -38865,7 +38900,8 @@ async function renderDiscoverHome() {
   try { hub = await getMediaHub(); } catch { results.innerHTML = discoverHomeEmptyHtml(); return; }
   if (token !== discoverSearchToken) return;
   discoverItemsByKey = new Map();
-  const continueItems = discoverContinueItems(hub, 12);
+  const continueItems = await discoverContinueItems(hub, 12);
+  if (token !== discoverSearchToken) return;
   const savedItems = discoverSavedItems(hub, 12);
   const recentItems = hub.mstate.historyItems(state.mediaHistory || [], { limit: 12 });
   const sections = [
@@ -38904,20 +38940,27 @@ async function renderDiscoverList(mode) {
   wireDiscoverButtons(results, hub);
 }
 
-// Dedupe canonical items by kind:id, keeping the first (highest-priority) seen.
+// Dedupe canonical items keeping the first (highest-priority) seen. Video is
+// deduped by TMDB id so a Jellyfin "continue watching" copy and the same title's
+// Watch entry collapse to one (Jellyfin first → its real resume position wins).
 function dedupeDiscoverItems(items) {
   const seen = new Set(), out = [];
   for (const it of items) {
-    const k = `${it.kind}:${it.id}`;
+    const k = (it.kind === "video" && it.meta && it.meta.tmdbId) ? `video:tmdb:${it.meta.tmdbId}` : `${it.kind}:${it.id}`;
     if (seen.has(k)) continue;
     seen.add(k); out.push(it);
   }
   return out;
 }
 
-// Unified Continue: in-progress across every kind (Watch series + podcasts today).
-function discoverContinueItems(hub, limit) {
+// Unified Continue: in-progress across every kind — Jellyfin continue-watching
+// (real resume ticks) + Watch series + in-progress podcasts. Async because
+// Jellyfin resume is a network call; degrades to the local sources on failure.
+async function discoverContinueItems(hub, limit) {
+  let jf = [];
+  try { jf = await hub.jellyfinResume(); } catch { jf = []; }
   const items = [
+    ...jf, // first → a Jellyfin resume beats the Watch episodic entry for the same title
     ...hub.watchA.watchItemsToMediaItems(state.watchItems || []),
     ...hub.sources.podcastsToContinueItems(state.podcasts || [], state.podcastProgress || {}),
   ];

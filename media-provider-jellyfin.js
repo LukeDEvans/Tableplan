@@ -81,7 +81,32 @@ export function createJellyfinMediaProvider(config = {}, deps = {}) {
       if (!q || !configured) return [];
       const params = new URLSearchParams({
         searchTerm: q, Recursive: "true", IncludeItemTypes: "Movie,Series",
-        Fields: "ProductionYear,Overview,SeriesName", Limit: String(limit), api_key: apiKey,
+        Fields: "ProductionYear,Overview,SeriesName,ProviderIds", Limit: String(limit), api_key: apiKey,
+      });
+      const data = await fetchJson(`${url}/Users/${encodeURIComponent(userId)}/Items?${params.toString()}`, { signal });
+      return (Array.isArray(data && data.Items) ? data.Items : []).map(mapItem).filter(Boolean);
+    },
+
+    // In-progress items (Jellyfin's own "Continue Watching") → canonical items
+    // carrying position progress. Feeds the unified Continue rail (design §12).
+    async resume({ limit = 20, signal } = {}) {
+      if (!configured) return [];
+      const params = new URLSearchParams({
+        Limit: String(limit), Recursive: "true", MediaTypes: "Video",
+        Fields: "ProductionYear,SeriesName,ProviderIds", api_key: apiKey,
+      });
+      const data = await fetchJson(`${url}/Users/${encodeURIComponent(userId)}/Items/Resume?${params.toString()}`, { signal });
+      return (Array.isArray(data && data.Items) ? data.Items : []).map(mapItem).filter(Boolean);
+    },
+
+    // The whole Movie/Series library as canonical items (ProviderIds included) —
+    // used to build a tmdbId→native-copy index so any title the user OWNS gets an
+    // in-app Play across the hub (Watch cards especially). One cached fetch.
+    async libraryItems({ signal } = {}) {
+      if (!configured) return [];
+      const params = new URLSearchParams({
+        Recursive: "true", IncludeItemTypes: "Movie,Series",
+        Fields: "ProductionYear,SeriesName,ProviderIds", api_key: apiKey,
       });
       const data = await fetchJson(`${url}/Users/${encodeURIComponent(userId)}/Items?${params.toString()}`, { signal });
       return (Array.isArray(data && data.Items) ? data.Items : []).map(mapItem).filter(Boolean);
