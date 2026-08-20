@@ -9336,13 +9336,22 @@ body.touch-drag-active * {
 .discover-hint--warn { color: var(--accent-dark, #a6772e); }
 .discover-results { display: flex; flex-direction: column; gap: 10px; }
 .discover-card {
+  position: relative;
   display: flex;
   gap: 12px;
   padding: 10px;
+  padding-right: 40px;
   border: 1px solid var(--line, #e4e0d8);
   border-radius: 12px;
   background: var(--surface, #fff);
 }
+.discover-save { position: absolute; top: 8px; right: 8px; background: transparent; border: none; color: var(--muted); cursor: pointer; padding: 3px; border-radius: 8px; line-height: 0; }
+.discover-save:hover { color: var(--ink); }
+.discover-save.is-saved { color: var(--accent, #5b5bd6); }
+.discover-save.is-saved svg { fill: currentColor; }
+.discover-section { margin-bottom: 18px; }
+.discover-section-title { font-size: 0.85rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 8px; }
+.discover-section .discover-card { margin-bottom: 8px; }
 .discover-art { width: 60px; height: 90px; flex: 0 0 auto; object-fit: cover; border-radius: 8px; background: var(--surface-2, #f0f0f6); }
 .discover-art--ph { background: var(--surface-2, #f0f0f6); }
 .discover-meta { min-width: 0; display: flex; flex-direction: column; gap: 3px; flex: 1 1 auto; }

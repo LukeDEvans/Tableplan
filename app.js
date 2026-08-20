@@ -38475,9 +38475,10 @@ async function playDiscoverMusic(key) {
 
 async function getMediaHub() {
   if (mediaHub) return mediaHub;
-  const [prov, search, tmdbP, jellyP, ytP, musicP] = await Promise.all([
+  const [prov, search, tmdbP, jellyP, ytP, musicP, mstate, watchA] = await Promise.all([
     import("./media-provider.js"), import("./media-search.js"), import("./media-provider-tmdb.js"),
     import("./media-provider-jellyfin.js"), import("./media-provider-youtube.js"), import("./media-provider-music.js"),
+    import("./media-state.js"), import("./media-watch-adapter.js"),
   ]);
   const authFetchJson = async (url, { signal } = {}) => {
     const r = await fetch(url, { signal, headers: { Authorization: `Bearer ${authSession?.access_token || ""}`, Accept: "application/json" } });
@@ -38498,7 +38499,7 @@ async function getMediaHub() {
   const connectedIds = [...(state.mediaServices || []), "music"]; // your streamers + always-available music
   if (jf.enabled && jf.url && jf.apiKey && jf.userId) connectedIds.push("jellyfin");
   const registry = prov.createMediaProviderRegistry([...prov.PROVIDER_CATALOG, tmdb, jellyfin, youtube, music], { connectedIds });
-  mediaHub = { search, tmdb, searchProviders, registry };
+  mediaHub = { search, tmdb, searchProviders, registry, mstate, watchA };
   return mediaHub;
 }
 
@@ -38560,6 +38561,8 @@ function renderDiscoverPanel() {
     input.addEventListener("input", () => { clearTimeout(t); const q = input.value.trim(); t = setTimeout(() => runDiscoverSearch(q), 360); });
     panel.querySelector("#discoverServicesBtn").addEventListener("click", openDiscoverServicesDialog);
   }
+  const q = document.getElementById("discoverSearchInput")?.value.trim();
+  if (!q) renderDiscoverHome(); // Continue · Saved · Recently played
   document.getElementById("discoverSearchInput")?.focus();
 }
 
@@ -38567,7 +38570,7 @@ async function runDiscoverSearch(query) {
   const results = document.getElementById("discoverResults");
   if (!results) return;
   const token = ++discoverSearchToken;
-  if (!query) { results.innerHTML = `<p class="discover-hint">Search across your services and beyond — find something, then Play or Open it.</p>`; return; }
+  if (!query) { renderDiscoverHome(); return; }
   results.innerHTML = `<p class="discover-hint">Searching…</p>`;
   try {
     const hub = await getMediaHub();
@@ -38582,24 +38585,49 @@ async function runDiscoverSearch(query) {
   }
 }
 
+// Register items for the Play/Save bridges, build annotated view models.
+function discoverViewsFor(items, hub) {
+  items.forEach((it) => discoverItemsByKey.set(`${it.kind}:${it.id}`, it));
+  return items.map((it) => {
+    const v = hub.search.discoverView(it, hub.registry);
+    v.saved = hub.mstate.isSaved(state.mediaSaved || [], v.key);
+    return v;
+  });
+}
+
+// Shared wiring for both search results and the home: Save toggles, and Play/Open
+// (Music → audio engine, Jellyfin native / YouTube embed → in-app video surface,
+// hand-offs → the provider). Every play is recorded to unified history.
+function wireDiscoverButtons(container, hub) {
+  container.querySelectorAll("[data-save-key]").forEach((btn) => btn.addEventListener("click", () => {
+    const item = discoverItemsByKey.get(btn.dataset.saveKey);
+    if (!item) return;
+    const list = (item.kind === "music" || item.kind === "podcast") ? hub.mstate.SAVED_LIST.LISTEN_LATER : hub.mstate.SAVED_LIST.WATCH_LATER;
+    state.mediaSaved = hub.mstate.toggleSaved(state.mediaSaved || [], item, list);
+    persist();
+    const now = hub.mstate.isSaved(state.mediaSaved, item, list);
+    btn.classList.toggle("is-saved", now);
+    btn.setAttribute("aria-pressed", String(now));
+  }));
+  container.querySelectorAll(".discover-svc").forEach((btn) => btn.addEventListener("click", () => {
+    const item = discoverItemsByKey.get(btn.dataset.key);
+    if (item) { try { state.mediaHistory = hub.mstate.recordPlayback(state.mediaHistory || [], item); persist(); } catch { /* noop */ } }
+    if (btn.dataset.provider === "music") { playDiscoverMusic(btn.dataset.key); return; }
+    const uri = btn.dataset.openUri; if (!uri) return;
+    const mode = btn.dataset.mode;
+    if (mode === "native" || mode === "embedded") openVideoSurface(uri, mode, btn.dataset.title || "");
+    else window.open(uri, "_blank", "noopener");
+  }));
+}
+
 function renderDiscoverResults(items, providerStatuses, hub) {
   const results = document.getElementById("discoverResults");
   if (!results) return;
   if (!items.length) { results.innerHTML = `<p class="discover-hint">No results.</p>`; return; }
-  discoverItemsByKey = new Map(items.map((it) => [`${it.kind}:${it.id}`, it])); // for the Play bridge
-  const views = items.map((it) => hub.search.discoverView(it, hub.registry));
+  discoverItemsByKey = new Map();
+  const views = discoverViewsFor(items, hub);
   results.innerHTML = views.map(discoverCardHtml).join("");
-  // Play/Open. Music → the audio engine; Jellyfin native / YouTube embed → the
-  // in-app video surface; hand-offs (streamers, browser) → open the provider.
-  results.querySelectorAll(".discover-svc").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      if (btn.dataset.provider === "music") { playDiscoverMusic(btn.dataset.key); return; }
-      const uri = btn.dataset.openUri; if (!uri) return;
-      const mode = btn.dataset.mode;
-      if (mode === "native" || mode === "embedded") openVideoSurface(uri, mode, btn.dataset.title || "");
-      else window.open(uri, "_blank", "noopener");
-    });
-  });
+  wireDiscoverButtons(results, hub);
   const failed = (providerStatuses || []).filter((s) => !s.ok).map((s) => s.provider);
   if (failed.length) {
     const note = document.createElement("p");
@@ -38607,6 +38635,38 @@ function renderDiscoverResults(items, providerStatuses, hub) {
     note.textContent = `Some sources didn't respond: ${failed.join(", ")}.`;
     results.appendChild(note);
   }
+}
+
+// The empty-search home: Continue · Saved · Recently played, from the unified
+// state layer (media-state.js). Read-only projection over existing stores.
+async function renderDiscoverHome() {
+  const results = document.getElementById("discoverResults");
+  if (!results) return;
+  const token = ++discoverSearchToken;
+  let hub;
+  try { hub = await getMediaHub(); } catch { results.innerHTML = discoverHomeEmptyHtml(); return; }
+  if (token !== discoverSearchToken) return;
+  discoverItemsByKey = new Map();
+  const continueItems = hub.mstate.continueList(hub.watchA.watchItemsToMediaItems(state.watchItems || []), { limit: 12 });
+  const savedItems = hub.mstate.savedList(state.mediaSaved || []).slice(0, 12).map(savedRecordToItem);
+  const recentItems = hub.mstate.historyItems(state.mediaHistory || [], { limit: 12 });
+  const sections = [
+    ["Continue", continueItems], ["Saved", savedItems], ["Recently played", recentItems],
+  ].map(([title, its]) => [title, discoverViewsFor(its, hub)]).filter(([, vs]) => vs.length);
+  if (!sections.length) { results.innerHTML = discoverHomeEmptyHtml(); return; }
+  results.innerHTML = sections.map(([title, vs]) =>
+    `<div class="discover-section"><h3 class="discover-section-title">${escapeHtml(title)}</h3>${vs.map(discoverCardHtml).join("")}</div>`).join("");
+  wireDiscoverButtons(results, hub);
+}
+
+function discoverHomeEmptyHtml() {
+  return `<p class="discover-hint">Search across your services and beyond — find something, then Play, Open, or Save it.</p>`;
+}
+
+// A saved record → a canonical-ish item (id recovered from its key) for rendering.
+function savedRecordToItem(s) {
+  const id = String(s.key || "").slice((String(s.kind || "") + ":").length);
+  return { kind: s.kind, id, title: s.title, subtitle: s.subtitle, artworkUrl: s.artworkUrl, providerRefs: s.providerRefs || [], meta: s.meta || {}, source: s.source ?? null, userState: {} };
 }
 
 function discoverServiceBtn(entry, title, key) {
@@ -38622,9 +38682,10 @@ function discoverCardHtml(v) {
   const yours = v.yours.length ? `<div class="discover-svc-group"><span class="discover-svc-label">Your services</span>${v.yours.map((e) => discoverServiceBtn(e, v.title, v.key)).join("")}</div>` : "";
   const others = v.others.length ? `<div class="discover-svc-group"><span class="discover-svc-label">Other services</span>${v.others.map((e) => discoverServiceBtn(e, v.title, v.key)).join("")}</div>` : "";
   const none = !v.hasTargets ? `<div class="discover-svc-none">No known way to watch yet.</div>` : "";
+  const save = `<button class="discover-save${v.saved ? " is-saved" : ""}" type="button" data-save-key="${escapeHtml(v.key)}" aria-pressed="${v.saved ? "true" : "false"}" title="Save for later" aria-label="Save for later"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>`;
   return `<div class="discover-card">${art}<div class="discover-meta">` +
     `<div class="discover-title">${escapeHtml(v.title)}${v.year ? ` <span class="discover-year">${escapeHtml(v.year)}</span>` : ""}</div>` +
-    `<div class="discover-sub">${escapeHtml(v.subtitle || "")}</div>${yours}${others}${none}</div></div>`;
+    `<div class="discover-sub">${escapeHtml(v.subtitle || "")}</div>${yours}${others}${none}</div>${save}</div>`;
 }
 
 // In-app video surface — a modal that plays a Jellyfin native stream in a
