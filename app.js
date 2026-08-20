@@ -33162,7 +33162,10 @@ async function getCadence() {
     import("./music/alignment.js"),
     import("./music/compare.js"),
   ]);
-  const section = await import("./music/section.js");
+  const [section, validation] = await Promise.all([
+    import("./music/section.js"),
+    import("./music/validation.js"),
+  ]);
   cadenceStorage = cadenceStorage || storage.createIdbStorage("cadence");
   cadenceMod = {
     importMusicXmlFile: imp.importMusicXmlFile, loadWork: imp.loadWork, listWorks: imp.listWorks,
@@ -33181,6 +33184,7 @@ async function getCadence() {
     buildAlignment: align.buildAlignment, averageTempo: align.averageTempo, tempoCurve: align.tempoCurve, tempoByMeasure: align.tempoByMeasure,
     attemptSummary: compare.attemptSummary, comparePerformances: compare.comparePerformances, comparisonHeadline: compare.comparisonHeadline,
     makeSection: section.makeSection, sectionStats: section.sectionStats, sectionTag: section.sectionTag,
+    validateScoreModel: validation.validateScoreModel, validationSummary: validation.validationSummary,
   };
   return cadenceMod;
 }
@@ -33859,6 +33863,13 @@ async function mountCadenceViewer(host) {
     if (!cadenceView.layout.notes.length) {
       const readout = document.getElementById("cadencePosReadout");
       if (readout) readout.textContent = "Heads up: this score rendered, but its notes couldn't be mapped — tapping and follow won't work on it.";
+    } else {
+      // Musical validation (music/validation.js) — surface likely timing errors
+      // (a common issue in imported/OMR scores) without blocking use.
+      try {
+        const note = C.validationSummary(C.validateScoreModel(cadenceView.model));
+        if (note) { const readout = document.getElementById("cadencePosReadout"); if (readout) readout.textContent = `⚠ ${note}`; }
+      } catch { /* noop */ }
     }
     // Load this work's practice history (from synced state → shows on every
     // device) and refresh the practice section.
