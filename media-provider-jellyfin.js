@@ -46,6 +46,10 @@ export function createJellyfinMediaProvider(config = {}, deps = {}) {
         providerId: "jellyfin", externalId: id, uri: streamUri,
         deepLink: `${url}/web/index.html#!/details?id=${id}`,
       }],
+      // A TMDB id (when the server scraped one) gives a trustworthy cross-
+      // provider identity, so this native copy MERGES with the same title's
+      // streamer availability instead of showing as a separate result.
+      meta: (it.ProviderIds && it.ProviderIds.Tmdb) ? { tmdbId: String(it.ProviderIds.Tmdb) } : {},
       userState: it.UserData ? {
         favorite: !!it.UserData.IsFavorite,
         progress: it.UserData.PlaybackPositionTicks

@@ -91,6 +91,22 @@ export function makePlaybackTarget(p = {}) {
 /** Stable identity for de-dupe across surfaces (kind + id). */
 export function mediaKey(item) { return `${str(item?.kind)}:${str(item?.id)}`; }
 
+/** A trustworthy cross-provider identity for VIDEO, when one exists: the TMDB id
+ *  (from the tmdb providerRef or meta.tmdbId). Used to merge the same title's
+ *  availability across providers; null when no reliable identity is known. */
+export function tmdbIdOf(item) {
+  if (!item) return null;
+  if (item.meta && item.meta.tmdbId) return String(item.meta.tmdbId);
+  const ref = (item.providerRefs || []).find((r) => r.providerId === "tmdb" && r.externalId);
+  return ref ? String(ref.externalId) : null;
+}
+
+/** Content identity for aggregation: the TMDB id if known, else kind:id. */
+export function contentKey(item) {
+  const t = tmdbIdOf(item);
+  return t ? `tmdb:${t}` : mediaKey(item);
+}
+
 /** Is this target an in-app playback (vs a handoff)? */
 export function isInApp(mode) {
   return mode === PLAYBACK_MODE.NATIVE || mode === PLAYBACK_MODE.EMBEDDED || mode === PLAYBACK_MODE.WEB;
