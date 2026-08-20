@@ -221,8 +221,9 @@ Edge Functions) unless wrapped.
 - Build: `vite build` → `dist` → Netlify. Cron + functions in `netlify.toml`.
 - **Never push/deploy without explicit approval** (deploy credits + push cap; see
   `CLAUDE.md`). Run the pre-push checklist first.
-- **Gap (§21):** no CI, no staging, ad-hoc SQL "migrations." Introduce a
-  migration runner + a CI job (test + bundle + lint) before production.
+- **CI:** `.github/workflows/ci.yml` runs `npm ci` → `npm test` → `npm run build`
+  on every push/PR (no deploy step). **Remaining gap (§21):** no staging; SQL
+  migrations live in `migrations/` but there is no ordered runner yet.
 
 ## 17. Observability requirements
 
@@ -256,18 +257,30 @@ first, verify all dependent domains, and never regress the sync/merge invariants
 ## 21. Known technical debt
 
 - **`app.js` is ~52k lines** — the shell holds state, sync, routing, and most
-  domain UI. Untested and hard to change safely. (Incremental extraction ongoing.)
-- **No CI/CD, no staging**, ad-hoc SQL files instead of ordered migrations.
+  domain UI. Mostly untested; the sync core (`state-sync.js`) is now extracted +
+  tested. (Incremental extraction ongoing — the model, not a big-bang split.)
+- **No staging**; SQL migrations in `migrations/` have no ordered runner yet.
 - **No shared canonical models** for people/locations/events/tasks/subscriptions/
   documents — modeled ad hoc per domain inside the state blob.
-- **RLS perf**: auth calls not wrapped in `(select …)`; overlapping legacy
-  `tableplan_states` policies ("Only Luke…" + generic per-user).
-- **6 DB functions** lack `SET search_path`; 3 `live_*` SECURITY DEFINER helpers
-  executable by `authenticated`.
-- **Unindexed foreign keys** on `eat_recipes.folder_id` and the `live_*` tables.
-- **Leaked-password protection** disabled in Auth.
+- **RLS perf (partial):** `tableplan_states` consolidated to 1 policy/action with
+  `(select auth.*)` (2026-08-20 migration). The low-value `auth_rls_initplan` wraps
+  on the tiny (0–229 row) domain tables (eat_*, live_*, history, push) are
+  intentionally deferred — no real perf value at current scale.
+- **By design, not debt:** 3 `live_*` SECURITY DEFINER helpers stay EXECUTE-able by
+  `authenticated` (the group RLS policy calls them; already `search_path=public`).
+  `mail_*` deny-all RLS = fail-closed (service-role only).
+- **Leaked-password protection** disabled in Auth (manual dashboard toggle).
+- **Storage adapter** deferred: `tableplan_states` access = ~14 heterogeneous call
+  sites behind `supabaseBaseUrl()`/`supabaseHeaders()`. Wrap the ~8 operations
+  (load-sections, compare-and-swap persist, upsert) behind a `Storage` interface
+  when a concrete second backend (PGlite / home-server PG) is on the table; the
+  merge half of optionality already lives in `state-sync.js`.
 - No music/audiobook **position persistence** (blocks unified Continue for audio).
 - Multiple legacy names (Eat / Tableplan / Live) across repo, tables, prod URL.
+
+*Fixed in the 2026-08-20 hardening pass: 6 function `search_path` warnings; 6
+unindexed foreign keys; `tableplan_states` policy overlap + per-row auth
+re-evaluation; CI added.*
 
 ## 22. Planned migrations
 
