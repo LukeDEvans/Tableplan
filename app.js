@@ -228,7 +228,7 @@ const STATE_SECTIONS = {
   // Cadence (piano-score subsystem): canonical metadata syncs here as small
   // id-keyed collections; score BYTES live in the private cadence-blobs bucket,
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
-  cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations"],
+  cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents"],
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin"],
@@ -3253,6 +3253,7 @@ function defaultState() {
     cadenceBlobs: [],
     cadenceSessions: [],
     cadenceAnnotations: [],
+    cadenceEvents: [],
     trips: [],
     travelIdeas: [],
     workouts: [],
@@ -3408,6 +3409,7 @@ function normalizeState(parsed) {
     cadenceBlobs: Array.isArray(parsed?.cadenceBlobs) ? parsed.cadenceBlobs : [],
     cadenceSessions: Array.isArray(parsed?.cadenceSessions) ? parsed.cadenceSessions : [],
     cadenceAnnotations: Array.isArray(parsed?.cadenceAnnotations) ? parsed.cadenceAnnotations : [],
+    cadenceEvents: Array.isArray(parsed?.cadenceEvents) ? parsed.cadenceEvents : [],
     trips: Array.isArray(parsed?.trips) ? parsed.trips : [],
     travelIdeas: Array.isArray(parsed?.travelIdeas) ? parsed.travelIdeas : [],
     workouts: normalizeWorkouts(parsed?.workouts),
@@ -5438,7 +5440,7 @@ function mergeStates(newer, older) {
     "pianoSongs", "sailingLog", "sailingBoats", "pianoLog",
     // Cadence: Works, blob catalog, sessions, annotations (all carry an `id`;
     // blob records use id = blobId). Union so neither device loses a score.
-    "cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations",
+    "cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents",
     // Inventory & shopping
     "inventoryBoxes", "inventoryItems",
     "groceryStores", "groceryPriceObservations", "priceHistory",
@@ -33148,9 +33150,10 @@ async function getCadence() {
     import("./music/input-midi.js"),
     import("./music/input-mic.js"),
   ]);
-  const [accuracy, cloud] = await Promise.all([
+  const [accuracy, cloud, events] = await Promise.all([
     import("./music/accuracy.js"),
     import("./music/cloud-blob.js"),
+    import("./music/events.js"),
   ]);
   cadenceStorage = cadenceStorage || storage.createIdbStorage("cadence");
   cadenceMod = {
@@ -33164,6 +33167,7 @@ async function getCadence() {
     createFollowingEngine: follow.createFollowingEngine, createMidiInputProvider: midi.createMidiInputProvider,
     createMicInputProvider: mic.createMicInputProvider, createAccuracyTracker: accuracy.createAccuracyTracker,
     uploadBlob: cloud.uploadBlob, downloadBlob: cloud.downloadBlob, cloudLocation: cloud.cloudLocation,
+    makeEvent: events.makeEvent, appendEvent: events.appendEvent, EVENT: events.EVENT,
   };
   return cadenceMod;
 }
@@ -33217,6 +33221,15 @@ function cadenceMirrorWork(work, asset) {
   const blobRec = cadenceBlobRecord(asset);
   if (blobRec) cadenceUpsert("cadenceBlobs", blobRec);
   persist();
+}
+
+// Append a durable domain event to the synced, capped `cadenceEvents` journal
+// (music/events.js). Best-effort — a logging failure never breaks the action.
+function cadenceLogEvent(C, type, opts = {}) {
+  try {
+    state.cadenceEvents = C.appendEvent(state.cadenceEvents, C.makeEvent({ type, ...opts }));
+    persist();
+  } catch (e) { console.warn("Cadence event log failed:", e); }
 }
 
 // Per-work practice rollup from the SYNCED sessions (the canonical superset), so
@@ -33509,6 +33522,7 @@ async function stopAndSaveCadencePractice() {
       metrics,
     });
     cadenceUpsert("cadenceSessions", savedSession); persist(); // sync practice history
+    cadenceLogEvent(C, C.EVENT.PRACTICE_COMPLETED, { subject: savedSession.workId, refs: { sessionId: savedSession.id }, data: { durationMs, accuracy: summary?.accuracy ?? null } });
     cadenceView.workSessions = await C.listSessions(cadenceStorage, { workId: cadenceView.activeWorkId });
     cadenceLibrary = null; // stats changed — library summaries refresh on return
     refreshCadencePractice();
@@ -33616,6 +33630,7 @@ async function handleCadenceImport(file) {
     let asset = await cadenceStorage.get("blobAssets", res.blobId);
     asset = await cadenceUploadBlobBytes(C, asset);
     cadenceMirrorWork(res.work, asset);
+    cadenceLogEvent(C, C.EVENT.SCORE_IMPORTED, { subject: res.work.id, data: { title: res.work.title, composer: res.work.composer } });
     const localWorks = await C.listWorks(cadenceStorage);
     cadenceLibrary = cadenceMergedLibrary(localWorks);
     cadenceImporting = false;
@@ -33698,6 +33713,7 @@ async function deleteCadenceWork(id) {
     state.cadenceSessions = (state.cadenceSessions || []).filter((s) => s.workId !== id);
     for (const s of doomed) recordDeletion("cadenceSessions", s.id);
     persist();
+    cadenceLogEvent(C, C.EVENT.SCORE_DELETED, { subject: id, data: work ? { title: work.title } : {} });
     cadenceLibrary = (cadenceLibrary || []).filter((x) => x.id !== id);
   } catch (e) { console.warn("Cadence delete failed:", e); }
   renderRecreatePage();
