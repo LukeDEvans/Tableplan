@@ -9374,7 +9374,7 @@ body.touch-drag-active * {
 .discover-year { color: var(--muted); font-weight: 500; }
 .discover-sub { color: var(--muted); font-size: 0.8rem; margin-bottom: 4px; }
 .discover-svc-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
-.discover-svc-label { font-size: 0.72rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; margin-right: 2px; }
+.discover-svc-label { flex: 0 0 100%; font-size: 0.72rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .discover-svc {
   font: inherit;
   font-size: 0.78rem;
