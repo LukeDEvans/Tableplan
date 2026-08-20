@@ -37,7 +37,7 @@ export function watchItemToMediaItem(item) {
     providerRefs: [
       // TMDB is always the metadata/availability anchor for a video Work.
       { providerId: "tmdb", externalId: item.tmdbId != null ? String(item.tmdbId) : "" },
-      ...refsFromProviders(item.streamingProviders),
+      ...refsFromProviders(item.streamingProviders, { title: item.title }),
     ],
     userState: {
       saved: item.status === "want",

@@ -82,10 +82,10 @@ export function createTmdbProvider(config = {}, deps = {}) {
 
     // The streaming services carrying a title — the "where can I watch this"
     // mechanism (providerRefs, NOT a search of the streamers themselves).
-    async availability(tmdbId, type = "movie", { signal } = {}) {
+    async availability(tmdbId, type = "movie", { signal, title } = {}) {
       if (!providersUrl || tmdbId == null) return [];
       const data = await fetchJson(providersUrl(String(tmdbId), type === "tv" ? "tv" : "movie"), { signal });
-      return tmdbWatchProvidersToRefs(data);
+      return tmdbWatchProvidersToRefs(data, { title });
     },
 
     // Fold a title's availability into its canonical item (merged providerRefs).
@@ -93,7 +93,7 @@ export function createTmdbProvider(config = {}, deps = {}) {
       if (!item || !providersUrl) return item;
       const tmdbId = item.meta?.tmdbId || (item.providerRefs || []).find((r) => r.providerId === "tmdb")?.externalId;
       if (!tmdbId) return item;
-      const refs = await this.availability(tmdbId, item.meta?.tmdbType || "movie", { signal });
+      const refs = await this.availability(tmdbId, item.meta?.tmdbType || "movie", { signal, title: item.title });
       return { ...item, providerRefs: unionRefs(item.providerRefs, refs) };
     },
   };

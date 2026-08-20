@@ -6,6 +6,8 @@
 
 // Display-name → catalog provider id. Everything else slugifies gracefully, so an
 // unknown streamer still yields a ref (the coordinator falls back to a hand-off).
+import { buildStreamerDeepLink } from "./media-deeplink.js";
+
 const NAME_TO_ID = [
   [/netflix/i, "netflix"], [/disney/i, "disney"], [/\bmax\b|hbo/i, "max"],
   [/paramount/i, "paramount"], [/espn/i, "espn"], [/xfinity/i, "xfinity"],
@@ -22,9 +24,11 @@ export function matchProviderId(name) {
 /**
  * TMDB watch/providers groups → providerRefs. flatrate/free/ads are subscription/
  * free streaming (the "your services" candidates); rent/buy are also reachable.
- * The JustWatch `link` becomes the deep link for each ref. De-duped by provider.
+ * Each ref's deepLink prefers a provider-specific title search (opens the actual
+ * service) and falls back to the JustWatch `link`; `link` is kept for reference.
+ * De-duped by provider. Pass { title } so provider-aware deep links can be built.
  */
-export function tmdbWatchProvidersToRefs(sp) {
+export function tmdbWatchProvidersToRefs(sp, { title } = {}) {
   if (!sp || typeof sp !== "object") return [];
   const link = sp.link || null;
   const groups = [...(sp.flatrate || []), ...(sp.free || []), ...(sp.ads || []), ...(sp.rent || []), ...(sp.buy || [])];
@@ -34,7 +38,12 @@ export function tmdbWatchProvidersToRefs(sp) {
     const id = matchProviderId(p && p.provider_name);
     if (seen.has(id)) continue;
     seen.add(id);
-    refs.push({ providerId: id, externalId: (p && p.provider_id != null) ? String(p.provider_id) : "", deepLink: link });
+    refs.push({
+      providerId: id,
+      externalId: (p && p.provider_id != null) ? String(p.provider_id) : "",
+      deepLink: buildStreamerDeepLink(id, title) || link,
+      link,
+    });
   }
   return refs;
 }
