@@ -38461,6 +38461,9 @@ function switchMediaTab(tab) {
 // spine is untouched. Modules are code-split (loaded on first Discover use).
 let mediaHub = null;
 let discoverSearchToken = 0;
+let discoverMode = "home";    // home | saved | history (browse views)
+let discoverFilter = "all";   // all | watch | listen (Saved/History sub-filter)
+const discoverKindGroup = (kind) => (kind === "video" ? "watch" : "listen");
 let discoverItemsByKey = new Map(); // mediaKey → MediaItem, for the Play bridge
 
 // Play a music result through the EXISTING audio engine (openMusicItem: a track
@@ -38570,15 +38573,38 @@ function renderDiscoverPanel() {
         `<input type="search" class="discover-search-input" id="discoverSearchInput" placeholder="Search movies, shows, videos…" aria-label="Search all media" autocomplete="off" />` +
         `<button class="icon-btn discover-services-btn" id="discoverServicesBtn" type="button" title="Your services" aria-label="Your services"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>` +
       `</div>` +
+      `<div class="discover-modes" id="discoverModes" role="tablist">` +
+        `<button class="discover-mode is-active" data-mode="home" type="button" role="tab">Home</button>` +
+        `<button class="discover-mode" data-mode="saved" type="button" role="tab">Saved</button>` +
+        `<button class="discover-mode" data-mode="history" type="button" role="tab">History</button>` +
+      `</div>` +
+      `<div class="discover-filters" id="discoverFilters" hidden>` +
+        `<button class="discover-filter is-active" data-filter="all" type="button">All</button>` +
+        `<button class="discover-filter" data-filter="watch" type="button">Watch</button>` +
+        `<button class="discover-filter" data-filter="listen" type="button">Listen</button>` +
+      `</div>` +
       `<div class="discover-results" id="discoverResults"><p class="discover-hint">Search across your services and beyond — find something, then Play or Open it.</p></div>`;
     panel.dataset.built = "1";
     const input = panel.querySelector("#discoverSearchInput");
     let t = null;
     input.addEventListener("input", () => { clearTimeout(t); const q = input.value.trim(); t = setTimeout(() => runDiscoverSearch(q), 360); });
     panel.querySelector("#discoverServicesBtn").addEventListener("click", openDiscoverServicesDialog);
+    panel.querySelectorAll(".discover-mode").forEach((b) => b.addEventListener("click", () => {
+      discoverMode = b.dataset.mode; discoverFilter = "all";
+      panel.querySelectorAll(".discover-mode").forEach((x) => x.classList.toggle("is-active", x === b));
+      panel.querySelectorAll(".discover-filter").forEach((x) => x.classList.toggle("is-active", x.dataset.filter === "all"));
+      panel.querySelector("#discoverFilters").hidden = (discoverMode === "home");
+      if (input.value) input.value = "";
+      renderDiscoverHome();
+    }));
+    panel.querySelectorAll(".discover-filter").forEach((b) => b.addEventListener("click", () => {
+      discoverFilter = b.dataset.filter;
+      panel.querySelectorAll(".discover-filter").forEach((x) => x.classList.toggle("is-active", x === b));
+      renderDiscoverHome();
+    }));
   }
   const q = document.getElementById("discoverSearchInput")?.value.trim();
-  if (!q) renderDiscoverHome(); // Continue · Saved · Recently played
+  if (!q) renderDiscoverHome(); // Home rails · Saved · History (per discoverMode)
   document.getElementById("discoverSearchInput")?.focus();
 }
 
@@ -38657,6 +38683,7 @@ function renderDiscoverResults(items, providerStatuses, hub) {
 // The empty-search home: Continue · Saved · Recently played, from the unified
 // state layer (media-state.js). Read-only projection over existing stores.
 async function renderDiscoverHome() {
+  if (discoverMode === "saved" || discoverMode === "history") return renderDiscoverList(discoverMode);
   const results = document.getElementById("discoverResults");
   if (!results) return;
   const token = ++discoverSearchToken;
@@ -38678,6 +38705,29 @@ async function renderDiscoverHome() {
 
 function discoverHomeEmptyHtml() {
   return `<p class="discover-hint">Search across your services and beyond — find something, then Play, Open, or Save it.</p>`;
+}
+
+// Full Saved / History browse list (with the Watch/Listen sub-filter), rendered as
+// the same Discover cards so Play/Open/Save all work identically to search.
+async function renderDiscoverList(mode) {
+  const results = document.getElementById("discoverResults");
+  if (!results) return;
+  const token = ++discoverSearchToken;
+  let hub;
+  try { hub = await getMediaHub(); } catch { results.innerHTML = `<p class="discover-hint">Couldn't load ${mode}.</p>`; return; }
+  if (token !== discoverSearchToken) return;
+  discoverItemsByKey = new Map();
+  let items = mode === "saved"
+    ? discoverSavedItems(hub, 200)
+    : hub.mstate.historyItems(state.mediaHistory || [], { limit: 200 });
+  if (discoverFilter !== "all") items = items.filter((it) => discoverKindGroup(it.kind) === discoverFilter);
+  const views = discoverViewsFor(items, hub);
+  if (!views.length) {
+    results.innerHTML = `<p class="discover-hint">${mode === "saved" ? "Nothing saved yet — Save anything you find to keep it here." : "Nothing played yet."}</p>`;
+    return;
+  }
+  results.innerHTML = views.map(discoverCardHtml).join("");
+  wireDiscoverButtons(results, hub);
 }
 
 // Dedupe canonical items by kind:id, keeping the first (highest-priority) seen.
