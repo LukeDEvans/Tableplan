@@ -33,9 +33,10 @@ const ALL_CAPS = new Set(Object.values(MEDIA_CAP));
 const str = (v, d = "") => (v == null ? d : String(v).trim());
 const arr = (v) => (Array.isArray(v) ? v : []);
 
-/** Normalize a provider descriptor; capabilities coerced to a validated Set. */
+/** Normalize a provider descriptor; capabilities (array OR Set) → validated Set. */
 export function makeProvider(p = {}) {
-  const caps = new Set(arr(p.capabilities).map(str).filter((c) => ALL_CAPS.has(c)));
+  const capsIn = p.capabilities instanceof Set ? [...p.capabilities] : arr(p.capabilities);
+  const caps = new Set(capsIn.map(str).filter((c) => ALL_CAPS.has(c)));
   return {
     id: str(p.id),
     label: str(p.label) || str(p.id),
