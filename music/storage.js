@@ -14,7 +14,7 @@
 //   delete(store, key)     → Promise
 //   close()
 
-export const STORES = ["bytes", "blobAssets", "works", "representations", "scoreModels", "practiceSessions", "annotations"];
+export const STORES = ["bytes", "blobAssets", "works", "representations", "scoreModels", "practiceSessions", "annotations", "recordings"];
 
 /** In-memory StoragePort — the test/dev fake and offline scratch. */
 export function createMemoryStorage() {
@@ -37,7 +37,7 @@ export function createMemoryStorage() {
  * browser; falls back to throwing a clear error where IndexedDB is unavailable
  * (callers should prefer createMemoryStorage in that case).
  */
-export function createIdbStorage(dbName = "cadence", version = 1) {
+export function createIdbStorage(dbName = "cadence", version = 2) {
   if (typeof indexedDB === "undefined") throw new Error("IndexedDB unavailable in this environment");
   let dbp = null;
   function open() {

@@ -1,6 +1,28 @@
 import { describe, it, expect } from "vitest";
 import { createMemoryStorage } from "../music/storage.js";
-import { saveSession, listSessions, deleteSession, sessionStats, workStats, formatDuration, relativeDay } from "../music/practice.js";
+import { saveSession, listSessions, deleteSession, sessionStats, workStats, formatDuration, relativeDay, saveRecording, getRecording, deleteRecording } from "../music/practice.js";
+
+describe("recordings — first-class performances (events + alignment)", () => {
+  it("saves, fetches, and deletes a recording, preserving its alignment", async () => {
+    const s = createMemoryStorage();
+    const alignment = { points: [{ q: 0, tMs: 0, measureIndex: 0 }, { q: 4, tMs: 2000, measureIndex: 1 }], durationQuarters: 4, durationMs: 2000 };
+    const rec = await saveRecording(s, { workId: "w1", media: [{ kind: "events", durationMs: 2000 }], alignment });
+    expect(rec.id).toMatch(/^rec_/);
+    expect(rec.workId).toBe("w1");
+    expect(rec.media[0].kind).toBe("events");
+
+    const got = await getRecording(s, rec.id);
+    expect(got.alignment.durationMs).toBe(2000);
+    expect(got.alignment.points).toHaveLength(2);
+
+    await deleteRecording(s, rec.id);
+    expect(await getRecording(s, rec.id)).toBeUndefined();
+  });
+  it("getRecording tolerates a null/absent id", async () => {
+    const s = createMemoryStorage();
+    expect(await getRecording(s, null)).toBeUndefined();
+  });
+});
 
 describe("practice service — persistence & queries", () => {
   it("saves sessions and lists them newest-first, filterable by work", async () => {

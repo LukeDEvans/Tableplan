@@ -4,13 +4,34 @@
 // "practiceSessions" StoragePort store (offline-owned); metadata sync is a later
 // concern. Pure over an injected StoragePort, so it's fully testable.
 
-import { makePracticeSession } from "./domain.js";
+import { makePracticeSession, makeRecording } from "./domain.js";
 
 /** Persist a session (normalizes + assigns an id). Returns the stored record. */
 export async function saveSession(storage, sessionLike) {
   const s = makePracticeSession(sessionLike);
   await storage.put("practiceSessions", s.id, s);
   return s;
+}
+
+// ── Recordings (first-class Performances) ────────────────────────────────────
+// A Recording captures WHAT was played — here, the event-stream/alignment of a
+// follow-tracked session. Kept local (durable per device) and linked from the
+// session via recordingId; the small comparison summary already rides the synced
+// session metrics, so heavy alignment data need not bloat the synced rows.
+
+/** Persist a recording (normalizes + assigns an id). Returns the stored record. */
+export async function saveRecording(storage, recordingLike) {
+  const r = makeRecording(recordingLike);
+  await storage.put("recordings", r.id, r);
+  return r;
+}
+
+export async function getRecording(storage, id) {
+  return id ? storage.get("recordings", id) : undefined;
+}
+
+export async function deleteRecording(storage, id) {
+  if (id) await storage.delete("recordings", id);
 }
 
 /** Sessions, newest first, optionally filtered to one work. */

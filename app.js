@@ -33168,6 +33168,7 @@ async function getCadence() {
     createOsmdRenderer: osmd.createOsmdRenderer,
     saveSession: practice.saveSession, listSessions: practice.listSessions,
     deleteSession: practice.deleteSession, workStats: practice.workStats,
+    saveRecording: practice.saveRecording, getRecording: practice.getRecording, deleteRecording: practice.deleteRecording,
     createFollowingEngine: follow.createFollowingEngine, createMidiInputProvider: midi.createMidiInputProvider,
     createMicInputProvider: mic.createMicInputProvider, createAccuracyTracker: accuracy.createAccuracyTracker,
     uploadBlob: cloud.uploadBlob, downloadBlob: cloud.downloadBlob, cloudLocation: cloud.cloudLocation,
@@ -33237,6 +33238,16 @@ function cadenceLogEvent(C, type, opts = {}) {
     state.cadenceEvents = C.appendEvent(state.cadenceEvents, C.makeEvent({ type, ...opts }));
     persist();
   } catch (e) { console.warn("Cadence event log failed:", e); }
+}
+
+// A work's practice history from the SYNCED sessions (newest first) — the
+// canonical superset, so history + compare show on every device, not just the
+// one that recorded them.
+function cadenceSessionsForWork(workId) {
+  return (state.cadenceSessions || [])
+    .filter((s) => s && s.workId === workId)
+    .slice()
+    .sort((a, b) => String(b.startedAt || "").localeCompare(String(a.startedAt || "")));
 }
 
 // Per-work practice rollup from the SYNCED sessions (the canonical superset), so
@@ -33508,8 +33519,15 @@ function bindCadencePractice(container) {
     btn.addEventListener("click", async () => {
       try {
         const C = await getCadence();
-        await C.deleteSession(cadenceStorage, btn.dataset.cadenceSessionDel);
-        cadenceView.workSessions = await C.listSessions(cadenceStorage, { workId: cadenceView.activeWorkId });
+        const id = btn.dataset.cadenceSessionDel;
+        const sess = (state.cadenceSessions || []).find((s) => s.id === id);
+        await C.deleteSession(cadenceStorage, id);
+        if (sess?.recordingId) { try { await C.deleteRecording(cadenceStorage, sess.recordingId); } catch { /* noop */ } }
+        // Remove from synced state + tombstone so the deletion propagates.
+        state.cadenceSessions = (state.cadenceSessions || []).filter((s) => s.id !== id);
+        recordDeletion("cadenceSessions", id);
+        persist();
+        cadenceView.workSessions = cadenceSessionsForWork(cadenceView.activeWorkId);
         cadenceLibrary = null; // stats changed — reload library summaries next time
         refreshCadencePractice();
       } catch (e) { console.warn("Cadence delete session failed:", e); }
@@ -33557,21 +33575,37 @@ async function stopAndSaveCadencePractice() {
         { type: "troubleSpots", value: summary.troubleSpots, producedBy, producerVersion },
       ];
     }
-    // Tempo from the timeline alignment of what was played (music/alignment.js).
+    // Timeline alignment of what was played (music/alignment.js) → tempo metrics.
+    let alignment = null;
     const samples = cadenceView.followSamples || [];
     if (samples.length >= 2 && cadenceView.model) {
       try {
-        const al = C.buildAlignment(samples, cadenceView.model, {
+        alignment = C.buildAlignment(samples, cadenceView.model, {
           movementId: cadenceView.activeCtx?.movementId || null,
           editionId: cadenceView.activeCtx?.editionId || null,
         });
-        const bpm = C.averageTempo(al);
+        const bpm = C.averageTempo(alignment);
         if (bpm != null) metrics.push({ type: "tempo", value: bpm, unit: "bpm", producedBy, producerVersion });
-        const tbm = C.tempoByMeasure(al); // per-measure spine for comparing attempts
+        const tbm = C.tempoByMeasure(alignment); // per-measure spine for comparing attempts
         if (tbm && Object.keys(tbm).length) metrics.push({ type: "tempoByMeasure", value: tbm, producedBy, producerVersion });
       } catch (e) { console.warn("Cadence tempo metric failed:", e); }
     }
     cadenceView.followSamples = []; // consumed
+
+    // Persist the performance as a first-class Recording (event-stream + alignment),
+    // kept local + linked from the session; enables click→hear / scrub later.
+    let recordingId = null;
+    if (alignment && alignment.points && alignment.points.length) {
+      try {
+        const rec = await C.saveRecording(cadenceStorage, {
+          workId: cadenceView.activeCtx?.workId || cadenceView.activeWorkId,
+          media: [{ kind: "events", durationMs: alignment.durationMs }],
+          alignment,
+        });
+        recordingId = rec.id;
+      } catch (e) { console.warn("Cadence recording save failed:", e); }
+    }
+
     const savedSession = await C.saveSession(cadenceStorage, {
       workId: cadenceView.activeCtx?.workId || cadenceView.activeWorkId,
       movementId: cadenceView.activeCtx?.movementId || null,
@@ -33581,11 +33615,12 @@ async function stopAndSaveCadencePractice() {
       durationMs,
       inputSource: summary ? "follow" : "manual",
       startPosition: cadenceView.lastPosition || null,
+      recordingId,
       metrics,
     });
     cadenceUpsert("cadenceSessions", savedSession); persist(); // sync practice history
     cadenceLogEvent(C, C.EVENT.PRACTICE_COMPLETED, { subject: savedSession.workId, refs: { sessionId: savedSession.id }, data: { durationMs, accuracy: summary?.accuracy ?? null } });
-    cadenceView.workSessions = await C.listSessions(cadenceStorage, { workId: cadenceView.activeWorkId });
+    cadenceView.workSessions = cadenceSessionsForWork(cadenceView.activeWorkId);
     cadenceLibrary = null; // stats changed — library summaries refresh on return
     refreshCadencePractice();
     if (summary) {
@@ -33741,8 +33776,9 @@ async function mountCadenceViewer(host) {
       const readout = document.getElementById("cadencePosReadout");
       if (readout) readout.textContent = "Heads up: this score rendered, but its notes couldn't be mapped — tapping and follow won't work on it.";
     }
-    // Load this work's practice history and refresh the practice section.
-    try { cadenceView.workSessions = await C.listSessions(cadenceStorage, { workId: cadenceView.activeWorkId }); refreshCadencePractice(); } catch { /* noop */ }
+    // Load this work's practice history (from synced state → shows on every
+    // device) and refresh the practice section.
+    cadenceView.workSessions = cadenceSessionsForWork(cadenceView.activeWorkId); refreshCadencePractice();
   } catch (e) {
     console.warn("Cadence render failed:", e);
     host.innerHTML = `<p class="piano-empty-state">Couldn't render this score.<br><small>${escapeHtml(e?.message || String(e))}</small></p>`;
