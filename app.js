@@ -33150,10 +33150,11 @@ async function getCadence() {
     import("./music/input-midi.js"),
     import("./music/input-mic.js"),
   ]);
-  const [accuracy, cloud, events] = await Promise.all([
+  const [accuracy, cloud, events, xmlexport] = await Promise.all([
     import("./music/accuracy.js"),
     import("./music/cloud-blob.js"),
     import("./music/events.js"),
+    import("./music/musicxml-export.js"),
   ]);
   cadenceStorage = cadenceStorage || storage.createIdbStorage("cadence");
   cadenceMod = {
@@ -33168,6 +33169,7 @@ async function getCadence() {
     createMicInputProvider: mic.createMicInputProvider, createAccuracyTracker: accuracy.createAccuracyTracker,
     uploadBlob: cloud.uploadBlob, downloadBlob: cloud.downloadBlob, cloudLocation: cloud.cloudLocation,
     makeEvent: events.makeEvent, appendEvent: events.appendEvent, EVENT: events.EVENT,
+    serializeToMusicXml: xmlexport.serializeToMusicXml,
   };
   return cadenceMod;
 }
@@ -33445,6 +33447,10 @@ function cadencePracticeSectionHtml() {
         ${practicing ? `<span class="cadence-rec-dot" aria-hidden="true"></span> Stop · <span id="cadencePracticeElapsed">${cadenceElapsedLabel()}</span>` : "Start practice"}
       </button>
       ${sessions.length ? `<span class="cadence-practice-total">${sessions.length} session${sessions.length > 1 ? "s" : ""} · ${escapeHtml(cadenceFmtDur(total))}</span>` : ""}
+      <button class="cadence-export-btn" type="button" data-cadence-export title="Download this score as MusicXML" aria-label="Download this score as MusicXML">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
+        MusicXML
+      </button>
     </div>
     ${list ? `<div class="cadence-session-list">${list}</div>` : ""}`;
 }
@@ -33456,8 +33462,28 @@ function refreshCadencePractice() {
   bindCadencePractice(el);
 }
 
+async function exportCadenceMusicXml() {
+  try {
+    const C = await getCadence();
+    const w = await C.loadWork(cadenceStorage, cadenceView.activeWorkId);
+    if (!w?.work) return;
+    // Prefer the ORIGINAL source bytes (lossless); fall back to serializing the
+    // canonical model (for future authored scores with no source file).
+    let xml = w.representation ? await C.readRepresentationXml(cadenceStorage, w.representation) : null;
+    if (xml == null && w.model) xml = C.serializeToMusicXml(w.model).xml;
+    if (xml == null) { alert("This score's file isn't on this device yet — open it once to download it."); return; }
+    const safe = (w.work.title || "score").replace(/[^\w.-]+/g, "_").slice(0, 60) || "score";
+    const url = URL.createObjectURL(new Blob([xml], { type: "application/vnd.recordare.musicxml+xml" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = `${safe}.musicxml`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) { console.warn("Cadence export failed:", e); alert("Couldn't export this score."); }
+}
+
 function bindCadencePractice(container) {
   container.querySelector("[data-cadence-practice-toggle]")?.addEventListener("click", toggleCadencePractice);
+  container.querySelector("[data-cadence-export]")?.addEventListener("click", exportCadenceMusicXml);
   container.querySelectorAll("[data-cadence-session-del]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       try {

@@ -13068,6 +13068,22 @@ body.touch-drag-active * {
   flex-wrap: wrap;
 }
 .cadence-practice-btn { display: inline-flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
+.cadence-export-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line, #e4e0d8);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.cadence-export-btn:hover { color: var(--ink); border-color: var(--line-strong, #d3ccbe); }
 .cadence-practice-btn.is-recording {
   background: var(--crit, #b23a3a);
   border-color: var(--crit, #b23a3a);
