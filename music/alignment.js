@@ -92,6 +92,19 @@ export function tempoCurve(alignment, { smooth = 1 } = {}) {
   });
 }
 
+/** Median local tempo per measure: { measureIndex: bpm } — the per-measure spine
+ * for comparing two attempts (where did I speed up between takes?). */
+export function tempoByMeasure(alignment) {
+  const byM = {};
+  for (const seg of tempoCurve(alignment)) (byM[seg.measureIndex] ||= []).push(seg.bpm);
+  const out = {};
+  for (const [mi, arr] of Object.entries(byM)) {
+    arr.sort((a, b) => a - b);
+    out[mi] = round1(arr[Math.floor(arr.length / 2)]);
+  }
+  return out;
+}
+
 /** Performance time (ms) for a musical position — for "click a measure → hear it". */
 export function timeAtPosition(alignment, model, position) {
   const pts = (alignment && alignment.points) || [];

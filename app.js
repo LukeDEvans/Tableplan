@@ -33151,12 +33151,13 @@ async function getCadence() {
     import("./music/input-midi.js"),
     import("./music/input-mic.js"),
   ]);
-  const [accuracy, cloud, events, xmlexport, align] = await Promise.all([
+  const [accuracy, cloud, events, xmlexport, align, compare] = await Promise.all([
     import("./music/accuracy.js"),
     import("./music/cloud-blob.js"),
     import("./music/events.js"),
     import("./music/musicxml-export.js"),
     import("./music/alignment.js"),
+    import("./music/compare.js"),
   ]);
   cadenceStorage = cadenceStorage || storage.createIdbStorage("cadence");
   cadenceMod = {
@@ -33172,7 +33173,8 @@ async function getCadence() {
     uploadBlob: cloud.uploadBlob, downloadBlob: cloud.downloadBlob, cloudLocation: cloud.cloudLocation,
     makeEvent: events.makeEvent, appendEvent: events.appendEvent, EVENT: events.EVENT,
     serializeToMusicXml: xmlexport.serializeToMusicXml,
-    buildAlignment: align.buildAlignment, averageTempo: align.averageTempo, tempoCurve: align.tempoCurve,
+    buildAlignment: align.buildAlignment, averageTempo: align.averageTempo, tempoCurve: align.tempoCurve, tempoByMeasure: align.tempoByMeasure,
+    attemptSummary: compare.attemptSummary, comparePerformances: compare.comparePerformances, comparisonHeadline: compare.comparisonHeadline,
   };
   return cadenceMod;
 }
@@ -33430,6 +33432,19 @@ function renderCadenceViewer() {
     </div>`;
 }
 
+// Headline comparing the two most recent tracked attempts (design §38). Sync:
+// uses the already-loaded Cadence module (the viewer is mounted before practice
+// renders); returns "" until two follow-tracked sessions exist.
+function cadenceCompareLine(sessions) {
+  if (!cadenceMod || !cadenceMod.comparePerformances) return "";
+  const tracked = (sessions || []).filter((s) => (s.metrics || []).some((m) => m.type === "tempo" || m.type === "accuracy"));
+  if (tracked.length < 2) return "";
+  const later = cadenceMod.attemptSummary(tracked[0]);   // newest (sessions are newest-first)
+  const earlier = cadenceMod.attemptSummary(tracked[1]); // the one before it
+  try { return cadenceMod.comparisonHeadline(cadenceMod.comparePerformances(earlier, later)); }
+  catch { return ""; }
+}
+
 function cadencePracticeSectionHtml() {
   const practicing = cadenceView.practiceStart != null;
   const sessions = cadenceView.workSessions || [];
@@ -33451,6 +33466,7 @@ function cadencePracticeSectionHtml() {
         ${practicing ? `<span class="cadence-rec-dot" aria-hidden="true"></span> Stop · <span id="cadencePracticeElapsed">${cadenceElapsedLabel()}</span>` : "Start practice"}
       </button>
       ${sessions.length ? `<span class="cadence-practice-total">${sessions.length} session${sessions.length > 1 ? "s" : ""} · ${escapeHtml(cadenceFmtDur(total))}</span>` : ""}
+      ${(() => { const h = cadenceCompareLine(sessions); return h ? `<span class="cadence-compare-line" title="Compared to your previous tracked attempt"><span class="cadence-compare-label">Since last time</span> ${escapeHtml(h)}</span>` : ""; })()}
       <button class="cadence-export-btn" type="button" data-cadence-export title="Download this score as MusicXML" aria-label="Download this score as MusicXML">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
         MusicXML
@@ -33551,6 +33567,8 @@ async function stopAndSaveCadencePractice() {
         });
         const bpm = C.averageTempo(al);
         if (bpm != null) metrics.push({ type: "tempo", value: bpm, unit: "bpm", producedBy, producerVersion });
+        const tbm = C.tempoByMeasure(al); // per-measure spine for comparing attempts
+        if (tbm && Object.keys(tbm).length) metrics.push({ type: "tempoByMeasure", value: tbm, producedBy, producerVersion });
       } catch (e) { console.warn("Cadence tempo metric failed:", e); }
     }
     cadenceView.followSamples = []; // consumed

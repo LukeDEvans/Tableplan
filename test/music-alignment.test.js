@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { rat } from "../music/rational.js";
 import { makePosition } from "../music/position.js";
-import { absQuarters, buildAlignment, averageTempo, tempoCurve, timeAtPosition, positionAtTime } from "../music/alignment.js";
+import { absQuarters, buildAlignment, averageTempo, tempoCurve, tempoByMeasure, timeAtPosition, positionAtTime } from "../music/alignment.js";
 
 const ctx = { workId: "w", movementId: "m", editionId: "e" };
 // Two 4/4 measures = 4 quarters each.
@@ -61,6 +61,19 @@ describe("tempoCurve", () => {
     expect(curve.map((c) => c.bpm)).toEqual([240, 60]);
     expect(curve[0].measureIndex).toBe(0);
     expect(curve[1].measureIndex).toBe(1);
+  });
+});
+
+describe("tempoByMeasure", () => {
+  it("gives a median local BPM per measure (the per-take spine for comparison)", () => {
+    const samples = [
+      { position: pos(0, 0), tMs: 0 },
+      { position: pos(0, 2), tMs: 500 },   // measure 0 segment → 240 BPM
+      { position: pos(1, 0), tMs: 2500 },  // measure 1 segment → 60 BPM
+    ];
+    const tbm = tempoByMeasure(buildAlignment(samples, model, ctx));
+    expect(tbm[0]).toBe(240);
+    expect(tbm[1]).toBe(60);
   });
 });
 

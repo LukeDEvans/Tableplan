@@ -13068,6 +13068,17 @@ body.touch-drag-active * {
   flex-wrap: wrap;
 }
 .cadence-practice-btn { display: inline-flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
+.cadence-compare-line {
+  flex: 1 1 100%;
+  order: 3;
+  font-size: 0.8rem;
+  color: var(--ink);
+}
+.cadence-compare-label {
+  font-weight: 600;
+  color: var(--muted);
+  margin-right: 4px;
+}
 .cadence-export-btn {
   margin-left: auto;
   display: inline-flex;
