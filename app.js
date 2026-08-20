@@ -220,7 +220,7 @@ const STATE_SECTIONS = {
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
   plan:      ["calendars", "planEvents", "planCalendars", "planHiddenSources"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
@@ -3376,6 +3376,8 @@ function normalizeState(parsed) {
     // Media: unified listening history + music library + radio (all in the media
     // section so they sync; newer-wins on merge — see mergeStates).
     mediaHistory: Array.isArray(parsed?.mediaHistory) ? parsed.mediaHistory : [],
+    // App-owned unified Saved store (Watch-Later / Listen-Later / Favourites).
+    mediaSaved: Array.isArray(parsed?.mediaSaved) ? parsed.mediaSaved : [],
     musicLibrary: (parsed?.musicLibrary && typeof parsed.musicLibrary === "object")
       ? { favorites: Array.isArray(parsed.musicLibrary.favorites) ? parsed.musicLibrary.favorites : [], playlists: Array.isArray(parsed.musicLibrary.playlists) ? parsed.musicLibrary.playlists : [] }
       : { favorites: [], playlists: [] },
@@ -5435,6 +5437,8 @@ function mergeStates(newer, older) {
     "calendars",
     // Saved articles (Read/Listen)
     "savedArticles",
+    // Unified Saved media (Watch-Later/Listen-Later/Favourites; id === mediaKey)
+    "mediaSaved",
     // Podcasts: subscribed shows, playlists, saved tabs
     "podcasts", "podcastPlaylists", "podcastSavedCategories",
     // Travel
