@@ -39121,11 +39121,13 @@ function renderMediaSearchResults() {
   results.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
 
   if (!results.length) {
-    listEl.innerHTML = `<div class="article-empty"><p>No media matches “${escapeHtml(mediaSearchQuery)}”.</p></div>`;
+    listEl.innerHTML = `<div class="article-empty"><p>No media in your library matches “${escapeHtml(mediaSearchQuery)}”.</p></div>` +
+      topSearchDiscoverRowHtml(mediaSearchQuery);
+    wireTopSearchDiscoverRow(listEl, mediaSearchQuery);
     return;
   }
   const TYPE_LABEL = { podcast: "Podcast", article: "Article", book: "Book" };
-  listEl.innerHTML = results.slice(0, 80).map((r) => `
+  listEl.innerHTML = topSearchDiscoverRowHtml(mediaSearchQuery) + results.slice(0, 80).map((r) => `
     <div class="article-row" data-media-search-type="${r.type}" data-media-search-id="${escapeHtml(r.id)}" role="button" tabindex="0">
       ${mediaRowArt(r.art, r.icon)}
       <div class="article-row-main">
@@ -39146,6 +39148,29 @@ function renderMediaSearchResults() {
     row.addEventListener("click", open);
     row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
   });
+  wireTopSearchDiscoverRow(listEl, mediaSearchQuery);
+}
+
+// Bridge the fast local library search to universal Discover search: the top-bar
+// filters your OWN podcasts/articles/books; this row runs the same query across
+// every service in Discover. One query, two reaches — no duplicate search box.
+function topSearchDiscoverRowHtml(q) {
+  return `<button class="media-search-discover-row" type="button" data-discover-q="${escapeHtml(q)}">` +
+    `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>` +
+    `<span>Search all media for “${escapeHtml(q)}”</span></button>`;
+}
+function wireTopSearchDiscoverRow(listEl, q) {
+  listEl.querySelector(".media-search-discover-row")?.addEventListener("click", () => goToDiscoverSearch(q));
+}
+function goToDiscoverSearch(q) {
+  mediaSearchQuery = "";
+  const si = document.getElementById("mediaSearchInput"); if (si) si.value = "";
+  activeMediaTab = "discover";
+  switchMediaTab("discover");
+  const input = document.getElementById("discoverSearchInput");
+  if (input) input.value = q;
+  discoverMode = "home";
+  runDiscoverSearch(q);
 }
 
 function switchPodcastTab(tabId) {
