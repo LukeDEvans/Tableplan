@@ -1,0 +1,32 @@
+# Application verification pipeline (see ARCHITECTURE.md §16). Runs on every push
+# and pull request: installs deps, runs the vitest suite, and runs the production
+# Vite build (which is also the bundle check). Fails the workflow if any step
+# fails. Does NOT deploy — deployment stays manual/approved (CLAUDE.md).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    name: test + build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Production build (bundle check)
+        run: npm run build
