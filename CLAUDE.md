@@ -1,5 +1,9 @@
 # Live App — Claude Instructions
 
+## Architecture
+
+**Before making substantial architectural or cross-domain changes, read [ARCHITECTURE.md](ARCHITECTURE.md) and follow its conventions.** It is the governing architectural reference: system layers, module/data ownership, and the rules for state/sync, integrations, background jobs, AI tools, and adding new modules. When a project convention exists there, use it rather than inventing a new pattern.
+
 ## Working style
 
 **Ask questions when you need further guidance.** If a request is ambiguous or a decision could go multiple ways that Luke would care about, ask rather than guessing.
