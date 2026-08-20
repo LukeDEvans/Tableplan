@@ -38473,12 +38473,23 @@ async function playDiscoverMusic(key) {
   try { await openMusicItem(item.source); } catch (e) { console.warn("Discover music play failed:", e); }
 }
 
+// Play/resume a podcast Continue or Saved card via the existing podcast engine.
+// openPodcastEpisode restores the saved position from podcastProgress on load.
+function playDiscoverPodcast(key) {
+  const item = discoverItemsByKey.get(key);
+  const episodeId = item && item.meta && item.meta.episodeId;
+  if (!episodeId) return;
+  showMediaApp();
+  switchMediaTab("podcasts");
+  try { openPodcastEpisode(episodeId, { autoplay: true }); } catch (e) { console.warn("Discover podcast play failed:", e); }
+}
+
 async function getMediaHub() {
   if (mediaHub) return mediaHub;
-  const [prov, search, tmdbP, jellyP, ytP, musicP, mstate, watchA] = await Promise.all([
+  const [prov, search, tmdbP, jellyP, ytP, musicP, mstate, watchA, sources] = await Promise.all([
     import("./media-provider.js"), import("./media-search.js"), import("./media-provider-tmdb.js"),
     import("./media-provider-jellyfin.js"), import("./media-provider-youtube.js"), import("./media-provider-music.js"),
-    import("./media-state.js"), import("./media-watch-adapter.js"),
+    import("./media-state.js"), import("./media-watch-adapter.js"), import("./media-sources.js"),
   ]);
   const authFetchJson = async (url, { signal } = {}) => {
     const r = await fetch(url, { signal, headers: { Authorization: `Bearer ${authSession?.access_token || ""}`, Accept: "application/json" } });
@@ -38495,11 +38506,16 @@ async function getMediaHub() {
   // Discover is universal (audio + video). Play hands back to the audio engine.
   const musicReg = await getMusicProviders();
   const music = musicP.createMusicMediaProvider({ search: async (q, opts) => ((await musicReg.search(q, opts)).items || []) });
+  // Podcasts already play in-app via the podcast engine; surface them to the
+  // Coordinator as a native, always-connected provider (no search here — search
+  // stays in the Podcasts tab; this is only so Continue/Saved podcast items get a
+  // ▶ Play target). The play bridge routes on data-provider==="podcast".
+  const podcast = { id: "podcast", label: "Podcasts", kind: "podcast", capabilities: new Set([prov.MEDIA_CAP.NATIVE_PLAYBACK]) };
   const searchProviders = [tmdb, jellyfin, youtube, music];
-  const connectedIds = [...(state.mediaServices || []), "music"]; // your streamers + always-available music
+  const connectedIds = [...(state.mediaServices || []), "music", "podcast"]; // your streamers + always-available audio
   if (jf.enabled && jf.url && jf.apiKey && jf.userId) connectedIds.push("jellyfin");
-  const registry = prov.createMediaProviderRegistry([...prov.PROVIDER_CATALOG, tmdb, jellyfin, youtube, music], { connectedIds });
-  mediaHub = { search, tmdb, searchProviders, registry, mstate, watchA };
+  const registry = prov.createMediaProviderRegistry([...prov.PROVIDER_CATALOG, tmdb, jellyfin, youtube, music, podcast], { connectedIds });
+  mediaHub = { search, tmdb, searchProviders, registry, mstate, watchA, sources };
   return mediaHub;
 }
 
@@ -38613,6 +38629,7 @@ function wireDiscoverButtons(container, hub) {
     const item = discoverItemsByKey.get(btn.dataset.key);
     if (item) { try { state.mediaHistory = hub.mstate.recordPlayback(state.mediaHistory || [], item); persist(); } catch { /* noop */ } }
     if (btn.dataset.provider === "music") { playDiscoverMusic(btn.dataset.key); return; }
+    if (btn.dataset.provider === "podcast") { playDiscoverPodcast(btn.dataset.key); return; }
     const uri = btn.dataset.openUri; if (!uri) return;
     const mode = btn.dataset.mode;
     if (mode === "native" || mode === "embedded") openVideoSurface(uri, mode, btn.dataset.title || "");
@@ -38647,8 +38664,8 @@ async function renderDiscoverHome() {
   try { hub = await getMediaHub(); } catch { results.innerHTML = discoverHomeEmptyHtml(); return; }
   if (token !== discoverSearchToken) return;
   discoverItemsByKey = new Map();
-  const continueItems = hub.mstate.continueList(hub.watchA.watchItemsToMediaItems(state.watchItems || []), { limit: 12 });
-  const savedItems = hub.mstate.savedList(state.mediaSaved || []).slice(0, 12).map(savedRecordToItem);
+  const continueItems = discoverContinueItems(hub, 12);
+  const savedItems = discoverSavedItems(hub, 12);
   const recentItems = hub.mstate.historyItems(state.mediaHistory || [], { limit: 12 });
   const sections = [
     ["Continue", continueItems], ["Saved", savedItems], ["Recently played", recentItems],
@@ -38661,6 +38678,37 @@ async function renderDiscoverHome() {
 
 function discoverHomeEmptyHtml() {
   return `<p class="discover-hint">Search across your services and beyond — find something, then Play, Open, or Save it.</p>`;
+}
+
+// Dedupe canonical items by kind:id, keeping the first (highest-priority) seen.
+function dedupeDiscoverItems(items) {
+  const seen = new Set(), out = [];
+  for (const it of items) {
+    const k = `${it.kind}:${it.id}`;
+    if (seen.has(k)) continue;
+    seen.add(k); out.push(it);
+  }
+  return out;
+}
+
+// Unified Continue: in-progress across every kind (Watch series + podcasts today).
+function discoverContinueItems(hub, limit) {
+  const items = [
+    ...hub.watchA.watchItemsToMediaItems(state.watchItems || []),
+    ...hub.sources.podcastsToContinueItems(state.podcasts || [], state.podcastProgress || {}),
+  ];
+  return hub.mstate.continueList(dedupeDiscoverItems(items), { limit });
+}
+
+// Unified Saved: the app-owned Saved store PLUS existing saves folded in
+// (Watch want-to-watch, saved podcasts, music favourites). App-owned first so
+// the Save toggle state is authoritative; the rest are read-only surfacing.
+function discoverSavedItems(hub, limit) {
+  const owned = hub.mstate.savedList(state.mediaSaved || []).map(savedRecordToItem);
+  const wantWatch = hub.watchA.watchItemsToMediaItems(state.watchItems || []).filter((i) => i.userState && i.userState.saved);
+  const podSaved = hub.sources.podcastSavedToItems(state.podcasts || [], state.podcastSaved || [], state.podcastProgress || {});
+  const musicFavs = hub.sources.musicFavoritesToItems(state.musicLibrary || {});
+  return dedupeDiscoverItems([...owned, ...wantWatch, ...podSaved, ...musicFavs]).slice(0, limit);
 }
 
 // A saved record → a canonical-ish item (id recovered from its key) for rendering.
