@@ -38476,23 +38476,40 @@ async function playDiscoverMusic(key) {
   try { await openMusicItem(item.source); } catch (e) { console.warn("Discover music play failed:", e); }
 }
 
-// Play/resume a podcast Continue or Saved card via the existing podcast engine.
-// openPodcastEpisode restores the saved position from podcastProgress on load.
+// Play/resume a podcast card via the existing podcast engine. A library episode
+// resumes via openPodcastEpisode (restores saved position); a search result is
+// an ad-hoc episode (source.episode has an audioUrl) → play it directly.
 function playDiscoverPodcast(key) {
   const item = discoverItemsByKey.get(key);
-  const episodeId = item && item.meta && item.meta.episodeId;
-  if (!episodeId) return;
+  if (!item) return;
   showMediaApp();
   switchMediaTab("podcasts");
-  try { openPodcastEpisode(episodeId, { autoplay: true }); } catch (e) { console.warn("Discover podcast play failed:", e); }
+  const src = item.source;
+  try {
+    if (src && src.episode && src.episode.audioUrl && !findPodcastEpisode(src.episode.id).episode) {
+      startPodcastPlayback(src.episode, src.show || { title: src.episode.showTitle }, { autoplay: true });
+    } else if (item.meta && item.meta.episodeId) {
+      openPodcastEpisode(item.meta.episodeId, { autoplay: true });
+    }
+  } catch (e) { console.warn("Discover podcast play failed:", e); }
+}
+
+// Play a radio station from a Discover card via the existing radio engine.
+function playDiscoverRadio(key) {
+  const item = discoverItemsByKey.get(key);
+  if (!item || !item.source) return;
+  showMediaApp();
+  switchMediaTab("radio");
+  try { playRadioStation(item.source); } catch (e) { console.warn("Discover radio play failed:", e); }
 }
 
 async function getMediaHub() {
   if (mediaHub) return mediaHub;
-  const [prov, search, tmdbP, jellyP, ytP, musicP, mstate, watchA, sources] = await Promise.all([
+  const [prov, search, tmdbP, jellyP, ytP, musicP, mstate, watchA, sources, radioP, podP] = await Promise.all([
     import("./media-provider.js"), import("./media-search.js"), import("./media-provider-tmdb.js"),
     import("./media-provider-jellyfin.js"), import("./media-provider-youtube.js"), import("./media-provider-music.js"),
     import("./media-state.js"), import("./media-watch-adapter.js"), import("./media-sources.js"),
+    import("./media-provider-radio.js"), import("./media-provider-podcast.js"),
   ]);
   const authFetchJson = async (url, { signal } = {}) => {
     const r = await fetch(url, { signal, headers: { Authorization: `Bearer ${authSession?.access_token || ""}`, Accept: "application/json" } });
@@ -38514,10 +38531,15 @@ async function getMediaHub() {
   // stays in the Podcasts tab; this is only so Continue/Saved podcast items get a
   // ▶ Play target). The play bridge routes on data-provider==="podcast".
   const podcast = { id: "podcast", label: "Podcasts", kind: "podcast", capabilities: new Set([prov.MEDIA_CAP.NATIVE_PLAYBACK]) };
-  const searchProviders = [tmdb, jellyfin, youtube, music];
-  const connectedIds = [...(state.mediaServices || []), "music", "podcast"]; // your streamers + always-available audio
+  // Radio + podcast SEARCH fold the existing station/iTunes search into universal
+  // search; their results play via the native "radio"/"podcast" providers.
+  const radioReg = await getRadio();
+  const radio = radioP.createRadioMediaProvider({ search: async (q, opts) => ((await radioReg.search(q, opts)).stations || []) });
+  const podcastSearch = podP.createPodcastMediaProvider({ fetchJson: async (url, o) => { const r = await fetch(url, o); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); } });
+  const searchProviders = [tmdb, jellyfin, youtube, music, radio, podcastSearch];
+  const connectedIds = [...(state.mediaServices || []), "music", "podcast", "radio"]; // your streamers + always-available audio
   if (jf.enabled && jf.url && jf.apiKey && jf.userId) connectedIds.push("jellyfin");
-  const registry = prov.createMediaProviderRegistry([...prov.PROVIDER_CATALOG, tmdb, jellyfin, youtube, music, podcast], { connectedIds });
+  const registry = prov.createMediaProviderRegistry([...prov.PROVIDER_CATALOG, tmdb, jellyfin, youtube, music, podcast, radio], { connectedIds });
   mediaHub = { search, tmdb, searchProviders, registry, mstate, watchA, sources };
   return mediaHub;
 }
@@ -38656,6 +38678,7 @@ function wireDiscoverButtons(container, hub) {
     if (item) { try { state.mediaHistory = hub.mstate.recordPlayback(state.mediaHistory || [], item); persist(); } catch { /* noop */ } }
     if (btn.dataset.provider === "music") { playDiscoverMusic(btn.dataset.key); return; }
     if (btn.dataset.provider === "podcast") { playDiscoverPodcast(btn.dataset.key); return; }
+    if (btn.dataset.provider === "radio") { playDiscoverRadio(btn.dataset.key); return; }
     const uri = btn.dataset.openUri; if (!uri) return;
     const mode = btn.dataset.mode;
     if (mode === "native" || mode === "embedded") {
