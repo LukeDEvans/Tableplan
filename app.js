@@ -38658,7 +38658,11 @@ function wireDiscoverButtons(container, hub) {
     if (btn.dataset.provider === "podcast") { playDiscoverPodcast(btn.dataset.key); return; }
     const uri = btn.dataset.openUri; if (!uri) return;
     const mode = btn.dataset.mode;
-    if (mode === "native" || mode === "embedded") openVideoSurface(uri, mode, btn.dataset.title || "");
+    if (mode === "native" || mode === "embedded") {
+      const p = item && item.userState && item.userState.progress;
+      const startPos = p && p.kind === "position" && p.position ? p.position : 0; // Jellyfin resume tick
+      openVideoSurface(uri, mode, btn.dataset.title || "", startPos);
+    }
     else window.open(uri, "_blank", "noopener");
   }));
 }
@@ -38791,7 +38795,7 @@ function discoverCardHtml(v) {
 // overlap. DRM/provider-controlled players stay provider-controlled (design §10);
 // this only owns the surrounding surface (design §11). Persistent video Now-
 // Playing is a later phase; this is the focused in-app player.
-function openVideoSurface(uri, mode, title) {
+function openVideoSurface(uri, mode, title, startPos = 0) {
   document.getElementById("videoSurfaceOverlay")?.remove();
   try { if (typeof mediaEngine !== "undefined" && mediaEngine) mediaEngine.pause(); } catch { /* no audio active */ }
   const overlay = document.createElement("div");
@@ -38807,6 +38811,12 @@ function openVideoSurface(uri, mode, title) {
       inner +
     `</div>`;
   document.body.appendChild(overlay);
+  // Native <video>: resume past a >10s saved position once metadata is ready
+  // (mirrors the podcast resume rule). Embedded frames handle their own resume.
+  if (mode !== "embedded" && startPos > 10) {
+    const vid = overlay.querySelector("video");
+    if (vid) vid.addEventListener("loadedmetadata", () => { try { vid.currentTime = startPos; } catch { /* noop */ } }, { once: true });
+  }
   const close = () => { try { overlay.querySelector("video")?.pause(); } catch { /* noop */ } overlay.remove(); };
   overlay.querySelector(".video-surface-close").addEventListener("click", close);
   overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
