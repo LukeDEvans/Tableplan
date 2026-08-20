@@ -38702,9 +38702,56 @@ function discoverViewsFor(items, hub) {
   items.forEach((it) => discoverItemsByKey.set(`${it.kind}:${it.id}`, it));
   return items.map((it) => {
     const v = hub.search.discoverView(it, hub.registry);
-    v.saved = hub.mstate.isSaved(state.mediaSaved || [], v.key);
+    // A TMDB video reads as saved if it's in the unified watchlist; else the store.
+    v.saved = (it.kind === "video" && it.meta && it.meta.tmdbId)
+      ? !!videoInWatchlist(it.meta.tmdbId)
+      : hub.mstate.isSaved(state.mediaSaved || [], v.key);
     return v;
   });
+}
+
+// ── Watch ⇄ Discover convergence: one watchlist for video (design §20) ──────────
+// The Watch section's state.watchItems IS the saved-video store; Discover writes
+// to it rather than a parallel list. Find by TMDB id (the cross-provider identity).
+function videoInWatchlist(tmdbId) {
+  const id = String(tmdbId);
+  return (state.watchItems || []).find((w) => w && String(w.tmdbId) === id) || null;
+}
+// A want-item with no progress/rating is safe to remove on un-save; anything with
+// history (seasonProgress, rating, watchedDate, non-want status) is never deleted.
+function watchItemIsPristine(w) {
+  return w && w.status === "want" && !w.rating && !w.watchedDate &&
+    !(w.seasonProgress && Object.keys(w.seasonProgress).length) &&
+    !(w.episodeData && Object.keys(w.episodeData).length);
+}
+// A canonical Discover video → the TMDB-result shape addWatchItemFromTmdb expects.
+function discoverVideoToTmdbResult(item) {
+  const s = (item.source && item.source.tmdbId != null) ? item.source : null;
+  if (s) return s;
+  return {
+    type: (item.meta && item.meta.tmdbType) || "movie",
+    title: item.title,
+    tmdbId: item.meta.tmdbId,
+    posterPath: null, year: item.year || null, overview: null, totalSeasons: null,
+  };
+}
+// Toggle a video's watchlist membership; returns whether it is now saved.
+function toggleWatchlistSave(item) {
+  const existing = videoInWatchlist(item.meta.tmdbId);
+  if (!existing) {
+    addWatchItemFromTmdb(discoverVideoToTmdbResult(item)); // adds want-item + loads providers
+    if (activeAppArea === "media" && activeMediaTab === "watch") renderWatchPlanner();
+    return true;
+  }
+  if (watchItemIsPristine(existing)) {
+    state.watchItems = (state.watchItems || []).filter((w) => w !== existing);
+    persist();
+    if (activeAppArea === "media" && activeMediaTab === "watch") renderWatchPlanner();
+    return false;
+  }
+  // Has real history — keep it, just tell the user where it lives.
+  try { showVoiceToast("Already in your Watch list."); } catch { /* noop */ }
+  return true;
 }
 
 // Shared wiring for both search results and the home: Save toggles, and Play/Open
@@ -38714,10 +38761,19 @@ function wireDiscoverButtons(container, hub) {
   container.querySelectorAll("[data-save-key]").forEach((btn) => btn.addEventListener("click", () => {
     const item = discoverItemsByKey.get(btn.dataset.saveKey);
     if (!item) return;
-    const list = (item.kind === "music" || item.kind === "podcast") ? hub.mstate.SAVED_LIST.LISTEN_LATER : hub.mstate.SAVED_LIST.WATCH_LATER;
-    state.mediaSaved = hub.mstate.toggleSaved(state.mediaSaved || [], item, list);
-    persist();
-    const now = hub.mstate.isSaved(state.mediaSaved, item, list);
+    // Convergence: a movie/show with a TMDB id is a Watch-list concept. Save it to
+    // the ONE watchlist (state.watchItems) so it appears in the Watch section AND
+    // in Discover — not a second, parallel saved store. Everything else uses the
+    // app-owned Saved store as before.
+    let now;
+    if (item.kind === "video" && item.meta && item.meta.tmdbId) {
+      now = toggleWatchlistSave(item);
+    } else {
+      const list = (item.kind === "music" || item.kind === "podcast") ? hub.mstate.SAVED_LIST.LISTEN_LATER : hub.mstate.SAVED_LIST.WATCH_LATER;
+      state.mediaSaved = hub.mstate.toggleSaved(state.mediaSaved || [], item, list);
+      persist();
+      now = hub.mstate.isSaved(state.mediaSaved, item, list);
+    }
     btn.classList.toggle("is-saved", now);
     btn.setAttribute("aria-pressed", String(now));
   }));
