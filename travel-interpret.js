@@ -54,10 +54,13 @@ function interpretPrompt() {
     '  "price": total numeric cost (no symbol) if stated, else null. "currency": ISO code if stated, else "".',
     '  "notes": one concise line of remaining key details (check-in instructions, seat, terminal, cancellation policy).',
     '  "provenance": object mapping any fields you INFERRED (not explicitly stated) to "inferred"; explicit fields may be omitted or set "explicit".',
+    '  "conflicts": array of GENUINELY contradictory fields you could NOT resolve. Each: { "field": the entity field name, "values": [ { "value": the string value, "source": a short message ref like "Message 2" or its date } ] }. Omit or use [] when there is no conflict.',
     "",
     'For kind "flight" also include "segments": array of legs, each { "flightNumber", "from" (IATA), "fromName", "to" (IATA), "toName", "departDate" (YYYY-MM-DD), "departTime" (HH:MM), "arriveDate", "arriveTime" }. Include every leg including layovers, chronologically.',
     "",
-    "Rules: Do NOT invent values — use \"\", null, or [] when unknown, and mark anything you inferred in provenance. Prefer the latest information in the thread. Output multiple entities when the thread genuinely contains multiple distinct reservations (e.g. a flight and a hotel).",
+    "Distinguish an UPDATE from a CONFLICT. If a later message CLEARLY supersedes an earlier one (a modification, a newer confirmation), that is an update: resolve it silently, latest wins, and do NOT list it in conflicts. Only when two values contradict each other with NO clear authority (e.g. two messages of similar standing give different check-out dates) is it a genuine conflict: still put your best guess in the main field, but list the contradictory values (with their message sources) in conflicts so the user can decide.",
+    "",
+    "Rules: Do NOT invent values — use \"\", null, or [] when unknown, and mark anything you inferred in provenance. Prefer the latest information in the thread for clear updates. Output multiple entities when the thread genuinely contains multiple distinct reservations (e.g. a flight and a hotel).",
   ].join("\n");
 }
 

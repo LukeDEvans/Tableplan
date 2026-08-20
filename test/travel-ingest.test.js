@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   normalizeEntity, normalizeEntities, entitySpan, entityToPlacements,
   matchTrip, suggestNewTrip, dateOverlap, findExistingItem, diffItem, entityToProposal,
+  hasConflicts, findItineraryConflict, entityToItineraryProposal,
 } from "../travel-ingest.js";
 import { buildDayTimeline } from "../travel-itinerary.js";
 
@@ -203,5 +204,97 @@ describe("imported entities feed the itinerary (extensibility)", () => {
     ] });
     commitInto(trip, flight, {});
     expect(findExistingItem(flight, trip)).toBeTruthy(); // same confirmation → recognized, not duplicated
+  });
+});
+
+// ── Gap-closing tests (conflict surfacing, itinerary proposals, multi-*, cancel) ──
+
+describe("conflict surfacing (genuine conflict ≠ silent update)", () => {
+  it("normalizes and keeps a real conflict (≥2 distinct values, with sources)", () => {
+    const e = normalizeEntity({ ...airbnb, conflicts: [
+      { field: "endDate", values: [{ value: "2026-06-21", source: "Message 1" }, { value: "2026-06-22", source: "Message 3" }] },
+    ] });
+    expect(hasConflicts(e)).toBe(true);
+    expect(e.conflicts[0].field).toBe("endDate");
+    expect(e.conflicts[0].values.map(v => v.source)).toEqual(["Message 1", "Message 3"]);
+  });
+  it("drops non-conflicts: agreeing values, single values, or malformed", () => {
+    expect(hasConflicts(normalizeEntity({ ...airbnb, conflicts: [
+      { field: "endDate", values: [{ value: "2026-06-22" }, { value: "2026-06-22" }] }, // agree
+    ] }))).toBe(false);
+    expect(hasConflicts(normalizeEntity({ ...airbnb, conflicts: [{ field: "x", values: [{ value: "only one" }] }] }))).toBe(false);
+    expect(hasConflicts(normalizeEntity({ ...airbnb, conflicts: "nope" }))).toBe(false);
+    expect(normalizeEntity(airbnb).conflicts).toEqual([]); // no conflicts by default
+  });
+});
+
+describe("multi-reservation thread", () => {
+  it("normalizes a flight + a hotel into two entities, each placed correctly", () => {
+    const entities = normalizeEntities([
+      { kind: "flight", confirmation: "UA9", segments: [{ from: "MSP", to: "FRA", departDate: "2026-06-14" }] },
+      airbnb,
+    ]);
+    expect(entities.map(e => e.kind)).toEqual(["flight", "lodging"]);
+    expect(entityToPlacements(entities[0])[0].section).toBe("travel");
+    expect(entityToPlacements(entities[1])[0].section).toBe("lodging");
+  });
+});
+
+describe("ambiguous multi-trip matching", () => {
+  it("still returns a best trip but is NOT confident when two trips score alike", () => {
+    const trips = [
+      { id: "a", name: "Turkey A", destination: "Türkiye", startDate: "2026-06-14", endDate: "2026-06-24" },
+      { id: "b", name: "Turkey B", destination: "Türkiye", startDate: "2026-06-15", endDate: "2026-06-23" },
+    ];
+    const m = matchTrip(normalizeEntity(airbnb), trips);
+    expect(m.best).toBeTruthy();
+    expect(m.candidates.length).toBe(2);
+    expect(m.confident).toBe(false); // two near-equal candidates → let the user choose
+  });
+});
+
+describe("itinerary-update proposals (imported vs hand-entered)", () => {
+  const trip = () => ({ id: "t", name: "Türkiye", days: { "2026-06-19": { food: [
+    { id: "dinner1", itemType: "food", name: "Dinner", reservationTime: "19:00" }, // hand-entered (no source)
+  ] } } });
+  const resto = normalizeEntity({ kind: "restaurant", title: "Mikla", startDate: "2026-06-19", startTime: "19:30", confirmation: "MK1" });
+
+  it("detects a hand-entered dinner whose time differs from the import", () => {
+    const c = findItineraryConflict(resto, trip());
+    expect(c).toBeTruthy();
+    expect(c.item.id).toBe("dinner1");
+    const times = c.changes.filter(ch => ch.field === "reservationTime");
+    expect(times[0]).toMatchObject({ from: "19:00", to: "19:30" });
+  });
+  it("proposes only times/confirmation — never overwrites the hand-typed name", () => {
+    const prop = entityToItineraryProposal(resto, findItineraryConflict(resto, trip()), source);
+    expect(prop.type).toBe("itinerary");
+    expect(prop.changes.some(c => c.field === "name")).toBe(false); // Dinner stays Dinner
+    expect(prop.changes.some(c => c.field === "reservationTime")).toBe(true);
+  });
+  it("skips imported items (those are reservation updates, handled elsewhere)", () => {
+    const t = trip();
+    t.days["2026-06-19"].food[0].source = { kind: "email", threadId: "x" };
+    expect(findItineraryConflict(resto, t)).toBeNull();
+  });
+  it("no conflict when the times already agree", () => {
+    const same = normalizeEntity({ kind: "restaurant", title: "Mikla", startDate: "2026-06-19", startTime: "19:00" });
+    expect(findItineraryConflict(same, trip())).toBeNull();
+  });
+});
+
+describe("cancellation (pure/domain behavior)", () => {
+  it("a cancel builds a cancel proposal (no field changes) and never an itinerary edit", () => {
+    const cancel = normalizeEntity({ ...airbnb, intent: "cancel" });
+    const trip = { id: "t", days: { "2026-06-18": { lodging: [
+      { id: "lodg1", confirmationNo: "HZ7K29", name: "Villa in Cappadocia", checkInDate: "2026-06-18" },
+    ] } } };
+    const existing = findExistingItem(cancel, trip);
+    expect(existing).toBeTruthy();
+    const prop = entityToProposal(cancel, existing, source);
+    expect(prop.type).toBe("cancel");
+    expect(prop.changes).toEqual([]);
+    // cancel intent never routes through the itinerary-conflict path
+    expect(findItineraryConflict(cancel, trip)).toBeNull();
   });
 });

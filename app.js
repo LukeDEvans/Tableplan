@@ -12788,9 +12788,20 @@ function buildIngestEntityCard(entity, source, dialog) {
   card.className = "ingest-card";
   const confTag = entity.confidence === "high" ? "" : `<span class="ingest-tag ingest-tag--${entity.confidence}">${entity.confidence === "low" ? "Uncertain" : "Review"}</span>`;
   const cancelBanner = entity.intent === "cancel" ? `<div class="ingest-cancel-banner">⚠ This looks like a cancellation.</div>` : "";
+  // Genuine conflicts the interpreter couldn't resolve — surfaced, never silently
+  // guessed. The most-recent value is used, but both are shown with their source.
+  const conflictBanner = TravelIngest.hasConflicts(entity)
+    ? `<div class="ingest-conflict-banner"><div class="ingest-conflict-head">⚠ Conflicting info — Live couldn't tell which is right</div>` +
+      entity.conflicts.map(c =>
+        `<div class="ingest-conflict-row"><span class="ingest-conflict-field">${escapeHtml(prettyFieldName(c.field))}</span>` +
+        `<span class="ingest-conflict-vals">` +
+        c.values.map(v => `<span class="ingest-conflict-val">${escapeHtml(v.value)}${v.source ? ` <em>${escapeHtml(v.source)}</em>` : ""}</span>`).join(`<span class="ingest-conflict-vs">vs</span>`) +
+        `</span></div>`).join("") +
+      `<div class="ingest-conflict-hint">Using the most recent value — open the email to confirm.</div></div>`
+    : "";
 
   card.innerHTML =
-    cancelBanner +
+    cancelBanner + conflictBanner +
     `<div class="ingest-card-head"><span class="ingest-card-icon">${meta.icon}</span>` +
       `<div><div class="ingest-card-title">${escapeHtml(entity.title || meta.label)} ${confTag}</div>` +
       `<div class="ingest-card-sub">${escapeHtml(meta.label)}${entity.provider ? " · " + escapeHtml(entity.provider) : ""}</div></div></div>` +
@@ -12860,8 +12871,14 @@ function commitEntityToTrip(entity, trip, source) {
     const incoming = TravelIngest.entityToPlacements(entity, source)[0]?.item;
     const changes = incoming ? TravelIngest.diffItem(existing.item, incoming, Object.keys(incoming)) : [];
     if (!changes.length) return "Already in this trip";
-    return proposeEntityChange(entity, trip, existing, source);
+    // A conflict with an already-IMPORTED item is a reservation update; a conflict
+    // with a HAND-ENTERED item is an itinerary-update proposal (never silent).
+    if (existing.item.source) return proposeEntityChange(entity, trip, existing, source);
+    return proposeItineraryChange(entity, trip, { item: existing.item, section: existing.section, dateKey: existing.dateKey, changes }, source);
   }
+  // Not a re-import: does it conflict with a hand-entered itinerary item?
+  const itinConflict = TravelIngest.findItineraryConflict(entity, trip);
+  if (itinConflict) return proposeItineraryChange(entity, trip, itinConflict, source);
   const placements = TravelIngest.entityToPlacements(entity, source);
   if (!placements.length) { saveEntityAsTripNote(entity, trip, source); return "Saved as note"; }
   placements.forEach(p => {
@@ -12937,6 +12954,21 @@ function proposeEntityChange(entity, trip, existing, source) {
   persist();
   if (typeof refreshExploreNotifications === "function") refreshExploreNotifications();
   return entity.intent === "cancel" ? "Cancellation proposed — review in Explore" : "Change proposed — review in Explore";
+}
+
+// Record a proposed change to a HAND-ENTERED itinerary item (e.g. imported
+// dinner 7:30 vs your typed 7:00). Distinct from a re-imported reservation:
+// surfaced as an "Itinerary update" in the review inbox, never applied silently.
+function proposeItineraryChange(entity, trip, conflict, source) {
+  const proposal = TravelIngest.entityToItineraryProposal(entity, conflict, source);
+  if (!proposal.changes.length) return "Already in this trip"; // nothing meaningful changed
+  if (!Array.isArray(trip.proposals)) trip.proposals = [];
+  const dup = trip.proposals.find(p => p.status === "pending" && p.targetItemId === proposal.targetItemId && p.type === "itinerary");
+  if (!dup) trip.proposals.push(proposal);
+  trip.updatedAt = new Date().toISOString();
+  persist();
+  if (typeof refreshExploreNotifications === "function") refreshExploreNotifications();
+  return "Itinerary update proposed — review in Explore";
 }
 
 // Opt-in: add an imported entity to the household Calendar as a canonical plan

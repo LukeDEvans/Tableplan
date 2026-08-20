@@ -62,6 +62,7 @@ export function normalizeEntity(raw) {
     notes: str(raw.notes),
     segments,
     provenance: (raw.provenance && typeof raw.provenance === "object") ? raw.provenance : {},
+    conflicts: normalizeConflicts(raw.conflicts),
   };
   // Flights carry their span in the segments; lift it to start/end when absent.
   if (kind === "flight" && segments.length) {
@@ -91,6 +92,31 @@ function normalizeConfidence(c) {
   if (typeof c === "number") return c >= 0.75 ? "high" : c >= 0.4 ? "medium" : "low";
   const s = str(c).toLowerCase();
   return ["high", "medium", "low"].includes(s) ? s : "medium";
+}
+
+// A conflict = a field the interpreter flagged as genuinely contradictory (as
+// opposed to a clean update, which it resolves silently). We keep only conflicts
+// that actually hold ≥2 DISTINCT values, each with its source preserved — so the
+// review UI never cries "conflict" over agreeing values, and provenance survives.
+function normalizeConflicts(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const c of raw) {
+    if (!c || typeof c !== "object" || !c.field) continue;
+    const values = (Array.isArray(c.values) ? c.values : [])
+      .map((v) => (v && typeof v === "object")
+        ? { value: str(v.value), source: str(v.source) }
+        : { value: str(v), source: "" })
+      .filter((v) => v.value);
+    const distinct = new Set(values.map((v) => v.value.toLowerCase()));
+    if (values.length >= 2 && distinct.size >= 2) out.push({ field: str(c.field), values });
+  }
+  return out;
+}
+
+/** Does this entity carry unresolved conflicts the user should see? */
+export function hasConflicts(entity) {
+  return !!(entity && Array.isArray(entity.conflicts) && entity.conflicts.length);
 }
 
 export function normalizeEntities(rawList) {
@@ -305,6 +331,54 @@ export function diffItem(existing, incoming, fields) {
     if (str(from) !== str(to)) changes.push({ field: f, from: str(from), to: str(to) });
   }
   return changes;
+}
+
+// ── Itinerary-update proposals ───────────────────────────────────────────────
+// The case where an import conflicts with a HAND-ENTERED itinerary item (e.g. the
+// user typed "Dinner 7:00", the confirmation says 7:30). This is distinct from a
+// re-imported reservation (findExistingItem): the target was never imported, so
+// we never silently edit it — we propose a type:"itinerary" change the user
+// accepts or rejects. Only times/confirmation are proposed, so an import can't
+// clobber a curated hand-typed name or address.
+const ITINERARY_FIELDS = ["checkInTime", "checkOutTime", "checkInDate", "checkOutDate",
+  "departTime", "arriveTime", "departDate", "arriveDate", "reservationTime", "activityTime",
+  "confirmationNo", "reservationNo"];
+const SECTION_TIME_FIELD = { food: "reservationTime", activities: "activityTime", travel: "departTime", lodging: "checkInTime" };
+
+export function findItineraryConflict(entity, trip) {
+  if (!entity || !trip || entity.intent === "cancel") return null;
+  const primary = entityToPlacements(entity)[0];
+  if (!primary || !primary.dateKey) return null;
+  const { section, dateKey, item: incoming } = primary;
+  const arr = ((trip.days || {})[dateKey] || {})[section];
+  if (!Array.isArray(arr)) return null;
+  const timeField = SECTION_TIME_FIELD[section];
+  const entTokens = tokenize(`${entity.title} ${entity.provider} ${entity.location} ${entity.address}`);
+  for (const item of arr) {
+    if (!item || item.cancelled || item.source) continue; // hand-entered only (imports → findExistingItem)
+    // Same-slot heuristic: shared name/location token, OR both carry this section's time field.
+    const nameTokens = tokenize(`${item.name || item.title} ${item.address || item.from || item.startLocation || ""}`);
+    const tokenMatch = entTokens.some(t => nameTokens.includes(t));
+    const timeMatch = timeField && item[timeField] && incoming[timeField];
+    if (!tokenMatch && !timeMatch) continue;
+    const changes = diffItem(item, incoming, ITINERARY_FIELDS);
+    if (changes.length) return { item, section, dateKey, changes };
+  }
+  return null;
+}
+
+export function entityToItineraryProposal(entity, conflict, source) {
+  const incoming = entityToPlacements(entity, source)[0]?.item || null;
+  // Authoritative diff over the curated fields — safe regardless of what the
+  // caller precomputed, so an import never overwrites a hand-typed name/address.
+  const changes = incoming ? diffItem(conflict.item, incoming, ITINERARY_FIELDS) : (conflict.changes || []);
+  return {
+    id: "prop_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    type: "itinerary", status: "pending",
+    targetItemId: conflict.item.id, section: conflict.section, ownerDateKey: conflict.dateKey,
+    changes, entityKind: entity.kind, title: entity.title || (KIND_META[entity.kind] || {}).label,
+    incoming, source: source || null, createdAt: new Date().toISOString(),
+  };
 }
 
 // Build a proposed-change record for the review inbox (never applied silently).
