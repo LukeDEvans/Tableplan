@@ -85,6 +85,7 @@
                 <button type="button" id="menuWatchTheatersBtn">Movie Theaters</button>
                 <button type="button" id="menuFoodHealthSettingsBtn">Nutrition</button>
                 <button type="button" id="menuGroceryListBtn">Preferred Stores</button>
+                <button type="button" id="menuGroceryChecklistBtn">Checklist</button>
                 <button type="button" id="menuGroceryPricingBtn">Receipts & Price History</button>
                 <button type="button" id="menuTagsBtn">Recipe Tags</button>
                 <button type="button" id="menuRecurringTasksBtn">Recurring Tasks</button>
@@ -465,6 +466,9 @@
               <div class="watch-category-bar" id="groceryStoreTabBar"></div>
               <form class="inline-form grocery-form" id="groceryForm">
                 <input id="groceryInput" placeholder="Add item" autocomplete="off" />
+                <button class="icon-btn grocery-nextstop-toggle" type="button" id="groceryNextStopToggle" title="Add to Next Stop" aria-pressed="false" aria-label="Add to Next Stop">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6-5.686-6-10a6 6 0 0 1 12 0c0 4.314-6 10-6 10z"/><circle cx="12" cy="11" r="2"/></svg>
+                </button>
                 <button class="icon-btn" title="Add item" aria-label="Add item">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
                 </button>
@@ -481,6 +485,7 @@
           </div>
         </section>
         <section class="planner-column do-column" id="inventoryMainPage" aria-label="Inventory" hidden>
+          <div class="watch-category-bar" id="inventorySpaceTabBar"></div>
           <div class="planner-grid" id="inventoryPlannerGrid"></div>
         </section>
         <section class="planner-column do-column" id="recreateMainPage" aria-label="Recreate" hidden>
@@ -3169,6 +3174,7 @@
           "./app.js",
           "./src/main.js",
           "./grocery-catalog.js",
+          "./grocery-sources.js",
           "./daily-dozen.js",
           "./food-health-checklists.js",
           "./food-health.js",

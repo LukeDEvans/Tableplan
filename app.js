@@ -1,4 +1,5 @@
 import * as LiveGroceryCatalog from './grocery-catalog.js';
+import * as LiveGrocerySources from './grocery-sources.js';
 import * as LiveDailyDozen from './daily-dozen.js';
 import * as LiveFoodHealth from './food-health.js';
 import * as LiveFoodHealthChecklists from './food-health-checklists.js';
@@ -263,7 +264,7 @@ const CLOUD_SNAPSHOT_HOURLY_MAX = 72;  // then 1 per hour back ~3 days (plenty f
 // Each section is stored as its own Supabase row: id = "{stateId}:{section}"
 const STATE_SECTIONS = {
   eat:       ["recipes", "trashedRecipes", "folders", "plans", "publishedWeeks", "recipeTags", "ingredientOptions", "autoGenerateRules", "mealPlanConfig", "activeCooking"],
-  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory"],
+  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems"],
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
@@ -662,6 +663,9 @@ let calendarEvents = loadCachedCalendarEvents();
 let activeCookingInterval = null;
 let selectedGroceryWeekKey = "";
 let activeGroceryStoreTab = "all";
+// The Shop page's three spaces (spec: Checklist · Shop · Inventory). Shop is the
+// default/opening view; the existing header/date bar sits above this nav.
+let shopSpace = "shop"; // "shop" | "checklist" | "inventory"
 let groceryRangeStart = "";
 let groceryRangeEnd = "";
 let showClearedGroceries = false; // (legacy) global reveal — superseded by per-store below
@@ -786,6 +790,7 @@ const elements = {
   menuAutoRulesBtn: document.querySelector("#menuAutoRulesBtn"),
   menuTagsBtn: document.querySelector("#menuTagsBtn"),
   menuGroceryListBtn: document.querySelector("#menuGroceryListBtn"),
+  menuGroceryChecklistBtn: document.querySelector("#menuGroceryChecklistBtn"),
   menuGroceryPricingBtn: document.querySelector("#menuGroceryPricingBtn"),
   menuGroceryItemsBtn: document.querySelector("#menuGroceryItemsBtn"),
   menuInventoryRoomsBtn: document.querySelector("#menuInventoryRoomsBtn"),
@@ -1824,6 +1829,7 @@ function bindEvents() {
   elements.menuAutoRulesBtn.addEventListener("click", () => openSettingsMenuDialog(openAutoRulesDialog));
   elements.menuTagsBtn.addEventListener("click", () => openSettingsMenuDialog(openTagsDialog));
   elements.menuGroceryListBtn.addEventListener("click", () => openSettingsMenuDialog(openGroceryStoresDialog));
+  elements.menuGroceryChecklistBtn?.addEventListener("click", () => openSettingsMenuDialog(openGroceryChecklistDialog));
   elements.menuGroceryPricingBtn.addEventListener("click", () => openSettingsMenuDialog(openGroceryPricingDialog));
   elements.menuGroceryItemsBtn.addEventListener("click", () => openSettingsMenuDialog(openGroceryLibraryDialog));
   elements.menuInventoryRoomsBtn.addEventListener("click", () => openSettingsMenuDialog(openInventoryRoomsDialog));
@@ -2197,6 +2203,7 @@ function bindEvents() {
     }
   });
   elements.groceryForm.addEventListener("submit", addManualGroceryItem);
+  document.getElementById("groceryNextStopToggle")?.addEventListener("click", () => setGroceryAddNextStop(!groceryAddNextStop));
 
   document.getElementById("groceryRangeStartBtn")?.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -3308,6 +3315,8 @@ function defaultState() {
     grocerySkippedStores: {},
     groceryItemWeekOverride: {},
     groceryCleared: {},
+    groceryChecklist: { config: [], provisional: {}, submissions: {} },
+    nextStopItems: [],
     recipeTags: defaultRecipeTags(),
     groceryBaseItems: defaultGroceryBaseItems(),
     groceryCatalogVersion: 1,
@@ -3469,6 +3478,8 @@ function normalizeState(parsed) {
     grocerySkippedStores: parsed?.grocerySkippedStores && typeof parsed.grocerySkippedStores === "object" ? parsed.grocerySkippedStores : {},
     groceryItemWeekOverride: parsed?.groceryItemWeekOverride && typeof parsed.groceryItemWeekOverride === "object" ? parsed.groceryItemWeekOverride : {},
     groceryCleared: parsed?.groceryCleared && typeof parsed.groceryCleared === "object" ? parsed.groceryCleared : {},
+    groceryChecklist: normalizeGroceryChecklist(parsed?.groceryChecklist),
+    nextStopItems: LiveGrocerySources.normalizeNextStopItems(parsed?.nextStopItems),
     recipeTags: normalizeRecipeTags(parsed?.recipeTags),
     groceryBaseItems: Array.isArray(parsed?.groceryBaseItems) ? normalizeGroceryBaseItems(parsed.groceryBaseItems) : defaultGroceryBaseItems(),
     groceryCatalogVersion: Number(parsed?.groceryCatalogVersion) || 0,
@@ -5070,6 +5081,26 @@ function normalizePersistentManualGroceries(parsed) {
     .map(String)
     .filter(Boolean)
     .sort((a, b) => normalize(a).localeCompare(normalize(b)));
+}
+
+// The Checklist source (Shop → Settings → Checklist): a configured, ordered list
+// of recurring household items, plus per-cycle provisional answers and submitted
+// snapshots. Cycle-keyed so the Friday reset is implicit (a new cycle has no
+// submission until the user submits). See grocery-sources.js for the pure logic.
+function normalizeGroceryChecklist(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  const seen = new Set();
+  const config = (Array.isArray(src.config) ? src.config : [])
+    .map((entry) => {
+      const name = String((entry && entry.name) || (typeof entry === "string" ? entry : "")).trim();
+      if (!name) return null;
+      const id = String((entry && entry.id) || "").trim() || `cl_${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+      return { id, name };
+    })
+    .filter((entry) => entry && !seen.has(entry.id) && seen.add(entry.id));
+  const provisional = src.provisional && typeof src.provisional === "object" ? src.provisional : {};
+  const submissions = src.submissions && typeof src.submissions === "object" ? src.submissions : {};
+  return { config, provisional, submissions, seeded: Boolean(src.seeded) };
 }
 
 function normalizeStoreCoordinate(value) {
@@ -10551,6 +10582,7 @@ function showInventoryApp(event) {
   event?.stopPropagation();
   if (!isPageEnabled("inventory")) { showHomeApp(); return; }
   activeAppArea = "inventory";
+  shopSpace = "inventory";
   hideAllPages();
   elements.inventoryMainPage.hidden = false;
   setWeekToolsMode("today");
@@ -10569,6 +10601,9 @@ function showShopApp(event) {
     return;
   }
   activeAppArea = "shop";
+  // Arriving on the Shop page from elsewhere lands on the Shop space (not a
+  // lingering Inventory selection). Checklist persists if that's where we were.
+  if (shopSpace === "inventory") shopSpace = "shop";
   hideAllPages();
   elements.shopMainPage.hidden = false;
   setWeekToolsMode("shop");
@@ -19631,6 +19666,7 @@ function updateSettingsMenuOptions() {
   elements.menuAutoRulesBtn.hidden = !isEat;
   elements.menuTagsBtn.hidden = !isEat;
   elements.menuGroceryListBtn.hidden = !isShop;
+  if (elements.menuGroceryChecklistBtn) elements.menuGroceryChecklistBtn.hidden = !isShop;
   elements.menuGroceryPricingBtn.hidden = !isShop;
   elements.menuGroceryItemsBtn.hidden = !isEat;
   elements.menuIngredientOptionsBtn.hidden = !isEat;
@@ -27484,6 +27520,72 @@ function autoGeneratePlannerDay(dayId) {
   renderGroceries();
 }
 
+// The Shop page's three-space segmented nav (Checklist · Shop · Inventory),
+// rendered into the bar that used to hold per-store tabs. Shop is the default.
+function renderShopSpaceNav() {
+  const bars = [document.getElementById("groceryStoreTabBar"), document.getElementById("inventorySpaceTabBar")].filter(Boolean);
+  if (!bars.length) return;
+  const spaces = [
+    { id: "checklist", label: "Checklist" },
+    { id: "shop", label: "Shop" },
+    { id: "inventory", label: "Inventory" }
+  ];
+  const html = `
+    <div class="watch-category-tabs shop-space-tabs" role="tablist" aria-label="Shop section">
+      ${spaces.map((s) => `
+        <button class="watch-category-tab${shopSpace === s.id ? " is-active" : ""}" type="button" role="tab" aria-selected="${shopSpace === s.id}" data-shop-space="${s.id}">${s.label}</button>
+      `).join("")}
+    </div>
+  `;
+  bars.forEach((el) => {
+    el.innerHTML = html;
+    el.querySelectorAll("[data-shop-space]").forEach((btn) => {
+      btn.addEventListener("click", () => setShopSpace(btn.dataset.shopSpace));
+    });
+  });
+}
+
+// Inventory is its own page (not redesigned); the nav routes to it and back.
+function setShopSpace(space) {
+  if (!["shop", "checklist", "inventory"].includes(space)) return;
+  if (space === "inventory") {
+    shopSpace = "inventory";
+    if (activeAppArea !== "inventory") showInventoryApp();
+    else renderInventoryPage();
+    return;
+  }
+  shopSpace = space;
+  if (activeAppArea !== "shop") showShopApp();
+  else renderGroceries();
+}
+
+// The "Add item" form belongs to the Shop space only.
+function syncGroceryFormForSpace() {
+  const form = document.getElementById("groceryForm");
+  if (form) form.hidden = shopSpace !== "shop";
+  const actions = document.querySelector(".shop-page-actions");
+  if (actions) actions.hidden = shopSpace !== "shop";
+}
+
+// A Next Stop row: purchase (removes with Undo) or remove. No store, no quantity
+// routing — deliberately minimal.
+function nextStopItemTemplate(item) {
+  return `
+    <div class="grocery-item-wrap grocery-nextstop-item" data-nextstop-id="${escapeHtml(item.id)}">
+      <label class="grocery-item">
+        <input type="checkbox" data-nextstop-purchase="${escapeHtml(item.id)}" />
+        <span class="grocery-name">${escapeHtml(item.name)}</span>
+        <span class="grocery-quantity">${escapeHtml(item.quantity || "")}</span>
+      </label>
+      <div class="grocery-swipe-actions">
+        <button class="grocery-swipe-btn grocery-swipe-delete" type="button" data-nextstop-remove="${escapeHtml(item.id)}" aria-label="Remove">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>
+        </button>
+      </div>
+    </div>
+  `;
+}
+
 function renderGroceryStoreTabs() {
   const el = document.getElementById("groceryStoreTabBar");
   if (!el) return;
@@ -27531,9 +27633,14 @@ function renderGroceryStoreTabs() {
 }
 
 function renderGroceries() {
+  renderShopSpaceNav();
+  syncGroceryFormForSpace();
+  // Checklist is the other in-page space (Inventory navigates to its own page via
+  // setShopSpace). Shop is the default. Header/date bar stays above (setWeekToolsMode).
+  if (shopSpace === "checklist") { renderShopChecklistSpace(); return; }
+
   renderGroceryWeekOptions();
   if (!groceryRangeStart || !groceryRangeEnd) initGroceryRange();
-  renderGroceryStoreTabs();
   const rangeKey = groceryCycleKey();
   const isCheckedRow = (rowKey) => Boolean(state.checkedGroceries[groceryCheckedKey(rangeKey, rowKey)]);
 
@@ -27544,52 +27651,22 @@ function renderGroceries() {
     cleared: isGroceryCleared(row.key)
   });
 
-  // Manual items — build all, then split by whether they have a saved store preference
-  const allManualRows = manualGroceryItems().map(manualGroceryRow).map(withFlags);
-  const manualLocations = groceryItemLocations();
+  // Shop is a dynamic projection of active household needs: Meal Plan + Checklist
+  // + Manual reconciled into ONE row per item (source independence lives in
+  // buildActiveNeedRows / grocery-sources.js). No manual "refresh" step.
+  const allNeeds = buildActiveNeedRows().map(withFlags);
+  const activeNeeds = allNeeds.filter((r) => !r.cleared);
+  const clearedCount = allNeeds.filter((r) => r.cleared).length;
 
-  // Plan-derived items — filtered by pantry; skipped keys collected across all weeks in range
-  const pantrySet = new Set(state.pantry.map(groceryRowKey));
-  const skippedKeys = new Set();
-  Object.entries(state.plans || {}).forEach(([key, weekPlan]) => {
-    if (!weekPlan) return;
-    const ws = dateFromWeekKey(key);
-    if (isNaN(ws.getTime())) return;
-    const wsISO = dateKeyFromDate(ws);
-    const weDate = new Date(ws); weDate.setDate(ws.getDate() + 7);
-    const weISO = dateKeyFromDate(weDate);
-    if (weISO < groceryRangeStart || wsISO > groceryRangeEnd) return;
-    (weekPlan.skippedGroceryKeys || []).forEach((k) => skippedKeys.add(k));
-  });
-  // Meal-plan-derived items populate the HOUSEHOLD list only — a personal
-  // Shop view is a from-scratch manual list.
-  const needed = sectionScope("grocery") === "personal" ? [] :
-    aggregateGroceryRows(buildRawGroceryRowsForRange(groceryRangeStart, groceryRangeEnd))
-    .filter((row) => !pantrySet.has(groceryRowKey(row.item)) && !skippedKeys.has(row.key))
-    .map(withFlags);
+  // Next Stop — store- and date-independent persistent intents (bypass routing).
+  const nextStopRows = nextStopItemsList();
 
-  // Cleared items were bought and swept off the active list this cycle. They're
-  // hidden by default and revealed PER STORE via each store heading's "show
-  // bought" toggle. They stay out of the pricing optimizer (already bought) but
-  // are still routed into their store section so that store can reveal them.
-  const clearedCount = new Set([...allManualRows, ...needed].filter((r) => r.cleared).map((r) => r.key)).size;
+  const pricePlan = optimizeGroceryBasket(activeNeeds);
+  // Route active AND bought rows together; anything with no usable store falls
+  // into Other (storeId ""), never silently into the first store.
+  const storeSections = groceryStoreSections(allNeeds, pricePlan.assignments, pricePlan.estimates, { otherFallback: true });
 
-  // A manual item is "located" if it resolves to an enabled store by ANY route
-  // — its saved preference/rank OR a this-trip override (set when it was added
-  // in a store tab, or defaulted to the preferred store from the All tab). That
-  // lets those overrides actually place the item into a store section below.
-  const manualEnabledIds = new Set(groceryStores().filter((s) => s.enabled !== false && !skippedGroceryStoreIds().has(s.id)).map((s) => s.id));
-  const manualEffectiveStore = (row) => resolveItemEffectiveStoreId(row.key, manualLocations, manualEnabledIds);
-  const locatedManualRows = allManualRows.filter((row) => manualEffectiveStore(row));
-  const unlocatedManualRows = activeGroceryStoreTab === "all"
-    ? allManualRows.filter((row) => !manualEffectiveStore(row))
-    : [];
-  const activeNeeded = needed.filter((r) => !r.cleared);
-  const pricePlan = optimizeGroceryBasket(activeNeeded);
-  // Route active AND bought rows together; storeSection splits them per store.
-  const storeSections = groceryStoreSections([...needed, ...locatedManualRows], pricePlan.assignments, pricePlan.estimates);
-
-  if (!unlocatedManualRows.length && !activeNeeded.length && !locatedManualRows.length && !clearedCount) {
+  if (!nextStopRows.length && !activeNeeds.length && !clearedCount) {
     elements.groceryList.innerHTML = `<div class="empty-state">Add meals to your plan and groceries will appear here.</div>`;
     return;
   }
@@ -27608,27 +27685,16 @@ function renderGroceries() {
     return `<button class="grocery-cleanup-link grocery-store-bought-toggle" type="button" data-grocery-toggle-bought="${escapeHtml(storeId)}" aria-pressed="${shown}">${shown ? "Hide" : "Show"} ${boughtRows.length} bought</button>`;
   };
 
-  const miscCollapsed = Boolean(state.collapsedSections?.["groceryStore:misc"]);
-  const miscActive = sortCheckedLast(unlocatedManualRows.filter((r) => !r.cleared));
-  const miscBought = unlocatedManualRows.filter((r) => r.cleared);
-  const miscChecked = miscActive.filter((r) => r.checked).length;
-  const miscShowBought = groceryBoughtShownStores.has("");
-  const miscRendered = miscShowBought ? [...miscActive, ...miscBought] : miscActive;
-  const miscSection = (unlocatedManualRows.length) ? `
-    <section class="grocery-store-section grocery-misc-section" data-grocery-store-section="">
+  // Next Stop: rendered first, above everything. Store-independent; each item is
+  // purchased (removed, with Undo) or removed outright — never routed or regenerated.
+  const nextStopSection = nextStopRows.length ? `
+    <section class="grocery-store-section grocery-nextstop-section" data-grocery-store-section="__nextstop">
       <div class="grocery-store-heading">
-        <button class="watch-section-head" type="button" data-grocery-collapse="groceryStore:misc" title="${miscCollapsed ? "Expand" : "Collapse"} Miscellaneous" aria-expanded="${!miscCollapsed}">
-          <svg class="watch-section-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-          <span>Miscellaneous${miscCollapsed ? ` <span class="grocery-collapsed-count">(${miscActive.length})</span>` : ""}</span>
-        </button>
-        ${boughtToggleBtn("", miscBought)}
-        ${miscChecked ? `<button class="icon-btn grocery-store-clear" type="button" data-grocery-clear-store="" title="Sweep ${miscChecked} checked" aria-label="Sweep ${miscChecked} checked items into bought">${groceryBroomSvg()}</button>` : ""}
+        <span class="grocery-store-name grocery-nextstop-name">Next Stop</span>
       </div>
-      ${miscCollapsed ? "" : `
-      <div class="grocery-store-list" data-grocery-store-list="" data-grocery-store-section-list="">
-        ${miscRendered.length ? miscRendered.map(groceryItemTemplate).join("") : `<div class="grocery-store-empty">Drop items here</div>`}
+      <div class="grocery-store-list">
+        ${nextStopRows.map(nextStopItemTemplate).join("")}
       </div>
-      `}
     </section>
   ` : "";
 
@@ -27685,27 +27751,28 @@ function renderGroceries() {
     </div>
   ` : "";
 
-  let planSections;
-  if (activeGroceryStoreTab === "all") {
-    planSections = activeNeeded.length ? `
-      ${groceryPricePlanTemplate(pricePlan)}
-      ${groceryFallbackRoutingTemplate(activeNeeded, pricePlan.assignments)}
-      ${storeSections.map(storeSection).join("")}
-      ${skippedStrip}
-    ` : (storeSections.some((s) => s.rows.length) ? storeSections.map(storeSection).join("") + skippedStrip : skippedStrip);
-  } else {
-    const active = storeSections.find((s) => s.storeId === activeGroceryStoreTab);
-    planSections = active?.rows.length
-      ? storeSection(active)
-      : `<div class="empty-state">No items assigned to this store yet. Drag items here from the All tab to assign them.</div>`;
-  }
+  // Shop view order (spec): Next Stop → Other → Stores. "Other" is the storeId=""
+  // section (needs with no usable store); it renders right below Next Stop, then
+  // the household's stores in their existing preference/optimization order.
+  const otherEntry = storeSections.find((s) => s.storeId === "");
+  const storeEntries = storeSections.filter((s) => s.storeId !== "");
+  const planSections = `
+    ${nextStopSection}
+    ${otherEntry ? storeSection({ ...otherEntry, name: "Other" }) : ""}
+    ${storeEntries.map(storeSection).join("")}
+    ${skippedStrip}
+  `;
 
-  // "Show bought" now lives per store (to the right of each store name); no
-  // global cleanup bar.
-  elements.groceryList.innerHTML = miscSection + planSections;
+  elements.groceryList.innerHTML = planSections;
 
   elements.groceryList.querySelectorAll("[data-grocery-clear-store]").forEach((btn) => {
     btn.addEventListener("click", (e) => { e.stopPropagation(); clearCheckedGroceriesForStore(btn.dataset.groceryClearStore); });
+  });
+  elements.groceryList.querySelectorAll("[data-nextstop-purchase]").forEach((cb) => {
+    cb.addEventListener("change", () => purchaseNextStopItem(cb.dataset.nextstopPurchase));
+  });
+  elements.groceryList.querySelectorAll("[data-nextstop-remove]").forEach((btn) => {
+    btn.addEventListener("click", () => { removeNextStopItem(btn.dataset.nextstopRemove); persist(); renderGroceries(); });
   });
   elements.groceryList.querySelectorAll("[data-grocery-toggle-bought]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
@@ -27976,14 +28043,17 @@ function resolveItemEffectiveStoreId(itemKey, locations, enabledStoreIds) {
   return null;
 }
 
-function groceryStoreSections(rows, priceAssignments = {}, priceEstimates = {}) {
+function groceryStoreSections(rows, priceAssignments = {}, priceEstimates = {}, options = {}) {
   const locations = groceryItemLocations();
   const itemSections = groceryStoreItemSections();
   const skippedIds = skippedGroceryStoreIds();
   const enabledStores = groceryStores().filter((s) => s.enabled !== false && !skippedIds.has(s.id));
   const enabledStoreIds = new Set(enabledStores.map((s) => s.id));
   const stores = enabledStores.map((store) => ({ storeId: store.id, name: store.name, store }));
-  const fallbackStoreId = stores[0]?.storeId || "";
+  // In the redesigned Shop, an item with no usable store assignment belongs in
+  // Other (storeId ""), NOT silently dropped into the first store. Legacy callers
+  // (buildGroceryText) keep the old first-store fallback.
+  const fallbackStoreId = options.otherFallback ? "" : (stores[0]?.storeId || "");
   const sections = [...stores, { storeId: "", name: "Unassigned", store: null }];
   return sections
     .map((section) => {
@@ -28062,6 +28132,25 @@ function groceryRowStoreOrder(row, locations) {
   return Number.isFinite(order) ? order : Number.MAX_SAFE_INTEGER;
 }
 
+// Experimental (spec #42): a subtle line of contextual source info under the
+// item name — "Meal Plan · 6", "Checklist", etc. Quiet by design; remove this
+// one helper + the <small> in the template if it ever feels cluttered.
+function groceryRowSourceLabel(row) {
+  if (!Array.isArray(row.sources) || !row.sources.length) return "";
+  const order = ["mealplan", "checklist", "manual"];
+  return row.sources
+    .slice()
+    .sort((a, b) => order.indexOf(a) - order.indexOf(b))
+    .map((s) => {
+      if (s === "mealplan") {
+        const c = row.sourceMeta?.mealplan?.count;
+        return c && c > 1 ? `Meal Plan · ${c}` : "Meal Plan";
+      }
+      return s === "checklist" ? "Checklist" : "Manual";
+    })
+    .join(" · ");
+}
+
 function groceryItemTemplate(row) {
   return `
     <div class="grocery-item-wrap" data-grocery-wrap-key="${escapeHtml(row.key)}">
@@ -28070,6 +28159,7 @@ function groceryItemTemplate(row) {
         <span class="grocery-name">
           ${escapeHtml(row.displayName || row.item)}
           ${row.notes?.length ? `<small>${escapeHtml(row.notes.join(" · "))}</small>` : ""}
+          ${groceryRowSourceLabel(row) ? `<small class="grocery-source-tag">${escapeHtml(groceryRowSourceLabel(row))}</small>` : ""}
           ${row.priceEstimate ? `
             <small>${formatCurrency(row.priceEstimate.cost)} estimated · ${row.priceEstimate.source === "receipt" ? `based on receipt ${escapeHtml(formatReceiptObservationDate(row.priceEstimate.observedAt))}` : "manual estimate"}</small>
           ` : ""}
@@ -28102,6 +28192,7 @@ function openGroceryItemMenu(event) {
   menu.className = "folder-context-menu grocery-library-context-menu";
   menu.setAttribute("role", "menu");
   menu.innerHTML = `
+    <button type="button" role="menuitem" data-move-grocery-item>Move to store…</button>
     <button type="button" role="menuitem" data-edit-grocery-item>Edit</button>
     <button type="button" role="menuitem" data-store-rank-grocery-item>Preferred stores</button>
     <button type="button" role="menuitem" data-delete-grocery-item>Delete</button>
@@ -28111,6 +28202,10 @@ function openGroceryItemMenu(event) {
   const y = Math.min(event.clientY || 10, window.innerHeight - menu.offsetHeight - 10);
   menu.style.left = `${Math.max(10, x)}px`;
   menu.style.top = `${Math.max(10, y)}px`;
+  menu.querySelector("[data-move-grocery-item]").addEventListener("click", () => {
+    closeFolderMenu();
+    openGroceryMoveSheet(key);
+  });
   menu.querySelector("[data-edit-grocery-item]").addEventListener("click", () => {
     closeFolderMenu();
     editGroceryItem(key);
@@ -28220,6 +28315,258 @@ function addStoreToRank() {
   persist();
   renderStoreRankList();
   renderGroceries();
+}
+
+// ── Move interaction: mobile-first store reassignment ─────────────────────────
+// A full-screen sheet: the item pinned at the top + large, vertically-listed
+// store destinations (in preference order) + Other. Tap a destination to assign;
+// you can also drag the pinned chip onto a destination, and the list autoscrolls
+// so off-screen targets stay reachable (attachPointerDragToTargets).
+let groceryMoveSheetEl = null;
+let groceryMoveDragCleanup = null;
+
+function groceryMoveItemLabel(itemKey) {
+  const gw = selectedGroceryWeek();
+  const row = gw ? buildGroceryRowsWithManual(gw.week).find((r) => r.key === itemKey) : null;
+  return row?.displayName || row?.item || itemKey.replace(/-/g, " ");
+}
+
+function currentEffectiveStoreForItem(itemKey) {
+  const skippedIds = skippedGroceryStoreIds();
+  const enabledIds = new Set(groceryStores().filter((s) => s.enabled !== false && !skippedIds.has(s.id)).map((s) => s.id));
+  return resolveItemEffectiveStoreId(itemKey, groceryItemLocations(), enabledIds) || "";
+}
+
+function openGroceryMoveSheet(itemKey) {
+  const skippedIds = skippedGroceryStoreIds();
+  const enabledStores = groceryStores().filter((s) => s.enabled !== false && !skippedIds.has(s.id));
+  const loc = groceryItemLocations()[itemKey];
+  const rank = loc?.storeRank?.length ? loc.storeRank : (loc?.storeId ? [loc.storeId] : []);
+  const currentStoreId = currentEffectiveStoreForItem(itemKey);
+  const destinations = LiveGrocerySources.moveDestinations({ stores: enabledStores, rank, currentStoreId });
+  const label = groceryMoveItemLabel(itemKey);
+
+  if (!groceryMoveSheetEl) {
+    groceryMoveSheetEl = document.createElement("div");
+    groceryMoveSheetEl.className = "shop-move-sheet";
+    document.body.appendChild(groceryMoveSheetEl);
+  }
+  const sheet = groceryMoveSheetEl;
+  sheet.innerHTML = `
+    <div class="shop-move-panel" role="dialog" aria-label="Move ${escapeHtml(label)}">
+      <div class="shop-move-head">
+        <div class="shop-move-chip" data-move-chip>Moving: <strong>${escapeHtml(label)}</strong></div>
+        <button class="icon-btn" type="button" data-move-cancel aria-label="Cancel">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="shop-move-targets" data-move-targets>
+        ${destinations.map((d) => `
+          <button class="shop-move-target${d.current ? " is-current" : ""}" type="button" data-move-target="${escapeHtml(d.id)}">
+            <span>${escapeHtml(d.name)}</span>
+            ${d.current ? `<span class="shop-move-current-tag">Current</span>` : ""}
+          </button>
+        `).join("")}
+      </div>
+    </div>
+  `;
+  sheet.classList.add("is-open");
+  sheet.querySelector("[data-move-cancel]").addEventListener("click", closeGroceryMoveSheet);
+  sheet.addEventListener("click", (e) => { if (e.target === sheet) closeGroceryMoveSheet(); });
+  sheet.querySelectorAll("[data-move-target]").forEach((btn) => {
+    btn.addEventListener("click", () => requestGroceryItemMove(itemKey, btn.dataset.moveTarget));
+  });
+  const chip = sheet.querySelector("[data-move-chip]");
+  const targetsEl = sheet.querySelector("[data-move-targets]");
+  groceryMoveDragCleanup = attachPointerDragToTargets(chip, targetsEl, "[data-move-target]", (el) => {
+    if (el) requestGroceryItemMove(itemKey, el.dataset.moveTarget);
+  });
+}
+
+function closeGroceryMoveSheet() {
+  if (groceryMoveDragCleanup) { groceryMoveDragCleanup(); groceryMoveDragCleanup = null; }
+  if (groceryMoveSheetEl) { groceryMoveSheetEl.classList.remove("is-open"); groceryMoveSheetEl.innerHTML = ""; }
+}
+
+// Direct move, or the temp/permanent confirmation when reassigning an item that
+// already has a valid store (spec #13/#14). Auto-reroute on skip never lands here.
+function requestGroceryItemMove(itemKey, targetStoreId) {
+  const currentStoreId = currentEffectiveStoreForItem(itemKey);
+  if (targetStoreId === currentStoreId) { closeGroceryMoveSheet(); return; }
+  if (LiveGrocerySources.moveNeedsConfirmation({ currentStoreId, targetStoreId })) {
+    openMoveConfirmDialog(itemKey, targetStoreId);
+    return;
+  }
+  // From Other → a store: establish it as the preferred store (nothing to protect).
+  // To Other: clear the preference so the item drops into Other.
+  if (targetStoreId === "") clearItemStorePreference(itemKey);
+  else setItemStorePermanent(itemKey, targetStoreId);
+  closeGroceryMoveSheet();
+  persist();
+  renderGroceries();
+}
+
+// This-week-only: a cycle-scoped override; the target is also placed into the
+// item's fallback ordering (appended) while the original preferred store stays
+// primary (spec #18). This is explicit intent, so it survives unskip.
+function setItemStoreThisWeek(itemKey, storeId) {
+  setGroceryItemStoreForTrip(itemKey, storeId);
+  const locations = groceryItemLocations();
+  const loc = locations[itemKey] || { storeId: "", storeRank: [], order: 0 };
+  const rank = [...(loc.storeRank || (loc.storeId ? [loc.storeId] : []))];
+  if (!rank.includes(storeId)) rank.push(storeId);
+  locations[itemKey] = { ...loc, storeId: rank[0] || storeId, storeRank: rank };
+  state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
+}
+
+// Permanent: the target becomes the primary preferred store; the this-week
+// override is cleared so the permanent choice takes effect immediately.
+function setItemStorePermanent(itemKey, storeId) {
+  const locations = groceryItemLocations();
+  const loc = locations[itemKey] || { storeId: "", storeRank: [], order: 0 };
+  const priorRank = loc.storeRank || (loc.storeId ? [loc.storeId] : []);
+  const rank = [storeId, ...priorRank.filter((id) => id !== storeId)];
+  locations[itemKey] = { ...loc, storeId, storeRank: rank };
+  state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
+  clearGroceryItemWeekOverride(itemKey);
+}
+
+function clearItemStorePreference(itemKey) {
+  const locations = groceryItemLocations();
+  if (locations[itemKey]) {
+    locations[itemKey] = { ...locations[itemKey], storeId: "", storeRank: [] };
+    state.groceryItemLocations = normalizeGroceryItemLocations(locations, groceryStores());
+  }
+  clearGroceryItemWeekOverride(itemKey);
+}
+
+// Merge-safe clear of the this-trip override (overwrite with "" rather than delete).
+function clearGroceryItemWeekOverride(itemKey) {
+  if (!state.groceryItemWeekOverride || typeof state.groceryItemWeekOverride !== "object") return;
+  const key = groceryItemWeekOverrideKey(itemKey);
+  if (key in state.groceryItemWeekOverride) state.groceryItemWeekOverride[key] = "";
+}
+
+let groceryMoveConfirmEl = null;
+function openMoveConfirmDialog(itemKey, targetStoreId) {
+  const store = groceryStores().find((s) => s.id === targetStoreId);
+  if (!store) return;
+  const label = groceryMoveItemLabel(itemKey);
+  if (!groceryMoveConfirmEl) {
+    groceryMoveConfirmEl = document.createElement("dialog");
+    groceryMoveConfirmEl.className = "recipe-dialog std-form-dialog shop-move-confirm-dialog";
+    document.body.appendChild(groceryMoveConfirmEl);
+    groceryMoveConfirmEl.addEventListener("click", (e) => { if (e.target === groceryMoveConfirmEl) groceryMoveConfirmEl.close(); });
+  }
+  const dlg = groceryMoveConfirmEl;
+  dlg.innerHTML = `
+    <div class="recipe-form std-form">
+      <h2 style="margin:0 0 14px">Move ${escapeHtml(label)} to ${escapeHtml(store.name)}?</h2>
+      <div class="shop-move-confirm-actions">
+        <button class="shop-move-choice" type="button" data-move-week>
+          <strong>This week only</strong>
+          <small>Use ${escapeHtml(store.name)} for this shopping cycle; keep the usual preference.</small>
+        </button>
+        <button class="shop-move-choice is-primary" type="button" data-move-permanent>
+          <strong>Make permanent</strong>
+          <small>Always prefer ${escapeHtml(store.name)} for ${escapeHtml(label)}.</small>
+        </button>
+      </div>
+      <details class="shop-move-prefs">
+        <summary>Preferred store order</summary>
+        <p class="muted-label" style="margin:8px 0 0">Reorder this item's fallback stores.</p>
+        <button class="grocery-cleanup-link" type="button" data-move-edit-prefs>Edit preferred stores…</button>
+      </details>
+      <div class="shop-move-confirm-foot">
+        <button class="secondary-btn" type="button" data-move-confirm-cancel>Cancel</button>
+      </div>
+    </div>
+  `;
+  dlg.querySelector("[data-move-week]").addEventListener("click", () => {
+    setItemStoreThisWeek(itemKey, targetStoreId); persist(); dlg.close(); closeGroceryMoveSheet(); renderGroceries();
+  });
+  dlg.querySelector("[data-move-permanent]").addEventListener("click", () => {
+    setItemStorePermanent(itemKey, targetStoreId); persist(); dlg.close(); closeGroceryMoveSheet(); renderGroceries();
+  });
+  dlg.querySelector("[data-move-confirm-cancel]").addEventListener("click", () => dlg.close());
+  dlg.querySelector("[data-move-edit-prefs]").addEventListener("click", () => { dlg.close(); closeGroceryMoveSheet(); openStoreRankDialog(itemKey); });
+  if (!dlg.open) dlg.showModal();
+}
+
+// ── Shared pointer-drag with autoscroll (the app-wide drag-scroll fix) ─────────
+// Drag `handleEl`; a floating ghost follows the pointer; the destination under it
+// (matching `targetSelector` inside `scrollContainer`) is highlighted; and the
+// container autoscrolls near its edges (autoscrollVelocity) so destinations that
+// start off-screen stay reachable mid-drag — reliably, on touch. Returns a
+// cleanup function. Pointer Events + setPointerCapture ⇒ works for mouse + touch.
+function attachPointerDragToTargets(handleEl, scrollContainer, targetSelector, onDrop) {
+  if (!handleEl || !scrollContainer) return () => {};
+  let dragging = false, ghost = null, current = null, rafId = 0, lastY = 0;
+
+  const targetUnder = (x, y) => {
+    const el = document.elementFromPoint(x, y);
+    const t = el && el.closest(targetSelector);
+    return t && scrollContainer.contains(t) ? t : null;
+  };
+  const setCurrent = (t) => {
+    if (current === t) return;
+    if (current) current.classList.remove("is-drop-target");
+    current = t;
+    if (current) current.classList.add("is-drop-target");
+  };
+  const autoscrollLoop = () => {
+    if (!dragging) return;
+    const v = LiveGrocerySources.autoscrollVelocity(lastY, scrollContainer.getBoundingClientRect());
+    if (v) { scrollContainer.scrollTop += v; setCurrent(targetUnder(ghost?._x ?? 0, lastY)); }
+    rafId = requestAnimationFrame(autoscrollLoop);
+  };
+  const onDown = (e) => {
+    if (dragging) return;
+    dragging = true;
+    // Pointer capture keeps events flowing to the handle mid-drag; guard it —
+    // a synthetic or already-released pointer would otherwise throw and abort.
+    try { handleEl.setPointerCapture?.(e.pointerId); } catch { /* no active pointer */ }
+    document.body.classList.add("shop-move-dragging");
+    ghost = handleEl.cloneNode(true);
+    ghost.classList.add("shop-move-ghost");
+    document.body.appendChild(ghost);
+    moveGhost(e.clientX, e.clientY);
+    lastY = e.clientY;
+    rafId = requestAnimationFrame(autoscrollLoop);
+  };
+  const moveGhost = (x, y) => { if (ghost) { ghost._x = x; ghost.style.left = `${x}px`; ghost.style.top = `${y}px`; } };
+  const onMove = (e) => {
+    if (!dragging) return;
+    e.preventDefault();
+    lastY = e.clientY;
+    moveGhost(e.clientX, e.clientY);
+    setCurrent(targetUnder(e.clientX, e.clientY));
+  };
+  const onUp = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    cancelAnimationFrame(rafId);
+    document.body.classList.remove("shop-move-dragging");
+    const dropped = targetUnder(e.clientX, e.clientY);
+    if (ghost) { ghost.remove(); ghost = null; }
+    if (current) current.classList.remove("is-drop-target");
+    const target = dropped || current;
+    current = null;
+    if (target && typeof onDrop === "function") onDrop(target);
+  };
+  handleEl.addEventListener("pointerdown", onDown);
+  handleEl.addEventListener("pointermove", onMove);
+  handleEl.addEventListener("pointerup", onUp);
+  handleEl.addEventListener("pointercancel", onUp);
+  return () => {
+    cancelAnimationFrame(rafId);
+    if (ghost) ghost.remove();
+    document.body.classList.remove("shop-move-dragging");
+    handleEl.removeEventListener("pointerdown", onDown);
+    handleEl.removeEventListener("pointermove", onMove);
+    handleEl.removeEventListener("pointerup", onUp);
+    handleEl.removeEventListener("pointercancel", onUp);
+  };
 }
 
 function learnGroceryItemMerge(row) {
@@ -28523,27 +28870,35 @@ function addManualGroceryItem(event) {
   event.preventDefault();
   const item = elements.groceryInput.value.trim();
   if (!item) return;
+  // Next Stop designation (spec #32): a spontaneous, store-independent need.
+  if (groceryAddNextStop) {
+    addNextStopItem(item);
+    elements.groceryInput.value = "";
+    setGroceryAddNextStop(false);
+    persist();
+    renderGroceries();
+    return;
+  }
   if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
   if (!state.persistentManualGroceries.some((existing) => normalize(existing) === normalize(item))) {
     state.persistentManualGroceries.push(item);
     state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
   }
-  const itemKey = manualGroceryRow(item).key;
-  const enabledStores = groceryStores().filter((s) => s.enabled !== false && !skippedGroceryStoreIds().has(s.id));
-  const enabledIds = new Set(enabledStores.map((s) => s.id));
-  if (activeGroceryStoreTab !== "all" && enabledIds.has(activeGroceryStoreTab)) {
-    // Land it in the open store's list for this trip (no forward pref change).
-    setGroceryItemStoreForTrip(itemKey, activeGroceryStoreTab);
-  } else if (activeGroceryStoreTab === "all") {
-    // From the All tab, default a brand-new item to the preferred (first) store
-    // rather than Miscellaneous — again only for this trip. An item that already
-    // has a store preference keeps routing to it.
-    const alreadyRouted = resolveItemEffectiveStoreId(itemKey, groceryItemLocations(), enabledIds);
-    if (!alreadyRouted && enabledStores[0]) setGroceryItemStoreForTrip(itemKey, enabledStores[0].id);
-  }
+  // A brand-new item with no known store lands in Other (spec) — we set no
+  // this-trip override, so resolveItemEffectiveStoreId returns null → Other.
+  // An item that already carries a saved store preference keeps routing to it.
   elements.groceryInput.value = "";
   persist();
   renderGroceries();
+}
+
+let groceryAddNextStop = false;
+function setGroceryAddNextStop(on) {
+  groceryAddNextStop = !!on;
+  const btn = document.getElementById("groceryNextStopToggle");
+  if (btn) btn.setAttribute("aria-pressed", String(groceryAddNextStop));
+  const input = document.getElementById("groceryInput");
+  if (input) input.placeholder = groceryAddNextStop ? "Add to Next Stop" : "Add item";
 }
 
 // Adding an item while viewing a specific store's tab should land it there
@@ -31575,6 +31930,289 @@ function buildGroceryItemsWithManual(week = weekState()) {
 
 function buildGroceryRowsWithManual(week = weekState()) {
   return aggregateGroceryRows([...buildRawGroceryRows(week), ...manualGroceryItems(week).map(manualGroceryRow)]);
+}
+
+// ── Shop sources (Checklist · Next Stop) + the active-needs projection ─────────
+// Shop is a dynamic projection of active household needs. Meal Plan and Manual
+// are the existing sources; the Checklist is the third. reconcileSources (pure,
+// grocery-sources.js) merges all sources into ONE active need per canonical key,
+// tagged with the sources that contribute to it, so satisfying/removing one
+// source never deletes a need another source still requires (source independence).
+
+function groceryChecklistState() {
+  if (!state.groceryChecklist || typeof state.groceryChecklist !== "object") {
+    state.groceryChecklist = { config: [], provisional: {}, submissions: {} };
+  }
+  const cl = state.groceryChecklist;
+  if (!Array.isArray(cl.config)) cl.config = [];
+  if (!cl.provisional || typeof cl.provisional !== "object") cl.provisional = {};
+  if (!cl.submissions || typeof cl.submissions !== "object") cl.submissions = {};
+  return cl;
+}
+function groceryChecklistConfig() { return groceryChecklistState().config; }
+function groceryChecklistCurrentSubmission() { return groceryChecklistState().submissions[groceryCycleKey()] || null; }
+// Provisional answers for the current cycle default to what was last submitted
+// (reopening mid-cycle shows your submitted state), else empty (fresh Friday).
+function groceryChecklistCurrentAnswers() {
+  const cl = groceryChecklistState();
+  const cycle = groceryCycleKey();
+  if (cl.provisional[cycle] && typeof cl.provisional[cycle] === "object") return cl.provisional[cycle];
+  const sub = cl.submissions[cycle];
+  return sub && sub.checked ? { ...sub.checked } : {};
+}
+function setGroceryChecklistAnswer(id, checked) {
+  const cl = groceryChecklistState();
+  const cycle = groceryCycleKey();
+  if (!cl.provisional[cycle] || typeof cl.provisional[cycle] !== "object") cl.provisional[cycle] = { ...groceryChecklistCurrentAnswers() };
+  cl.provisional[cycle][id] = !!checked;
+  persist();
+}
+function groceryChecklistHasPendingChanges() {
+  return LiveGrocerySources.checklistHasPendingChanges(groceryChecklistConfig(), groceryChecklistCurrentSubmission(), groceryChecklistCurrentAnswers());
+}
+// Commit the Checklist for the current cycle: unchecked items become/keep
+// Checklist-source needs; checked items drop their Checklist contribution. Other
+// sources are untouched. Marks the cycle submitted (Friday will start fresh).
+function submitGroceryChecklist() {
+  const cl = groceryChecklistState();
+  const cycle = groceryCycleKey();
+  const submission = LiveGrocerySources.buildChecklistSubmission(groceryChecklistConfig(), groceryChecklistCurrentAnswers(), new Date().toISOString());
+  cl.submissions[cycle] = submission;
+  cl.provisional[cycle] = { ...submission.checked };
+  persist();
+  renderShopPage();
+}
+// The Checklist's committed contribution as grocery rows (reuse the manual-row
+// shaping so Checklist needs share identity/normalization with everything else).
+function checklistSourceRows() {
+  return LiveGrocerySources.checklistContribution(groceryChecklistConfig(), groceryChecklistCurrentSubmission())
+    .map((entry) => ({ ...manualGroceryRow(entry.name), checklistId: entry.id }));
+}
+
+// Next Stop: store-independent, date-independent persistent intents. Never
+// regenerate; live in their own list; removed only on purchase or explicit
+// removal. They deliberately bypass store routing/optimization entirely.
+function nextStopItemsList() {
+  if (!Array.isArray(state.nextStopItems)) state.nextStopItems = [];
+  return state.nextStopItems;
+}
+function addNextStopItem(name, quantity = "") {
+  const clean = String(name || "").trim();
+  if (!clean) return false;
+  const list = nextStopItemsList();
+  if (list.some((it) => normalize(it.name) === normalize(clean))) return false;
+  list.push({ id: `ns_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`, name: clean, quantity: String(quantity || "").trim() });
+  state.nextStopItems = LiveGrocerySources.normalizeNextStopItems(list);
+  return true;
+}
+function removeNextStopItem(id) {
+  state.nextStopItems = nextStopItemsList().filter((it) => it.id !== id);
+}
+// Purchasing a Next Stop item removes it immediately (no confirmation, no
+// regeneration) with an Undo toast — never mutates any other source.
+function purchaseNextStopItem(id) {
+  const item = nextStopItemsList().find((it) => it.id === id);
+  if (!item) return;
+  const snapshot = { ...item };
+  removeNextStopItem(id);
+  persist();
+  renderGroceries();
+  showMailToast(`${snapshot.name} marked purchased`, () => {
+    const list = nextStopItemsList();
+    if (!list.some((it) => normalize(it.name) === normalize(snapshot.name))) list.push(snapshot);
+    state.nextStopItems = LiveGrocerySources.normalizeNextStopItems(list);
+    persist();
+    renderGroceries();
+  });
+}
+
+// The Checklist space: the configured weekly items with provisional checks and a
+// Submit button. Checking marks "don't need"; nothing hits Shop until Submit.
+function renderShopChecklistSpace() {
+  ensureGroceryChecklistSeeded();
+  const config = groceryChecklistConfig();
+  const answers = groceryChecklistCurrentAnswers();
+  const pending = groceryChecklistHasPendingChanges();
+  const submission = groceryChecklistCurrentSubmission();
+  if (!config.length) {
+    elements.groceryList.innerHTML = `<div class="empty-state">No checklist items yet.<br><button class="secondary-btn" type="button" data-open-checklist-config style="margin-top:10px">Configure checklist</button></div>`;
+    elements.groceryList.querySelector("[data-open-checklist-config]")?.addEventListener("click", openGroceryChecklistDialog);
+    return;
+  }
+  elements.groceryList.innerHTML = `
+    <div class="shop-checklist">
+      <p class="muted-label shop-checklist-hint">Check anything you don't need this week, then Submit. Starts fresh every Friday.</p>
+      <div class="shop-checklist-list">
+        ${config.map((entry) => `
+          <label class="grocery-item shop-checklist-row ${answers[entry.id] ? "is-checked" : ""}">
+            <input type="checkbox" data-checklist-toggle="${escapeHtml(entry.id)}" ${answers[entry.id] ? "checked" : ""} />
+            <span class="grocery-name">${escapeHtml(entry.name)}</span>
+          </label>
+        `).join("")}
+      </div>
+      <div class="shop-checklist-footer">
+        <button class="grocery-cleanup-link" type="button" data-open-checklist-config>Configure</button>
+        <span class="muted-label shop-checklist-status">${submission ? "Submitted this week" : "Not submitted yet this week"}${pending ? " · unsaved changes" : ""}</span>
+        <button class="primary-btn shop-checklist-submit" type="button" data-checklist-submit ${pending ? "" : "disabled"}>Submit</button>
+      </div>
+    </div>
+  `;
+  elements.groceryList.querySelector("[data-open-checklist-config]")?.addEventListener("click", openGroceryChecklistDialog);
+  elements.groceryList.querySelectorAll("[data-checklist-toggle]").forEach((cb) => {
+    cb.addEventListener("change", () => { setGroceryChecklistAnswer(cb.dataset.checklistToggle, cb.checked); renderGroceries(); });
+  });
+  const submitBtn = elements.groceryList.querySelector("[data-checklist-submit]");
+  if (submitBtn) submitBtn.addEventListener("click", submitGroceryChecklist);
+}
+
+// ── Checklist configuration (Shop → Settings → Checklist) ─────────────────────
+function addGroceryChecklistItem(name) {
+  const clean = String(name || "").trim();
+  if (!clean) return false;
+  const cl = groceryChecklistState();
+  if (cl.config.some((e) => normalize(e.name) === normalize(clean))) return false;
+  cl.config.push({ id: `cl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`, name: clean });
+  persist();
+  return true;
+}
+function removeGroceryChecklistItem(id) {
+  const cl = groceryChecklistState();
+  cl.config = cl.config.filter((e) => e.id !== id);
+  persist();
+}
+function moveGroceryChecklistItem(id, dir) {
+  const cl = groceryChecklistState();
+  const i = cl.config.findIndex((e) => e.id === id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= cl.config.length) return;
+  [cl.config[i], cl.config[j]] = [cl.config[j], cl.config[i]];
+  persist();
+}
+// One-time migration: seed the new Checklist config from the existing Inventory
+// "track on weekly checklist" (trackWeekly) items, so nothing the household
+// already relied on is lost. Runs once (guarded by cl.seeded), never overwrites.
+function seedGroceryChecklistFromInventory() {
+  const cl = groceryChecklistState();
+  let added = 0;
+  inventoryItemList().filter((i) => i.trackWeekly).forEach((i) => { if (addGroceryChecklistItem(i.name)) added++; });
+  return added;
+}
+function ensureGroceryChecklistSeeded() {
+  const cl = groceryChecklistState();
+  if (cl.seeded) return;
+  if (!cl.config.length) seedGroceryChecklistFromInventory();
+  cl.seeded = true;
+  persist();
+}
+
+let groceryChecklistDialogEl = null;
+function openGroceryChecklistDialog() {
+  if (!groceryChecklistDialogEl) {
+    groceryChecklistDialogEl = document.createElement("dialog");
+    groceryChecklistDialogEl.className = "recipe-dialog std-form-dialog grocery-checklist-config-dialog";
+    document.body.appendChild(groceryChecklistDialogEl);
+    groceryChecklistDialogEl.addEventListener("click", (e) => { if (e.target === groceryChecklistDialogEl) groceryChecklistDialogEl.close(); });
+  }
+  ensureGroceryChecklistSeeded();
+  renderGroceryChecklistConfig();
+  if (!groceryChecklistDialogEl.open) groceryChecklistDialogEl.showModal();
+}
+function renderGroceryChecklistConfig() {
+  const dlg = groceryChecklistDialogEl;
+  if (!dlg) return;
+  const config = groceryChecklistConfig();
+  const trackWeeklyCount = inventoryItemList().filter((i) => i.trackWeekly).length;
+  const canSeed = trackWeeklyCount > 0;
+  dlg.innerHTML = `
+    <div class="recipe-form std-form">
+      <div class="dialog-head">
+        <div>
+          <h2 style="margin:0">Checklist</h2>
+          <p class="muted-label" style="margin:2px 0 0">Recurring weekly items you review on the Shop page. Restarts every Friday.</p>
+        </div>
+        <button class="icon-btn" type="button" data-checklist-config-close aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <form class="inline-form std-add-btn-form" data-checklist-add-form>
+        <input type="text" data-checklist-add-input placeholder="Add checklist item" autocomplete="off" maxlength="64" />
+        <button class="icon-btn std-add-btn" type="submit" aria-label="Add item"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+      </form>
+      <div class="grocery-checklist-config-list">
+        ${config.length ? config.map((e, i) => `
+          <div class="grocery-checklist-config-row" data-checklist-config-id="${escapeHtml(e.id)}">
+            <span class="grocery-checklist-config-name">${escapeHtml(e.name)}</span>
+            <div class="grocery-checklist-config-actions">
+              <button class="icon-btn" type="button" data-checklist-move="up" ${i === 0 ? "disabled" : ""} aria-label="Move up"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg></button>
+              <button class="icon-btn" type="button" data-checklist-move="down" ${i === config.length - 1 ? "disabled" : ""} aria-label="Move down"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+              <button class="icon-btn" type="button" data-checklist-remove aria-label="Remove"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg></button>
+            </div>
+          </div>
+        `).join("") : `<p class="empty-state">No items yet. Add recurring household items above${canSeed ? ", or import the ones you already track in Inventory." : "."}</p>`}
+      </div>
+      ${canSeed ? `<button class="secondary-btn" type="button" data-checklist-seed>Import ${trackWeeklyCount} from Inventory</button>` : ""}
+    </div>
+  `;
+  dlg.querySelector("[data-checklist-config-close]").addEventListener("click", () => dlg.close());
+  dlg.querySelector("[data-checklist-add-form]").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const input = dlg.querySelector("[data-checklist-add-input]");
+    if (addGroceryChecklistItem(input.value)) { input.value = ""; renderGroceryChecklistConfig(); syncShopAfterChecklistConfig(); }
+    dlg.querySelector("[data-checklist-add-input]").focus();
+  });
+  dlg.querySelectorAll("[data-checklist-config-id]").forEach((row) => {
+    const id = row.dataset.checklistConfigId;
+    row.querySelector("[data-checklist-remove]").addEventListener("click", () => { removeGroceryChecklistItem(id); renderGroceryChecklistConfig(); syncShopAfterChecklistConfig(); });
+    row.querySelectorAll("[data-checklist-move]").forEach((btn) => btn.addEventListener("click", () => { moveGroceryChecklistItem(id, btn.dataset.checklistMove === "up" ? -1 : 1); renderGroceryChecklistConfig(); }));
+  });
+  const seedBtn = dlg.querySelector("[data-checklist-seed]");
+  if (seedBtn) seedBtn.addEventListener("click", () => { seedGroceryChecklistFromInventory(); renderGroceryChecklistConfig(); syncShopAfterChecklistConfig(); });
+}
+function syncShopAfterChecklistConfig() {
+  if (activeAppArea === "shop" && shopSpace === "checklist") renderGroceries();
+}
+
+// Meal-plan per-week skip keys within the active shopping window (existing
+// behavior: a recipe's ingredient can be skipped for a planned week).
+function plannedSkippedGroceryKeys() {
+  const skippedKeys = new Set();
+  Object.entries(state.plans || {}).forEach(([key, weekPlan]) => {
+    if (!weekPlan) return;
+    const ws = dateFromWeekKey(key);
+    if (isNaN(ws.getTime())) return;
+    const wsISO = dateKeyFromDate(ws);
+    const weDate = new Date(ws); weDate.setDate(ws.getDate() + 7);
+    const weISO = dateKeyFromDate(weDate);
+    if (weISO < groceryRangeStart || wsISO > groceryRangeEnd) return;
+    (weekPlan.skippedGroceryKeys || []).forEach((k) => skippedKeys.add(k));
+  });
+  return skippedKeys;
+}
+
+// The unified active-needs list: every source reconciled into one row per item,
+// tagged with its contributing sources, with pantry staples and meal-plan-only
+// week-skips removed (but kept if an explicit Manual/Checklist source wants them).
+function buildActiveNeedRows() {
+  const scope = sectionScope("grocery");
+  const mealplanRaw = scope === "personal" ? [] : buildRawGroceryRowsForRange(groceryRangeStart, groceryRangeEnd);
+  const manualRaw = manualGroceryItems().map(manualGroceryRow);
+  const checklistRaw = checklistSourceRows();
+  const { rows } = LiveGrocerySources.reconcileSources([
+    { source: LiveGrocerySources.SOURCE.MEALPLAN, rows: mealplanRaw },
+    { source: LiveGrocerySources.SOURCE.CHECKLIST, rows: checklistRaw },
+    { source: LiveGrocerySources.SOURCE.MANUAL, rows: manualRaw }
+  ], { mergeRows: aggregateGroceryRows, keyOf: (r) => r.key || canonicalGroceryItemKey(r.item) });
+
+  const pantrySet = new Set((state.pantry || []).map(groceryRowKey));
+  const skippedKeys = plannedSkippedGroceryKeys();
+  const hasExplicitSource = (row) => row.sources.includes("manual") || row.sources.includes("checklist");
+  return rows.filter((row) => {
+    // Pantry staples are hidden unless an explicit source (Manual/Checklist) asks for them.
+    if (pantrySet.has(groceryRowKey(row.item)) && !hasExplicitSource(row)) return false;
+    // A meal-plan-only week-skip drops the need; an explicit source keeps it.
+    if (skippedKeys.has(row.key) && !hasExplicitSource(row)) return false;
+    return true;
+  });
 }
 
 function manualGroceryRow(value) {
@@ -38523,6 +39161,7 @@ function inventoryBoxSelectOptions(selectedId = null, excludeId = null) {
 }
 
 function renderInventoryPage() {
+  renderShopSpaceNav(); // the shared Checklist · Shop · Inventory nav
   const grid = elements.inventoryPlannerGrid;
   if (!grid) return;
 
