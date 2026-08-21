@@ -10,6 +10,14 @@ import { createWeatherCache } from './weather-cache.js';
 import { createPlaybackEngine } from './playback-engine.js';
 import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones } from './state-sync.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
+import * as TravelItinerary from './travel-itinerary.js';
+import * as TravelTransitions from './travel-transitions.js';
+import * as TravelModel from './travel-model.js';
+import * as TravelOptimize from './travel-optimize.js';
+import * as TravelRefs from './travel-refs.js';
+import * as TravelGeo from './travel-geo.js';
+import * as TravelMode from './travel-mode.js';
+import * as TravelIngest from './travel-ingest.js';
 
 const STORAGE_KEY = "tableplan-state-v1";
 const TRAVEL_LOGISTIC_ICONS = { flight: "✈️", hotel: "🏨", car: "🚗", train: "🚆", ferry: "⛴️", other: "📌" };
@@ -18,8 +26,46 @@ const TRAVEL_PACKING_CATS = ["documents", "clothing", "electronics", "health", "
 // Travel party choices come from the household (plus generic groups) — no
 // hardcoded personal names anywhere in the app.
 function travelPartyOptions() {
-  const members = normalizeMealPlanConfig(state.mealPlanConfig).members.map((m) => m.label).filter(Boolean);
-  return [...members, "Friends", "Family"];
+  // Permanent chips for each household member; extra people are added by name.
+  return normalizeMealPlanConfig(state.mealPlanConfig).members.map((m) => m.label).filter(Boolean);
+}
+
+// HTML for the "add a person" row under a party-chips picker. Uses the app-wide
+// standard add button (icon-btn std-add-btn — a navy-bordered rounded-square "+").
+function partyAdderHtml() {
+  return '<div class="travel-party-add">' +
+    '<input type="text" class="text-input" data-party-add-input placeholder="Add someone…" autocomplete="off" />' +
+    '<button type="button" class="icon-btn std-add-btn" data-party-add-btn aria-label="Add person" title="Add person">' +
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button></div>';
+}
+
+// Wire the "add a person" row: typing a name (Enter or Add) appends a selected
+// chip to `chipsEl`. Deduplicates case-insensitively; re-selecting an existing
+// name just highlights it.
+function wirePartyAdder(dialog, chipsEl) {
+  const input = dialog.querySelector("[data-party-add-input]");
+  const btn = dialog.querySelector("[data-party-add-btn]");
+  if (!input || !chipsEl) return;
+  const add = () => {
+    const name = input.value.trim();
+    if (!name) return;
+    const existing = Array.from(chipsEl.querySelectorAll(".travel-party-chip"))
+      .find(c => c.dataset.party.toLowerCase() === name.toLowerCase());
+    if (existing) { existing.classList.add("is-selected"); }
+    else {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "travel-party-chip is-selected";
+      chip.dataset.party = name;
+      chip.textContent = name;
+      chip.addEventListener("click", () => chip.classList.toggle("is-selected"));
+      chipsEl.appendChild(chip);
+    }
+    input.value = "";
+    input.focus();
+  };
+  btn?.addEventListener("click", add);
+  input.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); add(); } });
 }
 let exploreOpenTripId = null;
 let exploreActiveDayKey = ""; // selected day in the trip day tabs
@@ -1381,6 +1427,7 @@ const PAGE_NOTIF_BUTTONS = {
   finance: ["homeFinanceBtn", "titleFinanceBtn"],
   do: ["homeDoBtn", "titleToDoListBtn"],
   eat: ["homeEatBtn", "titleMealPlanBtn"],
+  explore: ["homeExploreBtn", "titleExploreBtn"],
 };
 
 function setPageNotifCount(page, count) {
@@ -1694,19 +1741,8 @@ function bindEvents() {
       sidebar.classList.toggle("is-collapsed");
     }
   });
-  document.getElementById("exploreTripMenuBtn")?.addEventListener("click", () => {
-    const sidebar = document.getElementById("exMediaSidebar");
-    if (!sidebar) return;
-    if (window.innerWidth <= 680) {
-      // Mobile: slide-over overlay (is-collapsed outranks it in specificity — clear it)
-      sidebar.classList.remove("is-collapsed");
-      sidebar.classList.toggle("is-expanded");
-    } else {
-      // Desktop: collapse/expand the docked sidebar
-      sidebar.classList.remove("is-expanded");
-      sidebar.classList.toggle("is-collapsed");
-    }
-  });
+  // Explore's trips sidebar is toggled by the topbar hamburger (#exploreSidebarToggle),
+  // wired in wireExploreTabs — matching the Media/Mail sidebars.
   // Travel page buttons
   document.getElementById("travelNewTripBtn")?.addEventListener("click", showTravelNewTripDialog);
   document.getElementById("travelEmptyTripBtn")?.addEventListener("click", showTravelNewTripDialog);
@@ -2504,6 +2540,8 @@ function renderProfileDialog() {
   elements.profileDialog.querySelector(".profile-avatar-large").textContent = initials || "?";
   elements.profileDialog.querySelector("#profileNameInput").value = member?.label || userGroup?.display_name || "";
   elements.profileDialog.querySelector("#profileDobInput").value = member?.dob || "";
+  const homeInput = elements.profileDialog.querySelector("#profileHomeInput");
+  if (homeInput) homeInput.value = state.travelHome || "";
 
   const emailEl = elements.profileDialog.querySelector("#profileEmailDisplay");
   emailEl.textContent = email || (isLoggedIn ? "" : "Not signed in");
@@ -2517,6 +2555,10 @@ function saveProfile() {
   const dialog = elements.profileDialog;
   const newName = dialog.querySelector("#profileNameInput").value.trim();
   const newDob = dialog.querySelector("#profileDobInput").value.trim();
+
+  // Home address (used by Explore as each trip's start/finish anchor).
+  const newHome = (dialog.querySelector("#profileHomeInput")?.value || "").trim();
+  if (newHome !== (state.travelHome || "")) { state.travelHome = newHome; persist(); }
 
   const member = getCurrentProfileMember();
   if (member && newName) {
@@ -3549,7 +3591,17 @@ function normalizeState(parsed) {
   migratePlayExercisesToWorkouts(normalized);
   cleanupAutoAppliedFutureMealDefaults(normalized);
   syncPublishedWeekArchiveFromPlans(normalized);
+  migrateTravelIdeasToTripsOnce(normalized);
   return normalized;
+}
+
+// Fold legacy standalone travel ideas into the unified trip lifecycle as
+// undated "idea" trips (idempotent, non-destructive — the original
+// travelIdeas array is left intact). One lifecycle: IDEA→PLANNING→…→COMPLETED.
+function migrateTravelIdeasToTripsOnce(targetState) {
+  if (!Array.isArray(targetState.trips)) targetState.trips = [];
+  const added = TravelModel.migrateIdeasToTrips(targetState);
+  if (added.length) targetState.trips.push(...added);
 }
 
 const MAX_TOMBSTONES_PER_KEY = 200;
@@ -12458,7 +12510,11 @@ function showMailMoreMenu(thread, lastMsg) {
     </button>
     <button class="mail-more-option" type="button" data-action="move-to-media">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-      Move to Listen
+      Send to Media
+    </button>
+    <button class="mail-more-option" type="button" data-action="send-to-explore">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+      Send to Explore
     </button>
     <div class="mail-more-divider"></div>
     <button class="mail-more-option" type="button" data-action="label">
@@ -12479,6 +12535,7 @@ function showMailMoreMenu(thread, lastMsg) {
     else if (action === "add-task") addEmailToTasks(lastMsg?.subject || "(no subject)");
     else if (action === "create-event") createEventFromEmail(lastMsg?.subject || "");
     else if (action === "move-to-media") moveMailToMedia(thread, lastMsg);
+    else if (action === "send-to-explore") sendMailToExplore(thread, lastMsg);
     else if (action === "label") showMailMovePicker(thread);
   });
   btn.closest(".mail-more-wrap").appendChild(menu);
@@ -12632,8 +12689,425 @@ async function moveMailToMedia(thread, lastMsg) {
   // Trash the email and drop back to the list (optimistic — the row goes now).
   const removeIds = (currentMailbox && !["TRASH", "ALL"].includes(currentMailbox)) ? [currentMailbox] : [];
   afterMailThreadAction(thread.id);
-  showMailToast("Moved to Listen");
+  showMailToast("Sent to Media");
   callGmailApi({ action: "move", threadId: thread.id, addLabelIds: ["TRASH"], removeLabelIds: removeIds });
+}
+
+// ── Send to Explore: interpret a travel email/thread into structured info ─────
+// Provider-agnostic: the whole thread is interpreted server-side into normalized
+// entities (travel-ingest.js), the user reviews, then commits canonical Explore
+// objects that feed the itinerary/routing engine. AI proposes; the user commits.
+function sendMailToExplore(thread, lastMsg) {
+  if (!thread) return;
+  const source = {
+    kind: "email", threadId: thread.id, messageId: lastMsg?.id || "",
+    subject: lastMsg?.subject || "", from: lastMsg?.from || "",
+  };
+  showTravelIngestDialog(thread, source);
+}
+
+function ingestDatesLabel(entity) {
+  const s = TravelIngest.entitySpan(entity);
+  if (!s.start) return "";
+  return formatTravelDate(s.start) + (s.end && s.end !== s.start ? " – " + formatTravelDate(s.end) : "");
+}
+
+// Compact, honest field summary for an entity card; inferred fields get a tag.
+function ingestFieldRows(entity) {
+  const rows = [];
+  const inferred = (f) => (entity.provenance && entity.provenance[f] === "inferred")
+    ? ' <span class="ingest-tag ingest-tag--inferred">Inferred</span>' : "";
+  const row = (label, value, f) => value ? `<div class="ingest-field"><span class="ingest-field-label">${escapeHtml(label)}</span><span class="ingest-field-value">${escapeHtml(value)}${f ? inferred(f) : ""}</span></div>` : "";
+  const s = TravelIngest.entitySpan(entity);
+  if (entity.kind === "flight" && entity.segments.length) {
+    rows.push(row("Route", entity.segments.map(g => (g.from || g.fromName)).concat(entity.segments[entity.segments.length - 1].to || entity.segments[entity.segments.length - 1].toName).join(" → ")));
+    rows.push(row("Departs", [entity.segments[0].departDate, entity.segments[0].departTime].filter(Boolean).join(" · "), "startDate"));
+  } else {
+    if (s.start) rows.push(row(entity.kind === "lodging" ? "Check-in" : "When", [ingestDatesLabel(entity), entity.startTime].filter(Boolean).join(" · "), "startDate"));
+    if (entity.kind === "lodging" && entity.endTime) rows.push(row("Check-out time", entity.endTime, "endTime"));
+  }
+  if (entity.guests) rows.push(row("Guests", String(entity.guests), "guests"));
+  if (entity.confirmation) rows.push(row("Confirmation", entity.confirmation));
+  if (entity.location || entity.address) rows.push(row("Location", entity.address || entity.location, "location"));
+  if (entity.host) rows.push(row("Host", entity.host));
+  if (entity.price) rows.push(row("Price", (entity.currency ? entity.currency + " " : "") + entity.price));
+  if (entity.notes) rows.push(row("Notes", entity.notes));
+  return rows.filter(Boolean).join("");
+}
+
+async function showTravelIngestDialog(thread, source) {
+  const d = document.createElement("dialog");
+  d.className = "recipe-dialog auth-dialog ingest-dialog";
+  d.innerHTML =
+    `<div class="recipe-form">` +
+      `<div class="ingest-head"><h3 style="margin:0">Send to Explore</h3>` +
+      `<button class="icon-btn" id="ingestClose" type="button" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>` +
+      `<div id="ingestBody"><div class="mail-loading">Reading this email for travel information…</div></div>` +
+    `</div>`;
+  document.body.appendChild(d);
+  d.showModal();
+  d.querySelector("#ingestClose").addEventListener("click", () => d.remove());
+  d.addEventListener("close", () => d.remove());
+  const body = d.querySelector("#ingestBody");
+
+  if (!navigator.onLine) {
+    body.innerHTML = `<div class="mail-empty">You're offline. Interpreting travel information needs a connection — try again when you're back online.</div>`;
+    return;
+  }
+
+  const data = await callGmailApi({ action: "interpretThread", threadId: thread.id });
+  if (!d.isConnected) return;
+  if (!data) {
+    body.innerHTML = `<div class="mail-empty">${escapeHtml(lastGmailApiError || "Couldn't read the email. Connect Gmail on the Mail page first.")}</div>`;
+    return;
+  }
+  const entities = TravelIngest.normalizeEntities(data.entities);
+
+  if (!entities.length) {
+    body.innerHTML =
+      `<div class="ingest-none"><div class="ingest-none-icon">🧭</div>` +
+      `<p>No structured travel information detected in this email.</p>` +
+      `<div class="ingest-none-actions"><button class="secondary-btn" id="ingestNoteBtn" type="button">Save as trip note</button>` +
+      `<button class="secondary-btn" id="ingestCancelBtn" type="button">Cancel</button></div></div>`;
+    body.querySelector("#ingestCancelBtn").addEventListener("click", () => d.remove());
+    body.querySelector("#ingestNoteBtn").addEventListener("click", () => {
+      const note = { kind: "other", title: source.subject || "Travel note", notes: "", provenance: {}, segments: [], confidence: "medium" };
+      chooseTripForEntity(note, source, (t) => { saveEntityAsTripNote(note, t, source); showMailToast("Saved as trip note"); d.remove(); });
+    });
+    return;
+  }
+
+  body.innerHTML =
+    `<p class="ingest-intro">Live found ${entities.length} item${entities.length === 1 ? "" : "s"}. Review before anything is added — nothing changes your trips until you confirm.</p>` +
+    `<div class="ingest-cards" id="ingestCards"></div>`;
+  const cards = body.querySelector("#ingestCards");
+  entities.forEach(entity => cards.appendChild(buildIngestEntityCard(entity, source, d)));
+}
+
+function buildIngestEntityCard(entity, source, dialog) {
+  const meta = TravelIngest.KIND_META[entity.kind] || TravelIngest.KIND_META.other;
+  const match = TravelIngest.matchTrip(entity, state.trips || []);
+  const card = document.createElement("div");
+  card.className = "ingest-card";
+  const confTag = entity.confidence === "high" ? "" : `<span class="ingest-tag ingest-tag--${entity.confidence}">${entity.confidence === "low" ? "Uncertain" : "Review"}</span>`;
+  const cancelBanner = entity.intent === "cancel" ? `<div class="ingest-cancel-banner">⚠ This looks like a cancellation.</div>` : "";
+  // Genuine conflicts the interpreter couldn't resolve — surfaced, never silently
+  // guessed. The most-recent value is used, but both are shown with their source.
+  const conflictBanner = TravelIngest.hasConflicts(entity)
+    ? `<div class="ingest-conflict-banner"><div class="ingest-conflict-head">⚠ Conflicting info — Live couldn't tell which is right</div>` +
+      entity.conflicts.map(c =>
+        `<div class="ingest-conflict-row"><span class="ingest-conflict-field">${escapeHtml(prettyFieldName(c.field))}</span>` +
+        `<span class="ingest-conflict-vals">` +
+        c.values.map(v => `<span class="ingest-conflict-val">${escapeHtml(v.value)}${v.source ? ` <em>${escapeHtml(v.source)}</em>` : ""}</span>`).join(`<span class="ingest-conflict-vs">vs</span>`) +
+        `</span></div>`).join("") +
+      `<div class="ingest-conflict-hint">Using the most recent value — open the email to confirm.</div></div>`
+    : "";
+
+  card.innerHTML =
+    cancelBanner + conflictBanner +
+    `<div class="ingest-card-head"><span class="ingest-card-icon">${meta.icon}</span>` +
+      `<div><div class="ingest-card-title">${escapeHtml(entity.title || meta.label)} ${confTag}</div>` +
+      `<div class="ingest-card-sub">${escapeHtml(meta.label)}${entity.provider ? " · " + escapeHtml(entity.provider) : ""}</div></div></div>` +
+    `<div class="ingest-fields">${ingestFieldRows(entity)}</div>` +
+    (source.subject ? `<div class="ingest-source">Source: ${escapeHtml(source.subject)} <button class="ingest-source-open" type="button" data-open-src>Open email</button></div>` : "") +
+    `<div class="ingest-actions" data-actions></div>`;
+
+  const actions = card.querySelector("[data-actions]");
+  const renderActions = () => {
+    if (entity.kind === "other") {
+      actions.innerHTML = `<button class="primary-btn compact-btn" data-act="note" type="button">Save as trip note</button><button class="secondary-btn compact-btn" data-act="dismiss" type="button">Dismiss</button>`;
+    } else if (match.best) {
+      const t = match.best.trip;
+      actions.innerHTML =
+        `<button class="primary-btn compact-btn" data-act="add" type="button">Add to ${escapeHtml(t.name || "trip")}</button>` +
+        `<button class="secondary-btn compact-btn" data-act="choose" type="button">Choose another</button>` +
+        `<button class="secondary-btn compact-btn" data-act="create" type="button">Create trip</button>`;
+    } else {
+      const sug = TravelIngest.suggestNewTrip(entity);
+      actions.innerHTML =
+        (sug ? `<button class="primary-btn compact-btn" data-act="create" type="button">Create trip${sug.destination ? " · " + escapeHtml(sug.destination) : ""}</button>` : "") +
+        `<button class="secondary-btn compact-btn" data-act="choose" type="button">Add to a trip…</button>` +
+        `<button class="secondary-btn compact-btn" data-act="dismiss" type="button">Dismiss</button>`;
+    }
+  };
+  renderActions();
+
+  // After a commit, show the result and — for a dated+timed item — an opt-in
+  // "Add to calendar" (Calendar stays canonical; nothing is added automatically).
+  const done = (label) => {
+    card.classList.add("ingest-card--done");
+    const canCal = entity.startDate && entity.startTime && entity.kind !== "other";
+    actions.innerHTML = `<span class="ingest-done">✓ ${escapeHtml(label)}</span>` +
+      (canCal ? `<button class="secondary-btn compact-btn" type="button" data-cal>📅 Add to calendar</button>` : "");
+    actions.querySelector("[data-cal]")?.addEventListener("click", (ev) => {
+      addEntityToCalendar(entity);
+      ev.target.textContent = "✓ On calendar";
+      ev.target.disabled = true;
+    });
+  };
+
+  card.addEventListener("click", (e) => {
+    if (e.target.closest("[data-open-src]")) { openSourceEmail(source); return; }
+    if (e.target.closest("[data-cal]")) return; // handled by its own listener
+    const btn = e.target.closest("[data-act]");
+    if (!btn) return;
+    const act = btn.dataset.act;
+    if (act === "add") { const res = commitEntityToTrip(entity, match.best.trip, source); done(res); }
+    else if (act === "create") { const trip = createTripFromEntity(entity, source); if (trip) done("Created trip and added"); }
+    else if (act === "choose") { chooseTripForEntity(entity, source, (t) => done(commitEntityToTrip(entity, t, source))); }
+    else if (act === "note") { saveEntityAsTripNote(entity, match.best?.trip || null, source); done("Saved as note"); }
+    else if (act === "dismiss") { card.remove(); }
+  });
+  return card;
+}
+
+// Commit an entity's canonical placements into a trip's days (feeds the
+// itinerary/routing engine). Returns a short result label. Modifications/
+// cancellations of already-imported items are handled in the proposals flow.
+function commitEntityToTrip(entity, trip, source) {
+  if (!trip) return "No trip";
+  if (!Array.isArray(state.trips)) state.trips = [];
+  // Already-imported? Recognize an update/cancellation instead of duplicating.
+  const existing = TravelIngest.findExistingItem(entity, trip);
+  if (existing) {
+    if (entity.intent === "cancel") return proposeEntityChange(entity, trip, existing, source);
+    const incoming = TravelIngest.entityToPlacements(entity, source)[0]?.item;
+    const changes = incoming ? TravelIngest.diffItem(existing.item, incoming, Object.keys(incoming)) : [];
+    if (!changes.length) return "Already in this trip";
+    // A conflict with an already-IMPORTED item is a reservation update; a conflict
+    // with a HAND-ENTERED item is an itinerary-update proposal (never silent).
+    if (existing.item.source) return proposeEntityChange(entity, trip, existing, source);
+    return proposeItineraryChange(entity, trip, { item: existing.item, section: existing.section, dateKey: existing.dateKey, changes }, source);
+  }
+  // Not a re-import: does it conflict with a hand-entered itinerary item?
+  const itinConflict = TravelIngest.findItineraryConflict(entity, trip);
+  if (itinConflict) return proposeItineraryChange(entity, trip, itinConflict, source);
+  const placements = TravelIngest.entityToPlacements(entity, source);
+  if (!placements.length) { saveEntityAsTripNote(entity, trip, source); return "Saved as note"; }
+  placements.forEach(p => {
+    const item = Object.assign({ id: createId("ti") }, p.item);
+    tripDayItems(trip, p.dateKey, p.section).push(item);
+  });
+  trip.updatedAt = new Date().toISOString();
+  persist();
+  if (activeAppArea === "explore" && exploreOpenTripId === trip.id) renderExploreTripPanel("itinerary", trip);
+  return "Added to " + (trip.name || "trip");
+}
+
+function createTripFromEntity(entity, source) {
+  const sug = TravelIngest.suggestNewTrip(entity);
+  const trip = defaultTrip(sug ? { name: sug.name, destination: sug.destination, startDate: sug.startDate, endDate: sug.endDate, status: "booked" } : {});
+  if (!Array.isArray(state.trips)) state.trips = [];
+  state.trips.push(trip);
+  commitEntityToTrip(entity, trip, source);
+  if (activeAppArea === "explore") renderExploreSidebar(trip.id);
+  return trip;
+}
+
+function saveEntityAsTripNote(entity, trip, source) {
+  const target = trip || createTripFromEntity({ ...entity, kind: "other" }, source);
+  if (!Array.isArray(target.refs)) target.refs = [];
+  const title = (entity.title || TravelIngest.KIND_META[entity.kind]?.label || "Travel note") + (ingestDatesLabel(entity) ? " · " + ingestDatesLabel(entity) : "");
+  target.refs = TravelRefs.addRef(target.refs, TravelRefs.makeRef(TravelRefs.REF_KINDS.NOTE, { title, subtitle: entity.notes, meta: { source } }));
+  target.updatedAt = new Date().toISOString();
+  persist();
+}
+
+// Pick (or create) a trip for an entity — a compact list of existing trips plus
+// "New trip". Calls onPick(trip) with the chosen/created trip.
+function chooseTripForEntity(entity, source, onPick) {
+  const trips = [...(state.trips || [])].sort((a, b) => TravelModel.compareForHome(a, b));
+  const d = document.createElement("dialog");
+  d.className = "recipe-dialog auth-dialog";
+  d.innerHTML =
+    `<div class="recipe-form"><h3 style="margin:0 0 12px">Add to which trip?</h3>` +
+    `<div class="ingest-trip-list">` +
+      trips.map(t => {
+        const status = TravelModel.deriveStatus(t);
+        const dates = t.startDate ? formatTravelDate(t.startDate) : (status === "idea" ? "Idea" : "No dates");
+        return `<button class="ingest-trip-choice" type="button" data-trip-id="${escapeHtml(t.id)}"><span>${escapeHtml(t.name || "Untitled")}</span><span class="ingest-trip-dates">${escapeHtml(dates)}</span></button>`;
+      }).join("") +
+    `</div>` +
+    `<div style="display:flex;gap:8px;justify-content:space-between;margin-top:14px">` +
+      `<button class="secondary-btn" id="ingestChooseCreate" type="button">+ New trip</button>` +
+      `<button class="secondary-btn" id="ingestChooseCancel" type="button">Cancel</button>` +
+    `</div></div>`;
+  document.body.appendChild(d);
+  d.showModal();
+  d.addEventListener("close", () => d.remove());
+  d.querySelector("#ingestChooseCancel").addEventListener("click", () => d.remove());
+  d.querySelector("#ingestChooseCreate").addEventListener("click", () => { const t = createTripFromEntity(entity, source); d.remove(); onPick && onPick(t); });
+  d.querySelectorAll("[data-trip-id]").forEach(btn => btn.addEventListener("click", () => {
+    const t = (state.trips || []).find(x => x.id === btn.dataset.tripId);
+    d.remove();
+    if (t) onPick && onPick(t);
+  }));
+}
+
+// Record a proposed change (modification/cancellation of an already-imported
+// item) without touching canonical data. Surfaced in the Explore review inbox
+// (Phase 3). Returns a short label for the ingest card.
+function proposeEntityChange(entity, trip, existing, source) {
+  if (!Array.isArray(trip.proposals)) trip.proposals = [];
+  const proposal = TravelIngest.entityToProposal(entity, existing, source);
+  // Don't stack identical pending proposals for the same target.
+  const dup = trip.proposals.find(p => p.status === "pending" && p.targetItemId === proposal.targetItemId && p.type === proposal.type);
+  if (!dup) trip.proposals.push(proposal);
+  trip.updatedAt = new Date().toISOString();
+  persist();
+  if (typeof refreshExploreNotifications === "function") refreshExploreNotifications();
+  return entity.intent === "cancel" ? "Cancellation proposed — review in Explore" : "Change proposed — review in Explore";
+}
+
+// Record a proposed change to a HAND-ENTERED itinerary item (e.g. imported
+// dinner 7:30 vs your typed 7:00). Distinct from a re-imported reservation:
+// surfaced as an "Itinerary update" in the review inbox, never applied silently.
+function proposeItineraryChange(entity, trip, conflict, source) {
+  const proposal = TravelIngest.entityToItineraryProposal(entity, conflict, source);
+  if (!proposal.changes.length) return "Already in this trip"; // nothing meaningful changed
+  if (!Array.isArray(trip.proposals)) trip.proposals = [];
+  const dup = trip.proposals.find(p => p.status === "pending" && p.targetItemId === proposal.targetItemId && p.type === "itinerary");
+  if (!dup) trip.proposals.push(proposal);
+  trip.updatedAt = new Date().toISOString();
+  persist();
+  if (typeof refreshExploreNotifications === "function") refreshExploreNotifications();
+  return "Itinerary update proposed — review in Explore";
+}
+
+// Opt-in: add an imported entity to the household Calendar as a canonical plan
+// event (Calendar stays the owner; we never duplicate automatically).
+function addEntityToCalendar(entity) {
+  const span = TravelIngest.entitySpan(entity);
+  if (!span.start || !entity.startTime) return;
+  const meta = TravelIngest.KIND_META[entity.kind] || {};
+  const title = entity.title || meta.label || "Trip event";
+  state.planEvents = [...(state.planEvents || []), {
+    id: createId("plan-evt"), createdAt: new Date().toISOString(),
+    title, date: span.start, allDay: false,
+    startTime: entity.startTime, endTime: (entity.kind === "lodging" ? null : entity.endTime) || null,
+    notes: "From trip itinerary", color: "#32b496", calendarId: null,
+  }];
+  persist();
+  if (typeof showMailToast === "function") showMailToast(`Added “${title}” to your calendar`);
+}
+
+function openSourceEmail(source) {
+  if (!source || !source.threadId) return;
+  showMailApp();
+  openMailThread(source.threadId);
+}
+
+// ── Explore review inbox: proposed changes (never silent) ────────────────────
+// Modifications/cancellations of already-imported reservations land here as
+// pending proposals; the user Applies or Dismisses. Surfaced on the Explore bell.
+function allPendingProposals() {
+  const out = [];
+  (state.trips || []).forEach(trip => (trip.proposals || []).forEach(p => {
+    if (p && p.status === "pending") out.push({ trip, proposal: p });
+  }));
+  return out;
+}
+
+function refreshExploreNotifications() {
+  const pending = allPendingProposals();
+  const badge = document.getElementById("exploreNotifBadge");
+  const btn = document.getElementById("exploreNotificationsBtn");
+  if (btn) btn.hidden = false;
+  if (badge) { badge.hidden = pending.length === 0; badge.textContent = pending.length > 9 ? "9+" : String(pending.length); }
+  setPageNotifCount("explore", pending.length);
+}
+
+function findTripItemRaw(trip, id, section, dateKey) {
+  const direct = trip.days?.[dateKey]?.[section];
+  if (Array.isArray(direct)) { const it = direct.find(x => x && x.id === id); if (it) return it; }
+  for (const dk of Object.keys(trip.days || {})) {
+    for (const sec of Object.keys(trip.days[dk] || {})) {
+      const arr = trip.days[dk][sec];
+      if (Array.isArray(arr)) { const it = arr.find(x => x && x.id === id); if (it) return it; }
+    }
+  }
+  return null;
+}
+
+function openExploreProposalsPanel() {
+  const pending = allPendingProposals();
+  const d = document.createElement("dialog");
+  d.className = "recipe-dialog auth-dialog ingest-dialog";
+  const typeLabel = { modify: "Possible update", cancel: "Cancellation", itinerary: "Itinerary update" };
+  d.innerHTML =
+    `<div class="recipe-form"><div class="ingest-head"><h3 style="margin:0">Review inbox</h3>` +
+    `<button class="icon-btn" id="propPanelClose" type="button" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>` +
+    (pending.length
+      ? `<div class="explore-proposals">` + pending.map(({ trip, proposal }) =>
+          `<div class="explore-proposal-row" data-prop-id="${escapeHtml(proposal.id)}" data-trip-id="${escapeHtml(trip.id)}">` +
+            `<div class="explore-proposal-body"><div class="explore-proposal-title">${proposal.type === "cancel" ? "⚠ " : "💡 "}${escapeHtml(typeLabel[proposal.type] || "Change")}: ${escapeHtml(proposal.title || "")}</div>` +
+            `<div class="explore-proposal-sub">${escapeHtml(trip.name || "Trip")}${proposal.source?.subject ? " · " + escapeHtml(proposal.source.subject) : ""}</div></div>` +
+            `<button class="secondary-btn compact-btn" type="button" data-review>Review</button></div>`
+        ).join("") + `</div>`
+      : `<div class="mail-empty">No proposed changes to review.</div>`) +
+    `</div>`;
+  document.body.appendChild(d);
+  d.showModal();
+  d.addEventListener("close", () => d.remove());
+  d.querySelector("#propPanelClose").addEventListener("click", () => d.remove());
+  d.querySelectorAll(".explore-proposal-row").forEach(row => row.querySelector("[data-review]")?.addEventListener("click", () => {
+    const trip = (state.trips || []).find(t => t.id === row.dataset.tripId);
+    const proposal = trip?.proposals?.find(p => p.id === row.dataset.propId);
+    if (trip && proposal) { d.remove(); showProposalReviewDialog(trip, proposal); }
+  }));
+}
+
+function showProposalReviewDialog(trip, proposal) {
+  const d = document.createElement("dialog");
+  d.className = "recipe-dialog auth-dialog ingest-dialog";
+  const isCancel = proposal.type === "cancel";
+  const changesHtml = (proposal.changes || []).map(c =>
+    `<div class="prop-diff-row"><span class="prop-diff-field">${escapeHtml(prettyFieldName(c.field))}</span>` +
+    `<span class="prop-diff-from">${escapeHtml(c.from || "—")}</span><span class="prop-diff-arrow">→</span>` +
+    `<span class="prop-diff-to">${escapeHtml(c.to)}</span></div>`).join("");
+  d.innerHTML =
+    `<div class="recipe-form"><h3 style="margin:0 0 6px">${isCancel ? "Reservation cancelled" : "Possible update"}</h3>` +
+    `<p class="ingest-intro">${escapeHtml(proposal.title || "")} · ${escapeHtml(trip.name || "Trip")}</p>` +
+    (isCancel
+      ? `<div class="ingest-cancel-banner">The confirmation email says this reservation was cancelled. Remove it from the plan? It stays in your history.</div>`
+      : `<div class="prop-diff">${changesHtml || '<p class="mail-empty">No field changes detected.</p>'}</div>`) +
+    (proposal.source?.subject ? `<div class="ingest-source">Source: ${escapeHtml(proposal.source.subject)} <button class="ingest-source-open" type="button" data-open-src>Open email</button></div>` : "") +
+    `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">` +
+      `<button class="secondary-btn" id="propDismiss" type="button">${isCancel ? "Keep it" : "Keep current"}</button>` +
+      `<button class="primary-btn" id="propApply" type="button">${isCancel ? "Remove reservation" : "Apply update"}</button>` +
+    `</div></div>`;
+  document.body.appendChild(d);
+  d.showModal();
+  d.addEventListener("close", () => d.remove());
+  d.querySelector("[data-open-src]")?.addEventListener("click", () => openSourceEmail(proposal.source));
+  d.querySelector("#propDismiss").addEventListener("click", () => { resolveProposal(trip, proposal, "dismissed"); d.remove(); });
+  d.querySelector("#propApply").addEventListener("click", () => { applyProposal(trip, proposal); d.remove(); });
+}
+
+function applyProposal(trip, proposal) {
+  const item = findTripItemRaw(trip, proposal.targetItemId, proposal.section, proposal.ownerDateKey);
+  if (item) {
+    if (proposal.type === "cancel") { item.cancelled = true; item.cancelledAt = new Date().toISOString(); }
+    else (proposal.changes || []).forEach(c => { item[c.field] = c.to; });
+    if (!item.source && proposal.source) item.source = proposal.source;
+  }
+  resolveProposal(trip, proposal, "applied");
+  if (activeAppArea === "explore" && exploreOpenTripId === trip.id) renderExploreTripPanel("itinerary", trip);
+}
+
+function resolveProposal(trip, proposal, status) {
+  proposal.status = status;
+  proposal.resolvedAt = new Date().toISOString();
+  trip.updatedAt = new Date().toISOString();
+  persist();
+  refreshExploreNotifications();
+}
+
+function prettyFieldName(f) {
+  const map = { checkInDate: "Check-in", checkOutDate: "Check-out", checkInTime: "Check-in time", checkOutTime: "Check-out time",
+    departDate: "Departs", departTime: "Departure time", arriveDate: "Arrives", arriveTime: "Arrival time",
+    reservationTime: "Reservation", activityTime: "Time", confirmationNo: "Confirmation", address: "Address", notes: "Notes", name: "Name", title: "Name" };
+  return map[f] || f.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase());
 }
 
 // Optimistically remove an inbox row, run the forward label change, and offer
@@ -47605,6 +48079,8 @@ function defaultTrip(overrides = {}) {
     expenses: [],
     packingList: [],
     notes: "",
+    saved: [],   // lightweight trip-associated ideas (not yet scheduled)
+    refs: [],     // typed references to canonical Live objects (media/shop/…)
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...overrides
@@ -47628,6 +48104,13 @@ function formatTravelDate(d) {
   if (!d) return "";
   const [y, m, day] = d.split("-");
   return new Date(+y, +m - 1, +day).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+// Day-first, full month: "2026-06-23" → "23 June 2026".
+function formatTravelDateLong(d) {
+  if (!d) return "";
+  const [y, m, day] = d.split("-");
+  return new Date(+y, +m - 1, +day).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 }
 
 function travelActivityEndTime(startTime, durationMin) {
@@ -47661,24 +48144,122 @@ function showExploreApp(event) {
   closePageTitleMenu();
   closeAppMenu();
   wireExploreTabs();
+  refreshExploreNotifications();
   // Reopen the most recently viewed trip (survives reloads via localStorage)
   renderExploreSidebar(exploreOpenTripId || localStorage.getItem("live-explore-last-trip"));
+  // Restore Travel Mode if it was active for a still-traveling trip.
+  if (activeTravelTripId) {
+    const t = (state.trips || []).find(x => x.id === activeTravelTripId);
+    if (t && TravelModel.isTraveling(t)) enterTravelMode(t.id);
+    else { activeTravelTripId = null; try { localStorage.removeItem("live-travel-mode-trip"); } catch { /* ignore */ } }
+  }
 }
 
-function renderExploreSidebar(preserveSelectedId) {
+let exploreTripQuery = "";
+
+// Sidebar categories, each a "folder" with an icon that stays visible in the
+// collapsed rail (like Mail's label icons). A trip's derived lifecycle status
+// picks its category: Upcoming (planning/booked/traveling), Wishlist (ideas),
+// Past (completed).
+const EXPLORE_CATEGORIES = [
+  { key: "upcoming", label: "Upcoming",
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>`,
+    match: s => s !== "idea" && s !== "completed" },
+  { key: "wishlist", label: "Wishlist",
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
+    match: s => s === "idea" },
+  { key: "past", label: "Past", noHeader: true,
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
+    match: s => s === "completed" },
+];
+
+// Pull a leading/embedded emoji out of a trip name (flags like 🇹🇷 are two
+// regional-indicator code points; others may carry variation selectors or ZWJ
+// sequences). The emoji becomes the trip's icon; the cleaned name is displayed.
+function extractTripEmoji(rawName) {
+  const name = String(rawName || "");
+  // ️ = variation selector-16, ‍ = zero-width joiner (emoji sequences).
+  const src = "\\p{Regional_Indicator}\\p{Regional_Indicator}|\\p{Extended_Pictographic}(?:\\uFE0F|\\u200D\\p{Extended_Pictographic})*";
+  const m = name.match(new RegExp(src, "u"));
+  if (!m) return { emoji: "", name: name.trim() };
+  const stripped = name.replace(new RegExp(src, "gu"), "").replace(/\s{2,}/g, " ").trim();
+  return { emoji: m[0], name: stripped };
+}
+
+// Compact numeric date for the sidebar: day/month/'yy (no leading zeros).
+// "2026-07-24" → "24/7/'26". Start and end are shown in full, separated:
+//   "24/7/'26 - 26/7/'26".
+function tripDateParts(dateKey) {
+  const [yr, mo, da] = String(dateKey || "").split("-");
+  return { y: (yr || "").slice(2), m: parseInt(mo, 10), d: parseInt(da, 10) };
+}
+function formatTripDateShort(dateKey) {
+  const p = tripDateParts(dateKey);
+  return Number.isFinite(p.d) && Number.isFinite(p.m) ? `${p.d}/${p.m}/'${p.y}` : "";
+}
+function formatTripDateRange(start, end) {
+  const s = formatTripDateShort(start);
+  if (!s) return "";
+  if (!end || end === start) return s;
+  const e = formatTripDateShort(end);
+  return e ? `${s} - ${e}` : s;
+}
+
+function exploreTripTabHtml(trip) {
+  const status = TravelModel.deriveStatus(trip);
+  const meta = TravelModel.TRIP_STATUS_META[status] || {};
+  const dates = trip.startDate
+    ? formatTripDateRange(trip.startDate, trip.endDate)
+    : (status === "idea" ? "Idea" : "No dates");
+  // A name emoji (e.g. "🇹🇷 Türkiye") becomes the trip's icon; otherwise fall
+  // back to the lifecycle-status glyph.
+  const { emoji, name: cleanName } = extractTripEmoji(trip.name || "Untitled");
+  const icon = emoji || meta.icon || "✈";
+  return `
+    <button class="article-sidebar-tab explore-trip-tab explore-trip-tab--${meta.tone || status}" type="button" data-explore-trip-id="${trip.id}">
+      <span class="explore-trip-status" title="${escapeHtml(meta.label || status)}" aria-hidden="true">${icon}</span>
+      <span class="explore-trip-tab-body">
+        <span class="explore-trip-name">${escapeHtml(cleanName || "Untitled")}</span>
+        <span class="explore-trip-dates">${escapeHtml(dates)}</span>
+      </span>
+    </button>`;
+}
+
+// listOnly re-renders just the trips list (used by live search) without opening
+// or closing the trip view — so filtering never disturbs the open trip.
+function renderExploreSidebar(preserveSelectedId, { listOnly = false } = {}) {
   const list = document.getElementById("exploreTripList");
   if (!list) return;
   const trips = travelTrips();
   if (!trips.length) {
     list.innerHTML = `<p class="explore-sidebar-empty">No trips yet</p>`;
-    showExploreTripEmpty();
+    if (!listOnly) showExploreTripEmpty();
     return;
   }
-  list.innerHTML = trips.map(trip => `
-    <button class="article-sidebar-tab" type="button" data-explore-trip-id="${trip.id}">
-      <svg class="article-sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
-      <span>${escapeHtml(trip.name || "Untitled")}</span>
-    </button>`).join("");
+  const q = exploreTripQuery.trim().toLowerCase();
+  const visible = trips.filter(t => !q || `${t.name || ""} ${t.destination || ""}`.toLowerCase().includes(q));
+  if (!visible.length) {
+    list.innerHTML = `<p class="explore-sidebar-empty">No trips match “${escapeHtml(exploreTripQuery.trim())}”</p>`;
+    if (!listOnly) showExploreTripEmpty();
+    return;
+  }
+  // Group into categories; each non-empty category renders a folder header
+  // (icon + label + count, the icon staying visible in the collapsed rail),
+  // followed by its trips.
+  list.innerHTML = EXPLORE_CATEGORIES.map(cat => {
+    const items = visible.filter(t => cat.match(TravelModel.deriveStatus(t)))
+      .sort((a, b) => TravelModel.compareForHome(a, b));
+    if (!items.length) return "";
+    const head = cat.noHeader ? "" :
+      `<div class="explore-cat-head" title="${escapeHtml(cat.label)}">` +
+        `<span class="explore-cat-icon">${cat.icon}</span>` +
+        `<span class="explore-cat-label">${escapeHtml(cat.label)}</span>` +
+      `</div>`;
+    return `<div class="explore-cat-group" data-cat="${cat.key}">` +
+      head +
+      `<div class="explore-cat-trips">${items.map(exploreTripTabHtml).join("")}</div>` +
+    `</div>`;
+  }).join("");
   list.querySelectorAll("[data-explore-trip-id]").forEach(btn => {
     btn.addEventListener("click", () => {
       list.querySelectorAll(".article-sidebar-tab").forEach(b => b.classList.remove("is-active"));
@@ -47687,9 +48268,13 @@ function renderExploreSidebar(preserveSelectedId) {
     });
     btn.addEventListener("contextmenu", e => openExploreTripMenu(e, btn.dataset.exploreTripId));
   });
+  // Keep the open trip highlighted in the list (search re-renders don't reopen it).
+  const openId = preserveSelectedId || (listOnly ? exploreOpenTripId : null);
+  if (openId) list.querySelector(`[data-explore-trip-id="${openId}"]`)?.classList.add("is-active");
+  if (listOnly) return;
   if (preserveSelectedId) {
     const active = list.querySelector(`[data-explore-trip-id="${preserveSelectedId}"]`);
-    if (active) { active.classList.add("is-active"); openExploreTrip(preserveSelectedId); return; }
+    if (active) { openExploreTrip(preserveSelectedId); return; }
   }
   showExploreTripEmpty();
 }
@@ -47698,7 +48283,8 @@ function showExploreTripEmpty() {
   exploreOpenTripId = null;
   document.getElementById("exploreTripEmpty").hidden = false;
   document.getElementById("exploreTripView").hidden = true;
-  // No hamburger exists without an open trip — make sure the trips list is reachable
+  // With nothing selected, show the trips list (desktop docked, mobile drawer).
+  // The topbar hamburger toggles it thereafter.
   const sidebar = document.getElementById("exMediaSidebar");
   sidebar?.classList.remove("is-collapsed");
   if (window.innerWidth <= 680) sidebar?.classList.add("is-expanded");
@@ -47710,11 +48296,10 @@ function openExploreTrip(tripId) {
   if (exploreOpenTripId !== tripId) exploreActiveDayKey = ""; // new trip starts on Day 1
   exploreOpenTripId = tripId;
   localStorage.setItem("live-explore-last-trip", tripId); // reopen this trip on next visit
-  // Selecting a trip hides the trips menu: slide-over closes on mobile,
-  // docked sidebar collapses on desktop (hamburger next to the title reopens it)
+  // Like Media/Mail: the docked sidebar stays visible on desktop (the topbar
+  // hamburger controls it); on mobile, picking a trip closes the slide-over.
   const tripSidebar = document.getElementById("exMediaSidebar");
-  tripSidebar?.classList.remove("is-expanded");
-  if (window.innerWidth > 680) tripSidebar?.classList.add("is-collapsed");
+  if (window.innerWidth <= 680) tripSidebar?.classList.remove("is-expanded");
   document.getElementById("exploreTripEmpty").hidden = true;
   document.getElementById("exploreTripView").hidden = false;
 
@@ -47738,64 +48323,51 @@ function openExploreTrip(tripId) {
   };
 
   // Delete
-  document.getElementById("exploreDeleteTripBtn").onclick = () => {
-    if (!confirm(`Delete trip "${trip.name}"?`)) return;
-    state.trips = (state.trips || []).filter(t => t.id !== trip.id);
-    persist();
-    renderExploreSidebar();
-  };
+  // Delete lives on the trip's right-click menu in the sidebar (openExploreTripMenu);
+  // print is retired. Both header buttons were removed.
 
   // Meta row
   const dateStr = trip.startDate
-    ? `${formatTravelDate(trip.startDate)}${trip.endDate ? " – " + formatTravelDate(trip.endDate) : ""}`
+    ? `${formatTravelDateLong(trip.startDate)}${trip.endDate ? " - " + formatTravelDateLong(trip.endDate) : ""}`
     : "No dates set";
   const nights = (trip.startDate && trip.endDate)
     ? Math.round((new Date(trip.endDate) - new Date(trip.startDate)) / 86400000)
     : null;
   const partyStr = (trip.party || []).join(", ") || "Solo";
-  const nightsStr = nights ? ` · ${nights} night${nights === 1 ? "" : "s"}` : "";
+  const nightsStr = nights ? ` (${nights} night${nights === 1 ? "" : "s"})` : "";
   const destChip = trip.destination
     ? `<span class="travel-meta-chip">📍 ${escapeHtml(trip.destination)}</span>`
     : `<span class="travel-meta-chip" id="exploreEditDestBtn" title="Edit destination">📍 Add destination</span>`;
 
-  const homeChip = state.travelHome
-    ? `<span class="travel-meta-chip" id="exploreEditHomeBtn" title="Home base — new trips start and finish here">🏠 ${escapeHtml(state.travelHome)}</span>`
-    : `<span class="travel-meta-chip" id="exploreEditHomeBtn" title="Set your home base — new trips start and finish here">🏠 Set home</span>`;
+  // Travel Mode is offered as the trip nears/enters its dates.
+  const showTravelModeBtn = TravelModel.isTraveling(trip) || TravelModel.startsWithin(trip, 2);
+  const travelModeBtn = showTravelModeBtn
+    ? `<button class="travel-ai-btn travel-mode-btn" id="exploreTravelModeBtn" type="button" title="Enter Travel Mode">🧭 Travel Mode</button>`
+    : "";
 
   document.getElementById("exploreDetailMeta").innerHTML =
     `<span class="travel-meta-chip" id="exploreEditDatesBtn" title="Edit dates">📅 ${escapeHtml(dateStr)}${nightsStr}</span>` +
     `<span class="travel-meta-chip" id="exploreEditPartyBtn" title="Edit party">👥 ${escapeHtml(partyStr)}</span>` +
     destChip +
-    homeChip +
+    travelModeBtn +
     `<button class="travel-ai-btn" id="exploreAskAiBtn" type="button" title="Plan with AI">✨ Ask AI</button>`;
+  document.getElementById("exploreTravelModeBtn")?.addEventListener("click", () => enterTravelMode(trip.id));
 
   document.getElementById("exploreEditDatesBtn")?.addEventListener("click", () => showTravelEditDatesDialog(trip));
   document.getElementById("exploreEditPartyBtn")?.addEventListener("click", () => showTravelEditPartyDialog(trip));
-  document.getElementById("exploreEditHomeBtn")?.addEventListener("click", () => {
-    const val = window.prompt("Home base (city or airport) — new trip legs start and finish here:", state.travelHome || "");
-    if (val === null) return;
-    state.travelHome = val.trim();
-    persist();
-    openExploreTrip(trip.id);
-  });
   document.getElementById("exploreEditDestBtn")?.addEventListener("click", () => showTravelEditDestDialog(trip));
   document.getElementById("exploreAskAiBtn")?.addEventListener("click", () => {
     openAiPanel();
     const dest = trip.destination ? " to " + trip.destination : "";
     sendChatMessage(`I'm planning my trip "${trip.name}"${dest}. What should I know? Help me with itinerary ideas, things to do, local tips, and anything else useful. Use my trip data for context.`);
   });
-  document.getElementById("exploreScanBookingBtn").onclick = () => showTravelScanBookingDialog(trip);
-  document.getElementById("exploreScanEmailBtn").onclick = () => showTravelEmailScanDialog(trip);
-  document.getElementById("explorePrintBtn").onclick = () => printTripItinerary(trip);
+  // Booking scanning (photo / email) now lives on each itinerary item's
+  // right-click menu, so the header buttons were removed.
 
-  // Reset to overview tab and render it
-  const nav = document.getElementById("exploreTabsNav");
-  nav?.querySelectorAll(".explore-tab").forEach(b => {
-    const isOverview = b.dataset.exploreTab === "overview";
-    b.classList.toggle("is-active", isOverview);
-    b.setAttribute("aria-selected", String(isOverview));
-  });
-  renderExploreTripPanel("overview", trip);
+  // Reset to the itinerary — the trip's center of gravity — and render it.
+  setActiveExploreTab("itinerary");
+  document.getElementById("exploreMoreMenu")?.setAttribute("hidden", "");
+  renderExploreTripPanel("itinerary", trip);
 }
 
 function openExploreTripMenu(event, tripId) {
@@ -47857,7 +48429,7 @@ function showTravelEditTripDialog(tripId) {
         <div class="travel-dialog-field" style="flex:1"><label>Start date</label><input id="teStart" type="date" class="text-input" value="${escapeHtml(trip.startDate || "")}" /></div>
         <div class="travel-dialog-field" style="flex:1"><label>End date</label><input id="teEnd" type="date" class="text-input" value="${escapeHtml(trip.endDate || "")}" /></div>
       </div>
-      <div class="travel-dialog-field"><label>Who's coming?</label><div class="travel-party-chips" id="tePartyChips">${partyChipsHtml}</div></div>
+      <div class="travel-dialog-field"><label>Who's coming?</label><div class="travel-party-chips" id="tePartyChips">${partyChipsHtml}</div>${partyAdderHtml()}</div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
         <button type="button" class="secondary-btn" id="teCancel">Cancel</button>
         <button type="button" class="primary-btn" id="teSave">Save</button>
@@ -47868,6 +48440,7 @@ function showTravelEditTripDialog(tripId) {
   d.querySelectorAll(".travel-party-chip").forEach(btn => {
     btn.addEventListener("click", () => btn.classList.toggle("is-selected"));
   });
+  wirePartyAdder(d, d.querySelector("#tePartyChips"));
   d.querySelector("#teCancel").addEventListener("click", () => d.remove());
   d.querySelector("#teSave").addEventListener("click", () => {
     const name = d.querySelector("#teTripName").value.trim();
@@ -47889,6 +48462,25 @@ function wireExploreTabs() {
   if (!content || content._wired) return;
   content._wired = true;
 
+  // Topbar hamburger toggles the trips sidebar (matches Media/Mail): a docked
+  // collapse on desktop, a slide-over drawer on mobile.
+  document.getElementById("exploreSidebarToggle")?.addEventListener("click", () => {
+    const sidebar = document.getElementById("exMediaSidebar");
+    if (!sidebar) return;
+    if (window.innerWidth <= 680) { sidebar.classList.remove("is-collapsed"); sidebar.classList.toggle("is-expanded"); }
+    else { sidebar.classList.remove("is-expanded"); sidebar.classList.toggle("is-collapsed"); }
+  });
+
+  // Topbar search filters the trips list live.
+  const searchInput = document.getElementById("exploreSearchInput");
+  searchInput?.addEventListener("input", () => {
+    exploreTripQuery = searchInput.value;
+    renderExploreSidebar(exploreOpenTripId, { listOnly: true });
+  });
+
+  // Notifications button opens the Explore review inbox (proposed changes).
+  document.getElementById("exploreNotificationsBtn")?.addEventListener("click", openExploreProposalsPanel);
+
   document.getElementById("exploreAddTripBtn")?.addEventListener("click", () => {
     showTravelNewTripDialog();
     document.addEventListener("close", () => {
@@ -47906,17 +48498,61 @@ function wireExploreTabs() {
   document.getElementById("exploreEmptyIdeaBtn")?.addEventListener("click", showTravelNewIdeaDialog);
 
   content.addEventListener("click", e => {
-    const btn = e.target.closest(".explore-tab");
+    // The "More ▾" button toggles its dropdown rather than switching panels.
+    const moreBtn = e.target.closest("#exploreMoreBtn");
+    if (moreBtn) {
+      const menu = document.getElementById("exploreMoreMenu");
+      const open = menu.hidden;
+      menu.hidden = !open;
+      moreBtn.setAttribute("aria-expanded", String(open));
+      // The tab strip is an overflow:hidden horizontal scroller, which would
+      // clip an in-flow dropdown — position the menu as a fixed popover instead.
+      if (open) {
+        const r = moreBtn.getBoundingClientRect();
+        menu.style.top = `${Math.round(r.bottom + 4)}px`;
+        menu.style.left = `${Math.round(Math.min(r.left, window.innerWidth - 200))}px`;
+      }
+      return;
+    }
+    // A primary tab (Itinerary/Ideas/Prepare) or a More-menu item both carry
+    // data-explore-tab; a plain .explore-tab without one (the More button) is
+    // handled above.
+    const btn = e.target.closest("[data-explore-tab]");
     if (!btn) return;
-    const nav = document.getElementById("exploreTabsNav");
-    nav?.querySelectorAll(".explore-tab").forEach(b => {
-      b.classList.toggle("is-active", b === btn);
-      b.setAttribute("aria-selected", String(b === btn));
-    });
     const tab = btn.dataset.exploreTab;
+    const menu = document.getElementById("exploreMoreMenu");
+    if (menu) { menu.hidden = true; document.getElementById("exploreMoreBtn")?.setAttribute("aria-expanded", "false"); }
+    setActiveExploreTab(tab);
     const trip = (state.trips || []).find(t => t.id === exploreOpenTripId);
     if (trip) renderExploreTripPanel(tab, trip);
   });
+
+  // Close the More menu on an outside click.
+  document.addEventListener("click", e => {
+    const menu = document.getElementById("exploreMoreMenu");
+    if (menu && !menu.hidden && !e.target.closest(".explore-more-wrap")) {
+      menu.hidden = true;
+      document.getElementById("exploreMoreBtn")?.setAttribute("aria-expanded", "false");
+    }
+  });
+}
+
+// Reflect the active tab across the primary tab row and the More menu. When a
+// More-menu workspace is active, the "More ▾" button carries the active style so
+// the user can see where they are.
+const EXPLORE_MORE_TABS = new Set(["travel", "lodging", "activities", "food", "budget", "packing", "notes", "map"]);
+function setActiveExploreTab(tab) {
+  const nav = document.getElementById("exploreTabsNav");
+  if (!nav) return;
+  const inMore = EXPLORE_MORE_TABS.has(tab);
+  nav.querySelectorAll(".explore-tab").forEach(b => {
+    const isMoreBtn = b.id === "exploreMoreBtn";
+    const active = isMoreBtn ? inMore : (b.dataset.exploreTab === tab);
+    b.classList.toggle("is-active", active);
+    b.setAttribute("aria-selected", String(active));
+  });
+  nav.querySelectorAll(".explore-more-item").forEach(b =>
+    b.classList.toggle("is-active", b.dataset.exploreTab === tab));
 }
 
 const EXPLORE_TAB_SECTIONS = {
@@ -48095,9 +48731,10 @@ function buildHourlyGrid(gridItems) {
   return grid;
 }
 
-function showItemDetailView(type, item, trip, ownerDateKey, onEdit) {
-  const dlg = document.createElement("dialog");
-  dlg.className = "item-detail-dialog";
+// Build an item's presentation (icon, title, subtitle, detail rows) from its
+// type + fields. Shared by the modal detail view and the itinerary's inline
+// expand-in-place, so both show identical information.
+function itemDetailContent(type, item) {
   const fmtDate = ds => ds ? new Date(ds + "T12:00:00").toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric" }) : "";
   const row = (label, value, link) =>
     `<div class="item-detail-row"><span class="item-detail-label">${escapeHtml(label)}</span><span class="item-detail-value">${
@@ -48185,6 +48822,13 @@ function showItemDetailView(type, item, trip, ownerDateKey, onEdit) {
     if (item.notes) rows.push(row("Notes", item.notes));
     bodyHtml = rows.join("");
   }
+  return { icon, title, subtitle, bodyHtml };
+}
+
+function showItemDetailView(type, item, trip, ownerDateKey, onEdit) {
+  const dlg = document.createElement("dialog");
+  dlg.className = "item-detail-dialog";
+  const { icon, title, subtitle, bodyHtml } = itemDetailContent(type, item);
 
   dlg.innerHTML =
     `<div class="item-detail-header">` +
@@ -48199,6 +48843,7 @@ function showItemDetailView(type, item, trip, ownerDateKey, onEdit) {
     `</div>` +
     (bodyHtml ? `<div class="item-detail-body">${bodyHtml}</div>` : "") +
     `<div class="item-detail-footer">` +
+      (itemDetailCalendarInfo(type, item, ownerDateKey) ? `<button class="secondary-btn item-detail-cal" type="button">📅 Add to Calendar</button>` : "") +
       `<button class="secondary-btn item-detail-edit" type="button">✏ Edit</button>` +
     `</div>`;
 
@@ -48206,8 +48851,41 @@ function showItemDetailView(type, item, trip, ownerDateKey, onEdit) {
   dlg.showModal();
   dlg.querySelector(".item-detail-close").addEventListener("click", () => dlg.close());
   dlg.querySelector(".item-detail-edit").addEventListener("click", () => { dlg.close(); onEdit(); });
+  dlg.querySelector(".item-detail-cal")?.addEventListener("click", (e) => {
+    addStopToCalendar(type, item, ownerDateKey);
+    e.target.textContent = "✓ Added to Calendar";
+    e.target.disabled = true;
+  });
   dlg.addEventListener("click", e => { if (e.target === dlg) dlg.close(); });
   dlg.addEventListener("close", () => dlg.remove());
+}
+
+// A timed itinerary item can be added to the household Calendar as a real,
+// canonical plan event (opt-in — Calendar stays the owner; we never duplicate
+// events automatically). Returns the {date,startTime,title} or null if it lacks
+// a usable time.
+function itemDetailCalendarInfo(type, item, ownerDateKey) {
+  if (!ownerDateKey || !/^\d{4}-\d{2}-\d{2}$/.test(ownerDateKey)) return null;
+  let time = "", title = "";
+  if (type === "activity") { time = item.activityTime; title = item.name || item.title; }
+  else if (type === "food") { time = item.reservationTime; title = item.name || item.title; }
+  else if (type === "travel") { time = item.departTime; title = [item.from, item.to].filter(Boolean).join(" → "); }
+  if (!time || !/^\d{1,2}:\d{2}/.test(time)) return null;
+  return { date: item.departDate || ownerDateKey, startTime: time, title: title || "Trip event" };
+}
+
+function addStopToCalendar(type, item, ownerDateKey) {
+  const info = itemDetailCalendarInfo(type, item, ownerDateKey);
+  if (!info) return;
+  const endTime = (type === "activity" && item.duration) ? travelActivityEndTime(info.startTime, item.duration) : null;
+  state.planEvents = [...(state.planEvents || []), {
+    id: createId("plan-evt"), createdAt: new Date().toISOString(),
+    title: info.title, date: info.date, allDay: false,
+    startTime: info.startTime, endTime: endTime || null,
+    notes: "From trip itinerary", color: "#32b496", calendarId: null,
+  }];
+  persist();
+  if (typeof showMailToast === "function") showMailToast(`Added “${info.title}” to your calendar`);
 }
 
 // ── Travel-time suggestions (Google Distance Matrix via travel-time fn) ──────
@@ -48350,9 +49028,769 @@ function renderTravelPacking(trip, panel) {
   });
 }
 
+// ── The itinerary: the trip's center of gravity ──────────────────────────────
+// A chronological, day-based view built from the pure projection
+// (travel-itinerary.js): each day is a collapsible section of STOP cards woven
+// with first-class TRANSITION rows, and every transition proactively resolves
+// its A→B routing (travel-transitions.js) against the existing travel-time
+// backend. Days collapse/expand; the current day starts open.
+
+// Per-trip expand state for day sections: { "<tripId>:<dateKey>": true }.
+let exploreItinExpanded = {};
+
+// Does the household have a car available on this day? Drives the routing
+// recommendation (drive vs transit). Scans travel legs with a car/automobile
+// mode whose date range covers the day.
+function tripHasCarOnDay(trip, dateKey) {
+  const CAR_MODES = new Set(["automobile", "car-own", "car-rental"]);
+  const days = trip.days || {};
+  for (const ok of Object.keys(days)) {
+    for (const leg of (days[ok]?.travel || [])) {
+      if (!CAR_MODES.has(leg.mode)) continue;
+      const from = leg.departDate || ok, to = leg.arriveDate || leg.departDate || ok;
+      if (dateKey >= from && dateKey <= to) return true;
+    }
+  }
+  return false;
+}
+
+function itineraryStopIcon(stop) { return stop.icon || "📍"; }
+
+const ITIN_STOP_TYPE_MAP = { activity: "activity", food: "food", "lodging-in": "lodging", "lodging-out": "lodging", "lodging-stay": "lodging", leg: "travel" };
+
+// The edit action for a stop — opens the right editing dialog for its kind.
+function itineraryStopEdit(stop, trip, rerender) {
+  const type = ITIN_STOP_TYPE_MAP[stop.type] || "activity";
+  return () => {
+    if (type === "food") showFoodDialog(trip, stop.ownerDateKey, "food", rerender, stop.raw);
+    else if (type === "lodging") showLodgingDialog(trip, stop.ownerDateKey, "lodging", rerender, stop.raw);
+    else if (type === "travel") showTravelLegDialog(trip, stop.ownerDateKey, "travel", rerender, stop.raw);
+    else showActivityDialog(trip, stop.ownerDateKey, "activities", rerender, stop.raw);
+  };
+}
+
+function deleteItineraryStop(stop, trip, rerender) {
+  if (!confirm(`Remove “${stop.title}” from the itinerary?`)) return;
+  const arr = tripDayItems(trip, stop.ownerDateKey, stop.section);
+  const idx = arr.findIndex(x => x && x.id === stop.id);
+  if (idx > -1) arr.splice(idx, 1);
+  persist();
+  rerender();
+}
+
+// Which itinerary stops are expanded (by item id). Ephemeral per session;
+// survives re-renders so an open item stays open after an edit.
+const exploreItinStopOpen = new Set();
+
+// Right-click / ⋯ menu for an itinerary item: edit, attach a booking image
+// (scan a photo or pull from email), and remove.
+function openItineraryStopMenu(event, stop, trip, rerender) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeFolderMenu();
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML =
+    `<button type="button" role="menuitem" data-act="edit">✏ Edit</button>` +
+    `<button type="button" role="menuitem" data-act="scan">📷 Add booking image (scan)</button>` +
+    `<button type="button" role="menuitem" data-act="email">✉️ Booking image from email</button>` +
+    `<button type="button" role="menuitem" class="danger" data-act="delete">🗑 Remove from trip</button>`;
+  document.body.append(menu);
+  const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 10);
+  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(10, x)}px`;
+  menu.style.top = `${Math.max(10, y)}px`;
+  const act = a => {
+    closeFolderMenu();
+    if (a === "edit") itineraryStopEdit(stop, trip, rerender)();
+    else if (a === "scan") showAttachmentsDialog(trip, stop.raw, rerender);
+    else if (a === "email") showTravelEmailScanDialog(trip);
+    else if (a === "delete") deleteItineraryStop(stop, trip, rerender);
+  };
+  menu.querySelectorAll("[data-act]").forEach(b => b.addEventListener("click", e => { e.stopPropagation(); act(b.dataset.act); }));
+}
+
+// Build one STOP card for the itinerary timeline. Collapsed it shows only the
+// time + title; clicking expands it in place to show every field (the same
+// information the old detail popup held), plus Edit / Add-to-calendar actions.
+function buildItineraryStopCard(stop, trip, rerender) {
+  const el = document.createElement("div");
+  el.className = "itin-stop itin-stop--" + (stop.type || "generic");
+  if (stop.hasReservation) el.classList.add("itin-stop--reserved");
+  const detailType = ITIN_STOP_TYPE_MAP[stop.type] || "activity";
+  const timeLabel = stop.time ? (stop.endTime ? `${stop.time}–${stop.endTime}` : stop.time) : "";
+  const isOpen = stop.id && exploreItinStopOpen.has(stop.id);
+  if (isOpen) el.classList.add("is-expanded");
+
+  el.innerHTML =
+    `<div class="itin-stop-head">` +
+      `<span class="itin-stop-time">${escapeHtml(timeLabel || "—")}</span>` +
+      `<span class="itin-stop-icon" aria-hidden="true">${itineraryStopIcon(stop)}</span>` +
+      `<span class="itin-stop-title">${escapeHtml(stop.title)}</span>` +
+      `<span class="itin-stop-actions">` +
+        (stop.hasReservation ? `<span class="itin-stop-badge" title="Has a reservation/booking">✓</span>` : "") +
+        `<button class="itin-stop-menu-btn" type="button" title="More" aria-label="More actions">⋯</button>` +
+        `<span class="itin-stop-caret" aria-hidden="true">▸</span>` +
+      `</span>` +
+    `</div>` +
+    `<div class="itin-stop-detail"></div>`;
+
+  const detailEl = el.querySelector(".itin-stop-detail");
+  const renderDetail = () => {
+    const { bodyHtml } = itemDetailContent(detailType, stop.raw);
+    const canCal = itemDetailCalendarInfo(detailType, stop.raw, stop.ownerDateKey);
+    detailEl.innerHTML =
+      (bodyHtml || `<div class="item-detail-row"><span class="item-detail-value" style="color:var(--muted)">No extra details.</span></div>`) +
+      `<div class="itin-stop-detail-actions">` +
+        (canCal ? `<button class="secondary-btn compact-btn" type="button" data-stop-cal>📅 Add to calendar</button>` : "") +
+        `<button class="secondary-btn compact-btn" type="button" data-stop-edit>✏ Edit</button>` +
+      `</div>`;
+    detailEl.querySelector("[data-stop-edit]")?.addEventListener("click", () => itineraryStopEdit(stop, trip, rerender)());
+    detailEl.querySelector("[data-stop-cal]")?.addEventListener("click", (e) => {
+      addStopToCalendar(detailType, stop.raw, stop.ownerDateKey);
+      e.target.textContent = "✓ On calendar"; e.target.disabled = true;
+    });
+  };
+  if (isOpen) renderDetail();
+
+  const toggle = () => {
+    const open = el.classList.toggle("is-expanded");
+    if (stop.id) { if (open) exploreItinStopOpen.add(stop.id); else exploreItinStopOpen.delete(stop.id); }
+    if (open) renderDetail(); else detailEl.innerHTML = "";
+  };
+
+  el.querySelector(".itin-stop-head").addEventListener("click", e => {
+    if (e.target.closest("a")) return;
+    if (e.target.closest(".itin-stop-menu-btn")) { openItineraryStopMenu(e, stop, trip, rerender); return; }
+    toggle();
+  });
+  el.addEventListener("contextmenu", e => openItineraryStopMenu(e, stop, trip, rerender));
+  return el;
+}
+
+// Build one TRANSITION row (the connective element between two stops). Renders a
+// skeleton immediately, then resolves routing and updates in place. Tapping an
+// open transition opens the route chooser; a planned one opens its leg.
+function buildItineraryTransitionRow(transition, trip, dateKey, rerender) {
+  const row = document.createElement("div");
+  row.className = "itin-transition" + (transition.planned ? " itin-transition--planned" : "");
+
+  const render = (routing) => {
+    let inner;
+    if (transition.planned && transition.explicitLeg) {
+      const leg = transition.explicitLeg;
+      const meta = TravelTransitions.MODE_META;
+      const modeKey = Object.keys(meta).find(k => meta[k].legMode === leg.mode) || "drive";
+      inner = `<span class="itin-transition-line"><span class="itin-transition-mode">${(meta[modeKey] || {}).icon || "🔀"}</span>` +
+        `<span class="itin-transition-text">${escapeHtml((meta[modeKey] || {}).label || "Planned")}${leg.from || leg.to ? "" : ""}</span>` +
+        `<span class="itin-transition-tag">Planned</span></span>`;
+    } else if (!routing || routing.status === "pending") {
+      inner = `<span class="itin-transition-line itin-transition-line--loading"><span class="itin-transition-mode">⏱</span><span class="itin-transition-text">Finding the best way…</span></span>`;
+    } else if (routing.status === "unavailable") {
+      inner = `<span class="itin-transition-line"><span class="itin-transition-mode">↓</span><span class="itin-transition-text itin-transition-text--muted">Plan how to get there</span><span class="itin-transition-tag itin-transition-tag--open">+ Plan</span></span>`;
+    } else {
+      const best = (routing.rows || []).find(r => r.recommended) || {};
+      const dur = TravelTransitions.formatDuration(best.durationMin);
+      const leaveBy = routing.leaveBy ? ` · leave by ${routing.leaveBy}` : "";
+      const tight = routing.buffer && routing.buffer.ok === false;
+      inner = `<span class="itin-transition-line"><span class="itin-transition-mode">${best.icon || "↓"}</span>` +
+        `<span class="itin-transition-text">${escapeHtml(best.label || "")} ${escapeHtml(dur)}${escapeHtml(leaveBy)}</span>` +
+        `<span class="itin-transition-tag">Recommended</span>` +
+        (tight ? `<span class="itin-transition-warn" title="Tight — not much buffer">⚠</span>` : "") +
+        `</span>`;
+    }
+    row.innerHTML = inner;
+  };
+
+  render(transition.planned ? null : { status: "pending" });
+
+  row.addEventListener("click", () => {
+    if (transition.planned && transition.explicitLeg) {
+      showItemDetailView("travel", transition.explicitLeg, trip, dateKey, () =>
+        showTravelLegDialog(trip, dateKey, "travel", rerender, transition.explicitLeg));
+    } else {
+      const a = { label: transition.fromStop.title, loc: transition.fromLocation };
+      const b = { label: transition.toStop.title, loc: transition.toLocation };
+      showConnectionRouteDialog(trip, dateKey, a, b, tripHasCarOnDay(trip, dateKey), rerender);
+    }
+  });
+
+  // Resolve routing for open transitions (planned ones already show their mode).
+  if (!transition.planned) {
+    TravelTransitions.resolveTransition(transition, {
+      fetchTimes: fetchTravelTimes,
+      hasCar: tripHasCarOnDay(trip, dateKey),
+    }).then(resolved => { if (row.isConnected) render(resolved.routing); });
+  }
+  return row;
+}
+
+// A per-day "add a stop" control reusing the existing item dialogs.
+// Open the "add to this day" chooser anchored to a "+" button.
+function openDayAddMenu(anchorEl, trip, dateKey, rerender) {
+  closeFolderMenu();
+  const menu = document.createElement("div");
+  menu.className = "folder-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-add="activity">🎯 Activity</button>
+    <button type="button" role="menuitem" data-add="food">🍽 Food / meal</button>
+    <button type="button" role="menuitem" data-add="lodging">🏨 Lodging</button>
+    <button type="button" role="menuitem" data-add="travel">✈ Transport leg</button>`;
+  document.body.append(menu);
+  const r = anchorEl.getBoundingClientRect();
+  menu.style.left = `${Math.max(10, Math.min(r.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 10))}px`;
+  menu.style.top = `${Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 10)}px`;
+  menu.querySelectorAll("[data-add]").forEach(b => b.addEventListener("click", () => {
+    const kind = b.dataset.add;
+    closeFolderMenu();
+    if (kind === "activity") showActivityDialog(trip, dateKey, "activities", rerender, null);
+    else if (kind === "food") showFoodDialog(trip, dateKey, "food", rerender, null);
+    else if (kind === "lodging") showLodgingDialog(trip, dateKey, "lodging", rerender, null);
+    else showTravelLegDialog(trip, dateKey, "travel", rerender, null);
+  }));
+}
+
+// ── Travel Mode: the runtime travel operating environment ────────────────────
+// When active, Explore stops being a planner and answers "what do we need to
+// know right now?" — NOW / NEXT / LATER, glanceable by anyone in the household.
+// Explicit to enter, always easy to exit. State: an ephemeral active-trip id in
+// localStorage (session/device local, not synced) plus the trip's own lifecycle.
+let activeTravelTripId = (() => { try { return localStorage.getItem("live-travel-mode-trip") || null; } catch { return null; } })();
+let travelModeTimer = null;
+
+function isTravelModeActive() { return !!activeTravelTripId && !!document.getElementById("travelModeOverlay"); }
+
+function enterTravelMode(tripId) {
+  const trip = (state.trips || []).find(t => t.id === tripId);
+  if (!trip) return;
+  activeTravelTripId = tripId;
+  try { localStorage.setItem("live-travel-mode-trip", tripId); } catch { /* full */ }
+  renderTravelModeOverlay(trip);
+  // Tick every minute to keep NOW/NEXT and the "leave by" honest.
+  if (travelModeTimer) clearInterval(travelModeTimer);
+  travelModeTimer = setInterval(() => {
+    const t = (state.trips || []).find(x => x.id === activeTravelTripId);
+    if (t && document.getElementById("travelModeOverlay")) renderTravelModeOverlay(t);
+  }, 60000);
+}
+
+function exitTravelMode() {
+  activeTravelTripId = null;
+  try { localStorage.removeItem("live-travel-mode-trip"); } catch { /* ignore */ }
+  if (travelModeTimer) { clearInterval(travelModeTimer); travelModeTimer = null; }
+  document.getElementById("travelModeOverlay")?.remove();
+}
+
+// Best-effort current conditions for the trip, from the first geocoded stop.
+// Never blocks the view — resolves to null when weather/coords are unavailable.
+async function travelModeWeather(trip) {
+  try {
+    const cache = trip.geocache || {};
+    const firstCoord = Object.values(cache).find(v => v && Number.isFinite(v.lat) && Number.isFinite(v.lng));
+    if (!firstCoord || typeof getCurrentConditions !== "function") return null;
+    const cond = await getCurrentConditions({ id: "trip", latitude: firstCoord.lat, longitude: firstCoord.lng, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+    if (!cond) return null;
+    const temp = Math.round(cond.temperature ?? cond.temp ?? cond.temperature_2m);
+    return Number.isFinite(temp) ? { temp, icon: cond.icon || "" } : null;
+  } catch { return null; }
+}
+
+function travelModeStopRow(stop, state_) {
+  const mark = state_ === "done" ? "✓" : state_ === "current" ? "→" : "○";
+  const timeLabel = stop.time ? stop.time : "";
+  return `<div class="tm-stop tm-stop--${state_}"><span class="tm-stop-mark">${mark}</span>` +
+    `<span class="tm-stop-icon">${stop.icon || "📍"}</span>` +
+    `<span class="tm-stop-title">${escapeHtml(stop.title)}</span>` +
+    `<span class="tm-stop-time">${escapeHtml(timeLabel)}</span></div>`;
+}
+
+function renderTravelModeOverlay(trip) {
+  let overlay = document.getElementById("travelModeOverlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "travelModeOverlay";
+    overlay.className = "travel-mode-overlay";
+    document.body.appendChild(overlay);
+  }
+  const now = new Date();
+  const snap = TravelMode.travelSnapshot(trip, now);
+  const dateLabel = now.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+
+  // NEXT block content
+  const focus = snap.next || (snap.lookahead && snap.lookahead.stop) || null;
+  const focusIsTomorrow = !snap.next && snap.lookahead;
+  const trans = snap.incomingTransition;
+
+  const nextHtml = focus
+    ? `<div class="tm-next-card">` +
+        `<div class="tm-next-label">${focusIsTomorrow ? "NEXT · Day " + snap.lookahead.dayNumber : "NEXT"}</div>` +
+        `<div class="tm-next-main"><span class="tm-next-icon">${focus.icon || "📍"}</span>` +
+          `<span class="tm-next-title">${escapeHtml(focus.title)}</span></div>` +
+        (focus.time ? `<div class="tm-next-time">${escapeHtml(focus.time)}</div>` : "") +
+        (focus.location ? `<div class="tm-next-loc">📍 ${escapeHtml(focus.location)}</div>` : "") +
+        `<div class="tm-next-route" id="tmRoute"></div>` +
+        (focus.location ? `<a class="primary-btn tm-start-route" href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(focus.location)}" target="_blank" rel="noopener">Start route ↗</a>` : "") +
+      `</div>`
+    : `<div class="tm-next-card tm-next-card--rest"><div class="tm-next-label">You're all set</div><div class="tm-next-main">Nothing left on the schedule ${snap.onTrip ? "today" : ""}. Enjoy.</div></div>`;
+
+  const todayHtml = snap.onTrip && snap.entries.length
+    ? `<div class="tm-today"><div class="tm-today-label">Today</div>${snap.entries.map(e => travelModeStopRow(e.stop, e.state)).join("")}</div>`
+    : "";
+
+  const status = snap.beforeTrip ? "Trip hasn't started yet" : snap.afterTrip ? "Trip complete" : `Day ${snap.dayNumber}`;
+
+  overlay.innerHTML =
+    `<div class="tm-inner">` +
+      `<div class="tm-head">` +
+        `<div class="tm-head-left"><div class="tm-trip-name">${escapeHtml(trip.name || "Trip")}</div>` +
+          `<div class="tm-date">${escapeHtml(status)} · ${escapeHtml(dateLabel)}<span id="tmWeather"></span></div></div>` +
+        `<button class="tm-exit" type="button" id="tmExitBtn">Exit</button>` +
+      `</div>` +
+      nextHtml +
+      todayHtml +
+      `<div class="tm-actions">` +
+        `<button class="secondary-btn" type="button" id="tmMapBtn">🗺 Map</button>` +
+        `<button class="secondary-btn" type="button" id="tmPlanBtn">📋 Full plan</button>` +
+      `</div>` +
+    `</div>`;
+
+  overlay.querySelector("#tmExitBtn").addEventListener("click", exitTravelMode);
+  overlay.querySelector("#tmMapBtn").addEventListener("click", () => { exitTravelMode(); setActiveExploreTab("map"); renderExploreTripPanel("map", trip); });
+  overlay.querySelector("#tmPlanBtn").addEventListener("click", () => { exitTravelMode(); setActiveExploreTab("itinerary"); renderExploreTripPanel("itinerary", trip); });
+
+  // Async: leave-by for the incoming transition, and weather.
+  if (trans && !trans.planned) {
+    TravelTransitions.resolveTransition(trans, { fetchTimes: fetchTravelTimes, hasCar: tripHasCarOnDay(trip, snap.dateKey) }).then(r => {
+      const box = overlay.querySelector("#tmRoute");
+      if (!box || !box.isConnected || r.routing.status !== "ok") return;
+      const best = (r.routing.rows || []).find(x => x.recommended) || {};
+      box.innerHTML = `<span class="tm-route-mode">${best.icon || "→"}</span> ${escapeHtml(best.label || "")} ${escapeHtml(TravelTransitions.formatDuration(best.durationMin))}` +
+        (r.routing.leaveBy ? ` <strong>· Leave by ${escapeHtml(r.routing.leaveBy)}</strong>` : "");
+    });
+  }
+  travelModeWeather(trip).then(w => {
+    const box = overlay.querySelector("#tmWeather");
+    if (box && box.isConnected && w) box.textContent = `  ·  ${w.icon ? w.icon + " " : "☀ "}${w.temp}°`;
+  });
+}
+
+// Prefetch a symmetric travel-time lookup across a day's located points, then
+// hand back a synchronous distanceFn the pure optimizer can use. Uses the same
+// cached travel-time backend the transitions do; unknown pairs resolve to null.
+async function buildDayDistanceFn(locations) {
+  const uniq = [...new Set(locations.filter(Boolean))];
+  const map = new Map();
+  await Promise.all(uniq.flatMap(a => uniq.map(async b => {
+    const key = a + "|" + b;
+    if (a === b) { map.set(key, 0); return; }
+    let d = null;
+    try {
+      const times = await fetchTravelTimes(a, b);
+      if (times) d = times.drive?.durationMin ?? times.transit?.durationMin ?? times.walk?.durationMin ?? null;
+    } catch { d = null; }
+    map.set(key, d);
+  })));
+  return (a, b) => (map.has(a + "|" + b) ? map.get(a + "|" + b) : null);
+}
+
+// Household calendar events for a day, shaped for the conflict detector.
+function tripCalendarEventsForDay(dateKey) {
+  try {
+    const events = syncedCalendarEventsForDate(new Date(dateKey + "T12:00:00")) || [];
+    return events
+      .filter(e => !e.allDay && e.startTime)
+      .map(e => ({ title: e.summary || e.title || "Event", start: e.startTime, end: e.endTime || e.startTime }));
+  } catch { return []; }
+}
+
+// Review-change dialog for a reorder suggestion: shows CURRENT vs SUGGESTED and
+// only ever changes the plan when the user taps Apply. Never silent.
+function showReorderReviewDialog(trip, dateKey, suggestion, rerender) {
+  const list = arr => arr.map((s, i) => `<li><span class="reorder-num">${i + 1}</span>${escapeHtml(s.title)}</li>`).join("");
+  const d = document.createElement("dialog");
+  d.className = "recipe-dialog auth-dialog reorder-dialog";
+  d.innerHTML =
+    `<div class="recipe-form">` +
+      `<h3 style="margin:0 0 6px">Reorder to save ~${suggestion.savedMin} min</h3>` +
+      `<p class="reorder-reason">${escapeHtml(suggestion.reason)}.</p>` +
+      `<div class="reorder-cols">` +
+        `<div class="reorder-col"><p class="muted-label">Current</p><ol class="reorder-list">${list(suggestion.current)}</ol></div>` +
+        `<div class="reorder-arrow" aria-hidden="true">→</div>` +
+        `<div class="reorder-col reorder-col--suggested"><p class="muted-label">Suggested</p><ol class="reorder-list">${list(suggestion.suggested)}</ol></div>` +
+      `</div>` +
+      `<div class="reorder-save">Save ~${suggestion.savedMin} minutes of travel</div>` +
+      `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">` +
+        `<button type="button" class="secondary-btn" id="reorderKeep">Keep current</button>` +
+        `<button type="button" class="primary-btn" id="reorderApply">Apply</button>` +
+      `</div>` +
+    `</div>`;
+  document.body.appendChild(d);
+  d.showModal();
+  d.querySelector("#reorderKeep").addEventListener("click", () => d.remove());
+  d.querySelector("#reorderApply").addEventListener("click", () => {
+    // Realize the new order by writing dayOrder onto each moved item.
+    const byId = new Map();
+    Object.values(trip.days || {}).forEach(day => Object.values(day).forEach(arr => {
+      if (Array.isArray(arr)) arr.forEach(it => { if (it && it.id) byId.set(it.id, it); });
+    }));
+    suggestion.apply.forEach(({ id, dayOrder }) => { const it = byId.get(id); if (it) it.dayOrder = dayOrder; });
+    persist();
+    d.remove();
+    rerender();
+  });
+  d.addEventListener("close", () => d.remove());
+}
+
+// Evaluate a day and render any propose-only suggestion cards into `mountEl`.
+// Reorder needs routing distances (prefetched); calendar/overpacked are free.
+async function renderDaySuggestions(trip, dateKey, timeline, mountEl, rerender) {
+  if (!mountEl || !mountEl.isConnected) return;
+  const stops = timeline.filter(e => e.kind === "stop");
+  const movableLocated = stops.filter(s => s.movable && !s.time && s.location);
+
+  let distanceFn = () => null;
+  // Only pay for routing when a reorder is even possible (2–5 flexible stops).
+  if (movableLocated.length >= 2 && movableLocated.length <= 5) {
+    const locs = stops.map(s => s.location).filter(Boolean);
+    distanceFn = await buildDayDistanceFn(locs);
+    if (!mountEl.isConnected) return;
+  }
+  const events = tripCalendarEventsForDay(dateKey);
+  const suggestions = TravelOptimize.evaluateDay(timeline, { distanceFn, events });
+  if (!suggestions.length) { mountEl.innerHTML = ""; return; }
+
+  mountEl.innerHTML = "";
+  suggestions.forEach(sg => {
+    const card = document.createElement("div");
+    card.className = "itin-suggest itin-suggest--" + sg.type;
+    if (sg.type === "reorder") {
+      card.innerHTML =
+        `<span class="itin-suggest-icon">💡</span>` +
+        `<span class="itin-suggest-body"><strong>Possible improvement</strong>` +
+        `<span class="itin-suggest-text">Reordering could save ~${sg.savedMin} min of travel.</span></span>` +
+        `<button class="secondary-btn compact-btn" type="button">Review change</button>`;
+      card.querySelector("button").addEventListener("click", () => showReorderReviewDialog(trip, dateKey, sg, rerender));
+    } else if (sg.type === "calendar") {
+      card.innerHTML =
+        `<span class="itin-suggest-icon">⚠</span>` +
+        `<span class="itin-suggest-body"><strong>Calendar conflict</strong>` +
+        `<span class="itin-suggest-text">“${escapeHtml(sg.stopTitle)}” at ${escapeHtml(sg.stopTime)} overlaps “${escapeHtml(sg.eventTitle)}” (${escapeHtml(sg.eventTime)}).</span></span>`;
+    } else if (sg.type === "overpacked") {
+      card.innerHTML =
+        `<span class="itin-suggest-icon">🧭</span>` +
+        `<span class="itin-suggest-body"><strong>Full day</strong>` +
+        `<span class="itin-suggest-text">${escapeHtml(sg.reason)}.</span></span>`;
+    } else if (sg.type === "tight") {
+      card.innerHTML =
+        `<span class="itin-suggest-icon">⏱</span>` +
+        `<span class="itin-suggest-body"><strong>Tight connection</strong>` +
+        `<span class="itin-suggest-text">${escapeHtml(sg.fromTitle)} → ${escapeHtml(sg.toTitle)}: only ${sg.gapMin} min for a ${sg.needMin}-min hop.</span></span>`;
+    }
+    mountEl.appendChild(card);
+  });
+}
+
+function renderTripItinerary(trip, panel) {
+  const dayKeys = TravelItinerary.tripDayKeys(trip);
+
+  // Idea / undated trip: no day grid — invite dates, point to Ideas/Saved.
+  if (!dayKeys.length) {
+    const isIdea = TravelModel.isIdea(trip);
+    panel.innerHTML =
+      `<div class="itin-undated">` +
+        `<div class="itin-undated-icon">${isIdea ? "💡" : "🗓️"}</div>` +
+        `<p class="itin-undated-title">${isIdea ? "This is a travel idea" : "No dates yet"}</p>` +
+        `<p class="itin-undated-sub">${isIdea
+          ? "Collect places, restaurants and inspiration under <strong>Ideas</strong>. When you're ready, set dates to turn it into a day-by-day plan."
+          : "Set trip dates to build a day-by-day itinerary. You can still gather ideas in the meantime."}</p>` +
+        `<div class="itin-undated-actions">` +
+          `<button class="primary-btn" type="button" id="itinSetDatesBtn">Set dates</button>` +
+          `<button class="secondary-btn" type="button" id="itinGoIdeasBtn">Go to Ideas</button>` +
+        `</div>` +
+      `</div>`;
+    panel.querySelector("#itinSetDatesBtn")?.addEventListener("click", () => showTravelEditDatesDialog(trip));
+    panel.querySelector("#itinGoIdeasBtn")?.addEventListener("click", () => { setActiveExploreTab("ideas"); renderExploreTripPanel("ideas", trip); });
+    return;
+  }
+
+  const today = TravelModel.todayKey();
+  const currentIdx = dayKeys.indexOf(today);
+  const defaultOpenIdx = currentIdx >= 0 ? currentIdx : 0;
+  const rerender = () => renderTripItinerary(trip, panel);
+
+  // Offer Travel Mode when the trip is happening or about to (unless already in it).
+  const offerTravelMode = (TravelModel.isTraveling(trip) || TravelModel.startsWithin(trip, 1)) && !isTravelModeActive();
+  const bannerHtml = offerTravelMode
+    ? `<div class="itin-tm-banner"><span class="itin-tm-banner-text">${TravelModel.isTraveling(trip) ? "You're on this trip." : "Your trip is about to begin."} Switch to Travel Mode for a simpler, at-a-glance view.</span>` +
+      `<button class="primary-btn compact-btn" type="button" id="itinEnterTravelMode">Enter Travel Mode</button></div>`
+    : "";
+  panel.innerHTML = bannerHtml + `<div class="itin-days" id="itinDays"></div>`;
+  panel.querySelector("#itinEnterTravelMode")?.addEventListener("click", () => enterTravelMode(trip.id));
+  const container = panel.querySelector("#itinDays");
+
+  dayKeys.forEach((dateKey, i) => {
+    const d = new Date(dateKey + "T00:00:00");
+    const dateLabel = d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+    const summary = TravelItinerary.daySummary(trip, dateKey);
+    const expandKey = trip.id + ":" + dateKey;
+    if (exploreItinExpanded[expandKey] === undefined) exploreItinExpanded[expandKey] = (i === defaultOpenIdx);
+    const isToday = dateKey === today;
+
+    const section = document.createElement("section");
+    section.className = "itin-day" + (isToday ? " itin-day--today" : "") + (summary.isEmpty ? " itin-day--empty" : "");
+
+    const chips = [];
+    if (summary.activities) chips.push(`${summary.activities} 🎯`);
+    if (summary.meals) chips.push(`${summary.meals} 🍽`);
+    if (summary.legs) chips.push(`${summary.legs} ✈`);
+    if (summary.openTransitions) chips.push(`<span class="itin-day-open">${summary.openTransitions} to plan</span>`);
+
+    const head = document.createElement("div");
+    head.className = "itin-day-head";
+    head.setAttribute("role", "button");
+    head.setAttribute("aria-expanded", String(exploreItinExpanded[expandKey]));
+    head.innerHTML =
+      `<span class="itin-day-caret" aria-hidden="true">▸</span>` +
+      `<span class="itin-day-num">Day ${i + 1}${isToday ? ` <span class="itin-day-today-tag">Today</span>` : ""}</span>` +
+      `<span class="itin-day-date">${escapeHtml(dateLabel)}</span>` +
+      `<span class="itin-day-chips">${summary.isEmpty ? "<span class='itin-day-free'>Free day</span>" : chips.join(" · ")}</span>` +
+      `<button class="icon-btn std-add-btn itin-day-add" type="button" title="Add to this day" aria-label="Add to this day">` +
+        `<svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`;
+    head.querySelector(".itin-day-add").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openDayAddMenu(e.currentTarget, trip, dateKey, rerender);
+    });
+    section.appendChild(head);
+
+    const bodyWrap = document.createElement("div");
+    bodyWrap.className = "itin-day-body";
+    section.appendChild(bodyWrap);
+
+    const renderBody = () => {
+      bodyWrap.innerHTML = "";
+      const timeline = TravelItinerary.buildDayTimeline(trip, dateKey);
+      // Propose-only suggestions sit at the top of the day (filled async).
+      const suggestMount = document.createElement("div");
+      suggestMount.className = "itin-suggests";
+      bodyWrap.appendChild(suggestMount);
+      if (!timeline.length) {
+        const empty = document.createElement("div");
+        empty.className = "itin-day-empty-note";
+        empty.innerHTML = `<span>Nothing planned yet — an open day is an opportunity.</span>`;
+        bodyWrap.appendChild(empty);
+      } else {
+        timeline.forEach(entry => {
+          if (entry.kind === "stop") bodyWrap.appendChild(buildItineraryStopCard(entry, trip, rerender));
+          else bodyWrap.appendChild(buildItineraryTransitionRow(entry, trip, dateKey, rerender));
+        });
+      }
+      renderDaySuggestions(trip, dateKey, timeline, suggestMount, rerender);
+    };
+
+    const applyExpanded = () => {
+      const open = exploreItinExpanded[expandKey];
+      section.classList.toggle("is-open", open);
+      head.setAttribute("aria-expanded", String(open));
+      bodyWrap.hidden = !open;
+      if (open && !bodyWrap._rendered) { renderBody(); bodyWrap._rendered = true; }
+    };
+    head.tabIndex = 0;
+    const toggleDay = () => { exploreItinExpanded[expandKey] = !exploreItinExpanded[expandKey]; applyExpanded(); };
+    head.addEventListener("click", toggleDay);
+    head.addEventListener("keydown", (e) => {
+      if (e.target.closest(".itin-day-add")) return;
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleDay(); }
+    });
+    applyExpanded();
+    container.appendChild(section);
+  });
+
+  // Bring the current day into view.
+  panel.querySelector(".itin-day--today")?.scrollIntoView({ block: "nearest" });
+}
+
+// ── Trip references: associations to canonical Live objects (never copies) ───
+function addTripRef(trip, ref) {
+  trip.refs = TravelRefs.addRef(trip.refs, ref);
+  trip.updatedAt = new Date().toISOString();
+  persist();
+}
+function removeTripRef(trip, id) {
+  trip.refs = TravelRefs.removeRef(trip.refs, id);
+  persist();
+}
+
+// Rank canonical items from the rest of Live for "bring it along" enrichment,
+// excluding ones already saved to the trip. Returns { watch, podcast, article }.
+function tripEnrichmentCandidates(trip) {
+  const dest = trip.destination || trip.name || "";
+  const savedIds = new Set((trip.refs || []).filter(r => r.refId).map(r => r.kind + ":" + r.refId));
+  const notSaved = (kind, id) => !savedIds.has(kind + ":" + String(id));
+  const watch = TravelRefs.rankCandidates((state.watchItems || []).filter(w => notSaved("watch", w.id)), dest, { getText: w => `${w.title || ""} ${w.overview || ""}`, getTime: w => w.createdAt, limit: 5 });
+  const podcast = TravelRefs.rankCandidates((state.podcasts || []).filter(p => notSaved("podcast", p.id)), dest, { getText: p => `${p.title || ""} ${p.description || ""}`, getTime: p => p.lastFetched, limit: 5 });
+  const article = TravelRefs.rankCandidates((state.savedArticles || []).filter(a => notSaved("article", a.id)), dest, { getText: a => `${a.title || ""} ${a.publication || ""}`, getTime: a => a.savedAt || a.createdAt, limit: 5 });
+  return { watch, podcast, article };
+}
+
+function renderTripIdeas(trip, panel) {
+  if (!Array.isArray(trip.saved)) trip.saved = [];
+  if (!Array.isArray(trip.refs)) trip.refs = [];
+  const rerender = () => renderTripIdeas(trip, panel);
+
+  // Saved enrichment refs (Watch/Listen/Read/Links/Notes) grouped by kind.
+  const enrichKinds = ["watch", "podcast", "article", "book", "link", "note"];
+  const savedRefs = (trip.refs || []).filter(r => enrichKinds.includes(r.kind));
+  const grouped = TravelRefs.groupByKind(savedRefs);
+  const savedHtml = Object.keys(grouped).map(kind => {
+    const meta = TravelRefs.REF_KIND_META[kind] || {};
+    return `<div class="itin-ref-group"><div class="itin-ref-group-head">${meta.icon || "•"} ${escapeHtml(meta.label || kind)}</div>` +
+      grouped[kind].map(r => `<div class="itin-ref-row" data-ref-id="${escapeHtml(r.id)}"><span class="itin-ref-title">${escapeHtml(r.title)}</span><button class="icon-btn itin-ref-del" type="button" data-ref-del="${escapeHtml(r.id)}" title="Remove" aria-label="Remove">×</button></div>`).join("") +
+      `</div>`;
+  }).join("");
+
+  // "Bring it along" — canonical items from the rest of Live, ranked to the trip.
+  const cand = tripEnrichmentCandidates(trip);
+  const enrichSection = (kind, label, ranked) => {
+    if (!ranked.length) return "";
+    const meta = TravelRefs.REF_KIND_META[kind] || {};
+    return `<div class="itin-enrich-section"><div class="itin-enrich-head">${meta.icon || ""} ${escapeHtml(label)}</div>` +
+      ranked.map(({ item, matched }) => {
+        const t = item.title || item.name || "Untitled";
+        return `<div class="itin-enrich-row"><span class="itin-enrich-title">${escapeHtml(t)}${matched ? ` <span class="itin-enrich-match">for your trip</span>` : ""}</span>` +
+          `<button class="secondary-btn compact-btn itin-enrich-save" type="button" data-enrich-kind="${kind}" data-enrich-id="${escapeHtml(String(item.id))}" data-enrich-title="${escapeHtml(t)}">Save</button></div>`;
+      }).join("") + `</div>`;
+  };
+  const enrichHtml = [
+    enrichSection("watch", "Watch — related films & shows", cand.watch),
+    enrichSection("podcast", "Listen — related podcasts", cand.podcast),
+    enrichSection("article", "Read — related articles", cand.article),
+  ].filter(Boolean).join("");
+
+  panel.innerHTML =
+    `<div class="itin-ideas">` +
+      `<div class="itin-ideas-intro">Save things for this trip — places, food, links, inspiration. Not scheduled until you add them to a day.</div>` +
+      `<div class="itin-ideas-add">` +
+        `<input type="text" id="tripIdeaInput" class="text-input" placeholder="Save an idea…" autocomplete="off" />` +
+        `<button class="primary-btn icon-primary-btn" type="button" id="tripIdeaAddBtn" aria-label="Save idea"><span aria-hidden="true">+</span></button>` +
+      `</div>` +
+      (trip.saved.length
+        ? `<ul class="itin-ideas-list">${trip.saved.map(it => `
+            <li class="itin-idea-row" data-id="${escapeHtml(it.id)}">
+              <span class="itin-idea-title">${escapeHtml(it.title)}</span>
+              <button class="icon-btn itin-idea-del" type="button" data-del="${escapeHtml(it.id)}" title="Remove" aria-label="Remove">×</button>
+            </li>`).join("")}</ul>`
+        : `<p class="itin-ideas-empty">No saved ideas yet.</p>`) +
+      (savedHtml ? `<div class="itin-refs-saved"><div class="itin-section-label">Saved to this trip</div>${savedHtml}</div>` : "") +
+      (enrichHtml ? `<div class="itin-enrich"><div class="itin-section-label">Bring it along</div><p class="itin-enrich-intro">From the rest of Live, chosen for this trip. Saving links them here — nothing is copied.</p>${enrichHtml}</div>` : "") +
+    `</div>`;
+
+  const add = (title) => {
+    const t = String(title || "").trim();
+    if (!t) return;
+    trip.saved.push({ id: createId("saved"), title: t, createdAt: new Date().toISOString() });
+    persist(); rerender();
+    panel.querySelector("#tripIdeaInput")?.focus();
+  };
+  panel.querySelector("#tripIdeaAddBtn")?.addEventListener("click", () => add(panel.querySelector("#tripIdeaInput")?.value));
+  panel.querySelector("#tripIdeaInput")?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); add(e.target.value); } });
+  panel.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", () => {
+    trip.saved = trip.saved.filter(x => x.id !== b.dataset.del); persist(); rerender();
+  }));
+  panel.querySelectorAll("[data-ref-del]").forEach(b => b.addEventListener("click", () => { removeTripRef(trip, b.dataset.refDel); rerender(); }));
+  panel.querySelectorAll(".itin-enrich-save").forEach(b => b.addEventListener("click", () => {
+    addTripRef(trip, TravelRefs.makeRef(b.dataset.enrichKind, { refId: b.dataset.enrichId, title: b.dataset.enrichTitle }));
+    rerender();
+  }));
+}
+
+// ── Prepare (readiness) ──────────────────────────────────────────────────────
+// A calm coordination view — never a project-management board. Derives readiness
+// from the itinerary and pulls trip shopping (trip-owned needs) and packing
+// (with Inventory suggestions) together without duplicating Shop or Inventory.
+function renderTripPrepare(trip, panel) {
+  if (!Array.isArray(trip.refs)) trip.refs = [];
+  if (!Array.isArray(trip.packing)) trip.packing = [];
+  const rerender = () => renderTripPrepare(trip, panel);
+  const dayKeys = TravelItinerary.tripDayKeys(trip);
+  const legs = [], lodgings = [];
+  let openTransitions = 0, reservations = 0;
+  Object.values(trip.days || {}).forEach(day => {
+    (day.travel || []).forEach(l => { legs.push(l); if (l.flightNumber || l.confirmationNo) reservations++; });
+    (day.lodging || []).forEach(l => { lodgings.push(l); if (l.confirmationNo) reservations++; });
+    (day.activities || []).forEach(a => { if (a.confirmationNo) reservations++; });
+    (day.food || []).forEach(f => { if (f.reservationNo || f.reservationTime) reservations++; });
+  });
+  dayKeys.forEach(k => { openTransitions += TravelItinerary.daySummary(trip, k).openTransitions; });
+  const packing = trip.packing;
+  const packedRatio = packing.length ? packing.filter(p => p.checked).length / packing.length : 0;
+  const shop = TravelRefs.shopByBucket(trip.refs);
+  const shopCount = shop.before.length + shop.during.length + shop["bring-home"].length;
+
+  const checks = [
+    { label: "Transportation", ok: legs.length > 0, detail: legs.length ? `${legs.length} leg(s) planned` : "No travel legs yet" },
+    { label: "Lodging", ok: lodgings.length > 0, detail: lodgings.length ? `${lodgings.length} stay(s)` : "No lodging yet" },
+    { label: "Reservations", ok: reservations > 0, detail: reservations ? `${reservations} on file` : "None recorded" },
+    { label: "Getting around", ok: openTransitions === 0, detail: openTransitions ? `${openTransitions} connection(s) to plan` : "All connections planned" },
+    { label: "Packing", ok: packing.length > 0 && packedRatio === 1, detail: packing.length ? `${Math.round(packedRatio * 100)}% packed` : "No packing list yet" },
+    { label: "Shopping", ok: shopCount === 0, detail: shopCount ? `${shopCount} item(s) to get` : "Nothing to buy" },
+  ];
+  const ready = Math.round((checks.filter(c => c.ok).length / checks.length) * 100);
+
+  const bucketHtml = TravelRefs.SHOP_BUCKETS.map(bk => {
+    const items = shop[bk];
+    return `<div class="itin-shop-bucket"><div class="itin-shop-bucket-head">${escapeHtml(TravelRefs.SHOP_BUCKET_LABELS[bk])}</div>` +
+      (items.length ? items.map(r => `<div class="itin-shop-row" data-shop-id="${escapeHtml(r.id)}"><span>${escapeHtml(r.title)}</span><button class="icon-btn" type="button" data-shop-del="${escapeHtml(r.id)}" title="Remove" aria-label="Remove">×</button></div>`).join("") : `<div class="itin-shop-empty">—</div>`) +
+      `<div class="itin-shop-add"><input type="text" class="text-input compact-input" data-shop-input="${bk}" placeholder="Add…" autocomplete="off" /></div>` +
+      `</div>`;
+  }).join("");
+
+  // Packing suggestions from Inventory: owned items not yet on the packing list.
+  const owned = (typeof inventoryItemList === "function" ? inventoryItemList() : (state.inventoryItems || []));
+  const packingTitles = new Set(packing.map(p => String(p.title || "").toLowerCase()));
+  const suggestable = (owned || []).filter(it => it && it.name && !packingTitles.has(String(it.name).toLowerCase())).slice(0, 8);
+
+  panel.innerHTML =
+    `<div class="itin-prepare">` +
+      `<div class="itin-ready-head"><div class="itin-ready-pct">${ready}%</div><div class="itin-ready-label">ready${trip.name ? " for " + escapeHtml(trip.name) : ""}</div></div>` +
+      `<ul class="itin-ready-list">${checks.map(c => `
+        <li class="itin-ready-row ${c.ok ? "is-ok" : "is-open"}">
+          <span class="itin-ready-mark">${c.ok ? "✓" : "⚠"}</span>
+          <span class="itin-ready-name">${escapeHtml(c.label)}</span>
+          <span class="itin-ready-detail">${escapeHtml(c.detail)}</span>
+        </li>`).join("")}</ul>` +
+      `<div class="itin-prepare-block"><div class="itin-section-label">🛍️ Trip shopping</div><div class="itin-shop-buckets">${bucketHtml}</div></div>` +
+      (suggestable.length
+        ? `<div class="itin-prepare-block"><div class="itin-section-label">🧳 From your Stock</div><p class="itin-enrich-intro">Things you already own — tap to add to packing.</p><div class="itin-pack-suggest">${suggestable.map(it => `<button class="chip-btn itin-pack-chip" type="button" data-pack-add="${escapeHtml(it.name)}">+ ${escapeHtml(it.name)}</button>`).join("")}</div></div>`
+        : "") +
+    `</div>`;
+
+  panel.querySelectorAll("[data-shop-input]").forEach(inp => inp.addEventListener("keydown", e => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const t = e.target.value.trim();
+    if (!t) return;
+    addTripRef(trip, TravelRefs.makeRef(TravelRefs.REF_KINDS.SHOP, { title: t, bucket: e.target.dataset.shopInput }));
+    rerender();
+  }));
+  panel.querySelectorAll("[data-shop-del]").forEach(b => b.addEventListener("click", () => { removeTripRef(trip, b.dataset.shopDel); rerender(); }));
+  panel.querySelectorAll("[data-pack-add]").forEach(b => b.addEventListener("click", () => {
+    trip.packing.push({ id: createId("pack"), title: b.dataset.packAdd, checked: false });
+    persist(); rerender();
+  }));
+}
+
 function renderExploreTripPanel(tab, trip) {
   const panel = document.getElementById("exploreTripPanel");
   if (!panel) return;
+
+  // Primary experience: the itinerary is the center of gravity; Ideas and
+  // Prepare sit beside it; the old category tabs live under "More".
+  if (tab === "overview") tab = "itinerary"; // legacy alias
+  if (tab === "itinerary") { renderTripItinerary(trip, panel); return; }
+  if (tab === "ideas")     { renderTripIdeas(trip, panel);     return; }
+  if (tab === "prepare")   { renderTripPrepare(trip, panel);   return; }
 
   if (tab === "budget")  { renderTravelBudget(trip, panel); return; }
   if (tab === "notes")   { renderTravelNotes(trip, panel);  return; }
@@ -49053,174 +50491,113 @@ async function fetchTravelMapUrl(params) {
   } catch { return null; }
 }
 
+// ── Planning map (interactive Leaflet) ───────────────────────────────────────
+// Plots the trip's real located stops (from trip.days) on an interactive map,
+// geocoding each place once into a per-trip cache (trip.geocache). Markers are
+// day-coloured and numbered; each day's stops are joined by a path. Degrades to
+// a list of Google Maps links when geocoding or Leaflet is unavailable — the map
+// never hard-depends on any one service. See travel-geo.js for the pure core.
+
+// Best-effort geocoder (OpenStreetMap Nominatim). Returns {lat,lng} or null.
+// Sequential callers (TravelGeo.resolvePlaces) keep this within usage limits;
+// results are cached on the trip so a place is only ever geocoded once.
+async function geocodeAddress(address) {
+  const q = String(address || "").trim();
+  if (!q) return null;
+  try {
+    const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" + encodeURIComponent(q);
+    const res = await fetch(url, { headers: { "Accept": "application/json" } });
+    if (!res.ok) return null;
+    const arr = await res.json();
+    const hit = Array.isArray(arr) && arr[0];
+    if (!hit) return null;
+    const lat = parseFloat(hit.lat), lng = parseFloat(hit.lon);
+    return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+  } catch { return null; }
+}
+
+// Collect the trip's located places with a day index and order, from the real
+// itinerary projection.
+function collectTripMapPlaces(trip) {
+  const dayKeys = TravelItinerary.tripDayKeys(trip);
+  const keys = dayKeys.length ? dayKeys : Object.keys(trip.days || {});
+  const places = [];
+  keys.forEach((dateKey, dayIndex) => {
+    TravelItinerary.buildDayTimeline(trip, dateKey)
+      .filter(e => e.kind === "stop" && e.location)
+      .forEach((s, order) => places.push({ location: s.location, title: s.title, type: s.type, icon: s.icon, dayIndex: dayKeys.length ? dayIndex : 0, order }));
+  });
+  return places;
+}
+
+let _travelMapInstance = null;
 async function renderTravelMap(trip, el = null) {
-  el = el || document.getElementById("travelTabMap");
+  el = el || document.getElementById("exploreTripPanel");
   if (!el) return;
+  el.innerHTML = '<div class="travel-map-loading" style="padding:32px;text-align:center">Building the map…</div>';
 
-  el.innerHTML = '<div class="travel-map-loading" style="padding:32px;text-align:center">Building maps…</div>';
+  const places = collectTripMapPlaces(trip);
+  const linksList = () => {
+    const uniq = [...new Map(places.map(p => [p.location.toLowerCase(), p])).values()];
+    return uniq.length
+      ? '<div class="travel-map-links">' + uniq.map(p =>
+          '<a class="travel-map-link-row" href="https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(p.location) + '" target="_blank" rel="noopener">' +
+          '<span class="travel-map-link-icon">' + (p.icon || '📍') + '</span><span class="travel-map-link-title">' + escapeHtml(p.title) + '</span>' +
+          '<span class="travel-map-link-sub">' + escapeHtml(p.location) + '</span></a>').join('') + '</div>'
+      : '';
+  };
 
-  const sections = [];
-  const TRANSIT_ICON = { walk:'\U0001F6B6', rideshare:'\U0001F4F1', taxi:'\U0001F695', metro:'\U0001F687', bus:'\U0001F68C', tram:'\U0001F68A', drive:'\U0001F697', bike:'\U0001F6B2', ferry:'⛴️', other:'\U0001F4CC' };
-
-  // ── 1. Trip overview map: extract major stops from flight segments ──
-  const flightSegs = [];
-  (trip.logistics || []).forEach(function(l) {
-    if (l.type === "flight" && Array.isArray(l.segments)) {
-      l.segments.forEach(function(s) {
-        const from = s.fromName || s.from;
-        const to   = s.toName   || s.to;
-        if (from && to && s.departDate) flightSegs.push({ from, to, date: s.departDate });
-      });
-    }
-  });
-  flightSegs.sort((a, b) => a.date.localeCompare(b.date));
-
-  let overviewStops = [];
-  if (flightSegs.length) {
-    flightSegs.forEach(function(seg, i) {
-      if (i === 0) overviewStops.push(seg.from);
-      const last = overviewStops[overviewStops.length - 1] || "";
-      if (!last.toLowerCase().includes(seg.to.toLowerCase().split(" ")[0])) overviewStops.push(seg.to);
-    });
-  }
-  // Fallback: unique day locations in order
-  if (overviewStops.length < 2) {
-    const seen = new Set();
-    (trip.itinerary || []).forEach(d => { if (d.location && !seen.has(d.location)) { seen.add(d.location); overviewStops.push(d.location); } });
-  }
-  // Fallback: trip destination
-  if (!overviewStops.length && trip.destination) overviewStops = [trip.destination];
-
-  if (overviewStops.length === 1) {
-    sections.push({
-      label: "\U0001F30D Overview",
-      subtitle: overviewStops[0],
-      params: { type: "search", query: overviewStops[0] },
-      mapsLink: "https://maps.google.com/?q=" + encodeURIComponent(overviewStops[0]),
-      isOverview: true
-    });
-  } else if (overviewStops.length >= 2) {
-    sections.push({
-      label: "\U0001F30D Overview",
-      subtitle: overviewStops.join(" → "),
-      params: { type: "directions", origin: overviewStops[0], destination: overviewStops[overviewStops.length - 1], waypoints: overviewStops.slice(1, -1), mode: "flying" },
-      mapsLink: "https://www.google.com/maps/dir/" + overviewStops.map(encodeURIComponent).join("/"),
-      isOverview: true
-    });
-  }
-
-  // ── 2. Per-day route maps: accommodation → activities → accommodation ──
-  function stayForDate(dateKey) {
-    return (trip.stays || []).find(function(s) {
-      return s.checkIn && s.checkOut && dateKey && dateKey >= s.checkIn && dateKey <= s.checkOut && (s.address || s.name);
-    });
-  }
-
-  (trip.itinerary || []).forEach(function(day) {
-    var acts = (day.activities || []).filter(function(a) { return a.address || a.location; });
-    var actLocs = acts.map(function(a) { return a.address || a.location; });
-    var transits = day.transits || [];
-
-    // Bookend with accommodation
-    var stay = stayForDate(day.date);
-    var stayLoc = stay ? (stay.address || stay.name) : null;
-    var stayLabel = stay ? (stay.name || "Accommodation") : null;
-
-    // Full waypoint list for the map: [stay?, ...actLocs, stay?]
-    var locs = stayLoc ? [stayLoc].concat(actLocs).concat([stayLoc]) : actLocs;
-    if (!locs.length && day.location) locs = [day.location];
-    if (!locs.length) return;
-
-    var label = day.date ? formatTravelDate(day.date) : "";
-    var dayTitle = label + (day.location ? (label ? " — " : "") + day.location : "");
-
-    // Route summary HTML
-    var summaryItems = [];
-    if (stayLabel) summaryItems.push({ name: stayLabel, loc: stayLoc, isAccom: true });
-    acts.forEach(function(a) { summaryItems.push({ name: a.title || a.location, loc: a.address || a.location, isAccom: false }); });
-    if (stayLabel) summaryItems.push({ name: stayLabel, loc: stayLoc, isAccom: true });
-
-    var routeHtml = summaryItems.map(function(item, i) {
-      var row = '<div class="map-route-stop' + (item.isAccom ? ' map-route-stop--accom' : '') + '">' +
-        '<span class="map-route-stop-name">' + escapeHtml(item.name || "") + '</span>' +
-        (item.loc && item.loc !== item.name ? '<span class="map-route-stop-loc">' + escapeHtml(item.loc) + '</span>' : '') +
-        '</div>';
-      if (i < summaryItems.length - 1) {
-        // Transit between act[i-1] and act[i] (shift by accommodation offset)
-        var trIdx = stayLoc ? i - 1 : i;
-        var tr = (trIdx >= 0 && trIdx < acts.length - 1) ? (transits[trIdx] || {}) : {};
-        var icon = TRANSIT_ICON[tr.mode] || "↓";
-        var needed = !tr.mode && !item.isAccom && !(summaryItems[i+1] || {}).isAccom;
-        row += '<div class="map-route-transit' + (needed ? ' map-route-transit--needed' : '') + '">' +
-          '<span class="map-route-transit-icon">' + icon + '</span>' +
-          '<span class="map-route-transit-label">' +
-            (tr.mode ? tr.mode.charAt(0).toUpperCase() + tr.mode.slice(1) : (needed ? "Transit not set" : "↓")) +
-            (tr.durationMin ? ' · ' + tr.durationMin + ' min' : '') +
-            (tr.notes ? ' · ' + escapeHtml(tr.notes) : '') +
-          '</span></div>';
-      }
-      return row;
-    }).join('');
-
-    if (locs.length === 1) {
-      sections.push({ label: dayTitle || locs[0], routeHtml, params: { type: "place", query: locs[0] }, mapsLink: "https://maps.google.com/?q=" + encodeURIComponent(locs[0]) });
-    } else {
-      sections.push({
-        label: dayTitle || label,
-        routeHtml,
-        params: { type: "directions", origin: locs[0], destination: locs[locs.length - 1], waypoints: locs.slice(1, -1), mode: "walking" },
-        mapsLink: "https://www.google.com/maps/dir/" + locs.map(encodeURIComponent).join("/")
-      });
-    }
-  });
-
-  if (!sections.length) {
-    el.innerHTML =
-      '<div class="travel-map-empty">' +
-      '<p style="margin:0 0 8px;font-weight:600">No locations yet</p>' +
-      '<p style="margin:0;font-size:0.82rem">Add flight segments, stays, or activity addresses to see maps here.</p>' +
-      '</div>';
+  if (!places.length) {
+    el.innerHTML = '<div class="travel-map-empty" style="padding:32px;text-align:center;color:var(--muted)">' +
+      '<div style="font-size:2rem">🗺</div><p>Add activities, lodging or food with locations to see them on the map.</p></div>';
     return;
   }
 
-  // Render skeletons
-  el.innerHTML = sections.map(function(s, i) {
-    return '<div class="travel-map-section' + (s.isOverview ? ' travel-map-section--overview' : '') + '" id="travelMapSection' + i + '">' +
-      '<div class="travel-map-section-header">' +
-        '<div>' +
-          '<span class="travel-map-section-title">' + escapeHtml(s.label) + '</span>' +
-          (s.subtitle ? '<div class="travel-map-section-subtitle">' + escapeHtml(s.subtitle) + '</div>' : '') +
-        '</div>' +
-        '<a href="' + s.mapsLink + '" target="_blank" rel="noopener" class="travel-map-link">Open ↗</a>' +
-      '</div>' +
-      (s.routeHtml ? '<div class="map-route-summary">' + s.routeHtml + '</div>' : '') +
-      '<div class="travel-map-iframe-wrap"><div class="travel-map-loading">Loading map…</div></div>' +
-    '</div>';
-  }).join('');
+  // Resolve coordinates once, cached on the trip (nested → syncs for free).
+  if (!trip.geocache || typeof trip.geocache !== "object") trip.geocache = {};
+  let resolved;
+  try {
+    resolved = await TravelGeo.resolvePlaces(places, { geocode: geocodeAddress, cache: trip.geocache, maxRequests: 12 });
+    trip.geocache = resolved.cache;
+    persist();
+  } catch { resolved = { located: [] }; }
 
-  // Inject iframes
-  for (var i = 0; i < sections.length; i++) {
-    var wrap = el.querySelector('#travelMapSection' + i + ' .travel-map-iframe-wrap');
-    if (!wrap) continue;
-    try {
-      var mapUrl = await fetchTravelMapUrl(sections[i].params);
-      if (mapUrl) {
-        var h = sections[i].isOverview ? 340 : 260;
-        wrap.innerHTML = '<iframe class="travel-map-iframe" style="height:' + h + 'px" src="' + mapUrl + '" allowfullscreen loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>';
-      } else {
-        wrap.innerHTML =
-          '<a class="travel-map-fallback" href="' + sections[i].mapsLink + '" target="_blank" rel="noopener">' +
-            '<span class="travel-map-fallback-icon">\U0001F5FA️</span>' +
-            '<span>View in Google Maps ↗</span>' +
-          '</a>';
-      }
-    } catch {
-      wrap.innerHTML =
-        '<a class="travel-map-fallback" href="' + sections[i].mapsLink + '" target="_blank" rel="noopener">' +
-          '<span class="travel-map-fallback-icon">\U0001F5FA️</span>' +
-          '<span>View in Google Maps ↗</span>' +
-        '</a>';
-    }
+  el.innerHTML =
+    '<div class="travel-map-wrap">' +
+      '<div id="travelLeafletMap" class="travel-leaflet-map"></div>' +
+      '<div class="travel-map-listwrap"><div class="itin-section-label">Places</div>' + linksList() + '</div>' +
+    '</div>';
+
+  const located = resolved.located || [];
+  if (!located.length) { document.getElementById("travelLeafletMap")?.remove(); return; }
+
+  try {
+    await ensureLeaflet();
+    const L = window.L;
+    const mapEl = document.getElementById("travelLeafletMap");
+    if (!mapEl || !L) return;
+    if (_travelMapInstance) { try { _travelMapInstance.remove(); } catch {} _travelMapInstance = null; }
+    const b = TravelGeo.boundsOf(located);
+    const map = L.map(mapEl, { scrollWheelZoom: false }).setView([b.center.lat, b.center.lng], 13);
+    _travelMapInstance = map;
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+
+    const byDay = {};
+    located.forEach(p => { (byDay[p.dayIndex] = byDay[p.dayIndex] || []).push(p); });
+    Object.keys(byDay).forEach(di => {
+      const color = TravelGeo.dayColor(Number(di));
+      const dayPts = byDay[di].sort((a, c) => a.order - c.order);
+      if (dayPts.length > 1) L.polyline(dayPts.map(p => [p.lat, p.lng]), { color, weight: 3, opacity: 0.7 }).addTo(map);
+      dayPts.forEach((p, i) => {
+        const icon = L.divIcon({ className: "travel-map-pin", html: '<span style="background:' + color + '">' + (i + 1) + '</span>', iconSize: [26, 26] });
+        L.marker([p.lat, p.lng], { icon }).addTo(map).bindPopup('<strong>' + escapeHtml(p.title) + '</strong><br>' + escapeHtml(p.location));
+      });
+    });
+
+    if (located.length > 1) map.fitBounds(located.map(p => [p.lat, p.lng]), { padding: [30, 30] });
+    setTimeout(() => { try { map.invalidateSize(); } catch {} }, 120);
+  } catch {
+    document.getElementById("travelLeafletMap")?.remove();
   }
 }
 
@@ -50625,7 +52002,7 @@ function showTravelNewTripDialog() {
     '<div class="travel-dialog-field" style="flex:1"><label>Start date</label><input id="tnStart" type="date" class="text-input" /></div>' +
     '<div class="travel-dialog-field" style="flex:1"><label>End date</label><input id="tnEnd" type="date" class="text-input" /></div>' +
     '</div>' +
-    '<div class="travel-dialog-field"><label>Who\'s coming?</label><div class="travel-party-chips" id="tnPartyChips">' + partyChipsHtml + '</div></div>' +
+    '<div class="travel-dialog-field"><label>Who\'s coming?</label><div class="travel-party-chips" id="tnPartyChips">' + partyChipsHtml + '</div>' + partyAdderHtml() + '</div>' +
     '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
     '<button type="button" class="secondary-btn" id="tnCancel">Cancel</button>' +
     '<button type="button" class="primary-btn" id="tnCreate">Create</button>' +
@@ -50636,6 +52013,7 @@ function showTravelNewTripDialog() {
   d.querySelectorAll(".travel-party-chip").forEach(function(btn) {
     btn.addEventListener("click", function() { btn.classList.toggle("is-selected"); });
   });
+  wirePartyAdder(d, d.querySelector("#tnPartyChips"));
   d.querySelector("#tnCancel").addEventListener("click", function() { d.remove(); });
   d.querySelector("#tnCreate").addEventListener("click", function() {
     try {
@@ -50681,12 +52059,15 @@ function showTravelNewIdeaDialog() {
   d.querySelector("#tiSave").addEventListener("click", () => {
     const dest = d.querySelector("#tiDest").value.trim();
     if (!dest) { d.querySelector("#tiDest").focus(); return; }
-    const idea = defaultTravelIdea(dest);
-    idea.description = d.querySelector("#tiNotes").value.trim();
-    if (!Array.isArray(state.travelIdeas)) state.travelIdeas = [];
-    state.travelIdeas.push(idea);
+    // Ideas are first-class trips (status "idea", no dates) so they share one
+    // lifecycle and appear in the trips list immediately.
+    const trip = defaultTrip({ name: dest, destination: dest, status: TravelModel.TRIP_STATUS.IDEA });
+    trip.notes = d.querySelector("#tiNotes").value.trim();
+    if (!Array.isArray(state.trips)) state.trips = [];
+    state.trips.push(trip);
     persist();
     d.remove();
+    if (activeAppArea === "explore") { renderExploreSidebar(trip.id); }
   });
 }
 
@@ -50731,6 +52112,7 @@ function showTravelEditPartyDialog(trip) {
     '<div class="recipe-form">' +
     '<h3 style="margin:0 0 14px">Who\'s Coming?</h3>' +
     '<div class="travel-party-chips" id="tepChips">' + chipsHtml + '</div>' +
+    partyAdderHtml() +
     '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">' +
     '<button type="button" class="secondary-btn" id="tepCancel">Cancel</button>' +
     '<button type="button" class="primary-btn" id="tepSave">Save</button>' +
@@ -50739,6 +52121,7 @@ function showTravelEditPartyDialog(trip) {
   document.body.appendChild(d);
   d.showModal();
   d.querySelectorAll(".travel-party-chip").forEach(function(btn) { btn.addEventListener("click", function() { btn.classList.toggle("is-selected"); }); });
+  wirePartyAdder(d, d.querySelector("#tepChips"));
   d.querySelector("#tepCancel").addEventListener("click", function() { d.remove(); });
   d.querySelector("#tepSave").addEventListener("click", function() {
     trip.party = Array.from(d.querySelectorAll(".travel-party-chip.is-selected")).map(function(b) { return b.dataset.party; });

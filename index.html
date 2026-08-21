@@ -492,12 +492,27 @@
         <!-- ── Explore page ──────────────────────────────────────────────── -->
         <section class="planner-column do-column article-read-page" id="exploreMainPage" aria-label="Explore" hidden>
           <div class="article-page-inner">
+            <div class="mail-topbar media-topbar">
+              <button class="icon-btn mail-sidebar-toggle" type="button" id="exploreSidebarToggle" title="Toggle trips" aria-label="Toggle trips list">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+              </button>
+              <div class="mail-search-wrap">
+                <svg class="mail-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                <input class="mail-search-input" id="exploreSearchInput" type="search" placeholder="Search trips" aria-label="Search trips" />
+              </div>
+              <div class="mail-topbar-right">
+                <button class="icon-btn mail-notifications-btn" type="button" id="exploreNotificationsBtn" title="Notifications" aria-label="Notifications">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                  <span class="mail-notif-badge" id="exploreNotifBadge" hidden>0</span>
+                </button>
+              </div>
+            </div>
           <div class="article-layout">
               <div class="article-sidebar" id="exMediaSidebar">
-                <div class="explore-trips-header">
-                  <span class="article-sidebar-section-label">Trips</span>
-                  <button class="travel-new-btn" type="button" id="exploreAddTripBtn">+ Trip</button>
-                </div>
+                <button class="explore-new-trip-btn" type="button" id="exploreAddTripBtn" title="New trip" aria-label="New trip">
+                  <svg class="explore-new-trip-plus" viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  <span class="explore-new-trip-label">New</span>
+                </button>
                 <div id="exploreTripList"></div>
               </div>
               <div class="article-content" id="exMediaContent">
@@ -514,39 +529,36 @@
                 <div class="explore-trip-view" id="exploreTripView" hidden>
                   <div class="travel-detail-header" id="exploreTripHeader">
                     <div class="travel-detail-title-row">
-                      <button class="icon-btn explore-trip-menu-btn" type="button" id="exploreTripMenuBtn" title="Show trips" aria-label="Show trips list">
-                        <svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-                      </button>
                       <h2 class="travel-detail-name" id="exploreDetailName" contenteditable="true" spellcheck="true"></h2>
                       <div class="travel-detail-header-actions">
                         <select class="travel-status-select" id="exploreStatusSelect">
                           <option value="idea">Idea</option>
                           <option value="planning">Planning</option>
                           <option value="booked">Booked</option>
+                          <option value="traveling">Traveling</option>
                           <option value="completed">Completed</option>
                         </select>
-                        <button class="icon-btn" type="button" id="exploreScanBookingBtn" title="Scan booking confirmation">📷</button>
-                        <button class="icon-btn" type="button" id="exploreScanEmailBtn" title="Scan email for bookings">✉️</button>
-                        <button class="icon-btn" type="button" id="explorePrintBtn" title="Print itinerary">
-                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-                        </button>
-                        <button class="icon-btn travel-delete-btn" type="button" id="exploreDeleteTripBtn" title="Delete trip">
-                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-                        </button>
                       </div>
                     </div>
                     <div class="travel-detail-meta" id="exploreDetailMeta"></div>
                   </div>
                   <div class="watch-category-tabs explore-tabs" role="tablist" id="exploreTabsNav">
-                    <button class="watch-category-tab explore-tab is-active" type="button" role="tab" data-explore-tab="overview" aria-selected="true">Overview</button>
-                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="travel" aria-selected="false">Transportation</button>
-                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="lodging" aria-selected="false">Lodging</button>
-                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="activities" aria-selected="false">Activities</button>
-                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="food" aria-selected="false">Food</button>
-                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="budget" aria-selected="false">Budget</button>
-                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="packing" aria-selected="false">Packing</button>
-                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="notes" aria-selected="false">Notes</button>
-                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="map" aria-selected="false">Map</button>
+                    <button class="watch-category-tab explore-tab is-active" type="button" role="tab" data-explore-tab="itinerary" aria-selected="true">Itinerary</button>
+                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="ideas" aria-selected="false">Ideas</button>
+                    <button class="watch-category-tab explore-tab" type="button" role="tab" data-explore-tab="prepare" aria-selected="false">Prepare</button>
+                    <div class="explore-more-wrap">
+                      <button class="watch-category-tab explore-tab explore-more-btn" type="button" id="exploreMoreBtn" aria-haspopup="true" aria-expanded="false">More ▾</button>
+                      <div class="explore-more-menu" id="exploreMoreMenu" role="menu" hidden>
+                        <button class="explore-more-item" type="button" role="menuitem" data-explore-tab="travel">✈ Transportation</button>
+                        <button class="explore-more-item" type="button" role="menuitem" data-explore-tab="lodging">🏨 Lodging</button>
+                        <button class="explore-more-item" type="button" role="menuitem" data-explore-tab="activities">🎯 Activities</button>
+                        <button class="explore-more-item" type="button" role="menuitem" data-explore-tab="food">🍽 Food</button>
+                        <button class="explore-more-item" type="button" role="menuitem" data-explore-tab="budget">💰 Budget</button>
+                        <button class="explore-more-item" type="button" role="menuitem" data-explore-tab="packing">🧳 Packing</button>
+                        <button class="explore-more-item" type="button" role="menuitem" data-explore-tab="notes">📝 Notes</button>
+                        <button class="explore-more-item" type="button" role="menuitem" data-explore-tab="map">🗺 Map</button>
+                      </div>
+                    </div>
                   </div>
                   <div class="explore-trip-panel" id="exploreTripPanel"></div>
                 </div>
@@ -2275,6 +2287,10 @@
           <label class="profile-field-label">
             Birthday
             <input type="date" id="profileDobInput" class="config-input" />
+          </label>
+          <label class="profile-field-label">
+            Home address
+            <input type="text" id="profileHomeInput" class="config-input" autocomplete="off" placeholder="City or airport — trips start and finish here" />
           </label>
         </div>
         <div class="dialog-actions">

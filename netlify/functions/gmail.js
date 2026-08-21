@@ -1,4 +1,5 @@
 const { scanBookingFromEmailText } = require("../../booking-scan");
+const { interpretTravelThread } = require("../../travel-interpret");
 const {
   loadUserGmailTokens, saveUserGmailTokens, deleteUserGmailTokens,
   getUserId, getValidAccessToken, gFetch, gBatchGet, headersMap, extractBody,
@@ -256,6 +257,29 @@ exports.handler = async (event) => {
     } catch (e) {
       console.error("Booking email scan failed:", e.message);
       return json(502, { error: e.message || "Scan failed." });
+    }
+  }
+
+  // Send to Explore: interpret a whole thread into normalized travel entities.
+  // Bodies stay server-side; the client sends only the threadId.
+  if (action === "interpretThread") {
+    const { threadId } = body;
+    if (!threadId) return json(400, { error: "threadId required" });
+    const anthropicKey = (process.env.ANTHROPIC_API_KEY || "").trim();
+    if (!anthropicKey) return json(503, { error: "ANTHROPIC_API_KEY not configured." });
+    const r = await gFetch(gToken, `/threads/${threadId}?format=full`);
+    if (!r.ok) return json(502, { error: "Gmail thread fetch failed." });
+    const thread = await r.json();
+    const messages = (thread.messages || []).map((m) => {
+      const hdrs = headersMap(m.payload?.headers);
+      return { subject: hdrs.subject || "", from: hdrs.from || "", date: hdrs.date || "", text: htmlToText(extractBody(m.payload)) };
+    });
+    try {
+      const { entities } = await interpretTravelThread(messages, { apiKey: anthropicKey });
+      return json(200, { entities });
+    } catch (e) {
+      console.error("Travel thread interpretation failed:", e.message);
+      return json(502, { error: e.message || "Interpretation failed." });
     }
   }
 

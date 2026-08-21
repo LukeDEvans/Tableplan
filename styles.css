@@ -13947,7 +13947,8 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
 .mail-compose-btn svg { width: 20px; height: 20px; stroke: var(--ink); stroke-width: 1.5; fill: none; flex-shrink: 0; }
 /* The folder list scrolls independently of the message pane and the rest of
    the page; min-height:0 lets it shrink below its content so overflow engages. */
-.mail-label-nav { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; padding-right: 16px; }
+.mail-label-nav { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; -ms-overflow-style: none; padding-right: 16px; }
+.mail-label-nav::-webkit-scrollbar { width: 0; height: 0; display: none; }
 .mail-label-item {
   display: flex;
   align-items: center;
@@ -15002,12 +15003,22 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   /* Rail state (not hovered): icons only, centered; hide text and headers. */
   :is(#mediaMainPage, #exploreMainPage) .article-sidebar:not(:hover) .article-sidebar-tab > span,
   :is(#mediaMainPage, #exploreMainPage) .article-sidebar:not(:hover) .article-sidebar-section-label,
-  :is(#mediaMainPage, #exploreMainPage) .article-sidebar:not(:hover) .article-sidebar-divider,
-  #exploreMainPage .article-sidebar:not(:hover) .explore-trips-header,
-  #exploreMainPage .article-sidebar:not(:hover) #exploreTripList { display: none; }
+  :is(#mediaMainPage, #exploreMainPage) .article-sidebar:not(:hover) .article-sidebar-divider { display: none; }
   :is(#mediaMainPage, #exploreMainPage) .article-sidebar:not(:hover) .article-sidebar-tab {
     padding-left: 0; padding-right: 0; margin-right: 0; width: 100%; justify-content: center; gap: 0; border-radius: 0;
   }
+  /* Explore rail: keep each category's folder ICON visible (like Mail); hide the
+     labels and the individual trip rows until the rail is hovered open. */
+  #exploreMainPage .article-sidebar:not(:hover) .explore-cat-label,
+  #exploreMainPage .article-sidebar:not(:hover) .explore-sidebar-empty { display: none; }
+  #exploreMainPage .article-sidebar:not(:hover) .explore-cat-head { justify-content: center; padding-left: 0; padding-right: 0; gap: 0; }
+  #exploreMainPage .article-sidebar:not(:hover) .explore-cat-icon { color: var(--muted); }
+  /* Rail: each trip shows just its icon (its name emoji, or its status glyph),
+     centered under the category folder icon — same size as when expanded. */
+  #exploreMainPage .article-sidebar:not(:hover) .explore-trip-status { display: inline-flex !important; }
+  /* New-trip button collapses to the standard rounded-square "+" (navy border). */
+  #exploreMainPage .article-sidebar:not(:hover) .explore-new-trip-btn { width: 34px; height: 34px; padding: 0; margin: 10px auto; justify-content: center; border-radius: 8px; }
+  #exploreMainPage .article-sidebar:not(:hover) .explore-new-trip-label { display: none; }
 }
 
 /* ─── End Article/Listen pages ──────────────────────────────────────────────── */
@@ -16648,7 +16659,342 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 
 /* ── Explore page tabs ───────────────────────────────────────────────────── */
 #exMediaContent { flex-direction: column; }
-.explore-tabs { flex: none; }
+.explore-tabs { flex: none; position: relative; }
+
+/* "More ▾" dropdown holding the secondary planning workspaces */
+.explore-more-wrap { position: relative; display: inline-flex; }
+.explore-more-menu {
+  position: fixed; z-index: 4000;
+  min-width: 190px; padding: 6px;
+  background: var(--window-bg); border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent);
+  border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,0.18);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.explore-more-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border: none; border-radius: 8px; background: none;
+  font-size: 0.9rem; color: var(--ink); text-align: left; cursor: pointer;
+}
+.explore-more-item:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.explore-more-item.is-active { background: color-mix(in srgb, var(--accent) 16%, transparent); font-weight: 600; }
+
+/* Explore sidebar trip tabs with lifecycle status. A fixed row height and a
+   fixed icon slot keep every icon at the same position whether the sidebar is a
+   rail or expanded — so nothing shifts on hover. */
+.explore-trip-tab { display: flex; align-items: center; gap: 10px; min-height: 48px; }
+.explore-trip-status { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; font-size: 1.05rem; line-height: 1; flex-shrink: 0; }
+.explore-trip-tab-body { display: flex; flex-direction: column; gap: 0; min-width: 0; }
+.explore-trip-name { font-weight: 600; font-size: 0.9rem; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explore-trip-dates { font-size: 0.72rem; line-height: 1.25; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explore-trip-tab--traveling { box-shadow: inset 3px 0 0 var(--accent); }
+.explore-trip-tab--completed .explore-trip-name { color: var(--muted); }
+
+/* Sidebar categories (folders) — Upcoming / Wishlist / Past. Each header's icon
+   is what stays visible in the collapsed rail (see the desktop rail rules where
+   #exploreTripList lives). */
+#exploreMainPage .explore-cat-group { display: flex; flex-direction: column; margin-bottom: 4px; }
+.explore-cat-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px 4px 16px; }
+.explore-cat-icon { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex-shrink: 0; color: var(--muted); }
+.explore-cat-icon svg { width: 19px; height: 19px; }
+.explore-cat-label { flex: 1; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted, #888); }
+.explore-cat-trips { display: flex; flex-direction: column; }
+
+/* New-trip button: a rectangular "+ New" when the sidebar is open, collapsing to
+   the app-standard rounded-square "+" with the midnight-blue window border in the
+   rail (see std-add-btn). */
+.explore-new-trip-btn {
+  display: inline-flex; align-items: center; gap: 8px; align-self: flex-start;
+  height: 34px; box-sizing: border-box; margin: 10px 12px; padding: 0 14px;
+  border: 2px solid var(--window-border); border-radius: 10px;
+  background: var(--surface, #fff); color: var(--ink); cursor: pointer;
+  font-weight: 600; font-size: 0.9rem; white-space: nowrap;
+}
+.explore-new-trip-btn:hover { background: color-mix(in srgb, var(--window-border) 8%, transparent); }
+.explore-new-trip-plus { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2.2; fill: none; flex-shrink: 0; }
+
+/* ── Send to Explore: travel-info ingestion review ───────────────────────── */
+.ingest-dialog .recipe-form { max-width: 460px; }
+.ingest-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.ingest-intro { font-size: 0.85rem; color: var(--muted); margin: 0 0 14px; line-height: 1.45; }
+.ingest-cards { display: flex; flex-direction: column; gap: 12px; max-height: 60vh; overflow-y: auto; }
+.ingest-card { border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent); border-radius: 14px; padding: 14px; background: var(--surface); }
+.ingest-card--done { opacity: 0.75; background: color-mix(in srgb, var(--accent) 6%, transparent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+.ingest-card-head { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+.ingest-card-icon { font-size: 1.5rem; line-height: 1; }
+.ingest-card-title { font-weight: 700; font-size: 1rem; }
+.ingest-card-sub { font-size: 0.78rem; color: var(--muted); margin-top: 1px; }
+.ingest-fields { display: flex; flex-direction: column; gap: 4px; }
+.ingest-field { display: grid; grid-template-columns: 96px 1fr; gap: 8px; font-size: 0.84rem; }
+.ingest-field-label { color: var(--muted); }
+.ingest-field-value { min-width: 0; }
+.ingest-tag { font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; padding: 1px 6px; border-radius: 999px; vertical-align: middle; }
+.ingest-tag--inferred, .ingest-tag--medium { color: #b06a00; background: color-mix(in srgb, #d9822b 18%, transparent); }
+.ingest-tag--low { color: #b02a2a; background: color-mix(in srgb, #d94a4a 18%, transparent); }
+.ingest-cancel-banner { font-size: 0.8rem; font-weight: 600; color: #b02a2a; background: color-mix(in srgb, #d94a4a 12%, transparent); border-radius: 8px; padding: 6px 10px; margin-bottom: 10px; }
+.ingest-conflict-banner { font-size: 0.78rem; background: color-mix(in srgb, #d9a441 16%, transparent); border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; }
+.ingest-conflict-head { font-weight: 700; color: #9a6b16; margin-bottom: 5px; }
+.ingest-conflict-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 3px 0; }
+.ingest-conflict-field { font-weight: 600; color: var(--ink); }
+.ingest-conflict-vals { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.ingest-conflict-val { color: var(--ink); }
+.ingest-conflict-val em { color: var(--muted); font-style: normal; font-size: 0.72rem; }
+.ingest-conflict-vs { color: var(--muted); font-size: 0.72rem; }
+.ingest-conflict-hint { color: var(--muted); margin-top: 5px; }
+.ingest-source { font-size: 0.76rem; color: var(--muted); margin-top: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ingest-source-open { border: none; background: none; color: var(--accent-dark, var(--accent)); font-weight: 600; cursor: pointer; padding: 0; text-decoration: underline; font-size: 0.76rem; }
+.ingest-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.ingest-done { color: var(--accent-dark, var(--accent)); font-weight: 700; font-size: 0.85rem; }
+.ingest-none { text-align: center; padding: 24px 12px; }
+.ingest-none-icon { font-size: 2rem; }
+.ingest-none-actions { display: flex; gap: 8px; justify-content: center; margin-top: 14px; }
+.ingest-trip-list { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow-y: auto; }
+.ingest-trip-choice { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent); border-radius: 10px; background: var(--surface); cursor: pointer; text-align: left; color: var(--ink); font-size: 0.9rem; }
+.ingest-trip-choice:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.ingest-trip-dates { font-size: 0.76rem; color: var(--muted); }
+
+/* Explore review inbox (proposed changes) */
+.explore-proposals { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
+.explore-proposal-row { display: flex; align-items: center; gap: 10px; justify-content: space-between; border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent); border-radius: 10px; padding: 10px 12px; }
+.explore-proposal-body { min-width: 0; }
+.explore-proposal-title { font-size: 0.88rem; font-weight: 600; }
+.explore-proposal-sub { font-size: 0.76rem; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prop-diff { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 2px; }
+.prop-diff-row { display: grid; grid-template-columns: 110px 1fr auto 1fr; align-items: center; gap: 8px; font-size: 0.86rem; }
+.prop-diff-field { color: var(--muted); font-weight: 600; }
+.prop-diff-from { color: var(--muted); text-decoration: line-through; overflow: hidden; text-overflow: ellipsis; }
+.prop-diff-arrow { color: var(--muted); }
+.prop-diff-to { font-weight: 700; color: var(--accent-dark, var(--accent)); overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Itinerary: the center of gravity ────────────────────────────────────── */
+.itin-days { display: flex; flex-direction: column; gap: 10px; padding: 10px 10px 24px; overflow-y: auto; }
+.itin-day {
+  border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  border-radius: var(--radius); background: var(--surface); overflow: hidden;
+}
+.itin-day--today { border-color: color-mix(in srgb, var(--accent) 55%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent); }
+.itin-day-head {
+  width: 100%; display: grid; grid-template-columns: auto auto 1fr auto auto; align-items: center; gap: 10px;
+  padding: 12px 14px; border: none; background: none; cursor: pointer; text-align: left; color: var(--ink);
+}
+.itin-day-add { width: 28px; height: 28px; min-height: 28px; }
+.itin-day-add svg { width: 15px; height: 15px; }
+.itin-day-caret { transition: transform 0.15s ease; color: var(--muted); font-size: 0.85rem; }
+.itin-day.is-open .itin-day-caret { transform: rotate(90deg); }
+.itin-day-num { font-weight: 700; font-size: 0.9rem; white-space: nowrap; }
+.itin-day-today-tag {
+  font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  color: #fff; background: var(--accent); padding: 1px 6px; border-radius: 999px; margin-left: 4px;
+}
+.itin-day-date { color: var(--muted); font-size: 0.84rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.itin-day-chips { justify-self: end; font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
+.itin-day-open { color: var(--accent-dark, var(--accent)); font-weight: 700; }
+.itin-day-free { font-style: italic; opacity: 0.8; }
+.itin-day-body { padding: 4px 12px 14px; display: flex; flex-direction: column; }
+.itin-day-empty-note { padding: 14px 6px; color: var(--muted); font-size: 0.85rem; font-style: italic; }
+
+/* Stop card */
+.itin-stop { border-radius: 10px; }
+.itin-stop-head {
+  display: grid; grid-template-columns: 54px 24px 1fr auto; align-items: center; gap: 10px;
+  padding: 10px 8px; border-radius: 10px; cursor: pointer;
+}
+.itin-stop-head:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.itin-stop-time { font-variant-numeric: tabular-nums; font-size: 0.78rem; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.itin-stop-icon { font-size: 1.1rem; line-height: 1.3; }
+.itin-stop-title { font-weight: 600; font-size: 0.92rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.itin-stop-badge { color: var(--accent-dark, var(--accent)); font-weight: 700; }
+.itin-stop-actions { display: inline-flex; align-items: center; gap: 4px; }
+.itin-stop-caret { color: var(--muted); font-size: 0.85rem; transition: transform 0.15s ease; }
+.itin-stop.is-expanded .itin-stop-caret { transform: rotate(90deg); }
+.itin-stop-detail { display: none; padding: 2px 8px 12px 64px; }
+.itin-stop.is-expanded .itin-stop-detail { display: block; }
+.itin-stop-detail .item-detail-row { display: flex; gap: 10px; font-size: 0.82rem; padding: 3px 0; }
+.itin-stop-detail .item-detail-label { color: var(--muted); min-width: 84px; flex-shrink: 0; }
+.itin-stop-detail .item-detail-value a { color: var(--accent-dark, var(--accent)); text-decoration: underline; }
+.itin-stop-detail-actions { display: flex; gap: 8px; margin-top: 10px; }
+.itin-stop-menu-btn { border: none; background: none; color: var(--muted); cursor: pointer; font-size: 1.15rem; line-height: 1; padding: 2px 6px; border-radius: 6px; opacity: 0; transition: opacity 0.12s ease; }
+.itin-stop-head:hover .itin-stop-menu-btn { opacity: 1; }
+.itin-stop-menu-btn:hover { background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); }
+@media (hover: none), (pointer: coarse) { .itin-stop-menu-btn { opacity: 1; } }
+.itin-stop--leg .itin-stop-head { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+
+/* Transition row — the connective element between two stops */
+.itin-transition {
+  display: flex; align-items: center; margin-left: 60px; padding: 2px 8px 2px 0; cursor: pointer;
+  min-height: 30px; position: relative;
+}
+.itin-transition::before {
+  content: ""; position: absolute; left: -18px; top: 0; bottom: 0; width: 2px;
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
+}
+.itin-transition-line { display: inline-flex; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--muted); flex-wrap: wrap; }
+.itin-transition-line--loading { opacity: 0.7; }
+.itin-transition-mode { font-size: 1rem; }
+.itin-transition-text { color: var(--ink); }
+.itin-transition-text--muted { color: var(--muted); font-style: italic; }
+.itin-transition-tag {
+  font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--accent-dark, var(--accent)); background: color-mix(in srgb, var(--accent) 14%, transparent);
+  padding: 1px 7px; border-radius: 999px;
+}
+.itin-transition-tag--open { color: var(--muted); background: color-mix(in srgb, var(--ink) 10%, transparent); }
+.itin-transition--planned .itin-transition-tag { color: var(--muted); background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.itin-transition-warn { color: #d9822b; }
+.itin-transition:hover .itin-transition-text { text-decoration: underline; }
+
+.itin-add-wrap { margin: 8px 0 2px 60px; }
+.itin-add-btn { font-size: 0.8rem; }
+
+/* Propose-only suggestion cards (the itinerary's second opinion) */
+.itin-suggests { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; }
+.itin-suggest {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.itin-suggest--calendar, .itin-suggest--tight { background: color-mix(in srgb, #d9822b 10%, transparent); border-color: color-mix(in srgb, #d9822b 32%, transparent); }
+.itin-suggest-icon { font-size: 1.1rem; flex-shrink: 0; }
+.itin-suggest-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.itin-suggest-body strong { font-size: 0.82rem; }
+.itin-suggest-text { font-size: 0.8rem; color: var(--muted); }
+.itin-suggest .compact-btn { flex-shrink: 0; }
+
+/* Reorder review dialog */
+.reorder-dialog .reorder-reason { color: var(--muted); font-size: 0.86rem; margin: 0 0 14px; }
+.reorder-cols { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; }
+.reorder-col { min-width: 0; }
+.reorder-col--suggested { background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: 10px; padding: 6px 8px; }
+.reorder-arrow { color: var(--muted); font-size: 1.3rem; }
+.reorder-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.reorder-list li { display: flex; align-items: center; gap: 8px; font-size: 0.86rem; }
+.reorder-num { width: 20px; height: 20px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; background: color-mix(in srgb, var(--ink) 12%, transparent); font-size: 0.72rem; font-weight: 700; }
+.reorder-save { margin-top: 14px; text-align: center; font-weight: 700; color: var(--accent-dark, var(--accent)); font-size: 0.9rem; }
+
+/* Undated / idea state */
+.itin-undated { text-align: center; padding: 48px 24px; max-width: 440px; margin: 0 auto; }
+.itin-undated-icon { font-size: 2.4rem; }
+.itin-undated-title { font-weight: 700; font-size: 1.1rem; margin: 10px 0 4px; }
+.itin-undated-sub { color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
+.itin-undated-actions { display: flex; gap: 8px; justify-content: center; margin-top: 18px; flex-wrap: wrap; }
+
+/* Ideas / Saved */
+.itin-ideas { padding: 14px 12px 24px; max-width: 620px; }
+.itin-ideas-intro { color: var(--muted); font-size: 0.85rem; line-height: 1.5; margin-bottom: 12px; }
+.itin-ideas-add { display: flex; gap: 8px; margin-bottom: 12px; }
+.itin-ideas-add .text-input { flex: 1; }
+.itin-ideas-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.itin-idea-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent); border-radius: 10px; background: var(--surface);
+}
+.itin-idea-title { font-size: 0.9rem; }
+.itin-ideas-empty { color: var(--muted); font-style: italic; font-size: 0.88rem; }
+.itin-section-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 18px 0 8px; }
+.itin-refs-saved .itin-ref-group { margin-bottom: 10px; }
+.itin-ref-group-head { font-size: 0.8rem; font-weight: 600; margin-bottom: 4px; }
+.itin-ref-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); border-radius: 8px; margin-bottom: 4px; }
+.itin-ref-title { font-size: 0.86rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.itin-enrich-intro { color: var(--muted); font-size: 0.8rem; margin: 0 0 10px; }
+.itin-enrich-section { margin-bottom: 14px; }
+.itin-enrich-head { font-size: 0.82rem; font-weight: 600; margin-bottom: 6px; }
+.itin-enrich-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; border-radius: 8px; }
+.itin-enrich-row:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.itin-enrich-title { font-size: 0.86rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.itin-enrich-match { font-size: 0.66rem; font-weight: 700; text-transform: uppercase; color: var(--accent-dark, var(--accent)); background: color-mix(in srgb, var(--accent) 14%, transparent); padding: 1px 6px; border-radius: 999px; }
+.itin-enrich-save { flex-shrink: 0; }
+
+/* Prepare: shopping buckets + packing suggestions */
+.itin-prepare-block { margin-top: 20px; }
+.itin-shop-buckets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.itin-shop-bucket { border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); border-radius: 10px; padding: 8px; background: var(--surface); }
+.itin-shop-bucket-head { font-size: 0.74rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 6px; }
+.itin-shop-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 0.84rem; padding: 3px 0; }
+.itin-shop-empty { color: var(--muted); font-size: 0.8rem; }
+.itin-shop-add { margin-top: 6px; }
+.compact-input { padding: 5px 8px; font-size: 0.82rem; }
+.itin-pack-suggest { display: flex; flex-wrap: wrap; gap: 6px; }
+.itin-pack-chip { font-size: 0.8rem; }
+
+@media (max-width: 680px) {
+  .itin-shop-buckets { grid-template-columns: 1fr; }
+}
+
+/* Travel Mode activation banner */
+.itin-tm-banner { display: flex; align-items: center; gap: 12px; margin: 10px; padding: 12px 14px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent); }
+.itin-tm-banner-text { flex: 1; font-size: 0.86rem; }
+.travel-mode-btn { background: var(--accent) !important; color: #fff !important; }
+
+/* Travel Mode overlay — deliberately low-density, high-contrast, glanceable */
+.travel-mode-overlay { position: fixed; inset: 0; z-index: 5000; background: var(--bg); overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.tm-inner { max-width: 560px; margin: 0 auto; padding: 20px 18px 40px; display: flex; flex-direction: column; gap: 18px; }
+.tm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.tm-trip-name { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.01em; }
+.tm-date { color: var(--muted); font-size: 0.9rem; margin-top: 2px; }
+.tm-exit { border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 6px 16px; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+.tm-next-card { background: var(--surface-strong); border: 2px solid var(--accent); border-radius: 18px; padding: 20px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 8px 28px color-mix(in srgb, var(--accent) 18%, transparent); }
+.tm-next-card--rest { border-color: color-mix(in srgb, var(--ink) 16%, transparent); box-shadow: none; }
+.tm-next-label { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.12em; color: var(--accent-dark, var(--accent)); }
+.tm-next-main { display: flex; align-items: center; gap: 12px; }
+.tm-next-icon { font-size: 1.8rem; }
+.tm-next-title { font-size: 1.5rem; font-weight: 700; line-height: 1.15; }
+.tm-next-time { font-size: 1.1rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tm-next-loc { color: var(--muted); font-size: 0.9rem; }
+.tm-next-route { font-size: 0.95rem; color: var(--ink); min-height: 1.2em; }
+.tm-route-mode { font-size: 1.1rem; }
+.tm-start-route { align-self: flex-start; margin-top: 10px; text-decoration: none; }
+.tm-today-label { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 8px; }
+.tm-today { background: var(--surface); border-radius: 14px; padding: 14px 16px; }
+.tm-stop { display: grid; grid-template-columns: 22px 26px 1fr auto; align-items: center; gap: 10px; padding: 8px 0; font-size: 1rem; }
+.tm-stop + .tm-stop { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); }
+.tm-stop-mark { font-weight: 700; text-align: center; color: var(--muted); }
+.tm-stop--done { opacity: 0.5; }
+.tm-stop--done .tm-stop-title { text-decoration: line-through; }
+.tm-stop--current { font-weight: 700; }
+.tm-stop--current .tm-stop-mark { color: var(--accent-dark, var(--accent)); }
+.tm-stop-icon { font-size: 1.1rem; }
+.tm-stop-time { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 0.9rem; }
+.tm-actions { display: flex; gap: 10px; }
+.tm-actions .secondary-btn { flex: 1; }
+
+/* Planning map (Leaflet) */
+.travel-map-wrap { display: flex; flex-direction: column; height: 100%; }
+.travel-leaflet-map { width: 100%; height: 340px; border-radius: 12px; overflow: hidden; z-index: 0; background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.travel-map-listwrap { padding: 12px 4px 24px; }
+.travel-map-links { display: flex; flex-direction: column; gap: 4px; }
+.travel-map-link-row { display: grid; grid-template-columns: 24px 1fr; grid-template-areas: "icon title" "icon sub"; gap: 0 8px; padding: 8px 10px; border-radius: 8px; text-decoration: none; color: var(--ink); }
+.travel-map-link-row:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.travel-map-link-icon { grid-area: icon; align-self: center; }
+.travel-map-link-title { grid-area: title; font-weight: 600; font-size: 0.88rem; }
+.travel-map-link-sub { grid-area: sub; color: var(--muted); font-size: 0.76rem; }
+.travel-map-pin span {
+  display: flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+  border-radius: 50%; color: #fff; font-weight: 700; font-size: 0.78rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.35); border: 2px solid #fff;
+}
+
+/* Prepare / readiness */
+.itin-prepare { padding: 20px 14px 24px; max-width: 560px; }
+.itin-ready-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 16px; }
+.itin-ready-pct { font-size: 2.2rem; font-weight: 800; color: var(--accent-dark, var(--accent)); font-variant-numeric: tabular-nums; }
+.itin-ready-label { color: var(--muted); font-size: 0.95rem; }
+.itin-ready-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.itin-ready-row { display: grid; grid-template-columns: 24px 1fr auto; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--surface); border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); }
+.itin-ready-row.is-ok .itin-ready-mark { color: var(--accent-dark, var(--accent)); }
+.itin-ready-row.is-open .itin-ready-mark { color: #d9822b; }
+.itin-ready-mark { font-weight: 700; text-align: center; }
+.itin-ready-name { font-weight: 600; font-size: 0.9rem; }
+.itin-ready-detail { color: var(--muted); font-size: 0.8rem; text-align: right; }
+.itin-prepare-hint { color: var(--muted); font-size: 0.82rem; font-style: italic; margin-top: 16px; }
+
+@media (max-width: 680px) {
+  .itin-stop-head { grid-template-columns: 46px 20px 1fr auto; gap: 8px; }
+  .itin-stop-detail { padding-left: 54px; }
+  .itin-transition { margin-left: 46px; }
+  .itin-transition::before { left: -14px; }
+  .itin-add-wrap { margin-left: 46px; }
+  .itin-day-head { grid-template-columns: auto 1fr auto auto; }
+  .itin-day-date { display: none; }
+}
 
 /* ── Explore overview day cards ──────────────────────────────────────────── */
 .trip-overview-scroll {
@@ -16838,7 +17184,8 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
    preserve. */
 #mediaMainPage.planner-column,
 #mailMainPage.planner-column,
-#planMainPage.planner-column { padding: 0; }
+#planMainPage.planner-column,
+#exploreMainPage.planner-column { padding: 0; }
 
 /* Reading an article is a focused view — hide the Media search/menu/notifications
    top bar while the reader is open (the reader has its own Back button). */
@@ -19475,6 +19822,8 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .travel-dialog-field select,
 .travel-dialog-field textarea { font-size: 0.875rem; }
 .travel-party-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.travel-party-add { display: flex; gap: 8px; margin-top: 8px; }
+.travel-party-add .text-input { flex: 1; }
 .travel-party-chip {
   font-size: 0.78rem;
   padding: 3px 8px;
