@@ -8974,8 +8974,34 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
 /* ─── Watch page ────────────────────────────────────────────────────────────── */
 
 .watch-category-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
   margin-bottom: 4px;
 }
+/* Subtle corner actions (Archive + Add), matching the Discover/Podcasts corner
+   icons instead of the old prominent bottom footer. */
+.watch-category-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-bottom: 3px;
+}
+.watch-corner-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.watch-corner-btn:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
 
 /* Shop store bar: span the full panel width edge-to-edge (its underline was
    stopping short inside the list panel's 16px padding). Tabs stay inset. */

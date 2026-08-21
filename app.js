@@ -31503,19 +31503,15 @@ function renderWatchPlanner() {
           : `<button class="watch-category-tab watch-category-add-tab" type="button" data-watch-category-add title="Add tab">+</button>`
         }
       </div>
+      <div class="watch-category-actions">
+        <button class="watch-corner-btn" type="button" data-open-watch-archive title="Archive" aria-label="Archive"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg></button>
+        <button class="watch-corner-btn" type="button" data-open-watch-search title="Add movie or TV show" aria-label="Add movie or TV show"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+      </div>
     </div>
     <section class="day-column planner-day-panel do-backlog-panel watch-list-panel" aria-label="Watch List">
       <div class="do-board">
         ${watchListTemplate()}
       </div>
-      <footer class="watch-archive-footer">
-        <button class="watch-archive-open-btn" type="button" data-open-watch-archive>
-          Archive
-        </button>
-        <button class="primary-btn icon-primary-btn" type="button" data-open-watch-search title="Add movie or TV show" aria-label="Add movie or TV show">
-          <span aria-hidden="true">+</span>
-        </button>
-      </footer>
     </section>
   `;
 
