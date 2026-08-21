@@ -31616,7 +31616,7 @@ function watchScheduledListTemplate(dayId) {
 function watchScheduledItemTemplate(item, dayId) {
   const providerHtml = watchProviderOrShowtimesHtml(item);
 
-  const posterUrl = item.posterPath ? `https://image.tmdb.org/t/p/w92${item.posterPath}` : null;
+  const posterUrl = item.posterPath ? `https://image.tmdb.org/t/p/w185${item.posterPath}` : null;
   const posterHtml = posterUrl
     ? `<img class="watch-item-poster" src="${escapeHtml(posterUrl)}" alt="" aria-hidden="true" loading="lazy" />`
     : `<div class="watch-item-poster watch-item-poster-placeholder"></div>`;
@@ -31871,7 +31871,7 @@ function watchItemTemplate(item) {
 
   const episodeProgressHtml = item.type === "tv" ? watchEpisodeProgressHtml(item) : "";
 
-  const posterUrl = item.posterPath ? `https://image.tmdb.org/t/p/w92${item.posterPath}` : null;
+  const posterUrl = item.posterPath ? `https://image.tmdb.org/t/p/w185${item.posterPath}` : null;
   const posterHtml = posterUrl
     ? `<img class="watch-item-poster" src="${escapeHtml(posterUrl)}" alt="" aria-hidden="true" loading="lazy" />`
     : `<div class="watch-item-poster watch-item-poster-placeholder"></div>`;
@@ -32471,7 +32471,7 @@ function watchArchiveItemTemplate(item) {
         </div>`
       : "";
 
-  const posterUrl = item.posterPath ? `https://image.tmdb.org/t/p/w92${item.posterPath}` : null;
+  const posterUrl = item.posterPath ? `https://image.tmdb.org/t/p/w185${item.posterPath}` : null;
   const posterHtml = posterUrl
     ? `<img class="watch-item-poster" src="${escapeHtml(posterUrl)}" alt="" aria-hidden="true" loading="lazy" />`
     : `<div class="watch-item-poster watch-item-poster-placeholder"></div>`;
@@ -32704,7 +32704,7 @@ async function fetchWatchSearchResults(query, root, addForm) {
 
 function watchTmdbResultTemplate(r, dataAttr) {
   const posterUrl = r.posterPath
-    ? `https://image.tmdb.org/t/p/w92${r.posterPath}`
+    ? `https://image.tmdb.org/t/p/w185${r.posterPath}`
     : null;
   const posterHtml = posterUrl
     ? `<img class="watch-result-poster" src="${escapeHtml(posterUrl)}" alt="" aria-hidden="true" loading="lazy" />`

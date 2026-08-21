@@ -9392,6 +9392,51 @@ body.touch-drag-active * {
 .discover-svc[disabled] { opacity: 0.5; cursor: default; }
 .discover-svc-none { font-size: 0.78rem; color: var(--muted); margin-top: 4px; }
 
+/* ── Watch cards → Discover look (art-forward media cards) ─────────────────────
+   Reskin the planner's task-cards to the same neutral surface language as
+   Discover/Podcasts/Music (was the warm "sun"/do-board theme). Structure,
+   drag-drop, controls, sections, and showtimes are all unchanged — this is skin
+   only, and uses the shared --surface/--line tokens so both themes stay correct. */
+.watch-item {
+  border: 1px solid var(--line, #e4e0d8);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+  box-shadow: none;
+  padding: 10px;
+}
+.watch-item-layout { gap: 12px; align-items: flex-start; }
+.watch-item-poster,
+.watch-item-poster-placeholder {
+  display: block;
+  width: 60px;
+  height: 90px;
+  border-radius: 8px;
+  border: none;
+  background: var(--surface-2, #f0f0f6);
+}
+.watch-item-title { font-weight: 700; font-size: 0.95rem; }
+.watch-type-badge {
+  background: var(--surface-2, #f0f0f6);
+  color: var(--muted);
+  border: 1px solid var(--line, #e4e0d8);
+}
+.watch-status-select {
+  border: 1px solid var(--line, #e4e0d8);
+  background: var(--surface, #fff);
+  color: var(--ink);
+}
+/* Section headers match .discover-section-title (uppercase, muted) instead of the
+   bold sun-underlined heads; still a clickable collapse toggle. */
+.watch-section-head {
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: none;
+  padding: 2px 0 6px;
+}
+
 .watch-providers {
   display: flex;
   align-items: center;
