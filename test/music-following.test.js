@@ -100,6 +100,28 @@ describe("following — restarts, repeats, chords", () => {
     expect(s.matched).toBe(true);
     expect(s.position).toMatchObject({ measureIndex: 1, eventId: "f" });
   });
+
+  it("counts ALL members of a played chord as correct (polyphony), holding position", () => {
+    const e = eng();
+    e.reset(makePosition({ ...context, measureIndex: 1, offset: rat(0, 1) }));
+    e.push(on(67));                 // note "e"
+    const a = e.push(on(60));       // chord "f" — first member (forward match)
+    const b = e.push(on(64));       // chord "f" — second member
+    const c = e.push(on(67));       // chord "f" — third member
+    expect([a.matched, b.matched, c.matched]).toEqual([true, true, true]);
+    expect(a.position).toMatchObject({ eventId: "f" });
+    expect(c.position).toMatchObject({ eventId: "f" }); // held on the chord
+    expect(c.confidence).toBe(1);   // chord members never erode confidence
+  });
+
+  it("a chord played with a wrong extra note still scores the real members correct", () => {
+    const e = eng();
+    e.reset(makePosition({ ...context, measureIndex: 1, offset: rat(0, 1) }));
+    e.push(on(67));
+    expect(e.push(on(60)).matched).toBe(true);  // member
+    expect(e.push(on(63)).matched).toBe(false); // wrong extra (not a member)
+    expect(e.push(on(64)).matched).toBe(true);  // real member still counts
+  });
 });
 
 describe("following — robustness", () => {
