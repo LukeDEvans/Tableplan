@@ -113,6 +113,10 @@ const server = http.createServer(async (request, response) => {
       await handleTmdbSearch(url, response);
       return;
     }
+    if (url.pathname === "/api/youtube-search") {
+      await handleYoutubeSearch(url, response);
+      return;
+    }
     if (url.pathname === "/api/tmdb-watch-providers") {
       await handleTmdbWatchProviders(url, response);
       return;
@@ -1710,6 +1714,30 @@ const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 
 function tmdbApiKey() {
   return String(process.env.TMDB_API_KEY || "").trim();
+}
+
+// Local mirror of netlify/functions/youtube-search.js (no session check needed in
+// local dev). Returns the raw YouTube `items` so media-provider-youtube.js maps
+// them unchanged; empty 200 when no key is configured, so Discover just shows no
+// YouTube results (no error) until YOUTUBE_API_KEY is set in .env.
+async function handleYoutubeSearch(url, response) {
+  const query = String(url.searchParams.get("q") || "").trim();
+  if (!query) { sendJson(response, 400, { error: "Missing search query." }); return; }
+  const apiKey = String(process.env.YOUTUBE_API_KEY || "").trim();
+  if (!apiKey) { sendJson(response, 200, { items: [] }); return; }
+  const maxResults = Math.min(Math.max(parseInt(url.searchParams.get("maxResults"), 10) || 12, 1), 25);
+  try {
+    const params = new URLSearchParams({
+      part: "snippet", type: "video", safeSearch: "moderate",
+      maxResults: String(maxResults), q: query, key: apiKey,
+    });
+    const fetched = await fetch(`https://www.googleapis.com/youtube/v3/search?${params.toString()}`);
+    if (!fetched.ok) { sendJson(response, fetched.status, { error: `YouTube returned ${fetched.status}.` }); return; }
+    const data = await fetched.json();
+    sendJson(response, 200, { items: Array.isArray(data.items) ? data.items : [] });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || "YouTube search failed." });
+  }
 }
 
 async function handleTmdbSearch(url, response) {
