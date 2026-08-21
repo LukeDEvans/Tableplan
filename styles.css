@@ -9350,12 +9350,6 @@ body.touch-drag-active * {
   background: var(--surface, #fff);
   color: var(--ink);
 }
-.discover-modes { flex: 0 0 auto; display: flex; gap: 4px; padding: 0 2px 8px; }
-.discover-mode { flex: 0 0 auto; font: inherit; font-size: 0.85rem; font-weight: 600; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line, #e4e0d8); background: transparent; color: var(--muted); cursor: pointer; }
-.discover-mode.is-active { background: var(--ink); color: var(--surface, #fff); border-color: var(--ink); }
-.discover-filters { flex: 0 0 auto; display: flex; gap: 4px; padding: 0 2px 10px; }
-.discover-filter { flex: 0 0 auto; font: inherit; font-size: 0.8rem; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line, #e4e0d8); background: transparent; color: var(--muted); cursor: pointer; }
-.discover-filter.is-active { background: var(--surface-2, #f0ece3); color: var(--ink); border-color: var(--ink); }
 /* Watch tab = search head (fixed) + watchlist grid OR search results (each a
    direct scroll-child of the overflow:hidden panel, toggled by [hidden]). */
 #mediaWatchPanel > .planner-grid { flex: 1 1 auto; min-height: 0; overflow-y: auto; align-content: start; }
