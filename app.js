@@ -38367,7 +38367,7 @@ function wireMediaTabs() {
   document.getElementById("confirmPdfImportBtn")?.addEventListener("click", confirmPdfImport);
 }
 
-const MEDIA_SERVICE_TABS = ["books", "podcasts", "music", "radio", "watch", "discover"];
+const MEDIA_SERVICE_TABS = ["books", "podcasts", "music", "radio", "watch"];
 
 function switchMediaTab(tab) {
   activeMediaTab = tab;
@@ -38395,7 +38395,6 @@ function switchMediaTab(tab) {
   const musicPanel = document.getElementById("mediaMusicPanel");
   const radioPanel = document.getElementById("mediaRadioPanel");
   const watchPanel = document.getElementById("mediaWatchPanel");
-  const discoverPanel = document.getElementById("mediaDiscoverPanel");
 
   if (booksPanel) booksPanel.hidden = true;
   if (listPanel) listPanel.hidden = true;
@@ -38405,7 +38404,6 @@ function switchMediaTab(tab) {
   if (musicPanel) musicPanel.hidden = true;
   if (radioPanel) radioPanel.hidden = true;
   if (watchPanel) watchPanel.hidden = true;
-  if (discoverPanel) discoverPanel.hidden = true;
   const searchPanel = document.getElementById("mediaSearchPanel");
   if (searchPanel) searchPanel.hidden = true;
   // Leaving to a folder clears an active top-bar search.
@@ -38435,10 +38433,7 @@ function switchMediaTab(tab) {
     initRadioPanel();
   } else if (tab === "watch") {
     if (watchPanel) watchPanel.hidden = false;
-    renderWatchPlanner(); // self-contained (renders category tabs + list + wiring into #watchPlannerGrid)
-  } else if (tab === "discover") {
-    if (discoverPanel) discoverPanel.hidden = false;
-    renderDiscoverPanel();
+    renderWatchTab(); // universal search on top + the watchlist/planner below
   } else {
     const isArticleTab = getReadPublications().some(p => p.key === tab);
     if (listPanel) listPanel.hidden = false;
@@ -38450,6 +38445,36 @@ function switchMediaTab(tab) {
     renderMediaPubTabs(); // top publication bar, active tab highlighted
     renderArticleList("articleList", tab);
   }
+}
+
+// The Watch tab = universal search on top + the watchlist/planner below, on one
+// scroll surface (it absorbed the former Discover tab). Empty search shows the
+// watchlist; typing shows universal results in the shared #discoverResults.
+function renderWatchTab() {
+  const input = document.getElementById("discoverSearchInput");
+  if (input && !input.dataset.wired) {
+    input.dataset.wired = "1";
+    let t = null;
+    input.addEventListener("input", () => { clearTimeout(t); const q = input.value.trim(); t = setTimeout(() => watchTabSearch(q), 360); });
+    document.getElementById("discoverServicesBtn")?.addEventListener("click", openDiscoverServicesDialog);
+  }
+  const q = input && input.value.trim();
+  if (q) watchTabSearch(q); else showWatchList();
+}
+function watchTabSearch(q) {
+  const grid = document.getElementById("watchPlannerGrid");
+  const results = document.getElementById("discoverResults");
+  if (!q) { showWatchList(); return; }
+  if (grid) grid.hidden = true;
+  if (results) results.hidden = false;
+  runDiscoverSearch(q); // renders universal results into #discoverResults
+}
+function showWatchList() {
+  const grid = document.getElementById("watchPlannerGrid");
+  const results = document.getElementById("discoverResults");
+  if (results) { results.hidden = true; results.innerHTML = ""; }
+  if (grid) grid.hidden = false;
+  renderWatchPlanner();
 }
 
 // ── Discover: universal media search across providers ─────────────────────────
@@ -39351,12 +39376,11 @@ function wireTopSearchDiscoverRow(listEl, q) {
 function goToDiscoverSearch(q) {
   mediaSearchQuery = "";
   const si = document.getElementById("mediaSearchInput"); if (si) si.value = "";
-  activeMediaTab = "discover";
-  switchMediaTab("discover");
+  activeMediaTab = "watch";
+  switchMediaTab("watch");
   const input = document.getElementById("discoverSearchInput");
   if (input) input.value = q;
-  discoverMode = "home";
-  runDiscoverSearch(q);
+  watchTabSearch(q);
 }
 
 function switchPodcastTab(tabId) {

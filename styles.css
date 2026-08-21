@@ -9356,6 +9356,9 @@ body.touch-drag-active * {
 .discover-filters { flex: 0 0 auto; display: flex; gap: 4px; padding: 0 2px 10px; }
 .discover-filter { flex: 0 0 auto; font: inherit; font-size: 0.8rem; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line, #e4e0d8); background: transparent; color: var(--muted); cursor: pointer; }
 .discover-filter.is-active { background: var(--surface-2, #f0ece3); color: var(--ink); border-color: var(--ink); }
+/* Watch tab = search head (fixed) + watchlist grid OR search results (each a
+   direct scroll-child of the overflow:hidden panel, toggled by [hidden]). */
+#mediaWatchPanel > .planner-grid { flex: 1 1 auto; min-height: 0; overflow-y: auto; align-content: start; }
 .media-search-discover-row { display: flex; align-items: center; gap: 10px; width: 100%; font: inherit; font-size: 0.9rem; font-weight: 600; text-align: left; padding: 12px 14px; margin: 2px 0 8px; border: 1px solid var(--line, #e4e0d8); border-radius: 12px; background: var(--surface-2, #f0ece3); color: var(--ink); cursor: pointer; }
 .media-search-discover-row:hover { border-color: var(--ink); }
 .media-search-discover-row svg { flex: 0 0 auto; color: var(--muted); }
