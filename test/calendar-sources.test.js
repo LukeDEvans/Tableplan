@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  registerProvider, getProvider, listProviders, providerIsReadOnly, sourceFromPlanCalendar
+  registerProvider, getProvider, listProviders, providerIsReadOnly, sourceFromPlanCalendar, detectProvider
 } from "../calendar/sources.js";
 import { externalEventId, normalizeExternalEvent, normalizeExternalEvents } from "../calendar/normalize.js";
 
@@ -20,6 +20,30 @@ describe("provider registry (§10-11)", () => {
   });
   it("unknown providers are treated as read-only (safe default)", () => {
     expect(providerIsReadOnly("nope")).toBe(true);
+  });
+  it("ships the read-only Amion provider alongside ICS (§12)", () => {
+    expect(getProvider("amion")).toMatchObject({ id: "amion", readOnly: true });
+  });
+});
+
+describe("detectProvider — Amion reuses the ICS pipeline (§12)", () => {
+  it("recognizes the Amion on-call VCal endpoint by host and by the Vcal param", () => {
+    expect(detectProvider("https://www.amion.com/cgi-bin/ocs?Vcal=7.1500&Lo=3umnpeds&Jd=10758")).toBe("amion");
+    expect(detectProvider("https://amion.com/cgi-bin/ocs?Jd=1")).toBe("amion");
+    expect(detectProvider("https://feeds.example.com/x?Vcal=7.1")).toBe("amion");
+  });
+  it("treats any other iCal URL as generic ICS", () => {
+    expect(detectProvider("https://calendar.google.com/…/basic.ics")).toBe("ics");
+    expect(detectProvider("")).toBe("ics");
+    expect(detectProvider(null)).toBe("ics");
+  });
+  it("does not misfire on lookalike hosts", () => {
+    expect(detectProvider("https://notamion.com.evil.test/f.ics")).toBe("ics");
+  });
+  it("a subscription with an Amion URL is modeled as the amion provider (still ICS pipeline)", () => {
+    const src = sourceFromPlanCalendar({ id: "c1", name: "On-call", url: "https://www.amion.com/cgi-bin/ocs?Vcal=7.1500&Lo=x&Jd=1" });
+    expect(src.provider).toBe("amion");
+    expect(src.readOnly).toBe(true);
   });
 });
 

@@ -40,8 +40,22 @@ export function providerIsReadOnly(id) {
   return p ? p.readOnly : true; // unknown providers are treated as read-only
 }
 
-// ICS is the built-in read-only provider. Amion will register alongside it later.
+// ICS is the built-in read-only provider. Amion is the first real proof that the
+// provider model works: it serves an iCalendar/VCal feed, so it reuses the exact
+// same fetch + parse + normalize pipeline as ICS (§12 — do NOT write a parallel
+// parser) and only differs as a recognized provider label. No Amion-specific UI.
 registerProvider({ id: "ics", label: "iCal / ICS subscription", readOnly: true });
+registerProvider({ id: "amion", label: "Amion", readOnly: true });
+
+// Identify the provider a subscription URL belongs to. Amion's on-call feed is an
+// iCalendar endpoint like https://www.amion.com/cgi-bin/ocs?Vcal=7.1500&Lo=…&Jd=…
+// — detected by host so its events can carry provider:"amion" while flowing
+// through the ICS pipeline. Everything else is treated as generic ICS.
+export function detectProvider(url) {
+  const u = String(url || "").toLowerCase();
+  if (/(^|\/\/|\.)amion\.com\b/.test(u) || /[?&]vcal=/.test(u)) return "amion";
+  return "ics";
+}
 
 // Bridge from today's stored subscription shape (`planCalendars` entry) to a
 // generalized CalendarSource. Data is NOT moved — this is a read-only view over
@@ -53,7 +67,7 @@ registerProvider({ id: "ics", label: "iCal / ICS subscription", readOnly: true }
 export function sourceFromPlanCalendar(cal) {
   return {
     id: cal.id,                       // stable source id
-    provider: "ics",
+    provider: detectProvider(cal.url), // "amion" for Amion feeds, else "ics"
     calendarId: cal.id,               // owning Calendar bucket (§8)
     name: cal.name || "Calendar",
     color: cal.color || null,
