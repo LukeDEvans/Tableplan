@@ -10,6 +10,9 @@ import { icon as ldeIcon } from './live-icons.js';
 import { createWeatherCache } from './weather-cache.js';
 import { createPlaybackEngine } from './playback-engine.js';
 import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones } from './state-sync.js';
+import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
+import { normalizePlanEvents } from './calendar/model.js';
+import { eventInstancesInRange, sortEventsForDisplay } from './calendar/projection.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import * as TravelItinerary from './travel-itinerary.js';
 import * as TravelTransitions from './travel-transitions.js';
@@ -35859,183 +35862,12 @@ function planNthWeekdayInfo(d) {
   return { weekday, dayOfMonth, setPos, isLast: dayOfMonth + 7 > dim };
 }
 
-// Date of the Nth (setPos; -1 = last) `weekday` in year/month, or null if that
-// occurrence doesn't exist (e.g. a 5th Friday in a short month).
-function planNthWeekdayDate(year, month, weekday, setPos) {
-  const dim = new Date(year, month + 1, 0).getDate();
-  if (setPos === -1) {
-    const last = new Date(year, month, dim);
-    return new Date(year, month, dim - ((last.getDay() - weekday + 7) % 7));
-  }
-  const first = new Date(year, month, 1);
-  const day = 1 + ((weekday - first.getDay() + 7) % 7) + (setPos - 1) * 7;
-  return day > dim ? null : new Date(year, month, day);
-}
+// normalizeRecurrence, planNthOccurrenceDate, planNthWeekdayDate and
+// expandRecurringOccurrences moved to ./calendar/recurrence.js (imported at top).
 
-function normalizeRecurrence(r) {
-  if (!r || typeof r !== "object") return null;
-  const freq = ["daily", "weekly", "monthly", "yearly"].includes(r.freq) ? r.freq : null;
-  if (!freq) return null;
-  const interval = Math.max(1, Math.min(365, Math.round(Number(r.interval) || 1)));
-  const until = (typeof r.until === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.until)) ? r.until : null;
-  // "Ends after N times" is stored as both count (for the editor) and a derived
-  // until date (so expansion stays purely until-based).
-  const count = (Number.isInteger(r.count) && r.count > 0 && r.count <= 3650) ? r.count : null;
-  // Weekly events can repeat on specific days of the week (0 = Sun … 6 = Sat).
-  let byWeekdays = null;
-  if (freq === "weekly" && Array.isArray(r.byWeekdays)) {
-    const days = [...new Set(r.byWeekdays.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 0 && n <= 6))].sort((a, b) => a - b);
-    if (days.length) byWeekdays = days;
-  }
-  // Monthly/yearly can repeat on the same day-of-month/date, or on the "nth
-  // weekday" (e.g. the third Friday, or the last Friday).
-  let monthMode = null, byWeekday = null, bySetPos = null;
-  if (freq === "monthly" || freq === "yearly") {
-    monthMode = r.monthMode === "nthWeekday" ? "nthWeekday" : "dayOfMonth";
-    if (monthMode === "nthWeekday") {
-      byWeekday = (Number.isInteger(r.byWeekday) && r.byWeekday >= 0 && r.byWeekday <= 6) ? r.byWeekday : null;
-      bySetPos = [1, 2, 3, 4, 5, -1].includes(Number(r.bySetPos)) ? Number(r.bySetPos) : 1;
-      if (byWeekday === null) { monthMode = "dayOfMonth"; bySetPos = null; }
-    }
-  }
-  return { freq, interval, until, count, byWeekdays, monthMode, byWeekday, bySetPos };
-}
+// normalizePlanEvents moved to ./calendar/model.js (imported at top).
 
-// Date of the Nth occurrence of a recurring event, counting from its start.
-// Used to convert an "ends after N times" choice into a concrete until date so
-// occurrence expansion stays purely until-based.
-function planNthOccurrenceDate(baseEvent, count) {
-  if (!baseEvent?.recurrence || !(count >= 1)) return null;
-  const endD = new Date(baseEvent.date + "T00:00:00");
-  if (isNaN(endD)) return null;
-  endD.setFullYear(endD.getFullYear() + 20); // generous horizon; loops are capped internally
-  const occ = expandRecurringOccurrences(
-    { ...baseEvent, recurrence: { ...baseEvent.recurrence, until: null, count: null }, exceptions: [] },
-    baseEvent.date, dateKeyFromDate(endD)
-  );
-  return occ[count - 1] || occ[occ.length - 1] || null;
-}
-
-function normalizePlanEvents(events) {
-  return Array.isArray(events) ? events.map((e) => ({
-    id: e?.id || createId("plan-evt"),
-    title: String(e?.title || "").trim(),
-    date: String(e?.date || "").trim(),
-    startTime: e?.startTime ? String(e.startTime).trim() : null,
-    endTime: e?.endTime ? String(e.endTime).trim() : null,
-    allDay: e?.allDay !== false,
-    color: e?.color ? String(e.color) : null,
-    calendarId: e?.calendarId ? String(e.calendarId) : null,
-    notes: String(e?.notes || "").trim(),
-    location: (e?.location && typeof e.location === "object") ? e.location : null,
-    attachment: (e?.attachment && typeof e.attachment === "object") ? e.attachment : null,
-    recurrence: normalizeRecurrence(e?.recurrence),
-    exceptions: Array.isArray(e?.exceptions) ? e.exceptions.filter((d) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) : [],
-    addToDo: Boolean(e?.addToDo),
-    chores: Array.isArray(e?.chores) ? e.chores.map((c) => String(c || "").trim()).filter(Boolean) : [],
-    // When on, the event shows on the meal plan in whichever meal column(s) its
-    // time of day falls into (all-day / untimed events show on every meal).
-    showInMealPlan: Boolean(e?.showInMealPlan),
-    reminder: Number.isFinite(e?.reminder) ? e.reminder : null,
-    endDate: (typeof e?.endDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(e.endDate)) ? e.endDate : null,
-    createdAt: e?.createdAt || new Date().toISOString()
-  })).filter((e) => e.date && e.title) : [];
-}
-
-// Expand a recurring event into occurrence date-keys within [startKey, endKey].
-function expandRecurringOccurrences(e, startKey, endKey) {
-  const occ = [];
-  const rec = e.recurrence;
-  if (!rec) return occ;
-  const base = new Date(e.date + "T00:00:00");
-  if (isNaN(base)) return occ;
-  const exceptions = new Set(e.exceptions || []);
-  const hardEnd = (rec.until && rec.until < endKey) ? rec.until : endKey;
-
-  // Weekly on specific weekdays: scan day-by-day, keeping the chosen weekdays
-  // in weeks that fall on the interval (e.g. every 2 weeks on Mon & Wed).
-  if (rec.freq === "weekly" && Array.isArray(rec.byWeekdays) && rec.byWeekdays.length) {
-    const days = new Set(rec.byWeekdays);
-    const baseWeekStart = planWeekStart(base); // Sunday of the event's start week
-    const startD2 = new Date(startKey + "T00:00:00");
-    const scan = new Date(Math.max(base.getTime(), startD2.getTime()));
-    scan.setHours(0, 0, 0, 0);
-    let g = 0;
-    while (g++ < 1500) {
-      const key = dateKeyFromDate(scan);
-      if (key > hardEnd) break;
-      if (key >= startKey && key >= e.date && days.has(scan.getDay()) && !exceptions.has(key)) {
-        const weekOffset = Math.round((planWeekStart(scan) - baseWeekStart) / (7 * 86400000));
-        if (weekOffset >= 0 && weekOffset % rec.interval === 0) occ.push(key);
-      }
-      scan.setDate(scan.getDate() + 1);
-    }
-    return occ;
-  }
-
-  // Monthly / yearly on the Nth weekday (e.g. 3rd Friday, or last Friday). For
-  // yearly the month is fixed to the event's month; for monthly it advances.
-  if ((rec.freq === "monthly" || rec.freq === "yearly") && rec.monthMode === "nthWeekday" && Number.isInteger(rec.byWeekday)) {
-    const endD = new Date(hardEnd + "T00:00:00");
-    let y = base.getFullYear(), m = base.getMonth(), g3 = 0;
-    while (g3++ < 1500) {
-      if (new Date(y, m, 1) > endD) break;
-      const occDate = planNthWeekdayDate(y, m, rec.byWeekday, rec.bySetPos);
-      if (occDate) {
-        const key = dateKeyFromDate(occDate);
-        if (key > hardEnd) break;
-        if (key >= startKey && key >= e.date && !exceptions.has(key)) occ.push(key);
-      }
-      if (rec.freq === "monthly") { m += rec.interval; y += Math.floor(m / 12); m = ((m % 12) + 12) % 12; }
-      else { y += rec.interval; }
-    }
-    return occ;
-  }
-
-  // Monthly / yearly on a day-of-month: anchor on the original day so a month or
-  // year that lacks that day (e.g. the 31st in Feb, or Feb 29 in a common year)
-  // is SKIPPED, not rolled forward into the next month (which would drift the day
-  // and drop months entirely).
-  if (rec.freq === "monthly" || rec.freq === "yearly") {
-    const anchorDay = base.getDate();
-    const anchorMonth = base.getMonth();
-    const endD = new Date(hardEnd + "T00:00:00");
-    let y = base.getFullYear(), m = base.getMonth(), g4 = 0;
-    while (g4++ < 2400) {
-      const mm = rec.freq === "yearly" ? anchorMonth : m;
-      if (new Date(y, mm, 1) > endD) break;
-      const dim = new Date(y, mm + 1, 0).getDate(); // days in this month
-      if (anchorDay <= dim) {
-        const key = dateKeyFromDate(new Date(y, mm, anchorDay));
-        if (key > hardEnd) break;
-        if (key >= startKey && key >= e.date && !exceptions.has(key)) occ.push(key);
-      }
-      if (rec.freq === "monthly") { m += rec.interval; y += Math.floor(m / 12); m = ((m % 12) + 12) % 12; }
-      else { y += rec.interval; }
-    }
-    return occ;
-  }
-
-  // Daily / weekly (every N days/weeks). Fast-forward from an old start so we
-  // don't burn the iteration cap before reaching the visible window.
-  const d = new Date(base);
-  const startD = new Date(startKey + "T00:00:00");
-  if (d < startD) {
-    const step = (rec.freq === "daily" ? 1 : 7) * rec.interval;
-    const jumps = Math.floor((startD - d) / 86400000 / step);
-    if (jumps > 0) d.setDate(d.getDate() + jumps * step);
-  }
-  let guard = 0;
-  while (guard++ < 1500) {
-    const key = dateKeyFromDate(d);
-    if (key > hardEnd) break;
-    if (key >= startKey && !exceptions.has(key)) occ.push(key);
-    if (rec.freq === "daily") d.setDate(d.getDate() + rec.interval);
-    else if (rec.freq === "weekly") d.setDate(d.getDate() + 7 * rec.interval);
-    else break;
-  }
-  return occ;
-}
+// expandRecurringOccurrences moved to ./calendar/recurrence.js (imported at top).
 
 function normalizePlanCalendars(calendars) {
   return Array.isArray(calendars) ? calendars.map((c) => ({
@@ -37402,27 +37234,11 @@ function getPlanEventsForRange(startKey, endKey) {
   (state.planEvents || []).forEach((e) => {
     if (e.calendarId && disabledCalIds.has(e.calendarId)) return; // calendar hidden
     const color = eventColor(e);
-    if (e.recurrence) {
-      expandRecurringOccurrences(e, startKey, endKey).forEach((occDate) => {
-        events.push({ ...e, date: occDate, occurrenceOf: e.id, source: "personal", color });
-      });
-    } else if (e.endDate && e.endDate > e.date) {
-      // Multi-day: show on each spanned day within the visible range.
-      let d = new Date((e.date > startKey ? e.date : startKey) + "T00:00:00");
-      const last = e.endDate < endKey ? e.endDate : endKey;
-      let g = 0;
-      while (g++ < 400) {
-        const k = dateKeyFromDate(d);
-        if (k > last) break;
-        if (k >= e.date) {
-          const spanPos = k === e.date ? "start" : (k === e.endDate ? "end" : "mid");
-          events.push({ ...e, date: k, occurrenceOf: e.id, source: "personal", color, spanPos });
-        }
-        d.setDate(d.getDate() + 1);
-      }
-    } else if (e.date >= startKey && e.date <= endKey) {
-      events.push({ ...e, source: "personal", color });
-    }
+    // Expansion (recurrence / multi-day span / single) is the pure projection
+    // helper; the source + resolved color are layered on here.
+    eventInstancesInRange(e, startKey, endKey).forEach((inst) => {
+      events.push({ ...e, ...inst, source: "personal", color });
+    });
   });
   // Household view overlays the member's own events (marked) so nothing is
   // missed while planning family things. Personal view stays personal-only.
@@ -37451,10 +37267,7 @@ function getPlanEventsForRange(startKey, endKey) {
     });
   });
   getAppDataEvents(startKey, endKey).forEach((e) => events.push(e));
-  events.sort((a, b) => {
-    if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
-    return (a.startTime || "00:00").localeCompare(b.startTime || "00:00");
-  });
+  sortEventsForDisplay(events);
   planRangeCache.set(cacheKey, events);
   if (planRangeCache.size > PLAN_RANGE_CACHE_MAX) planRangeCache.delete(planRangeCache.keys().next().value);
   return events;
