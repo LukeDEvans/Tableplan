@@ -11014,6 +11014,26 @@ body.touch-drag-active * {
   color: var(--accent, #1a73e8);
 }
 
+/* Calendar-page Tasks bell — opens the Tasks overlay; a red dot when tasks are
+   due, overdue, or chores are pending (fed by updateDoNotifCount). */
+.plan-tasks-btn { position: relative; flex: 0 0 auto; }
+.plan-tasks-btn.has-notif-dot::after {
+  content: ""; position: absolute; top: 3px; right: 3px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--tomato, #e5484d);
+  box-shadow: 0 0 0 2px var(--window-bg, #fff);
+}
+
+/* Tasks overlay — the full task planner as a window over the calendar. */
+.tasks-overlay .panel-head { align-items: center; padding: 14px 16px 0; margin-bottom: 8px; }
+.tasks-overlay-week { display: flex; align-items: center; gap: 4px; }
+.tasks-overlay-week-label {
+  font-size: 0.85rem; font-weight: 600; color: var(--muted, #6f6a60);
+  min-width: 8ch; text-align: center; white-space: nowrap;
+}
+.tasks-overlay-body { display: flex; flex-direction: column; min-height: 0; padding: 0 16px 16px; }
+.tasks-overlay-body #doPlannerGrid { flex: 1 1 auto; min-height: 0; }
+
 .plan-today-btn {
   margin-left: auto;
   padding: 6px 14px;

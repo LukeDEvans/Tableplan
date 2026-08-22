@@ -1062,6 +1062,11 @@ const elements = {
   closeDoArchiveBtn: document.querySelector("#closeDoArchiveBtn"),
   tasksPageDialog: document.querySelector("#tasksPageDialog"),
   closeTasksPageBtn: document.querySelector("#closeTasksPageBtn"),
+  tasksOverlayBody: document.querySelector("#tasksOverlayBody"),
+  tasksOverlayWeekLabel: document.querySelector("#tasksOverlayWeekLabel"),
+  tasksOverlayPrevWeek: document.querySelector("#tasksOverlayPrevWeek"),
+  tasksOverlayNextWeek: document.querySelector("#tasksOverlayNextWeek"),
+  planTasksBtn: document.querySelector("#planTasksBtn"),
   tasksPageTaskForm: document.querySelector("#tasksPageTaskForm"),
   tasksPageTaskInput: document.querySelector("#tasksPageTaskInput"),
   tasksPageTaskList: document.querySelector("#tasksPageTaskList"),
@@ -1442,7 +1447,7 @@ let mealPlanSwipeIndex = 0;
 const PAGE_NOTIF_BUTTONS = {
   mail: ["homeMailBtn", "titleMailBtn"],
   finance: ["homeFinanceBtn", "titleFinanceBtn"],
-  do: ["homeDoBtn", "titleToDoListBtn"],
+  do: ["planTasksBtn"], // Tasks notif dot now lives on the Calendar page's bell
   eat: ["homeEatBtn", "titleMealPlanBtn"],
   explore: ["homeExploreBtn", "titleExploreBtn"],
 };
@@ -1905,11 +1910,18 @@ function bindEvents() {
   elements.closeDoArchiveBtn?.addEventListener("click", () => elements.doArchiveDialog.close());
   elements.closeTasksPageBtn.addEventListener("click", () => elements.tasksPageDialog.close());
   elements.tasksPageDialog.addEventListener("close", () => setPageTitle(currentMainPageTitle()));
+  // The Tasks overlay hosts the full task planner: relocate the planner grid into
+  // it once, so every existing renderDoPlanner()/bindDoTaskControls call renders the
+  // complete Tasks experience inside the overlay (retired the standalone Tasks page).
+  if (elements.tasksOverlayBody && elements.doPlannerGrid) elements.tasksOverlayBody.appendChild(elements.doPlannerGrid);
+  elements.planTasksBtn?.addEventListener("click", openTasksPage);
+  elements.tasksOverlayPrevWeek?.addEventListener("click", () => stepPlanTasksWeek(-1));
+  elements.tasksOverlayNextWeek?.addEventListener("click", () => stepPlanTasksWeek(1));
   elements.closeDoSettingsBtn.addEventListener("click", () => elements.doSettingsDialog.close());
   elements.doneDoSettingsBtn.addEventListener("click", () => elements.doSettingsDialog.close());
   elements.closeRecurringTasksBtn.addEventListener("click", () => elements.recurringTasksDialog.close());
   elements.doneRecurringTasksBtn.addEventListener("click", () => elements.recurringTasksDialog.close());
-  elements.tasksPageTaskForm.addEventListener("submit", addDoTaskFromTasksPage);
+  elements.tasksPageTaskForm?.addEventListener("submit", addDoTaskFromTasksPage);
   elements.recipeSearch.addEventListener("input", () => {
     updateRecipeSearchClearButton();
     renderRecipes();
@@ -7160,20 +7172,15 @@ function activateEatShell() {
   renderPlanner();
 }
 
+// Tasks is no longer a standalone page — it lives in a window over the Calendar,
+// opened by the Calendar page's notifications button. Every former entry point
+// (home tile, page-title menu, the #do hash, voice/chat) lands there via this
+// redirect: show the Calendar, then open the Tasks overlay on top of it.
 function showDoApp(event) {
   event?.stopPropagation();
-  if (!isPageEnabled("do")) {
-    showHomeApp();
-    return;
-  }
-  activeAppArea = "do";
-  hideAllPages();
-  elements.doMainPage.hidden = false;
-  setWeekToolsMode("week");
-  elements.activeCookingSection.hidden = true;
-  setPageTitle("Tasks");
-  setPageHash("do");
-  renderDoPlanner();
+  if (!isPageEnabled("do")) { showHomeApp(); return; }
+  if (isPageEnabled("plan")) showPlanApp(event); else showHomeApp();
+  openTasksPage(event);
   closePageTitleMenu();
   closeAppMenu();
 }
@@ -10005,6 +10012,7 @@ function showPlanApp(event) {
   fetchAllPlanCalendars();
   renderPlanCalList(); // populate the left sidebar's calendar manager
   renderPlanPage();
+  updateDoNotifCount(); // refresh the Tasks bell dot for the current task state
   closePageTitleMenu();
   closeAppMenu();
 }
@@ -14146,14 +14154,27 @@ function currentMainPageTitle() {
   return "Meal Plan";
 }
 
+// The Tasks overlay — opened from the Calendar page's notifications button. It hosts
+// the full task planner (relocated #doPlannerGrid) as a window over the calendar.
 function openTasksPage(event) {
   event?.stopPropagation();
   closeFloatingMenus();
   setPageTitle("Tasks");
+  updatePlanTasksWeekLabel();
   renderDoPlanner();
-  renderTasksPage();
   if (!elements.tasksPageDialog.open) elements.tasksPageDialog.showModal();
-  requestAnimationFrame(() => elements.tasksPageTaskInput.focus());
+}
+
+function updatePlanTasksWeekLabel() {
+  if (elements.tasksOverlayWeekLabel) elements.tasksOverlayWeekLabel.textContent = formatWeekRange(currentWeek, 6);
+}
+
+// Step the task week within the overlay without disturbing the calendar behind it
+// (currentWeek is the shared task/meal week, as the standalone page used it).
+function stepPlanTasksWeek(delta) {
+  currentWeek = addDays(currentWeek, delta * 7);
+  renderDoPlanner();
+  updatePlanTasksWeekLabel();
 }
 
 function openDoSettingsDialog(event) {
@@ -19583,7 +19604,7 @@ function setPageTitle(title) {
 function updatePageTitleMenu() {
   elements.titleMealPlanBtn.hidden = activeAppArea === "eat" || !isPagePersonallyEnabled("eat");
   elements.titleExercisePlanBtn.hidden = activeAppArea === "play" || !isPagePersonallyEnabled("play");
-  elements.titleToDoListBtn.hidden = activeAppArea === "do" || !isPagePersonallyEnabled("do");
+  elements.titleToDoListBtn.hidden = true; // Tasks moved into the Calendar page's notifications window — no top-level nav button
   elements.titleWatchBtn.hidden = true; // Watch moved into the Media page's sidebar — no top-level nav button
   elements.titleReadBtn.hidden = activeAppArea === "media" || !isPagePersonallyEnabled("read");
   elements.titleShopBtn.hidden = activeAppArea === "shop" || !isPagePersonallyEnabled("shop");
@@ -19603,7 +19624,7 @@ function updatePageTitleMenu() {
 function updatePageVisibility() {
   elements.homeEatBtn.hidden = !isPagePersonallyEnabled("eat");
   elements.homePlayBtn.hidden = !isPagePersonallyEnabled("play");
-  elements.homeDoBtn.hidden = !isPagePersonallyEnabled("do");
+  elements.homeDoBtn.hidden = true; // Tasks moved into the Calendar page's notifications window — no home-screen button
   elements.homeWatchBtn.hidden = true; // Watch moved into the Media page's sidebar — no home-screen button
   elements.homeReadBtn.hidden = !isPagePersonallyEnabled("read");
   elements.homeShopBtn.hidden = !isPagePersonallyEnabled("shop");
