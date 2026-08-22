@@ -814,6 +814,7 @@ const elements = {
   restaurantInfoRemoveBtn: document.querySelector("#restaurantInfoRemoveBtn"),
   menuIngredientOptionsBtn: document.querySelector("#menuIngredientOptionsBtn"),
   menuFoodHealthSettingsBtn: document.querySelector("#menuFoodHealthSettingsBtn"),
+  menuWatchServicesBtn: document.querySelector("#menuWatchServicesBtn"),
   menuWatchTheatersBtn: document.querySelector("#menuWatchTheatersBtn"),
   menuRecurringTasksBtn: document.querySelector("#menuRecurringTasksBtn"),
   menuWorkoutLibraryBtn: document.querySelector("#menuWorkoutLibraryBtn"),
@@ -1846,6 +1847,7 @@ function bindEvents() {
   elements.menuPodcastPriorityBtn.addEventListener("click", () => openSettingsMenuDialog(showPodcastPriorityModal));
   elements.menuPublicationsBtn.addEventListener("click", () => openSettingsMenuDialog(showPublicationsModal));
   elements.menuReadSyncBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("read-sync")));
+  elements.menuWatchServicesBtn.addEventListener("click", () => openSettingsMenuDialog(openDiscoverServicesDialog));
   elements.menuWatchTheatersBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("watch")));
   elements.menuRecurringTasksBtn.addEventListener("click", () => openSettingsMenuDialog(openRecurringTasksDialog));
   elements.menuWorkoutLibraryBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLibraryDialog));
@@ -19677,7 +19679,9 @@ function updateSettingsMenuOptions() {
   elements.menuIngredientOptionsBtn.hidden = !isEat;
   elements.menuFoodHealthSettingsBtn.hidden = !isEat;
   elements.menuMealPlanSettingsBtn.hidden = !isEat;
-  elements.menuWatchTheatersBtn.hidden = !(activeAppArea === "media" && activeMediaTab === "watch");
+  const isWatchTab = activeAppArea === "media" && activeMediaTab === "watch";
+  elements.menuWatchServicesBtn.hidden = !isWatchTab;
+  elements.menuWatchTheatersBtn.hidden = !isWatchTab;
   elements.menuRecurringTasksBtn.hidden = !isDo;
   elements.menuWorkoutLibraryBtn.hidden = !isPlay;
   elements.menuWorkoutLogsBtn.hidden = !isPlay;
@@ -20944,6 +20948,7 @@ function closeFloatingMenus() {
   closePageTitleMenu();
   closeWeekJumpMenu();
   closeGroceryRangeMenus();
+  closeDiscoverFilterMenu();
 }
 
 function closeFloatingMenusOnPageScroll(event) {
@@ -40138,7 +40143,8 @@ function renderWatchTab() {
     input.dataset.wired = "1";
     let t = null;
     input.addEventListener("input", () => { clearTimeout(t); const q = input.value.trim(); t = setTimeout(() => watchTabSearch(q), 360); });
-    document.getElementById("discoverServicesBtn")?.addEventListener("click", openDiscoverServicesDialog);
+    document.getElementById("discoverFilterBtn")?.addEventListener("click", toggleDiscoverFilterMenu);
+    document.getElementById("discoverFilterMenu")?.addEventListener("click", (e) => e.stopPropagation());
   }
   const q = input && input.value.trim();
   if (q) watchTabSearch(q); else showWatchList();
@@ -40329,6 +40335,88 @@ const DISCOVER_SERVICE_OPTIONS = [
   ["peacock", "Peacock"], ["espn", "ESPN"], ["xfinity", "Xfinity Stream"],
 ];
 
+// ── Watch search scope (the header filter button) ─────────────────────────────
+// The Watch search is universal across providers; this filter narrows it by media
+// type (mapped to the underlying providers) and, optionally, to titles available
+// on the streamers the user subscribes to. Persisted locally (a UI preference, not
+// synced state) under one key.
+const WATCH_SCOPE_TYPES = [
+  { key: "movtv",   label: "Movies & TV", providers: ["tmdb"] },
+  { key: "video",   label: "Videos",      providers: ["youtube", "jellyfin"] },
+  { key: "music",   label: "Music",       providers: ["music"] },
+  { key: "podcast", label: "Podcasts",    providers: ["podcastsearch"] },
+  { key: "radio",   label: "Radio",       providers: ["radio"] },
+];
+const WATCH_SCOPE_KEY = "live_watch_search_scope";
+let watchSearchScope = null;
+function getWatchSearchScope() {
+  if (watchSearchScope) return watchSearchScope;
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(WATCH_SCOPE_KEY) || "null"); } catch { /* ignore */ }
+  const allKeys = WATCH_SCOPE_TYPES.map((t) => t.key);
+  // A valid (even empty) saved array is honored; only a missing/corrupt one defaults to all.
+  const types = Array.isArray(saved?.types) ? saved.types.filter((k) => allKeys.includes(k)) : allKeys.slice();
+  watchSearchScope = { types, servicesOnly: !!saved?.servicesOnly };
+  return watchSearchScope;
+}
+function saveWatchSearchScope() {
+  try { localStorage.setItem(WATCH_SCOPE_KEY, JSON.stringify(watchSearchScope)); } catch { /* ignore */ }
+}
+function allowedScopeProviderIds(scope) {
+  const set = new Set();
+  WATCH_SCOPE_TYPES.forEach((t) => { if (scope.types.includes(t.key)) t.providers.forEach((p) => set.add(p)); });
+  return set;
+}
+function rerunDiscoverForScope() {
+  const q = document.getElementById("discoverSearchInput")?.value.trim();
+  if (q) runDiscoverSearch(q);
+}
+function renderDiscoverFilterMenu() {
+  const menu = document.getElementById("discoverFilterMenu");
+  if (!menu) return;
+  const scope = getWatchSearchScope();
+  menu.innerHTML =
+    `<div class="discover-filter-head">Show</div>` +
+    WATCH_SCOPE_TYPES.map((t) =>
+      `<label class="discover-filter-row"><span>${escapeHtml(t.label)}</span>` +
+      `<input type="checkbox" class="live-toggle" data-scope-type="${t.key}"${scope.types.includes(t.key) ? " checked" : ""}></label>`).join("") +
+    `<div class="discover-filter-sep"></div>` +
+    `<label class="discover-filter-row"><span>Only my services</span>` +
+    `<input type="checkbox" class="live-toggle" data-scope-services${scope.servicesOnly ? " checked" : ""}></label>`;
+  menu.querySelectorAll("[data-scope-type]").forEach((cb) => cb.addEventListener("change", () => {
+    const s = getWatchSearchScope();
+    const set = new Set(s.types);
+    if (cb.checked) set.add(cb.dataset.scopeType); else set.delete(cb.dataset.scopeType);
+    s.types = WATCH_SCOPE_TYPES.map((t) => t.key).filter((k) => set.has(k));
+    saveWatchSearchScope();
+    rerunDiscoverForScope();
+  }));
+  menu.querySelector("[data-scope-services]")?.addEventListener("change", (e) => {
+    getWatchSearchScope().servicesOnly = e.target.checked;
+    saveWatchSearchScope();
+    rerunDiscoverForScope();
+  });
+}
+function toggleDiscoverFilterMenu(e) {
+  e?.stopPropagation();
+  const menu = document.getElementById("discoverFilterMenu");
+  if (!menu) return;
+  const willOpen = menu.hidden;
+  closeFloatingMenus();
+  if (willOpen) {
+    renderDiscoverFilterMenu();
+    menu.hidden = false;
+    document.getElementById("discoverFilterBtn")?.setAttribute("aria-expanded", "true");
+  }
+}
+function closeDiscoverFilterMenu() {
+  const menu = document.getElementById("discoverFilterMenu");
+  if (menu && !menu.hidden) {
+    menu.hidden = true;
+    document.getElementById("discoverFilterBtn")?.setAttribute("aria-expanded", "false");
+  }
+}
+
 function openDiscoverServicesDialog() {
   const have = new Set(state.mediaServices || []);
   const d = document.createElement("dialog");
@@ -40366,10 +40454,14 @@ async function runDiscoverSearch(query) {
   if (!results) return;
   const token = ++discoverSearchToken;
   if (!query) { showWatchList(); return; }
+  const scope = getWatchSearchScope();
+  const allowedIds = allowedScopeProviderIds(scope);
+  if (!allowedIds.size) { results.hidden = false; results.innerHTML = `<p class="discover-hint">No media types selected. Tap the filter and pick at least one.</p>`; return; }
   results.innerHTML = `<p class="discover-hint">Searching…</p>`;
   try {
     const hub = await getMediaHub();
-    const { items, providerStatuses } = await hub.search.universalSearch(query, { providers: hub.searchProviders, limit: 20 });
+    const providers = hub.searchProviders.filter((p) => allowedIds.has(p.id));
+    const { items, providerStatuses } = await hub.search.universalSearch(query, { providers, limit: 20 });
     if (token !== discoverSearchToken) return; // out-of-order guard
     const enriched = await hub.search.enrichWithAvailability(items, hub.tmdb); // "where can I watch this"
     if (token !== discoverSearchToken) return;
@@ -40524,7 +40616,14 @@ function renderDiscoverResults(items, providerStatuses, hub) {
   if (!results) return;
   if (!items.length) { results.innerHTML = `<p class="discover-hint">No results.</p>`; return; }
   discoverItemsByKey = new Map();
-  const views = discoverViewsFor(items, hub);
+  let views = discoverViewsFor(items, hub);
+  // "Only my services": keep native-audio kinds (always playable in-app) and any
+  // video available on a streamer the user subscribes to (view.yours non-empty).
+  if (getWatchSearchScope().servicesOnly) {
+    const audioKinds = new Set(["music", "podcast", "radio"]);
+    views = views.filter((v) => audioKinds.has(v.kind) || (v.yours && v.yours.length));
+    if (!views.length) { results.innerHTML = `<p class="discover-hint">Nothing on your services matched. Turn off “Only my services” in the filter to see more.</p>`; return; }
+  }
   results.innerHTML = views.map(discoverCardHtml).join("");
   wireDiscoverButtons(results, hub);
   const failed = (providerStatuses || []).filter((s) => !s.ok).map((s) => s.provider);

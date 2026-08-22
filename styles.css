@@ -9496,6 +9496,19 @@ body.touch-drag-active * {
 /* ── Discover (universal media search) ── */
 .discover-head { flex: 0 0 auto; display: flex; gap: 8px; align-items: center; padding: 4px 2px 12px; }
 .discover-services-btn { flex: 0 0 auto; }
+.discover-filter { position: relative; flex: 0 0 auto; }
+.discover-filter-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
+  min-width: 210px; max-width: min(240px, calc(100vw - 24px)); padding: 8px;
+  background: var(--window-bg, #fff); color: var(--ink);
+  border: 1px solid var(--line, #e4e0d8); border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.discover-filter-head { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted, #8a8378); padding: 4px 6px 2px; }
+.discover-filter-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px; border-radius: 8px; font-size: 0.92rem; cursor: pointer; }
+.discover-filter-row:hover { background: rgba(127, 127, 127, 0.1); }
+.discover-filter-sep { height: 1px; background: var(--line, #e4e0d8); margin: 6px 2px; }
 .discover-search-input {
   flex: 1 1 auto;
   min-width: 0;
