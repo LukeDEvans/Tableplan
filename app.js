@@ -488,7 +488,7 @@ const MANAGED_PAGES = [
   { key: "eat",       label: "Meal Plan" },
   { key: "mail",      label: "Mail" },
   { key: "shop",      label: "Shop" },
-  { key: "do",        label: "To-Do" },
+  { key: "do",        label: "Tasks" },
   { key: "play",      label: "Exercise" },
   { key: "watch",     label: "Watch" },
   { key: "read",      label: "Media" },
@@ -7164,7 +7164,7 @@ function showDoApp(event) {
   elements.doMainPage.hidden = false;
   setWeekToolsMode("week");
   elements.activeCookingSection.hidden = true;
-  setPageTitle("To-Do");
+  setPageTitle("Tasks");
   setPageHash("do");
   renderDoPlanner();
   closePageTitleMenu();
@@ -14124,7 +14124,7 @@ async function callGmailAuthApi() {
 
 function currentMainPageTitle() {
   if (activeAppArea === "home") return getAppName();
-  if (activeAppArea === "do") return "To-Do";
+  if (activeAppArea === "do") return "Tasks";
   if (activeAppArea === "play") return "Exercise";
   if (activeAppArea === "plan") return "Calendar";
   if (activeAppArea === "inventory") return "Inventory";
@@ -14226,7 +14226,7 @@ function importAiItemSummary(item) {
   if (item.section === "calendar") return `${item.date}${item.time ? ` · ${item.time}` : " · all day"}`;
   if (item.section === "recurring") return (item.days || []).map((d) => d.slice(0, 3)).join(", ") || "no days";
   if (item.section === "shopping") return "Shopping list";
-  return "To-Do backlog";
+  return "Tasks backlog";
 }
 
 // Lenient parse: strips a markdown fence if present, validates each item
@@ -14279,7 +14279,7 @@ function parseImportAiPaste() {
   importAiParsedItems = results.filter((r) => r.ok).map((r) => r.item);
   const bad = results.filter((r) => !r.ok);
 
-  const sectionLabel = { todo: "To-Do", calendar: "Calendar", shopping: "Shopping", recurring: "Recurring" };
+  const sectionLabel = { todo: "Tasks", calendar: "Calendar", shopping: "Shopping", recurring: "Recurring" };
   elements.importAiPreview.innerHTML = `
     ${parsed.summary ? `<p class="import-ai-summary">${escapeHtml(String(parsed.summary).slice(0, 300))}</p>` : ""}
     ${importAiParsedItems.map((item, idx) => `
@@ -14694,7 +14694,7 @@ function renderDoPlanner() {
   const activeDay = doPrepDays.find((day) => day.id === activePlannerDayId);
   elements.doPlannerGrid.innerHTML = `
     <div class="do-top-row">
-      <div class="day-tabs" role="tablist" aria-label="To-do days">
+      <div class="day-tabs" role="tablist" aria-label="Task days">
         ${doPrepDays.map((day) => doDayTabTemplate(day, day.id === activeDay.id)).join("")}
       </div>
       ${doNotifBellHtml()}
@@ -19789,7 +19789,7 @@ function renderContextSettingsDialog(kind) {
   const titles = {
     general: "Settings",
     eat: "Meal Plan",
-    do: "To-Do",
+    do: "Tasks",
     play: "Exercise",
     family: "Household",
     recreate: "Recreate",
@@ -37310,7 +37310,7 @@ function buildPlanAppDataIndex() {
   doTasks.forEach((task) => {
     const key = task?.date || task?.dueDate;
     const title = task?.title || task?.text || task?.name;
-    if (key && title) push(key, { id: `do-${task.id || title}`, title, date: key, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.do, source: "do", calendarName: "To-Do" });
+    if (key && title) push(key, { id: `do-${task.id || title}`, title, date: key, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.do, source: "do", calendarName: "Tasks" });
   });
   return byDate;
 }
@@ -38977,7 +38977,7 @@ function renderPlanCalList() {
     <div class="plan-cal-overlays">
       ${planOverlayRowHtml("eat", "Meal Plan", PLAN_APP_COLORS.eat)}
       ${planOverlayRowHtml("play", "Exercise", PLAN_APP_COLORS.play)}
-      ${planOverlayRowHtml("do", "To-Do", PLAN_APP_COLORS.do)}
+      ${planOverlayRowHtml("do", "Tasks", PLAN_APP_COLORS.do)}
       ${planOverlayRowHtml("birthday", "Birthdays", PLAN_APP_COLORS.birthday)}
     </div>
     <div class="plan-cal-divider"></div>
