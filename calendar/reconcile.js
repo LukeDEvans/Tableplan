@@ -37,6 +37,25 @@ export function resetOverrideField(override, field) {
   return Object.keys(next).length ? next : null;
 }
 
+// The persisted hide/unhide list is an array of toggle records
+// { id, hidden, title, at } — a `hidden` flag (not a tombstone) so hide/unhide
+// sync as a newer-wins field. These two helpers own that list's semantics (§16).
+
+// The set of event ids currently hidden.
+export function hiddenIdSet(records) {
+  return new Set((records || []).filter((r) => r && r.hidden && r.id).map((r) => r.id));
+}
+
+// Upsert a toggle record; returns a new list (never mutates).
+export function toggleExclusion(records, id, hidden, title = "") {
+  const list = [...(records || [])];
+  const at = new Date().toISOString();
+  const i = list.findIndex((r) => r && r.id === id);
+  if (i >= 0) list[i] = { ...list[i], hidden, at };
+  else list.push({ id, hidden, title, at });
+  return list;
+}
+
 // Drop excluded events from a list. `exclusions` may be a Set or an array of ids.
 export function applyExclusions(events, exclusions) {
   if (!exclusions) return events;

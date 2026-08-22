@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  reconcile, applyOverride, resetOverrideField, applyExclusions
+  reconcile, applyOverride, resetOverrideField, applyExclusions, hiddenIdSet, toggleExclusion
 } from "../calendar/reconcile.js";
 
 const ev = (id, over = {}) => ({
@@ -74,6 +74,34 @@ describe("local overrides (§15) — local edit survives, source fields still up
   it("resetOverrideField removes a field and nulls out an emptied override", () => {
     expect(resetOverrideField({ title: "X", notes: "Y" }, "title")).toEqual({ notes: "Y" });
     expect(resetOverrideField({ title: "X" }, "title")).toBe(null);
+  });
+});
+
+describe("hide/unhide toggle list (§16) — the persisted exclusion records", () => {
+  it("hiddenIdSet collects only the records currently hidden", () => {
+    const recs = [{ id: "a", hidden: true }, { id: "b", hidden: false }, { id: "c", hidden: true }, { id: "", hidden: true }];
+    expect([...hiddenIdSet(recs)].sort()).toEqual(["a", "c"]);
+    expect(hiddenIdSet(null).size).toBe(0);
+  });
+  it("toggleExclusion upserts a new hidden record, keeping the title", () => {
+    const out = toggleExclusion([], "s:1", true, "Standup");
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ id: "s:1", hidden: true, title: "Standup" });
+  });
+  it("toggling an existing id flips hidden without duplicating (hide → unhide → re-hide)", () => {
+    let recs = toggleExclusion([], "s:1", true, "X");
+    recs = toggleExclusion(recs, "s:1", false); // unhide
+    expect(recs).toHaveLength(1);
+    expect(hiddenIdSet(recs).size).toBe(0);
+    recs = toggleExclusion(recs, "s:1", true); // re-hide — still one record, now hidden
+    expect(recs).toHaveLength(1);
+    expect(hiddenIdSet(recs).has("s:1")).toBe(true);
+  });
+  it("never mutates the input list", () => {
+    const input = [{ id: "s:1", hidden: true }];
+    const out = toggleExclusion(input, "s:2", true);
+    expect(input).toHaveLength(1);
+    expect(out).toHaveLength(2);
   });
 });
 

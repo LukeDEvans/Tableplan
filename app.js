@@ -15,6 +15,7 @@ import { normalizePlanEvents } from './calendar/model.js';
 import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
 import { sourceFromPlanCalendar } from './calendar/sources.js';
 import { normalizeExternalEvent } from './calendar/normalize.js';
+import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion } from './calendar/reconcile.js';
 import { taskIsScheduled } from './calendar/tasks-project.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import * as TravelItinerary from './travel-itinerary.js';
@@ -275,7 +276,7 @@ const STATE_SECTIONS = {
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
   media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
-  plan:      ["calendars", "planEvents", "planCalendars", "planHiddenSources"],
+  plan:      ["calendars", "planEvents", "planCalendars", "planHiddenSources", "planExternalExclusions"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies"],
@@ -3352,6 +3353,7 @@ function defaultState() {
     calendars: [],
     planEvents: [],
     planHiddenSources: {},
+    planExternalExclusions: [],
     contacts: [],
     contactGroups: [],
     weatherLocations: [],
@@ -3586,6 +3588,7 @@ function normalizeState(parsed) {
     planEvents: normalizePlanEvents(parsed?.planEvents),
     planCalendars: normalizePlanCalendars(parsed?.planCalendars),
     planHiddenSources: (parsed?.planHiddenSources && typeof parsed.planHiddenSources === "object") ? parsed.planHiddenSources : {},
+    planExternalExclusions: normalizePlanExternalExclusions(parsed?.planExternalExclusions),
     contacts: normalizeContacts(parsed?.contacts),
     contactGroups: normalizeContactGroups(parsed?.contactGroups),
     weatherLocations: Array.isArray(parsed?.weatherLocations) ? parsed.weatherLocations.filter((l) => l && isFinite(l.latitude) && isFinite(l.longitude)) : [],
@@ -5515,7 +5518,7 @@ function mergeStates(newer, older) {
     // Core content
     "recipes", "trashedRecipes", "folders",
     // Planning & tasks
-    "planCalendars", "planEvents", "autoGenerateRules",
+    "planCalendars", "planEvents", "planExternalExclusions", "autoGenerateRules",
     "doTasks", "doBacklog", "doArchive", "playBacklog",
     "recurringTasks", "playAutoRules",
     // Watch / Read / Recreate
@@ -35877,6 +35880,36 @@ function normalizePlanCalendars(calendars) {
   })).filter((c) => c.id) : [];
 }
 
+// Local exclusions for read-only external events (§16). `id` is the canonical
+// external event id (sourceId:externalId); `hidden` is a newer-wins toggle so
+// hide/unhide sync cleanly without tombstones. `title` is kept only so the
+// "hidden events" list can be labeled. id-keyed → rides unionById + tombstones.
+function normalizePlanExternalExclusions(arr) {
+  return Array.isArray(arr) ? arr.map((e) => ({
+    id: String(e?.id || "").trim(),
+    hidden: e?.hidden !== false,
+    title: String(e?.title || "").trim(),
+    at: e?.at || new Date().toISOString()
+  })).filter((e) => e.id) : [];
+}
+
+// The set of external event ids currently hidden from the calendar (§16).
+// Toggle semantics live in the tested calendar/reconcile.js.
+function planExcludedEventIds() {
+  return exclusionHiddenIdSet(state.planExternalExclusions);
+}
+
+// Hide / un-hide a read-only external event. Upserts the toggle record and
+// re-renders the calendar. Persisted + synced.
+function setPlanExternalHidden(id, title, hidden) {
+  if (!id) return;
+  state.planExternalExclusions = toggleExclusion(state.planExternalExclusions, id, hidden, title || "");
+  planRangeCache.clear();
+  persist();
+  renderPlanPage();
+  renderPlanCalList();
+}
+
 // Contacts (address book). Birthday is stored as "MM-DD" (no year) or
 // "YYYY-MM-DD" (with year), so the birthday calendar can show an age.
 const CONTACT_DATE_RE = /^(\d{4}-)?(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
@@ -37228,6 +37261,7 @@ function getPlanEventsForRange(startKey, endKey) {
   const eventColor = (e) => e.color || ((state.planCalendars || []).find((c) => c.id === e.calendarId)?.color) || PLAN_COLORS[0];
   // Calendars toggled off in the sidebar hide their events (personal + iCal).
   const disabledCalIds = new Set((state.planCalendars || []).filter((c) => c.enabled === false).map((c) => c.id));
+  const excludedExternalIds = planExcludedEventIds(); // §16 per-event hides for read-only external events
   (state.planEvents || []).forEach((e) => {
     if (e.calendarId && disabledCalIds.has(e.calendarId)) return; // calendar hidden
     const color = eventColor(e);
@@ -37259,6 +37293,7 @@ function getPlanEventsForRange(startKey, endKey) {
     const source = sourceFromPlanCalendar(cal);
     cached.events.forEach((e) => {
       const base = normalizeExternalEvent(e, source);
+      if (excludedExternalIds.has(base.id)) return; // §16: locally hidden (incl. all its occurrences)
       if (e.recurrence?.freq) {
         // Subscribed recurring events (holidays, birthdays, …) expand like personal ones.
         expandRecurringOccurrences(base, startKey, endKey).forEach((occ) => events.push({ ...base, date: occ, occurrenceOf: base.id }));
@@ -37882,7 +37917,11 @@ function renderPlanEventDetail(ev) {
   const personal = !ev.source || ev.source === "personal";
   actionsEl.innerHTML = personal
     ? `<button type="button" class="secondary-btn" data-plan-detail-delete>Delete</button><button type="button" class="primary-btn" data-plan-detail-edit>Edit</button>`
-    : "";
+    : isExternal
+      // Read-only external events can't be deleted from their source, only hidden
+      // locally (§16). The hide persists across the next sync.
+      ? `<button type="button" class="secondary-btn" data-plan-detail-hide>Hide from calendar</button>`
+      : "";
 }
 
 function openPlanEventDetail(id, dateKey) {
@@ -37890,7 +37929,7 @@ function openPlanEventDetail(id, dateKey) {
   const range = getPlanEventsForRange(key, key);
   const ev = range.find((e) => e.id === id && e.date === key) || range.find((e) => e.id === id);
   if (!ev) { openPlanEventDialog(dateKey || null, id); return; } // fall back to the editor if not found
-  planDetailContext = { id: ev.id, date: ev.date || key, source: ev.source || "personal" };
+  planDetailContext = { id: ev.id, date: ev.date || key, source: ev.source || "personal", title: ev.title || "" };
   renderPlanEventDetail(ev);
   const panel = document.getElementById("planDetailPanel");
   if (!panel) return;
@@ -37923,6 +37962,12 @@ function initPlanEventDetail() {
       editingPlanEventId = ctx.id;
       editingPlanEventOccurrenceDate = ctx.date;
       deletePlanEvent();
+      return;
+    }
+    if (e.target.closest("[data-plan-detail-hide]") && planDetailContext) {
+      const ctx = planDetailContext;
+      closePlanEventDetail();
+      setPlanExternalHidden(ctx.id, ctx.title, true); // §16 local hide (read-only external)
     }
   });
   document.addEventListener("keydown", (e) => {
@@ -38747,6 +38792,8 @@ function initPlanCalListDelegation() {
 
   list.addEventListener("click", (e) => {
     if (e.target.closest("[data-add-cal]")) { openAddPlanCalDialog(); return; }
+    const unhide = e.target.closest("[data-plan-unhide]");
+    if (unhide) { setPlanExternalHidden(unhide.dataset.planUnhide, "", false); return; } // §16 un-hide
 
     // The color dot is a visibility toggle. Flip just the clicked dot in place
     // (the list order is unchanged) instead of rebuilding the whole sidebar.
@@ -39003,7 +39050,25 @@ function renderPlanCalList() {
     <div class="plan-cal-divider"></div>
     ${sorted.map((c) => planCalRowHtml(c)).join("")}
     ${!sorted.length ? `<p class="plan-cal-empty">No calendars yet.</p>` : ""}
+    ${planHiddenEventsSectionHtml()}
   `;
+}
+
+// Hidden read-only external events (§16), with an un-hide control. Only shows
+// when something is hidden.
+function planHiddenEventsSectionHtml() {
+  const hidden = (state.planExternalExclusions || []).filter((x) => x.hidden);
+  if (!hidden.length) return "";
+  return `
+    <div class="plan-cal-divider"></div>
+    <div class="plan-cal-hidden">
+      <div class="plan-cal-list-title">Hidden events</div>
+      ${hidden.map((x) => `
+        <div class="plan-cal-hidden-row">
+          <span class="plan-cal-hidden-title">${escapeHtml(x.title || "Event")}</span>
+          <button class="secondary-btn plan-cal-unhide" type="button" data-plan-unhide="${escapeHtml(x.id)}">Unhide</button>
+        </div>`).join("")}
+    </div>`;
 }
 
 function planCalRowHtml(cal) {
