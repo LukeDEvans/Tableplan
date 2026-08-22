@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  registerProvider, getProvider, listProviders, providerIsReadOnly, sourceFromPlanCalendar, detectProvider
+  registerProvider, getProvider, listProviders, providerIsReadOnly, sourceFromPlanCalendar, detectProvider, isGoogleCalendarUrl
 } from "../calendar/sources.js";
 import { externalEventId, normalizeExternalEvent, normalizeExternalEvents } from "../calendar/normalize.js";
 
@@ -44,6 +44,21 @@ describe("detectProvider — Amion reuses the ICS pipeline (§12)", () => {
     const src = sourceFromPlanCalendar({ id: "c1", name: "On-call", url: "https://www.amion.com/cgi-bin/ocs?Vcal=7.1500&Lo=x&Jd=1" });
     expect(src.provider).toBe("amion");
     expect(src.readOnly).toBe(true);
+  });
+});
+
+describe("isGoogleCalendarUrl — routes the unified add flow to the right backend", () => {
+  it("recognizes a Google Calendar iCal URL", () => {
+    expect(isGoogleCalendarUrl("https://calendar.google.com/calendar/ical/abc%40group.calendar.google.com/private-x/basic.ics")).toBe(true);
+    expect(isGoogleCalendarUrl("https://www.google.com/calendar/ical/x/basic.ics")).toBe(true);
+  });
+  it("rejects non-Google, non-ical, non-https, and Amion URLs", () => {
+    expect(isGoogleCalendarUrl("https://calendar.google.com/calendar/embed?src=x")).toBe(false); // not /ical/
+    expect(isGoogleCalendarUrl("http://calendar.google.com/calendar/ical/x/basic.ics")).toBe(false); // not https
+    expect(isGoogleCalendarUrl("https://feeds.example.com/x.ics")).toBe(false);
+    expect(isGoogleCalendarUrl("https://www.amion.com/cgi-bin/ocs?Vcal=7.1")).toBe(false);
+    expect(isGoogleCalendarUrl("")).toBe(false);
+    expect(isGoogleCalendarUrl("not a url")).toBe(false);
   });
 });
 

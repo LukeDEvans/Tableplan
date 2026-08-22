@@ -13,7 +13,7 @@ import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKe
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
 import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
-import { sourceFromPlanCalendar } from './calendar/sources.js';
+import { sourceFromPlanCalendar, isGoogleCalendarUrl } from './calendar/sources.js';
 import { normalizeExternalEvent } from './calendar/normalize.js';
 import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion } from './calendar/reconcile.js';
 import { taskIsScheduled } from './calendar/tasks-project.js';
@@ -25441,6 +25441,7 @@ async function loadCalendarEvents(options = {}) {
   if (!calendars.length) {
     calendarEvents = [];
     localStorage.removeItem(CALENDAR_CACHE_KEY);
+    planRangeCache.clear(); // Google events also feed the Plan calendar (drop its memoized range)
     if (options.statusElement) options.statusElement.textContent = "No enabled calendars to sync.";
     renderPlanner();
     return;
@@ -25458,6 +25459,7 @@ async function loadCalendarEvents(options = {}) {
       }));
     }));
     calendarEvents = eventGroups.flat();
+    planRangeCache.clear(); // Google events also feed the Plan calendar (drop its memoized range)
     localStorage.setItem(CALENDAR_CACHE_KEY, JSON.stringify({ fetchedAt: new Date().toISOString(), events: calendarEvents }));
     if (options.statusElement) {
       options.statusElement.textContent = `${calendarEvents.length} event${calendarEvents.length === 1 ? "" : "s"} synced from ${calendars.length} calendar${calendars.length === 1 ? "" : "s"}.`;
@@ -37302,6 +37304,25 @@ function getPlanEventsForRange(startKey, endKey) {
       }
     });
   });
+  // Google Calendar subscriptions (state.calendars) render on the Plan calendar
+  // too, so it's the central surface — not just the meal plan. The Google backend
+  // is unchanged; we only project the already-fetched, enabled events (all-day,
+  // incl. yearly-recurring) into the canonical shape. Per-calendar visibility is
+  // handled inside syncedCalendarEventsForDate (its `enabled` filter).
+  {
+    const gCur = new Date(startKey + "T00:00:00");
+    const gEnd = new Date(endKey + "T00:00:00");
+    let gg = 0;
+    while (gCur <= gEnd && gg++ < 800) {
+      const dk = dateKeyFromDate(gCur);
+      syncedCalendarEventsForDate(gCur).forEach((ev) => {
+        const id = `gcal:${ev.calendarId}:${dk}:${ev.summary}`;
+        if (excludedExternalIds.has(id)) return; // §16 locally hidden
+        events.push({ id, title: ev.summary, date: dk, allDay: true, startTime: null, endTime: null, color: ev.calendarColor || PLAN_COLORS[0], source: "ical", readOnly: true, provider: "google", calendarId: ev.calendarId, calendarName: ev.calendarName });
+      });
+      gCur.setDate(gCur.getDate() + 1);
+    }
+  }
   getAppDataEvents(startKey, endKey).forEach((e) => events.push(e));
   sortEventsForDisplay(events);
   planRangeCache.set(cacheKey, events);
@@ -38802,6 +38823,13 @@ function initPlanCalListDelegation() {
     if (calDot) {
       const id = calDot.dataset.calToggle;
       let now = false;
+      if (planCalIsGoogle(id)) {
+        state.calendars = (state.calendars || []).map((c) => c.id === id ? (now = c.enabled === false, { ...c, enabled: now }) : c);
+        flipDot(calDot, now);
+        persist();
+        loadCalendarEvents().then(() => { if (activeAppArea === "plan") renderPlanPage(); });
+        return;
+      }
       state.planCalendars = (state.planCalendars || []).map((c) => c.id === id ? (now = !c.enabled, { ...c, enabled: now }) : c);
       flipDot(calDot, now);
       persist();
@@ -38821,7 +38849,9 @@ function initPlanCalListDelegation() {
 
     const refreshBtn = e.target.closest("[data-refresh-cal]");
     if (refreshBtn) {
-      const c = (state.planCalendars || []).find((x) => x.id === refreshBtn.dataset.refreshCal);
+      const id = refreshBtn.dataset.refreshCal;
+      if (planCalIsGoogle(id)) { loadCalendarEvents({ force: true }).then(() => { renderPlanCalList(); if (activeAppArea === "plan") renderPlanPage(); }); return; }
+      const c = (state.planCalendars || []).find((x) => x.id === id);
       if (c) fetchOnePlanCalendar(c).then(() => renderPlanCalList());
       return;
     }
@@ -38837,9 +38867,10 @@ function initPlanCalListDelegation() {
       const id = saveEdit.dataset.saveCalEdit;
       const newName = document.getElementById(`cal-edit-name-${id}`)?.value.trim();
       const newColor = document.getElementById(`cal-edit-color-${id}`)?.querySelector("input:checked")?.value;
-      const cal = (state.planCalendars || []).find((c) => c.id === id);
+      const store = planCalIsGoogle(id) ? "calendars" : "planCalendars";
+      const cal = (state[store] || []).find((c) => c.id === id);
       if (!cal) return;
-      state.planCalendars = (state.planCalendars || []).map((c) =>
+      state[store] = (state[store] || []).map((c) =>
         c.id === id ? { ...c, name: newName || cal.name, color: newColor || cal.color } : c
       );
       persist();
@@ -38877,13 +38908,16 @@ function initPlanCalListDelegation() {
 }
 
 function deletePlanCalendar(id) {
-  const calName = (state.planCalendars || []).find((c) => c.id === id)?.name || "this calendar";
+  // Route to whichever store owns this row (Google vs generic-ICS).
+  const store = planCalIsGoogle(id) ? "calendars" : "planCalendars";
+  const calName = (state[store] || []).find((c) => c.id === id)?.name || "this calendar";
   if (!confirm(`Remove "${calName}"?`)) return;
-  recordDeletion("planCalendars", id);
-  state.planCalendars = (state.planCalendars || []).filter((c) => c.id !== id);
-  delete planCalendarCache[id];
+  recordDeletion(store, id);
+  state[store] = (state[store] || []).filter((c) => c.id !== id);
+  if (store === "planCalendars") { delete planCalendarCache[id]; }
   persist();
   renderPlanCalList();
+  if (store === "calendars") loadCalendarEvents();
   if (activeAppArea === "plan") renderPlanPage();
 }
 
@@ -39028,11 +39062,14 @@ function planOverlayRowHtml(source, name, color) {
 }
 
 function renderPlanCalList() {
-  const cals = state.planCalendars || [];
   // Leaving any inline-edit state; release the sidebar hover-rail pin.
   document.getElementById("planSidebar")?.classList.remove("is-pinned");
-  // Personal + subscribed calendars are blended into one alphabetical list.
-  const sorted = [...cals].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  // One place to manage BOTH subscription backends: generic-ICS calendars
+  // (state.planCalendars) and Google calendars (state.calendars) are blended into
+  // one alphabetical list, each row tagged with its store so actions route right.
+  const planCals = (state.planCalendars || []).map((c) => ({ ...c, _store: "plan" }));
+  const googleCals = normalizeLinkedCalendars(state.calendars).map((c) => ({ ...c, _store: "google" }));
+  const sorted = [...planCals, ...googleCals].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
   elements.planCalList.innerHTML = `
     <div class="plan-cal-list-head">
@@ -39074,8 +39111,10 @@ function planHiddenEventsSectionHtml() {
 function planCalRowHtml(cal) {
   // Edit/Delete are hidden by default: swipe-left reveals them on touch, and a
   // right-click opens a menu on desktop (see initPlanCalListDelegation).
+  const store = cal._store || "plan";
+  const googleBadge = store === "google" ? '<span class="plan-cal-badge" title="Google Calendar">G</span>' : "";
   return `
-    <div class="plan-cal-row" id="plan-cal-row-${escapeHtml(cal.id)}" data-cal-id="${escapeHtml(cal.id)}">
+    <div class="plan-cal-row" id="plan-cal-row-${escapeHtml(cal.id)}" data-cal-id="${escapeHtml(cal.id)}" data-cal-store="${store}">
       <div class="plan-cal-actions">
         <button class="icon-btn" type="button" data-cal-edit="${escapeHtml(cal.id)}" aria-label="Edit ${escapeHtml(cal.name)}">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -39086,7 +39125,7 @@ function planCalRowHtml(cal) {
       </div>
       <div class="plan-cal-front">
         <button type="button" class="plan-cal-dot ${cal.enabled ? "is-on" : "is-off"}" style="--dot-color:${escapeHtml(cal.color)}" data-cal-toggle="${escapeHtml(cal.id)}" role="switch" aria-checked="${cal.enabled ? "true" : "false"}" aria-label="Toggle ${escapeHtml(cal.name)}"></button>
-        <span class="plan-cal-name">${escapeHtml(cal.name)}</span>
+        <span class="plan-cal-name">${escapeHtml(cal.name)}</span>${googleBadge}
       </div>
     </div>
   `;
@@ -39105,7 +39144,7 @@ function planRelativeTime(iso) {
 function openPlanCalEditMode(id) {
   const row = document.getElementById(`plan-cal-row-${id}`);
   if (!row) return;
-  const cal = (state.planCalendars || []).find((c) => c.id === id);
+  const cal = (planCalIsGoogle(id) ? (state.calendars || []) : (state.planCalendars || [])).find((c) => c.id === id);
   if (!cal) return;
   // Keep the sidebar expanded while editing so the inline form isn't hidden when
   // the cursor leaves the desktop hover-rail (cleared on next renderPlanCalList).
@@ -39129,16 +39168,35 @@ function openPlanCalEditMode(id) {
   document.getElementById(nameId)?.focus();
 }
 
+// Whether a sidebar calendar id belongs to the Google (state.calendars) store
+// rather than the generic-ICS (state.planCalendars) store.
+function planCalIsGoogle(id) {
+  return (state.calendars || []).some((c) => c.id === id);
+}
+
 async function addPlanCalendar() {
   const name = elements.planNewCalName.value.trim() || "My Calendar";
   const url = elements.planNewCalUrl.value.trim();
   const color = elements.planNewCalColorPicker.querySelector("input:checked")?.value || PLAN_COLORS[2];
+  elements.planAddCalDialog.close();
+  // The two subscription backends stay separate (Google Calendar via the
+  // authenticated google-calendar fn; generic iCal/Amion via ics-proxy). The
+  // sidebar is just one place to add either: a Google iCal URL routes to the
+  // Google store, everything else (incl. Amion) to the generic-ICS store.
+  if (url && isGoogleCalendarUrl(url)) {
+    state.calendars = normalizeLinkedCalendars([...(state.calendars || []), { id: createId("cal"), name, url, color, enabled: true }]);
+    persist();
+    maybeWriteCloudSnapshot({ force: true }).catch(() => {});
+    renderPlanCalList();
+    await loadCalendarEvents({ force: true });
+    if (activeAppArea === "plan") renderPlanPage();
+    return;
+  }
   // Blank URL creates a personal calendar; a URL subscribes to an external one.
   const newCal = { id: createId("plan-cal"), name, url, color, enabled: true, lastFetched: null };
   state.planCalendars = [...(state.planCalendars || []), newCal];
   persist();
   maybeWriteCloudSnapshot({ force: true }).catch(() => {});
-  elements.planAddCalDialog.close();
   renderPlanCalList();
   if (url) await fetchOnePlanCalendar(newCal);
   if (activeAppArea === "plan") renderPlanPage();

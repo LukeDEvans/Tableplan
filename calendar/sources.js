@@ -57,6 +57,19 @@ export function detectProvider(url) {
   return "ics";
 }
 
+// A Google Calendar iCal URL (calendar.google.com/.../calendar/ical/…). These go
+// to the authenticated Google backend, not the generic ICS proxy, so the unified
+// "add calendar" flow routes them to the right store. Mirrors the server's
+// isAllowedCalendarUrl allowlist so the two never disagree.
+export function isGoogleCalendarUrl(url) {
+  try {
+    const u = new URL(String(url || "").trim());
+    return u.protocol === "https:" &&
+      ["calendar.google.com", "www.google.com"].includes(u.hostname) &&
+      u.pathname.includes("/calendar/ical/");
+  } catch { return false; }
+}
+
 // Bridge from today's stored subscription shape (`planCalendars` entry) to a
 // generalized CalendarSource. Data is NOT moved — this is a read-only view over
 // the existing collection, so the two-list question stays open (see plan Fork 2).
