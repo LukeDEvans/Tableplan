@@ -18,6 +18,7 @@ import { normalizeExternalEvent } from './calendar/normalize.js';
 import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap, upsertTitleOverride } from './calendar/reconcile.js';
 import { taskIsScheduled } from './calendar/tasks-project.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
+import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
 import * as TravelItinerary from './travel-itinerary.js';
 import * as TravelTransitions from './travel-transitions.js';
 import * as TravelModel from './travel-model.js';
@@ -40358,35 +40359,20 @@ const DISCOVER_SERVICE_OPTIONS = [
 
 // ── Watch search scope (the header filter button) ─────────────────────────────
 // The Watch search is universal across providers; this filter narrows it by media
-// type (mapped to the underlying providers) and, optionally, to titles available
-// on the streamers the user subscribes to. Persisted locally (a UI preference, not
-// synced state) under one key.
-const WATCH_SCOPE_TYPES = [
-  { key: "movtv",   label: "Movies & TV", providers: ["tmdb"] },
-  { key: "video",   label: "Videos",      providers: ["youtube", "jellyfin"] },
-  { key: "music",   label: "Music",       providers: ["music"] },
-  { key: "podcast", label: "Podcasts",    providers: ["podcastsearch"] },
-  { key: "radio",   label: "Radio",       providers: ["radio"] },
-];
+// type and, optionally, to titles available on the streamers the user subscribes
+// to. The type→provider mapping + normalization live in the pure, tested
+// media-search-scope.js; here we only own the localStorage read/write and the DOM.
 const WATCH_SCOPE_KEY = "live_watch_search_scope";
 let watchSearchScope = null;
 function getWatchSearchScope() {
   if (watchSearchScope) return watchSearchScope;
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(WATCH_SCOPE_KEY) || "null"); } catch { /* ignore */ }
-  const allKeys = WATCH_SCOPE_TYPES.map((t) => t.key);
-  // A valid (even empty) saved array is honored; only a missing/corrupt one defaults to all.
-  const types = Array.isArray(saved?.types) ? saved.types.filter((k) => allKeys.includes(k)) : allKeys.slice();
-  watchSearchScope = { types, servicesOnly: !!saved?.servicesOnly };
+  watchSearchScope = normalizeWatchScope(saved);
   return watchSearchScope;
 }
 function saveWatchSearchScope() {
   try { localStorage.setItem(WATCH_SCOPE_KEY, JSON.stringify(watchSearchScope)); } catch { /* ignore */ }
-}
-function allowedScopeProviderIds(scope) {
-  const set = new Set();
-  WATCH_SCOPE_TYPES.forEach((t) => { if (scope.types.includes(t.key)) t.providers.forEach((p) => set.add(p)); });
-  return set;
 }
 function rerunDiscoverForScope() {
   const q = document.getElementById("discoverSearchInput")?.value.trim();
@@ -40476,7 +40462,7 @@ async function runDiscoverSearch(query) {
   const token = ++discoverSearchToken;
   if (!query) { showWatchList(); return; }
   const scope = getWatchSearchScope();
-  const allowedIds = allowedScopeProviderIds(scope);
+  const allowedIds = allowedProviderIds(scope);
   if (!allowedIds.size) { results.hidden = false; results.innerHTML = `<p class="discover-hint">No media types selected. Tap the filter and pick at least one.</p>`; return; }
   results.innerHTML = `<p class="discover-hint">Searching…</p>`;
   try {
