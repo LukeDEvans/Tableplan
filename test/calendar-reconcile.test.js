@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  reconcile, applyOverride, resetOverrideField, applyExclusions, hiddenIdSet, toggleExclusion
+  reconcile, applyOverride, resetOverrideField, applyExclusions, hiddenIdSet, toggleExclusion,
+  titleOverrideMap, upsertTitleOverride
 } from "../calendar/reconcile.js";
 
 const ev = (id, over = {}) => ({
@@ -102,6 +103,31 @@ describe("hide/unhide toggle list (§16) — the persisted exclusion records", (
     const out = toggleExclusion(input, "s:2", true);
     expect(input).toHaveLength(1);
     expect(out).toHaveLength(2);
+  });
+});
+
+describe("title override list (§15) — the persisted local-rename records", () => {
+  it("titleOverrideMap maps ids to their non-empty local title", () => {
+    const m = titleOverrideMap([{ id: "a", title: "Pediatric Call" }, { id: "b", title: "" }, { id: "c", title: "Gym" }]);
+    expect(m.get("a")).toBe("Pediatric Call");
+    expect(m.has("b")).toBe(false); // empty = no override
+    expect(m.get("c")).toBe("Gym");
+  });
+  it("upsertTitleOverride sets, updates, and (via empty) resets — without duplicating", () => {
+    let recs = upsertTitleOverride([], "s:1", "  Renamed  ");
+    expect(recs).toHaveLength(1);
+    expect(titleOverrideMap(recs).get("s:1")).toBe("Renamed"); // trimmed
+    recs = upsertTitleOverride(recs, "s:1", "Renamed again");
+    expect(recs).toHaveLength(1);
+    expect(titleOverrideMap(recs).get("s:1")).toBe("Renamed again");
+    recs = upsertTitleOverride(recs, "s:1", ""); // reset
+    expect(recs).toHaveLength(1);
+    expect(titleOverrideMap(recs).has("s:1")).toBe(false);
+  });
+  it("does not mutate the input list", () => {
+    const input = [{ id: "s:1", title: "X" }];
+    expect(upsertTitleOverride(input, "s:2", "Y")).toHaveLength(2);
+    expect(input).toHaveLength(1);
   });
 });
 

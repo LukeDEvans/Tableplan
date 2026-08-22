@@ -15,7 +15,7 @@ import { normalizePlanEvents } from './calendar/model.js';
 import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
 import { sourceFromPlanCalendar, isGoogleCalendarUrl } from './calendar/sources.js';
 import { normalizeExternalEvent } from './calendar/normalize.js';
-import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion } from './calendar/reconcile.js';
+import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap, upsertTitleOverride } from './calendar/reconcile.js';
 import { taskIsScheduled } from './calendar/tasks-project.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import * as TravelItinerary from './travel-itinerary.js';
@@ -276,7 +276,7 @@ const STATE_SECTIONS = {
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
   media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
-  plan:      ["calendars", "planEvents", "planCalendars", "planHiddenSources", "planExternalExclusions"],
+  plan:      ["calendars", "planEvents", "planCalendars", "planHiddenSources", "planExternalExclusions", "planExternalOverrides"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies"],
@@ -3354,6 +3354,7 @@ function defaultState() {
     planEvents: [],
     planHiddenSources: {},
     planExternalExclusions: [],
+    planExternalOverrides: [],
     contacts: [],
     contactGroups: [],
     weatherLocations: [],
@@ -3589,6 +3590,7 @@ function normalizeState(parsed) {
     planCalendars: normalizePlanCalendars(parsed?.planCalendars),
     planHiddenSources: (parsed?.planHiddenSources && typeof parsed.planHiddenSources === "object") ? parsed.planHiddenSources : {},
     planExternalExclusions: normalizePlanExternalExclusions(parsed?.planExternalExclusions),
+    planExternalOverrides: normalizePlanExternalOverrides(parsed?.planExternalOverrides),
     contacts: normalizeContacts(parsed?.contacts),
     contactGroups: normalizeContactGroups(parsed?.contactGroups),
     weatherLocations: Array.isArray(parsed?.weatherLocations) ? parsed.weatherLocations.filter((l) => l && isFinite(l.latitude) && isFinite(l.longitude)) : [],
@@ -5518,7 +5520,7 @@ function mergeStates(newer, older) {
     // Core content
     "recipes", "trashedRecipes", "folders",
     // Planning & tasks
-    "planCalendars", "planEvents", "planExternalExclusions", "autoGenerateRules",
+    "planCalendars", "planEvents", "planExternalExclusions", "planExternalOverrides", "autoGenerateRules",
     "doTasks", "doBacklog", "doArchive", "playBacklog",
     "recurringTasks", "playAutoRules",
     // Watch / Read / Recreate
@@ -35895,6 +35897,33 @@ function normalizePlanExternalExclusions(arr) {
   })).filter((e) => e.id) : [];
 }
 
+// Local title overrides for read-only external events (§15). A non-empty `title`
+// renames the event locally and survives re-sync (source-controlled fields keep
+// updating; only the title is overridden). Empty title = the reset state.
+// id-keyed → rides unionById + tombstones.
+function normalizePlanExternalOverrides(arr) {
+  return Array.isArray(arr) ? arr.map((e) => ({
+    id: String(e?.id || "").trim(),
+    title: String(e?.title || "").trim(),
+    at: e?.at || new Date().toISOString()
+  })).filter((e) => e.id) : [];
+}
+
+// Map of external event id → local title override (non-empty only). Semantics
+// live in the tested calendar/reconcile.js.
+function planExternalTitleOverrides() {
+  return titleOverrideMap(state.planExternalOverrides);
+}
+
+// Rename / reset a read-only external event's title locally. Empty title resets.
+function setPlanExternalTitle(id, title) {
+  if (!id) return;
+  state.planExternalOverrides = upsertTitleOverride(state.planExternalOverrides, id, title);
+  planRangeCache.clear();
+  persist();
+  renderPlanPage();
+}
+
 // The set of external event ids currently hidden from the calendar (§16).
 // Toggle semantics live in the tested calendar/reconcile.js.
 function planExcludedEventIds() {
@@ -37264,6 +37293,7 @@ function getPlanEventsForRange(startKey, endKey) {
   // Calendars toggled off in the sidebar hide their events (personal + iCal).
   const disabledCalIds = new Set((state.planCalendars || []).filter((c) => c.enabled === false).map((c) => c.id));
   const excludedExternalIds = planExcludedEventIds(); // §16 per-event hides for read-only external events
+  const externalTitleOverrides = planExternalTitleOverrides(); // §15 local renames
   (state.planEvents || []).forEach((e) => {
     if (e.calendarId && disabledCalIds.has(e.calendarId)) return; // calendar hidden
     const color = eventColor(e);
@@ -37296,6 +37326,8 @@ function getPlanEventsForRange(startKey, endKey) {
     cached.events.forEach((e) => {
       const base = normalizeExternalEvent(e, source);
       if (excludedExternalIds.has(base.id)) return; // §16: locally hidden (incl. all its occurrences)
+      const ov = externalTitleOverrides.get(base.id); // §15: local rename (keeps the source title for reset)
+      if (ov) { base._sourceTitle = base.title; base.title = ov; base._overridden = true; }
       if (e.recurrence?.freq) {
         // Subscribed recurring events (holidays, birthdays, …) expand like personal ones.
         expandRecurringOccurrences(base, startKey, endKey).forEach((occ) => events.push({ ...base, date: occ, occurrenceOf: base.id }));
@@ -37318,7 +37350,8 @@ function getPlanEventsForRange(startKey, endKey) {
       syncedCalendarEventsForDate(gCur).forEach((ev) => {
         const id = `gcal:${ev.calendarId}:${dk}:${ev.summary}`;
         if (excludedExternalIds.has(id)) return; // §16 locally hidden
-        events.push({ id, title: ev.summary, date: dk, allDay: true, startTime: null, endTime: null, color: ev.calendarColor || PLAN_COLORS[0], source: "ical", readOnly: true, provider: "google", calendarId: ev.calendarId, calendarName: ev.calendarName });
+        const ov = externalTitleOverrides.get(id); // §15 local rename
+        events.push({ id, title: ov || ev.summary, ...(ov ? { _sourceTitle: ev.summary, _overridden: true } : {}), date: dk, allDay: true, startTime: null, endTime: null, color: ev.calendarColor || PLAN_COLORS[0], source: "ical", readOnly: true, provider: "google", calendarId: ev.calendarId, calendarName: ev.calendarName });
       });
       gCur.setDate(gCur.getDate() + 1);
     }
@@ -37932,16 +37965,17 @@ function renderPlanEventDetail(ev) {
     planEventDetailRow("📝", "Notes", ev.notes || ""),
     remText ? planEventDetailRow("🔔", "Reminder", remText) : "",
     chores.length ? planEventDetailRow("✔", "Linked tasks", chores.join("\n")) : "",
-    planEventDetailRow("🔗", "Source", sourceText)
+    planEventDetailRow("🔗", "Source", sourceText),
+    ev._overridden ? planEventDetailRow("✎", "Renamed", `Originally “${ev._sourceTitle || ""}”`) : ""
   ].join("");
 
   const personal = !ev.source || ev.source === "personal";
   actionsEl.innerHTML = personal
     ? `<button type="button" class="secondary-btn" data-plan-detail-delete>Delete</button><button type="button" class="primary-btn" data-plan-detail-edit>Edit</button>`
     : isExternal
-      // Read-only external events can't be deleted from their source, only hidden
-      // locally (§16). The hide persists across the next sync.
-      ? `<button type="button" class="secondary-btn" data-plan-detail-hide>Hide from calendar</button>`
+      // Read-only external events can't be edited at the source, only locally:
+      // rename (§15, survives re-sync) or hide (§16). Both persist across syncs.
+      ? `<button type="button" class="secondary-btn" data-plan-detail-rename>Rename</button>${ev._overridden ? `<button type="button" class="secondary-btn" data-plan-detail-reset>Reset</button>` : ""}<button type="button" class="secondary-btn" data-plan-detail-hide>Hide</button>`
       : "";
 }
 
@@ -37950,7 +37984,7 @@ function openPlanEventDetail(id, dateKey) {
   const range = getPlanEventsForRange(key, key);
   const ev = range.find((e) => e.id === id && e.date === key) || range.find((e) => e.id === id);
   if (!ev) { openPlanEventDialog(dateKey || null, id); return; } // fall back to the editor if not found
-  planDetailContext = { id: ev.id, date: ev.date || key, source: ev.source || "personal", title: ev.title || "" };
+  planDetailContext = { id: ev.id, date: ev.date || key, source: ev.source || "personal", title: ev.title || "", sourceTitle: ev._sourceTitle || ev.title || "", overridden: Boolean(ev._overridden) };
   renderPlanEventDetail(ev);
   const panel = document.getElementById("planDetailPanel");
   if (!panel) return;
@@ -37989,6 +38023,21 @@ function initPlanEventDetail() {
       const ctx = planDetailContext;
       closePlanEventDetail();
       setPlanExternalHidden(ctx.id, ctx.title, true); // §16 local hide (read-only external)
+      return;
+    }
+    if (e.target.closest("[data-plan-detail-rename]") && planDetailContext) {
+      const ctx = planDetailContext;
+      const next = prompt("Rename this event locally (its source keeps updating):", ctx.title || "");
+      if (next === null) return; // cancelled
+      closePlanEventDetail();
+      // Renaming back to the source title clears the override.
+      setPlanExternalTitle(ctx.id, next.trim() === (ctx.sourceTitle || "").trim() ? "" : next); // §15
+      return;
+    }
+    if (e.target.closest("[data-plan-detail-reset]") && planDetailContext) {
+      const ctx = planDetailContext;
+      closePlanEventDetail();
+      setPlanExternalTitle(ctx.id, ""); // §15 reset to source title
     }
   });
   document.addEventListener("keydown", (e) => {

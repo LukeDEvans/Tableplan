@@ -56,6 +56,25 @@ export function toggleExclusion(records, id, hidden, title = "") {
   return list;
 }
 
+// Local title-override records: { id, title, at }. A non-empty title renames the
+// external event locally; empty is the reset state. These helpers own that list
+// (§15), mirroring the exclusion helpers above.
+export function titleOverrideMap(records) {
+  const m = new Map();
+  for (const r of records || []) if (r && r.id && r.title) m.set(r.id, r.title);
+  return m;
+}
+
+export function upsertTitleOverride(records, id, title) {
+  const list = [...(records || [])];
+  const clean = String(title || "").trim();
+  const at = new Date().toISOString();
+  const i = list.findIndex((r) => r && r.id === id);
+  if (i >= 0) list[i] = { ...list[i], title: clean, at };
+  else list.push({ id, title: clean, at });
+  return list;
+}
+
 // Drop excluded events from a list. `exclusions` may be a Set or an array of ids.
 export function applyExclusions(events, exclusions) {
   if (!exclusions) return events;
