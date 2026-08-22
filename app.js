@@ -19,6 +19,7 @@ import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap,
 import { taskIsScheduled } from './calendar/tasks-project.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
+import { beginTasksWeekSession, stepTasksWeek, endTasksWeekSession, tasksBellState } from './tasks-overlay.js';
 import * as TravelItinerary from './travel-itinerary.js';
 import * as TravelTransitions from './travel-transitions.js';
 import * as TravelModel from './travel-model.js';
@@ -535,6 +536,10 @@ let pendingInviteToken = null;
 let activeFolder = "";
 let activeRecipeTag = "";
 let currentWeek = startOfPrepWindow(new Date());
+// Active Tasks-overlay week session (T1). While open, currentWeek is driven by the
+// overlay; this holds the shared week to restore on close so Meal Plan etc. are
+// never moved by task week-stepping. null when the overlay is closed.
+let tasksWeekSession = null;
 let activePlannerDayId = plannerDayIdForDate(new Date());
 let activeAutoRuleDayId = activePlannerDayId;
 let editingDoTaskContext = null;
@@ -1910,7 +1915,12 @@ function bindEvents() {
   elements.closeDoTaskDetailBtn?.addEventListener("click", () => elements.doTaskDetailDialog.close());
   elements.closeDoArchiveBtn?.addEventListener("click", () => elements.doArchiveDialog.close());
   elements.closeTasksPageBtn.addEventListener("click", () => elements.tasksPageDialog.close());
-  elements.tasksPageDialog.addEventListener("close", () => setPageTitle(currentMainPageTitle()));
+  elements.tasksPageDialog.addEventListener("close", () => {
+    // T1: restore the shared prep week the overlay borrowed, so Meal Plan and other
+    // week-scoped views keep the week they were on (any close path fires this).
+    if (tasksWeekSession) { currentWeek = endTasksWeekSession(tasksWeekSession); tasksWeekSession = null; }
+    setPageTitle(currentMainPageTitle());
+  });
   // The Tasks overlay hosts the full task planner: relocate the planner grid into
   // it once, so every existing renderDoPlanner()/bindDoTaskControls call renders the
   // complete Tasks experience inside the overlay (retired the standalone Tasks page).
@@ -7179,7 +7189,9 @@ function activateEatShell() {
 // redirect: show the Calendar, then open the Tasks overlay on top of it.
 function showDoApp(event) {
   event?.stopPropagation();
-  if (!isPageEnabled("do")) { showHomeApp(); return; }
+  // One page-enable model: respect a personally-disabled Tasks page here too, so a
+  // #do hash / voice / stale link can't route into a page the user disabled (T2).
+  if (!isPagePersonallyEnabled("do")) { showHomeApp(); return; }
   if (isPageEnabled("plan")) showPlanApp(event); else showHomeApp();
   openTasksPage(event);
   closePageTitleMenu();
@@ -10013,6 +10025,9 @@ function showPlanApp(event) {
   fetchAllPlanCalendars();
   renderPlanCalList(); // populate the left sidebar's calendar manager
   renderPlanPage();
+  // T2: the bell is Tasks' only entry point — hide it when the Tasks page is
+  // disabled in settings, so it can't bypass the page-enable model.
+  if (elements.planTasksBtn) elements.planTasksBtn.hidden = tasksBellState(isPagePersonallyEnabled("do")).hidden;
   updateDoNotifCount(); // refresh the Tasks bell dot for the current task state
   closePageTitleMenu();
   closeAppMenu();
@@ -14157,9 +14172,22 @@ function currentMainPageTitle() {
 
 // The Tasks overlay — opened from the Calendar page's notifications button. It hosts
 // the full task planner (relocated #doPlannerGrid) as a window over the calendar.
+// T2: honour the page-enable setting — a disabled Tasks page cannot be opened here.
+// T1: on open, start a week session so the overlay browses its own week (today's
+// real prep week) without moving Meal Plan's shared week; restored on close.
 function openTasksPage(event) {
   event?.stopPropagation();
+  if (!tasksBellState(isPagePersonallyEnabled("do")).canOpen) return;
   closeFloatingMenus();
+  // Start a week session only when one isn't already active. Tying the stash to the
+  // session (not to dialog.open) means that if renderDoPlanner()/showModal() ever
+  // throws before the dialog opens, the next open won't re-stash — which would
+  // overwrite the real shared prep week with the overlay's — so the shared week is
+  // never lost (restored by the close handler once the dialog does open). (T1)
+  if (!tasksWeekSession) {
+    tasksWeekSession = beginTasksWeekSession(currentWeek, startOfPrepWindow(new Date()));
+    currentWeek = tasksWeekSession.overlayWeek;
+  }
   setPageTitle("Tasks");
   updatePlanTasksWeekLabel();
   renderDoPlanner();
@@ -14170,10 +14198,11 @@ function updatePlanTasksWeekLabel() {
   if (elements.tasksOverlayWeekLabel) elements.tasksOverlayWeekLabel.textContent = formatWeekRange(currentWeek, 6);
 }
 
-// Step the task week within the overlay without disturbing the calendar behind it
-// (currentWeek is the shared task/meal week, as the standalone page used it).
+// Step the overlay's own week (T1). During a session this moves only the overlay's
+// week; the shared week is restored on close, so Meal Plan / Exercise / Grocery are
+// untouched. Falls back to the raw shared week if somehow stepped without a session.
 function stepPlanTasksWeek(delta) {
-  currentWeek = addDays(currentWeek, delta * 7);
+  currentWeek = tasksWeekSession ? stepTasksWeek(tasksWeekSession, delta) : addDays(currentWeek, delta * 7);
   renderDoPlanner();
   updatePlanTasksWeekLabel();
 }
@@ -19689,7 +19718,6 @@ function updateSettingsMenuOptions() {
   const isEat = activeAppArea === "eat";
   const isShop = activeAppArea === "shop";
   const isPlay = activeAppArea === "play";
-  const isDo = activeAppArea === "do";
   const isRecreate = activeAppArea === "recreate";
   const isPlan = activeAppArea === "plan";
   elements.menuAutoRulesBtn.hidden = !isEat;
@@ -19704,7 +19732,10 @@ function updateSettingsMenuOptions() {
   const isWatchTab = activeAppArea === "media" && activeMediaTab === "watch";
   elements.menuWatchServicesBtn.hidden = !isWatchTab;
   elements.menuWatchTheatersBtn.hidden = !isWatchTab;
-  elements.menuRecurringTasksBtn.hidden = !isDo;
+  // T3: Tasks moved into the Calendar page's overlay, and this app-menu item was
+  // Recurring Tasks' only live route — so surface it on the Calendar (Tasks' new
+  // home), gated by the same page-enable check as the Tasks bell (T2).
+  elements.menuRecurringTasksBtn.hidden = !(isPlan && isPagePersonallyEnabled("do"));
   elements.menuWorkoutLibraryBtn.hidden = !isPlay;
   elements.menuWorkoutLogsBtn.hidden = !isPlay;
   elements.menuInventoryRoomsBtn.hidden = activeAppArea !== "inventory";
