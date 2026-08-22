@@ -13,6 +13,8 @@ import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKe
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
 import { eventInstancesInRange, sortEventsForDisplay } from './calendar/projection.js';
+import { sourceFromPlanCalendar } from './calendar/sources.js';
+import { normalizeExternalEvent } from './calendar/normalize.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import * as TravelItinerary from './travel-itinerary.js';
 import * as TravelTransitions from './travel-transitions.js';
@@ -37256,8 +37258,12 @@ function getPlanEventsForRange(startKey, endKey) {
   (state.planCalendars || []).filter((c) => c.enabled).forEach((cal) => {
     const cached = planCalendarCache[cal.id];
     if (!cached) return;
+    // External events converge to the canonical shape here (same fields as before
+    // plus stable identity: sourceId/externalId/provider/readOnly), so local and
+    // external events reach the renderer through one representation (§13-14).
+    const source = sourceFromPlanCalendar(cal);
     cached.events.forEach((e) => {
-      const base = { ...e, id: `${cal.id}:${e.uid}`, source: "ical", calendarId: cal.id, color: cal.color, calendarName: cal.name };
+      const base = normalizeExternalEvent(e, source);
       if (e.recurrence?.freq) {
         // Subscribed recurring events (holidays, birthdays, …) expand like personal ones.
         expandRecurringOccurrences(base, startKey, endKey).forEach((occ) => events.push({ ...base, date: occ, occurrenceOf: base.id }));
