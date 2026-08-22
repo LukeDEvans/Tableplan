@@ -1422,11 +1422,10 @@ const elements = {
 
 let pendingRestore = null;
 let pendingCookLogId = "";
-let doNotifOpen = false;
 // Declared here (above the initial render() below) because renderPlanner() —
 // which render() calls — reads them via mealPlanNotifBellHtml() during that
 // first synchronous render, before their original `let` further down would
-// have initialized (TDZ). Same reason doNotifOpen sits here.
+// have initialized (TDZ).
 let mealPlanRecipes = null;
 let mealPlanNotifOpen = false;
 let mealPlanNotifWired = false;
@@ -1462,7 +1461,7 @@ bindEvents();
 // closed, no dialog open), re-render so newly-due items surface live.
 setInterval(() => {
   updateDoNotifCount();
-  if (elements.doPlannerGrid && elements.doPlannerGrid.offsetParent !== null && !doNotifOpen && !document.querySelector("dialog[open]")) {
+  if (elements.doPlannerGrid && elements.doPlannerGrid.offsetParent !== null && !document.querySelector("dialog[open]")) {
     renderDoPlanner();
   }
   checkEventReminders();
@@ -14575,24 +14574,18 @@ function initDoPlannerDelegation() {
     if (del) { deleteDoTask(del.dataset.doDay, del.dataset.doTaskDelete); return; }
     const edit = e.target.closest("[data-do-task-swipe-edit]");
     if (edit) { openEditTaskDialog(edit.dataset.doDay, edit.dataset.doTaskSwipeEdit); return; }
-    if (e.target.closest("[data-do-notif-toggle]")) { doNotifOpen = !doNotifOpen; renderDoPlanner(); return; }
+    // Suggested section: jump to the day a due/overdue item lives on.
     const jump = e.target.closest("[data-do-notif-jump]");
-    if (jump) { doNotifOpen = false; selectPlannerDay(jump.dataset.doNotifJump); return; }
+    if (jump) { selectPlannerDay(jump.dataset.doNotifJump); return; }
   });
 
   grid.addEventListener("change", (e) => {
     const toggle = e.target.closest("[data-do-task-toggle]");
     if (toggle) { toggleDoTask(toggle.dataset.doDay, toggle.dataset.doTaskToggle, toggle.checked); return; }
+    // Suggested section: checking an item marks that task done for the week.
     const notifCheck = e.target.closest("[data-do-notif-check]");
     if (notifCheck) toggleDoTaskForWeek(notifCheck.dataset.key, notifCheck.dataset.day, notifCheck.dataset.task, true);
   });
-
-  document.addEventListener("click", (e) => {
-    if (!doNotifOpen) return;
-    if (e.target.closest(".do-notif-wrap")) return;
-    doNotifOpen = false;
-    renderDoPlanner();
-  }, { capture: true });
 
   grid.addEventListener("dragover", (e) => {
     if (!Array.from(e.dataTransfer.types || []).includes("application/json")) return;
@@ -14647,45 +14640,45 @@ function initTasksPageDelegation() {
   });
 }
 
-function doNotifBellHtml() {
+// Suggested section on the Tasks page (Calendar 2.0 §29). Replaces the old
+// in-page notifications bell: the same attention items (due now / overdue this
+// week / unfinished chores) now surface as an inline "Suggested" section above
+// Chores rather than a nested bell dropdown. Empty → renders nothing. The check
+// (mark done) and day-jump actions are unchanged.
+function doSuggestedSectionHtml() {
   const chores = doUnfinishedChores();
   const overdue = doOverdueDayTasks();
   const due = doDueTimedTasks();
   const count = chores.length + overdue.length + due.length;
-  const bellSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
+  if (!count) return "";
   const rowHtml = (label, key, dayId, taskId) => `
     <label class="do-notif-item">
       <input type="checkbox" data-do-notif-check data-key="${escapeHtml(key)}" data-day="${escapeHtml(dayId)}" data-task="${escapeHtml(taskId)}" />
       <span class="do-notif-item-title">${escapeHtml(label)}</span>
     </label>`;
   return `
-    <div class="do-notif-wrap">
-      <button class="icon-btn do-notif-btn" type="button" data-do-notif-toggle title="Unfinished items needing attention" aria-label="Unfinished items">
-        ${bellSvg}
-        ${count ? `<span class="do-notif-badge">${count}</span>` : ""}
-      </button>
-      ${doNotifOpen ? `
-      <div class="do-notif-panel">
-        ${due.length ? `
-        <div class="do-notif-head">Due now</div>
+    <section class="do-suggested" aria-label="Suggested">
+      <div class="slot-topline">
+        <div class="slot-label">Suggested</div>
+        <span class="do-suggested-count" aria-label="${count} suggested">${count}</span>
+      </div>
+      <div class="do-suggested-list">
+        ${due.length ? `<div class="do-notif-head">Due now</div>
         ${due.map((d) => `
           <div class="do-notif-row">
             ${rowHtml(`${formatTaskTime(d.task.time)} · ${d.task.title}`, d.dayKey, d.dayId, d.task.id)}
             <button class="secondary-btn do-notif-jump" type="button" data-do-notif-jump="${escapeHtml(d.dayId)}">${escapeHtml(d.dayName)}</button>
           </div>`).join("")}` : ""}
-        ${overdue.length ? `
-        <div class="do-notif-head">Overdue this week</div>
+        ${overdue.length ? `<div class="do-notif-head">Overdue this week</div>
         ${overdue.map((o) => `
           <div class="do-notif-row">
             ${rowHtml(o.task.title, o.dayKey, o.dayId, o.task.id)}
             <button class="secondary-btn do-notif-jump" type="button" data-do-notif-jump="${escapeHtml(o.dayId)}">${escapeHtml(o.dayName)}</button>
           </div>`).join("")}` : ""}
-        ${chores.length ? `
-        <div class="do-notif-head">Unfinished chores</div>
+        ${chores.length ? `<div class="do-notif-head">Unfinished chores</div>
         ${chores.map((c) => rowHtml(c.title, doRealWeekKey(), "backlog", c.id)).join("")}` : ""}
-        ${!count ? `<div class="do-notif-empty">Nothing overdue.</div>` : ""}
-      </div>` : ""}
-    </div>`;
+      </div>
+    </section>`;
 }
 
 function renderDoPlanner() {
@@ -14697,7 +14690,6 @@ function renderDoPlanner() {
       <div class="day-tabs" role="tablist" aria-label="Task days">
         ${doPrepDays.map((day) => doDayTabTemplate(day, day.id === activeDay.id)).join("")}
       </div>
-      ${doNotifBellHtml()}
     </div>
     <div class="do-week-shell">
       <section class="day-column planner-day-panel do-day-panel" role="tabpanel" id="do-panel-${activeDay.id}" aria-labelledby="do-tab-${activeDay.id}">
@@ -14708,6 +14700,7 @@ function renderDoPlanner() {
         </div>
       </section>
       <section class="day-column planner-day-panel do-backlog-panel" aria-label="Chores">
+        ${doSuggestedSectionHtml()}
         <div class="slot-topline">
           <div class="slot-label">Chores</div>
           <div class="slot-actions" style="margin-left:auto">

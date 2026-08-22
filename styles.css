@@ -21094,6 +21094,34 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   .do-notif-panel { width: min(320px, 92vw); }
 }
 
+/* Suggested section on the Tasks page (Calendar 2.0 §29) — replaces the old
+   in-page notifications bell; sits above Chores in the backlog panel. Reuses the
+   .do-notif-* row/item/head/jump styles for its contents. */
+.do-suggested {
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.do-suggested .slot-topline { margin-bottom: 4px; }
+.do-suggested-count {
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.do-suggested-list { display: flex; flex-direction: column; gap: 2px; }
+/* The app-wide `input { width: 100% }` reset would stretch these checkboxes and
+   collapse the item title — keep them intrinsic-width. */
+.do-suggested input[type="checkbox"] { width: auto; flex: 0 0 auto; margin: 0; }
+
 /* Meal Plan page: recipe notifications (same shape as .do-notif-*) */
 .eat-top-row { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 12%, transparent); }
 /* overflow-y:hidden stops the browser from computing overflow-y as `auto`
