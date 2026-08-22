@@ -39252,15 +39252,27 @@ async function addPlanCalendar() {
 }
 
 async function fetchAllPlanCalendars() {
-  if (!canUseLocalBackend()) return;
   const cals = state.planCalendars || [];
-  await Promise.all(cals.map(fetchOnePlanCalendar));
+  await Promise.all(cals.map(fetchOnePlanCalendar)); // fetchOnePlanCalendar picks local vs Netlify proxy
+}
+
+// The generic-ICS proxy URL: the local dev server in development, else the
+// deployed Netlify function (so subscriptions also refresh on the live site).
+function icsProxyUrl(url) {
+  const enc = encodeURIComponent(String(url || "").trim());
+  if (!enc) return "";
+  if (canUseLocalBackend()) return `/api/ics-proxy?url=${enc}`;
+  if (window.location.protocol.startsWith("http")) return `/.netlify/functions/ics-proxy?url=${enc}`;
+  return "";
 }
 
 async function fetchOnePlanCalendar(cal) {
-  if (!cal?.url || !canUseLocalBackend()) return;
+  if (!cal?.url) return;
+  const proxy = icsProxyUrl(cal.url);
+  if (!proxy) return;
   try {
-    const res = await fetch(`/api/ics-proxy?url=${encodeURIComponent(cal.url)}`);
+    // The Netlify proxy is session-gated; the local one ignores the header.
+    const res = await fetch(proxy, { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
     if (!res.ok) return;
     const data = await res.json();
     planCalendarCache[cal.id] = { fetchedAt: new Date(), events: data.events || [] };

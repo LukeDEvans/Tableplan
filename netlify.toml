@@ -17,6 +17,11 @@
 [functions]
   directory = "netlify/functions"
 
+# ics-proxy imports the shared parser at calendar/ics.mjs — ensure it's bundled
+# with the function regardless of the bundler's import tracing.
+[functions."ics-proxy"]
+  included_files = ["calendar/ics.mjs"]
+
 [functions."scheduled-email"]
   schedule = "*/15 * * * *"
 
