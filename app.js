@@ -15,6 +15,7 @@ import { normalizePlanEvents } from './calendar/model.js';
 import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
 import { sourceFromPlanCalendar } from './calendar/sources.js';
 import { normalizeExternalEvent } from './calendar/normalize.js';
+import { taskIsScheduled } from './calendar/tasks-project.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import * as TravelItinerary from './travel-itinerary.js';
 import * as TravelTransitions from './travel-transitions.js';
@@ -37303,7 +37304,16 @@ function buildPlanAppDataIndex() {
   doTasks.forEach((task) => {
     const key = task?.date || task?.dueDate;
     const title = task?.title || task?.text || task?.name;
-    if (key && title) push(key, { id: `do-${task.id || title}`, title, date: key, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.do, source: "do", calendarName: "Tasks" });
+    if (!(key && title)) return;
+    // Tasks stay Tasks (§24) — projected read-only, never converted to Events.
+    // A task with a time-of-day is SCHEDULED (occupies that slot); one without is
+    // DUE (an all-day chip on its date). `isTask` drives the distinct styling (§25).
+    const common = { id: `do-${task.id || title}`, title, date: key, color: PLAN_APP_COLORS.do, source: "do", calendarName: "Tasks", isTask: true, done: Boolean(task?.done) };
+    if (taskIsScheduled(task)) {
+      push(key, { ...common, allDay: false, startTime: task.time, endTime: null, taskState: "scheduled" });
+    } else {
+      push(key, { ...common, allDay: true, startTime: null, endTime: null, taskState: "due" });
+    }
   });
   return byDate;
 }
@@ -37340,6 +37350,13 @@ function getAppDataEvents(startKey, endKey) {
   return events;
 }
 
+// A projected Task (vs an Event) — carries a checkbox glyph so the two never look
+// alike, independent of colour (§25, §42).
+function planIsTaskEvent(event) { return Boolean(event.isTask) || event.source === "do"; }
+function planTaskGlyph(event) {
+  return planIsTaskEvent(event) ? `<span class="plan-task-check" aria-hidden="true">${event.done ? "☑" : "☐"}</span>` : "";
+}
+
 function planEventPillTemplate(event) {
   const commonAttrs = `data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}" style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])}" data-tip="${escapeHtml(event.title)}" tabindex="0" role="button" aria-label="${escapeHtml(event.title)}"`;
   // Multi-day continuation days render as a title-less bar segment that connects
@@ -37357,8 +37374,9 @@ function planEventPillTemplate(event) {
   const movable = personal && !event.recurrence && !event.occurrenceOf;
   const occMovable = personal && event.recurrence && event.occurrenceOf;
   const dragAttrs = movable ? ' draggable="true" data-evt-movable="1"' : occMovable ? ' draggable="true" data-evt-occ-movable="1"' : "";
-  return `<div class="plan-event-pill${movable || occMovable ? " is-movable" : ""}${spanCls}"${dragAttrs} ${commonAttrs}>
-    ${dot}${time}<span class="plan-event-title">${escapeHtml(event.title)}</span>${event.recurrence || event.occurrenceOf ? '<span class="plan-event-recur" aria-hidden="true">↻</span>' : ""}
+  const isTask = planIsTaskEvent(event);
+  return `<div class="plan-event-pill${movable || occMovable ? " is-movable" : ""}${spanCls}${isTask ? " is-task" : ""}"${dragAttrs} ${commonAttrs}>
+    ${isTask ? planTaskGlyph(event) : dot}${time}<span class="plan-event-title">${escapeHtml(event.title)}</span>${event.recurrence || event.occurrenceOf ? '<span class="plan-event-recur" aria-hidden="true">↻</span>' : ""}
   </div>`;
 }
 
@@ -37422,19 +37440,26 @@ function renderPlanMonthView() {
     const isToday = key === today;
     const isOther = date.getMonth() !== month;
     const dayEvts = eventsByDay[key] || []; // already sorted: all-day first, then by start time
-    // Unified chip list (all-day first, then timed). Cap so busy days can't
-    // silently clip; the remainder shows as "+N" (which drills into that day).
+    // Month stays high-level: Events show as chips; Tasks collapse to a single
+    // compact count so the grid isn't flooded (§25). Both drill into the day.
+    const eventChips = dayEvts.filter((e) => !planIsTaskEvent(e));
+    const taskCount = dayEvts.length - eventChips.length;
+    // Cap so busy days can't silently clip; the remainder shows as "+N".
     // 5 titled rows fit a desktop cell, and the chips collapse to dots on phones.
     const MONTH_CHIP_CAP = 5;
-    const shown = dayEvts.slice(0, MONTH_CHIP_CAP);
-    const hidden = dayEvts.length - shown.length;
-    const aria = `${date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}${dayEvts.length ? `, ${dayEvts.length} event${dayEvts.length > 1 ? "s" : ""}` : ""}`;
+    const shown = eventChips.slice(0, MONTH_CHIP_CAP);
+    const hidden = eventChips.length - shown.length;
+    const taskChip = taskCount ? `<span class="plan-month-task-count" role="button" tabindex="0" aria-label="${taskCount} task${taskCount > 1 ? "s" : ""} — open day" title="${taskCount} task${taskCount > 1 ? "s" : ""}"><span aria-hidden="true">☑ ${taskCount}</span></span>` : "";
+    const ariaParts = [];
+    if (eventChips.length) ariaParts.push(`${eventChips.length} event${eventChips.length > 1 ? "s" : ""}`);
+    if (taskCount) ariaParts.push(`${taskCount} task${taskCount > 1 ? "s" : ""}`);
+    const aria = `${date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}${ariaParts.length ? ", " + ariaParts.join(", ") : ""}`;
     return `<div class="plan-month-day${isToday ? " is-today" : ""}${isOther ? " is-other-month" : ""}" data-plan-day="${escapeHtml(key)}" tabindex="0" role="gridcell" aria-label="${escapeHtml(aria)}">
       <div class="plan-month-day-head">
         <span class="plan-day-number">${date.getDate()}</span>
       </div>
       ${paydayDotHtml(paydaysByDay[key])}
-      ${(shown.length || hidden) ? `<div class="plan-month-events">${shown.map(planMonthChipTemplate).join("")}${hidden ? `<span class="plan-month-more" role="button" aria-label="${hidden} more — open day">+${hidden}</span>` : ""}</div>` : ""}
+      ${(shown.length || hidden || taskChip) ? `<div class="plan-month-events">${shown.map(planMonthChipTemplate).join("")}${hidden ? `<span class="plan-month-more" role="button" aria-label="${hidden} more — open day">+${hidden}</span>` : ""}${taskChip}</div>` : ""}
     </div>`;
   }).join("");
   return `<div class="plan-month">
@@ -37561,7 +37586,7 @@ function renderPlanAgendaView() {
       return `<div class="plan-agenda-event" data-plan-event-id="${escapeHtml(e.id)}" data-plan-event-date="${escapeHtml(e.date || key)}" data-plan-day="${escapeHtml(key)}">
         <span class="plan-agenda-dot" style="background:${escapeHtml(e.color || PLAN_COLORS[0])}"></span>
         <div class="plan-agenda-info">
-          <span class="plan-agenda-title">${escapeHtml(e.title)}${e.recurrence || e.occurrenceOf ? ' <span class="plan-event-recur" aria-hidden="true">↻</span>' : ""}</span>
+          <span class="plan-agenda-title${planIsTaskEvent(e) ? " is-task" : ""}">${planIsTaskEvent(e) ? planTaskGlyph(e) + " " : ""}${escapeHtml(e.title)}${e.recurrence || e.occurrenceOf ? ' <span class="plan-event-recur" aria-hidden="true">↻</span>' : ""}</span>
           <span class="plan-agenda-time">${escapeHtml(timeStr)}${calLabel}</span>
         </div>
       </div>`;
@@ -37639,11 +37664,13 @@ function planTimedEventBlock(seg, layout, conflicts) {
   // the class means the cue isn't colour-only (§42).
   const isConflict = conflicts?.has(event.id);
   const conflictMark = isConflict ? '<span class="plan-conflict-mark" aria-hidden="true">⚠</span>' : "";
-  return `<div class="plan-timed-event${seg.tail ? " is-overnight-tail" : ""}${resizable ? " is-movable" : ""}${isConflict ? " is-conflict" : ""}" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}"
-               tabindex="0" role="button" aria-label="${escapeHtml(label)}${isConflict ? " (overlaps another event)" : ""}"
+  const isTask = planIsTaskEvent(event);
+  const taskLabel = isTask ? `${event.done ? "☑" : "☐"} ${label}` : label;
+  return `<div class="plan-timed-event${seg.tail ? " is-overnight-tail" : ""}${resizable ? " is-movable" : ""}${isConflict ? " is-conflict" : ""}${isTask ? " is-task" : ""}" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}"
+               tabindex="0" role="button" aria-label="${escapeHtml(taskLabel)}${isConflict ? " (overlaps another event)" : ""}"
                style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])};top:${top}%;height:${height}%;${colStyle}"
-               data-tip="${escapeHtml(label)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}${isConflict ? " · overlaps another event" : ""}">
-    <span>${escapeHtml(label)}${event.recurrence || event.occurrenceOf ? " ↻" : ""}</span>${conflictMark}${resizable ? `<span class="plan-event-resize" data-resize-event="${escapeHtml(event.id)}" aria-hidden="true"></span>` : ""}
+               data-tip="${escapeHtml(taskLabel)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}${isConflict ? " · overlaps another event" : ""}">
+    <span>${escapeHtml(taskLabel)}${event.recurrence || event.occurrenceOf ? " ↻" : ""}</span>${conflictMark}${resizable ? `<span class="plan-event-resize" data-resize-event="${escapeHtml(event.id)}" aria-hidden="true"></span>` : ""}
   </div>`;
 }
 
@@ -38672,7 +38699,7 @@ function initPlanCalListDelegation() {
     const cell = e.target.closest("[data-plan-day]");
     if (!cell) return;
     // Month view: the day number or the "+N more" chip drill into that day.
-    if (planViewMode === "month" && (e.target.closest(".plan-day-number") || e.target.closest(".plan-month-more"))) {
+    if (planViewMode === "month" && (e.target.closest(".plan-day-number") || e.target.closest(".plan-month-more") || e.target.closest(".plan-month-task-count"))) {
       planViewDate = new Date(cell.dataset.planDay + "T00:00:00");
       planViewMode = "day";
       setWeekToolsMode("plan");

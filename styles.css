@@ -11563,6 +11563,25 @@ body.touch-drag-active * {
 .plan-timed-event.is-conflict { box-shadow: inset 3px 0 0 0 #d9534f; }
 .plan-conflict-mark { position: absolute; top: 1px; right: 3px; font-size: 0.7rem; line-height: 1; color: #d9534f; }
 
+/* Projected Tasks on the calendar (§25) — a checkbox glyph + a dashed outline set
+   Tasks apart from Events without relying on colour alone (§42). Tasks are
+   read-only projections (clicking jumps to the Tasks page). */
+.plan-task-check { flex: 0 0 auto; font-size: 0.9em; line-height: 1; }
+.plan-event-pill.is-task { background: transparent; border: 1px dashed color-mix(in srgb, var(--evt-color) 55%, var(--line)); }
+.plan-timed-event.is-task { border: 1px dashed color-mix(in srgb, var(--evt-color) 70%, var(--window-bg)); }
+.plan-month-task-count {
+  display: inline-flex;
+  align-items: center;
+  height: 15px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px dashed var(--muted);
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 /* Just wide enough for the 7 weekday circles (7×34 + gaps + padding). */
 .plan-event-dialog { max-width: 320px; }
 /* Full-screen on mobile. */
