@@ -87,6 +87,24 @@ export function eventsOverlap(a, b) {
   return aStart < bE && bStart < aE;
 }
 
+// Conflict marker for the Day/Week columns, computed from the already-laid-out
+// segments (each { id, start, end } in column-minutes). Working from the visual
+// segments — rather than event date/time strings — means an overnight event's
+// evening and morning halves are compared within the correct column, and it's a
+// single O(n²) pass over what's actually drawn. Returns the Set of ids that
+// overlap at least one other segment. §22: surfaced, never auto-resolved.
+export function overlappingIntervalIds(intervals) {
+  const out = new Set();
+  const list = intervals || [];
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      const a = list[i], b = list[j];
+      if (a.start < b.end && b.start < a.end) { out.add(a.id); out.add(b.id); }
+    }
+  }
+  return out;
+}
+
 // Given the instance list for a range, return the Set of instance ids that
 // overlap at least one other event. Pure; used by the Day/Week conflict marker.
 export function conflictsFor(events) {

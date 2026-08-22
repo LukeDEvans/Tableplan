@@ -11510,6 +11510,59 @@ body.touch-drag-active * {
 /* Title left, close (x) in the top-right corner. */
 .plan-cal-dialog .recipe-form-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .plan-cal-dialog .recipe-form-head h2 { margin: 0; }
+/* Event detail side panel (Calendar 2.0 §21): read view first, "Edit" opens the
+   full editor. Right-docked on desktop; a bottom sheet on mobile (§43). */
+.plan-detail { position: fixed; inset: 0; z-index: 60; display: flex; justify-content: flex-end; }
+.plan-detail[hidden] { display: none; }
+.plan-detail-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.28); }
+.plan-detail-card {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: min(380px, 100vw);
+  height: 100dvh;
+  background: var(--window-bg);
+  border-left: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  padding: 18px 18px 16px;
+  gap: 14px;
+  overflow-y: auto;
+  animation: planDetailIn 0.18s ease;
+}
+@keyframes planDetailIn { from { transform: translateX(16px); opacity: 0; } to { transform: none; opacity: 1; } }
+.plan-detail-head { display: flex; align-items: flex-start; gap: 10px; }
+.plan-detail-dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 6px; flex: 0 0 auto; background: var(--muted); }
+.plan-detail-title { flex: 1; margin: 0; font-size: 1.15rem; line-height: 1.25; font-weight: 650; color: var(--text); word-break: break-word; }
+.plan-detail-close { flex: 0 0 auto; }
+.plan-detail-body { display: flex; flex-direction: column; gap: 12px; }
+.plan-detail-row { display: flex; gap: 10px; align-items: baseline; font-size: 0.9rem; }
+.plan-detail-row-icon { flex: 0 0 20px; text-align: center; color: var(--muted); }
+.plan-detail-row-text { flex: 1; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+.plan-detail-row-label { display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 2px; }
+.plan-detail-badge { display: inline-block; font-size: 0.72rem; padding: 2px 8px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); }
+.plan-detail-actions { display: flex; gap: 8px; margin-top: auto; padding-top: 8px; }
+.plan-detail-actions button { flex: 1; }
+.plan-detail-actions:empty { display: none; }
+@media (max-width: 560px) {
+  .plan-detail { align-items: flex-end; }
+  .plan-detail-card {
+    width: 100%;
+    height: auto;
+    max-height: 86dvh;
+    border-left: 0;
+    border-top-left-radius: 16px;
+    border-top-right-radius: 16px;
+    animation: planDetailUp 0.2s ease;
+  }
+}
+@keyframes planDetailUp { from { transform: translateY(20px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .plan-detail-card { animation: none; } }
+
+/* Conflict cue on timed blocks (§22): a stripe AND a glyph so it isn't colour-only (§42). */
+.plan-timed-event.is-conflict { box-shadow: inset 3px 0 0 0 #d9534f; }
+.plan-conflict-mark { position: absolute; top: 1px; right: 3px; font-size: 0.7rem; line-height: 1; color: #d9534f; }
+
 /* Just wide enough for the 7 weekday circles (7×34 + gaps + padding). */
 .plan-event-dialog { max-width: 320px; }
 /* Full-screen on mobile. */

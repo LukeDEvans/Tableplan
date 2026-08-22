@@ -3,7 +3,8 @@ import {
   eventInstancesInRange,
   sortEventsForDisplay,
   eventsOverlap,
-  conflictsFor
+  conflictsFor,
+  overlappingIntervalIds
 } from "../calendar/projection.js";
 import { normalizeRecurrence } from "../calendar/recurrence.js";
 
@@ -90,5 +91,23 @@ describe("eventsOverlap / conflictsFor (§22)", () => {
   });
   it("no conflicts → empty set", () => {
     expect(conflictsFor([timed("a", "2026-01-01", "09:00", "10:00"), timed("b", "2026-01-01", "10:00", "11:00")]).size).toBe(0);
+  });
+});
+
+describe("overlappingIntervalIds (Day/Week column segments)", () => {
+  it("marks both ids of an overlapping pair, leaves a free segment out", () => {
+    const ids = overlappingIntervalIds([
+      { id: "a", start: 540, end: 630 }, // 9:00–10:30
+      { id: "b", start: 600, end: 660 }, // 10:00–11:00 (overlaps a)
+      { id: "c", start: 720, end: 780 }  // 12:00–13:00 (free)
+    ]);
+    expect([...ids].sort()).toEqual(["a", "b"]);
+  });
+  it("touching segments (end == start) do not overlap", () => {
+    expect(overlappingIntervalIds([{ id: "a", start: 540, end: 600 }, { id: "b", start: 600, end: 660 }]).size).toBe(0);
+  });
+  it("empty / single input → empty set", () => {
+    expect(overlappingIntervalIds([]).size).toBe(0);
+    expect(overlappingIntervalIds([{ id: "a", start: 0, end: 60 }]).size).toBe(0);
   });
 });

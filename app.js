@@ -12,7 +12,7 @@ import { createPlaybackEngine } from './playback-engine.js';
 import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones } from './state-sync.js';
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
-import { eventInstancesInRange, sortEventsForDisplay } from './calendar/projection.js';
+import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
 import { sourceFromPlanCalendar } from './calendar/sources.js';
 import { normalizeExternalEvent } from './calendar/normalize.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
@@ -2374,6 +2374,7 @@ async function initializeApp() {
   initDoPlannerDelegation();
   initTasksPageDelegation();
   initPlanCalListDelegation();
+  initPlanEventDetail();
   initPodcastEpisodeListDelegation();
   initEpisodeContextMenu();
   initTouchDragPolyfill();
@@ -37479,8 +37480,13 @@ function renderPlanWeekView() {
   const now = new Date();
   const nowH = now.getHours(), nowTop = (now.getMinutes() / 60) * 100;
   // Per-day segments (splitting overnight events) + column layout for overlaps.
-  const segsByDay = {}, layoutByDay = {};
-  days.forEach((d) => { const k = dateKeyFromDate(d); segsByDay[k] = planDaySegments(k, timed); layoutByDay[k] = packDaySegments(segsByDay[k]); });
+  const segsByDay = {}, layoutByDay = {}, conflictsByDay = {};
+  days.forEach((d) => {
+    const k = dateKeyFromDate(d);
+    segsByDay[k] = planDaySegments(k, timed);
+    layoutByDay[k] = packDaySegments(segsByDay[k]);
+    conflictsByDay[k] = overlappingIntervalIds(segsByDay[k].map((s) => ({ id: s.event.id, start: s.start, end: s.end })));
+  });
   const hourRows = Array.from({ length: 24 }, (_, h) => {
     const label = h === 0 ? "" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
     const cols = days.map((d) => {
@@ -37488,7 +37494,7 @@ function renderPlanWeekView() {
       const segs = segsByDay[key].filter((s) => Math.floor(s.start / 60) === h);
       const nowLine = (key === today && h === nowH) ? `<div class="plan-now-line" style="top:${nowTop}%"></div>` : "";
       return `<div class="plan-week-cell" data-plan-day="${escapeHtml(key)}" data-plan-hour="${h}">
-        ${nowLine}${segs.map((s) => planTimedEventBlock(s, layoutByDay[key].get(s.event.id))).join("")}
+        ${nowLine}${segs.map((s) => planTimedEventBlock(s, layoutByDay[key].get(s.event.id), conflictsByDay[key])).join("")}
       </div>`;
     }).join("");
     return `<div class="plan-hour-row">
@@ -37521,6 +37527,7 @@ function renderPlanDayView() {
   const timed = allEvents.filter((e) => !e.allDay && e.startTime);
   const segs = planDaySegments(key, timed);
   const layout = packDaySegments(segs); // side-by-side columns for overlaps
+  const dayConflicts = overlappingIntervalIds(segs.map((s) => ({ id: s.event.id, start: s.start, end: s.end })));
   const hourRows = Array.from({ length: 24 }, (_, h) => {
     const label = h === 0 ? "" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
     const cells = segs.filter((s) => Math.floor(s.start / 60) === h);
@@ -37528,7 +37535,7 @@ function renderPlanDayView() {
     return `<div class="plan-hour-row plan-day-hour-row">
       <div class="plan-time-label">${label}</div>
       <div class="plan-day-cell" data-plan-day="${escapeHtml(key)}" data-plan-hour="${h}">
-        ${nowLine}${cells.map((s) => planTimedEventBlock(s, layout.get(s.event.id))).join("")}
+        ${nowLine}${cells.map((s) => planTimedEventBlock(s, layout.get(s.event.id), dayConflicts)).join("")}
       </div>
     </div>`;
   }).join("");
@@ -37624,7 +37631,7 @@ function packDaySegments(segs) {
   return result;
 }
 
-function planTimedEventBlock(seg, layout) {
+function planTimedEventBlock(seg, layout, conflicts) {
   const event = seg.event;
   const top = ((seg.start % 60) / 60) * 100;
   const height = Math.max(((seg.end - seg.start) / 60) * 100, 33);
@@ -37635,11 +37642,15 @@ function planTimedEventBlock(seg, layout) {
   const personal = !event.source || event.source === "personal";
   // The block's bottom edge is a resize handle for single, non-span personal events.
   const resizable = personal && !event.spanPos && !seg.tail;
-  return `<div class="plan-timed-event${seg.tail ? " is-overnight-tail" : ""}${resizable ? " is-movable" : ""}" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}"
-               tabindex="0" role="button" aria-label="${escapeHtml(label)}"
+  // §22: overlapping events are both flagged (never merged/hidden). A glyph plus
+  // the class means the cue isn't colour-only (§42).
+  const isConflict = conflicts?.has(event.id);
+  const conflictMark = isConflict ? '<span class="plan-conflict-mark" aria-hidden="true">⚠</span>' : "";
+  return `<div class="plan-timed-event${seg.tail ? " is-overnight-tail" : ""}${resizable ? " is-movable" : ""}${isConflict ? " is-conflict" : ""}" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}"
+               tabindex="0" role="button" aria-label="${escapeHtml(label)}${isConflict ? " (overlaps another event)" : ""}"
                style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])};top:${top}%;height:${height}%;${colStyle}"
-               data-tip="${escapeHtml(label)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}">
-    <span>${escapeHtml(label)}${event.recurrence || event.occurrenceOf ? " ↻" : ""}</span>${resizable ? `<span class="plan-event-resize" data-resize-event="${escapeHtml(event.id)}" aria-hidden="true"></span>` : ""}
+               data-tip="${escapeHtml(label)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}${isConflict ? " · overlaps another event" : ""}">
+    <span>${escapeHtml(label)}${event.recurrence || event.occurrenceOf ? " ↻" : ""}</span>${conflictMark}${resizable ? `<span class="plan-event-resize" data-resize-event="${escapeHtml(event.id)}" aria-hidden="true"></span>` : ""}
   </div>`;
 }
 
@@ -37768,6 +37779,135 @@ function updatePlanConflictCue() {
   const more = clashes.length > 3 ? ` +${clashes.length - 3} more` : "";
   el.innerHTML = `<span class="plan-conflict-icon" aria-hidden="true">⚠</span> Overlaps ${escapeHtml(names)}${escapeHtml(more)}`;
   el.hidden = false;
+}
+
+// ── Event detail side panel (Calendar 2.0 §21) ───────────────────────────────
+// Clicking an event opens this read view first; "Edit" opens the full editor
+// (openPlanEventDialog) unchanged. Read-only external events show their source +
+// sync info and have no editor. `planDetailContext` carries the id/date so the
+// action buttons reproduce the same behavior clicking used to have.
+let planDetailContext = null;
+
+// Human-readable recurrence summary for the detail panel.
+function planRecurrenceSummary(rec) {
+  if (!rec) return "";
+  const unit = { daily: "day", weekly: "week", monthly: "month", yearly: "year" }[rec.freq] || rec.freq;
+  let base = rec.interval > 1 ? `Every ${rec.interval} ${unit}s` : `Every ${unit}`;
+  if (rec.freq === "weekly" && rec.byWeekdays?.length) {
+    const names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    base += ` on ${rec.byWeekdays.map((d) => names[d]).join(", ")}`;
+  } else if ((rec.freq === "monthly" || rec.freq === "yearly") && rec.monthMode === "nthWeekday" && Number.isInteger(rec.byWeekday)) {
+    const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const pos = { 1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth", "-1": "last" }[rec.bySetPos] || "";
+    base += ` on the ${pos} ${days[rec.byWeekday]}`;
+  }
+  if (rec.until) base += ` until ${new Date(rec.until + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+  return base;
+}
+
+function planEventDetailRow(icon, label, text) {
+  if (!text) return "";
+  return `<div class="plan-detail-row"><span class="plan-detail-row-icon" aria-hidden="true">${icon}</span><div class="plan-detail-row-text">${label ? `<span class="plan-detail-row-label">${escapeHtml(label)}</span>` : ""}${escapeHtml(text)}</div></div>`;
+}
+
+function renderPlanEventDetail(ev) {
+  const titleEl = document.getElementById("planDetailTitle");
+  const dotEl = document.getElementById("planDetailDot");
+  const bodyEl = document.getElementById("planDetailBody");
+  const actionsEl = document.getElementById("planDetailActions");
+  if (!titleEl || !bodyEl || !actionsEl) return;
+  titleEl.textContent = ev.title || "(no title)";
+  if (dotEl) dotEl.style.background = ev.color || PLAN_COLORS[0];
+
+  const dateFmt = (k) => new Date(k + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  const dateLabel = ev.date ? dateFmt(ev.date) : "";
+  let whenText;
+  if (ev.allDay) {
+    whenText = (ev.endDate && ev.endDate > ev.date) ? `${dateLabel} → ${dateFmt(ev.endDate)} · All day` : `${dateLabel} · All day`;
+  } else {
+    const t = ev.startTime ? planFormatTime(ev.startTime) + (ev.endTime ? ` – ${planFormatTime(ev.endTime)}` : "") : "";
+    whenText = `${dateLabel}${t ? " · " + t : ""}`;
+  }
+
+  const isExternal = ev.source === "ical";
+  const calName = ev.calendarName || (ev.calendarId ? (state.planCalendars || []).find((c) => c.id === ev.calendarId)?.name : "") || "Personal";
+  let locText = "";
+  if (typeof ev.location === "string") locText = ev.location;
+  else if (ev.location && typeof ev.location === "object") locText = ev.location.name || ev.location.address || ev.location.label || "";
+  const remText = Number.isFinite(ev.reminder) ? (ev.reminder === 0 ? "At time of event" : `${ev.reminder} minutes before`) : "";
+  const chores = Array.isArray(ev.chores) ? ev.chores.filter(Boolean) : [];
+
+  let sourceText;
+  if (isExternal) {
+    const src = (state.planCalendars || []).find((c) => c.id === ev.sourceId || c.id === ev.calendarId);
+    const synced = src?.lastFetched ? ` · synced ${new Date(src.lastFetched).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "";
+    sourceText = `Read-only — from “${calName}”${synced}`;
+  } else if (ev.source === "personal-overlay") {
+    sourceText = "A household member's event";
+  } else {
+    sourceText = "Personal event";
+  }
+
+  bodyEl.innerHTML = [
+    planEventDetailRow("🕑", "", whenText),
+    ev.recurrence ? planEventDetailRow("↻", "Repeats", planRecurrenceSummary(ev.recurrence)) : "",
+    planEventDetailRow("📁", "Calendar", calName),
+    planEventDetailRow("📍", "Location", locText),
+    planEventDetailRow("📝", "Notes", ev.notes || ""),
+    remText ? planEventDetailRow("🔔", "Reminder", remText) : "",
+    chores.length ? planEventDetailRow("✔", "Linked tasks", chores.join("\n")) : "",
+    planEventDetailRow("🔗", "Source", sourceText)
+  ].join("");
+
+  const personal = !ev.source || ev.source === "personal";
+  actionsEl.innerHTML = personal
+    ? `<button type="button" class="secondary-btn" data-plan-detail-delete>Delete</button><button type="button" class="primary-btn" data-plan-detail-edit>Edit</button>`
+    : "";
+}
+
+function openPlanEventDetail(id, dateKey) {
+  const key = dateKey || dateKeyFromDate(planViewDate);
+  const range = getPlanEventsForRange(key, key);
+  const ev = range.find((e) => e.id === id && e.date === key) || range.find((e) => e.id === id);
+  if (!ev) { openPlanEventDialog(dateKey || null, id); return; } // fall back to the editor if not found
+  planDetailContext = { id: ev.id, date: ev.date || key, source: ev.source || "personal" };
+  renderPlanEventDetail(ev);
+  const panel = document.getElementById("planDetailPanel");
+  if (!panel) return;
+  panel.hidden = false;
+  panel.querySelector(".plan-detail-close")?.focus();
+}
+
+function closePlanEventDetail() {
+  const panel = document.getElementById("planDetailPanel");
+  if (panel) panel.hidden = true;
+  planDetailContext = null;
+}
+
+// Bound once at startup: close on scrim/X/Escape; Edit → the full editor; Delete
+// → the same path the right-click menu uses.
+function initPlanEventDetail() {
+  const panel = document.getElementById("planDetailPanel");
+  if (!panel) return;
+  panel.addEventListener("click", (e) => {
+    if (e.target.closest("[data-plan-detail-close]")) { closePlanEventDetail(); return; }
+    if (e.target.closest("[data-plan-detail-edit]") && planDetailContext) {
+      const ctx = planDetailContext;
+      closePlanEventDetail();
+      openPlanEventDialog(ctx.date || null, ctx.id);
+      return;
+    }
+    if (e.target.closest("[data-plan-detail-delete]") && planDetailContext) {
+      const ctx = planDetailContext;
+      closePlanEventDetail();
+      editingPlanEventId = ctx.id;
+      editingPlanEventOccurrenceDate = ctx.date;
+      deletePlanEvent();
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !panel.hidden) { e.stopPropagation(); closePlanEventDetail(); }
+  });
 }
 
 function openPlanEventDialog(date, eventId, prefill) {
@@ -38529,8 +38669,11 @@ function initPlanCalListDelegation() {
       }
       // Auto-generated events (a logged workout, planned meal, to-do) aren't
       // editable calendar entries — jump to their source page instead.
-      if (openPlanSyntheticEvent(pill.dataset.planEventSource)) return;
-      openPlanEventDialog(pill.dataset.planEventDate || null, pill.dataset.planEventId);
+      const src = pill.dataset.planEventSource;
+      if (src === "play" || src === "eat" || src === "do") { openPlanSyntheticEvent(src); return; }
+      // Personal + read-only external (iCal) events open the detail panel first;
+      // the panel's Edit opens the full editor (§21).
+      openPlanEventDetail(pill.dataset.planEventId, pill.dataset.planEventDate || null);
       return;
     }
     const cell = e.target.closest("[data-plan-day]");
@@ -38553,8 +38696,10 @@ function initPlanCalListDelegation() {
       const evtEl = e.target.closest("[data-plan-event-id]");
       if (evtEl) {
         e.preventDefault();
-        if (openPlanSyntheticEvent(evtEl.dataset.planEventSource)) return;
-        openPlanEventDialog(evtEl.dataset.planEventDate || null, evtEl.dataset.planEventId);
+        if (evtEl.dataset.planEventSource === "birthday") { openPlanSyntheticEvent("birthday"); return; }
+        const src = evtEl.dataset.planEventSource;
+        if (src === "play" || src === "eat" || src === "do") { openPlanSyntheticEvent(src); return; }
+        openPlanEventDetail(evtEl.dataset.planEventId, evtEl.dataset.planEventDate || null);
         return;
       }
     }
