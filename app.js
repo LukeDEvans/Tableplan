@@ -20,6 +20,8 @@ import { taskIsScheduled } from './calendar/tasks-project.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
 import { beginTasksWeekSession, stepTasksWeek, endTasksWeekSession, tasksBellState } from './tasks-overlay.js';
+import { createVoiceService } from './voice-service.js';
+import { createGoogleProvider, createKokoroProvider } from './tts-provider.js';
 import * as TravelItinerary from './travel-itinerary.js';
 import * as TravelTransitions from './travel-transitions.js';
 import * as TravelModel from './travel-model.js';
@@ -46862,6 +46864,25 @@ async function listenToArticle(id) {
 
 // Fetches (or generates) the TTS chunk URLs for an article. The server caches
 // generated audio per article, so repeated calls are cheap.
+// The one speech seam (Phase 0). Consumers ask for speech by domain; the service
+// resolves voice → provider → provider voice id and a content-addressed cache key,
+// then calls the provider. Google is the working provider today; the Kokoro seam
+// is registered but refuses to synthesize until its Phase-1 proxy is wired (so no
+// private content is ever routed to an unintended provider). Playback, prefetch,
+// and the article→article hand-off are unchanged — only generation routes here.
+let voiceServiceSingleton = null;
+function getVoiceService() {
+  if (voiceServiceSingleton) return voiceServiceSingleton;
+  voiceServiceSingleton = createVoiceService({
+    providers: {
+      google: createGoogleProvider({ callFn: callNetlifyFunction }),
+      kokoro: createKokoroProvider({ synthViaProxy: null }), // Phase 1 injects the session-gated kokoro-tts proxy
+    },
+    getAiSettings: () => state.aiSettings || {},
+  });
+  return voiceServiceSingleton;
+}
+
 async function generateTtsUrls(article) {
   const body = article.text?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || "";
   if (!body) return null;
@@ -46876,11 +46897,10 @@ async function generateTtsUrls(article) {
   // How many leading words belong to the spoken intro — the article body words
   // (what we highlight on screen) start after these.
   const introWords = intro ? (intro + ".").split(/\s+/).filter(Boolean).length : 0;
-  trackUsage("google_tts");
-  const result = await callNetlifyFunction("generate-tts", { articleId: article.id, text });
-  if (result.error || !Array.isArray(result.urls) || !result.urls.length) {
-    throw new Error(result.error || "Unknown error");
-  }
+  trackUsage("google_tts"); // article domain resolves to the Google provider in Phase 0
+  // VoiceService throws on provider error / empty result, matching the previous
+  // behavior; returns the same { urls, timings } shape the engine already consumes.
+  const result = await getVoiceService().synthesize({ text, domain: "article", refId: article.id });
   return { urls: result.urls, timings: result.timings || null, introWords };
 }
 
