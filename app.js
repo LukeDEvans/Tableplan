@@ -6487,7 +6487,10 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
 
   if (seen) {
     const res = await fetch(
-      `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&updated_at=eq.${encodeURIComponent(seen)}`,
+      // select=updated_at so the representation echoes ONLY the stamp we read
+      // below — not the whole (multi-MB for media) state blob. Cuts write egress
+      // dramatically; we never used the returned state here.
+      `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&updated_at=eq.${encodeURIComponent(seen)}&select=updated_at`,
       { method: "PATCH", headers: { ...supabaseHeaders(), Prefer: "return=representation" }, body: JSON.stringify(payload) }
     );
     if (!res.ok) throw new Error(`Supabase section "${section}" save failed: ${res.status}`);
@@ -6503,7 +6506,9 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
     if (!probe.ok) throw new Error(`Supabase section "${section}" probe failed: ${probe.status}`);
     const probeRows = await probe.json();
     if (!probeRows.length) {
-      const ins = await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?on_conflict=id`, {
+      const ins = await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?on_conflict=id&select=updated_at`, {
+        // select=updated_at: same reason as the PATCH above — only the stamp is
+        // read back, so don't have the insert echo the whole row.
         method: "POST",
         headers: { ...supabaseHeaders(), Prefer: "resolution=merge-duplicates,return=representation" },
         body: JSON.stringify({ id: rowId, ...payload })
