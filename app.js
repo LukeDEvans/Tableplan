@@ -46870,13 +46870,26 @@ async function listenToArticle(id) {
 // is registered but refuses to synthesize until its Phase-1 proxy is wired (so no
 // private content is ever routed to an unintended provider). Playback, prefetch,
 // and the article→article hand-off are unchanged — only generation routes here.
+// Phase 1A: the Kokoro provider's server call. Mirrors the Google provider — POSTs
+// to the session-gated kokoro-tts function and normalizes to { urls, timings }.
+// Throws a typed error on failure; the VoiceService never swaps to Google, so
+// private text is never silently rerouted (design §14). Timings are null in 1A
+// (Kokoro has no word alignment yet) — highlighting simply won't activate.
+async function kokoroSynthViaProxy({ text, refId, providerVoiceId, cacheKey, speed }) {
+  const res = await callNetlifyFunction("kokoro-tts", { text, refId, providerVoiceId, cacheKey, speed });
+  if (res?.error || !Array.isArray(res?.urls) || !res.urls.length) {
+    throw new Error(res?.error || res?.code || "Kokoro synthesis failed");
+  }
+  return { urls: res.urls, timings: res.timings || null, cached: !!res.cached };
+}
+
 let voiceServiceSingleton = null;
 function getVoiceService() {
   if (voiceServiceSingleton) return voiceServiceSingleton;
   voiceServiceSingleton = createVoiceService({
     providers: {
       google: createGoogleProvider({ callFn: callNetlifyFunction }),
-      kokoro: createKokoroProvider({ synthViaProxy: null }), // Phase 1 injects the session-gated kokoro-tts proxy
+      kokoro: createKokoroProvider({ synthViaProxy: kokoroSynthViaProxy }), // Phase 1A: session-gated kokoro-tts proxy
     },
     getAiSettings: () => state.aiSettings || {},
   });
