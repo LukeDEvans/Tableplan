@@ -107,10 +107,14 @@ async function synthChunk(url, token, text, voice, speed) {
   const timer = setTimeout(() => ctrl.abort(), HOME_TIMEOUT_MS);
   let res;
   try {
+    // Kokoro-FastAPI's OpenAI-compatible speech endpoint. KOKORO_URL must be the
+    // FULL ".../v1/audio/speech" URL. The bearer is checked by the auth layer in
+    // front of Kokoro (Caddy / Cloudflare) in production; Kokoro-FastAPI itself
+    // ignores unknown headers, so local testing needs no auth. See KOKORO_SERVER_SETUP.md.
     res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}`, accept: "audio/mpeg" },
-      body: JSON.stringify({ text, voice, speed, format: "mp3" }),
+      body: JSON.stringify({ model: "kokoro", input: text, voice, speed, response_format: "mp3" }),
       signal: ctrl.signal,
     });
   } catch (err) {
