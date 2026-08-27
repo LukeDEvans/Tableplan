@@ -8,6 +8,8 @@ import * as LiveReceiptDomain from './receipt-domain.js';
 import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
 import { createWeatherCache } from './weather-cache.js';
+import { conditionFor, conditionLabel, weatherEmphasis } from './weather-condition.js';
+import { heroArtSvg, iconSvg } from './weather-art.js';
 import { createPlaybackEngine } from './playback-engine.js';
 import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones } from './state-sync.js';
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
@@ -10214,13 +10216,31 @@ function renderWeatherPage() {
     </div>`;
 
   let body;
-  if (weatherStatus === "geolocating") body = `<div class="wx-note">Finding your location…</div>`;
+  if (weatherStatus === "geolocating") body = `<div class="wx-skeleton">Finding your location…</div>`;
   else if (!loc) body = wxEmptyState();
   else if (weatherStatus === "error" && !s) body = `<div class="wx-error">${escapeHtml(weatherErrorMsg || "Weather unavailable.")}</div>`;
   else if (!s) body = `<div class="wx-skeleton">Loading weather…</div>`;
   else body = wxDashboard(s, tz);
 
-  el.innerHTML = header + (weatherPickerOpen ? wxPicker() : "") + (weatherErrorMsg && s ? `<div class="wx-inline-warn">${escapeHtml(weatherErrorMsg)}</div>` : "") + body;
+  el.innerHTML = header
+    + (loc ? wxLocationRail() : "")
+    + (weatherPickerOpen ? wxPicker() : "")
+    + (weatherErrorMsg && s ? `<div class="wx-inline-warn">${escapeHtml(weatherErrorMsg)}</div>` : "")
+    + body;
+}
+
+function wxShortLoc(label) { return String(label || "").split(",")[0].trim() || "Location"; }
+
+function wxLocationRail() {
+  const saved = state.weatherLocations || [];
+  const active = weatherActiveLocation;
+  const cur = active && active.id === "current";
+  const chips = [
+    `<button class="wx-loc" type="button" data-wx-action="use-current" aria-current="${cur ? "true" : "false"}"><span class="wx-loc-t" aria-hidden="true">◎</span> Current</button>`,
+    ...saved.map((l) => `<button class="wx-loc" type="button" data-wx-action="select-saved" data-id="${escapeHtml(l.id)}" aria-current="${active && active.id === l.id ? "true" : "false"}">${escapeHtml(wxShortLoc(l.label))}</button>`),
+    `<button class="wx-loc wx-loc-add" type="button" data-wx-action="toggle-picker" aria-expanded="${weatherPickerOpen}">+ Add</button>`,
+  ];
+  return `<div class="wx-locrail" role="group" aria-label="Saved locations">${chips.join("")}</div>`;
 }
 
 function wxEmptyState() {
@@ -10262,17 +10282,20 @@ function wxPicker() {
 function wxAlertCard(a) {
   const cls = WX_SEVERITY_CLASS[a.severity] || "wx-sev-minor";
   const open = weatherExpanded.has(`alert:${a.id}`);
+  const tz = weatherActiveLocation?.timezone || "America/New_York";
+  const until = a.expires ? `until ${wxClock(a.expires, tz)}` : "";
+  const meta = [a.affectedArea, a.urgency, a.certainty].filter((x) => x && x !== "Unknown").join(" · ");
   return `
     <div class="wx-alert ${cls}">
       <button class="wx-alert-head" type="button" data-wx-action="toggle" data-id="alert:${escapeHtml(a.id)}" aria-expanded="${open}">
-        <span class="wx-alert-sev">${escapeHtml(a.severity)}</span>
+        <span class="wx-alert-sev">${escapeHtml(a.severity === "Unknown" ? "Advisory" : a.severity)}</span>
         <span class="wx-alert-event">${escapeHtml(a.event)}</span>
-        <span class="wx-caret">${open ? "▴" : "▾"}</span>
+        ${until ? `<span class="wx-alert-meta">${escapeHtml(until)}</span>` : ""}
+        <span class="wx-caret" aria-hidden="true">${open ? "▴" : "▾"}</span>
       </button>
       ${open ? `<div class="wx-alert-body">
+        ${meta ? `<div class="wx-alert-area">${escapeHtml(meta)}</div>` : ""}
         ${a.headline ? `<div class="wx-alert-headline">${escapeHtml(a.headline)}</div>` : ""}
-        ${a.affectedArea ? `<div class="wx-alert-area">${escapeHtml(a.affectedArea)}</div>` : ""}
-        ${a.expires ? `<div class="wx-alert-expires">Until ${escapeHtml(wxClock(a.expires, weatherActiveLocation?.timezone || "America/New_York"))}</div>` : ""}
         <div class="wx-alert-desc">${escapeHtml(a.description || "")}</div>
         ${a.instructions ? `<div class="wx-alert-instr"><b>What to do:</b> ${escapeHtml(a.instructions)}</div>` : ""}
       </div>` : ""}
@@ -10281,102 +10304,240 @@ function wxAlertCard(a) {
 
 function wxDashboard(s, tz) {
   const c = s.current || {};
-  const prov = c.provenance || {};
-  const provLine = prov.isForecastDerived
-    ? "Forecast data — no recent station observation"
-    : `${escapeHtml(prov.stationName || prov.stationId || "Nearby station")}${prov.stationDistanceMiles != null ? ` · ${prov.stationDistanceMiles} mi` : ""}${prov.observedAt ? ` · ${escapeHtml(wxAgo(prov.observedAt))}` : ""}`;
-  const today = s.daily?.[0];
+  const nowHour = (s.hourly || [])[0] || {};
+  const cond = conditionFor({
+    icon: nowHour.icon, shortForecast: nowHour.description, description: c.description,
+    sunrise: c.sunrise, sunset: c.sunset, at: c.provenance?.observedAt || s.fetchedAt,
+  });
+  const emphasis = weatherEmphasis({ conditionKey: cond.key, alerts: s.alerts || [] });
   const alertsHtml = (s.alerts || []).length ? `<div class="wx-alerts">${s.alerts.map(wxAlertCard).join("")}</div>` : "";
-  const sun = c.sunrise && c.sunset ? `${wxClock(c.sunrise, tz)} / ${wxClock(c.sunset, tz)}` : "—";
-  const detail = [
-    ["Humidity", wxNum(c.humidityPercent, "%")],
-    ["Dew point", wxTempStr(c.dewPointF)],
-    ["Wind", c.windMph != null ? `${c.windMph} mph ${c.windDirectionCardinal || ""}`.trim() : "—"],
-    ["Gusts", c.windGustMph != null ? `${c.windGustMph} mph` : "—"],
-    ["Pressure", wxNum(c.pressureInHg, " inHg")],
-    ["Visibility", c.visibilityMiles != null ? `${c.visibilityMiles} mi` : "—"],
-    ["Precip (1h)", c.precipitationInches != null ? `${c.precipitationInches} in` : "—"],
-    ["Sun ↑/↓", sun],
-    ["UV index", wxUvLabel(c.uvIndex)],
-    ["Air quality", wxAqiLabel(c.airQualityIndex)]
-  ].map(([k, v]) => `<div class="wx-detail-cell"><span class="wx-detail-k">${k}</span><span class="wx-detail-v">${escapeHtml(String(v))}</span></div>`).join("");
-  const uvAqiNote = c.uvAqiProvenance ? `<div class="wx-source-note">UV &amp; air quality via Open-Meteo</div>` : "";
-
-  const hourStrip = (s.hourly || []).slice(0, 12).map((h) => `
-    <div class="wx-hour">
-      <div class="wx-hour-t">${escapeHtml(wxHourLabel(h.startTime, tz))}</div>
-      <div class="wx-hour-temp">${wxTempStr(h.temperatureF)}</div>
-      <div class="wx-hour-pop">${h.precipProbabilityPercent ? `${h.precipProbabilityPercent}%` : "&nbsp;"}</div>
-    </div>`).join("");
-
-  const hourlyOpen = weatherExpanded.has("sec:hourly");
-  const hourlyFull = (s.hourly || []).slice(0, 24).map((h) => `
-    <div class="wx-hourly-row">
-      <span class="wx-hourly-time">${escapeHtml(wxFmt(h.startTime, tz, { weekday: "short", hour: "numeric" }))}</span>
-      <span class="wx-hourly-temp">${wxTempStr(h.temperatureF)}</span>
-      <span class="wx-hourly-pop">${h.precipProbabilityPercent ? `${h.precipProbabilityPercent}%` : ""}</span>
-      <span class="wx-hourly-desc">${escapeHtml(h.description || "")}</span>
-    </div>`).join("");
-
-  const dailyOpen = weatherExpanded.has("sec:daily");
-  const dailyFull = (s.daily || []).map((d) => `
-    <div class="wx-daily-row">
-      <span class="wx-daily-name">${escapeHtml(d.name)}</span>
-      <span class="wx-daily-temp">${wxTempStr(d.temperatureF)}</span>
-      <span class="wx-daily-pop">${d.precipProbabilityPercent ? `${d.precipProbabilityPercent}%` : ""}</span>
-      <span class="wx-daily-desc">${escapeHtml(d.description || "")}</span>
-    </div>`).join("");
-
   return `
     ${alertsHtml}
-    <div class="wx-current">
-      <div class="wx-temp-big">${wxTempStr(c.temperatureF)}</div>
-      <div class="wx-current-meta">
-        <div class="wx-desc">${escapeHtml(c.description || today?.description || "")}</div>
-        <div class="wx-feels">Feels like ${wxTempStr(c.apparentTemperatureF)}</div>
-        <div class="wx-prov">${provLine}</div>
+    <div class="wx-grid" data-emphasis="${emphasis}">
+      ${wxHero(s, c, cond)}
+      ${wxHourlyCard(s, tz)}
+      <div class="wx-col">
+        ${wxDailyCard(s, tz)}
+        ${wxRadarCard(s)}
       </div>
-    </div>
-    ${today ? `<div class="wx-today">${escapeHtml(today.name)}: ${escapeHtml(today.detailedForecast || today.description || "")}</div>` : ""}
-    <div class="wx-section-label">Next hours</div>
-    <div class="wx-hours-strip">${hourStrip}</div>
-    ${wxRadarPreview(s)}
-    <div class="wx-section-label">Now</div>
-    <div class="wx-detail-grid">${detail}</div>
-    ${uvAqiNote}
-    ${wxDisclosure("hourly", "Hourly forecast", hourlyOpen, `<div class="wx-hourly-list">${hourlyFull}</div>`)}
-    ${wxDisclosure("daily", "7-day forecast", dailyOpen, `<div class="wx-daily-list">${dailyFull}</div>`)}
-    ${wxProductsSection(s)}
-    ${(s.warnings || []).length ? `<div class="wx-warnings">${s.warnings.map((w) => `<div>• ${escapeHtml(w)}</div>`).join("")}</div>` : ""}`;
-}
-
-function wxDisclosure(id, title, open, inner) {
-  return `
-    <div class="wx-disclosure">
-      <button class="wx-disclosure-head" type="button" data-wx-action="toggle" data-id="sec:${id}" aria-expanded="${open}">
-        <span>${escapeHtml(title)}</span><span class="wx-caret">${open ? "▴" : "▾"}</span>
-      </button>
-      ${open ? inner : ""}
+      <div class="wx-col">
+        ${wxDetailGroups(s, c, tz)}
+        ${wxTrendCard(s, tz)}
+        ${wxFeedCard(s)}
+      </div>
     </div>`;
 }
 
-function wxRadarPreview(s) {
-  const site = s.radarStation;
-  if (!site) return "";
-  // Lightweight static preview; tapping opens the interactive Leaflet map.
-  return `
-    <div class="wx-section-label">Radar</div>
-    <button class="wx-radar-preview" type="button" data-wx-action="open-map" title="Open interactive radar map">
-      <img src="https://radar.weather.gov/ridge/standard/${escapeHtml(site)}_loop.gif" alt="Radar loop for ${escapeHtml(site)}" loading="lazy" onerror="this.closest('.wx-radar-preview').classList.add('is-broken')">
-      <span class="wx-radar-fallback">Open radar map</span>
-      <span class="wx-radar-expand">⤢ Expand</span>
-    </button>`;
+// clear/partly day = open sky (default); cloud/precip day = muted; night/severe = dark.
+function wxHeroMood(cond) {
+  if (!cond.isDay) return "mood-night";
+  if (["thunderstorm", "heavy-rain", "heavy-snow"].includes(cond.key)) return "mood-storm";
+  if (["cloudy", "overcast", "rain", "snow", "sleet", "fog", "haze", "wind"].includes(cond.key)) return "mood-cloud";
+  return "";
 }
 
-function wxProductsSection(s) {
+function wxHero(s, c, cond) {
+  const prov = c.provenance || {};
+  const obs = prov.isForecastDerived
+    ? "Forecast data — no recent station observation"
+    : `${escapeHtml(prov.stationName || prov.stationId || "Nearby station")}${prov.stationDistanceMiles != null ? ` · ${prov.stationDistanceMiles} mi` : ""}${prov.observedAt ? ` · ${escapeHtml(wxAgo(prov.observedAt))}` : ""}`;
+  const today = s.daily?.[0];
+  const condLabel = c.description || today?.description || conditionLabel(cond.key, cond.isDay);
+  const hi = s.daily?.find((d) => d.isDaytime)?.temperatureF;
+  const lo = s.daily?.find((d) => !d.isDaytime)?.temperatureF;
+  const hilo = [hi != null ? `↑ ${Math.round(hi)}°` : "", lo != null ? `↓ ${Math.round(lo)}°` : ""].filter(Boolean).join("  ");
+  const summary = today?.detailedForecast || today?.description || "";
+  const chips = [
+    c.windMph != null ? `🍃 ${c.windMph} mph ${c.windDirectionCardinal || ""}`.trim() : "",
+    c.humidityPercent != null ? `💧 ${c.humidityPercent}%` : "",
+    c.uvIndex != null ? `☀︎ UV ${wxUvLabel(c.uvIndex)}` : "",
+    c.visibilityMiles != null ? `🌫 ${c.visibilityMiles} mi` : "",
+  ].filter(Boolean).map((t) => `<span class="wx-chip">${escapeHtml(t)}</span>`).join("");
+  return `
+    <section class="wx-card wx-hero wx-span ${wxHeroMood(cond)}">
+      ${heroArtSvg(cond.key, cond.isDay)}
+      <div class="wx-hero-inner">
+        <button class="wx-hero-loc" type="button" data-wx-action="toggle-picker">◎ ${escapeHtml(wxShortLoc(s.location?.label || ""))} ▾</button>
+        <div class="wx-hero-obs">${obs}</div>
+        <div class="wx-temp">${c.temperatureF != null ? Math.round(c.temperatureF) : "—"}<sup>°F</sup></div>
+        <div class="wx-hero-cond">${escapeHtml(condLabel)}</div>
+        <div class="wx-hero-feels">Feels like ${wxTempStr(c.apparentTemperatureF)}</div>
+        ${hilo || summary ? `<div class="wx-hero-hilo">${escapeHtml(hilo)}${hilo && summary ? "  ·  " : ""}${escapeHtml(summary)}</div>` : ""}
+        ${chips ? `<div class="wx-hero-chips">${chips}</div>` : ""}
+      </div>
+    </section>`;
+}
+
+function wxHourlyCard(s, tz) {
+  const hours = (s.hourly || []).slice(0, 24);
+  if (!hours.length) return "";
+  const cells = hours.map((h, i) => {
+    const cond = conditionFor({ icon: h.icon, shortForecast: h.description, isDaytime: h.isDaytime });
+    const pop = h.precipProbabilityPercent;
+    const wind = [h.windDirectionCardinal, h.windMph].filter((v) => v != null && v !== "").join(" ");
+    return `
+      <div class="wx-hour${i === 0 ? " is-now" : ""}" role="listitem">
+        <div class="wx-hour-hh">${i === 0 ? "Now" : escapeHtml(wxHourLabel(h.startTime, tz))}</div>
+        ${iconSvg(cond.key, cond.isDay)}
+        <div class="wx-hour-temp">${wxTempStr(h.temperatureF)}</div>
+        <div class="wx-hour-pop${pop ? "" : " is-zero"}">💧${pop || 0}%</div>
+        <div class="wx-hour-wd">${escapeHtml(wind)}</div>
+      </div>`;
+  }).join("");
+  return `
+    <section class="wx-card wx-span">
+      <div class="wx-card-hd"><h3>Hourly</h3><span class="wx-sub">Next 24 hours · scroll →</span></div>
+      <div class="wx-rail" role="list" aria-label="Hourly forecast">${cells}</div>
+    </section>`;
+}
+
+// Fold NWS day/night periods into calendar days with a high, low, pop, and condition.
+function wxFoldDaily(periods, tz) {
+  const keyOf = (iso) => { try { return new Date(iso).toLocaleDateString("en-US", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }); } catch { return String(iso).slice(0, 10); } };
+  const order = [];
+  const byKey = new Map();
+  for (const p of periods || []) {
+    if (!p?.startTime) continue;
+    const k = keyOf(p.startTime);
+    if (!byKey.has(k)) { byKey.set(k, { key: k, periods: [] }); order.push(k); }
+    byKey.get(k).periods.push(p);
+  }
+  const todayKey = keyOf(new Date().toISOString());
+  return order.map((k) => {
+    const g = byKey.get(k);
+    const day = g.periods.find((p) => p.isDaytime);
+    const night = g.periods.find((p) => !p.isDaytime);
+    const temps = g.periods.map((p) => p.temperatureF).filter((v) => v != null);
+    const hi = day ? day.temperatureF : (temps.length ? Math.max(...temps) : null);
+    const lo = night ? night.temperatureF : (temps.length ? Math.min(...temps) : null);
+    const pop = Math.max(0, ...g.periods.map((p) => p.precipProbabilityPercent || 0));
+    const src = day || night || g.periods[0];
+    const cond = conditionFor({ icon: src.icon, shortForecast: src.description, isDaytime: true });
+    const name = k === todayKey ? "Today" : (() => { try { return new Date(g.periods[0].startTime).toLocaleDateString("en-US", { timeZone: tz, weekday: "short" }); } catch { return g.periods[0].name; } })();
+    return { name, hi, lo, pop, cond };
+  });
+}
+
+function wxDailyCard(s, tz) {
+  const days = wxFoldDaily(s.daily || [], tz).slice(0, 7);
+  if (!days.length) return "";
+  const los = days.map((d) => d.lo).filter((v) => v != null);
+  const his = days.map((d) => d.hi).filter((v) => v != null);
+  const min = los.length ? Math.min(...los) : 0;
+  const max = his.length ? Math.max(...his) : 1;
+  const span = Math.max(1, max - min);
+  const rows = days.map((d) => {
+    const L = d.lo != null ? ((d.lo - min) / span) * 100 : 0;
+    const W = (d.lo != null && d.hi != null) ? ((d.hi - d.lo) / span) * 100 : 100;
+    return `
+      <div class="wx-day">
+        <span class="wx-day-name">${escapeHtml(d.name)}</span>
+        ${iconSvg(d.cond.key, d.cond.isDay)}
+        <span class="wx-day-pop${d.pop ? "" : " is-zero"}">💧${d.pop}%</span>
+        <div class="wx-rangewrap">
+          <span class="wx-day-lo">${d.lo != null ? Math.round(d.lo) + "°" : "—"}</span>
+          <div class="wx-range"><div class="wx-range-seg" style="left:${L.toFixed(1)}%;width:${Math.max(W, 6).toFixed(1)}%"></div></div>
+          <span class="wx-day-hi">${d.hi != null ? Math.round(d.hi) + "°" : "—"}</span>
+        </div>
+      </div>`;
+  }).join("");
+  return `
+    <section class="wx-card">
+      <div class="wx-card-hd"><h3>7-Day Forecast</h3></div>
+      <div class="wx-daily">${rows}</div>
+    </section>`;
+}
+
+// Sun position along a dawn→dusk arc (dot only; decorative).
+function wxSunArc(c) {
+  if (!c.sunrise || !c.sunset) return "";
+  const rise = +new Date(c.sunrise), set = +new Date(c.sunset), now = Date.now();
+  const frac = Math.max(0, Math.min(1, (now - rise) / Math.max(1, set - rise)));
+  const x = 60 - 52 * Math.cos(frac * Math.PI);
+  const y = 52 - 40 * Math.sin(frac * Math.PI);
+  const up = now >= rise && now <= set;
+  return `<svg class="wx-arc" viewBox="0 0 120 56" role="img" aria-hidden="true">
+    <path d="M8 52 A52 40 0 0 1 112 52" fill="none" stroke="var(--line)" stroke-width="2.5" stroke-dasharray="3 5"/>
+    <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="5" fill="${up ? "var(--sun,#f1b24e)" : "var(--muted)"}"/></svg>`;
+}
+
+function wxDetailGroups(s, c, tz) {
+  const deg = c.windDirectionDegrees;
+  const dial = `<svg class="wx-dial" viewBox="0 0 100 100" role="img" aria-hidden="true">
+    <circle cx="50" cy="50" r="42" fill="none" stroke="var(--line)" stroke-width="2"/>
+    <g fill="var(--muted)" font-size="9" font-weight="700"><text x="50" y="14" text-anchor="middle">N</text><text x="88" y="53" text-anchor="middle">E</text><text x="50" y="94" text-anchor="middle">S</text><text x="12" y="53" text-anchor="middle">W</text></g>
+    ${deg != null ? `<g transform="rotate(${Math.round(deg)} 50 50)"><path d="M50 20 L44 54 L50 48 L56 54 Z" fill="var(--accent)"/></g>` : ""}
+    <circle cx="50" cy="50" r="4" fill="var(--accent-dark)"/></svg>`;
+  const g = (title, inner) => `<div class="wx-g"><h4>${title}</h4>${inner}</div>`;
+  const kv = (k, v) => `<div class="wx-kv"><span class="wx-k">${escapeHtml(k)}</span><span class="wx-v">${escapeHtml(String(v))}</span></div>`;
+  return `
+    <div class="wx-groups">
+      ${g("🍃 Wind", dial
+        + kv("Wind", c.windMph != null ? `${c.windMph} mph ${c.windDirectionCardinal || ""}`.trim() : "—")
+        + kv("Gusts", c.windGustMph != null ? `${c.windGustMph} mph` : "—"))}
+      ${g("💧 Comfort", kv("Feels like", wxTempStr(c.apparentTemperatureF))
+        + kv("Humidity", wxNum(c.humidityPercent, "%"))
+        + kv("Dew point", wxTempStr(c.dewPointF))
+        + kv("Pressure", c.pressureInHg != null ? `${c.pressureInHg}"` : "—"))}
+      ${g("☀︎ Sun & Sky", wxSunArc(c)
+        + kv("Sunrise", c.sunrise ? wxClock(c.sunrise, tz) : "—")
+        + kv("Sunset", c.sunset ? wxClock(c.sunset, tz) : "—")
+        + kv("Visibility", c.visibilityMiles != null ? `${c.visibilityMiles} mi` : "—"))}
+      ${g("🌫 Air", kv("UV index", wxUvLabel(c.uvIndex))
+        + kv("Air quality", wxAqiLabel(c.airQualityIndex))
+        + kv("Precip (1h)", c.precipitationInches != null ? `${c.precipitationInches}"` : "—")
+        + (c.uvAqiProvenance ? `<div class="wx-g-note">UV &amp; air quality via Open-Meteo</div>` : ""))}
+    </div>`;
+}
+
+function wxTrendCard(s, tz) {
+  const hrs = (s.hourly || []).slice(0, 12);
+  const temps = hrs.map((h) => h.temperatureF);
+  if (temps.filter((v) => v != null).length < 3) return "";
+  const P = hrs.map((h) => h.precipProbabilityPercent || 0);
+  const W = 320, H = 130, pad = 16, n = hrs.length;
+  const xs = (i) => pad + (i * (W - 2 * pad)) / (n - 1);
+  const valid = temps.filter((v) => v != null);
+  const tmin = Math.min(...valid) - 3, tmax = Math.max(...valid) + 3;
+  const ys = (v) => H - 24 - ((v - tmin) / Math.max(1, tmax - tmin)) * (H - 44);
+  const bars = P.map((p, i) => { if (!p) return ""; const bh = (p / 100) * (H - 44); return `<rect x="${(xs(i) - 6).toFixed(1)}" y="${(H - 24 - bh).toFixed(1)}" width="12" height="${bh.toFixed(1)}" rx="2" fill="var(--window-border)" opacity="0.2"/>`; }).join("");
+  const pts = temps.map((v, i) => (v == null ? null : `${xs(i).toFixed(1)},${ys(v).toFixed(1)}`)).filter(Boolean).join(" ");
+  const area = `M${xs(0).toFixed(1)},${H - 24} ` + temps.map((v, i) => (v == null ? "" : `L${xs(i).toFixed(1)},${ys(v).toFixed(1)}`)).join(" ") + ` L${xs(n - 1).toFixed(1)},${H - 24} Z`;
+  const dots = temps.map((v, i) => (v == null ? "" : `<circle cx="${xs(i).toFixed(1)}" cy="${ys(v).toFixed(1)}" r="2.4" fill="var(--tomato)"/>`)).join("");
+  const labels = temps.map((v, i) => { if (v == null || i % 2) return ""; const hh = i === 0 ? "Now" : escapeHtml(wxHourLabel(hrs[i].startTime, tz).replace(/\s*(AM|PM)/i, "")); return `<text x="${xs(i).toFixed(1)}" y="${(ys(v) - 6).toFixed(1)}" text-anchor="middle">${Math.round(v)}°</text><text x="${xs(i).toFixed(1)}" y="${H - 8}" text-anchor="middle">${hh}</text>`; }).join("");
+  const svg = `<svg class="wx-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Temperature and precipitation probability for the next 12 hours">
+    <defs><linearGradient id="wxTrendFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--tomato)" stop-opacity="0.26"/><stop offset="1" stop-color="var(--tomato)" stop-opacity="0"/></linearGradient></defs>
+    ${bars}<path d="${area}" fill="url(#wxTrendFill)"/><polyline points="${pts}" fill="none" stroke="var(--tomato)" stroke-width="2.5" stroke-linejoin="round"/>${dots}${labels}</svg>`;
+  return `
+    <section class="wx-card">
+      <div class="wx-card-hd"><h3>Temperature &amp; Precip · 12h</h3></div>
+      <div class="wx-chart-legend"><span class="wx-k"><span class="wx-sw" style="background:var(--tomato)"></span>Temp</span><span class="wx-k"><span class="wx-sw" style="background:var(--window-border)"></span>Precip %</span></div>
+      <div class="wx-chart-wrap">${svg}</div>
+    </section>`;
+}
+
+function wxRadarCard(s) {
+  const site = s.radarStation;
+  const stamp = `Radar · ${escapeHtml(wxAgo(s.fetchedAt))}`;
+  const inner = site
+    ? `<img src="https://radar.weather.gov/ridge/standard/${escapeHtml(site)}_loop.gif" alt="Radar loop for ${escapeHtml(site)}" loading="lazy" onerror="this.closest('.wx-radar-preview').classList.add('is-broken')">
+       <span class="wx-radar-fallback">Open radar map</span>
+       <span class="wx-radar-open" aria-hidden="true">⤢ Open full map</span>
+       <span class="wx-radar-stamp"><span class="wx-live-dot"></span> ${stamp}</span>`
+    : `<span class="wx-radar-fallback">Open radar map</span>`;
+  return `
+    <section class="wx-card wx-radarcard">
+      <div class="wx-card-hd"><h3>Radar</h3><span class="wx-sub">tap to open map</span></div>
+      <button class="wx-radar-preview" type="button" data-wx-action="open-map" aria-label="Open interactive radar map">${inner}</button>
+      <div class="wx-radar-legend"><span>Light</span><span class="wx-radar-scale" aria-hidden="true"></span><span>Heavy</span></div>
+    </section>`;
+}
+
+function wxFeedCard(s) {
   const products = s.products || [];
-  if (!products.length) return "";
-  return products.map((p) => {
+  const warnings = (s.warnings || []).length ? `<div class="wx-warnings">${s.warnings.map((w) => `• ${escapeHtml(w)}`).join("<br>")}</div>` : "";
+  if (!products.length && !warnings) return "";
+  const rows = products.map((p) => {
     const id = `prod:${p.office}:${p.type}`;
     const open = weatherExpanded.has(id);
     let inner = "";
@@ -10384,16 +10545,21 @@ function wxProductsSection(s) {
       const cached = weatherProductText.get(`${p.office}:${p.type}`);
       if (cached === "loading" || cached === undefined) inner = `<div class="wx-note">Loading…</div>`;
       else if (cached === "none" || !cached?.text) inner = `<div class="wx-note">Not currently issued for ${escapeHtml(p.office)}.</div>`;
-      else inner = `<div class="wx-product-meta">Issued ${escapeHtml(wxClock(cached.issued, s.location.timezone))}</div><pre class="wx-product-text">${escapeHtml(cached.text)}</pre>`;
+      else inner = `<div class="wx-product-meta">Issued ${escapeHtml(wxClock(cached.issued, s.location.timezone))}</div><div class="wx-product-text">${escapeHtml(cached.text)}</div>`;
     }
     return `
-      <div class="wx-disclosure">
+      <div class="wx-frow">
         <button class="wx-disclosure-head" type="button" data-wx-action="product" data-office="${escapeHtml(p.office)}" data-type="${escapeHtml(p.type)}" aria-expanded="${open}">
-          <span>${escapeHtml(p.name)}</span><span class="wx-caret">${open ? "▴" : "▾"}</span>
+          <span class="wx-fname">${escapeHtml(p.name)}</span><span class="wx-rm">${open ? "Read less ▴" : "Read more →"}</span>
         </button>
         ${open ? inner : ""}
       </div>`;
   }).join("");
+  return `
+    <section class="wx-card wx-feed">
+      <div class="wx-card-hd"><h3>NWS Forecast Feed</h3><span class="wx-sub">tap to expand</span></div>
+      ${rows}${warnings}
+    </section>`;
 }
 
 // ── Wiring (delegated, bound once) ──────────────────────────────────────────
