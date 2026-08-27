@@ -24,10 +24,10 @@ describe("voice registry — availability & default", () => {
     expect(getVoice(DEFAULT_VOICE_ID).provider).toBe("google");
     expect(getVoice(DEFAULT_VOICE_ID).availability).toBe("available");
   });
-  it("Kokoro voices are registered but unavailable until Phase 1", () => {
+  it("Kokoro voices are live (served by the self-hosted engine) and selectable", () => {
     const kokoro = getVoices({ provider: "kokoro" });
     expect(kokoro.length).toBeGreaterThan(0);
-    expect(kokoro.every((v) => v.availability === "unavailable")).toBe(true);
+    expect(kokoro.every((v) => v.availability === "available")).toBe(true);
     expect(kokoro.map((v) => v.id)).toContain("bella");
   });
   it("availableOnly filter returns only available voices", () => {

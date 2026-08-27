@@ -1878,6 +1878,7 @@ function bindEvents() {
   elements.closeContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
   elements.contextSettingsBackBtn.addEventListener("click", () => renderContextSettingsDialog("general"));
   elements.doneContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
+  elements.contextSettingsDialog.addEventListener("close", () => stopVoicePreview());
   elements.contextSettingsBody.addEventListener("click", handleContextSettingsAction);
   elements.contextSettingsBody.addEventListener("change", handleContextSettingsChange);
   // Right-click label/sub/account management inside the Accounts panel (mirrors
@@ -19847,7 +19848,76 @@ function refreshFinanceSettingsIfOpen() {
     renderContextSettingsDialog("finance-accounts");
   }
 }
+// ── Settings → AI → Voice: preview + preference helpers ──────────────────────
+const VOICE_PLAY_SVG = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>`;
+const VOICE_STOP_SVG = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>`;
+const VOICE_SPIN_SVG = `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" stroke-dasharray="30" stroke-dashoffset="10"/></svg>`;
+
+// Write the global default voice/speed, preserving any per-domain overrides the
+// resolver reads (voice-prefs.js). Base on the currently-resolved values so a
+// partial patch ({voiceId} or {speed}) never drops the other field.
+function setVoiceDefaultPref(patch) {
+  const c = getVoiceService().voiceForDomain("article");
+  if (!state.aiSettings || typeof state.aiSettings !== "object") state.aiSettings = {};
+  const voice = (state.aiSettings.voice && typeof state.aiSettings.voice === "object") ? state.aiSettings.voice : {};
+  state.aiSettings.voice = { ...voice, default: { voiceId: c.voiceId, speed: c.speed, ...patch } };
+  persist();
+}
+
+// Voice preview: synthesize a short sample in the chosen voice and play it. Uses
+// the same session-gated pipeline as Listen (so a private voice's cold start is
+// handled by the proxy's retry), and never blocks — a token guards against a
+// second click / dialog re-render superseding an in-flight preview.
+let voicePreviewAudio = null;
+let voicePreviewBtn = null;
+let voicePreviewToken = 0;
+
+function resetVoicePreviewBtn(btn) {
+  if (!btn) return;
+  btn.classList.remove("playing");
+  const mini = btn.classList.contains("vpick-mini");
+  btn.innerHTML = mini ? VOICE_PLAY_SVG : `${VOICE_PLAY_SVG} Preview`;
+}
+function stopVoicePreview() {
+  voicePreviewToken++;
+  if (voicePreviewAudio) { try { voicePreviewAudio.pause(); } catch { /* noop */ } voicePreviewAudio = null; }
+  if (voicePreviewBtn) { resetVoicePreviewBtn(voicePreviewBtn); voicePreviewBtn = null; }
+}
+async function previewVoice(voiceId, btn) {
+  const toggleOff = voicePreviewBtn === btn;
+  stopVoicePreview();           // invalidates any in-flight preview + resets prior button
+  if (toggleOff) return;        // a second click on the active control just stops
+  const token = voicePreviewToken;
+  const mini = btn.classList.contains("vpick-mini");
+  voicePreviewBtn = btn;
+  btn.classList.add("playing");
+  btn.innerHTML = mini ? VOICE_SPIN_SVG : `${VOICE_SPIN_SVG} Preparing…`;
+
+  let urls;
+  try {
+    const sample = "Hi, this is how I sound reading your articles aloud.";
+    const res = await getVoiceService().synthesize({ text: sample, domain: "article", voiceId });
+    urls = res?.urls;
+  } catch (e) {
+    if (token !== voicePreviewToken) return;
+    voicePreviewBtn = null; resetVoicePreviewBtn(btn);
+    alert("Could not play preview: " + (e?.message || e));
+    return;
+  }
+  if (token !== voicePreviewToken) return;       // superseded / stopped during synth
+  if (!Array.isArray(urls) || !urls.length) { voicePreviewBtn = null; resetVoicePreviewBtn(btn); return; }
+
+  const audio = new Audio(urls[0]);
+  voicePreviewAudio = audio;
+  btn.innerHTML = mini ? VOICE_STOP_SVG : `${VOICE_STOP_SVG} Stop`;
+  const done = () => { if (token === voicePreviewToken) { voicePreviewAudio = null; voicePreviewBtn = null; resetVoicePreviewBtn(btn); } };
+  audio.onended = done;
+  audio.onerror = done;
+  audio.play().catch(done);
+}
+
 function renderContextSettingsDialog(kind) {
+  if (kind !== "voice") stopVoicePreview(); // leaving the Voice panel silences any preview
   contextSettingsKind = kind;
   const titles = {
     general: "Settings",
@@ -19866,6 +19936,7 @@ function renderContextSettingsDialog(kind) {
     "api-usage": "API Usage",
     "ai-notes": "AI Notes",
     "mail-ai": "Mail AI",
+    "voice": "Voice",
     "podcasts": "Podcasts"
   };
   const isSubPanel = !["general", "eat", "do", "play", "watch", "recreate", "read-sync"].includes(kind);
@@ -19879,6 +19950,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="location-services">Location Services</button>
         <button type="button" data-context-settings-action="weekly-email">Email</button>
         <button type="button" data-context-settings-action="mail-ai">Mail AI</button>
+        <button type="button" data-context-settings-action="voice">Voice</button>
         <button type="button" data-context-settings-action="family">Household</button>
         <button type="button" data-context-settings-action="voice-commands">Voice Commands</button>
         <button type="button" data-context-settings-action="ai-log">AI Action Log</button>
@@ -19959,6 +20031,80 @@ function renderContextSettingsDialog(kind) {
         state.mailAiSettings[input.dataset.mailAiKey] = input.checked;
         persist();
       });
+    });
+    return;
+  }
+
+  if (kind === "voice") {
+    const vs = getVoiceService();
+    const cur = vs.voiceForDomain("article");           // { voiceId, speed, voice }
+    const curVoice = cur.voice || vs.getVoice("google-neural");
+    const curSpeed = cur.speed || 1;
+    const priv = vs.getVoices({ provider: "kokoro", availableOnly: true });
+    const cloud = vs.getVoices({ provider: "google", availableOnly: true });
+    const SPEEDS = [
+      { v: 0.75, label: "0.75×" }, { v: 0.9, label: "0.9×" }, { v: 1.0, label: "1.0×" },
+      { v: 1.1, label: "1.1×" }, { v: 1.25, label: "1.25×" }, { v: 1.5, label: "1.5×" }, { v: 2.0, label: "2.0×" },
+    ];
+    const isPrivate = (v) => !!v && v.provider === "kokoro";
+    // Provider names stay hidden: strip a trailing "(Google)" etc. from the label.
+    const nameOf = (v) => (v?.displayName || "Voice").replace(/\s*\([^)]*\)\s*$/, "").trim();
+    const initialOf = (v) => (nameOf(v)[0] || "?").toUpperCase();
+    const accentOf = (v) => !v ? "" : `${v.accent || ""}${(v.language || "").startsWith("en") ? " English" : (v.language ? " " + v.language : "")}`.trim();
+
+    const voiceRow = (v) => `
+      <button class="vpick-voice" type="button" data-voice-id="${escapeHtml(v.id)}" aria-selected="${v.id === curVoice?.id ? "true" : "false"}">
+        <span class="vpick-dot ${isPrivate(v) ? "" : "cloud"}">${escapeHtml(initialOf(v))}</span>
+        <span class="vpick-nm">
+          <span class="n">${escapeHtml(nameOf(v))}${isPrivate(v) ? ' <span class="vpick-badge">Private</span>' : ""}</span>
+          <span class="s">${escapeHtml(accentOf(v))}</span>
+        </span>
+        <span class="vpick-mini" role="button" tabindex="0" data-preview-id="${escapeHtml(v.id)}" aria-label="Preview ${escapeHtml(nameOf(v))}">${VOICE_PLAY_SVG}</span>
+        <svg class="vpick-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+      </button>`;
+
+    elements.contextSettingsBody.innerHTML = `
+      <p class="settings-hint">One voice for reading your articles aloud. Voices marked <span class="vpick-badge">Private</span> are spoken on your own server — the text never goes to a third party.</p>
+      <div class="vpick-card">
+        <div class="vpick-head">Voice</div>
+        <div class="vpick-current">
+          <div class="vpick-avatar ${isPrivate(curVoice) ? "" : "cloud"}">${escapeHtml(initialOf(curVoice))}</div>
+          <div class="vpick-grow">
+            <div class="vpick-name">${escapeHtml(nameOf(curVoice))}${isPrivate(curVoice) ? ' <span class="vpick-badge">Private</span>' : ""}</div>
+            <div class="vpick-sub">${escapeHtml(accentOf(curVoice))}</div>
+          </div>
+          <button class="vpick-btn" type="button" data-preview-id="${escapeHtml(curVoice?.id || "")}" aria-label="Preview">${VOICE_PLAY_SVG} Preview</button>
+        </div>
+        <div class="vpick-speed-label">Speaking speed</div>
+        <div class="vpick-speed" role="group" aria-label="Speaking speed">
+          ${SPEEDS.map((s) => `<button class="vpick-seg" type="button" data-speed="${s.v}" aria-pressed="${Math.abs(s.v - curSpeed) < 0.001 ? "true" : "false"}">${s.label}</button>`).join("")}
+        </div>
+      </div>
+      <div class="vpick-card">
+        <div class="vpick-head">Choose a voice <span class="vpick-hint">tap ▶ to preview</span></div>
+        ${priv.length ? `<div class="vpick-group">Your voices · private</div>${priv.map(voiceRow).join("")}` : ""}
+        ${cloud.length ? `<div class="vpick-group">Cloud</div>${cloud.map(voiceRow).join("")}` : ""}
+      </div>
+      <p class="vpick-note">You pick a voice; the app picks the engine. A private voice can take a few extra seconds the first time after a while, as the voice server wakes up.</p>`;
+
+    // Select a voice (writes the global default, preserving any other voice prefs).
+    elements.contextSettingsBody.querySelectorAll(".vpick-voice").forEach((row) => {
+      row.addEventListener("click", (e) => {
+        if (e.target.closest("[data-preview-id]")) return; // preview handled separately
+        setVoiceDefaultPref({ voiceId: row.dataset.voiceId });
+        stopVoicePreview();
+        renderContextSettingsDialog("voice");
+      });
+    });
+    elements.contextSettingsBody.querySelectorAll("[data-speed]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setVoiceDefaultPref({ speed: Number(btn.dataset.speed) });
+        stopVoicePreview();
+        renderContextSettingsDialog("voice");
+      });
+    });
+    elements.contextSettingsBody.querySelectorAll("[data-preview-id]").forEach((btn) => {
+      btn.addEventListener("click", (e) => { e.stopPropagation(); previewVoice(btn.dataset.previewId, btn); });
     });
     return;
   }
@@ -20699,6 +20845,7 @@ function handleContextSettingsAction(event) {
     "calendars": () => closeAndRun(openPlanCalDialog),
     "weekly-email": () => closeAndRun(openWeeklyEmailDialog),
     "mail-ai": () => renderContextSettingsDialog("mail-ai"),
+    "voice": () => renderContextSettingsDialog("voice"),
     "backup-health": () => closeAndRun(openBackupHealthDialog),
     "restore-backup": () => closeAndRun(openRestoreDialog),
     "admin-pages": () => renderContextSettingsDialog("admin-pages"),
@@ -40384,6 +40531,41 @@ async function mediaApi() {
 }
 if (typeof window !== "undefined") window.LiveMedia = { api: mediaApi };
 
+// Localhost-only QA hook for the AI Voice work (there's no Settings UI yet, and
+// state/persist aren't otherwise console-reachable). Gated on canUseLocalBackend()
+// so it never exists in production. Lets you pick a voice and drop a ready-to-play
+// test article from the console:  LiveVoiceQA.use("bella");  LiveVoiceQA.addTestArticle();
+if (typeof window !== "undefined" && canUseLocalBackend()) {
+  window.LiveVoiceQA = {
+    use(voiceId) {
+      const cur = state.aiSettings?.voice || {};
+      state.aiSettings = { ...(state.aiSettings || {}), voice: { ...cur, default: { voiceId, speed: cur.default?.speed || 1.0 } } };
+      persist();
+      return `voice → ${voiceId}`;
+    },
+    addTestArticle(text) {
+      const id = "voiceqa-" + Date.now();
+      if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
+      state.savedArticles.unshift({
+        id, url: null, title: "Kokoro Test Article", author: "Local test", publication: "Test",
+        date: new Date().toLocaleDateString(), savedAt: new Date().toISOString(),
+        text: text || "<p>This is a test article for the on-device Kokoro voice. If you can hear these words read aloud inside the app, the whole text-to-speech pipeline is working end to end: the app sent this text to the local function, the function asked Kokoro on your own machine to synthesize it, and the audio came back and played through the shared media engine. Enjoy Bella.</p>",
+      });
+      persist();
+      try { showMediaApp(); openArticle(id, "articleList"); } catch (e) { console.warn("Article added — open it from Media manually:", e); }
+      return id;
+    },
+  };
+  console.log('%cLiveVoiceQA ready →  LiveVoiceQA.use("bella")  then  LiveVoiceQA.addTestArticle()', "color:#32b496;font-weight:bold");
+  // Zero-console QA: open localhost:4174/?voiceqa=1 and a test article is added +
+  // opened automatically a moment after load — just press Listen. (localhost only.)
+  if (new URLSearchParams(location.search).get("voiceqa") != null) {
+    window.addEventListener("load", () => setTimeout(() => {
+      try { window.LiveVoiceQA.addTestArticle(); } catch (e) { console.warn("voiceqa auto-open failed — the article was still added; open it from Media:", e); }
+    }, 1500));
+  }
+}
+
 // Drop the cached hub so a services/config change is picked up on the next search.
 function resetMediaHub() { mediaHub = null; watchHubReady = false; watchHubLoading = false; }
 
@@ -46687,7 +46869,13 @@ let listenWordAbsTimes = null; // absolute start time (s) of each spoken word
 let listenActiveWordEl = null; // currently highlighted word span, if any
 let listenSpeaking = false;
 let listenLoading = false;
+let listenLoadingLabel = "Loading…"; // spinner caption; a Kokoro cold start swaps in a friendlier note
 let listenGenId = 0;
+
+// Set by the foreground Listen flow so a Kokoro cold-start wait (the scale-to-zero
+// voice box booting, ~30-60s) can show a reassuring caption. Null during background
+// prefetch, so nothing flickers on the button while something else is playing.
+let onKokoroColdStart = null;
 
 // Builds an <audio> that immediately starts buffering, so by the time the
 // current chunk ends the next one is ready and playback doesn't stall.
@@ -46875,12 +47063,35 @@ async function listenToArticle(id) {
 // Throws a typed error on failure; the VoiceService never swaps to Google, so
 // private text is never silently rerouted (design §14). Timings are null in 1A
 // (Kokoro has no word alignment yet) — highlighting simply won't activate.
+// Codes we never retry — the request itself is wrong, so waiting won't help.
+const KOKORO_FATAL_CODES = new Set([
+  "KOKORO_AUTH_FAILED", "KOKORO_INVALID_REQUEST", "KOKORO_UNSUPPORTED_VOICE", "KOKORO_SYNTHESIS_FAILED",
+]);
+const KOKORO_COLD_ATTEMPTS = 6;   // enough tries to outlast a ~60s cold start
+const KOKORO_COLD_DELAY_MS = 10000;
+
 async function kokoroSynthViaProxy({ text, refId, providerVoiceId, cacheKey, speed }) {
-  const res = await callNetlifyFunction("kokoro-tts", { text, refId, providerVoiceId, cacheKey, speed });
-  if (res?.error || !Array.isArray(res?.urls) || !res.urls.length) {
-    throw new Error(res?.error || res?.code || "Kokoro synthesis failed");
+  for (let attempt = 1; ; attempt++) {
+    const res = await callNetlifyFunction("kokoro-tts", { text, refId, providerVoiceId, cacheKey, speed });
+    if (Array.isArray(res?.urls) && res.urls.length) {
+      return { urls: res.urls, timings: res.timings || null, cached: !!res.cached };
+    }
+    // Cold start: the scale-to-zero voice box was asleep and is now booting, so the
+    // proxy timed out / the gateway errored. Keep retrying (the box stays warming) so
+    // the first Listen after idle just waits instead of failing. Only fatal codes
+    // (bad request / voice / auth) bail immediately — anything else is treated as a
+    // transient warm-up and retried until the attempt budget runs out.
+    const code = res?.code;
+    const transient = !KOKORO_FATAL_CODES.has(code);
+    if (transient && attempt < KOKORO_COLD_ATTEMPTS) {
+      try { onKokoroColdStart && onKokoroColdStart(attempt); } catch { /* UI hook is best-effort */ }
+      await new Promise((r) => setTimeout(r, KOKORO_COLD_DELAY_MS));
+      continue;
+    }
+    const err = new Error(res?.error || code || "Kokoro synthesis failed");
+    err.kokoroCode = code;
+    throw err;
   }
-  return { urls: res.urls, timings: res.timings || null, cached: !!res.cached };
 }
 
 let voiceServiceSingleton = null;
@@ -47062,6 +47273,13 @@ async function startListenTTS(article) {
     if (myGenId !== listenGenId) return;
   }
   if (!data) {
+    // On a Kokoro cold start, swap the spinner caption to a reassuring note so a
+    // ~1-minute wait doesn't look frozen. Cleared in finally either way.
+    onKokoroColdStart = () => {
+      if (myGenId !== listenGenId) return;
+      listenLoadingLabel = "Preparing voice…";
+      updateListenPlayBtn();
+    };
     try {
       data = await generateTtsUrls(article);
     } catch (e) {
@@ -47070,6 +47288,9 @@ async function startListenTTS(article) {
       updateListenPlayBtn();
       alert("Could not generate audio: " + e.message);
       return;
+    } finally {
+      onKokoroColdStart = null;
+      listenLoadingLabel = "Loading…";
     }
     if (myGenId !== listenGenId) return;
   }
@@ -47162,7 +47383,7 @@ function updateListenPlayBtn() {
   const icon = document.getElementById("listenBtnIcon");
   if (!btn) return;
   if (listenLoading) {
-    if (label) label.textContent = "Loading…";
+    if (label) label.textContent = listenLoadingLabel;
     if (icon) icon.innerHTML = `<circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="28" stroke-dashoffset="10"/>`;
     btn.disabled = true;
     return;

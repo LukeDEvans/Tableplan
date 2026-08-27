@@ -21652,3 +21652,40 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .radio-now-btn:hover { background: var(--accent-dark); }
 .radio-now-stop { width: 34px; height: 34px; background: transparent; color: var(--muted); }
 .radio-now-stop:hover { background: var(--tomato-soft); color: var(--tomato); }
+
+/* Settings → AI → Voice picker. Provider names stay hidden: the user picks a
+   VOICE (grouped "your voices · private" = self-hosted Kokoro, and "cloud" =
+   Google); the app resolves the engine. Fits the narrow settings dialog + 360px. */
+.vpick-card { border: 1px solid var(--line); border-radius: 12px; background: var(--window-bg); overflow: clip; margin-bottom: 16px; }
+.vpick-card > .vpick-head { padding: 11px 14px; border-bottom: 1px solid var(--line); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 700; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.vpick-head .vpick-hint { text-transform: none; letter-spacing: 0; font-weight: 600; }
+.vpick-current { display: flex; align-items: center; gap: 12px; padding: 13px 14px; }
+.vpick-avatar { width: 40px; height: 40px; border-radius: 50%; flex: 0 0 auto; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 1rem; background: radial-gradient(120% 120% at 30% 20%, var(--accent) 0%, var(--accent-dark) 100%); }
+.vpick-avatar.cloud { background: radial-gradient(120% 120% at 30% 20%, #7f9bb5 0%, var(--window-border) 100%); }
+.vpick-current .vpick-grow { flex: 1; min-width: 0; }
+.vpick-current .vpick-name { font-weight: 600; }
+.vpick-current .vpick-sub { font-size: 0.82rem; color: var(--muted); margin-top: 1px; }
+.vpick-badge { display: inline-flex; align-items: center; font-size: 0.64rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: var(--accent-dark); background: var(--accent-soft); border-radius: 99px; padding: 2px 7px; margin-left: 6px; vertical-align: middle; }
+.vpick-btn { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 99px; padding: 7px 13px; font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.vpick-btn:hover { border-color: var(--accent); color: var(--accent-dark); }
+.vpick-btn.playing { border-color: var(--accent); color: var(--accent-dark); background: var(--accent-soft); }
+.vpick-btn svg { width: 14px; height: 14px; }
+.vpick-speed-label { padding: 12px 14px 4px; font-weight: 600; font-size: 0.9rem; }
+.vpick-speed { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 14px 14px; }
+.vpick-seg { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 10px; padding: 7px 11px; font: inherit; font-size: 0.84rem; font-weight: 600; cursor: pointer; font-variant-numeric: tabular-nums; }
+.vpick-seg[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.vpick-group { padding: 11px 14px 5px; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 700; }
+.vpick-voice { display: flex; align-items: center; gap: 12px; padding: 10px 14px; cursor: pointer; width: 100%; background: none; border: 0; border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent); font: inherit; color: var(--ink); text-align: left; }
+.vpick-voice:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.vpick-dot { width: 30px; height: 30px; border-radius: 50%; flex: 0 0 auto; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 0.8rem; background: radial-gradient(120% 120% at 30% 20%, var(--accent) 0%, var(--accent-dark) 100%); }
+.vpick-dot.cloud { background: radial-gradient(120% 120% at 30% 20%, #7f9bb5 0%, var(--window-border) 100%); }
+.vpick-voice .vpick-nm { flex: 1; min-width: 0; }
+.vpick-voice .vpick-nm .n { font-weight: 600; }
+.vpick-voice .vpick-nm .s { font-size: 0.8rem; color: var(--muted); }
+.vpick-voice[aria-selected="true"] .n { color: var(--accent-dark); }
+.vpick-check { width: 20px; height: 20px; flex: 0 0 auto; color: var(--accent); opacity: 0; }
+.vpick-voice[aria-selected="true"] .vpick-check { opacity: 1; }
+.vpick-mini { border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 99px; width: 30px; height: 30px; flex: 0 0 auto; display: grid; place-items: center; cursor: pointer; }
+.vpick-mini:hover, .vpick-mini.playing { border-color: var(--accent); color: var(--accent-dark); background: var(--accent-soft); }
+.vpick-mini svg { width: 13px; height: 13px; }
+.vpick-note { margin-top: 6px; font-size: 0.8rem; color: var(--muted); border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 10px 13px; border-radius: 0 10px 10px 0; }
