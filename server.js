@@ -202,6 +202,10 @@ const server = http.createServer(async (request, response) => {
       await handleNetlifyFunction("./netlify/functions/generate-tts", request, response);
       return;
     }
+    if (url.pathname === "/.netlify/functions/kokoro-tts") {
+      await handleNetlifyFunction("./netlify/functions/kokoro-tts.mjs", request, response);
+      return;
+    }
     if (url.pathname === "/.netlify/functions/fetch-podcast") {
       await handleNetlifyFunction("./netlify/functions/fetch-podcast", request, response);
       return;
@@ -1340,7 +1344,11 @@ async function handleNetlifyFunction(modulePath, request, response, url = null) 
   for (const k of Object.keys(require.cache)) {
     if (k.includes(fnDir)) delete require.cache[k];
   }
-  const fn = require(modulePath);
+  // ESM functions (.mjs, e.g. kokoro-tts) can't be require()'d; import() them
+  // instead, cache-busted so edits still take effect without restarting.
+  const fn = modulePath.endsWith(".mjs")
+    ? await import(`${require("url").pathToFileURL(path.join(__dirname, modulePath)).href}?t=${Date.now()}`)
+    : require(modulePath);
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
   const body = Buffer.concat(chunks).toString();

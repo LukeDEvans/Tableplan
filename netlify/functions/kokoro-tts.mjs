@@ -42,10 +42,15 @@ export const handler = async (event) => {
   }
 
   // Authenticate the app user via the existing session mechanism; never trust a
-  // client-supplied id.
-  const accessToken = bearer(event);
-  if (!accessToken) return cors(json(401, { code: KOKORO_ERRORS.INVALID_REQUEST, error: "Not authenticated." }));
-  if (!(await getUserId(accessToken, serviceKey))) return cors(json(401, { code: KOKORO_ERRORS.INVALID_REQUEST, error: "Invalid session." }));
+  // client-supplied id. LOCAL-DEV ONLY escape hatch: server.js sets
+  // KOKORO_LOCAL_NO_AUTH=1 so the localhost app (which can run with no Supabase
+  // session) can exercise Kokoro. Production Netlify never sets this var, so the
+  // gate below is always enforced in the real deployment.
+  if (process.env.KOKORO_LOCAL_NO_AUTH !== "1") {
+    const accessToken = bearer(event);
+    if (!accessToken) return cors(json(401, { code: KOKORO_ERRORS.INVALID_REQUEST, error: "Not authenticated." }));
+    if (!(await getUserId(accessToken, serviceKey))) return cors(json(401, { code: KOKORO_ERRORS.INVALID_REQUEST, error: "Invalid session." }));
+  }
 
   let body;
   try { body = JSON.parse(event.body || "{}"); } catch { return cors(json(400, { code: KOKORO_ERRORS.INVALID_REQUEST, error: "Invalid JSON" })); }

@@ -1,0 +1,9 @@
+# Public, Bearer-gated entrypoint for the home Kokoro server (sits behind Tailscale
+# Funnel). Anything without the exact "Authorization: Bearer <KOKORO_TOKEN>" header
+# gets 401; valid requests are proxied to Kokoro. This is what stops the public
+# Funnel URL from being an open TTS server.
+:8080 {
+	@unauthorized not header Authorization "Bearer {$KOKORO_TOKEN}"
+	respond @unauthorized "Unauthorized" 401
+	reverse_proxy kokoro:8880
+}
