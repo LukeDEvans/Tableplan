@@ -10305,10 +10305,12 @@ function wxAlertCard(a) {
 function wxDashboard(s, tz) {
   const c = s.current || {};
   const nowHour = (s.hourly || [])[0] || {};
-  const cond = conditionFor({
-    icon: nowHour.icon, shortForecast: nowHour.description, description: c.description,
-    sunrise: c.sunrise, sunset: c.sunset, at: c.provenance?.observedAt || s.fetchedAt,
-  });
+  // Prefer the real station observation for the hero condition (so the artwork
+  // matches the shown label); fall back to the current forecast hour's icon.
+  const hasObs = !!c.description && !c.provenance?.isForecastDerived;
+  const cond = conditionFor(hasObs
+    ? { description: c.description, sunrise: c.sunrise, sunset: c.sunset, at: c.provenance?.observedAt || s.fetchedAt }
+    : { icon: nowHour.icon, shortForecast: nowHour.description, isDaytime: nowHour.isDaytime, sunrise: c.sunrise, sunset: c.sunset, at: s.fetchedAt });
   const emphasis = weatherEmphasis({ conditionKey: cond.key, alerts: s.alerts || [] });
   const alertsHtml = (s.alerts || []).length ? `<div class="wx-alerts">${s.alerts.map(wxAlertCard).join("")}</div>` : "";
   return `
@@ -10685,10 +10687,12 @@ async function openWeatherRadarMap() {
     || (!document.documentElement.dataset.theme && window.matchMedia?.("(prefers-color-scheme: dark)").matches);
   const map = L.map(canvas, { zoomControl: true, attributionControl: true }).setView([loc.latitude, loc.longitude], 7);
   weatherMapInstance = map;
+  // Keyless, theme-aware Esri gray canvas (CARTO's free basemaps now stamp an
+  // "API KEY REQUIRED" watermark). Grayscale reads cleanly under radar/satellite.
   L.tileLayer(
-    dark ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-         : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-    { attribution: "© OpenStreetMap © CARTO", subdomains: "abcd", maxZoom: 18 }
+    dark ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+         : "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+    { attribution: "© Esri", maxZoom: 16 }
   ).addTo(map);
   L.marker([loc.latitude, loc.longitude]).addTo(map);
 
