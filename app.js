@@ -10650,19 +10650,21 @@ async function openWeatherRadarMap() {
   overlay.id = "wxMapOverlay";
   overlay.className = "wx-map-overlay";
   overlay.innerHTML = `
-    <div class="wx-map-modal" role="dialog" aria-modal="true" aria-label="Radar map">
+    <div class="wx-map-modal" role="dialog" aria-modal="true" aria-label="Weather map">
       <div class="wx-map-bar">
-        <span class="wx-map-title">Radar — ${escapeHtml(s?.location?.label || loc.label)}</span>
-        <div class="wx-map-toggles">
-          <label class="wx-map-toggle"><input type="checkbox" id="wxMapRadar" checked> Radar</label>
-          <label class="wx-map-toggle" id="wxMapAlertsWrap"><input type="checkbox" id="wxMapAlerts" checked> Alerts</label>
+        <span class="wx-map-title">${escapeHtml(s?.location?.label || loc.label)}</span>
+        <div class="wx-map-modes" role="group" aria-label="Map layer">
+          <button type="button" data-wx-map-mode="radar" aria-pressed="true">Radar</button>
+          <button type="button" data-wx-map-mode="satellite" aria-pressed="false">Satellite</button>
         </div>
-        <button class="wx-map-close" type="button" aria-label="Close radar map"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        <label class="wx-map-toggle" id="wxMapAlertsWrap"><input type="checkbox" id="wxMapAlerts" checked> Warnings</label>
+        <button class="wx-map-close" type="button" aria-label="Close weather map"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
       <div class="wx-map-canvas" id="wxMapCanvas"><div class="wx-map-msg">Loading map…</div></div>
       <div class="wx-map-foot">
         <img class="wx-map-legend" id="wxMapLegend" alt="Radar reflectivity scale" hidden>
         <span class="wx-map-valid" id="wxMapValid"></span>
+        <span class="wx-map-attr" id="wxMapAttr"></span>
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -10681,7 +10683,7 @@ async function openWeatherRadarMap() {
   canvas.innerHTML = "";
   const dark = document.documentElement.dataset.theme === "dark"
     || (!document.documentElement.dataset.theme && window.matchMedia?.("(prefers-color-scheme: dark)").matches);
-  const map = L.map(canvas, { zoomControl: true, attributionControl: true }).setView([loc.latitude, loc.longitude], 8);
+  const map = L.map(canvas, { zoomControl: true, attributionControl: true }).setView([loc.latitude, loc.longitude], 7);
   weatherMapInstance = map;
   L.tileLayer(
     dark ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
@@ -10690,29 +10692,36 @@ async function openWeatherRadarMap() {
   ).addTo(map);
   L.marker([loc.latitude, loc.longitude]).addTo(map);
 
-  // Radar layer, discovered via GetCapabilities (never leave a broken toggle).
-  let radarLayer = null;
-  const valid = document.getElementById("wxMapValid");
+  const legendEl = document.getElementById("wxMapLegend");
+  const validEl = document.getElementById("wxMapValid");
+  const attrEl = document.getElementById("wxMapAttr");
+
+  // SATELLITE: NASA GIBS GOES-East GeoColor, latest frame (time="default"). A
+  // different provider than NOAA radar — documented in WEATHER.md — chosen because
+  // it is authoritative (GOES-derived), reliably tiled, and ~10-min fresh. Not
+  // animated: NOAA exposes no reliable historical frames, so no fake timeline.
+  const satLayer = L.tileLayer(
+    "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/GOES-East_ABI_GeoColor/default/default/GoogleMapsCompatible_Level7/{z}/{y}/{x}.png",
+    { maxZoom: 18, maxNativeZoom: 7, opacity: 0.85, attribution: "Imagery: NASA GIBS · NOAA GOES-East", bounds: [[-85, -180], [85, 180]] }
+  );
+  let satErrored = false;
+  satLayer.on("tileerror", () => { if (!satErrored) { satErrored = true; if (currentMode === "satellite" && validEl) validEl.textContent = "Satellite temporarily unavailable"; } });
+
+  // RADAR: NOAA IDP base reflectivity WMS, discovered via GetCapabilities (single
+  // current frame). Never leaves a broken toggle — offline disables the mode.
+  let radarLayer = null, radarLegendUrl = null, radarOffline = false;
   try {
     const cap = await weatherRequest({ action: "capabilities" }, 3 * 60 * 60 * 1000);
     if (weatherMapInstance !== map) return; // closed/reopened
     if (cap?.available) {
-      radarLayer = L.tileLayer.wms(cap.wmsUrl, { layers: cap.layer, format: cap.format, version: cap.version, transparent: true, opacity: 0.75, attribution: cap.attribution }).addTo(map);
-      const legend = document.getElementById("wxMapLegend");
-      if (cap.legendUrl && legend) { legend.src = cap.legendUrl; legend.hidden = false; }
-      if (valid) valid.textContent = "Base reflectivity · latest · " + cap.attribution;
-    } else {
-      if (valid) valid.textContent = "Radar temporarily offline";
-      document.getElementById("wxMapRadar").disabled = true;
-    }
-  } catch {
-    if (valid) valid.textContent = "Radar temporarily offline";
-    const rc = document.getElementById("wxMapRadar"); if (rc) rc.disabled = true;
-  }
+      radarLayer = L.tileLayer.wms(cap.wmsUrl, { layers: cap.layer, format: cap.format, version: cap.version, transparent: true, opacity: 0.75, attribution: cap.attribution });
+      radarLegendUrl = cap.legendUrl || null;
+    } else radarOffline = true;
+  } catch { radarOffline = true; }
 
-  // Active alert polygons from the snapshot geometry (already normalized).
-  let alertLayer = null;
+  // Active-warning polygons from the snapshot geometry (already normalized).
   const feats = (s?.alerts || []).filter((a) => a.geometry).map((a) => ({ type: "Feature", geometry: a.geometry, properties: { event: a.event, severity: a.severity } }));
+  let alertLayer = null;
   if (feats.length) {
     alertLayer = L.geoJSON({ type: "FeatureCollection", features: feats }, {
       style: (f) => ({ color: WX_ALERT_STROKE[f.properties.severity] || "#c0392b", weight: 2, fillOpacity: 0.15 }),
@@ -10723,7 +10732,37 @@ async function openWeatherRadarMap() {
     const ac = document.getElementById("wxMapAlerts"); if (ac) ac.disabled = true;
   }
 
-  document.getElementById("wxMapRadar")?.addEventListener("change", (e) => { if (!radarLayer) return; e.target.checked ? radarLayer.addTo(map) : map.removeLayer(radarLayer); });
+  let currentMode = "radar";
+  const setMode = (mode) => {
+    if (mode === "radar" && radarOffline) mode = "satellite";
+    currentMode = mode;
+    overlay.querySelectorAll("[data-wx-map-mode]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.wxMapMode === mode)));
+    if (mode === "radar") {
+      map.removeLayer(satLayer);
+      if (radarLayer && !map.hasLayer(radarLayer)) radarLayer.addTo(map);
+      if (legendEl && radarLegendUrl) { legendEl.src = radarLegendUrl; legendEl.hidden = false; }
+      if (validEl) validEl.textContent = "Base reflectivity · latest frame";
+      if (attrEl) attrEl.textContent = "Radar © NOAA/NWS";
+    } else {
+      if (radarLayer) map.removeLayer(radarLayer);
+      if (!map.hasLayer(satLayer)) satLayer.addTo(map);
+      if (legendEl) legendEl.hidden = true;
+      if (validEl) validEl.textContent = satErrored ? "Satellite temporarily unavailable" : "GOES-East GeoColor · ~10-min imagery";
+      if (attrEl) attrEl.textContent = "Imagery: NASA GIBS · NOAA GOES-East";
+    }
+    // keep warning polygons on top of whichever layer is active
+    if (alertLayer && map.hasLayer(alertLayer)) alertLayer.bringToFront();
+  };
+
+  if (radarOffline) {
+    const rb = overlay.querySelector('[data-wx-map-mode="radar"]');
+    if (rb) { rb.disabled = true; rb.title = "Radar temporarily offline"; }
+    setMode("satellite");
+  } else {
+    setMode("radar");
+  }
+
+  overlay.querySelectorAll("[data-wx-map-mode]").forEach((b) => b.addEventListener("click", () => { if (!b.disabled) setMode(b.dataset.wxMapMode); }));
   document.getElementById("wxMapAlerts")?.addEventListener("change", (e) => { if (!alertLayer) return; e.target.checked ? alertLayer.addTo(map) : map.removeLayer(alertLayer); });
   setTimeout(() => { try { map.invalidateSize(); } catch {} }, 60); // correct sizing after the overlay lays out
 }
