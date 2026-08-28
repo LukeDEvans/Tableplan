@@ -14846,18 +14846,27 @@ function doBacklogListTemplate() {
 }
 
 function bindDoTaskControls(root = document) {
-  // Drag source and touch-swipe handlers must stay per-element (use currentTarget internally).
-  // Click/change handlers are handled by delegated listeners set up in initDoPlannerDelegation / initTasksPageDelegation.
   root.querySelectorAll("[data-do-task]").forEach((item) => {
-    item.addEventListener("dragstart", handleDoTaskDragStart);
-    item.addEventListener("drag", handleDoTaskDrag);
-    item.addEventListener("dragend", handleDoTaskDragEnd);
     item.addEventListener("contextmenu", openDoTaskMenu);
-    item.addEventListener("pointerdown", handleDoTaskPointerDown);
-    item.addEventListener("pointermove", handleDoTaskPointerMove);
-    item.addEventListener("pointerup", handleDoTaskPointerEnd);
-    item.addEventListener("pointercancel", handleDoTaskPointerEnd);
   });
+  // Task move (onto a day-tab / day-list / backlog) — shared sortable primitive in
+  // MOVE mode; delegates to the existing moveDoTask. Replaces the old desktop HTML5
+  // DnD + bespoke touch pointer-clone with one code path (mouse + touch long-press +
+  // edge auto-scroll). Bound once per container; the primitive delegates.
+  if (root.nodeType === 1 && !root.__sortableBound) {
+    root.__sortableBound = true;
+    makeSortable(root, {
+      rowSelector: "[data-do-task]",
+      getId: (row) => row.dataset.doTask,
+      reorder: false,
+      dropZoneSelector: "[data-do-day-tab], [data-do-task-drop-day], [data-do-backlog-drop]",
+      onDropZone: ({ row, zone }) => {
+        const targetDay = zone.dataset.doDayTab || zone.dataset.doTaskDropDay || (zone.hasAttribute("data-do-backlog-drop") ? "backlog" : null);
+        if (targetDay) moveDoTask(row.dataset.doDay, targetDay, row.dataset.doTask);
+      },
+      itemLabel: (row) => (row.querySelector(".do-task-title, .task-title, .do-task-text")?.textContent || row.textContent || "task").trim().slice(0, 40),
+    });
+  }
 }
 
 function doTasksForDay(dayId) {
@@ -16332,7 +16341,7 @@ function doTaskTemplate(task, dayId) {
   const hasInfo = Boolean((task.notes || "").trim()) || logCount > 0;
   const timeLabel = formatTaskTime(task.time);
   return `
-    <article class="do-task-item ${task.done ? "is-done" : ""} ${task.recurringTaskId ? "is-recurring" : ""}" data-do-task="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" draggable="true">
+    <article class="do-task-item ${task.done ? "is-done" : ""} ${task.recurringTaskId ? "is-recurring" : ""}" data-do-task="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}">
       <div class="do-task-main">
         <input type="checkbox" class="do-task-check" data-do-task-toggle="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" ${task.done ? "checked" : ""} aria-label="Mark ${escapeHtml(task.title)} done" />
         <button type="button" class="do-task-title" data-do-task-detail="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}">

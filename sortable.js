@@ -59,6 +59,9 @@ export function makeSortable(container, opts = {}) {
     onReorder = () => {},
     groupSelector = null,       // grouped mode: rows may cross between these within `container`
     onGroupedDrop = null,       // ({ itemId, fromContainer, toContainer, targetId, position })
+    reorder = true,             // false = pure MOVE mode (no intra-list reorder; drop-zones only)
+    dropZoneSelector = null,    // move mode: valid drop targets (searched anywhere in the document)
+    onDropZone = null,          // move mode: ({ itemId, row, zone }) when released over a drop zone
     disabledWithin = INTERACTIVE,
     longPressMs = SORTABLE_DEFAULTS.longPressMs,
     touchTolerancePx = SORTABLE_DEFAULTS.touchTolerancePx,
@@ -141,9 +144,21 @@ export function makeSortable(container, opts = {}) {
     if (sc.scrollTop !== before) g.scrolled = true;
   }
 
+  // Move mode: highlight the drop target under the pointer (a day-tab, folder,
+  // backlog, category — not a sibling row).
+  function updateDropZone() {
+    const el = document.elementFromPoint(g.lastX, g.lastY);
+    const zone = el && el.closest ? el.closest(dropZoneSelector) : null;
+    if (zone === g.zone) return;
+    if (g.zone) g.zone.classList.remove("sortable-dropzone-over");
+    g.zone = zone;
+    if (g.zone) g.zone.classList.add("sortable-dropzone-over");
+  }
+
   function loop() {
     if (!g || !g.armed) return;
-    reorderToPointer();
+    if (reorder) reorderToPointer();
+    if (dropZoneSelector) updateDropZone();
     autoScrollFrame();
     g.raf = requestAnimationFrame(loop);
   }
@@ -195,7 +210,8 @@ export function makeSortable(container, opts = {}) {
     }
   }
   function finishDrop() {
-    if (g.reordered) emitDrop(g.placeholder, g.fromContainer, g.fromIndex);
+    if (dropZoneSelector && g.zone && onDropZone) { onDropZone({ itemId: g.itemId, row: g.placeholder, zone: g.zone }); return; }
+    if (reorder && g.reordered) emitDrop(g.placeholder, g.fromContainer, g.fromIndex);
   }
 
   function teardown() {
@@ -209,6 +225,8 @@ export function makeSortable(container, opts = {}) {
     if (g.placeholder) { g.placeholder.classList.remove("sortable-placeholder"); g.placeholder.style.pointerEvents = ""; }
     if (g.clone) g.clone.remove();
     container.classList.remove("sortable-active");
+    if (g.zone) g.zone.classList.remove("sortable-dropzone-over");
+    if (dropZoneSelector) document.querySelectorAll(".sortable-dropzone-over").forEach((z) => z.classList.remove("sortable-dropzone-over"));
     // clear any leftover FLIP transforms wherever the placeholder ended up
     (groupSelector ? [...container.querySelectorAll(groupSelector)] : [container]).forEach(resetTransforms);
     g = null;
@@ -226,8 +244,8 @@ export function makeSortable(container, opts = {}) {
       row, itemId: getId(row), pointerId: e.pointerId, pointerType: e.pointerType,
       startX: e.clientX, startY: e.clientY, lastX: e.clientX, lastY: e.clientY,
       grabX: 0, grabY: 0, armed: false, reordered: false, scrolled: false,
-      clone: null, placeholder: null, raf: 0, timer: 0,
-      fromContainer: listOf(row), fromIndex: idsIn(listOf(row)).indexOf(getId(row)),
+      clone: null, placeholder: null, raf: 0, timer: 0, zone: null,
+      fromContainer: listOf(row), fromIndex: reorder ? idsIn(listOf(row)).indexOf(getId(row)) : -1,
     };
     window.addEventListener("pointermove", onMove, { passive: false });
     window.addEventListener("pointerup", onUp);
@@ -263,6 +281,7 @@ export function makeSortable(container, opts = {}) {
   // Alt/Option + Arrow Up/Down moves the focused row earlier/later. Discrete,
   // announced via aria-live, and conflict-free with a row's own Enter/Space action.
   function onKeyDown(e) {
+    if (!reorder) return; // move mode: reordering keys don't apply (feature provides its own move UI)
     if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
     const row = e.target.closest ? e.target.closest(rowSelector) : null;
     if (!row || !container.contains(row)) return;
