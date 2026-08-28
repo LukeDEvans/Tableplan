@@ -203,7 +203,7 @@ export function makeSortable(container, opts = {}) {
       const target = nextRow ? { targetId: getId(nextRow), position: "before" }
         : prevRow ? { targetId: getId(prevRow), position: "after" }
         : { targetId: "", position: "after" };
-      onGroupedDrop({ itemId: getId(row), fromContainer, toContainer: toList, ...target });
+      onGroupedDrop({ itemId: getId(row), row, fromContainer, toContainer: toList, ...target });
     } else {
       const order = idsIn(toList);
       const toIndex = order.indexOf(getId(row));
@@ -211,7 +211,13 @@ export function makeSortable(container, opts = {}) {
     }
   }
   function finishDrop() {
-    if (dropZoneSelector && g.zone && onDropZone) { onDropZone({ itemId: g.itemId, row: g.placeholder, zone: g.zone }); return; }
+    // Resolve the drop zone from the ACTUAL release position (the rAF-tracked g.zone
+    // can lag the final pointerup). A zone drop wins over a grouped reorder.
+    if (dropZoneSelector && onDropZone) {
+      const el = document.elementFromPoint(g.lastX, g.lastY);
+      const zone = el && el.closest ? el.closest(dropZoneSelector) : null;
+      if (zone) { onDropZone({ itemId: g.itemId, row: g.placeholder, zone }); return; }
+    }
     if (reorder && g.reordered) emitDrop(g.placeholder, g.fromContainer, g.fromIndex);
   }
 

@@ -25412,17 +25412,36 @@ function renderPlanner() {
     elements.mealAutoFillDialog.showModal();
   });
 
-  elements.plannerGrid.querySelectorAll("[data-meal-entry][draggable='true']").forEach((entry) => {
-    entry.addEventListener("dragstart", handleMealEntryDragStart);
-    entry.addEventListener("drag", handleMealEntryDrag);
-    entry.addEventListener("dragover", handleMealEntryDragOver);
-    entry.addEventListener("dragleave", () => entry.classList.remove("drag-over"));
-    entry.addEventListener("drop", handleMealEntryDrop);
-    entry.addEventListener("dragend", handleMealEntryDragEnd);
+  elements.plannerGrid.querySelectorAll("[data-meal-entry]").forEach((entry) => {
     entry.addEventListener("contextmenu", openMealEntryMenu);
-    entry.addEventListener("mousedown", handleMealEntryMouseDown);
-    entry.addEventListener("pointerdown", handleMealEntryPointerDown);
   });
+  // Meal entries — shared sortable primitive in COMBINED grouped + move mode:
+  //  • reorder within a slot / move between slots  → onGroupedDrop (index-based:
+  //    reorderMealEntry same-slot, moveMealEntryToSlot cross-slot)
+  //  • drop onto a day-tab                          → onDropZone (moveMealEntryToDay)
+  // Replaces the old HTML5 DnD + bespoke touch pointer path. Bound once (delegated).
+  if (!elements.plannerGrid.__sortableBound) {
+    elements.plannerGrid.__sortableBound = true;
+    makeSortable(elements.plannerGrid, {
+      rowSelector: "[data-meal-entry]",
+      getId: (e) => `${e.dataset.day}:${e.dataset.meal}:${e.dataset.index}`,
+      groupSelector: "[data-meal-slot]",
+      dropZoneSelector: "[data-day-tab]",
+      onGroupedDrop: ({ row, toContainer }) => {
+        const source = { day: row.dataset.day, meal: row.dataset.meal, index: Number(row.dataset.index) };
+        const targetDay = toContainer.dataset.day, targetMeal = toContainer.dataset.meal;
+        const targetIndex = [...toContainer.querySelectorAll("[data-meal-entry]")].indexOf(row);
+        if (targetDay === source.day && targetMeal === source.meal) reorderMealEntry(source.day, source.meal, source.index, targetIndex);
+        else moveMealEntryToSlot(source, targetDay, targetMeal, targetIndex);
+      },
+      onDropZone: ({ row, zone }) => {
+        const source = { day: row.dataset.day, meal: row.dataset.meal, index: Number(row.dataset.index) };
+        const targetDay = zone.dataset.dayTab;
+        if (targetDay && mealForDayTabDrop(source.meal, targetDay)) moveMealEntryToDay(source, targetDay);
+      },
+      itemLabel: (e) => (e.textContent || "meal").trim().slice(0, 40),
+    });
+  }
 
   elements.plannerGrid.querySelectorAll("[data-meal-slot]").forEach((slot) => {
     slot.addEventListener("dragover", handleMealSlotDragOver);
@@ -26379,7 +26398,7 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
   const specialMeal = specialMealForSlot(entry);
   const listId = `recipe-options-${day.id}-${mealToken(meal)}-${index}`;
   const isEditing = isEditingMealEntry(day.id, meal, index);
-  const draggable = entry && !isEditing ? `data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true"` : "";
+  const draggable = entry && !isEditing ? `data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}"` : "";
 
   if (readOnly) {
     if (!entry) {
@@ -26444,7 +26463,7 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
 
   if (recipe) {
     return `
-      <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true">
+      <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}">
         <button class="recipe-meal-link" type="button" data-view-recipe="${escapeHtml(recipe.id)}" data-edit-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Double-click to edit">
           ${escapeHtml(recipe.name)}
         </button>
@@ -26457,7 +26476,7 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
     const restaurantLinked = specialMeal.type === "out" && specialMeal.restaurant?.placeId;
     const pinTitle = restaurantLinked ? "Change restaurant" : "Link restaurant";
     return `
-      <div class="meal-entry draggable-meal-entry special-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true">
+      <div class="meal-entry draggable-meal-entry special-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}">
         <div class="special-meal-card special-meal-${escapeHtml(specialMeal.type)}">
           <div class="special-meal-label-row">
             <strong>${escapeHtml(specialMealLabel(specialMeal.type))}${specialMeal.note && !restaurantLinked ? " -" : ""}</strong>
@@ -26473,7 +26492,7 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
   }
 
   return `
-    <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true">
+    <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}">
       <button class="recipe-meal-link custom-meal-link" type="button" data-edit-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Double-click to edit">
         ${escapeHtml(mealInputValue(entry))}
       </button>
