@@ -18847,9 +18847,20 @@ function bindRecipeCards(root) {
     card.addEventListener("mousedown", (event) => {
       if (event.button === 2) openRecipeMenu(event, card.dataset.id);
     });
-    card.addEventListener("dragstart", handleRecipeDragStart);
-    card.addEventListener("dragend", clearRecipeDragState);
   });
+  // Recipe → folder move — shared sortable primitive (move mode); delegates to the
+  // existing moveRecipeToFolder. Folder buttons are the drop zones. Bound once.
+  if (root.nodeType === 1 && !root.__sortableBound) {
+    root.__sortableBound = true;
+    makeSortable(root, {
+      rowSelector: ".recipe-card",
+      getId: (card) => card.dataset.id,
+      reorder: false,
+      dropZoneSelector: ".folder-btn[data-folder]",
+      onDropZone: ({ itemId, zone }) => moveRecipeToFolder(itemId, zone.dataset.folder),
+      itemLabel: (card) => (card.textContent || "recipe").trim().slice(0, 40),
+    });
+  }
 }
 
 function recipesByFolder() {
@@ -25056,7 +25067,7 @@ function recipeMatchesSearch(recipe, query) {
 function recipeCardTemplate(recipe) {
   const tags = normalizeRecipeTagSelection(recipe.tags);
   return `
-    <button class="recipe-card" data-id="${recipe.id}" draggable="true">
+    <button class="recipe-card" data-id="${recipe.id}">
       <span class="recipe-card-head">
         <h3>${escapeHtml(recipe.name)}</h3>
         ${recipeTimePillsTemplate(recipe, "Anytime")}
@@ -36609,7 +36620,7 @@ function addContactRow(listId, { label = "", value = "", labelPh = "Label", valu
   const reorder = list.dataset.reorder === "1";
   const row = document.createElement("div");
   row.className = "contact-multi-row";
-  const handle = reorder ? `<button type="button" class="contact-row-drag" aria-label="Drag to reorder" title="Drag to reorder" draggable="true">${CONTACT_DRAG_SVG}</button>` : "";
+  const handle = reorder ? `<button type="button" class="contact-row-drag" aria-label="Drag to reorder" title="Drag to reorder">${CONTACT_DRAG_SVG}</button>` : "";
   row.innerHTML = `${handle}
     <input type="text" class="contact-row-label" placeholder="${escapeHtml(labelPh)}" value="${escapeHtml(label)}" aria-label="Label" />
     <input type="${valueType}" class="contact-row-value" placeholder="${escapeHtml(valuePh)}" value="${escapeHtml(value)}" aria-label="${escapeHtml(valuePh || "Value")}" />
@@ -36643,20 +36654,18 @@ function refreshContactReorderList(list) {
 }
 
 function setupContactRowDrag(row, list) {
-  const handle = row.querySelector(".contact-row-drag");
-  if (!handle) return;
-  handle.addEventListener("dragstart", (e) => { contactDragRow = row; row.classList.add("is-dragging"); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", ""); } catch { /* older browsers */ } });
-  handle.addEventListener("dragend", () => { row.classList.remove("is-dragging"); contactDragRow = null; refreshContactReorderList(list); });
-  if (!list.dataset.dragBound) {
-    list.dataset.dragBound = "1";
-    list.addEventListener("dragover", (e) => {
-      if (!contactDragRow || contactDragRow.parentElement !== list) return;
-      e.preventDefault();
-      const after = contactDragAfter(list, e.clientY);
-      if (after == null) list.appendChild(contactDragRow);
-      else if (after !== contactDragRow) list.insertBefore(contactDragRow, after);
-    });
-  }
+  // Reorder multi-value rows via the shared sortable primitive, using the drag
+  // handle (the row is all inputs). DOM-only reorder; the contact form reads the row
+  // order on save, and refreshContactReorderList fixes the +/× buttons. Bound once.
+  if (list.__sortableBound) return;
+  list.__sortableBound = true;
+  makeSortable(list, {
+    rowSelector: ".contact-multi-row",
+    getId: (r) => String([...list.querySelectorAll(".contact-multi-row")].indexOf(r)),
+    handleSelector: ".contact-row-drag",
+    onReorder: () => refreshContactReorderList(list),
+    itemLabel: (r) => (r.querySelector(".contact-row-value")?.value || "row").trim().slice(0, 40),
+  });
 }
 
 function contactDragAfter(list, y) {
@@ -47711,7 +47720,7 @@ function readingItemTemplate(item) {
   const audibleUrl = audibleSearchUrl(item.title, item.authors);
 
   return `
-    <article class="do-task-item watch-item reading-item" data-reading-item="${escapeHtml(item.id)}" draggable="true">
+    <article class="do-task-item watch-item reading-item" data-reading-item="${escapeHtml(item.id)}">
       <div class="watch-item-layout">
         ${coverHtml}
         <div class="watch-item-main">
@@ -47751,8 +47760,6 @@ function bindReadingControls(root = document) {
   });
   root.querySelectorAll("[data-reading-item]").forEach((article) => {
     article.addEventListener("contextmenu", openReadingItemMenu);
-    article.addEventListener("dragstart", handleReadingItemDragStart);
-    article.addEventListener("dragend", handleReadingItemDragEnd);
     article.addEventListener("mouseenter", () => {
       const itemId = article.dataset.readingItem;
       const item = readingItemById(itemId);
@@ -47763,6 +47770,22 @@ function bindReadingControls(root = document) {
       loadHclAvailability(itemId, item.title, item.authors).then(res => renderHclAvailability(availEl, res));
     }, { once: true });
   });
+  // Reading item → wishlist category tab (move mode). Only custom wishlist tabs
+  // accept a book; format tabs (Audible/Libby/…) are highlighted-but-ignored.
+  if (root.nodeType === 1 && !root.__sortableBound) {
+    root.__sortableBound = true;
+    makeSortable(root, {
+      rowSelector: "[data-reading-item]",
+      getId: (a) => a.dataset.readingItem,
+      reorder: false,
+      dropZoneSelector: "[data-book-tab]",
+      onDropZone: ({ itemId, zone }) => {
+        const key = zone.dataset.bookTab;
+        if (key && !BOOK_FORMAT_TABS.some((t) => t.key === key)) addBookToWishlist(itemId, key);
+      },
+      itemLabel: (a) => (a.querySelector(".reading-item-title")?.textContent || a.textContent || "book").trim().slice(0, 40),
+    });
+  }
 }
 
 function renderHclAvailability(el, res) {

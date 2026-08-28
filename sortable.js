@@ -62,6 +62,7 @@ export function makeSortable(container, opts = {}) {
     reorder = true,             // false = pure MOVE mode (no intra-list reorder; drop-zones only)
     dropZoneSelector = null,    // move mode: valid drop targets (searched anywhere in the document)
     onDropZone = null,          // move mode: ({ itemId, row, zone }) when released over a drop zone
+    handleSelector = null,      // if set, a drag only starts from within a handle inside the row
     disabledWithin = INTERACTIVE,
     longPressMs = SORTABLE_DEFAULTS.longPressMs,
     touchTolerancePx = SORTABLE_DEFAULTS.touchTolerancePx,
@@ -236,10 +237,16 @@ export function makeSortable(container, opts = {}) {
     if (g || (e.pointerType === "mouse" && e.button !== 0)) return;
     const row = e.target.closest ? e.target.closest(rowSelector) : null;
     if (!row || !container.contains(row)) return;
-    // A control *inside* the row keeps its normal behaviour; the row matching
-    // disabledWithin itself (e.g. a role="button" row) must still be draggable.
-    const hit = e.target.closest(disabledWithin);
-    if (hit && hit !== row && row.contains(hit)) return;
+    if (handleSelector) {
+      // Handle mode: a drag begins ONLY from the handle, which bypasses the
+      // interactive-child exclusion. The rest of the row keeps normal behaviour.
+      if (!(e.target.closest && e.target.closest(handleSelector))) return;
+    } else {
+      // A control *inside* the row keeps its normal behaviour; the row matching
+      // disabledWithin itself (e.g. a role="button" row) must still be draggable.
+      const hit = e.target.closest(disabledWithin);
+      if (hit && hit !== row && row.contains(hit)) return;
+    }
     g = {
       row, itemId: getId(row), pointerId: e.pointerId, pointerType: e.pointerType,
       startX: e.clientX, startY: e.clientY, lastX: e.clientX, lastY: e.clientY,
