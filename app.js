@@ -41835,9 +41835,9 @@ function showPodcastPriorityModal() {
 
   document.body.appendChild(overlay);
 
-  let dragItemId = null;
-  let dragItemKind = null; // "show" | "pub"
-
+  // Read every tile's current tier from the DOM back into local modal state.
+  // Tiles carry no order within a tier — a tier is a bucket, so only membership
+  // (which zone the tile sits in) matters. Save + reorder both sync through here.
   function readCurrentAssignments() {
     overlay.querySelectorAll(".priority-drop-zone[data-tier]").forEach(zone => {
       const tier = parseInt(zone.dataset.tier, 10);
@@ -41852,128 +41852,113 @@ function showPodcastPriorityModal() {
     });
   }
 
+  const GRIP_SVG = `<svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true" fill="currentColor"><circle cx="7" cy="4" r="1.4"/><circle cx="13" cy="4" r="1.4"/><circle cx="7" cy="10" r="1.4"/><circle cx="13" cy="10" r="1.4"/><circle cx="7" cy="16" r="1.4"/><circle cx="13" cy="16" r="1.4"/></svg>`;
+
+  function tileArt(src, placeholderSvg, onError = "") {
+    return src
+      ? `<img class="priority-show-art" src="${escapeHtml(src)}" alt="" loading="lazy"${onError}>`
+      : `<span class="priority-show-art priority-show-art--placeholder">${placeholderSvg}</span>`;
+  }
+
   function showCard(show) {
     const d = document.createElement("div");
     d.className = "priority-show-card";
-    d.draggable = true;
     d.dataset.showId = show.id;
-    d.title = show.title || "";
+    d.tabIndex = 0;
+    d.setAttribute("role", "listitem");
     d.setAttribute("aria-label", show.title || "Show");
-    d.innerHTML = show.art
-      ? `<img class="priority-show-art" src="${escapeHtml(show.art)}" alt="${escapeHtml(show.title || "")}" loading="lazy">`
-      : `<div class="priority-show-art priority-show-art--placeholder"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div>`;
-    d.addEventListener("dragstart", (e) => { dragItemId = show.id; dragItemKind = "show"; d.classList.add("is-dragging"); e.dataTransfer.effectAllowed = "move"; });
-    d.addEventListener("dragend", () => { dragItemId = null; dragItemKind = null; d.classList.remove("is-dragging"); overlay.querySelectorAll(".priority-drop-zone").forEach(z => z.classList.remove("drag-over")); });
-    wireCardTouch(d);
+    const ph = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>`;
+    d.innerHTML = `${tileArt(show.art, ph)}<span class="priority-show-label">${escapeHtml(show.title || "Untitled")}</span>`;
     return d;
   }
 
   function pubCard(pub) {
     const d = document.createElement("div");
     d.className = "priority-show-card priority-show-card--article";
-    d.draggable = true;
     d.dataset.pubKey = pub.key;
-    d.title = `${pub.label} (Article)`;
+    d.tabIndex = 0;
+    d.setAttribute("role", "listitem");
     d.setAttribute("aria-label", `${pub.label} — Article`);
     const logoUrl = pub.domain ? publicationLogoUrl(pub.domain) : null;
-    d.innerHTML = logoUrl
-      ? `<img class="priority-show-art" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(pub.label || "")}" loading="lazy" onerror="this.style.display='none'">`
-      : `<div class="priority-show-art priority-show-art--placeholder"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></div>`;
-    d.addEventListener("dragstart", (e) => { dragItemId = pub.key; dragItemKind = "pub"; d.classList.add("is-dragging"); e.dataTransfer.effectAllowed = "move"; });
-    d.addEventListener("dragend", () => { dragItemId = null; dragItemKind = null; d.classList.remove("is-dragging"); overlay.querySelectorAll(".priority-drop-zone").forEach(z => z.classList.remove("drag-over")); });
-    wireCardTouch(d);
+    const ph = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>`;
+    d.innerHTML = `${tileArt(logoUrl, ph, ` onerror="this.style.display='none'"`)}<span class="priority-show-label">${escapeHtml(pub.label || "")}</span>`;
     return d;
   }
 
-  function wireZone(zone) {
-    zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("drag-over"); });
-    zone.addEventListener("dragleave", () => zone.classList.remove("drag-over"));
-    zone.addEventListener("drop", (e) => {
-      e.preventDefault();
-      zone.classList.remove("drag-over");
-      if (!dragItemId) return;
-      const selector = dragItemKind === "pub"
-        ? `.priority-show-card[data-pub-key="${CSS.escape(dragItemId)}"]`
-        : `.priority-show-card[data-show-id="${CSS.escape(dragItemId)}"]`;
-      const card = overlay.querySelector(selector);
-      if (!card) return;
-      zone.querySelector(".priority-drop-hint")?.remove();
-      zone.appendChild(card);
-      overlay.querySelectorAll(".priority-drop-zone").forEach(z => {
-        if (!z.querySelector(".priority-show-card") && !z.querySelector(".priority-drop-hint")) {
-          z.insertAdjacentHTML("beforeend", `<div class="priority-drop-hint">${z.dataset.tier === "0" ? "All items assigned to tiers" : "Drop shows or publications here"}</div>`);
-        }
-      });
+  // Re-derive each zone's empty-state hint after a tile moves (called on drop so
+  // a vacated tier shows its prompt again and a filled one drops it).
+  function refreshEmptyHints() {
+    overlay.querySelectorAll(".priority-drop-zone[data-tier]").forEach((z) => {
+      const hasCard = z.querySelector(".priority-show-card");
+      const hint = z.querySelector(".priority-drop-hint");
+      if (hasCard && hint) hint.remove();
+      else if (!hasCard && !hint) {
+        z.insertAdjacentHTML("beforeend", `<div class="priority-drop-hint">${z.dataset.tier === "0" ? "Everything is ranked" : "Drop shows or publications here"}</div>`);
+      }
     });
   }
 
-  // Reorder whole tiers (so a newly added bottom tier can move to the top):
-  // swap every assignment between tier n and its neighbour.
-  function moveTier(n, dir) {
+  function removeTier(n) {
     readCurrentAssignments();
-    const other = n + dir;
-    if (other < 1 || other > ms.tierCount) return;
-    const swap = (map) => { for (const k of Object.keys(map)) { if (map[k] === n) map[k] = other; else if (map[k] === other) map[k] = n; } };
-    swap(ms.showTiers); swap(ms.publicationTiers);
+    for (const [showId, t] of Object.entries(ms.showTiers)) {
+      if (t === n) delete ms.showTiers[showId];
+      else if (t > n) ms.showTiers[showId] = t - 1;
+    }
+    for (const [pubKey, t] of Object.entries(ms.publicationTiers)) {
+      if (t === n) delete ms.publicationTiers[pubKey];
+      else if (t > n) ms.publicationTiers[pubKey] = t - 1;
+    }
+    ms.tierCount = Math.max(1, ms.tierCount - 1);
     renderTiers();
   }
 
-  // Touch drag for a tier card: long-press to pick it up, drag over a tier's
-  // drop zone, release to drop it there (HTML5 drag-and-drop is mouse-only).
-  function wireCardTouch(card) {
-    let pressTimer = null, armed = false, sx = 0, sy = 0;
-    const zones = () => overlay.querySelectorAll(".priority-drop-zone");
-    const clearHover = () => zones().forEach((z) => z.classList.remove("drag-over"));
-    function refreshHints() {
-      zones().forEach((z) => {
-        if (!z.querySelector(".priority-show-card") && !z.querySelector(".priority-drop-hint")) {
-          z.insertAdjacentHTML("beforeend", `<div class="priority-drop-hint">${z.dataset.tier === "0" ? "All items assigned to tiers" : "Drop shows or publications here"}</div>`);
-        }
+  // Two shared-primitive bindings drive the whole board:
+  //   • tiles move between tier bands (move mode, buckets — no intra-tier order),
+  //     bound ONCE on the persistent body (it resolves zones live at drop time).
+  //   • whole tier bands reorder by dragging their header (handle mode, reorder),
+  //     re-bound each render since the bands wrapper is rebuilt.
+  // They never collide: a tile pointer-down finds no band header, a header
+  // pointer-down finds no tile — each binding ignores the other's target.
+  let tilesSortable = null;
+  function attachSortables(bodyEl, bandsEl) {
+    if (!tilesSortable) {
+      tilesSortable = makeSortable(bodyEl, {
+        rowSelector: ".priority-show-card",
+        getId: (row) => row.dataset.showId || row.dataset.pubKey,
+        reorder: false,
+        dropZoneSelector: ".priority-drop-zone[data-tier]",
+        onDropZone: ({ row, zone }) => {
+          if (row.parentElement === zone) return;
+          zone.querySelector(".priority-drop-hint")?.remove();
+          zone.appendChild(row);
+          refreshEmptyHints();
+        },
+        itemLabel: (row) => row.querySelector(".priority-show-label")?.textContent || "item",
       });
     }
-    function cleanup() {
-      clearTimeout(pressTimer); pressTimer = null;
-      card.classList.remove("is-dragging"); card.style.pointerEvents = "";
-      clearHover();
-      document.removeEventListener("touchmove", onMove, { passive: false });
-      document.removeEventListener("touchend", onEnd);
-      document.removeEventListener("touchcancel", onEnd);
-      armed = false;
-    }
-    function onMove(e) {
-      const t = e.touches[0];
-      if (!armed) { if (Math.abs(t.clientX - sx) > 10 || Math.abs(t.clientY - sy) > 10) cleanup(); return; }
-      e.preventDefault();
-      clearHover();
-      document.elementFromPoint(t.clientX, t.clientY)?.closest(".priority-drop-zone")?.classList.add("drag-over");
-    }
-    function onEnd(e) {
-      if (armed) {
-        const t = e.changedTouches[0];
-        card.style.pointerEvents = "";
-        const zone = document.elementFromPoint(t.clientX, t.clientY)?.closest(".priority-drop-zone");
-        if (zone) { zone.querySelector(".priority-drop-hint")?.remove(); zone.appendChild(card); }
-        refreshHints();
-      }
-      cleanup();
-    }
-    card.addEventListener("touchstart", (e) => {
-      sx = e.touches[0].clientX; sy = e.touches[0].clientY;
-      pressTimer = setTimeout(() => {
-        armed = true;
-        card.classList.add("is-dragging");
-        card.style.pointerEvents = "none";
-        if (navigator.vibrate) navigator.vibrate(8);
-      }, 250);
-      document.addEventListener("touchmove", onMove, { passive: false });
-      document.addEventListener("touchend", onEnd);
-      document.addEventListener("touchcancel", onEnd);
-    }, { passive: true });
+    makeSortable(bandsEl, {
+      rowSelector: ".priority-band",
+      getId: (row) => row.dataset.band,
+      handleSelector: ".priority-band-head",
+      onReorder: ({ order }) => {
+        // `order` is the new top-to-bottom sequence of the OLD tier numbers.
+        readCurrentAssignments();                 // capture tile membership first
+        const remap = new Map();
+        order.forEach((oldT, i) => remap.set(parseInt(oldT, 10), i + 1));
+        const apply = (map) => { for (const k of Object.keys(map)) { const nt = remap.get(map[k]); if (nt) map[k] = nt; } };
+        apply(ms.showTiers); apply(ms.publicationTiers);
+        renderTiers();                            // rebuild with fresh numbering
+      },
+      itemLabel: (row) => row.querySelector(".priority-band-title")?.textContent || "tier",
+    });
   }
 
+  // Callers MUST have already synced `ms` from the DOM (via readCurrentAssignments)
+  // before calling — renderTiers renders straight from `ms`. It deliberately does
+  // NOT re-read the DOM itself: after a tier reorder the zones still carry their
+  // pre-remap data-tier, so a read here would clobber the just-applied renumber.
   function renderTiers() {
     const body = overlay.querySelector("#priorityTiersBody");
-    readCurrentAssignments();
 
     const shows = state.podcasts || [];
     const showsByTier = {};
@@ -42002,47 +41987,35 @@ function showPodcastPriorityModal() {
     }
 
     const zoneIsEmpty = (n) => !showsByTier[n].length && !pubsByTier[n].length;
-
-    const tiersRow = document.createElement("div");
-    tiersRow.className = "priority-tiers-row";
-    for (let n = 1; n <= ms.tierCount; n++) {
-      const col = document.createElement("div");
-      col.className = "priority-tier-col";
-      col.innerHTML = `
-        <div class="priority-tier-heading">
-          <span class="priority-tier-badge tier-n" style="background:hsl(${(n-1)*60},60%,88%);color:hsl(${(n-1)*60},50%,30%)">${n}</span>
-          <span class="priority-tier-label-text">Tier ${n}</span>
-          ${n === 1 ? `<span class="priority-tier-sub">Plays first</span>` : ""}
-          ${n === ms.tierCount && ms.tierCount > 1 ? `<span class="priority-tier-sub">Plays last</span>` : ""}
-          <span class="priority-tier-move">
-            <button class="priority-tier-move-btn" type="button" data-move-tier="up" title="Move tier up" aria-label="Move tier ${n} up"${n === 1 ? " disabled" : ""}>▲</button>
-            <button class="priority-tier-move-btn" type="button" data-move-tier="down" title="Move tier down" aria-label="Move tier ${n} down"${n === ms.tierCount ? " disabled" : ""}>▼</button>
-          </span>
-          <button class="priority-tier-remove-btn" type="button" data-remove-tier="${n}" title="Remove tier" aria-label="Remove tier ${n}">×</button>
-        </div>
-        <div class="priority-drop-zone" data-tier="${n}"></div>`;
-      const zone = col.querySelector(".priority-drop-zone");
+    const fillZone = (zone, n, emptyText) => {
       for (const show of showsByTier[n]) zone.appendChild(showCard(show));
       for (const pub of pubsByTier[n]) zone.appendChild(pubCard(pub));
-      if (zoneIsEmpty(n)) zone.innerHTML = `<div class="priority-drop-hint">Drop shows or publications here</div>`;
-      wireZone(zone);
-      col.querySelector('[data-move-tier="up"]').addEventListener("click", () => moveTier(n, -1));
-      col.querySelector('[data-move-tier="down"]').addEventListener("click", () => moveTier(n, 1));
-      col.querySelector("[data-remove-tier]").addEventListener("click", () => {
-        readCurrentAssignments();
-        const removeNum = parseInt(col.querySelector("[data-remove-tier]").dataset.removeTier, 10);
-        for (const [showId, t] of Object.entries(ms.showTiers)) {
-          if (t === removeNum) delete ms.showTiers[showId];
-          else if (t > removeNum) ms.showTiers[showId] = t - 1;
-        }
-        for (const [pubKey, t] of Object.entries(ms.publicationTiers)) {
-          if (t === removeNum) delete ms.publicationTiers[pubKey];
-          else if (t > removeNum) ms.publicationTiers[pubKey] = t - 1;
-        }
-        ms.tierCount = Math.max(1, ms.tierCount - 1);
-        renderTiers();
-      });
-      tiersRow.appendChild(col);
+      if (zoneIsEmpty(n)) zone.innerHTML = `<div class="priority-drop-hint">${emptyText}</div>`;
+    };
+
+    // Tier bands, stacked top (plays first) to bottom (plays last).
+    const bands = document.createElement("div");
+    bands.className = "priority-bands";
+    for (let n = 1; n <= ms.tierCount; n++) {
+      const hue = (n - 1) * 60;
+      const band = document.createElement("div");
+      band.className = "priority-band";
+      band.dataset.band = String(n);
+      band.innerHTML = `
+        <div class="priority-band-headrow">
+          <div class="priority-band-head" title="Drag to reorder tier" aria-label="Tier ${n} — drag to reorder">
+            <span class="priority-band-grip" aria-hidden="true">${GRIP_SVG}</span>
+            <span class="priority-tier-badge" style="background:hsl(${hue},60%,88%);color:hsl(${hue},50%,30%)">${n}</span>
+            <span class="priority-band-title">Tier ${n}</span>
+            ${n === 1 ? `<span class="priority-tier-sub">Plays first</span>` : ""}
+            ${n === ms.tierCount && ms.tierCount > 1 ? `<span class="priority-tier-sub">Plays last</span>` : ""}
+          </div>
+          <button class="priority-tier-remove-btn" type="button" data-remove-tier="${n}" title="Remove tier" aria-label="Remove tier ${n}">×</button>
+        </div>
+        <div class="priority-drop-zone" data-tier="${n}" role="list"></div>`;
+      fillZone(band.querySelector(".priority-drop-zone"), n, "Drop shows or publications here");
+      band.querySelector("[data-remove-tier]").addEventListener("click", () => removeTier(n));
+      bands.appendChild(band);
     }
 
     const addBtn = document.createElement("button");
@@ -42050,25 +42023,28 @@ function showPodcastPriorityModal() {
     addBtn.type = "button";
     addBtn.textContent = "+ Add tier";
     addBtn.addEventListener("click", () => { readCurrentAssignments(); ms.tierCount++; renderTiers(); });
-    tiersRow.appendChild(addBtn);
+    bands.appendChild(addBtn);
 
-    const untieredSection = document.createElement("div");
-    untieredSection.className = "priority-untiered-section";
-    untieredSection.innerHTML = `
-      <div class="priority-tier-heading">
-        <span class="priority-tier-label-text">Untiered</span>
-        <span class="priority-tier-sub">After all tiers</span>
+    // The "Not ranked" pool sits below every tier and is itself tier 0 — the
+    // same move target, just the bucket that plays last. It doesn't reorder, so
+    // it lives outside the bands wrapper the tier-reorder binding watches.
+    const pool = document.createElement("div");
+    pool.className = "priority-band priority-band--pool";
+    pool.innerHTML = `
+      <div class="priority-band-headrow">
+        <div class="priority-band-head priority-band-head--static">
+          <span class="priority-band-title">Not ranked</span>
+          <span class="priority-tier-sub">Plays after all tiers</span>
+        </div>
       </div>
-      <div class="priority-drop-zone priority-untiered-drop" data-tier="0"></div>`;
-    const untieredZone = untieredSection.querySelector(".priority-drop-zone");
-    for (const show of showsByTier[0]) untieredZone.appendChild(showCard(show));
-    for (const pub of pubsByTier[0]) untieredZone.appendChild(pubCard(pub));
-    if (zoneIsEmpty(0)) untieredZone.innerHTML = `<div class="priority-drop-hint">All items assigned to tiers</div>`;
-    wireZone(untieredZone);
+      <div class="priority-drop-zone priority-untiered-drop" data-tier="0" role="list"></div>`;
+    fillZone(pool.querySelector(".priority-drop-zone"), 0, "Everything is ranked");
 
     body.innerHTML = "";
-    body.appendChild(tiersRow);
-    body.appendChild(untieredSection);
+    body.appendChild(bands);
+    body.appendChild(pool);
+
+    attachSortables(body, bands);
   }
 
   renderTiers();
