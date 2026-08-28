@@ -15144,6 +15144,24 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   border-radius: 8px;
   opacity: 0.96;
 }
+
+/* Shared sortable interaction (sortable.js) — one restrained visual language for
+   every migrated list. The clone follows the pointer; the source stays as a dimmed
+   placeholder that neighbours slide around (FLIP). */
+.sortable-active { touch-action: none; user-select: none; -webkit-user-select: none; cursor: grabbing; }
+.sortable-clone {
+  background: var(--surface, #fff);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  border-radius: 12px;
+  opacity: 0.97;
+  scale: 1.02;
+  cursor: grabbing;
+  overflow: hidden;
+}
+:root[data-theme="dark"] .sortable-clone, :root:not([data-theme="light"]) .sortable-clone { box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5); }
+.sortable-placeholder { opacity: 0.38; }
+.sortable-kb-grabbed { outline: 2px solid var(--accent, #32b496); outline-offset: 2px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22); border-radius: 8px; }
+@media (prefers-reduced-motion: reduce) { .sortable-clone { scale: 1; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22); } }
 .article-row--active .article-row-actions { background: linear-gradient(to right, transparent, color-mix(in srgb, var(--accent, #92400E) 8%, var(--paper, #fff)) 30%); }
 .article-row-action-btn {
   width: 30px;

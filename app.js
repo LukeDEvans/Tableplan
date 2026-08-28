@@ -8,6 +8,7 @@ import * as LiveReceiptDomain from './receipt-domain.js';
 import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
 import { createWeatherCache } from './weather-cache.js';
+import { makeSortable } from './sortable.js';
 import { createPlaybackEngine } from './playback-engine.js';
 import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones } from './state-sync.js';
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
@@ -28049,18 +28050,22 @@ function renderGroceries() {
       deleteGroceryItem(btn.dataset.groceryActionDelete);
     });
   });
-  elements.groceryList.querySelectorAll("[data-grocery-row-key]").forEach((item) => {
-    item.addEventListener("dragstart", handleGroceryItemDragStart);
-    item.addEventListener("dragend", clearGroceryItemDragState);
-    item.addEventListener("dragover", handleGroceryItemDragOver);
-    item.addEventListener("dragleave", clearGroceryItemDropTarget);
-    item.addEventListener("drop", handleGroceryItemDrop);
-  });
-  elements.groceryList.querySelectorAll("[data-grocery-store-list]").forEach((list) => {
-    list.addEventListener("dragover", handleGroceryStoreDragOver);
-    list.addEventListener("dragleave", clearGroceryStoreDropTarget);
-    list.addEventListener("drop", handleGroceryStoreDrop);
-  });
+  // Grocery item reorder — shared sortable primitive (mouse drag + touch long-press +
+  // continuous edge auto-scroll + Alt+Arrow keyboard), grouped so an item reorders
+  // within its aisle AND moves between aisles. Persistence is UNCHANGED: every drop
+  // delegates to moveGroceryItem (targetStore/section + neighbour + before/after).
+  // groceryList persists across renders and the primitive delegates, so it binds ONCE.
+  if (!elements.groceryList.__sortableBound) {
+    elements.groceryList.__sortableBound = true;
+    makeSortable(elements.groceryList, {
+      rowSelector: "[data-grocery-row-key]",
+      getId: (row) => row.dataset.groceryRowKey,
+      groupSelector: "[data-grocery-store-list]",
+      onGroupedDrop: ({ itemId, toContainer, targetId, position }) =>
+        moveGroceryItem(itemId, toContainer?.dataset.groceryStoreList || "", targetId, position, toContainer?.dataset.groceryStoreSectionList || ""),
+      itemLabel: (row) => (row.querySelector(".grocery-item-name, .grocery-item-label")?.textContent || row.textContent || "item").trim().slice(0, 40),
+    });
+  }
   elements.groceryList.querySelectorAll("[data-grocery-store-setting]").forEach((heading) => {
     heading.addEventListener("contextmenu", openGroceryStoreMenu);
   });
@@ -28373,7 +28378,7 @@ function groceryRowSourceLabel(row) {
 function groceryItemTemplate(row) {
   return `
     <div class="grocery-item-wrap" data-grocery-wrap-key="${escapeHtml(row.key)}">
-      <label class="grocery-item ${row.checked ? "checked" : ""}${row.cleared ? " grocery-item--cleared" : ""}" draggable="true" data-grocery-row-key="${escapeHtml(row.key)}" title="Drag to organize">
+      <label class="grocery-item ${row.checked ? "checked" : ""}${row.cleared ? " grocery-item--cleared" : ""}" data-grocery-row-key="${escapeHtml(row.key)}" title="Drag or long-press to organize; Alt+Arrow to reorder" aria-roledescription="Sortable item">
         <input type="checkbox" data-grocery="${escapeHtml(row.checkedKey)}" ${row.checked ? "checked" : ""} />
         <span class="grocery-name">
           ${escapeHtml(row.displayName || row.item)}
@@ -42408,7 +42413,7 @@ function renderMediaAllList() {
       : isArt ? !!(state.savedArticles || []).find((a) => a.id === e.id && a.pinned)
       : false;
     html += `
-    <div class="article-row playlist-row podcast-episode-row podcast-draggable-row${isResume ? " is-resume" : ""}${e.id === mediaAllQueueId ? " article-row--active" : ""}" data-all-id="${escapeHtml(e.id)}" data-all-type="${escapeHtml(e.type)}"${isPod ? ` data-episode-id="${escapeHtml(e.id)}"` : ""}${e.showId ? ` data-show-id="${escapeHtml(e.showId)}"` : ""} draggable="true" role="button" tabindex="0">
+    <div class="article-row playlist-row podcast-episode-row podcast-draggable-row${isResume ? " is-resume" : ""}${e.id === mediaAllQueueId ? " article-row--active" : ""}" data-all-id="${escapeHtml(e.id)}" data-all-type="${escapeHtml(e.type)}"${isPod ? ` data-episode-id="${escapeHtml(e.id)}"` : ""}${e.showId ? ` data-show-id="${escapeHtml(e.showId)}"` : ""} role="button" tabindex="0" aria-roledescription="Draggable item, Alt plus arrow keys to reorder">
       <button class="playlist-art-btn" type="button" data-all-art="${escapeHtml(e.id)}" tabindex="-1" aria-label="${isPod ? "Go to show" : "Open"}">${art}</button>
       <div class="article-row-main">
         ${isResume
@@ -42758,46 +42763,18 @@ function makeTouchReorder(listEl, { rowSelector, getId, onDrop, longPressMs = 28
   }, { passive: true });
 }
 
-function setupMediaAllDrag(listEl, items) {
-  makeTouchReorder(listEl, {
+// Media queue reorder — now on the shared sortable primitive (mouse + touch
+// long-press + auto-scroll + keyboard). The list element persists across renders
+// (innerHTML is replaced), and makeSortable delegates, so it binds ONCE. Persistence
+// is unchanged: the materialized DOM order becomes state.mediaAllPinnedOrder.
+function setupMediaAllDrag(listEl) {
+  if (listEl.__sortableBound) return;
+  listEl.__sortableBound = true;
+  makeSortable(listEl, {
     rowSelector: "[data-all-id]",
     getId: (row) => row.dataset.allId,
-    onDrop: (order) => { state.mediaAllPinnedOrder = order; persist(); renderMediaAllList(); },
-  });
-  let dragSrc = null;
-  listEl.querySelectorAll("[data-all-id]").forEach((row) => {
-    row.addEventListener("dragstart", (e) => {
-      dragSrc = row;
-      e.dataTransfer.effectAllowed = "move";
-      row.classList.add("is-dragging");
-    });
-    row.addEventListener("dragend", () => {
-      row.classList.remove("is-dragging");
-      listEl.querySelectorAll(".is-drag-over").forEach((r) => r.classList.remove("is-drag-over"));
-      dragSrc = null;
-    });
-  });
-  listEl.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    const target = e.target.closest("[data-all-id]");
-    if (!target || target === dragSrc) return;
-    listEl.querySelectorAll(".is-drag-over").forEach((r) => r.classList.remove("is-drag-over"));
-    target.classList.add("is-drag-over");
-  });
-  listEl.addEventListener("drop", (e) => {
-    e.preventDefault();
-    const target = e.target.closest("[data-all-id]");
-    if (!target || !dragSrc || target === dragSrc) return;
-    const ids = items.map((i) => i.id);
-    const from = ids.indexOf(dragSrc.dataset.allId);
-    const to = ids.indexOf(target.dataset.allId);
-    if (from < 0 || to < 0) return;
-    const [moved] = ids.splice(from, 1);
-    ids.splice(from < to ? to - 1 : to, 0, moved);
-    // Materialize the whole current arrangement as the pinned order
-    state.mediaAllPinnedOrder = ids;
-    persist();
-    renderMediaAllList();
+    onReorder: ({ order }) => { state.mediaAllPinnedOrder = order; persist(); renderMediaAllList(); },
+    itemLabel: (row) => (row.querySelector(".podcast-episode-title, .article-row-title")?.textContent || row.textContent || "item").trim().slice(0, 40),
   });
 }
 
