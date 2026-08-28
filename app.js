@@ -17249,7 +17249,7 @@ function playBacklogListTemplate() {
 
 function playBacklogExerciseTemplate(task) {
   return `
-    <article class="do-task-item play-workout-item" data-play-task="${escapeHtml(task.id)}" data-play-day="backlog" draggable="true">
+    <article class="do-task-item play-workout-item" data-play-task="${escapeHtml(task.id)}" data-play-day="backlog">
       <label>
         <button class="do-task-title workout-title-button" type="button" data-open-play-exercise-detail data-play-day="backlog" data-play-task="${escapeHtml(task.id)}">${escapeHtml(task.title)}</button>
       </label>
@@ -17321,7 +17321,7 @@ function playTaskTemplate(task, dayId) {
   const isScheduled = dayId !== "backlog";
   const buttonAttribute = isScheduled ? "data-start-play-exercise" : "data-open-play-exercise-detail";
   return `
-    <article class="do-task-item play-workout-item ${task.done ? "is-done" : ""} ${task.recurringTaskId ? "is-recurring" : ""}" data-play-task="${escapeHtml(task.id)}" data-play-day="${escapeHtml(dayId)}" draggable="true">
+    <article class="do-task-item play-workout-item ${task.done ? "is-done" : ""} ${task.recurringTaskId ? "is-recurring" : ""}" data-play-task="${escapeHtml(task.id)}" data-play-day="${escapeHtml(dayId)}">
       <label>
         <button class="do-task-title workout-title-button" type="button" ${buttonAttribute} data-play-day="${escapeHtml(dayId)}" data-play-task="${escapeHtml(task.id)}">${escapeHtml(task.title)}</button>
       </label>
@@ -17331,11 +17331,26 @@ function playTaskTemplate(task, dayId) {
 
 function bindPlayTaskControls(root = document) {
   root.querySelectorAll("[data-play-task]").forEach((item) => {
-    item.addEventListener("dragstart", handlePlayTaskDragStart);
-    item.addEventListener("drag", handlePlayTaskDrag);
-    item.addEventListener("dragend", handlePlayTaskDragEnd);
     item.addEventListener("contextmenu", openPlayTaskMenu);
   });
+  // Play task move (day-tab / day-list / backlog) — shared sortable primitive in move
+  // mode; delegates to the existing movePlayTask. Backlog kept data-do-backlog-drop
+  // (the play board reuses the do-board template; replaceAll didn't rename it). Workout-
+  // pool drag (a separate source) is unchanged. Bound once (delegated).
+  if (root.nodeType === 1 && !root.__sortableBound) {
+    root.__sortableBound = true;
+    makeSortable(root, {
+      rowSelector: "[data-play-task]",
+      getId: (row) => row.dataset.playTask,
+      reorder: false,
+      dropZoneSelector: "[data-play-day-tab], [data-play-task-drop-day], [data-do-backlog-drop]",
+      onDropZone: ({ row, zone }) => {
+        const targetDay = zone.dataset.playDayTab || zone.dataset.playTaskDropDay || (zone.hasAttribute("data-do-backlog-drop") ? "backlog" : null);
+        if (targetDay) movePlayTask(row.dataset.playDay, targetDay, row.dataset.playTask);
+      },
+      itemLabel: (row) => (row.querySelector(".do-task-title")?.textContent || row.textContent || "task").trim().slice(0, 40),
+    });
+  }
   root.querySelectorAll("[data-play-task-toggle]").forEach((checkbox) => {
     checkbox.addEventListener("change", () => togglePlayTask(checkbox.dataset.playDay, checkbox.dataset.playTaskToggle, checkbox.checked));
   });
@@ -33007,7 +33022,7 @@ function watchScheduledItemTemplate(item, dayId) {
     : `<div class="watch-item-poster watch-item-poster-placeholder"></div>`;
 
   return `
-    <article class="do-task-item watch-item" data-watch-scheduled="${escapeHtml(item.id)}" data-watch-day="${escapeHtml(dayId)}" draggable="true">
+    <article class="do-task-item watch-item" data-watch-scheduled="${escapeHtml(item.id)}" data-watch-day="${escapeHtml(dayId)}">
       <div class="watch-item-layout">
         ${posterHtml}
         <div class="watch-item-main">
@@ -33262,7 +33277,7 @@ function watchItemTemplate(item) {
     : `<div class="watch-item-poster watch-item-poster-placeholder"></div>`;
 
   return `
-    <article class="do-task-item watch-item" data-watch-item="${escapeHtml(item.id)}" draggable="true">
+    <article class="do-task-item watch-item" data-watch-item="${escapeHtml(item.id)}">
       <div class="watch-item-layout">
         ${posterHtml}
         <div class="watch-item-main">
@@ -33410,16 +33425,30 @@ function bindWatchControls(root = document) {
   root.querySelectorAll("[data-watch-expand-seasons]").forEach((btn) => {
     btn.addEventListener("click", () => initWatchSeasonTracking(btn.dataset.watchExpandSeasons));
   });
-  root.querySelectorAll("[data-watch-item]").forEach((article) => {
-    article.addEventListener("dragstart", handleWatchItemDragStart);
-    article.addEventListener("dragend", handleWatchItemDragEnd);
-    article.addEventListener("contextmenu", openWatchItemMenu);
-  });
-  root.querySelectorAll("[data-watch-scheduled]").forEach((article) => {
-    article.addEventListener("dragstart", handleWatchScheduledDragStart);
-    article.addEventListener("dragend", handleWatchItemDragEnd);
-    article.addEventListener("contextmenu", openWatchScheduledMenu);
-  });
+  root.querySelectorAll("[data-watch-item]").forEach((a) => a.addEventListener("contextmenu", openWatchItemMenu));
+  root.querySelectorAll("[data-watch-scheduled]").forEach((a) => a.addEventListener("contextmenu", openWatchScheduledMenu));
+  // Watch item move — shared sortable primitive (move mode). Library + scheduled items
+  // drop onto a category tab (categorize), a day-tab/day-list (schedule/reschedule), or
+  // backlog (unschedule). Delegates to the existing schedule/unschedule/categorize logic.
+  // Day-lists carry data-watch-day too, so the item's own data-watch-day is excluded.
+  if (root.nodeType === 1 && !root.__sortableBound) {
+    root.__sortableBound = true;
+    makeSortable(root, {
+      rowSelector: "[data-watch-item], [data-watch-scheduled]",
+      getId: (row) => row.dataset.watchItem || row.dataset.watchScheduled,
+      reorder: false,
+      dropZoneSelector: "[data-watch-category], [data-watch-day-tab], [data-watch-day]:not([data-watch-scheduled]):not([data-watch-item]), [data-do-backlog-drop]",
+      onDropZone: ({ row, zone }) => {
+        const id = row.dataset.watchItem || row.dataset.watchScheduled;
+        const fromDay = row.dataset.watchDay || null;
+        if (zone.hasAttribute("data-watch-category")) { categorizeWatchItem(id, zone.dataset.watchCategory); return; }
+        if (zone.hasAttribute("data-do-backlog-drop")) { if (fromDay) unscheduleWatchItem(id, fromDay); return; }
+        const toDay = zone.dataset.watchDayTab || zone.dataset.watchDay;
+        if (toDay) { if (fromDay && fromDay !== toDay) unscheduleWatchItem(id, fromDay); scheduleWatchItem(id, toDay); }
+      },
+      itemLabel: (row) => (row.querySelector(".do-task-title")?.textContent || row.textContent || "title").trim().slice(0, 40),
+    });
+  }
 }
 
 function openWatchScheduledMenu(event) {
@@ -34031,6 +34060,22 @@ function handleWatchCategoryDrop(event, targetCategoryId) {
   }
   draggedWatchItemId = null;
   draggedWatchScheduled = null;
+  categorizeWatchItem(id, targetCategoryId);
+}
+
+// Assign a watch item to a category tab (move semantics: leaving a user tab removes it).
+// Shared by the sortable drop-zone handler and the legacy HTML5 drop above.
+function categorizeWatchItem(id, targetCategoryId) {
+  const item = watchItemById(id);
+  if (!item) return;
+  if (!Array.isArray(item.categories)) item.categories = [];
+  const isSystemTab = (x) => x === "all" || x === "__upcoming" || x === "__in-theaters";
+  if (!isSystemTab(targetCategoryId)) {
+    if (!isSystemTab(activeWatchCategory) && activeWatchCategory !== targetCategoryId) {
+      item.categories = item.categories.filter((c) => c !== activeWatchCategory);
+    }
+    if (!item.categories.includes(targetCategoryId)) item.categories.push(targetCategoryId);
+  }
   activeWatchCategory = targetCategoryId;
   persist();
   renderWatchPlanner();
