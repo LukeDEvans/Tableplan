@@ -21245,7 +21245,7 @@ function renderGroceryStoresSettings() {
   const stores = groceryStores();
   elements.groceryStoresList.innerHTML = stores.length
     ? stores.map((store) => `
-      <div class="grocery-store-setting${store.enabled ? "" : " is-disabled"}" data-grocery-store-setting="${escapeHtml(store.id)}" draggable="true" title="Drag to reorder">
+      <div class="grocery-store-setting${store.enabled ? "" : " is-disabled"}" data-grocery-store-setting="${escapeHtml(store.id)}" title="Drag or long-press to reorder">
         <span class="grocery-store-setting-details">
           <strong>${escapeHtml(store.name)}</strong>
           <small>${escapeHtml(store.address || "Manually added store")}</small>
@@ -21261,12 +21261,18 @@ function renderGroceryStoresSettings() {
 
   elements.groceryStoresList.querySelectorAll("[data-grocery-store-setting]").forEach((row) => {
     row.addEventListener("contextmenu", openGroceryStoreMenu);
-    row.addEventListener("dragstart", handleGroceryStoreOrderDragStart);
-    row.addEventListener("dragover", handleGroceryStoreOrderDragOver);
-    row.addEventListener("dragleave", clearGroceryStoreOrderDropTarget);
-    row.addEventListener("drop", handleGroceryStoreOrderDrop);
-    row.addEventListener("dragend", clearGroceryStoreOrderDragState);
   });
+  // Store-order reorder — shared sortable primitive (single list; delegates to the
+  // existing neighbour-based reorderGroceryStore). Bound once (delegated).
+  if (!elements.groceryStoresList.__sortableBound) {
+    elements.groceryStoresList.__sortableBound = true;
+    makeSortable(elements.groceryStoresList, {
+      rowSelector: "[data-grocery-store-setting]",
+      getId: (row) => row.dataset.groceryStoreSetting,
+      onGroupedDrop: ({ itemId, targetId, position }) => reorderGroceryStore(itemId, targetId, position),
+      itemLabel: (row) => (row.querySelector(".grocery-store-name, .store-name")?.textContent || row.textContent || "store").trim().slice(0, 40),
+    });
+  }
   elements.groceryStoresList.querySelectorAll("[data-store-toggle]").forEach((checkbox) => {
     checkbox.addEventListener("change", () => {
       const storeId = checkbox.dataset.storeToggle;
@@ -21842,7 +21848,7 @@ function renderGroceryStoreLayoutEditor(sections) {
 
 function groceryStoreLayoutRowTemplate(section) {
   return `
-    <div class="grocery-store-layout-row" data-store-section-row="${escapeHtml(section.id)}" draggable="true">
+    <div class="grocery-store-layout-row" data-store-section-row="${escapeHtml(section.id)}">
       <span class="grocery-store-section-grip" aria-hidden="true">⋮⋮</span>
       <input value="${escapeHtml(section.name)}" aria-label="Section name" />
       <button class="icon-btn" type="button" data-remove-store-section="${escapeHtml(section.id)}" title="Remove section" aria-label="Remove ${escapeHtml(section.name)}">
@@ -21853,15 +21859,18 @@ function groceryStoreLayoutRowTemplate(section) {
 }
 
 function bindGroceryStoreLayoutRows() {
-  elements.groceryStoreLayoutList.querySelectorAll("[data-store-section-row]").forEach((row) => {
-    if (row.dataset.bound === "true") return;
-    row.dataset.bound = "true";
-    row.addEventListener("dragstart", handleStoreSectionDragStart);
-    row.addEventListener("dragover", handleStoreSectionDragOver);
-    row.addEventListener("dragleave", clearStoreSectionDropTarget);
-    row.addEventListener("drop", handleStoreSectionDrop);
-    row.addEventListener("dragend", clearStoreSectionDragState);
-  });
+  // Store-section layout reorder — shared sortable primitive. The reorder is
+  // DOM-only here (saveGroceryStoreLayout reads the section order + names on submit),
+  // so onReorder is a no-op; the primitive just moves the row. Bound once (delegated).
+  if (!elements.groceryStoreLayoutList.__sortableBound) {
+    elements.groceryStoreLayoutList.__sortableBound = true;
+    makeSortable(elements.groceryStoreLayoutList, {
+      rowSelector: "[data-store-section-row]",
+      getId: (row) => row.dataset.storeSectionRow,
+      onReorder: () => {},
+      itemLabel: (row) => (row.querySelector("input")?.value || "section").trim().slice(0, 40),
+    });
+  }
   elements.groceryStoreLayoutList.querySelectorAll("[data-remove-store-section]:not([data-bound])").forEach((button) => {
     button.dataset.bound = "true";
     button.addEventListener("click", () => removeGroceryStoreSectionRow(button.dataset.removeStoreSection));
