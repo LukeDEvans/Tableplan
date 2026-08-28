@@ -92,7 +92,7 @@ async function importRecipe(url) {
   const recipeUrl = normalizeRecipeUrlInput(url);
   if (!recipeUrl) throw new Error("Open a supported recipe URL first.");
 
-  const parsedRecipe = await parseRecipe(recipeUrl);
+  const parsedRecipe = await parseRecipe(recipeUrl, session.access_token);
   const existing = await recipeBySourceUrl(recipeUrl, session.access_token);
   const recipe = {
     ...parsedRecipe,
@@ -382,9 +382,13 @@ function detectPublication(url) {
   return "other";
 }
 
-async function parseRecipe(recipeUrl) {
+async function parseRecipe(recipeUrl, accessToken) {
   const helperUrl = IMPORT_RECIPE_URL;
-  const response = await fetch(`${helperUrl}?url=${encodeURIComponent(recipeUrl)}`);
+  // import-recipe verifies the Supabase session before parsing (401 otherwise),
+  // so send the same Bearer token every other extension→function call uses.
+  const response = await fetch(`${helperUrl}?url=${encodeURIComponent(recipeUrl)}`, {
+    headers: { authorization: `Bearer ${accessToken}` }
+  });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || `Import failed with status ${response.status}`);
   if (!payload.recipe?.name && !payload.recipe?.ingredients?.length) throw new Error("No recipe data found.");
