@@ -23629,7 +23629,7 @@ function renderMealTypesList() {
   const config = normalizeMealPlanConfig(state.mealPlanConfig);
   const list = elements.mealPlanSettingsDialog.querySelector("[data-mealtypes-list]");
   list.innerHTML = config.mealTypes.map(t => `
-    <div class="config-row" data-mealtype-row data-mealtype-id="${escapeHtml(t.id)}" draggable="true">
+    <div class="config-row" data-mealtype-row data-mealtype-id="${escapeHtml(t.id)}">
       <span class="drag-handle" aria-hidden="true">
         <svg viewBox="0 0 24 24"><path d="M9 5a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-6 6a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-6 6a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg>
       </span>
@@ -23670,35 +23670,17 @@ function addMealType() {
   div.querySelector("input").focus();
 }
 
+// Generic config-row reorder (settings lists) — now on the shared sortable
+// primitive. The reorder is DOM-only; the owning form reads the row order + input
+// values on save (e.g. saveMealPlanMealTypes), so onReorder is a no-op. Bound once.
 function bindConfigListDrag(list, rowSelector) {
-  let dragSrc = null;
-  list.querySelectorAll(rowSelector).forEach(row => {
-    row.addEventListener("dragstart", e => {
-      dragSrc = row;
-      row.classList.add("dragging");
-      e.dataTransfer.effectAllowed = "move";
-    });
-    row.addEventListener("dragend", () => {
-      dragSrc = null;
-      list.querySelectorAll(rowSelector).forEach(r => r.classList.remove("dragging", "drag-over"));
-    });
-    row.addEventListener("dragover", e => {
-      e.preventDefault();
-      if (!dragSrc || row === dragSrc) return;
-      e.dataTransfer.dropEffect = "move";
-      list.querySelectorAll(rowSelector).forEach(r => r.classList.remove("drag-over"));
-      row.classList.add("drag-over");
-      const rows = [...list.querySelectorAll(rowSelector)];
-      const srcIdx = rows.indexOf(dragSrc);
-      const tgtIdx = rows.indexOf(row);
-      if (srcIdx < tgtIdx) row.after(dragSrc);
-      else row.before(dragSrc);
-    });
-    row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
-    row.addEventListener("drop", e => {
-      e.preventDefault();
-      row.classList.remove("drag-over");
-    });
+  if (list.__sortableBound) return;
+  list.__sortableBound = true;
+  makeSortable(list, {
+    rowSelector,
+    getId: (row) => row.dataset.mealtypeId || row.id || row.dataset.sortId || "",
+    onReorder: () => {},
+    itemLabel: (row) => (row.querySelector("input")?.value || "item").trim().slice(0, 40),
   });
 }
 
