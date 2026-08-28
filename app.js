@@ -17263,7 +17263,7 @@ function playExerciseLibraryTemplate() {
     .filter((workout) => !scheduledWorkoutIds.has(workout.id))
     .sort((a, b) => a.title.localeCompare(b.title));
   const workoutHtml = workouts.map((workout) => `
-    <article class="do-task-item play-workout-item" data-play-workout="${escapeHtml(workout.id)}" draggable="true">
+    <article class="do-task-item play-workout-item" data-play-workout="${escapeHtml(workout.id)}">
       <label>
         <button class="do-task-title workout-title-button" type="button" data-open-workout-detail data-workout-id="${escapeHtml(workout.id)}">${escapeHtml(workout.title)}</button>
       </label>
@@ -17340,13 +17340,15 @@ function bindPlayTaskControls(root = document) {
   if (root.nodeType === 1 && !root.__sortableBound) {
     root.__sortableBound = true;
     makeSortable(root, {
-      rowSelector: "[data-play-task]",
-      getId: (row) => row.dataset.playTask,
+      rowSelector: "[data-play-task], [data-play-workout]",
+      getId: (row) => row.dataset.playTask || row.dataset.playWorkout,
       reorder: false,
       dropZoneSelector: "[data-play-day-tab], [data-play-task-drop-day], [data-do-backlog-drop]",
       onDropZone: ({ row, zone }) => {
         const targetDay = zone.dataset.playDayTab || zone.dataset.playTaskDropDay || (zone.hasAttribute("data-do-backlog-drop") ? "backlog" : null);
-        if (targetDay) movePlayTask(row.dataset.playDay, targetDay, row.dataset.playTask);
+        if (!targetDay) return;
+        if (row.dataset.playWorkout) { if (targetDay !== "backlog") addWorkoutToPlayDay(row.dataset.playWorkout, targetDay); } // pool workout → day (never backlog)
+        else movePlayTask(row.dataset.playDay, targetDay, row.dataset.playTask);
       },
       itemLabel: (row) => (row.querySelector(".do-task-title")?.textContent || row.textContent || "task").trim().slice(0, 40),
     });
