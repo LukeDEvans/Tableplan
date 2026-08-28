@@ -39811,7 +39811,7 @@ function inventoryContainerTemplate(container) {
 
 function inventoryItemChipTemplate(item) {
   return `
-    <div class="inventory-item-chip${item.trackWeekly ? " is-tracked" : ""}" data-inventory-item="${escapeHtml(item.id)}" draggable="true">
+    <div class="inventory-item-chip${item.trackWeekly ? " is-tracked" : ""}" data-inventory-item="${escapeHtml(item.id)}">
       ${item.trackWeekly ? `<span class="inventory-item-track-dot" title="On the weekly checklist" aria-hidden="true"></span>` : ""}
       <span class="inventory-item-name">${escapeHtml(item.name)}</span>
       ${item.quantity ? `<span class="inventory-item-qty">${escapeHtml(item.quantity)}</span>` : ""}
@@ -39865,50 +39865,22 @@ function bindInventoryControls(root) {
     });
   });
 
-  // Drag items between rooms/containers
-  let dragOverZone = null;
-
-  root.querySelectorAll("[data-inventory-item]").forEach((chip) => {
-    chip.addEventListener("dragstart", (e) => {
-      inventoryDragItemId = chip.dataset.inventoryItem;
-      chip.classList.add("inv-dragging");
-      e.dataTransfer.effectAllowed = "move";
+  // Move items between rooms/containers — shared sortable primitive (move mode).
+  // Delegates to the existing boxId reassignment. Bound once (delegated).
+  if (root.nodeType === 1 && !root.__sortableBound) {
+    root.__sortableBound = true;
+    makeSortable(root, {
+      rowSelector: "[data-inventory-item]",
+      getId: (chip) => chip.dataset.inventoryItem,
+      reorder: false,
+      dropZoneSelector: "[data-drop-target]",
+      onDropZone: ({ itemId, zone }) => {
+        const item = inventoryItemList().find((i) => i.id === itemId);
+        if (item) { item.boxId = zone.dataset.dropTarget || null; persist(); renderInventoryPage(); }
+      },
+      itemLabel: (chip) => (chip.textContent || "item").trim().slice(0, 40),
     });
-    chip.addEventListener("dragend", () => {
-      chip.classList.remove("inv-dragging");
-      inventoryDragItemId = null;
-      if (dragOverZone) { dragOverZone.classList.remove("inv-drag-over"); dragOverZone = null; }
-    });
-  });
-
-  root.querySelectorAll("[data-drop-target]").forEach((zone) => {
-    zone.addEventListener("dragover", (e) => {
-      if (!inventoryDragItemId) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-      if (dragOverZone !== zone) {
-        if (dragOverZone) dragOverZone.classList.remove("inv-drag-over");
-        dragOverZone = zone;
-        zone.classList.add("inv-drag-over");
-      }
-    });
-    zone.addEventListener("dragleave", (e) => {
-      if (!zone.contains(e.relatedTarget)) {
-        zone.classList.remove("inv-drag-over");
-        if (dragOverZone === zone) dragOverZone = null;
-      }
-    });
-    zone.addEventListener("drop", (e) => {
-      e.preventDefault();
-      zone.classList.remove("inv-drag-over");
-      dragOverZone = null;
-      if (!inventoryDragItemId) return;
-      const newBoxId = zone.dataset.dropTarget || null;
-      const item = inventoryItemList().find((i) => i.id === inventoryDragItemId);
-      if (item) { item.boxId = newBoxId; persist(); renderInventoryPage(); }
-      inventoryDragItemId = null;
-    });
-  });
+  }
 }
 
 function openInventoryBoxDialog(boxId = null, parentId = null) {
