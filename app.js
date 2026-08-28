@@ -30575,8 +30575,11 @@ async function importRecipeFromUrl() {
       throw new Error("No structured recipe data found.");
     }
     openImportedRecipe(recipe);
-  } catch {
-    setImportStatus("This URL could not be read directly. If it is NYT, Bon Appetit, or Google Drive, copy the recipe text and paste it below.");
+  } catch (error) {
+    const msg = String(error?.message || "");
+    setImportStatus(/article/i.test(msg)
+      ? msg
+      : "This URL could not be read directly. If it is NYT, Bon Appetit, or Google Drive, copy the recipe text and paste it below.");
   } finally {
     elements.fetchRecipeBtn.disabled = false;
   }
@@ -30584,15 +30587,25 @@ async function importRecipeFromUrl() {
 
 async function fetchRecipeWithBestAvailableMethod(url) {
   trackUsage("claude_recipe_import");
-  const helperUrl = recipeImportHelperUrl(url);
-  if (helperUrl) {
-    const response = await fetch(helperUrl, { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
+  const endpoint = importGatewayUrl();
+  if (endpoint) {
+    // Unified import gateway (deterministic, server-side): it detects the content
+    // type and returns the import contract { type, status, data, warnings, ... }.
+    // This dialog imports recipes, so a recipe result populates the recipe form;
+    // an article (or nothing usable) surfaces a clear message instead.
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` },
+      body: JSON.stringify({ source: { url, sourceClient: "in-app" } })
+    });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || `Import helper failed with status ${response.status}`);
-    return {
-      ...payload.recipe,
-      folderId: ""
-    };
+    if (!response.ok) throw new Error(payload.error || payload.warnings?.[0] || `Import failed with status ${response.status}`);
+    if (payload.type === "recipe" && payload.data && (payload.data.name || payload.data.ingredients?.length)) {
+      return { ...payload.data, folderId: "" };
+    }
+    throw new Error(payload.type === "article"
+      ? "That page looks like an article, not a recipe."
+      : "No structured recipe data found.");
   }
 
   const response = await fetch(url);
@@ -30601,9 +30614,9 @@ async function fetchRecipeWithBestAvailableMethod(url) {
   return parseRecipeHtml(html, url);
 }
 
-function recipeImportHelperUrl(url) {
-  if (canUseLocalBackend()) return `/api/import-recipe?url=${encodeURIComponent(url)}`;
-  if (window.location.protocol.startsWith("http")) return `/.netlify/functions/import-recipe?url=${encodeURIComponent(url)}`;
+function importGatewayUrl() {
+  if (canUseLocalBackend()) return "/api/import";
+  if (window.location.protocol.startsWith("http")) return "/.netlify/functions/import";
   return "";
 }
 

@@ -1,11 +1,12 @@
 # CONTENT_IMPORT.md — Unified content import (Phase 0 + Phase 1)
 
-Status: **server-side gateway built; clients not yet wired.** Phase 0 (recipe-import
-fix), Phase 1 (secure deterministic import foundation), and Phase 2 (the unified
-`/import` gateway — deterministic, server-side, unit-tested) are implemented. No client
-yet calls `/import`: the in-app importer, the extension, and mobile Share Target still
-use the existing endpoints. Mobile Share Target, the extension migration, and AI fallback
-are **not** built yet.
+Status: **gateway live; in-app recipe importer wired.** Phase 0 (recipe-import fix),
+Phase 1 (secure deterministic import foundation), Phase 2 (the unified `/import` gateway),
+and the first client cutover (the in-app recipe importer now `POST`s `/import` and
+populates the recipe form from the contract) are implemented. The Chrome extension and
+mobile Share Target still use the existing endpoints. Mobile Share Target, the extension
+migration, a unified in-app entry that also saves articles, and AI fallback are **not**
+built yet.
 
 See `ARCHITECTURE_AUDIT.md` for the full plan this derives from. This file documents
 only what exists now.
@@ -78,9 +79,12 @@ separately (`source.url`); the canonical form is only a dedup key.
 
 ## Deliberately NOT here
 
-Client wiring to `/import` (the in-app importer, extension, and mobile share still use
-the existing endpoints), mobile Share Target, the Chrome-extension migration, microdata/
-RDFa recipe parsing, and AI fallback. Duplicate detection still uses each domain's
+Extension + mobile-share wiring to `/import` (the in-app **recipe** importer now uses it;
+the extension and mobile share still use the existing endpoints), a unified in-app entry
+that also **saves articles** (the recipe dialog only imports recipes — an article URL
+gets a clear "that's an article" message, not a save), mobile Share Target, the
+Chrome-extension migration, microdata/RDFa recipe parsing, and AI fallback. Duplicate
+detection still uses each domain's
 existing exact-URL match (recipe `source_url`; article `savedArticles[].url`);
 canonicalization is available (and surfaced as `source.canonicalUrl`) for a later,
 backward-compatible dedup upgrade.
