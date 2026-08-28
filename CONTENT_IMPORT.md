@@ -1,8 +1,11 @@
 # CONTENT_IMPORT.md — Unified content import (Phase 0 + Phase 1)
 
-Status: **foundation only.** Phase 0 (recipe-import fix) + Phase 1 (secure, reusable
-deterministic import foundation) are implemented. The unified `/import` gateway,
-mobile Share Target, extension migration, and AI fallback are **not** built yet.
+Status: **server-side gateway built; clients not yet wired.** Phase 0 (recipe-import
+fix), Phase 1 (secure deterministic import foundation), and Phase 2 (the unified
+`/import` gateway — deterministic, server-side, unit-tested) are implemented. No client
+yet calls `/import`: the in-app importer, the extension, and mobile Share Target still
+use the existing endpoints. Mobile Share Target, the extension migration, and AI fallback
+are **not** built yet.
 
 See `ARCHITECTURE_AUDIT.md` for the full plan this derives from. This file documents
 only what exists now.
@@ -16,10 +19,33 @@ only what exists now.
 | `_recipe-extract.js` | Deterministic recipe extraction moved verbatim from `import-recipe`: JSON-LD (multi-block + `@graph`) → HTML/text heuristic fallback. `extractRecipeFromHtml` / `extractRecipeFromText`. |
 | `_article-extract.js` | Deterministic server-side article extraction moved verbatim from `fetch-article`: metadata + JSON-LD `articleBody` + `__NEXT_DATA__` walker + semantic-HTML blocks. `extractArticleFromHtml`. |
 | `_import-contract.js` | Ingestion result shape `{ type, status, confidence, data, warnings, source }` + `scoreRecipe`/`scoreArticle` (field-presence only). **Not** a persistence model. |
+| `_import-detect.js` | `detectContentType({html,text,url,metadata,hint})` → `{ type: recipe\|article\|unknown, confidence, reason }` from hint → JSON-LD `@type` → og:type → microdata → recipe DOM signals → URL heuristic. |
+| `_import-gateway.js` | `runImport(input, {safeFetch?})` — orchestration: use `extractedContent` if supplied else `safeFetch(url)`; detect; extract with that core; if not `ready`, also try the other core and keep the higher-scoring result; return the contract. **Stateless — never persists.** |
 
 `import-recipe.js` and `fetch-article.js` are now thin handlers (auth + request/response)
 over these modules. Response shapes are unchanged; `import-recipe` additionally returns
 an `{ result }` (the contract) alongside the existing `{ recipe }`.
+
+## Gateway (`/import`, additive)
+
+`netlify/functions/import.js` — `POST`, session-verified. Body:
+
+```
+{ source:{ url?, title?, sharedText?, sourceClient? },
+  hints?:{ contentType? },
+  extractedContent?:{ html?, text?, metadata? } }
+```
+
+→ returns the import-result contract (with a `detection` annotation). The handler is a
+thin auth wrapper over `runImport`; typed fetch errors map to HTTP status via
+`statusForImportError`. It is **stateless extraction only** — the caller persists
+`result.data` through the existing domain path (recipe → `eat_recipes`; article →
+`media.savedArticles` via `updateSection`). Existing endpoints (`import-recipe`,
+`save-article`, `fetch-article`) are untouched; nothing calls `/import` yet.
+
+Server vs client: pass a `url` for normal server-side import; pass `extractedContent`
+(rendered `html`/`text` + `metadata`) for logged-in/JS-rendered pages the server can't
+reproduce — the gateway then skips its own fetch.
 
 ## Security model (server-side fetch)
 
@@ -52,7 +78,9 @@ separately (`source.url`); the canonical form is only a dedup key.
 
 ## Deliberately NOT here
 
-Microdata/RDFa recipe parsing, AI fallback, the `/import` gateway, mobile Share Target,
-and the Chrome-extension migration. Duplicate detection still uses each domain's existing
-exact-URL match (recipe `source_url`; article `savedArticles[].url`); canonicalization is
-available for a later, backward-compatible dedup upgrade.
+Client wiring to `/import` (the in-app importer, extension, and mobile share still use
+the existing endpoints), mobile Share Target, the Chrome-extension migration, microdata/
+RDFa recipe parsing, and AI fallback. Duplicate detection still uses each domain's
+existing exact-URL match (recipe `source_url`; article `savedArticles[].url`);
+canonicalization is available (and surfaced as `source.canonicalUrl`) for a later,
+backward-compatible dedup upgrade.
