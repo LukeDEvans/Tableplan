@@ -30628,10 +30628,15 @@ function normalizeRecipeUrlInput(value) {
 
 function handleImportUrlParameter() {
   const params = new URLSearchParams(window.location.search);
-  const importUrl = normalizeRecipeUrlInput(params.get("importUrl"));
+  // Accept the app's own ?importUrl= deep-link AND the Web Share Target params
+  // (?url= / ?text= / ?title=, per manifest.json share_target). Android Chrome
+  // often puts the shared link in `text`, so scan each candidate for the first
+  // URL. The import dialog auto-detects recipe vs article from here.
+  const shared = params.get("importUrl") || params.get("url") || params.get("text") || params.get("title") || "";
+  const importUrl = normalizeRecipeUrlInput(shared);
   if (!importUrl) return;
 
-  params.delete("importUrl");
+  ["importUrl", "url", "text", "title"].forEach((key) => params.delete(key));
   const nextQuery = params.toString();
   const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`;
   window.history.replaceState({}, "", nextUrl);

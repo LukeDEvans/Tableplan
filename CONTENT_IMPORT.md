@@ -5,8 +5,9 @@ Phase 1 (secure deterministic import foundation), Phase 2 (the unified `/import`
 and the in-app cutover are implemented. The in-app "Import from URL" dialog now `POST`s
 `/import` and routes by detected type: a recipe opens the recipe form; an article is
 saved to the reading list (`state.savedArticles`, deduped on URL) with the extracted
-title/author/date/text. The Chrome extension and mobile Share Target still use the
-existing endpoints — those and AI fallback are **not** built yet.
+title/author/date/text. An Android **Web Share Target** routes shared links into that
+same importer. The Chrome extension still uses its own endpoints — that migration and AI
+fallback are **not** built yet.
 
 See `ARCHITECTURE_AUDIT.md` for the full plan this derives from. This file documents
 only what exists now.
@@ -48,6 +49,23 @@ Server vs client: pass a `url` for normal server-side import; pass `extractedCon
 (rendered `html`/`text` + `metadata`) for logged-in/JS-rendered pages the server can't
 reproduce — the gateway then skips its own fetch.
 
+## Mobile share (Web Share Target)
+
+`manifest.json` declares a **GET** `share_target` (`action:"/"`, params `title/text/url`).
+Sharing a link to the installed PWA opens it at `/?url=…` (or `/?text=…`); `app.js`'s
+`handleImportUrlParameter` reads `importUrl`/`url`/`text`/`title`, extracts the first URL
+(Android Chrome often puts the link in `text`), strips the params, and opens the unified
+importer with auto-fetch — so a shared recipe or article is detected and routed with no
+extra taps. No service-worker change is needed (GET navigation flows through the existing
+network-first handler).
+
+Platform limits: **iOS Safari does not support Web Share Target** — there is no code path
+that makes it work; the fallback is the in-app "Import from URL" paste box (or a
+user-added iOS Shortcut that opens `/?url=…`). On Android it requires the PWA to be
+**installed**. If the app is locked when a share arrives, the URL is pre-filled but the
+auto-fetch may fail until the user unlocks and taps Fetch (a later refinement could defer
+the fetch past unlock).
+
 ## Security model (server-side fetch)
 
 Every server import fetch goes through `safeFetch`, which:
@@ -79,10 +97,9 @@ separately (`source.url`); the canonical form is only a dedup key.
 
 ## Deliberately NOT here
 
-Extension + mobile-share wiring to `/import` (the in-app importer now uses it; the
-extension and mobile share still use the existing endpoints), mobile Share Target, the
-Chrome-extension migration, microdata/RDFa recipe parsing, and AI fallback. Duplicate
-detection still uses each domain's
+The Chrome-extension migration to `/import` (the extension still uses its own endpoints),
+microdata/RDFa recipe parsing, and AI fallback. Duplicate detection still uses each
+domain's
 existing exact-URL match (recipe `source_url`; article `savedArticles[].url`);
 canonicalization is available (and surfaced as `source.canonicalUrl`) for a later,
 backward-compatible dedup upgrade.
