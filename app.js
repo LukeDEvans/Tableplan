@@ -30562,56 +30562,54 @@ function openImportDialog(prefilledUrl = "", shouldAutoFetch = false) {
 async function importRecipeFromUrl() {
   const url = normalizeRecipeUrlInput(elements.importUrl.value);
   if (!url) {
-    setImportStatus("Paste a recipe URL first.");
+    setImportStatus("Paste a recipe or article URL first.");
     return;
   }
   elements.importUrl.value = url;
 
-  setImportStatus("Trying to read recipe data from the page...");
+  setImportStatus("Reading the page…");
   elements.fetchRecipeBtn.disabled = true;
   try {
-    const recipe = await fetchRecipeWithBestAvailableMethod(url);
-    if (!recipe.name && !recipe.ingredients.length) {
-      throw new Error("No structured recipe data found.");
+    // The gateway auto-detects the content type; route the result to the right home:
+    // a recipe opens the recipe form, an article is saved to the reading list.
+    const result = await importViaGateway(url);
+    if (result?.type === "recipe" && result.data && (result.data.name || result.data.ingredients?.length)) {
+      openImportedRecipe({ ...result.data, folderId: "" });
+      return;
     }
-    openImportedRecipe(recipe);
-  } catch (error) {
-    const msg = String(error?.message || "");
-    setImportStatus(/article/i.test(msg)
-      ? msg
-      : "This URL could not be read directly. If it is NYT, Bon Appetit, or Google Drive, copy the recipe text and paste it below.");
+    if (result?.type === "article" && result.data && (result.data.text || result.data.title)) {
+      elements.importDialog.close();
+      saveImportedArticle(result.data, url);
+      return;
+    }
+    setImportStatus("No recipe or article could be read from that URL. If it is blocked, copy the recipe text and paste it below.");
+  } catch {
+    setImportStatus("This URL could not be read directly. If it is NYT, Bon Appetit, or Google Drive, copy the recipe text and paste it below.");
   } finally {
     elements.fetchRecipeBtn.disabled = false;
   }
 }
 
-async function fetchRecipeWithBestAvailableMethod(url) {
+// POST a URL to the unified import gateway and return the import contract
+// ({ type, status, data, warnings, source }). When no server backend is reachable
+// (a non-http context) fall back to a client-side recipe parse wrapped as a
+// contract so the caller can treat both paths uniformly.
+async function importViaGateway(url) {
   trackUsage("claude_recipe_import");
   const endpoint = importGatewayUrl();
-  if (endpoint) {
-    // Unified import gateway (deterministic, server-side): it detects the content
-    // type and returns the import contract { type, status, data, warnings, ... }.
-    // This dialog imports recipes, so a recipe result populates the recipe form;
-    // an article (or nothing usable) surfaces a clear message instead.
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` },
-      body: JSON.stringify({ source: { url, sourceClient: "in-app" } })
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || payload.warnings?.[0] || `Import failed with status ${response.status}`);
-    if (payload.type === "recipe" && payload.data && (payload.data.name || payload.data.ingredients?.length)) {
-      return { ...payload.data, folderId: "" };
-    }
-    throw new Error(payload.type === "article"
-      ? "That page looks like an article, not a recipe."
-      : "No structured recipe data found.");
+  if (!endpoint) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Fetch failed with status ${response.status}`);
+    return { type: "recipe", status: "needs-review", data: parseRecipeHtml(await response.text(), url) };
   }
-
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Fetch failed with status ${response.status}`);
-  const html = await response.text();
-  return parseRecipeHtml(html, url);
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` },
+    body: JSON.stringify({ source: { url, sourceClient: "in-app" } })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || payload.warnings?.[0] || `Import failed with status ${response.status}`);
+  return payload;
 }
 
 function importGatewayUrl() {
@@ -46504,6 +46502,34 @@ function saveArticleUrl(url) {
   if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
   state.savedArticles.push({ id, url, title: url, publication: pub, savedAt: new Date().toISOString(), author: null, date: null, text: null });
   persist();
+  if (activeAppArea === "media") switchMediaTab(pub);
+}
+
+// Save an article the import gateway already extracted — richer than saveArticleUrl's
+// stub (carries the detected title/author/date/text). Dedups on the exact URL so
+// re-importing the same link doesn't pile up duplicates.
+function saveImportedArticle(data, sourceUrl) {
+  const url = sourceUrl || data.url || "";
+  if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
+  const existing = state.savedArticles.find((a) => a.url === url);
+  if (existing) {
+    showMailToast("Article already saved.");
+    if (activeAppArea === "media") switchMediaTab(existing.publication || "other");
+    return;
+  }
+  const pub = data.publication || detectArticlePublication(url);
+  const id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `art_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  state.savedArticles.push({
+    id, url,
+    title: data.title || url,
+    publication: pub,
+    savedAt: new Date().toISOString(),
+    author: data.author || null,
+    date: data.date || null,
+    text: data.text || null,
+  });
+  persist();
+  showMailToast(`Saved “${data.title || "article"}”.`);
   if (activeAppArea === "media") switchMediaTab(pub);
 }
 
