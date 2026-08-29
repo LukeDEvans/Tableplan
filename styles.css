@@ -15144,6 +15144,26 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   border-radius: 8px;
   opacity: 0.96;
 }
+
+/* Shared sortable interaction (sortable.js) — one restrained visual language for
+   every migrated list. The clone follows the pointer; the source stays as a dimmed
+   placeholder that neighbours slide around (FLIP). */
+.sortable-active { touch-action: none; user-select: none; -webkit-user-select: none; cursor: grabbing; }
+.sortable-clone {
+  background: var(--surface, #fff);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  border-radius: 12px;
+  opacity: 0.97;
+  scale: 1.02;
+  cursor: grabbing;
+  overflow: hidden;
+}
+:root[data-theme="dark"] .sortable-clone, :root:not([data-theme="light"]) .sortable-clone { box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5); }
+.sortable-placeholder { opacity: 0.38; }
+.sortable-kb-grabbed { outline: 2px solid var(--accent, #32b496); outline-offset: 2px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22); border-radius: 8px; }
+/* move mode: the drop target (day-tab, folder, backlog, category) under the pointer */
+.sortable-dropzone-over { outline: 2px dashed var(--accent, #32b496); outline-offset: -2px; background: color-mix(in srgb, var(--accent, #32b496) 12%, transparent); border-radius: 8px; }
+@media (prefers-reduced-motion: reduce) { .sortable-clone { scale: 1; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22); } }
 .article-row--active .article-row-actions { background: linear-gradient(to right, transparent, color-mix(in srgb, var(--accent, #92400E) 8%, var(--paper, #fff)) 30%); }
 .article-row-action-btn {
   width: 30px;
@@ -16101,60 +16121,49 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
 .priority-sort-btn.is-active { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent, #92400E); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .priority-sort-btn:hover:not(.is-active) { background: color-mix(in srgb, var(--ink) 5%, transparent); color: var(--ink); }
 
-.priority-tiers-body { overflow-y: auto; overflow-x: hidden; flex: 1; }
-.priority-tiers-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 14px 20px 0;
-  align-items: flex-start;
+.priority-tiers-body { overflow-y: auto; overflow-x: hidden; flex: 1; padding: 14px 20px 4px; }
+
+/* Vertical tier list: full-width bands stacked top (plays first) → bottom
+   (plays last). One layout for every width — no side-by-side columns — so the
+   board always fits a phone with no horizontal scroll. */
+.priority-bands { display: flex; flex-direction: column; gap: 10px; }
+.priority-band {
+  border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ink) 2.5%, transparent);
+  overflow: hidden;
 }
-.priority-tier-col { display: flex; flex-direction: column; gap: 6px; min-width: 150px; flex: 1; }
-.priority-add-tier-btn {
-  align-self: flex-start;
-  margin-top: 28px;
-  padding: 6px 12px;
-  font-size: 0.8rem;
-  font-family: inherit;
-  font-weight: 600;
-  color: var(--accent, #92400E);
-  background: none;
-  border: 1.5px dashed color-mix(in srgb, var(--accent) 40%, transparent);
-  border-radius: 8px;
-  cursor: pointer;
-  white-space: nowrap;
+.priority-band--pool {
+  margin-top: 12px;
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  border-style: dashed;
 }
-.priority-add-tier-btn:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.priority-tier-move { margin-left: auto; display: inline-flex; gap: 1px; }
-.priority-tier-move-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--text-muted, #aaa);
-  font-size: 0.7rem;
-  line-height: 1;
-  padding: 3px 4px;
-  border-radius: 4px;
-}
-.priority-tier-move-btn:hover:not(:disabled) { color: var(--accent, #92400E); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.priority-tier-move-btn:disabled { opacity: 0.3; cursor: default; }
-.priority-tier-remove-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--text-muted, #aaa);
-  font-size: 1rem;
-  line-height: 1;
-  padding: 0 2px;
-  border-radius: 4px;
-}
-.priority-tier-remove-btn:hover { color: #c00; background: color-mix(in srgb, #c00 10%, transparent); }
-.priority-tier-heading {
+.priority-band-headrow {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding-bottom: 4px;
+  padding: 7px 8px 7px 4px;
 }
+/* The header is the tier's drag handle (grip + badge + label). */
+.priority-band-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  border-radius: 8px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.priority-band-head:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.priority-band-head:active { cursor: grabbing; }
+.priority-band-head--static { cursor: default; touch-action: auto; }
+.priority-band-head--static:hover { background: none; }
+.priority-band-grip { display: inline-flex; color: color-mix(in srgb, var(--ink) 35%, transparent); flex-shrink: 0; }
+.priority-band-head--static .priority-band-grip { display: none; }
+.priority-band-title { font-size: 0.82rem; font-weight: 700; color: var(--ink); white-space: nowrap; }
 .priority-tier-badge {
   width: 22px;
   height: 22px;
@@ -16166,11 +16175,39 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   font-weight: 700;
   flex-shrink: 0;
 }
-.priority-tier-label-text { font-size: 0.8rem; font-weight: 600; color: var(--ink); }
-.priority-tier-sub { font-size: 0.72rem; color: var(--text-muted, #888); }
+.priority-tier-sub { font-size: 0.72rem; color: var(--text-muted, #888); font-weight: 500; }
+.priority-tier-remove-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted, #aaa);
+  font-size: 1.05rem;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+.priority-tier-remove-btn:hover { color: #c00; background: color-mix(in srgb, #c00 10%, transparent); }
+
+.priority-add-tier-btn {
+  align-self: stretch;
+  margin-top: 2px;
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  font-family: inherit;
+  font-weight: 600;
+  color: var(--accent, #92400E);
+  background: none;
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.priority-add-tier-btn:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
 .priority-drop-zone {
-  min-height: 72px;
-  border: 2px dashed color-mix(in srgb, var(--ink) 15%, transparent);
+  min-height: 60px;
+  margin: 0 8px 8px;
+  border: 2px dashed color-mix(in srgb, var(--ink) 12%, transparent);
   border-radius: 10px;
   padding: 8px;
   display: flex;
@@ -16178,67 +16215,59 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   align-content: flex-start;
   gap: 8px;
   transition: border-color 0.15s, background 0.15s;
-  flex: 1;
 }
-.priority-drop-zone.drag-over {
+/* Shared-primitive drop highlight (replaces the old .drag-over hook). */
+.priority-drop-zone.sortable-dropzone-over {
   border-color: var(--accent, #92400E);
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-style: solid;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 .priority-drop-hint {
   font-size: 0.75rem;
   color: var(--text-muted, #aaa);
   text-align: center;
-  padding: 12px 0;
+  padding: 10px 0;
   pointer-events: none;
   width: 100%;
   flex: 0 0 100%;
 }
-/* Thumbnail-only tiles: name is conveyed via title/aria-label (hover), so the
-   art alone identifies the show. Fixed square tiles wrap within the drop zone,
-   fitting the modal width with no horizontal scroll. */
+
+/* Artwork + title chip: a pill that pairs the thumbnail with a truncated name so
+   similar shows are distinguishable at a glance, especially on a phone. */
 .priority-show-card {
   position: relative;
-  width: 52px;
-  height: 52px;
-  padding: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 4px 12px 4px 4px;
   background: var(--surface, #fff);
-  border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
-  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  border-radius: 999px;
   cursor: grab;
   user-select: none;
-  flex: 0 0 auto;
-  overflow: hidden;
+  touch-action: none;
+  flex: 0 1 auto;
+  min-width: 0;
 }
+.priority-show-card:focus-visible { outline: 2px solid var(--accent, #92400E); outline-offset: 2px; }
 .priority-show-card:active { cursor: grabbing; }
-.priority-show-card.is-dragging { opacity: 0.4; }
-/* Small corner marker distinguishes article publications from podcast shows
-   now that the text label is gone. */
-.priority-show-card--article::after {
-  content: "";
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 9px;
-  height: 9px;
-  border-radius: 2px;
-  background: var(--accent, #92400E);
-  box-shadow: 0 0 0 1.5px var(--surface, #fff);
-  pointer-events: none;
-}
-/* Mobile: stack the tiers vertically at full width so each tier reads as its
-   own row of thumbnails instead of cramped side-by-side columns. */
-@media (max-width: 640px) {
-  .priority-tiers-row { flex-direction: column; flex-wrap: nowrap; gap: 16px; padding: 14px 14px 0; }
-  .priority-tier-col { min-width: 0; width: 100%; }
-  .priority-add-tier-btn { margin-top: 4px; align-self: stretch; text-align: center; }
-  .priority-show-card { width: 48px; height: 48px; }
+.priority-show-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 168px;
 }
 .priority-show-art {
-  width: 100%;
-  height: 100%;
-  border-radius: 8px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
   object-fit: cover;
   display: block;
+  flex-shrink: 0;
 }
 .priority-show-art--placeholder {
   display: flex;
@@ -16247,25 +16276,35 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--text-muted, #888);
 }
-.priority-untiered-section {
-  padding: 12px 20px 0;
+/* A small accent dot marks article publications apart from podcast shows. */
+.priority-show-card--article .priority-show-art { border-radius: 8px; }
+.priority-show-card--article::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 26px;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--accent, #92400E);
+  box-shadow: 0 0 0 1.5px var(--surface, #fff);
+  pointer-events: none;
 }
-.priority-untiered-drop {
-  min-height: 56px;
-  display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 8px;
-}
-.priority-untiered-drop .priority-show-card { flex-shrink: 0; }
+
 .priority-modal-footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
   padding: 14px 20px;
   border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
-  margin-top: 12px;
+}
+
+/* Phone: full-height sheet + a touch more breathing room per tile. */
+@media (max-width: 640px) {
+  .priority-overlay { padding: 0; align-items: stretch; justify-content: stretch; }
+  .priority-modal { width: 100%; max-height: 100dvh; border-radius: 0; }
+  .priority-tiers-body { padding: 12px 12px 4px; }
+  .priority-show-label { max-width: 132px; }
 }
 
 /* ─── Publications manager modal ─────────────────────────────────────────── */

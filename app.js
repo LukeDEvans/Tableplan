@@ -10,6 +10,7 @@ import { icon as ldeIcon } from './live-icons.js';
 import { createWeatherCache } from './weather-cache.js';
 import { conditionFor, conditionLabel, weatherEmphasis } from './weather-condition.js';
 import { heroArtSvg, iconSvg } from './weather-art.js';
+import { makeSortable } from './sortable.js';
 import { createPlaybackEngine } from './playback-engine.js';
 import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones } from './state-sync.js';
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
@@ -15054,18 +15055,27 @@ function doBacklogListTemplate() {
 }
 
 function bindDoTaskControls(root = document) {
-  // Drag source and touch-swipe handlers must stay per-element (use currentTarget internally).
-  // Click/change handlers are handled by delegated listeners set up in initDoPlannerDelegation / initTasksPageDelegation.
   root.querySelectorAll("[data-do-task]").forEach((item) => {
-    item.addEventListener("dragstart", handleDoTaskDragStart);
-    item.addEventListener("drag", handleDoTaskDrag);
-    item.addEventListener("dragend", handleDoTaskDragEnd);
     item.addEventListener("contextmenu", openDoTaskMenu);
-    item.addEventListener("pointerdown", handleDoTaskPointerDown);
-    item.addEventListener("pointermove", handleDoTaskPointerMove);
-    item.addEventListener("pointerup", handleDoTaskPointerEnd);
-    item.addEventListener("pointercancel", handleDoTaskPointerEnd);
   });
+  // Task move (onto a day-tab / day-list / backlog) — shared sortable primitive in
+  // MOVE mode; delegates to the existing moveDoTask. Replaces the old desktop HTML5
+  // DnD + bespoke touch pointer-clone with one code path (mouse + touch long-press +
+  // edge auto-scroll). Bound once per container; the primitive delegates.
+  if (root.nodeType === 1 && !root.__sortableBound) {
+    root.__sortableBound = true;
+    makeSortable(root, {
+      rowSelector: "[data-do-task]",
+      getId: (row) => row.dataset.doTask,
+      reorder: false,
+      dropZoneSelector: "[data-do-day-tab], [data-do-task-drop-day], [data-do-backlog-drop]",
+      onDropZone: ({ row, zone }) => {
+        const targetDay = zone.dataset.doDayTab || zone.dataset.doTaskDropDay || (zone.hasAttribute("data-do-backlog-drop") ? "backlog" : null);
+        if (targetDay) moveDoTask(row.dataset.doDay, targetDay, row.dataset.doTask);
+      },
+      itemLabel: (row) => (row.querySelector(".do-task-title, .task-title, .do-task-text")?.textContent || row.textContent || "task").trim().slice(0, 40),
+    });
+  }
 }
 
 function doTasksForDay(dayId) {
@@ -16540,7 +16550,7 @@ function doTaskTemplate(task, dayId) {
   const hasInfo = Boolean((task.notes || "").trim()) || logCount > 0;
   const timeLabel = formatTaskTime(task.time);
   return `
-    <article class="do-task-item ${task.done ? "is-done" : ""} ${task.recurringTaskId ? "is-recurring" : ""}" data-do-task="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" draggable="true">
+    <article class="do-task-item ${task.done ? "is-done" : ""} ${task.recurringTaskId ? "is-recurring" : ""}" data-do-task="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}">
       <div class="do-task-main">
         <input type="checkbox" class="do-task-check" data-do-task-toggle="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" ${task.done ? "checked" : ""} aria-label="Mark ${escapeHtml(task.title)} done" />
         <button type="button" class="do-task-title" data-do-task-detail="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}">
@@ -17448,7 +17458,7 @@ function playBacklogListTemplate() {
 
 function playBacklogExerciseTemplate(task) {
   return `
-    <article class="do-task-item play-workout-item" data-play-task="${escapeHtml(task.id)}" data-play-day="backlog" draggable="true">
+    <article class="do-task-item play-workout-item" data-play-task="${escapeHtml(task.id)}" data-play-day="backlog">
       <label>
         <button class="do-task-title workout-title-button" type="button" data-open-play-exercise-detail data-play-day="backlog" data-play-task="${escapeHtml(task.id)}">${escapeHtml(task.title)}</button>
       </label>
@@ -17462,7 +17472,7 @@ function playExerciseLibraryTemplate() {
     .filter((workout) => !scheduledWorkoutIds.has(workout.id))
     .sort((a, b) => a.title.localeCompare(b.title));
   const workoutHtml = workouts.map((workout) => `
-    <article class="do-task-item play-workout-item" data-play-workout="${escapeHtml(workout.id)}" draggable="true">
+    <article class="do-task-item play-workout-item" data-play-workout="${escapeHtml(workout.id)}">
       <label>
         <button class="do-task-title workout-title-button" type="button" data-open-workout-detail data-workout-id="${escapeHtml(workout.id)}">${escapeHtml(workout.title)}</button>
       </label>
@@ -17520,7 +17530,7 @@ function playTaskTemplate(task, dayId) {
   const isScheduled = dayId !== "backlog";
   const buttonAttribute = isScheduled ? "data-start-play-exercise" : "data-open-play-exercise-detail";
   return `
-    <article class="do-task-item play-workout-item ${task.done ? "is-done" : ""} ${task.recurringTaskId ? "is-recurring" : ""}" data-play-task="${escapeHtml(task.id)}" data-play-day="${escapeHtml(dayId)}" draggable="true">
+    <article class="do-task-item play-workout-item ${task.done ? "is-done" : ""} ${task.recurringTaskId ? "is-recurring" : ""}" data-play-task="${escapeHtml(task.id)}" data-play-day="${escapeHtml(dayId)}">
       <label>
         <button class="do-task-title workout-title-button" type="button" ${buttonAttribute} data-play-day="${escapeHtml(dayId)}" data-play-task="${escapeHtml(task.id)}">${escapeHtml(task.title)}</button>
       </label>
@@ -17530,11 +17540,28 @@ function playTaskTemplate(task, dayId) {
 
 function bindPlayTaskControls(root = document) {
   root.querySelectorAll("[data-play-task]").forEach((item) => {
-    item.addEventListener("dragstart", handlePlayTaskDragStart);
-    item.addEventListener("drag", handlePlayTaskDrag);
-    item.addEventListener("dragend", handlePlayTaskDragEnd);
     item.addEventListener("contextmenu", openPlayTaskMenu);
   });
+  // Play task move (day-tab / day-list / backlog) — shared sortable primitive in move
+  // mode; delegates to the existing movePlayTask. Backlog kept data-do-backlog-drop
+  // (the play board reuses the do-board template; replaceAll didn't rename it). Workout-
+  // pool drag (a separate source) is unchanged. Bound once (delegated).
+  if (root.nodeType === 1 && !root.__sortableBound) {
+    root.__sortableBound = true;
+    makeSortable(root, {
+      rowSelector: "[data-play-task], [data-play-workout]",
+      getId: (row) => row.dataset.playTask || row.dataset.playWorkout,
+      reorder: false,
+      dropZoneSelector: "[data-play-day-tab], [data-play-task-drop-day], [data-do-backlog-drop]",
+      onDropZone: ({ row, zone }) => {
+        const targetDay = zone.dataset.playDayTab || zone.dataset.playTaskDropDay || (zone.hasAttribute("data-do-backlog-drop") ? "backlog" : null);
+        if (!targetDay) return;
+        if (row.dataset.playWorkout) { if (targetDay !== "backlog") addWorkoutToPlayDay(row.dataset.playWorkout, targetDay); } // pool workout → day (never backlog)
+        else movePlayTask(row.dataset.playDay, targetDay, row.dataset.playTask);
+      },
+      itemLabel: (row) => (row.querySelector(".do-task-title")?.textContent || row.textContent || "task").trim().slice(0, 40),
+    });
+  }
   root.querySelectorAll("[data-play-task-toggle]").forEach((checkbox) => {
     checkbox.addEventListener("change", () => togglePlayTask(checkbox.dataset.playDay, checkbox.dataset.playTaskToggle, checkbox.checked));
   });
@@ -19046,9 +19073,20 @@ function bindRecipeCards(root) {
     card.addEventListener("mousedown", (event) => {
       if (event.button === 2) openRecipeMenu(event, card.dataset.id);
     });
-    card.addEventListener("dragstart", handleRecipeDragStart);
-    card.addEventListener("dragend", clearRecipeDragState);
   });
+  // Recipe → folder move — shared sortable primitive (move mode); delegates to the
+  // existing moveRecipeToFolder. Folder buttons are the drop zones. Bound once.
+  if (root.nodeType === 1 && !root.__sortableBound) {
+    root.__sortableBound = true;
+    makeSortable(root, {
+      rowSelector: ".recipe-card",
+      getId: (card) => card.dataset.id,
+      reorder: false,
+      dropZoneSelector: ".folder-btn[data-folder]",
+      onDropZone: ({ itemId, zone }) => moveRecipeToFolder(itemId, zone.dataset.folder),
+      itemLabel: (card) => (card.textContent || "recipe").trim().slice(0, 40),
+    });
+  }
 }
 
 function recipesByFolder() {
@@ -21453,7 +21491,7 @@ function renderGroceryStoresSettings() {
   const stores = groceryStores();
   elements.groceryStoresList.innerHTML = stores.length
     ? stores.map((store) => `
-      <div class="grocery-store-setting${store.enabled ? "" : " is-disabled"}" data-grocery-store-setting="${escapeHtml(store.id)}" draggable="true" title="Drag to reorder">
+      <div class="grocery-store-setting${store.enabled ? "" : " is-disabled"}" data-grocery-store-setting="${escapeHtml(store.id)}" title="Drag or long-press to reorder">
         <span class="grocery-store-setting-details">
           <strong>${escapeHtml(store.name)}</strong>
           <small>${escapeHtml(store.address || "Manually added store")}</small>
@@ -21469,12 +21507,18 @@ function renderGroceryStoresSettings() {
 
   elements.groceryStoresList.querySelectorAll("[data-grocery-store-setting]").forEach((row) => {
     row.addEventListener("contextmenu", openGroceryStoreMenu);
-    row.addEventListener("dragstart", handleGroceryStoreOrderDragStart);
-    row.addEventListener("dragover", handleGroceryStoreOrderDragOver);
-    row.addEventListener("dragleave", clearGroceryStoreOrderDropTarget);
-    row.addEventListener("drop", handleGroceryStoreOrderDrop);
-    row.addEventListener("dragend", clearGroceryStoreOrderDragState);
   });
+  // Store-order reorder — shared sortable primitive (single list; delegates to the
+  // existing neighbour-based reorderGroceryStore). Bound once (delegated).
+  if (!elements.groceryStoresList.__sortableBound) {
+    elements.groceryStoresList.__sortableBound = true;
+    makeSortable(elements.groceryStoresList, {
+      rowSelector: "[data-grocery-store-setting]",
+      getId: (row) => row.dataset.groceryStoreSetting,
+      onGroupedDrop: ({ itemId, targetId, position }) => reorderGroceryStore(itemId, targetId, position),
+      itemLabel: (row) => (row.querySelector(".grocery-store-name, .store-name")?.textContent || row.textContent || "store").trim().slice(0, 40),
+    });
+  }
   elements.groceryStoresList.querySelectorAll("[data-store-toggle]").forEach((checkbox) => {
     checkbox.addEventListener("change", () => {
       const storeId = checkbox.dataset.storeToggle;
@@ -22050,7 +22094,7 @@ function renderGroceryStoreLayoutEditor(sections) {
 
 function groceryStoreLayoutRowTemplate(section) {
   return `
-    <div class="grocery-store-layout-row" data-store-section-row="${escapeHtml(section.id)}" draggable="true">
+    <div class="grocery-store-layout-row" data-store-section-row="${escapeHtml(section.id)}">
       <span class="grocery-store-section-grip" aria-hidden="true">⋮⋮</span>
       <input value="${escapeHtml(section.name)}" aria-label="Section name" />
       <button class="icon-btn" type="button" data-remove-store-section="${escapeHtml(section.id)}" title="Remove section" aria-label="Remove ${escapeHtml(section.name)}">
@@ -22061,15 +22105,18 @@ function groceryStoreLayoutRowTemplate(section) {
 }
 
 function bindGroceryStoreLayoutRows() {
-  elements.groceryStoreLayoutList.querySelectorAll("[data-store-section-row]").forEach((row) => {
-    if (row.dataset.bound === "true") return;
-    row.dataset.bound = "true";
-    row.addEventListener("dragstart", handleStoreSectionDragStart);
-    row.addEventListener("dragover", handleStoreSectionDragOver);
-    row.addEventListener("dragleave", clearStoreSectionDropTarget);
-    row.addEventListener("drop", handleStoreSectionDrop);
-    row.addEventListener("dragend", clearStoreSectionDragState);
-  });
+  // Store-section layout reorder — shared sortable primitive. The reorder is
+  // DOM-only here (saveGroceryStoreLayout reads the section order + names on submit),
+  // so onReorder is a no-op; the primitive just moves the row. Bound once (delegated).
+  if (!elements.groceryStoreLayoutList.__sortableBound) {
+    elements.groceryStoreLayoutList.__sortableBound = true;
+    makeSortable(elements.groceryStoreLayoutList, {
+      rowSelector: "[data-store-section-row]",
+      getId: (row) => row.dataset.storeSectionRow,
+      onReorder: () => {},
+      itemLabel: (row) => (row.querySelector("input")?.value || "section").trim().slice(0, 40),
+    });
+  }
   elements.groceryStoreLayoutList.querySelectorAll("[data-remove-store-section]:not([data-bound])").forEach((button) => {
     button.dataset.bound = "true";
     button.addEventListener("click", () => removeGroceryStoreSectionRow(button.dataset.removeStoreSection));
@@ -23828,7 +23875,7 @@ function renderMealTypesList() {
   const config = normalizeMealPlanConfig(state.mealPlanConfig);
   const list = elements.mealPlanSettingsDialog.querySelector("[data-mealtypes-list]");
   list.innerHTML = config.mealTypes.map(t => `
-    <div class="config-row" data-mealtype-row data-mealtype-id="${escapeHtml(t.id)}" draggable="true">
+    <div class="config-row" data-mealtype-row data-mealtype-id="${escapeHtml(t.id)}">
       <span class="drag-handle" aria-hidden="true">
         <svg viewBox="0 0 24 24"><path d="M9 5a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-6 6a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-6 6a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg>
       </span>
@@ -23869,35 +23916,17 @@ function addMealType() {
   div.querySelector("input").focus();
 }
 
+// Generic config-row reorder (settings lists) — now on the shared sortable
+// primitive. The reorder is DOM-only; the owning form reads the row order + input
+// values on save (e.g. saveMealPlanMealTypes), so onReorder is a no-op. Bound once.
 function bindConfigListDrag(list, rowSelector) {
-  let dragSrc = null;
-  list.querySelectorAll(rowSelector).forEach(row => {
-    row.addEventListener("dragstart", e => {
-      dragSrc = row;
-      row.classList.add("dragging");
-      e.dataTransfer.effectAllowed = "move";
-    });
-    row.addEventListener("dragend", () => {
-      dragSrc = null;
-      list.querySelectorAll(rowSelector).forEach(r => r.classList.remove("dragging", "drag-over"));
-    });
-    row.addEventListener("dragover", e => {
-      e.preventDefault();
-      if (!dragSrc || row === dragSrc) return;
-      e.dataTransfer.dropEffect = "move";
-      list.querySelectorAll(rowSelector).forEach(r => r.classList.remove("drag-over"));
-      row.classList.add("drag-over");
-      const rows = [...list.querySelectorAll(rowSelector)];
-      const srcIdx = rows.indexOf(dragSrc);
-      const tgtIdx = rows.indexOf(row);
-      if (srcIdx < tgtIdx) row.after(dragSrc);
-      else row.before(dragSrc);
-    });
-    row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
-    row.addEventListener("drop", e => {
-      e.preventDefault();
-      row.classList.remove("drag-over");
-    });
+  if (list.__sortableBound) return;
+  list.__sortableBound = true;
+  makeSortable(list, {
+    rowSelector,
+    getId: (row) => row.dataset.mealtypeId || row.id || row.dataset.sortId || "",
+    onReorder: () => {},
+    itemLabel: (row) => (row.querySelector("input")?.value || "item").trim().slice(0, 40),
   });
 }
 
@@ -25264,7 +25293,7 @@ function recipeMatchesSearch(recipe, query) {
 function recipeCardTemplate(recipe) {
   const tags = normalizeRecipeTagSelection(recipe.tags);
   return `
-    <button class="recipe-card" data-id="${recipe.id}" draggable="true">
+    <button class="recipe-card" data-id="${recipe.id}">
       <span class="recipe-card-head">
         <h3>${escapeHtml(recipe.name)}</h3>
         ${recipeTimePillsTemplate(recipe, "Anytime")}
@@ -25609,17 +25638,36 @@ function renderPlanner() {
     elements.mealAutoFillDialog.showModal();
   });
 
-  elements.plannerGrid.querySelectorAll("[data-meal-entry][draggable='true']").forEach((entry) => {
-    entry.addEventListener("dragstart", handleMealEntryDragStart);
-    entry.addEventListener("drag", handleMealEntryDrag);
-    entry.addEventListener("dragover", handleMealEntryDragOver);
-    entry.addEventListener("dragleave", () => entry.classList.remove("drag-over"));
-    entry.addEventListener("drop", handleMealEntryDrop);
-    entry.addEventListener("dragend", handleMealEntryDragEnd);
+  elements.plannerGrid.querySelectorAll("[data-meal-entry]").forEach((entry) => {
     entry.addEventListener("contextmenu", openMealEntryMenu);
-    entry.addEventListener("mousedown", handleMealEntryMouseDown);
-    entry.addEventListener("pointerdown", handleMealEntryPointerDown);
   });
+  // Meal entries — shared sortable primitive in COMBINED grouped + move mode:
+  //  • reorder within a slot / move between slots  → onGroupedDrop (index-based:
+  //    reorderMealEntry same-slot, moveMealEntryToSlot cross-slot)
+  //  • drop onto a day-tab                          → onDropZone (moveMealEntryToDay)
+  // Replaces the old HTML5 DnD + bespoke touch pointer path. Bound once (delegated).
+  if (!elements.plannerGrid.__sortableBound) {
+    elements.plannerGrid.__sortableBound = true;
+    makeSortable(elements.plannerGrid, {
+      rowSelector: "[data-meal-entry]",
+      getId: (e) => `${e.dataset.day}:${e.dataset.meal}:${e.dataset.index}`,
+      groupSelector: "[data-meal-slot]",
+      dropZoneSelector: "[data-day-tab]",
+      onGroupedDrop: ({ row, toContainer }) => {
+        const source = { day: row.dataset.day, meal: row.dataset.meal, index: Number(row.dataset.index) };
+        const targetDay = toContainer.dataset.day, targetMeal = toContainer.dataset.meal;
+        const targetIndex = [...toContainer.querySelectorAll("[data-meal-entry]")].indexOf(row);
+        if (targetDay === source.day && targetMeal === source.meal) reorderMealEntry(source.day, source.meal, source.index, targetIndex);
+        else moveMealEntryToSlot(source, targetDay, targetMeal, targetIndex);
+      },
+      onDropZone: ({ row, zone }) => {
+        const source = { day: row.dataset.day, meal: row.dataset.meal, index: Number(row.dataset.index) };
+        const targetDay = zone.dataset.dayTab;
+        if (targetDay && mealForDayTabDrop(source.meal, targetDay)) moveMealEntryToDay(source, targetDay);
+      },
+      itemLabel: (e) => (e.textContent || "meal").trim().slice(0, 40),
+    });
+  }
 
   elements.plannerGrid.querySelectorAll("[data-meal-slot]").forEach((slot) => {
     slot.addEventListener("dragover", handleMealSlotDragOver);
@@ -26576,7 +26624,7 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
   const specialMeal = specialMealForSlot(entry);
   const listId = `recipe-options-${day.id}-${mealToken(meal)}-${index}`;
   const isEditing = isEditingMealEntry(day.id, meal, index);
-  const draggable = entry && !isEditing ? `data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true"` : "";
+  const draggable = entry && !isEditing ? `data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}"` : "";
 
   if (readOnly) {
     if (!entry) {
@@ -26641,7 +26689,7 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
 
   if (recipe) {
     return `
-      <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true">
+      <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}">
         <button class="recipe-meal-link" type="button" data-view-recipe="${escapeHtml(recipe.id)}" data-edit-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Double-click to edit">
           ${escapeHtml(recipe.name)}
         </button>
@@ -26654,7 +26702,7 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
     const restaurantLinked = specialMeal.type === "out" && specialMeal.restaurant?.placeId;
     const pinTitle = restaurantLinked ? "Change restaurant" : "Link restaurant";
     return `
-      <div class="meal-entry draggable-meal-entry special-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true">
+      <div class="meal-entry draggable-meal-entry special-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}">
         <div class="special-meal-card special-meal-${escapeHtml(specialMeal.type)}">
           <div class="special-meal-label-row">
             <strong>${escapeHtml(specialMealLabel(specialMeal.type))}${specialMeal.note && !restaurantLinked ? " -" : ""}</strong>
@@ -26670,7 +26718,7 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
   }
 
   return `
-    <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true">
+    <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}">
       <button class="recipe-meal-link custom-meal-link" type="button" data-edit-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Double-click to edit">
         ${escapeHtml(mealInputValue(entry))}
       </button>
@@ -28258,18 +28306,22 @@ function renderGroceries() {
       deleteGroceryItem(btn.dataset.groceryActionDelete);
     });
   });
-  elements.groceryList.querySelectorAll("[data-grocery-row-key]").forEach((item) => {
-    item.addEventListener("dragstart", handleGroceryItemDragStart);
-    item.addEventListener("dragend", clearGroceryItemDragState);
-    item.addEventListener("dragover", handleGroceryItemDragOver);
-    item.addEventListener("dragleave", clearGroceryItemDropTarget);
-    item.addEventListener("drop", handleGroceryItemDrop);
-  });
-  elements.groceryList.querySelectorAll("[data-grocery-store-list]").forEach((list) => {
-    list.addEventListener("dragover", handleGroceryStoreDragOver);
-    list.addEventListener("dragleave", clearGroceryStoreDropTarget);
-    list.addEventListener("drop", handleGroceryStoreDrop);
-  });
+  // Grocery item reorder — shared sortable primitive (mouse drag + touch long-press +
+  // continuous edge auto-scroll + Alt+Arrow keyboard), grouped so an item reorders
+  // within its aisle AND moves between aisles. Persistence is UNCHANGED: every drop
+  // delegates to moveGroceryItem (targetStore/section + neighbour + before/after).
+  // groceryList persists across renders and the primitive delegates, so it binds ONCE.
+  if (!elements.groceryList.__sortableBound) {
+    elements.groceryList.__sortableBound = true;
+    makeSortable(elements.groceryList, {
+      rowSelector: "[data-grocery-row-key]",
+      getId: (row) => row.dataset.groceryRowKey,
+      groupSelector: "[data-grocery-store-list]",
+      onGroupedDrop: ({ itemId, toContainer, targetId, position }) =>
+        moveGroceryItem(itemId, toContainer?.dataset.groceryStoreList || "", targetId, position, toContainer?.dataset.groceryStoreSectionList || ""),
+      itemLabel: (row) => (row.querySelector(".grocery-item-name, .grocery-item-label")?.textContent || row.textContent || "item").trim().slice(0, 40),
+    });
+  }
   elements.groceryList.querySelectorAll("[data-grocery-store-setting]").forEach((heading) => {
     heading.addEventListener("contextmenu", openGroceryStoreMenu);
   });
@@ -28582,7 +28634,7 @@ function groceryRowSourceLabel(row) {
 function groceryItemTemplate(row) {
   return `
     <div class="grocery-item-wrap" data-grocery-wrap-key="${escapeHtml(row.key)}">
-      <label class="grocery-item ${row.checked ? "checked" : ""}${row.cleared ? " grocery-item--cleared" : ""}" draggable="true" data-grocery-row-key="${escapeHtml(row.key)}" title="Drag to organize">
+      <label class="grocery-item ${row.checked ? "checked" : ""}${row.cleared ? " grocery-item--cleared" : ""}" data-grocery-row-key="${escapeHtml(row.key)}" title="Drag or long-press to organize; Alt+Arrow to reorder" aria-roledescription="Sortable item">
         <input type="checkbox" data-grocery="${escapeHtml(row.checkedKey)}" ${row.checked ? "checked" : ""} />
         <span class="grocery-name">
           ${escapeHtml(row.displayName || row.item)}
@@ -33181,7 +33233,7 @@ function watchScheduledItemTemplate(item, dayId) {
     : `<div class="watch-item-poster watch-item-poster-placeholder"></div>`;
 
   return `
-    <article class="do-task-item watch-item" data-watch-scheduled="${escapeHtml(item.id)}" data-watch-day="${escapeHtml(dayId)}" draggable="true">
+    <article class="do-task-item watch-item" data-watch-scheduled="${escapeHtml(item.id)}" data-watch-day="${escapeHtml(dayId)}">
       <div class="watch-item-layout">
         ${posterHtml}
         <div class="watch-item-main">
@@ -33436,7 +33488,7 @@ function watchItemTemplate(item) {
     : `<div class="watch-item-poster watch-item-poster-placeholder"></div>`;
 
   return `
-    <article class="do-task-item watch-item" data-watch-item="${escapeHtml(item.id)}" draggable="true">
+    <article class="do-task-item watch-item" data-watch-item="${escapeHtml(item.id)}">
       <div class="watch-item-layout">
         ${posterHtml}
         <div class="watch-item-main">
@@ -33584,16 +33636,30 @@ function bindWatchControls(root = document) {
   root.querySelectorAll("[data-watch-expand-seasons]").forEach((btn) => {
     btn.addEventListener("click", () => initWatchSeasonTracking(btn.dataset.watchExpandSeasons));
   });
-  root.querySelectorAll("[data-watch-item]").forEach((article) => {
-    article.addEventListener("dragstart", handleWatchItemDragStart);
-    article.addEventListener("dragend", handleWatchItemDragEnd);
-    article.addEventListener("contextmenu", openWatchItemMenu);
-  });
-  root.querySelectorAll("[data-watch-scheduled]").forEach((article) => {
-    article.addEventListener("dragstart", handleWatchScheduledDragStart);
-    article.addEventListener("dragend", handleWatchItemDragEnd);
-    article.addEventListener("contextmenu", openWatchScheduledMenu);
-  });
+  root.querySelectorAll("[data-watch-item]").forEach((a) => a.addEventListener("contextmenu", openWatchItemMenu));
+  root.querySelectorAll("[data-watch-scheduled]").forEach((a) => a.addEventListener("contextmenu", openWatchScheduledMenu));
+  // Watch item move — shared sortable primitive (move mode). Library + scheduled items
+  // drop onto a category tab (categorize), a day-tab/day-list (schedule/reschedule), or
+  // backlog (unschedule). Delegates to the existing schedule/unschedule/categorize logic.
+  // Day-lists carry data-watch-day too, so the item's own data-watch-day is excluded.
+  if (root.nodeType === 1 && !root.__sortableBound) {
+    root.__sortableBound = true;
+    makeSortable(root, {
+      rowSelector: "[data-watch-item], [data-watch-scheduled]",
+      getId: (row) => row.dataset.watchItem || row.dataset.watchScheduled,
+      reorder: false,
+      dropZoneSelector: "[data-watch-category], [data-watch-day-tab], [data-watch-day]:not([data-watch-scheduled]):not([data-watch-item]), [data-do-backlog-drop]",
+      onDropZone: ({ row, zone }) => {
+        const id = row.dataset.watchItem || row.dataset.watchScheduled;
+        const fromDay = row.dataset.watchDay || null;
+        if (zone.hasAttribute("data-watch-category")) { categorizeWatchItem(id, zone.dataset.watchCategory); return; }
+        if (zone.hasAttribute("data-do-backlog-drop")) { if (fromDay) unscheduleWatchItem(id, fromDay); return; }
+        const toDay = zone.dataset.watchDayTab || zone.dataset.watchDay;
+        if (toDay) { if (fromDay && fromDay !== toDay) unscheduleWatchItem(id, fromDay); scheduleWatchItem(id, toDay); }
+      },
+      itemLabel: (row) => (row.querySelector(".do-task-title")?.textContent || row.textContent || "title").trim().slice(0, 40),
+    });
+  }
 }
 
 function openWatchScheduledMenu(event) {
@@ -34205,6 +34271,22 @@ function handleWatchCategoryDrop(event, targetCategoryId) {
   }
   draggedWatchItemId = null;
   draggedWatchScheduled = null;
+  categorizeWatchItem(id, targetCategoryId);
+}
+
+// Assign a watch item to a category tab (move semantics: leaving a user tab removes it).
+// Shared by the sortable drop-zone handler and the legacy HTML5 drop above.
+function categorizeWatchItem(id, targetCategoryId) {
+  const item = watchItemById(id);
+  if (!item) return;
+  if (!Array.isArray(item.categories)) item.categories = [];
+  const isSystemTab = (x) => x === "all" || x === "__upcoming" || x === "__in-theaters";
+  if (!isSystemTab(targetCategoryId)) {
+    if (!isSystemTab(activeWatchCategory) && activeWatchCategory !== targetCategoryId) {
+      item.categories = item.categories.filter((c) => c !== activeWatchCategory);
+    }
+    if (!item.categories.includes(targetCategoryId)) item.categories.push(targetCategoryId);
+  }
   activeWatchCategory = targetCategoryId;
   persist();
   renderWatchPlanner();
@@ -36813,7 +36895,7 @@ function addContactRow(listId, { label = "", value = "", labelPh = "Label", valu
   const reorder = list.dataset.reorder === "1";
   const row = document.createElement("div");
   row.className = "contact-multi-row";
-  const handle = reorder ? `<button type="button" class="contact-row-drag" aria-label="Drag to reorder" title="Drag to reorder" draggable="true">${CONTACT_DRAG_SVG}</button>` : "";
+  const handle = reorder ? `<button type="button" class="contact-row-drag" aria-label="Drag to reorder" title="Drag to reorder">${CONTACT_DRAG_SVG}</button>` : "";
   row.innerHTML = `${handle}
     <input type="text" class="contact-row-label" placeholder="${escapeHtml(labelPh)}" value="${escapeHtml(label)}" aria-label="Label" />
     <input type="${valueType}" class="contact-row-value" placeholder="${escapeHtml(valuePh)}" value="${escapeHtml(value)}" aria-label="${escapeHtml(valuePh || "Value")}" />
@@ -36847,20 +36929,18 @@ function refreshContactReorderList(list) {
 }
 
 function setupContactRowDrag(row, list) {
-  const handle = row.querySelector(".contact-row-drag");
-  if (!handle) return;
-  handle.addEventListener("dragstart", (e) => { contactDragRow = row; row.classList.add("is-dragging"); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", ""); } catch { /* older browsers */ } });
-  handle.addEventListener("dragend", () => { row.classList.remove("is-dragging"); contactDragRow = null; refreshContactReorderList(list); });
-  if (!list.dataset.dragBound) {
-    list.dataset.dragBound = "1";
-    list.addEventListener("dragover", (e) => {
-      if (!contactDragRow || contactDragRow.parentElement !== list) return;
-      e.preventDefault();
-      const after = contactDragAfter(list, e.clientY);
-      if (after == null) list.appendChild(contactDragRow);
-      else if (after !== contactDragRow) list.insertBefore(contactDragRow, after);
-    });
-  }
+  // Reorder multi-value rows via the shared sortable primitive, using the drag
+  // handle (the row is all inputs). DOM-only reorder; the contact form reads the row
+  // order on save, and refreshContactReorderList fixes the +/× buttons. Bound once.
+  if (list.__sortableBound) return;
+  list.__sortableBound = true;
+  makeSortable(list, {
+    rowSelector: ".contact-multi-row",
+    getId: (r) => String([...list.querySelectorAll(".contact-multi-row")].indexOf(r)),
+    handleSelector: ".contact-row-drag",
+    onReorder: () => refreshContactReorderList(list),
+    itemLabel: (r) => (r.querySelector(".contact-row-value")?.value || "row").trim().slice(0, 40),
+  });
 }
 
 function contactDragAfter(list, y) {
@@ -39942,7 +40022,7 @@ function inventoryContainerTemplate(container) {
 
 function inventoryItemChipTemplate(item) {
   return `
-    <div class="inventory-item-chip${item.trackWeekly ? " is-tracked" : ""}" data-inventory-item="${escapeHtml(item.id)}" draggable="true">
+    <div class="inventory-item-chip${item.trackWeekly ? " is-tracked" : ""}" data-inventory-item="${escapeHtml(item.id)}">
       ${item.trackWeekly ? `<span class="inventory-item-track-dot" title="On the weekly checklist" aria-hidden="true"></span>` : ""}
       <span class="inventory-item-name">${escapeHtml(item.name)}</span>
       ${item.quantity ? `<span class="inventory-item-qty">${escapeHtml(item.quantity)}</span>` : ""}
@@ -39996,50 +40076,22 @@ function bindInventoryControls(root) {
     });
   });
 
-  // Drag items between rooms/containers
-  let dragOverZone = null;
-
-  root.querySelectorAll("[data-inventory-item]").forEach((chip) => {
-    chip.addEventListener("dragstart", (e) => {
-      inventoryDragItemId = chip.dataset.inventoryItem;
-      chip.classList.add("inv-dragging");
-      e.dataTransfer.effectAllowed = "move";
+  // Move items between rooms/containers — shared sortable primitive (move mode).
+  // Delegates to the existing boxId reassignment. Bound once (delegated).
+  if (root.nodeType === 1 && !root.__sortableBound) {
+    root.__sortableBound = true;
+    makeSortable(root, {
+      rowSelector: "[data-inventory-item]",
+      getId: (chip) => chip.dataset.inventoryItem,
+      reorder: false,
+      dropZoneSelector: "[data-drop-target]",
+      onDropZone: ({ itemId, zone }) => {
+        const item = inventoryItemList().find((i) => i.id === itemId);
+        if (item) { item.boxId = zone.dataset.dropTarget || null; persist(); renderInventoryPage(); }
+      },
+      itemLabel: (chip) => (chip.textContent || "item").trim().slice(0, 40),
     });
-    chip.addEventListener("dragend", () => {
-      chip.classList.remove("inv-dragging");
-      inventoryDragItemId = null;
-      if (dragOverZone) { dragOverZone.classList.remove("inv-drag-over"); dragOverZone = null; }
-    });
-  });
-
-  root.querySelectorAll("[data-drop-target]").forEach((zone) => {
-    zone.addEventListener("dragover", (e) => {
-      if (!inventoryDragItemId) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-      if (dragOverZone !== zone) {
-        if (dragOverZone) dragOverZone.classList.remove("inv-drag-over");
-        dragOverZone = zone;
-        zone.classList.add("inv-drag-over");
-      }
-    });
-    zone.addEventListener("dragleave", (e) => {
-      if (!zone.contains(e.relatedTarget)) {
-        zone.classList.remove("inv-drag-over");
-        if (dragOverZone === zone) dragOverZone = null;
-      }
-    });
-    zone.addEventListener("drop", (e) => {
-      e.preventDefault();
-      zone.classList.remove("inv-drag-over");
-      dragOverZone = null;
-      if (!inventoryDragItemId) return;
-      const newBoxId = zone.dataset.dropTarget || null;
-      const item = inventoryItemList().find((i) => i.id === inventoryDragItemId);
-      if (item) { item.boxId = newBoxId; persist(); renderInventoryPage(); }
-      inventoryDragItemId = null;
-    });
-  });
+  }
 }
 
 function openInventoryBoxDialog(boxId = null, parentId = null) {
@@ -41992,9 +42044,9 @@ function showPodcastPriorityModal() {
 
   document.body.appendChild(overlay);
 
-  let dragItemId = null;
-  let dragItemKind = null; // "show" | "pub"
-
+  // Read every tile's current tier from the DOM back into local modal state.
+  // Tiles carry no order within a tier — a tier is a bucket, so only membership
+  // (which zone the tile sits in) matters. Save + reorder both sync through here.
   function readCurrentAssignments() {
     overlay.querySelectorAll(".priority-drop-zone[data-tier]").forEach(zone => {
       const tier = parseInt(zone.dataset.tier, 10);
@@ -42009,128 +42061,113 @@ function showPodcastPriorityModal() {
     });
   }
 
+  const GRIP_SVG = `<svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true" fill="currentColor"><circle cx="7" cy="4" r="1.4"/><circle cx="13" cy="4" r="1.4"/><circle cx="7" cy="10" r="1.4"/><circle cx="13" cy="10" r="1.4"/><circle cx="7" cy="16" r="1.4"/><circle cx="13" cy="16" r="1.4"/></svg>`;
+
+  function tileArt(src, placeholderSvg, onError = "") {
+    return src
+      ? `<img class="priority-show-art" src="${escapeHtml(src)}" alt="" loading="lazy"${onError}>`
+      : `<span class="priority-show-art priority-show-art--placeholder">${placeholderSvg}</span>`;
+  }
+
   function showCard(show) {
     const d = document.createElement("div");
     d.className = "priority-show-card";
-    d.draggable = true;
     d.dataset.showId = show.id;
-    d.title = show.title || "";
+    d.tabIndex = 0;
+    d.setAttribute("role", "listitem");
     d.setAttribute("aria-label", show.title || "Show");
-    d.innerHTML = show.art
-      ? `<img class="priority-show-art" src="${escapeHtml(show.art)}" alt="${escapeHtml(show.title || "")}" loading="lazy">`
-      : `<div class="priority-show-art priority-show-art--placeholder"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div>`;
-    d.addEventListener("dragstart", (e) => { dragItemId = show.id; dragItemKind = "show"; d.classList.add("is-dragging"); e.dataTransfer.effectAllowed = "move"; });
-    d.addEventListener("dragend", () => { dragItemId = null; dragItemKind = null; d.classList.remove("is-dragging"); overlay.querySelectorAll(".priority-drop-zone").forEach(z => z.classList.remove("drag-over")); });
-    wireCardTouch(d);
+    const ph = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>`;
+    d.innerHTML = `${tileArt(show.art, ph)}<span class="priority-show-label">${escapeHtml(show.title || "Untitled")}</span>`;
     return d;
   }
 
   function pubCard(pub) {
     const d = document.createElement("div");
     d.className = "priority-show-card priority-show-card--article";
-    d.draggable = true;
     d.dataset.pubKey = pub.key;
-    d.title = `${pub.label} (Article)`;
+    d.tabIndex = 0;
+    d.setAttribute("role", "listitem");
     d.setAttribute("aria-label", `${pub.label} — Article`);
     const logoUrl = pub.domain ? publicationLogoUrl(pub.domain) : null;
-    d.innerHTML = logoUrl
-      ? `<img class="priority-show-art" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(pub.label || "")}" loading="lazy" onerror="this.style.display='none'">`
-      : `<div class="priority-show-art priority-show-art--placeholder"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></div>`;
-    d.addEventListener("dragstart", (e) => { dragItemId = pub.key; dragItemKind = "pub"; d.classList.add("is-dragging"); e.dataTransfer.effectAllowed = "move"; });
-    d.addEventListener("dragend", () => { dragItemId = null; dragItemKind = null; d.classList.remove("is-dragging"); overlay.querySelectorAll(".priority-drop-zone").forEach(z => z.classList.remove("drag-over")); });
-    wireCardTouch(d);
+    const ph = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>`;
+    d.innerHTML = `${tileArt(logoUrl, ph, ` onerror="this.style.display='none'"`)}<span class="priority-show-label">${escapeHtml(pub.label || "")}</span>`;
     return d;
   }
 
-  function wireZone(zone) {
-    zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("drag-over"); });
-    zone.addEventListener("dragleave", () => zone.classList.remove("drag-over"));
-    zone.addEventListener("drop", (e) => {
-      e.preventDefault();
-      zone.classList.remove("drag-over");
-      if (!dragItemId) return;
-      const selector = dragItemKind === "pub"
-        ? `.priority-show-card[data-pub-key="${CSS.escape(dragItemId)}"]`
-        : `.priority-show-card[data-show-id="${CSS.escape(dragItemId)}"]`;
-      const card = overlay.querySelector(selector);
-      if (!card) return;
-      zone.querySelector(".priority-drop-hint")?.remove();
-      zone.appendChild(card);
-      overlay.querySelectorAll(".priority-drop-zone").forEach(z => {
-        if (!z.querySelector(".priority-show-card") && !z.querySelector(".priority-drop-hint")) {
-          z.insertAdjacentHTML("beforeend", `<div class="priority-drop-hint">${z.dataset.tier === "0" ? "All items assigned to tiers" : "Drop shows or publications here"}</div>`);
-        }
-      });
+  // Re-derive each zone's empty-state hint after a tile moves (called on drop so
+  // a vacated tier shows its prompt again and a filled one drops it).
+  function refreshEmptyHints() {
+    overlay.querySelectorAll(".priority-drop-zone[data-tier]").forEach((z) => {
+      const hasCard = z.querySelector(".priority-show-card");
+      const hint = z.querySelector(".priority-drop-hint");
+      if (hasCard && hint) hint.remove();
+      else if (!hasCard && !hint) {
+        z.insertAdjacentHTML("beforeend", `<div class="priority-drop-hint">${z.dataset.tier === "0" ? "Everything is ranked" : "Drop shows or publications here"}</div>`);
+      }
     });
   }
 
-  // Reorder whole tiers (so a newly added bottom tier can move to the top):
-  // swap every assignment between tier n and its neighbour.
-  function moveTier(n, dir) {
+  function removeTier(n) {
     readCurrentAssignments();
-    const other = n + dir;
-    if (other < 1 || other > ms.tierCount) return;
-    const swap = (map) => { for (const k of Object.keys(map)) { if (map[k] === n) map[k] = other; else if (map[k] === other) map[k] = n; } };
-    swap(ms.showTiers); swap(ms.publicationTiers);
+    for (const [showId, t] of Object.entries(ms.showTiers)) {
+      if (t === n) delete ms.showTiers[showId];
+      else if (t > n) ms.showTiers[showId] = t - 1;
+    }
+    for (const [pubKey, t] of Object.entries(ms.publicationTiers)) {
+      if (t === n) delete ms.publicationTiers[pubKey];
+      else if (t > n) ms.publicationTiers[pubKey] = t - 1;
+    }
+    ms.tierCount = Math.max(1, ms.tierCount - 1);
     renderTiers();
   }
 
-  // Touch drag for a tier card: long-press to pick it up, drag over a tier's
-  // drop zone, release to drop it there (HTML5 drag-and-drop is mouse-only).
-  function wireCardTouch(card) {
-    let pressTimer = null, armed = false, sx = 0, sy = 0;
-    const zones = () => overlay.querySelectorAll(".priority-drop-zone");
-    const clearHover = () => zones().forEach((z) => z.classList.remove("drag-over"));
-    function refreshHints() {
-      zones().forEach((z) => {
-        if (!z.querySelector(".priority-show-card") && !z.querySelector(".priority-drop-hint")) {
-          z.insertAdjacentHTML("beforeend", `<div class="priority-drop-hint">${z.dataset.tier === "0" ? "All items assigned to tiers" : "Drop shows or publications here"}</div>`);
-        }
+  // Two shared-primitive bindings drive the whole board:
+  //   • tiles move between tier bands (move mode, buckets — no intra-tier order),
+  //     bound ONCE on the persistent body (it resolves zones live at drop time).
+  //   • whole tier bands reorder by dragging their header (handle mode, reorder),
+  //     re-bound each render since the bands wrapper is rebuilt.
+  // They never collide: a tile pointer-down finds no band header, a header
+  // pointer-down finds no tile — each binding ignores the other's target.
+  let tilesSortable = null;
+  function attachSortables(bodyEl, bandsEl) {
+    if (!tilesSortable) {
+      tilesSortable = makeSortable(bodyEl, {
+        rowSelector: ".priority-show-card",
+        getId: (row) => row.dataset.showId || row.dataset.pubKey,
+        reorder: false,
+        dropZoneSelector: ".priority-drop-zone[data-tier]",
+        onDropZone: ({ row, zone }) => {
+          if (row.parentElement === zone) return;
+          zone.querySelector(".priority-drop-hint")?.remove();
+          zone.appendChild(row);
+          refreshEmptyHints();
+        },
+        itemLabel: (row) => row.querySelector(".priority-show-label")?.textContent || "item",
       });
     }
-    function cleanup() {
-      clearTimeout(pressTimer); pressTimer = null;
-      card.classList.remove("is-dragging"); card.style.pointerEvents = "";
-      clearHover();
-      document.removeEventListener("touchmove", onMove, { passive: false });
-      document.removeEventListener("touchend", onEnd);
-      document.removeEventListener("touchcancel", onEnd);
-      armed = false;
-    }
-    function onMove(e) {
-      const t = e.touches[0];
-      if (!armed) { if (Math.abs(t.clientX - sx) > 10 || Math.abs(t.clientY - sy) > 10) cleanup(); return; }
-      e.preventDefault();
-      clearHover();
-      document.elementFromPoint(t.clientX, t.clientY)?.closest(".priority-drop-zone")?.classList.add("drag-over");
-    }
-    function onEnd(e) {
-      if (armed) {
-        const t = e.changedTouches[0];
-        card.style.pointerEvents = "";
-        const zone = document.elementFromPoint(t.clientX, t.clientY)?.closest(".priority-drop-zone");
-        if (zone) { zone.querySelector(".priority-drop-hint")?.remove(); zone.appendChild(card); }
-        refreshHints();
-      }
-      cleanup();
-    }
-    card.addEventListener("touchstart", (e) => {
-      sx = e.touches[0].clientX; sy = e.touches[0].clientY;
-      pressTimer = setTimeout(() => {
-        armed = true;
-        card.classList.add("is-dragging");
-        card.style.pointerEvents = "none";
-        if (navigator.vibrate) navigator.vibrate(8);
-      }, 250);
-      document.addEventListener("touchmove", onMove, { passive: false });
-      document.addEventListener("touchend", onEnd);
-      document.addEventListener("touchcancel", onEnd);
-    }, { passive: true });
+    makeSortable(bandsEl, {
+      rowSelector: ".priority-band",
+      getId: (row) => row.dataset.band,
+      handleSelector: ".priority-band-head",
+      onReorder: ({ order }) => {
+        // `order` is the new top-to-bottom sequence of the OLD tier numbers.
+        readCurrentAssignments();                 // capture tile membership first
+        const remap = new Map();
+        order.forEach((oldT, i) => remap.set(parseInt(oldT, 10), i + 1));
+        const apply = (map) => { for (const k of Object.keys(map)) { const nt = remap.get(map[k]); if (nt) map[k] = nt; } };
+        apply(ms.showTiers); apply(ms.publicationTiers);
+        renderTiers();                            // rebuild with fresh numbering
+      },
+      itemLabel: (row) => row.querySelector(".priority-band-title")?.textContent || "tier",
+    });
   }
 
+  // Callers MUST have already synced `ms` from the DOM (via readCurrentAssignments)
+  // before calling — renderTiers renders straight from `ms`. It deliberately does
+  // NOT re-read the DOM itself: after a tier reorder the zones still carry their
+  // pre-remap data-tier, so a read here would clobber the just-applied renumber.
   function renderTiers() {
     const body = overlay.querySelector("#priorityTiersBody");
-    readCurrentAssignments();
 
     const shows = state.podcasts || [];
     const showsByTier = {};
@@ -42159,47 +42196,35 @@ function showPodcastPriorityModal() {
     }
 
     const zoneIsEmpty = (n) => !showsByTier[n].length && !pubsByTier[n].length;
-
-    const tiersRow = document.createElement("div");
-    tiersRow.className = "priority-tiers-row";
-    for (let n = 1; n <= ms.tierCount; n++) {
-      const col = document.createElement("div");
-      col.className = "priority-tier-col";
-      col.innerHTML = `
-        <div class="priority-tier-heading">
-          <span class="priority-tier-badge tier-n" style="background:hsl(${(n-1)*60},60%,88%);color:hsl(${(n-1)*60},50%,30%)">${n}</span>
-          <span class="priority-tier-label-text">Tier ${n}</span>
-          ${n === 1 ? `<span class="priority-tier-sub">Plays first</span>` : ""}
-          ${n === ms.tierCount && ms.tierCount > 1 ? `<span class="priority-tier-sub">Plays last</span>` : ""}
-          <span class="priority-tier-move">
-            <button class="priority-tier-move-btn" type="button" data-move-tier="up" title="Move tier up" aria-label="Move tier ${n} up"${n === 1 ? " disabled" : ""}>▲</button>
-            <button class="priority-tier-move-btn" type="button" data-move-tier="down" title="Move tier down" aria-label="Move tier ${n} down"${n === ms.tierCount ? " disabled" : ""}>▼</button>
-          </span>
-          <button class="priority-tier-remove-btn" type="button" data-remove-tier="${n}" title="Remove tier" aria-label="Remove tier ${n}">×</button>
-        </div>
-        <div class="priority-drop-zone" data-tier="${n}"></div>`;
-      const zone = col.querySelector(".priority-drop-zone");
+    const fillZone = (zone, n, emptyText) => {
       for (const show of showsByTier[n]) zone.appendChild(showCard(show));
       for (const pub of pubsByTier[n]) zone.appendChild(pubCard(pub));
-      if (zoneIsEmpty(n)) zone.innerHTML = `<div class="priority-drop-hint">Drop shows or publications here</div>`;
-      wireZone(zone);
-      col.querySelector('[data-move-tier="up"]').addEventListener("click", () => moveTier(n, -1));
-      col.querySelector('[data-move-tier="down"]').addEventListener("click", () => moveTier(n, 1));
-      col.querySelector("[data-remove-tier]").addEventListener("click", () => {
-        readCurrentAssignments();
-        const removeNum = parseInt(col.querySelector("[data-remove-tier]").dataset.removeTier, 10);
-        for (const [showId, t] of Object.entries(ms.showTiers)) {
-          if (t === removeNum) delete ms.showTiers[showId];
-          else if (t > removeNum) ms.showTiers[showId] = t - 1;
-        }
-        for (const [pubKey, t] of Object.entries(ms.publicationTiers)) {
-          if (t === removeNum) delete ms.publicationTiers[pubKey];
-          else if (t > removeNum) ms.publicationTiers[pubKey] = t - 1;
-        }
-        ms.tierCount = Math.max(1, ms.tierCount - 1);
-        renderTiers();
-      });
-      tiersRow.appendChild(col);
+      if (zoneIsEmpty(n)) zone.innerHTML = `<div class="priority-drop-hint">${emptyText}</div>`;
+    };
+
+    // Tier bands, stacked top (plays first) to bottom (plays last).
+    const bands = document.createElement("div");
+    bands.className = "priority-bands";
+    for (let n = 1; n <= ms.tierCount; n++) {
+      const hue = (n - 1) * 60;
+      const band = document.createElement("div");
+      band.className = "priority-band";
+      band.dataset.band = String(n);
+      band.innerHTML = `
+        <div class="priority-band-headrow">
+          <div class="priority-band-head" title="Drag to reorder tier" aria-label="Tier ${n} — drag to reorder">
+            <span class="priority-band-grip" aria-hidden="true">${GRIP_SVG}</span>
+            <span class="priority-tier-badge" style="background:hsl(${hue},60%,88%);color:hsl(${hue},50%,30%)">${n}</span>
+            <span class="priority-band-title">Tier ${n}</span>
+            ${n === 1 ? `<span class="priority-tier-sub">Plays first</span>` : ""}
+            ${n === ms.tierCount && ms.tierCount > 1 ? `<span class="priority-tier-sub">Plays last</span>` : ""}
+          </div>
+          <button class="priority-tier-remove-btn" type="button" data-remove-tier="${n}" title="Remove tier" aria-label="Remove tier ${n}">×</button>
+        </div>
+        <div class="priority-drop-zone" data-tier="${n}" role="list"></div>`;
+      fillZone(band.querySelector(".priority-drop-zone"), n, "Drop shows or publications here");
+      band.querySelector("[data-remove-tier]").addEventListener("click", () => removeTier(n));
+      bands.appendChild(band);
     }
 
     const addBtn = document.createElement("button");
@@ -42207,25 +42232,28 @@ function showPodcastPriorityModal() {
     addBtn.type = "button";
     addBtn.textContent = "+ Add tier";
     addBtn.addEventListener("click", () => { readCurrentAssignments(); ms.tierCount++; renderTiers(); });
-    tiersRow.appendChild(addBtn);
+    bands.appendChild(addBtn);
 
-    const untieredSection = document.createElement("div");
-    untieredSection.className = "priority-untiered-section";
-    untieredSection.innerHTML = `
-      <div class="priority-tier-heading">
-        <span class="priority-tier-label-text">Untiered</span>
-        <span class="priority-tier-sub">After all tiers</span>
+    // The "Not ranked" pool sits below every tier and is itself tier 0 — the
+    // same move target, just the bucket that plays last. It doesn't reorder, so
+    // it lives outside the bands wrapper the tier-reorder binding watches.
+    const pool = document.createElement("div");
+    pool.className = "priority-band priority-band--pool";
+    pool.innerHTML = `
+      <div class="priority-band-headrow">
+        <div class="priority-band-head priority-band-head--static">
+          <span class="priority-band-title">Not ranked</span>
+          <span class="priority-tier-sub">Plays after all tiers</span>
+        </div>
       </div>
-      <div class="priority-drop-zone priority-untiered-drop" data-tier="0"></div>`;
-    const untieredZone = untieredSection.querySelector(".priority-drop-zone");
-    for (const show of showsByTier[0]) untieredZone.appendChild(showCard(show));
-    for (const pub of pubsByTier[0]) untieredZone.appendChild(pubCard(pub));
-    if (zoneIsEmpty(0)) untieredZone.innerHTML = `<div class="priority-drop-hint">All items assigned to tiers</div>`;
-    wireZone(untieredZone);
+      <div class="priority-drop-zone priority-untiered-drop" data-tier="0" role="list"></div>`;
+    fillZone(pool.querySelector(".priority-drop-zone"), 0, "Everything is ranked");
 
     body.innerHTML = "";
-    body.appendChild(tiersRow);
-    body.appendChild(untieredSection);
+    body.appendChild(bands);
+    body.appendChild(pool);
+
+    attachSortables(body, bands);
   }
 
   renderTiers();
@@ -42617,7 +42645,7 @@ function renderMediaAllList() {
       : isArt ? !!(state.savedArticles || []).find((a) => a.id === e.id && a.pinned)
       : false;
     html += `
-    <div class="article-row playlist-row podcast-episode-row podcast-draggable-row${isResume ? " is-resume" : ""}${e.id === mediaAllQueueId ? " article-row--active" : ""}" data-all-id="${escapeHtml(e.id)}" data-all-type="${escapeHtml(e.type)}"${isPod ? ` data-episode-id="${escapeHtml(e.id)}"` : ""}${e.showId ? ` data-show-id="${escapeHtml(e.showId)}"` : ""} draggable="true" role="button" tabindex="0">
+    <div class="article-row playlist-row podcast-episode-row podcast-draggable-row${isResume ? " is-resume" : ""}${e.id === mediaAllQueueId ? " article-row--active" : ""}" data-all-id="${escapeHtml(e.id)}" data-all-type="${escapeHtml(e.type)}"${isPod ? ` data-episode-id="${escapeHtml(e.id)}"` : ""}${e.showId ? ` data-show-id="${escapeHtml(e.showId)}"` : ""} role="button" tabindex="0" aria-roledescription="Draggable item, Alt plus arrow keys to reorder">
       <button class="playlist-art-btn" type="button" data-all-art="${escapeHtml(e.id)}" tabindex="-1" aria-label="${isPod ? "Go to show" : "Open"}">${art}</button>
       <div class="article-row-main">
         ${isResume
@@ -42967,46 +42995,18 @@ function makeTouchReorder(listEl, { rowSelector, getId, onDrop, longPressMs = 28
   }, { passive: true });
 }
 
-function setupMediaAllDrag(listEl, items) {
-  makeTouchReorder(listEl, {
+// Media queue reorder — now on the shared sortable primitive (mouse + touch
+// long-press + auto-scroll + keyboard). The list element persists across renders
+// (innerHTML is replaced), and makeSortable delegates, so it binds ONCE. Persistence
+// is unchanged: the materialized DOM order becomes state.mediaAllPinnedOrder.
+function setupMediaAllDrag(listEl) {
+  if (listEl.__sortableBound) return;
+  listEl.__sortableBound = true;
+  makeSortable(listEl, {
     rowSelector: "[data-all-id]",
     getId: (row) => row.dataset.allId,
-    onDrop: (order) => { state.mediaAllPinnedOrder = order; persist(); renderMediaAllList(); },
-  });
-  let dragSrc = null;
-  listEl.querySelectorAll("[data-all-id]").forEach((row) => {
-    row.addEventListener("dragstart", (e) => {
-      dragSrc = row;
-      e.dataTransfer.effectAllowed = "move";
-      row.classList.add("is-dragging");
-    });
-    row.addEventListener("dragend", () => {
-      row.classList.remove("is-dragging");
-      listEl.querySelectorAll(".is-drag-over").forEach((r) => r.classList.remove("is-drag-over"));
-      dragSrc = null;
-    });
-  });
-  listEl.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    const target = e.target.closest("[data-all-id]");
-    if (!target || target === dragSrc) return;
-    listEl.querySelectorAll(".is-drag-over").forEach((r) => r.classList.remove("is-drag-over"));
-    target.classList.add("is-drag-over");
-  });
-  listEl.addEventListener("drop", (e) => {
-    e.preventDefault();
-    const target = e.target.closest("[data-all-id]");
-    if (!target || !dragSrc || target === dragSrc) return;
-    const ids = items.map((i) => i.id);
-    const from = ids.indexOf(dragSrc.dataset.allId);
-    const to = ids.indexOf(target.dataset.allId);
-    if (from < 0 || to < 0) return;
-    const [moved] = ids.splice(from, 1);
-    ids.splice(from < to ? to - 1 : to, 0, moved);
-    // Materialize the whole current arrangement as the pinned order
-    state.mediaAllPinnedOrder = ids;
-    persist();
-    renderMediaAllList();
+    onReorder: ({ order }) => { state.mediaAllPinnedOrder = order; persist(); renderMediaAllList(); },
+    itemLabel: (row) => (row.querySelector(".podcast-episode-title, .article-row-title")?.textContent || row.textContent || "item").trim().slice(0, 40),
   });
 }
 
@@ -47943,7 +47943,7 @@ function readingItemTemplate(item) {
   const audibleUrl = audibleSearchUrl(item.title, item.authors);
 
   return `
-    <article class="do-task-item watch-item reading-item" data-reading-item="${escapeHtml(item.id)}" draggable="true">
+    <article class="do-task-item watch-item reading-item" data-reading-item="${escapeHtml(item.id)}">
       <div class="watch-item-layout">
         ${coverHtml}
         <div class="watch-item-main">
@@ -47983,8 +47983,6 @@ function bindReadingControls(root = document) {
   });
   root.querySelectorAll("[data-reading-item]").forEach((article) => {
     article.addEventListener("contextmenu", openReadingItemMenu);
-    article.addEventListener("dragstart", handleReadingItemDragStart);
-    article.addEventListener("dragend", handleReadingItemDragEnd);
     article.addEventListener("mouseenter", () => {
       const itemId = article.dataset.readingItem;
       const item = readingItemById(itemId);
@@ -47995,6 +47993,22 @@ function bindReadingControls(root = document) {
       loadHclAvailability(itemId, item.title, item.authors).then(res => renderHclAvailability(availEl, res));
     }, { once: true });
   });
+  // Reading item → wishlist category tab (move mode). Only custom wishlist tabs
+  // accept a book; format tabs (Audible/Libby/…) are highlighted-but-ignored.
+  if (root.nodeType === 1 && !root.__sortableBound) {
+    root.__sortableBound = true;
+    makeSortable(root, {
+      rowSelector: "[data-reading-item]",
+      getId: (a) => a.dataset.readingItem,
+      reorder: false,
+      dropZoneSelector: "[data-book-tab]",
+      onDropZone: ({ itemId, zone }) => {
+        const key = zone.dataset.bookTab;
+        if (key && !BOOK_FORMAT_TABS.some((t) => t.key === key)) addBookToWishlist(itemId, key);
+      },
+      itemLabel: (a) => (a.querySelector(".reading-item-title")?.textContent || a.textContent || "book").trim().slice(0, 40),
+    });
+  }
 }
 
 function renderHclAvailability(el, res) {
