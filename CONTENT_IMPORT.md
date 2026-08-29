@@ -6,8 +6,9 @@ and the in-app cutover are implemented. The in-app "Import from URL" dialog now 
 `/import` and routes by detected type: a recipe opens the recipe form; an article is
 saved to the reading list (`state.savedArticles`, deduped on URL) with the extracted
 title/author/date/text. An Android **Web Share Target** routes shared links into that
-same importer. The Chrome extension still uses its own endpoints — that migration and AI
-fallback are **not** built yet.
+same importer. The Chrome extension's **recipe** import now `POST`s `/import` too (its
+article save intentionally stays on `save-article` — see below). AI fallback is **not**
+built.
 
 See `ARCHITECTURE_AUDIT.md` for the full plan this derives from. This file documents
 only what exists now.
@@ -97,9 +98,13 @@ separately (`source.url`); the canonical form is only a dedup key.
 
 ## Deliberately NOT here
 
-The Chrome-extension migration to `/import` (the extension still uses its own endpoints),
-microdata/RDFa recipe parsing, and AI fallback. Duplicate detection still uses each
-domain's
+Extension **article** migration and popup unification (the extension's recipe import now
+uses `/import`, but its article save deliberately stays on `save-article`: the extension's
+own rendered-DOM extraction already produces exactly what `save-article` persists, so
+round-tripping it through the gateway's *server-side* extractor would add a call and a
+failure mode for no gain — unifying the popup into one "Add to Tableplan" button is a
+later UX task). Also not here: microdata/RDFa recipe parsing and AI fallback. Duplicate
+detection still uses each domain's
 existing exact-URL match (recipe `source_url`; article `savedArticles[].url`);
 canonicalization is available (and surfaced as `source.canonicalUrl`) for a later,
 backward-compatible dedup upgrade.

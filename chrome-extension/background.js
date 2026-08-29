@@ -1,6 +1,6 @@
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5veW9jamNsdHJlbndkb3ZxcnFsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzMjk5MjUsImV4cCI6MjA5MzkwNTkyNX0.UFs3GHdG2yuqOvPGXr6D8DjbvnTLzgC5-KGilg4Oc94";
-const IMPORT_RECIPE_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/import-recipe";
+const IMPORT_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/import";
 const SAVE_ARTICLE_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/save-article";
 const IMPORT_PDF_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/import-pdf-background";
 const SAVE_PAGE_ARTICLES_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/save-page-articles";
@@ -383,16 +383,23 @@ function detectPublication(url) {
 }
 
 async function parseRecipe(recipeUrl, accessToken) {
-  const helperUrl = IMPORT_RECIPE_URL;
-  // import-recipe verifies the Supabase session before parsing (401 otherwise),
-  // so send the same Bearer token every other extension→function call uses.
-  const response = await fetch(`${helperUrl}?url=${encodeURIComponent(recipeUrl)}`, {
-    headers: { authorization: `Bearer ${accessToken}` }
+  // Unified import gateway: POST the URL, get the import contract back. The gateway
+  // verifies the session (401 otherwise), fetches safely, detects the type, and
+  // returns { type, status, data, ... }. This action imports recipes, so a recipe
+  // result is returned; an article is reported clearly. (Persistence stays here —
+  // the gateway is stateless — so saveRecipe still writes eat_recipes as before.)
+  const response = await fetch(IMPORT_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ source: { url: recipeUrl, sourceClient: "extension" } })
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || `Import failed with status ${response.status}`);
-  if (!payload.recipe?.name && !payload.recipe?.ingredients?.length) throw new Error("No recipe data found.");
-  return payload.recipe;
+  if (!response.ok) throw new Error(payload.error || payload.warnings?.[0] || `Import failed with status ${response.status}`);
+  if (payload.type === "recipe" && payload.data && (payload.data.name || payload.data.ingredients?.length)) {
+    return payload.data;
+  }
+  if (payload.type === "article") throw new Error("That page looks like an article, not a recipe.");
+  throw new Error("No recipe data found.");
 }
 
 async function recipeBySourceUrl(sourceUrl, accessToken) {
