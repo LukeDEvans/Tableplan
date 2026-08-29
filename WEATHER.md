@@ -126,3 +126,47 @@ address — set a real contact before relying on it in production.
       Note: sailing also needs marine (wave) + cloud-cover %, which the NWS-based
       service doesn't provide — migrating it needs a small design decision (keep
       marine via a separate adapter vs. add those fields), so it's its own change.
+
+## Weather 2.0 — UI redesign (branch `weather-2.0`)
+
+A presentation-layer redesign ("calm card stack") over the SAME `weather.js` +
+`getWeatherSnapshot` service — **no backend, model, or provider change to the data
+path**. The normalized model was rich enough as-is (the NWS `icon` token + `isDaytime`
++ `shortForecast` drive everything).
+
+**New pure modules (unit-tested):**
+- `weather-condition.js` — interprets the already-normalized `icon`/text/day-night into
+  one canonical condition set (+ heavy/severe refinement, text-only fallback for
+  observations, `weatherEmphasis()` for the reactive hierarchy). NOT a data source.
+- `weather-art.js` — the ARTWORK SKIN: `(condition, isDay) -> inline SVG` hero art +
+  forecast icons. Deliberately isolated so the "calm" set can later be swapped for an
+  atmospheric/animated set without touching callers.
+
+**UI (all in app.js, `renderWeatherPage` + `wx*` components):** atmospheric hero
+(condition + time-of-day artwork, mood-tinted sky, dominant temp, provenance, chips),
+horizontal hourly rail, 7-day folded from day/night periods into hi/lo rows with
+temp-range bars, grouped detail (Wind dial · Comfort · Sun & Sky arc · Air), 12h temp+
+precip trend chart, location rail, progressive NWS feed, upgraded alerts. Two-column
+desktop / single-column mobile; light + dark; `minmax(0,…)` grids (no blowout).
+
+**Map (`openWeatherRadarMap`):** RADAR | SATELLITE modes.
+- Radar = the existing NOAA IDP base-reflectivity WMS (single frame, discovered via
+  GetCapabilities). **Satellite = NASA GIBS GOES-East GeoColor**, latest frame via
+  `time=default`, `GoogleMapsCompatible_Level7` (maxNativeZoom 7). This is a deliberate
+  **non-NOAA provider** choice — GOES-derived, reliably tiled, ~10-min cadence — the only
+  reliable tiled satellite source found; documented here per the brief.
+- Base map switched CARTO → **Esri gray canvas** (keyless, theme-aware) because CARTO's
+  free basemaps now stamp an "API KEY REQUIRED" watermark.
+- Warnings (alert polygons) kept. States: radar-offline disables its mode + falls back to
+  satellite; satellite tile errors show "temporarily unavailable"; freshness + attribution
+  always shown. `sw.js` SKIP_HOSTS excludes gibs + arcgisonline (tiles never cached).
+
+**NOAA limitations reconfirmed live:** no reliable historical radar frames → **no timeline/
+animation** (not faked). NDFD overlays still thin. If radar animation is ever wanted, a
+non-NOAA frame provider (e.g. RainViewer) is the explicit future decision.
+
+**Verified (browser, live NWS data):** hero/rails/detail/chart/feed at 360/390/desktop ×
+light/dark, 0 horizontal overflow, no render errors; map opens, radar + GIBS satellite
+tiles load, mode-switch + freshness labels correct. `weather-*` tests: 49 green.
+**Not live-verifiable at build time:** severe/alert + night + stale states (no active US
+alerts existed during QA; day everywhere) — covered by unit tests + the design mockup.
