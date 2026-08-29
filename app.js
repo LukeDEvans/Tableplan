@@ -17,6 +17,7 @@ import { sourceFromPlanCalendar, isGoogleCalendarUrl } from './calendar/sources.
 import { normalizeExternalEvent } from './calendar/normalize.js';
 import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap, upsertTitleOverride } from './calendar/reconcile.js';
 import { taskIsScheduled } from './calendar/tasks-project.js';
+import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
 import { beginTasksWeekSession, stepTasksWeek, endTasksWeekSession, tasksBellState } from './tasks-overlay.js';
@@ -8000,112 +8001,220 @@ function openFinanceTxnReview() {
   overlay.id = "finReviewOverlay";
   overlay.className = "fin-review-overlay";
   overlay.innerHTML = `
-    <div class="fin-review-modal" role="dialog" aria-modal="true" aria-label="Label transactions">
+    <div class="fin-review-modal" role="dialog" aria-modal="true" aria-label="Review transactions">
       <div class="fin-review-head">
-        <span class="fin-review-title">Label transactions</span>
+        <span class="fin-review-title">Review transactions</span>
+        <span class="fin-review-count" data-fin-review-count aria-live="polite"></span>
         <button class="fin-review-close" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
-      <div class="fin-review-deck" data-fin-review-deck></div>
+      <div class="fin-review-deck" data-fin-review-deck tabindex="0"></div>
     </div>`;
   document.body.appendChild(overlay);
   const close = () => { overlay.remove(); if (activeAppArea === "finance") renderFinancePage(); };
   overlay.querySelector(".fin-review-close").addEventListener("click", close);
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) return close();
+    if (e.target.closest("[data-fin-review-close]")) return close();
+  });
   renderFinanceReviewDeck();
   wireFinanceReviewDeck(overlay);
+  overlay.querySelector("[data-fin-review-deck]")?.focus();
 }
 
 function renderFinanceReviewDeck() {
   const deck = document.querySelector("[data-fin-review-deck]");
   if (!deck) return;
   const groups = financeReviewGroups();
-  if (!groups.length) {
-    deck.innerHTML = `<div class="fin-review-empty">All caught up — everything's labeled. 🎉</div>`;
-    return;
-  }
+  if (!groups.length) { updateFinanceReviewProgress(deck); return; } // paints the caught-up state
+  const names = state.financeMerchantNames || {};
+  const noteOverrides = state.financeTxnNoteOverrides || {};
   deck.innerHTML = groups.map((g) => {
     const t = g.rep;
-    const date = t.posted ? new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
-    const meta = [t.account, date, g.count > 1 ? `${g.count} charges` : ""].filter(Boolean).join(" · ");
+    const mKey = financeMerchantKey(t.description);
+    const nameVal = names[mKey] || "";
+    const noteVal = Object.prototype.hasOwnProperty.call(noteOverrides, t.id) ? (noteOverrides[t.id] || "") : "";
+    const date = t.posted ? new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
+    // Bank facts (read-only): account · date · status. Manual entries say so.
+    const status = t.isManual ? "Manual" : (t.pending ? "Pending" : (t.posted ? "Posted" : ""));
+    const facts = [t.account, date, status].filter(Boolean).join(" · ");
+    const merchantTitle = nameVal || t.description || "Transaction";
+    const showRaw = nameVal && nameVal !== t.description; // renamed → surface the original bank text
     return `
-    <div class="fin-review-card" data-review-key="${escapeHtml(g.key)}">
-      <div class="fin-review-action fin-review-action-snooze" aria-hidden="true">Snooze</div>
-      <div class="fin-review-action fin-review-action-done" aria-hidden="true">Done</div>
+    <div class="fin-review-card" data-review-key="${escapeHtml(g.key)}" data-txn-id="${escapeHtml(t.id)}">
+      <div class="fin-review-action fin-review-action-done" aria-hidden="true">✓ Approve</div>
       <div class="fin-review-card-inner">
-        <div class="fin-review-amount${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</div>
-        <div class="fin-review-merchant">${escapeHtml(t.displayName || t.description || "Transaction")}</div>
-        ${meta ? `<div class="fin-review-meta">${escapeHtml(meta)}</div>` : ""}
-        <select class="fin-txn-label fin-review-label" data-review-label data-id="${escapeHtml(t.id)}" data-desc="${escapeHtml(t.description)}" aria-label="Budget category">
-          <option value="">Pick a category…</option>
-          ${financeTxnLabelOptionsHtml("")}
-        </select>
-        <div class="fin-review-hint"><span>← Snooze</span><span>↑ ↓ browse</span><span>Done →</span></div>
+        <div class="fin-review-body">
+          <div class="fin-review-amount${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</div>
+          <div class="fin-review-merchant">${escapeHtml(merchantTitle)}</div>
+          ${facts ? `<div class="fin-review-facts">${escapeHtml(facts)}</div>` : ""}
+          ${showRaw ? `<div class="fin-review-raw">Bank: ${escapeHtml(t.description)}</div>` : ""}
+          ${g.count > 1 ? `<div class="fin-review-group"><strong>${g.count} matching transactions</strong> from this merchant. Approving applies the category to all of them.</div>` : ""}
+          <label class="fin-review-field">Category
+            <select class="fin-txn-label fin-review-label" data-review-label data-id="${escapeHtml(t.id)}" data-desc="${escapeHtml(t.description)}" aria-label="Budget category">
+              <option value="">Pick a category…</option>
+              ${financeTxnLabelOptionsHtml("")}
+            </select>
+          </label>
+          <label class="fin-review-field">Name
+            <input type="text" class="fin-review-input" data-review-name value="${escapeHtml(nameVal)}" placeholder="${escapeHtml(t.description || "Merchant")}" aria-label="Merchant display name" />
+          </label>
+          <label class="fin-review-field">Note
+            <input type="text" class="fin-review-input" data-review-note value="${escapeHtml(noteVal)}" placeholder="Add a note (optional)" maxlength="60" aria-label="Purchase note" />
+          </label>
+          <div class="fin-review-actions">
+            <button class="fin-review-approve" type="button" data-fin-review-approve>✓ Approve</button>
+            <button class="fin-review-secondary" type="button" data-fin-review-more>Edit details…</button>
+            <button class="fin-review-secondary" type="button" data-fin-review-skip>Skip for now</button>
+          </div>
+        </div>
+        <div class="fin-review-hint" aria-hidden="true"><span>↑ ↓ browse</span><span>swipe right to approve →</span></div>
       </div>
     </div>`;
   }).join("");
+  updateFinanceReviewProgress(deck);
 }
 
-// Re-render the deck after an action while keeping the user near where they
-// were (the acted card is gone; the next one lands in its place).
-function refreshFinanceReviewDeck() {
-  const deck = document.querySelector("[data-fin-review-deck]");
-  const saved = deck?.scrollTop || 0;
-  renderFinanceReviewDeck();
-  if (deck) deck.scrollTop = saved;
+// Progress + completion. Cards are removed one at a time as they're approved or
+// skipped (never a full re-render), so any edits typed on other cards survive.
+function updateFinanceReviewProgress(deck) {
+  deck = deck || document.querySelector("[data-fin-review-deck]");
+  if (!deck) return;
+  const cards = [...deck.querySelectorAll(".fin-review-card")];
+  const countEl = document.querySelector("[data-fin-review-count]");
+  if (!cards.length) {
+    deck.innerHTML = `<div class="fin-review-empty">
+      <div class="fin-review-empty-check" aria-hidden="true">✓</div>
+      <div class="fin-review-empty-title">All caught up</div>
+      <div class="fin-review-empty-sub">You've reviewed every transaction that needed attention.</div>
+      <button class="fin-review-approve" type="button" data-fin-review-close>Back to Transactions</button>
+    </div>`;
+    if (countEl) countEl.textContent = "";
+    return;
+  }
+  const idx = deck.clientHeight ? Math.round(deck.scrollTop / deck.clientHeight) : 0;
+  if (countEl) countEl.textContent = `${Math.min(idx + 1, cards.length)} of ${cards.length}`;
 }
 
-let financeReviewWired = false;
+const finReviewReduceMotion = () => typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// Fling/collapse the card off, then remove it and refresh progress. Approve
+// flings right (matching the gesture); skip collapses in place.
+function finishFinanceReviewCard(card, kind) {
+  if (!card) return;
+  const deck = card.closest("[data-fin-review-deck]");
+  const inner = card.querySelector(".fin-review-card-inner");
+  const done = () => { card.remove(); updateFinanceReviewProgress(deck); };
+  if (inner && !finReviewReduceMotion()) {
+    inner.style.transition = "transform 0.22s ease, opacity 0.22s ease";
+    inner.style.transform = kind === "approve" ? "translateX(120%) rotate(6deg)" : "scale(0.96)";
+    inner.style.opacity = "0";
+    setTimeout(done, 210);
+  } else {
+    done();
+  }
+}
+
+// Approve = commit this review card and drop it from the queue. Requires a
+// category (the whole point of the queue is labeling); a bare approval nudges
+// the picker instead of silently doing nothing. Reuses the existing persistence
+// (saveRenameTxn for name/note, recordFinanceTxnLabel for the category + the
+// learned merchant rule that clears the whole matching group).
+function approveFinanceReviewCard(card) {
+  if (!card) return false;
+  const sel = card.querySelector("[data-review-label]");
+  const cat = sel?.value || "";
+  if (!cat) {
+    card.classList.add("fin-review-need-cat");
+    setTimeout(() => card.classList.remove("fin-review-need-cat"), 1200);
+    try { sel?.focus(); } catch { /* not focusable */ }
+    return false;
+  }
+  const id = sel.dataset.id, rawDesc = sel.dataset.desc || "";
+  const nameInput = card.querySelector("[data-review-name]");
+  const noteInput = card.querySelector("[data-review-note]");
+  // Only touch name/note storage when the user actually edited them.
+  if (nameInput && noteInput && (nameInput.value !== nameInput.defaultValue || noteInput.value !== noteInput.defaultValue)) {
+    saveRenameTxn(id, rawDesc, nameInput.value, noteInput.value);
+  }
+  recordFinanceTxnLabel(id, cat, rawDesc); // labels + learns the merchant rule + updates the bell count
+  finishFinanceReviewCard(card, "approve");
+  return true;
+}
+
+function skipFinanceReviewCard(card) {
+  if (!card) return;
+  financeSnoozeLabelGroup(card.dataset.reviewKey); // returns tomorrow; not an approval
+  finishFinanceReviewCard(card, "skip");
+}
+
+// "Edit details…" hands off to the existing main-list detail card, which owns
+// the advanced editors (split, receipt scan, return linking, sign correction)
+// — reused rather than duplicated inside the review deck.
+function openFinanceTxnDetailFromReview(card) {
+  const id = card?.dataset.txnId;
+  if (!id) return;
+  document.getElementById("finReviewOverlay")?.remove();
+  financeDetailTxnId = id;
+  financeExpanded.add("card:txns");
+  if (activeAppArea === "finance") renderFinancePage();
+}
+
 function wireFinanceReviewDeck(overlay) {
   const deck = overlay.querySelector("[data-fin-review-deck]");
   if (!deck) return;
-  // Picking a category labels the transaction (dropping it from the queue).
-  deck.addEventListener("change", (e) => {
-    const sel = e.target.closest("[data-review-label]");
-    if (!sel || !sel.value) return;
-    recordFinanceTxnLabel(sel.dataset.id, sel.value, sel.dataset.desc || "");
-    refreshFinanceReviewDeck();
+
+  // Buttons (the non-gesture path — approval is always possible without swiping).
+  deck.addEventListener("click", (e) => {
+    const card = e.target.closest(".fin-review-card");
+    if (e.target.closest("[data-fin-review-approve]")) { approveFinanceReviewCard(card); return; }
+    if (e.target.closest("[data-fin-review-skip]")) { skipFinanceReviewCard(card); return; }
+    if (e.target.closest("[data-fin-review-more]")) { openFinanceTxnDetailFromReview(card); return; }
   });
-  // Swipe: horizontal drag acts (left = snooze, right = done/next); vertical is
-  // left to the deck's native scroll-snap so up/down browses.
+
+  deck.addEventListener("scroll", () => updateFinanceReviewProgress(deck), { passive: true });
+
+  // Keyboard: ↑/↓ browse (never approves); form controls keep their own arrow
+  // behavior. Approval by keyboard is the focusable Approve button (Enter).
+  deck.addEventListener("keydown", (e) => {
+    if (e.target.closest("select, input, textarea")) return;
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    const idx = deck.clientHeight ? Math.round(deck.scrollTop / deck.clientHeight) : 0;
+    const to = e.key === "ArrowDown" ? idx + 1 : idx - 1;
+    deck.scrollTo({ top: Math.max(0, to) * deck.clientHeight, behavior: "smooth" });
+    e.preventDefault();
+  });
+
+  // Touch swipe, axis-locked by the pure classifier so a vertical/diagonal drag
+  // can never approve (see finance-review-gesture.js + its test).
   let card = null, sx = 0, sy = 0, axis = null;
-  const parts = (c) => ({ inner: c.querySelector(".fin-review-card-inner"), snooze: c.querySelector(".fin-review-action-snooze"), done: c.querySelector(".fin-review-action-done") });
+  const parts = (c) => ({ inner: c.querySelector(".fin-review-card-inner"), done: c.querySelector(".fin-review-action-done") });
+  const reset = (c) => { const { inner, done } = parts(c); if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = ""; } if (done) done.style.opacity = 0; };
   deck.addEventListener("touchstart", (e) => {
     card = e.target.closest(".fin-review-card") || null;
     if (!card) return;
-    if (e.target.closest(".fin-review-label")) { card = null; return; } // let the picker open
+    if (e.target.closest("input, select, textarea, button, a")) { card = null; return; } // let controls work
     sx = e.touches[0].clientX; sy = e.touches[0].clientY; axis = null;
   }, { passive: true });
   deck.addEventListener("touchmove", (e) => {
     if (!card) return;
     const dx = e.touches[0].clientX - sx, dy = e.touches[0].clientY - sy;
-    if (!axis) { if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return; axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y"; }
-    if (axis !== "x") return;
+    if (!axis) { axis = reviewGestureAxis(dx, dy); if (!axis) return; }
+    if (axis !== "x") return; // vertical → let the deck scroll-snap (browse)
     e.preventDefault();
-    const { inner, snooze, done } = parts(card);
-    if (inner) { inner.style.transition = "none"; inner.style.transform = `translateX(${dx}px) rotate(${dx * 0.02}deg)`; }
-    const t = Math.min(1, Math.abs(dx) / 120);
-    if (done) done.style.opacity = dx > 0 ? t : 0;
-    if (snooze) snooze.style.opacity = dx < 0 ? t : 0;
+    const { inner, done } = parts(card);
+    const shown = Math.max(dx, -48); // leftward barely follows (it's a no-op)
+    if (inner) { inner.style.transition = "none"; inner.style.transform = `translateX(${shown}px) rotate(${shown * 0.02}deg)`; }
+    if (done) done.style.opacity = dx > 0 ? Math.min(1, dx / REVIEW_GESTURE.approveThresholdPx) : 0;
   }, { passive: false });
   deck.addEventListener("touchend", (e) => {
     if (!card) return;
     const c = card, ax = axis; card = null; axis = null;
-    if (ax !== "x") return;
+    if (ax !== "x") return; // vertical was native scroll
     const dx = e.changedTouches[0].clientX - sx;
-    const { inner } = parts(c);
-    const key = c.dataset.reviewKey;
-    const THRESH = 90;
-    if (dx < -THRESH) { // snooze for the day
-      if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = "translateX(-120%) rotate(-6deg)"; }
-      setTimeout(() => { financeSnoozeLabelGroup(key); refreshFinanceReviewDeck(); }, 170);
-    } else if (dx > THRESH) { // done — advance to the next card
-      const idx = deck.clientHeight ? Math.round(deck.scrollTop / deck.clientHeight) : 0;
-      if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = ""; }
-      deck.scrollTo({ top: (idx + 1) * deck.clientHeight, behavior: "smooth" });
+    if (reviewGestureAction(ax, dx) === "approve") {
+      if (!approveFinanceReviewCard(c)) reset(c); // no category → snap back
     } else {
-      if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = ""; }
-      parts(c).snooze && (parts(c).snooze.style.opacity = 0);
-      parts(c).done && (parts(c).done.style.opacity = 0);
+      reset(c); // leftward or too-small → no state change
     }
   }, { passive: true });
 }
@@ -8150,7 +8259,7 @@ function financeAccountsNeedingAttention() {
 
 // The finance bell / home-tile badge total.
 function financeBellCount() {
-  return financeBellCount() + financeAccountsNeedingAttention().length;
+  return financeUnlabeledCount() + financeAccountsNeedingAttention().length;
 }
 
 // Persist this month's per-category totals (and income received) so history

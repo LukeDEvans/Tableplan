@@ -20953,13 +20953,33 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-review-action { position: absolute; top: 0; bottom: 0; width: 45%; display: flex; align-items: center; font-size: 1.4rem; font-weight: 850; color: #fff; opacity: 0; pointer-events: none; text-transform: uppercase; }
 .fin-review-action-done { right: 0; justify-content: flex-end; padding-right: 26px; background: linear-gradient(90deg, transparent, var(--accent)); }
 .fin-review-action-snooze { left: 0; justify-content: flex-start; padding-left: 26px; background: linear-gradient(-90deg, transparent, #c9902b); }
-.fin-review-card-inner { position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; background: var(--window-bg); will-change: transform; touch-action: pan-y; }
+.fin-review-card-inner { position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column; background: var(--window-bg); will-change: transform; touch-action: pan-y; }
+.fin-review-card.fin-review-need-cat .fin-review-label { outline: 2px solid #c9902b; outline-offset: 1px; border-radius: 8px; animation: finReviewNudge 0.3s ease; }
+@keyframes finReviewNudge { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
+@media (prefers-reduced-motion: reduce) { .fin-review-card.fin-review-need-cat .fin-review-label { animation: none; } }
+/* Scrollable content column so a full card (facts + fields + actions) fits any
+   viewport; the hint pins to the bottom. */
+.fin-review-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 22px 24px 60px; text-align: center; }
+.fin-review-count { margin-left: auto; margin-right: 12px; font-size: 0.82rem; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
 .fin-review-amount { font-size: 2.4rem; font-weight: 850; color: var(--accent-dark); }
 .fin-review-amount.is-neg { color: var(--ink); }
 .fin-review-merchant { font-size: 1.25rem; font-weight: 800; color: var(--ink); line-height: 1.25; }
-.fin-review-meta { font-size: 0.85rem; font-weight: 600; color: var(--muted); }
-.fin-review-label { max-width: 320px; width: 100%; font-size: 1rem; padding: 12px 14px; margin-top: 8px; }
-.fin-review-hint { position: absolute; left: 0; right: 0; bottom: 18px; display: flex; justify-content: space-between; padding: 0 20px; font-size: 0.72rem; font-weight: 700; color: var(--muted); }
+.fin-review-meta, .fin-review-facts { font-size: 0.85rem; font-weight: 600; color: var(--muted); }
+.fin-review-raw { font-size: 0.76rem; color: var(--muted); opacity: 0.85; }
+/* Merchant-grouping callout — explains "approve labels the whole group". */
+.fin-review-group { max-width: 360px; width: 100%; font-size: 0.8rem; line-height: 1.35; color: var(--ink); background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: 10px; padding: 8px 12px; margin-top: 2px; }
+.fin-review-field { max-width: 360px; width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); text-align: left; margin-top: 4px; }
+.fin-review-label, .fin-review-input { width: 100%; font-size: 1rem; padding: 11px 13px; border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); border-radius: 9px; background: var(--input-bg, var(--window-bg)); color: var(--ink); font-family: inherit; text-transform: none; letter-spacing: normal; }
+.fin-review-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 360px; width: 100%; margin-top: 14px; }
+.fin-review-approve { flex: 1 1 100%; padding: 13px 16px; font-size: 1rem; font-weight: 800; color: #fff; background: var(--accent); border: none; border-radius: 10px; cursor: pointer; }
+.fin-review-approve:hover { background: var(--accent-dark); }
+.fin-review-secondary { flex: 1 1 40%; padding: 10px 12px; font-size: 0.85rem; font-weight: 700; color: var(--ink); background: color-mix(in srgb, var(--ink) 7%, transparent); border: none; border-radius: 9px; cursor: pointer; }
+.fin-review-secondary:hover { background: color-mix(in srgb, var(--ink) 12%, transparent); }
+.fin-review-empty-check { width: 56px; height: 56px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent-dark); font-size: 1.8rem; font-weight: 850; display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; }
+.fin-review-empty-title { font-size: 1.3rem; font-weight: 850; color: var(--ink); }
+.fin-review-empty-sub { font-size: 0.9rem; color: var(--muted); margin: 6px 0 18px; max-width: 300px; }
+.fin-review-empty .fin-review-approve { max-width: 260px; flex: 0 0 auto; }
+.fin-review-hint { flex: 0 0 auto; position: absolute; left: 0; right: 0; bottom: 14px; display: flex; justify-content: space-between; padding: 0 20px; font-size: 0.72rem; font-weight: 700; color: var(--muted); pointer-events: none; }
 .fin-rec-row { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding-top: 6px; }
 .fin-rec-link-row { padding-bottom: 6px; }
 .fin-recap-row { min-height: 24px; }
