@@ -30823,19 +30823,27 @@ function openImportDialog(prefilledUrl = "", shouldAutoFetch = false) {
 async function importRecipeFromUrl() {
   const url = normalizeRecipeUrlInput(elements.importUrl.value);
   if (!url) {
-    setImportStatus("Paste a recipe URL first.");
+    setImportStatus("Paste a recipe or article URL first.");
     return;
   }
   elements.importUrl.value = url;
 
-  setImportStatus("Trying to read recipe data from the page...");
+  setImportStatus("Reading the page…");
   elements.fetchRecipeBtn.disabled = true;
   try {
-    const recipe = await fetchRecipeWithBestAvailableMethod(url);
-    if (!recipe.name && !recipe.ingredients.length) {
-      throw new Error("No structured recipe data found.");
+    // The gateway auto-detects the content type; route the result to the right home:
+    // a recipe opens the recipe form, an article is saved to the reading list.
+    const result = await importViaGateway(url);
+    if (result?.type === "recipe" && result.data && (result.data.name || result.data.ingredients?.length)) {
+      openImportedRecipe({ ...result.data, folderId: "" });
+      return;
     }
-    openImportedRecipe(recipe);
+    if (result?.type === "article" && result.data && (result.data.text || result.data.title)) {
+      elements.importDialog.close();
+      saveImportedArticle(result.data, url);
+      return;
+    }
+    setImportStatus("No recipe or article could be read from that URL. If it is blocked, copy the recipe text and paste it below.");
   } catch {
     setImportStatus("This URL could not be read directly. If it is NYT, Bon Appetit, or Google Drive, copy the recipe text and paste it below.");
   } finally {
@@ -30843,28 +30851,31 @@ async function importRecipeFromUrl() {
   }
 }
 
-async function fetchRecipeWithBestAvailableMethod(url) {
+// POST a URL to the unified import gateway and return the import contract
+// ({ type, status, data, warnings, source }). When no server backend is reachable
+// (a non-http context) fall back to a client-side recipe parse wrapped as a
+// contract so the caller can treat both paths uniformly.
+async function importViaGateway(url) {
   trackUsage("claude_recipe_import");
-  const helperUrl = recipeImportHelperUrl(url);
-  if (helperUrl) {
-    const response = await fetch(helperUrl, { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || `Import helper failed with status ${response.status}`);
-    return {
-      ...payload.recipe,
-      folderId: ""
-    };
+  const endpoint = importGatewayUrl();
+  if (!endpoint) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Fetch failed with status ${response.status}`);
+    return { type: "recipe", status: "needs-review", data: parseRecipeHtml(await response.text(), url) };
   }
-
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Fetch failed with status ${response.status}`);
-  const html = await response.text();
-  return parseRecipeHtml(html, url);
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` },
+    body: JSON.stringify({ source: { url, sourceClient: "in-app" } })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || payload.warnings?.[0] || `Import failed with status ${response.status}`);
+  return payload;
 }
 
-function recipeImportHelperUrl(url) {
-  if (canUseLocalBackend()) return `/api/import-recipe?url=${encodeURIComponent(url)}`;
-  if (window.location.protocol.startsWith("http")) return `/.netlify/functions/import-recipe?url=${encodeURIComponent(url)}`;
+function importGatewayUrl() {
+  if (canUseLocalBackend()) return "/api/import";
+  if (window.location.protocol.startsWith("http")) return "/.netlify/functions/import";
   return "";
 }
 
@@ -30878,10 +30889,15 @@ function normalizeRecipeUrlInput(value) {
 
 function handleImportUrlParameter() {
   const params = new URLSearchParams(window.location.search);
-  const importUrl = normalizeRecipeUrlInput(params.get("importUrl"));
+  // Accept the app's own ?importUrl= deep-link AND the Web Share Target params
+  // (?url= / ?text= / ?title=, per manifest.json share_target). Android Chrome
+  // often puts the shared link in `text`, so scan each candidate for the first
+  // URL. The import dialog auto-detects recipe vs article from here.
+  const shared = params.get("importUrl") || params.get("url") || params.get("text") || params.get("title") || "";
+  const importUrl = normalizeRecipeUrlInput(shared);
   if (!importUrl) return;
 
-  params.delete("importUrl");
+  ["importUrl", "url", "text", "title"].forEach((key) => params.delete(key));
   const nextQuery = params.toString();
   const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`;
   window.history.replaceState({}, "", nextUrl);
@@ -46700,6 +46716,34 @@ function saveArticleUrl(url) {
   if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
   state.savedArticles.push({ id, url, title: url, publication: pub, savedAt: new Date().toISOString(), author: null, date: null, text: null });
   persist();
+  if (activeAppArea === "media") switchMediaTab(pub);
+}
+
+// Save an article the import gateway already extracted — richer than saveArticleUrl's
+// stub (carries the detected title/author/date/text). Dedups on the exact URL so
+// re-importing the same link doesn't pile up duplicates.
+function saveImportedArticle(data, sourceUrl) {
+  const url = sourceUrl || data.url || "";
+  if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
+  const existing = state.savedArticles.find((a) => a.url === url);
+  if (existing) {
+    showMailToast("Article already saved.");
+    if (activeAppArea === "media") switchMediaTab(existing.publication || "other");
+    return;
+  }
+  const pub = data.publication || detectArticlePublication(url);
+  const id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `art_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  state.savedArticles.push({
+    id, url,
+    title: data.title || url,
+    publication: pub,
+    savedAt: new Date().toISOString(),
+    author: data.author || null,
+    date: data.date || null,
+    text: data.text || null,
+  });
+  persist();
+  showMailToast(`Saved “${data.title || "article"}”.`);
   if (activeAppArea === "media") switchMediaTab(pub);
 }
 
