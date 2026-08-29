@@ -8010,7 +8010,7 @@ function openFinanceTxnReview() {
       <div class="fin-review-deck" data-fin-review-deck tabindex="0"></div>
     </div>`;
   document.body.appendChild(overlay);
-  const close = () => { overlay.remove(); if (activeAppArea === "finance") renderFinancePage(); };
+  const close = () => { commitAllFinanceReviewCards(overlay); overlay.remove(); if (activeAppArea === "finance") renderFinancePage(); };
   overlay.querySelector(".fin-review-close").addEventListener("click", close);
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) return close();
@@ -8119,24 +8119,43 @@ function finishFinanceReviewCard(card, kind) {
 // the picker instead of silently doing nothing. Reuses the existing persistence
 // (saveRenameTxn for name/note, recordFinanceTxnLabel for the category + the
 // learned merchant rule that clears the whole matching group).
-function approveFinanceReviewCard(card) {
-  if (!card) return false;
+// Commit a card's staged edits (category + name/note) exactly once, via the
+// existing persistence. Guarded with a once-only flag so a commit can't run
+// twice for the same card — e.g. a fast double-tap during the 210ms approve
+// fling, or an approve immediately followed by a close — which would otherwise
+// double-count the learned merchant/note majority votes. Returns true if
+// anything was written. Called by both approve AND every close path, so a
+// picked category / typed name / typed note is never silently discarded.
+function commitFinanceReviewEdits(card) {
+  if (!card || card.dataset.finReviewCommitted === "1") return false;
   const sel = card.querySelector("[data-review-label]");
-  const cat = sel?.value || "";
-  if (!cat) {
+  if (!sel) return false;
+  const cat = sel.value || "";
+  const nameInput = card.querySelector("[data-review-name]");
+  const noteInput = card.querySelector("[data-review-note]");
+  const nameChanged = nameInput && nameInput.value !== nameInput.defaultValue;
+  const noteChanged = noteInput && noteInput.value !== noteInput.defaultValue;
+  if (!cat && !nameChanged && !noteChanged) return false; // nothing staged → leave it reviewable
+  card.dataset.finReviewCommitted = "1";
+  if (nameChanged || noteChanged) saveRenameTxn(sel.dataset.id, sel.dataset.desc || "", nameInput.value, noteInput.value);
+  if (cat) recordFinanceTxnLabel(sel.dataset.id, cat, sel.dataset.desc || ""); // labels + learns the merchant rule + updates the bell count
+  return true;
+}
+
+function commitAllFinanceReviewCards(root) {
+  (root || document).querySelectorAll?.(".fin-review-card").forEach(commitFinanceReviewEdits);
+}
+
+function approveFinanceReviewCard(card) {
+  if (!card || card.dataset.finReviewCommitted === "1") return false; // already committed (mid-fling)
+  const sel = card.querySelector("[data-review-label]");
+  if (!(sel && sel.value)) { // approval requires a category — nudge instead of a silent no-op
     card.classList.add("fin-review-need-cat");
     setTimeout(() => card.classList.remove("fin-review-need-cat"), 1200);
     try { sel?.focus(); } catch { /* not focusable */ }
     return false;
   }
-  const id = sel.dataset.id, rawDesc = sel.dataset.desc || "";
-  const nameInput = card.querySelector("[data-review-name]");
-  const noteInput = card.querySelector("[data-review-note]");
-  // Only touch name/note storage when the user actually edited them.
-  if (nameInput && noteInput && (nameInput.value !== nameInput.defaultValue || noteInput.value !== noteInput.defaultValue)) {
-    saveRenameTxn(id, rawDesc, nameInput.value, noteInput.value);
-  }
-  recordFinanceTxnLabel(id, cat, rawDesc); // labels + learns the merchant rule + updates the bell count
+  commitFinanceReviewEdits(card);
   finishFinanceReviewCard(card, "approve");
   return true;
 }
@@ -8153,7 +8172,9 @@ function skipFinanceReviewCard(card) {
 function openFinanceTxnDetailFromReview(card) {
   const id = card?.dataset.txnId;
   if (!id) return;
-  document.getElementById("finReviewOverlay")?.remove();
+  const overlay = document.getElementById("finReviewOverlay");
+  commitAllFinanceReviewCards(overlay); // don't lose staged edits when handing off to the detail card
+  overlay?.remove();
   financeDetailTxnId = id;
   financeExpanded.add("card:txns");
   if (activeAppArea === "finance") renderFinancePage();
