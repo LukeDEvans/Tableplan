@@ -2661,6 +2661,7 @@ async function toggleAuth() {
     // while signed out won't be merged into the cloud account.
     localStorage.setItem("live_signed_out_explicitly", new Date().toISOString());
     purgeLocalArticleContent(); // privacy default: drop local article bodies (backstop rehydrates on re-login)
+    purgeLocalCadenceContent(); // same: drop local Cadence score bytes (rehydrate from cadence-blobs on re-login)
     updateAuthUi();
     return;
   }
@@ -34976,6 +34977,23 @@ async function getCadence() {
     validateScoreModel: validation.validateScoreModel, validationSummary: validation.validationSummary,
   };
   return cadenceMod;
+}
+
+// Privacy default on explicit logout: drop the local Cadence score BYTES (the
+// "cadence" IndexedDB). Canonical metadata rides the synced `cadence` state
+// section and the bytes live in the private cadence-blobs bucket, so a re-login
+// rehydrates on demand — exactly the article-body model in
+// purgeLocalArticleContent(). Best-effort; reset the module handles so the next
+// getCadence() rebuilds against a fresh store.
+async function purgeLocalCadenceContent() {
+  try {
+    if (cadenceStorage?.close) await cadenceStorage.close(); // release the connection so deleteDatabase isn't blocked
+  } catch { /* best-effort */ }
+  cadenceStorage = null;
+  cadenceMod = null;
+  try {
+    if (typeof indexedDB !== "undefined" && indexedDB.deleteDatabase) indexedDB.deleteDatabase("cadence");
+  } catch { /* best-effort */ }
 }
 
 // ── Cadence ⇄ synced-state bridge (Phase 1 cross-device sync) ─────────────────
