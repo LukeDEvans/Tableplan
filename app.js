@@ -3140,6 +3140,13 @@ function mirrorStateToLocalStorage() {
   // the biggest thing in state, re-fetchable, and keeping them risks blowing
   // the ~5 MB localStorage cap.
   if (Array.isArray(base.podcasts)) base.podcasts = stripEpisodeDescriptions(base.podcasts);
+  // Backstopped article bodies (in local IndexedDB + the reading-content bucket)
+  // don't need to sit in the ~5 MB mirror; the reader re-reads them via the
+  // content store. Bodies without a backstop keep their text so an offline cold
+  // boot still shows them.
+  if (Array.isArray(base.savedArticles)) {
+    base.savedArticles = base.savedArticles.map((a) => (a && a.text && a.bodyRef?.cloud ? { ...a, text: null } : a));
+  }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(base));
     return;
@@ -6367,6 +6374,14 @@ function extractSectionData(keys) {
   // full text stays in memory during a session and is re-fetched via
   // ensureEpisodeDescription() when a user actually opens the notes.
   if (Array.isArray(obj.podcasts)) obj.podcasts = stripEpisodeDescriptions(obj.podcasts);
+  // Article bodies whose bytes are safely in the content-store backstop no longer
+  // ride the synced media section (the Disk-IO win — the section was rewritten
+  // with full article text on every media interaction). The reader re-reads them
+  // from the content store via bodyRef. Bodies NOT yet backstopped keep their
+  // synced text, so text is never dropped before it is durable elsewhere.
+  if (Array.isArray(obj.savedArticles)) {
+    obj.savedArticles = obj.savedArticles.map((a) => (a && a.text && a.bodyRef?.cloud ? { ...a, text: null } : a));
+  }
   return obj;
 }
 
@@ -46339,6 +46354,38 @@ function markArticleRead(id) {
   });
 }
 
+// Render an article's body into the reader. Prefers in-memory text (fast, no
+// flicker + keeps the content store populated), then the content store (local
+// IndexedDB → durable backstop via the saved bodyRef — this is how a cold-loaded
+// or cross-device article, whose synced text was dropped once it was safely in
+// the backstop, still reads offline/without re-fetching), then falls back to
+// fetching. article.text stays the fallback throughout.
+async function renderArticleBody(textEl, article, id) {
+  const paint = (html) => {
+    textEl.innerHTML = html;
+    wrapArticleWords(textEl);
+    if (listenArticle && listenArticle.id === id) highlightCurrentWord();
+  };
+  if (article.text) { paint(article.text); stashArticleBody(article); return; }
+
+  let body = null;
+  try { const ac = await getArticleContent(); if (ac) body = await ac.loadBody(id, { ref: article.bodyRef, fallbackText: null }); } catch { /* fall through to fetch */ }
+  if (openArticleId !== id) return; // user navigated away while the body loaded
+  if (body) { article.text = body; paint(body); return; } // repopulate session memory
+
+  if (!articleAutoFetchTried.has(id)) {
+    // Auto-fetch the text instead of making the user tap "Fetch" (e.g.
+    // NutritionFacts links arrive without body text). Fall back to the manual
+    // prompt only if the auto-fetch fails.
+    articleAutoFetchTried.add(id);
+    textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
+    fetchArticleText(id);
+  } else {
+    textEl.innerHTML = `<div class="article-fetch-prompt"><p>Article text not yet loaded.</p><p class="article-fetch-hint">Free and open-access articles load fully. Paywalled articles may return only the opening paragraphs.</p><button class="primary-btn" type="button" data-fetch-article="${escapeHtml(id)}">Fetch Article</button></div>`;
+    textEl.querySelector("[data-fetch-article]")?.addEventListener("click", () => { articleAutoFetchTried.delete(id); fetchArticleText(id); });
+  }
+}
+
 function openArticle(id, fromListId) {
   const article = (state.savedArticles || []).find((a) => a.id === id);
   if (!article) return;
@@ -46361,33 +46408,11 @@ function openArticle(id, fromListId) {
     const parts = [article.author, article.date].filter(Boolean);
     metaEl.textContent = parts.join(" · ");
   }
-  if (textEl) {
-    if (article.text) {
-      textEl.innerHTML = article.text;
-      stashArticleBody(article); // lazy backfill: mirror existing bodies into the content store as they're read
-    } else if (!articleAutoFetchTried.has(id)) {
-      // Auto-fetch the text instead of making the user tap "Fetch" (e.g.
-      // NutritionFacts links arrive without body text). Fall back to the manual
-      // prompt only if the auto-fetch fails.
-      articleAutoFetchTried.add(id);
-      textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
-      fetchArticleText(id);
-    } else {
-      textEl.innerHTML = `<div class="article-fetch-prompt"><p>Article text not yet loaded.</p><p class="article-fetch-hint">Free and open-access articles load fully. Paywalled articles may return only the opening paragraphs.</p><button class="primary-btn" type="button" data-fetch-article="${escapeHtml(id)}">Fetch Article</button></div>`;
-      textEl.querySelector("[data-fetch-article]")?.addEventListener("click", () => { articleAutoFetchTried.delete(id); fetchArticleText(id); });
-    }
-  }
+  if (textEl) renderArticleBody(textEl, article, id);
 
   listPanel?.querySelectorAll(".article-row").forEach((row) => {
     row.classList.toggle("article-row--active", row.dataset.articleId === id);
   });
-
-  // Wrap words so read-aloud can highlight them; if this is the article that's
-  // currently playing, sync the highlight to the current position right away.
-  if (textEl && article.text) {
-    wrapArticleWords(textEl);
-    if (listenArticle && listenArticle.id === id) highlightCurrentWord();
-  }
 
   // Always start a freshly opened article at the very top — reused reader DOM
   // otherwise keeps the previous article's scroll position.
