@@ -2659,6 +2659,7 @@ async function toggleAuth() {
     // Mark that this sign-out was user-initiated. On next sign-in, changes made
     // while signed out won't be merged into the cloud account.
     localStorage.setItem("live_signed_out_explicitly", new Date().toISOString());
+    purgeLocalArticleContent(); // privacy default: drop local article bodies (backstop rehydrates on re-login)
     updateAuthUi();
     return;
   }
@@ -3144,6 +3145,13 @@ function mirrorStateToLocalStorage() {
   // the biggest thing in state, re-fetchable, and keeping them risks blowing
   // the ~5 MB localStorage cap.
   if (Array.isArray(base.podcasts)) base.podcasts = stripEpisodeDescriptions(base.podcasts);
+  // Backstopped article bodies (in local IndexedDB + the reading-content bucket)
+  // don't need to sit in the ~5 MB mirror; the reader re-reads them via the
+  // content store. Bodies without a backstop keep their text so an offline cold
+  // boot still shows them.
+  if (Array.isArray(base.savedArticles)) {
+    base.savedArticles = base.savedArticles.map((a) => (a && a.text && a.bodyRef?.cloud ? { ...a, text: null } : a));
+  }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(base));
     return;
@@ -6371,6 +6379,14 @@ function extractSectionData(keys) {
   // full text stays in memory during a session and is re-fetched via
   // ensureEpisodeDescription() when a user actually opens the notes.
   if (Array.isArray(obj.podcasts)) obj.podcasts = stripEpisodeDescriptions(obj.podcasts);
+  // Article bodies whose bytes are safely in the content-store backstop no longer
+  // ride the synced media section (the Disk-IO win — the section was rewritten
+  // with full article text on every media interaction). The reader re-reads them
+  // from the content store via bodyRef. Bodies NOT yet backstopped keep their
+  // synced text, so text is never dropped before it is durable elsewhere.
+  if (Array.isArray(obj.savedArticles)) {
+    obj.savedArticles = obj.savedArticles.map((a) => (a && a.text && a.bodyRef?.cloud ? { ...a, text: null } : a));
+  }
   return obj;
 }
 
@@ -46694,6 +46710,38 @@ function markArticleRead(id) {
   });
 }
 
+// Render an article's body into the reader. Prefers in-memory text (fast, no
+// flicker + keeps the content store populated), then the content store (local
+// IndexedDB → durable backstop via the saved bodyRef — this is how a cold-loaded
+// or cross-device article, whose synced text was dropped once it was safely in
+// the backstop, still reads offline/without re-fetching), then falls back to
+// fetching. article.text stays the fallback throughout.
+async function renderArticleBody(textEl, article, id) {
+  const paint = (html) => {
+    textEl.innerHTML = html;
+    wrapArticleWords(textEl);
+    if (listenArticle && listenArticle.id === id) highlightCurrentWord();
+  };
+  if (article.text) { paint(article.text); stashArticleBody(article); return; }
+
+  let body = null;
+  try { const ac = await getArticleContent(); if (ac) body = await ac.loadBody(id, { ref: article.bodyRef, fallbackText: null }); } catch { /* fall through to fetch */ }
+  if (openArticleId !== id) return; // user navigated away while the body loaded
+  if (body) { article.text = body; paint(body); return; } // repopulate session memory
+
+  if (!articleAutoFetchTried.has(id)) {
+    // Auto-fetch the text instead of making the user tap "Fetch" (e.g.
+    // NutritionFacts links arrive without body text). Fall back to the manual
+    // prompt only if the auto-fetch fails.
+    articleAutoFetchTried.add(id);
+    textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
+    fetchArticleText(id);
+  } else {
+    textEl.innerHTML = `<div class="article-fetch-prompt"><p>Article text not yet loaded.</p><p class="article-fetch-hint">Free and open-access articles load fully. Paywalled articles may return only the opening paragraphs.</p><button class="primary-btn" type="button" data-fetch-article="${escapeHtml(id)}">Fetch Article</button></div>`;
+    textEl.querySelector("[data-fetch-article]")?.addEventListener("click", () => { articleAutoFetchTried.delete(id); fetchArticleText(id); });
+  }
+}
+
 function openArticle(id, fromListId) {
   const article = (state.savedArticles || []).find((a) => a.id === id);
   if (!article) return;
@@ -46716,32 +46764,11 @@ function openArticle(id, fromListId) {
     const parts = [article.author, article.date].filter(Boolean);
     metaEl.textContent = parts.join(" · ");
   }
-  if (textEl) {
-    if (article.text) {
-      textEl.innerHTML = article.text;
-    } else if (!articleAutoFetchTried.has(id)) {
-      // Auto-fetch the text instead of making the user tap "Fetch" (e.g.
-      // NutritionFacts links arrive without body text). Fall back to the manual
-      // prompt only if the auto-fetch fails.
-      articleAutoFetchTried.add(id);
-      textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
-      fetchArticleText(id);
-    } else {
-      textEl.innerHTML = `<div class="article-fetch-prompt"><p>Article text not yet loaded.</p><p class="article-fetch-hint">Free and open-access articles load fully. Paywalled articles may return only the opening paragraphs.</p><button class="primary-btn" type="button" data-fetch-article="${escapeHtml(id)}">Fetch Article</button></div>`;
-      textEl.querySelector("[data-fetch-article]")?.addEventListener("click", () => { articleAutoFetchTried.delete(id); fetchArticleText(id); });
-    }
-  }
+  if (textEl) renderArticleBody(textEl, article, id);
 
   listPanel?.querySelectorAll(".article-row").forEach((row) => {
     row.classList.toggle("article-row--active", row.dataset.articleId === id);
   });
-
-  // Wrap words so read-aloud can highlight them; if this is the article that's
-  // currently playing, sync the highlight to the current position right away.
-  if (textEl && article.text) {
-    wrapArticleWords(textEl);
-    if (listenArticle && listenArticle.id === id) highlightCurrentWord();
-  }
 
   // Always start a freshly opened article at the very top — reused reader DOM
   // otherwise keeps the previous article's scroll position.
@@ -46784,6 +46811,65 @@ function deleteOpenArticle() {
   deleteArticle(openArticleId);
 }
 
+// ── Article bodies → shared content store (local-first Phase 1a) ─────────────
+// Additive + reversible: bodies are dual-written to the content store (local
+// IndexedDB "reading" + the private reading-content durable backstop) while
+// savedArticles[].text stays the source of truth + fallback. Removing text from
+// synced state (the Disk-IO win) is a later, separately-reviewed step. Lazy,
+// best-effort, non-fatal — nothing here can break reading an article.
+// Ask the browser to keep our IndexedDB content across storage pressure. Origin-
+// wide (covers Cadence too), best-effort, capability-detected, non-blocking, and
+// never fatal — the content store is always backstopped in Supabase Storage, so
+// eviction only costs a re-fetch. Requested once, on first content-store use.
+let _persistRequested = false;
+function ensurePersistentStorage() {
+  if (_persistRequested) return;
+  _persistRequested = true;
+  try { navigator.storage?.persist?.().catch(() => {}); } catch { /* unsupported */ }
+}
+
+// Privacy default: purge local article content on logout. Safe because owned
+// bodies live in the reading-content backstop and rehydrate via bodyRef on the
+// next read; savedArticles metadata is cleared with the rest of state anyway.
+async function purgeLocalArticleContent() {
+  try {
+    const ac = _articleContentPromise ? await _articleContentPromise.catch(() => null) : null;
+    _articleContentPromise = null;
+    if (ac?.close) await ac.close(); // release the connection so deleteDatabase isn't blocked
+    if (typeof indexedDB !== "undefined" && indexedDB.deleteDatabase) indexedDB.deleteDatabase("reading");
+  } catch { /* best-effort */ }
+}
+
+let _articleContentPromise = null;
+async function getArticleContent() {
+  if (_articleContentPromise) return _articleContentPromise;
+  _articleContentPromise = (async () => {
+    try {
+      if (typeof indexedDB === "undefined") return null;
+      ensurePersistentStorage();
+      const [mc, storageMod] = await Promise.all([import("./media-content.js"), import("./content-store/storage.js")]);
+      const storage = storageMod.createIdbStorage(mc.READING_DB, 1, mc.READING_STORES);
+      return mc.createArticleContent({ storage, cloudClient: supabaseClient || null, userId: authSession?.user?.id || "personal" });
+    } catch { return null; }
+  })();
+  return _articleContentPromise;
+}
+
+// Fire-and-forget: mirror an article's body into the content store and record the
+// small cross-device ref on the synced metadata. Never throws to the caller.
+function stashArticleBody(article) {
+  if (!article?.id || !article.text) return;
+  (async () => {
+    try {
+      const ac = await getArticleContent();
+      if (!ac) return;
+      if (article.bodyRef?.cloud && await ac.hasLocal(article.id)) return; // already stored + uploaded
+      const ref = await ac.saveBody(article.id, article.text);
+      if (ref?.cloud && JSON.stringify(article.bodyRef) !== JSON.stringify(ref)) { article.bodyRef = ref; persist(); }
+    } catch { /* non-fatal — article.text remains authoritative */ }
+  })();
+}
+
 // Fetches an article's body text into state (returns the outcome). Shared by
 // the reader (auto-fetch on open) and the listen flow (fetch-then-play).
 async function ensureArticleText(id) {
@@ -46797,6 +46883,7 @@ async function ensureArticleText(id) {
     if (res.author) article.author = res.author;
     if (res.date) article.date = res.date;
     persist();
+    stashArticleBody(article); // mirror the fetched body into the content store
     return { ok: true };
   }
   return { ok: false, error: res?.error || "Could not extract article text." };
