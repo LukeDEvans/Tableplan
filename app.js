@@ -46364,6 +46364,7 @@ function openArticle(id, fromListId) {
   if (textEl) {
     if (article.text) {
       textEl.innerHTML = article.text;
+      stashArticleBody(article); // lazy backfill: mirror existing bodies into the content store as they're read
     } else if (!articleAutoFetchTried.has(id)) {
       // Auto-fetch the text instead of making the user tap "Fetch" (e.g.
       // NutritionFacts links arrive without body text). Fall back to the manual
@@ -46429,6 +46430,41 @@ function deleteOpenArticle() {
   deleteArticle(openArticleId);
 }
 
+// ── Article bodies → shared content store (local-first Phase 1a) ─────────────
+// Additive + reversible: bodies are dual-written to the content store (local
+// IndexedDB "reading" + the private reading-content durable backstop) while
+// savedArticles[].text stays the source of truth + fallback. Removing text from
+// synced state (the Disk-IO win) is a later, separately-reviewed step. Lazy,
+// best-effort, non-fatal — nothing here can break reading an article.
+let _articleContentPromise = null;
+async function getArticleContent() {
+  if (_articleContentPromise) return _articleContentPromise;
+  _articleContentPromise = (async () => {
+    try {
+      if (typeof indexedDB === "undefined") return null;
+      const [mc, storageMod] = await Promise.all([import("./media-content.js"), import("./content-store/storage.js")]);
+      const storage = storageMod.createIdbStorage(mc.READING_DB, 1, mc.READING_STORES);
+      return mc.createArticleContent({ storage, cloudClient: supabaseClient || null, userId: authSession?.user?.id || "personal" });
+    } catch { return null; }
+  })();
+  return _articleContentPromise;
+}
+
+// Fire-and-forget: mirror an article's body into the content store and record the
+// small cross-device ref on the synced metadata. Never throws to the caller.
+function stashArticleBody(article) {
+  if (!article?.id || !article.text) return;
+  (async () => {
+    try {
+      const ac = await getArticleContent();
+      if (!ac) return;
+      if (article.bodyRef?.cloud && await ac.hasLocal(article.id)) return; // already stored + uploaded
+      const ref = await ac.saveBody(article.id, article.text);
+      if (ref?.cloud && JSON.stringify(article.bodyRef) !== JSON.stringify(ref)) { article.bodyRef = ref; persist(); }
+    } catch { /* non-fatal — article.text remains authoritative */ }
+  })();
+}
+
 // Fetches an article's body text into state (returns the outcome). Shared by
 // the reader (auto-fetch on open) and the listen flow (fetch-then-play).
 async function ensureArticleText(id) {
@@ -46442,6 +46478,7 @@ async function ensureArticleText(id) {
     if (res.author) article.author = res.author;
     if (res.date) article.date = res.date;
     persist();
+    stashArticleBody(article); // mirror the fetched body into the content store
     return { ok: true };
   }
   return { ok: false, error: res?.error || "Could not extract article text." };
