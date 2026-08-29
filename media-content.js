@@ -74,5 +74,8 @@ export function createArticleContent({ storage, cloudClient = null, userId = "pe
 
     /** Is this article's body already in the local content store? */
     async hasLocal(articleId) { return store.has(articleBlobId(articleId)); },
+
+    /** Release the local StoragePort (e.g. before deleting the db on logout). */
+    async close() { try { await storage.close?.(); } catch { /* already closed */ } },
   };
 }

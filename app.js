@@ -2655,6 +2655,7 @@ async function toggleAuth() {
     // Mark that this sign-out was user-initiated. On next sign-in, changes made
     // while signed out won't be merged into the cloud account.
     localStorage.setItem("live_signed_out_explicitly", new Date().toISOString());
+    purgeLocalArticleContent(); // privacy default: drop local article bodies (backstop rehydrates on re-login)
     updateAuthUi();
     return;
   }
@@ -46461,12 +46462,36 @@ function deleteOpenArticle() {
 // savedArticles[].text stays the source of truth + fallback. Removing text from
 // synced state (the Disk-IO win) is a later, separately-reviewed step. Lazy,
 // best-effort, non-fatal — nothing here can break reading an article.
+// Ask the browser to keep our IndexedDB content across storage pressure. Origin-
+// wide (covers Cadence too), best-effort, capability-detected, non-blocking, and
+// never fatal — the content store is always backstopped in Supabase Storage, so
+// eviction only costs a re-fetch. Requested once, on first content-store use.
+let _persistRequested = false;
+function ensurePersistentStorage() {
+  if (_persistRequested) return;
+  _persistRequested = true;
+  try { navigator.storage?.persist?.().catch(() => {}); } catch { /* unsupported */ }
+}
+
+// Privacy default: purge local article content on logout. Safe because owned
+// bodies live in the reading-content backstop and rehydrate via bodyRef on the
+// next read; savedArticles metadata is cleared with the rest of state anyway.
+async function purgeLocalArticleContent() {
+  try {
+    const ac = _articleContentPromise ? await _articleContentPromise.catch(() => null) : null;
+    _articleContentPromise = null;
+    if (ac?.close) await ac.close(); // release the connection so deleteDatabase isn't blocked
+    if (typeof indexedDB !== "undefined" && indexedDB.deleteDatabase) indexedDB.deleteDatabase("reading");
+  } catch { /* best-effort */ }
+}
+
 let _articleContentPromise = null;
 async function getArticleContent() {
   if (_articleContentPromise) return _articleContentPromise;
   _articleContentPromise = (async () => {
     try {
       if (typeof indexedDB === "undefined") return null;
+      ensurePersistentStorage();
       const [mc, storageMod] = await Promise.all([import("./media-content.js"), import("./content-store/storage.js")]);
       const storage = storageMod.createIdbStorage(mc.READING_DB, 1, mc.READING_STORES);
       return mc.createArticleContent({ storage, cloudClient: supabaseClient || null, userId: authSession?.user?.id || "personal" });
