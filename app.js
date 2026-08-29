@@ -11,6 +11,7 @@ import { createWeatherCache } from './weather-cache.js';
 import { conditionFor, conditionLabel, weatherEmphasis } from './weather-condition.js';
 import { heroArtSvg, iconSvg } from './weather-art.js';
 import { makeSortable } from './sortable.js';
+import { canonicalizeUrl as canonicalizeImportUrl } from './import-canonical.js';
 import { createPlaybackEngine } from './playback-engine.js';
 import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones } from './state-sync.js';
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
@@ -46928,10 +46929,16 @@ function confirmSaveArticle() {
 }
 
 function saveArticleUrl(url) {
+  if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
+  const existing = findSavedArticleByUrl(url);
+  if (existing) {
+    showMailToast("Article already saved.");
+    if (activeAppArea === "media") switchMediaTab(existing.publication || "other");
+    return;
+  }
   const pub = detectArticlePublication(url);
   const id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `art_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
-  state.savedArticles.push({ id, url, title: url, publication: pub, savedAt: new Date().toISOString(), author: null, date: null, text: null });
+  state.savedArticles.push({ id, url, canonicalUrl: canonicalizeImportUrl(url), title: url, publication: pub, savedAt: new Date().toISOString(), author: null, date: null, text: null });
   persist();
   if (activeAppArea === "media") switchMediaTab(pub);
 }
@@ -46939,10 +46946,19 @@ function saveArticleUrl(url) {
 // Save an article the import gateway already extracted — richer than saveArticleUrl's
 // stub (carries the detected title/author/date/text). Dedups on the exact URL so
 // re-importing the same link doesn't pile up duplicates.
+// Two saved-article URLs are "the same" if they canonicalize equal — so the same
+// link shared with different tracking params / trailing slash / fragment dedupes
+// to one article. Compares against a stored canonicalUrl when present, else
+// canonicalizes the existing url on the fly (so pre-existing articles dedupe too).
+function findSavedArticleByUrl(url) {
+  const canon = canonicalizeImportUrl(url);
+  return (state.savedArticles || []).find((a) => (a.canonicalUrl || canonicalizeImportUrl(a.url)) === canon);
+}
+
 function saveImportedArticle(data, sourceUrl) {
   const url = sourceUrl || data.url || "";
   if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
-  const existing = state.savedArticles.find((a) => a.url === url);
+  const existing = findSavedArticleByUrl(url);
   if (existing) {
     showMailToast("Article already saved.");
     if (activeAppArea === "media") switchMediaTab(existing.publication || "other");
@@ -46952,6 +46968,7 @@ function saveImportedArticle(data, sourceUrl) {
   const id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `art_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   state.savedArticles.push({
     id, url,
+    canonicalUrl: canonicalizeImportUrl(url),
     title: data.title || url,
     publication: pub,
     savedAt: new Date().toISOString(),
@@ -47048,8 +47065,8 @@ async function startPdfImport(payload) {
 window._liveAddArticle = function(article) {
   if (!article?.url) return;
   if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
-  if (state.savedArticles.find(a => a.url === article.url)) return;
-  state.savedArticles.push(article);
+  if (findSavedArticleByUrl(article.url)) return;
+  state.savedArticles.push({ ...article, canonicalUrl: article.canonicalUrl || canonicalizeImportUrl(article.url) });
   persist();
   if (activeAppArea === "media" && !MEDIA_SERVICE_TABS.includes(activeMediaTab)) {
     renderArticleList("articleList", activeMediaTab);
