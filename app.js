@@ -985,6 +985,7 @@ const elements = {
   planNewCalColorPicker: document.querySelector("#planNewCalColorPicker"),
   closePlanAddCalBtn: document.querySelector("#closePlanAddCalBtn"),
   addPlanCalBtn: document.querySelector("#addPlanCalBtn"),
+  planCalDialogDeleteBtn: document.querySelector("#planCalDialogDeleteBtn"),
   mailMainPage: document.querySelector("#mailMainPage"),
   homeMailBtn: document.querySelector("#homeMailBtn"),
   titleMailBtn: document.querySelector("#titleMailBtn"),
@@ -1849,6 +1850,12 @@ function bindEvents() {
   // planTodayBtn / planAddEventBtn are wired inside renderPlanPage now (they moved
   // into the calendar window), so no static wiring here.
   elements.closePlanAddCalBtn.addEventListener("click", () => elements.planAddCalDialog.close());
+  elements.planCalDialogDeleteBtn?.addEventListener("click", () => {
+    const id = planCalDialogEditId;
+    planCalDialogEditId = null;
+    elements.planAddCalDialog.close();
+    if (id) deletePlanCalendar(id);
+  });
   elements.addPlanCalBtn.addEventListener("click", addPlanCalendar);
   elements.closeSailLogBtn.addEventListener("click", () => elements.sailLogDialog.close());
   elements.sailLogDialog.addEventListener("click", closeDialogOnBackdropClick);
@@ -36614,6 +36621,41 @@ const PLAN_COLORS = [
 ];
 const PLAN_APP_COLORS = { eat: "#0f9d58", play: "#ff5722", do: "#1976d2", watch: "#7b1fa2", birthday: "#e91e63" };
 
+// Calendar color picker palette: 6 base hues, each a light→deep ramp of 7 shades
+// (Material 100→800). The base circle shows the mid (index 4) shade; clicking it
+// reveals the hue's shades. Shades already used by other calendars are blocked.
+const PLAN_COLOR_HUES = {
+  red:    ["#ffcdd2", "#ef9a9a", "#e57373", "#ef5350", "#f44336", "#e53935", "#c62828"],
+  orange: ["#ffe0b2", "#ffcc80", "#ffb74d", "#ffa726", "#fb8c00", "#f57c00", "#e65100"],
+  yellow: ["#fff9c4", "#fff59d", "#fff176", "#ffee58", "#fdd835", "#fbc02d", "#f9a825"],
+  green:  ["#c8e6c9", "#a5d6a7", "#81c784", "#66bb6a", "#4caf50", "#43a047", "#2e7d32"],
+  blue:   ["#bbdefb", "#90caf9", "#64b5f6", "#42a5f5", "#2196f3", "#1e88e5", "#1565c0"],
+  purple: ["#e1bee7", "#ce93d8", "#ba68c8", "#ab47bc", "#9c27b0", "#8e24aa", "#6a1b9a"],
+};
+const PLAN_HUE_ORDER = ["red", "orange", "yellow", "green", "blue", "purple"];
+const PLAN_HUE_BASE_INDEX = 4; // the representative "500" shade shown on the base circle
+
+function planHueOfColor(color) {
+  const c = String(color || "").toLowerCase();
+  for (const hue of PLAN_HUE_ORDER) if (PLAN_COLOR_HUES[hue].includes(c)) return hue;
+  return null;
+}
+
+// Colors currently assigned to calendars — used to block picking a shade twice.
+// `exceptId` keeps the edited calendar's own color available to itself.
+function usedCalendarColors(exceptId = null) {
+  const all = [...(state.calendars || []), ...(state.planCalendars || [])];
+  return all.filter((c) => c.id !== exceptId).map((c) => String(c.color || "").toLowerCase());
+}
+
+// First shade (scanning hues in order, light→deep) not already taken, so a new
+// calendar defaults to an unused color rather than colliding on sight.
+function firstUnusedPlanColor(used = []) {
+  const taken = new Set(used.map((c) => String(c || "").toLowerCase()));
+  for (const hue of PLAN_HUE_ORDER) for (const c of PLAN_COLOR_HUES[hue]) if (!taken.has(c)) return c;
+  return PLAN_COLOR_HUES.blue[PLAN_HUE_BASE_INDEX];
+}
+
 const PLAN_ORDINALS = ["first", "second", "third", "fourth", "fifth"];
 const PLAN_WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const PLAN_MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -39006,39 +39048,69 @@ function autosizePlanEventNotes() {
   el.style.height = Math.min(el.scrollHeight + 2, 220) + "px";
 }
 
-function renderPlanColorPicker(container, selectedColor, name) {
-  // A picked color outside the curated palette is a "custom" color: no palette
-  // swatch matches it, so it lives on the custom chip instead.
-  const isCustom = !!selectedColor && !PLAN_COLORS.includes(selectedColor);
-  const customVal = isCustom ? selectedColor : "";
-  const swatches = PLAN_COLORS.map((c) => `
-    <label class="plan-color-swatch">
-      <input type="radio" name="${name}" value="${escapeHtml(c)}" ${c === selectedColor ? "checked" : ""} />
-      <span style="background:${escapeHtml(c)}"></span>
-    </label>
-  `).join("");
-  // Custom chip: a native color input overlays a rainbow swatch; picking a color
-  // updates a same-group radio so the existing "input:checked" read still works.
-  const customChip = `
-    <label class="plan-color-swatch plan-color-custom" title="Custom color">
-      <input type="color" class="plan-color-custom-input" value="${escapeHtml(customVal || "#4285f4")}" aria-label="Custom color" />
-      <input type="radio" name="${name}" value="${escapeHtml(customVal)}" ${isCustom ? "checked" : ""} data-custom-radio />
-      <span class="plan-color-custom-swatch"${isCustom ? ` style="background:${escapeHtml(customVal)}"` : ""}></span>
-    </label>`;
-  container.innerHTML = swatches + customChip;
+// Calendar color picker: a row of 6 base hue circles (red…purple) + a custom chip.
+// Clicking a base circle reveals that hue's 7 shades inline below; a shade already
+// used by another calendar is shown blocked and can't be picked. The selected
+// value is read the same way callers already use: container.querySelector("input:checked").
+function renderCalendarColorPicker(container, selectedColor, name, usedColors = []) {
+  const sel = String(selectedColor || "").toLowerCase();
+  const used = new Set(usedColors.map((c) => String(c || "").toLowerCase()));
+  used.delete(sel); // never block this calendar's own current color
+  const selHue = planHueOfColor(sel);
+  const isCustom = !!sel && !selHue;
 
+  const baseRow = PLAN_HUE_ORDER.map((hue) => {
+    const rep = PLAN_COLOR_HUES[hue][PLAN_HUE_BASE_INDEX];
+    return `<button type="button" class="plan-hue-base${hue === selHue ? " is-active" : ""}" data-hue="${hue}" style="--hue-color:${rep}" aria-label="${hue}" title="${hue}"></button>`;
+  }).join("");
+  const customChip = `
+    <label class="plan-hue-base plan-color-custom${isCustom ? " is-active" : ""}" title="Custom color">
+      <input type="color" class="plan-color-custom-input" value="${escapeHtml(isCustom ? sel : "#4285f4")}" aria-label="Custom color" />
+      <input type="radio" name="${name}" value="${escapeHtml(isCustom ? sel : "")}" ${isCustom ? "checked" : ""} data-custom-radio />
+      <span class="plan-color-custom-swatch"></span>
+    </label>`;
+  container.innerHTML = `
+    <div class="plan-hue-row">${baseRow}${customChip}</div>
+    <div class="plan-shade-row" data-shade-row hidden></div>`;
+
+  const shadeRow = container.querySelector("[data-shade-row]");
+  const customSpan = container.querySelector(".plan-color-custom-swatch");
+  if (isCustom) customSpan.style.background = sel;
+
+  const renderShades = (hue) => {
+    const selectedShade = planHueOfColor(sel) === hue ? sel : "";
+    shadeRow.hidden = false;
+    shadeRow.innerHTML = PLAN_COLOR_HUES[hue].map((c) => {
+      const blocked = used.has(c);
+      return `<label class="plan-color-swatch plan-shade${blocked ? " is-blocked" : ""}" title="${blocked ? "Already used by another calendar" : c}">
+        <input type="radio" name="${name}" value="${c}" ${c === selectedShade ? "checked" : ""} ${blocked ? "disabled" : ""} />
+        <span style="background:${c}"></span>
+      </label>`;
+    }).join("");
+  };
+
+  // Custom chip: picking a color checks its radio and clears any hue selection.
   const colorInput = container.querySelector(".plan-color-custom-input");
   const customRadio = container.querySelector("[data-custom-radio]");
-  const customSpan = container.querySelector(".plan-color-custom-swatch");
   colorInput?.addEventListener("input", () => {
     customRadio.value = colorInput.value;
-    customRadio.checked = true; // radio group unchecks the palette swatches
+    customRadio.checked = true;
     customSpan.style.background = colorInput.value;
+    container.querySelector(".plan-color-custom").classList.add("is-active");
+    container.querySelectorAll(".plan-hue-base[data-hue]").forEach((b) => b.classList.remove("is-active"));
+    shadeRow.hidden = true;
   });
-  // Choosing a palette swatch returns the custom chip to its rainbow "any color" look.
-  container.querySelectorAll("input[type=radio]:not([data-custom-radio])").forEach((r) => {
-    r.addEventListener("change", () => { if (r.checked) customSpan.style.background = ""; });
+
+  // Base hue click → reveal that hue's shades inline.
+  container.querySelectorAll(".plan-hue-base[data-hue]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      container.querySelectorAll(".plan-hue-base").forEach((b) => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      renderShades(btn.dataset.hue);
+    });
   });
+
+  if (selHue) renderShades(selHue); // a preselected color opens on its shades
 }
 
 // Calendar dropdown below the title — pick which of your own (non-subscribed)
@@ -39495,11 +39567,40 @@ function closePlanSidebar() {
   else sidebar.classList.add("is-collapsed");
 }
 
+// The Add/Edit Calendar dialog is one window in two modes; this holds the id being
+// edited (null = adding).
+let planCalDialogEditId = null;
+
+function setPlanCalDialogMode(editing) {
+  const titleEl = document.getElementById("planCalDialogTitle");
+  if (titleEl) titleEl.textContent = editing ? "Edit Calendar" : "Add Calendar";
+  if (elements.addPlanCalBtn) elements.addPlanCalBtn.textContent = editing ? "Save" : "Add";
+  const delBtn = document.getElementById("planCalDialogDeleteBtn");
+  if (delBtn) delBtn.hidden = !editing;
+}
+
 function openAddPlanCalDialog() {
-  renderPlanColorPicker(elements.planNewCalColorPicker, PLAN_COLORS[2], "planNewCalColor");
+  planCalDialogEditId = null;
+  const used = usedCalendarColors();
   elements.planNewCalName.value = "";
   elements.planNewCalUrl.value = "";
+  renderCalendarColorPicker(elements.planNewCalColorPicker, firstUnusedPlanColor(used), "planNewCalColor", used);
+  setPlanCalDialogMode(false);
   elements.planAddCalDialog.showModal();
+  requestAnimationFrame(() => elements.planNewCalName.focus());
+}
+
+function openEditCalDialog(id) {
+  const store = planCalIsGoogle(id) ? "calendars" : "planCalendars";
+  const cal = (state[store] || []).find((c) => c.id === id);
+  if (!cal) return;
+  planCalDialogEditId = id;
+  elements.planNewCalName.value = cal.name || "";
+  elements.planNewCalUrl.value = cal.url || "";
+  renderCalendarColorPicker(elements.planNewCalColorPicker, cal.color, "planNewCalColor", usedCalendarColors(id));
+  setPlanCalDialogMode(true);
+  elements.planAddCalDialog.showModal();
+  requestAnimationFrame(() => elements.planNewCalName.focus());
 }
 
 let planSearchDebounce = null;
@@ -39952,30 +40053,9 @@ function planRelativeTime(iso) {
 }
 
 function openPlanCalEditMode(id) {
-  const row = document.getElementById(`plan-cal-row-${id}`);
-  if (!row) return;
-  const cal = (planCalIsGoogle(id) ? (state.calendars || []) : (state.planCalendars || [])).find((c) => c.id === id);
-  if (!cal) return;
-  // Keep the sidebar expanded while editing so the inline form isn't hidden when
-  // the cursor leaves the desktop hover-rail (cleared on next renderPlanCalList).
-  document.getElementById("planSidebar")?.classList.add("is-pinned");
-  const colorPickerId = `cal-edit-color-${id}`;
-  const nameId = `cal-edit-name-${id}`;
-  row.innerHTML = `
-    <div class="plan-cal-edit-row">
-      <div class="plan-cal-new-form-inner">
-        <div id="${escapeHtml(colorPickerId)}" class="plan-cal-edit-colors"></div>
-        <input class="plan-cal-edit-name" type="text" id="${escapeHtml(nameId)}" value="${escapeHtml(cal.name)}" autocomplete="off" maxlength="40" />
-      </div>
-      ${cal.url ? `<div class="plan-cal-synced">Synced ${escapeHtml(planRelativeTime(cal.lastFetched))} · <button class="plan-cal-link-btn" type="button" data-refresh-cal="${escapeHtml(id)}">Refresh now</button></div>` : ""}
-      <div class="plan-cal-edit-actions">
-        <button class="primary-btn" type="button" data-save-cal-edit="${escapeHtml(id)}">Save</button>
-        <button class="secondary-btn" type="button" data-cancel-cal-edit="${escapeHtml(id)}">Cancel</button>
-      </div>
-    </div>
-  `;
-  renderPlanColorPicker(document.getElementById(colorPickerId), cal.color, `calEditColor-${id}`);
-  document.getElementById(nameId)?.focus();
+  // Editing a calendar's name/color/URL happens in the Add/Edit Calendar dialog
+  // now (replacing the old clunky inline sidebar form).
+  openEditCalDialog(id);
 }
 
 // Whether a sidebar calendar id belongs to the Google (state.calendars) store
@@ -39987,7 +40067,30 @@ function planCalIsGoogle(id) {
 async function addPlanCalendar() {
   const name = elements.planNewCalName.value.trim() || "My Calendar";
   const url = elements.planNewCalUrl.value.trim();
-  const color = elements.planNewCalColorPicker.querySelector("input:checked")?.value || PLAN_COLORS[2];
+  const color = elements.planNewCalColorPicker.querySelector("input:checked")?.value
+    || firstUnusedPlanColor(usedCalendarColors(planCalDialogEditId));
+
+  // Edit mode: update the existing calendar's name / color / url in place.
+  if (planCalDialogEditId) {
+    const id = planCalDialogEditId;
+    planCalDialogEditId = null;
+    elements.planAddCalDialog.close();
+    const store = planCalIsGoogle(id) ? "calendars" : "planCalendars";
+    const existing = (state[store] || []).find((c) => c.id === id);
+    if (!existing) return;
+    const urlChanged = (existing.url || "") !== url;
+    state[store] = (state[store] || []).map((c) => c.id === id ? { ...c, name, color, url } : c);
+    persist();
+    maybeWriteCloudSnapshot({ force: true }).catch(() => {});
+    renderPlanCalList();
+    if (urlChanged && url) {
+      if (store === "calendars") await loadCalendarEvents({ force: true });
+      else { const updated = (state[store] || []).find((c) => c.id === id); if (updated) await fetchOnePlanCalendar(updated); }
+    }
+    if (activeAppArea === "plan") renderPlanPage();
+    return;
+  }
+
   elements.planAddCalDialog.close();
   // The two subscription backends stay separate (Google Calendar via the
   // authenticated google-calendar fn; generic iCal/Amion via ics-proxy). The

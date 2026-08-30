@@ -3376,29 +3376,22 @@
     </div>
 
     <!-- Plan: calendar management dialog (create a personal calendar or subscribe by URL) -->
-    <dialog class="recipe-dialog plan-cal-dialog" id="planAddCalDialog">
+    <dialog class="recipe-dialog plan-cal-dialog std-form-dialog" id="planAddCalDialog">
       <form class="recipe-form" method="dialog">
         <div class="recipe-form-head">
-          <h2>Add Calendar</h2>
+          <h2 id="planCalDialogTitle">Add Calendar</h2>
           <button class="icon-btn" type="button" id="closePlanAddCalBtn" aria-label="Close">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
           </button>
         </div>
         <div class="recipe-form-body">
-          <label class="form-field">
-            <span>Name</span>
-            <input type="text" id="planNewCalName" placeholder="My Calendar" autocomplete="off" />
-          </label>
-          <label class="form-field">
-            <span>Subscription URL <span class="muted-label">(optional)</span></span>
-            <input type="url" id="planNewCalUrl" placeholder="https://calendar.google.com/calendar/ical/…" autocomplete="off" />
-          </label>
-          <p class="muted-label" style="margin:2px 0 6px">Leave the URL blank for a personal calendar, or paste a public ICS link (Google Calendar → "Secret address in iCal format") to subscribe.</p>
+          <input type="text" id="planNewCalName" class="plan-title-input" placeholder="Name" autocomplete="off" maxlength="60" />
+          <input type="url" id="planNewCalUrl" class="plan-title-input plan-cal-url-input" placeholder="Subscription URL (optional)" autocomplete="off" />
           <div class="plan-cal-colors" id="planNewCalColorPicker"></div>
         </div>
         <div class="dialog-actions">
-          <span></span>
-          <button class="primary-btn" type="button" id="addPlanCalBtn">Add</button>
+          <button class="plan-cal-delete-btn" type="button" id="planCalDialogDeleteBtn" hidden>Delete</button>
+          <button class="primary-btn" type="button" id="addPlanCalBtn" style="margin-left:auto">Add</button>
         </div>
       </form>
     </dialog>

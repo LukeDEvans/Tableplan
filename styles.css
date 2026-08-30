@@ -12300,6 +12300,55 @@ body.touch-drag-active * {
   transition: border-color 0.15s, transform 0.1s;
 }
 
+/* ── Add / Edit Calendar dialog ─────────────────────────────────────────────── */
+/* Name + Subscription URL behave like the event Title: borderless, the field name
+   sits in the box as placeholder text and clears as you type, underline on focus. */
+.plan-cal-dialog .recipe-form-body { display: flex; flex-direction: column; gap: 12px; }
+.plan-cal-dialog .plan-title-input {
+  width: 100%;
+  border: none;
+  border-bottom: 2px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  background: transparent;
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--ink);
+  padding: 6px 2px;
+  outline: none;
+}
+.plan-cal-dialog .plan-title-input::placeholder { color: var(--muted); font-weight: 500; }
+.plan-cal-dialog .plan-title-input:focus { border-bottom-color: var(--accent); }
+.plan-cal-dialog .plan-cal-url-input { font-size: 0.92rem; font-weight: 500; }
+.plan-cal-delete-btn {
+  border: none; background: none; color: #c62828; font: inherit; font-weight: 600;
+  cursor: pointer; padding: 8px 4px;
+}
+.plan-cal-delete-btn:hover { text-decoration: underline; }
+
+/* Color picker: a row of 6 base hue circles (+ custom); clicking one reveals that
+   hue's 7 shades inline below. A shade used by another calendar is blocked. */
+.plan-cal-dialog .plan-cal-colors { flex-direction: column; align-items: stretch; gap: 12px; }
+.plan-hue-row, .plan-shade-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.plan-hue-base {
+  width: 30px; height: 30px; padding: 0; border-radius: 50%; cursor: pointer;
+  border: 3px solid transparent; background: var(--hue-color, #ccc);
+  transition: border-color 0.15s, transform 0.1s;
+}
+.plan-hue-base:hover { transform: scale(1.08); }
+.plan-hue-base.is-active { border-color: var(--ink); transform: scale(1.12); }
+.plan-hue-base.plan-color-custom {
+  position: relative;
+  background: conic-gradient(from 90deg, #f44336, #ff9800, #ffeb3b, #4caf50, #00bcd4, #3f51b5, #9c27b0, #f44336);
+}
+.plan-shade-row { padding-top: 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); }
+.plan-shade span { position: relative; width: 26px; height: 26px; }
+.plan-shade.is-blocked { cursor: not-allowed; }
+.plan-shade.is-blocked span { opacity: 0.3; }
+.plan-shade.is-blocked span::after {
+  content: ""; position: absolute; left: 50%; top: -12%; width: 2px; height: 124%;
+  background: var(--ink); transform: translateX(-50%) rotate(45deg);
+}
+
 /* Calendar management rows */
 .plan-cal-row {
   position: relative;
