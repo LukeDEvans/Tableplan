@@ -6,8 +6,9 @@
 //
 // Deterministic-first order (no AI):
 //   1. Schema.org / JSON-LD Recipe (incl. multiple blocks and @graph)
-//   2. existing HTML→text heuristic fallback (name / Ingredients: / Instructions:)
-// Microdata/RDFa and AI are deliberately NOT added here (see CONTENT_IMPORT.md).
+//   2. Schema.org Microdata (itemtype/itemprop) + RDFa (typeof/property) Recipe
+//   3. existing HTML→text heuristic fallback (name / Ingredients: / Instructions:)
+// AI is deliberately NOT added here (see CONTENT_IMPORT.md).
 //
 // extractRecipeFromHtml(html, sourceUrl) → normalized recipe object
 // extractRecipeFromText(text, sourceUrl, fallbackName) → normalized recipe object
@@ -20,7 +21,11 @@ function extractRecipeFromHtml(html, sourceUrl) {
     .map(findRecipeNode)
     .filter(Boolean);
   const recipe = jsonRecipes[0];
-  if (!recipe) return extractRecipeFromText(htmlToText(html), sourceUrl);
+  if (!recipe) {
+    // No JSON-LD → try Schema.org Microdata / RDFa before the text heuristic.
+    const micro = extractRecipeFromMicrodata(html, sourceUrl);
+    return micro || extractRecipeFromText(htmlToText(html), sourceUrl);
+  }
 
   return {
     name: textValue(recipe.name) || findTitle(html),
@@ -33,6 +38,94 @@ function extractRecipeFromHtml(html, sourceUrl) {
     ingredients: arrayValue(recipe.recipeIngredient).map((line) => parseIngredientLine(String(line))),
     steps: instructionsToText(recipe.recipeInstructions)
   };
+}
+
+// ── Microdata / RDFa Recipe extraction ───────────────────────────────────────
+// A middle tier for pages that mark up a recipe with Schema.org Microdata
+// (itemtype=".../Recipe" + itemprop="…") or RDFa (typeof="…Recipe" +
+// property="…") instead of a JSON-LD block. Pure regex over the recipe scope —
+// handles the common shapes: <meta content>, <time datetime>, and text-bearing
+// leaf elements (<li>/<span>/<p>) for ingredients and steps. Returns null when
+// no recipe scope or neither ingredients nor instructions are found, so the
+// caller falls through to the plain-text heuristic.
+const MICRODATA_VOID = new Set(["meta", "link", "img", "br", "hr", "input"]);
+
+function extractRecipeFromMicrodata(html, sourceUrl) {
+  const scope = findRecipeScope(html);
+  if (!scope) return null;
+  const ingredients = microTextValues(scope, "recipeIngredient");
+  const legacyIngredients = ingredients.length ? ingredients : microTextValues(scope, "ingredients");
+  const instructions = microTextValues(scope, "recipeInstructions");
+  if (!legacyIngredients.length && !instructions.length) return null; // not really a recipe
+  const steps = instructions
+    .map(stripStepPrefix)
+    .filter((s) => s && !isStepHeaderOnly(s))
+    .join("\n");
+  return {
+    name: microFirstText(scope, "name") || findTitle(html),
+    prepTime: readableDuration(microFirstAttr(scope, "prepTime")),
+    cookTime: readableDuration(microFirstAttr(scope, "cookTime")),
+    time: readableDuration(microFirstAttr(scope, "totalTime") || microFirstAttr(scope, "cookTime") || microFirstAttr(scope, "prepTime")),
+    servings: parseServings(microFirstText(scope, "recipeYield")),
+    folderId: "",
+    sourceUrl,
+    ingredients: legacyIngredients.map((line) => parseIngredientLine(line)),
+    steps
+  };
+}
+
+// From the recipe element's opening tag to end-of-document. Property extraction
+// is recipe-specific enough (recipeIngredient/recipeInstructions/recipeYield)
+// that not bounding the close tag is safe; `name` is taken as the first match
+// after the scope start, which is the recipe's own name.
+function findRecipeScope(html) {
+  const md = html.search(/<[a-z][^>]*\bitemtype\s*=\s*["'][^"']*schema\.org\/Recipe\b[^"']*["']/i);
+  if (md >= 0) return html.slice(md);
+  const rdfa = html.search(/<[a-z][^>]*\btypeof\s*=\s*["'][^"']*\bRecipe\b[^"']*["']/i);
+  if (rdfa >= 0) return html.slice(rdfa);
+  return null;
+}
+
+// Every element in `scope` whose itemprop/property attribute lists `prop` as one
+// of its (space-separated, optionally namespaced) tokens, as { attrVal, inner }.
+function microProps(scope, prop) {
+  const out = [];
+  const re = /<([a-z][a-z0-9]*)\b([^>]*)>/gi;
+  let m;
+  while ((m = re.exec(scope))) {
+    const tag = m[1].toLowerCase();
+    const attrs = m[2];
+    const pa = attrs.match(/\b(?:itemprop|property)\s*=\s*["']([^"']*)["']/i);
+    if (!pa) continue;
+    const tokens = pa[1].split(/\s+/).map((t) => t.replace(/^[a-z][\w-]*:/i, "")); // drop "schema:" etc.
+    if (!tokens.includes(prop)) continue;
+    const attrVal =
+      attrs.match(/\bcontent\s*=\s*["']([^"']*)["']/i)?.[1] ||
+      attrs.match(/\bdatetime\s*=\s*["']([^"']*)["']/i)?.[1] || "";
+    let inner = "";
+    if (!MICRODATA_VOID.has(tag)) {
+      const rest = scope.slice(re.lastIndex);
+      const close = rest.match(new RegExp(`</${tag}\\s*>`, "i"));
+      inner = decodeHtml((close ? rest.slice(0, close.index) : rest.slice(0, 400)).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).trim();
+    }
+    out.push({ attrVal, inner });
+  }
+  return out;
+}
+
+function microTextValues(scope, prop) {
+  return microProps(scope, prop).map((x) => (x.inner || x.attrVal).trim()).filter(Boolean);
+}
+
+function microFirstText(scope, prop) {
+  return microTextValues(scope, prop)[0] || "";
+}
+
+// Duration-ish props prefer the machine value (meta content / time datetime).
+function microFirstAttr(scope, prop) {
+  const all = microProps(scope, prop);
+  const withAttr = all.find((x) => x.attrVal);
+  return (withAttr ? withAttr.attrVal : all[0]?.inner) || "";
 }
 
 function findJsonLdBlocks(html) {
@@ -213,10 +306,12 @@ function looksLikeIngredient(line) {
 module.exports = {
   extractRecipeFromHtml,
   extractRecipeFromText,
+  extractRecipeFromMicrodata,
   // exported for targeted tests / reuse
   findJsonLdBlocks,
   parseJsonLd,
   findRecipeNode,
+  findRecipeScope,
   parseIngredientLine,
   instructionsToText,
   readableDuration,

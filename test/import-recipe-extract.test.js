@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
-const { extractRecipeFromHtml, extractRecipeFromText } = require("../netlify/functions/_recipe-extract.js");
+const { extractRecipeFromHtml, extractRecipeFromText, extractRecipeFromMicrodata } = require("../netlify/functions/_recipe-extract.js");
 
 const jsonLd = (obj) => `<script type="application/ld+json">${JSON.stringify(obj)}</script>`;
 
@@ -84,6 +84,66 @@ describe("extractRecipeFromHtml — fallback + edge cases", () => {
   it("does not throw on empty input", () => {
     expect(() => extractRecipeFromHtml("", "u")).not.toThrow();
     expect(extractRecipeFromHtml("", "u").ingredients).toEqual([]);
+  });
+});
+
+describe("extractRecipeFromHtml — Microdata / RDFa tier", () => {
+  const MICRODATA = `<!doctype html><html><body>
+    <article itemscope itemtype="https://schema.org/Recipe">
+      <h1 itemprop="name">Weeknight Chili</h1>
+      <meta itemprop="prepTime" content="PT15M">
+      <time itemprop="cookTime" datetime="PT45M">45 minutes</time>
+      <span itemprop="recipeYield">Serves 6</span>
+      <ul>
+        <li itemprop="recipeIngredient">1 lb ground beef</li>
+        <li itemprop="recipeIngredient">2 cups kidney beans, drained</li>
+        <li itemprop="recipeIngredient">1 onion, diced</li>
+      </ul>
+      <ol>
+        <li itemprop="recipeInstructions">Brown the beef.</li>
+        <li itemprop="recipeInstructions">Add the beans and onion.</li>
+        <li itemprop="recipeInstructions">Simmer for 45 minutes.</li>
+      </ol>
+    </article>
+  </body></html>`;
+
+  it("extracts a Microdata recipe (name, times, yield, ingredients, steps)", () => {
+    const r = extractRecipeFromHtml(MICRODATA, "https://x.com/chili");
+    expect(r.name).toBe("Weeknight Chili");
+    expect(r.prepTime).toBe("15 min");
+    expect(r.cookTime).toBe("45 min");
+    expect(r.servings).toBe(6);
+    expect(r.ingredients).toHaveLength(3);
+    expect(r.ingredients[0].item).toContain("ground beef");
+    expect(r.steps).toBe("Brown the beef.\nAdd the beans and onion.\nSimmer for 45 minutes.");
+    expect(r.sourceUrl).toBe("https://x.com/chili");
+  });
+
+  it("extracts an RDFa recipe (typeof/property, namespaced tokens)", () => {
+    const rdfa = `<div vocab="https://schema.org/" typeof="Recipe">
+      <h2 property="name">Simple Salad</h2>
+      <span property="recipeYield">2 servings</span>
+      <li property="schema:recipeIngredient">2 cups spinach</li>
+      <li property="schema:recipeIngredient">1 tbsp olive oil</li>
+      <div property="recipeInstructions">Toss everything together.</div>
+    </div>`;
+    const r = extractRecipeFromHtml(rdfa, "u");
+    expect(r.name).toBe("Simple Salad");
+    expect(r.servings).toBe(2);
+    expect(r.ingredients).toHaveLength(2);
+    expect(r.steps).toBe("Toss everything together.");
+  });
+
+  it("JSON-LD still wins when both JSON-LD and microdata are present", () => {
+    const html = jsonLd({ "@type": "Recipe", name: "JSON Wins", recipeIngredient: ["1 cup flour"], recipeInstructions: ["Bake"] }) + MICRODATA;
+    expect(extractRecipeFromHtml(html, "u").name).toBe("JSON Wins");
+  });
+
+  it("returns null (→ text fallback) for non-recipe microdata", () => {
+    const product = `<div itemscope itemtype="https://schema.org/Product"><span itemprop="name">A Blender</span></div>`;
+    expect(extractRecipeFromMicrodata(product, "u")).toBe(null);
+    // and the public entry point degrades to the empty text result, not a throw
+    expect(extractRecipeFromHtml(product, "u").ingredients).toHaveLength(0);
   });
 });
 

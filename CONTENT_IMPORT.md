@@ -98,13 +98,13 @@ separately (`source.url`); the canonical form is only a dedup key.
 
 ## Deliberately NOT here
 
-Extension **article** migration and popup unification (the extension's recipe import now
-uses `/import`, but its article save deliberately stays on `save-article`: the extension's
-own rendered-DOM extraction already produces exactly what `save-article` persists, so
-round-tripping it through the gateway's *server-side* extractor would add a call and a
-failure mode for no gain — unifying the popup into one "Add to Tableplan" button is a
-later UX task). Also not here: microdata/RDFa recipe parsing and AI fallback. Duplicate
-detection still uses each domain's
-existing exact-URL match (recipe `source_url`; article `savedArticles[].url`);
-canonicalization is available (and surfaced as `source.canonicalUrl`) for a later,
-backward-compatible dedup upgrade.
+The extension popup is now unified into one "Add to Tableplan" button: it captures the
+rendered page (raw HTML for recipe structured-data detection + cleaned article text as a
+paywalled-page fallback), sends both to `/import` in one call, and routes on the detected
+type — recipe → `eat_recipes`, article → `save-article`/`media.savedArticles`, PDF → the
+background PDF importer. (Article persistence still lands on `save-article`; the gateway is
+extraction-only.) Microdata/RDFa recipe parsing IS now implemented, as a deterministic tier
+between JSON-LD and the plain-text heuristic (`extractRecipeFromMicrodata`). Still not here:
+AI fallback. Duplicate detection now canonicalizes URLs on both the client and server (utm/
+fragment/trailing-slash stripped via `import-canonical.js` ⇄ `_import-url.js`), stored as
+`canonicalUrl` on saved articles and dedup-checked in `save-article`/`saveImportedArticle`.
