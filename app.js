@@ -23,6 +23,7 @@ import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap,
 import { taskIsScheduled } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot } from './finance-actuals.js';
+import { deriveMediaTierCount } from './media-tier.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
 import { beginTasksWeekSession, stepTasksWeek, endTasksWeekSession, tasksBellState } from './tasks-overlay.js';
@@ -3660,7 +3661,7 @@ function normalizeState(parsed) {
     podcastEpisodeTiers: (parsed?.podcastEpisodeTiers !== null && typeof parsed?.podcastEpisodeTiers === "object" && !Array.isArray(parsed?.podcastEpisodeTiers)) ? parsed.podcastEpisodeTiers : {},
     podcastSkipAds: Boolean(parsed?.podcastSkipAds),
     mediaAllPinnedOrder: Array.isArray(parsed?.mediaAllPinnedOrder) ? parsed.mediaAllPinnedOrder : [],
-    podcastTierCount: Number.isInteger(parsed?.podcastTierCount) ? parsed.podcastTierCount : 3,
+    podcastTierCount: deriveMediaTierCount(parsed?.podcastTierCount, parsed?.podcastShowTiers, parsed?.publicationTiers),
     podcastPrioritySort: parsed?.podcastPrioritySort === "newest" ? "newest" : "oldest"
   };
   ensureGroceryCatalog(normalized);
@@ -43760,7 +43761,7 @@ function showEpisodeContextMenu(episodeId, x, y) {
   if (!episode) return;
   const isSaved = (state.podcastSaved || []).includes(episodeId);
   const link = episode.link || episode.audioUrl || show?.url || "";
-  const playlists = state.podcastPlaylists || [];
+  const isQueued = (state.podcastQueue || []).includes(episodeId);
 
   const menu = document.createElement("div");
   menu.id = "episodeContextMenu";
@@ -43769,7 +43770,7 @@ function showEpisodeContextMenu(episodeId, x, y) {
     <button class="fin-txn-menu-option" type="button" data-ep-menu="notes">Show notes</button>
     ${show ? `<button class="fin-txn-menu-option" type="button" data-ep-menu="show">Go to show</button>` : ""}
     <button class="fin-txn-menu-option" type="button" data-ep-menu="save">${isSaved ? "Remove from saved" : "Save"}</button>
-    <button class="fin-txn-menu-option" type="button" data-ep-menu="add-playlist">Add to a playlist…</button>
+    <button class="fin-txn-menu-option" type="button" data-ep-menu="add-playlist">${isQueued ? "Remove from playlist" : "Add to playlist"}</button>
     ${(state.podcastSavedCategories || []).length ? `<button class="fin-txn-menu-option" type="button" data-ep-menu="saved-tag">Assign to saved tab…</button>` : ""}
     ${link ? `<button class="fin-txn-menu-option" type="button" data-ep-menu="copy">Copy link</button>` : ""}`;
   document.body.appendChild(menu);
@@ -43789,7 +43790,7 @@ function showEpisodeContextMenu(episodeId, x, y) {
     else if (action === "save") { close(); toggleEpisodeSaved(episodeId); }
     else if (action === "copy") { close(); navigator.clipboard?.writeText(link).then(() => showMailToast("Link copied")).catch(() => {}); }
     else if (action === "saved-tag") { showPodcastSavedEpisodeCategoryMenu(episodeId, btn); close(); }
-    else if (action === "add-playlist") { showEpisodeAddToPlaylistMenu(episodeId, menu); }
+    else if (action === "add-playlist") { close(); toggleEpisodeInQueue(episodeId); }
   });
   // Dismiss on any outside interaction.
   setTimeout(() => {
@@ -43799,26 +43800,6 @@ function showEpisodeContextMenu(episodeId, x, y) {
     window.addEventListener("scroll", onScroll, true);
   }, 0);
 }
-// Secondary menu: pick which custom playlist to add/remove this episode.
-function showEpisodeAddToPlaylistMenu(episodeId, parentMenu) {
-  const playlists = state.podcastPlaylists || [];
-  const items = state.podcastPlaylistItems || {};
-  parentMenu.innerHTML = playlists.length
-    ? playlists.map((pl) => {
-        const inList = (items[pl.id] || []).includes(episodeId);
-        return `<button class="fin-txn-menu-option" type="button" data-add-pl="${escapeHtml(pl.id)}">${inList ? "✓ " : ""}${escapeHtml(pl.name || "Playlist")}</button>`;
-      }).join("")
-    : `<div class="fin-txn-menu-empty">No playlists yet — create one with + on the playlist bar.</div>`;
-  parentMenu.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-add-pl]");
-    if (!btn) return;
-    e.stopPropagation();
-    toggleEpisodeInPlaylist(episodeId, btn.dataset.addPl);
-    closeEpisodeContextMenu();
-    if (activePodcastTab === btn.dataset.addPl) renderPodcastPlaylistEpisodes(btn.dataset.addPl);
-  });
-}
-
 // Right-click (desktop) and long-press (touch) on any episode row opens the
 // context menu, wherever that row lives in the Media page.
 function initEpisodeContextMenu() {
