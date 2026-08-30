@@ -3,8 +3,7 @@ const status = document.querySelector("#status");
 const connectButton = document.querySelector("#connectGoogle");
 const actionGroup = document.querySelector("#actionGroup");
 const importSavedGroup = document.querySelector("#importSavedGroup");
-const importButton = document.querySelector("#importCurrentPage");
-const saveArticleButton = document.querySelector("#saveCurrentArticle");
+const addButton = document.querySelector("#addToTableplan");
 const saveReceiptButton = document.querySelector("#saveReceipt");
 const importSavedButton = document.querySelector("#importSavedArticles");
 const signOutButton = document.querySelector("#signOut");
@@ -42,14 +41,6 @@ async function updateActionLabels() {
   importSavedGroup.hidden = !currentTabPublication;
   const isReceiptSite = /target\.com|amazon\.|walmart\.com|costco\.com|instacart\.com|kohls\.com/i.test(url);
   saveReceiptButton.hidden = !isReceiptSite;
-  const isArticle = /nytimes\.com|economist\.com/i.test(url);
-  if (isArticle) {
-    saveArticleButton.style.order = "-1";
-    importButton.style.order = "0";
-  } else {
-    saveArticleButton.style.order = "0";
-    importButton.style.order = "-1";
-  }
 }
 
 connectButton.addEventListener("click", async () => {
@@ -65,17 +56,27 @@ signOutButton.addEventListener("click", async () => {
   await refreshStatus();
 });
 
-importButton.addEventListener("click", async () => {
+addButton.addEventListener("click", async () => {
   const tab = await currentTab();
   if (!tab?.url || !tab.url.startsWith("http")) {
-    status.textContent = "Open a recipe page first.";
+    status.textContent = "Open a web page first.";
     return;
   }
-  status.textContent = "Importing recipe...";
-  const response = await send({ type: "importRecipe", url: tab.url });
-  status.textContent = response?.ok
-    ? `${response.updated ? "Updated" : "Saved"}: ${response.name}`
-    : response?.error || "Import failed.";
+  status.textContent = "Adding to Tableplan...";
+  const response = await send({ type: "addToTableplan", url: tab.url, title: tab.title, tabId: tab.id });
+  if (!response?.ok) {
+    status.textContent = response?.error || "Couldn't add this page.";
+    return;
+  }
+  if (response.kind === "recipe") {
+    status.textContent = `${response.updated ? "Updated recipe" : "Saved recipe"}: ${response.name}`;
+  } else if (response.kind === "pdf") {
+    status.textContent = "Importing PDF in the background — it'll appear in your articles in a few minutes.";
+  } else if (response.already_saved) {
+    status.textContent = "Already saved.";
+  } else {
+    status.textContent = response.hasText ? `Saved article: ${response.name}` : `Saved: ${response.name} (text not available)`;
+  }
 });
 
 importSavedButton.addEventListener("click", async () => {
@@ -95,21 +96,6 @@ saveReceiptButton.addEventListener("click", async () => {
   status.textContent = response?.ok
     ? `Saved: ${response.receipt.merchant || "receipt"} · $${response.receipt.total} (${response.receipt.items} items). It will match its bank transaction in Finance.`
     : response?.error || "Could not extract a receipt.";
-});
-
-saveArticleButton.addEventListener("click", async () => {
-  const tab = await currentTab();
-  if (!tab?.url || !tab.url.startsWith("http")) {
-    status.textContent = "Open an article page first.";
-    return;
-  }
-  status.textContent = "Saving article...";
-  const response = await send({ type: "saveArticle", url: tab.url, title: tab.title, tabId: tab.id });
-  status.textContent = response?.ok
-    ? (response.pdf ? "Importing PDF in the background — it'll appear in your articles in a few minutes."
-      : response.already_saved ? "Already saved."
-      : response.hasText ? "Saved with full text." : "Saved (text not available).")
-    : response?.error || "Could not save article.";
 });
 
 refreshStatus();

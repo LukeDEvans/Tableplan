@@ -80,6 +80,34 @@ describe("runImport — supplied (rendered) content path", () => {
     expect(r.type).toBe("recipe");
     expect(r.data.name).toBe("Banana Bread");
   });
+
+  // The unified extension action ("Add to Tableplan") sends BOTH the raw page
+  // html (for recipe structured-data detection) AND cleaned article text (empty
+  // on non-article pages) in one call. These pin that combined-payload contract.
+  it("recipe page: html + empty text → recipe, still no fetch", async () => {
+    const spy = vi.fn();
+    const r = await runImport({
+      source: { url: "https://x.com/r", sourceClient: "extension" },
+      extractedContent: { html: RECIPE_HTML, text: "", metadata: { title: "Banana Bread", publication: "other" } },
+    }, { safeFetch: spy });
+    expect(spy).not.toHaveBeenCalled();
+    expect(r.type).toBe("recipe");
+    expect(r.data.name).toBe("Banana Bread");
+  });
+
+  it("article page: article html + cleaned text → article using the rendered text", async () => {
+    const spy = vi.fn();
+    const cleaned = "Urban gardening has grown across cities worldwide over the past decade, and it keeps expanding well past the two hundred character floor the scorer needs to call this a ready article with real body text.";
+    const r = await runImport({
+      source: { url: "https://paywalled.com/a", sourceClient: "extension" },
+      extractedContent: { html: ARTICLE_HTML, text: cleaned, metadata: { title: "Rendered Title", author: "Jane Doe", date: "2026-01-15", publication: "nyt" } },
+    }, { safeFetch: spy });
+    expect(spy).not.toHaveBeenCalled();
+    expect(r.type).toBe("article");
+    expect(r.status).toBe("ready");
+    expect(r.data.title).toBe("Rendered Title");
+    expect(r.data.text).toBe(cleaned); // the rendered text wins over an HTML re-scan
+  });
 });
 
 describe("runImport — nothing to import", () => {
