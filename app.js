@@ -22,6 +22,7 @@ import { normalizeExternalEvent } from './calendar/normalize.js';
 import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap, upsertTitleOverride } from './calendar/reconcile.js';
 import { taskIsScheduled } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
+import { financeMonthsToSnapshot } from './finance-actuals.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
 import { beginTasksWeekSession, stepTasksWeek, endTasksWeekSession, tasksBellState } from './tasks-overlay.js';
@@ -8082,12 +8083,7 @@ function renderFinanceReviewDeck() {
           <label class="fin-review-field">Note
             <input type="text" class="fin-review-input" data-review-note value="${escapeHtml(noteVal)}" placeholder="Add a note (optional)" maxlength="60" aria-label="Purchase note" />
           </label>
-          <div class="fin-review-quick">
-            <button class="fin-review-quick-btn${state.financeTxnSignFlips?.[t.id] ? " is-on" : ""}" type="button" data-fin-review-flip title="Flip the sign — this was actually income / a refund the bank posted as a charge (or vice-versa)">⇅ Sign</button>
-            ${(t.amount || 0) < 0 ? `<button class="fin-review-quick-btn" type="button" data-fin-review-split title="Split this across several budget categories">Split</button>` : ""}
-            ${(t.amount || 0) < 0 ? `<button class="fin-review-quick-btn" type="button" data-fin-review-receipt title="Scan a receipt to itemize + categorize this">Receipt</button>` : ""}
-            ${(t.amount || 0) > 0 ? `<button class="fin-review-quick-btn" type="button" data-fin-review-return title="Link this refund to the purchase it offsets">Return</button>` : ""}
-          </div>
+          <div class="fin-review-quick">${financeReviewQuickChipsHtml(t)}</div>
           <div class="fin-review-actions">
             <button class="fin-review-approve" type="button" data-fin-review-approve>✓ Approve</button>
             <button class="fin-review-secondary" type="button" data-fin-review-more>Edit details…</button>
@@ -8207,11 +8203,23 @@ function openFinanceTxnDetailFromReview(card) {
   if (activeAppArea === "finance") renderFinancePage();
 }
 
+// The quick-action chip row on a review card. Split/Receipt are spend-only and
+// Return is credit-only, so the set depends on the (possibly flipped) sign —
+// shared by the card template and the in-place sign-flip so they can't drift.
+function financeReviewQuickChipsHtml(t) {
+  const amt = t.amount || 0;
+  return `
+    <button class="fin-review-quick-btn${state.financeTxnSignFlips?.[t.id] ? " is-on" : ""}" type="button" data-fin-review-flip title="Flip the sign — this was actually income / a refund the bank posted as a charge (or vice-versa)">⇅ Sign</button>
+    ${amt < 0 ? `<button class="fin-review-quick-btn" type="button" data-fin-review-split title="Split this across several budget categories">Split</button>` : ""}
+    ${amt < 0 ? `<button class="fin-review-quick-btn" type="button" data-fin-review-receipt title="Scan a receipt to itemize + categorize this">Receipt</button>` : ""}
+    ${amt > 0 ? `<button class="fin-review-quick-btn" type="button" data-fin-review-return title="Link this refund to the purchase it offsets">Return</button>` : ""}`;
+}
+
 // Sign flip is light enough to do in place: toggle the correction, then update
-// this card's amount and button state without tearing down the review deck (so
-// edits staged on other cards survive). The rest of the quick-actions (split,
-// receipt, return) are full editors that live on the detail card, so they hand
-// off there pre-armed — the same seam as "Edit details…", one step deeper.
+// this card's amount, chip row and button state without tearing down the review
+// deck (so edits staged on other cards survive). The rest of the quick-actions
+// (split, receipt, return) are full editors that live on the detail card, so
+// they hand off there pre-armed — the same seam as "Edit details…", one deeper.
 function flipFinanceReviewCardSign(card) {
   const id = card?.dataset.txnId;
   if (!id) return;
@@ -8222,7 +8230,10 @@ function flipFinanceReviewCardSign(card) {
     amtEl.textContent = formatFinMoney(t.amount || 0);
     amtEl.classList.toggle("is-neg", (t.amount || 0) < 0);
   }
-  card.querySelector("[data-fin-review-flip]")?.classList.toggle("is-on", Boolean(state.financeTxnSignFlips?.[id]));
+  // Rebuild the chips so split/receipt (spend) ↔ return (credit) match the new
+  // sign and the flip's on-state is reflected.
+  const quick = card.querySelector(".fin-review-quick");
+  if (quick && t) quick.innerHTML = financeReviewQuickChipsHtml(t);
 }
 
 function handoffFinanceReviewCard(card, action) {
@@ -8358,26 +8369,38 @@ function financeBellCount() {
 // outages. Derived from labeled transactions; only written when values change.
 function updateFinanceMonthActuals() {
   if (!financeLive?.accounts?.length) return;
-  const month = new Date().toISOString().slice(0, 7);
-  const cats = {};
-  const incomeBy = {};
-  let incomeGot = 0;
-  for (const t of financeLabeledTxns()) {
-    if ((t.posted || "").slice(0, 7) !== month || !t.label) continue;
-    for (const p of financeTxnPortions(t)) {
-      if (p.label === "income" || p.label.startsWith("income:")) {
-        incomeGot += p.amount;
-        incomeBy[p.label] = Math.round(((incomeBy[p.label] || 0) + p.amount) * 100) / 100;
-      } else if (p.label.startsWith("cat:")) {
-        const k = p.label.slice(4);
-        cats[k] = Math.round(((cats[k] || 0) + p.amount) * 100) / 100;
+  const txns = financeLabeledTxns();
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  // Which months are safe to (re)snapshot from the live feed: always the current
+  // month, plus any PAST month the feed fully covers — so a correction to an
+  // older transaction still in the feed updates that month's totals, not only
+  // the current month's, without a partial window undercounting a complete
+  // historical snapshot. (Coverage guard is pure + tested in finance-actuals.js.)
+  const monthsToWrite = financeMonthsToSnapshot(txns, currentMonth);
+  if (!state.financeMonthActuals || typeof state.financeMonthActuals !== "object") state.financeMonthActuals = {};
+  let changed = false;
+  for (const month of monthsToWrite) {
+    const cats = {};
+    const incomeBy = {};
+    let incomeGot = 0;
+    for (const t of txns) {
+      if ((t.posted || "").slice(0, 7) !== month || !t.label) continue;
+      for (const p of financeTxnPortions(t)) {
+        if (p.label === "income" || p.label.startsWith("income:")) {
+          incomeGot += p.amount;
+          incomeBy[p.label] = Math.round(((incomeBy[p.label] || 0) + p.amount) * 100) / 100;
+        } else if (p.label.startsWith("cat:")) {
+          const k = p.label.slice(4);
+          cats[k] = Math.round(((cats[k] || 0) + p.amount) * 100) / 100;
+        }
       }
     }
+    const entry = { cats, income: Math.round(incomeGot * 100) / 100, incomeBy };
+    if (JSON.stringify(state.financeMonthActuals[month]) === JSON.stringify(entry)) continue;
+    state.financeMonthActuals[month] = entry;
+    changed = true;
   }
-  const entry = { cats, income: Math.round(incomeGot * 100) / 100, incomeBy };
-  if (!state.financeMonthActuals || typeof state.financeMonthActuals !== "object") state.financeMonthActuals = {};
-  if (JSON.stringify(state.financeMonthActuals[month]) === JSON.stringify(entry)) return;
-  state.financeMonthActuals[month] = entry;
+  if (!changed) return;
   const months = Object.keys(state.financeMonthActuals).sort();
   for (let i = 0; i < months.length - 36; i++) delete state.financeMonthActuals[months[i]];
   persist();
@@ -9900,6 +9923,12 @@ function onFinanceGridClick(e) {
       .map((p) => ({ label: p.label, amount: parseFinAmount(p.amount) }))
       .filter((p) => p.label && p.amount > 0);
     if (!portions.length) return;
+    // Defense in depth: the Save button is disabled unless the portions total
+    // the transaction, but re-assert here so no state drift can persist a split
+    // that silently mis-totals its categories.
+    const splitTxn = financeLabeledTxns().find((x) => x.id === btn.dataset.id);
+    const assigned = portions.reduce((s, p) => s + p.amount, 0);
+    if (splitTxn && Math.abs(Math.abs(splitTxn.amount || 0) - assigned) > 0.02) return;
     recordFinanceTxnSplit(btn.dataset.id, portions);
     financeSplitDraft = null;
     renderFinancePage();
