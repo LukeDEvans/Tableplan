@@ -8082,6 +8082,12 @@ function renderFinanceReviewDeck() {
           <label class="fin-review-field">Note
             <input type="text" class="fin-review-input" data-review-note value="${escapeHtml(noteVal)}" placeholder="Add a note (optional)" maxlength="60" aria-label="Purchase note" />
           </label>
+          <div class="fin-review-quick">
+            <button class="fin-review-quick-btn${state.financeTxnSignFlips?.[t.id] ? " is-on" : ""}" type="button" data-fin-review-flip title="Flip the sign — this was actually income / a refund the bank posted as a charge (or vice-versa)">⇅ Sign</button>
+            ${(t.amount || 0) < 0 ? `<button class="fin-review-quick-btn" type="button" data-fin-review-split title="Split this across several budget categories">Split</button>` : ""}
+            ${(t.amount || 0) < 0 ? `<button class="fin-review-quick-btn" type="button" data-fin-review-receipt title="Scan a receipt to itemize + categorize this">Receipt</button>` : ""}
+            ${(t.amount || 0) > 0 ? `<button class="fin-review-quick-btn" type="button" data-fin-review-return title="Link this refund to the purchase it offsets">Return</button>` : ""}
+          </div>
           <div class="fin-review-actions">
             <button class="fin-review-approve" type="button" data-fin-review-approve>✓ Approve</button>
             <button class="fin-review-secondary" type="button" data-fin-review-more>Edit details…</button>
@@ -8201,6 +8207,45 @@ function openFinanceTxnDetailFromReview(card) {
   if (activeAppArea === "finance") renderFinancePage();
 }
 
+// Sign flip is light enough to do in place: toggle the correction, then update
+// this card's amount and button state without tearing down the review deck (so
+// edits staged on other cards survive). The rest of the quick-actions (split,
+// receipt, return) are full editors that live on the detail card, so they hand
+// off there pre-armed — the same seam as "Edit details…", one step deeper.
+function flipFinanceReviewCardSign(card) {
+  const id = card?.dataset.txnId;
+  if (!id) return;
+  toggleFinanceTxnSignFlip(id); // persists + invalidates the labeled cache
+  const t = financeLabeledTxns().find((x) => x.id === id);
+  const amtEl = card.querySelector(".fin-review-amount");
+  if (t && amtEl) {
+    amtEl.textContent = formatFinMoney(t.amount || 0);
+    amtEl.classList.toggle("is-neg", (t.amount || 0) < 0);
+  }
+  card.querySelector("[data-fin-review-flip]")?.classList.toggle("is-on", Boolean(state.financeTxnSignFlips?.[id]));
+}
+
+function handoffFinanceReviewCard(card, action) {
+  const id = card?.dataset.txnId;
+  if (!id) return;
+  const overlay = document.getElementById("finReviewOverlay");
+  commitAllFinanceReviewCards(overlay); // preserve staged edits across the handoff
+  overlay?.remove();
+  financeDetailTxnId = id;
+  financeExpanded.add("card:txns");
+  if (action === "split") {
+    startSplitTxn(id);           // opens the split editor (renders the page)
+  } else if (action === "receipt") {
+    startScanReceiptForTxn(id);  // opens split + pops the receipt scanner
+  } else if (action === "return") {
+    financeReturnLinkSearch = { txnId: id, q: "" };
+    if (activeAppArea === "finance") renderFinancePage();
+    requestAnimationFrame(() => document.querySelector('[data-fin-edit="return-link-q"]')?.focus());
+  } else if (activeAppArea === "finance") {
+    renderFinancePage();
+  }
+}
+
 function wireFinanceReviewDeck(overlay) {
   const deck = overlay.querySelector("[data-fin-review-deck]");
   if (!deck) return;
@@ -8211,6 +8256,10 @@ function wireFinanceReviewDeck(overlay) {
     if (e.target.closest("[data-fin-review-approve]")) { approveFinanceReviewCard(card); return; }
     if (e.target.closest("[data-fin-review-skip]")) { skipFinanceReviewCard(card); return; }
     if (e.target.closest("[data-fin-review-more]")) { openFinanceTxnDetailFromReview(card); return; }
+    if (e.target.closest("[data-fin-review-flip]")) { flipFinanceReviewCardSign(card); return; }
+    if (e.target.closest("[data-fin-review-split]")) { handoffFinanceReviewCard(card, "split"); return; }
+    if (e.target.closest("[data-fin-review-receipt]")) { handoffFinanceReviewCard(card, "receipt"); return; }
+    if (e.target.closest("[data-fin-review-return]")) { handoffFinanceReviewCard(card, "return"); return; }
   });
 
   deck.addEventListener("scroll", () => updateFinanceReviewProgress(deck), { passive: true });

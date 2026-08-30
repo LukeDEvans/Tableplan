@@ -21014,6 +21014,12 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-review-approve:hover { background: var(--accent-dark); }
 .fin-review-secondary { flex: 1 1 40%; padding: 10px 12px; font-size: 0.85rem; font-weight: 700; color: var(--ink); background: color-mix(in srgb, var(--ink) 7%, transparent); border: none; border-radius: 9px; cursor: pointer; }
 .fin-review-secondary:hover { background: color-mix(in srgb, var(--ink) 12%, transparent); }
+/* Quick actions (sign flip / split / receipt / return) — a compact row of chips
+   above the primary Approve, so common corrections don't need "Edit details…". */
+.fin-review-quick { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; max-width: 360px; width: 100%; margin-top: 12px; }
+.fin-review-quick-btn { flex: 0 1 auto; padding: 7px 12px; font-size: 0.8rem; font-weight: 700; color: var(--muted); background: color-mix(in srgb, var(--ink) 5%, transparent); border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); border-radius: 999px; cursor: pointer; }
+.fin-review-quick-btn:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 10%, transparent); }
+.fin-review-quick-btn.is-on { color: var(--accent-dark); background: color-mix(in srgb, var(--accent) 16%, transparent); border-color: color-mix(in srgb, var(--accent) 32%, transparent); }
 .fin-review-empty-check { width: 56px; height: 56px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent-dark); font-size: 1.8rem; font-weight: 850; display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; }
 .fin-review-empty-title { font-size: 1.3rem; font-weight: 850; color: var(--ink); }
 .fin-review-empty-sub { font-size: 0.9rem; color: var(--muted); margin: 6px 0 18px; max-width: 300px; }
