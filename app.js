@@ -8,9 +8,26 @@ import * as LiveReceiptDomain from './receipt-domain.js';
 import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
 import { createWeatherCache } from './weather-cache.js';
+import { conditionFor, conditionLabel, weatherEmphasis } from './weather-condition.js';
+import { heroArtSvg, iconSvg } from './weather-art.js';
+import { makeSortable } from './sortable.js';
+import { canonicalizeUrl as canonicalizeImportUrl } from './import-canonical.js';
 import { createPlaybackEngine } from './playback-engine.js';
 import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones } from './state-sync.js';
+import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
+import { normalizePlanEvents } from './calendar/model.js';
+import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
+import { sourceFromPlanCalendar, isGoogleCalendarUrl } from './calendar/sources.js';
+import { normalizeExternalEvent } from './calendar/normalize.js';
+import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap, upsertTitleOverride } from './calendar/reconcile.js';
+import { taskIsScheduled } from './calendar/tasks-project.js';
+import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
+import { financeMonthsToSnapshot } from './finance-actuals.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
+import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
+import { beginTasksWeekSession, stepTasksWeek, endTasksWeekSession, tasksBellState } from './tasks-overlay.js';
+import { createVoiceService } from './voice-service.js';
+import { createGoogleProvider, createKokoroProvider } from './tts-provider.js';
 import * as TravelItinerary from './travel-itinerary.js';
 import * as TravelTransitions from './travel-transitions.js';
 import * as TravelModel from './travel-model.js';
@@ -269,7 +286,7 @@ const STATE_SECTIONS = {
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
   media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
-  plan:      ["calendars", "planEvents", "planCalendars", "planHiddenSources"],
+  plan:      ["calendars", "planEvents", "planCalendars", "planHiddenSources", "planExternalExclusions", "planExternalOverrides"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies"],
@@ -483,7 +500,7 @@ const MANAGED_PAGES = [
   { key: "eat",       label: "Meal Plan" },
   { key: "mail",      label: "Mail" },
   { key: "shop",      label: "Shop" },
-  { key: "do",        label: "To-Do" },
+  { key: "do",        label: "Tasks" },
   { key: "play",      label: "Exercise" },
   { key: "watch",     label: "Watch" },
   { key: "read",      label: "Media" },
@@ -527,6 +544,10 @@ let pendingInviteToken = null;
 let activeFolder = "";
 let activeRecipeTag = "";
 let currentWeek = startOfPrepWindow(new Date());
+// Active Tasks-overlay week session (T1). While open, currentWeek is driven by the
+// overlay; this holds the shared week to restore on close so Meal Plan etc. are
+// never moved by task week-stepping. null when the overlay is closed.
+let tasksWeekSession = null;
 let activePlannerDayId = plannerDayIdForDate(new Date());
 let activeAutoRuleDayId = activePlannerDayId;
 let editingDoTaskContext = null;
@@ -807,6 +828,7 @@ const elements = {
   restaurantInfoRemoveBtn: document.querySelector("#restaurantInfoRemoveBtn"),
   menuIngredientOptionsBtn: document.querySelector("#menuIngredientOptionsBtn"),
   menuFoodHealthSettingsBtn: document.querySelector("#menuFoodHealthSettingsBtn"),
+  menuWatchServicesBtn: document.querySelector("#menuWatchServicesBtn"),
   menuWatchTheatersBtn: document.querySelector("#menuWatchTheatersBtn"),
   menuRecurringTasksBtn: document.querySelector("#menuRecurringTasksBtn"),
   menuWorkoutLibraryBtn: document.querySelector("#menuWorkoutLibraryBtn"),
@@ -1054,6 +1076,11 @@ const elements = {
   closeDoArchiveBtn: document.querySelector("#closeDoArchiveBtn"),
   tasksPageDialog: document.querySelector("#tasksPageDialog"),
   closeTasksPageBtn: document.querySelector("#closeTasksPageBtn"),
+  tasksOverlayBody: document.querySelector("#tasksOverlayBody"),
+  tasksOverlayWeekLabel: document.querySelector("#tasksOverlayWeekLabel"),
+  tasksOverlayPrevWeek: document.querySelector("#tasksOverlayPrevWeek"),
+  tasksOverlayNextWeek: document.querySelector("#tasksOverlayNextWeek"),
+  planTasksBtn: document.querySelector("#planTasksBtn"),
   tasksPageTaskForm: document.querySelector("#tasksPageTaskForm"),
   tasksPageTaskInput: document.querySelector("#tasksPageTaskInput"),
   tasksPageTaskList: document.querySelector("#tasksPageTaskList"),
@@ -1417,11 +1444,10 @@ const elements = {
 
 let pendingRestore = null;
 let pendingCookLogId = "";
-let doNotifOpen = false;
 // Declared here (above the initial render() below) because renderPlanner() —
 // which render() calls — reads them via mealPlanNotifBellHtml() during that
 // first synchronous render, before their original `let` further down would
-// have initialized (TDZ). Same reason doNotifOpen sits here.
+// have initialized (TDZ).
 let mealPlanRecipes = null;
 let mealPlanNotifOpen = false;
 let mealPlanNotifWired = false;
@@ -1435,7 +1461,7 @@ let mealPlanSwipeIndex = 0;
 const PAGE_NOTIF_BUTTONS = {
   mail: ["homeMailBtn", "titleMailBtn"],
   finance: ["homeFinanceBtn", "titleFinanceBtn"],
-  do: ["homeDoBtn", "titleToDoListBtn"],
+  do: ["planTasksBtn"], // Tasks notif dot now lives on the Calendar page's bell
   eat: ["homeEatBtn", "titleMealPlanBtn"],
   explore: ["homeExploreBtn", "titleExploreBtn"],
 };
@@ -1457,7 +1483,7 @@ bindEvents();
 // closed, no dialog open), re-render so newly-due items surface live.
 setInterval(() => {
   updateDoNotifCount();
-  if (elements.doPlannerGrid && elements.doPlannerGrid.offsetParent !== null && !doNotifOpen && !document.querySelector("dialog[open]")) {
+  if (elements.doPlannerGrid && elements.doPlannerGrid.offsetParent !== null && !document.querySelector("dialog[open]")) {
     renderDoPlanner();
   }
   checkEventReminders();
@@ -1840,6 +1866,7 @@ function bindEvents() {
   elements.menuPodcastPriorityBtn.addEventListener("click", () => openSettingsMenuDialog(showPodcastPriorityModal));
   elements.menuPublicationsBtn.addEventListener("click", () => openSettingsMenuDialog(showPublicationsModal));
   elements.menuReadSyncBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("read-sync")));
+  elements.menuWatchServicesBtn.addEventListener("click", () => openSettingsMenuDialog(openDiscoverServicesDialog));
   elements.menuWatchTheatersBtn.addEventListener("click", () => openSettingsMenuDialog(() => openContextSettingsDialog("watch")));
   elements.menuRecurringTasksBtn.addEventListener("click", () => openSettingsMenuDialog(openRecurringTasksDialog));
   elements.menuWorkoutLibraryBtn.addEventListener("click", () => openSettingsMenuDialog(openWorkoutLibraryDialog));
@@ -1857,6 +1884,7 @@ function bindEvents() {
   elements.closeContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
   elements.contextSettingsBackBtn.addEventListener("click", () => renderContextSettingsDialog("general"));
   elements.doneContextSettingsBtn.addEventListener("click", () => elements.contextSettingsDialog.close());
+  elements.contextSettingsDialog.addEventListener("close", () => stopVoicePreview());
   elements.contextSettingsBody.addEventListener("click", handleContextSettingsAction);
   elements.contextSettingsBody.addEventListener("change", handleContextSettingsChange);
   // Right-click label/sub/account management inside the Accounts panel (mirrors
@@ -1896,12 +1924,24 @@ function bindEvents() {
   elements.closeDoTaskDetailBtn?.addEventListener("click", () => elements.doTaskDetailDialog.close());
   elements.closeDoArchiveBtn?.addEventListener("click", () => elements.doArchiveDialog.close());
   elements.closeTasksPageBtn.addEventListener("click", () => elements.tasksPageDialog.close());
-  elements.tasksPageDialog.addEventListener("close", () => setPageTitle(currentMainPageTitle()));
+  elements.tasksPageDialog.addEventListener("close", () => {
+    // T1: restore the shared prep week the overlay borrowed, so Meal Plan and other
+    // week-scoped views keep the week they were on (any close path fires this).
+    if (tasksWeekSession) { currentWeek = endTasksWeekSession(tasksWeekSession); tasksWeekSession = null; }
+    setPageTitle(currentMainPageTitle());
+  });
+  // The Tasks overlay hosts the full task planner: relocate the planner grid into
+  // it once, so every existing renderDoPlanner()/bindDoTaskControls call renders the
+  // complete Tasks experience inside the overlay (retired the standalone Tasks page).
+  if (elements.tasksOverlayBody && elements.doPlannerGrid) elements.tasksOverlayBody.appendChild(elements.doPlannerGrid);
+  elements.planTasksBtn?.addEventListener("click", openTasksPage);
+  elements.tasksOverlayPrevWeek?.addEventListener("click", () => stepPlanTasksWeek(-1));
+  elements.tasksOverlayNextWeek?.addEventListener("click", () => stepPlanTasksWeek(1));
   elements.closeDoSettingsBtn.addEventListener("click", () => elements.doSettingsDialog.close());
   elements.doneDoSettingsBtn.addEventListener("click", () => elements.doSettingsDialog.close());
   elements.closeRecurringTasksBtn.addEventListener("click", () => elements.recurringTasksDialog.close());
   elements.doneRecurringTasksBtn.addEventListener("click", () => elements.recurringTasksDialog.close());
-  elements.tasksPageTaskForm.addEventListener("submit", addDoTaskFromTasksPage);
+  elements.tasksPageTaskForm?.addEventListener("submit", addDoTaskFromTasksPage);
   elements.recipeSearch.addEventListener("input", () => {
     updateRecipeSearchClearButton();
     renderRecipes();
@@ -2369,6 +2409,7 @@ async function initializeApp() {
   initDoPlannerDelegation();
   initTasksPageDelegation();
   initPlanCalListDelegation();
+  initPlanEventDetail();
   initPodcastEpisodeListDelegation();
   initEpisodeContextMenu();
   initTouchDragPolyfill();
@@ -2620,6 +2661,8 @@ async function toggleAuth() {
     // Mark that this sign-out was user-initiated. On next sign-in, changes made
     // while signed out won't be merged into the cloud account.
     localStorage.setItem("live_signed_out_explicitly", new Date().toISOString());
+    purgeLocalArticleContent(); // privacy default: drop local article bodies (backstop rehydrates on re-login)
+    purgeLocalCadenceContent(); // same: drop local Cadence score bytes (rehydrate from cadence-blobs on re-login)
     updateAuthUi();
     return;
   }
@@ -3105,6 +3148,13 @@ function mirrorStateToLocalStorage() {
   // the biggest thing in state, re-fetchable, and keeping them risks blowing
   // the ~5 MB localStorage cap.
   if (Array.isArray(base.podcasts)) base.podcasts = stripEpisodeDescriptions(base.podcasts);
+  // Backstopped article bodies (in local IndexedDB + the reading-content bucket)
+  // don't need to sit in the ~5 MB mirror; the reader re-reads them via the
+  // content store. Bodies without a backstop keep their text so an offline cold
+  // boot still shows them.
+  if (Array.isArray(base.savedArticles)) {
+    base.savedArticles = base.savedArticles.map((a) => (a && a.text && a.bodyRef?.cloud ? { ...a, text: null } : a));
+  }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(base));
     return;
@@ -3346,6 +3396,8 @@ function defaultState() {
     calendars: [],
     planEvents: [],
     planHiddenSources: {},
+    planExternalExclusions: [],
+    planExternalOverrides: [],
     contacts: [],
     contactGroups: [],
     weatherLocations: [],
@@ -3580,6 +3632,8 @@ function normalizeState(parsed) {
     planEvents: normalizePlanEvents(parsed?.planEvents),
     planCalendars: normalizePlanCalendars(parsed?.planCalendars),
     planHiddenSources: (parsed?.planHiddenSources && typeof parsed.planHiddenSources === "object") ? parsed.planHiddenSources : {},
+    planExternalExclusions: normalizePlanExternalExclusions(parsed?.planExternalExclusions),
+    planExternalOverrides: normalizePlanExternalOverrides(parsed?.planExternalOverrides),
     contacts: normalizeContacts(parsed?.contacts),
     contactGroups: normalizeContactGroups(parsed?.contactGroups),
     weatherLocations: Array.isArray(parsed?.weatherLocations) ? parsed.weatherLocations.filter((l) => l && isFinite(l.latitude) && isFinite(l.longitude)) : [],
@@ -5509,7 +5563,7 @@ function mergeStates(newer, older) {
     // Core content
     "recipes", "trashedRecipes", "folders",
     // Planning & tasks
-    "planCalendars", "planEvents", "autoGenerateRules",
+    "planCalendars", "planEvents", "planExternalExclusions", "planExternalOverrides", "autoGenerateRules",
     "doTasks", "doBacklog", "doArchive", "playBacklog",
     "recurringTasks", "playAutoRules",
     // Watch / Read / Recreate
@@ -6328,6 +6382,14 @@ function extractSectionData(keys) {
   // full text stays in memory during a session and is re-fetched via
   // ensureEpisodeDescription() when a user actually opens the notes.
   if (Array.isArray(obj.podcasts)) obj.podcasts = stripEpisodeDescriptions(obj.podcasts);
+  // Article bodies whose bytes are safely in the content-store backstop no longer
+  // ride the synced media section (the Disk-IO win — the section was rewritten
+  // with full article text on every media interaction). The reader re-reads them
+  // from the content store via bodyRef. Bodies NOT yet backstopped keep their
+  // synced text, so text is never dropped before it is durable elsewhere.
+  if (Array.isArray(obj.savedArticles)) {
+    obj.savedArticles = obj.savedArticles.map((a) => (a && a.text && a.bodyRef?.cloud ? { ...a, text: null } : a));
+  }
   return obj;
 }
 
@@ -6451,7 +6513,10 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
 
   if (seen) {
     const res = await fetch(
-      `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&updated_at=eq.${encodeURIComponent(seen)}`,
+      // select=updated_at so the representation echoes ONLY the stamp we read
+      // below — not the whole (multi-MB for media) state blob. Cuts write egress
+      // dramatically; we never used the returned state here.
+      `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(rowId)}&updated_at=eq.${encodeURIComponent(seen)}&select=updated_at`,
       { method: "PATCH", headers: { ...supabaseHeaders(), Prefer: "return=representation" }, body: JSON.stringify(payload) }
     );
     if (!res.ok) throw new Error(`Supabase section "${section}" save failed: ${res.status}`);
@@ -6467,7 +6532,9 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
     if (!probe.ok) throw new Error(`Supabase section "${section}" probe failed: ${probe.status}`);
     const probeRows = await probe.json();
     if (!probeRows.length) {
-      const ins = await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?on_conflict=id`, {
+      const ins = await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?on_conflict=id&select=updated_at`, {
+        // select=updated_at: same reason as the PATCH above — only the stamp is
+        // read back, so don't have the insert echo the whole row.
         method: "POST",
         headers: { ...supabaseHeaders(), Prefer: "resolution=merge-duplicates,return=representation" },
         body: JSON.stringify({ id: rowId, ...payload })
@@ -7147,20 +7214,17 @@ function activateEatShell() {
   renderPlanner();
 }
 
+// Tasks is no longer a standalone page — it lives in a window over the Calendar,
+// opened by the Calendar page's notifications button. Every former entry point
+// (home tile, page-title menu, the #do hash, voice/chat) lands there via this
+// redirect: show the Calendar, then open the Tasks overlay on top of it.
 function showDoApp(event) {
   event?.stopPropagation();
-  if (!isPageEnabled("do")) {
-    showHomeApp();
-    return;
-  }
-  activeAppArea = "do";
-  hideAllPages();
-  elements.doMainPage.hidden = false;
-  setWeekToolsMode("week");
-  elements.activeCookingSection.hidden = true;
-  setPageTitle("To-Do");
-  setPageHash("do");
-  renderDoPlanner();
+  // One page-enable model: respect a personally-disabled Tasks page here too, so a
+  // #do hash / voice / stale link can't route into a page the user disabled (T2).
+  if (!isPagePersonallyEnabled("do")) { showHomeApp(); return; }
+  if (isPageEnabled("plan")) showPlanApp(event); else showHomeApp();
+  openTasksPage(event);
   closePageTitleMenu();
   closeAppMenu();
 }
@@ -7959,112 +8023,300 @@ function openFinanceTxnReview() {
   overlay.id = "finReviewOverlay";
   overlay.className = "fin-review-overlay";
   overlay.innerHTML = `
-    <div class="fin-review-modal" role="dialog" aria-modal="true" aria-label="Label transactions">
+    <div class="fin-review-modal" role="dialog" aria-modal="true" aria-label="Review transactions">
       <div class="fin-review-head">
-        <span class="fin-review-title">Label transactions</span>
+        <span class="fin-review-title">Review transactions</span>
+        <span class="fin-review-count" data-fin-review-count aria-live="polite"></span>
         <button class="fin-review-close" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
-      <div class="fin-review-deck" data-fin-review-deck></div>
+      <div class="fin-review-deck" data-fin-review-deck tabindex="0"></div>
     </div>`;
   document.body.appendChild(overlay);
-  const close = () => { overlay.remove(); if (activeAppArea === "finance") renderFinancePage(); };
+  const close = () => { commitAllFinanceReviewCards(overlay); overlay.remove(); if (activeAppArea === "finance") renderFinancePage(); };
   overlay.querySelector(".fin-review-close").addEventListener("click", close);
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) return close();
+    if (e.target.closest("[data-fin-review-close]")) return close();
+  });
   renderFinanceReviewDeck();
   wireFinanceReviewDeck(overlay);
+  overlay.querySelector("[data-fin-review-deck]")?.focus();
 }
 
 function renderFinanceReviewDeck() {
   const deck = document.querySelector("[data-fin-review-deck]");
   if (!deck) return;
   const groups = financeReviewGroups();
-  if (!groups.length) {
-    deck.innerHTML = `<div class="fin-review-empty">All caught up — everything's labeled. 🎉</div>`;
-    return;
-  }
+  if (!groups.length) { updateFinanceReviewProgress(deck); return; } // paints the caught-up state
+  const names = state.financeMerchantNames || {};
+  const noteOverrides = state.financeTxnNoteOverrides || {};
   deck.innerHTML = groups.map((g) => {
     const t = g.rep;
-    const date = t.posted ? new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
-    const meta = [t.account, date, g.count > 1 ? `${g.count} charges` : ""].filter(Boolean).join(" · ");
+    const mKey = financeMerchantKey(t.description);
+    const nameVal = names[mKey] || "";
+    const noteVal = Object.prototype.hasOwnProperty.call(noteOverrides, t.id) ? (noteOverrides[t.id] || "") : "";
+    const date = t.posted ? new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
+    // Bank facts (read-only): account · date · status. Manual entries say so.
+    const status = t.isManual ? "Manual" : (t.pending ? "Pending" : (t.posted ? "Posted" : ""));
+    const facts = [t.account, date, status].filter(Boolean).join(" · ");
+    const merchantTitle = nameVal || t.description || "Transaction";
+    const showRaw = nameVal && nameVal !== t.description; // renamed → surface the original bank text
     return `
-    <div class="fin-review-card" data-review-key="${escapeHtml(g.key)}">
-      <div class="fin-review-action fin-review-action-snooze" aria-hidden="true">Snooze</div>
-      <div class="fin-review-action fin-review-action-done" aria-hidden="true">Done</div>
+    <div class="fin-review-card" data-review-key="${escapeHtml(g.key)}" data-txn-id="${escapeHtml(t.id)}">
+      <div class="fin-review-action fin-review-action-done" aria-hidden="true">✓ Approve</div>
       <div class="fin-review-card-inner">
-        <div class="fin-review-amount${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</div>
-        <div class="fin-review-merchant">${escapeHtml(t.displayName || t.description || "Transaction")}</div>
-        ${meta ? `<div class="fin-review-meta">${escapeHtml(meta)}</div>` : ""}
-        <select class="fin-txn-label fin-review-label" data-review-label data-id="${escapeHtml(t.id)}" data-desc="${escapeHtml(t.description)}" aria-label="Budget category">
-          <option value="">Pick a category…</option>
-          ${financeTxnLabelOptionsHtml("")}
-        </select>
-        <div class="fin-review-hint"><span>← Snooze</span><span>↑ ↓ browse</span><span>Done →</span></div>
+        <div class="fin-review-body">
+          <div class="fin-review-amount${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</div>
+          <div class="fin-review-merchant">${escapeHtml(merchantTitle)}</div>
+          ${facts ? `<div class="fin-review-facts">${escapeHtml(facts)}</div>` : ""}
+          ${showRaw ? `<div class="fin-review-raw">Bank: ${escapeHtml(t.description)}</div>` : ""}
+          ${g.count > 1 ? `<div class="fin-review-group"><strong>${g.count} matching transactions</strong> from this merchant. Approving applies the category to all of them.</div>` : ""}
+          <label class="fin-review-field">Category
+            <select class="fin-txn-label fin-review-label" data-review-label data-id="${escapeHtml(t.id)}" data-desc="${escapeHtml(t.description)}" aria-label="Budget category">
+              <option value="">Pick a category…</option>
+              ${financeTxnLabelOptionsHtml("")}
+            </select>
+          </label>
+          <label class="fin-review-field">Name
+            <input type="text" class="fin-review-input" data-review-name value="${escapeHtml(nameVal)}" placeholder="${escapeHtml(t.description || "Merchant")}" aria-label="Merchant display name" />
+          </label>
+          <label class="fin-review-field">Note
+            <input type="text" class="fin-review-input" data-review-note value="${escapeHtml(noteVal)}" placeholder="Add a note (optional)" maxlength="60" aria-label="Purchase note" />
+          </label>
+          <div class="fin-review-quick">${financeReviewQuickChipsHtml(t)}</div>
+          <div class="fin-review-actions">
+            <button class="fin-review-approve" type="button" data-fin-review-approve>✓ Approve</button>
+            <button class="fin-review-secondary" type="button" data-fin-review-more>Edit details…</button>
+            <button class="fin-review-secondary" type="button" data-fin-review-skip>Skip for now</button>
+          </div>
+        </div>
+        <div class="fin-review-hint" aria-hidden="true"><span>↑ ↓ browse</span><span>swipe right to approve →</span></div>
       </div>
     </div>`;
   }).join("");
+  updateFinanceReviewProgress(deck);
 }
 
-// Re-render the deck after an action while keeping the user near where they
-// were (the acted card is gone; the next one lands in its place).
-function refreshFinanceReviewDeck() {
-  const deck = document.querySelector("[data-fin-review-deck]");
-  const saved = deck?.scrollTop || 0;
-  renderFinanceReviewDeck();
-  if (deck) deck.scrollTop = saved;
+// Progress + completion. Cards are removed one at a time as they're approved or
+// skipped (never a full re-render), so any edits typed on other cards survive.
+function updateFinanceReviewProgress(deck) {
+  deck = deck || document.querySelector("[data-fin-review-deck]");
+  if (!deck) return;
+  const cards = [...deck.querySelectorAll(".fin-review-card")];
+  const countEl = document.querySelector("[data-fin-review-count]");
+  if (!cards.length) {
+    deck.innerHTML = `<div class="fin-review-empty">
+      <div class="fin-review-empty-check" aria-hidden="true">✓</div>
+      <div class="fin-review-empty-title">All caught up</div>
+      <div class="fin-review-empty-sub">You've reviewed every transaction that needed attention.</div>
+      <button class="fin-review-approve" type="button" data-fin-review-close>Back to Transactions</button>
+    </div>`;
+    if (countEl) countEl.textContent = "";
+    return;
+  }
+  const idx = deck.clientHeight ? Math.round(deck.scrollTop / deck.clientHeight) : 0;
+  if (countEl) countEl.textContent = `${Math.min(idx + 1, cards.length)} of ${cards.length}`;
 }
 
-let financeReviewWired = false;
+const finReviewReduceMotion = () => typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// Fling/collapse the card off, then remove it and refresh progress. Approve
+// flings right (matching the gesture); skip collapses in place.
+function finishFinanceReviewCard(card, kind) {
+  if (!card) return;
+  const deck = card.closest("[data-fin-review-deck]");
+  const inner = card.querySelector(".fin-review-card-inner");
+  const done = () => { card.remove(); updateFinanceReviewProgress(deck); };
+  if (inner && !finReviewReduceMotion()) {
+    inner.style.transition = "transform 0.22s ease, opacity 0.22s ease";
+    inner.style.transform = kind === "approve" ? "translateX(120%) rotate(6deg)" : "scale(0.96)";
+    inner.style.opacity = "0";
+    setTimeout(done, 210);
+  } else {
+    done();
+  }
+}
+
+// Approve = commit this review card and drop it from the queue. Requires a
+// category (the whole point of the queue is labeling); a bare approval nudges
+// the picker instead of silently doing nothing. Reuses the existing persistence
+// (saveRenameTxn for name/note, recordFinanceTxnLabel for the category + the
+// learned merchant rule that clears the whole matching group).
+// Commit a card's staged edits (category + name/note) exactly once, via the
+// existing persistence. Guarded with a once-only flag so a commit can't run
+// twice for the same card — e.g. a fast double-tap during the 210ms approve
+// fling, or an approve immediately followed by a close — which would otherwise
+// double-count the learned merchant/note majority votes. Returns true if
+// anything was written. Called by both approve AND every close path, so a
+// picked category / typed name / typed note is never silently discarded.
+function commitFinanceReviewEdits(card) {
+  if (!card || card.dataset.finReviewCommitted === "1") return false;
+  const sel = card.querySelector("[data-review-label]");
+  if (!sel) return false;
+  const cat = sel.value || "";
+  const nameInput = card.querySelector("[data-review-name]");
+  const noteInput = card.querySelector("[data-review-note]");
+  const nameChanged = nameInput && nameInput.value !== nameInput.defaultValue;
+  const noteChanged = noteInput && noteInput.value !== noteInput.defaultValue;
+  if (!cat && !nameChanged && !noteChanged) return false; // nothing staged → leave it reviewable
+  card.dataset.finReviewCommitted = "1";
+  if (nameChanged || noteChanged) saveRenameTxn(sel.dataset.id, sel.dataset.desc || "", nameInput.value, noteInput.value);
+  if (cat) recordFinanceTxnLabel(sel.dataset.id, cat, sel.dataset.desc || ""); // labels + learns the merchant rule + updates the bell count
+  return true;
+}
+
+function commitAllFinanceReviewCards(root) {
+  (root || document).querySelectorAll?.(".fin-review-card").forEach(commitFinanceReviewEdits);
+}
+
+function approveFinanceReviewCard(card) {
+  if (!card || card.dataset.finReviewCommitted === "1") return false; // already committed (mid-fling)
+  const sel = card.querySelector("[data-review-label]");
+  if (!(sel && sel.value)) { // approval requires a category — nudge instead of a silent no-op
+    card.classList.add("fin-review-need-cat");
+    setTimeout(() => card.classList.remove("fin-review-need-cat"), 1200);
+    try { sel?.focus(); } catch { /* not focusable */ }
+    return false;
+  }
+  commitFinanceReviewEdits(card);
+  finishFinanceReviewCard(card, "approve");
+  return true;
+}
+
+function skipFinanceReviewCard(card) {
+  if (!card) return;
+  financeSnoozeLabelGroup(card.dataset.reviewKey); // returns tomorrow; not an approval
+  finishFinanceReviewCard(card, "skip");
+}
+
+// "Edit details…" hands off to the existing main-list detail card, which owns
+// the advanced editors (split, receipt scan, return linking, sign correction)
+// — reused rather than duplicated inside the review deck.
+function openFinanceTxnDetailFromReview(card) {
+  const id = card?.dataset.txnId;
+  if (!id) return;
+  const overlay = document.getElementById("finReviewOverlay");
+  commitAllFinanceReviewCards(overlay); // don't lose staged edits when handing off to the detail card
+  overlay?.remove();
+  financeDetailTxnId = id;
+  financeExpanded.add("card:txns");
+  if (activeAppArea === "finance") renderFinancePage();
+}
+
+// The quick-action chip row on a review card. Split/Receipt are spend-only and
+// Return is credit-only, so the set depends on the (possibly flipped) sign —
+// shared by the card template and the in-place sign-flip so they can't drift.
+function financeReviewQuickChipsHtml(t) {
+  const amt = t.amount || 0;
+  return `
+    <button class="fin-review-quick-btn${state.financeTxnSignFlips?.[t.id] ? " is-on" : ""}" type="button" data-fin-review-flip title="Flip the sign — this was actually income / a refund the bank posted as a charge (or vice-versa)">⇅ Sign</button>
+    ${amt < 0 ? `<button class="fin-review-quick-btn" type="button" data-fin-review-split title="Split this across several budget categories">Split</button>` : ""}
+    ${amt < 0 ? `<button class="fin-review-quick-btn" type="button" data-fin-review-receipt title="Scan a receipt to itemize + categorize this">Receipt</button>` : ""}
+    ${amt > 0 ? `<button class="fin-review-quick-btn" type="button" data-fin-review-return title="Link this refund to the purchase it offsets">Return</button>` : ""}`;
+}
+
+// Sign flip is light enough to do in place: toggle the correction, then update
+// this card's amount, chip row and button state without tearing down the review
+// deck (so edits staged on other cards survive). The rest of the quick-actions
+// (split, receipt, return) are full editors that live on the detail card, so
+// they hand off there pre-armed — the same seam as "Edit details…", one deeper.
+function flipFinanceReviewCardSign(card) {
+  const id = card?.dataset.txnId;
+  if (!id) return;
+  toggleFinanceTxnSignFlip(id); // persists + invalidates the labeled cache
+  const t = financeLabeledTxns().find((x) => x.id === id);
+  const amtEl = card.querySelector(".fin-review-amount");
+  if (t && amtEl) {
+    amtEl.textContent = formatFinMoney(t.amount || 0);
+    amtEl.classList.toggle("is-neg", (t.amount || 0) < 0);
+  }
+  // Rebuild the chips so split/receipt (spend) ↔ return (credit) match the new
+  // sign and the flip's on-state is reflected.
+  const quick = card.querySelector(".fin-review-quick");
+  if (quick && t) quick.innerHTML = financeReviewQuickChipsHtml(t);
+}
+
+function handoffFinanceReviewCard(card, action) {
+  const id = card?.dataset.txnId;
+  if (!id) return;
+  const overlay = document.getElementById("finReviewOverlay");
+  commitAllFinanceReviewCards(overlay); // preserve staged edits across the handoff
+  overlay?.remove();
+  financeDetailTxnId = id;
+  financeExpanded.add("card:txns");
+  if (action === "split") {
+    startSplitTxn(id);           // opens the split editor (renders the page)
+  } else if (action === "receipt") {
+    startScanReceiptForTxn(id);  // opens split + pops the receipt scanner
+  } else if (action === "return") {
+    financeReturnLinkSearch = { txnId: id, q: "" };
+    if (activeAppArea === "finance") renderFinancePage();
+    requestAnimationFrame(() => document.querySelector('[data-fin-edit="return-link-q"]')?.focus());
+  } else if (activeAppArea === "finance") {
+    renderFinancePage();
+  }
+}
+
 function wireFinanceReviewDeck(overlay) {
   const deck = overlay.querySelector("[data-fin-review-deck]");
   if (!deck) return;
-  // Picking a category labels the transaction (dropping it from the queue).
-  deck.addEventListener("change", (e) => {
-    const sel = e.target.closest("[data-review-label]");
-    if (!sel || !sel.value) return;
-    recordFinanceTxnLabel(sel.dataset.id, sel.value, sel.dataset.desc || "");
-    refreshFinanceReviewDeck();
+
+  // Buttons (the non-gesture path — approval is always possible without swiping).
+  deck.addEventListener("click", (e) => {
+    const card = e.target.closest(".fin-review-card");
+    if (e.target.closest("[data-fin-review-approve]")) { approveFinanceReviewCard(card); return; }
+    if (e.target.closest("[data-fin-review-skip]")) { skipFinanceReviewCard(card); return; }
+    if (e.target.closest("[data-fin-review-more]")) { openFinanceTxnDetailFromReview(card); return; }
+    if (e.target.closest("[data-fin-review-flip]")) { flipFinanceReviewCardSign(card); return; }
+    if (e.target.closest("[data-fin-review-split]")) { handoffFinanceReviewCard(card, "split"); return; }
+    if (e.target.closest("[data-fin-review-receipt]")) { handoffFinanceReviewCard(card, "receipt"); return; }
+    if (e.target.closest("[data-fin-review-return]")) { handoffFinanceReviewCard(card, "return"); return; }
   });
-  // Swipe: horizontal drag acts (left = snooze, right = done/next); vertical is
-  // left to the deck's native scroll-snap so up/down browses.
+
+  deck.addEventListener("scroll", () => updateFinanceReviewProgress(deck), { passive: true });
+
+  // Keyboard: ↑/↓ browse (never approves); form controls keep their own arrow
+  // behavior. Approval by keyboard is the focusable Approve button (Enter).
+  deck.addEventListener("keydown", (e) => {
+    if (e.target.closest("select, input, textarea")) return;
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    const idx = deck.clientHeight ? Math.round(deck.scrollTop / deck.clientHeight) : 0;
+    const to = e.key === "ArrowDown" ? idx + 1 : idx - 1;
+    deck.scrollTo({ top: Math.max(0, to) * deck.clientHeight, behavior: "smooth" });
+    e.preventDefault();
+  });
+
+  // Touch swipe, axis-locked by the pure classifier so a vertical/diagonal drag
+  // can never approve (see finance-review-gesture.js + its test).
   let card = null, sx = 0, sy = 0, axis = null;
-  const parts = (c) => ({ inner: c.querySelector(".fin-review-card-inner"), snooze: c.querySelector(".fin-review-action-snooze"), done: c.querySelector(".fin-review-action-done") });
+  const parts = (c) => ({ inner: c.querySelector(".fin-review-card-inner"), done: c.querySelector(".fin-review-action-done") });
+  const reset = (c) => { const { inner, done } = parts(c); if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = ""; } if (done) done.style.opacity = 0; };
   deck.addEventListener("touchstart", (e) => {
     card = e.target.closest(".fin-review-card") || null;
     if (!card) return;
-    if (e.target.closest(".fin-review-label")) { card = null; return; } // let the picker open
+    if (e.target.closest("input, select, textarea, button, a")) { card = null; return; } // let controls work
     sx = e.touches[0].clientX; sy = e.touches[0].clientY; axis = null;
   }, { passive: true });
   deck.addEventListener("touchmove", (e) => {
     if (!card) return;
     const dx = e.touches[0].clientX - sx, dy = e.touches[0].clientY - sy;
-    if (!axis) { if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return; axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y"; }
-    if (axis !== "x") return;
+    if (!axis) { axis = reviewGestureAxis(dx, dy); if (!axis) return; }
+    if (axis !== "x") return; // vertical → let the deck scroll-snap (browse)
     e.preventDefault();
-    const { inner, snooze, done } = parts(card);
-    if (inner) { inner.style.transition = "none"; inner.style.transform = `translateX(${dx}px) rotate(${dx * 0.02}deg)`; }
-    const t = Math.min(1, Math.abs(dx) / 120);
-    if (done) done.style.opacity = dx > 0 ? t : 0;
-    if (snooze) snooze.style.opacity = dx < 0 ? t : 0;
+    const { inner, done } = parts(card);
+    const shown = Math.max(dx, -48); // leftward barely follows (it's a no-op)
+    if (inner) { inner.style.transition = "none"; inner.style.transform = `translateX(${shown}px) rotate(${shown * 0.02}deg)`; }
+    if (done) done.style.opacity = dx > 0 ? Math.min(1, dx / REVIEW_GESTURE.approveThresholdPx) : 0;
   }, { passive: false });
   deck.addEventListener("touchend", (e) => {
     if (!card) return;
     const c = card, ax = axis; card = null; axis = null;
-    if (ax !== "x") return;
+    if (ax !== "x") return; // vertical was native scroll
     const dx = e.changedTouches[0].clientX - sx;
-    const { inner } = parts(c);
-    const key = c.dataset.reviewKey;
-    const THRESH = 90;
-    if (dx < -THRESH) { // snooze for the day
-      if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = "translateX(-120%) rotate(-6deg)"; }
-      setTimeout(() => { financeSnoozeLabelGroup(key); refreshFinanceReviewDeck(); }, 170);
-    } else if (dx > THRESH) { // done — advance to the next card
-      const idx = deck.clientHeight ? Math.round(deck.scrollTop / deck.clientHeight) : 0;
-      if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = ""; }
-      deck.scrollTo({ top: (idx + 1) * deck.clientHeight, behavior: "smooth" });
+    if (reviewGestureAction(ax, dx) === "approve") {
+      if (!approveFinanceReviewCard(c)) reset(c); // no category → snap back
     } else {
-      if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = ""; }
-      parts(c).snooze && (parts(c).snooze.style.opacity = 0);
-      parts(c).done && (parts(c).done.style.opacity = 0);
+      reset(c); // leftward or too-small → no state change
     }
   }, { passive: true });
 }
@@ -8109,7 +8361,7 @@ function financeAccountsNeedingAttention() {
 
 // The finance bell / home-tile badge total.
 function financeBellCount() {
-  return financeBellCount() + financeAccountsNeedingAttention().length;
+  return financeUnlabeledCount() + financeAccountsNeedingAttention().length;
 }
 
 // Persist this month's per-category totals (and income received) so history
@@ -8117,26 +8369,38 @@ function financeBellCount() {
 // outages. Derived from labeled transactions; only written when values change.
 function updateFinanceMonthActuals() {
   if (!financeLive?.accounts?.length) return;
-  const month = new Date().toISOString().slice(0, 7);
-  const cats = {};
-  const incomeBy = {};
-  let incomeGot = 0;
-  for (const t of financeLabeledTxns()) {
-    if ((t.posted || "").slice(0, 7) !== month || !t.label) continue;
-    for (const p of financeTxnPortions(t)) {
-      if (p.label === "income" || p.label.startsWith("income:")) {
-        incomeGot += p.amount;
-        incomeBy[p.label] = Math.round(((incomeBy[p.label] || 0) + p.amount) * 100) / 100;
-      } else if (p.label.startsWith("cat:")) {
-        const k = p.label.slice(4);
-        cats[k] = Math.round(((cats[k] || 0) + p.amount) * 100) / 100;
+  const txns = financeLabeledTxns();
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  // Which months are safe to (re)snapshot from the live feed: always the current
+  // month, plus any PAST month the feed fully covers — so a correction to an
+  // older transaction still in the feed updates that month's totals, not only
+  // the current month's, without a partial window undercounting a complete
+  // historical snapshot. (Coverage guard is pure + tested in finance-actuals.js.)
+  const monthsToWrite = financeMonthsToSnapshot(txns, currentMonth);
+  if (!state.financeMonthActuals || typeof state.financeMonthActuals !== "object") state.financeMonthActuals = {};
+  let changed = false;
+  for (const month of monthsToWrite) {
+    const cats = {};
+    const incomeBy = {};
+    let incomeGot = 0;
+    for (const t of txns) {
+      if ((t.posted || "").slice(0, 7) !== month || !t.label) continue;
+      for (const p of financeTxnPortions(t)) {
+        if (p.label === "income" || p.label.startsWith("income:")) {
+          incomeGot += p.amount;
+          incomeBy[p.label] = Math.round(((incomeBy[p.label] || 0) + p.amount) * 100) / 100;
+        } else if (p.label.startsWith("cat:")) {
+          const k = p.label.slice(4);
+          cats[k] = Math.round(((cats[k] || 0) + p.amount) * 100) / 100;
+        }
       }
     }
+    const entry = { cats, income: Math.round(incomeGot * 100) / 100, incomeBy };
+    if (JSON.stringify(state.financeMonthActuals[month]) === JSON.stringify(entry)) continue;
+    state.financeMonthActuals[month] = entry;
+    changed = true;
   }
-  const entry = { cats, income: Math.round(incomeGot * 100) / 100, incomeBy };
-  if (!state.financeMonthActuals || typeof state.financeMonthActuals !== "object") state.financeMonthActuals = {};
-  if (JSON.stringify(state.financeMonthActuals[month]) === JSON.stringify(entry)) return;
-  state.financeMonthActuals[month] = entry;
+  if (!changed) return;
   const months = Object.keys(state.financeMonthActuals).sort();
   for (let i = 0; i < months.length - 36; i++) delete state.financeMonthActuals[months[i]];
   persist();
@@ -9659,6 +9923,12 @@ function onFinanceGridClick(e) {
       .map((p) => ({ label: p.label, amount: parseFinAmount(p.amount) }))
       .filter((p) => p.label && p.amount > 0);
     if (!portions.length) return;
+    // Defense in depth: the Save button is disabled unless the portions total
+    // the transaction, but re-assert here so no state drift can persist a split
+    // that silently mis-totals its categories.
+    const splitTxn = financeLabeledTxns().find((x) => x.id === btn.dataset.id);
+    const assigned = portions.reduce((s, p) => s + p.amount, 0);
+    if (splitTxn && Math.abs(Math.abs(splitTxn.amount || 0) - assigned) > 0.02) return;
     recordFinanceTxnSplit(btn.dataset.id, portions);
     financeSplitDraft = null;
     renderFinancePage();
@@ -9992,6 +10262,10 @@ function showPlanApp(event) {
   fetchAllPlanCalendars();
   renderPlanCalList(); // populate the left sidebar's calendar manager
   renderPlanPage();
+  // T2: the bell is Tasks' only entry point — hide it when the Tasks page is
+  // disabled in settings, so it can't bypass the page-enable model.
+  if (elements.planTasksBtn) elements.planTasksBtn.hidden = tasksBellState(isPagePersonallyEnabled("do")).hidden;
+  updateDoNotifCount(); // refresh the Tasks bell dot for the current task state
   closePageTitleMenu();
   closeAppMenu();
 }
@@ -10169,13 +10443,31 @@ function renderWeatherPage() {
     </div>`;
 
   let body;
-  if (weatherStatus === "geolocating") body = `<div class="wx-note">Finding your location…</div>`;
+  if (weatherStatus === "geolocating") body = `<div class="wx-skeleton">Finding your location…</div>`;
   else if (!loc) body = wxEmptyState();
   else if (weatherStatus === "error" && !s) body = `<div class="wx-error">${escapeHtml(weatherErrorMsg || "Weather unavailable.")}</div>`;
   else if (!s) body = `<div class="wx-skeleton">Loading weather…</div>`;
   else body = wxDashboard(s, tz);
 
-  el.innerHTML = header + (weatherPickerOpen ? wxPicker() : "") + (weatherErrorMsg && s ? `<div class="wx-inline-warn">${escapeHtml(weatherErrorMsg)}</div>` : "") + body;
+  el.innerHTML = header
+    + (loc ? wxLocationRail() : "")
+    + (weatherPickerOpen ? wxPicker() : "")
+    + (weatherErrorMsg && s ? `<div class="wx-inline-warn">${escapeHtml(weatherErrorMsg)}</div>` : "")
+    + body;
+}
+
+function wxShortLoc(label) { return String(label || "").split(",")[0].trim() || "Location"; }
+
+function wxLocationRail() {
+  const saved = state.weatherLocations || [];
+  const active = weatherActiveLocation;
+  const cur = active && active.id === "current";
+  const chips = [
+    `<button class="wx-loc" type="button" data-wx-action="use-current" aria-current="${cur ? "true" : "false"}"><span class="wx-loc-t" aria-hidden="true">◎</span> Current</button>`,
+    ...saved.map((l) => `<button class="wx-loc" type="button" data-wx-action="select-saved" data-id="${escapeHtml(l.id)}" aria-current="${active && active.id === l.id ? "true" : "false"}">${escapeHtml(wxShortLoc(l.label))}</button>`),
+    `<button class="wx-loc wx-loc-add" type="button" data-wx-action="toggle-picker" aria-expanded="${weatherPickerOpen}">+ Add</button>`,
+  ];
+  return `<div class="wx-locrail" role="group" aria-label="Saved locations">${chips.join("")}</div>`;
 }
 
 function wxEmptyState() {
@@ -10217,17 +10509,20 @@ function wxPicker() {
 function wxAlertCard(a) {
   const cls = WX_SEVERITY_CLASS[a.severity] || "wx-sev-minor";
   const open = weatherExpanded.has(`alert:${a.id}`);
+  const tz = weatherActiveLocation?.timezone || "America/New_York";
+  const until = a.expires ? `until ${wxClock(a.expires, tz)}` : "";
+  const meta = [a.affectedArea, a.urgency, a.certainty].filter((x) => x && x !== "Unknown").join(" · ");
   return `
     <div class="wx-alert ${cls}">
       <button class="wx-alert-head" type="button" data-wx-action="toggle" data-id="alert:${escapeHtml(a.id)}" aria-expanded="${open}">
-        <span class="wx-alert-sev">${escapeHtml(a.severity)}</span>
+        <span class="wx-alert-sev">${escapeHtml(a.severity === "Unknown" ? "Advisory" : a.severity)}</span>
         <span class="wx-alert-event">${escapeHtml(a.event)}</span>
-        <span class="wx-caret">${open ? "▴" : "▾"}</span>
+        ${until ? `<span class="wx-alert-meta">${escapeHtml(until)}</span>` : ""}
+        <span class="wx-caret" aria-hidden="true">${open ? "▴" : "▾"}</span>
       </button>
       ${open ? `<div class="wx-alert-body">
+        ${meta ? `<div class="wx-alert-area">${escapeHtml(meta)}</div>` : ""}
         ${a.headline ? `<div class="wx-alert-headline">${escapeHtml(a.headline)}</div>` : ""}
-        ${a.affectedArea ? `<div class="wx-alert-area">${escapeHtml(a.affectedArea)}</div>` : ""}
-        ${a.expires ? `<div class="wx-alert-expires">Until ${escapeHtml(wxClock(a.expires, weatherActiveLocation?.timezone || "America/New_York"))}</div>` : ""}
         <div class="wx-alert-desc">${escapeHtml(a.description || "")}</div>
         ${a.instructions ? `<div class="wx-alert-instr"><b>What to do:</b> ${escapeHtml(a.instructions)}</div>` : ""}
       </div>` : ""}
@@ -10236,102 +10531,242 @@ function wxAlertCard(a) {
 
 function wxDashboard(s, tz) {
   const c = s.current || {};
-  const prov = c.provenance || {};
-  const provLine = prov.isForecastDerived
-    ? "Forecast data — no recent station observation"
-    : `${escapeHtml(prov.stationName || prov.stationId || "Nearby station")}${prov.stationDistanceMiles != null ? ` · ${prov.stationDistanceMiles} mi` : ""}${prov.observedAt ? ` · ${escapeHtml(wxAgo(prov.observedAt))}` : ""}`;
-  const today = s.daily?.[0];
+  const nowHour = (s.hourly || [])[0] || {};
+  // Prefer the real station observation for the hero condition (so the artwork
+  // matches the shown label); fall back to the current forecast hour's icon.
+  const hasObs = !!c.description && !c.provenance?.isForecastDerived;
+  const cond = conditionFor(hasObs
+    ? { description: c.description, sunrise: c.sunrise, sunset: c.sunset, at: c.provenance?.observedAt || s.fetchedAt }
+    : { icon: nowHour.icon, shortForecast: nowHour.description, isDaytime: nowHour.isDaytime, sunrise: c.sunrise, sunset: c.sunset, at: s.fetchedAt });
+  const emphasis = weatherEmphasis({ conditionKey: cond.key, alerts: s.alerts || [] });
   const alertsHtml = (s.alerts || []).length ? `<div class="wx-alerts">${s.alerts.map(wxAlertCard).join("")}</div>` : "";
-  const sun = c.sunrise && c.sunset ? `${wxClock(c.sunrise, tz)} / ${wxClock(c.sunset, tz)}` : "—";
-  const detail = [
-    ["Humidity", wxNum(c.humidityPercent, "%")],
-    ["Dew point", wxTempStr(c.dewPointF)],
-    ["Wind", c.windMph != null ? `${c.windMph} mph ${c.windDirectionCardinal || ""}`.trim() : "—"],
-    ["Gusts", c.windGustMph != null ? `${c.windGustMph} mph` : "—"],
-    ["Pressure", wxNum(c.pressureInHg, " inHg")],
-    ["Visibility", c.visibilityMiles != null ? `${c.visibilityMiles} mi` : "—"],
-    ["Precip (1h)", c.precipitationInches != null ? `${c.precipitationInches} in` : "—"],
-    ["Sun ↑/↓", sun],
-    ["UV index", wxUvLabel(c.uvIndex)],
-    ["Air quality", wxAqiLabel(c.airQualityIndex)]
-  ].map(([k, v]) => `<div class="wx-detail-cell"><span class="wx-detail-k">${k}</span><span class="wx-detail-v">${escapeHtml(String(v))}</span></div>`).join("");
-  const uvAqiNote = c.uvAqiProvenance ? `<div class="wx-source-note">UV &amp; air quality via Open-Meteo</div>` : "";
-
-  const hourStrip = (s.hourly || []).slice(0, 12).map((h) => `
-    <div class="wx-hour">
-      <div class="wx-hour-t">${escapeHtml(wxHourLabel(h.startTime, tz))}</div>
-      <div class="wx-hour-temp">${wxTempStr(h.temperatureF)}</div>
-      <div class="wx-hour-pop">${h.precipProbabilityPercent ? `${h.precipProbabilityPercent}%` : "&nbsp;"}</div>
-    </div>`).join("");
-
-  const hourlyOpen = weatherExpanded.has("sec:hourly");
-  const hourlyFull = (s.hourly || []).slice(0, 24).map((h) => `
-    <div class="wx-hourly-row">
-      <span class="wx-hourly-time">${escapeHtml(wxFmt(h.startTime, tz, { weekday: "short", hour: "numeric" }))}</span>
-      <span class="wx-hourly-temp">${wxTempStr(h.temperatureF)}</span>
-      <span class="wx-hourly-pop">${h.precipProbabilityPercent ? `${h.precipProbabilityPercent}%` : ""}</span>
-      <span class="wx-hourly-desc">${escapeHtml(h.description || "")}</span>
-    </div>`).join("");
-
-  const dailyOpen = weatherExpanded.has("sec:daily");
-  const dailyFull = (s.daily || []).map((d) => `
-    <div class="wx-daily-row">
-      <span class="wx-daily-name">${escapeHtml(d.name)}</span>
-      <span class="wx-daily-temp">${wxTempStr(d.temperatureF)}</span>
-      <span class="wx-daily-pop">${d.precipProbabilityPercent ? `${d.precipProbabilityPercent}%` : ""}</span>
-      <span class="wx-daily-desc">${escapeHtml(d.description || "")}</span>
-    </div>`).join("");
-
   return `
     ${alertsHtml}
-    <div class="wx-current">
-      <div class="wx-temp-big">${wxTempStr(c.temperatureF)}</div>
-      <div class="wx-current-meta">
-        <div class="wx-desc">${escapeHtml(c.description || today?.description || "")}</div>
-        <div class="wx-feels">Feels like ${wxTempStr(c.apparentTemperatureF)}</div>
-        <div class="wx-prov">${provLine}</div>
+    <div class="wx-grid" data-emphasis="${emphasis}">
+      ${wxHero(s, c, cond)}
+      ${wxHourlyCard(s, tz)}
+      <div class="wx-col">
+        ${wxDailyCard(s, tz)}
+        ${wxRadarCard(s)}
       </div>
-    </div>
-    ${today ? `<div class="wx-today">${escapeHtml(today.name)}: ${escapeHtml(today.detailedForecast || today.description || "")}</div>` : ""}
-    <div class="wx-section-label">Next hours</div>
-    <div class="wx-hours-strip">${hourStrip}</div>
-    ${wxRadarPreview(s)}
-    <div class="wx-section-label">Now</div>
-    <div class="wx-detail-grid">${detail}</div>
-    ${uvAqiNote}
-    ${wxDisclosure("hourly", "Hourly forecast", hourlyOpen, `<div class="wx-hourly-list">${hourlyFull}</div>`)}
-    ${wxDisclosure("daily", "7-day forecast", dailyOpen, `<div class="wx-daily-list">${dailyFull}</div>`)}
-    ${wxProductsSection(s)}
-    ${(s.warnings || []).length ? `<div class="wx-warnings">${s.warnings.map((w) => `<div>• ${escapeHtml(w)}</div>`).join("")}</div>` : ""}`;
-}
-
-function wxDisclosure(id, title, open, inner) {
-  return `
-    <div class="wx-disclosure">
-      <button class="wx-disclosure-head" type="button" data-wx-action="toggle" data-id="sec:${id}" aria-expanded="${open}">
-        <span>${escapeHtml(title)}</span><span class="wx-caret">${open ? "▴" : "▾"}</span>
-      </button>
-      ${open ? inner : ""}
+      <div class="wx-col">
+        ${wxDetailGroups(s, c, tz)}
+        ${wxTrendCard(s, tz)}
+        ${wxFeedCard(s)}
+      </div>
     </div>`;
 }
 
-function wxRadarPreview(s) {
-  const site = s.radarStation;
-  if (!site) return "";
-  // Lightweight static preview; tapping opens the interactive Leaflet map.
-  return `
-    <div class="wx-section-label">Radar</div>
-    <button class="wx-radar-preview" type="button" data-wx-action="open-map" title="Open interactive radar map">
-      <img src="https://radar.weather.gov/ridge/standard/${escapeHtml(site)}_loop.gif" alt="Radar loop for ${escapeHtml(site)}" loading="lazy" onerror="this.closest('.wx-radar-preview').classList.add('is-broken')">
-      <span class="wx-radar-fallback">Open radar map</span>
-      <span class="wx-radar-expand">⤢ Expand</span>
-    </button>`;
+// clear/partly day = open sky (default); cloud/precip day = muted; night/severe = dark.
+function wxHeroMood(cond) {
+  if (!cond.isDay) return "mood-night";
+  if (["thunderstorm", "heavy-rain", "heavy-snow"].includes(cond.key)) return "mood-storm";
+  if (["cloudy", "overcast", "rain", "snow", "sleet", "fog", "haze", "wind"].includes(cond.key)) return "mood-cloud";
+  return "";
 }
 
-function wxProductsSection(s) {
+function wxHero(s, c, cond) {
+  const prov = c.provenance || {};
+  const obs = prov.isForecastDerived
+    ? "Forecast data — no recent station observation"
+    : `${escapeHtml(prov.stationName || prov.stationId || "Nearby station")}${prov.stationDistanceMiles != null ? ` · ${prov.stationDistanceMiles} mi` : ""}${prov.observedAt ? ` · ${escapeHtml(wxAgo(prov.observedAt))}` : ""}`;
+  const today = s.daily?.[0];
+  const condLabel = c.description || today?.description || conditionLabel(cond.key, cond.isDay);
+  const hi = s.daily?.find((d) => d.isDaytime)?.temperatureF;
+  const lo = s.daily?.find((d) => !d.isDaytime)?.temperatureF;
+  const hilo = [hi != null ? `↑ ${Math.round(hi)}°` : "", lo != null ? `↓ ${Math.round(lo)}°` : ""].filter(Boolean).join("  ");
+  const summary = today?.detailedForecast || today?.description || "";
+  const chips = [
+    c.windMph != null ? `🍃 ${c.windMph} mph ${c.windDirectionCardinal || ""}`.trim() : "",
+    c.humidityPercent != null ? `💧 ${c.humidityPercent}%` : "",
+    c.uvIndex != null ? `☀︎ UV ${wxUvLabel(c.uvIndex)}` : "",
+    c.visibilityMiles != null ? `🌫 ${c.visibilityMiles} mi` : "",
+  ].filter(Boolean).map((t) => `<span class="wx-chip">${escapeHtml(t)}</span>`).join("");
+  return `
+    <section class="wx-card wx-hero wx-span ${wxHeroMood(cond)}">
+      ${heroArtSvg(cond.key, cond.isDay)}
+      <div class="wx-hero-inner">
+        <button class="wx-hero-loc" type="button" data-wx-action="toggle-picker">◎ ${escapeHtml(wxShortLoc(s.location?.label || ""))} ▾</button>
+        <div class="wx-hero-obs">${obs}</div>
+        <div class="wx-temp">${c.temperatureF != null ? Math.round(c.temperatureF) : "—"}<sup>°F</sup></div>
+        <div class="wx-hero-cond">${escapeHtml(condLabel)}</div>
+        <div class="wx-hero-feels">Feels like ${wxTempStr(c.apparentTemperatureF)}</div>
+        ${hilo || summary ? `<div class="wx-hero-hilo">${escapeHtml(hilo)}${hilo && summary ? "  ·  " : ""}${escapeHtml(summary)}</div>` : ""}
+        ${chips ? `<div class="wx-hero-chips">${chips}</div>` : ""}
+      </div>
+    </section>`;
+}
+
+function wxHourlyCard(s, tz) {
+  const hours = (s.hourly || []).slice(0, 24);
+  if (!hours.length) return "";
+  const cells = hours.map((h, i) => {
+    const cond = conditionFor({ icon: h.icon, shortForecast: h.description, isDaytime: h.isDaytime });
+    const pop = h.precipProbabilityPercent;
+    const wind = [h.windDirectionCardinal, h.windMph].filter((v) => v != null && v !== "").join(" ");
+    return `
+      <div class="wx-hour${i === 0 ? " is-now" : ""}" role="listitem">
+        <div class="wx-hour-hh">${i === 0 ? "Now" : escapeHtml(wxHourLabel(h.startTime, tz))}</div>
+        ${iconSvg(cond.key, cond.isDay)}
+        <div class="wx-hour-temp">${wxTempStr(h.temperatureF)}</div>
+        <div class="wx-hour-pop${pop ? "" : " is-zero"}">💧${pop || 0}%</div>
+        <div class="wx-hour-wd">${escapeHtml(wind)}</div>
+      </div>`;
+  }).join("");
+  return `
+    <section class="wx-card wx-span">
+      <div class="wx-card-hd"><h3>Hourly</h3><span class="wx-sub">Next 24 hours · scroll →</span></div>
+      <div class="wx-rail" role="list" aria-label="Hourly forecast">${cells}</div>
+    </section>`;
+}
+
+// Fold NWS day/night periods into calendar days with a high, low, pop, and condition.
+function wxFoldDaily(periods, tz) {
+  const keyOf = (iso) => { try { return new Date(iso).toLocaleDateString("en-US", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }); } catch { return String(iso).slice(0, 10); } };
+  const order = [];
+  const byKey = new Map();
+  for (const p of periods || []) {
+    if (!p?.startTime) continue;
+    const k = keyOf(p.startTime);
+    if (!byKey.has(k)) { byKey.set(k, { key: k, periods: [] }); order.push(k); }
+    byKey.get(k).periods.push(p);
+  }
+  const todayKey = keyOf(new Date().toISOString());
+  return order.map((k) => {
+    const g = byKey.get(k);
+    const day = g.periods.find((p) => p.isDaytime);
+    const night = g.periods.find((p) => !p.isDaytime);
+    const temps = g.periods.map((p) => p.temperatureF).filter((v) => v != null);
+    const hi = day ? day.temperatureF : (temps.length ? Math.max(...temps) : null);
+    const lo = night ? night.temperatureF : (temps.length ? Math.min(...temps) : null);
+    const pop = Math.max(0, ...g.periods.map((p) => p.precipProbabilityPercent || 0));
+    const src = day || night || g.periods[0];
+    const cond = conditionFor({ icon: src.icon, shortForecast: src.description, isDaytime: true });
+    const name = k === todayKey ? "Today" : (() => { try { return new Date(g.periods[0].startTime).toLocaleDateString("en-US", { timeZone: tz, weekday: "short" }); } catch { return g.periods[0].name; } })();
+    return { name, hi, lo, pop, cond };
+  });
+}
+
+function wxDailyCard(s, tz) {
+  const days = wxFoldDaily(s.daily || [], tz).slice(0, 7);
+  if (!days.length) return "";
+  const los = days.map((d) => d.lo).filter((v) => v != null);
+  const his = days.map((d) => d.hi).filter((v) => v != null);
+  const min = los.length ? Math.min(...los) : 0;
+  const max = his.length ? Math.max(...his) : 1;
+  const span = Math.max(1, max - min);
+  const rows = days.map((d) => {
+    const L = d.lo != null ? ((d.lo - min) / span) * 100 : 0;
+    const W = (d.lo != null && d.hi != null) ? ((d.hi - d.lo) / span) * 100 : 100;
+    return `
+      <div class="wx-day">
+        <span class="wx-day-name">${escapeHtml(d.name)}</span>
+        ${iconSvg(d.cond.key, d.cond.isDay)}
+        <span class="wx-day-pop${d.pop ? "" : " is-zero"}">💧${d.pop}%</span>
+        <div class="wx-rangewrap">
+          <span class="wx-day-lo">${d.lo != null ? Math.round(d.lo) + "°" : "—"}</span>
+          <div class="wx-range"><div class="wx-range-seg" style="left:${L.toFixed(1)}%;width:${Math.max(W, 6).toFixed(1)}%"></div></div>
+          <span class="wx-day-hi">${d.hi != null ? Math.round(d.hi) + "°" : "—"}</span>
+        </div>
+      </div>`;
+  }).join("");
+  return `
+    <section class="wx-card">
+      <div class="wx-card-hd"><h3>7-Day Forecast</h3></div>
+      <div class="wx-daily">${rows}</div>
+    </section>`;
+}
+
+// Sun position along a dawn→dusk arc (dot only; decorative).
+function wxSunArc(c) {
+  if (!c.sunrise || !c.sunset) return "";
+  const rise = +new Date(c.sunrise), set = +new Date(c.sunset), now = Date.now();
+  const frac = Math.max(0, Math.min(1, (now - rise) / Math.max(1, set - rise)));
+  const x = 60 - 52 * Math.cos(frac * Math.PI);
+  const y = 52 - 40 * Math.sin(frac * Math.PI);
+  const up = now >= rise && now <= set;
+  return `<svg class="wx-arc" viewBox="0 0 120 56" role="img" aria-hidden="true">
+    <path d="M8 52 A52 40 0 0 1 112 52" fill="none" stroke="var(--line)" stroke-width="2.5" stroke-dasharray="3 5"/>
+    <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="5" fill="${up ? "var(--sun,#f1b24e)" : "var(--muted)"}"/></svg>`;
+}
+
+function wxDetailGroups(s, c, tz) {
+  const deg = c.windDirectionDegrees;
+  const dial = `<svg class="wx-dial" viewBox="0 0 100 100" role="img" aria-hidden="true">
+    <circle cx="50" cy="50" r="42" fill="none" stroke="var(--line)" stroke-width="2"/>
+    <g fill="var(--muted)" font-size="9" font-weight="700"><text x="50" y="14" text-anchor="middle">N</text><text x="88" y="53" text-anchor="middle">E</text><text x="50" y="94" text-anchor="middle">S</text><text x="12" y="53" text-anchor="middle">W</text></g>
+    ${deg != null ? `<g transform="rotate(${Math.round(deg)} 50 50)"><path d="M50 20 L44 54 L50 48 L56 54 Z" fill="var(--accent)"/></g>` : ""}
+    <circle cx="50" cy="50" r="4" fill="var(--accent-dark)"/></svg>`;
+  const g = (title, inner) => `<div class="wx-g"><h4>${title}</h4>${inner}</div>`;
+  const kv = (k, v) => `<div class="wx-kv"><span class="wx-k">${escapeHtml(k)}</span><span class="wx-v">${escapeHtml(String(v))}</span></div>`;
+  return `
+    <div class="wx-groups">
+      ${g("🍃 Wind", dial
+        + kv("Wind", c.windMph != null ? `${c.windMph} mph ${c.windDirectionCardinal || ""}`.trim() : "—")
+        + kv("Gusts", c.windGustMph != null ? `${c.windGustMph} mph` : "—"))}
+      ${g("💧 Comfort", kv("Feels like", wxTempStr(c.apparentTemperatureF))
+        + kv("Humidity", wxNum(c.humidityPercent, "%"))
+        + kv("Dew point", wxTempStr(c.dewPointF))
+        + kv("Pressure", c.pressureInHg != null ? `${c.pressureInHg}"` : "—"))}
+      ${g("☀︎ Sun & Sky", wxSunArc(c)
+        + kv("Sunrise", c.sunrise ? wxClock(c.sunrise, tz) : "—")
+        + kv("Sunset", c.sunset ? wxClock(c.sunset, tz) : "—")
+        + kv("Visibility", c.visibilityMiles != null ? `${c.visibilityMiles} mi` : "—"))}
+      ${g("🌫 Air", kv("UV index", wxUvLabel(c.uvIndex))
+        + kv("Air quality", wxAqiLabel(c.airQualityIndex))
+        + kv("Precip (1h)", c.precipitationInches != null ? `${c.precipitationInches}"` : "—")
+        + (c.uvAqiProvenance ? `<div class="wx-g-note">UV &amp; air quality via Open-Meteo</div>` : ""))}
+    </div>`;
+}
+
+function wxTrendCard(s, tz) {
+  const hrs = (s.hourly || []).slice(0, 12);
+  const temps = hrs.map((h) => h.temperatureF);
+  if (temps.filter((v) => v != null).length < 3) return "";
+  const P = hrs.map((h) => h.precipProbabilityPercent || 0);
+  const W = 320, H = 130, pad = 16, n = hrs.length;
+  const xs = (i) => pad + (i * (W - 2 * pad)) / (n - 1);
+  const valid = temps.filter((v) => v != null);
+  const tmin = Math.min(...valid) - 3, tmax = Math.max(...valid) + 3;
+  const ys = (v) => H - 24 - ((v - tmin) / Math.max(1, tmax - tmin)) * (H - 44);
+  const bars = P.map((p, i) => { if (!p) return ""; const bh = (p / 100) * (H - 44); return `<rect x="${(xs(i) - 6).toFixed(1)}" y="${(H - 24 - bh).toFixed(1)}" width="12" height="${bh.toFixed(1)}" rx="2" fill="var(--window-border)" opacity="0.2"/>`; }).join("");
+  const pts = temps.map((v, i) => (v == null ? null : `${xs(i).toFixed(1)},${ys(v).toFixed(1)}`)).filter(Boolean).join(" ");
+  const area = `M${xs(0).toFixed(1)},${H - 24} ` + temps.map((v, i) => (v == null ? "" : `L${xs(i).toFixed(1)},${ys(v).toFixed(1)}`)).join(" ") + ` L${xs(n - 1).toFixed(1)},${H - 24} Z`;
+  const dots = temps.map((v, i) => (v == null ? "" : `<circle cx="${xs(i).toFixed(1)}" cy="${ys(v).toFixed(1)}" r="2.4" fill="var(--tomato)"/>`)).join("");
+  const labels = temps.map((v, i) => { if (v == null || i % 2) return ""; const hh = i === 0 ? "Now" : escapeHtml(wxHourLabel(hrs[i].startTime, tz).replace(/\s*(AM|PM)/i, "")); return `<text x="${xs(i).toFixed(1)}" y="${(ys(v) - 6).toFixed(1)}" text-anchor="middle">${Math.round(v)}°</text><text x="${xs(i).toFixed(1)}" y="${H - 8}" text-anchor="middle">${hh}</text>`; }).join("");
+  const svg = `<svg class="wx-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Temperature and precipitation probability for the next 12 hours">
+    <defs><linearGradient id="wxTrendFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--tomato)" stop-opacity="0.26"/><stop offset="1" stop-color="var(--tomato)" stop-opacity="0"/></linearGradient></defs>
+    ${bars}<path d="${area}" fill="url(#wxTrendFill)"/><polyline points="${pts}" fill="none" stroke="var(--tomato)" stroke-width="2.5" stroke-linejoin="round"/>${dots}${labels}</svg>`;
+  return `
+    <section class="wx-card">
+      <div class="wx-card-hd"><h3>Temperature &amp; Precip · 12h</h3></div>
+      <div class="wx-chart-legend"><span class="wx-k"><span class="wx-sw" style="background:var(--tomato)"></span>Temp</span><span class="wx-k"><span class="wx-sw" style="background:var(--window-border)"></span>Precip %</span></div>
+      <div class="wx-chart-wrap">${svg}</div>
+    </section>`;
+}
+
+function wxRadarCard(s) {
+  const site = s.radarStation;
+  const stamp = `Radar · ${escapeHtml(wxAgo(s.fetchedAt))}`;
+  const inner = site
+    ? `<img src="https://radar.weather.gov/ridge/standard/${escapeHtml(site)}_loop.gif" alt="Radar loop for ${escapeHtml(site)}" loading="lazy" onerror="this.closest('.wx-radar-preview').classList.add('is-broken')">
+       <span class="wx-radar-fallback">Open radar map</span>
+       <span class="wx-radar-open" aria-hidden="true">⤢ Open full map</span>
+       <span class="wx-radar-stamp"><span class="wx-live-dot"></span> ${stamp}</span>`
+    : `<span class="wx-radar-fallback">Open radar map</span>`;
+  return `
+    <section class="wx-card wx-radarcard">
+      <div class="wx-card-hd"><h3>Radar</h3><span class="wx-sub">tap to open map</span></div>
+      <button class="wx-radar-preview" type="button" data-wx-action="open-map" aria-label="Open interactive radar map">${inner}</button>
+      <div class="wx-radar-legend"><span>Light</span><span class="wx-radar-scale" aria-hidden="true"></span><span>Heavy</span></div>
+    </section>`;
+}
+
+function wxFeedCard(s) {
   const products = s.products || [];
-  if (!products.length) return "";
-  return products.map((p) => {
+  const warnings = (s.warnings || []).length ? `<div class="wx-warnings">${s.warnings.map((w) => `• ${escapeHtml(w)}`).join("<br>")}</div>` : "";
+  if (!products.length && !warnings) return "";
+  const rows = products.map((p) => {
     const id = `prod:${p.office}:${p.type}`;
     const open = weatherExpanded.has(id);
     let inner = "";
@@ -10339,16 +10774,21 @@ function wxProductsSection(s) {
       const cached = weatherProductText.get(`${p.office}:${p.type}`);
       if (cached === "loading" || cached === undefined) inner = `<div class="wx-note">Loading…</div>`;
       else if (cached === "none" || !cached?.text) inner = `<div class="wx-note">Not currently issued for ${escapeHtml(p.office)}.</div>`;
-      else inner = `<div class="wx-product-meta">Issued ${escapeHtml(wxClock(cached.issued, s.location.timezone))}</div><pre class="wx-product-text">${escapeHtml(cached.text)}</pre>`;
+      else inner = `<div class="wx-product-meta">Issued ${escapeHtml(wxClock(cached.issued, s.location.timezone))}</div><div class="wx-product-text">${escapeHtml(cached.text)}</div>`;
     }
     return `
-      <div class="wx-disclosure">
+      <div class="wx-frow">
         <button class="wx-disclosure-head" type="button" data-wx-action="product" data-office="${escapeHtml(p.office)}" data-type="${escapeHtml(p.type)}" aria-expanded="${open}">
-          <span>${escapeHtml(p.name)}</span><span class="wx-caret">${open ? "▴" : "▾"}</span>
+          <span class="wx-fname">${escapeHtml(p.name)}</span><span class="wx-rm">${open ? "Read less ▴" : "Read more →"}</span>
         </button>
         ${open ? inner : ""}
       </div>`;
   }).join("");
+  return `
+    <section class="wx-card wx-feed">
+      <div class="wx-card-hd"><h3>NWS Forecast Feed</h3><span class="wx-sub">tap to expand</span></div>
+      ${rows}${warnings}
+    </section>`;
 }
 
 // ── Wiring (delegated, bound once) ──────────────────────────────────────────
@@ -10439,19 +10879,21 @@ async function openWeatherRadarMap() {
   overlay.id = "wxMapOverlay";
   overlay.className = "wx-map-overlay";
   overlay.innerHTML = `
-    <div class="wx-map-modal" role="dialog" aria-modal="true" aria-label="Radar map">
+    <div class="wx-map-modal" role="dialog" aria-modal="true" aria-label="Weather map">
       <div class="wx-map-bar">
-        <span class="wx-map-title">Radar — ${escapeHtml(s?.location?.label || loc.label)}</span>
-        <div class="wx-map-toggles">
-          <label class="wx-map-toggle"><input type="checkbox" id="wxMapRadar" checked> Radar</label>
-          <label class="wx-map-toggle" id="wxMapAlertsWrap"><input type="checkbox" id="wxMapAlerts" checked> Alerts</label>
+        <span class="wx-map-title">${escapeHtml(s?.location?.label || loc.label)}</span>
+        <div class="wx-map-modes" role="group" aria-label="Map layer">
+          <button type="button" data-wx-map-mode="radar" aria-pressed="true">Radar</button>
+          <button type="button" data-wx-map-mode="satellite" aria-pressed="false">Satellite</button>
         </div>
-        <button class="wx-map-close" type="button" aria-label="Close radar map"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        <label class="wx-map-toggle" id="wxMapAlertsWrap"><input type="checkbox" id="wxMapAlerts" checked> Warnings</label>
+        <button class="wx-map-close" type="button" aria-label="Close weather map"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
       <div class="wx-map-canvas" id="wxMapCanvas"><div class="wx-map-msg">Loading map…</div></div>
       <div class="wx-map-foot">
         <img class="wx-map-legend" id="wxMapLegend" alt="Radar reflectivity scale" hidden>
         <span class="wx-map-valid" id="wxMapValid"></span>
+        <span class="wx-map-attr" id="wxMapAttr"></span>
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -10470,38 +10912,47 @@ async function openWeatherRadarMap() {
   canvas.innerHTML = "";
   const dark = document.documentElement.dataset.theme === "dark"
     || (!document.documentElement.dataset.theme && window.matchMedia?.("(prefers-color-scheme: dark)").matches);
-  const map = L.map(canvas, { zoomControl: true, attributionControl: true }).setView([loc.latitude, loc.longitude], 8);
+  const map = L.map(canvas, { zoomControl: true, attributionControl: true }).setView([loc.latitude, loc.longitude], 7);
   weatherMapInstance = map;
+  // Keyless, theme-aware Esri gray canvas (CARTO's free basemaps now stamp an
+  // "API KEY REQUIRED" watermark). Grayscale reads cleanly under radar/satellite.
   L.tileLayer(
-    dark ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-         : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-    { attribution: "© OpenStreetMap © CARTO", subdomains: "abcd", maxZoom: 18 }
+    dark ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+         : "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+    { attribution: "© Esri", maxZoom: 16 }
   ).addTo(map);
   L.marker([loc.latitude, loc.longitude]).addTo(map);
 
-  // Radar layer, discovered via GetCapabilities (never leave a broken toggle).
-  let radarLayer = null;
-  const valid = document.getElementById("wxMapValid");
+  const legendEl = document.getElementById("wxMapLegend");
+  const validEl = document.getElementById("wxMapValid");
+  const attrEl = document.getElementById("wxMapAttr");
+
+  // SATELLITE: NASA GIBS GOES-East GeoColor, latest frame (time="default"). A
+  // different provider than NOAA radar — documented in WEATHER.md — chosen because
+  // it is authoritative (GOES-derived), reliably tiled, and ~10-min fresh. Not
+  // animated: NOAA exposes no reliable historical frames, so no fake timeline.
+  const satLayer = L.tileLayer(
+    "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/GOES-East_ABI_GeoColor/default/default/GoogleMapsCompatible_Level7/{z}/{y}/{x}.png",
+    { maxZoom: 18, maxNativeZoom: 7, opacity: 0.85, attribution: "Imagery: NASA GIBS · NOAA GOES-East", bounds: [[-85, -180], [85, 180]] }
+  );
+  let satErrored = false;
+  satLayer.on("tileerror", () => { if (!satErrored) { satErrored = true; if (currentMode === "satellite" && validEl) validEl.textContent = "Satellite temporarily unavailable"; } });
+
+  // RADAR: NOAA IDP base reflectivity WMS, discovered via GetCapabilities (single
+  // current frame). Never leaves a broken toggle — offline disables the mode.
+  let radarLayer = null, radarLegendUrl = null, radarOffline = false;
   try {
     const cap = await weatherRequest({ action: "capabilities" }, 3 * 60 * 60 * 1000);
     if (weatherMapInstance !== map) return; // closed/reopened
     if (cap?.available) {
-      radarLayer = L.tileLayer.wms(cap.wmsUrl, { layers: cap.layer, format: cap.format, version: cap.version, transparent: true, opacity: 0.75, attribution: cap.attribution }).addTo(map);
-      const legend = document.getElementById("wxMapLegend");
-      if (cap.legendUrl && legend) { legend.src = cap.legendUrl; legend.hidden = false; }
-      if (valid) valid.textContent = "Base reflectivity · latest · " + cap.attribution;
-    } else {
-      if (valid) valid.textContent = "Radar temporarily offline";
-      document.getElementById("wxMapRadar").disabled = true;
-    }
-  } catch {
-    if (valid) valid.textContent = "Radar temporarily offline";
-    const rc = document.getElementById("wxMapRadar"); if (rc) rc.disabled = true;
-  }
+      radarLayer = L.tileLayer.wms(cap.wmsUrl, { layers: cap.layer, format: cap.format, version: cap.version, transparent: true, opacity: 0.75, attribution: cap.attribution });
+      radarLegendUrl = cap.legendUrl || null;
+    } else radarOffline = true;
+  } catch { radarOffline = true; }
 
-  // Active alert polygons from the snapshot geometry (already normalized).
-  let alertLayer = null;
+  // Active-warning polygons from the snapshot geometry (already normalized).
   const feats = (s?.alerts || []).filter((a) => a.geometry).map((a) => ({ type: "Feature", geometry: a.geometry, properties: { event: a.event, severity: a.severity } }));
+  let alertLayer = null;
   if (feats.length) {
     alertLayer = L.geoJSON({ type: "FeatureCollection", features: feats }, {
       style: (f) => ({ color: WX_ALERT_STROKE[f.properties.severity] || "#c0392b", weight: 2, fillOpacity: 0.15 }),
@@ -10512,7 +10963,37 @@ async function openWeatherRadarMap() {
     const ac = document.getElementById("wxMapAlerts"); if (ac) ac.disabled = true;
   }
 
-  document.getElementById("wxMapRadar")?.addEventListener("change", (e) => { if (!radarLayer) return; e.target.checked ? radarLayer.addTo(map) : map.removeLayer(radarLayer); });
+  let currentMode = "radar";
+  const setMode = (mode) => {
+    if (mode === "radar" && radarOffline) mode = "satellite";
+    currentMode = mode;
+    overlay.querySelectorAll("[data-wx-map-mode]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.wxMapMode === mode)));
+    if (mode === "radar") {
+      map.removeLayer(satLayer);
+      if (radarLayer && !map.hasLayer(radarLayer)) radarLayer.addTo(map);
+      if (legendEl && radarLegendUrl) { legendEl.src = radarLegendUrl; legendEl.hidden = false; }
+      if (validEl) validEl.textContent = "Base reflectivity · latest frame";
+      if (attrEl) attrEl.textContent = "Radar © NOAA/NWS";
+    } else {
+      if (radarLayer) map.removeLayer(radarLayer);
+      if (!map.hasLayer(satLayer)) satLayer.addTo(map);
+      if (legendEl) legendEl.hidden = true;
+      if (validEl) validEl.textContent = satErrored ? "Satellite temporarily unavailable" : "GOES-East GeoColor · ~10-min imagery";
+      if (attrEl) attrEl.textContent = "Imagery: NASA GIBS · NOAA GOES-East";
+    }
+    // keep warning polygons on top of whichever layer is active
+    if (alertLayer && map.hasLayer(alertLayer)) alertLayer.bringToFront();
+  };
+
+  if (radarOffline) {
+    const rb = overlay.querySelector('[data-wx-map-mode="radar"]');
+    if (rb) { rb.disabled = true; rb.title = "Radar temporarily offline"; }
+    setMode("satellite");
+  } else {
+    setMode("radar");
+  }
+
+  overlay.querySelectorAll("[data-wx-map-mode]").forEach((b) => b.addEventListener("click", () => { if (!b.disabled) setMode(b.dataset.wxMapMode); }));
   document.getElementById("wxMapAlerts")?.addEventListener("change", (e) => { if (!alertLayer) return; e.target.checked ? alertLayer.addTo(map) : map.removeLayer(alertLayer); });
   setTimeout(() => { try { map.invalidateSize(); } catch {} }, 60); // correct sizing after the overlay lays out
 }
@@ -14118,7 +14599,7 @@ async function callGmailAuthApi() {
 
 function currentMainPageTitle() {
   if (activeAppArea === "home") return getAppName();
-  if (activeAppArea === "do") return "To-Do";
+  if (activeAppArea === "do") return "Tasks";
   if (activeAppArea === "play") return "Exercise";
   if (activeAppArea === "plan") return "Calendar";
   if (activeAppArea === "inventory") return "Inventory";
@@ -14133,14 +14614,41 @@ function currentMainPageTitle() {
   return "Meal Plan";
 }
 
+// The Tasks overlay — opened from the Calendar page's notifications button. It hosts
+// the full task planner (relocated #doPlannerGrid) as a window over the calendar.
+// T2: honour the page-enable setting — a disabled Tasks page cannot be opened here.
+// T1: on open, start a week session so the overlay browses its own week (today's
+// real prep week) without moving Meal Plan's shared week; restored on close.
 function openTasksPage(event) {
   event?.stopPropagation();
+  if (!tasksBellState(isPagePersonallyEnabled("do")).canOpen) return;
   closeFloatingMenus();
+  // Start a week session only when one isn't already active. Tying the stash to the
+  // session (not to dialog.open) means that if renderDoPlanner()/showModal() ever
+  // throws before the dialog opens, the next open won't re-stash — which would
+  // overwrite the real shared prep week with the overlay's — so the shared week is
+  // never lost (restored by the close handler once the dialog does open). (T1)
+  if (!tasksWeekSession) {
+    tasksWeekSession = beginTasksWeekSession(currentWeek, startOfPrepWindow(new Date()));
+    currentWeek = tasksWeekSession.overlayWeek;
+  }
   setPageTitle("Tasks");
+  updatePlanTasksWeekLabel();
   renderDoPlanner();
-  renderTasksPage();
   if (!elements.tasksPageDialog.open) elements.tasksPageDialog.showModal();
-  requestAnimationFrame(() => elements.tasksPageTaskInput.focus());
+}
+
+function updatePlanTasksWeekLabel() {
+  if (elements.tasksOverlayWeekLabel) elements.tasksOverlayWeekLabel.textContent = formatWeekRange(currentWeek, 6);
+}
+
+// Step the overlay's own week (T1). During a session this moves only the overlay's
+// week; the shared week is restored on close, so Meal Plan / Exercise / Grocery are
+// untouched. Falls back to the raw shared week if somehow stepped without a session.
+function stepPlanTasksWeek(delta) {
+  currentWeek = tasksWeekSession ? stepTasksWeek(tasksWeekSession, delta) : addDays(currentWeek, delta * 7);
+  renderDoPlanner();
+  updatePlanTasksWeekLabel();
 }
 
 function openDoSettingsDialog(event) {
@@ -14220,7 +14728,7 @@ function importAiItemSummary(item) {
   if (item.section === "calendar") return `${item.date}${item.time ? ` · ${item.time}` : " · all day"}`;
   if (item.section === "recurring") return (item.days || []).map((d) => d.slice(0, 3)).join(", ") || "no days";
   if (item.section === "shopping") return "Shopping list";
-  return "To-Do backlog";
+  return "Tasks backlog";
 }
 
 // Lenient parse: strips a markdown fence if present, validates each item
@@ -14273,7 +14781,7 @@ function parseImportAiPaste() {
   importAiParsedItems = results.filter((r) => r.ok).map((r) => r.item);
   const bad = results.filter((r) => !r.ok);
 
-  const sectionLabel = { todo: "To-Do", calendar: "Calendar", shopping: "Shopping", recurring: "Recurring" };
+  const sectionLabel = { todo: "Tasks", calendar: "Calendar", shopping: "Shopping", recurring: "Recurring" };
   elements.importAiPreview.innerHTML = `
     ${parsed.summary ? `<p class="import-ai-summary">${escapeHtml(String(parsed.summary).slice(0, 300))}</p>` : ""}
     ${importAiParsedItems.map((item, idx) => `
@@ -14569,24 +15077,18 @@ function initDoPlannerDelegation() {
     if (del) { deleteDoTask(del.dataset.doDay, del.dataset.doTaskDelete); return; }
     const edit = e.target.closest("[data-do-task-swipe-edit]");
     if (edit) { openEditTaskDialog(edit.dataset.doDay, edit.dataset.doTaskSwipeEdit); return; }
-    if (e.target.closest("[data-do-notif-toggle]")) { doNotifOpen = !doNotifOpen; renderDoPlanner(); return; }
+    // Suggested section: jump to the day a due/overdue item lives on.
     const jump = e.target.closest("[data-do-notif-jump]");
-    if (jump) { doNotifOpen = false; selectPlannerDay(jump.dataset.doNotifJump); return; }
+    if (jump) { selectPlannerDay(jump.dataset.doNotifJump); return; }
   });
 
   grid.addEventListener("change", (e) => {
     const toggle = e.target.closest("[data-do-task-toggle]");
     if (toggle) { toggleDoTask(toggle.dataset.doDay, toggle.dataset.doTaskToggle, toggle.checked); return; }
+    // Suggested section: checking an item marks that task done for the week.
     const notifCheck = e.target.closest("[data-do-notif-check]");
     if (notifCheck) toggleDoTaskForWeek(notifCheck.dataset.key, notifCheck.dataset.day, notifCheck.dataset.task, true);
   });
-
-  document.addEventListener("click", (e) => {
-    if (!doNotifOpen) return;
-    if (e.target.closest(".do-notif-wrap")) return;
-    doNotifOpen = false;
-    renderDoPlanner();
-  }, { capture: true });
 
   grid.addEventListener("dragover", (e) => {
     if (!Array.from(e.dataTransfer.types || []).includes("application/json")) return;
@@ -14641,45 +15143,45 @@ function initTasksPageDelegation() {
   });
 }
 
-function doNotifBellHtml() {
+// Suggested section on the Tasks page (Calendar 2.0 §29). Replaces the old
+// in-page notifications bell: the same attention items (due now / overdue this
+// week / unfinished chores) now surface as an inline "Suggested" section above
+// Chores rather than a nested bell dropdown. Empty → renders nothing. The check
+// (mark done) and day-jump actions are unchanged.
+function doSuggestedSectionHtml() {
   const chores = doUnfinishedChores();
   const overdue = doOverdueDayTasks();
   const due = doDueTimedTasks();
   const count = chores.length + overdue.length + due.length;
-  const bellSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
+  if (!count) return "";
   const rowHtml = (label, key, dayId, taskId) => `
     <label class="do-notif-item">
       <input type="checkbox" data-do-notif-check data-key="${escapeHtml(key)}" data-day="${escapeHtml(dayId)}" data-task="${escapeHtml(taskId)}" />
       <span class="do-notif-item-title">${escapeHtml(label)}</span>
     </label>`;
   return `
-    <div class="do-notif-wrap">
-      <button class="icon-btn do-notif-btn" type="button" data-do-notif-toggle title="Unfinished items needing attention" aria-label="Unfinished items">
-        ${bellSvg}
-        ${count ? `<span class="do-notif-badge">${count}</span>` : ""}
-      </button>
-      ${doNotifOpen ? `
-      <div class="do-notif-panel">
-        ${due.length ? `
-        <div class="do-notif-head">Due now</div>
+    <section class="do-suggested" aria-label="Suggested">
+      <div class="slot-topline">
+        <div class="slot-label">Suggested</div>
+        <span class="do-suggested-count" aria-label="${count} suggested">${count}</span>
+      </div>
+      <div class="do-suggested-list">
+        ${due.length ? `<div class="do-notif-head">Due now</div>
         ${due.map((d) => `
           <div class="do-notif-row">
             ${rowHtml(`${formatTaskTime(d.task.time)} · ${d.task.title}`, d.dayKey, d.dayId, d.task.id)}
             <button class="secondary-btn do-notif-jump" type="button" data-do-notif-jump="${escapeHtml(d.dayId)}">${escapeHtml(d.dayName)}</button>
           </div>`).join("")}` : ""}
-        ${overdue.length ? `
-        <div class="do-notif-head">Overdue this week</div>
+        ${overdue.length ? `<div class="do-notif-head">Overdue this week</div>
         ${overdue.map((o) => `
           <div class="do-notif-row">
             ${rowHtml(o.task.title, o.dayKey, o.dayId, o.task.id)}
             <button class="secondary-btn do-notif-jump" type="button" data-do-notif-jump="${escapeHtml(o.dayId)}">${escapeHtml(o.dayName)}</button>
           </div>`).join("")}` : ""}
-        ${chores.length ? `
-        <div class="do-notif-head">Unfinished chores</div>
+        ${chores.length ? `<div class="do-notif-head">Unfinished chores</div>
         ${chores.map((c) => rowHtml(c.title, doRealWeekKey(), "backlog", c.id)).join("")}` : ""}
-        ${!count ? `<div class="do-notif-empty">Nothing overdue.</div>` : ""}
-      </div>` : ""}
-    </div>`;
+      </div>
+    </section>`;
 }
 
 function renderDoPlanner() {
@@ -14688,10 +15190,9 @@ function renderDoPlanner() {
   const activeDay = doPrepDays.find((day) => day.id === activePlannerDayId);
   elements.doPlannerGrid.innerHTML = `
     <div class="do-top-row">
-      <div class="day-tabs" role="tablist" aria-label="To-do days">
+      <div class="day-tabs" role="tablist" aria-label="Task days">
         ${doPrepDays.map((day) => doDayTabTemplate(day, day.id === activeDay.id)).join("")}
       </div>
-      ${doNotifBellHtml()}
     </div>
     <div class="do-week-shell">
       <section class="day-column planner-day-panel do-day-panel" role="tabpanel" id="do-panel-${activeDay.id}" aria-labelledby="do-tab-${activeDay.id}">
@@ -14702,6 +15203,7 @@ function renderDoPlanner() {
         </div>
       </section>
       <section class="day-column planner-day-panel do-backlog-panel" aria-label="Chores">
+        ${doSuggestedSectionHtml()}
         <div class="slot-topline">
           <div class="slot-label">Chores</div>
           <div class="slot-actions" style="margin-left:auto">
@@ -14779,18 +15281,27 @@ function doBacklogListTemplate() {
 }
 
 function bindDoTaskControls(root = document) {
-  // Drag source and touch-swipe handlers must stay per-element (use currentTarget internally).
-  // Click/change handlers are handled by delegated listeners set up in initDoPlannerDelegation / initTasksPageDelegation.
   root.querySelectorAll("[data-do-task]").forEach((item) => {
-    item.addEventListener("dragstart", handleDoTaskDragStart);
-    item.addEventListener("drag", handleDoTaskDrag);
-    item.addEventListener("dragend", handleDoTaskDragEnd);
     item.addEventListener("contextmenu", openDoTaskMenu);
-    item.addEventListener("pointerdown", handleDoTaskPointerDown);
-    item.addEventListener("pointermove", handleDoTaskPointerMove);
-    item.addEventListener("pointerup", handleDoTaskPointerEnd);
-    item.addEventListener("pointercancel", handleDoTaskPointerEnd);
   });
+  // Task move (onto a day-tab / day-list / backlog) — shared sortable primitive in
+  // MOVE mode; delegates to the existing moveDoTask. Replaces the old desktop HTML5
+  // DnD + bespoke touch pointer-clone with one code path (mouse + touch long-press +
+  // edge auto-scroll). Bound once per container; the primitive delegates.
+  if (root.nodeType === 1 && !root.__sortableBound) {
+    root.__sortableBound = true;
+    makeSortable(root, {
+      rowSelector: "[data-do-task]",
+      getId: (row) => row.dataset.doTask,
+      reorder: false,
+      dropZoneSelector: "[data-do-day-tab], [data-do-task-drop-day], [data-do-backlog-drop]",
+      onDropZone: ({ row, zone }) => {
+        const targetDay = zone.dataset.doDayTab || zone.dataset.doTaskDropDay || (zone.hasAttribute("data-do-backlog-drop") ? "backlog" : null);
+        if (targetDay) moveDoTask(row.dataset.doDay, targetDay, row.dataset.doTask);
+      },
+      itemLabel: (row) => (row.querySelector(".do-task-title, .task-title, .do-task-text")?.textContent || row.textContent || "task").trim().slice(0, 40),
+    });
+  }
 }
 
 function doTasksForDay(dayId) {
@@ -16265,7 +16776,7 @@ function doTaskTemplate(task, dayId) {
   const hasInfo = Boolean((task.notes || "").trim()) || logCount > 0;
   const timeLabel = formatTaskTime(task.time);
   return `
-    <article class="do-task-item ${task.done ? "is-done" : ""} ${task.recurringTaskId ? "is-recurring" : ""}" data-do-task="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" draggable="true">
+    <article class="do-task-item ${task.done ? "is-done" : ""} ${task.recurringTaskId ? "is-recurring" : ""}" data-do-task="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}">
       <div class="do-task-main">
         <input type="checkbox" class="do-task-check" data-do-task-toggle="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}" ${task.done ? "checked" : ""} aria-label="Mark ${escapeHtml(task.title)} done" />
         <button type="button" class="do-task-title" data-do-task-detail="${escapeHtml(task.id)}" data-do-day="${escapeHtml(dayId)}">
@@ -17173,7 +17684,7 @@ function playBacklogListTemplate() {
 
 function playBacklogExerciseTemplate(task) {
   return `
-    <article class="do-task-item play-workout-item" data-play-task="${escapeHtml(task.id)}" data-play-day="backlog" draggable="true">
+    <article class="do-task-item play-workout-item" data-play-task="${escapeHtml(task.id)}" data-play-day="backlog">
       <label>
         <button class="do-task-title workout-title-button" type="button" data-open-play-exercise-detail data-play-day="backlog" data-play-task="${escapeHtml(task.id)}">${escapeHtml(task.title)}</button>
       </label>
@@ -17187,7 +17698,7 @@ function playExerciseLibraryTemplate() {
     .filter((workout) => !scheduledWorkoutIds.has(workout.id))
     .sort((a, b) => a.title.localeCompare(b.title));
   const workoutHtml = workouts.map((workout) => `
-    <article class="do-task-item play-workout-item" data-play-workout="${escapeHtml(workout.id)}" draggable="true">
+    <article class="do-task-item play-workout-item" data-play-workout="${escapeHtml(workout.id)}">
       <label>
         <button class="do-task-title workout-title-button" type="button" data-open-workout-detail data-workout-id="${escapeHtml(workout.id)}">${escapeHtml(workout.title)}</button>
       </label>
@@ -17245,7 +17756,7 @@ function playTaskTemplate(task, dayId) {
   const isScheduled = dayId !== "backlog";
   const buttonAttribute = isScheduled ? "data-start-play-exercise" : "data-open-play-exercise-detail";
   return `
-    <article class="do-task-item play-workout-item ${task.done ? "is-done" : ""} ${task.recurringTaskId ? "is-recurring" : ""}" data-play-task="${escapeHtml(task.id)}" data-play-day="${escapeHtml(dayId)}" draggable="true">
+    <article class="do-task-item play-workout-item ${task.done ? "is-done" : ""} ${task.recurringTaskId ? "is-recurring" : ""}" data-play-task="${escapeHtml(task.id)}" data-play-day="${escapeHtml(dayId)}">
       <label>
         <button class="do-task-title workout-title-button" type="button" ${buttonAttribute} data-play-day="${escapeHtml(dayId)}" data-play-task="${escapeHtml(task.id)}">${escapeHtml(task.title)}</button>
       </label>
@@ -17255,11 +17766,28 @@ function playTaskTemplate(task, dayId) {
 
 function bindPlayTaskControls(root = document) {
   root.querySelectorAll("[data-play-task]").forEach((item) => {
-    item.addEventListener("dragstart", handlePlayTaskDragStart);
-    item.addEventListener("drag", handlePlayTaskDrag);
-    item.addEventListener("dragend", handlePlayTaskDragEnd);
     item.addEventListener("contextmenu", openPlayTaskMenu);
   });
+  // Play task move (day-tab / day-list / backlog) — shared sortable primitive in move
+  // mode; delegates to the existing movePlayTask. Backlog kept data-do-backlog-drop
+  // (the play board reuses the do-board template; replaceAll didn't rename it). Workout-
+  // pool drag (a separate source) is unchanged. Bound once (delegated).
+  if (root.nodeType === 1 && !root.__sortableBound) {
+    root.__sortableBound = true;
+    makeSortable(root, {
+      rowSelector: "[data-play-task], [data-play-workout]",
+      getId: (row) => row.dataset.playTask || row.dataset.playWorkout,
+      reorder: false,
+      dropZoneSelector: "[data-play-day-tab], [data-play-task-drop-day], [data-do-backlog-drop]",
+      onDropZone: ({ row, zone }) => {
+        const targetDay = zone.dataset.playDayTab || zone.dataset.playTaskDropDay || (zone.hasAttribute("data-do-backlog-drop") ? "backlog" : null);
+        if (!targetDay) return;
+        if (row.dataset.playWorkout) { if (targetDay !== "backlog") addWorkoutToPlayDay(row.dataset.playWorkout, targetDay); } // pool workout → day (never backlog)
+        else movePlayTask(row.dataset.playDay, targetDay, row.dataset.playTask);
+      },
+      itemLabel: (row) => (row.querySelector(".do-task-title")?.textContent || row.textContent || "task").trim().slice(0, 40),
+    });
+  }
   root.querySelectorAll("[data-play-task-toggle]").forEach((checkbox) => {
     checkbox.addEventListener("change", () => togglePlayTask(checkbox.dataset.playDay, checkbox.dataset.playTaskToggle, checkbox.checked));
   });
@@ -18771,9 +19299,20 @@ function bindRecipeCards(root) {
     card.addEventListener("mousedown", (event) => {
       if (event.button === 2) openRecipeMenu(event, card.dataset.id);
     });
-    card.addEventListener("dragstart", handleRecipeDragStart);
-    card.addEventListener("dragend", clearRecipeDragState);
   });
+  // Recipe → folder move — shared sortable primitive (move mode); delegates to the
+  // existing moveRecipeToFolder. Folder buttons are the drop zones. Bound once.
+  if (root.nodeType === 1 && !root.__sortableBound) {
+    root.__sortableBound = true;
+    makeSortable(root, {
+      rowSelector: ".recipe-card",
+      getId: (card) => card.dataset.id,
+      reorder: false,
+      dropZoneSelector: ".folder-btn[data-folder]",
+      onDropZone: ({ itemId, zone }) => moveRecipeToFolder(itemId, zone.dataset.folder),
+      itemLabel: (card) => (card.textContent || "recipe").trim().slice(0, 40),
+    });
+  }
 }
 
 function recipesByFolder() {
@@ -19576,7 +20115,7 @@ function setPageTitle(title) {
 function updatePageTitleMenu() {
   elements.titleMealPlanBtn.hidden = activeAppArea === "eat" || !isPagePersonallyEnabled("eat");
   elements.titleExercisePlanBtn.hidden = activeAppArea === "play" || !isPagePersonallyEnabled("play");
-  elements.titleToDoListBtn.hidden = activeAppArea === "do" || !isPagePersonallyEnabled("do");
+  elements.titleToDoListBtn.hidden = true; // Tasks moved into the Calendar page's notifications window — no top-level nav button
   elements.titleWatchBtn.hidden = true; // Watch moved into the Media page's sidebar — no top-level nav button
   elements.titleReadBtn.hidden = activeAppArea === "media" || !isPagePersonallyEnabled("read");
   elements.titleShopBtn.hidden = activeAppArea === "shop" || !isPagePersonallyEnabled("shop");
@@ -19596,7 +20135,7 @@ function updatePageTitleMenu() {
 function updatePageVisibility() {
   elements.homeEatBtn.hidden = !isPagePersonallyEnabled("eat");
   elements.homePlayBtn.hidden = !isPagePersonallyEnabled("play");
-  elements.homeDoBtn.hidden = !isPagePersonallyEnabled("do");
+  elements.homeDoBtn.hidden = true; // Tasks moved into the Calendar page's notifications window — no home-screen button
   elements.homeWatchBtn.hidden = true; // Watch moved into the Media page's sidebar — no home-screen button
   elements.homeReadBtn.hidden = !isPagePersonallyEnabled("read");
   elements.homeShopBtn.hidden = !isPagePersonallyEnabled("shop");
@@ -19660,7 +20199,6 @@ function updateSettingsMenuOptions() {
   const isEat = activeAppArea === "eat";
   const isShop = activeAppArea === "shop";
   const isPlay = activeAppArea === "play";
-  const isDo = activeAppArea === "do";
   const isRecreate = activeAppArea === "recreate";
   const isPlan = activeAppArea === "plan";
   elements.menuAutoRulesBtn.hidden = !isEat;
@@ -19672,8 +20210,13 @@ function updateSettingsMenuOptions() {
   elements.menuIngredientOptionsBtn.hidden = !isEat;
   elements.menuFoodHealthSettingsBtn.hidden = !isEat;
   elements.menuMealPlanSettingsBtn.hidden = !isEat;
-  elements.menuWatchTheatersBtn.hidden = !(activeAppArea === "media" && activeMediaTab === "watch");
-  elements.menuRecurringTasksBtn.hidden = !isDo;
+  const isWatchTab = activeAppArea === "media" && activeMediaTab === "watch";
+  elements.menuWatchServicesBtn.hidden = !isWatchTab;
+  elements.menuWatchTheatersBtn.hidden = !isWatchTab;
+  // T3: Tasks moved into the Calendar page's overlay, and this app-menu item was
+  // Recurring Tasks' only live route — so surface it on the Calendar (Tasks' new
+  // home), gated by the same page-enable check as the Tasks bell (T2).
+  elements.menuRecurringTasksBtn.hidden = !(isPlan && isPagePersonallyEnabled("do"));
   elements.menuWorkoutLibraryBtn.hidden = !isPlay;
   elements.menuWorkoutLogsBtn.hidden = !isPlay;
   elements.menuInventoryRoomsBtn.hidden = activeAppArea !== "inventory";
@@ -19778,12 +20321,81 @@ function refreshFinanceSettingsIfOpen() {
     renderContextSettingsDialog("finance-accounts");
   }
 }
+// ── Settings → AI → Voice: preview + preference helpers ──────────────────────
+const VOICE_PLAY_SVG = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>`;
+const VOICE_STOP_SVG = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>`;
+const VOICE_SPIN_SVG = `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" stroke-dasharray="30" stroke-dashoffset="10"/></svg>`;
+
+// Write the global default voice/speed, preserving any per-domain overrides the
+// resolver reads (voice-prefs.js). Base on the currently-resolved values so a
+// partial patch ({voiceId} or {speed}) never drops the other field.
+function setVoiceDefaultPref(patch) {
+  const c = getVoiceService().voiceForDomain("article");
+  if (!state.aiSettings || typeof state.aiSettings !== "object") state.aiSettings = {};
+  const voice = (state.aiSettings.voice && typeof state.aiSettings.voice === "object") ? state.aiSettings.voice : {};
+  state.aiSettings.voice = { ...voice, default: { voiceId: c.voiceId, speed: c.speed, ...patch } };
+  persist();
+}
+
+// Voice preview: synthesize a short sample in the chosen voice and play it. Uses
+// the same session-gated pipeline as Listen (so a private voice's cold start is
+// handled by the proxy's retry), and never blocks — a token guards against a
+// second click / dialog re-render superseding an in-flight preview.
+let voicePreviewAudio = null;
+let voicePreviewBtn = null;
+let voicePreviewToken = 0;
+
+function resetVoicePreviewBtn(btn) {
+  if (!btn) return;
+  btn.classList.remove("playing");
+  const mini = btn.classList.contains("vpick-mini");
+  btn.innerHTML = mini ? VOICE_PLAY_SVG : `${VOICE_PLAY_SVG} Preview`;
+}
+function stopVoicePreview() {
+  voicePreviewToken++;
+  if (voicePreviewAudio) { try { voicePreviewAudio.pause(); } catch { /* noop */ } voicePreviewAudio = null; }
+  if (voicePreviewBtn) { resetVoicePreviewBtn(voicePreviewBtn); voicePreviewBtn = null; }
+}
+async function previewVoice(voiceId, btn) {
+  const toggleOff = voicePreviewBtn === btn;
+  stopVoicePreview();           // invalidates any in-flight preview + resets prior button
+  if (toggleOff) return;        // a second click on the active control just stops
+  const token = voicePreviewToken;
+  const mini = btn.classList.contains("vpick-mini");
+  voicePreviewBtn = btn;
+  btn.classList.add("playing");
+  btn.innerHTML = mini ? VOICE_SPIN_SVG : `${VOICE_SPIN_SVG} Preparing…`;
+
+  let urls;
+  try {
+    const sample = "Hi, this is how I sound reading your articles aloud.";
+    const res = await getVoiceService().synthesize({ text: sample, domain: "article", voiceId });
+    urls = res?.urls;
+  } catch (e) {
+    if (token !== voicePreviewToken) return;
+    voicePreviewBtn = null; resetVoicePreviewBtn(btn);
+    alert("Could not play preview: " + (e?.message || e));
+    return;
+  }
+  if (token !== voicePreviewToken) return;       // superseded / stopped during synth
+  if (!Array.isArray(urls) || !urls.length) { voicePreviewBtn = null; resetVoicePreviewBtn(btn); return; }
+
+  const audio = new Audio(urls[0]);
+  voicePreviewAudio = audio;
+  btn.innerHTML = mini ? VOICE_STOP_SVG : `${VOICE_STOP_SVG} Stop`;
+  const done = () => { if (token === voicePreviewToken) { voicePreviewAudio = null; voicePreviewBtn = null; resetVoicePreviewBtn(btn); } };
+  audio.onended = done;
+  audio.onerror = done;
+  audio.play().catch(done);
+}
+
 function renderContextSettingsDialog(kind) {
+  if (kind !== "voice") stopVoicePreview(); // leaving the Voice panel silences any preview
   contextSettingsKind = kind;
   const titles = {
     general: "Settings",
     eat: "Meal Plan",
-    do: "To-Do",
+    do: "Tasks",
     play: "Exercise",
     family: "Household",
     recreate: "Recreate",
@@ -19797,6 +20409,7 @@ function renderContextSettingsDialog(kind) {
     "api-usage": "API Usage",
     "ai-notes": "AI Notes",
     "mail-ai": "Mail AI",
+    "voice": "Voice",
     "podcasts": "Podcasts"
   };
   const isSubPanel = !["general", "eat", "do", "play", "watch", "recreate", "read-sync"].includes(kind);
@@ -19810,6 +20423,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="location-services">Location Services</button>
         <button type="button" data-context-settings-action="weekly-email">Email</button>
         <button type="button" data-context-settings-action="mail-ai">Mail AI</button>
+        <button type="button" data-context-settings-action="voice">Voice</button>
         <button type="button" data-context-settings-action="family">Household</button>
         <button type="button" data-context-settings-action="voice-commands">Voice Commands</button>
         <button type="button" data-context-settings-action="ai-log">AI Action Log</button>
@@ -19890,6 +20504,80 @@ function renderContextSettingsDialog(kind) {
         state.mailAiSettings[input.dataset.mailAiKey] = input.checked;
         persist();
       });
+    });
+    return;
+  }
+
+  if (kind === "voice") {
+    const vs = getVoiceService();
+    const cur = vs.voiceForDomain("article");           // { voiceId, speed, voice }
+    const curVoice = cur.voice || vs.getVoice("google-neural");
+    const curSpeed = cur.speed || 1;
+    const priv = vs.getVoices({ provider: "kokoro", availableOnly: true });
+    const cloud = vs.getVoices({ provider: "google", availableOnly: true });
+    const SPEEDS = [
+      { v: 0.75, label: "0.75×" }, { v: 0.9, label: "0.9×" }, { v: 1.0, label: "1.0×" },
+      { v: 1.1, label: "1.1×" }, { v: 1.25, label: "1.25×" }, { v: 1.5, label: "1.5×" }, { v: 2.0, label: "2.0×" },
+    ];
+    const isPrivate = (v) => !!v && v.provider === "kokoro";
+    // Provider names stay hidden: strip a trailing "(Google)" etc. from the label.
+    const nameOf = (v) => (v?.displayName || "Voice").replace(/\s*\([^)]*\)\s*$/, "").trim();
+    const initialOf = (v) => (nameOf(v)[0] || "?").toUpperCase();
+    const accentOf = (v) => !v ? "" : `${v.accent || ""}${(v.language || "").startsWith("en") ? " English" : (v.language ? " " + v.language : "")}`.trim();
+
+    const voiceRow = (v) => `
+      <button class="vpick-voice" type="button" data-voice-id="${escapeHtml(v.id)}" aria-selected="${v.id === curVoice?.id ? "true" : "false"}">
+        <span class="vpick-dot ${isPrivate(v) ? "" : "cloud"}">${escapeHtml(initialOf(v))}</span>
+        <span class="vpick-nm">
+          <span class="n">${escapeHtml(nameOf(v))}${isPrivate(v) ? ' <span class="vpick-badge">Private</span>' : ""}</span>
+          <span class="s">${escapeHtml(accentOf(v))}</span>
+        </span>
+        <span class="vpick-mini" role="button" tabindex="0" data-preview-id="${escapeHtml(v.id)}" aria-label="Preview ${escapeHtml(nameOf(v))}">${VOICE_PLAY_SVG}</span>
+        <svg class="vpick-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+      </button>`;
+
+    elements.contextSettingsBody.innerHTML = `
+      <p class="settings-hint">One voice for reading your articles aloud. Voices marked <span class="vpick-badge">Private</span> are spoken on your own server — the text never goes to a third party.</p>
+      <div class="vpick-card">
+        <div class="vpick-head">Voice</div>
+        <div class="vpick-current">
+          <div class="vpick-avatar ${isPrivate(curVoice) ? "" : "cloud"}">${escapeHtml(initialOf(curVoice))}</div>
+          <div class="vpick-grow">
+            <div class="vpick-name">${escapeHtml(nameOf(curVoice))}${isPrivate(curVoice) ? ' <span class="vpick-badge">Private</span>' : ""}</div>
+            <div class="vpick-sub">${escapeHtml(accentOf(curVoice))}</div>
+          </div>
+          <button class="vpick-btn" type="button" data-preview-id="${escapeHtml(curVoice?.id || "")}" aria-label="Preview">${VOICE_PLAY_SVG} Preview</button>
+        </div>
+        <div class="vpick-speed-label">Speaking speed</div>
+        <div class="vpick-speed" role="group" aria-label="Speaking speed">
+          ${SPEEDS.map((s) => `<button class="vpick-seg" type="button" data-speed="${s.v}" aria-pressed="${Math.abs(s.v - curSpeed) < 0.001 ? "true" : "false"}">${s.label}</button>`).join("")}
+        </div>
+      </div>
+      <div class="vpick-card">
+        <div class="vpick-head">Choose a voice <span class="vpick-hint">tap ▶ to preview</span></div>
+        ${priv.length ? `<div class="vpick-group">Your voices · private</div>${priv.map(voiceRow).join("")}` : ""}
+        ${cloud.length ? `<div class="vpick-group">Cloud</div>${cloud.map(voiceRow).join("")}` : ""}
+      </div>
+      <p class="vpick-note">You pick a voice; the app picks the engine. A private voice can take a few extra seconds the first time after a while, as the voice server wakes up.</p>`;
+
+    // Select a voice (writes the global default, preserving any other voice prefs).
+    elements.contextSettingsBody.querySelectorAll(".vpick-voice").forEach((row) => {
+      row.addEventListener("click", (e) => {
+        if (e.target.closest("[data-preview-id]")) return; // preview handled separately
+        setVoiceDefaultPref({ voiceId: row.dataset.voiceId });
+        stopVoicePreview();
+        renderContextSettingsDialog("voice");
+      });
+    });
+    elements.contextSettingsBody.querySelectorAll("[data-speed]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setVoiceDefaultPref({ speed: Number(btn.dataset.speed) });
+        stopVoicePreview();
+        renderContextSettingsDialog("voice");
+      });
+    });
+    elements.contextSettingsBody.querySelectorAll("[data-preview-id]").forEach((btn) => {
+      btn.addEventListener("click", (e) => { e.stopPropagation(); previewVoice(btn.dataset.previewId, btn); });
     });
     return;
   }
@@ -20630,6 +21318,7 @@ function handleContextSettingsAction(event) {
     "calendars": () => closeAndRun(openPlanCalDialog),
     "weekly-email": () => closeAndRun(openWeeklyEmailDialog),
     "mail-ai": () => renderContextSettingsDialog("mail-ai"),
+    "voice": () => renderContextSettingsDialog("voice"),
     "backup-health": () => closeAndRun(openBackupHealthDialog),
     "restore-backup": () => closeAndRun(openRestoreDialog),
     "admin-pages": () => renderContextSettingsDialog("admin-pages"),
@@ -20939,6 +21628,7 @@ function closeFloatingMenus() {
   closePageTitleMenu();
   closeWeekJumpMenu();
   closeGroceryRangeMenus();
+  closeDiscoverFilterMenu();
 }
 
 function closeFloatingMenusOnPageScroll(event) {
@@ -21027,7 +21717,7 @@ function renderGroceryStoresSettings() {
   const stores = groceryStores();
   elements.groceryStoresList.innerHTML = stores.length
     ? stores.map((store) => `
-      <div class="grocery-store-setting${store.enabled ? "" : " is-disabled"}" data-grocery-store-setting="${escapeHtml(store.id)}" draggable="true" title="Drag to reorder">
+      <div class="grocery-store-setting${store.enabled ? "" : " is-disabled"}" data-grocery-store-setting="${escapeHtml(store.id)}" title="Drag or long-press to reorder">
         <span class="grocery-store-setting-details">
           <strong>${escapeHtml(store.name)}</strong>
           <small>${escapeHtml(store.address || "Manually added store")}</small>
@@ -21043,12 +21733,18 @@ function renderGroceryStoresSettings() {
 
   elements.groceryStoresList.querySelectorAll("[data-grocery-store-setting]").forEach((row) => {
     row.addEventListener("contextmenu", openGroceryStoreMenu);
-    row.addEventListener("dragstart", handleGroceryStoreOrderDragStart);
-    row.addEventListener("dragover", handleGroceryStoreOrderDragOver);
-    row.addEventListener("dragleave", clearGroceryStoreOrderDropTarget);
-    row.addEventListener("drop", handleGroceryStoreOrderDrop);
-    row.addEventListener("dragend", clearGroceryStoreOrderDragState);
   });
+  // Store-order reorder — shared sortable primitive (single list; delegates to the
+  // existing neighbour-based reorderGroceryStore). Bound once (delegated).
+  if (!elements.groceryStoresList.__sortableBound) {
+    elements.groceryStoresList.__sortableBound = true;
+    makeSortable(elements.groceryStoresList, {
+      rowSelector: "[data-grocery-store-setting]",
+      getId: (row) => row.dataset.groceryStoreSetting,
+      onGroupedDrop: ({ itemId, targetId, position }) => reorderGroceryStore(itemId, targetId, position),
+      itemLabel: (row) => (row.querySelector(".grocery-store-name, .store-name")?.textContent || row.textContent || "store").trim().slice(0, 40),
+    });
+  }
   elements.groceryStoresList.querySelectorAll("[data-store-toggle]").forEach((checkbox) => {
     checkbox.addEventListener("change", () => {
       const storeId = checkbox.dataset.storeToggle;
@@ -21624,7 +22320,7 @@ function renderGroceryStoreLayoutEditor(sections) {
 
 function groceryStoreLayoutRowTemplate(section) {
   return `
-    <div class="grocery-store-layout-row" data-store-section-row="${escapeHtml(section.id)}" draggable="true">
+    <div class="grocery-store-layout-row" data-store-section-row="${escapeHtml(section.id)}">
       <span class="grocery-store-section-grip" aria-hidden="true">⋮⋮</span>
       <input value="${escapeHtml(section.name)}" aria-label="Section name" />
       <button class="icon-btn" type="button" data-remove-store-section="${escapeHtml(section.id)}" title="Remove section" aria-label="Remove ${escapeHtml(section.name)}">
@@ -21635,15 +22331,18 @@ function groceryStoreLayoutRowTemplate(section) {
 }
 
 function bindGroceryStoreLayoutRows() {
-  elements.groceryStoreLayoutList.querySelectorAll("[data-store-section-row]").forEach((row) => {
-    if (row.dataset.bound === "true") return;
-    row.dataset.bound = "true";
-    row.addEventListener("dragstart", handleStoreSectionDragStart);
-    row.addEventListener("dragover", handleStoreSectionDragOver);
-    row.addEventListener("dragleave", clearStoreSectionDropTarget);
-    row.addEventListener("drop", handleStoreSectionDrop);
-    row.addEventListener("dragend", clearStoreSectionDragState);
-  });
+  // Store-section layout reorder — shared sortable primitive. The reorder is
+  // DOM-only here (saveGroceryStoreLayout reads the section order + names on submit),
+  // so onReorder is a no-op; the primitive just moves the row. Bound once (delegated).
+  if (!elements.groceryStoreLayoutList.__sortableBound) {
+    elements.groceryStoreLayoutList.__sortableBound = true;
+    makeSortable(elements.groceryStoreLayoutList, {
+      rowSelector: "[data-store-section-row]",
+      getId: (row) => row.dataset.storeSectionRow,
+      onReorder: () => {},
+      itemLabel: (row) => (row.querySelector("input")?.value || "section").trim().slice(0, 40),
+    });
+  }
   elements.groceryStoreLayoutList.querySelectorAll("[data-remove-store-section]:not([data-bound])").forEach((button) => {
     button.dataset.bound = "true";
     button.addEventListener("click", () => removeGroceryStoreSectionRow(button.dataset.removeStoreSection));
@@ -23402,7 +24101,7 @@ function renderMealTypesList() {
   const config = normalizeMealPlanConfig(state.mealPlanConfig);
   const list = elements.mealPlanSettingsDialog.querySelector("[data-mealtypes-list]");
   list.innerHTML = config.mealTypes.map(t => `
-    <div class="config-row" data-mealtype-row data-mealtype-id="${escapeHtml(t.id)}" draggable="true">
+    <div class="config-row" data-mealtype-row data-mealtype-id="${escapeHtml(t.id)}">
       <span class="drag-handle" aria-hidden="true">
         <svg viewBox="0 0 24 24"><path d="M9 5a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-6 6a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-6 6a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg>
       </span>
@@ -23443,35 +24142,17 @@ function addMealType() {
   div.querySelector("input").focus();
 }
 
+// Generic config-row reorder (settings lists) — now on the shared sortable
+// primitive. The reorder is DOM-only; the owning form reads the row order + input
+// values on save (e.g. saveMealPlanMealTypes), so onReorder is a no-op. Bound once.
 function bindConfigListDrag(list, rowSelector) {
-  let dragSrc = null;
-  list.querySelectorAll(rowSelector).forEach(row => {
-    row.addEventListener("dragstart", e => {
-      dragSrc = row;
-      row.classList.add("dragging");
-      e.dataTransfer.effectAllowed = "move";
-    });
-    row.addEventListener("dragend", () => {
-      dragSrc = null;
-      list.querySelectorAll(rowSelector).forEach(r => r.classList.remove("dragging", "drag-over"));
-    });
-    row.addEventListener("dragover", e => {
-      e.preventDefault();
-      if (!dragSrc || row === dragSrc) return;
-      e.dataTransfer.dropEffect = "move";
-      list.querySelectorAll(rowSelector).forEach(r => r.classList.remove("drag-over"));
-      row.classList.add("drag-over");
-      const rows = [...list.querySelectorAll(rowSelector)];
-      const srcIdx = rows.indexOf(dragSrc);
-      const tgtIdx = rows.indexOf(row);
-      if (srcIdx < tgtIdx) row.after(dragSrc);
-      else row.before(dragSrc);
-    });
-    row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
-    row.addEventListener("drop", e => {
-      e.preventDefault();
-      row.classList.remove("drag-over");
-    });
+  if (list.__sortableBound) return;
+  list.__sortableBound = true;
+  makeSortable(list, {
+    rowSelector,
+    getId: (row) => row.dataset.mealtypeId || row.id || row.dataset.sortId || "",
+    onReorder: () => {},
+    itemLabel: (row) => (row.querySelector("input")?.value || "item").trim().slice(0, 40),
   });
 }
 
@@ -24838,7 +25519,7 @@ function recipeMatchesSearch(recipe, query) {
 function recipeCardTemplate(recipe) {
   const tags = normalizeRecipeTagSelection(recipe.tags);
   return `
-    <button class="recipe-card" data-id="${recipe.id}" draggable="true">
+    <button class="recipe-card" data-id="${recipe.id}">
       <span class="recipe-card-head">
         <h3>${escapeHtml(recipe.name)}</h3>
         ${recipeTimePillsTemplate(recipe, "Anytime")}
@@ -25183,17 +25864,36 @@ function renderPlanner() {
     elements.mealAutoFillDialog.showModal();
   });
 
-  elements.plannerGrid.querySelectorAll("[data-meal-entry][draggable='true']").forEach((entry) => {
-    entry.addEventListener("dragstart", handleMealEntryDragStart);
-    entry.addEventListener("drag", handleMealEntryDrag);
-    entry.addEventListener("dragover", handleMealEntryDragOver);
-    entry.addEventListener("dragleave", () => entry.classList.remove("drag-over"));
-    entry.addEventListener("drop", handleMealEntryDrop);
-    entry.addEventListener("dragend", handleMealEntryDragEnd);
+  elements.plannerGrid.querySelectorAll("[data-meal-entry]").forEach((entry) => {
     entry.addEventListener("contextmenu", openMealEntryMenu);
-    entry.addEventListener("mousedown", handleMealEntryMouseDown);
-    entry.addEventListener("pointerdown", handleMealEntryPointerDown);
   });
+  // Meal entries — shared sortable primitive in COMBINED grouped + move mode:
+  //  • reorder within a slot / move between slots  → onGroupedDrop (index-based:
+  //    reorderMealEntry same-slot, moveMealEntryToSlot cross-slot)
+  //  • drop onto a day-tab                          → onDropZone (moveMealEntryToDay)
+  // Replaces the old HTML5 DnD + bespoke touch pointer path. Bound once (delegated).
+  if (!elements.plannerGrid.__sortableBound) {
+    elements.plannerGrid.__sortableBound = true;
+    makeSortable(elements.plannerGrid, {
+      rowSelector: "[data-meal-entry]",
+      getId: (e) => `${e.dataset.day}:${e.dataset.meal}:${e.dataset.index}`,
+      groupSelector: "[data-meal-slot]",
+      dropZoneSelector: "[data-day-tab]",
+      onGroupedDrop: ({ row, toContainer }) => {
+        const source = { day: row.dataset.day, meal: row.dataset.meal, index: Number(row.dataset.index) };
+        const targetDay = toContainer.dataset.day, targetMeal = toContainer.dataset.meal;
+        const targetIndex = [...toContainer.querySelectorAll("[data-meal-entry]")].indexOf(row);
+        if (targetDay === source.day && targetMeal === source.meal) reorderMealEntry(source.day, source.meal, source.index, targetIndex);
+        else moveMealEntryToSlot(source, targetDay, targetMeal, targetIndex);
+      },
+      onDropZone: ({ row, zone }) => {
+        const source = { day: row.dataset.day, meal: row.dataset.meal, index: Number(row.dataset.index) };
+        const targetDay = zone.dataset.dayTab;
+        if (targetDay && mealForDayTabDrop(source.meal, targetDay)) moveMealEntryToDay(source, targetDay);
+      },
+      itemLabel: (e) => (e.textContent || "meal").trim().slice(0, 40),
+    });
+  }
 
   elements.plannerGrid.querySelectorAll("[data-meal-slot]").forEach((slot) => {
     slot.addEventListener("dragover", handleMealSlotDragOver);
@@ -25438,6 +26138,7 @@ async function loadCalendarEvents(options = {}) {
   if (!calendars.length) {
     calendarEvents = [];
     localStorage.removeItem(CALENDAR_CACHE_KEY);
+    planRangeCache.clear(); // Google events also feed the Plan calendar (drop its memoized range)
     if (options.statusElement) options.statusElement.textContent = "No enabled calendars to sync.";
     renderPlanner();
     return;
@@ -25455,6 +26156,7 @@ async function loadCalendarEvents(options = {}) {
       }));
     }));
     calendarEvents = eventGroups.flat();
+    planRangeCache.clear(); // Google events also feed the Plan calendar (drop its memoized range)
     localStorage.setItem(CALENDAR_CACHE_KEY, JSON.stringify({ fetchedAt: new Date().toISOString(), events: calendarEvents }));
     if (options.statusElement) {
       options.statusElement.textContent = `${calendarEvents.length} event${calendarEvents.length === 1 ? "" : "s"} synced from ${calendars.length} calendar${calendars.length === 1 ? "" : "s"}.`;
@@ -26148,7 +26850,7 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
   const specialMeal = specialMealForSlot(entry);
   const listId = `recipe-options-${day.id}-${mealToken(meal)}-${index}`;
   const isEditing = isEditingMealEntry(day.id, meal, index);
-  const draggable = entry && !isEditing ? `data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true"` : "";
+  const draggable = entry && !isEditing ? `data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}"` : "";
 
   if (readOnly) {
     if (!entry) {
@@ -26213,7 +26915,7 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
 
   if (recipe) {
     return `
-      <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true">
+      <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}">
         <button class="recipe-meal-link" type="button" data-view-recipe="${escapeHtml(recipe.id)}" data-edit-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Double-click to edit">
           ${escapeHtml(recipe.name)}
         </button>
@@ -26226,7 +26928,7 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
     const restaurantLinked = specialMeal.type === "out" && specialMeal.restaurant?.placeId;
     const pinTitle = restaurantLinked ? "Change restaurant" : "Link restaurant";
     return `
-      <div class="meal-entry draggable-meal-entry special-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true">
+      <div class="meal-entry draggable-meal-entry special-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}">
         <div class="special-meal-card special-meal-${escapeHtml(specialMeal.type)}">
           <div class="special-meal-label-row">
             <strong>${escapeHtml(specialMealLabel(specialMeal.type))}${specialMeal.note && !restaurantLinked ? " -" : ""}</strong>
@@ -26242,7 +26944,7 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
   }
 
   return `
-    <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" draggable="true">
+    <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}">
       <button class="recipe-meal-link custom-meal-link" type="button" data-edit-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Double-click to edit">
         ${escapeHtml(mealInputValue(entry))}
       </button>
@@ -27830,18 +28532,22 @@ function renderGroceries() {
       deleteGroceryItem(btn.dataset.groceryActionDelete);
     });
   });
-  elements.groceryList.querySelectorAll("[data-grocery-row-key]").forEach((item) => {
-    item.addEventListener("dragstart", handleGroceryItemDragStart);
-    item.addEventListener("dragend", clearGroceryItemDragState);
-    item.addEventListener("dragover", handleGroceryItemDragOver);
-    item.addEventListener("dragleave", clearGroceryItemDropTarget);
-    item.addEventListener("drop", handleGroceryItemDrop);
-  });
-  elements.groceryList.querySelectorAll("[data-grocery-store-list]").forEach((list) => {
-    list.addEventListener("dragover", handleGroceryStoreDragOver);
-    list.addEventListener("dragleave", clearGroceryStoreDropTarget);
-    list.addEventListener("drop", handleGroceryStoreDrop);
-  });
+  // Grocery item reorder — shared sortable primitive (mouse drag + touch long-press +
+  // continuous edge auto-scroll + Alt+Arrow keyboard), grouped so an item reorders
+  // within its aisle AND moves between aisles. Persistence is UNCHANGED: every drop
+  // delegates to moveGroceryItem (targetStore/section + neighbour + before/after).
+  // groceryList persists across renders and the primitive delegates, so it binds ONCE.
+  if (!elements.groceryList.__sortableBound) {
+    elements.groceryList.__sortableBound = true;
+    makeSortable(elements.groceryList, {
+      rowSelector: "[data-grocery-row-key]",
+      getId: (row) => row.dataset.groceryRowKey,
+      groupSelector: "[data-grocery-store-list]",
+      onGroupedDrop: ({ itemId, toContainer, targetId, position }) =>
+        moveGroceryItem(itemId, toContainer?.dataset.groceryStoreList || "", targetId, position, toContainer?.dataset.groceryStoreSectionList || ""),
+      itemLabel: (row) => (row.querySelector(".grocery-item-name, .grocery-item-label")?.textContent || row.textContent || "item").trim().slice(0, 40),
+    });
+  }
   elements.groceryList.querySelectorAll("[data-grocery-store-setting]").forEach((heading) => {
     heading.addEventListener("contextmenu", openGroceryStoreMenu);
   });
@@ -28154,7 +28860,7 @@ function groceryRowSourceLabel(row) {
 function groceryItemTemplate(row) {
   return `
     <div class="grocery-item-wrap" data-grocery-wrap-key="${escapeHtml(row.key)}">
-      <label class="grocery-item ${row.checked ? "checked" : ""}${row.cleared ? " grocery-item--cleared" : ""}" draggable="true" data-grocery-row-key="${escapeHtml(row.key)}" title="Drag to organize">
+      <label class="grocery-item ${row.checked ? "checked" : ""}${row.cleared ? " grocery-item--cleared" : ""}" data-grocery-row-key="${escapeHtml(row.key)}" title="Drag or long-press to organize; Alt+Arrow to reorder" aria-roledescription="Sortable item">
         <input type="checkbox" data-grocery="${escapeHtml(row.checkedKey)}" ${row.checked ? "checked" : ""} />
         <span class="grocery-name">
           ${escapeHtml(row.displayName || row.item)}
@@ -30343,19 +31049,27 @@ function openImportDialog(prefilledUrl = "", shouldAutoFetch = false) {
 async function importRecipeFromUrl() {
   const url = normalizeRecipeUrlInput(elements.importUrl.value);
   if (!url) {
-    setImportStatus("Paste a recipe URL first.");
+    setImportStatus("Paste a recipe or article URL first.");
     return;
   }
   elements.importUrl.value = url;
 
-  setImportStatus("Trying to read recipe data from the page...");
+  setImportStatus("Reading the page…");
   elements.fetchRecipeBtn.disabled = true;
   try {
-    const recipe = await fetchRecipeWithBestAvailableMethod(url);
-    if (!recipe.name && !recipe.ingredients.length) {
-      throw new Error("No structured recipe data found.");
+    // The gateway auto-detects the content type; route the result to the right home:
+    // a recipe opens the recipe form, an article is saved to the reading list.
+    const result = await importViaGateway(url);
+    if (result?.type === "recipe" && result.data && (result.data.name || result.data.ingredients?.length)) {
+      openImportedRecipe({ ...result.data, folderId: "" });
+      return;
     }
-    openImportedRecipe(recipe);
+    if (result?.type === "article" && result.data && (result.data.text || result.data.title)) {
+      elements.importDialog.close();
+      saveImportedArticle(result.data, url);
+      return;
+    }
+    setImportStatus("No recipe or article could be read from that URL. If it is blocked, copy the recipe text and paste it below.");
   } catch {
     setImportStatus("This URL could not be read directly. If it is NYT, Bon Appetit, or Google Drive, copy the recipe text and paste it below.");
   } finally {
@@ -30363,28 +31077,31 @@ async function importRecipeFromUrl() {
   }
 }
 
-async function fetchRecipeWithBestAvailableMethod(url) {
+// POST a URL to the unified import gateway and return the import contract
+// ({ type, status, data, warnings, source }). When no server backend is reachable
+// (a non-http context) fall back to a client-side recipe parse wrapped as a
+// contract so the caller can treat both paths uniformly.
+async function importViaGateway(url) {
   trackUsage("claude_recipe_import");
-  const helperUrl = recipeImportHelperUrl(url);
-  if (helperUrl) {
-    const response = await fetch(helperUrl, { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || `Import helper failed with status ${response.status}`);
-    return {
-      ...payload.recipe,
-      folderId: ""
-    };
+  const endpoint = importGatewayUrl();
+  if (!endpoint) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Fetch failed with status ${response.status}`);
+    return { type: "recipe", status: "needs-review", data: parseRecipeHtml(await response.text(), url) };
   }
-
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Fetch failed with status ${response.status}`);
-  const html = await response.text();
-  return parseRecipeHtml(html, url);
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` },
+    body: JSON.stringify({ source: { url, sourceClient: "in-app" } })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || payload.warnings?.[0] || `Import failed with status ${response.status}`);
+  return payload;
 }
 
-function recipeImportHelperUrl(url) {
-  if (canUseLocalBackend()) return `/api/import-recipe?url=${encodeURIComponent(url)}`;
-  if (window.location.protocol.startsWith("http")) return `/.netlify/functions/import-recipe?url=${encodeURIComponent(url)}`;
+function importGatewayUrl() {
+  if (canUseLocalBackend()) return "/api/import";
+  if (window.location.protocol.startsWith("http")) return "/.netlify/functions/import";
   return "";
 }
 
@@ -30398,10 +31115,15 @@ function normalizeRecipeUrlInput(value) {
 
 function handleImportUrlParameter() {
   const params = new URLSearchParams(window.location.search);
-  const importUrl = normalizeRecipeUrlInput(params.get("importUrl"));
+  // Accept the app's own ?importUrl= deep-link AND the Web Share Target params
+  // (?url= / ?text= / ?title=, per manifest.json share_target). Android Chrome
+  // often puts the shared link in `text`, so scan each candidate for the first
+  // URL. The import dialog auto-detects recipe vs article from here.
+  const shared = params.get("importUrl") || params.get("url") || params.get("text") || params.get("title") || "";
+  const importUrl = normalizeRecipeUrlInput(shared);
   if (!importUrl) return;
 
-  params.delete("importUrl");
+  ["importUrl", "url", "text", "title"].forEach((key) => params.delete(key));
   const nextQuery = params.toString();
   const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`;
   window.history.replaceState({}, "", nextUrl);
@@ -32753,7 +33475,7 @@ function watchScheduledItemTemplate(item, dayId) {
     : `<div class="watch-item-poster watch-item-poster-placeholder"></div>`;
 
   return `
-    <article class="do-task-item watch-item" data-watch-scheduled="${escapeHtml(item.id)}" data-watch-day="${escapeHtml(dayId)}" draggable="true">
+    <article class="do-task-item watch-item" data-watch-scheduled="${escapeHtml(item.id)}" data-watch-day="${escapeHtml(dayId)}">
       <div class="watch-item-layout">
         ${posterHtml}
         <div class="watch-item-main">
@@ -33008,7 +33730,7 @@ function watchItemTemplate(item) {
     : `<div class="watch-item-poster watch-item-poster-placeholder"></div>`;
 
   return `
-    <article class="do-task-item watch-item" data-watch-item="${escapeHtml(item.id)}" draggable="true">
+    <article class="do-task-item watch-item" data-watch-item="${escapeHtml(item.id)}">
       <div class="watch-item-layout">
         ${posterHtml}
         <div class="watch-item-main">
@@ -33156,16 +33878,30 @@ function bindWatchControls(root = document) {
   root.querySelectorAll("[data-watch-expand-seasons]").forEach((btn) => {
     btn.addEventListener("click", () => initWatchSeasonTracking(btn.dataset.watchExpandSeasons));
   });
-  root.querySelectorAll("[data-watch-item]").forEach((article) => {
-    article.addEventListener("dragstart", handleWatchItemDragStart);
-    article.addEventListener("dragend", handleWatchItemDragEnd);
-    article.addEventListener("contextmenu", openWatchItemMenu);
-  });
-  root.querySelectorAll("[data-watch-scheduled]").forEach((article) => {
-    article.addEventListener("dragstart", handleWatchScheduledDragStart);
-    article.addEventListener("dragend", handleWatchItemDragEnd);
-    article.addEventListener("contextmenu", openWatchScheduledMenu);
-  });
+  root.querySelectorAll("[data-watch-item]").forEach((a) => a.addEventListener("contextmenu", openWatchItemMenu));
+  root.querySelectorAll("[data-watch-scheduled]").forEach((a) => a.addEventListener("contextmenu", openWatchScheduledMenu));
+  // Watch item move — shared sortable primitive (move mode). Library + scheduled items
+  // drop onto a category tab (categorize), a day-tab/day-list (schedule/reschedule), or
+  // backlog (unschedule). Delegates to the existing schedule/unschedule/categorize logic.
+  // Day-lists carry data-watch-day too, so the item's own data-watch-day is excluded.
+  if (root.nodeType === 1 && !root.__sortableBound) {
+    root.__sortableBound = true;
+    makeSortable(root, {
+      rowSelector: "[data-watch-item], [data-watch-scheduled]",
+      getId: (row) => row.dataset.watchItem || row.dataset.watchScheduled,
+      reorder: false,
+      dropZoneSelector: "[data-watch-category], [data-watch-day-tab], [data-watch-day]:not([data-watch-scheduled]):not([data-watch-item]), [data-do-backlog-drop]",
+      onDropZone: ({ row, zone }) => {
+        const id = row.dataset.watchItem || row.dataset.watchScheduled;
+        const fromDay = row.dataset.watchDay || null;
+        if (zone.hasAttribute("data-watch-category")) { categorizeWatchItem(id, zone.dataset.watchCategory); return; }
+        if (zone.hasAttribute("data-do-backlog-drop")) { if (fromDay) unscheduleWatchItem(id, fromDay); return; }
+        const toDay = zone.dataset.watchDayTab || zone.dataset.watchDay;
+        if (toDay) { if (fromDay && fromDay !== toDay) unscheduleWatchItem(id, fromDay); scheduleWatchItem(id, toDay); }
+      },
+      itemLabel: (row) => (row.querySelector(".do-task-title")?.textContent || row.textContent || "title").trim().slice(0, 40),
+    });
+  }
 }
 
 function openWatchScheduledMenu(event) {
@@ -33777,6 +34513,22 @@ function handleWatchCategoryDrop(event, targetCategoryId) {
   }
   draggedWatchItemId = null;
   draggedWatchScheduled = null;
+  categorizeWatchItem(id, targetCategoryId);
+}
+
+// Assign a watch item to a category tab (move semantics: leaving a user tab removes it).
+// Shared by the sortable drop-zone handler and the legacy HTML5 drop above.
+function categorizeWatchItem(id, targetCategoryId) {
+  const item = watchItemById(id);
+  if (!item) return;
+  if (!Array.isArray(item.categories)) item.categories = [];
+  const isSystemTab = (x) => x === "all" || x === "__upcoming" || x === "__in-theaters";
+  if (!isSystemTab(targetCategoryId)) {
+    if (!isSystemTab(activeWatchCategory) && activeWatchCategory !== targetCategoryId) {
+      item.categories = item.categories.filter((c) => c !== activeWatchCategory);
+    }
+    if (!item.categories.includes(targetCategoryId)) item.categories.push(targetCategoryId);
+  }
   activeWatchCategory = targetCategoryId;
   persist();
   renderWatchPlanner();
@@ -34303,6 +35055,23 @@ async function getCadence() {
     validateScoreModel: validation.validateScoreModel, validationSummary: validation.validationSummary,
   };
   return cadenceMod;
+}
+
+// Privacy default on explicit logout: drop the local Cadence score BYTES (the
+// "cadence" IndexedDB). Canonical metadata rides the synced `cadence` state
+// section and the bytes live in the private cadence-blobs bucket, so a re-login
+// rehydrates on demand — exactly the article-body model in
+// purgeLocalArticleContent(). Best-effort; reset the module handles so the next
+// getCadence() rebuilds against a fresh store.
+async function purgeLocalCadenceContent() {
+  try {
+    if (cadenceStorage?.close) await cadenceStorage.close(); // release the connection so deleteDatabase isn't blocked
+  } catch { /* best-effort */ }
+  cadenceStorage = null;
+  cadenceMod = null;
+  try {
+    if (typeof indexedDB !== "undefined" && indexedDB.deleteDatabase) indexedDB.deleteDatabase("cadence");
+  } catch { /* best-effort */ }
 }
 
 // ── Cadence ⇄ synced-state bridge (Phase 1 cross-device sync) ─────────────────
@@ -35859,183 +36628,12 @@ function planNthWeekdayInfo(d) {
   return { weekday, dayOfMonth, setPos, isLast: dayOfMonth + 7 > dim };
 }
 
-// Date of the Nth (setPos; -1 = last) `weekday` in year/month, or null if that
-// occurrence doesn't exist (e.g. a 5th Friday in a short month).
-function planNthWeekdayDate(year, month, weekday, setPos) {
-  const dim = new Date(year, month + 1, 0).getDate();
-  if (setPos === -1) {
-    const last = new Date(year, month, dim);
-    return new Date(year, month, dim - ((last.getDay() - weekday + 7) % 7));
-  }
-  const first = new Date(year, month, 1);
-  const day = 1 + ((weekday - first.getDay() + 7) % 7) + (setPos - 1) * 7;
-  return day > dim ? null : new Date(year, month, day);
-}
+// normalizeRecurrence, planNthOccurrenceDate, planNthWeekdayDate and
+// expandRecurringOccurrences moved to ./calendar/recurrence.js (imported at top).
 
-function normalizeRecurrence(r) {
-  if (!r || typeof r !== "object") return null;
-  const freq = ["daily", "weekly", "monthly", "yearly"].includes(r.freq) ? r.freq : null;
-  if (!freq) return null;
-  const interval = Math.max(1, Math.min(365, Math.round(Number(r.interval) || 1)));
-  const until = (typeof r.until === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.until)) ? r.until : null;
-  // "Ends after N times" is stored as both count (for the editor) and a derived
-  // until date (so expansion stays purely until-based).
-  const count = (Number.isInteger(r.count) && r.count > 0 && r.count <= 3650) ? r.count : null;
-  // Weekly events can repeat on specific days of the week (0 = Sun … 6 = Sat).
-  let byWeekdays = null;
-  if (freq === "weekly" && Array.isArray(r.byWeekdays)) {
-    const days = [...new Set(r.byWeekdays.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 0 && n <= 6))].sort((a, b) => a - b);
-    if (days.length) byWeekdays = days;
-  }
-  // Monthly/yearly can repeat on the same day-of-month/date, or on the "nth
-  // weekday" (e.g. the third Friday, or the last Friday).
-  let monthMode = null, byWeekday = null, bySetPos = null;
-  if (freq === "monthly" || freq === "yearly") {
-    monthMode = r.monthMode === "nthWeekday" ? "nthWeekday" : "dayOfMonth";
-    if (monthMode === "nthWeekday") {
-      byWeekday = (Number.isInteger(r.byWeekday) && r.byWeekday >= 0 && r.byWeekday <= 6) ? r.byWeekday : null;
-      bySetPos = [1, 2, 3, 4, 5, -1].includes(Number(r.bySetPos)) ? Number(r.bySetPos) : 1;
-      if (byWeekday === null) { monthMode = "dayOfMonth"; bySetPos = null; }
-    }
-  }
-  return { freq, interval, until, count, byWeekdays, monthMode, byWeekday, bySetPos };
-}
+// normalizePlanEvents moved to ./calendar/model.js (imported at top).
 
-// Date of the Nth occurrence of a recurring event, counting from its start.
-// Used to convert an "ends after N times" choice into a concrete until date so
-// occurrence expansion stays purely until-based.
-function planNthOccurrenceDate(baseEvent, count) {
-  if (!baseEvent?.recurrence || !(count >= 1)) return null;
-  const endD = new Date(baseEvent.date + "T00:00:00");
-  if (isNaN(endD)) return null;
-  endD.setFullYear(endD.getFullYear() + 20); // generous horizon; loops are capped internally
-  const occ = expandRecurringOccurrences(
-    { ...baseEvent, recurrence: { ...baseEvent.recurrence, until: null, count: null }, exceptions: [] },
-    baseEvent.date, dateKeyFromDate(endD)
-  );
-  return occ[count - 1] || occ[occ.length - 1] || null;
-}
-
-function normalizePlanEvents(events) {
-  return Array.isArray(events) ? events.map((e) => ({
-    id: e?.id || createId("plan-evt"),
-    title: String(e?.title || "").trim(),
-    date: String(e?.date || "").trim(),
-    startTime: e?.startTime ? String(e.startTime).trim() : null,
-    endTime: e?.endTime ? String(e.endTime).trim() : null,
-    allDay: e?.allDay !== false,
-    color: e?.color ? String(e.color) : null,
-    calendarId: e?.calendarId ? String(e.calendarId) : null,
-    notes: String(e?.notes || "").trim(),
-    location: (e?.location && typeof e.location === "object") ? e.location : null,
-    attachment: (e?.attachment && typeof e.attachment === "object") ? e.attachment : null,
-    recurrence: normalizeRecurrence(e?.recurrence),
-    exceptions: Array.isArray(e?.exceptions) ? e.exceptions.filter((d) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) : [],
-    addToDo: Boolean(e?.addToDo),
-    chores: Array.isArray(e?.chores) ? e.chores.map((c) => String(c || "").trim()).filter(Boolean) : [],
-    // When on, the event shows on the meal plan in whichever meal column(s) its
-    // time of day falls into (all-day / untimed events show on every meal).
-    showInMealPlan: Boolean(e?.showInMealPlan),
-    reminder: Number.isFinite(e?.reminder) ? e.reminder : null,
-    endDate: (typeof e?.endDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(e.endDate)) ? e.endDate : null,
-    createdAt: e?.createdAt || new Date().toISOString()
-  })).filter((e) => e.date && e.title) : [];
-}
-
-// Expand a recurring event into occurrence date-keys within [startKey, endKey].
-function expandRecurringOccurrences(e, startKey, endKey) {
-  const occ = [];
-  const rec = e.recurrence;
-  if (!rec) return occ;
-  const base = new Date(e.date + "T00:00:00");
-  if (isNaN(base)) return occ;
-  const exceptions = new Set(e.exceptions || []);
-  const hardEnd = (rec.until && rec.until < endKey) ? rec.until : endKey;
-
-  // Weekly on specific weekdays: scan day-by-day, keeping the chosen weekdays
-  // in weeks that fall on the interval (e.g. every 2 weeks on Mon & Wed).
-  if (rec.freq === "weekly" && Array.isArray(rec.byWeekdays) && rec.byWeekdays.length) {
-    const days = new Set(rec.byWeekdays);
-    const baseWeekStart = planWeekStart(base); // Sunday of the event's start week
-    const startD2 = new Date(startKey + "T00:00:00");
-    const scan = new Date(Math.max(base.getTime(), startD2.getTime()));
-    scan.setHours(0, 0, 0, 0);
-    let g = 0;
-    while (g++ < 1500) {
-      const key = dateKeyFromDate(scan);
-      if (key > hardEnd) break;
-      if (key >= startKey && key >= e.date && days.has(scan.getDay()) && !exceptions.has(key)) {
-        const weekOffset = Math.round((planWeekStart(scan) - baseWeekStart) / (7 * 86400000));
-        if (weekOffset >= 0 && weekOffset % rec.interval === 0) occ.push(key);
-      }
-      scan.setDate(scan.getDate() + 1);
-    }
-    return occ;
-  }
-
-  // Monthly / yearly on the Nth weekday (e.g. 3rd Friday, or last Friday). For
-  // yearly the month is fixed to the event's month; for monthly it advances.
-  if ((rec.freq === "monthly" || rec.freq === "yearly") && rec.monthMode === "nthWeekday" && Number.isInteger(rec.byWeekday)) {
-    const endD = new Date(hardEnd + "T00:00:00");
-    let y = base.getFullYear(), m = base.getMonth(), g3 = 0;
-    while (g3++ < 1500) {
-      if (new Date(y, m, 1) > endD) break;
-      const occDate = planNthWeekdayDate(y, m, rec.byWeekday, rec.bySetPos);
-      if (occDate) {
-        const key = dateKeyFromDate(occDate);
-        if (key > hardEnd) break;
-        if (key >= startKey && key >= e.date && !exceptions.has(key)) occ.push(key);
-      }
-      if (rec.freq === "monthly") { m += rec.interval; y += Math.floor(m / 12); m = ((m % 12) + 12) % 12; }
-      else { y += rec.interval; }
-    }
-    return occ;
-  }
-
-  // Monthly / yearly on a day-of-month: anchor on the original day so a month or
-  // year that lacks that day (e.g. the 31st in Feb, or Feb 29 in a common year)
-  // is SKIPPED, not rolled forward into the next month (which would drift the day
-  // and drop months entirely).
-  if (rec.freq === "monthly" || rec.freq === "yearly") {
-    const anchorDay = base.getDate();
-    const anchorMonth = base.getMonth();
-    const endD = new Date(hardEnd + "T00:00:00");
-    let y = base.getFullYear(), m = base.getMonth(), g4 = 0;
-    while (g4++ < 2400) {
-      const mm = rec.freq === "yearly" ? anchorMonth : m;
-      if (new Date(y, mm, 1) > endD) break;
-      const dim = new Date(y, mm + 1, 0).getDate(); // days in this month
-      if (anchorDay <= dim) {
-        const key = dateKeyFromDate(new Date(y, mm, anchorDay));
-        if (key > hardEnd) break;
-        if (key >= startKey && key >= e.date && !exceptions.has(key)) occ.push(key);
-      }
-      if (rec.freq === "monthly") { m += rec.interval; y += Math.floor(m / 12); m = ((m % 12) + 12) % 12; }
-      else { y += rec.interval; }
-    }
-    return occ;
-  }
-
-  // Daily / weekly (every N days/weeks). Fast-forward from an old start so we
-  // don't burn the iteration cap before reaching the visible window.
-  const d = new Date(base);
-  const startD = new Date(startKey + "T00:00:00");
-  if (d < startD) {
-    const step = (rec.freq === "daily" ? 1 : 7) * rec.interval;
-    const jumps = Math.floor((startD - d) / 86400000 / step);
-    if (jumps > 0) d.setDate(d.getDate() + jumps * step);
-  }
-  let guard = 0;
-  while (guard++ < 1500) {
-    const key = dateKeyFromDate(d);
-    if (key > hardEnd) break;
-    if (key >= startKey && !exceptions.has(key)) occ.push(key);
-    if (rec.freq === "daily") d.setDate(d.getDate() + rec.interval);
-    else if (rec.freq === "weekly") d.setDate(d.getDate() + 7 * rec.interval);
-    else break;
-  }
-  return occ;
-}
+// expandRecurringOccurrences moved to ./calendar/recurrence.js (imported at top).
 
 function normalizePlanCalendars(calendars) {
   return Array.isArray(calendars) ? calendars.map((c) => ({
@@ -36046,6 +36644,63 @@ function normalizePlanCalendars(calendars) {
     enabled: c?.enabled !== false,
     lastFetched: c?.lastFetched || null
   })).filter((c) => c.id) : [];
+}
+
+// Local exclusions for read-only external events (§16). `id` is the canonical
+// external event id (sourceId:externalId); `hidden` is a newer-wins toggle so
+// hide/unhide sync cleanly without tombstones. `title` is kept only so the
+// "hidden events" list can be labeled. id-keyed → rides unionById + tombstones.
+function normalizePlanExternalExclusions(arr) {
+  return Array.isArray(arr) ? arr.map((e) => ({
+    id: String(e?.id || "").trim(),
+    hidden: e?.hidden !== false,
+    title: String(e?.title || "").trim(),
+    at: e?.at || new Date().toISOString()
+  })).filter((e) => e.id) : [];
+}
+
+// Local title overrides for read-only external events (§15). A non-empty `title`
+// renames the event locally and survives re-sync (source-controlled fields keep
+// updating; only the title is overridden). Empty title = the reset state.
+// id-keyed → rides unionById + tombstones.
+function normalizePlanExternalOverrides(arr) {
+  return Array.isArray(arr) ? arr.map((e) => ({
+    id: String(e?.id || "").trim(),
+    title: String(e?.title || "").trim(),
+    at: e?.at || new Date().toISOString()
+  })).filter((e) => e.id) : [];
+}
+
+// Map of external event id → local title override (non-empty only). Semantics
+// live in the tested calendar/reconcile.js.
+function planExternalTitleOverrides() {
+  return titleOverrideMap(state.planExternalOverrides);
+}
+
+// Rename / reset a read-only external event's title locally. Empty title resets.
+function setPlanExternalTitle(id, title) {
+  if (!id) return;
+  state.planExternalOverrides = upsertTitleOverride(state.planExternalOverrides, id, title);
+  planRangeCache.clear();
+  persist();
+  renderPlanPage();
+}
+
+// The set of external event ids currently hidden from the calendar (§16).
+// Toggle semantics live in the tested calendar/reconcile.js.
+function planExcludedEventIds() {
+  return exclusionHiddenIdSet(state.planExternalExclusions);
+}
+
+// Hide / un-hide a read-only external event. Upserts the toggle record and
+// re-renders the calendar. Persisted + synced.
+function setPlanExternalHidden(id, title, hidden) {
+  if (!id) return;
+  state.planExternalExclusions = toggleExclusion(state.planExternalExclusions, id, hidden, title || "");
+  planRangeCache.clear();
+  persist();
+  renderPlanPage();
+  renderPlanCalList();
 }
 
 // Contacts (address book). Birthday is stored as "MM-DD" (no year) or
@@ -36499,7 +37154,7 @@ function addContactRow(listId, { label = "", value = "", labelPh = "Label", valu
   const reorder = list.dataset.reorder === "1";
   const row = document.createElement("div");
   row.className = "contact-multi-row";
-  const handle = reorder ? `<button type="button" class="contact-row-drag" aria-label="Drag to reorder" title="Drag to reorder" draggable="true">${CONTACT_DRAG_SVG}</button>` : "";
+  const handle = reorder ? `<button type="button" class="contact-row-drag" aria-label="Drag to reorder" title="Drag to reorder">${CONTACT_DRAG_SVG}</button>` : "";
   row.innerHTML = `${handle}
     <input type="text" class="contact-row-label" placeholder="${escapeHtml(labelPh)}" value="${escapeHtml(label)}" aria-label="Label" />
     <input type="${valueType}" class="contact-row-value" placeholder="${escapeHtml(valuePh)}" value="${escapeHtml(value)}" aria-label="${escapeHtml(valuePh || "Value")}" />
@@ -36533,20 +37188,18 @@ function refreshContactReorderList(list) {
 }
 
 function setupContactRowDrag(row, list) {
-  const handle = row.querySelector(".contact-row-drag");
-  if (!handle) return;
-  handle.addEventListener("dragstart", (e) => { contactDragRow = row; row.classList.add("is-dragging"); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", ""); } catch { /* older browsers */ } });
-  handle.addEventListener("dragend", () => { row.classList.remove("is-dragging"); contactDragRow = null; refreshContactReorderList(list); });
-  if (!list.dataset.dragBound) {
-    list.dataset.dragBound = "1";
-    list.addEventListener("dragover", (e) => {
-      if (!contactDragRow || contactDragRow.parentElement !== list) return;
-      e.preventDefault();
-      const after = contactDragAfter(list, e.clientY);
-      if (after == null) list.appendChild(contactDragRow);
-      else if (after !== contactDragRow) list.insertBefore(contactDragRow, after);
-    });
-  }
+  // Reorder multi-value rows via the shared sortable primitive, using the drag
+  // handle (the row is all inputs). DOM-only reorder; the contact form reads the row
+  // order on save, and refreshContactReorderList fixes the +/× buttons. Bound once.
+  if (list.__sortableBound) return;
+  list.__sortableBound = true;
+  makeSortable(list, {
+    rowSelector: ".contact-multi-row",
+    getId: (r) => String([...list.querySelectorAll(".contact-multi-row")].indexOf(r)),
+    handleSelector: ".contact-row-drag",
+    onReorder: () => refreshContactReorderList(list),
+    itemLabel: (r) => (r.querySelector(".contact-row-value")?.value || "row").trim().slice(0, 40),
+  });
 }
 
 function contactDragAfter(list, y) {
@@ -37399,30 +38052,16 @@ function getPlanEventsForRange(startKey, endKey) {
   const eventColor = (e) => e.color || ((state.planCalendars || []).find((c) => c.id === e.calendarId)?.color) || PLAN_COLORS[0];
   // Calendars toggled off in the sidebar hide their events (personal + iCal).
   const disabledCalIds = new Set((state.planCalendars || []).filter((c) => c.enabled === false).map((c) => c.id));
+  const excludedExternalIds = planExcludedEventIds(); // §16 per-event hides for read-only external events
+  const externalTitleOverrides = planExternalTitleOverrides(); // §15 local renames
   (state.planEvents || []).forEach((e) => {
     if (e.calendarId && disabledCalIds.has(e.calendarId)) return; // calendar hidden
     const color = eventColor(e);
-    if (e.recurrence) {
-      expandRecurringOccurrences(e, startKey, endKey).forEach((occDate) => {
-        events.push({ ...e, date: occDate, occurrenceOf: e.id, source: "personal", color });
-      });
-    } else if (e.endDate && e.endDate > e.date) {
-      // Multi-day: show on each spanned day within the visible range.
-      let d = new Date((e.date > startKey ? e.date : startKey) + "T00:00:00");
-      const last = e.endDate < endKey ? e.endDate : endKey;
-      let g = 0;
-      while (g++ < 400) {
-        const k = dateKeyFromDate(d);
-        if (k > last) break;
-        if (k >= e.date) {
-          const spanPos = k === e.date ? "start" : (k === e.endDate ? "end" : "mid");
-          events.push({ ...e, date: k, occurrenceOf: e.id, source: "personal", color, spanPos });
-        }
-        d.setDate(d.getDate() + 1);
-      }
-    } else if (e.date >= startKey && e.date <= endKey) {
-      events.push({ ...e, source: "personal", color });
-    }
+    // Expansion (recurrence / multi-day span / single) is the pure projection
+    // helper; the source + resolved color are layered on here.
+    eventInstancesInRange(e, startKey, endKey).forEach((inst) => {
+      events.push({ ...e, ...inst, source: "personal", color });
+    });
   });
   // Household view overlays the member's own events (marked) so nothing is
   // missed while planning family things. Personal view stays personal-only.
@@ -37440,8 +38079,15 @@ function getPlanEventsForRange(startKey, endKey) {
   (state.planCalendars || []).filter((c) => c.enabled).forEach((cal) => {
     const cached = planCalendarCache[cal.id];
     if (!cached) return;
+    // External events converge to the canonical shape here (same fields as before
+    // plus stable identity: sourceId/externalId/provider/readOnly), so local and
+    // external events reach the renderer through one representation (§13-14).
+    const source = sourceFromPlanCalendar(cal);
     cached.events.forEach((e) => {
-      const base = { ...e, id: `${cal.id}:${e.uid}`, source: "ical", calendarId: cal.id, color: cal.color, calendarName: cal.name };
+      const base = normalizeExternalEvent(e, source);
+      if (excludedExternalIds.has(base.id)) return; // §16: locally hidden (incl. all its occurrences)
+      const ov = externalTitleOverrides.get(base.id); // §15: local rename (keeps the source title for reset)
+      if (ov) { base._sourceTitle = base.title; base.title = ov; base._overridden = true; }
       if (e.recurrence?.freq) {
         // Subscribed recurring events (holidays, birthdays, …) expand like personal ones.
         expandRecurringOccurrences(base, startKey, endKey).forEach((occ) => events.push({ ...base, date: occ, occurrenceOf: base.id }));
@@ -37450,11 +38096,28 @@ function getPlanEventsForRange(startKey, endKey) {
       }
     });
   });
+  // Google Calendar subscriptions (state.calendars) render on the Plan calendar
+  // too, so it's the central surface — not just the meal plan. The Google backend
+  // is unchanged; we only project the already-fetched, enabled events (all-day,
+  // incl. yearly-recurring) into the canonical shape. Per-calendar visibility is
+  // handled inside syncedCalendarEventsForDate (its `enabled` filter).
+  {
+    const gCur = new Date(startKey + "T00:00:00");
+    const gEnd = new Date(endKey + "T00:00:00");
+    let gg = 0;
+    while (gCur <= gEnd && gg++ < 800) {
+      const dk = dateKeyFromDate(gCur);
+      syncedCalendarEventsForDate(gCur).forEach((ev) => {
+        const id = `gcal:${ev.calendarId}:${dk}:${ev.summary}`;
+        if (excludedExternalIds.has(id)) return; // §16 locally hidden
+        const ov = externalTitleOverrides.get(id); // §15 local rename
+        events.push({ id, title: ov || ev.summary, ...(ov ? { _sourceTitle: ev.summary, _overridden: true } : {}), date: dk, allDay: true, startTime: null, endTime: null, color: ev.calendarColor || PLAN_COLORS[0], source: "ical", readOnly: true, provider: "google", calendarId: ev.calendarId, calendarName: ev.calendarName });
+      });
+      gCur.setDate(gCur.getDate() + 1);
+    }
+  }
   getAppDataEvents(startKey, endKey).forEach((e) => events.push(e));
-  events.sort((a, b) => {
-    if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
-    return (a.startTime || "00:00").localeCompare(b.startTime || "00:00");
-  });
+  sortEventsForDisplay(events);
   planRangeCache.set(cacheKey, events);
   if (planRangeCache.size > PLAN_RANGE_CACHE_MAX) planRangeCache.delete(planRangeCache.keys().next().value);
   return events;
@@ -37490,7 +38153,16 @@ function buildPlanAppDataIndex() {
   doTasks.forEach((task) => {
     const key = task?.date || task?.dueDate;
     const title = task?.title || task?.text || task?.name;
-    if (key && title) push(key, { id: `do-${task.id || title}`, title, date: key, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.do, source: "do", calendarName: "To-Do" });
+    if (!(key && title)) return;
+    // Tasks stay Tasks (§24) — projected read-only, never converted to Events.
+    // A task with a time-of-day is SCHEDULED (occupies that slot); one without is
+    // DUE (an all-day chip on its date). `isTask` drives the distinct styling (§25).
+    const common = { id: `do-${task.id || title}`, title, date: key, color: PLAN_APP_COLORS.do, source: "do", calendarName: "Tasks", isTask: true, done: Boolean(task?.done) };
+    if (taskIsScheduled(task)) {
+      push(key, { ...common, allDay: false, startTime: task.time, endTime: null, taskState: "scheduled" });
+    } else {
+      push(key, { ...common, allDay: true, startTime: null, endTime: null, taskState: "due" });
+    }
   });
   return byDate;
 }
@@ -37527,6 +38199,13 @@ function getAppDataEvents(startKey, endKey) {
   return events;
 }
 
+// A projected Task (vs an Event) — carries a checkbox glyph so the two never look
+// alike, independent of colour (§25, §42).
+function planIsTaskEvent(event) { return Boolean(event.isTask) || event.source === "do"; }
+function planTaskGlyph(event) {
+  return planIsTaskEvent(event) ? `<span class="plan-task-check" aria-hidden="true">${event.done ? "☑" : "☐"}</span>` : "";
+}
+
 function planEventPillTemplate(event) {
   const commonAttrs = `data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}" style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])}" data-tip="${escapeHtml(event.title)}" tabindex="0" role="button" aria-label="${escapeHtml(event.title)}"`;
   // Multi-day continuation days render as a title-less bar segment that connects
@@ -37544,8 +38223,9 @@ function planEventPillTemplate(event) {
   const movable = personal && !event.recurrence && !event.occurrenceOf;
   const occMovable = personal && event.recurrence && event.occurrenceOf;
   const dragAttrs = movable ? ' draggable="true" data-evt-movable="1"' : occMovable ? ' draggable="true" data-evt-occ-movable="1"' : "";
-  return `<div class="plan-event-pill${movable || occMovable ? " is-movable" : ""}${spanCls}"${dragAttrs} ${commonAttrs}>
-    ${dot}${time}<span class="plan-event-title">${escapeHtml(event.title)}</span>${event.recurrence || event.occurrenceOf ? '<span class="plan-event-recur" aria-hidden="true">↻</span>' : ""}
+  const isTask = planIsTaskEvent(event);
+  return `<div class="plan-event-pill${movable || occMovable ? " is-movable" : ""}${spanCls}${isTask ? " is-task" : ""}"${dragAttrs} ${commonAttrs}>
+    ${isTask ? planTaskGlyph(event) : dot}${time}<span class="plan-event-title">${escapeHtml(event.title)}</span>${event.recurrence || event.occurrenceOf ? '<span class="plan-event-recur" aria-hidden="true">↻</span>' : ""}
   </div>`;
 }
 
@@ -37609,19 +38289,26 @@ function renderPlanMonthView() {
     const isToday = key === today;
     const isOther = date.getMonth() !== month;
     const dayEvts = eventsByDay[key] || []; // already sorted: all-day first, then by start time
-    // Unified chip list (all-day first, then timed). Cap so busy days can't
-    // silently clip; the remainder shows as "+N" (which drills into that day).
+    // Month stays high-level: Events show as chips; Tasks collapse to a single
+    // compact count so the grid isn't flooded (§25). Both drill into the day.
+    const eventChips = dayEvts.filter((e) => !planIsTaskEvent(e));
+    const taskCount = dayEvts.length - eventChips.length;
+    // Cap so busy days can't silently clip; the remainder shows as "+N".
     // 5 titled rows fit a desktop cell, and the chips collapse to dots on phones.
     const MONTH_CHIP_CAP = 5;
-    const shown = dayEvts.slice(0, MONTH_CHIP_CAP);
-    const hidden = dayEvts.length - shown.length;
-    const aria = `${date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}${dayEvts.length ? `, ${dayEvts.length} event${dayEvts.length > 1 ? "s" : ""}` : ""}`;
+    const shown = eventChips.slice(0, MONTH_CHIP_CAP);
+    const hidden = eventChips.length - shown.length;
+    const taskChip = taskCount ? `<span class="plan-month-task-count" role="button" tabindex="0" aria-label="${taskCount} task${taskCount > 1 ? "s" : ""} — open day" title="${taskCount} task${taskCount > 1 ? "s" : ""}"><span aria-hidden="true">☑ ${taskCount}</span></span>` : "";
+    const ariaParts = [];
+    if (eventChips.length) ariaParts.push(`${eventChips.length} event${eventChips.length > 1 ? "s" : ""}`);
+    if (taskCount) ariaParts.push(`${taskCount} task${taskCount > 1 ? "s" : ""}`);
+    const aria = `${date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}${ariaParts.length ? ", " + ariaParts.join(", ") : ""}`;
     return `<div class="plan-month-day${isToday ? " is-today" : ""}${isOther ? " is-other-month" : ""}" data-plan-day="${escapeHtml(key)}" tabindex="0" role="gridcell" aria-label="${escapeHtml(aria)}">
       <div class="plan-month-day-head">
         <span class="plan-day-number">${date.getDate()}</span>
       </div>
       ${paydayDotHtml(paydaysByDay[key])}
-      ${(shown.length || hidden) ? `<div class="plan-month-events">${shown.map(planMonthChipTemplate).join("")}${hidden ? `<span class="plan-month-more" role="button" aria-label="${hidden} more — open day">+${hidden}</span>` : ""}</div>` : ""}
+      ${(shown.length || hidden || taskChip) ? `<div class="plan-month-events">${shown.map(planMonthChipTemplate).join("")}${hidden ? `<span class="plan-month-more" role="button" aria-label="${hidden} more — open day">+${hidden}</span>` : ""}${taskChip}</div>` : ""}
     </div>`;
   }).join("");
   return `<div class="plan-month">
@@ -37660,8 +38347,13 @@ function renderPlanWeekView() {
   const now = new Date();
   const nowH = now.getHours(), nowTop = (now.getMinutes() / 60) * 100;
   // Per-day segments (splitting overnight events) + column layout for overlaps.
-  const segsByDay = {}, layoutByDay = {};
-  days.forEach((d) => { const k = dateKeyFromDate(d); segsByDay[k] = planDaySegments(k, timed); layoutByDay[k] = packDaySegments(segsByDay[k]); });
+  const segsByDay = {}, layoutByDay = {}, conflictsByDay = {};
+  days.forEach((d) => {
+    const k = dateKeyFromDate(d);
+    segsByDay[k] = planDaySegments(k, timed);
+    layoutByDay[k] = packDaySegments(segsByDay[k]);
+    conflictsByDay[k] = overlappingIntervalIds(segsByDay[k].map((s) => ({ id: s.event.id, start: s.start, end: s.end })));
+  });
   const hourRows = Array.from({ length: 24 }, (_, h) => {
     const label = h === 0 ? "" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
     const cols = days.map((d) => {
@@ -37669,7 +38361,7 @@ function renderPlanWeekView() {
       const segs = segsByDay[key].filter((s) => Math.floor(s.start / 60) === h);
       const nowLine = (key === today && h === nowH) ? `<div class="plan-now-line" style="top:${nowTop}%"></div>` : "";
       return `<div class="plan-week-cell" data-plan-day="${escapeHtml(key)}" data-plan-hour="${h}">
-        ${nowLine}${segs.map((s) => planTimedEventBlock(s, layoutByDay[key].get(s.event.id))).join("")}
+        ${nowLine}${segs.map((s) => planTimedEventBlock(s, layoutByDay[key].get(s.event.id), conflictsByDay[key])).join("")}
       </div>`;
     }).join("");
     return `<div class="plan-hour-row">
@@ -37702,6 +38394,7 @@ function renderPlanDayView() {
   const timed = allEvents.filter((e) => !e.allDay && e.startTime);
   const segs = planDaySegments(key, timed);
   const layout = packDaySegments(segs); // side-by-side columns for overlaps
+  const dayConflicts = overlappingIntervalIds(segs.map((s) => ({ id: s.event.id, start: s.start, end: s.end })));
   const hourRows = Array.from({ length: 24 }, (_, h) => {
     const label = h === 0 ? "" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
     const cells = segs.filter((s) => Math.floor(s.start / 60) === h);
@@ -37709,7 +38402,7 @@ function renderPlanDayView() {
     return `<div class="plan-hour-row plan-day-hour-row">
       <div class="plan-time-label">${label}</div>
       <div class="plan-day-cell" data-plan-day="${escapeHtml(key)}" data-plan-hour="${h}">
-        ${nowLine}${cells.map((s) => planTimedEventBlock(s, layout.get(s.event.id))).join("")}
+        ${nowLine}${cells.map((s) => planTimedEventBlock(s, layout.get(s.event.id), dayConflicts)).join("")}
       </div>
     </div>`;
   }).join("");
@@ -37742,7 +38435,7 @@ function renderPlanAgendaView() {
       return `<div class="plan-agenda-event" data-plan-event-id="${escapeHtml(e.id)}" data-plan-event-date="${escapeHtml(e.date || key)}" data-plan-day="${escapeHtml(key)}">
         <span class="plan-agenda-dot" style="background:${escapeHtml(e.color || PLAN_COLORS[0])}"></span>
         <div class="plan-agenda-info">
-          <span class="plan-agenda-title">${escapeHtml(e.title)}${e.recurrence || e.occurrenceOf ? ' <span class="plan-event-recur" aria-hidden="true">↻</span>' : ""}</span>
+          <span class="plan-agenda-title${planIsTaskEvent(e) ? " is-task" : ""}">${planIsTaskEvent(e) ? planTaskGlyph(e) + " " : ""}${escapeHtml(e.title)}${e.recurrence || e.occurrenceOf ? ' <span class="plan-event-recur" aria-hidden="true">↻</span>' : ""}</span>
           <span class="plan-agenda-time">${escapeHtml(timeStr)}${calLabel}</span>
         </div>
       </div>`;
@@ -37805,7 +38498,7 @@ function packDaySegments(segs) {
   return result;
 }
 
-function planTimedEventBlock(seg, layout) {
+function planTimedEventBlock(seg, layout, conflicts) {
   const event = seg.event;
   const top = ((seg.start % 60) / 60) * 100;
   const height = Math.max(((seg.end - seg.start) / 60) * 100, 33);
@@ -37816,11 +38509,17 @@ function planTimedEventBlock(seg, layout) {
   const personal = !event.source || event.source === "personal";
   // The block's bottom edge is a resize handle for single, non-span personal events.
   const resizable = personal && !event.spanPos && !seg.tail;
-  return `<div class="plan-timed-event${seg.tail ? " is-overnight-tail" : ""}${resizable ? " is-movable" : ""}" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}"
-               tabindex="0" role="button" aria-label="${escapeHtml(label)}"
+  // §22: overlapping events are both flagged (never merged/hidden). A glyph plus
+  // the class means the cue isn't colour-only (§42).
+  const isConflict = conflicts?.has(event.id);
+  const conflictMark = isConflict ? '<span class="plan-conflict-mark" aria-hidden="true">⚠</span>' : "";
+  const isTask = planIsTaskEvent(event);
+  const taskLabel = isTask ? `${event.done ? "☑" : "☐"} ${label}` : label;
+  return `<div class="plan-timed-event${seg.tail ? " is-overnight-tail" : ""}${resizable ? " is-movable" : ""}${isConflict ? " is-conflict" : ""}${isTask ? " is-task" : ""}" data-plan-event-id="${escapeHtml(event.id)}" data-plan-event-date="${escapeHtml(event.date || "")}" data-plan-event-source="${escapeHtml(event.source || "")}"
+               tabindex="0" role="button" aria-label="${escapeHtml(taskLabel)}${isConflict ? " (overlaps another event)" : ""}"
                style="--evt-color:${escapeHtml(event.color || PLAN_COLORS[0])};top:${top}%;height:${height}%;${colStyle}"
-               data-tip="${escapeHtml(label)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}">
-    <span>${escapeHtml(label)}${event.recurrence || event.occurrenceOf ? " ↻" : ""}</span>${resizable ? `<span class="plan-event-resize" data-resize-event="${escapeHtml(event.id)}" aria-hidden="true"></span>` : ""}
+               data-tip="${escapeHtml(taskLabel)}${event.recurrence || event.occurrenceOf ? " (repeats)" : ""}${isConflict ? " · overlaps another event" : ""}">
+    <span>${escapeHtml(taskLabel)}${event.recurrence || event.occurrenceOf ? " ↻" : ""}</span>${conflictMark}${resizable ? `<span class="plan-event-resize" data-resize-event="${escapeHtml(event.id)}" aria-hidden="true"></span>` : ""}
   </div>`;
 }
 
@@ -37949,6 +38648,161 @@ function updatePlanConflictCue() {
   const more = clashes.length > 3 ? ` +${clashes.length - 3} more` : "";
   el.innerHTML = `<span class="plan-conflict-icon" aria-hidden="true">⚠</span> Overlaps ${escapeHtml(names)}${escapeHtml(more)}`;
   el.hidden = false;
+}
+
+// ── Event detail side panel (Calendar 2.0 §21) ───────────────────────────────
+// Clicking an event opens this read view first; "Edit" opens the full editor
+// (openPlanEventDialog) unchanged. Read-only external events show their source +
+// sync info and have no editor. `planDetailContext` carries the id/date so the
+// action buttons reproduce the same behavior clicking used to have.
+let planDetailContext = null;
+
+// Human-readable recurrence summary for the detail panel.
+function planRecurrenceSummary(rec) {
+  if (!rec) return "";
+  const unit = { daily: "day", weekly: "week", monthly: "month", yearly: "year" }[rec.freq] || rec.freq;
+  let base = rec.interval > 1 ? `Every ${rec.interval} ${unit}s` : `Every ${unit}`;
+  if (rec.freq === "weekly" && rec.byWeekdays?.length) {
+    const names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    base += ` on ${rec.byWeekdays.map((d) => names[d]).join(", ")}`;
+  } else if ((rec.freq === "monthly" || rec.freq === "yearly") && rec.monthMode === "nthWeekday" && Number.isInteger(rec.byWeekday)) {
+    const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const pos = { 1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth", "-1": "last" }[rec.bySetPos] || "";
+    base += ` on the ${pos} ${days[rec.byWeekday]}`;
+  }
+  if (rec.until) base += ` until ${new Date(rec.until + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+  return base;
+}
+
+function planEventDetailRow(icon, label, text) {
+  if (!text) return "";
+  return `<div class="plan-detail-row"><span class="plan-detail-row-icon" aria-hidden="true">${icon}</span><div class="plan-detail-row-text">${label ? `<span class="plan-detail-row-label">${escapeHtml(label)}</span>` : ""}${escapeHtml(text)}</div></div>`;
+}
+
+function renderPlanEventDetail(ev) {
+  const titleEl = document.getElementById("planDetailTitle");
+  const dotEl = document.getElementById("planDetailDot");
+  const bodyEl = document.getElementById("planDetailBody");
+  const actionsEl = document.getElementById("planDetailActions");
+  if (!titleEl || !bodyEl || !actionsEl) return;
+  titleEl.textContent = ev.title || "(no title)";
+  if (dotEl) dotEl.style.background = ev.color || PLAN_COLORS[0];
+
+  const dateFmt = (k) => new Date(k + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  const dateLabel = ev.date ? dateFmt(ev.date) : "";
+  let whenText;
+  if (ev.allDay) {
+    whenText = (ev.endDate && ev.endDate > ev.date) ? `${dateLabel} → ${dateFmt(ev.endDate)} · All day` : `${dateLabel} · All day`;
+  } else {
+    const t = ev.startTime ? planFormatTime(ev.startTime) + (ev.endTime ? ` – ${planFormatTime(ev.endTime)}` : "") : "";
+    whenText = `${dateLabel}${t ? " · " + t : ""}`;
+  }
+
+  const isExternal = ev.source === "ical";
+  const calName = ev.calendarName || (ev.calendarId ? (state.planCalendars || []).find((c) => c.id === ev.calendarId)?.name : "") || "Personal";
+  let locText = "";
+  if (typeof ev.location === "string") locText = ev.location;
+  else if (ev.location && typeof ev.location === "object") locText = ev.location.name || ev.location.address || ev.location.label || "";
+  const remText = Number.isFinite(ev.reminder) ? (ev.reminder === 0 ? "At time of event" : `${ev.reminder} minutes before`) : "";
+  const chores = Array.isArray(ev.chores) ? ev.chores.filter(Boolean) : [];
+
+  let sourceText;
+  if (isExternal) {
+    const src = (state.planCalendars || []).find((c) => c.id === ev.sourceId || c.id === ev.calendarId);
+    const synced = src?.lastFetched ? ` · synced ${new Date(src.lastFetched).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "";
+    sourceText = `Read-only — from “${calName}”${synced}`;
+  } else if (ev.source === "personal-overlay") {
+    sourceText = "A household member's event";
+  } else {
+    sourceText = "Personal event";
+  }
+
+  bodyEl.innerHTML = [
+    planEventDetailRow("🕑", "", whenText),
+    ev.recurrence ? planEventDetailRow("↻", "Repeats", planRecurrenceSummary(ev.recurrence)) : "",
+    planEventDetailRow("📁", "Calendar", calName),
+    planEventDetailRow("📍", "Location", locText),
+    planEventDetailRow("📝", "Notes", ev.notes || ""),
+    remText ? planEventDetailRow("🔔", "Reminder", remText) : "",
+    chores.length ? planEventDetailRow("✔", "Linked tasks", chores.join("\n")) : "",
+    planEventDetailRow("🔗", "Source", sourceText),
+    ev._overridden ? planEventDetailRow("✎", "Renamed", `Originally “${ev._sourceTitle || ""}”`) : ""
+  ].join("");
+
+  const personal = !ev.source || ev.source === "personal";
+  actionsEl.innerHTML = personal
+    ? `<button type="button" class="secondary-btn" data-plan-detail-delete>Delete</button><button type="button" class="primary-btn" data-plan-detail-edit>Edit</button>`
+    : isExternal
+      // Read-only external events can't be edited at the source, only locally:
+      // rename (§15, survives re-sync) or hide (§16). Both persist across syncs.
+      ? `<button type="button" class="secondary-btn" data-plan-detail-rename>Rename</button>${ev._overridden ? `<button type="button" class="secondary-btn" data-plan-detail-reset>Reset</button>` : ""}<button type="button" class="secondary-btn" data-plan-detail-hide>Hide</button>`
+      : "";
+}
+
+function openPlanEventDetail(id, dateKey) {
+  const key = dateKey || dateKeyFromDate(planViewDate);
+  const range = getPlanEventsForRange(key, key);
+  const ev = range.find((e) => e.id === id && e.date === key) || range.find((e) => e.id === id);
+  if (!ev) { openPlanEventDialog(dateKey || null, id); return; } // fall back to the editor if not found
+  planDetailContext = { id: ev.id, date: ev.date || key, source: ev.source || "personal", title: ev.title || "", sourceTitle: ev._sourceTitle || ev.title || "", overridden: Boolean(ev._overridden) };
+  renderPlanEventDetail(ev);
+  const panel = document.getElementById("planDetailPanel");
+  if (!panel) return;
+  panel.hidden = false;
+  panel.querySelector(".plan-detail-close")?.focus();
+}
+
+function closePlanEventDetail() {
+  const panel = document.getElementById("planDetailPanel");
+  if (panel) panel.hidden = true;
+  planDetailContext = null;
+}
+
+// Bound once at startup: close on scrim/X/Escape; Edit → the full editor; Delete
+// → the same path the right-click menu uses.
+function initPlanEventDetail() {
+  const panel = document.getElementById("planDetailPanel");
+  if (!panel) return;
+  panel.addEventListener("click", (e) => {
+    if (e.target.closest("[data-plan-detail-close]")) { closePlanEventDetail(); return; }
+    if (e.target.closest("[data-plan-detail-edit]") && planDetailContext) {
+      const ctx = planDetailContext;
+      closePlanEventDetail();
+      openPlanEventDialog(ctx.date || null, ctx.id);
+      return;
+    }
+    if (e.target.closest("[data-plan-detail-delete]") && planDetailContext) {
+      const ctx = planDetailContext;
+      closePlanEventDetail();
+      editingPlanEventId = ctx.id;
+      editingPlanEventOccurrenceDate = ctx.date;
+      deletePlanEvent();
+      return;
+    }
+    if (e.target.closest("[data-plan-detail-hide]") && planDetailContext) {
+      const ctx = planDetailContext;
+      closePlanEventDetail();
+      setPlanExternalHidden(ctx.id, ctx.title, true); // §16 local hide (read-only external)
+      return;
+    }
+    if (e.target.closest("[data-plan-detail-rename]") && planDetailContext) {
+      const ctx = planDetailContext;
+      const next = prompt("Rename this event locally (its source keeps updating):", ctx.title || "");
+      if (next === null) return; // cancelled
+      closePlanEventDetail();
+      // Renaming back to the source title clears the override.
+      setPlanExternalTitle(ctx.id, next.trim() === (ctx.sourceTitle || "").trim() ? "" : next); // §15
+      return;
+    }
+    if (e.target.closest("[data-plan-detail-reset]") && planDetailContext) {
+      const ctx = planDetailContext;
+      closePlanEventDetail();
+      setPlanExternalTitle(ctx.id, ""); // §15 reset to source title
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !panel.hidden) { e.stopPropagation(); closePlanEventDetail(); }
+  });
 }
 
 function openPlanEventDialog(date, eventId, prefill) {
@@ -38710,14 +39564,17 @@ function initPlanCalListDelegation() {
       }
       // Auto-generated events (a logged workout, planned meal, to-do) aren't
       // editable calendar entries — jump to their source page instead.
-      if (openPlanSyntheticEvent(pill.dataset.planEventSource)) return;
-      openPlanEventDialog(pill.dataset.planEventDate || null, pill.dataset.planEventId);
+      const src = pill.dataset.planEventSource;
+      if (src === "play" || src === "eat" || src === "do") { openPlanSyntheticEvent(src); return; }
+      // Personal + read-only external (iCal) events open the detail panel first;
+      // the panel's Edit opens the full editor (§21).
+      openPlanEventDetail(pill.dataset.planEventId, pill.dataset.planEventDate || null);
       return;
     }
     const cell = e.target.closest("[data-plan-day]");
     if (!cell) return;
     // Month view: the day number or the "+N more" chip drill into that day.
-    if (planViewMode === "month" && (e.target.closest(".plan-day-number") || e.target.closest(".plan-month-more"))) {
+    if (planViewMode === "month" && (e.target.closest(".plan-day-number") || e.target.closest(".plan-month-more") || e.target.closest(".plan-month-task-count"))) {
       planViewDate = new Date(cell.dataset.planDay + "T00:00:00");
       planViewMode = "day";
       setWeekToolsMode("plan");
@@ -38734,8 +39591,10 @@ function initPlanCalListDelegation() {
       const evtEl = e.target.closest("[data-plan-event-id]");
       if (evtEl) {
         e.preventDefault();
-        if (openPlanSyntheticEvent(evtEl.dataset.planEventSource)) return;
-        openPlanEventDialog(evtEl.dataset.planEventDate || null, evtEl.dataset.planEventId);
+        if (evtEl.dataset.planEventSource === "birthday") { openPlanSyntheticEvent("birthday"); return; }
+        const src = evtEl.dataset.planEventSource;
+        if (src === "play" || src === "eat" || src === "do") { openPlanSyntheticEvent(src); return; }
+        openPlanEventDetail(evtEl.dataset.planEventId, evtEl.dataset.planEventDate || null);
         return;
       }
     }
@@ -38763,6 +39622,8 @@ function initPlanCalListDelegation() {
 
   list.addEventListener("click", (e) => {
     if (e.target.closest("[data-add-cal]")) { openAddPlanCalDialog(); return; }
+    const unhide = e.target.closest("[data-plan-unhide]");
+    if (unhide) { setPlanExternalHidden(unhide.dataset.planUnhide, "", false); return; } // §16 un-hide
 
     // The color dot is a visibility toggle. Flip just the clicked dot in place
     // (the list order is unchanged) instead of rebuilding the whole sidebar.
@@ -38771,6 +39632,13 @@ function initPlanCalListDelegation() {
     if (calDot) {
       const id = calDot.dataset.calToggle;
       let now = false;
+      if (planCalIsGoogle(id)) {
+        state.calendars = (state.calendars || []).map((c) => c.id === id ? (now = c.enabled === false, { ...c, enabled: now }) : c);
+        flipDot(calDot, now);
+        persist();
+        loadCalendarEvents().then(() => { if (activeAppArea === "plan") renderPlanPage(); });
+        return;
+      }
       state.planCalendars = (state.planCalendars || []).map((c) => c.id === id ? (now = !c.enabled, { ...c, enabled: now }) : c);
       flipDot(calDot, now);
       persist();
@@ -38790,7 +39658,9 @@ function initPlanCalListDelegation() {
 
     const refreshBtn = e.target.closest("[data-refresh-cal]");
     if (refreshBtn) {
-      const c = (state.planCalendars || []).find((x) => x.id === refreshBtn.dataset.refreshCal);
+      const id = refreshBtn.dataset.refreshCal;
+      if (planCalIsGoogle(id)) { loadCalendarEvents({ force: true }).then(() => { renderPlanCalList(); if (activeAppArea === "plan") renderPlanPage(); }); return; }
+      const c = (state.planCalendars || []).find((x) => x.id === id);
       if (c) fetchOnePlanCalendar(c).then(() => renderPlanCalList());
       return;
     }
@@ -38806,9 +39676,10 @@ function initPlanCalListDelegation() {
       const id = saveEdit.dataset.saveCalEdit;
       const newName = document.getElementById(`cal-edit-name-${id}`)?.value.trim();
       const newColor = document.getElementById(`cal-edit-color-${id}`)?.querySelector("input:checked")?.value;
-      const cal = (state.planCalendars || []).find((c) => c.id === id);
+      const store = planCalIsGoogle(id) ? "calendars" : "planCalendars";
+      const cal = (state[store] || []).find((c) => c.id === id);
       if (!cal) return;
-      state.planCalendars = (state.planCalendars || []).map((c) =>
+      state[store] = (state[store] || []).map((c) =>
         c.id === id ? { ...c, name: newName || cal.name, color: newColor || cal.color } : c
       );
       persist();
@@ -38846,13 +39717,16 @@ function initPlanCalListDelegation() {
 }
 
 function deletePlanCalendar(id) {
-  const calName = (state.planCalendars || []).find((c) => c.id === id)?.name || "this calendar";
+  // Route to whichever store owns this row (Google vs generic-ICS).
+  const store = planCalIsGoogle(id) ? "calendars" : "planCalendars";
+  const calName = (state[store] || []).find((c) => c.id === id)?.name || "this calendar";
   if (!confirm(`Remove "${calName}"?`)) return;
-  recordDeletion("planCalendars", id);
-  state.planCalendars = (state.planCalendars || []).filter((c) => c.id !== id);
-  delete planCalendarCache[id];
+  recordDeletion(store, id);
+  state[store] = (state[store] || []).filter((c) => c.id !== id);
+  if (store === "planCalendars") { delete planCalendarCache[id]; }
   persist();
   renderPlanCalList();
+  if (store === "calendars") loadCalendarEvents();
   if (activeAppArea === "plan") renderPlanPage();
 }
 
@@ -38997,11 +39871,14 @@ function planOverlayRowHtml(source, name, color) {
 }
 
 function renderPlanCalList() {
-  const cals = state.planCalendars || [];
   // Leaving any inline-edit state; release the sidebar hover-rail pin.
   document.getElementById("planSidebar")?.classList.remove("is-pinned");
-  // Personal + subscribed calendars are blended into one alphabetical list.
-  const sorted = [...cals].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  // One place to manage BOTH subscription backends: generic-ICS calendars
+  // (state.planCalendars) and Google calendars (state.calendars) are blended into
+  // one alphabetical list, each row tagged with its store so actions route right.
+  const planCals = (state.planCalendars || []).map((c) => ({ ...c, _store: "plan" }));
+  const googleCals = normalizeLinkedCalendars(state.calendars).map((c) => ({ ...c, _store: "google" }));
+  const sorted = [...planCals, ...googleCals].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
   elements.planCalList.innerHTML = `
     <div class="plan-cal-list-head">
@@ -39013,20 +39890,40 @@ function renderPlanCalList() {
     <div class="plan-cal-overlays">
       ${planOverlayRowHtml("eat", "Meal Plan", PLAN_APP_COLORS.eat)}
       ${planOverlayRowHtml("play", "Exercise", PLAN_APP_COLORS.play)}
-      ${planOverlayRowHtml("do", "To-Do", PLAN_APP_COLORS.do)}
+      ${planOverlayRowHtml("do", "Tasks", PLAN_APP_COLORS.do)}
       ${planOverlayRowHtml("birthday", "Birthdays", PLAN_APP_COLORS.birthday)}
     </div>
     <div class="plan-cal-divider"></div>
     ${sorted.map((c) => planCalRowHtml(c)).join("")}
     ${!sorted.length ? `<p class="plan-cal-empty">No calendars yet.</p>` : ""}
+    ${planHiddenEventsSectionHtml()}
   `;
+}
+
+// Hidden read-only external events (§16), with an un-hide control. Only shows
+// when something is hidden.
+function planHiddenEventsSectionHtml() {
+  const hidden = (state.planExternalExclusions || []).filter((x) => x.hidden);
+  if (!hidden.length) return "";
+  return `
+    <div class="plan-cal-divider"></div>
+    <div class="plan-cal-hidden">
+      <div class="plan-cal-list-title">Hidden events</div>
+      ${hidden.map((x) => `
+        <div class="plan-cal-hidden-row">
+          <span class="plan-cal-hidden-title">${escapeHtml(x.title || "Event")}</span>
+          <button class="secondary-btn plan-cal-unhide" type="button" data-plan-unhide="${escapeHtml(x.id)}">Unhide</button>
+        </div>`).join("")}
+    </div>`;
 }
 
 function planCalRowHtml(cal) {
   // Edit/Delete are hidden by default: swipe-left reveals them on touch, and a
   // right-click opens a menu on desktop (see initPlanCalListDelegation).
+  const store = cal._store || "plan";
+  const googleBadge = store === "google" ? '<span class="plan-cal-badge" title="Google Calendar">G</span>' : "";
   return `
-    <div class="plan-cal-row" id="plan-cal-row-${escapeHtml(cal.id)}" data-cal-id="${escapeHtml(cal.id)}">
+    <div class="plan-cal-row" id="plan-cal-row-${escapeHtml(cal.id)}" data-cal-id="${escapeHtml(cal.id)}" data-cal-store="${store}">
       <div class="plan-cal-actions">
         <button class="icon-btn" type="button" data-cal-edit="${escapeHtml(cal.id)}" aria-label="Edit ${escapeHtml(cal.name)}">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -39037,7 +39934,7 @@ function planCalRowHtml(cal) {
       </div>
       <div class="plan-cal-front">
         <button type="button" class="plan-cal-dot ${cal.enabled ? "is-on" : "is-off"}" style="--dot-color:${escapeHtml(cal.color)}" data-cal-toggle="${escapeHtml(cal.id)}" role="switch" aria-checked="${cal.enabled ? "true" : "false"}" aria-label="Toggle ${escapeHtml(cal.name)}"></button>
-        <span class="plan-cal-name">${escapeHtml(cal.name)}</span>
+        <span class="plan-cal-name">${escapeHtml(cal.name)}</span>${googleBadge}
       </div>
     </div>
   `;
@@ -39056,7 +39953,7 @@ function planRelativeTime(iso) {
 function openPlanCalEditMode(id) {
   const row = document.getElementById(`plan-cal-row-${id}`);
   if (!row) return;
-  const cal = (state.planCalendars || []).find((c) => c.id === id);
+  const cal = (planCalIsGoogle(id) ? (state.calendars || []) : (state.planCalendars || [])).find((c) => c.id === id);
   if (!cal) return;
   // Keep the sidebar expanded while editing so the inline form isn't hidden when
   // the cursor leaves the desktop hover-rail (cleared on next renderPlanCalList).
@@ -39080,31 +39977,62 @@ function openPlanCalEditMode(id) {
   document.getElementById(nameId)?.focus();
 }
 
+// Whether a sidebar calendar id belongs to the Google (state.calendars) store
+// rather than the generic-ICS (state.planCalendars) store.
+function planCalIsGoogle(id) {
+  return (state.calendars || []).some((c) => c.id === id);
+}
+
 async function addPlanCalendar() {
   const name = elements.planNewCalName.value.trim() || "My Calendar";
   const url = elements.planNewCalUrl.value.trim();
   const color = elements.planNewCalColorPicker.querySelector("input:checked")?.value || PLAN_COLORS[2];
+  elements.planAddCalDialog.close();
+  // The two subscription backends stay separate (Google Calendar via the
+  // authenticated google-calendar fn; generic iCal/Amion via ics-proxy). The
+  // sidebar is just one place to add either: a Google iCal URL routes to the
+  // Google store, everything else (incl. Amion) to the generic-ICS store.
+  if (url && isGoogleCalendarUrl(url)) {
+    state.calendars = normalizeLinkedCalendars([...(state.calendars || []), { id: createId("cal"), name, url, color, enabled: true }]);
+    persist();
+    maybeWriteCloudSnapshot({ force: true }).catch(() => {});
+    renderPlanCalList();
+    await loadCalendarEvents({ force: true });
+    if (activeAppArea === "plan") renderPlanPage();
+    return;
+  }
   // Blank URL creates a personal calendar; a URL subscribes to an external one.
   const newCal = { id: createId("plan-cal"), name, url, color, enabled: true, lastFetched: null };
   state.planCalendars = [...(state.planCalendars || []), newCal];
   persist();
   maybeWriteCloudSnapshot({ force: true }).catch(() => {});
-  elements.planAddCalDialog.close();
   renderPlanCalList();
   if (url) await fetchOnePlanCalendar(newCal);
   if (activeAppArea === "plan") renderPlanPage();
 }
 
 async function fetchAllPlanCalendars() {
-  if (!canUseLocalBackend()) return;
   const cals = state.planCalendars || [];
-  await Promise.all(cals.map(fetchOnePlanCalendar));
+  await Promise.all(cals.map(fetchOnePlanCalendar)); // fetchOnePlanCalendar picks local vs Netlify proxy
+}
+
+// The generic-ICS proxy URL: the local dev server in development, else the
+// deployed Netlify function (so subscriptions also refresh on the live site).
+function icsProxyUrl(url) {
+  const enc = encodeURIComponent(String(url || "").trim());
+  if (!enc) return "";
+  if (canUseLocalBackend()) return `/api/ics-proxy?url=${enc}`;
+  if (window.location.protocol.startsWith("http")) return `/.netlify/functions/ics-proxy?url=${enc}`;
+  return "";
 }
 
 async function fetchOnePlanCalendar(cal) {
-  if (!cal?.url || !canUseLocalBackend()) return;
+  if (!cal?.url) return;
+  const proxy = icsProxyUrl(cal.url);
+  if (!proxy) return;
   try {
-    const res = await fetch(`/api/ics-proxy?url=${encodeURIComponent(cal.url)}`);
+    // The Netlify proxy is session-gated; the local one ignores the header.
+    const res = await fetch(proxy, { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
     if (!res.ok) return;
     const data = await res.json();
     planCalendarCache[cal.id] = { fetchedAt: new Date(), events: data.events || [] };
@@ -39353,7 +40281,7 @@ function inventoryContainerTemplate(container) {
 
 function inventoryItemChipTemplate(item) {
   return `
-    <div class="inventory-item-chip${item.trackWeekly ? " is-tracked" : ""}" data-inventory-item="${escapeHtml(item.id)}" draggable="true">
+    <div class="inventory-item-chip${item.trackWeekly ? " is-tracked" : ""}" data-inventory-item="${escapeHtml(item.id)}">
       ${item.trackWeekly ? `<span class="inventory-item-track-dot" title="On the weekly checklist" aria-hidden="true"></span>` : ""}
       <span class="inventory-item-name">${escapeHtml(item.name)}</span>
       ${item.quantity ? `<span class="inventory-item-qty">${escapeHtml(item.quantity)}</span>` : ""}
@@ -39407,50 +40335,22 @@ function bindInventoryControls(root) {
     });
   });
 
-  // Drag items between rooms/containers
-  let dragOverZone = null;
-
-  root.querySelectorAll("[data-inventory-item]").forEach((chip) => {
-    chip.addEventListener("dragstart", (e) => {
-      inventoryDragItemId = chip.dataset.inventoryItem;
-      chip.classList.add("inv-dragging");
-      e.dataTransfer.effectAllowed = "move";
+  // Move items between rooms/containers — shared sortable primitive (move mode).
+  // Delegates to the existing boxId reassignment. Bound once (delegated).
+  if (root.nodeType === 1 && !root.__sortableBound) {
+    root.__sortableBound = true;
+    makeSortable(root, {
+      rowSelector: "[data-inventory-item]",
+      getId: (chip) => chip.dataset.inventoryItem,
+      reorder: false,
+      dropZoneSelector: "[data-drop-target]",
+      onDropZone: ({ itemId, zone }) => {
+        const item = inventoryItemList().find((i) => i.id === itemId);
+        if (item) { item.boxId = zone.dataset.dropTarget || null; persist(); renderInventoryPage(); }
+      },
+      itemLabel: (chip) => (chip.textContent || "item").trim().slice(0, 40),
     });
-    chip.addEventListener("dragend", () => {
-      chip.classList.remove("inv-dragging");
-      inventoryDragItemId = null;
-      if (dragOverZone) { dragOverZone.classList.remove("inv-drag-over"); dragOverZone = null; }
-    });
-  });
-
-  root.querySelectorAll("[data-drop-target]").forEach((zone) => {
-    zone.addEventListener("dragover", (e) => {
-      if (!inventoryDragItemId) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-      if (dragOverZone !== zone) {
-        if (dragOverZone) dragOverZone.classList.remove("inv-drag-over");
-        dragOverZone = zone;
-        zone.classList.add("inv-drag-over");
-      }
-    });
-    zone.addEventListener("dragleave", (e) => {
-      if (!zone.contains(e.relatedTarget)) {
-        zone.classList.remove("inv-drag-over");
-        if (dragOverZone === zone) dragOverZone = null;
-      }
-    });
-    zone.addEventListener("drop", (e) => {
-      e.preventDefault();
-      zone.classList.remove("inv-drag-over");
-      dragOverZone = null;
-      if (!inventoryDragItemId) return;
-      const newBoxId = zone.dataset.dropTarget || null;
-      const item = inventoryItemList().find((i) => i.id === inventoryDragItemId);
-      if (item) { item.boxId = newBoxId; persist(); renderInventoryPage(); }
-      inventoryDragItemId = null;
-    });
-  });
+  }
 }
 
 function openInventoryBoxDialog(boxId = null, parentId = null) {
@@ -39970,7 +40870,8 @@ function renderWatchTab() {
     input.dataset.wired = "1";
     let t = null;
     input.addEventListener("input", () => { clearTimeout(t); const q = input.value.trim(); t = setTimeout(() => watchTabSearch(q), 360); });
-    document.getElementById("discoverServicesBtn")?.addEventListener("click", openDiscoverServicesDialog);
+    document.getElementById("discoverFilterBtn")?.addEventListener("click", toggleDiscoverFilterMenu);
+    document.getElementById("discoverFilterMenu")?.addEventListener("click", (e) => e.stopPropagation());
   }
   const q = input && input.value.trim();
   if (q) watchTabSearch(q); else showWatchList();
@@ -40150,6 +41051,41 @@ async function mediaApi() {
 }
 if (typeof window !== "undefined") window.LiveMedia = { api: mediaApi };
 
+// Localhost-only QA hook for the AI Voice work (there's no Settings UI yet, and
+// state/persist aren't otherwise console-reachable). Gated on canUseLocalBackend()
+// so it never exists in production. Lets you pick a voice and drop a ready-to-play
+// test article from the console:  LiveVoiceQA.use("bella");  LiveVoiceQA.addTestArticle();
+if (typeof window !== "undefined" && canUseLocalBackend()) {
+  window.LiveVoiceQA = {
+    use(voiceId) {
+      const cur = state.aiSettings?.voice || {};
+      state.aiSettings = { ...(state.aiSettings || {}), voice: { ...cur, default: { voiceId, speed: cur.default?.speed || 1.0 } } };
+      persist();
+      return `voice → ${voiceId}`;
+    },
+    addTestArticle(text) {
+      const id = "voiceqa-" + Date.now();
+      if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
+      state.savedArticles.unshift({
+        id, url: null, title: "Kokoro Test Article", author: "Local test", publication: "Test",
+        date: new Date().toLocaleDateString(), savedAt: new Date().toISOString(),
+        text: text || "<p>This is a test article for the on-device Kokoro voice. If you can hear these words read aloud inside the app, the whole text-to-speech pipeline is working end to end: the app sent this text to the local function, the function asked Kokoro on your own machine to synthesize it, and the audio came back and played through the shared media engine. Enjoy Bella.</p>",
+      });
+      persist();
+      try { showMediaApp(); openArticle(id, "articleList"); } catch (e) { console.warn("Article added — open it from Media manually:", e); }
+      return id;
+    },
+  };
+  console.log('%cLiveVoiceQA ready →  LiveVoiceQA.use("bella")  then  LiveVoiceQA.addTestArticle()', "color:#32b496;font-weight:bold");
+  // Zero-console QA: open localhost:4174/?voiceqa=1 and a test article is added +
+  // opened automatically a moment after load — just press Listen. (localhost only.)
+  if (new URLSearchParams(location.search).get("voiceqa") != null) {
+    window.addEventListener("load", () => setTimeout(() => {
+      try { window.LiveVoiceQA.addTestArticle(); } catch (e) { console.warn("voiceqa auto-open failed — the article was still added; open it from Media:", e); }
+    }, 1500));
+  }
+}
+
 // Drop the cached hub so a services/config change is picked up on the next search.
 function resetMediaHub() { mediaHub = null; watchHubReady = false; watchHubLoading = false; }
 
@@ -40160,6 +41096,73 @@ const DISCOVER_SERVICE_OPTIONS = [
   ["prime", "Prime Video"], ["paramount", "Paramount+"], ["appletv", "Apple TV"],
   ["peacock", "Peacock"], ["espn", "ESPN"], ["xfinity", "Xfinity Stream"],
 ];
+
+// ── Watch search scope (the header filter button) ─────────────────────────────
+// The Watch search is universal across providers; this filter narrows it by media
+// type and, optionally, to titles available on the streamers the user subscribes
+// to. The type→provider mapping + normalization live in the pure, tested
+// media-search-scope.js; here we only own the localStorage read/write and the DOM.
+const WATCH_SCOPE_KEY = "live_watch_search_scope";
+let watchSearchScope = null;
+function getWatchSearchScope() {
+  if (watchSearchScope) return watchSearchScope;
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(WATCH_SCOPE_KEY) || "null"); } catch { /* ignore */ }
+  watchSearchScope = normalizeWatchScope(saved);
+  return watchSearchScope;
+}
+function saveWatchSearchScope() {
+  try { localStorage.setItem(WATCH_SCOPE_KEY, JSON.stringify(watchSearchScope)); } catch { /* ignore */ }
+}
+function rerunDiscoverForScope() {
+  const q = document.getElementById("discoverSearchInput")?.value.trim();
+  if (q) runDiscoverSearch(q);
+}
+function renderDiscoverFilterMenu() {
+  const menu = document.getElementById("discoverFilterMenu");
+  if (!menu) return;
+  const scope = getWatchSearchScope();
+  menu.innerHTML =
+    `<div class="discover-filter-head">Show</div>` +
+    WATCH_SCOPE_TYPES.map((t) =>
+      `<label class="discover-filter-row"><span>${escapeHtml(t.label)}</span>` +
+      `<input type="checkbox" class="live-toggle" data-scope-type="${t.key}"${scope.types.includes(t.key) ? " checked" : ""}></label>`).join("") +
+    `<div class="discover-filter-sep"></div>` +
+    `<label class="discover-filter-row"><span>Only my services</span>` +
+    `<input type="checkbox" class="live-toggle" data-scope-services${scope.servicesOnly ? " checked" : ""}></label>`;
+  menu.querySelectorAll("[data-scope-type]").forEach((cb) => cb.addEventListener("change", () => {
+    const s = getWatchSearchScope();
+    const set = new Set(s.types);
+    if (cb.checked) set.add(cb.dataset.scopeType); else set.delete(cb.dataset.scopeType);
+    s.types = WATCH_SCOPE_TYPES.map((t) => t.key).filter((k) => set.has(k));
+    saveWatchSearchScope();
+    rerunDiscoverForScope();
+  }));
+  menu.querySelector("[data-scope-services]")?.addEventListener("change", (e) => {
+    getWatchSearchScope().servicesOnly = e.target.checked;
+    saveWatchSearchScope();
+    rerunDiscoverForScope();
+  });
+}
+function toggleDiscoverFilterMenu(e) {
+  e?.stopPropagation();
+  const menu = document.getElementById("discoverFilterMenu");
+  if (!menu) return;
+  const willOpen = menu.hidden;
+  closeFloatingMenus();
+  if (willOpen) {
+    renderDiscoverFilterMenu();
+    menu.hidden = false;
+    document.getElementById("discoverFilterBtn")?.setAttribute("aria-expanded", "true");
+  }
+}
+function closeDiscoverFilterMenu() {
+  const menu = document.getElementById("discoverFilterMenu");
+  if (menu && !menu.hidden) {
+    menu.hidden = true;
+    document.getElementById("discoverFilterBtn")?.setAttribute("aria-expanded", "false");
+  }
+}
 
 function openDiscoverServicesDialog() {
   const have = new Set(state.mediaServices || []);
@@ -40198,10 +41201,14 @@ async function runDiscoverSearch(query) {
   if (!results) return;
   const token = ++discoverSearchToken;
   if (!query) { showWatchList(); return; }
+  const scope = getWatchSearchScope();
+  const allowedIds = allowedProviderIds(scope);
+  if (!allowedIds.size) { results.hidden = false; results.innerHTML = `<p class="discover-hint">No media types selected. Tap the filter and pick at least one.</p>`; return; }
   results.innerHTML = `<p class="discover-hint">Searching…</p>`;
   try {
     const hub = await getMediaHub();
-    const { items, providerStatuses } = await hub.search.universalSearch(query, { providers: hub.searchProviders, limit: 20 });
+    const providers = hub.searchProviders.filter((p) => allowedIds.has(p.id));
+    const { items, providerStatuses } = await hub.search.universalSearch(query, { providers, limit: 20 });
     if (token !== discoverSearchToken) return; // out-of-order guard
     const enriched = await hub.search.enrichWithAvailability(items, hub.tmdb); // "where can I watch this"
     if (token !== discoverSearchToken) return;
@@ -40356,7 +41363,14 @@ function renderDiscoverResults(items, providerStatuses, hub) {
   if (!results) return;
   if (!items.length) { results.innerHTML = `<p class="discover-hint">No results.</p>`; return; }
   discoverItemsByKey = new Map();
-  const views = discoverViewsFor(items, hub);
+  let views = discoverViewsFor(items, hub);
+  // "Only my services": keep native-audio kinds (always playable in-app) and any
+  // video available on a streamer the user subscribes to (view.yours non-empty).
+  if (getWatchSearchScope().servicesOnly) {
+    const audioKinds = new Set(["music", "podcast", "radio"]);
+    views = views.filter((v) => audioKinds.has(v.kind) || (v.yours && v.yours.length));
+    if (!views.length) { results.innerHTML = `<p class="discover-hint">Nothing on your services matched. Turn off “Only my services” in the filter to see more.</p>`; return; }
+  }
   results.innerHTML = views.map(discoverCardHtml).join("");
   wireDiscoverButtons(results, hub);
   const failed = (providerStatuses || []).filter((s) => !s.ok).map((s) => s.provider);
@@ -41289,9 +42303,9 @@ function showPodcastPriorityModal() {
 
   document.body.appendChild(overlay);
 
-  let dragItemId = null;
-  let dragItemKind = null; // "show" | "pub"
-
+  // Read every tile's current tier from the DOM back into local modal state.
+  // Tiles carry no order within a tier — a tier is a bucket, so only membership
+  // (which zone the tile sits in) matters. Save + reorder both sync through here.
   function readCurrentAssignments() {
     overlay.querySelectorAll(".priority-drop-zone[data-tier]").forEach(zone => {
       const tier = parseInt(zone.dataset.tier, 10);
@@ -41306,128 +42320,113 @@ function showPodcastPriorityModal() {
     });
   }
 
+  const GRIP_SVG = `<svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true" fill="currentColor"><circle cx="7" cy="4" r="1.4"/><circle cx="13" cy="4" r="1.4"/><circle cx="7" cy="10" r="1.4"/><circle cx="13" cy="10" r="1.4"/><circle cx="7" cy="16" r="1.4"/><circle cx="13" cy="16" r="1.4"/></svg>`;
+
+  function tileArt(src, placeholderSvg, onError = "") {
+    return src
+      ? `<img class="priority-show-art" src="${escapeHtml(src)}" alt="" loading="lazy"${onError}>`
+      : `<span class="priority-show-art priority-show-art--placeholder">${placeholderSvg}</span>`;
+  }
+
   function showCard(show) {
     const d = document.createElement("div");
     d.className = "priority-show-card";
-    d.draggable = true;
     d.dataset.showId = show.id;
-    d.title = show.title || "";
+    d.tabIndex = 0;
+    d.setAttribute("role", "listitem");
     d.setAttribute("aria-label", show.title || "Show");
-    d.innerHTML = show.art
-      ? `<img class="priority-show-art" src="${escapeHtml(show.art)}" alt="${escapeHtml(show.title || "")}" loading="lazy">`
-      : `<div class="priority-show-art priority-show-art--placeholder"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div>`;
-    d.addEventListener("dragstart", (e) => { dragItemId = show.id; dragItemKind = "show"; d.classList.add("is-dragging"); e.dataTransfer.effectAllowed = "move"; });
-    d.addEventListener("dragend", () => { dragItemId = null; dragItemKind = null; d.classList.remove("is-dragging"); overlay.querySelectorAll(".priority-drop-zone").forEach(z => z.classList.remove("drag-over")); });
-    wireCardTouch(d);
+    const ph = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>`;
+    d.innerHTML = `${tileArt(show.art, ph)}<span class="priority-show-label">${escapeHtml(show.title || "Untitled")}</span>`;
     return d;
   }
 
   function pubCard(pub) {
     const d = document.createElement("div");
     d.className = "priority-show-card priority-show-card--article";
-    d.draggable = true;
     d.dataset.pubKey = pub.key;
-    d.title = `${pub.label} (Article)`;
+    d.tabIndex = 0;
+    d.setAttribute("role", "listitem");
     d.setAttribute("aria-label", `${pub.label} — Article`);
     const logoUrl = pub.domain ? publicationLogoUrl(pub.domain) : null;
-    d.innerHTML = logoUrl
-      ? `<img class="priority-show-art" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(pub.label || "")}" loading="lazy" onerror="this.style.display='none'">`
-      : `<div class="priority-show-art priority-show-art--placeholder"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></div>`;
-    d.addEventListener("dragstart", (e) => { dragItemId = pub.key; dragItemKind = "pub"; d.classList.add("is-dragging"); e.dataTransfer.effectAllowed = "move"; });
-    d.addEventListener("dragend", () => { dragItemId = null; dragItemKind = null; d.classList.remove("is-dragging"); overlay.querySelectorAll(".priority-drop-zone").forEach(z => z.classList.remove("drag-over")); });
-    wireCardTouch(d);
+    const ph = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>`;
+    d.innerHTML = `${tileArt(logoUrl, ph, ` onerror="this.style.display='none'"`)}<span class="priority-show-label">${escapeHtml(pub.label || "")}</span>`;
     return d;
   }
 
-  function wireZone(zone) {
-    zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("drag-over"); });
-    zone.addEventListener("dragleave", () => zone.classList.remove("drag-over"));
-    zone.addEventListener("drop", (e) => {
-      e.preventDefault();
-      zone.classList.remove("drag-over");
-      if (!dragItemId) return;
-      const selector = dragItemKind === "pub"
-        ? `.priority-show-card[data-pub-key="${CSS.escape(dragItemId)}"]`
-        : `.priority-show-card[data-show-id="${CSS.escape(dragItemId)}"]`;
-      const card = overlay.querySelector(selector);
-      if (!card) return;
-      zone.querySelector(".priority-drop-hint")?.remove();
-      zone.appendChild(card);
-      overlay.querySelectorAll(".priority-drop-zone").forEach(z => {
-        if (!z.querySelector(".priority-show-card") && !z.querySelector(".priority-drop-hint")) {
-          z.insertAdjacentHTML("beforeend", `<div class="priority-drop-hint">${z.dataset.tier === "0" ? "All items assigned to tiers" : "Drop shows or publications here"}</div>`);
-        }
-      });
+  // Re-derive each zone's empty-state hint after a tile moves (called on drop so
+  // a vacated tier shows its prompt again and a filled one drops it).
+  function refreshEmptyHints() {
+    overlay.querySelectorAll(".priority-drop-zone[data-tier]").forEach((z) => {
+      const hasCard = z.querySelector(".priority-show-card");
+      const hint = z.querySelector(".priority-drop-hint");
+      if (hasCard && hint) hint.remove();
+      else if (!hasCard && !hint) {
+        z.insertAdjacentHTML("beforeend", `<div class="priority-drop-hint">${z.dataset.tier === "0" ? "Everything is ranked" : "Drop shows or publications here"}</div>`);
+      }
     });
   }
 
-  // Reorder whole tiers (so a newly added bottom tier can move to the top):
-  // swap every assignment between tier n and its neighbour.
-  function moveTier(n, dir) {
+  function removeTier(n) {
     readCurrentAssignments();
-    const other = n + dir;
-    if (other < 1 || other > ms.tierCount) return;
-    const swap = (map) => { for (const k of Object.keys(map)) { if (map[k] === n) map[k] = other; else if (map[k] === other) map[k] = n; } };
-    swap(ms.showTiers); swap(ms.publicationTiers);
+    for (const [showId, t] of Object.entries(ms.showTiers)) {
+      if (t === n) delete ms.showTiers[showId];
+      else if (t > n) ms.showTiers[showId] = t - 1;
+    }
+    for (const [pubKey, t] of Object.entries(ms.publicationTiers)) {
+      if (t === n) delete ms.publicationTiers[pubKey];
+      else if (t > n) ms.publicationTiers[pubKey] = t - 1;
+    }
+    ms.tierCount = Math.max(1, ms.tierCount - 1);
     renderTiers();
   }
 
-  // Touch drag for a tier card: long-press to pick it up, drag over a tier's
-  // drop zone, release to drop it there (HTML5 drag-and-drop is mouse-only).
-  function wireCardTouch(card) {
-    let pressTimer = null, armed = false, sx = 0, sy = 0;
-    const zones = () => overlay.querySelectorAll(".priority-drop-zone");
-    const clearHover = () => zones().forEach((z) => z.classList.remove("drag-over"));
-    function refreshHints() {
-      zones().forEach((z) => {
-        if (!z.querySelector(".priority-show-card") && !z.querySelector(".priority-drop-hint")) {
-          z.insertAdjacentHTML("beforeend", `<div class="priority-drop-hint">${z.dataset.tier === "0" ? "All items assigned to tiers" : "Drop shows or publications here"}</div>`);
-        }
+  // Two shared-primitive bindings drive the whole board:
+  //   • tiles move between tier bands (move mode, buckets — no intra-tier order),
+  //     bound ONCE on the persistent body (it resolves zones live at drop time).
+  //   • whole tier bands reorder by dragging their header (handle mode, reorder),
+  //     re-bound each render since the bands wrapper is rebuilt.
+  // They never collide: a tile pointer-down finds no band header, a header
+  // pointer-down finds no tile — each binding ignores the other's target.
+  let tilesSortable = null;
+  function attachSortables(bodyEl, bandsEl) {
+    if (!tilesSortable) {
+      tilesSortable = makeSortable(bodyEl, {
+        rowSelector: ".priority-show-card",
+        getId: (row) => row.dataset.showId || row.dataset.pubKey,
+        reorder: false,
+        dropZoneSelector: ".priority-drop-zone[data-tier]",
+        onDropZone: ({ row, zone }) => {
+          if (row.parentElement === zone) return;
+          zone.querySelector(".priority-drop-hint")?.remove();
+          zone.appendChild(row);
+          refreshEmptyHints();
+        },
+        itemLabel: (row) => row.querySelector(".priority-show-label")?.textContent || "item",
       });
     }
-    function cleanup() {
-      clearTimeout(pressTimer); pressTimer = null;
-      card.classList.remove("is-dragging"); card.style.pointerEvents = "";
-      clearHover();
-      document.removeEventListener("touchmove", onMove, { passive: false });
-      document.removeEventListener("touchend", onEnd);
-      document.removeEventListener("touchcancel", onEnd);
-      armed = false;
-    }
-    function onMove(e) {
-      const t = e.touches[0];
-      if (!armed) { if (Math.abs(t.clientX - sx) > 10 || Math.abs(t.clientY - sy) > 10) cleanup(); return; }
-      e.preventDefault();
-      clearHover();
-      document.elementFromPoint(t.clientX, t.clientY)?.closest(".priority-drop-zone")?.classList.add("drag-over");
-    }
-    function onEnd(e) {
-      if (armed) {
-        const t = e.changedTouches[0];
-        card.style.pointerEvents = "";
-        const zone = document.elementFromPoint(t.clientX, t.clientY)?.closest(".priority-drop-zone");
-        if (zone) { zone.querySelector(".priority-drop-hint")?.remove(); zone.appendChild(card); }
-        refreshHints();
-      }
-      cleanup();
-    }
-    card.addEventListener("touchstart", (e) => {
-      sx = e.touches[0].clientX; sy = e.touches[0].clientY;
-      pressTimer = setTimeout(() => {
-        armed = true;
-        card.classList.add("is-dragging");
-        card.style.pointerEvents = "none";
-        if (navigator.vibrate) navigator.vibrate(8);
-      }, 250);
-      document.addEventListener("touchmove", onMove, { passive: false });
-      document.addEventListener("touchend", onEnd);
-      document.addEventListener("touchcancel", onEnd);
-    }, { passive: true });
+    makeSortable(bandsEl, {
+      rowSelector: ".priority-band",
+      getId: (row) => row.dataset.band,
+      handleSelector: ".priority-band-head",
+      onReorder: ({ order }) => {
+        // `order` is the new top-to-bottom sequence of the OLD tier numbers.
+        readCurrentAssignments();                 // capture tile membership first
+        const remap = new Map();
+        order.forEach((oldT, i) => remap.set(parseInt(oldT, 10), i + 1));
+        const apply = (map) => { for (const k of Object.keys(map)) { const nt = remap.get(map[k]); if (nt) map[k] = nt; } };
+        apply(ms.showTiers); apply(ms.publicationTiers);
+        renderTiers();                            // rebuild with fresh numbering
+      },
+      itemLabel: (row) => row.querySelector(".priority-band-title")?.textContent || "tier",
+    });
   }
 
+  // Callers MUST have already synced `ms` from the DOM (via readCurrentAssignments)
+  // before calling — renderTiers renders straight from `ms`. It deliberately does
+  // NOT re-read the DOM itself: after a tier reorder the zones still carry their
+  // pre-remap data-tier, so a read here would clobber the just-applied renumber.
   function renderTiers() {
     const body = overlay.querySelector("#priorityTiersBody");
-    readCurrentAssignments();
 
     const shows = state.podcasts || [];
     const showsByTier = {};
@@ -41456,47 +42455,35 @@ function showPodcastPriorityModal() {
     }
 
     const zoneIsEmpty = (n) => !showsByTier[n].length && !pubsByTier[n].length;
-
-    const tiersRow = document.createElement("div");
-    tiersRow.className = "priority-tiers-row";
-    for (let n = 1; n <= ms.tierCount; n++) {
-      const col = document.createElement("div");
-      col.className = "priority-tier-col";
-      col.innerHTML = `
-        <div class="priority-tier-heading">
-          <span class="priority-tier-badge tier-n" style="background:hsl(${(n-1)*60},60%,88%);color:hsl(${(n-1)*60},50%,30%)">${n}</span>
-          <span class="priority-tier-label-text">Tier ${n}</span>
-          ${n === 1 ? `<span class="priority-tier-sub">Plays first</span>` : ""}
-          ${n === ms.tierCount && ms.tierCount > 1 ? `<span class="priority-tier-sub">Plays last</span>` : ""}
-          <span class="priority-tier-move">
-            <button class="priority-tier-move-btn" type="button" data-move-tier="up" title="Move tier up" aria-label="Move tier ${n} up"${n === 1 ? " disabled" : ""}>▲</button>
-            <button class="priority-tier-move-btn" type="button" data-move-tier="down" title="Move tier down" aria-label="Move tier ${n} down"${n === ms.tierCount ? " disabled" : ""}>▼</button>
-          </span>
-          <button class="priority-tier-remove-btn" type="button" data-remove-tier="${n}" title="Remove tier" aria-label="Remove tier ${n}">×</button>
-        </div>
-        <div class="priority-drop-zone" data-tier="${n}"></div>`;
-      const zone = col.querySelector(".priority-drop-zone");
+    const fillZone = (zone, n, emptyText) => {
       for (const show of showsByTier[n]) zone.appendChild(showCard(show));
       for (const pub of pubsByTier[n]) zone.appendChild(pubCard(pub));
-      if (zoneIsEmpty(n)) zone.innerHTML = `<div class="priority-drop-hint">Drop shows or publications here</div>`;
-      wireZone(zone);
-      col.querySelector('[data-move-tier="up"]').addEventListener("click", () => moveTier(n, -1));
-      col.querySelector('[data-move-tier="down"]').addEventListener("click", () => moveTier(n, 1));
-      col.querySelector("[data-remove-tier]").addEventListener("click", () => {
-        readCurrentAssignments();
-        const removeNum = parseInt(col.querySelector("[data-remove-tier]").dataset.removeTier, 10);
-        for (const [showId, t] of Object.entries(ms.showTiers)) {
-          if (t === removeNum) delete ms.showTiers[showId];
-          else if (t > removeNum) ms.showTiers[showId] = t - 1;
-        }
-        for (const [pubKey, t] of Object.entries(ms.publicationTiers)) {
-          if (t === removeNum) delete ms.publicationTiers[pubKey];
-          else if (t > removeNum) ms.publicationTiers[pubKey] = t - 1;
-        }
-        ms.tierCount = Math.max(1, ms.tierCount - 1);
-        renderTiers();
-      });
-      tiersRow.appendChild(col);
+      if (zoneIsEmpty(n)) zone.innerHTML = `<div class="priority-drop-hint">${emptyText}</div>`;
+    };
+
+    // Tier bands, stacked top (plays first) to bottom (plays last).
+    const bands = document.createElement("div");
+    bands.className = "priority-bands";
+    for (let n = 1; n <= ms.tierCount; n++) {
+      const hue = (n - 1) * 60;
+      const band = document.createElement("div");
+      band.className = "priority-band";
+      band.dataset.band = String(n);
+      band.innerHTML = `
+        <div class="priority-band-headrow">
+          <div class="priority-band-head" title="Drag to reorder tier" aria-label="Tier ${n} — drag to reorder">
+            <span class="priority-band-grip" aria-hidden="true">${GRIP_SVG}</span>
+            <span class="priority-tier-badge" style="background:hsl(${hue},60%,88%);color:hsl(${hue},50%,30%)">${n}</span>
+            <span class="priority-band-title">Tier ${n}</span>
+            ${n === 1 ? `<span class="priority-tier-sub">Plays first</span>` : ""}
+            ${n === ms.tierCount && ms.tierCount > 1 ? `<span class="priority-tier-sub">Plays last</span>` : ""}
+          </div>
+          <button class="priority-tier-remove-btn" type="button" data-remove-tier="${n}" title="Remove tier" aria-label="Remove tier ${n}">×</button>
+        </div>
+        <div class="priority-drop-zone" data-tier="${n}" role="list"></div>`;
+      fillZone(band.querySelector(".priority-drop-zone"), n, "Drop shows or publications here");
+      band.querySelector("[data-remove-tier]").addEventListener("click", () => removeTier(n));
+      bands.appendChild(band);
     }
 
     const addBtn = document.createElement("button");
@@ -41504,25 +42491,28 @@ function showPodcastPriorityModal() {
     addBtn.type = "button";
     addBtn.textContent = "+ Add tier";
     addBtn.addEventListener("click", () => { readCurrentAssignments(); ms.tierCount++; renderTiers(); });
-    tiersRow.appendChild(addBtn);
+    bands.appendChild(addBtn);
 
-    const untieredSection = document.createElement("div");
-    untieredSection.className = "priority-untiered-section";
-    untieredSection.innerHTML = `
-      <div class="priority-tier-heading">
-        <span class="priority-tier-label-text">Untiered</span>
-        <span class="priority-tier-sub">After all tiers</span>
+    // The "Not ranked" pool sits below every tier and is itself tier 0 — the
+    // same move target, just the bucket that plays last. It doesn't reorder, so
+    // it lives outside the bands wrapper the tier-reorder binding watches.
+    const pool = document.createElement("div");
+    pool.className = "priority-band priority-band--pool";
+    pool.innerHTML = `
+      <div class="priority-band-headrow">
+        <div class="priority-band-head priority-band-head--static">
+          <span class="priority-band-title">Not ranked</span>
+          <span class="priority-tier-sub">Plays after all tiers</span>
+        </div>
       </div>
-      <div class="priority-drop-zone priority-untiered-drop" data-tier="0"></div>`;
-    const untieredZone = untieredSection.querySelector(".priority-drop-zone");
-    for (const show of showsByTier[0]) untieredZone.appendChild(showCard(show));
-    for (const pub of pubsByTier[0]) untieredZone.appendChild(pubCard(pub));
-    if (zoneIsEmpty(0)) untieredZone.innerHTML = `<div class="priority-drop-hint">All items assigned to tiers</div>`;
-    wireZone(untieredZone);
+      <div class="priority-drop-zone priority-untiered-drop" data-tier="0" role="list"></div>`;
+    fillZone(pool.querySelector(".priority-drop-zone"), 0, "Everything is ranked");
 
     body.innerHTML = "";
-    body.appendChild(tiersRow);
-    body.appendChild(untieredSection);
+    body.appendChild(bands);
+    body.appendChild(pool);
+
+    attachSortables(body, bands);
   }
 
   renderTiers();
@@ -41914,7 +42904,7 @@ function renderMediaAllList() {
       : isArt ? !!(state.savedArticles || []).find((a) => a.id === e.id && a.pinned)
       : false;
     html += `
-    <div class="article-row playlist-row podcast-episode-row podcast-draggable-row${isResume ? " is-resume" : ""}${e.id === mediaAllQueueId ? " article-row--active" : ""}" data-all-id="${escapeHtml(e.id)}" data-all-type="${escapeHtml(e.type)}"${isPod ? ` data-episode-id="${escapeHtml(e.id)}"` : ""}${e.showId ? ` data-show-id="${escapeHtml(e.showId)}"` : ""} draggable="true" role="button" tabindex="0">
+    <div class="article-row playlist-row podcast-episode-row podcast-draggable-row${isResume ? " is-resume" : ""}${e.id === mediaAllQueueId ? " article-row--active" : ""}" data-all-id="${escapeHtml(e.id)}" data-all-type="${escapeHtml(e.type)}"${isPod ? ` data-episode-id="${escapeHtml(e.id)}"` : ""}${e.showId ? ` data-show-id="${escapeHtml(e.showId)}"` : ""} role="button" tabindex="0" aria-roledescription="Draggable item, Alt plus arrow keys to reorder">
       <button class="playlist-art-btn" type="button" data-all-art="${escapeHtml(e.id)}" tabindex="-1" aria-label="${isPod ? "Go to show" : "Open"}">${art}</button>
       <div class="article-row-main">
         ${isResume
@@ -42264,46 +43254,18 @@ function makeTouchReorder(listEl, { rowSelector, getId, onDrop, longPressMs = 28
   }, { passive: true });
 }
 
-function setupMediaAllDrag(listEl, items) {
-  makeTouchReorder(listEl, {
+// Media queue reorder — now on the shared sortable primitive (mouse + touch
+// long-press + auto-scroll + keyboard). The list element persists across renders
+// (innerHTML is replaced), and makeSortable delegates, so it binds ONCE. Persistence
+// is unchanged: the materialized DOM order becomes state.mediaAllPinnedOrder.
+function setupMediaAllDrag(listEl) {
+  if (listEl.__sortableBound) return;
+  listEl.__sortableBound = true;
+  makeSortable(listEl, {
     rowSelector: "[data-all-id]",
     getId: (row) => row.dataset.allId,
-    onDrop: (order) => { state.mediaAllPinnedOrder = order; persist(); renderMediaAllList(); },
-  });
-  let dragSrc = null;
-  listEl.querySelectorAll("[data-all-id]").forEach((row) => {
-    row.addEventListener("dragstart", (e) => {
-      dragSrc = row;
-      e.dataTransfer.effectAllowed = "move";
-      row.classList.add("is-dragging");
-    });
-    row.addEventListener("dragend", () => {
-      row.classList.remove("is-dragging");
-      listEl.querySelectorAll(".is-drag-over").forEach((r) => r.classList.remove("is-drag-over"));
-      dragSrc = null;
-    });
-  });
-  listEl.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    const target = e.target.closest("[data-all-id]");
-    if (!target || target === dragSrc) return;
-    listEl.querySelectorAll(".is-drag-over").forEach((r) => r.classList.remove("is-drag-over"));
-    target.classList.add("is-drag-over");
-  });
-  listEl.addEventListener("drop", (e) => {
-    e.preventDefault();
-    const target = e.target.closest("[data-all-id]");
-    if (!target || !dragSrc || target === dragSrc) return;
-    const ids = items.map((i) => i.id);
-    const from = ids.indexOf(dragSrc.dataset.allId);
-    const to = ids.indexOf(target.dataset.allId);
-    if (from < 0 || to < 0) return;
-    const [moved] = ids.splice(from, 1);
-    ids.splice(from < to ? to - 1 : to, 0, moved);
-    // Materialize the whole current arrangement as the pinned order
-    state.mediaAllPinnedOrder = ids;
-    persist();
-    renderMediaAllList();
+    onReorder: ({ order }) => { state.mediaAllPinnedOrder = order; persist(); renderMediaAllList(); },
+    itemLabel: (row) => (row.querySelector(".podcast-episode-title, .article-row-title")?.textContent || row.textContent || "item").trim().slice(0, 40),
   });
 }
 
@@ -45845,6 +46807,38 @@ function markArticleRead(id) {
   });
 }
 
+// Render an article's body into the reader. Prefers in-memory text (fast, no
+// flicker + keeps the content store populated), then the content store (local
+// IndexedDB → durable backstop via the saved bodyRef — this is how a cold-loaded
+// or cross-device article, whose synced text was dropped once it was safely in
+// the backstop, still reads offline/without re-fetching), then falls back to
+// fetching. article.text stays the fallback throughout.
+async function renderArticleBody(textEl, article, id) {
+  const paint = (html) => {
+    textEl.innerHTML = html;
+    wrapArticleWords(textEl);
+    if (listenArticle && listenArticle.id === id) highlightCurrentWord();
+  };
+  if (article.text) { paint(article.text); stashArticleBody(article); return; }
+
+  let body = null;
+  try { const ac = await getArticleContent(); if (ac) body = await ac.loadBody(id, { ref: article.bodyRef, fallbackText: null }); } catch { /* fall through to fetch */ }
+  if (openArticleId !== id) return; // user navigated away while the body loaded
+  if (body) { article.text = body; paint(body); return; } // repopulate session memory
+
+  if (!articleAutoFetchTried.has(id)) {
+    // Auto-fetch the text instead of making the user tap "Fetch" (e.g.
+    // NutritionFacts links arrive without body text). Fall back to the manual
+    // prompt only if the auto-fetch fails.
+    articleAutoFetchTried.add(id);
+    textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
+    fetchArticleText(id);
+  } else {
+    textEl.innerHTML = `<div class="article-fetch-prompt"><p>Article text not yet loaded.</p><p class="article-fetch-hint">Free and open-access articles load fully. Paywalled articles may return only the opening paragraphs.</p><button class="primary-btn" type="button" data-fetch-article="${escapeHtml(id)}">Fetch Article</button></div>`;
+    textEl.querySelector("[data-fetch-article]")?.addEventListener("click", () => { articleAutoFetchTried.delete(id); fetchArticleText(id); });
+  }
+}
+
 function openArticle(id, fromListId) {
   const article = (state.savedArticles || []).find((a) => a.id === id);
   if (!article) return;
@@ -45867,32 +46861,11 @@ function openArticle(id, fromListId) {
     const parts = [article.author, article.date].filter(Boolean);
     metaEl.textContent = parts.join(" · ");
   }
-  if (textEl) {
-    if (article.text) {
-      textEl.innerHTML = article.text;
-    } else if (!articleAutoFetchTried.has(id)) {
-      // Auto-fetch the text instead of making the user tap "Fetch" (e.g.
-      // NutritionFacts links arrive without body text). Fall back to the manual
-      // prompt only if the auto-fetch fails.
-      articleAutoFetchTried.add(id);
-      textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
-      fetchArticleText(id);
-    } else {
-      textEl.innerHTML = `<div class="article-fetch-prompt"><p>Article text not yet loaded.</p><p class="article-fetch-hint">Free and open-access articles load fully. Paywalled articles may return only the opening paragraphs.</p><button class="primary-btn" type="button" data-fetch-article="${escapeHtml(id)}">Fetch Article</button></div>`;
-      textEl.querySelector("[data-fetch-article]")?.addEventListener("click", () => { articleAutoFetchTried.delete(id); fetchArticleText(id); });
-    }
-  }
+  if (textEl) renderArticleBody(textEl, article, id);
 
   listPanel?.querySelectorAll(".article-row").forEach((row) => {
     row.classList.toggle("article-row--active", row.dataset.articleId === id);
   });
-
-  // Wrap words so read-aloud can highlight them; if this is the article that's
-  // currently playing, sync the highlight to the current position right away.
-  if (textEl && article.text) {
-    wrapArticleWords(textEl);
-    if (listenArticle && listenArticle.id === id) highlightCurrentWord();
-  }
 
   // Always start a freshly opened article at the very top — reused reader DOM
   // otherwise keeps the previous article's scroll position.
@@ -45935,6 +46908,65 @@ function deleteOpenArticle() {
   deleteArticle(openArticleId);
 }
 
+// ── Article bodies → shared content store (local-first Phase 1a) ─────────────
+// Additive + reversible: bodies are dual-written to the content store (local
+// IndexedDB "reading" + the private reading-content durable backstop) while
+// savedArticles[].text stays the source of truth + fallback. Removing text from
+// synced state (the Disk-IO win) is a later, separately-reviewed step. Lazy,
+// best-effort, non-fatal — nothing here can break reading an article.
+// Ask the browser to keep our IndexedDB content across storage pressure. Origin-
+// wide (covers Cadence too), best-effort, capability-detected, non-blocking, and
+// never fatal — the content store is always backstopped in Supabase Storage, so
+// eviction only costs a re-fetch. Requested once, on first content-store use.
+let _persistRequested = false;
+function ensurePersistentStorage() {
+  if (_persistRequested) return;
+  _persistRequested = true;
+  try { navigator.storage?.persist?.().catch(() => {}); } catch { /* unsupported */ }
+}
+
+// Privacy default: purge local article content on logout. Safe because owned
+// bodies live in the reading-content backstop and rehydrate via bodyRef on the
+// next read; savedArticles metadata is cleared with the rest of state anyway.
+async function purgeLocalArticleContent() {
+  try {
+    const ac = _articleContentPromise ? await _articleContentPromise.catch(() => null) : null;
+    _articleContentPromise = null;
+    if (ac?.close) await ac.close(); // release the connection so deleteDatabase isn't blocked
+    if (typeof indexedDB !== "undefined" && indexedDB.deleteDatabase) indexedDB.deleteDatabase("reading");
+  } catch { /* best-effort */ }
+}
+
+let _articleContentPromise = null;
+async function getArticleContent() {
+  if (_articleContentPromise) return _articleContentPromise;
+  _articleContentPromise = (async () => {
+    try {
+      if (typeof indexedDB === "undefined") return null;
+      ensurePersistentStorage();
+      const [mc, storageMod] = await Promise.all([import("./media-content.js"), import("./content-store/storage.js")]);
+      const storage = storageMod.createIdbStorage(mc.READING_DB, 1, mc.READING_STORES);
+      return mc.createArticleContent({ storage, cloudClient: supabaseClient || null, userId: authSession?.user?.id || "personal" });
+    } catch { return null; }
+  })();
+  return _articleContentPromise;
+}
+
+// Fire-and-forget: mirror an article's body into the content store and record the
+// small cross-device ref on the synced metadata. Never throws to the caller.
+function stashArticleBody(article) {
+  if (!article?.id || !article.text) return;
+  (async () => {
+    try {
+      const ac = await getArticleContent();
+      if (!ac) return;
+      if (article.bodyRef?.cloud && await ac.hasLocal(article.id)) return; // already stored + uploaded
+      const ref = await ac.saveBody(article.id, article.text);
+      if (ref?.cloud && JSON.stringify(article.bodyRef) !== JSON.stringify(ref)) { article.bodyRef = ref; persist(); }
+    } catch { /* non-fatal — article.text remains authoritative */ }
+  })();
+}
+
 // Fetches an article's body text into state (returns the outcome). Shared by
 // the reader (auto-fetch on open) and the listen flow (fetch-then-play).
 async function ensureArticleText(id) {
@@ -45948,6 +46980,7 @@ async function ensureArticleText(id) {
     if (res.author) article.author = res.author;
     if (res.date) article.date = res.date;
     persist();
+    stashArticleBody(article); // mirror the fetched body into the content store
     return { ok: true };
   }
   return { ok: false, error: res?.error || "Could not extract article text." };
@@ -45992,11 +47025,55 @@ function confirmSaveArticle() {
 }
 
 function saveArticleUrl(url) {
+  if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
+  const existing = findSavedArticleByUrl(url);
+  if (existing) {
+    showMailToast("Article already saved.");
+    if (activeAppArea === "media") switchMediaTab(existing.publication || "other");
+    return;
+  }
   const pub = detectArticlePublication(url);
   const id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `art_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
-  state.savedArticles.push({ id, url, title: url, publication: pub, savedAt: new Date().toISOString(), author: null, date: null, text: null });
+  state.savedArticles.push({ id, url, canonicalUrl: canonicalizeImportUrl(url), title: url, publication: pub, savedAt: new Date().toISOString(), author: null, date: null, text: null });
   persist();
+  if (activeAppArea === "media") switchMediaTab(pub);
+}
+
+// Save an article the import gateway already extracted — richer than saveArticleUrl's
+// stub (carries the detected title/author/date/text). Dedups on the exact URL so
+// re-importing the same link doesn't pile up duplicates.
+// Two saved-article URLs are "the same" if they canonicalize equal — so the same
+// link shared with different tracking params / trailing slash / fragment dedupes
+// to one article. Compares against a stored canonicalUrl when present, else
+// canonicalizes the existing url on the fly (so pre-existing articles dedupe too).
+function findSavedArticleByUrl(url) {
+  const canon = canonicalizeImportUrl(url);
+  return (state.savedArticles || []).find((a) => (a.canonicalUrl || canonicalizeImportUrl(a.url)) === canon);
+}
+
+function saveImportedArticle(data, sourceUrl) {
+  const url = sourceUrl || data.url || "";
+  if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
+  const existing = findSavedArticleByUrl(url);
+  if (existing) {
+    showMailToast("Article already saved.");
+    if (activeAppArea === "media") switchMediaTab(existing.publication || "other");
+    return;
+  }
+  const pub = data.publication || detectArticlePublication(url);
+  const id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `art_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  state.savedArticles.push({
+    id, url,
+    canonicalUrl: canonicalizeImportUrl(url),
+    title: data.title || url,
+    publication: pub,
+    savedAt: new Date().toISOString(),
+    author: data.author || null,
+    date: data.date || null,
+    text: data.text || null,
+  });
+  persist();
+  showMailToast(`Saved “${data.title || "article"}”.`);
   if (activeAppArea === "media") switchMediaTab(pub);
 }
 
@@ -46084,8 +47161,8 @@ async function startPdfImport(payload) {
 window._liveAddArticle = function(article) {
   if (!article?.url) return;
   if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
-  if (state.savedArticles.find(a => a.url === article.url)) return;
-  state.savedArticles.push(article);
+  if (findSavedArticleByUrl(article.url)) return;
+  state.savedArticles.push({ ...article, canonicalUrl: article.canonicalUrl || canonicalizeImportUrl(article.url) });
   persist();
   if (activeAppArea === "media" && !MEDIA_SERVICE_TABS.includes(activeMediaTab)) {
     renderArticleList("articleList", activeMediaTab);
@@ -46375,7 +47452,13 @@ let listenWordAbsTimes = null; // absolute start time (s) of each spoken word
 let listenActiveWordEl = null; // currently highlighted word span, if any
 let listenSpeaking = false;
 let listenLoading = false;
+let listenLoadingLabel = "Loading…"; // spinner caption; a Kokoro cold start swaps in a friendlier note
 let listenGenId = 0;
+
+// Set by the foreground Listen flow so a Kokoro cold-start wait (the scale-to-zero
+// voice box booting, ~30-60s) can show a reassuring caption. Null during background
+// prefetch, so nothing flickers on the button while something else is playing.
+let onKokoroColdStart = null;
 
 // Builds an <audio> that immediately starts buffering, so by the time the
 // current chunk ends the next one is ready and playback doesn't stall.
@@ -46552,6 +47635,61 @@ async function listenToArticle(id) {
 
 // Fetches (or generates) the TTS chunk URLs for an article. The server caches
 // generated audio per article, so repeated calls are cheap.
+// The one speech seam (Phase 0). Consumers ask for speech by domain; the service
+// resolves voice → provider → provider voice id and a content-addressed cache key,
+// then calls the provider. Google is the working provider today; the Kokoro seam
+// is registered but refuses to synthesize until its Phase-1 proxy is wired (so no
+// private content is ever routed to an unintended provider). Playback, prefetch,
+// and the article→article hand-off are unchanged — only generation routes here.
+// Phase 1A: the Kokoro provider's server call. Mirrors the Google provider — POSTs
+// to the session-gated kokoro-tts function and normalizes to { urls, timings }.
+// Throws a typed error on failure; the VoiceService never swaps to Google, so
+// private text is never silently rerouted (design §14). Timings are null in 1A
+// (Kokoro has no word alignment yet) — highlighting simply won't activate.
+// Codes we never retry — the request itself is wrong, so waiting won't help.
+const KOKORO_FATAL_CODES = new Set([
+  "KOKORO_AUTH_FAILED", "KOKORO_INVALID_REQUEST", "KOKORO_UNSUPPORTED_VOICE", "KOKORO_SYNTHESIS_FAILED",
+]);
+const KOKORO_COLD_ATTEMPTS = 6;   // enough tries to outlast a ~60s cold start
+const KOKORO_COLD_DELAY_MS = 10000;
+
+async function kokoroSynthViaProxy({ text, refId, providerVoiceId, cacheKey, speed }) {
+  for (let attempt = 1; ; attempt++) {
+    const res = await callNetlifyFunction("kokoro-tts", { text, refId, providerVoiceId, cacheKey, speed });
+    if (Array.isArray(res?.urls) && res.urls.length) {
+      return { urls: res.urls, timings: res.timings || null, cached: !!res.cached };
+    }
+    // Cold start: the scale-to-zero voice box was asleep and is now booting, so the
+    // proxy timed out / the gateway errored. Keep retrying (the box stays warming) so
+    // the first Listen after idle just waits instead of failing. Only fatal codes
+    // (bad request / voice / auth) bail immediately — anything else is treated as a
+    // transient warm-up and retried until the attempt budget runs out.
+    const code = res?.code;
+    const transient = !KOKORO_FATAL_CODES.has(code);
+    if (transient && attempt < KOKORO_COLD_ATTEMPTS) {
+      try { onKokoroColdStart && onKokoroColdStart(attempt); } catch { /* UI hook is best-effort */ }
+      await new Promise((r) => setTimeout(r, KOKORO_COLD_DELAY_MS));
+      continue;
+    }
+    const err = new Error(res?.error || code || "Kokoro synthesis failed");
+    err.kokoroCode = code;
+    throw err;
+  }
+}
+
+let voiceServiceSingleton = null;
+function getVoiceService() {
+  if (voiceServiceSingleton) return voiceServiceSingleton;
+  voiceServiceSingleton = createVoiceService({
+    providers: {
+      google: createGoogleProvider({ callFn: callNetlifyFunction }),
+      kokoro: createKokoroProvider({ synthViaProxy: kokoroSynthViaProxy }), // Phase 1A: session-gated kokoro-tts proxy
+    },
+    getAiSettings: () => state.aiSettings || {},
+  });
+  return voiceServiceSingleton;
+}
+
 async function generateTtsUrls(article) {
   const body = article.text?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || "";
   if (!body) return null;
@@ -46566,11 +47704,10 @@ async function generateTtsUrls(article) {
   // How many leading words belong to the spoken intro — the article body words
   // (what we highlight on screen) start after these.
   const introWords = intro ? (intro + ".").split(/\s+/).filter(Boolean).length : 0;
-  trackUsage("google_tts");
-  const result = await callNetlifyFunction("generate-tts", { articleId: article.id, text });
-  if (result.error || !Array.isArray(result.urls) || !result.urls.length) {
-    throw new Error(result.error || "Unknown error");
-  }
+  trackUsage("google_tts"); // article domain resolves to the Google provider in Phase 0
+  // VoiceService throws on provider error / empty result, matching the previous
+  // behavior; returns the same { urls, timings } shape the engine already consumes.
+  const result = await getVoiceService().synthesize({ text, domain: "article", refId: article.id });
   return { urls: result.urls, timings: result.timings || null, introWords };
 }
 
@@ -46719,6 +47856,13 @@ async function startListenTTS(article) {
     if (myGenId !== listenGenId) return;
   }
   if (!data) {
+    // On a Kokoro cold start, swap the spinner caption to a reassuring note so a
+    // ~1-minute wait doesn't look frozen. Cleared in finally either way.
+    onKokoroColdStart = () => {
+      if (myGenId !== listenGenId) return;
+      listenLoadingLabel = "Preparing voice…";
+      updateListenPlayBtn();
+    };
     try {
       data = await generateTtsUrls(article);
     } catch (e) {
@@ -46727,6 +47871,9 @@ async function startListenTTS(article) {
       updateListenPlayBtn();
       alert("Could not generate audio: " + e.message);
       return;
+    } finally {
+      onKokoroColdStart = null;
+      listenLoadingLabel = "Loading…";
     }
     if (myGenId !== listenGenId) return;
   }
@@ -46819,7 +47966,7 @@ function updateListenPlayBtn() {
   const icon = document.getElementById("listenBtnIcon");
   if (!btn) return;
   if (listenLoading) {
-    if (label) label.textContent = "Loading…";
+    if (label) label.textContent = listenLoadingLabel;
     if (icon) icon.innerHTML = `<circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="28" stroke-dashoffset="10"/>`;
     btn.disabled = true;
     return;
@@ -47170,7 +48317,7 @@ function readingItemTemplate(item) {
   const audibleUrl = audibleSearchUrl(item.title, item.authors);
 
   return `
-    <article class="do-task-item watch-item reading-item" data-reading-item="${escapeHtml(item.id)}" draggable="true">
+    <article class="do-task-item watch-item reading-item" data-reading-item="${escapeHtml(item.id)}">
       <div class="watch-item-layout">
         ${coverHtml}
         <div class="watch-item-main">
@@ -47210,8 +48357,6 @@ function bindReadingControls(root = document) {
   });
   root.querySelectorAll("[data-reading-item]").forEach((article) => {
     article.addEventListener("contextmenu", openReadingItemMenu);
-    article.addEventListener("dragstart", handleReadingItemDragStart);
-    article.addEventListener("dragend", handleReadingItemDragEnd);
     article.addEventListener("mouseenter", () => {
       const itemId = article.dataset.readingItem;
       const item = readingItemById(itemId);
@@ -47222,6 +48367,22 @@ function bindReadingControls(root = document) {
       loadHclAvailability(itemId, item.title, item.authors).then(res => renderHclAvailability(availEl, res));
     }, { once: true });
   });
+  // Reading item → wishlist category tab (move mode). Only custom wishlist tabs
+  // accept a book; format tabs (Audible/Libby/…) are highlighted-but-ignored.
+  if (root.nodeType === 1 && !root.__sortableBound) {
+    root.__sortableBound = true;
+    makeSortable(root, {
+      rowSelector: "[data-reading-item]",
+      getId: (a) => a.dataset.readingItem,
+      reorder: false,
+      dropZoneSelector: "[data-book-tab]",
+      onDropZone: ({ itemId, zone }) => {
+        const key = zone.dataset.bookTab;
+        if (key && !BOOK_FORMAT_TABS.some((t) => t.key === key)) addBookToWishlist(itemId, key);
+      },
+      itemLabel: (a) => (a.querySelector(".reading-item-title")?.textContent || a.textContent || "book").trim().slice(0, 40),
+    });
+  }
 }
 
 function renderHclAvailability(el, res) {

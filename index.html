@@ -82,6 +82,7 @@
                 <button type="button" id="menuGroceryItemsBtn">Grocery Items</button>
                 <button type="button" id="menuIngredientOptionsBtn">Ingredient Options</button>
                 <button type="button" id="menuMealPlanSettingsBtn">Meals</button>
+                <button type="button" id="menuWatchServicesBtn">Watch</button>
                 <button type="button" id="menuWatchTheatersBtn">Movie Theaters</button>
                 <button type="button" id="menuFoodHealthSettingsBtn">Nutrition</button>
                 <button type="button" id="menuGroceryListBtn">Preferred Stores</button>
@@ -123,7 +124,7 @@
                 <button type="button" id="titleRecreateBtn">Recreate</button>
                 <button type="button" id="titleShopBtn">Shop</button>
                 <button type="button" id="titleInventoryBtn">Inventory</button>
-                <button type="button" id="titleToDoListBtn">To-Do</button>
+                <button type="button" id="titleToDoListBtn">Tasks</button>
                 <button type="button" id="titleWatchBtn">Watch</button>
                 <button type="button" id="titleReadBtn">Media</button>
                 <button type="button" id="titleMailBtn">Mail</button>
@@ -239,7 +240,7 @@
                 <button type="button" id="homePlanBtn">Calendar</button>
                 <button type="button" id="homeShopBtn">Shop</button>
                 <button type="button" id="homeInventoryBtn">Inventory</button>
-                <button type="button" id="homeDoBtn">To-Do</button>
+                <button type="button" id="homeDoBtn">Tasks</button>
                 <button type="button" id="homeWatchBtn">Watch</button>
                 <button type="button" id="homeContactsBtn">Contacts</button>
                 <button type="button" id="homeWeatherBtn">Weather</button>
@@ -262,7 +263,7 @@
             <div class="planner-grid" id="plannerGrid"></div>
           </div>
         </section>
-        <section class="planner-column do-column" id="doMainPage" aria-label="To-do list" hidden>
+        <section class="planner-column do-column" id="doMainPage" aria-label="Tasks" hidden>
           <div class="planner-grid" id="doPlannerGrid"></div>
         </section>
         <section class="planner-column do-column" id="playMainPage" aria-label="Exercise plan" hidden>
@@ -389,7 +390,10 @@
                 <div class="podcast-panel" id="mediaWatchPanel" hidden>
                   <div class="discover-head">
                     <input type="search" class="discover-search-input" id="discoverSearchInput" placeholder="Search movies, shows, videos…" aria-label="Search all media" autocomplete="off" />
-                    <button class="icon-btn discover-services-btn" id="discoverServicesBtn" type="button" title="Your services" aria-label="Your services"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+                    <div class="discover-filter">
+                    <button class="icon-btn discover-filter-btn" id="discoverFilterBtn" type="button" title="Filter search" aria-label="Filter search scope" aria-haspopup="true" aria-expanded="false"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
+                    <div class="discover-filter-menu" id="discoverFilterMenu" role="menu" hidden></div>
+                  </div>
                   </div>
                   <div class="discover-results" id="discoverResults" hidden></div>
                   <div class="planner-grid" id="watchPlannerGrid"></div>
@@ -709,6 +713,9 @@
                     <option value="agenda">Agenda</option>
                   </select>
                   <button class="plan-view-tab" id="planTodayBtn" type="button">Today</button>
+                  <button class="icon-btn plan-tasks-btn" id="planTasksBtn" type="button" title="Tasks" aria-label="Tasks — due, overdue and chores">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                  </button>
                   <!-- Add-event "+" hidden for now — events are created by clicking a date on the
                        calendar. The JS (openPlanEventDialog + #planAddEventBtn wiring) is kept so
                        this button can be restored by un-commenting it.
@@ -918,7 +925,7 @@
 
             <section class="settings-page-section">
               <button class="settings-section-toggle" type="button" id="doSettingsBtn" aria-expanded="false" aria-controls="doSettingsMenu">
-                <span>To-Do</span>
+                <span>Tasks</span>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
               </button>
               <div class="settings-page-body" id="doSettingsMenu" hidden>
@@ -1524,7 +1531,7 @@
         </div>
       </dialog>
 
-      <dialog class="page-dialog" id="tasksPageDialog">
+      <dialog class="page-dialog tasks-overlay" id="tasksPageDialog">
         <section class="panel app-page-panel" aria-label="Tasks">
           <div class="panel-head">
             <div class="section-heading">
@@ -1532,19 +1539,20 @@
                 <h2>Tasks</h2>
               </div>
             </div>
+            <div class="tasks-overlay-week" role="group" aria-label="Task week">
+              <button class="icon-btn" type="button" id="tasksOverlayPrevWeek" title="Previous week" aria-label="Previous week">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+              </button>
+              <span class="tasks-overlay-week-label" id="tasksOverlayWeekLabel" aria-live="polite"></span>
+              <button class="icon-btn" type="button" id="tasksOverlayNextWeek" title="Next week" aria-label="Next week">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+              </button>
+            </div>
             <button class="icon-btn" type="button" id="closeTasksPageBtn" title="Close Tasks" aria-label="Close Tasks">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
             </button>
           </div>
-          <div class="do-board">
-            <form class="inline-form do-task-form" id="tasksPageTaskForm">
-              <input id="tasksPageTaskInput" placeholder="Add a task" autocomplete="off" />
-              <button class="primary-btn icon-primary-btn" type="submit" title="Add task" aria-label="Add task">
-                <span aria-hidden="true">+</span>
-              </button>
-            </form>
-            <div class="do-task-list" id="tasksPageTaskList"></div>
-          </div>
+          <div class="tasks-overlay-body" id="tasksOverlayBody"></div>
         </section>
       </dialog>
 
@@ -2135,15 +2143,15 @@
         <div class="dialog-head">
           <div>
             <p class="muted-label">Import</p>
-            <h2>Recipe from URL</h2>
+            <h2>Import from URL</h2>
           </div>
           <button class="icon-btn" id="closeImportBtn" title="Close" aria-label="Close">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
           </button>
         </div>
         <label>
-          Recipe URL
-          <input id="importUrl" placeholder="Paste a NYT, Bon Appetit, or Google Drive URL" />
+          Recipe or article URL
+          <input id="importUrl" placeholder="Paste a recipe or article URL" />
         </label>
         <div class="import-actions">
           <button class="primary-btn" type="button" id="fetchRecipeBtn">Fetch from URL</button>
@@ -3320,7 +3328,7 @@
           <div class="form-field plan-todo-field">
             <label class="plan-todo-toggle">
               <input type="checkbox" id="planEventAddTodo" />
-              <span>To-Do</span>
+              <span>Tasks</span>
             </label>
             <div class="plan-chore-section" id="planChoreSection" hidden>
               <div class="plan-chore-list" id="planChoreList"></div>
@@ -3348,6 +3356,24 @@
         </div>
       </form>
     </dialog>
+
+    <!-- Plan: event detail side panel. Clicking an event opens this read view first;
+         "Edit" opens the full editor above. Right-docked on desktop, a bottom sheet on
+         mobile. Modular enough to become a popover later (Calendar 2.0 §21). -->
+    <div class="plan-detail" id="planDetailPanel" hidden>
+      <div class="plan-detail-scrim" data-plan-detail-close></div>
+      <div class="plan-detail-card" role="dialog" aria-modal="false" aria-labelledby="planDetailTitle">
+        <div class="plan-detail-head">
+          <span class="plan-detail-dot" id="planDetailDot" aria-hidden="true"></span>
+          <h2 class="plan-detail-title" id="planDetailTitle"></h2>
+          <button class="icon-btn plan-detail-close" type="button" data-plan-detail-close aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="plan-detail-body" id="planDetailBody"></div>
+        <div class="plan-detail-actions" id="planDetailActions"></div>
+      </div>
+    </div>
 
     <!-- Plan: calendar management dialog (create a personal calendar or subscribe by URL) -->
     <dialog class="recipe-dialog plan-cal-dialog" id="planAddCalDialog">

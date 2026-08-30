@@ -1,6 +1,9 @@
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5veW9jamNsdHJlbndkb3ZxcnFsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzMjk5MjUsImV4cCI6MjA5MzkwNTkyNX0.UFs3GHdG2yuqOvPGXr6D8DjbvnTLzgC5-KGilg4Oc94";
-const IMPORT_RECIPE_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/import-recipe";
+// Unified import gateway. NOTE: `/import` must be deployed to production before this
+// extension build is reloaded — until the content-import work ships, prod only has
+// `/import-recipe` and this URL returns 404. (Deploy the functions, then reload.)
+const IMPORT_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/import";
 const SAVE_ARTICLE_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/save-article";
 const IMPORT_PDF_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/import-pdf-background";
 const SAVE_PAGE_ARTICLES_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/save-page-articles";
@@ -18,6 +21,7 @@ async function handleMessage(message) {
   if (message?.type === "sessionStatus") return sessionStatus();
   if (message?.type === "signIn") return signInWithGoogle();
   if (message?.type === "signOut") return signOut();
+  if (message?.type === "addToTableplan") return addToTableplan(message.url, message.title, message.tabId);
   if (message?.type === "importRecipe") return importRecipe(message.url);
   if (message?.type === "saveArticle") return saveArticle(message.url, message.title, message.tabId);
   if (message?.type === "importFromPage") return importFromPage(message.tabId, message.publication);
@@ -92,7 +96,7 @@ async function importRecipe(url) {
   const recipeUrl = normalizeRecipeUrlInput(url);
   if (!recipeUrl) throw new Error("Open a supported recipe URL first.");
 
-  const parsedRecipe = await parseRecipe(recipeUrl);
+  const parsedRecipe = await parseRecipe(recipeUrl, session.access_token);
   const existing = await recipeBySourceUrl(recipeUrl, session.access_token);
   const recipe = {
     ...parsedRecipe,
@@ -122,8 +126,6 @@ async function saveArticle(url, title, tabId) {
     return { ok: true, already_saved: false, pdf: true };
   }
 
-  const publication = detectPublication(url);
-
   let extracted = null;
   if (tabId) {
     try {
@@ -132,38 +134,139 @@ async function saveArticle(url, title, tabId) {
     } catch { /* tab may not support scripting; proceed without text */ }
   }
 
-  const body = {
+  return persistArticle(session.access_token, {
     url,
     title: extracted?.title || title || url,
-    publication,
+    publication: detectPublication(url),
     text: extracted?.text || null,
     author: extracted?.author || null,
     date: extracted?.date || null
-  };
+  });
+}
 
+// Save one article via /save-article and optimistically push it into any open
+// app tab. Shared by the article button and the unified "Add to Tableplan" flow.
+async function persistArticle(accessToken, { url, title, publication, text, author, date }) {
+  const body = {
+    url,
+    title: title || url,
+    publication: publication || detectPublication(url),
+    text: text || null,
+    author: author || null,
+    date: date || null
+  };
   const response = await fetch(SAVE_ARTICLE_URL, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
+    headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
     body: JSON.stringify(body)
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || `Save failed with status ${response.status}`);
 
   if (!payload.already_saved && payload.id) {
-    const article = {
+    pushArticleToAppTabs({
       id: payload.id,
       url: body.url,
       title: body.title,
       publication: body.publication,
       savedAt: new Date().toISOString(),
-      author: body.author || null,
-      date: body.date || null,
-      text: body.text || null
-    };
-    pushArticleToAppTabs(article).catch(() => {});
+      author: body.author,
+      date: body.date,
+      text: body.text
+    }).catch(() => {});
   }
 
-  return { ok: true, already_saved: payload.already_saved || false, hasText: Boolean(extracted?.text) };
+  return { ok: true, already_saved: payload.already_saved || false, hasText: Boolean(body.text) };
+}
+
+// One action, any page: capture the rendered page (raw HTML for recipe
+// structured-data detection + cleaned article text/metadata as a paywalled-page
+// fallback), let the /import gateway auto-detect recipe vs article in a single
+// call (no server re-fetch), then persist through the matching domain path.
+async function addToTableplan(url, title, tabId) {
+  const session = await getValidSession(true);
+  if (!url || !url.startsWith("http")) throw new Error("Open a web page first.");
+
+  // A PDF can't be scraped as HTML — hand its URL to the background PDF importer,
+  // which reproduces it as a readable article.
+  if (/\.pdf(\?|#|$)/i.test(url)) {
+    const res = await fetch(IMPORT_PDF_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ pdfUrl: url, sourceUrl: url, title: (title || "").replace(/\.pdf$/i, "").trim() || "Imported PDF" })
+    });
+    if (!(res.ok || res.status === 202)) throw new Error(`Import failed with status ${res.status}`);
+    return { ok: true, kind: "pdf" };
+  }
+
+  // Capture the rendered page from the user's own session (works on paywalled
+  // pages). extractArticleTextFromDOM returns null on non-article pages (e.g. a
+  // recipe), which is fine — the raw HTML still carries the recipe's structured
+  // data for detection.
+  let extracted = null, html = "";
+  if (tabId) {
+    try {
+      const [tRes, hRes] = await Promise.all([
+        chrome.scripting.executeScript({ target: { tabId }, func: extractArticleTextFromDOM }),
+        chrome.scripting.executeScript({ target: { tabId }, func: grabPageHtml })
+      ]);
+      extracted = tRes?.[0]?.result || null;
+      html = hRes?.[0]?.result || "";
+    } catch { /* tab not injectable — fall back to a server-side fetch by URL */ }
+  }
+
+  const metadata = {
+    title: extracted?.title || title || "",
+    author: extracted?.author || "",
+    date: extracted?.date || "",
+    publication: detectPublication(url)
+  };
+
+  // Prefer the captured page content (no server fetch, survives paywalls); if we
+  // couldn't inject, fall back to the gateway fetching the URL itself.
+  const reqBody = { source: { url, title, sourceClient: "extension" } };
+  if (html || extracted?.text) reqBody.extractedContent = { html, text: extracted?.text || "", metadata };
+
+  const response = await fetch(IMPORT_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
+    body: JSON.stringify(reqBody)
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || payload.warnings?.[0] || `Import failed with status ${response.status}`);
+
+  // Recipe → eat_recipes (dedupe on the source URL, like importRecipe).
+  if (payload.type === "recipe" && payload.data && (payload.data.name || payload.data.ingredients?.length)) {
+    const existing = await recipeBySourceUrl(url, session.access_token);
+    const recipe = { ...payload.data, id: existing?.id || payload.data.id || createId("recipe"), folderId: "", sourceUrl: url };
+    await saveRecipe(recipe, session.access_token, Boolean(existing?.id));
+    return { ok: true, kind: "recipe", updated: Boolean(existing?.id), name: recipe.name || "Recipe" };
+  }
+
+  // Article → media.savedArticles (prefer the gateway's cleaned data; fall back
+  // to the DOM text we captured).
+  if (payload.type === "article") {
+    const d = payload.data || {};
+    const res = await persistArticle(session.access_token, {
+      url,
+      title: d.title || metadata.title || url,
+      publication: d.publication || metadata.publication,
+      text: d.text || extracted?.text || null,
+      author: d.author || metadata.author || null,
+      date: d.date || metadata.date || null
+    });
+    return { ok: true, kind: "article", already_saved: res.already_saved, hasText: res.hasText, name: d.title || metadata.title || "Article" };
+  }
+
+  throw new Error(payload.warnings?.[0] || "Couldn't find a recipe or article on this page.");
+}
+
+// Runs inside the page — must be self-contained. Capped so a very large DOM
+// can't exceed the import function's request-body limit; a recipe's JSON-LD/
+// microdata lives in <head> or early <body>, well within the cap.
+function grabPageHtml() {
+  try { return document.documentElement.outerHTML.slice(0, 2000000); }
+  catch { return ""; }
 }
 
 // Runs inside the article page — must be self-contained (no closures, no imports)
@@ -382,13 +485,24 @@ function detectPublication(url) {
   return "other";
 }
 
-async function parseRecipe(recipeUrl) {
-  const helperUrl = IMPORT_RECIPE_URL;
-  const response = await fetch(`${helperUrl}?url=${encodeURIComponent(recipeUrl)}`);
+async function parseRecipe(recipeUrl, accessToken) {
+  // Unified import gateway: POST the URL, get the import contract back. The gateway
+  // verifies the session (401 otherwise), fetches safely, detects the type, and
+  // returns { type, status, data, ... }. This action imports recipes, so a recipe
+  // result is returned; an article is reported clearly. (Persistence stays here —
+  // the gateway is stateless — so saveRecipe still writes eat_recipes as before.)
+  const response = await fetch(IMPORT_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ source: { url: recipeUrl, sourceClient: "extension" } })
+  });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || `Import failed with status ${response.status}`);
-  if (!payload.recipe?.name && !payload.recipe?.ingredients?.length) throw new Error("No recipe data found.");
-  return payload.recipe;
+  if (!response.ok) throw new Error(payload.error || payload.warnings?.[0] || `Import failed with status ${response.status}`);
+  if (payload.type === "recipe" && payload.data && (payload.data.name || payload.data.ingredients?.length)) {
+    return payload.data;
+  }
+  if (payload.type === "article") throw new Error("That page looks like an article, not a recipe.");
+  throw new Error("No recipe data found.");
 }
 
 async function recipeBySourceUrl(sourceUrl, accessToken) {

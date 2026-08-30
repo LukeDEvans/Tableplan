@@ -18,11 +18,17 @@ exports.handler = async (event) => {
   let body;
   try { body = JSON.parse(event.body || "{}"); } catch { return cors(json(400, { error: "Invalid JSON" })); }
 
-  const { articleId, text } = body;
+  const { articleId, text, cacheKey } = body;
   if (!articleId || !text) return cors(json(400, { error: "articleId and text are required" }));
 
   const cleanText = text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
   if (!cleanText) return cors(json(400, { error: "No text content." }));
+
+  // Storage path prefix. Prefer the client's content-addressed cache key (folds
+  // in voice/provider/model/speed via tts-cache-identity.js) so different voices
+  // never collide; fall back to the legacy article-id path for older clients.
+  // Sanitized to a single path segment so a client can't traverse the bucket.
+  const keyPrefix = sanitizeKey(cacheKey) || String(articleId);
 
   // Bump when the generation format changes so older cached audio (which has
   // no word timings) is regenerated on next play instead of served stale.
@@ -30,10 +36,10 @@ exports.handler = async (event) => {
 
   // Check cache — reuse only if it was generated in the current format (i.e.
   // already carries per-word timings for on-screen highlighting).
-  const cached = await getStorageJson(serviceKey, `${articleId}/meta.json`);
+  const cached = await getStorageJson(serviceKey, `${keyPrefix}/meta.json`);
   if (cached?.count && cached.version === FORMAT_VERSION) {
     const urls = Array.from({ length: cached.count }, (_, i) =>
-      `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${articleId}/${i}.mp3`
+      `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${keyPrefix}/${i}.mp3`
     );
     return cors(json(200, { urls, timings: cached.timings || null, cached: true }));
   }
@@ -50,12 +56,12 @@ exports.handler = async (event) => {
     if (!result?.audio) return cors(json(500, { error: `TTS generation failed for chunk ${i}` }));
     const uploaded = await uploadToStorage(
       serviceKey,
-      `${articleId}/${i}.mp3`,
+      `${keyPrefix}/${i}.mp3`,
       Buffer.from(result.audio, "base64"),
       "audio/mpeg"
     );
     if (!uploaded) return cors(json(500, { error: `Storage upload failed for chunk ${i}` }));
-    urls.push(`${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${articleId}/${i}.mp3`);
+    urls.push(`${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${keyPrefix}/${i}.mp3`);
     for (const tp of result.timepoints || []) {
       const gi = parseInt(String(tp.markName).slice(1), 10); // "w123" -> 123 (global index)
       if (gi >= 0 && gi < timings.length) timings[gi] = { c: i, t: tp.timeSeconds || 0 };
@@ -64,13 +70,20 @@ exports.handler = async (event) => {
 
   await uploadToStorage(
     serviceKey,
-    `${articleId}/meta.json`,
+    `${keyPrefix}/meta.json`,
     Buffer.from(JSON.stringify({ count: chunks.length, version: FORMAT_VERSION, timings, generatedAt: new Date().toISOString() })),
     "application/json"
   );
 
   return cors(json(200, { urls, timings, cached: false }));
 };
+
+// Restrict a client-supplied cache key to one safe path segment (no "/", "..",
+// spaces). Returns "" when nothing usable remains, so the caller falls back to
+// the article id. The function is already session-gated; this is defense in depth.
+function sanitizeKey(k) {
+  return String(k == null ? "" : k).toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 160);
+}
 
 function escapeSsml(w) {
   return w.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");

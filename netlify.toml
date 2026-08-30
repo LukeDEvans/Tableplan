@@ -17,6 +17,15 @@
 [functions]
   directory = "netlify/functions"
 
+# ics-proxy imports the shared parser at calendar/ics.mjs — ensure it's bundled
+# with the function regardless of the bundler's import tracing.
+[functions."ics-proxy"]
+  included_files = ["calendar/ics.mjs"]
+
+# kokoro-tts imports the shared pure core (validation/chunking/voices/errors).
+[functions."kokoro-tts"]
+  included_files = ["kokoro-core.mjs"]
+
 [functions."scheduled-email"]
   schedule = "*/15 * * * *"
 

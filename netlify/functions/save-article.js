@@ -1,4 +1,5 @@
 const { getUserIdFromToken, getUserGroupId, updateSection } = require("./_state-sections.js");
+const { canonicalizeUrl } = require("./_import-url.js");
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return cors(json(200, {}));
@@ -26,9 +27,12 @@ exports.handler = async (event) => {
   let existingId = null;
 
   try {
+    const canon = canonicalizeUrl(url);
     await updateSection(serviceKey, `u-${userId}`, "media", (state) => {
       const articles = Array.isArray(state.savedArticles) ? state.savedArticles : [];
-      const existing = articles.find((a) => a.url === url);
+      // Dedupe on the canonical URL so the same link shared with different
+      // tracking params / trailing slash doesn't create a second article.
+      const existing = articles.find((a) => (a.canonicalUrl || canonicalizeUrl(a.url)) === canon);
       if (existing) {
         alreadySaved = true;
         existingId = existing.id;
@@ -39,6 +43,7 @@ exports.handler = async (event) => {
         savedArticles: [...articles, {
           id,
           url,
+          canonicalUrl: canon,
           title: title || url,
           publication: publication || detectPublication(url),
           savedAt: new Date().toISOString(),

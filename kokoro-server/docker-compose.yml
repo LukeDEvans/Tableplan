@@ -1,0 +1,22 @@
+# Home Kokoro server for production (Part B). Two entry points:
+#   - :8880  Kokoro directly (kept for LOCAL dev; server.js hits this, no auth)
+#   - :8080  Caddy, Bearer-gated (Tailscale Funnel exposes THIS to the internet)
+# Run from this folder:  docker compose up -d    (reads KOKORO_TOKEN from ./.env)
+name: kokoro-server
+services:
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    restart: unless-stopped
+    ports:
+      - "8880:8880"   # local dev keeps talking to localhost:8880 directly
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [kokoro]
+    ports:
+      - "8080:8080"   # Tailscale Funnel points here; every request must carry the Bearer
+    environment:
+      KOKORO_TOKEN: ${KOKORO_TOKEN:?set KOKORO_TOKEN in kokoro-server/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro

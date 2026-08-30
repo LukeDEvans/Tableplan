@@ -1,5 +1,25 @@
+const { getUserIdFromToken } = require("./_state-sections.js");
+const { safeFetch, statusForImportError } = require("./_import-fetch.js");
+
+// RSS/Atom feeds declare a range of XML content types; allow the feed-specific
+// ones on top of safeFetch's default text/markup list. (safeFetch only enforces
+// the list when the server actually declares a type.)
+const FEED_CONTENT_TYPES = [
+  "application/rss+xml", "application/atom+xml", "application/xml",
+  "text/xml", "application/xhtml+xml", "text/html", "text/plain",
+  "application/octet-stream",
+];
+
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return json(405, { error: "Method not allowed" });
+
+  // Require a signed-in user: this endpoint fetches an arbitrary user-supplied
+  // URL server-side, so gating it to authenticated users keeps the SSRF surface
+  // to the same risk model as the other import fetches (see _import-fetch.js).
+  const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+  const accessToken = (event.headers.authorization || event.headers.Authorization || "").replace(/^Bearer\s+/i, "").trim();
+  const userId = accessToken ? await getUserIdFromToken(accessToken, serviceKey) : null;
+  if (!userId) return json(401, { error: "Not authenticated." });
 
   let body;
   try { body = JSON.parse(event.body || "{}"); } catch { return json(400, { error: "Invalid JSON" }); }
@@ -7,21 +27,25 @@ exports.handler = async (event) => {
   const { url } = body;
   if (!url) return json(400, { error: "url required" });
 
+  let result;
   try {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; LiveApp/1.0)",
-        "Accept": "application/rss+xml, application/xml, text/xml, */*"
-      }
+    // SSRF/resource-exhaustion protections live in safeFetch: scheme/port/host
+    // allow-listing, DNS + blocked-IP checks on the initial host and every
+    // redirect hop, a streamed size cap, and a total timeout.
+    result = await safeFetch(url, {
+      maxBytes: 5_000_000, // feeds with 50 episodes + show notes can be large
+      accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
+      allowedContentTypes: FEED_CONTENT_TYPES,
     });
-    if (!res.ok) return json(502, { error: `Feed returned ${res.status}` });
-    const xml = await res.text();
-    const parsed = parseRSS(xml);
-    if (!parsed.title) return json(422, { error: "Could not parse RSS feed — check the URL is a valid RSS/Atom feed" });
-    return json(200, parsed);
   } catch (e) {
+    if (e && e.isImportFetchError) return json(statusForImportError(e), { error: e.message });
     return json(500, { error: e.message || "Failed to fetch feed" });
   }
+  if (!result.ok) return json(502, { error: `Feed returned ${result.status}` });
+
+  const parsed = parseRSS(result.body);
+  if (!parsed.title) return json(422, { error: "Could not parse RSS feed — check the URL is a valid RSS/Atom feed" });
+  return json(200, parsed);
 };
 
 function parseRSS(xml) {
@@ -105,3 +129,7 @@ function decodeEntities(str) {
 function json(statusCode, body) {
   return { statusCode, headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
 }
+
+// Exposed for tests (feed content-type allow-list + parser).
+module.exports.FEED_CONTENT_TYPES = FEED_CONTENT_TYPES;
+module.exports.parseRSS = parseRSS;

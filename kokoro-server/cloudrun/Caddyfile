@@ -1,0 +1,22 @@
+# Bearer gate for the cloud-hosted Kokoro. Requests without the exact
+# "Authorization: Bearer <KOKORO_TOKEN>" header get 401; valid ones are proxied to
+# Kokoro on localhost. KOKORO_TOKEN comes from the Cloud Run env (fail-closed: if it
+# is unset the matcher requires an empty bearer, so nothing gets through).
+{
+	admin off
+	persist_config off
+}
+
+# Port-only site = plain HTTP on $PORT (Cloud Run already terminates TLS in front).
+:{$PORT} {
+	@unauthorized not header Authorization "Bearer {$KOKORO_TOKEN}"
+	respond @unauthorized "Unauthorized" 401
+
+	reverse_proxy 127.0.0.1:8880 {
+		# Cold start: on a scale-to-zero box the model may still be warming when the
+		# first request lands. Hold the request and retry the upstream for up to 90s
+		# instead of returning a 502, so the first Listen after idle just waits.
+		lb_try_duration 90s
+		lb_try_interval 2s
+	}
+}
