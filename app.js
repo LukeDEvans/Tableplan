@@ -39063,19 +39063,19 @@ function renderCalendarColorPicker(container, selectedColor, name, usedColors = 
     const rep = PLAN_COLOR_HUES[hue][PLAN_HUE_BASE_INDEX];
     return `<button type="button" class="plan-hue-base${hue === selHue ? " is-active" : ""}" data-hue="${hue}" style="--hue-color:${rep}" aria-label="${hue}" title="${hue}"></button>`;
   }).join("");
+  // Single circle: the label itself is the swatch (conic "any color" by default,
+  // the picked color once chosen). The native color input overlays it.
   const customChip = `
-    <label class="plan-hue-base plan-color-custom${isCustom ? " is-active" : ""}" title="Custom color">
+    <label class="plan-hue-base plan-color-custom${isCustom ? " is-active" : ""}"${isCustom ? ` style="background:${escapeHtml(sel)}"` : ""} title="Custom color">
       <input type="color" class="plan-color-custom-input" value="${escapeHtml(isCustom ? sel : "#4285f4")}" aria-label="Custom color" />
       <input type="radio" name="${name}" value="${escapeHtml(isCustom ? sel : "")}" ${isCustom ? "checked" : ""} data-custom-radio />
-      <span class="plan-color-custom-swatch"></span>
     </label>`;
   container.innerHTML = `
     <div class="plan-hue-row">${baseRow}${customChip}</div>
     <div class="plan-shade-row" data-shade-row hidden></div>`;
 
   const shadeRow = container.querySelector("[data-shade-row]");
-  const customSpan = container.querySelector(".plan-color-custom-swatch");
-  if (isCustom) customSpan.style.background = sel;
+  const customLabel = container.querySelector(".plan-color-custom");
 
   const renderShades = (hue) => {
     const selectedShade = planHueOfColor(sel) === hue ? sel : "";
@@ -39095,8 +39095,8 @@ function renderCalendarColorPicker(container, selectedColor, name, usedColors = 
   colorInput?.addEventListener("input", () => {
     customRadio.value = colorInput.value;
     customRadio.checked = true;
-    customSpan.style.background = colorInput.value;
-    container.querySelector(".plan-color-custom").classList.add("is-active");
+    customLabel.style.background = colorInput.value;
+    customLabel.classList.add("is-active");
     container.querySelectorAll(".plan-hue-base[data-hue]").forEach((b) => b.classList.remove("is-active"));
     shadeRow.hidden = true;
   });

@@ -12341,7 +12341,7 @@ body.touch-drag-active * {
   background: conic-gradient(from 90deg, #f44336, #ff9800, #ffeb3b, #4caf50, #00bcd4, #3f51b5, #9c27b0, #f44336);
 }
 .plan-shade-row { padding-top: 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); }
-.plan-shade span { position: relative; width: 26px; height: 26px; }
+.plan-shade span { position: relative; width: 30px; height: 30px; } /* match the base hue circles */
 .plan-shade.is-blocked { cursor: not-allowed; }
 .plan-shade.is-blocked span { opacity: 0.3; }
 .plan-shade.is-blocked span::after {
