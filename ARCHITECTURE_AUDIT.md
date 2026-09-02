@@ -409,3 +409,87 @@ You've already built the hard parts twice (Media, Cadence) and a solid sync core
 ---
 
 *Prepared read-only. No code, schema, config, dependencies, or infrastructure were modified; nothing was committed. Findings are evidence-based from the current repository; items marked "verify" (notably RLS policies and any real-device a11y/offline behavior) require checks I could not perform read-only or without your account.*
+
+---
+
+# Addendum — 2026-09-01 Reconciliation & Delta
+
+*A fresh maximalist architecture-audit prompt (53 sections: capability registry, event bus,
+job/operation/workflow frameworks, unified import, search/index, rules engine, "Today"
+orchestration, ADRs, scorecard, etc.) was run against Live. Rather than regenerate a second
+full audit — which CLAUDE.md and the prompt itself forbid ("do not blindly re-audit what is
+established") — this addendum reconciles that prompt against the audit above, records what has
+shipped since 2026-08-25, verifies the P0s, and writes down the deliberate non-decisions.
+No rewrite is recommended; the independent "design from scratch" answer is **build essentially
+what exists** (vanilla-ESM shell + extracted tested pure modules + capability providers +
+section/union/tombstone sync + server-side secret boundary). 971 tests green, build clean,
+as of this addendum.*
+
+## What shipped since the 2026-08-25 audit
+
+- **Import pipeline is a first-class capability** (prompt §10): the unified `/import` gateway
+  (`_import-gateway.js` + detect/extract/contract modules, SSRF-guarded `safeFetch`) is live,
+  fed by the in-app dialog, an Android Web Share Target, **and** the Chrome extension as
+  acquisition clients. See `CONTENT_IMPORT.md`.
+- **Content-store** (`content-store/`) added and wired: article bodies dual-written to
+  IndexedDB + a reading bucket, then removed from the synced state.
+- **Finance**: actuals-snapshot coverage guard + inline review-card gestures extracted with
+  tests (`finance-actuals.js`, `finance-review-gesture.js`).
+- **Workflow infrastructure**: `DEVELOPMENT.md`, repo `.claude/settings.json` ask-list, the
+  `/recap` + `/adversarial-review` skills — the process companion to this constitution.
+- Test suite grew **719 → 971**; calendar source/reconcile/ICS modules landed.
+
+## P0 verification (this addendum's scope)
+
+| 2026-08-25 P0 | Verdict | Evidence |
+|---|---|---|
+| **Fix the large, hot Media sync row** | **CLOSED** | `extractSectionData` (`app.js:6381`) strips podcast episode notes **and** backstopped article bodies (`bodyRef?.cloud`) from the cloud payload; the localStorage mirror (`app.js:3163`) and `state_history` snapshots (`app.js:6104`) strip the same. Guarded: text is never dropped before it is durable in the content-store. **Residual watch item** (not the emergency): `mediaHistory` / `musicLibrary` still ride the media section — bounded today; see invalidation signals. |
+| **Add Finance tests + extract just enough to test the merge / stale-write guard** | **PARTIAL** | New tests cover actuals + the review gesture, but the **core data-loss protection is still untested**: `mergeFinanceCategories/BudgetGroups/People/Personal` remain inline at `app.js:5487–5625` and the `financeSectionHydrated` stale-write gate at `app.js:5935–6008` — the exact contract the audit prioritized. This is the highest-value remaining P0 slice: extract those four merge fns (or move them into `state-sync.js`, which already owns `mergeStates`) and pin the stale-write/hydration-gate behavior with tests. |
+
+## Deliberate non-decisions — DEFER, and why (prompt §23/§34/§37)
+
+For a **solo, mostly-single-user, local-first** app whose entire domain state is one in-memory
+object, the following would be infrastructure ahead of evidence. Written down so they are
+explicit deferrals, not ambiguity:
+
+- **Formal event bus (§8)** — cross-domain "events" are direct calls over shared `state` today;
+  a pub/sub layer adds indirection and debugging cost for coupling that doesn't exist. *Revisit
+  when a second consumer needs a signal it cannot read from `state`.*
+- **Separate job + operation + workflow frameworks (§9/§11/§12)** — ~4 scheduled functions and a
+  bounded mail sweep already satisfy ARCHITECTURE.md §8; three new frameworks solve no current
+  pain. *Revisit when background job **types** outgrow §8's per-job discipline.*
+- **Search/index engine (§14)** — state is in-memory and fully scannable; define the
+  searchable-concept list, but **don't build an index**. *Revisit at multi-thousand-item scale
+  or when the AI assistant needs retrieval it can't get by scanning state.*
+- **Rules engine (§16)** — speculative; the per-domain `projectToday` layer (audit §13) is the
+  right substrate first. *Revisit only with concrete recurring automation demand.*
+- **Plugin architecture (§23)** — the capability registry (`media-provider.js`) is the correct
+  stopping point; the prompt agrees. *Revisit only on real third-party-extension demand.*
+
+## Sharpened roadmap (supersedes nothing above; re-prioritizes it as of 2026-09-01)
+
+- **P0 — finish, don't start:** extract + test the Finance merge / stale-write guard
+  (the residual half of the old P0#2). The hot-media-row P0 is closed pending an egress
+  re-check with live data.
+- **P1 — highest consolidation leverage:** one reorderable-list interaction primitive
+  (audit §12; prompt §28) replacing ~85 ad-hoc drag sites, built *as* the planned
+  Shop/Media-Queue work.
+- **P1 — cheap, high-DX, genuinely new:** a read-only developer diagnostics panel (prompt §13)
+  over existing state / provider-status / sync info.
+- **P2 — design-now/implement-later:** the per-domain `projectToday(state, now)` projection
+  layer feeding both Home and the AI functions (audit §13/§14); `DESIGN_SYSTEM.md` token
+  extraction (prompt §6).
+- **DEFER:** the five non-decisions above.
+
+## Invalidation signals to watch (prompt §34)
+
+- `media` section payload size (if `mediaHistory`/`musicLibrary` growth re-inflates the row →
+  apply the same content-store split).
+- localStorage mirror hitting the quota fallback tiers (`app.js:3170`/`3177` warnings firing).
+- Number of external providers / import types (if either climbs sharply, revisit the
+  capability-registry surface and a shared adapter helper).
+- Any second in-memory-`state` consumer that wants change notifications → reconsider §8.
+
+*Reconciliation prepared 2026-09-01. Verification (P0 checks) was read-only over code; the
+media-row egress win should be confirmed against live Supabase metrics before P0#1 is called
+fully done. Nothing was pushed or deployed.*
