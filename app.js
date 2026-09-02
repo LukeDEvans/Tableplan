@@ -23,6 +23,7 @@ import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap,
 import { taskIsScheduled } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot } from './finance-actuals.js';
+import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance } from './finance-sync.js';
 import { deriveMediaTierCount } from './media-tier.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
@@ -5456,97 +5457,11 @@ function trashedRecipes() {
 
 // mergeTombstones is imported from ./state-sync.js (extracted, unit-tested).
 
-// ── Finance deep merges ──────────────────────────────────────────────────────
-// The localStorage mirror deliberately omits finance (the household ledger is
-// cloud-only), so on EVERY boot financeBudgetGroups / financePeople /
-// financePersonal come up as empty defaults until the Supabase pull lands. A
-// plain unionById whole-object-replaces a same-id record, which let a
-// just-booted client's empty groups overwrite the cloud's real ones and wipe
-// every category — the recurring data-loss bug. These merges instead UNION by
-// id AND union each record's nested child arrays, so both sides always
-// contribute and an empty just-booted record can never erase a populated cloud
-// one. Genuine deletions still propagate because the delete handlers tombstone
-// the removed id (financeCategories / financeLineItems / financeScenarios).
-function financeDeadSet(tombstones, key) {
-  return new Set((tombstones?.[key] || []).map(String));
-}
-// Union two id-keyed child arrays (items / scenarios). Both sides survive;
-// newer wins on an id clash; tombstoned ids drop out. Order: existing first.
-function unionFinanceChildren(newer, older, deadSet) {
-  const ids = [];
-  const byId = new Map();
-  const add = (x) => {
-    if (!x || x.id == null) return;
-    if (!byId.has(x.id)) ids.push(x.id);
-    byId.set(x.id, x);
-  };
-  (older || []).forEach(add);
-  (newer || []).forEach(add);
-  return ids.map((id) => byId.get(id)).filter((x) => !deadSet.has(String(x.id)));
-}
-function mergeFinanceCategories(newer, older, deadCat, deadItem) {
-  const ids = [];
-  const byId = new Map();
-  const seed = (c) => { if (c?.id == null) return; if (!byId.has(c.id)) ids.push(c.id); byId.set(c.id, c); };
-  (older || []).forEach(seed);
-  (newer || []).forEach((c) => {
-    if (c?.id == null) return;
-    const prev = byId.get(c.id);
-    if (!prev) { ids.push(c.id); byId.set(c.id, c); return; }
-    byId.set(c.id, { ...prev, ...c, items: unionFinanceChildren(c.items, prev.items, deadItem) });
-  });
-  return ids.map((id) => byId.get(id)).filter((c) => !deadCat.has(String(c.id)));
-}
-function mergeFinanceBudgetGroups(newer, older, tombstones) {
-  const deadGroup = financeDeadSet(tombstones, "financeBudgetGroups");
-  const deadCat = financeDeadSet(tombstones, "financeCategories");
-  const deadItem = financeDeadSet(tombstones, "financeLineItems");
-  const ids = [];
-  const byId = new Map();
-  const seed = (g) => { if (g?.id == null) return; if (!byId.has(g.id)) ids.push(g.id); byId.set(g.id, g); };
-  (older || []).forEach(seed);
-  (newer || []).forEach((g) => {
-    if (g?.id == null) return;
-    const prev = byId.get(g.id);
-    if (!prev) { ids.push(g.id); byId.set(g.id, g); return; }
-    byId.set(g.id, { ...prev, ...g, categories: mergeFinanceCategories(g.categories, prev.categories, deadCat, deadItem) });
-  });
-  return ids.map((id) => byId.get(id)).filter((g) => !deadGroup.has(String(g.id)));
-}
-function mergeFinancePeople(newer, older, tombstones) {
-  const deadPerson = financeDeadSet(tombstones, "financePeople");
-  const deadScenario = financeDeadSet(tombstones, "financeScenarios");
-  const ids = [];
-  const byId = new Map();
-  const seed = (p) => { if (p?.id == null) return; if (!byId.has(p.id)) ids.push(p.id); byId.set(p.id, p); };
-  (older || []).forEach(seed);
-  (newer || []).forEach((p) => {
-    if (p?.id == null) return;
-    const prev = byId.get(p.id);
-    if (!prev) { ids.push(p.id); byId.set(p.id, p); return; }
-    byId.set(p.id, { ...prev, ...p, scenarios: unionFinanceChildren(p.scenarios, prev.scenarios, deadScenario) });
-  });
-  return ids.map((id) => byId.get(id)).filter((p) => !deadPerson.has(String(p.id)));
-}
-function mergeFinancePersonal(newer, older, tombstones) {
-  const deadPersonal = financeDeadSet(tombstones, "financePersonal");
-  const deadItem = financeDeadSet(tombstones, "financeLineItems");
-  const ids = [];
-  const byId = new Map();
-  const seed = (p) => { if (p?.id == null) return; if (!byId.has(p.id)) ids.push(p.id); byId.set(p.id, p); };
-  (older || []).forEach(seed);
-  (newer || []).forEach((p) => {
-    if (p?.id == null) return;
-    const prev = byId.get(p.id);
-    if (!prev) { ids.push(p.id); byId.set(p.id, p); return; }
-    byId.set(p.id, {
-      ...prev, ...p,
-      incomeItems: unionFinanceChildren(p.incomeItems, prev.incomeItems, deadItem),
-      expenseItems: unionFinanceChildren(p.expenseItems, prev.expenseItems, deadItem),
-    });
-  });
-  return ids.map((id) => byId.get(id)).filter((p) => !deadPersonal.has(String(p.id)));
-}
+// Finance deep merges + boot-empty protection live in ./finance-sync.js
+// (extracted, unit-tested): mergeFinanceBudgetGroups / mergeFinancePeople /
+// mergeFinancePersonal union by id AND union each record's nested child arrays so
+// an empty just-booted record can never erase populated cloud data; genuine
+// deletes propagate via tombstones. See that module's header for the WHY.
 
 function mergeStates(newer, older) {
   const merged = { ...newer };
@@ -5933,27 +5848,9 @@ let hydrateRetryCount = 0;
 // blanks budget picks / cash / emergency account selections. This flag flips
 // true the moment finance has been hydrated from (or written to) the cloud.
 let financeSectionHydrated = false;
-// Per-transaction metadata that is (a) cached in device localStorage and (b)
-// edited on THIS device, and that mergeStates already combines NON-destructively
-// (unionByKey / unionById — union of keys, newer wins per key, nothing dropped).
-// These must ride that merge and must NOT be force-overwritten from the cloud at
-// boot: doing so reverted the user's just-made budget label / merchant rename /
-// payment-reason edits on the next reload whenever the cloud copy hadn't caught
-// up yet. The rest of the finance section (budget groups, people, accounts,
-// personal budgets, account-selection arrays, scalars) can boot empty and/or is
-// merged wholesale, so it still gets the cloud-restore guard below.
-const FINANCE_LOCAL_AUTHORITATIVE_KEYS = new Set([
-  "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeMerchantNames",
-  "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts",
-  "financeManualTxns", "financeRecurring",
-]);
-function guardBootEmptyFinance(merged, sharedState) {
-  if (financeSectionHydrated) return; // already have the real finance; local edits are authoritative
-  for (const key of STATE_SECTIONS.finance) {
-    if (FINANCE_LOCAL_AUTHORITATIVE_KEYS.has(key)) continue;
-    if (sharedState && key in sharedState) merged[key] = sharedState[key];
-  }
-}
+// guardBootEmptyFinance + FINANCE_LOCAL_AUTHORITATIVE_KEYS live in
+// ./finance-sync.js (extracted, unit-tested). The mutable session flag above
+// stays here; callers pass it + STATE_SECTIONS.finance into the pure guard.
 
 async function hydrateStateFromSharedStorage() {
   const providers = sharedStorageProviders();
@@ -5986,7 +5883,7 @@ async function hydrateStateFromSharedStorage() {
           console.info(`Local state (${localTs}) is same-or-newer than ${provider.label} (${remoteTs || "no timestamp"}); merging and pushing.`);
           await snapshotCloudStateBeforeOverwrite(sharedState);
           const merged = mergeStates(stateForMerge, sharedState);
-          guardBootEmptyFinance(merged, sharedState); // don't let boot-empty finance overwrite the cloud copy
+          guardBootEmptyFinance(merged, sharedState, STATE_SECTIONS.finance, financeSectionHydrated); // don't let boot-empty finance overwrite the cloud copy
           applyStoredState(merged);
           financeSectionHydrated = true;
           await provider.write();
@@ -5994,7 +5891,7 @@ async function hydrateStateFromSharedStorage() {
           console.info(`Remote state (${remoteTs}) is newer than local (${localTs || "no timestamp"}); merging and applying.`);
           await snapshotBeforeSharedStateReplacement(sharedState, provider.label);
           const merged = mergeStates(sharedState, stateForMerge);
-          guardBootEmptyFinance(merged, sharedState);
+          guardBootEmptyFinance(merged, sharedState, STATE_SECTIONS.finance, financeSectionHydrated);
           applyStoredState(merged);
           financeSectionHydrated = true;
           // Only write back if local actually contributed something new (tombstones, additions).
@@ -7862,27 +7759,9 @@ function financeLineItemOptionsHtml(selected) {
 // creation across devices/boots piled up hundreds of duplicates — each firing
 // its own bell alert. Fold duplicates into the most-recently-seen entry while
 // PRESERVING answers: once acknowledged/linked anywhere, it stays answered.
-function dedupeFinanceRecurring(list) {
-  if (!Array.isArray(list)) return [];
-  const byKey = new Map();
-  for (const raw of list) {
-    const key = raw?.merchantKey || "";
-    if (!key) continue; // drop key-less junk that can never match a charge
-    const prev = byKey.get(key);
-    if (!prev) { byKey.set(key, { ...raw }); continue; }
-    // Base = the entry with the most recent charge (its amount/day/name win).
-    const keepRaw = (raw.lastSeen || "") > (prev.lastSeen || "");
-    const base = keepRaw ? { ...raw } : prev;
-    const other = keepRaw ? prev : raw;
-    base.newAck = Boolean(prev.newAck || raw.newAck);
-    base.lineItemKey = base.lineItemKey || other.lineItemKey || "";
-    base.missAck = (prev.missAck || "") > (raw.missAck || "") ? (prev.missAck || "") : (raw.missAck || "");
-    const acks = [prev.ackAmount, raw.ackAmount].filter((v) => v !== null && v !== undefined);
-    base.ackAmount = acks.includes(base.lastAmount) ? base.lastAmount : (acks.length ? acks[0] : null);
-    byKey.set(key, base);
-  }
-  return [...byKey.values()];
-}
+// dedupeFinanceRecurring lives in ./finance-sync.js (extracted, unit-tested):
+// recurring charges collapse per merchantKey, not per id, so two devices'
+// independently-created entries for the same merchant never pile up as duplicates.
 
 function updateFinanceRecurring() {
   if (!financeLive?.accounts?.length) return;
