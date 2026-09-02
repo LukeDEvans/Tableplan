@@ -31,6 +31,7 @@ import { describeCapabilities } from './platform-capabilities.js';
 import { projectToday } from './today-projection.js';
 import { buildAgentContext } from './ai-context.js';
 import { indexFromState, search as searchIndexQuery } from './search-index.js';
+import { createOperationTracker } from './async-operation.js';
 import { deriveMediaTierCount } from './media-tier.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
@@ -529,6 +530,10 @@ let authSession = null;
 // Read-only developer diagnostics: an in-memory, reset-on-reload error ring buffer
 // (no persistence → no account-boundary surface) feeding the dev-only window.__liveDiag.
 const diagErrorLog = createErrorLog(50);
+// In-memory async-operation status tracker (matrix item 15). Long-running work can
+// register status here for the diagnostics surface. Reset on reload → no account
+// surface. Callers: liveOps.start(id,label)/update/succeed/fail as work progresses.
+const liveOps = createOperationTracker();
 // The account identity whose data is currently in memory (Supabase user id, or
 // email fallback). Set the moment an authenticated session is established for this
 // tab; used to tell a genuine account TRANSITION (this tab must reset its account
@@ -2735,6 +2740,7 @@ function diagnosticsSnapshot() {
     },
     persistence: { mirrorPresent, localKeys, idbStores: ["reading", "cadence", "live-music"] },
     capabilities: describeCapabilities(),
+    operations: liveOps.active(),
     errors: diagErrorLog.list(),
   });
 }

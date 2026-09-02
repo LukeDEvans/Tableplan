@@ -52,6 +52,9 @@ export function collectDiagnostics(sources = {}, now = new Date()) {
     capabilities: asArray(sources.capabilities).map((c) => ({
       id: c?.id ?? null, status: c?.status ?? null, available: asBool(c?.available),
     })),
+    operations: asArray(sources.operations).map((o) => ({
+      id: o?.id ?? null, label: o?.label ?? o?.id ?? null, status: o?.status ?? null, progress: o?.progress ?? null,
+    })),
     errors: asArray(sources.errors).slice(-20),
   };
 }
@@ -76,6 +79,7 @@ export function formatDiagnostics(snap) {
   push("persistence", "idb stores", snap.persistence.idbStores.join(", ") || "-");
   push("providers", "available", snap.providers.filter((p) => p.available).map((p) => p.id).join(", ") || "-");
   push("capabilities", "live", snap.capabilities.filter((c) => c.available).map((c) => c.id).join(", ") || "-");
+  push("operations", "active", snap.operations.map((o) => `${o.label}(${o.status})`).join(", ") || "-");
   push("errors", "recent", snap.errors.length);
   return lines;
 }

@@ -188,3 +188,20 @@ earlier slices — diagnostics, projections — surface a genuine consumer.)*
   in-memory only + rebuilt on state change/account transition (no persistence → no
   account-boundary surface); pure JS → home-server portable. NO external engine. Consumer:
   dev/AI hook `window.__liveSearch(q)`. 16 tests; catalog status → emerging.
+- **Slice 11 — Deferred-frameworks reconciliation — RESOLVED (items 14-18, 22).**
+  - **Jobs/operations (15) — INCORPORATED (minimal):** `async-operation.js` — a status
+    contract (`createOperationTracker`: start/update/succeed/fail/cancel/active, capped,
+    in-memory → no account surface). NOT a job engine; retryable/recurring jobs stay §8.
+    Wired into diagnostics (active ops observable). 6 tests. Catalog entry `operations`.
+  - **Rules engine (14) — REJECTED (generic):** no consumer; domains own invariants.
+    Trigger: ≥3 domains grow user-authored declarative rules.
+  - **Workflow orchestration (16) — REJECTED:** the import gateway owns its one bounded
+    flow. Trigger: a 2nd genuine resumable workflow.
+  - **Event bus (17) — REJECTED (generic):** central in-memory state + direct calls +
+    derived state suffice. Trigger: a consumer needs a signal not readable from state.
+  - **Plugin architecture (18) — REJECTED:** the provider/capability registry IS the
+    extension boundary. Trigger: real out-of-tree extension demand.
+  - **Offline mutation queue (22) — REJECTED:** union/tombstone/CAS suffices. Trigger:
+    per-op ordering / exactly-once / command-replay need.
+  All rejections recorded in ARCHITECTURE.md §25 standing negative-recommendations with
+  triggers — the default answer to "add a framework for X?".
