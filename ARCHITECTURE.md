@@ -291,7 +291,71 @@ advisor findings (search_path, FK indexes, RLS `(select …)`, policy consolidat
 shared canonical models for people/locations/events as domains next touch them;
 (e) wrap data access behind a storage adapter to preserve self-host optionality.
 
+## 23. North Star (target architecture)
+
+Live is a **local-first personal platform**: one in-memory `state` (truth), mirrored
+to local storage, replicated to a cloud backend, reconciled by merge (§11). Domains
+own their invariants and logic; they share infrastructure (auth, sync, providers,
+playback, import, provenance, projections), never each other's internals (§4). Data
+enters through **capability-typed providers** behind adapters (§7) and the **unified
+import gateway**, is stamped with **provenance** at ingress (§25 lists it as a
+platform capability), and is read out through **deterministic per-domain projections**
+(`projectToday(state, now)`) that feed both Home and future AI — the app determines
+truth, AI interprets it (§9). Large/binary data lives out-of-band (content store,
+buckets, IndexedDB), keyed and account-scoped. Cloud is a **replica**, not the center;
+the same state/merge/provider contracts must run against a future **home-server
+Postgres** behind a storage seam (§15, §21) without a rewrite. The measure of the
+architecture is not abstraction count but whether the *next* feature is obvious to
+place, safe to sync, cheap to observe, and easy for a human or an AI agent to reason
+about.
+
+## 24. Architecture scorecard (living; revisit ~every 6 months)
+
+Honest current grades and the target. Update dates in the completion matrix.
+
+| Quality attribute | Grade | Target | Note |
+|---|---|---|---|
+| Correctness | B+ | A | strong in extracted modules; inline domains thinner |
+| Data safety | A− | A | finance guard + account boundary + tombstones + snapshots |
+| Local-first | A− | A | truth-in-memory; large-section split done for media |
+| Offline resilience | B | A− | works post-first-load; bundle precache still open |
+| Recoverability | B+ | A | history snapshots + backups; per-domain restore uneven |
+| Observability | B → A− | A− | diagnostics slice (7) closes the client-side gap |
+| Performance | B+ | A− | section-granular writes; watch hot rows (§14 signals) |
+| Maintainability | B | A− | monolith shrinking via extraction; fitness tests guard drift |
+| Extensibility | A− | A | capability/provider registry is the boundary |
+| Testability | A− | A | ~1011 tests; pure-core discipline |
+| Security | A− | A | secrets server-side; RLS sole authZ (verify per §16) |
+| AI readiness | B → A− | A | provenance + projections + capabilities + diagnostics |
+| Infra portability | B | A− | storage seam designed; second backend gates the swap |
+
+## 25. Decision guardrails (apply before adding any capability)
+
+Maximalist architecture ≠ maximal abstraction. Prefer the **smallest architecture
+that fully satisfies the requirement**; a rejected framework is a design decision to
+record, not a gap. Every new registry/service/abstraction/framework/adapter answers,
+in the PR/commit or a doc:
+
+1. **Why does it exist** — the concrete problem, with current code that shows the need.
+2. **Evidence** — how many *real* consumers today (not hypothetical)? One consumer ⇒ don't generalize yet.
+3. **Complexity added vs removed** — net; and the maintenance/comprehension cost.
+4. **Do-nothing cost** — what breaks or gets harder in 6–12 months if we skip it.
+5. **Reversibility** — how hard to remove later (files touched, data migration, lock-in).
+6. **Account/lifecycle ownership** — every cache/persistence/job/event/tab mechanism declares its account scope and is covered by the account-boundary fitness test (§ fitness).
+7. **Local-first + portability** — no cloud-only dependency; no Netlify/Supabase topology in domain logic.
+8. **Revisit trigger** — the concrete future condition that would reopen the decision.
+
+**Standing negative recommendations (do NOT build; recorded with triggers in
+`ARCHITECTURE_COMPLETION_MATRIX.md`):** generic event bus, generic rules engine,
+generic workflow engine, generic job-processing framework, generic plugin system,
+offline mutation/oplog queue. Each is rejected because it has no second consumer and
+the in-memory-`state` + provider-registry + §8 job discipline already cover the need;
+each has a named revisit trigger. **Designed-but-gated:** storage adapter + migration
+runner (gated on a real second backend). This list is the default answer to "should
+we add a framework for X?" — extend a canonical mechanism instead.
+
 ---
 
-*Future development agents: follow the protocol in §18–19. When a project
-convention exists, use it rather than inventing a new pattern.*
+*Future development agents: follow the protocol in §18–19, apply the §25 guardrails
+before adding infrastructure, and keep `ARCHITECTURE_COMPLETION_MATRIX.md` current.
+When a project convention exists, use it rather than inventing a new pattern.*

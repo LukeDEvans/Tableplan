@@ -100,3 +100,10 @@ extraction (ongoing process, not a discrete item).
 the worklist's original order. Multi-tab is elevated early as an outstanding safety
 item. Deferred frameworks come late because their disposition depends on whether the
 earlier slices — diagnostics, projections — surface a genuine consumer.)*
+
+## D. Progress log (updated per slice)
+
+- **Slice 1 — Architectural framework — RESOLVED (items 1,2,3 IMPLEMENTED).** Added
+  ARCHITECTURE.md §23 North Star, §24 living scorecard (13 attributes, honest grades),
+  §25 decision guardrails (8-question template + standing negative-recommendation list
+  with revisit triggers). No new doc; folded into the constitution. Commit: see log.
