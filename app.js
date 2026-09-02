@@ -24,6 +24,7 @@ import { taskIsScheduled } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot } from './finance-actuals.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance } from './finance-sync.js';
+import { clearLocalAccountState } from './auth-account-reset.js';
 import { deriveMediaTierCount } from './media-tier.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
@@ -2672,7 +2673,15 @@ async function toggleAuth() {
     localStorage.setItem("live_signed_out_explicitly", new Date().toISOString());
     purgeLocalArticleContent(); // privacy default: drop local article bodies (backstop rehydrates on re-login)
     purgeLocalCadenceContent(); // same: drop local Cadence score bytes (rehydrate from cadence-blobs on re-login)
-    updateAuthUi();
+    // Account-transition safety: a subsequent sign-in — especially a DIFFERENT
+    // account via OTP in the same tab with no reload — must never read or merge
+    // this account's residue (in-memory state, the financeSectionHydrated flag,
+    // pending writes, or the account-scoped localStorage). Cancel any pending
+    // debounced write, clear the local account boundary, then reload so ALL
+    // in-memory state and sync flags reinitialize from a clean slate.
+    window.clearTimeout(sharedStorageSaveTimer);
+    clearLocalAccountState(localStorage);
+    window.location.reload();
     return;
   }
 
