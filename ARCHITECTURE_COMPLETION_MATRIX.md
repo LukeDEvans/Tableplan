@@ -205,3 +205,11 @@ earlier slices — diagnostics, projections — surface a genuine consumer.)*
     per-op ordering / exactly-once / command-replay need.
   All rejections recorded in ARCHITECTURE.md §25 standing negative-recommendations with
   triggers — the default answer to "add a framework for X?".
+- **Slice 12 — Infrastructure portability — RESOLVED (items 19,20 DESIGNED; 21 DESIGNED/
+  gated; 22 REJECTED in slice 11).** ARCHITECTURE.md §27 designs the storage seam (the ~8
+  Storage operations behind supabaseBaseUrl()/supabaseHeaders(), ~14 call sites), what's
+  already portable (state/merge/projections/search/pure modules) vs provider-specific,
+  the migration runner convention (migrations/YYYY-MM-DD-*.sql + schema_migrations, local
+  ordered runner), and the 3-phase path (cloud → home-server Postgres → remote dev).
+  DESIGN ONLY — implementation gated on a real 2nd backend / staging (applying migrations
+  = prod DB change, confirmation-gated §16, out of this local-only program). No code.

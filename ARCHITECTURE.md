@@ -413,6 +413,49 @@ platform capabilities (multiple consumers) versus domain-local.
   not the reorderable-list primitive and must not be merged into it. *Revisit trigger:
   a 3rd domain hand-rolls the same drop-target + auto-scroll + preview logic.*
 
+## 27. Infrastructure portability & the storage seam (design; gated)
+
+Target path: **cloud today → optional home-server (Postgres + local services) →
+remote AI-assisted dev**. The architecture must let that happen incrementally, not
+as a rewrite. **Do NOT build the adapter now** — it is gated on a real second
+backend (PGlite / home Postgres). This section is the concrete design so the future
+swap is a drop-in.
+
+**What is already portable (no change needed):** the state model, `mergeStates`
+(union/tombstone/CAS), the section split, provenance, projections, search, and every
+pure module run identically against any backend — they touch no vendor API.
+
+**The storage seam** — all Supabase-specific access is funneled through a small set
+of operations behind `supabaseBaseUrl()` / `supabaseHeaders()` (~14 call sites). The
+future `Storage` interface is exactly these ~8 operations:
+
+1. `loadSections(stateId)` → all section rows for a scope.
+2. `writeSectionWithMerge(stateId, section, payload, seenStamp)` → CAS write (0-rows ⇒ conflict-merge-retry).
+3. `probe/insertSection(rowId, payload)` → first-write create.
+4. `loadLegacyState(stateId)` → migration fallback (pre-section blob).
+5. `readSnapshots()` / `writeSnapshot()` / `pruneSnapshots()` → history.
+6. `loadRecipeRows()` / `writeRecipeRows()` → the relational recipe path.
+7. auth/session token accessor (what stamps RLS identity).
+8. binary/object storage (buckets → content store) for large/blob data.
+
+Provider-specific: the PostgREST URL shape, headers, RLS-as-authZ, bucket API.
+Domain-neutral: everything above the seam. A home-server backend implements the same
+8 operations against local Postgres (RLS or app-level scoping) + local object storage;
+the client swaps one adapter, no domain code changes.
+
+**Migrations** (design; infra-gated): SQL lives in `migrations/YYYY-MM-DD-*.sql`,
+applied in filename order, recorded in a `schema_migrations` table, by a small local
+runner (idempotent, transactional per file). Applying a migration is a **production
+DB change — confirmation-gated (§16), out of local-only programs.** The runner is
+designed, not built, until there is a staging env or a second backend.
+
+**Phases:** (1) cloud (today). (2) home server — implement the `Storage` adapter +
+run the same schema on local Postgres; Jellyfin/Kokoro/etc. already sit behind
+provider/capability boundaries so they relocate without domain changes. (3) remote
+dev — the repo + adapters make a remote agent's changes reviewable without topology
+assumptions. **Non-negotiable:** no Netlify/Supabase specifics leak into domain logic
+(fitness + §7 keep vendor calls behind functions/adapters).
+
 ---
 
 *Future development agents: follow the protocol in §18–19, apply the §25 guardrails
