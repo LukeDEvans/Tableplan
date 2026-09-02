@@ -46,8 +46,8 @@ export const PLATFORM_CAPABILITIES = [
     consumers: ["developers", "future: AI"], status: "emerging",
     description: "Read-only snapshot of sync/hydration/account/providers/caches/errors via a dev console hook." },
   { id: "search",          label: "Local search index", module: "search-index.js",
-    consumers: ["cross-domain search", "future: AI retrieval"], status: "planned",
-    description: "Projection-backed, rebuildable, account-scoped local index — no external engine (slice 10)." },
+    consumers: ["cross-domain search", "future: AI retrieval"], status: "emerging",
+    description: "Projection-backed, rebuildable, invalidatable, account-scoped in-memory index — no external engine." },
 ];
 
 const byId = new Map(PLATFORM_CAPABILITIES.map((c) => [c.id, c]));

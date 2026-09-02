@@ -30,6 +30,7 @@ import { collectDiagnostics, formatDiagnostics, createErrorLog } from './diagnos
 import { describeCapabilities } from './platform-capabilities.js';
 import { projectToday } from './today-projection.js';
 import { buildAgentContext } from './ai-context.js';
+import { indexFromState, search as searchIndexQuery } from './search-index.js';
 import { deriveMediaTierCount } from './media-tier.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
@@ -2757,6 +2758,7 @@ function setupDiagnostics() {
   // incremental (it can consume projectToday instead of re-deriving per-domain).
   window.__liveToday = (now) => projectToday(state, now instanceof Date ? now : new Date());
   window.__liveContext = (now) => buildAgentContext(state, now instanceof Date ? now : new Date());
+  window.__liveSearch = (q, opts) => searchIndexQuery(indexFromState(state), q, opts || {});
 }
 
 function renderDiagnosticsPanel(snap) {

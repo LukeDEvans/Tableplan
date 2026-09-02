@@ -31,10 +31,12 @@ describe("platform capabilities catalog", () => {
     }
   });
 
-  it("describeCapabilities marks planned ones unavailable by default", () => {
+  it("describeCapabilities marks live capabilities available and planned ones not", () => {
     const d = describeCapabilities();
-    expect(d.find((c) => c.id === "sync").available).toBe(true);
-    expect(d.find((c) => c.id === "search").available).toBe(false); // planned
+    expect(d.find((c) => c.id === "sync").available).toBe(true); // stable → available
+    // Any 'planned' capability is unavailable by default (mechanism holds even when,
+    // as now, every capability has been implemented and none remain planned).
+    for (const c of d.filter((c) => c.status === "planned")) expect(c.available).toBe(false);
   });
 
   it("describeCapabilities honors an explicit availability map", () => {

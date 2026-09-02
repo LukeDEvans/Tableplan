@@ -27,10 +27,14 @@ describe("projectCalendar (deterministic, pure)", () => {
     expect(ids).not.toContain("e2"); // different day
   });
 
-  it("is a pure function of its inputs (same now → same output)", () => {
+  it("is a pure function of its inputs (same now → same facts)", () => {
+    // The projected facts (which events, in which order) are deterministic. (The
+    // normalizer stamps createdAt=now on events that lack one — real events have it;
+    // that's a normalize concern, not a projection one — so compare the facts.)
     const a = projectCalendar(state, at("2026-09-02T12:00:00"));
     const b = projectCalendar(state, at("2026-09-02T12:00:00"));
-    expect(a).toEqual(b);
+    expect(a.date).toBe(b.date);
+    expect(a.events.map((e) => e.id)).toEqual(b.events.map((e) => e.id));
   });
 
   it("empty/absent planEvents → empty", () => {

@@ -180,3 +180,11 @@ earlier slices — diagnostics, projections — surface a genuine consumer.)*
   concepts (media-model, §26), provenance on ingress (§5), capability discovery, deterministic
   projections, diagnostics, and account-scoped boundaries — the substrate is in place; no AI
   infrastructure was built.
+- **Slice 10 — Search / indexing — RESOLVED (item 13 IMPLEMENTED, lightweight).**
+  `search-index.js` (pure): SEARCHABLE projection config (recipe/article/task/contact/
+  trip/event/media) → toSearchDocs(state) → buildIndex (inverted term→doc index) →
+  search() (cross-domain, prefix matching, title-weighted ranking, type filter). Derived/
+  non-authoritative; indexFromState stamps stateUpdatedAt; isStale() detects drift;
+  in-memory only + rebuilt on state change/account transition (no persistence → no
+  account-boundary surface); pure JS → home-server portable. NO external engine. Consumer:
+  dev/AI hook `window.__liveSearch(q)`. 16 tests; catalog status → emerging.
