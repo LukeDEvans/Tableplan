@@ -152,3 +152,12 @@ earlier slices — diagnostics, projections — surface a genuine consumer.)*
   Drop-target consolidation recorded as a separate opportunistic follow-up (trigger: a 3rd
   domain hand-rolls drop-target+auto-scroll). No UI churn — avoided duplicating existing
   architecture and avoided forcing distinct interactions together.
+- **Slice 7 — Developer diagnostics — RESOLVED (item 10 IMPLEMENTED).** `diagnostics.js`
+  (pure): collectDiagnostics(sources) normalizes injected runtime values → snapshot
+  (account/sync/persistence/providers/capabilities/errors, defensively guarded);
+  formatDiagnostics → printable lines; createErrorLog ring buffer (in-memory, reset on
+  reload → no account-boundary surface). app.js wires a dev-only `window.__liveDiag()`
+  (console.table) / `__liveDiag('panel')` (dismissible overlay) gathering live values
+  (stateAccountId, sync readiness, dirty sections, mirror/IDB, capabilities, recent
+  errors from window error listeners). Not linked from user UI. 15 tests; diagnostics.js
+  in pure-core fitness; catalog status → emerging.

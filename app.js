@@ -26,6 +26,8 @@ import { financeMonthsToSnapshot } from './finance-actuals.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance } from './finance-sync.js';
 import { clearLocalAccountState, accountTransitionKind } from './auth-account-reset.js';
 import { makeProvenance, ORIGIN as PROV_ORIGIN } from './provenance.js';
+import { collectDiagnostics, formatDiagnostics, createErrorLog } from './diagnostics.js';
+import { describeCapabilities } from './platform-capabilities.js';
 import { deriveMediaTierCount } from './media-tier.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
@@ -521,6 +523,9 @@ const MANAGED_PAGES = [
 let lastWrittenSections = null;
 let supabaseClient = null;
 let authSession = null;
+// Read-only developer diagnostics: an in-memory, reset-on-reload error ring buffer
+// (no persistence → no account-boundary surface) feeding the dev-only window.__liveDiag.
+const diagErrorLog = createErrorLog(50);
 // The account identity whose data is currently in memory (Supabase user id, or
 // email fallback). Set the moment an authenticated session is established for this
 // tab; used to tell a genuine account TRANSITION (this tab must reset its account
@@ -2433,6 +2438,7 @@ async function initializeApp() {
   registerServiceWorker();
   window.addEventListener("online", handleCameOnline);
   window.addEventListener("offline", () => updateSyncStatus("offline"));
+  setupDiagnostics(); // dev-only window.__liveDiag + error ring buffer
   handleInviteUrlParameter();
   // Localhost dev mode persists across reloads via the live_local_dev flag; when
   // set, skip Supabase entirely and boot straight against the local backend.
@@ -2698,6 +2704,64 @@ function saveProfile() {
   }
 
   dialog.close();
+}
+
+// Gather the live runtime values into a diagnostics snapshot (pure normalization
+// happens in diagnostics.js). Read-only; every getter is defensively guarded.
+function diagnosticsSnapshot() {
+  const dirty = [];
+  try {
+    for (const [section, keys] of Object.entries(STATE_SECTIONS)) {
+      const cur = JSON.stringify(extractSectionData(keys));
+      if (!lastWrittenSections || lastWrittenSections[section] !== cur) dirty.push(section);
+    }
+  } catch { /* ignore */ }
+  let localKeys = [];
+  try { localKeys = Object.keys(localStorage); } catch { /* private mode */ }
+  const mirrorPresent = (() => { try { return !!localStorage.getItem(STORAGE_KEY); } catch { return false; } })();
+  return collectDiagnostics({
+    account: { id: stateAccountId, hydrated: sharedStorageReady, financeHydrated: financeSectionHydrated, localDev: localDevMode },
+    sync: {
+      ready: sharedStorageReady,
+      provider: activeSharedStorageProvider?.label || null,
+      online: typeof navigator !== "undefined" ? navigator.onLine : true,
+      pendingWrite: !!sharedStorageSaveTimer,
+      dirtySections: dirty,
+      stateUpdatedAt: state.stateUpdatedAt,
+      schemaVersion: STATE_SCHEMA_VERSION,
+    },
+    persistence: { mirrorPresent, localKeys, idbStores: ["reading", "cadence", "live-music"] },
+    capabilities: describeCapabilities(),
+    errors: diagErrorLog.list(),
+  });
+}
+
+// Wire the dev-only diagnostics surface. Not linked from any user-facing UI:
+// `window.__liveDiag()` returns + console.tables the snapshot; `window.__liveDiag('panel')`
+// renders a dismissible overlay. Also feeds the in-memory error ring buffer.
+function setupDiagnostics() {
+  try {
+    window.addEventListener("error", (e) => diagErrorLog.record(e.error || e.message));
+    window.addEventListener("unhandledrejection", (e) => diagErrorLog.record(e.reason));
+  } catch { /* non-browser */ }
+  window.__liveDiag = (mode) => {
+    const snap = diagnosticsSnapshot();
+    if (mode === "panel") { renderDiagnosticsPanel(snap); return snap; }
+    try { console.table(formatDiagnostics(snap)); } catch { /* ignore */ }
+    return snap;
+  };
+}
+
+function renderDiagnosticsPanel(snap) {
+  document.getElementById("liveDiagPanel")?.remove();
+  const panel = document.createElement("div");
+  panel.id = "liveDiagPanel";
+  panel.setAttribute("style", "position:fixed;right:8px;bottom:8px;z-index:99999;max-width:min(92vw,420px);max-height:70vh;overflow:auto;background:var(--window-bg,#fff);border:1px solid #888;border-radius:8px;padding:10px 12px;font:12px/1.5 ui-monospace,monospace;box-shadow:0 6px 24px rgba(0,0,0,.25)");
+  const rows = formatDiagnostics(snap).map((l) => `<div><b>${escapeHtml(l.group)}</b> · ${escapeHtml(l.label)}: ${escapeHtml(l.value)}</div>`).join("");
+  const errs = snap.errors.slice(-5).map((e) => `<div style="color:#c00">${escapeHtml(e.at.slice(11, 19))} ${escapeHtml(e.message)}</div>`).join("");
+  panel.innerHTML = `<div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:6px"><b>Live diagnostics</b><button id="liveDiagClose" style="cursor:pointer;border:0;background:none;font:inherit">✕</button></div>${rows}${errs ? `<div style="margin-top:6px"><b>errors</b></div>${errs}` : ""}`;
+  document.body.appendChild(panel);
+  panel.querySelector("#liveDiagClose").addEventListener("click", () => panel.remove());
 }
 
 async function toggleAuth() {
