@@ -107,3 +107,9 @@ earlier slices — diagnostics, projections — surface a genuine consumer.)*
   ARCHITECTURE.md §23 North Star, §24 living scorecard (13 attributes, honest grades),
   §25 decision guardrails (8-question template + standing negative-recommendation list
   with revisit triggers). No new doc; folded into the constitution. Commit: see log.
+- **Slice 2 — Fitness tests — RESOLVED (item 4 IMPLEMENTED).** `test/architecture-fitness.test.js`
+  (97 assertions): pure-core DOM-free, dependency direction (no domain→shell import;
+  primitives import nothing), no client-shipped secrets, critical synced lists
+  registered in mergeStates, finance excluded from the localStorage mirror, account-scoped
+  storage guard present. Each rule adversarially confirmed to catch violations and ignore
+  comment mentions. Added `test/architecture-*.test.js` to the vitest include.
