@@ -166,6 +166,17 @@ per-notification unbounded reads.
   user confirms. Context is passed as a `CURRENT CONTEXT` snapshot, not DB access.
 - Adding a tool = adding a typed entry + a client applier; never widen to raw writes.
 
+**AI-readiness substrate (no framework).** The app is made *legible* to a future
+agent by the application's own structure, not by AI infrastructure: canonical
+concepts (`media-model.js`, §26), provenance on ingress data (`provenance.js`, §5),
+capability discovery (`platform-capabilities.js`), deterministic projections
+(`today-projection.js` `projectToday`), and diagnostics (`diagnostics.js`).
+`ai-context.js` `buildAgentContext(state, now)` composes these into ONE deterministic
+context (today's facts + capabilities + the `AGENT_CONTRACT` ground rules as data) —
+the shared surface Home and the AI functions should both consume so AI never
+re-derives basic facts. There is deliberately no agent loop or model call in the
+client substrate; agents act through the typed tools above.
+
 ## 10. Authentication / security rules
 
 - Supabase Auth (JWT). Personal state RLS-scoped to the owner's email; groups by

@@ -29,6 +29,7 @@ import { makeProvenance, ORIGIN as PROV_ORIGIN } from './provenance.js';
 import { collectDiagnostics, formatDiagnostics, createErrorLog } from './diagnostics.js';
 import { describeCapabilities } from './platform-capabilities.js';
 import { projectToday } from './today-projection.js';
+import { buildAgentContext } from './ai-context.js';
 import { deriveMediaTierCount } from './media-tier.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
@@ -2755,6 +2756,7 @@ function setupDiagnostics() {
   // dev/AI-inspectable hook; pure (state + now in, facts out). Home adoption is
   // incremental (it can consume projectToday instead of re-deriving per-domain).
   window.__liveToday = (now) => projectToday(state, now instanceof Date ? now : new Date());
+  window.__liveContext = (now) => buildAgentContext(state, now instanceof Date ? now : new Date());
 }
 
 function renderDiagnosticsPanel(snap) {

@@ -169,3 +169,14 @@ earlier slices — diagnostics, projections — surface a genuine consumer.)*
   dev/AI hook `window.__liveToday()`. 14 tests. Item 23 (audio position persistence)
   DESIGNED: mediaContinue is its read surface; position flows through mediaHistory when
   added. Home adoption is incremental (documented). Catalog status → emerging.
+- **Slice 9 — AI-readiness substrate — RESOLVED (item 12 INCORPORATED, no framework).**
+  `ai-context.js` `buildAgentContext(state, now, extra)`: one pure deterministic surface
+  composing projectToday (facts) + describeCapabilities (what the app can do) + a frozen
+  `AGENT_CONTRACT` (ground rules as data: act-through-typed-tools, confirm-outward,
+  account-scoped, facts-are-deterministic). Reuses existing substrate — no model call, no
+  agent loop. Consumer: dev/AI hook `window.__liveContext()`; the shared context Home +
+  AI functions should both consume (audit §14 gap). 7 tests. ARCHITECTURE.md §9 AI-readiness
+  note. **AI-readiness assessment:** the app is legible to a future agent via canonical
+  concepts (media-model, §26), provenance on ingress (§5), capability discovery, deterministic
+  projections, diagnostics, and account-scoped boundaries — the substrate is in place; no AI
+  infrastructure was built.
