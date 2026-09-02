@@ -129,6 +129,15 @@ describe("mergeFinanceBudgetGroups — the core data-loss guard", () => {
     expect(merged.map((g) => g.id)).toEqual(["g1"]);
   });
 
+  it("record-level tombstone drops a group present ONLY on the newer side too", () => {
+    // The filter is unconditional on id, regardless of which side supplied the
+    // record — a delete propagates even if the other device never had the group.
+    const older = [group("g1")];
+    const newer = [group("g1"), group("g2")];
+    const merged = mergeFinanceBudgetGroups(newer, older, { financeBudgetGroups: ["g2"] });
+    expect(merged.map((g) => g.id)).toEqual(["g1"]);
+  });
+
   it("tombstones cascade to categories and line items (parent chain present)", () => {
     const cloud = [group("g1", [cat("c1", [item("i1"), item("i2")]), cat("c2")])];
     // newer carries g1 → c1 (empty items) so the item-level tombstone applies.
@@ -232,6 +241,25 @@ describe("dedupeFinanceRecurring", () => {
       { merchantKey: "x", lastSeen: "2026-01-01", lineItemKey: "budget:rent" },
     ]);
     expect(out[0].lineItemKey).toBe("budget:rent");
+  });
+
+  it("on equal lastSeen the first-seen entry wins the base (strict >, not >=)", () => {
+    // mergeStates concatenates older-first, so on a tie the older device's
+    // amount/day/name win. Pinned because flipping > to >= would silently change
+    // which device wins a tie.
+    const out = dedupeFinanceRecurring([
+      { merchantKey: "x", lastSeen: "2026-01-01", lastAmount: 1 }, // first-seen
+      { merchantKey: "x", lastSeen: "2026-01-01", lastAmount: 2 },
+    ]);
+    expect(out[0].lastAmount).toBe(1);
+  });
+
+  it("ackAmount is null when neither side has one", () => {
+    const out = dedupeFinanceRecurring([
+      { merchantKey: "x", lastSeen: "2026-02-01", lastAmount: 5, ackAmount: null },
+      { merchantKey: "x", lastSeen: "2026-01-01", lastAmount: 5 }, // ackAmount undefined
+    ]);
+    expect(out[0].ackAmount).toBe(null);
   });
 
   it("drops key-less junk and handles non-arrays", () => {
