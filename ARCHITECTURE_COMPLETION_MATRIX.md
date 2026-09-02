@@ -141,3 +141,14 @@ earlier slices — diagnostics, projections — surface a genuine consumer.)*
   plugin system. 7 tests. Domain-model convergence DESIGNED in ARCHITECTURE.md §26:
   canonical concepts (media/person/event/location/provider/provenance) + "converge on
   contact, not big-bang" rule + explicit non-goals (no universal entity model).
+- **Slice 6 — Reorderable-list primitive — RESOLVED (item 9 IMPLEMENTED; verified, not
+  re-built).** The primitive already exists from the prior sortable-interaction work:
+  `sortable-core.js` (pure: activation/auto-scroll/insertion/reorder-delta, tested) +
+  `makeSortable()` (sortable.js), adopted at ~17 sites. Audited the ~37 residual raw-drag
+  handlers: they are the DROP-ONTO-TARGET interaction (meal slot, calendar day, trash
+  zone, cross-container) — a *distinct* pattern that must NOT be forced into a list-reorder
+  primitive (per guidance). Added `reorder` to the platform-capabilities catalog; documented
+  the reorder-vs-drop-target boundary + "new list UIs use makeSortable" rule in ARCH §26.
+  Drop-target consolidation recorded as a separate opportunistic follow-up (trigger: a 3rd
+  domain hand-rolls drop-target+auto-scroll). No UI churn — avoided duplicating existing
+  architecture and avoided forcing distinct interactions together.

@@ -390,6 +390,18 @@ between* domains (a finance person that IS a contact), not a single table. The
 `platform-capabilities.js` catalog records which cross-cutting mechanisms are
 platform capabilities (multiple consumers) versus domain-local.
 
+**Interaction primitives — two distinct patterns, do not conflate:**
+- **Reorder within a list** → `makeSortable()` (`sortable.js` + pure `sortable-core.js`:
+  activation, auto-scroll, insertion index, reorder delta). One primitive, ~17
+  consumers. **New list-reorder UIs must use it, not raw `dragstart/over/drop`.**
+- **Drop onto a target** (a calendar day, a meal slot, a trash zone, a cross-container
+  move) → native HTML5 drag-drop. This is a *different* interaction (a payload lands on
+  a typed target, not a sibling reorder) and is correctly NOT part of `makeSortable`.
+  The residual raw-drag handlers in `app.js` are this pattern. A shared *droppable-
+  target* helper is an opportunistic future consolidation, tracked separately — it is
+  not the reorderable-list primitive and must not be merged into it. *Revisit trigger:
+  a 3rd domain hand-rolls the same drop-target + auto-scroll + preview logic.*
+
 ---
 
 *Future development agents: follow the protocol in §18–19, apply the §25 guardrails
