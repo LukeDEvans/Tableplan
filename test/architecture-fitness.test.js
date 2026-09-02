@@ -21,7 +21,7 @@ const PURE_CORE = [
   "calendar/recurrence.js", "calendar/model.js", "calendar/projection.js", "calendar/reconcile.js",
   "calendar/normalize.js", "calendar/sources.js", "calendar/tasks-project.js",
   "grocery-catalog.js", "grocery-sources.js", "nutrition-domain.js", "receipt-domain.js",
-  "daily-dozen.js", "food-health.js", "meal-plan-servings.js", "music-canonical.js", "provenance.js", "platform-capabilities.js", "diagnostics.js",
+  "daily-dozen.js", "food-health.js", "meal-plan-servings.js", "music-canonical.js", "provenance.js", "platform-capabilities.js", "diagnostics.js", "today-projection.js",
 ];
 
 // Client-served source (secrets must never reach here — ARCH §10). Excludes netlify/

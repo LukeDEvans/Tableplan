@@ -161,3 +161,11 @@ earlier slices — diagnostics, projections — surface a genuine consumer.)*
   (stateAccountId, sync readiness, dirty sections, mirror/IDB, capabilities, recent
   errors from window error listeners). Not linked from user UI. 15 tests; diagnostics.js
   in pure-core fitness; catalog status → emerging.
+- **Slice 8 — Today projections — RESOLVED (item 11 IMPLEMENTED; item 23 DESIGNED).**
+  `today-projection.js` (pure): projectCalendar (reuses pure calendar modules incl.
+  recurrence), projectMediaContinue (media-history), projectWeather; projectToday(state,
+  now, extra) is a THIN composition — now always supplied (deterministic, no clock reads),
+  `extra` seam injects still-inline domains (tasks/meals) without shell coupling. Consumer:
+  dev/AI hook `window.__liveToday()`. 14 tests. Item 23 (audio position persistence)
+  DESIGNED: mediaContinue is its read surface; position flows through mediaHistory when
+  added. Home adoption is incremental (documented). Catalog status → emerging.
