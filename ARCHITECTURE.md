@@ -98,6 +98,13 @@ reach into another domain's internals. Cross-domain needs go through a shared mo
 | History/backup | `tableplan_state_history` | periodic snapshots |
 | Media (content/provider/target/user-state) | canonical envelope in `media-model.js` | wraps native records, no migration |
 
+**Provenance:** records that ENTER Live from a source (imported / provider-fetched /
+generated / derived) carry a `provenance` stamp (`provenance.js`: origin, source,
+sourceUrl, importedAt, observedAt, refreshable, userModified) so their lineage and
+lifecycle are explainable to a person and legible to future AI — attached only at
+ingress, never blanket metadata. `describeProvenance` answers where-from / current? /
+safe-to-regenerate.
+
 **Known ownership gaps (see §21):** `people`, `locations`, `events`, `tasks`,
 `subscriptions`, `documents` do not yet have a single canonical representation —
 several domains model them ad hoc inside the state blob.

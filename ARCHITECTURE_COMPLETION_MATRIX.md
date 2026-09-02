@@ -125,3 +125,11 @@ earlier slices — diagnostics, projections — surface a genuine consumer.)*
   retry timer too. Relies on Supabase's default cross-tab auth broadcast (no parallel
   machinery). 8 new lifecycle tests; 1116 green; build clean. Manual multi-tab steps in
   QA_ACCOUNT_SWITCH.md; constitution §10 note added.
+- **Slice 4 — Provenance / lifecycle — RESOLVED (item 6 IMPLEMENTED).** `provenance.js`:
+  pure contract (ORIGIN manual/imported/provider/generated/derived; makeProvenance with
+  origin-defaulted `refreshable`; markUserModified/markObserved immutable updates;
+  describeProvenance answers where-from / current? / safelyRegenerable). Wired at genuine
+  article ingress points (import-extracted, URL-quick-save, email→Media) — not blanket
+  metadata; rides sync as a normal record field. 24 tests; added to pure-core fitness +
+  vitest include. Constitution §5 note. Substrate for diagnostics (7), AI-readiness (9),
+  search (10).

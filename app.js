@@ -25,6 +25,7 @@ import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './financ
 import { financeMonthsToSnapshot } from './finance-actuals.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance } from './finance-sync.js';
 import { clearLocalAccountState, accountTransitionKind } from './auth-account-reset.js';
+import { makeProvenance, ORIGIN as PROV_ORIGIN } from './provenance.js';
 import { deriveMediaTierCount } from './media-tier.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
@@ -13171,7 +13172,9 @@ async function moveMailToMedia(thread, lastMsg) {
         : lastMsg.date ? new Date(lastMsg.date) : null;
       return (arrived && !isNaN(arrived) ? arrived : new Date()).toISOString();
     })(),
-    text: sanitized
+    text: sanitized,
+    // Provenance: captured from a Gmail message — a one-time capture, not refreshable.
+    provenance: makeProvenance({ origin: PROV_ORIGIN.IMPORTED, source: "gmail", refreshable: false }),
   });
   persist();
   // Trash the email and drop back to the list (optimistic — the row goes now).
@@ -47072,7 +47075,9 @@ function saveArticleUrl(url) {
   }
   const pub = detectArticlePublication(url);
   const id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `art_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  state.savedArticles.push({ id, url, canonicalUrl: canonicalizeImportUrl(url), title: url, publication: pub, savedAt: new Date().toISOString(), author: null, date: null, text: null });
+  const savedAt = new Date().toISOString();
+  state.savedArticles.push({ id, url, canonicalUrl: canonicalizeImportUrl(url), title: url, publication: pub, savedAt, author: null, date: null, text: null,
+    provenance: makeProvenance({ origin: PROV_ORIGIN.IMPORTED, source: "import", sourceUrl: url, importedAt: savedAt }) });
   persist();
   if (activeAppArea === "media") switchMediaTab(pub);
 }
@@ -47100,15 +47105,18 @@ function saveImportedArticle(data, sourceUrl) {
   }
   const pub = data.publication || detectArticlePublication(url);
   const id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `art_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const savedAt = new Date().toISOString();
   state.savedArticles.push({
     id, url,
     canonicalUrl: canonicalizeImportUrl(url),
     title: data.title || url,
     publication: pub,
-    savedAt: new Date().toISOString(),
+    savedAt,
     author: data.author || null,
     date: data.date || null,
     text: data.text || null,
+    // Provenance: extracted from an external URL via the import path — refreshable.
+    provenance: makeProvenance({ origin: PROV_ORIGIN.IMPORTED, source: "import", sourceUrl: url, importedAt: savedAt }),
   });
   persist();
   showMailToast(`Saved “${data.title || "article"}”.`);
