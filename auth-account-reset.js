@@ -22,14 +22,47 @@ export const ACCOUNT_SCOPED_STORAGE_KEYS = [
   "live_plan_ics_cache",     // subscribed ICS/Amion events cache
   "live-chat-history",       // CHAT_STORAGE_KEY — AI chat history
   "live_watch_search_scope", // WATCH_SCOPE_KEY — watch search scope
+  "live-explore-last-trip",  // last-opened trip id (account-owned)
+  "live-travel-mode-trip",   // active Travel-Mode trip id (account-owned)
 ];
 
-// Remove every account-scoped key. Best-effort and defensive: a missing key is a
-// no-op, and a throwing store (private mode, quota, a stubbed environment) never
-// aborts the rest — clearing as much as possible is always safer than bailing.
+// Some account-scoped keys are DYNAMIC (a stable prefix + a variable suffix), so
+// they can't be listed literally. Any key starting with one of these prefixes is
+// account data and gets swept too.
+export const ACCOUNT_SCOPED_STORAGE_KEY_PREFIXES = [
+  "briefing_ai_", // per-day home AI briefing, derived from the account's data
+];
+
+// Enumerate a Web Storage's keys via the standard length/key(i) API (used only
+// for the prefix sweep). Defensive: returns [] if the store can't be enumerated.
+function storageKeys(storage) {
+  const out = [];
+  try {
+    if (typeof storage.length === "number" && typeof storage.key === "function") {
+      for (let i = 0; i < storage.length; i++) {
+        const k = storage.key(i);
+        if (k != null) out.push(k);
+      }
+    }
+  } catch { /* not enumerable — skip the prefix sweep */ }
+  return out;
+}
+
+// Remove every account-scoped key (exact + prefix-matched). Best-effort and
+// defensive: a missing key is a no-op, and a throwing store (private mode, quota,
+// a stubbed environment) never aborts the rest — clearing as much as possible is
+// always safer than bailing.
 export function clearLocalAccountState(storage) {
   if (!storage || typeof storage.removeItem !== "function") return;
   for (const key of ACCOUNT_SCOPED_STORAGE_KEYS) {
     try { storage.removeItem(key); } catch { /* private mode / quota — best effort */ }
+  }
+  if (ACCOUNT_SCOPED_STORAGE_KEY_PREFIXES.length) {
+    // Snapshot keys first, then remove — never mutate mid-enumeration.
+    for (const key of storageKeys(storage)) {
+      if (ACCOUNT_SCOPED_STORAGE_KEY_PREFIXES.some((p) => key.startsWith(p))) {
+        try { storage.removeItem(key); } catch { /* best effort */ }
+      }
+    }
   }
 }

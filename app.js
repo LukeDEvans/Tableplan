@@ -2664,24 +2664,29 @@ async function toggleAuth() {
   }
 
   if (authSession?.access_token) {
-    await supabaseClient.auth.signOut();
     authSession = null;
     sharedStorageReady = false;
     activeSharedStorageProvider = null;
     // Mark that this sign-out was user-initiated. On next sign-in, changes made
     // while signed out won't be merged into the cloud account.
     localStorage.setItem("live_signed_out_explicitly", new Date().toISOString());
-    purgeLocalArticleContent(); // privacy default: drop local article bodies (backstop rehydrates on re-login)
-    purgeLocalCadenceContent(); // same: drop local Cadence score bytes (rehydrate from cadence-blobs on re-login)
     // Account-transition safety: a subsequent sign-in — especially a DIFFERENT
     // account via OTP in the same tab with no reload — must never read or merge
     // this account's residue (in-memory state, the financeSectionHydrated flag,
-    // pending writes, or the account-scoped localStorage). Cancel any pending
-    // debounced write, clear the local account boundary, then reload so ALL
-    // in-memory state and sync flags reinitialize from a clean slate.
+    // pending writes, or the account-scoped localStorage / IndexedDB). Tear the
+    // local boundary down FIRST — before the awaited network revoke — so a
+    // signOut() failure can't leave it live, then reload in a finally so ALL
+    // in-memory state and sync flags reinitialize regardless of the revoke result.
     window.clearTimeout(sharedStorageSaveTimer);
     clearLocalAccountState(localStorage);
-    window.location.reload();
+    purgeLocalArticleContent(); // privacy default: drop local article bodies (backstop rehydrates on re-login)
+    purgeLocalCadenceContent(); // same: drop local Cadence score bytes (rehydrate from cadence-blobs on re-login)
+    purgeLocalMusicContent();   // same: drop local uploaded-music blobs (live-music IDB)
+    try {
+      await supabaseClient.auth.signOut();
+    } finally {
+      window.location.reload();
+    }
     return;
   }
 
@@ -46906,6 +46911,19 @@ async function purgeLocalArticleContent() {
     _articleContentPromise = null;
     if (ac?.close) await ac.close(); // release the connection so deleteDatabase isn't blocked
     if (typeof indexedDB !== "undefined" && indexedDB.deleteDatabase) indexedDB.deleteDatabase("reading");
+  } catch { /* best-effort */ }
+}
+
+// Privacy + account-transition safety: drop this device's locally-uploaded music
+// blobs on sign-out (same rationale as the cadence/article purges). state.musicLibrary
+// (favorites/playlists) is account state cleared with the rest; these are the raw
+// audio bytes in the `live-music` IndexedDB. The store exposes no close(), but the
+// immediate reload on sign-out drops the connection so the delete can complete.
+async function purgeLocalMusicContent() {
+  try {
+    musicLib = null;
+    musicLibrary = [];
+    if (typeof indexedDB !== "undefined" && indexedDB.deleteDatabase) indexedDB.deleteDatabase("live-music");
   } catch { /* best-effort */ }
 }
 
