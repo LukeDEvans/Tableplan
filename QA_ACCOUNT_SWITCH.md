@@ -154,3 +154,33 @@ still occur (the reload only affects the tab that signed out). That is a separat
 still-open scoped follow-up, out of scope for the fix under test here. To confirm
 it is *unchanged* (not worsened): the single-tab procedure above must still PASS;
 a separate two-tab repro is its own task.
+
+---
+
+## Multi-tab verification (Slice 3 — cross-tab isolation)
+
+The single-tab procedure above must still PASS. Multi-tab adds: a stale tab left on
+account A must reset when the account changes elsewhere.
+
+- [ ] **Cross-tab sign-out.** Open two tabs signed in as A. In Tab 1, sign out.
+  **Expected:** Tab 1 reloads to the gate (single-tab path); **Tab 2 also reloads to
+  the gate on its own** (it receives Supabase's cross-tab SIGNED_OUT → `accountTransitionKind`
+  returns `signout` → clear + purge + reload). Neither tab shows A's data afterward.
+- [ ] **Cross-tab account change.** Tabs 1 & 2 signed in as A. In Tab 1, sign out and
+  sign in as B. **Expected:** Tab 2 reloads and re-hydrates as **B** with **zero
+  `ZZZ-A-*`** markers (UI + `localStorage`), and A's cloud rows stay uncontaminated.
+- [ ] **No spurious reloads.** Leave two tabs signed in as A idle across a token
+  refresh (~1h, or force one). **Expected:** neither tab reloads (`accountTransitionKind`
+  → `refresh`). This is the anti-noise guarantee — a reload storm here is a FAIL.
+- [ ] **Pending write at transition.** In Tab 2 make an edit, then immediately trigger a
+  cross-tab account change from Tab 1. **Expected:** Tab 2's unsynced edit does not reach
+  B; Tab 2 reloads clean.
+
+**Automated coverage:** `accountTransitionKind` (the transition-vs-noise classifier) is
+unit-tested in `test/auth-account-reset.test.js` (none/first/refresh/changed/signout,
+email fallback, malformed-never-changed). The DOM/Supabase wiring (purge-then-reload
+ordering) is covered by adversarial review + this manual pass.
+
+**Known scope:** cross-tab relies on Supabase's default `localStorage` auth broadcast
+(same browser profile). A *separate browser/device* is out of "multi-tab" scope (each
+is its own runtime and hits the single-tab path on its own auth changes).

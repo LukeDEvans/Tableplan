@@ -5,6 +5,7 @@ import {
   ACCOUNT_SCOPED_STORAGE_KEYS,
   ACCOUNT_SCOPED_STORAGE_KEY_PREFIXES,
   clearLocalAccountState,
+  accountTransitionKind,
 } from "../auth-account-reset.js";
 
 // A minimal Web-Storage stand-in: supports removeItem + the length/key(i)
@@ -89,6 +90,53 @@ describe("clearLocalAccountState — account-transition boundary", () => {
     for (const neutral of DEVICE_NEUTRAL_KEYS) {
       expect(ACCOUNT_SCOPED_STORAGE_KEYS).not.toContain(neutral);
     }
+  });
+});
+
+describe("accountTransitionKind — multi-tab account isolation", () => {
+  const sess = (id, email) => ({ access_token: "tok", user: { id, email } });
+
+  it("no session, none established → none (never resets a signed-out boot)", () => {
+    expect(accountTransitionKind(null, null)).toBe("none");
+    expect(accountTransitionKind(null, {})).toBe("none");
+    expect(accountTransitionKind(null, { access_token: "" })).toBe("none");
+  });
+
+  it("session appears with no account established → first (hydrate)", () => {
+    expect(accountTransitionKind(null, sess("u-A"))).toBe("first");
+  });
+
+  it("same account, new token → refresh (no reload, no re-hydrate)", () => {
+    expect(accountTransitionKind("u-A", sess("u-A"))).toBe("refresh");
+  });
+
+  it("DIFFERENT account now authenticated → changed (reset the boundary)", () => {
+    expect(accountTransitionKind("u-A", sess("u-B"))).toBe("changed");
+  });
+
+  it("account signed out (possibly cross-tab) → signout (reset to gate)", () => {
+    expect(accountTransitionKind("u-A", null)).toBe("signout");
+    expect(accountTransitionKind("u-A", { access_token: "" })).toBe("signout");
+  });
+
+  it("falls back to email identity when id is absent", () => {
+    expect(accountTransitionKind("a@x.com", sess(null, "a@x.com"))).toBe("refresh");
+    expect(accountTransitionKind("a@x.com", sess(null, "b@x.com"))).toBe("changed");
+  });
+
+  it("SAFETY: an unidentifiable session never yields 'changed' (no spurious destructive reset)", () => {
+    // A malformed/partial refresh event (session present, no user) must be treated
+    // as a same-account refresh, never as a transition that clears local data.
+    expect(accountTransitionKind("u-A", { access_token: "tok" })).toBe("refresh");
+    expect(accountTransitionKind("u-A", { access_token: "tok", user: {} })).toBe("refresh");
+  });
+
+  it("full A→sign-out→B lifecycle classifies correctly", () => {
+    // Tab holds A; another tab signs out → this tab sees signout; then B signs in.
+    expect(accountTransitionKind("u-A", null)).toBe("signout");      // reset → reload
+    expect(accountTransitionKind(null, sess("u-B"))).toBe("first");  // fresh boot hydrates B
+    // Or B signs in directly with no intervening signout event (session swaps A→B):
+    expect(accountTransitionKind("u-A", sess("u-B"))).toBe("changed"); // reset → reload → boots as B
   });
 });
 

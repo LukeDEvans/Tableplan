@@ -168,6 +168,11 @@ per-notification unbounded reads.
   acting. Secrets live in Netlify env / `.env` (gitignored), never in the client.
 - Security headers set in `netlify.toml` (XFO deny, nosniff, HSTS, referrer).
 - Webhooks validate origin/shape and fast-ACK.
+- **Account-boundary lifecycle:** an authenticated account transition (in-tab OR
+  cross-tab, detected via Supabase's auth broadcast + `accountTransitionKind`) tears
+  down the previous account's local data (localStorage account-scoped keys +
+  article/cadence/music IndexedDB) and reloads, so no prior-account state, flag,
+  pending write, or cached bytes reaches the new account (`auth-account-reset.js`).
 
 ## 11. State management rules
 

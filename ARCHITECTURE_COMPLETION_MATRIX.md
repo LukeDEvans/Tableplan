@@ -113,3 +113,15 @@ earlier slices — diagnostics, projections — surface a genuine consumer.)*
   registered in mergeStates, finance excluded from the localStorage mirror, account-scoped
   storage guard present. Each rule adversarially confirmed to catch violations and ignore
   comment mentions. Added `test/architecture-*.test.js` to the vitest include.
+- **Slice 3 — Multi-tab account isolation — RESOLVED (item 5 IMPLEMENTED).** Pure
+  `accountTransitionKind(prevId, session)` (auth-account-reset.js) separates a genuine
+  account transition (changed/signout) from token-refresh noise (refresh) via account
+  identity (user id, email fallback; unidentifiable→refresh, never a destructive reset).
+  `app.js` tracks `stateAccountId`, set at boot before the listener registers (so
+  INITIAL_SESSION is a no-op) and synchronously at the top of first-hydrate; on a
+  transition it clears+purges+reloads. Adversarial review (subagent) found 3 issues —
+  all fixed: (1) await IDB purges before reload with provider nulled first so no write
+  fires during the wait; (2) claim identity before the hydrate awaits; (3) clear the
+  retry timer too. Relies on Supabase's default cross-tab auth broadcast (no parallel
+  machinery). 8 new lifecycle tests; 1116 green; build clean. Manual multi-tab steps in
+  QA_ACCOUNT_SWITCH.md; constitution §10 note added.

@@ -48,6 +48,32 @@ function storageKeys(storage) {
   return out;
 }
 
+// Classify an auth-state change for one tab, given the account identity whose data
+// is currently in memory (`prevId`) and the incoming Supabase `session`. This is the
+// core of multi-tab account isolation: it separates a genuine account TRANSITION
+// (which must reset the tab's account boundary) from routine token-refresh noise.
+//
+//   'none'    no session now, and none was established — nothing to do.
+//   'first'   a session appeared and no account was established yet — hydrate it.
+//   'refresh' same account, new token (or an unidentifiable session while an account
+//             is established) — do NOT re-hydrate or reload (avoids spurious reloads
+//             on the ~hourly TOKEN_REFRESHED event and on malformed refreshes).
+//   'changed' a DIFFERENT account is now authenticated (e.g. another tab signed in as
+//             account B while this tab holds account A) — reset the boundary + reload.
+//   'signout' the account signed out (possibly in another tab) — reset + reload to gate.
+//
+// Identity is the Supabase user id (stable UUID), falling back to email. When a
+// session is present but unidentifiable we return 'refresh', never 'changed', so a
+// malformed event can never trigger a destructive reset.
+export function accountTransitionKind(prevId, session) {
+  const hasSession = !!session?.access_token;
+  const newId = session?.user?.id || session?.user?.email || null;
+  if (!hasSession) return prevId ? "signout" : "none";
+  if (!prevId) return "first";
+  if (!newId) return "refresh";
+  return newId === prevId ? "refresh" : "changed";
+}
+
 // Remove every account-scoped key (exact + prefix-matched). Best-effort and
 // defensive: a missing key is a no-op, and a throwing store (private mode, quota,
 // a stubbed environment) never aborts the rest — clearing as much as possible is

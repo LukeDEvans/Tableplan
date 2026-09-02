@@ -24,7 +24,7 @@ import { taskIsScheduled } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot } from './finance-actuals.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance } from './finance-sync.js';
-import { clearLocalAccountState } from './auth-account-reset.js';
+import { clearLocalAccountState, accountTransitionKind } from './auth-account-reset.js';
 import { deriveMediaTierCount } from './media-tier.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
@@ -520,6 +520,12 @@ const MANAGED_PAGES = [
 let lastWrittenSections = null;
 let supabaseClient = null;
 let authSession = null;
+// The account identity whose data is currently in memory (Supabase user id, or
+// email fallback). Set the moment an authenticated session is established for this
+// tab; used to tell a genuine account TRANSITION (this tab must reset its account
+// boundary) from routine token-refresh noise (do nothing) — including transitions
+// that arrive cross-tab via Supabase's auth broadcast. Reset to null by reload.
+let stateAccountId = null;
 // Localhost-only escape hatch: sign in against the local file backend
 // (server.js /api/state) with a synthetic session, bypassing Supabase entirely,
 // so the app is usable on localhost when the cloud is down or unconfigured.
@@ -2507,18 +2513,60 @@ async function initializeSupabaseAuth() {
 
   authSession = data.session;
   authCheckCompleted = true;
+  // Record the booting account BEFORE registering the listener so Supabase's
+  // INITIAL_SESSION event reads as a same-account 'refresh' (no-op) — the boot
+  // hydrate below owns loading this account. If booted signed-out, this stays null
+  // and a subsequent sign-in is a clean 'first'.
+  stateAccountId = authSession?.user?.id || authSession?.user?.email || null;
   updateAppLockState();
   if (authSession?.access_token) { warmMailStatus(); warmMailList(); warmPageNotifs(); }
   supabaseClient.auth.onAuthStateChange(async (_event, session) => {
-    const hadSession = !!authSession?.access_token;
+    // Multi-tab account isolation: classify the change against the account whose
+    // data this tab holds. A transition can arrive cross-tab (Supabase broadcasts
+    // auth changes to every tab via localStorage), so a stale tab left on account A
+    // reacts here when another tab signs out or signs in as a different account.
+    const kind = accountTransitionKind(stateAccountId, session);
     authSession = session;
     updateAppLockState();
     updateAuthUi();
-    // Only a fresh sign-in needs the full reload below. Routine TOKEN_REFRESHED
-    // events (~hourly) also land here, and re-hydrating on them re-rendered the
-    // app mid-use — views jumped and unsaved UI state was lost.
-    if (session?.access_token && hadSession) return;
-    if (session?.access_token) {
+
+    if (kind === "changed" || kind === "signout") {
+      // Genuine account transition reached this tab. Enforce the account boundary
+      // exactly like an in-tab sign-out: cancel any pending/queued write, tear down
+      // this account's local data (localStorage + article/cadence/music IDB), and
+      // reload so the tab re-initializes cleanly as the new account (or the gate).
+      // This closes the multi-tab hole where a stale tab could persist the previous
+      // account's data into the new one.
+      //
+      // Order matters: null the provider + clear BOTH timers FIRST so no write can
+      // fire during the awaited purges below (saveStateToSharedStorage /
+      // writeStateToSharedStorage both early-return without a provider). Then AWAIT
+      // the IDB purges before reloading — they close the DB connection before
+      // deleteDatabase, so a synchronous reload would abort the delete and leave the
+      // previous account's cached bytes on disk (the single-tab path only got away
+      // with it because its awaited signOut() yielded the loop first).
+      window.clearTimeout(sharedStorageSaveTimer);
+      window.clearTimeout(sharedStorageRetryTimer);
+      sharedStorageReady = false;
+      activeSharedStorageProvider = null;
+      clearLocalAccountState(localStorage);
+      await Promise.allSettled([
+        purgeLocalArticleContent(),
+        purgeLocalCadenceContent(),
+        purgeLocalMusicContent(),
+      ]);
+      window.location.reload();
+      return;
+    }
+    // Same account, new token (or unidentifiable refresh) — re-hydrating here
+    // re-rendered the app mid-use (views jumped, unsaved UI state lost). Do nothing.
+    if (kind === "refresh") return;
+    if (kind === "first" && session?.access_token) {
+      // Claim the account identity BEFORE the awaited hydrate so a re-entrant auth
+      // event during hydration classifies correctly: a same-account repeat reads
+      // 'refresh' (no double hydrate); a DIFFERENT account reads 'changed' (reset),
+      // never a second in-place 'first' that would merge two accounts.
+      stateAccountId = session.user?.id || session.user?.email || null;
       // Cancel any pending debounced write — the re-hydration below will write back
       // if needed. We intentionally do NOT flush here: flushing stale in-memory state
       // (e.g. from a dev server with old localStorage) would overwrite newer cloud data.
