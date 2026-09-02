@@ -133,3 +133,11 @@ earlier slices — diagnostics, projections — surface a genuine consumer.)*
   metadata; rides sync as a normal record field. 24 tests; added to pure-core fitness +
   vitest include. Constitution §5 note. Substrate for diagnostics (7), AI-readiness (9),
   search (10).
+- **Slice 5 — Domain-model convergence + platform capabilities — RESOLVED (item 8
+  INCORPORATED, item 7 DESIGNED).** `platform-capabilities.js`: a small honest catalog
+  (persistence/sync/account-boundary/provenance/import/providers/media-playback/tts +
+  planned projections/diagnostics/search) with canonical module + consumers + status;
+  consumed by diagnostics (7)/AI (9)/onboarding — NOT a parallel provider registry or
+  plugin system. 7 tests. Domain-model convergence DESIGNED in ARCHITECTURE.md §26:
+  canonical concepts (media/person/event/location/provider/provenance) + "converge on
+  contact, not big-bang" rule + explicit non-goals (no universal entity model).

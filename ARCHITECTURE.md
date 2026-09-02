@@ -366,6 +366,30 @@ each has a named revisit trigger. **Designed-but-gated:** storage adapter + migr
 runner (gated on a real second backend). This list is the default answer to "should
 we add a framework for X?" — extend a canonical mechanism instead.
 
+## 26. Domain-model convergence (design; converge on contact, not big-bang)
+
+Several concepts are genuinely shared across domains but modeled ad hoc (§21). The
+rule is **shared semantics where relationships are genuinely shared, independent
+ownership where they are not** — and convergence happens *when a domain next
+re-models the concept*, never as a speculative universal-object rewrite.
+
+**Canonical concepts + their target representation:**
+
+| Concept | Appears in (ad hoc today) | Canonical target | Convergence trigger |
+|---|---|---|---|
+| **Media** | watch, music, radio, podcasts, read | `media-model.js` (`MediaItem`, `mediaKey`, `providerRefs`) — **already converged** | keep; new media types adopt it |
+| **Person** | finance `financePeople`, contacts, meal-plan members, `familyMembers` | a `PersonRef {id, name, kind}` a domain stores instead of a bare name/id | next time a domain re-models people (e.g. finance↔contacts link) |
+| **Event / time** | calendar `planEvents`, tasks (due), meal plan (by day) | calendar `model.js` normalize + projections (§ Today) as the read path | Today projections (slice 8) become the shared read surface |
+| **Location** | travel, weather, showtimes, calendar `location{}` | a `PlaceRef {name, lat, lng, sourceId}` | next geo-touching feature |
+| **Provider ↔ capability ↔ content** | media/music/radio | `media-provider.js` registry + `providerRefs` — **already converged** | keep |
+| **Provenance** | ingress records | `provenance.js` (§5) | attached at each new ingress point |
+
+**Non-goals:** do NOT force tasks, budget lines, recipes, or inventory into one
+entity type — their invariants are domain-owned. Convergence is about *references
+between* domains (a finance person that IS a contact), not a single table. The
+`platform-capabilities.js` catalog records which cross-cutting mechanisms are
+platform capabilities (multiple consumers) versus domain-local.
+
 ---
 
 *Future development agents: follow the protocol in §18–19, apply the §25 guardrails
