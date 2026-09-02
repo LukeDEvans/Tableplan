@@ -213,3 +213,46 @@ earlier slices — diagnostics, projections — surface a genuine consumer.)*
   ordered runner), and the 3-phase path (cloud → home-server Postgres → remote dev).
   DESIGN ONLY — implementation gated on a real 2nd backend / staging (applying migrations
   = prod DB change, confirmation-gated §16, out of this local-only program). No code.
+
+## E. Final closure (2026-09-02) — every item resolved, no unexplained yellow
+
+| # | Item | Final disposition | Where |
+|---|---|---|---|
+| 1 | North Star | IMPLEMENTED | ARCH §23 |
+| 2 | Scorecard | IMPLEMENTED | ARCH §24 |
+| 3 | Guardrails (reversibility/invalidation/complexity/do-nothing/negative-recs) | IMPLEMENTED | ARCH §25 |
+| 4 | Fitness tests | IMPLEMENTED | test/architecture-fitness.test.js |
+| 5 | Multi-tab account isolation | IMPLEMENTED | auth-account-reset.js + app.js |
+| 6 | Provenance / lifecycle | IMPLEMENTED | provenance.js |
+| 7 | Domain-model convergence | DESIGNED (incremental) | ARCH §26 |
+| 8 | Platform capabilities | INCORPORATED | platform-capabilities.js |
+| 9 | Reorderable-list primitive | IMPLEMENTED (pre-existing, verified) | sortable*.js |
+| 10 | Developer diagnostics | IMPLEMENTED | diagnostics.js |
+| 11 | Today projections | IMPLEMENTED | today-projection.js |
+| 12 | AI-readiness substrate | INCORPORATED | ai-context.js |
+| 13 | Search / indexing | IMPLEMENTED | search-index.js |
+| 14 | Rules engine | REJECTED (+trigger) | ARCH §25 |
+| 15 | Jobs / operations | INCORPORATED (status contract) | async-operation.js |
+| 16 | Workflow orchestration | REJECTED (+trigger) | ARCH §25 |
+| 17 | Event bus | REJECTED (+trigger) | ARCH §25 |
+| 18 | Plugin architecture | REJECTED (+trigger) | ARCH §25 |
+| 19 | Storage adapter | DESIGNED (gated) | ARCH §27 |
+| 20 | Migration runner | DESIGNED (gated) | ARCH §27 |
+| 21 | Remaining DB advisor fixes | DESIGNED/gated (infra) | ARCH §21/§27 |
+| 22 | Offline mutation queue | REJECTED (+trigger) | ARCH §25 |
+| 23 | Audio position persistence | DESIGNED (read surface exists) | today-projection.js |
+| 24 | Legacy naming | REJECTED (cosmetic, +trigger) | matrix §B |
+
+**Closure answers:** (1) Every agreed item is resolved — 9 implemented, 2 incorporated,
+5 designed/gated, 6 rejected-with-trigger, plus verifications. (2) Incorporated-not-framework:
+platform capabilities, AI-readiness, jobs→status-contract. (3) Rejected: rules, workflow,
+event bus, plugin, offline queue (+cosmetic legacy naming), each with a revisit trigger.
+(4) Designed/gated: storage adapter, migration runner, DB advisor fixes, domain-model
+convergence, audio position — each with a concrete gate. (5) No account-boundary risk added:
+all 7 new modules are pure/in-memory (no localStorage/IndexedDB); multi-tab EXTENDED the
+boundary; the completeness contract + fitness suite stay green. (6) Home-server readiness:
+storage seam + migration path designed (§27); provider boundaries already relocate. (7) AI
+readiness: canonical concepts + provenance + capabilities + deterministic projections +
+diagnostics + one legible context surface, no AI framework. (8) Net complexity: +8 small pure
+modules (each with ≥1 real consumer + tests) and ~7 documentation sections; 5 frameworks
+explicitly NOT built. (9) 1196 tests green, build clean, tree clean. **No unexplained yellow.**
