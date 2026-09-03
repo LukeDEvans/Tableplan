@@ -109,15 +109,21 @@ async function safeFetch(rawUrl, options = {}) {
     let current = assertAllowedUrl(rawUrl);
     await assertHostResolvesPublic(current.hostname, lookup);
 
+    // Fresh, minimal headers only — no cookies, no Authorization, nothing from the
+    // originating request is forwarded to the target site. `conditional` adds ONLY
+    // the two RSS-cache validators (never arbitrary headers), so a feed poll can be
+    // a cheap 304 without weakening the SSRF model.
+    const reqHeaders = { "user-agent": opt.userAgent, accept: opt.accept };
+    if (opt.conditional && opt.conditional.etag) reqHeaders["if-none-match"] = String(opt.conditional.etag);
+    if (opt.conditional && opt.conditional.lastModified) reqHeaders["if-modified-since"] = String(opt.conditional.lastModified);
+
     let res;
     for (let hop = 0; ; hop++) {
       try {
         res = await doFetch(current.toString(), {
           redirect: "manual",
           signal: controller.signal,
-          // Fresh, minimal headers only — no cookies, no Authorization, nothing
-          // from the originating request is forwarded to the target site.
-          headers: { "user-agent": opt.userAgent, accept: opt.accept },
+          headers: reqHeaders,
         });
       } catch (e) {
         if (e && e.name === "AbortError") throw fetchError("timeout", "The request timed out.");
@@ -138,6 +144,13 @@ async function safeFetch(rawUrl, options = {}) {
       break;
     }
 
+    const etag = res.headers.get("etag") || null;
+    const lastModified = res.headers.get("last-modified") || null;
+    // 304 Not Modified: no body, no content-type — a cheap conditional-GET hit.
+    if (res.status === 304) {
+      try { if (res.body && res.body.cancel) await res.body.cancel(); } catch { /* ignore */ }
+      return { ok: false, status: 304, notModified: true, finalUrl: current.toString(), etag, lastModified, body: "" };
+    }
     const contentType = (res.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
     // Only enforce the allow-list when the server actually declared a type.
     if (contentType && opt.allowedContentTypes && !opt.allowedContentTypes.includes(contentType)) {
@@ -156,6 +169,8 @@ async function safeFetch(rawUrl, options = {}) {
       contentType,
       bytes,
       body: text,
+      etag,
+      lastModified,
     };
   } finally {
     clearTimeout(timer);
