@@ -299,7 +299,7 @@ const STATE_SECTIONS = {
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "mediaProgress", "pubArticles", "articleNotifications", "pubDefs", "pubFeeds", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "mediaProgress", "pubArticles", "articleNotifications", "pubDefs", "pubFeeds", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
   plan:      ["calendars", "planEvents", "planCalendars", "planHiddenSources", "planExternalExclusions", "planExternalOverrides"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
@@ -3602,6 +3602,7 @@ function defaultState() {
     articleNotifications: {},
     pubDefs: [],
     pubFeeds: [],
+    readingProgress: {},
     podcastPlaylists: [],
     podcastPlaylistItems: {},
     podcastQueue: [],
@@ -3937,6 +3938,7 @@ function normalizeState(parsed) {
     articleNotifications: (parsed?.articleNotifications && typeof parsed.articleNotifications === "object" && !Array.isArray(parsed.articleNotifications)) ? parsed.articleNotifications : {},
     pubDefs: Array.isArray(parsed?.pubDefs) ? parsed.pubDefs : [],
     pubFeeds: Array.isArray(parsed?.pubFeeds) ? parsed.pubFeeds : [],
+    readingProgress: (parsed?.readingProgress && typeof parsed.readingProgress === "object" && !Array.isArray(parsed.readingProgress)) ? parsed.readingProgress : {},
     podcastSaved: Array.isArray(parsed?.podcastSaved) ? parsed.podcastSaved : [],
     podcastQueue: Array.isArray(parsed?.podcastQueue) ? parsed.podcastQueue : [],
     podcastAutoSkipped: Array.isArray(parsed?.podcastAutoSkipped) ? parsed.podcastAutoSkipped : [],
@@ -5847,7 +5849,7 @@ function mergeStates(newer, older) {
     "personChecklistSettings",
     "podcastSavedEpisodeCategories",
     "podcastProgress", "mediaProgress", "podcastShowTiers", "podcastEpisodeTiers",
-    "podcastPlaylistItems", "articleReadDates", "publicationTiers",
+    "podcastPlaylistItems", "articleReadDates", "publicationTiers", "readingProgress",
     "podcastBundleSeries", "podcastReleasedSeries",
     // Finance per-transaction metadata (keyed by txn id / merchant key / month).
     // Union-merged so a sync between two devices never drops one device's
