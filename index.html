@@ -769,8 +769,12 @@
             <div class="pub-reader-inner">
               <div class="pub-reader-head">
                 <button type="button" class="icon-btn pub-reader-close" id="pubReaderClose" aria-label="Close reader">✕</button>
-                <a class="pub-reader-orig" id="pubReaderOrig" href="#" target="_blank" rel="noopener">Open original ↗</a>
+                <div class="pub-reader-head-actions">
+                  <button type="button" class="pub-reader-listen" id="pubReaderListen">▶ Listen</button>
+                  <a class="pub-reader-orig" id="pubReaderOrig" href="#" target="_blank" rel="noopener">Open original ↗</a>
+                </div>
               </div>
+              <div class="pub-reader-listen-msg" id="pubReaderListenMsg" hidden></div>
               <div class="pub-reader-body" id="pubReaderBody">
                 <h1 class="pub-reader-title" id="pubReaderTitle"></h1>
                 <div class="pub-reader-meta" id="pubReaderMeta"></div>

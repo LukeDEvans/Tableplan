@@ -991,6 +991,8 @@ const elements = {
   pubReaderMeta: document.querySelector("#pubReaderMeta"),
   pubReaderOrig: document.querySelector("#pubReaderOrig"),
   pubReaderClose: document.querySelector("#pubReaderClose"),
+  pubReaderListen: document.querySelector("#pubReaderListen"),
+  pubReaderListenMsg: document.querySelector("#pubReaderListenMsg"),
   pubManageDialog: document.querySelector("#pubManageDialog"),
   pubSubList: document.querySelector("#pubSubList"),
   pubNewName: document.querySelector("#pubNewName"),
@@ -1767,6 +1769,7 @@ function bindEvents() {
   elements.homeWeatherBtn?.addEventListener("click", showWeatherApp);
   elements.homePublicationsBtn?.addEventListener("click", showPublicationsApp);
   elements.pubReaderClose?.addEventListener("click", closePubReader);
+  elements.pubReaderListen?.addEventListener("click", () => { if (openPubArticleId) listenToPubArticle(openPubArticleId); });
   elements.pubAddBtn?.addEventListener("click", () => addSubscription());
   elements.pubManageClose?.addEventListener("click", () => elements.pubManageDialog?.close());
   elements.pubNewUrl?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addSubscription(); } });
@@ -2812,6 +2815,8 @@ function setupDiagnostics() {
     readingPercent: (id) => readingPercent(state.readingProgress, id),
     consumed: (id) => (state.readArticleIds || []).includes(id),
     subscriptions: () => ({ pubs: (state.pubDefs || []).length, feeds: (state.pubFeeds || []).length }),
+    resolveBody: (id) => resolvePubArticleBody(pubArticleById(id) || {}),
+    listen: (id) => listenToPubArticle(id),
     // Seed a body straight into the content store so the reader path can be
     // verified without a live fetch-article call (returns the stored ref).
     seedBody: async (id, html) => { const ac = await getArticleContent(); return ac ? ac.saveBody(id, html) : null; },
@@ -2968,6 +2973,7 @@ function openPubArticle(id) {
   if (!article || !panel) return;
   openPubArticleId = id;
   panel.hidden = false;
+  setPubListenMsg("");
   if (elements.pubReaderTitle) elements.pubReaderTitle.textContent = article.title || article.canonicalUrl || article.url || "(untitled)";
   if (elements.pubReaderMeta) {
     const pub = article.publicationId ? (state.pubDefs || []).find((p) => p.id === article.publicationId) : null;
@@ -2981,6 +2987,36 @@ function openPubArticle(id) {
   renderPubArticleBody(article);
 }
 
+// Resolve an article's body HTML: content store first (local IndexedDB → durable
+// Supabase-Storage backstop via bodyRef), else the SSRF-guarded fetch-article
+// boundary — mirroring the result into the content store (keyed by id) and
+// recording only a small bodyRef + non-destructive metadata refresh. Returns
+// { ok, text } | { ok:false, error }. Shared by the reader and the listen path.
+async function resolvePubArticleBody(article) {
+  const id = article.id;
+  try {
+    const ac = await getArticleContent();
+    if (ac) { const body = await ac.loadBody(id, { ref: article.bodyRef, fallbackText: null }); if (body) return { ok: true, text: body }; }
+  } catch { /* fall through to a network fetch */ }
+
+  const req = bodyFetchRequest(article, { pubsById: Object.fromEntries((state.pubDefs || []).map((p) => [p.id, p])) });
+  if (!req.ok) return { ok: false, error: req.error };
+  let res;
+  try { res = await callNetlifyFunction("fetch-article", { url: req.url, publication: req.publication }); }
+  catch { res = null; }
+  const norm = normalizeFetchedBody(res);
+  if (!norm.ok) return { ok: false, error: norm.error };
+  try {
+    const ac = await getArticleContent();
+    const ref = ac ? await ac.saveBody(id, norm.text) : null;
+    const { article: refreshed, changed } = mergeFetchedMetadata(article, norm);
+    const patch = changed ? { ...refreshed } : {};
+    if (ref?.cloud) patch.bodyRef = ref;
+    if (Object.keys(patch).length) updatePubArticle(id, patch);
+  } catch { /* non-fatal — the caller still has the body text */ }
+  return { ok: true, text: norm.text };
+}
+
 async function renderPubArticleBody(article) {
   const id = article.id;
   const textEl = elements.pubReaderText;
@@ -2990,37 +3026,58 @@ async function renderPubArticleBody(article) {
     textEl.innerHTML = html;
     restorePubReadingScroll(id);
   };
-
-  // 1) Content store (local IndexedDB → durable Supabase-Storage backstop via bodyRef).
-  try {
-    const ac = await getArticleContent();
-    if (ac) { const body = await ac.loadBody(id, { ref: article.bodyRef, fallbackText: null }); if (body) { paint(body); return; } }
-  } catch { /* fall through to a network fetch */ }
+  // Show a fetching hint only if the content store misses (a fetch is coming).
+  let acHit = false;
+  try { const ac = await getArticleContent(); if (ac) acHit = await ac.hasLocal(id); } catch { /* ignore */ }
   if (openPubArticleId !== id) return;
+  if (!acHit) textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
 
-  // 2) On-demand fetch through the SSRF-guarded fetch-article boundary.
-  const req = bodyFetchRequest(article, { pubsById: Object.fromEntries((state.pubDefs || []).map((p) => [p.id, p])) });
-  if (!req.ok) { paint(`<div class="article-fetch-prompt"><p class="article-fetch-hint">${escapeHtml(req.error)}</p></div>`); return; }
-  textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
-  let res;
-  try { res = await callNetlifyFunction("fetch-article", { url: req.url, publication: req.publication }); }
-  catch { res = null; }
+  const r = await resolvePubArticleBody(article);
   if (openPubArticleId !== id) return;
-  const norm = normalizeFetchedBody(res);
-  if (!norm.ok) {
-    paint(`<div class="article-fetch-prompt"><p class="article-fetch-hint">${escapeHtml(norm.error)}</p><a href="${escapeHtml(article.canonicalUrl || article.url || "#")}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`);
-    return;
-  }
-  // Mirror the body into the content store (keyed by id) and record only the small ref.
-  try {
-    const ac = await getArticleContent();
-    const ref = ac ? await ac.saveBody(id, norm.text) : null;
-    const { article: refreshed, changed } = mergeFetchedMetadata(article, norm);
-    const patch = changed ? { ...refreshed } : {};
-    if (ref?.cloud) patch.bodyRef = ref;
-    if (Object.keys(patch).length) updatePubArticle(id, patch);
-  } catch { /* non-fatal — body still paints from memory below */ }
-  paint(norm.text);
+  if (r.ok) { paint(r.text); return; }
+  const orig = escapeHtml(article.canonicalUrl || article.url || "#");
+  paint(`<div class="article-fetch-prompt"><p class="article-fetch-hint">${escapeHtml(r.error)}</p><a href="${orig}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`);
+}
+
+// Listen to a Library article: resolve its body, then reuse the shared article-TTS
+// engine via a savedArticle-shaped adapter (audit "article as audio"). Audio is
+// synthesized + cached by the voice service (keyed by the article id); listening
+// is a SEPARATE concern from reading progress and from consumption.
+async function listenToPubArticle(id) {
+  const article = pubArticleById(id);
+  if (!article) return;
+  unlockListenAudio(); // bless the audio element NOW, inside the user's tap (iOS)
+  setPubListenMsg("Loading…");
+  const r = await resolvePubArticleBody(article);
+  if (!r.ok || !r.text) { setPubListenMsg(r.error || "Couldn't load this article to read aloud."); return; }
+  const pub = article.publicationId ? (state.pubDefs || []).find((p) => p.id === article.publicationId) : null;
+  const adapter = {
+    id: article.id,
+    text: r.text,
+    title: article.title || "",
+    author: article.author || "",
+    publication: pub?.name || article.category || "",
+    pubDate: article.publishedAt || null,
+  };
+  // Pre-generate the audio ourselves so a synth failure surfaces inline (rather
+  // than through the shared engine's blocking alert), and a success is reused via
+  // the engine's prefetch cache (no second synthesis).
+  setPubListenMsg("Preparing audio…");
+  let data;
+  try { data = await generateTtsUrls(adapter); }
+  catch (e) { setPubListenMsg("Couldn't prepare audio — " + (e?.message || "try again later")); return; }
+  if (!data || !data.urls || !data.urls.length) { setPubListenMsg("No audio was produced for this article."); return; }
+  setPubListenMsg("");
+  ttsPrefetchCache.set(adapter.id, Promise.resolve(data));
+  try { stopListen(); startListenTTS(adapter); }
+  catch (e) { setPubListenMsg("Could not start audio: " + (e?.message || "unknown error")); }
+}
+
+function setPubListenMsg(text) {
+  const el = elements.pubReaderListenMsg;
+  if (!el) return;
+  el.textContent = text || "";
+  el.hidden = !text;
 }
 
 // Restore the saved reading position (percent → scrollTop) once the body is laid out.

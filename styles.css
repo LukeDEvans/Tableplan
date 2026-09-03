@@ -21946,7 +21946,11 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .pub-reader-head { display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 10px 14px; border-bottom: 1px solid var(--hairline, #eee); flex: 0 0 auto; }
 .pub-reader-close { flex: 0 0 auto; }
-.pub-reader-orig { font-size: 13px; color: var(--accent, #2f9e78); text-decoration: none; }
+.pub-reader-head-actions { display: flex; align-items: center; gap: 12px; }
+.pub-reader-listen { font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  color: #fffaf0; background: var(--accent, #2f9e78); border: 0; border-radius: 999px; padding: 6px 14px; }
+.pub-reader-listen-msg { padding: 0 14px 6px; font-size: 12px; color: var(--muted, #8a8175); }
+.pub-reader-orig { font-size: 13px; color: var(--accent, #2f9e78); text-decoration: none; white-space: nowrap; }
 .pub-reader-body { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 18px 20px 48px;
   -webkit-overflow-scrolling: touch; }
 .pub-reader-title { font-size: 22px; line-height: 1.25; margin: 0 0 6px; overflow-wrap: anywhere; text-wrap: balance; }
