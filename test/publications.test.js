@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   sourceKey, canonicalKey, makePublication, makeFeed, makeArticle,
-  reconcileArticle, ingestArticles, savedArticleToArticle,
+  reconcileArticle, ingestArticles, savedArticleToArticle, unifiedLibraryArticles,
 } from "../publications.js";
 
 describe("identity", () => {
@@ -133,6 +133,41 @@ describe("savedArticleToArticle — legacy reconciliation (deterministic, non-de
     const { articles } = ingestArticles([a1], [makeArticle({ url: "https://x.com/a", title: "T", feedIds: ["f1"] })]);
     expect(articles.length).toBe(1);
     expect(articles[0].feedIds).toEqual(["f1"]);
+  });
+});
+
+describe("unifiedLibraryArticles — non-destructive convergence of RSS + manual saves", () => {
+  const rss = [makeArticle({ id: "art_rss1", url: "https://x.com/a", title: "A (RSS)", feedIds: ["f1"] })];
+  const saved = [
+    { id: "s1", url: "https://x.com/a?utm_source=news", title: "A (manual)", savedAt: "2026-08-02T00:00:00Z" }, // same canonical URL as rss
+    { id: "s2", url: "https://x.com/b", title: "B (manual only)", savedAt: "2026-08-03T00:00:00Z" },
+  ];
+
+  it("dedupes a manual save against its RSS twin (one article, RSS id kept) and adds manual-only saves", () => {
+    const out = unifiedLibraryArticles(rss, saved);
+    expect(out.length).toBe(2); // A (converged) + B (manual only)
+    const a = out.find((x) => x.canonicalUrl === "https://x.com/a");
+    const b = out.find((x) => x.canonicalUrl === "https://x.com/b");
+    expect(a.id).toBe("art_rss1");     // RSS identity wins on a URL match
+    expect(a.origins).toEqual(["rss"]);
+    expect(b.id).toBe("s2");           // manual-only keeps its saved id
+    expect(b.origins).toEqual(["manual"]); // so the reader can find its body in savedArticles
+  });
+
+  it("never mutates either input", () => {
+    const rssSnap = JSON.stringify(rss), savedSnap = JSON.stringify(saved);
+    unifiedLibraryArticles(rss, saved);
+    expect(JSON.stringify(rss)).toBe(rssSnap);
+    expect(JSON.stringify(saved)).toBe(savedSnap);
+  });
+
+  it("is idempotent (same inputs → same ids/origins) and handles empties", () => {
+    const a1 = unifiedLibraryArticles(rss, saved).map((x) => [x.id, (x.origins || []).join()]);
+    const a2 = unifiedLibraryArticles(rss, saved).map((x) => [x.id, (x.origins || []).join()]);
+    expect(a1).toEqual(a2);
+    expect(unifiedLibraryArticles([], [])).toEqual([]);
+    expect(unifiedLibraryArticles(rss, []).length).toBe(1);
+    expect(unifiedLibraryArticles([], saved).length).toBe(2);
   });
 });
 

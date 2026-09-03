@@ -36,7 +36,7 @@ import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition 
 import { runFeedIngestion } from './feed-ingest.js';
 import { markManyDiscovered, pruneNotifications, saveArticle as notifSaveArticle, dismissArticle as notifDismissArticle, pendingNotifications, notificationBadgeCount, badgeLabel, retainedArticles, isSaved as notifIsSaved } from './publications-notify.js';
 import { publicationsPanelHtml, subscriptionListHtml } from './publications-render.js';
-import { makePublication, makeFeed } from './publications.js';
+import { makePublication, makeFeed, unifiedLibraryArticles } from './publications.js';
 import { setReadingProgress, readingPercent, pruneReadingProgress, isFinished } from './reading-progress.js';
 import { bodyFetchRequest, normalizeFetchedBody, mergeFetchedMetadata } from './article-body.js';
 import { deriveMediaTierCount } from './media-tier.js';
@@ -2815,7 +2815,9 @@ function setupDiagnostics() {
     readingPercent: (id) => readingPercent(state.readingProgress, id),
     consumed: (id) => (state.readArticleIds || []).includes(id),
     subscriptions: () => ({ pubs: (state.pubDefs || []).length, feeds: (state.pubFeeds || []).length }),
-    resolveBody: (id) => resolvePubArticleBody(pubArticleById(id) || {}),
+    resolveBody: (id) => resolvePubArticleBody(libraryArticleById(id) || { id }),
+    library: (publicationId = null) => pubLibrary(publicationId).map((a) => ({ id: a.id, title: a.title, origins: a.origins || ["rss"] })),
+    seedSaved: (art) => { if (!Array.isArray(state.savedArticles)) state.savedArticles = []; state.savedArticles.push(art); persist(); },
     listen: (id) => listenToPubArticle(id),
     // Seed a body straight into the content store so the reader path can be
     // verified without a live fetch-article call (returns the stored ref).
@@ -2864,7 +2866,8 @@ function applyFeedIngestion(feed, response) {
   state.pubArticles = capPubArticles(r.articles, state.articleNotifications);
   const liveIds = state.pubArticles.map((a) => a.id);
   state.articleNotifications = pruneNotifications(state.articleNotifications, liveIds);
-  state.readingProgress = pruneReadingProgress(state.readingProgress, liveIds);
+  // Reading progress spans the UNIFIED library, so keep manual-save ids too.
+  state.readingProgress = pruneReadingProgress(state.readingProgress, [...liveIds, ...(state.savedArticles || []).map((a) => a.id)]);
   persist();
   return r;
 }
@@ -2903,6 +2906,24 @@ function pubPending() { return pendingNotifications(state.pubArticles || [], sta
 function pubBadgeCount() { return notificationBadgeCount(state.pubArticles || [], state.articleNotifications || {}, new Date().toISOString()); }
 function pubRetained(publicationId = null) { return retainedArticles(state.pubArticles || [], state.articleNotifications || {}, { publicationId }); }
 
+// The UNIFIED library (audit §213): RSS-saved articles converged with the manual
+// savedArticles store into one deduplicated canonical list — non-destructive, read
+// only. Filter by publication (manual saves have none → only under "All"); newest
+// first. This is the migration-ready convergence WITHOUT moving/removing any data.
+function pubLibrary(publicationId = null) {
+  const unified = unifiedLibraryArticles(pubRetained(null), state.savedArticles || []);
+  const filtered = publicationId ? unified.filter((a) => a.publicationId === publicationId) : unified;
+  const ms = (iso) => { const t = Date.parse(iso); return Number.isNaN(t) ? 0 : t; };
+  return filtered.sort((a, b) => (ms(b.publishedAt) - ms(a.publishedAt)) || (ms(b.discoveredAt) - ms(a.discoveredAt)));
+}
+
+// Resolve a library article by id from EITHER source (canonical pub store or a
+// manual save surfaced through the convergence), so the reader/listen paths open
+// manual saves too.
+function libraryArticleById(id) {
+  return pubArticleById(id) || pubLibrary(null).find((a) => a.id === id) || null;
+}
+
 let pubActiveTab = "notifications";  // "notifications" | "library"
 let pubActiveFilter = null;          // publicationId or null (= All)
 
@@ -2926,7 +2947,7 @@ function renderPublicationsPanel() {
   const badge = pubBadgeCount();
   el.innerHTML = publicationsPanelHtml({
     tab: pubActiveTab, badge, badgeLabel: badgeLabel(badge),
-    pending: pubPending(), retained: pubRetained(pubActiveFilter),
+    pending: pubPending(), retained: pubLibrary(pubActiveFilter),
     pubs, activePublicationId: pubActiveFilter, pubsById,
     readIds: new Set(state.readArticleIds || []),
   });
@@ -2968,7 +2989,7 @@ function updatePubArticle(id, patch) {
 }
 
 function openPubArticle(id) {
-  const article = pubArticleById(id);
+  const article = libraryArticleById(id);
   const panel = elements.pubReaderPanel;
   if (!article || !panel) return;
   openPubArticleId = id;
@@ -2994,9 +3015,14 @@ function openPubArticle(id) {
 // { ok, text } | { ok:false, error }. Shared by the reader and the listen path.
 async function resolvePubArticleBody(article) {
   const id = article.id;
+  // A manual save surfaced through the convergence already holds its body in
+  // state.savedArticles (text or a content-store bodyRef) — use it, no fetch.
+  const saved = (state.savedArticles || []).find((s) => s.id === id);
+  if (saved?.text) return { ok: true, text: saved.text };
   try {
     const ac = await getArticleContent();
-    if (ac) { const body = await ac.loadBody(id, { ref: article.bodyRef, fallbackText: null }); if (body) return { ok: true, text: body }; }
+    const ref = article.bodyRef || saved?.bodyRef;
+    if (ac) { const body = await ac.loadBody(id, { ref, fallbackText: null }); if (body) return { ok: true, text: body }; }
   } catch { /* fall through to a network fetch */ }
 
   const req = bodyFetchRequest(article, { pubsById: Object.fromEntries((state.pubDefs || []).map((p) => [p.id, p])) });
@@ -3044,7 +3070,7 @@ async function renderPubArticleBody(article) {
 // synthesized + cached by the voice service (keyed by the article id); listening
 // is a SEPARATE concern from reading progress and from consumption.
 async function listenToPubArticle(id) {
-  const article = pubArticleById(id);
+  const article = libraryArticleById(id);
   if (!article) return;
   unlockListenAudio(); // bless the audio element NOW, inside the user's tap (iOS)
   setPubListenMsg("Loading…");

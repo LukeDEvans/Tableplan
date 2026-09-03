@@ -197,3 +197,26 @@ export function savedArticleToArticle(saved) {
     provenance: saved?.provenance || makeProvenance({ origin: ORIGIN.IMPORTED, source: "manual", sourceUrl: url || null }),
   });
 }
+
+// Unify the RSS-saved library with the manual savedArticles store into ONE
+// deduplicated canonical list (audit §213 "unify savedArticles + RSS"), WITHOUT
+// touching either source — a read-side convergence, safe to run every render and
+// reversible. RSS-saved articles win identity on a canonical-URL match (their
+// feed metadata is richer); a manual save with no RSS twin is added on its own
+// id. Deterministic + idempotent (reuses ingestArticles' canonical dedup). Each
+// returned article carries `origins` (["rss"]/["manual"]/both) so the reader can
+// find a manual save's body in savedArticles when the content store misses.
+export function unifiedLibraryArticles(retainedRssArticles, savedArticles) {
+  const rss = Array.isArray(retainedRssArticles) ? retainedRssArticles : [];
+  const saved = Array.isArray(savedArticles) ? savedArticles : [];
+  const savedIds = new Set();
+  const savedCanonicals = saved.map((s) => { const a = savedArticleToArticle(s); savedIds.add(a.id); return a; });
+  const { articles } = ingestArticles(rss, savedCanonicals);
+  const rssIds = new Set(rss.map((a) => a.id));
+  return articles.map((a) => {
+    const origins = [];
+    if (rssIds.has(a.id)) origins.push("rss");
+    if (savedIds.has(a.id)) origins.push("manual");
+    return origins.length ? { ...a, origins } : a;
+  });
+}
