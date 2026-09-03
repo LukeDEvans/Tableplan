@@ -36,7 +36,7 @@ import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition 
 import { runFeedIngestion } from './feed-ingest.js';
 import { markManyDiscovered, pruneNotifications, saveArticle as notifSaveArticle, dismissArticle as notifDismissArticle, pendingNotifications, notificationBadgeCount, badgeLabel, retainedArticles, isSaved as notifIsSaved } from './publications-notify.js';
 import { publicationsPanelHtml } from './publications-render.js';
-import { setReadingProgress, readingPercent } from './reading-progress.js';
+import { setReadingProgress, readingPercent, pruneReadingProgress } from './reading-progress.js';
 import { bodyFetchRequest, normalizeFetchedBody, mergeFetchedMetadata } from './article-body.js';
 import { deriveMediaTierCount } from './media-tier.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
@@ -2844,7 +2844,9 @@ function applyFeedIngestion(feed, response) {
   const newIds = (r.articles || []).filter((a) => !before.has(a.id)).map((a) => a.id);
   state.articleNotifications = markManyDiscovered(state.articleNotifications || {}, newIds);
   state.pubArticles = capPubArticles(r.articles, state.articleNotifications);
-  state.articleNotifications = pruneNotifications(state.articleNotifications, state.pubArticles.map((a) => a.id));
+  const liveIds = state.pubArticles.map((a) => a.id);
+  state.articleNotifications = pruneNotifications(state.articleNotifications, liveIds);
+  state.readingProgress = pruneReadingProgress(state.readingProgress, liveIds);
   persist();
   return r;
 }
