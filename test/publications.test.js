@@ -135,3 +135,20 @@ describe("savedArticleToArticle — legacy reconciliation (deterministic, non-de
     expect(articles[0].feedIds).toEqual(["f1"]);
   });
 });
+
+describe("deterministic canonical article id (cross-device stable)", () => {
+  it("same canonical identity → same id; different → different; supplied id wins", () => {
+    const a = makeArticle({ url: "https://x.com/a" });
+    const b = makeArticle({ url: "https://x.com/a/?utm_source=y" }); // same canonical URL
+    const c = makeArticle({ url: "https://x.com/b" });
+    expect(a.id).toBe(b.id);            // stable across ingests/devices
+    expect(a.id).not.toBe(c.id);
+    expect(a.id.startsWith("art_")).toBe(true);
+    expect(makeArticle({ id: "explicit", url: "https://x.com/a" }).id).toBe("explicit");
+  });
+  it("a title/date-only article still gets a stable id; identity-less stays empty", () => {
+    const t = makeArticle({ title: "Hello", publishedAt: "2026-09-01T00:00:00Z" });
+    expect(t.id).toBe(makeArticle({ title: "Hello", publishedAt: "2026-09-01T00:00:00Z" }).id);
+    expect(makeArticle({}).id).toBe(""); // nothing to key on
+  });
+});

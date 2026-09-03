@@ -44,6 +44,22 @@ export function canonicalKey(article) {
   return "";
 }
 
+// A DETERMINISTIC article id derived from the canonical identity, so the SAME
+// real-world article gets the SAME id on every device and every ingest — without a
+// stable id, cross-device unionById would create duplicates and RSS items (which
+// carry no id) couldn't be tracked. ~64-bit (two FNV-1a streams) → collision-safe at
+// personal scale. Only used when the caller doesn't supply an id (e.g. the relational
+// table's gen_random_uuid, or an explicit id, still win).
+function deterministicArticleId(key) {
+  let h1 = 0x811c9dc5, h2 = (0x811c9dc5 ^ 0x9e3779b9) >>> 0;
+  for (let i = 0; i < key.length; i++) {
+    const c = key.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193);
+    h2 = Math.imul(h2 ^ c, 0x01000193);
+  }
+  return "art_" + (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36);
+}
+
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
 export function makePublication(p = {}) {
@@ -82,13 +98,16 @@ export function makeFeed(f = {}) {
 export function makeArticle(a = {}) {
   const url = str(a.url);
   const discoveredAt = str(a.discoveredAt) || nowIso();
+  const canonicalUrl = str(a.canonicalUrl) || (url ? canonicalizeUrl(url) : null);
+  // Deterministic id from the SAME canonical key the dedup uses (stable cross-device).
+  const idKey = canonicalKey({ canonicalUrl, url, title: a.title, publishedAt: a.publishedAt });
   return {
-    id: str(a.id),
+    id: str(a.id) || (idKey ? deterministicArticleId(idKey) : ""),
     publicationId: str(a.publicationId) || null,
     feedIds: Array.isArray(a.feedIds) ? [...new Set(a.feedIds.map(str).filter(Boolean))] : [],
     guid: a.guid == null ? null : str(a.guid),
     url: url || null,
-    canonicalUrl: str(a.canonicalUrl) || (url ? canonicalizeUrl(url) : null),
+    canonicalUrl,
     title: str(a.title),
     author: a.author == null ? null : str(a.author),
     publishedAt: a.publishedAt == null ? null : str(a.publishedAt),
