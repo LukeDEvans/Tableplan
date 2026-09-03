@@ -14,6 +14,7 @@ import { normalizePlanEvents } from "./calendar/model.js";
 import { eventInstancesInRange, sortEventsForDisplay } from "./calendar/projection.js";
 import { recentHistory } from "./media-history.js";
 import { resumableEntries } from "./media-progress.js";
+import { pendingNotifications, notificationBadgeCount, badgeLabel, retainedArticles } from "./publications-notify.js";
 
 // Local YYYY-MM-DD for a Date (matches how planEvents store dates). Explicit local
 // time so "today" means the user's calendar day, deterministically.
@@ -60,6 +61,23 @@ export function projectWeather(state) {
   return { location: active, hasLocation: !!active };
 }
 
+// Publications: the deterministic notification badge + counts for Today/nav.
+// Derived purely from state.pubArticles + state.articleNotifications — the badge is
+// never derived from library size, history, or playlist (§18).
+export function projectPublications(state, now = new Date()) {
+  const articles = Array.isArray(state?.pubArticles) ? state.pubArticles : [];
+  const notif = state?.articleNotifications;
+  const iso = now.toISOString();
+  const count = notificationBadgeCount(articles, notif, iso);
+  return {
+    badge: count,
+    badgeLabel: badgeLabel(count),
+    pendingCount: count,
+    retainedCount: retainedArticles(articles, notif).length,
+    pending: pendingNotifications(articles, notif, iso, { retentionDays: 7 }).slice(0, 20),
+  };
+}
+
 // Compose per-domain projections into a deterministic Today context. `now` is
 // ALWAYS supplied by the caller (never read internally) so the output is a pure
 // function of its inputs. `extra` merges shell-injected projections (e.g. tasks,
@@ -72,6 +90,7 @@ export function projectToday(state, now = new Date(), extra = {}) {
     calendar: projectCalendar(s, now),
     mediaContinue: projectMediaContinue(s, now),
     weather: projectWeather(s),
+    publications: projectPublications(s, now),
     ...extra,
   };
 }

@@ -90,3 +90,22 @@ describe("projectToday (thin composition)", () => {
     expect(ctx.mediaContinue.recent).toEqual([]);
   });
 });
+
+describe("projectPublications (deterministic badge)", () => {
+  it("badge counts pending notifications only, not library/history", async () => {
+    const { projectPublications } = await import("../today-projection.js");
+    const state = {
+      pubArticles: [{ id: "a1", publishedAt: "2026-09-02T00:00:00Z", publicationId: "p1", discoveredAt: "2026-09-02T00:00:00Z" }],
+      articleNotifications: { a1: { state: "pending", discoveredAt: "2026-09-02T00:00:00Z", resolvedAt: null } },
+    };
+    const p = projectPublications(state, new Date("2026-09-02T12:00:00Z"));
+    expect(p.badge).toBe(1);
+    expect(p.badgeLabel).toBe("1");
+    expect(p.pending.length).toBe(1);
+    // saving resolves it → badge 0, retained 1
+    state.articleNotifications.a1.state = "saved";
+    const p2 = projectPublications(state, new Date("2026-09-02T12:00:00Z"));
+    expect(p2.badge).toBe(0);
+    expect(p2.retainedCount).toBe(1);
+  });
+});

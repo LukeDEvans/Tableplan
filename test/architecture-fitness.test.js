@@ -21,7 +21,7 @@ const PURE_CORE = [
   "calendar/recurrence.js", "calendar/model.js", "calendar/projection.js", "calendar/reconcile.js",
   "calendar/normalize.js", "calendar/sources.js", "calendar/tasks-project.js",
   "grocery-catalog.js", "grocery-sources.js", "nutrition-domain.js", "receipt-domain.js",
-  "daily-dozen.js", "food-health.js", "meal-plan-servings.js", "music-canonical.js", "provenance.js", "platform-capabilities.js", "diagnostics.js", "today-projection.js", "ai-context.js", "search-index.js", "async-operation.js", "publications.js", "feed-parse.js", "feed-ingest.js",
+  "daily-dozen.js", "food-health.js", "meal-plan-servings.js", "music-canonical.js", "provenance.js", "platform-capabilities.js", "diagnostics.js", "today-projection.js", "ai-context.js", "search-index.js", "async-operation.js", "publications.js", "feed-parse.js", "feed-ingest.js", "publications-notify.js",
 ];
 
 // Client-served source (secrets must never reach here — ARCH §10). Excludes netlify/
@@ -153,7 +153,7 @@ describe("fitness: RSS ingestion boundary (Phase 2A)", () => {
     expect(src.includes('from "./publications.js"')).toBe(true); // reuse, not a second Article model
   });
   it("the RSS layer introduces NO scheduler/polling (demand-driven only)", () => {
-    for (const f of ["feed-parse.js", "feed-ingest.js", "netlify/functions/fetch-feed.js"]) {
+    for (const f of ["feed-parse.js", "feed-ingest.js", "publications-notify.js", "netlify/functions/fetch-feed.js"]) {
       const src = code(f);
       expect(/setInterval|setTimeout|cron|scheduled|node-cron|nextFetchAt\s*=/.test(src)).toBe(false);
     }
@@ -174,5 +174,37 @@ describe("fitness: RSS ingestion boundary (Phase 2A)", () => {
   it("feed-ingest does not reimplement URL normalization (reuses import-canonical via publications)", () => {
     const src = code("feed-ingest.js");
     expect(src.includes("canonicalizeUrl")).toBe(false); // it comes through publications.js, not redefined here
+  });
+});
+
+describe("fitness: Publications notifications/library (Phase 2B)", () => {
+  it("notification/lifecycle state is NOT stored on the canonical Article", () => {
+    const pub = code("publications.js");
+    const makeArt = pub.slice(pub.indexOf("export function makeArticle"), pub.indexOf("export function reconcileArticle"));
+    for (const banned of ["notification", "dismissed:", "saved:", "notifState"]) {
+      expect(makeArt.includes(banned)).toBe(false);
+    }
+    // the lifecycle lives in its own module, keyed by articleId
+    expect(code("publications-notify.js").includes("articleId")).toBe(true);
+  });
+  it("canonical articles + notification map are registered in mergeStates (synced)", () => {
+    const app = code("app.js");
+    const body = app.slice(app.indexOf("function mergeStates(newer, older)"));
+    const mergeBody = body.slice(0, body.indexOf("\nfunction ", 1));
+    expect(mergeBody.includes('"pubArticles"')).toBe(true);            // id-keyed union
+    expect(mergeBody.includes('"articleNotifications"')).toBe(true);   // key union
+  });
+  it("the ingestion applier converges through canonical reconciliation (no bypass)", () => {
+    const app = code("app.js");
+    const fn = app.slice(app.indexOf("function applyFeedIngestion"));
+    const body = fn.slice(0, 900);
+    expect(body.includes("runFeedIngestion")).toBe(true);
+    // failure/304 must not mutate the article store
+    expect(/failure\s*\|\|\s*.*notModified/.test(body) || body.includes("r.failure || r.notModified")).toBe(true);
+  });
+  it("Publications introduces NO scheduler/polling (demand-driven refresh only)", () => {
+    const app = code("app.js");
+    const region = app.slice(app.indexOf("function refreshFeed"), app.indexOf("function refreshFeed") + 800);
+    expect(/setInterval|setTimeout|cron|scheduled/.test(region)).toBe(false);
   });
 });

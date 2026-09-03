@@ -33,6 +33,8 @@ import { buildAgentContext } from './ai-context.js';
 import { indexFromState, search as searchIndexQuery } from './search-index.js';
 import { createOperationTracker } from './async-operation.js';
 import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition as clearMediaPosition, resumePositionFor, pruneMediaProgress } from './media-progress.js';
+import { runFeedIngestion } from './feed-ingest.js';
+import { markManyDiscovered, pruneNotifications, saveArticle as notifSaveArticle, dismissArticle as notifDismissArticle, pendingNotifications, notificationBadgeCount, badgeLabel, retainedArticles, isSaved as notifIsSaved } from './publications-notify.js';
 import { deriveMediaTierCount } from './media-tier.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
@@ -296,7 +298,7 @@ const STATE_SECTIONS = {
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "mediaProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "mediaProgress", "pubArticles", "articleNotifications", "pubDefs", "pubFeeds", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
   plan:      ["calendars", "planEvents", "planCalendars", "planHiddenSources", "planExternalExclusions", "planExternalOverrides"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
@@ -2766,6 +2768,17 @@ function setupDiagnostics() {
   window.__liveToday = (now) => projectToday(state, now instanceof Date ? now : new Date());
   window.__liveContext = (now) => buildAgentContext(state, now instanceof Date ? now : new Date());
   window.__liveSearch = (q, opts) => searchIndexQuery(indexFromState(state), q, opts || {});
+  // Publications (Phase 2B) dev/inspection surface: triage deck, badge, library,
+  // and a demand-driven feed refresh — the interactive UI consumes these verbs.
+  window.__livePublications = {
+    pending: () => pubPending(),
+    badge: () => pubBadgeCount(),
+    retained: (publicationId = null) => pubRetained(publicationId),
+    save: (id) => (savePubArticle(id), pubBadgeCount()),
+    dismiss: (id) => (dismissPubArticle(id), pubBadgeCount()),
+    refreshFeed: (feed) => refreshFeed(feed),
+    applyResponse: (feed, resp) => applyFeedIngestion(feed, resp), // for a seeded/manual response
+  };
 }
 
 function renderDiagnosticsPanel(snap) {
@@ -2779,6 +2792,72 @@ function renderDiagnosticsPanel(snap) {
   document.body.appendChild(panel);
   panel.querySelector("#liveDiagClose").addEventListener("click", () => panel.remove());
 }
+
+// ── Publications (Phase 2B): demand-driven ingestion applier + triage ─────────
+// Bound the interim state-backed article store (until the relational table is
+// applied): ALWAYS keep saved/permanent articles; cap the rest, newest first. This
+// guarantees notification retention/pruning can never drop the permanent library.
+function capPubArticles(list, notifMap, cap = 1000) {
+  const arr = Array.isArray(list) ? list : [];
+  if (arr.length <= cap) return arr;
+  const ms = (iso) => { const t = Date.parse(iso); return Number.isNaN(t) ? 0 : t; };
+  const saved = arr.filter((a) => notifIsSaved(notifMap, a.id));
+  const rest = arr.filter((a) => !notifIsSaved(notifMap, a.id))
+    .sort((a, b) => (ms(b.publishedAt) - ms(a.publishedAt)) || (ms(b.discoveredAt) - ms(a.discoveredAt)));
+  const keep = new Set(saved.map((a) => a.id));
+  for (const a of rest) { if (keep.size >= cap) break; keep.add(a.id); }
+  return arr.filter((a) => keep.has(a.id));
+}
+
+// Apply a fetch-feed RESPONSE to state via the Phase-2A/1 pipeline. On failure or
+// 304 it does NOT mutate the article store (only records feed metadata). New article
+// ids become PENDING notifications; rediscovered ones keep their lifecycle.
+function applyFeedIngestion(feed, response) {
+  const before = new Set((state.pubArticles || []).map((a) => a.id));
+  const r = runFeedIngestion({ feed, response, existingList: state.pubArticles || [] });
+  applyFeedRecordUpdate(feed, r.feedUpdate);
+  if (r.failure || r.notModified) { persist(); return r; } // transient/no-change → never touch articles
+  const newIds = (r.articles || []).filter((a) => !before.has(a.id)).map((a) => a.id);
+  state.articleNotifications = markManyDiscovered(state.articleNotifications || {}, newIds);
+  state.pubArticles = capPubArticles(r.articles, state.articleNotifications);
+  state.articleNotifications = pruneNotifications(state.articleNotifications, state.pubArticles.map((a) => a.id));
+  persist();
+  return r;
+}
+
+// Persist the feed's fetch metadata (etag/lastModified/lastSuccessAt/errorCount/…)
+// onto the matching pubFeeds record, so the next refresh can send a conditional GET.
+function applyFeedRecordUpdate(feed, update) {
+  if (!feed?.id || !update) return;
+  if (!Array.isArray(state.pubFeeds)) state.pubFeeds = [];
+  const i = state.pubFeeds.findIndex((f) => f.id === feed.id);
+  if (i >= 0) state.pubFeeds[i] = { ...state.pubFeeds[i], ...update };
+}
+
+// Demand-driven refresh of ONE feed through the SSRF-guarded server boundary
+// (fetch-feed). Never polls; a caller (manual refresh) invokes it explicitly.
+async function refreshFeed(feed) {
+  if (!feed?.url) return { failure: { message: "feed has no url" } };
+  let resp;
+  try {
+    const res = await fetch("/.netlify/functions/fetch-feed", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(authSession?.access_token ? { authorization: `Bearer ${authSession.access_token}` } : {}) },
+      body: JSON.stringify({ url: feed.url, etag: feed.etag || null, lastModified: feed.lastModified || null }),
+    });
+    resp = await res.json();
+  } catch (e) {
+    resp = { status: null, error: (e && e.message) || "network error" };
+  }
+  return applyFeedIngestion(feed, resp);
+}
+
+// Runtime triage helpers used by the UI (save/dismiss resolve the notification only).
+function savePubArticle(articleId) { state.articleNotifications = notifSaveArticle(state.articleNotifications || {}, articleId); persist(); }
+function dismissPubArticle(articleId) { state.articleNotifications = notifDismissArticle(state.articleNotifications || {}, articleId); persist(); }
+function pubPending() { return pendingNotifications(state.pubArticles || [], state.articleNotifications || {}, new Date().toISOString()); }
+function pubBadgeCount() { return notificationBadgeCount(state.pubArticles || [], state.articleNotifications || {}, new Date().toISOString()); }
+function pubRetained(publicationId = null) { return retainedArticles(state.pubArticles || [], state.articleNotifications || {}, { publicationId }); }
 
 async function toggleAuth() {
   // Local-dev sign-out: drop the flag and reload back to the real gate. No
@@ -3472,6 +3551,10 @@ function defaultState() {
     podcasts: [],
     podcastProgress: {},
     mediaProgress: {},
+    pubArticles: [],
+    articleNotifications: {},
+    pubDefs: [],
+    pubFeeds: [],
     podcastPlaylists: [],
     podcastPlaylistItems: {},
     podcastQueue: [],
@@ -3803,6 +3886,10 @@ function normalizeState(parsed) {
     podcasts: Array.isArray(parsed?.podcasts) ? parsed.podcasts : [],
     podcastProgress: (parsed?.podcastProgress !== null && typeof parsed?.podcastProgress === "object" && !Array.isArray(parsed?.podcastProgress)) ? parsed.podcastProgress : {},
     mediaProgress: normalizeMediaProgress(parsed?.mediaProgress),
+    pubArticles: Array.isArray(parsed?.pubArticles) ? parsed.pubArticles : [],
+    articleNotifications: (parsed?.articleNotifications && typeof parsed.articleNotifications === "object" && !Array.isArray(parsed.articleNotifications)) ? parsed.articleNotifications : {},
+    pubDefs: Array.isArray(parsed?.pubDefs) ? parsed.pubDefs : [],
+    pubFeeds: Array.isArray(parsed?.pubFeeds) ? parsed.pubFeeds : [],
     podcastSaved: Array.isArray(parsed?.podcastSaved) ? parsed.podcastSaved : [],
     podcastQueue: Array.isArray(parsed?.podcastQueue) ? parsed.podcastQueue : [],
     podcastAutoSkipped: Array.isArray(parsed?.podcastAutoSkipped) ? parsed.podcastAutoSkipped : [],
@@ -5665,6 +5752,8 @@ function mergeStates(newer, older) {
     "trips", "travelIdeas",
     // Finance (flat id-keyed — the nested ones are deep-merged below)
     "financeAccounts", "financeManualTxns",
+    // Publications (Phase 2B): canonical articles + publications + feeds (id-keyed)
+    "pubArticles", "pubDefs", "pubFeeds",
     // Contacts (address book)
     "contacts",
   ]) {
@@ -5719,6 +5808,7 @@ function mergeStates(newer, older) {
     "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeMerchantNames",
     "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts",
     "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes",
+    "articleNotifications",
   ]) {
     merged[key] = unionByKey(newer[key], older[key]);
   }
