@@ -57,17 +57,23 @@ export function notificationDeckHtml(pending, { pubsById } = {}) {
   return `<div class="pub-deck">${pending.map((a) => notificationCardHtml(a, { pubsById })).join("")}</div>`;
 }
 
-// One retained-library row (compact; click → details later, never auto-play §32).
-export function libraryRowHtml(article, { pubsById } = {}) {
+// A "read" check mark for a consumed article — the same glyph the savedArticles
+// list uses, so read state reads identically across the app.
+const READ_CHECK = `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Read"><polyline points="20 6 9 17 4 12"/></svg>`;
+
+// One retained-library row (compact; click → reader). Shows a read check when the
+// article has been consumed (a COMPLETE read), never merely opened (§279–283).
+export function libraryRowHtml(article, { pubsById, readIds } = {}) {
   const meta = [esc(pubName(article, pubsById)), esc(article.author || ""), esc(dateLabel(article.publishedAt))].filter(Boolean).join(" · ");
-  return `<div class="article-row pub-lib-row" data-article-id="${esc(article.id)}" role="button" tabindex="0">
-    <div class="article-row-main"><div class="article-row-title">${esc(article.title || "(untitled)")}</div>${meta ? `<div class="article-row-sub">${meta}</div>` : ""}</div>
+  const read = readIds && readIds.has ? readIds.has(article.id) : false;
+  return `<div class="article-row pub-lib-row${read ? " article-row--read" : ""}" data-article-id="${esc(article.id)}" role="button" tabindex="0">
+    <div class="article-row-main"><div class="article-row-title">${esc(article.title || "(untitled)")}</div>${meta ? `<div class="article-row-sub">${meta}</div>` : ""}</div>${read ? READ_CHECK : ""}
   </div>`;
 }
 
-export function libraryListHtml(articles, { pubsById, emptyText = "No saved articles yet." } = {}) {
+export function libraryListHtml(articles, { pubsById, readIds, emptyText = "No saved articles yet." } = {}) {
   if (!articles || !articles.length) return `<div class="pub-empty">${esc(emptyText)}</div>`;
-  return `<div class="pub-lib-list">${articles.map((a) => libraryRowHtml(a, { pubsById })).join("")}</div>`;
+  return `<div class="pub-lib-list">${articles.map((a) => libraryRowHtml(a, { pubsById, readIds })).join("")}</div>`;
 }
 
 // Publication filter chips for the library ("All" + each publication).
@@ -81,12 +87,12 @@ export function publicationTabsHtml(pubs, activePublicationId) {
 }
 
 // The whole panel: header (tabs + badge) + the active view.
-export function publicationsPanelHtml({ tab = "notifications", badge = 0, badgeLabel = "0", pending = [], retained = [], pubs = [], activePublicationId = null, pubsById = {} } = {}) {
+export function publicationsPanelHtml({ tab = "notifications", badge = 0, badgeLabel = "0", pending = [], retained = [], pubs = [], activePublicationId = null, pubsById = {}, readIds = null } = {}) {
   const tabBtn = (id, label, extra = "") =>
     `<button class="watch-category-tab${tab === id ? " is-active" : ""}" type="button" role="tab" data-pub-tab="${id}">${esc(label)}${extra}</button>`;
   const badgeHtml = badge > 0 ? ` <span class="pub-badge" aria-label="${badge} new">${esc(badgeLabel)}</span>` : "";
   const body = tab === "library"
-    ? publicationTabsHtml(pubs, activePublicationId) + libraryListHtml(retained, { pubsById })
+    ? publicationTabsHtml(pubs, activePublicationId) + libraryListHtml(retained, { pubsById, readIds })
     : notificationDeckHtml(pending, { pubsById });
   return `<div class="pub-panel">
     <div class="pub-panel-head">

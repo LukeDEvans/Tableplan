@@ -36,7 +36,7 @@ import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition 
 import { runFeedIngestion } from './feed-ingest.js';
 import { markManyDiscovered, pruneNotifications, saveArticle as notifSaveArticle, dismissArticle as notifDismissArticle, pendingNotifications, notificationBadgeCount, badgeLabel, retainedArticles, isSaved as notifIsSaved } from './publications-notify.js';
 import { publicationsPanelHtml } from './publications-render.js';
-import { setReadingProgress, readingPercent, pruneReadingProgress } from './reading-progress.js';
+import { setReadingProgress, readingPercent, pruneReadingProgress, isFinished } from './reading-progress.js';
 import { bodyFetchRequest, normalizeFetchedBody, mergeFetchedMetadata } from './article-body.js';
 import { deriveMediaTierCount } from './media-tier.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
@@ -2799,6 +2799,7 @@ function setupDiagnostics() {
     openReader: (id) => openPubArticle(id),
     closeReader: () => closePubReader(),
     readingPercent: (id) => readingPercent(state.readingProgress, id),
+    consumed: (id) => (state.readArticleIds || []).includes(id),
     // Seed a body straight into the content store so the reader path can be
     // verified without a live fetch-article call (returns the stored ref).
     seedBody: async (id, html) => { const ac = await getArticleContent(); return ac ? ac.saveBody(id, html) : null; },
@@ -2910,6 +2911,7 @@ function renderPublicationsPanel() {
     tab: pubActiveTab, badge, badgeLabel: badgeLabel(badge),
     pending: pubPending(), retained: pubRetained(pubActiveFilter),
     pubs, activePublicationId: pubActiveFilter, pubsById,
+    readIds: new Set(state.readArticleIds || []),
   });
   el.querySelectorAll("[data-pub-tab]").forEach((b) => b.addEventListener("click", () => { pubActiveTab = b.dataset.pubTab; renderPublicationsPanel(); }));
   el.querySelectorAll("[data-pub-filter]").forEach((b) => b.addEventListener("click", () => { pubActiveFilter = b.dataset.pubFilter === "all" ? null : b.dataset.pubFilter; renderPublicationsPanel(); }));
@@ -3021,17 +3023,39 @@ function restorePubReadingScroll(id) {
   });
 }
 
-// Save reading position on scroll (debounced). Opening/scrolling never consumes.
+// Record a COMPLETE read as consumption — the shared history the rest of the app
+// uses (readArticleIds + articleReadDates), so a finished pub article reads the
+// same everywhere. Idempotent. This is the ONLY place the pub reader consumes:
+// opening and partial reading never do (audit §279–283). The article stays in the
+// Library (consumption ≠ deletion/dismissal).
+function markPubArticleConsumed(id) {
+  if (!id) return false;
+  if (!Array.isArray(state.readArticleIds)) state.readArticleIds = [];
+  if (state.readArticleIds.includes(id)) return false;
+  state.readArticleIds.push(id);
+  if (!state.articleReadDates || typeof state.articleReadDates !== "object") state.articleReadDates = {};
+  if (!state.articleReadDates[id]) state.articleReadDates[id] = new Date().toISOString();
+  persist();
+  return true;
+}
+
+// Save reading position on scroll (debounced). Opening/scrolling never consumes;
+// only crossing the finished threshold (reaching the end) records consumption.
 function onPubReaderScroll() {
   const body = elements.pubReaderBody;
   if (!body || !openPubArticleId) return;
   if (_pubScrollTimer) clearTimeout(_pubScrollTimer);
   _pubScrollTimer = setTimeout(() => {
-    if (!openPubArticleId) return;
+    const id = openPubArticleId;
+    if (!id) return;
     const max = body.scrollHeight - body.clientHeight;
     const pct = max > 0 ? body.scrollTop / max : 0;
-    state.readingProgress = setReadingProgress(state.readingProgress, openPubArticleId, { percent: pct, position: body.scrollTop });
+    state.readingProgress = setReadingProgress(state.readingProgress, id, { percent: pct, position: body.scrollTop });
     persist();
+    // Reached the end → consume (once). Re-render the library so the row shows read.
+    if (isFinished(state.readingProgress, id) && markPubArticleConsumed(id) && activeAppArea === "publications") {
+      renderPublicationsPanel();
+    }
   }, 400);
 }
 

@@ -42,6 +42,17 @@ describe("empty states (distinct from failures)", () => {
   it("empty library shows a no-saved message", () => {
     expect(libraryListHtml([])).toContain("No saved articles");
   });
+  it("marks a consumed library row read (check mark), unread rows have none", () => {
+    const arts = [{ id: "a1", title: "Read one" }, { id: "a2", title: "Unread one" }];
+    const h = libraryListHtml(arts, { readIds: new Set(["a1"]) });
+    expect(h).toMatch(/data-article-id="a1"[^>]*class="[^"]*"|class="[^"]*article-row--read[^"]*"[^>]*data-article-id="a1"/);
+    // the read row carries the read class + a check; the unread row carries neither
+    const rowA1 = h.slice(h.indexOf('data-article-id="a1"') - 80, h.indexOf('data-article-id="a1"') + 200);
+    expect(rowA1).toContain("article-row--read");
+    expect(rowA1).toContain("article-row-check");
+    const rowA2 = h.slice(h.indexOf('data-article-id="a2"') - 80, h.indexOf('data-article-id="a2"') + 200);
+    expect(rowA2).not.toContain("article-row--read");
+  });
 });
 
 describe("publicationTabsHtml", () => {
