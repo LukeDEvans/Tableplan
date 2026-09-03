@@ -134,6 +134,15 @@ several domains model them ad hoc inside the state blob.
 - **Retries must be bounded** and must never re-enter a webhook/notification loop
   (see §8). Prefer "return empty on missing config" over erroring (YouTube proxy).
 - New integrations follow: *Domain → Domain service → Integration function → vendor.*
+- **RSS/feed discovery (Phase 2A)** is DEMAND-DRIVEN and split into three boundaries:
+  the network fetch (`netlify/functions/fetch-feed.js`, thin, reuses the SSRF-guarded
+  `safeFetch` with conditional GET) → the PURE parser (`feed-parse.js`, RSS 2.0 + Atom,
+  network-free, testable) → the PURE ingester (`feed-ingest.js` `runFeedIngestion`, which
+  converges every feed through the Phase-1 canonical Article via `publications.js`
+  `ingestArticles`). GUIDs stay feed-scoped; cross-feed dedup is the conservative canonical
+  URL. It does NOT poll/schedule, extract article bodies, do TTS, or own notifications —
+  a future scheduler/UI calls it. Article stays metadata-only (RSS `description` is an
+  excerpt, never the body).
 
 ## 8. Background-job conventions (highest-risk area)
 
