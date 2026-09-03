@@ -21,7 +21,7 @@ const PURE_CORE = [
   "calendar/recurrence.js", "calendar/model.js", "calendar/projection.js", "calendar/reconcile.js",
   "calendar/normalize.js", "calendar/sources.js", "calendar/tasks-project.js",
   "grocery-catalog.js", "grocery-sources.js", "nutrition-domain.js", "receipt-domain.js",
-  "daily-dozen.js", "food-health.js", "meal-plan-servings.js", "music-canonical.js", "provenance.js", "platform-capabilities.js", "diagnostics.js", "today-projection.js", "ai-context.js", "search-index.js", "async-operation.js",
+  "daily-dozen.js", "food-health.js", "meal-plan-servings.js", "music-canonical.js", "provenance.js", "platform-capabilities.js", "diagnostics.js", "today-projection.js", "ai-context.js", "search-index.js", "async-operation.js", "publications.js",
 ];
 
 // Client-served source (secrets must never reach here — ARCH §10). Excludes netlify/
@@ -128,5 +128,20 @@ describe("fitness: media-state separation — progress never defines current pla
     const body = fn.slice(0, fn.indexOf("\nasync function ", 1) > -1 ? fn.indexOf("\nfunction ", 1) : 400);
     expect(app.includes("projectResumable")).toBe(true);
     expect(app.includes("function activeMediaKey")).toBe(true);
+  });
+});
+
+describe("fitness: canonical Article stays OUT of the hot media JSONB (Phase 1)", () => {
+  it("the media state section does not hold canonical publications/feeds/articles tables", () => {
+    const app = code("app.js");
+    const media = app.slice(app.indexOf("media:"), app.indexOf("media:") + 1200);
+    // The canonical Article library is RELATIONAL (migrations/2026-09-02-publications.sql),
+    // never in the hot media section. (Legacy manual `savedArticles` stays until migrated.)
+    expect(/["']articleLibrary["']|["']canonicalArticles["']|["']publicationsTable["']/.test(media)).toBe(false);
+  });
+  it("publications.js is pure and reuses the existing canonical-URL utility", () => {
+    const src = code("publications.js");
+    expect(src.includes('from "./import-canonical.js"')).toBe(true); // reuse, not reinvent
+    expect(src.includes('from "./provenance.js"')).toBe(true);       // reuse provenance
   });
 });
