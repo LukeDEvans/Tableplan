@@ -36,6 +36,8 @@ import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition 
 import { runFeedIngestion } from './feed-ingest.js';
 import { markManyDiscovered, pruneNotifications, saveArticle as notifSaveArticle, dismissArticle as notifDismissArticle, pendingNotifications, notificationBadgeCount, badgeLabel, retainedArticles, isSaved as notifIsSaved } from './publications-notify.js';
 import { publicationsPanelHtml } from './publications-render.js';
+import { setReadingProgress, readingPercent } from './reading-progress.js';
+import { bodyFetchRequest, normalizeFetchedBody, mergeFetchedMetadata } from './article-body.js';
 import { deriveMediaTierCount } from './media-tier.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
@@ -981,6 +983,13 @@ const elements = {
   publicationsMainPage: document.querySelector("#publicationsMainPage"),
   publicationsPanel: document.querySelector("#publicationsPanel"),
   homePublicationsBtn: document.querySelector("#homePublicationsBtn"),
+  pubReaderPanel: document.querySelector("#pubReaderPanel"),
+  pubReaderBody: document.querySelector("#pubReaderBody"),
+  pubReaderText: document.querySelector("#pubReaderText"),
+  pubReaderTitle: document.querySelector("#pubReaderTitle"),
+  pubReaderMeta: document.querySelector("#pubReaderMeta"),
+  pubReaderOrig: document.querySelector("#pubReaderOrig"),
+  pubReaderClose: document.querySelector("#pubReaderClose"),
   weatherPageInner: document.querySelector("#weatherPageInner"),
   contactsGrid: document.querySelector("#contactsGrid"),
   contactsSearchInput: document.querySelector("#contactsSearchInput"),
@@ -1749,6 +1758,9 @@ function bindEvents() {
   elements.titleContactsBtn?.addEventListener("click", showContactsApp);
   elements.homeWeatherBtn?.addEventListener("click", showWeatherApp);
   elements.homePublicationsBtn?.addEventListener("click", showPublicationsApp);
+  elements.pubReaderClose?.addEventListener("click", closePubReader);
+  elements.pubReaderBody?.addEventListener("scroll", onPubReaderScroll, { passive: true });
+  elements.pubReaderPanel?.addEventListener("keydown", (e) => { if (e.key === "Escape") closePubReader(); });
   elements.titleWeatherBtn?.addEventListener("click", showWeatherApp);
   elements.contactsAddBtn?.addEventListener("click", () => openContactDialog(null));
   elements.contactsSearchInput?.addEventListener("input", () => renderContactsPage());
@@ -2784,6 +2796,12 @@ function setupDiagnostics() {
     dismiss: (id) => (dismissPubArticle(id), pubBadgeCount()),
     refreshFeed: (feed) => refreshFeed(feed),
     applyResponse: (feed, resp) => applyFeedIngestion(feed, resp), // for a seeded/manual response
+    openReader: (id) => openPubArticle(id),
+    closeReader: () => closePubReader(),
+    readingPercent: (id) => readingPercent(state.readingProgress, id),
+    // Seed a body straight into the content store so the reader path can be
+    // verified without a live fetch-article call (returns the stored ref).
+    seedBody: async (id, html) => { const ac = await getArticleContent(); return ac ? ac.saveBody(id, html) : null; },
   };
 }
 
@@ -2897,6 +2915,128 @@ function renderPublicationsPanel() {
   el.querySelectorAll("[data-pub-dismiss]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); dismissPubArticle(b.dataset.pubDismiss); renderPublicationsPanel(); }));
   el.querySelectorAll("[data-pub-flip]").forEach((b) => b.addEventListener("click", () => b.closest(".pub-card")?.classList.toggle("is-flipped")));
   el.querySelector("[data-pub-refresh]")?.addEventListener("click", () => refreshAllFeeds());
+  // Library rows open the reader (triage cards deliberately do NOT — §16/§32/§33).
+  el.querySelectorAll(".pub-lib-row").forEach((row) => {
+    const open = () => openPubArticle(row.dataset.articleId);
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+  });
+}
+
+// ── Publications reader (Phase 3): on-demand body → content store, reading progress ──
+// A DEDICATED panel (isolated from the savedArticles reader so its Delete/Close
+// handlers can't touch a canonical pub article). Body is fetched on demand into the
+// shared content store, keyed by the article id; the metadata record stays body-free
+// (only a small cross-device bodyRef is stored on it). Opening never marks the
+// article consumed (audit §279–283) — it only saves a READING position.
+let openPubArticleId = null;
+let _pubScrollTimer = null;
+
+function pubArticleById(id) { return (state.pubArticles || []).find((a) => a.id === id) || null; }
+
+// Persist a small content-store ref + any non-destructive metadata refresh back
+// onto the canonical article. NEVER writes a body onto the synced record.
+function updatePubArticle(id, patch) {
+  const i = (state.pubArticles || []).findIndex((a) => a.id === id);
+  if (i < 0) return;
+  state.pubArticles[i] = { ...state.pubArticles[i], ...patch };
+  if ("text" in state.pubArticles[i]) delete state.pubArticles[i].text;
+  if ("body" in state.pubArticles[i]) delete state.pubArticles[i].body;
+  persist();
+}
+
+function openPubArticle(id) {
+  const article = pubArticleById(id);
+  const panel = elements.pubReaderPanel;
+  if (!article || !panel) return;
+  openPubArticleId = id;
+  panel.hidden = false;
+  if (elements.pubReaderTitle) elements.pubReaderTitle.textContent = article.title || article.canonicalUrl || article.url || "(untitled)";
+  if (elements.pubReaderMeta) {
+    const pub = article.publicationId ? (state.pubDefs || []).find((p) => p.id === article.publicationId) : null;
+    const dt = article.publishedAt ? new Date(Date.parse(article.publishedAt)) : null;
+    const dateLbl = dt && !Number.isNaN(dt.getTime()) ? dt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "";
+    elements.pubReaderMeta.textContent = [pub?.name || article.category || "", article.author || "", dateLbl].filter(Boolean).join(" · ");
+  }
+  const orig = article.canonicalUrl || article.url || "";
+  if (elements.pubReaderOrig) { elements.pubReaderOrig.href = orig || "#"; elements.pubReaderOrig.hidden = !orig; }
+  if (elements.pubReaderBody) elements.pubReaderBody.scrollTop = 0;
+  renderPubArticleBody(article);
+}
+
+async function renderPubArticleBody(article) {
+  const id = article.id;
+  const textEl = elements.pubReaderText;
+  if (!textEl) return;
+  const paint = (html) => {
+    if (openPubArticleId !== id) return;
+    textEl.innerHTML = html;
+    restorePubReadingScroll(id);
+  };
+
+  // 1) Content store (local IndexedDB → durable Supabase-Storage backstop via bodyRef).
+  try {
+    const ac = await getArticleContent();
+    if (ac) { const body = await ac.loadBody(id, { ref: article.bodyRef, fallbackText: null }); if (body) { paint(body); return; } }
+  } catch { /* fall through to a network fetch */ }
+  if (openPubArticleId !== id) return;
+
+  // 2) On-demand fetch through the SSRF-guarded fetch-article boundary.
+  const req = bodyFetchRequest(article, { pubsById: Object.fromEntries((state.pubDefs || []).map((p) => [p.id, p])) });
+  if (!req.ok) { paint(`<div class="article-fetch-prompt"><p class="article-fetch-hint">${escapeHtml(req.error)}</p></div>`); return; }
+  textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
+  let res;
+  try { res = await callNetlifyFunction("fetch-article", { url: req.url, publication: req.publication }); }
+  catch { res = null; }
+  if (openPubArticleId !== id) return;
+  const norm = normalizeFetchedBody(res);
+  if (!norm.ok) {
+    paint(`<div class="article-fetch-prompt"><p class="article-fetch-hint">${escapeHtml(norm.error)}</p><a href="${escapeHtml(article.canonicalUrl || article.url || "#")}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`);
+    return;
+  }
+  // Mirror the body into the content store (keyed by id) and record only the small ref.
+  try {
+    const ac = await getArticleContent();
+    const ref = ac ? await ac.saveBody(id, norm.text) : null;
+    const { article: refreshed, changed } = mergeFetchedMetadata(article, norm);
+    const patch = changed ? { ...refreshed } : {};
+    if (ref?.cloud) patch.bodyRef = ref;
+    if (Object.keys(patch).length) updatePubArticle(id, patch);
+  } catch { /* non-fatal — body still paints from memory below */ }
+  paint(norm.text);
+}
+
+// Restore the saved reading position (percent → scrollTop) once the body is laid out.
+function restorePubReadingScroll(id) {
+  const body = elements.pubReaderBody;
+  if (!body) return;
+  const pct = readingPercent(state.readingProgress, id);
+  if (pct <= 0) return;
+  requestAnimationFrame(() => {
+    if (openPubArticleId !== id) return;
+    const max = body.scrollHeight - body.clientHeight;
+    if (max > 0) body.scrollTop = Math.round(pct * max);
+  });
+}
+
+// Save reading position on scroll (debounced). Opening/scrolling never consumes.
+function onPubReaderScroll() {
+  const body = elements.pubReaderBody;
+  if (!body || !openPubArticleId) return;
+  if (_pubScrollTimer) clearTimeout(_pubScrollTimer);
+  _pubScrollTimer = setTimeout(() => {
+    if (!openPubArticleId) return;
+    const max = body.scrollHeight - body.clientHeight;
+    const pct = max > 0 ? body.scrollTop / max : 0;
+    state.readingProgress = setReadingProgress(state.readingProgress, openPubArticleId, { percent: pct, position: body.scrollTop });
+    persist();
+  }, 400);
+}
+
+function closePubReader() {
+  if (elements.pubReaderPanel) elements.pubReaderPanel.hidden = true;
+  if (_pubScrollTimer) { clearTimeout(_pubScrollTimer); _pubScrollTimer = null; }
+  openPubArticleId = null;
 }
 
 // Manual, demand-driven refresh of every enabled feed (never polls). Re-renders when done.

@@ -21928,4 +21928,19 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .pub-empty { padding: 32px 16px; text-align: center; color: var(--muted, #8a8175); }
 .pub-lib-list { display: flex; flex-direction: column; }
 .pub-lib-row { cursor: pointer; }
-@media (max-width: 480px) { .pub-page-inner { padding: 8px; } .pub-card-img { width: 52px; height: 52px; } }
+/* Publications reader (Phase 3): a full-screen sheet over the app; body scrolls. */
+.pub-reader { position: fixed; inset: 0; z-index: 1200; background: var(--window-bg, #fff);
+  display: flex; justify-content: center; }
+.pub-reader-inner { display: flex; flex-direction: column; width: 100%; max-width: 720px; height: 100%; }
+.pub-reader-head { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 14px; border-bottom: 1px solid var(--hairline, #eee); flex: 0 0 auto; }
+.pub-reader-close { flex: 0 0 auto; }
+.pub-reader-orig { font-size: 13px; color: var(--accent, #2f9e78); text-decoration: none; }
+.pub-reader-body { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 18px 20px 48px;
+  -webkit-overflow-scrolling: touch; }
+.pub-reader-title { font-size: 22px; line-height: 1.25; margin: 0 0 6px; overflow-wrap: anywhere; text-wrap: balance; }
+.pub-reader-meta { font-size: 13px; color: var(--muted, #8a8175); margin-bottom: 16px; overflow-wrap: anywhere; }
+.pub-reader-text { font-size: 17px; line-height: 1.65; overflow-wrap: anywhere; }
+.pub-reader-text img { max-width: 100%; height: auto; border-radius: 8px; }
+@media (max-width: 480px) { .pub-page-inner { padding: 8px; } .pub-card-img { width: 52px; height: 52px; }
+  .pub-reader-body { padding: 14px 16px 40px; } .pub-reader-title { font-size: 20px; } .pub-reader-text { font-size: 16px; } }

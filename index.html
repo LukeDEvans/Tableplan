@@ -765,6 +765,19 @@
         </section>
         <section class="planner-column do-column" id="publicationsMainPage" aria-label="Publications" hidden>
           <div class="pub-page-inner" id="publicationsPanel"></div>
+          <div class="pub-reader" id="pubReaderPanel" role="dialog" aria-modal="true" aria-label="Article reader" tabindex="-1" hidden>
+            <div class="pub-reader-inner">
+              <div class="pub-reader-head">
+                <button type="button" class="icon-btn pub-reader-close" id="pubReaderClose" aria-label="Close reader">✕</button>
+                <a class="pub-reader-orig" id="pubReaderOrig" href="#" target="_blank" rel="noopener">Open original ↗</a>
+              </div>
+              <div class="pub-reader-body" id="pubReaderBody">
+                <h1 class="pub-reader-title" id="pubReaderTitle"></h1>
+                <div class="pub-reader-meta" id="pubReaderMeta"></div>
+                <div class="pub-reader-text article-reader-text" id="pubReaderText"></div>
+              </div>
+            </div>
+          </div>
         </section>
         <section class="planner-column do-column mail-page" id="mailMainPage" aria-label="Mail" hidden>
           <div class="mail-page-inner">
