@@ -35,12 +35,19 @@ export function projectCalendar(state, now) {
 
 // Recently-played media to "continue" (the read surface for a future unified audio/
 // audiobook Continue — position persistence, when added, flows through mediaHistory).
-export function projectMediaContinue(state, now, { limit = 5 } = {}) {
+// `currentlyPlaying` (the runtime now-playing item, or null) and `activeKey` (its
+// mediaKey/id) are INJECTED by the shell — currently-playing is runtime engine
+// truth, not derivable from state. Passing activeKey excludes the playing item from
+// `resumable`, keeping the two concepts separate (Phase 0).
+export function projectMediaContinue(state, now, { limit = 5, activeKey = null, currentlyPlaying = null } = {}) {
   const list = Array.isArray(state?.mediaHistory) ? state.mediaHistory : [];
+  const excludeId = activeKey ? String(activeKey).split(":").slice(1).join(":") || activeKey : null;
   return {
+    currentlyPlaying: currentlyPlaying || null, // runtime truth; null when nothing plays
     recent: recentHistory(list, { limit }),
-    // Resume points (music/audiobooks partway through) from the mediaProgress map.
-    resumable: resumableEntries(state?.mediaProgress, { limit }),
+    // Resume points (music/audiobooks partway through) from the mediaProgress map,
+    // excluding whatever is currently playing.
+    resumable: resumableEntries(state?.mediaProgress, { limit, excludeId }),
   };
 }
 

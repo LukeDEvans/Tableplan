@@ -92,6 +92,39 @@ export function continueList(items, { limit } = {}) {
   return limit != null ? out.slice(0, limit) : out;
 }
 
+// ── Media-state separation (Phase 0) ─────────────────────────────────────────
+// Five INDEPENDENT concepts that must never be conflated (audit §8):
+//   1. CURRENTLY PLAYING — the item occupying the active playback engine RIGHT NOW.
+//      Runtime truth only (nowPlayingKind() in the shell); null when nothing plays.
+//      NEVER inferred from progress, membership, history, or "most recent".
+//   2. RESUMABLE — items with meaningful saved progress that can be resumed.
+//      Derived from progress (isContinuable). Having progress does NOT mean playing,
+//      so the resumable list MUST exclude the currently-playing key.
+//   3. PLAYLIST MEMBERSHIP — the user intentionally queued an item for later.
+//      Independent of playing/progress/consumption; adding never starts playback.
+//   4. PLAYBACK PROGRESS — a persisted position within a session (media-progress.js /
+//      podcastProgress). Not active-playback state.
+//   5. CONSUMPTION — historical completion. Separate from all of the above; not terminal.
+// These helpers make the separation explicit and testable; the shell injects the
+// runtime `activeKey` (the currently-playing item's mediaKey) so this stays pure.
+
+/** The mediaKey (kind:id) of an item — the stable identity used for all comparisons. */
+export function mediaKeyOf(item) { return item ? mediaKey(item) : null; }
+
+/** Is THIS item the one currently playing? Identity match against the runtime
+ *  active key ONLY — never true merely because the item has saved progress. */
+export function isCurrentlyPlaying(item, activeKey) {
+  return !!activeKey && !!item && mediaKey(item) === activeKey;
+}
+
+/** Resumable items = continuable (meaningful progress) MINUS the currently-playing
+ *  item. This is the model-level enforcement of "resumable ≠ currently playing":
+ *  the actively-playing item is shown in the now-playing surface, not in Continue. */
+export function projectResumable(items, { activeKey = null, limit } = {}) {
+  const out = continueList(items).filter((it) => !isCurrentlyPlaying(it, activeKey));
+  return limit != null ? out.slice(0, limit) : out;
+}
+
 // ── Saved (app-owned Watch-Later / Listen-Later / Favourites, design §14) ──────
 export const SAVED_LIST = Object.freeze({ WATCH_LATER: "watch-later", LISTEN_LATER: "listen-later", FAVORITES: "favorites" });
 

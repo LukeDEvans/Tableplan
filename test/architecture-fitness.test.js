@@ -110,3 +110,23 @@ describe("fitness: account-scoped local storage stays classified (account bounda
     expect(t.includes("classifies every localStorage key")).toBe(true);
   });
 });
+
+describe("fitness: media-state separation — progress never defines current playback (Phase 0)", () => {
+  it("isCurrentlyPlaying is identity-only (does not read progress/userState)", () => {
+    const src = code("media-state.js");
+    const fn = src.slice(src.indexOf("export function isCurrentlyPlaying"));
+    const body = fn.slice(0, fn.indexOf("}") + 1);
+    expect(body.includes("progress")).toBe(false);
+    expect(body.includes("userState")).toBe(false);
+    expect(/mediaKey\(item\)\s*===\s*activeKey/.test(body)).toBe(true);
+  });
+  it("the Continue/resumable builder excludes the currently-playing item", () => {
+    const app = code("app.js");
+    // discoverContinueItems must use projectResumable + activeMediaKey (not the raw
+    // continueList, which would let the playing item sit in Continue).
+    const fn = app.slice(app.indexOf("async function discoverContinueItems"));
+    const body = fn.slice(0, fn.indexOf("\nasync function ", 1) > -1 ? fn.indexOf("\nfunction ", 1) : 400);
+    expect(app.includes("projectResumable")).toBe(true);
+    expect(app.includes("function activeMediaKey")).toBe(true);
+  });
+});

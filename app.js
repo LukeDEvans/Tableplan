@@ -41539,7 +41539,9 @@ async function discoverContinueItems(hub, limit) {
     ...hub.watchA.watchItemsToMediaItems(state.watchItems || []),
     ...hub.sources.podcastsToContinueItems(state.podcasts || [], state.podcastProgress || {}),
   ];
-  return hub.mstate.continueList(dedupeDiscoverItems(items), { limit });
+  // Resumable EXCLUDES the currently-playing item (Phase 0: progress ≠ playing) —
+  // the active item lives in the now-playing surface, not the Continue list.
+  return hub.mstate.projectResumable(dedupeDiscoverItems(items), { activeKey: activeMediaKey(), limit });
 }
 
 
@@ -46003,6 +46005,17 @@ function deleteMusicPlaylist(id) {
 
 // The active kind is detected from the mode flags via the MEDIA_KINDS registry.
 function nowPlayingKind() { for (const k of NOW_PLAYING_ORDER) if (MEDIA_KINDS[k].active()) return k; return null; }
+// The mediaKey (kind:id) of the item on the active playback engine RIGHT NOW, or
+// null when nothing plays. Runtime truth (Phase 0 CURRENTLY-PLAYING) — used to keep
+// the playing item OUT of the Resumable/Continue list. Never derived from progress.
+function activeMediaKey() {
+  const k = nowPlayingKind();
+  if (k === "podcast") return podcastCurEpisode ? `podcast:${podcastCurEpisode.id}` : null;
+  if (k === "music") return musicCurTrack ? `music:${musicCurTrack.id}` : null;
+  if (k === "tts") return listenArticle ? `article:${listenArticle.id}` : null;
+  if (k === "radio") return radioCurStation ? `radio:${radioCurStation.id || radioCurStation.name || ""}` : null;
+  return null;
+}
 // The shared element while a podcast / radio / music item is active (all drive
 // the bar the same element-based way); null during TTS, which has its own readout.
 function nowPlayingEl() { const k = nowPlayingKind(); return k ? MEDIA_KINDS[k].el() : null; }

@@ -59,11 +59,13 @@ export function pruneMediaProgress(map, { cap = 200 } = {}) {
 }
 
 // Resumable items for a Today/Continue projection: entries with a meaningful resume
-// point, newest first. Pure — the caller maps ids back to titles/targets.
-export function resumableEntries(map, { minPosition = 45, tailGuard = 15, limit = 10 } = {}) {
+// point, newest first. Pure — the caller maps ids back to titles/targets. `excludeId`
+// drops the currently-playing item so RESUMABLE strictly excludes CURRENTLY-PLAYING
+// (Phase 0: having progress does not mean it is playing).
+export function resumableEntries(map, { minPosition = 45, tailGuard = 15, limit = 10, excludeId = null } = {}) {
   const m = normalizeMediaProgress(map);
   return Object.keys(m)
-    .filter((k) => resumePositionFor(m, k, { minPosition, tailGuard }) > 0)
+    .filter((k) => k !== excludeId && resumePositionFor(m, k, { minPosition, tailGuard }) > 0)
     .map((k) => ({ id: k, position: m[k].position, duration: m[k].duration || 0, lastPlayedAt: m[k].lastPlayedAt || null }))
     .sort((a, b) => String(b.lastPlayedAt || "").localeCompare(String(a.lastPlayedAt || "")))
     .slice(0, limit);

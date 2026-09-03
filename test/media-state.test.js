@@ -3,6 +3,7 @@ import {
   toHistoryEntry, fromHistoryEntry, recordPlayback, historyItems,
   progressRatio, progressLabel, isContinuable, continueList,
   makeSavedItem, isSaved, saveItem, unsaveItem, toggleSaved, savedList, SAVED_LIST,
+  mediaKeyOf, isCurrentlyPlaying, projectResumable,
 } from "../media-state.js";
 import { makeMediaItem, mediaKey } from "../media-model.js";
 import { watchItemToMediaItem } from "../media-watch-adapter.js";
@@ -110,5 +111,56 @@ describe("integration: real Watch item → Continue + Saved", () => {
     expect(continueList([item]).map((i) => i.title)).toEqual(["The Bear"]);
     const saved = saveItem([], item, SAVED_LIST.WATCH_LATER);
     expect(isSaved(saved, item)).toBe(true);
+  });
+});
+
+// ── Phase 0: media-state separation (currently-playing vs resumable vs …) ──────
+describe("Phase 0 — the five media concepts are independent", () => {
+  const prog = (position, duration = 120) => ({ kind: "position", position, duration });
+  const item = (kind, id, position, lastAt = 0) =>
+    makeMediaItem({ kind, id, title: `${kind}-${id}`, userState: { progress: prog(position), lastAt } });
+
+  it("mediaKeyOf returns kind:id", () => {
+    expect(mediaKeyOf(item("podcast", "e1", 30))).toBe("podcast:e1");
+    expect(mediaKeyOf(null)).toBe(null);
+  });
+
+  it("CURRENTLY PLAYING is identity-only — progress never makes an item 'playing'", () => {
+    const withProgress = item("podcast", "e1", 60); // 50% in
+    expect(isCurrentlyPlaying(withProgress, "podcast:e1")).toBe(true);  // it IS the active key
+    expect(isCurrentlyPlaying(withProgress, null)).toBe(false);          // nothing playing
+    expect(isCurrentlyPlaying(withProgress, "podcast:OTHER")).toBe(false); // has progress, but not active
+  });
+
+  it("RESUMABLE excludes the currently-playing item (progress ≠ playing)", () => {
+    const items = [item("podcast", "e1", 60, 3), item("music", "m2", 40, 2), item("podcast", "e3", 90, 1)];
+    // e1 is playing → resumable must NOT include it, even though it has progress.
+    const res = projectResumable(items, { activeKey: "podcast:e1" });
+    const keys = res.map(mediaKeyOf);
+    expect(keys).not.toContain("podcast:e1");
+    expect(keys).toContain("music:m2");
+    expect(keys).toContain("podcast:e3");
+  });
+
+  it("with nothing playing, all continuable items are resumable (none excluded)", () => {
+    const items = [item("podcast", "e1", 60, 2), item("music", "m2", 40, 1)];
+    expect(projectResumable(items, { activeKey: null }).map(mediaKeyOf).sort())
+      .toEqual(["music:m2", "podcast:e1"]);
+  });
+
+  it("RESUMABLE is cross-kind and ordered by recency (lastAt desc)", () => {
+    const items = [item("music", "m1", 30, 1), item("podcast", "e2", 30, 3), item("video", "v3", 30, 2)];
+    expect(projectResumable(items, {}).map(mediaKeyOf)).toEqual(["podcast:e2", "video:v3", "music:m1"]);
+  });
+
+  it("a completed/tiny-progress item is not resumable (existing threshold holds)", () => {
+    const done = makeMediaItem({ kind: "music", id: "d", userState: { progress: { kind: "position", position: 119, duration: 120 } } });
+    const tiny = makeMediaItem({ kind: "music", id: "t", userState: { progress: { kind: "position", position: 1, duration: 120 } } });
+    expect(projectResumable([done, tiny], {}).map(mediaKeyOf)).toEqual([]);
+  });
+
+  it("resumable respects a limit", () => {
+    const items = [item("music", "m1", 30, 3), item("music", "m2", 30, 2), item("music", "m3", 30, 1)];
+    expect(projectResumable(items, { limit: 2 }).length).toBe(2);
   });
 });
