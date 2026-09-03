@@ -394,12 +394,19 @@ re-models the concept*, never as a speculative universal-object rewrite.
 | **Location** | travel, weather, showtimes, calendar `location{}` | a `PlaceRef {name, lat, lng, sourceId}` | next geo-touching feature |
 | **Provider ↔ capability ↔ content** | media/music/radio | `media-provider.js` registry + `providerRefs` — **already converged** | keep |
 | **Provenance** | ingress records | `provenance.js` (§5) | attached at each new ingress point |
+| **Article / Publication** | manual `savedArticles` + (future) RSS | `publications.js` canonical Article + Publication + Feed; relational store (migrations/2026-09-02-publications.sql, design) | **converging now** — Publications is the on-contact trigger (Phase 1 foundation) |
 
 **Non-goals:** do NOT force tasks, budget lines, recipes, or inventory into one
 entity type — their invariants are domain-owned. Convergence is about *references
 between* domains (a finance person that IS a contact), not a single table. The
 `platform-capabilities.js` catalog records which cross-cutting mechanisms are
 platform capabilities (multiple consumers) versus domain-local.
+
+**Media-state — five concepts that must never conflate** (Phase 0, `media-state.js`):
+CURRENTLY-PLAYING (runtime `nowPlayingKind()`, null when stopped) · RESUMABLE
+(`isContinuable`/`projectResumable`, excludes the playing item) · PLAYLIST MEMBERSHIP
+(`podcastQueue`) · PLAYBACK PROGRESS (`media-progress.js`/`podcastProgress`) · CONSUMPTION
+(history/read flags). Progress never implies currently-playing (fitness-enforced).
 
 **Interaction primitives — two distinct patterns, do not conflate:**
 - **Reorder within a list** → `makeSortable()` (`sortable.js` + pure `sortable-core.js`:
