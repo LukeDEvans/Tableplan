@@ -151,6 +151,15 @@ several domains model them ad hoc inside the state blob.
   reorders by discovery; the badge counts only PENDING (never library/history/playlist).
   Interim store: bounded `pubArticles`/`articleNotifications` in state (saved always kept),
   promoting to the relational `articles` table when that migration is applied.
+- **Publications reader + on-demand body (Phase 3):** the Article record stays METADATA
+  only — the body is acquired on demand through the SSRF-guarded `fetch-article` boundary
+  (`article-body.js` shapes the request/normalizes the response) and mirrored into the shared
+  content store keyed by article id; only a small cross-device `bodyRef` is written back onto
+  the synced record (never the body). **Reading progress** (`reading-progress.js`, small
+  `readingProgress` map, `unionByKey` merge) is a DISTINCT concern from listening
+  (`mediaProgress`) and consumption (`readArticleIds`): opening/scrolling saves a position and
+  NEVER consumes or touches the queue. The reader opens from the Library only; triage cards
+  stay read-free.
 
 ## 8. Background-job conventions (highest-risk area)
 
