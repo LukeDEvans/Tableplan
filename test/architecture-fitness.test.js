@@ -17,7 +17,7 @@ const code = (p) => stripComments(read(p));
 // §13, §20 "business logic living inside DOM render functions" is an anti-pattern).
 const PURE_CORE = [
   "state-sync.js", "finance-sync.js", "finance-actuals.js", "finance-review-gesture.js",
-  "media-model.js", "media-tier.js", "media-history.js", "media-search-scope.js", "media-sources.js",
+  "media-model.js", "media-tier.js", "media-history.js", "media-search-scope.js", "media-sources.js", "media-progress.js",
   "calendar/recurrence.js", "calendar/model.js", "calendar/projection.js", "calendar/reconcile.js",
   "calendar/normalize.js", "calendar/sources.js", "calendar/tasks-project.js",
   "grocery-catalog.js", "grocery-sources.js", "nutrition-domain.js", "receipt-domain.js",

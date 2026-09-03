@@ -32,6 +32,7 @@ import { projectToday } from './today-projection.js';
 import { buildAgentContext } from './ai-context.js';
 import { indexFromState, search as searchIndexQuery } from './search-index.js';
 import { createOperationTracker } from './async-operation.js';
+import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition as clearMediaPosition, resumePositionFor, pruneMediaProgress } from './media-progress.js';
 import { deriveMediaTierCount } from './media-tier.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
@@ -295,7 +296,7 @@ const STATE_SECTIONS = {
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "mediaProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
   plan:      ["calendars", "planEvents", "planCalendars", "planHiddenSources", "planExternalExclusions", "planExternalOverrides"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
@@ -3470,6 +3471,7 @@ function defaultState() {
     articleReadDates: {},
     podcasts: [],
     podcastProgress: {},
+    mediaProgress: {},
     podcastPlaylists: [],
     podcastPlaylistItems: {},
     podcastQueue: [],
@@ -3800,6 +3802,7 @@ function normalizeState(parsed) {
     // Podcast — not normalized elsewhere; guard the types that render functions loop over directly.
     podcasts: Array.isArray(parsed?.podcasts) ? parsed.podcasts : [],
     podcastProgress: (parsed?.podcastProgress !== null && typeof parsed?.podcastProgress === "object" && !Array.isArray(parsed?.podcastProgress)) ? parsed.podcastProgress : {},
+    mediaProgress: normalizeMediaProgress(parsed?.mediaProgress),
     podcastSaved: Array.isArray(parsed?.podcastSaved) ? parsed.podcastSaved : [],
     podcastQueue: Array.isArray(parsed?.podcastQueue) ? parsed.podcastQueue : [],
     podcastAutoSkipped: Array.isArray(parsed?.podcastAutoSkipped) ? parsed.podcastAutoSkipped : [],
@@ -5707,7 +5710,7 @@ function mergeStates(newer, older) {
     "groceryReviewDismissed", "collapsedDays",
     "personChecklistSettings",
     "podcastSavedEpisodeCategories",
-    "podcastProgress", "podcastShowTiers", "podcastEpisodeTiers",
+    "podcastProgress", "mediaProgress", "podcastShowTiers", "podcastEpisodeTiers",
     "podcastPlaylistItems", "articleReadDates", "publicationTiers",
     "podcastBundleSeries", "podcastReleasedSeries",
     // Finance per-transaction metadata (keyed by txn id / merchant key / month).
@@ -41660,6 +41663,7 @@ let podcastSaveTimer = null;
 // Music (Listen → Music). musicAudio mirrors podcastAudio: the shared element
 // while a music track is active, else null. See the music playback block below.
 let musicAudio = null;
+let musicPositionSaveTimer = null; // throttled resume-position saver (media-progress)
 let musicCurTrack = null;      // track loaded into the shared element
 let musicQueueRest = [];       // remaining track ids to auto-advance through
 let musicCurUrl = null;        // object URL for the current local blob (revoked on change)
@@ -44688,6 +44692,17 @@ function musicArtUrlFor(track) {
 // the one shared engine. The queue holds tagged refs so library and streaming
 // tracks interleave and auto-advance through the same path.
 //   queue item: { kind:"library", id } | { kind:"stream", track }
+// Save the current music position into the synced mediaProgress map (throttled by
+// the interval below). Reads the shared element's currentTime (music is one
+// segment, so element time == logical position). Skips trivially-short positions.
+function saveMusicPosition() {
+  if (!musicAudio || !musicCurTrack?.id) return;
+  const pos = Math.floor(musicAudio.currentTime || 0);
+  if (pos <= 5) return; // nothing worth resuming yet
+  state.mediaProgress = pruneMediaProgress(setMediaPosition(state.mediaProgress, musicCurTrack.id, { position: pos, duration: musicAudio.duration || 0 }));
+  persist();
+}
+
 function playMusicDescriptor(desc, url, { isBlob = false } = {}) {
   stopPodcastAudio();   // never overlap with a podcast…
   stopListen();         // …or an article read-aloud
@@ -44697,7 +44712,12 @@ function playMusicDescriptor(desc, url, { isBlob = false } = {}) {
   musicCurTrack = desc;
   const engine = getMediaEngine();
   musicAudio = ensureMediaAudioEl(); // mode flag → the shared element
-  engine.load({ id: desc.id, providerId: "music", segments: [{ url }], startPosition: 0, rate: mediaPlaybackSpeed }, { autoplay: true });
+  // Resume where the listener left off (podcast/video already do this via the same
+  // engine startPosition). Threshold-guarded so short songs / near-done tracks don't jump.
+  const resumeAt = resumePositionFor(state.mediaProgress, desc.id);
+  engine.load({ id: desc.id, providerId: "music", segments: [{ url }], startPosition: resumeAt, rate: mediaPlaybackSpeed }, { autoplay: true });
+  window.clearInterval(musicPositionSaveTimer);
+  musicPositionSaveTimer = window.setInterval(saveMusicPosition, 10000);
   setMiniPlayer(desc.title || "Untitled", desc.artist || desc.album || "", desc.artworkUrl || "");
   setMusicMediaSession(desc);
   pushMusicHistory(desc);
@@ -44751,12 +44771,17 @@ function playStreamingTrack(track, restTracks = []) {
 }
 
 function onMusicEnded() {
+  // Track finished — drop its resume point so it doesn't reopen part-way next time.
+  window.clearInterval(musicPositionSaveTimer);
+  if (musicCurTrack?.id) { state.mediaProgress = clearMediaPosition(state.mediaProgress, musicCurTrack.id); persist(); }
   updateMiniPlayerPlayBtn();
   if (musicQueueRest.length) { const next = musicQueueRest.shift(); playMusicQueueItem(next, musicQueueRest); return; }
   stopMusicPlayback(); // queue drained
 }
 
 function stopMusicPlayback() {
+  saveMusicPosition(); // capture the final resume point before tearing down
+  window.clearInterval(musicPositionSaveTimer);
   if (mediaEngine && musicAudio) mediaEngine.stop();
   if (musicCurUrl) { try { URL.revokeObjectURL(musicCurUrl); } catch { /* noop */ } musicCurUrl = null; }
   musicAudio = null;

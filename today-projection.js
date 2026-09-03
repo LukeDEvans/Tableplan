@@ -13,6 +13,7 @@
 import { normalizePlanEvents } from "./calendar/model.js";
 import { eventInstancesInRange, sortEventsForDisplay } from "./calendar/projection.js";
 import { recentHistory } from "./media-history.js";
+import { resumableEntries } from "./media-progress.js";
 
 // Local YYYY-MM-DD for a Date (matches how planEvents store dates). Explicit local
 // time so "today" means the user's calendar day, deterministically.
@@ -36,7 +37,11 @@ export function projectCalendar(state, now) {
 // audiobook Continue — position persistence, when added, flows through mediaHistory).
 export function projectMediaContinue(state, now, { limit = 5 } = {}) {
   const list = Array.isArray(state?.mediaHistory) ? state.mediaHistory : [];
-  return { recent: recentHistory(list, { limit }) };
+  return {
+    recent: recentHistory(list, { limit }),
+    // Resume points (music/audiobooks partway through) from the mediaProgress map.
+    resumable: resumableEntries(state?.mediaProgress, { limit }),
+  };
 }
 
 // The active weather location (readings are external/cached, not in canonical state,
