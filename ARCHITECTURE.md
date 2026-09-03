@@ -425,9 +425,15 @@ swap is a drop-in.
 (union/tombstone/CAS), the section split, provenance, projections, search, and every
 pure module run identically against any backend — they touch no vendor API.
 
-**The storage seam** — all Supabase-specific access is funneled through a small set
-of operations behind `supabaseBaseUrl()` / `supabaseHeaders()` (~14 call sites). The
-future `Storage` interface is exactly these ~8 operations:
+**A coarse provider seam already exists.** `sharedStorageProviders()` returns a
+`{ label, load, write }` provider, and there are already **two real implementations**
+behind it — Supabase (cloud) and the **local file backend** (`loadStateFromLocalBackend`
+/ `writeStateToLocalBackend`, used by `dev:local`). So whole-state load/write is
+already adapter-shaped with a genuine second consumer. What is *not* yet behind a
+formal interface is the finer **section-level** operation set (below), which the
+local backend doesn't use (it round-trips whole state) and which only a home-server
+Postgres backend would need. That finer `Storage` interface is exactly these ~8
+operations behind `supabaseBaseUrl()` / `supabaseHeaders()` (~14 call sites):
 
 1. `loadSections(stateId)` → all section rows for a scope.
 2. `writeSectionWithMerge(stateId, section, payload, seenStamp)` → CAS write (0-rows ⇒ conflict-merge-retry).

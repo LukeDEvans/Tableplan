@@ -256,3 +256,55 @@ readiness: canonical concepts + provenance + capabilities + deterministic projec
 diagnostics + one legible context surface, no AI framework. (8) Net complexity: +8 small pure
 modules (each with ≥1 real consumer + tests) and ~7 documentation sections; 5 frameworks
 explicitly NOT built. (9) 1196 tests green, build clean, tree clean. **No unexplained yellow.**
+
+## F. Gate re-evaluation (2026-09-02) — the four DESIGNED/GATED items re-opened
+
+Re-reviewed each gate against current evidence (not deferred by default).
+
+- **Audio-position persistence (23) — GATE LIFTED → IMPLEMENTED.** The playback
+  architecture now provides a natural home (podcastProgress precedent + engine
+  startPosition + projectMediaContinue). Built `media-progress.js` + music resume/save
+  wiring; adversarial-reviewed clean. Commit `bdf38ed`.
+- **Storage adapter (19) — RECLASSIFIED; finer interface GATE HOLDS with evidence.**
+  Evidence found: a coarse `{load,write}` provider seam ALREADY exists
+  (`sharedStorageProviders`) with **two real backends** — Supabase + the local file
+  backend. So whole-state adapter = effectively IMPLEMENTED. The finer section-level
+  `Storage` interface (ARCH §27) genuinely has NO second consumer (the local backend
+  round-trips whole state; only a home-server Postgres would need section CAS), so
+  building it now is a wrapper-over-one-impl (§25). **Gate holds for the fine interface;
+  trigger: a home-server/PGlite backend.**
+- **Migration runner (20) — GATE HOLDS (evidence).** Only 3 migrations, applied manually;
+  no staging; applying = a production DB change (confirmation-gated §16, outside this
+  local-only/no-deploy program). Building a runner for 3 files now is premature. Trigger:
+  a staging env or >1 migration/week.
+- **DB advisor fixes (21) — GATE HOLDS (evidence).** Outstanding findings are the
+  RLS `auth_rls_initplan` wraps on tiny (0–229 row) domain tables — §21 documents these
+  as *intentionally* deferred (no perf value at this scale) — and the leaked-password
+  Auth toggle (a dashboard setting, not code). Both are **production changes requiring
+  `apply_migration`/dashboard access + approval**, outside this local-only program (and
+  the Supabase connector is down this session). No finding is both actionable AND
+  local-safe. Trigger: the next approved DB-hardening pass.
+- **Domain-model convergence (7) — GATE HOLDS; concrete finding recorded.** Identified a
+  real inconsistency: place/coordinate shape varies (`{lat,lng}` in travel vs
+  `{latitude,longitude}` in weather/grocery). But no domain is currently re-modeling
+  place, converging it touches UI geocoding paths that can't be browser-verified in this
+  program, and the benefit is modest — forcing it now is speculative churn against the
+  "converge on contact, not big-bang" rule (§26) and §25 (no forcing consumer). Person
+  convergence (financePeople/contacts/familyMembers) remains the big-bang to avoid.
+  **Recorded as the concrete convergence target for whichever of those domains is next
+  touched.**
+
+## G. Final closure review #2 (2026-09-02, post gate re-evaluation)
+
+The four DESIGNED/GATED items were re-opened and evaluated against current evidence:
+**1 gate lifted and implemented** (audio-position persistence — natural home now exists);
+**4 gates confirmed still justified with concrete evidence** (storage-adapter *fine
+interface* — coarse seam already exists with 2 backends, no consumer for the fine one;
+migration runner — 3 files, no staging, prod-change-gated; DB advisor — prod changes,
+tiny-table wraps intentionally deferred, connector down; domain-model convergence —
+concrete place/coord finding recorded, but no re-model trigger and unverifiable wiring).
+No gate was left on autopilot: each hold cites the prerequisite that still exists.
+
+**State:** 1211 tests green, build clean, working tree clean. No account-boundary surface
+added (media-progress.js is state-only, cleared with state on transition; completeness
+contract + fitness suite green). **No unexplained yellow. Local only — nothing pushed.**
