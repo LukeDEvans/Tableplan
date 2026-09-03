@@ -21,7 +21,7 @@ const PURE_CORE = [
   "calendar/recurrence.js", "calendar/model.js", "calendar/projection.js", "calendar/reconcile.js",
   "calendar/normalize.js", "calendar/sources.js", "calendar/tasks-project.js",
   "grocery-catalog.js", "grocery-sources.js", "nutrition-domain.js", "receipt-domain.js",
-  "daily-dozen.js", "food-health.js", "meal-plan-servings.js", "music-canonical.js", "provenance.js", "platform-capabilities.js", "diagnostics.js", "today-projection.js", "ai-context.js", "search-index.js", "async-operation.js", "publications.js",
+  "daily-dozen.js", "food-health.js", "meal-plan-servings.js", "music-canonical.js", "provenance.js", "platform-capabilities.js", "diagnostics.js", "today-projection.js", "ai-context.js", "search-index.js", "async-operation.js", "publications.js", "feed-parse.js", "feed-ingest.js",
 ];
 
 // Client-served source (secrets must never reach here — ARCH §10). Excludes netlify/
@@ -143,5 +143,36 @@ describe("fitness: canonical Article stays OUT of the hot media JSONB (Phase 1)"
     const src = code("publications.js");
     expect(src.includes('from "./import-canonical.js"')).toBe(true); // reuse, not reinvent
     expect(src.includes('from "./provenance.js"')).toBe(true);       // reuse provenance
+  });
+});
+
+describe("fitness: RSS ingestion boundary (Phase 2A)", () => {
+  it("feed ingestion converges through the Phase-1 canonical reconciliation", () => {
+    const src = code("feed-ingest.js");
+    expect(/ingestArticles|canonicalKey|makeArticle/.test(src)).toBe(true);
+    expect(src.includes('from "./publications.js"')).toBe(true); // reuse, not a second Article model
+  });
+  it("the RSS layer introduces NO scheduler/polling (demand-driven only)", () => {
+    for (const f of ["feed-parse.js", "feed-ingest.js", "netlify/functions/fetch-feed.js"]) {
+      const src = code(f);
+      expect(/setInterval|setTimeout|cron|scheduled|node-cron|nextFetchAt\s*=/.test(src)).toBe(false);
+    }
+  });
+  it("the feed fetch reuses the shared SSRF-guarded safeFetch (no second fetch impl)", () => {
+    const src = code("netlify/functions/fetch-feed.js");
+    expect(src.includes('require("./_import-fetch.js")')).toBe(true);
+    expect(src.includes("safeFetch(")).toBe(true);
+    expect(/\bfetch\s*\(/.test(src.replace(/safeFetch/g, ""))).toBe(false); // no bare fetch()
+  });
+  it("the RSS layer does not give Article a body/audio/playback field", () => {
+    const pub = code("publications.js");
+    const makeArt = pub.slice(pub.indexOf("export function makeArticle"), pub.indexOf("export function reconcileArticle"));
+    for (const banned of ["text:", "body:", "audioUrl", "listeningProgress", "readingProgress", "playbackPosition"]) {
+      expect(makeArt.includes(banned)).toBe(false);
+    }
+  });
+  it("feed-ingest does not reimplement URL normalization (reuses import-canonical via publications)", () => {
+    const src = code("feed-ingest.js");
+    expect(src.includes("canonicalizeUrl")).toBe(false); // it comes through publications.js, not redefined here
   });
 });
