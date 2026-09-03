@@ -35,6 +35,7 @@ import { createOperationTracker } from './async-operation.js';
 import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition as clearMediaPosition, resumePositionFor, pruneMediaProgress } from './media-progress.js';
 import { runFeedIngestion } from './feed-ingest.js';
 import { markManyDiscovered, pruneNotifications, saveArticle as notifSaveArticle, dismissArticle as notifDismissArticle, pendingNotifications, notificationBadgeCount, badgeLabel, retainedArticles, isSaved as notifIsSaved } from './publications-notify.js';
+import { publicationsPanelHtml } from './publications-render.js';
 import { deriveMediaTierCount } from './media-tier.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
@@ -977,6 +978,9 @@ const elements = {
   homeWeatherBtn: document.querySelector("#homeWeatherBtn"),
   titleWeatherBtn: document.querySelector("#titleWeatherBtn"),
   weatherMainPage: document.querySelector("#weatherMainPage"),
+  publicationsMainPage: document.querySelector("#publicationsMainPage"),
+  publicationsPanel: document.querySelector("#publicationsPanel"),
+  homePublicationsBtn: document.querySelector("#homePublicationsBtn"),
   weatherPageInner: document.querySelector("#weatherPageInner"),
   contactsGrid: document.querySelector("#contactsGrid"),
   contactsSearchInput: document.querySelector("#contactsSearchInput"),
@@ -1744,6 +1748,7 @@ function bindEvents() {
   elements.homeContactsBtn?.addEventListener("click", showContactsApp);
   elements.titleContactsBtn?.addEventListener("click", showContactsApp);
   elements.homeWeatherBtn?.addEventListener("click", showWeatherApp);
+  elements.homePublicationsBtn?.addEventListener("click", showPublicationsApp);
   elements.titleWeatherBtn?.addEventListener("click", showWeatherApp);
   elements.contactsAddBtn?.addEventListener("click", () => openContactDialog(null));
   elements.contactsSearchInput?.addEventListener("input", () => renderContactsPage());
@@ -2493,6 +2498,7 @@ function handleHashNavigation() {
     schedule: showPlanApp,
     contacts: showContactsApp,
     weather: showWeatherApp,
+    publications: showPublicationsApp,
     settings: showSettingsApp,
     home: showHomeApp,
     read: showMediaApp,
@@ -2858,6 +2864,47 @@ function dismissPubArticle(articleId) { state.articleNotifications = notifDismis
 function pubPending() { return pendingNotifications(state.pubArticles || [], state.articleNotifications || {}, new Date().toISOString()); }
 function pubBadgeCount() { return notificationBadgeCount(state.pubArticles || [], state.articleNotifications || {}, new Date().toISOString()); }
 function pubRetained(publicationId = null) { return retainedArticles(state.pubArticles || [], state.articleNotifications || {}, { publicationId }); }
+
+let pubActiveTab = "notifications";  // "notifications" | "library"
+let pubActiveFilter = null;          // publicationId or null (= All)
+
+function showPublicationsApp(event) {
+  event?.stopPropagation();
+  activeAppArea = "publications";
+  hideAllPages();
+  elements.publicationsMainPage.hidden = false;
+  setPageTitle("Publications");
+  setPageHash("publications");
+  closePageTitleMenu();
+  closeAppMenu();
+  renderPublicationsPanel();
+}
+
+function renderPublicationsPanel() {
+  const el = elements.publicationsPanel;
+  if (!el) return;
+  const pubs = Array.isArray(state.pubDefs) ? state.pubDefs : [];
+  const pubsById = Object.fromEntries(pubs.map((p) => [p.id, p]));
+  const badge = pubBadgeCount();
+  el.innerHTML = publicationsPanelHtml({
+    tab: pubActiveTab, badge, badgeLabel: badgeLabel(badge),
+    pending: pubPending(), retained: pubRetained(pubActiveFilter),
+    pubs, activePublicationId: pubActiveFilter, pubsById,
+  });
+  el.querySelectorAll("[data-pub-tab]").forEach((b) => b.addEventListener("click", () => { pubActiveTab = b.dataset.pubTab; renderPublicationsPanel(); }));
+  el.querySelectorAll("[data-pub-filter]").forEach((b) => b.addEventListener("click", () => { pubActiveFilter = b.dataset.pubFilter === "all" ? null : b.dataset.pubFilter; renderPublicationsPanel(); }));
+  el.querySelectorAll("[data-pub-save]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); savePubArticle(b.dataset.pubSave); renderPublicationsPanel(); }));
+  el.querySelectorAll("[data-pub-dismiss]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); dismissPubArticle(b.dataset.pubDismiss); renderPublicationsPanel(); }));
+  el.querySelectorAll("[data-pub-flip]").forEach((b) => b.addEventListener("click", () => b.closest(".pub-card")?.classList.toggle("is-flipped")));
+  el.querySelector("[data-pub-refresh]")?.addEventListener("click", () => refreshAllFeeds());
+}
+
+// Manual, demand-driven refresh of every enabled feed (never polls). Re-renders when done.
+async function refreshAllFeeds() {
+  const feeds = (state.pubFeeds || []).filter((f) => f && f.enabled !== false && f.url);
+  for (const f of feeds) { try { await refreshFeed(f); } catch { /* per-feed failure is recorded on the feed */ } }
+  renderPublicationsPanel();
+}
 
 async function toggleAuth() {
   // Local-dev sign-out: drop the flag and reload back to the real gate. No
@@ -7331,6 +7378,7 @@ function hideAllPages() {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.mediaMainPage.hidden = true;
+  if (elements.publicationsMainPage) elements.publicationsMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
