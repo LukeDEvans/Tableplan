@@ -76,6 +76,19 @@ export function libraryListHtml(articles, { pubsById, readIds, emptyText = "No s
   return `<div class="pub-lib-list">${articles.map((a) => libraryRowHtml(a, { pubsById, readIds })).join("")}</div>`;
 }
 
+// The current-subscriptions list for the manage dialog: each publication with its
+// feed URL and a Remove control. Pure; the add form lives in static HTML.
+export function subscriptionListHtml(pubs, { feedUrlById = {} } = {}) {
+  if (!pubs || !pubs.length) return `<div class="pub-empty">No publications yet — add one below.</div>`;
+  return `<div class="pub-sub-list">${pubs.map((p) => {
+    const url = (p.feedIds || []).map((fid) => feedUrlById[fid]).filter(Boolean)[0] || "";
+    return `<div class="pub-sub-row" data-pub-id="${esc(p.id)}">
+      <div class="pub-sub-main"><div class="pub-sub-name">${esc(p.name || "(publication)")}</div>${url ? `<div class="pub-sub-url">${esc(url)}</div>` : ""}</div>
+      <button class="icon-btn pub-sub-remove" type="button" data-pub-remove="${esc(p.id)}" aria-label="Remove ${esc(p.name || "publication")}">✕</button>
+    </div>`;
+  }).join("")}</div>`;
+}
+
 // Publication filter chips for the library ("All" + each publication).
 export function publicationTabsHtml(pubs, activePublicationId) {
   const chip = (id, label, active) =>
@@ -100,7 +113,10 @@ export function publicationsPanelHtml({ tab = "notifications", badge = 0, badgeL
         ${tabBtn("notifications", "Notifications", badgeHtml)}
         ${tabBtn("library", "Library")}
       </div>
-      <button class="icon-btn pub-refresh" type="button" data-pub-refresh title="Refresh feeds" aria-label="Refresh feeds">↻</button>
+      <div class="pub-head-actions">
+        <button class="icon-btn pub-refresh" type="button" data-pub-refresh title="Refresh feeds" aria-label="Refresh feeds">↻</button>
+        <button class="icon-btn std-add-btn pub-manage" type="button" data-pub-manage title="Manage publications" aria-label="Manage publications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+      </div>
     </div>
     <div class="pub-panel-body">${body}</div>
   </div>`;

@@ -778,6 +778,25 @@
               </div>
             </div>
           </div>
+          <dialog class="recipe-dialog std-form-dialog pub-manage-dialog" id="pubManageDialog">
+            <form class="recipe-form" method="dialog">
+              <div class="recipe-form-head">
+                <h2>Publications</h2>
+                <button class="icon-btn" type="button" id="pubManageClose" aria-label="Close">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+              </div>
+              <div class="recipe-form-body">
+                <div id="pubSubList"></div>
+                <input type="text" id="pubNewName" class="plan-title-input" placeholder="Publication name" autocomplete="off" maxlength="80" />
+                <input type="url" id="pubNewUrl" class="plan-title-input" placeholder="RSS / Atom feed URL" autocomplete="off" />
+                <div class="pub-manage-msg" id="pubManageMsg" hidden></div>
+              </div>
+              <div class="dialog-actions">
+                <button class="primary-btn" type="button" id="pubAddBtn" style="margin-left:auto">Add</button>
+              </div>
+            </form>
+          </dialog>
         </section>
         <section class="planner-column do-column mail-page" id="mailMainPage" aria-label="Mail" hidden>
           <div class="mail-page-inner">

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { notificationCardHtml, notificationDeckHtml, libraryListHtml, publicationTabsHtml, publicationsPanelHtml } from "../publications-render.js";
+import { notificationCardHtml, notificationDeckHtml, libraryListHtml, publicationTabsHtml, publicationsPanelHtml, subscriptionListHtml } from "../publications-render.js";
 
 const art = (over = {}) => ({ id: "a1", title: "Big Sugar", author: "Greger", publishedAt: "2026-09-01T00:00:00Z", publicationId: "p1", description: "An excerpt.", imageUrl: null, ...over });
 const pubsById = { p1: { id: "p1", name: "NutritionFacts" } };
@@ -52,6 +52,26 @@ describe("empty states (distinct from failures)", () => {
     expect(rowA1).toContain("article-row-check");
     const rowA2 = h.slice(h.indexOf('data-article-id="a2"') - 80, h.indexOf('data-article-id="a2"') + 200);
     expect(rowA2).not.toContain("article-row--read");
+  });
+});
+
+describe("subscriptionListHtml", () => {
+  it("lists each publication with its feed URL and a remove control", () => {
+    const h = subscriptionListHtml(
+      [{ id: "p1", name: "NutritionFacts", feedIds: ["f1"] }],
+      { feedUrlById: { f1: "https://nutritionfacts.org/feed" } },
+    );
+    expect(h).toContain("NutritionFacts");
+    expect(h).toContain("https://nutritionfacts.org/feed");
+    expect(h).toContain('data-pub-remove="p1"');
+  });
+  it("escapes a hostile publication name (no raw markup)", () => {
+    const h = subscriptionListHtml([{ id: "p1", name: "<img src=x onerror=alert(1)>", feedIds: [] }], {});
+    expect(h).not.toContain("<img src=x");
+    expect(h).toContain("&lt;img");
+  });
+  it("shows an empty state when there are no subscriptions", () => {
+    expect(subscriptionListHtml([])).toContain("No publications yet");
   });
 });
 

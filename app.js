@@ -35,7 +35,8 @@ import { createOperationTracker } from './async-operation.js';
 import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition as clearMediaPosition, resumePositionFor, pruneMediaProgress } from './media-progress.js';
 import { runFeedIngestion } from './feed-ingest.js';
 import { markManyDiscovered, pruneNotifications, saveArticle as notifSaveArticle, dismissArticle as notifDismissArticle, pendingNotifications, notificationBadgeCount, badgeLabel, retainedArticles, isSaved as notifIsSaved } from './publications-notify.js';
-import { publicationsPanelHtml } from './publications-render.js';
+import { publicationsPanelHtml, subscriptionListHtml } from './publications-render.js';
+import { makePublication, makeFeed } from './publications.js';
 import { setReadingProgress, readingPercent, pruneReadingProgress, isFinished } from './reading-progress.js';
 import { bodyFetchRequest, normalizeFetchedBody, mergeFetchedMetadata } from './article-body.js';
 import { deriveMediaTierCount } from './media-tier.js';
@@ -990,6 +991,13 @@ const elements = {
   pubReaderMeta: document.querySelector("#pubReaderMeta"),
   pubReaderOrig: document.querySelector("#pubReaderOrig"),
   pubReaderClose: document.querySelector("#pubReaderClose"),
+  pubManageDialog: document.querySelector("#pubManageDialog"),
+  pubSubList: document.querySelector("#pubSubList"),
+  pubNewName: document.querySelector("#pubNewName"),
+  pubNewUrl: document.querySelector("#pubNewUrl"),
+  pubAddBtn: document.querySelector("#pubAddBtn"),
+  pubManageClose: document.querySelector("#pubManageClose"),
+  pubManageMsg: document.querySelector("#pubManageMsg"),
   weatherPageInner: document.querySelector("#weatherPageInner"),
   contactsGrid: document.querySelector("#contactsGrid"),
   contactsSearchInput: document.querySelector("#contactsSearchInput"),
@@ -1759,6 +1767,9 @@ function bindEvents() {
   elements.homeWeatherBtn?.addEventListener("click", showWeatherApp);
   elements.homePublicationsBtn?.addEventListener("click", showPublicationsApp);
   elements.pubReaderClose?.addEventListener("click", closePubReader);
+  elements.pubAddBtn?.addEventListener("click", () => addSubscription());
+  elements.pubManageClose?.addEventListener("click", () => elements.pubManageDialog?.close());
+  elements.pubNewUrl?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addSubscription(); } });
   elements.pubReaderBody?.addEventListener("scroll", onPubReaderScroll, { passive: true });
   elements.pubReaderPanel?.addEventListener("keydown", (e) => { if (e.key === "Escape") closePubReader(); });
   elements.titleWeatherBtn?.addEventListener("click", showWeatherApp);
@@ -2800,6 +2811,7 @@ function setupDiagnostics() {
     closeReader: () => closePubReader(),
     readingPercent: (id) => readingPercent(state.readingProgress, id),
     consumed: (id) => (state.readArticleIds || []).includes(id),
+    subscriptions: () => ({ pubs: (state.pubDefs || []).length, feeds: (state.pubFeeds || []).length }),
     // Seed a body straight into the content store so the reader path can be
     // verified without a live fetch-article call (returns the stored ref).
     seedBody: async (id, html) => { const ac = await getArticleContent(); return ac ? ac.saveBody(id, html) : null; },
@@ -2919,6 +2931,7 @@ function renderPublicationsPanel() {
   el.querySelectorAll("[data-pub-dismiss]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); dismissPubArticle(b.dataset.pubDismiss); renderPublicationsPanel(); }));
   el.querySelectorAll("[data-pub-flip]").forEach((b) => b.addEventListener("click", () => b.closest(".pub-card")?.classList.toggle("is-flipped")));
   el.querySelector("[data-pub-refresh]")?.addEventListener("click", () => refreshAllFeeds());
+  el.querySelector("[data-pub-manage]")?.addEventListener("click", () => openPubManage());
   // Library rows open the reader (triage cards deliberately do NOT — §16/§32/§33).
   el.querySelectorAll(".pub-lib-row").forEach((row) => {
     const open = () => openPubArticle(row.dataset.articleId);
@@ -3069,6 +3082,79 @@ function closePubReader() {
 async function refreshAllFeeds() {
   const feeds = (state.pubFeeds || []).filter((f) => f && f.enabled !== false && f.url);
   for (const f of feeds) { try { await refreshFeed(f); } catch { /* per-feed failure is recorded on the feed */ } }
+  renderPublicationsPanel();
+}
+
+// ── Subscription management: add/remove a Publication + its Feed ──────────────
+// The only user path to populate pubDefs/pubFeeds. Reuses the canonical shapes
+// (makePublication/makeFeed) and the existing SSRF-guarded fetch pipeline.
+function openPubManage() {
+  if (!elements.pubManageDialog) return;
+  renderPubSubList();
+  if (elements.pubNewName) elements.pubNewName.value = "";
+  if (elements.pubNewUrl) elements.pubNewUrl.value = "";
+  setPubManageMsg("");
+  elements.pubManageDialog.showModal();
+}
+
+function setPubManageMsg(text) {
+  const el = elements.pubManageMsg;
+  if (!el) return;
+  el.textContent = text || "";
+  el.hidden = !text;
+}
+
+function renderPubSubList() {
+  if (!elements.pubSubList) return;
+  const pubs = Array.isArray(state.pubDefs) ? state.pubDefs : [];
+  const feedUrlById = Object.fromEntries((state.pubFeeds || []).map((f) => [f.id, f.url]));
+  elements.pubSubList.innerHTML = subscriptionListHtml(pubs, { feedUrlById });
+  elements.pubSubList.querySelectorAll("[data-pub-remove]").forEach((b) =>
+    b.addEventListener("click", () => removeSubscription(b.dataset.pubRemove)));
+}
+
+// Validate + create a Publication with one Feed, then pull it through the normal
+// fetch pipeline so its articles surface as notifications immediately.
+async function addSubscription() {
+  const name = (elements.pubNewName?.value || "").trim();
+  const url = (elements.pubNewUrl?.value || "").trim();
+  if (!url) { setPubManageMsg("Enter a feed URL."); return; }
+  let parsed;
+  try { parsed = new URL(url); } catch { setPubManageMsg("That doesn't look like a valid URL."); return; }
+  if (!/^https?:$/.test(parsed.protocol)) { setPubManageMsg("Feed URLs must start with http:// or https://."); return; }
+  if ((state.pubFeeds || []).some((f) => f.url === url)) { setPubManageMsg("That feed is already added."); return; }
+
+  const feedId = createId("feed");
+  const pub = makePublication({ id: createId("pub"), name: name || parsed.hostname, feedIds: [feedId] });
+  const feed = makeFeed({ id: feedId, publicationId: pub.id, url, title: name || parsed.hostname });
+  if (!Array.isArray(state.pubDefs)) state.pubDefs = [];
+  if (!Array.isArray(state.pubFeeds)) state.pubFeeds = [];
+  state.pubDefs.push(pub);
+  state.pubFeeds.push(feed);
+  persist();
+  if (elements.pubNewName) elements.pubNewName.value = "";
+  if (elements.pubNewUrl) elements.pubNewUrl.value = "";
+  renderPubSubList();
+  setPubManageMsg("Fetching…");
+  try {
+    const r = await refreshFeed(feed);
+    setPubManageMsg(r?.failure ? "Added, but the fetch failed — try Refresh later." : "Added.");
+  } catch { setPubManageMsg("Added, but the fetch failed — try Refresh later."); }
+  renderPublicationsPanel();
+}
+
+// Remove a subscription: tombstone the Publication + its Feeds so a sync can't
+// resurrect them. Articles/notifications are left to age out normally.
+function removeSubscription(pubId) {
+  if (!pubId) return;
+  const pub = (state.pubDefs || []).find((p) => p.id === pubId);
+  const feedIds = pub?.feedIds || [];
+  recordDeletion("pubDefs", pubId);
+  for (const fid of feedIds) recordDeletion("pubFeeds", fid);
+  state.pubDefs = (state.pubDefs || []).filter((p) => p.id !== pubId);
+  state.pubFeeds = (state.pubFeeds || []).filter((f) => !feedIds.includes(f.id) && f.publicationId !== pubId);
+  persist();
+  renderPubSubList();
   renderPublicationsPanel();
 }
 
