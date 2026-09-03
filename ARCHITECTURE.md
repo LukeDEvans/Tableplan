@@ -143,6 +143,14 @@ several domains model them ad hoc inside the state blob.
   URL. It does NOT poll/schedule, extract article bodies, do TTS, or own notifications —
   a future scheduler/UI calls it. Article stays metadata-only (RSS `description` is an
   excerpt, never the body).
+- **Publications lifecycle (Phase 2B)** keeps five states SEPARATE, none on the Article:
+  DISCOVERY (feed found it) → NOTIFICATION (`publications-notify.js` PENDING triage entry,
+  default **7-day** retention that ages entries out of the *deck* only) → RETENTION (SAVED =
+  the permanent library, kept forever) / DISMISSED (skipped, Article still kept) → future
+  Reading/Listening/Consumption. Rediscovery never resurrects a resolved notification or
+  reorders by discovery; the badge counts only PENDING (never library/history/playlist).
+  Interim store: bounded `pubArticles`/`articleNotifications` in state (saved always kept),
+  promoting to the relational `articles` table when that migration is applied.
 
 ## 8. Background-job conventions (highest-risk area)
 
