@@ -36,7 +36,7 @@ import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition 
 import { runFeedIngestion } from './feed-ingest.js';
 import { markManyDiscovered, pruneNotifications, saveArticle as notifSaveArticle, dismissArticle as notifDismissArticle, pendingNotifications, notificationBadgeCount, badgeLabel, retainedArticles, isSaved as notifIsSaved } from './publications-notify.js';
 import { publicationsPanelHtml, subscriptionListHtml } from './publications-render.js';
-import { makePublication, makeFeed, unifiedLibraryArticles } from './publications.js';
+import { makePublication, makeFeed, unifiedLibraryArticles, ingestArticles } from './publications.js';
 import { articleToRow, articleFromRow, publicationToRow, feedToRow, feedFromRow, assemblePublications } from './publications-store.js';
 import { setReadingProgress, readingPercent, pruneReadingProgress, isFinished } from './reading-progress.js';
 import { bodyFetchRequest, normalizeFetchedBody, mergeFetchedMetadata } from './article-body.js';
@@ -2498,6 +2498,7 @@ async function initializeApp() {
     await hydrateStateFromSharedStorage();
   }
   await hydrateRecipeRowsFromSupabase();
+  await hydratePublicationsFromDb();
   resyncAllEventChores(); // roll recurring-event chores forward into the To-Do planner
   applyInitialMealPlanFocus();
   handleImportUrlParameter();
@@ -2629,6 +2630,7 @@ async function initializeSupabaseAuth() {
       maybeShowHydrationOverlay();
       await hydrateStateFromSharedStorage();
       await hydrateRecipeRowsFromSupabase();
+      await hydratePublicationsFromDb();
       maybeAutoLinkProfile();
       restoreProfileDobFromAuth();
       warmMailStatus();
@@ -2875,6 +2877,16 @@ function applyFeedIngestion(feed, response) {
   // Reading progress spans the UNIFIED library, so keep manual-save ids too.
   state.readingProgress = pruneReadingProgress(state.readingProgress, [...liveIds, ...(state.savedArticles || []).map((a) => a.id)]);
   persist();
+  // Best-effort write-through: mirror new articles + the feed's fetch metadata to
+  // the tables. Fire-and-forget — a DB failure never breaks the in-memory flow, and
+  // the next boot hydrate reconciles anything missed.
+  if (pubDbReady()) {
+    const newSet = new Set(newIds);
+    const changed = state.pubArticles.filter((a) => newSet.has(a.id));
+    if (changed.length) upsertArticlesToDb(changed).catch((e) => console.warn("pub article DB upsert failed", e));
+    const f = (state.pubFeeds || []).find((x) => x.id === feed?.id);
+    if (f) upsertFeedsToDb([f]).catch(() => {});
+  }
   return r;
 }
 
@@ -3221,6 +3233,10 @@ async function addSubscription() {
   state.pubDefs.push(pub);
   state.pubFeeds.push(feed);
   persist();
+  if (pubDbReady()) {
+    upsertPublicationsToDb([pub]).catch((e) => console.warn("pub DB upsert failed", e));
+    upsertFeedsToDb([feed]).catch((e) => console.warn("feed DB upsert failed", e));
+  }
   if (elements.pubNewName) elements.pubNewName.value = "";
   if (elements.pubNewUrl) elements.pubNewUrl.value = "";
   renderPubSubList();
@@ -3243,6 +3259,13 @@ function removeSubscription(pubId) {
   state.pubDefs = (state.pubDefs || []).filter((p) => p.id !== pubId);
   state.pubFeeds = (state.pubFeeds || []).filter((f) => !feedIds.includes(f.id) && f.publicationId !== pubId);
   persist();
+  if (pubDbReady()) {
+    // Delete feeds first (FK), then the publication. Best-effort; ON DELETE CASCADE
+    // would also clear feeds, but we delete explicitly to be backend-agnostic.
+    Promise.all(feedIds.map((fid) => deleteSupabaseRow("feeds", fid).catch(() => {})))
+      .then(() => deleteSupabaseRow("publications", pubId).catch(() => {}))
+      .catch(() => {});
+  }
   renderPubSubList();
   renderPublicationsPanel();
 }
@@ -3294,6 +3317,48 @@ function upsertArticlesToDb(articles) { const g = pubDbGroupId(); return upsertR
 function upsertPublicationsToDb(pubs) { const g = pubDbGroupId(); return upsertRowsToDb("publications", (pubs || []).filter((p) => p.id).map((p) => publicationToRow(p, g))); }
 function upsertFeedsToDb(feeds) { const g = pubDbGroupId(); return upsertRowsToDb("feeds", (feeds || []).filter((f) => f.id).map((f) => feedToRow(f, g))); }
 // Deletes reuse the generic deleteSupabaseRow("articles"|"feeds"|"publications", id).
+
+// One-time (idempotent) push of the current interim JSONB store into the tables —
+// on_conflict=id makes re-running a no-op beyond metadata refresh. Used both as the
+// initial backfill (empty DB) and to lift any local-only rows the DB lacks yet.
+async function backfillPublicationsToDb() {
+  if (!pubDbReady()) return { skipped: true };
+  await upsertPublicationsToDb(state.pubDefs || []);
+  await upsertFeedsToDb(state.pubFeeds || []);
+  await upsertArticlesToDb(state.pubArticles || []);
+  return { pubs: (state.pubDefs || []).length, feeds: (state.pubFeeds || []).length, articles: (state.pubArticles || []).length };
+}
+
+// Boot hydration: when a cloud session exists, the RELATIONAL tables are the durable
+// source for publications/feeds/articles. Load them into memory (unioning any
+// local-only rows by canonical identity so nothing is lost), then lift local-only
+// rows back to the DB. On an empty DB this is the initial backfill. Best-effort:
+// any failure leaves the interim JSONB store in charge (no throw to the caller).
+async function hydratePublicationsFromDb() {
+  if (!pubDbReady()) return; // no cloud session → the interim JSONB store stays authoritative
+  try {
+    const [{ pubDefs, pubFeeds }, articles] = await Promise.all([
+      loadPublicationsFromDb(),
+      loadArticlesFromDb({ limit: 500 }),
+    ]);
+    if (pubDefs.length || pubFeeds.length || articles.length) {
+      if (pubDefs.length) state.pubDefs = pubDefs;
+      if (pubFeeds.length) state.pubFeeds = pubFeeds;
+      // DB articles are the base; local-only ones (discovered since last sync) union in.
+      state.pubArticles = ingestArticles(articles, state.pubArticles || []).articles;
+      const liveIds = state.pubArticles.map((a) => a.id);
+      state.articleNotifications = pruneNotifications(state.articleNotifications || {}, liveIds);
+      state.readingProgress = pruneReadingProgress(state.readingProgress, [...liveIds, ...(state.savedArticles || []).map((a) => a.id)]);
+      persist();
+      await backfillPublicationsToDb(); // lift any local-only rows up (idempotent)
+      if (activeAppArea === "publications") renderPublicationsPanel();
+      return;
+    }
+    await backfillPublicationsToDb(); // empty DB → seed it from the interim store
+  } catch (e) {
+    console.warn("Publications DB unavailable; using the interim store.", e);
+  }
+}
 
 async function toggleAuth() {
   // Local-dev sign-out: drop the flag and reload back to the real gate. No
