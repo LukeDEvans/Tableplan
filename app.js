@@ -43270,7 +43270,7 @@ function podcastEpisodeRowHtml(e, { showShowTitle = false, hasPlaylists = false 
       ${pct > 0 ? `<div class="podcast-progress-bar"><div class="podcast-progress-fill" style="width:${pct}%"></div></div>` : ""}
     </div>
     ${played ? `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Played"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
-    ${episodeArchiveDeleteActions(e.id, `data-episode-skip="${escapeHtml(e.id)}"`, "Remove from playlist")}
+    ${episodeArchiveDeleteActions(e.id, `data-episode-skip="${escapeHtml(e.id)}"`, "Remove from list", { queue: true })}
   </div>`;
 }
 
@@ -44553,14 +44553,17 @@ function initPodcastEpisodeListDelegation() {
       return;
     }
 
-    // Row click: open episode or article
-    const row = e.target.closest(".podcast-episode-row, .podcast-draggable-row");
+    // Row click on a PLAYLIST row (draggable). Non-draggable rows (Recent / a
+    // show / Saved) have their own per-row handlers, so this owns only the
+    // playlist queue. A tap opens details (paused) — playback starts from the
+    // detail panel's play button, matching the All queue and Apple Podcasts.
+    const row = e.target.closest(".podcast-draggable-row");
     if (!row) return;
     if (e.target.closest(".article-row-actions, .playlist-drag-handle, .playlist-show-title-btn")) return;
     const episodeId = row.dataset.episodeId;
     const articleId = row.dataset.articleId;
-    if (articleId) playArticleFromPlaylist(articleId);
-    else if (episodeId) openPodcastEpisode(episodeId);
+    if (articleId) openArticle(articleId, "articleList");
+    else if (episodeId) openPodcastEpisode(episodeId, { autoplay: false });
   });
 
   listEl.addEventListener("keydown", (e) => {
@@ -44839,9 +44842,17 @@ function showEpisodeNotesModal(episodeId) {
 // + Delete. Playback starts by tapping the row, so no play button is needed;
 // everything else lives in the right-click / long-press context menu. The
 // delete button's behavior is per-list — pass its data-attribute(s).
-function episodeArchiveDeleteActions(episodeId, deleteAttrs, deleteTitle = "Remove") {
+function episodeArchiveDeleteActions(episodeId, deleteAttrs, deleteTitle = "Remove", { queue = false } = {}) {
+  // Optional "add to / remove from playlist" toggle (browse lists — Recent, a
+  // show's episodes — so you can queue an episode without the long-press menu).
+  const isQueued = (state.podcastQueue || []).includes(episodeId);
+  const queueBtn = queue ? `
+        <button class="article-row-action-btn${isQueued ? " is-active" : ""}" type="button" title="${isQueued ? "Remove from playlist" : "Add to playlist"}" aria-label="${isQueued ? "Remove from playlist" : "Add to playlist"}" data-episode-queue="${escapeHtml(episodeId)}">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="3" y1="6" x2="15" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="11" y2="18"/><line x1="18" y1="9" x2="18" y2="15"/><line x1="15" y1="12" x2="21" y2="12"/></svg>
+        </button>` : "";
   return `
       <div class="article-row-actions">
+        ${queueBtn}
         <button class="article-row-action-btn" type="button" title="Mark as played" aria-label="Mark as played" data-episode-archive="${escapeHtml(episodeId)}">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
         </button>

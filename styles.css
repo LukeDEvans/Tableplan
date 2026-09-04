@@ -17597,9 +17597,12 @@ body:has(#exploreMainPage:not([hidden])) #exploreMainPage {
 @media (max-width: 680px) {
   .playlist-row-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 }
-/* Mobile has no hover — row actions across the Media page stay visible there */
+/* Mobile has no hover — row actions across the Media page stay visible there,
+   EXCEPT podcast episode rows, which hide their actions until a swipe-left (the
+   rules in the (hover:none) block below own them). Without this exclusion the id
+   here out-specifies the swipe-hide and the buttons sit there permanently. */
 @media (max-width: 680px) {
-  #mediaMainPage .article-row-actions { display: flex; }
+  #mediaMainPage .article-row:not(.podcast-episode-row) .article-row-actions { display: flex; }
 }
 /* …except the Playlist rows, which hide their quick-actions until a swipe-left
    reveals them (a clean tap plays/opens; long-press reorders). */
