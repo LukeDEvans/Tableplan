@@ -12085,12 +12085,6 @@ function isCoarsePointer() {
   return (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) || ("ontouchstart" in window);
 }
 
-// The notifications window renders as a swipe deck only when the user opted in
-// (Meal Plan Settings) AND they're on a touch device.
-function mealPlanUsesSwipeView() {
-  return normalizeMealPlanConfig(state.mealPlanConfig).notifView === "swipe" && isCoarsePointer();
-}
-
 // Which swipe card is centered, so any renderPlanner() (including the async
 // ones fired by a background import) can land the deck back on the same recipe
 // rather than snapping to the top. Updated as the deck scrolls; restored in
@@ -12117,12 +12111,6 @@ function dismissMealPlanRecipe(url) {
   callGmailApi({ action: "dismissRecipe", url });
 }
 
-// List view: opens the import dialog so the recipe can be reviewed before saving.
-function addMealPlanRecipe(url) {
-  dismissMealPlanRecipe(url); // leaves the list the moment you act on it
-  mealPlanNotifOpen = false;
-  openImportDialog(url, true);
-}
 
 // Swipe view: adds the recipe straight to the book (no dialog) and stays in the
 // cards so triage can continue uninterrupted.
@@ -12144,8 +12132,13 @@ function swipeAddMealPlanRecipe(url) {
 async function importMealPlanRecipeDirect(recipe) {
   const url = normalizeRecipeUrlInput(recipe.url) || recipe.url;
   try {
-    const fetched = await fetchRecipeWithBestAvailableMethod(url);
-    if (!fetched?.name && !(fetched?.ingredients || []).length) return false;
+    // Use the SAME import gateway as the interactive dialog. (The old call to
+    // fetchRecipeWithBestAvailableMethod referenced a function that no longer
+    // exists — it threw, was swallowed, and every swipe-add reported "couldn't
+    // read", so a tapped/approved recipe never actually imported.)
+    const result = await importViaGateway(url);
+    const fetched = result?.type === "recipe" ? result.data : null;
+    if (!fetched || (!fetched.name && !(fetched.ingredients || []).length)) return false;
     const id = createId("recipe");
     const prepTime = (fetched.prepTime || "").trim();
     const cookTime = (fetched.cookTime || "").trim();
@@ -12182,28 +12175,13 @@ async function importMealPlanRecipeDirect(recipe) {
   }
 }
 
-function mealPlanNotifListBodyHtml(recipes) {
-  return `
-    <div class="eat-notif-head">New recipes</div>
-    ${recipes.length ? recipes.map((r) => `
-      <div class="eat-notif-row">
-        ${r.image ? `<a class="eat-notif-thumb-link" href="${escapeHtml(r.url)}" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true"><img class="eat-notif-thumb" src="${escapeHtml(r.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.closest('.eat-notif-thumb-link').remove()"></a>` : ""}
-        <div class="eat-notif-text">
-          <a class="eat-notif-item-title" href="${escapeHtml(r.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(r.title)}">${escapeHtml(r.title)}</a>
-          ${r.source ? `<span class="eat-notif-source">${escapeHtml(r.source)}</span>` : ""}
-        </div>
-        <div class="eat-notif-actions">
-          <button class="secondary-btn eat-notif-add" type="button" data-eat-notif-add="${escapeHtml(r.url)}">Add</button>
-          <button class="icon-btn eat-notif-dismiss" type="button" data-eat-notif-dismiss="${escapeHtml(r.url)}" title="Dismiss" aria-label="Dismiss">&times;</button>
-        </div>
-      </div>`).join("") : `<div class="eat-notif-empty">No new recipes.</div>`}`;
-}
-
-// Swipe view: one full-window card per recipe in a vertical scroll-snap deck.
-// Native up/down scroll browses between cards; a horizontal drag on a card
-// (wired in wireMealPlanNotifDelegation) dismisses left / adds right.
+// One full-window card per recipe in a vertical scroll-snap deck. Up/down scroll
+// (from the photo side) browses recipes; a horizontal drag dismisses/adds; tapping
+// the photo FLIPS the card to the recipe in the app's standard format (which
+// scrolls on its own and locks the deck so you browse only from the photo side).
 function mealPlanNotifSwipeBodyHtml(recipes) {
   if (!recipes.length) return `<div class="eat-notif-head">New recipes</div><div class="eat-notif-empty">No new recipes.</div>`;
+  const fallbackSvg = `<svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 2v7a3 3 0 0 0 6 0V2M6 2v20M17 2c-1.7 0-3 2.7-3 6s1.3 5 3 5 3 .6 3 2v7"/></svg>`;
   return `
     <div class="eat-swipe-deck" data-eat-swipe-deck>
       ${recipes.map((r) => `
@@ -12211,29 +12189,82 @@ function mealPlanNotifSwipeBodyHtml(recipes) {
           <div class="eat-swipe-action eat-swipe-action-del" aria-hidden="true">Dismiss</div>
           <div class="eat-swipe-action eat-swipe-action-add" aria-hidden="true">Add</div>
           <div class="eat-swipe-card-inner">
-            <div class="eat-swipe-media">
-              ${r.image
-                ? `<img src="${escapeHtml(r.image)}" alt="" referrerpolicy="no-referrer" loading="lazy" onerror="this.remove()">`
-                : ""}
-              <span class="eat-swipe-media-fallback" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 2v7a3 3 0 0 0 6 0V2M6 2v20M17 2c-1.7 0-3 2.7-3 6s1.3 5 3 5 3 .6 3 2v7"/></svg>
-              </span>
+            <div class="eat-swipe-flip">
+              <div class="eat-swipe-face eat-swipe-front">
+                <button class="eat-swipe-media" type="button" data-eat-notif-flip="${escapeHtml(r.url)}" aria-label="Show recipe">
+                  ${r.image ? `<img src="${escapeHtml(r.image)}" alt="" referrerpolicy="no-referrer" loading="lazy" onerror="this.remove()">` : ""}
+                  <span class="eat-swipe-media-fallback" aria-hidden="true">${fallbackSvg}</span>
+                  <span class="eat-swipe-flip-hint">Tap for recipe ⟳</span>
+                </button>
+                <div class="eat-swipe-meta">
+                  <div class="eat-swipe-title">${escapeHtml(r.title)}</div>
+                  ${r.source ? `<div class="eat-swipe-source">${escapeHtml(r.source)}</div>` : ""}
+                </div>
+                <div class="eat-swipe-buttons">
+                  <button class="secondary-btn eat-swipe-btn" type="button" data-eat-notif-dismiss="${escapeHtml(r.url)}">Dismiss</button>
+                  <button class="primary-btn eat-swipe-btn" type="button" data-eat-notif-swipe-add="${escapeHtml(r.url)}">Add</button>
+                </div>
+              </div>
+              <div class="eat-swipe-face eat-swipe-back">
+                <div class="eat-swipe-back-head">
+                  <button class="eat-swipe-flip-back" type="button" data-eat-notif-flip-back aria-label="Back to photo">← Photo</button>
+                  <a class="eat-swipe-view" href="${escapeHtml(r.url)}" target="_blank" rel="noopener noreferrer">Source ↗</a>
+                </div>
+                <div class="eat-swipe-recipe" data-eat-recipe-body></div>
+              </div>
             </div>
-            <div class="eat-swipe-meta">
-              <div class="eat-swipe-title">${escapeHtml(r.title)}</div>
-              ${r.source ? `<div class="eat-swipe-source">${escapeHtml(r.source)}</div>` : ""}
-              <a class="eat-swipe-view" href="${escapeHtml(r.url)}" target="_blank" rel="noopener noreferrer">View recipe ↗</a>
-            </div>
-            <div class="eat-swipe-hint"><span>← Dismiss</span><span>↑ ↓ browse</span><span>Add →</span></div>
           </div>
         </div>`).join("")}
     </div>`;
 }
 
+// The fetched recipe in the app's standard read format (title, meta, ingredients,
+// steps) — shown on the flipped side of a notification card.
+function mealPlanRecipePreviewHtml(r) {
+  const ings = normalizeIngredients(r.ingredients).map((i) => scaledIngredientToText(i, 1)).filter(Boolean);
+  const steps = normalizeInstructionSteps(r.steps).filter(Boolean);
+  const meta = [combinedRecipeTime(r) || (r.time || "").trim(), Number(r.servings) ? `${Number(r.servings)} servings` : ""].filter(Boolean).join(" · ");
+  return `
+    <h3 class="eat-swipe-recipe-title">${escapeHtml(r.name || "Recipe")}</h3>
+    ${meta ? `<div class="eat-swipe-recipe-meta">${escapeHtml(meta)}</div>` : ""}
+    ${ings.length ? `<h4 class="eat-swipe-recipe-h">Ingredients</h4>
+      <ul class="eat-swipe-recipe-ings">${ings.map((i) => `<li>${escapeHtml(i)}</li>`).join("")}</ul>` : ""}
+    ${steps.length ? `<h4 class="eat-swipe-recipe-h">Steps</h4>
+      <ol class="eat-swipe-recipe-steps">${steps.map((s) => `<li>${escapeHtml(s)}</li>`).join("")}</ol>` : ""}
+    ${!ings.length && !steps.length ? `<p class="eat-swipe-recipe-empty">No ingredients or steps could be read.</p>` : ""}`;
+}
+
+// Flip a card to its recipe side, fetching + rendering the recipe on first flip.
+// While any card is flipped the deck's scroll-snap is disabled so the recipe side
+// scrolls freely (you browse recipes only from the photo side).
+async function flipMealPlanCard(url, cardEl) {
+  const flip = cardEl.querySelector(".eat-swipe-flip");
+  const deck = cardEl.closest(".eat-swipe-deck");
+  if (!flip) return;
+  flip.classList.add("is-flipped");
+  deck?.classList.add("is-card-flipped");
+  const body = cardEl.querySelector("[data-eat-recipe-body]");
+  if (!body || body.dataset.loaded) return; // fetch once, then it's cached in the DOM
+  const errHtml = `<div class="eat-swipe-recipe-err">Couldn't read this recipe automatically. <a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open the source ↗</a></div>`;
+  body.innerHTML = `<div class="eat-swipe-recipe-loading">Reading recipe…</div>`;
+  try {
+    const result = await importViaGateway(normalizeRecipeUrlInput(url) || url);
+    const data = result?.type === "recipe" ? result.data : null;
+    if (!data || (!data.name && !(data.ingredients || []).length)) { body.innerHTML = errHtml; return; }
+    body.innerHTML = mealPlanRecipePreviewHtml(data);
+    body.dataset.loaded = "1";
+  } catch { body.innerHTML = errHtml; }
+}
+
+function unflipMealPlanCard(cardEl) {
+  cardEl.querySelector(".eat-swipe-flip")?.classList.remove("is-flipped");
+  const deck = cardEl.closest(".eat-swipe-deck");
+  if (deck && !deck.querySelector(".eat-swipe-flip.is-flipped")) deck.classList.remove("is-card-flipped");
+}
+
 function mealPlanNotifBellHtml() {
   const recipes = mealPlanRecipes || [];
   const count = recipes.length;
-  const swipe = mealPlanUsesSwipeView();
   const bellSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
   return `
     <div class="eat-notif-wrap">
@@ -12242,12 +12273,8 @@ function mealPlanNotifBellHtml() {
         ${count ? `<span class="eat-notif-badge">${count}</span>` : ""}
       </button>
       ${mealPlanNotifOpen ? `
-      <div class="eat-notif-panel${swipe ? " eat-notif-panel-swipe" : ""}">
-        ${isCoarsePointer() ? `<div class="eat-notif-viewswitch" role="group" aria-label="Notifications view">
-          <button type="button" class="eat-notif-viewbtn${!swipe ? " is-active" : ""}" data-eat-notif-view="list">List</button>
-          <button type="button" class="eat-notif-viewbtn${swipe ? " is-active" : ""}" data-eat-notif-view="swipe">Cards</button>
-        </div>` : ""}
-        ${swipe ? mealPlanNotifSwipeBodyHtml(recipes) : mealPlanNotifListBodyHtml(recipes)}
+      <div class="eat-notif-panel eat-notif-panel-swipe">
+        ${mealPlanNotifSwipeBodyHtml(recipes)}
       </div>` : ""}
     </div>`;
 }
@@ -12257,19 +12284,12 @@ function wireMealPlanNotifDelegation() {
   mealPlanNotifWired = true;
   elements.plannerGrid.addEventListener("click", (e) => {
     if (e.target.closest("[data-eat-notif-toggle]")) { mealPlanNotifOpen = !mealPlanNotifOpen; if (mealPlanNotifOpen) mealPlanSwipeIndex = 0; renderPlanner(); return; }
-    const viewBtn = e.target.closest("[data-eat-notif-view]");
-    if (viewBtn) {
-      const v = viewBtn.dataset.eatNotifView === "swipe" ? "swipe" : "list";
-      if (normalizeMealPlanConfig(state.mealPlanConfig).notifView !== v) {
-        state.mealPlanConfig = normalizeMealPlanConfig({ ...state.mealPlanConfig, notifView: v });
-        persist();
-        mealPlanSwipeIndex = 0;
-        renderPlanner();
-      }
-      return;
-    }
-    const add = e.target.closest("[data-eat-notif-add]");
-    if (add) { addMealPlanRecipe(add.dataset.eatNotifAdd); return; }
+    const flip = e.target.closest("[data-eat-notif-flip]");
+    if (flip) { const card = flip.closest(".eat-swipe-card"); if (card) flipMealPlanCard(flip.dataset.eatNotifFlip, card); return; }
+    const flipBack = e.target.closest("[data-eat-notif-flip-back]");
+    if (flipBack) { const card = flipBack.closest(".eat-swipe-card"); if (card) unflipMealPlanCard(card); return; }
+    const swipeAdd = e.target.closest("[data-eat-notif-swipe-add]");
+    if (swipeAdd) { swipeAddMealPlanRecipe(swipeAdd.dataset.eatNotifSwipeAdd); return; }
     const dismiss = e.target.closest("[data-eat-notif-dismiss]");
     if (dismiss) { dismissMealPlanRecipe(dismiss.dataset.eatNotifDismiss); return; }
   });
@@ -12299,6 +12319,9 @@ function wireMealPlanNotifDelegation() {
   });
   elements.plannerGrid.addEventListener("touchstart", (e) => {
     const card = e.target.closest(".eat-swipe-card");
+    // A flipped card shows the recipe (scrolls vertically on its own) — the
+    // dismiss/add fling belongs to the photo side only.
+    if (card && card.querySelector(".eat-swipe-flip.is-flipped")) { swipeCard = null; return; }
     swipeCard = card || null;
     if (!card) return;
     swipeStartX = e.touches[0].clientX;
@@ -25121,8 +25144,6 @@ function renderMealTypesList() {
     btn.addEventListener("click", () => btn.closest("[data-mealtype-row]").remove());
   });
   bindConfigListDrag(list, "[data-mealtype-row]");
-  const swipeToggle = elements.mealPlanSettingsDialog.querySelector("#mealPlanSwipeToggle");
-  if (swipeToggle) swipeToggle.checked = config.notifView === "swipe";
 }
 
 function addMealType() {
@@ -25172,9 +25193,7 @@ function saveMealPlanMealTypes() {
   });
   if (!newTypes.length) { alert("At least one meal type is required."); return; }
   const oldConfig = normalizeMealPlanConfig(state.mealPlanConfig);
-  const swipeToggle = elements.mealPlanSettingsDialog.querySelector("#mealPlanSwipeToggle");
-  const notifView = swipeToggle?.checked ? "swipe" : "list";
-  state.mealPlanConfig = normalizeMealPlanConfig({ ...state.mealPlanConfig, mealTypes: newTypes, notifView });
+  state.mealPlanConfig = normalizeMealPlanConfig({ ...state.mealPlanConfig, mealTypes: newTypes });
   const newConfig = normalizeMealPlanConfig(state.mealPlanConfig);
   recomputeMealPlanLayout();
   applyMealPlanConfigChange(oldConfig, newConfig);

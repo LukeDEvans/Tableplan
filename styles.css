@@ -21600,6 +21600,30 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .eat-swipe-source { font-size: 0.78rem; font-weight: 700; color: var(--muted); }
 .eat-swipe-view { font-size: 0.82rem; font-weight: 700; color: var(--accent); text-decoration: none; }
 .eat-swipe-view:hover { text-decoration: underline; }
+
+/* ── Card flip: tap the photo to turn the card to the recipe ─────────────── */
+.eat-swipe-flip { position: relative; flex: 1 1 auto; min-height: 0; transform-style: preserve-3d; transition: transform 0.5s ease; }
+.eat-swipe-flip.is-flipped { transform: rotateY(180deg); }
+.eat-swipe-face { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--window-bg); backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+.eat-swipe-back { transform: rotateY(180deg); overflow-y: auto; -webkit-overflow-scrolling: touch; }
+/* The photo is a button now (tap to flip) — strip button chrome. */
+button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%; font: inherit; color: inherit; }
+.eat-swipe-flip-hint { position: absolute; bottom: 10px; right: 10px; background: color-mix(in srgb, #000 55%, transparent); color: #fff; font-size: 0.7rem; font-weight: 700; padding: 4px 9px; border-radius: 99px; pointer-events: none; }
+.eat-swipe-buttons { flex: 0 0 auto; display: flex; gap: 8px; padding: 6px 18px 16px; }
+.eat-swipe-buttons .eat-swipe-btn { flex: 1; }
+/* When a card is flipped, the deck stops browsing so the recipe scrolls freely. */
+.eat-swipe-deck.is-card-flipped { overflow-y: hidden; scroll-snap-type: none; }
+/* Recipe side (standard read format). */
+.eat-swipe-back-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); background: var(--window-bg); position: sticky; top: 0; z-index: 1; }
+.eat-swipe-flip-back { border: none; background: none; font: inherit; font-weight: 800; font-size: 0.85rem; color: var(--accent); cursor: pointer; padding: 4px 2px; }
+.eat-swipe-recipe { padding: 14px 18px 24px; }
+.eat-swipe-recipe-title { margin: 0 0 4px; font-size: 1.1rem; font-weight: 850; color: var(--ink); }
+.eat-swipe-recipe-meta { font-size: 0.8rem; font-weight: 700; color: var(--muted); margin-bottom: 12px; }
+.eat-swipe-recipe-h { margin: 16px 0 6px; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent-dark, var(--accent)); }
+.eat-swipe-recipe-ings { margin: 0; padding-left: 20px; display: grid; gap: 4px; font-size: 0.88rem; line-height: 1.4; }
+.eat-swipe-recipe-steps { margin: 0; padding-left: 22px; display: grid; gap: 8px; font-size: 0.88rem; line-height: 1.5; }
+.eat-swipe-recipe-loading, .eat-swipe-recipe-empty, .eat-swipe-recipe-err { padding: 24px 4px; text-align: center; color: var(--muted); font-size: 0.88rem; }
+.eat-swipe-recipe-err a, .eat-swipe-recipe-loading a { color: var(--accent); font-weight: 700; }
 .eat-swipe-hint {
   flex: 0 0 auto;
   display: flex;
