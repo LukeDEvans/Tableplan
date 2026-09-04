@@ -29416,7 +29416,7 @@ function renderGroceries() {
       ? `<button class="icon-btn grocery-store-clear" type="button" data-grocery-clear-store="${escapeHtml(storeId)}" title="Sweep ${storeChecked} checked" aria-label="Sweep ${storeChecked} checked items into bought">${groceryBroomSvg()}</button>`
       : "";
     return `
-      <section class="grocery-store-section" data-grocery-store-section="${escapeHtml(storeId)}">
+      <section class="grocery-store-section${isCollapsed ? " is-collapsed" : ""}" data-grocery-store-section="${escapeHtml(storeId)}">
         ${activeGroceryStoreTab === "all" ? `
           <div class="grocery-store-heading" ${storeId ? `data-grocery-store-setting="${escapeHtml(storeId)}"` : ""}>
             <button class="watch-section-head" type="button" data-grocery-collapse="${escapeHtml(collapseKey)}" title="${isCollapsed ? "Expand" : "Collapse"} ${escapeHtml(name)}" aria-expanded="${!isCollapsed}">
@@ -29432,13 +29432,11 @@ function renderGroceries() {
             ${broomBtn}
           </div>
         ` : `<div class="grocery-store-solo-actions">${boughtToggleBtn(storeId, boughtRows)}${broomBtn}</div>`}
-        ${isCollapsed ? "" : `
         <div class="grocery-store-list ${rowsToRender.length ? "" : "is-empty"}"
           data-grocery-store-list="${escapeHtml(storeId)}"
           data-grocery-store-section-list="">
           ${rowsToRender.length ? rowsToRender.map(groceryItemTemplate).join("") : `<div class="grocery-store-empty">Drop items here</div>`}
         </div>
-        `}
       </section>
     `;
   };

@@ -1173,6 +1173,22 @@ body {
   border-radius: 0;
 }
 
+/* Recipe Box: freeze the header (title + New + Close) to the top of the scrolling
+   panel so it stays reachable as the recipe list scrolls. The panel scrolls
+   (overflow:auto) and .panel-head is its direct child, so sticky pins here; drop
+   the panel's top padding and let the header carry it, and span the header full
+   width (cancel the panel's 16px side padding) so nothing peeks past it. */
+#recipeBoxPageDialog .app-page-panel { padding-top: 0; }
+#recipeBoxPageDialog .panel-head {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--window-bg);
+  margin: 0 -16px 12px;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 9%, transparent);
+}
+
 .planner-column {
   width: 100%;
   /* No inner margin between the blue window-border and page content — the app-wide
@@ -3875,7 +3891,11 @@ body.shop-move-dragging { user-select: none; -webkit-user-select: none; }
 #groceryList.sortable-active .sortable-placeholder { display: none; }
 
 #groceryList.sortable-active .grocery-store-section { margin-bottom: 6px; }
+/* Collapsed stores hide their list normally, but during a drag they become drop
+   targets too (the id-scoped drag rule below re-shows them via display:grid). */
+.grocery-store-section.is-collapsed .grocery-store-list { display: none; }
 #groceryList.sortable-active .grocery-store-list {
+  display: grid;
   min-height: 54px;
   border: 1.5px dashed color-mix(in srgb, var(--ink) 30%, transparent);
   background: color-mix(in srgb, var(--ink) 3%, transparent);
@@ -9300,6 +9320,19 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
 .watch-category-tab.is-active {
   color: var(--accent-dark);
   background: none;
+}
+
+/* Shop section nav (Checklist · Shop · Inventory): stretch across the full page
+   width as three equal tabs — Checklist left, Shop centre, Inventory right —
+   rather than a left-packed scrolling strip. */
+.shop-space-tabs { overflow-x: visible; }
+.shop-space-tabs .watch-category-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: center;
+  justify-content: center;
+  padding-left: 6px;
+  padding-right: 6px;
 }
 
 .watch-category-tab.watch-drop-over,
