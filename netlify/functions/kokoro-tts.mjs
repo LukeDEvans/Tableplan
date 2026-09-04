@@ -23,8 +23,16 @@ const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 // provider (kokoro vs google), so Kokoro + Google audio never collide.
 const BUCKET = "article-audio";
 const FORMAT_VERSION = 1;      // kokoro meta format (client KOKORO_MODEL busts content)
-const HOME_TIMEOUT_MS = 25000; // per-chunk home-server request timeout
-const WARM_TIMEOUT_MS = 8000;  // warm-up ping: short — we only need to WAKE the box
+// Per-chunk home-server request timeout. CRITICAL: this MUST stay under Netlify's
+// synchronous-function platform cap (~10s). If a synth runs past the platform cap,
+// Netlify kills the invocation and returns an HTML gateway page — which the client
+// then can't parse as JSON ("Unexpected token '<'"). By self-aborting at 8s we
+// always return clean JSON (a TIMEOUT the client retries) instead of being killed.
+// A scale-to-zero cold start is handled by the client's retry loop, not by one
+// long-hanging request. Chunks are small (see MAX_CHUNK_CHARS) so a warm synth
+// finishes well inside this budget.
+const HOME_TIMEOUT_MS = 7000;
+const WARM_TIMEOUT_MS = 6000;  // warm-up ping: short — we only need to WAKE the box
 
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return cors(json(200, {}));

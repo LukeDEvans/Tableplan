@@ -49504,7 +49504,22 @@ async function callNetlifyFunction(name, body, { timeoutMs } = {}) {
       body: JSON.stringify(body),
       signal: ctrl?.signal,
     });
-    return await res.json();
+    // Read the body as text first, then parse. A platform gateway error (e.g. a
+    // function that exceeded the runtime's timeout) returns an HTML page, not JSON;
+    // parsing that directly throws a cryptic "Unexpected token '<'". Instead we
+    // surface a typed, retryable error so callers (Kokoro TTS's retry loop) treat
+    // it as transient and the user never sees a raw JSON-parse message.
+    const raw = await res.text();
+    try {
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {
+        error: res.ok ? "Malformed server response" : `Server error (${res.status})`,
+        code: `HTTP_${res.status}`,
+        httpStatus: res.status,
+        nonJson: true,
+      };
+    }
   } catch (e) { return { error: String(e) }; }
   finally { if (timer) clearTimeout(timer); }
 }

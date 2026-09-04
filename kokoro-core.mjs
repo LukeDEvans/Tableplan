@@ -26,7 +26,11 @@ export const KOKORO_VOICES = Object.freeze([
 ]);
 
 export const MAX_TTS_CHARS = 60000;   // reject absurd payloads (≈ a very long article)
-export const MAX_CHUNK_CHARS = 1800;  // per home-server request — bounds memory/latency
+// Per home-server request. Kept small so a single warm synth finishes well inside
+// the proxy's home-server timeout (which itself must stay under Netlify's ~10s
+// synchronous-function cap — see kokoro-tts.mjs HOME_TIMEOUT_MS). Smaller chunks
+// also mean faster time-to-first-audio for the incremental (chunk-by-chunk) path.
+export const MAX_CHUNK_CHARS = 800;
 export const SPEED_MIN = 0.5;
 export const SPEED_MAX = 2.0;
 
