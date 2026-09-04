@@ -21828,12 +21828,16 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 
 /* Music → Discover (on-demand streaming) — mode tabs reuse .watch-category-tab */
 
-.music-discover { display: flex; flex-direction: column; }
+.music-discover { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .music-search-bar { display: flex; align-items: center; gap: 8px; margin: 8px 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .music-search-bar:focus-within { border-color: var(--accent); }
+.music-search-clear { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: none; border-radius: 50%; background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); cursor: pointer; flex-shrink: 0; }
+.music-search-clear:hover { background: color-mix(in srgb, var(--ink) 18%, transparent); }
 .music-search-ic { color: var(--muted); flex: 0 0 auto; }
 .music-search-input { flex: 1 1 auto; border: none; background: transparent; color: var(--ink); font-size: 0.95rem; outline: none; }
-.music-discover-results { padding: 2px 4px 14px; }
+/* The scroll region (the panel itself is overflow:hidden). Without flex+overflow
+   here the radio/music lists were clipped and couldn't scroll. */
+.music-discover-results { padding: 2px 4px 14px; flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .music-discover-hint { padding: 22px 16px; text-align: center; }
 
 .music-chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 12px 12px; }

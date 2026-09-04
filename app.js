@@ -46876,6 +46876,9 @@ function renderRadioPanel() {
       <div class="music-search-bar">
         <svg class="music-search-ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
         <input type="search" id="radioSearchInput" class="music-search-input" placeholder="Search stations…" autocomplete="off" spellcheck="false" value="${escapeHtml(radioSearchQuery)}">
+        <button type="button" class="music-search-clear" id="radioSearchClear" aria-label="Clear search"${radioSearchQuery ? "" : " hidden"}>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </div>
       <div id="radioBody" class="music-discover-results">${radioBodyHtml()}</div>
     </div>`;
@@ -46889,6 +46892,14 @@ function initRadioPanel() {
   if (!radioPanelWired) {
     radioPanelWired = true;
     panel.addEventListener("click", (e) => {
+      if (e.target.closest("#radioSearchClear")) {
+        const input = panel.querySelector("#radioSearchInput");
+        if (input) { input.value = ""; input.focus(); }
+        e.target.closest("#radioSearchClear").hidden = true;
+        clearTimeout(radioSearchDebounce);
+        doRadioSearch("");
+        return;
+      }
       if (e.target.closest("[data-radio-add]")) { openAddRadioStation(); return; }
       const del = e.target.closest("[data-radio-delete]");
       if (del) { e.stopPropagation(); deleteRadioUserStation(del.dataset.radioDelete); return; }
@@ -46912,7 +46923,12 @@ function initRadioPanel() {
       if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); const st = radioViewIndex.get(row.dataset.radioPlay); if (st) playRadioStation(st); return; }
       if (e.target.id === "radioSearchInput" && e.key === "Enter") { e.preventDefault(); clearTimeout(radioSearchDebounce); doRadioSearch(e.target.value); }
     });
-    panel.addEventListener("input", (e) => { if (e.target.id === "radioSearchInput") queueRadioSearch(e.target.value); });
+    panel.addEventListener("input", (e) => {
+      if (e.target.id !== "radioSearchInput") return;
+      const clear = panel.querySelector("#radioSearchClear");
+      if (clear) clear.hidden = !e.target.value;
+      queueRadioSearch(e.target.value);
+    });
   }
   renderRadioPanel();
   if (!radioCatalog) ensureRadioCatalog().then(() => { if (activeMediaTab === "radio") renderRadioPanel(); }).catch((err) => console.warn("radio catalog load failed", err));
