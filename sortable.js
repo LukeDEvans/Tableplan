@@ -228,6 +228,7 @@ export function makeSortable(container, opts = {}) {
     window.removeEventListener("pointermove", onMove);
     window.removeEventListener("pointerup", onUp);
     window.removeEventListener("pointercancel", onCancel);
+    window.removeEventListener("touchmove", onTouchMove);
     if (g.row) { try { g.row.releasePointerCapture(g.pointerId); } catch { /* detached */ } }
     if (g.placeholder) { g.placeholder.classList.remove("sortable-placeholder"); g.placeholder.style.pointerEvents = ""; }
     if (g.clone) g.clone.remove();
@@ -263,7 +264,21 @@ export function makeSortable(container, opts = {}) {
     window.addEventListener("pointermove", onMove, { passive: false });
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onCancel);
-    if (e.pointerType === "touch") g.timer = setTimeout(activate, longPressMs);
+    // Touch only: a non-passive touchmove lets us actually SUPPRESS native
+    // scrolling once a drag is armed. preventDefault on `pointermove` (above) does
+    // NOT stop scroll per the Pointer Events spec — the browser would keep panning
+    // and fire `pointercancel`, tearing the drag down on the first move. This is the
+    // real reason touch long-press-drag "did nothing" on mobile. Pre-activation it's
+    // a no-op, so a plain swipe still scrolls / passes through as before.
+    if (e.pointerType === "touch") {
+      window.addEventListener("touchmove", onTouchMove, { passive: false });
+      g.timer = setTimeout(activate, longPressMs);
+    }
+  }
+
+  // See onDown: only cancels the browser's scroll while a drag is actually armed.
+  function onTouchMove(e) {
+    if (g && g.armed && e.cancelable) e.preventDefault();
   }
 
   function onMove(e) {

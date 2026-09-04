@@ -29496,6 +29496,12 @@ function renderGroceries() {
       rowSelector: "[data-grocery-row-key]",
       getId: (row) => row.dataset.groceryRowKey,
       groupSelector: "[data-grocery-store-list]",
+      // Rows share the touch with swipe-to-reveal (horizontal) + scroll (vertical),
+      // so give the long-press a little more drift tolerance than the default — a
+      // resting thumb wobbles past 9px before the hold completes. Still well under a
+      // deliberate scroll flick, which cancels the pending drag as before.
+      longPressMs: 400,
+      touchTolerancePx: 13,
       onGroupedDrop: ({ itemId, toContainer, targetId, position }) =>
         moveGroceryItem(itemId, toContainer?.dataset.groceryStoreList || "", targetId, position, toContainer?.dataset.groceryStoreSectionList || ""),
       itemLabel: (row) => (row.querySelector(".grocery-item-name, .grocery-item-label")?.textContent || row.textContent || "item").trim().slice(0, 40),
