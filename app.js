@@ -21087,7 +21087,7 @@ function openSettingsMenuDialog(openDialog) {
 }
 
 function openContextSettingsDialog(kind) {
-  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync", "ai-notes", "finance-accounts", "finance-emergency", "podcasts"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync", "ai-notes", "finance-accounts", "finance-emergency", "podcasts", "radio"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -21881,6 +21881,11 @@ function renderContextSettingsDialog(kind) {
     return;
   }
 
+  if (kind === "radio") {
+    renderRadioSettings();
+    return;
+  }
+
   if (kind === "family") {
     const config = normalizeMealPlanConfig(state.mealPlanConfig);
     const existingNames = new Set(config.members.map((m) => m.label.trim().toLowerCase()));
@@ -22104,6 +22109,44 @@ function renderWatchContextSettings() {
         renderWatchContextSettings();
       }
     });
+  });
+}
+
+// Settings → Radio: manage custom stations (add by stream URL, remove). This is
+// where the radio panel's old "+" lived — moved here so the panel stays clean.
+function renderRadioSettings() {
+  const stations = state.radioUserStations || [];
+  elements.contextSettingsBody.innerHTML = `
+    <div class="watch-theater-settings">
+      <div class="watch-theater-settings-head">Your Stations</div>
+      <p class="watch-theater-settings-hint">Custom stations you add by stream URL appear alongside the catalog in the Radio tab.</p>
+      ${stations.length ? `<ul class="watch-theater-list">
+        ${stations.map((s) => `
+          <li class="watch-theater-item">
+            <span class="watch-theater-name">${escapeHtml(s.name)}${s.category ? ` <em>· ${escapeHtml(s.category)}</em>` : ""}</span>
+            <button class="icon-btn watch-theater-delete" type="button" data-delete-radio="${escapeHtml(s.id)}" aria-label="Remove ${escapeHtml(s.name)}">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </li>`).join("")}
+      </ul>` : `<p class="watch-theater-settings-hint">No custom stations yet.</p>`}
+      <form class="watch-theater-add-form" id="radioAddForm">
+        <input class="watch-theater-input" id="radioAddName" type="text" placeholder="Station name (optional)" autocomplete="off" />
+        <input class="watch-theater-input watch-theater-url-input" id="radioAddUrl" type="url" placeholder="Stream URL (required)" autocomplete="off" required />
+        <input class="watch-theater-input" id="radioAddCat" type="text" placeholder="Category (optional, e.g. Jazz)" autocomplete="off" />
+        <button class="primary-btn" type="submit">Add Station</button>
+      </form>
+    </div>
+  `;
+  elements.contextSettingsBody.querySelector("#radioAddForm")?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const url = elements.contextSettingsBody.querySelector("#radioAddUrl")?.value.trim();
+    if (!url) { showVoiceToast("A stream URL is required."); return; }
+    const name = elements.contextSettingsBody.querySelector("#radioAddName")?.value.trim();
+    const category = elements.contextSettingsBody.querySelector("#radioAddCat")?.value.trim();
+    saveRadioUserStation({ name: name || "My station", streamUrl: url, category }).then(renderRadioSettings);
+  });
+  elements.contextSettingsBody.querySelectorAll("[data-delete-radio]").forEach((btn) => {
+    btn.addEventListener("click", () => deleteRadioUserStation(btn.dataset.deleteRadio).then(renderRadioSettings));
   });
 }
 
@@ -46687,34 +46730,6 @@ function pushRadioHistory(station) {
 function radioRecentEntries() { return getRecentMedia({ kind: "radio" }); }
 
 // ── User-added stations (any stream URL; coexist with provider stations) ──────
-function openAddRadioStation() {
-  document.getElementById("musicCfgOverlay")?.remove();
-  const ov = document.createElement("div");
-  ov.id = "musicCfgOverlay"; ov.className = "music-cfg-overlay";
-  ov.innerHTML = `<div class="music-cfg" role="dialog" aria-modal="true" aria-label="Add a station">
-      <button class="music-cfg-x" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-      <h3 class="music-cfg-title">Add a station</h3>
-      <p class="music-cfg-sub">Paste any live stream URL. HTTPS streams play in-app; HTTP-only streams are blocked by the browser on a secure page.</p>
-      <label class="music-cfg-field"><span>Name</span><input type="text" id="raName" placeholder="My station" autocomplete="off"></label>
-      <label class="music-cfg-field"><span>Stream URL</span><input type="url" id="raUrl" placeholder="https://…/stream.mp3" autocomplete="off" spellcheck="false"></label>
-      <label class="music-cfg-field"><span>Category <em>(optional)</em></span><input type="text" id="raCat" placeholder="e.g. Jazz" autocomplete="off"></label>
-      <div class="music-cfg-actions"><button class="music-cfg-cancel" type="button" data-ra-cancel>Cancel</button><button class="primary-btn" type="button" data-ra-save>Add station</button></div>
-    </div>`;
-  const close = () => ov.remove();
-  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
-  ov.querySelector(".music-cfg-x").addEventListener("click", close);
-  ov.querySelector("[data-ra-cancel]").addEventListener("click", close);
-  ov.querySelector("[data-ra-save]").addEventListener("click", () => {
-    const name = ov.querySelector("#raName").value.trim();
-    const url = ov.querySelector("#raUrl").value.trim();
-    const category = ov.querySelector("#raCat").value.trim();
-    if (!url) { showVoiceToast("A stream URL is required."); return; }
-    saveRadioUserStation({ name: name || "My station", streamUrl: url, category });
-    close();
-  });
-  document.body.appendChild(ov);
-  ov.querySelector("#raName")?.focus();
-}
 async function saveRadioUserStation(rec) {
   const id = `user_${(typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : Date.now().toString(36)}`;
   if (!Array.isArray(state.radioUserStations)) state.radioUserStations = [];
@@ -46870,7 +46885,7 @@ function renderRadioPanel() {
   if (!panel) return;
   panel.innerHTML = `
     <div class="podcast-playlist-bar music-bar"><div class="podcast-tabs-actions">
-      <button class="icon-btn std-add-btn" type="button" data-radio-add title="Add a station" aria-label="Add a station by stream URL">${MUSIC_PLUS_SVG}</button>
+      <button class="icon-btn" type="button" data-radio-settings title="Radio settings" aria-label="Radio settings"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
     </div></div>
     <div class="music-discover">
       <div class="music-search-bar">
@@ -46900,7 +46915,7 @@ function initRadioPanel() {
         doRadioSearch("");
         return;
       }
-      if (e.target.closest("[data-radio-add]")) { openAddRadioStation(); return; }
+      if (e.target.closest("[data-radio-settings]")) { openContextSettingsDialog("radio"); return; }
       const del = e.target.closest("[data-radio-delete]");
       if (del) { e.stopPropagation(); deleteRadioUserStation(del.dataset.radioDelete); return; }
       const fav = e.target.closest("[data-radio-fav]");
