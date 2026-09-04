@@ -16885,8 +16885,12 @@ body.has-mini-player .mail-list { padding-bottom: 114px; }
 .np-grabber { width: 40px; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--ink) 18%, transparent); margin: -8px auto 12px; }
 /* Playback-speed pill, cycles 0.75×–2×. */
 .np-extra { display: flex; justify-content: center; margin: 0 0 16px; }
-.np-speed { min-width: 52px; padding: 6px 14px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--window-border) 40%, transparent); background: none; color: var(--window-border); font-weight: 800; font-size: 0.85rem; font-family: inherit; cursor: pointer; font-variant-numeric: tabular-nums; }
-.np-speed:hover { background: color-mix(in srgb, var(--window-border) 10%, transparent); }
+.np-speed-row { display: flex; align-items: center; gap: 12px; width: 100%; }
+.np-speed-label { font-size: 0.8rem; font-weight: 700; color: color-mix(in srgb, var(--ink) 65%, transparent); text-transform: uppercase; letter-spacing: 0.04em; flex-shrink: 0; }
+.np-speed-val { min-width: 3.2em; text-align: right; font-weight: 800; font-size: 0.9rem; color: var(--window-border); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.np-speed-slider { flex: 1; min-width: 0; height: 4px; -webkit-appearance: none; appearance: none; background: color-mix(in srgb, var(--ink) 15%, transparent); border-radius: 3px; cursor: pointer; }
+.np-speed-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--window-border); cursor: pointer; }
+.np-speed-slider::-moz-range-thumb { width: 18px; height: 18px; border: none; border-radius: 50%; background: var(--window-border); cursor: pointer; }
 
 /* ── AI Recipe Toolbar ────────────────────────────────────────────────────── */
 .recipe-ai-toolbar {

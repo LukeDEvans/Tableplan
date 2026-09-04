@@ -47151,7 +47151,11 @@ function openNowPlayingModal() {
         </button>
       </div>
       <div class="np-extra">
-        <button class="np-speed" id="npSpeed" type="button" aria-label="Playback speed"></button>
+        <div class="np-speed-row">
+          <span class="np-speed-label">Speed</span>
+          <input type="range" class="np-speed-slider" id="npSpeedSlider" min="0.5" max="3" step="0.05" aria-label="Playback speed">
+          <span class="np-speed-val" id="npSpeedVal">1×</span>
+        </div>
       </div>
       <div class="np-desc${info.desc ? "" : " np-desc--empty"}">${info.desc ? escapeHtml(info.desc) : "No description available."}</div>
     </div>`;
@@ -47166,14 +47170,18 @@ function openNowPlayingModal() {
   overlay.querySelector("#npPlay").addEventListener("click", () => { nowPlayingToggle(); updateNowPlayingModal(); });
   overlay.querySelector("#npBack").addEventListener("click", () => nowPlayingSkip(-10));
   overlay.querySelector("#npFwd").addEventListener("click", () => nowPlayingSkip(30));
-  // Playback speed: a pill that cycles through the same steps as the reader's
-  // speed menu; setMediaPlaybackSpeed applies it to whichever audio is playing.
-  overlay.querySelector("#npSpeed").addEventListener("click", () => {
-    const steps = [0.75, 1, 1.25, 1.5, 2];
-    const i = steps.findIndex((s) => Math.abs(s - mediaPlaybackSpeed) < 0.01);
-    setMediaPlaybackSpeed(steps[(i + 1) % steps.length]);
-    updateNowPlayingModal();
+  // Playback speed: a continuous 0.5×–3.0× slider (0.05 steps). setMediaPlaybackSpeed
+  // applies it live to whichever audio is playing. The `speeding` flag stops
+  // updateNowPlayingModal from yanking the thumb back while it's being dragged.
+  const speedSlider = overlay.querySelector("#npSpeedSlider");
+  speedSlider.value = String(mediaPlaybackSpeed);
+  speedSlider.addEventListener("input", () => {
+    overlay.dataset.speeding = "1";
+    setMediaPlaybackSpeed(parseFloat(speedSlider.value));
+    const val = overlay.querySelector("#npSpeedVal");
+    if (val) val.textContent = formatSpeedLabel(mediaPlaybackSpeed);
   });
+  speedSlider.addEventListener("change", () => { delete overlay.dataset.speeding; });
   const seek = overlay.querySelector("#npSeek");
   seek.addEventListener("input", () => { overlay.dataset.scrubbing = "1"; });
   seek.addEventListener("change", () => { nowPlayingSeekFraction(Number(seek.value) / 1000); delete overlay.dataset.scrubbing; updateNowPlayingModal(); });
@@ -47231,9 +47239,14 @@ function updateNowPlayingModal() {
       ? `<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/></svg>`
       : `<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4" fill="currentColor"/></svg>`;
   }
-  const speed = overlay.querySelector("#npSpeed");
-  if (speed) speed.textContent = `${mediaPlaybackSpeed}×`;
+  const speedSlider = overlay.querySelector("#npSpeedSlider");
+  const speedVal = overlay.querySelector("#npSpeedVal");
+  if (speedSlider && overlay.dataset.speeding !== "1") speedSlider.value = String(mediaPlaybackSpeed);
+  if (speedVal) speedVal.textContent = formatSpeedLabel(mediaPlaybackSpeed);
 }
+
+// "1×", "1.35×", "2.5×" — two decimals with trailing zeros trimmed.
+function formatSpeedLabel(v) { return `${Number(v).toFixed(2).replace(/\.?0+$/, "")}×`; }
 
 function goToOpenEpisode() {
   if (!openPodcastEpisodeId) return;
