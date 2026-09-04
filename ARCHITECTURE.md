@@ -149,8 +149,18 @@ several domains model them ad hoc inside the state blob.
   the permanent library, kept forever) / DISMISSED (skipped, Article still kept) → future
   Reading/Listening/Consumption. Rediscovery never resurrects a resolved notification or
   reorders by discovery; the badge counts only PENDING (never library/history/playlist).
-  Interim store: bounded `pubArticles`/`articleNotifications` in state (saved always kept),
-  promoting to the relational `articles` table when that migration is applied.
+  Interim store (pre-cutover): bounded `pubArticles`/`articleNotifications` in state.
+- **Publications relational cutover (2026-09):** publications/feeds/articles now live in
+  RELATIONAL tables (`migrations/2026-09-02-publications.sql`, applied; group-scoped RLS,
+  TEXT ids == client ids so no re-keying). `publications-store.js` is the pure row⇄model
+  mapping layer; `app.js` reads them at boot (`hydratePublicationsFromDb`, after the
+  `eat_recipes` load) and write-throughs on ingest/subscribe (best-effort, DB is durable so a
+  UI wipe self-heals on reload). `pubArticles`/`pubDefs`/`pubFeeds` are REMOVED from the synced
+  `media` JSONB section (`STATE_SECTIONS` + `mergeStates`) — self-migrating (key-blind reads
+  still load a legacy blob, backfill lifts it to the DB, then writes stop carrying it);
+  `applyStoredState` preserves the DB-loaded copies across a full replace. **`articleNotifications`
+  and `readingProgress` STAY in JSONB** (per-user derived state, keyed by article id, not table
+  columns). Article bodies stay in the content store.
 - **Publications reader + on-demand body (Phase 3):** the Article record stays METADATA
   only — the body is acquired on demand through the SSRF-guarded `fetch-article` boundary
   (`article-body.js` shapes the request/normalizes the response) and mirrored into the shared

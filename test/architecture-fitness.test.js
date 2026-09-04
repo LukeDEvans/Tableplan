@@ -187,12 +187,16 @@ describe("fitness: Publications notifications/library (Phase 2B)", () => {
     // the lifecycle lives in its own module, keyed by articleId
     expect(code("publications-notify.js").includes("articleId")).toBe(true);
   });
-  it("canonical articles + notification map are registered in mergeStates (synced)", () => {
+  it("notification map stays a synced key-union; articles moved to the relational store", () => {
     const app = code("app.js");
     const body = app.slice(app.indexOf("function mergeStates(newer, older)"));
     const mergeBody = body.slice(0, body.indexOf("\nfunction ", 1));
-    expect(mergeBody.includes('"pubArticles"')).toBe(true);            // id-keyed union
-    expect(mergeBody.includes('"articleNotifications"')).toBe(true);   // key union
+    expect(mergeBody.includes('"articleNotifications"')).toBe(true);   // notifications stay JSONB (key union)
+    // Cutover: articles/publications/feeds are relational — NOT synced-state, so not merged here.
+    expect(mergeBody.includes('"pubArticles"')).toBe(false);
+    // The relational data-access layer owns them, and the app writes through to it.
+    expect(code("publications-store.js").includes("articleToRow")).toBe(true);
+    expect(app.includes("upsertArticlesToDb")).toBe(true);
   });
   it("the ingestion applier converges through canonical reconciliation (no bypass)", () => {
     const app = code("app.js");

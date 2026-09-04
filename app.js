@@ -303,7 +303,7 @@ const STATE_SECTIONS = {
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "mediaProgress", "pubArticles", "articleNotifications", "pubDefs", "pubFeeds", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "mediaProgress", "articleNotifications", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
   plan:      ["calendars", "planEvents", "planCalendars", "planHiddenSources", "planExternalExclusions", "planExternalOverrides"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
@@ -6255,8 +6255,9 @@ function mergeStates(newer, older) {
     "trips", "travelIdeas",
     // Finance (flat id-keyed — the nested ones are deep-merged below)
     "financeAccounts", "financeManualTxns",
-    // Publications (Phase 2B): canonical articles + publications + feeds (id-keyed)
-    "pubArticles", "pubDefs", "pubFeeds",
+    // Publications: articles/publications/feeds now live in the relational tables
+    // (cutover slice 3) — they are no longer synced-state, so they are NOT merged
+    // here; applyStoredState preserves the DB-loaded copies across a full replace.
     // Contacts (address book)
     "contacts",
   ]) {
@@ -6959,9 +6960,21 @@ async function tryPreChangeBackup(actionLabel) {
 
 function applyStoredState(storedState) {
   const currentCollapsedSections = state.collapsedSections;
+  // Publications/feeds/articles live in the relational tables now (cutover slice 3),
+  // not in the synced blob. A full state replace whose incoming blob doesn't carry
+  // them (post-migration) must NOT wipe the DB-loaded copies — preserve them, keyed
+  // on the RAW input having the field at all (a legacy blob still carrying them wins).
+  const keepPub = {
+    pubArticles: storedState?.pubArticles === undefined ? state.pubArticles : undefined,
+    pubDefs: storedState?.pubDefs === undefined ? state.pubDefs : undefined,
+    pubFeeds: storedState?.pubFeeds === undefined ? state.pubFeeds : undefined,
+  };
   Object.keys(state).forEach((key) => delete state[key]);
   Object.assign(state, normalizeState(storedState));
   state.collapsedSections = currentCollapsedSections || state.collapsedSections || defaultCollapsedSections();
+  if (keepPub.pubArticles !== undefined) state.pubArticles = keepPub.pubArticles;
+  if (keepPub.pubDefs !== undefined) state.pubDefs = keepPub.pubDefs;
+  if (keepPub.pubFeeds !== undefined) state.pubFeeds = keepPub.pubFeeds;
   // If the incoming state has no trips but the local trip backup has non-tombstoned trips,
   // restore them. This catches accidental syncs that wipe travel data.
   // Explicitly deleted trips are tombstoned by the delete handler, so they won't come back.
