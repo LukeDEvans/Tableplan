@@ -43844,36 +43844,28 @@ function getBundleHeldEpisodeIds() {
 // The started-but-unfinished episode you most recently listened to. Surfaced at
 // the very top of the playlist so a lower-tier resume isn't buried under newer
 // higher-tier episodes when you come back the next day.
-function currentInProgressEpisodeId() {
-  const prog = state.podcastProgress || {};
-  // Prefer whatever is loaded in the player right now, if it's mid-episode.
-  if (openPodcastEpisodeId) {
-    const p = prog[openPodcastEpisodeId];
-    if (p && !p.played && (p.position || 0) > 0) return openPodcastEpisodeId;
-  }
-  // Otherwise the most-recently-listened started-but-unfinished episode that
-  // still belongs to a subscribed show.
-  const known = new Set();
-  for (const show of (state.podcasts || [])) for (const ep of (show.episodes || [])) known.add(ep.id);
-  let best = null, bestAt = "";
-  for (const [id, p] of Object.entries(prog)) {
-    if (!p || p.played || !((p.position || 0) > 0) || !known.has(id)) continue;
-    const at = p.lastPlayedAt || "";
-    if (best === null || at > bestAt) { best = id; bestAt = at; }
-  }
-  return best;
-}
-
 function playlistItemForEpisodeId(id) {
   const { episode, show } = findPodcastEpisode(id) || {};
   if (!episode) return null;
   return { ...episode, type: "podcast", showId: show?.id || "", showTitle: show?.title || "", showArt: show?.art || "" };
 }
 
-// Move (or inject, if the time window excluded it) the resume episode to the
-// front of a playlist array.
+// The queue item currently LOADED in the player — playing OR paused — which is
+// what belongs in the "Now Playing" slot at the top of the queue. A stopped
+// player, or live radio / music (not queue items), yields null → an empty slot.
+// (The queue no longer pins a merely *started* episode when nothing is loaded.)
+function nowPlayingQueueId() {
+  const k = nowPlayingKind();
+  if (k === "podcast") return podcastCurEpisode?.id || null;
+  if (k === "tts") return listenArticle?.id || null;
+  return null;
+}
+
+// Move the CURRENTLY-PLAYING item (playing or paused) to the front of a queue
+// array so it fills the top "Now Playing" slot. Nothing loaded → the queue is
+// left in its normal order (empty slot), never pinning a merely-started episode.
 function hoistResumeEpisode(list) {
-  const curId = currentInProgressEpisodeId();
+  const curId = nowPlayingQueueId();
   if (!curId) return list;
   const idx = list.findIndex((i) => i.id === curId);
   if (idx > 0) { const [it] = list.splice(idx, 1); list.unshift(it); }
@@ -43975,7 +43967,20 @@ function getAllListenList() {
   return hoistResumeEpisode(list);
 }
 
+// Re-render the queue when the loaded (Now Playing) item changes, so its top
+// slot tracks playback live instead of what was loaded when the tab last drew.
+// No-ops unless the queue tab is visible and the item actually changed.
+let _lastQueueNowId = null;
+function syncQueueNowPlaying() {
+  if (activeMediaTab !== "queue") return;
+  const id = nowPlayingQueueId();
+  if (id === _lastQueueNowId) return;
+  _lastQueueNowId = id;
+  renderMediaAllList();
+}
+
 function renderMediaAllList() {
+  _lastQueueNowId = nowPlayingQueueId();
   const listEl = document.getElementById("mediaAllList");
   if (!listEl) return;
   const items = getAllListenList();
@@ -43989,13 +43994,18 @@ function renderMediaAllList() {
   // under the title (Apple-Podcasts style). Tiering silently sorts the list
   // (via getAutoPlaylist) — no tier headers, no show-name/type text.
   const progress = state.podcastProgress || {};
-  const resumeId = currentInProgressEpisodeId();
+  const nowId = nowPlayingQueueId();       // the loaded item (playing/paused), or null
   let html = "";
+  let upNextEmitted = false;
   items.forEach((e) => {
     const isPod = e.type === "podcast";
     const isArt = e.type === "article";
     const isBook = e.type === "book";
-    const isResume = e.id === resumeId;
+    const isResume = e.id === nowId;        // the "Now Playing" row (hoisted to top)
+    // Section headers: "Now Playing" over the loaded item, "Up Next" over the
+    // rest. Nothing loaded → the list is just "Up Next" (empty play space).
+    if (isResume) html += `<div class="playlist-section-head">Now Playing</div>`;
+    else if (!upNextEmitted) { html += `<div class="playlist-section-head">Up Next</div>`; upNextEmitted = true; }
     const dur = (!isArt && !isBook) ? (e.duration || progress[e.id]?.duration || 0) : 0;
     const remain = (isResume && dur && progress[e.id]?.position) ? Math.max(0, dur - progress[e.id].position) : 0;
     const art = e.showArt
@@ -44009,7 +44019,7 @@ function renderMediaAllList() {
       <button class="playlist-art-btn" type="button" data-all-art="${escapeHtml(e.id)}" tabindex="-1" aria-label="${isPod ? "Go to show" : "Open"}">${art}</button>
       <div class="article-row-main">
         ${isResume
-          ? `<div class="playlist-row-continue">Continue${remain ? ` · ${formatPodcastDuration(remain)} left` : ""}</div>`
+          ? `<div class="playlist-row-continue">Now Playing${remain ? ` · ${formatPodcastDuration(remain)} left` : ""}</div>`
           : (e.pubDate ? `<div class="playlist-row-date">${escapeHtml(formatArticleDate(e.pubDate))}</div>` : "")}
         <div class="article-row-title playlist-row-title">${escapeHtml(e.title || "")}</div>
         ${!isBook ? `<div class="playlist-play-row">
@@ -47098,6 +47108,7 @@ function updateMiniPlayerPlayBtn() {
     ? `<rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/>`
     : `<polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>`;
   updateNowPlayingModal();
+  syncQueueNowPlaying(); // keep the queue's Now-Playing slot current on play/pause/stop/advance
 }
 
 function updateMiniPlayerProgress() {
