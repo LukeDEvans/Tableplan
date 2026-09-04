@@ -16692,6 +16692,13 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   line-height: 1.65;
   color: var(--ink);
 }
+/* Episode detail sheet (opened from the queue — art + actions above the notes). */
+.episode-detail-head { display: flex; gap: 12px; align-items: flex-start; min-width: 0; flex: 1; }
+.episode-detail-art { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.episode-detail-date { font-size: 0.74rem; color: var(--ink-faint); }
+.episode-detail-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 12px 20px 4px; }
+.episode-detail-actions .primary-btn { display: inline-flex; align-items: center; gap: 6px; }
+.episode-detail-actions .primary-btn svg { display: block; }
 .episode-notes-body a { color: var(--accent); }
 .episode-notes-body p { margin: 0 0 0.75em; }
 .episode-notes-body ul, .episode-notes-body ol { margin: 0 0 0.75em 1.2em; padding: 0; }

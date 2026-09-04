@@ -44056,13 +44056,10 @@ function renderMediaAllList() {
     if (row.dataset.allType === "book") openMediaAllBook(id);
     else if (row.dataset.allType === "article") openArticle(id, "articleList");
     else {
-      // The episode player panel lives inside the Podcasts tab, so switch to it
-      // first — otherwise "open details" from the All list would set a panel
-      // that stays invisible under the hidden Podcasts tab. autoplay:false opens
-      // it paused (tap = view details; the play button starts it).
-      activeMediaTab = "podcasts";
-      switchMediaTab("podcasts");
-      openPodcastEpisode(id, { autoplay: false });
+      // Open the episode as a tab-agnostic detail sheet so you STAY in the queue
+      // tab instead of being teleported into Podcasts (the in-tab player panel
+      // lives there). The row's play button still starts playback directly.
+      openEpisodeDetailSheet(id);
     }
   };
   const inControls = (el) => el.closest(".article-row-actions, .playlist-drag-handle, .playlist-art-btn, .playlist-play-btn");
@@ -44844,6 +44841,77 @@ function showEpisodeNotesModal(episodeId) {
     ensureEpisodeDescription(episodeId).then((desc) => {
       const body = overlay.querySelector(".episode-notes-body");
       if (body && document.body.contains(overlay)) body.innerHTML = episodeNotesBodyHtml(desc);
+    });
+  }
+}
+
+// A tab-agnostic episode detail SHEET: art, title, actions (Play / playlist /
+// mark played) and notes, shown as an overlay so opening an episode from the
+// queue (or anywhere outside the Podcasts tab) never teleports you to another
+// tab — you stay right where you were.
+function openEpisodeDetailSheet(episodeId) {
+  document.getElementById("episodeNotesOverlay")?.remove();
+  const { episode, show } = findPodcastEpisode(episodeId) || {};
+  if (!episode) return;
+  openPodcastEpisodeId = episodeId; // context menus / now-playing resolve against this
+
+  const overlay = document.createElement("div");
+  overlay.id = "episodeNotesOverlay";
+  overlay.className = "priority-overlay";
+
+  const art = episode.art || show?.art || "";
+  const desc = episode.description || "";
+  const willFetch = !desc && Boolean(show?.url);
+  const isQueued = () => (state.podcastQueue || []).includes(episodeId);
+  const isPlayed = () => !!(state.podcastProgress || {})[episodeId]?.played;
+
+  overlay.innerHTML = `
+    <div class="priority-modal episode-notes-modal episode-detail-sheet" role="dialog" aria-modal="true" aria-label="Episode">
+      <div class="priority-modal-header">
+        <div class="episode-detail-head">
+          ${art ? `<img class="episode-detail-art" src="${escapeHtml(art)}" alt="" loading="lazy" onerror="this.style.display='none'">` : ""}
+          <div class="episode-notes-header-text">
+            <div class="episode-notes-title">${escapeHtml(episode.title || "")}</div>
+            ${show ? `<div class="episode-notes-show">${escapeHtml(show.title)}</div>` : ""}
+            ${episode.pubDate ? `<div class="episode-detail-date">${escapeHtml(formatArticleDate(episode.pubDate))}</div>` : ""}
+          </div>
+        </div>
+        <button class="icon-btn" type="button" id="closeEpisodeNotesBtn" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="episode-detail-actions">
+        <button class="primary-btn" type="button" data-ep-detail-play>
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4" fill="currentColor"/></svg> Play
+        </button>
+        <button class="secondary-btn compact-btn" type="button" data-ep-detail-queue>${isQueued() ? "In playlist ✓" : "Add to playlist"}</button>
+        <button class="secondary-btn compact-btn" type="button" data-ep-detail-played>${isPlayed() ? "Played ✓" : "Mark played"}</button>
+      </div>
+      <div class="episode-notes-body">${willFetch ? `<p style="color:var(--ink-faint);margin:0">Loading show notes…</p>` : episodeNotesBodyHtml(desc)}</div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector("#closeEpisodeNotesBtn").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  overlay.querySelector("[data-ep-detail-play]").addEventListener("click", () => {
+    startPodcastPlayback(episode, show, { autoplay: true }); // plays in place; mini-player follows
+    close();
+  });
+  overlay.querySelector("[data-ep-detail-queue]").addEventListener("click", (e) => {
+    toggleEpisodeInQueue(episodeId);
+    e.currentTarget.textContent = isQueued() ? "In playlist ✓" : "Add to playlist";
+  });
+  overlay.querySelector("[data-ep-detail-played]").addEventListener("click", (e) => {
+    const nowPlayed = !isPlayed();
+    setPodcastEpisodePlayed(episodeId, nowPlayed);
+    e.currentTarget.textContent = nowPlayed ? "Played ✓" : "Mark played";
+    if (activeMediaTab === "queue") renderMediaAllList();
+  });
+  if (willFetch) {
+    ensureEpisodeDescription(episodeId).then((d) => {
+      const body = overlay.querySelector(".episode-notes-body");
+      if (body && document.body.contains(overlay)) body.innerHTML = episodeNotesBodyHtml(d);
     });
   }
 }
