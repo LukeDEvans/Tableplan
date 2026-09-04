@@ -1317,6 +1317,7 @@ const elements = {
   closeReceiptScanBtn: document.querySelector("#closeReceiptScanBtn"),
   receiptReviewForm: document.querySelector("#receiptReviewForm"),
   receiptReconcileBanner: document.querySelector("#receiptReconcileBanner"),
+  receiptSourceImages: document.querySelector("#receiptSourceImages"),
   receiptStoreName: document.querySelector("#receiptStoreName"),
   receiptStoreId: document.querySelector("#receiptStoreId"),
   receiptPurchaseDate: document.querySelector("#receiptPurchaseDate"),
@@ -2832,6 +2833,31 @@ function setupDiagnostics() {
     upsertToDb: async () => { if (!localDevMode) return; await upsertPublicationsToDb(state.pubDefs || []); await upsertFeedsToDb(state.pubFeeds || []); await upsertArticlesToDb(state.pubArticles || []); return "ok"; },
     seedSaved: (art) => { if (!localDevMode) return; if (!Array.isArray(state.savedArticles)) state.savedArticles = []; state.savedArticles.push(art); persist(); },
     seedBody: async (id, html) => { if (!localDevMode) return null; const ac = await getArticleContent(); return ac ? ac.saveBody(id, html) : null; },
+  };
+  // Receipt review — test-only verbs (local dev) for headless verification of the
+  // validation banner + per-line highlighting + source thumbnails.
+  window.__liveReceiptScan = {
+    seedDraft: async (receipt, imageBytesList = []) => {
+      if (!localDevMode) return null;
+      pendingReceiptDraft = LiveReceiptDomain.normalizeReceipt(receipt, createId);
+      if (imageBytesList.length) {
+        const sc = await getScanContent();
+        const refs = [];
+        for (let i = 0; i < imageBytesList.length; i++) {
+          const ref = sc && await sc.saveImage(pendingReceiptDraft.id, i, new Uint8Array(imageBytesList[i]), "image/jpeg");
+          if (ref) refs.push(ref);
+        }
+        pendingReceiptDraft.imageRefs = refs;
+      }
+      if (elements.receiptScanDialog?.showModal && !elements.receiptScanDialog.open) elements.receiptScanDialog.showModal();
+      elements.receiptReviewForm.hidden = false;
+      renderReceiptReview();
+      await new Promise((r) => setTimeout(r, 60)); // let async thumbnails paint
+      return pendingReceiptDraft.id;
+    },
+    banner: () => (localDevMode ? { cls: elements.receiptReconcileBanner?.className || "", text: elements.receiptReconcileBanner?.textContent || "" } : null),
+    flaggedRows: () => (localDevMode ? (elements.receiptLineList?.querySelectorAll(".receipt-line--flagged").length || 0) : 0),
+    thumbs: () => (localDevMode ? (elements.receiptSourceImages?.querySelectorAll("img").length || 0) : 0),
   };
 }
 
@@ -23531,6 +23557,39 @@ function renderReceiptReview() {
   elements.receiptLineList.innerHTML = "";
   receipt.lineItems.forEach((line) => addReceiptReviewLine(line));
   refreshReceiptValidation();
+  renderReceiptSourceImages(receipt);
+}
+
+// Show the preserved source photo(s) as thumbnails so the reviewer can check any
+// flagged line against the original. Revokes prior object URLs to avoid leaks.
+let _receiptThumbUrls = [];
+async function renderReceiptSourceImages(receipt) {
+  const container = elements.receiptSourceImages;
+  if (!container) return;
+  _receiptThumbUrls.forEach((u) => { try { URL.revokeObjectURL(u); } catch { /* noop */ } });
+  _receiptThumbUrls = [];
+  container.innerHTML = "";
+  const refs = Array.isArray(receipt?.imageRefs) ? receipt.imageRefs : [];
+  if (!refs.length) { container.hidden = true; return; }
+  try {
+    const sc = await getScanContent();
+    if (!sc) { container.hidden = true; return; }
+    for (const ref of refs) {
+      const bytes = await sc.loadImage(receipt.id, ref.index, { ref });
+      if (!bytes) continue;
+      const url = URL.createObjectURL(new Blob([bytes], { type: ref.mimeType || "image/jpeg" }));
+      _receiptThumbUrls.push(url);
+      const img = document.createElement("img");
+      img.className = "receipt-source-thumb";
+      img.src = url;
+      img.alt = "Scanned receipt photo";
+      img.loading = "lazy";
+      img.title = "Open the full receipt photo";
+      img.addEventListener("click", () => { try { window.open(url, "_blank", "noopener"); } catch { /* popup blocked */ } });
+      container.appendChild(img);
+    }
+    container.hidden = container.childElementCount === 0;
+  } catch { container.hidden = true; }
 }
 
 // Advisory reconciliation/validation banner — reads the current form, validates
@@ -23544,7 +23603,20 @@ function refreshReceiptValidation() {
   try { receipt = reviewedReceiptFromForm(); } catch { return; }
   const v = LiveReceiptDomain.validateReceipt(receipt);
   receiptValidationFlags = v.flags;
-  const lineIssues = v.flags.filter((f) => f.lineId).length;
+  // Per-line highlighting: clear prior marks, then flag rows that need a look.
+  elements.receiptLineList?.querySelectorAll(".receipt-line--flagged").forEach((row) => {
+    row.classList.remove("receipt-line--flagged");
+    row.removeAttribute("title");
+  });
+  const messagesByLine = new Map();
+  v.flags.filter((f) => f.lineId).forEach((f) => {
+    messagesByLine.set(f.lineId, [...(messagesByLine.get(f.lineId) || []), f.message]);
+  });
+  messagesByLine.forEach((messages, lineId) => {
+    const row = elements.receiptLineList?.querySelector(`[data-receipt-line-id="${(window.CSS && CSS.escape) ? CSS.escape(lineId) : lineId}"]`);
+    if (row) { row.classList.add("receipt-line--flagged"); row.title = messages.join(" "); }
+  });
+  const lineIssues = messagesByLine.size;
   if (v.reconciles && !v.flags.length) {
     banner.hidden = false;
     banner.className = "receipt-reconcile is-ok";
