@@ -37,6 +37,7 @@ import { runFeedIngestion } from './feed-ingest.js';
 import { markManyDiscovered, pruneNotifications, saveArticle as notifSaveArticle, dismissArticle as notifDismissArticle, pendingNotifications, notificationBadgeCount, badgeLabel, retainedArticles, isSaved as notifIsSaved } from './publications-notify.js';
 import { publicationsPanelHtml, subscriptionListHtml } from './publications-render.js';
 import { makePublication, makeFeed, unifiedLibraryArticles } from './publications.js';
+import { articleToRow, articleFromRow, publicationToRow, feedToRow, feedFromRow, assemblePublications } from './publications-store.js';
 import { setReadingProgress, readingPercent, pruneReadingProgress, isFinished } from './reading-progress.js';
 import { bodyFetchRequest, normalizeFetchedBody, mergeFetchedMetadata } from './article-body.js';
 import { deriveMediaTierCount } from './media-tier.js';
@@ -2815,6 +2816,11 @@ function setupDiagnostics() {
     readingPercent: (id) => readingPercent(state.readingProgress, id),
     consumed: (id) => (state.readArticleIds || []).includes(id),
     subscriptions: () => ({ pubs: (state.pubDefs || []).length, feeds: (state.pubFeeds || []).length }),
+    // Relational store (cutover slice 1) — needs a cloud session; the sync slice wires these in.
+    dbReady: () => pubDbReady(),
+    loadDb: () => loadPublicationsFromDb(),
+    loadArticlesDb: (opts) => loadArticlesFromDb(opts),
+    upsertToDb: async () => { await upsertPublicationsToDb(state.pubDefs || []); await upsertFeedsToDb(state.pubFeeds || []); await upsertArticlesToDb(state.pubArticles || []); return "ok"; },
     resolveBody: (id) => resolvePubArticleBody(libraryArticleById(id) || { id }),
     library: (publicationId = null) => pubLibrary(publicationId).map((a) => ({ id: a.id, title: a.title, origins: a.origins || ["rss"] })),
     seedSaved: (art) => { if (!Array.isArray(state.savedArticles)) state.savedArticles = []; state.savedArticles.push(art); persist(); },
@@ -3240,6 +3246,54 @@ function removeSubscription(pubId) {
   renderPubSubList();
   renderPublicationsPanel();
 }
+
+// ── Publications relational store (Phase 3 cutover, slice 1) ──────────────────
+// Thin PostgREST data-access over the publications/feeds/articles tables, mirroring
+// the eat_recipes pattern (supabaseHeaders + supabaseBaseUrl + on_conflict upsert).
+// The pure row⇄model mapping lives in publications-store.js. group_id is the current
+// group (userGroup.id) so the group-scoped RLS passes. NOT yet wired into the live
+// read/write flow — the sync slice consumes these. Every call needs a cloud session.
+function pubDbGroupId() { return userGroup?.id || null; }
+function pubDbReady() { return !localDevMode && canUseCloudStorage() && !!authSession?.access_token && !!pubDbGroupId(); }
+
+// Load publications + their feeds and assemble the client pubDefs/pubFeeds shapes.
+async function loadPublicationsFromDb() {
+  const base = supabaseBaseUrl();
+  const [pubRes, feedRes] = await Promise.all([
+    fetch(`${base}/rest/v1/publications?select=id,name,key,enabled&order=name.asc`, { headers: supabaseHeaders(), cache: "no-store" }),
+    fetch(`${base}/rest/v1/feeds?select=*&order=created_at.asc`, { headers: supabaseHeaders(), cache: "no-store" }),
+  ]);
+  if (!pubRes.ok) throw new Error(`publications load failed (${pubRes.status})`);
+  if (!feedRes.ok) throw new Error(`feeds load failed (${feedRes.status})`);
+  const pubRows = await pubRes.json();
+  const feedRows = await feedRes.json();
+  return { pubDefs: assemblePublications(pubRows, feedRows), pubFeeds: feedRows.map(feedFromRow) };
+}
+
+// Load a page of articles, newest-published first (indexed by group_published_idx).
+// `before` (ISO) pages backwards from a prior page's last publishedAt.
+async function loadArticlesFromDb({ limit = 200, before = null } = {}) {
+  const base = supabaseBaseUrl();
+  const beforeClause = before ? `&published_at=lt.${encodeURIComponent(before)}` : "";
+  const res = await fetch(`${base}/rest/v1/articles?select=*&order=published_at.desc.nullslast,discovered_at.desc&limit=${Number(limit) || 200}${beforeClause}`, { headers: supabaseHeaders(), cache: "no-store" });
+  if (!res.ok) throw new Error(`articles load failed (${res.status})`);
+  return (await res.json()).map(articleFromRow);
+}
+
+async function upsertRowsToDb(table, rows) {
+  if (!rows.length) return;
+  const res = await fetch(`${supabaseBaseUrl()}/rest/v1/${table}?on_conflict=id`, {
+    method: "POST",
+    headers: { ...supabaseHeaders(), Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify(rows),
+  });
+  if (!res.ok) throw new Error(`${table} upsert failed (${res.status})`);
+}
+
+function upsertArticlesToDb(articles) { const g = pubDbGroupId(); return upsertRowsToDb("articles", (articles || []).filter((a) => a.id).map((a) => articleToRow(a, g))); }
+function upsertPublicationsToDb(pubs) { const g = pubDbGroupId(); return upsertRowsToDb("publications", (pubs || []).filter((p) => p.id).map((p) => publicationToRow(p, g))); }
+function upsertFeedsToDb(feeds) { const g = pubDbGroupId(); return upsertRowsToDb("feeds", (feeds || []).filter((f) => f.id).map((f) => feedToRow(f, g))); }
+// Deletes reuse the generic deleteSupabaseRow("articles"|"feeds"|"publications", id).
 
 async function toggleAuth() {
   // Local-dev sign-out: drop the flag and reload back to the real gate. No

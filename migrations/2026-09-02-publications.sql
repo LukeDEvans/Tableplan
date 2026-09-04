@@ -1,10 +1,14 @@
--- Publications foundation — Publication / Feed / canonical Article (Phase 1).
+-- Publications foundation — Publication / Feed / canonical Article.
 --
--- ⚠️ DESIGN ONLY — NOT APPLIED. This migration is committed as the reviewed schema
--- for the Publications relational store; applying it is a production DB change that
--- is confirmation-gated (CLAUDE.md, ARCHITECTURE.md §16) and OUT OF SCOPE for the
--- Phase 0/1 local implementation. It follows ARCH §6 (id PK, created_at/updated_at,
--- RLS enabled, group-scoped like tableplan_states/eat_recipes, an index for every FK).
+-- ✅ APPLIED to production 2026-09-03 (project noyocjcltrenwdovqrql) in two steps:
+--   1. publications_foundation (tables + RLS + indexes)
+--   2. publications_ids_to_text (id/publication_id uuid → TEXT)
+-- This file reflects the FINAL applied schema. ids are TEXT, not uuid: the client
+-- keys articles/publications/feeds by string ids (art_… deterministic, pub_…/feed_…
+-- from createId) that the content store, notifications, reading-progress, and
+-- unionById all depend on — so DB identity == client identity (no re-keying).
+-- Follows ARCH §6 (id PK, created_at/updated_at, RLS enabled, group-scoped like
+-- tableplan_states, an index for every FK).
 --
 -- Rationale for relational (not the hot media JSONB): the article library grows
 -- indefinitely and is list-queried/paginated/filtered — exactly the §6 promotion
@@ -15,7 +19,7 @@
 
 -- ── publications ──────────────────────────────────────────────────────────────
 create table if not exists public.publications (
-  id          uuid primary key default gen_random_uuid(),
+  id          text primary key,
   group_id    text not null,
   name        text not null,
   key         text not null,                 -- normalized identity (dedupe within a group)
@@ -38,9 +42,9 @@ create policy "pub delete" on public.publications for delete
 
 -- ── feeds (a publication has many feeds) ──────────────────────────────────────
 create table if not exists public.feeds (
-  id              uuid primary key default gen_random_uuid(),
+  id          text primary key,
   group_id        text not null,
-  publication_id  uuid not null references public.publications(id) on delete cascade,
+  publication_id  text not null references public.publications(id) on delete cascade,
   url             text not null,
   title           text,
   enabled         boolean not null default true,
@@ -72,9 +76,9 @@ create policy "feed delete" on public.feeds for delete
 -- feed_ids is an array (many feeds can discover ONE article) — a text[] keeps the
 -- model to three tables (§33: no unnecessary join table) and mirrors the client shape.
 create table if not exists public.articles (
-  id             uuid primary key default gen_random_uuid(),
+  id          text primary key,
   group_id       text not null,
-  publication_id uuid references public.publications(id) on delete set null,
+  publication_id text references public.publications(id) on delete set null,
   feed_ids       text[] not null default '{}',
   guid           text,                        -- source identity (scoped to its feed)
   url            text,
