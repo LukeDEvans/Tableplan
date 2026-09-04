@@ -1,58 +1,22 @@
-const DEFAULT_SCAN_MODEL = "claude-haiku-4-5-20251001";
+// recipe-scan.js — recipe domain adapter over the shared document-scan seam.
+// Owns the recipe PROMPT + normalization; the vision plumbing lives in
+// document-scan.js.
+const { scanDocument, parseJsonFromText } = require("./document-scan");
 
 async function scanRecipeFromImages(images, options = {}) {
-  const apiKey = options.apiKey || process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    throw new Error("Recipe scanning needs ANTHROPIC_API_KEY set on the server.");
-  }
-  const cleanImages = validateImages(images);
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json"
+  const { rawText } = await scanDocument({
+    items: images,
+    prompt: recipeScanPrompt(),
+    options: {
+      ...options,
+      maxItems: 6,
+      noun: "image",
+      label: "Recipe scan",
+      envModelVar: "ANTHROPIC_RECIPE_SCAN_MODEL",
+      missingKeyMessage: "Recipe scanning needs ANTHROPIC_API_KEY set on the server.",
     },
-    body: JSON.stringify({
-      model: options.model || process.env.ANTHROPIC_RECIPE_SCAN_MODEL || DEFAULT_SCAN_MODEL,
-      max_tokens: 4096,
-      temperature: 0,
-      messages: [{
-        role: "user",
-        content: [
-          { type: "text", text: recipeScanPrompt() },
-          ...cleanImages.map((image) => {
-            const { media_type, data } = parseDataUrl(image);
-            return { type: "image", source: { type: "base64", media_type, data } };
-          })
-        ]
-      }]
-    })
   });
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.error?.message || `Recipe scan failed with status ${response.status}`);
-  }
-  return normalizeScannedRecipe(parseRecipeJson(outputText(payload)));
-}
-
-function parseDataUrl(dataUrl) {
-  const match = dataUrl.match(/^data:(image\/[a-z+]+);base64,(.+)$/i);
-  if (!match) throw new Error("Invalid image data URL.");
-  return { media_type: match[1].toLowerCase(), data: match[2] };
-}
-
-function validateImages(images) {
-  if (!Array.isArray(images) || !images.length) throw new Error("At least one image is required.");
-  if (images.length > 6) throw new Error("Use up to 6 images for one recipe scan.");
-  return images.map((image) => {
-    const value = String(image || "");
-    if (!/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(value)) {
-      throw new Error("Images must be PNG, JPEG, WEBP, or GIF data URLs.");
-    }
-    return value;
-  });
+  return normalizeScannedRecipe(parseRecipeJson(rawText));
 }
 
 function recipeScanPrompt() {
@@ -80,24 +44,8 @@ function recipeScanPrompt() {
   ].join("\n");
 }
 
-function outputText(payload) {
-  return (payload.content || [])
-    .filter((block) => block.type === "text")
-    .map((block) => block.text || "")
-    .join("\n")
-    .trim();
-}
-
 function parseRecipeJson(text) {
-  const trimmed = String(text || "").trim();
-  if (!trimmed) throw new Error("The scan did not return recipe text.");
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    const match = trimmed.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("The scan response could not be parsed.");
-    return JSON.parse(match[0]);
-  }
+  return parseJsonFromText(text, "The scan did not return recipe text.");
 }
 
 function normalizeScannedRecipe(recipe) {

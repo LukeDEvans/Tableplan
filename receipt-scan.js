@@ -1,4 +1,9 @@
-const DEFAULT_SCAN_MODEL = "claude-haiku-4-5-20251001";
+// receipt-scan.js — receipt domain adapter over the shared document-scan seam.
+// Owns the receipt PROMPT + normalization; the vision plumbing lives in
+// document-scan.js. Returns the intermediate { receipt, rawText, model } so the
+// client keeps the extraction (raw output) independent of the interpretation.
+const { scanDocument, parseJsonFromText, validateAndBuildBlocks } = require("./document-scan");
+
 let _receiptDomain = null;
 async function getReceiptDomain() {
   if (!_receiptDomain) _receiptDomain = await import("./receipt-domain.js");
@@ -6,59 +11,22 @@ async function getReceiptDomain() {
 }
 
 async function scanReceiptFromImages(images, options = {}) {
-  const apiKey = options.apiKey || process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("Receipt scanning needs ANTHROPIC_API_KEY set on the server.");
-  const cleanImages = validateImages(images);
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json"
+  const { rawText, model } = await scanDocument({
+    items: images,
+    prompt: receiptScanPrompt(),
+    options: {
+      ...options,
+      maxItems: 6,
+      noun: "receipt image",
+      label: "Receipt scan",
+      envModelVar: "ANTHROPIC_RECEIPT_SCAN_MODEL",
+      missingKeyMessage: "Receipt scanning needs ANTHROPIC_API_KEY set on the server.",
     },
-    body: JSON.stringify({
-      model: options.model || process.env.ANTHROPIC_RECEIPT_SCAN_MODEL || DEFAULT_SCAN_MODEL,
-      max_tokens: 4096,
-      temperature: 0,
-      messages: [{
-        role: "user",
-        content: [
-          { type: "text", text: receiptScanPrompt() },
-          ...cleanImages.map((image) => {
-            const { media_type, data } = parseDataUrl(image);
-            return { type: "image", source: { type: "base64", media_type, data } };
-          })
-        ]
-      }]
-    })
   });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error?.message || `Receipt scan failed with status ${response.status}`);
   const { normalizeReceipt } = await getReceiptDomain();
-  // Preserve the model's RAW output + which model produced it, so the client can
-  // keep the extraction independent of the interpretation (re-parse later without
-  // a rescan). The normalized receipt is the interpretation.
-  const rawText = outputText(payload);
-  const model = options.model || process.env.ANTHROPIC_RECEIPT_SCAN_MODEL || DEFAULT_SCAN_MODEL;
+  // Preserve the model's RAW output + which model produced it (extraction kept
+  // independent of the interpretation — re-parse later without a rescan).
   return { receipt: normalizeReceipt(parseReceiptJson(rawText)), rawText, model };
-}
-
-function parseDataUrl(dataUrl) {
-  const match = dataUrl.match(/^data:(image\/[a-z+]+);base64,(.+)$/i);
-  if (!match) throw new Error("Invalid image data URL.");
-  return { media_type: match[1].toLowerCase(), data: match[2] };
-}
-
-function validateImages(images) {
-  if (!Array.isArray(images) || !images.length) throw new Error("At least one receipt image is required.");
-  if (images.length > 6) throw new Error("Use up to 6 images for one receipt.");
-  return images.map((image) => {
-    const value = String(image || "");
-    if (!/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(value)) {
-      throw new Error("Receipt images must be PNG, JPEG, WEBP, or GIF data URLs.");
-    }
-    return value;
-  });
 }
 
 function receiptScanPrompt() {
@@ -94,24 +62,13 @@ function receiptScanPrompt() {
   ].join("\n");
 }
 
-function outputText(payload) {
-  return (payload.content || [])
-    .filter((block) => block.type === "text")
-    .map((block) => block.text || "")
-    .join("\n")
-    .trim();
-}
-
+// Back-compat thin wrappers (kept for existing importers/tests).
 function parseReceiptJson(text) {
-  const trimmed = String(text || "").trim();
-  if (!trimmed) throw new Error("The receipt scan did not return text.");
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    const match = trimmed.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("The receipt scan response could not be parsed.");
-    return JSON.parse(match[0]);
-  }
+  return parseJsonFromText(text, "The receipt scan did not return text.");
+}
+function validateImages(images) {
+  validateAndBuildBlocks(images, { max: 6, allowPdf: false, noun: "receipt image" });
+  return images.map((image) => String(image));
 }
 
 module.exports = {

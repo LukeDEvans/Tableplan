@@ -1,56 +1,23 @@
-const DEFAULT_SCAN_MODEL = "claude-haiku-4-5-20251001";
+// booking-scan.js — booking domain adapter over the shared document-scan seam.
+// Owns the booking PROMPT + normalization; the vision plumbing (incl. PDF support)
+// lives in document-scan.js.
+const { scanDocument, parseJsonFromText } = require("./document-scan");
 
 async function scanBookingFromImages(files, options = {}) {
-  const apiKey = options.apiKey || process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("Booking scan needs ANTHROPIC_API_KEY set on the server.");
-  const contentBlocks = validateAndBuildBlocks(files);
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-beta": "pdfs-2024-09-25",
-      "content-type": "application/json"
+  const { rawText } = await scanDocument({
+    items: files,
+    prompt: bookingScanPrompt(),
+    options: {
+      ...options,
+      maxItems: 3,
+      allowPdf: true,
+      maxTokens: 2048,
+      betaHeader: "pdfs-2024-09-25",
+      label: "Booking scan",
+      missingKeyMessage: "Booking scan needs ANTHROPIC_API_KEY set on the server.",
     },
-    body: JSON.stringify({
-      model: options.model || DEFAULT_SCAN_MODEL,
-      max_tokens: 2048,
-      temperature: 0,
-      messages: [{
-        role: "user",
-        content: [
-          { type: "text", text: bookingScanPrompt() },
-          ...contentBlocks
-        ]
-      }]
-    })
   });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error?.message || `Booking scan failed with status ${response.status}`);
-  return parseBookingJson(outputText(payload));
-}
-
-function parseDataUrl(dataUrl) {
-  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/i);
-  if (!match) throw new Error("Invalid file data URL.");
-  return { media_type: match[1].toLowerCase(), data: match[2] };
-}
-
-function buildContentBlock(dataUrl) {
-  const { media_type, data } = parseDataUrl(dataUrl);
-  if (media_type === "application/pdf") {
-    return { type: "document", source: { type: "base64", media_type: "application/pdf", data } };
-  }
-  if (/^image\/(png|jpe?g|webp|gif)$/.test(media_type)) {
-    return { type: "image", source: { type: "base64", media_type, data } };
-  }
-  throw new Error("Files must be images (PNG/JPEG/WEBP/GIF) or PDFs.");
-}
-
-function validateAndBuildBlocks(files) {
-  if (!Array.isArray(files) || !files.length) throw new Error("At least one file is required.");
-  if (files.length > 3) throw new Error("Use up to 3 files per scan.");
-  return files.map((f) => buildContentBlock(String(f || "")));
+  return parseBookingJson(rawText);
 }
 
 function bookingScanPrompt() {
