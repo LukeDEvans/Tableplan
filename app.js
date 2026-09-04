@@ -42651,6 +42651,10 @@ let podcastSavedCatInputActive = false;
 let podcastTabInputActive = false;
 let openPodcastEpisodeId = null;
 let podcastPanelWired = false;
+// Timestamp of the last long-press that opened the episode context menu. Row
+// tap/click handlers check this so a long-press only opens the menu — it must
+// NOT also open/play the episode. (One long-press is ever active at a time.)
+let podcastLongPressAt = 0;
 let podcastAudio = null;       // mode flag: the shared element while a podcast is active, else null
 let podcastCurEpisode = null;  // episode currently loaded into the shared media element
 let podcastCurShow = null;
@@ -42931,6 +42935,11 @@ function goToDiscoverSearch(q) {
 function switchPodcastTab(tabId) {
   activePodcastTab = tabId;
   podcastTabInputActive = false;
+  // Browsing is independent of the currently-playing episode: entering any
+  // browse tab always shows the list, never the in-tab player panel that a
+  // previous tap left open. Playback keeps going (the mini-player carries it).
+  const playerPanel = document.getElementById("podcastPlayerPanel");
+  if (playerPanel) playerPanel.hidden = true;
   renderPodcastPlaylistBar();
   if (tabId === "playlist") {
     renderPodcastQueueEpisodes();
@@ -43021,7 +43030,7 @@ function renderPodcastPlaylistEpisodes(playlistId) {
 
   listEl.querySelectorAll(".podcast-episode-row").forEach(row => {
     const id = row.dataset.episodeId;
-    row.addEventListener("click", (ev) => { if (ev.target.closest(".article-row-actions")) return; openPodcastEpisode(id); });
+    row.addEventListener("click", (ev) => { if (Date.now() - podcastLongPressAt < 700) return; if (ev.target.closest(".article-row-actions")) return; openPodcastEpisode(id); });
     row.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openPodcastEpisode(id); } });
     row.querySelector("[data-episode-remove]")?.addEventListener("click", (ev) => {
       ev.stopPropagation();
@@ -43323,10 +43332,11 @@ function wirePodcastEpisodeRows(listEl) {
       if (moved) { suppressUntil = Date.now() + 600; return; }
       if (e.target.closest(".article-row-actions")) return; // let the button handle it
       suppressUntil = Date.now() + 600;
+      if (Date.now() - podcastLongPressAt < 700) return; // long-press opened the menu, don't also play
       if (row.classList.contains("podcast-episode-row--swiped")) { row.classList.remove("podcast-episode-row--swiped"); podcastSwipedRow = null; return; }
       openPodcastEpisode(id);
     });
-    row.addEventListener("click", (ev) => { if (Date.now() < suppressUntil) return; if (ev.target.closest(".article-row-actions")) return; openPodcastEpisode(id); });
+    row.addEventListener("click", (ev) => { if (Date.now() < suppressUntil) return; if (Date.now() - podcastLongPressAt < 700) return; if (ev.target.closest(".article-row-actions")) return; openPodcastEpisode(id); });
     row.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openPodcastEpisode(id); } });
     row.querySelector("[data-episode-save]")?.addEventListener("click", (ev) => { ev.stopPropagation(); toggleEpisodeSaved(id); });
     row.querySelector("[data-episode-queue]")?.addEventListener("click", (ev) => { ev.stopPropagation(); toggleEpisodeInQueue(id); });
@@ -43894,7 +43904,7 @@ function hoistResumeEpisode(list) {
   return list;
 }
 
-function getAutoPlaylist(forceIncludeArticles = false) {
+function getAutoPlaylist(forceIncludeArticles = false, { hoist = true } = {}) {
   const tiers = state.podcastShowTiers || {};
   const epTiers = state.podcastEpisodeTiers || {};
   const pubTiers = state.publicationTiers || {};
@@ -43943,7 +43953,10 @@ function getAutoPlaylist(forceIncludeArticles = false) {
     const dateA = new Date(a.pubDate), dateB = new Date(b.pubDate);
     return newestFirst ? dateB - dateA : dateA - dateB;
   });
-  return hoistResumeEpisode(sorted);
+  // hoist:false keeps the natural sorted order (used by prev/next-episode
+  // navigation, which needs a stable running order, not the now-playing-first
+  // display order).
+  return hoist ? hoistResumeEpisode(sorted) : sorted;
 }
 
 // ── "All" blended listen list ────────────────────────────────────────────────
@@ -43955,11 +43968,11 @@ let mediaAllQueueId = null;   // id of the item currently playing from the All q
 let mediaAllQueueRest = [];   // ordered ids remaining after the current item
 let mediaAllSwipedRow = null; // playlist row currently revealing its swipe actions (touch)
 
-function getAllListenList() {
+function getAllListenList({ hoist = true } = {}) {
   // Each item carries an explicit providerId so the play-queue routes through
   // the provider registry without ever inferring from a display "type" (see
   // providerIdForItem). type stays for the presentation layer below.
-  const items = getAutoPlaylist(true).map((e) => (e.type === "article"
+  const items = getAutoPlaylist(true, { hoist }).map((e) => (e.type === "article"
     ? { ...e, providerId: "tts" }
     : { ...e, type: e.type || "podcast", providerId: "podcast" }));
   (state.readingItems || [])
@@ -43985,7 +43998,8 @@ function getAllListenList() {
     list = [...inPinned, ...rest];
   }
   // The resume episode wins the very top slot even over a manual pin order.
-  return hoistResumeEpisode(list);
+  // (hoist:false keeps natural order for prev/next-episode navigation.)
+  return hoist ? hoistResumeEpisode(list) : list;
 }
 
 // Re-render the queue when the loaded (Now Playing) item changes, so its top
@@ -45029,7 +45043,7 @@ function initEpisodeContextMenu() {
     const t = e.touches[0];
     lpXY = { x: t.clientX, y: t.clientY };
     lpTimer = setTimeout(() => {
-      if (lpRow && !lpMoved) { showEpisodeContextMenu(lpRow.dataset.episodeId, lpXY.x, lpXY.y); lpRow = null; }
+      if (lpRow && !lpMoved) { podcastLongPressAt = Date.now(); showEpisodeContextMenu(lpRow.dataset.episodeId, lpXY.x, lpXY.y); lpRow = null; }
     }, 500);
   }, { passive: true });
   document.addEventListener("touchmove", (e) => {
@@ -45167,7 +45181,7 @@ function renderPodcastSavedEpisodes() {
   // Wire episode rows
   listEl.querySelectorAll(".podcast-episode-row").forEach(row => {
     const id = row.dataset.episodeId;
-    row.addEventListener("click", (ev) => { if (ev.target.closest(".article-row-actions")) return; openPodcastEpisode(id); });
+    row.addEventListener("click", (ev) => { if (Date.now() - podcastLongPressAt < 700) return; if (ev.target.closest(".article-row-actions")) return; openPodcastEpisode(id); });
     row.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openPodcastEpisode(id); } });
     row.querySelector("[data-episode-queue]")?.addEventListener("click", (ev) => { ev.stopPropagation(); toggleEpisodeInQueue(id); });
     row.querySelector("[data-episode-mark]")?.addEventListener("click", (ev) => { ev.stopPropagation(); setPodcastEpisodePlayed(id, ev.currentTarget.dataset.episodeMark === "mark"); });
@@ -47127,6 +47141,24 @@ function nowPlayingTotal() {
 function nowPlayingIsLive() { const k = nowPlayingKind(); return !!(k && MEDIA_KINDS[k].live); }
 function nowPlayingToggle() { const k = nowPlayingKind(); MEDIA_KINDS[k]?.toggle?.(); }
 function nowPlayingSkip(sec) { const k = nowPlayingKind(); MEDIA_KINDS[k]?.skip?.(sec); } // radio's skip is a no-op (live)
+// Is prev/next-episode navigation meaningful for what's playing? Only the
+// queue-based kinds (podcasts + article TTS) run off the shared listen list.
+function nowPlayingHasEpisodeNav() { const k = nowPlayingKind(); return k === "podcast" || k === "tts"; }
+// Step to the previous (dir=-1) or next (dir=+1) playable item in the listen
+// playlist. Uses the natural (un-hoisted) order so both directions are stable,
+// then hands off to playAllQueueFrom so the queue's advance state stays correct.
+function nowPlayingEpisodeStep(dir) {
+  if (!nowPlayingHasEpisodeNav()) return;
+  const items = getAllListenList({ hoist: false }).filter(mediaItemPlayable);
+  const curId = nowPlayingQueueId();
+  const idx = items.findIndex((i) => i.id === curId);
+  if (idx === -1) return;
+  const target = items[idx + dir];
+  if (!target) return; // already at an end
+  playAllQueueFrom(target.id);
+  updateNowPlayingModal();
+  refreshMiniPlayerFromNowPlaying();
+}
 function nowPlayingSeekFraction(f) {
   if (nowPlayingIsLive()) return; // live: no seek
   // Logical seek through the engine (crosses chunk boundaries for multi-segment
@@ -47154,9 +47186,11 @@ function refreshMiniPlayerFromNowPlaying() {
   const info = k && MEDIA_KINDS[k]?.info ? MEDIA_KINDS[k].info() : null;
   if (!info) return;
   const t = document.getElementById("miniPlayerTitle");
+  const s = document.getElementById("miniPlayerShow");
   const a = document.getElementById("miniPlayerArt");
   const title = info.title || "";
   if (t && t.textContent !== title) { t.textContent = title; setupMiniPlayerMarquee(); }
+  if (s) { const show = info.show || ""; if (s.textContent !== show) s.textContent = show; }
   if (a) {
     const art = info.art || "";
     if ((a.dataset.art || "") !== art) { a.dataset.art = art; a.src = art; a.hidden = !art; }
@@ -47169,8 +47203,10 @@ function setMiniPlayer(title, subtitle, art) {
   const el = document.getElementById("miniPlayer");
   if (!el) return;
   const t = document.getElementById("miniPlayerTitle");
+  const s = document.getElementById("miniPlayerShow");
   const a = document.getElementById("miniPlayerArt");
   if (t) t.textContent = title;
+  if (s) s.textContent = subtitle || "";
   if (a) { a.dataset.art = art || ""; a.src = art || ""; a.hidden = !art; }
   el.hidden = false;
   document.body.classList.add("has-mini-player");
@@ -47205,6 +47241,14 @@ function updateMiniPlayerProgress() {
   const total = nowPlayingTotal();
   const fill = document.getElementById("miniPlayerProgressFill");
   if (fill) fill.style.width = (total ? Math.min(100, Math.max(0, (cur / total) * 100)) : 0) + "%";
+  const time = document.getElementById("miniPlayerTime");
+  if (time) {
+    // Live streams (radio) have no meaningful total — show nothing rather than a
+    // bogus "of --:--". Otherwise "M:SS of M:SS".
+    time.textContent = (total && !nowPlayingIsLive())
+      ? `${formatPodcastDuration(Math.floor(cur))} of ${formatPodcastDuration(Math.floor(total))}`
+      : "";
+  }
   updateNowPlayingModal();
 }
 
@@ -47254,6 +47298,7 @@ function nowPlayingInfo() { const k = nowPlayingKind(); return (k && MEDIA_KINDS
 function openNowPlayingModal() {
   const info = nowPlayingInfo();
   if (!info) return;
+  const hasEpNav = nowPlayingHasEpisodeNav(); // prev/next-episode skip (podcasts + TTS)
   document.getElementById("nowPlayingOverlay")?.remove();
   const overlay = document.createElement("div");
   overlay.id = "nowPlayingOverlay";
@@ -47278,6 +47323,9 @@ function openNowPlayingModal() {
         <span class="np-time np-time-right" id="npRem">-0:00</span>
       </div>
       <div class="np-controls">
+        ${hasEpNav ? `<button class="np-ctrl np-ctrl--ep" id="npPrevEp" type="button" aria-label="Previous episode">
+          <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><polygon points="18 5 9 12 18 19" fill="currentColor"/><polygon points="10 5 4 12 10 19" fill="currentColor"/></svg>
+        </button>` : ""}
         <button class="np-ctrl" id="npBack" type="button" aria-label="Back 10 seconds">
           <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.3a8.4 8.4 0 1 1-7.9 5.4"/><path d="M12 2 8 4.3 12 6.6Z" fill="currentColor" stroke="none"/><text x="12" y="15.6" font-size="8.4" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none">10</text></svg>
         </button>
@@ -47285,6 +47333,9 @@ function openNowPlayingModal() {
         <button class="np-ctrl" id="npFwd" type="button" aria-label="Forward 30 seconds">
           <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.3a8.4 8.4 0 1 0 7.9 5.4"/><path d="M12 2 16 4.3 12 6.6Z" fill="currentColor" stroke="none"/><text x="12" y="15.6" font-size="8" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none">30</text></svg>
         </button>
+        ${hasEpNav ? `<button class="np-ctrl np-ctrl--ep" id="npNextEp" type="button" aria-label="Next episode">
+          <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><polygon points="6 5 15 12 6 19" fill="currentColor"/><polygon points="14 5 20 12 14 19" fill="currentColor"/></svg>
+        </button>` : ""}
       </div>
       <div class="np-extra">
         <div class="np-speed-row">
@@ -47306,6 +47357,8 @@ function openNowPlayingModal() {
   overlay.querySelector("#npPlay").addEventListener("click", () => { nowPlayingToggle(); updateNowPlayingModal(); });
   overlay.querySelector("#npBack").addEventListener("click", () => nowPlayingSkip(-10));
   overlay.querySelector("#npFwd").addEventListener("click", () => nowPlayingSkip(30));
+  overlay.querySelector("#npPrevEp")?.addEventListener("click", () => nowPlayingEpisodeStep(-1));
+  overlay.querySelector("#npNextEp")?.addEventListener("click", () => nowPlayingEpisodeStep(1));
   // Playback speed: a continuous 0.5×–3.0× slider (0.05 steps). setMediaPlaybackSpeed
   // applies it live to whichever audio is playing. The `speeding` flag stops
   // updateNowPlayingModal from yanking the thumb back while it's being dragged.
@@ -47398,11 +47451,12 @@ function goToOpenEpisode() {
 }
 
 function closePodcastPlayer() {
+  // "Back" returns to the browse list WITHOUT stopping playback — the episode
+  // keeps playing and the mini-player carries it. (Pausing is done from the
+  // mini-player / now-playing window; there is no hard stop here.)
   const panel = document.getElementById("podcastPlayerPanel");
   if (panel) panel.hidden = true;
-  stopPodcastAudio();
   openPodcastEpisodeId = null;
-  document.querySelectorAll(".podcast-episode-row").forEach(r => r.classList.remove("article-row--active"));
 }
 
 function setPodcastEpisodePlayed(episodeId, played) {

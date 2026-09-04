@@ -16838,14 +16838,42 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
 .mini-player-art[hidden] + .mini-player-art-fallback { display: flex; }
 .mini-player-art-fallback { display: none; align-items: center; justify-content: center; }
 .mini-player-art:not([hidden]) ~ .mini-player-art-fallback { display: none; }
+/* Text column: time readout, episode title (marquee), and show title stacked. */
+.mini-player-textcol {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  padding: 0 14px;
+  overflow: hidden;
+}
+/* Elapsed / total time above the title. */
+.mini-player-time {
+  font-size: 0.72rem;
+  line-height: 1.25;
+  color: color-mix(in srgb, var(--ink) 55%, transparent);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.mini-player-time:empty { display: none; }
+/* Show title below the episode title. */
+.mini-player-show {
+  font-size: 0.78rem;
+  line-height: 1.25;
+  color: color-mix(in srgb, var(--ink) 60%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mini-player-show:empty { display: none; }
 /* Title — clips its overflow; the inner span slides (marquee) when it can't fit. */
 .mini-player-title {
-  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   display: flex;
   align-items: center;
-  padding: 0 14px;
 }
 .mini-player-title-inner {
   display: inline-block;
@@ -16972,8 +17000,11 @@ body.has-mini-player .mail-list { padding-bottom: 114px; }
 .np-seek { flex: 1; min-width: 0; height: 4px; -webkit-appearance: none; appearance: none; background: color-mix(in srgb, var(--ink) 15%, transparent); border-radius: 3px; cursor: pointer; }
 .np-seek::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; border-radius: 50%; background: var(--window-border); cursor: pointer; }
 .np-seek::-moz-range-thumb { width: 15px; height: 15px; border: none; border-radius: 50%; background: var(--window-border); cursor: pointer; }
-.np-controls { display: flex; align-items: center; justify-content: center; gap: 24px; margin: 6px 0 12px; }
+.np-controls { display: flex; align-items: center; justify-content: center; gap: 16px; margin: 6px 0 12px; }
 .np-ctrl { width: 48px; height: 48px; border-radius: 50%; border: none; background: none; color: var(--window-border); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+/* Previous / next-episode skip — a touch smaller and quieter than the seek controls. */
+.np-ctrl--ep { width: 44px; height: 44px; color: color-mix(in srgb, var(--window-border) 78%, transparent); }
+.np-ctrl--ep:active { transform: scale(0.9); }
 .np-ctrl:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .np-play { width: 62px; height: 62px; border-radius: 50%; border: none; background: none; color: var(--window-border); cursor: pointer; display: flex; align-items: center; justify-content: center; }
 .np-play:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }

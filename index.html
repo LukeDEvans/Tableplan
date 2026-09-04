@@ -3625,9 +3625,13 @@
             <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
           </span>
         </button>
-        <!-- Title scrolls (marquee) when it can't fit -->
-        <div class="mini-player-title" id="miniPlayerTitleWrap">
-          <span class="mini-player-title-inner" id="miniPlayerTitle"></span>
+        <!-- Text column: elapsed/total time, then episode title (marquee), then show -->
+        <div class="mini-player-textcol">
+          <div class="mini-player-time" id="miniPlayerTime" aria-hidden="true"></div>
+          <div class="mini-player-title" id="miniPlayerTitleWrap">
+            <span class="mini-player-title-inner" id="miniPlayerTitle"></span>
+          </div>
+          <div class="mini-player-show" id="miniPlayerShow"></div>
         </div>
         <div class="mini-player-controls">
           <button class="mini-player-skip-btn" type="button" id="miniPlayerSkipBack" title="Back 10 seconds" aria-label="Skip back 10 seconds">
