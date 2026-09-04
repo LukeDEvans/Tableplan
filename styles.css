@@ -3864,6 +3864,43 @@ body.shop-move-dragging { user-select: none; -webkit-user-select: none; }
   outline-offset: 2px;
 }
 
+/* Drag "drop mode": while an item is being dragged (the sortable primitive puts
+   .sortable-active on the list), collapse everything except the store targets so
+   all that's visible is the list of stores to drop into. Each store's list turns
+   into a labelled drop zone; the one holding the moving placeholder highlights.
+   The dragged item itself rides along as the floating clone. */
+#groceryList.sortable-active .grocery-item-wrap,
+#groceryList.sortable-active .grocery-nextstop-section,
+#groceryList.sortable-active .grocery-skipped-strip,
+#groceryList.sortable-active .sortable-placeholder { display: none; }
+
+#groceryList.sortable-active .grocery-store-section { margin-bottom: 6px; }
+#groceryList.sortable-active .grocery-store-list {
+  min-height: 54px;
+  border: 1.5px dashed color-mix(in srgb, var(--ink) 30%, transparent);
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+}
+#groceryList.sortable-active .grocery-store-list::after {
+  content: "Drop here";
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 16px 8px;
+  color: color-mix(in srgb, var(--ink) 42%, transparent);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+/* The store currently under the pointer (holds the placeholder) — the drop target. */
+#groceryList.sortable-active .grocery-store-list:has(.sortable-placeholder) {
+  border-style: solid;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft, var(--accent)) 45%, transparent);
+}
+#groceryList.sortable-active .grocery-store-list:has(.sortable-placeholder)::after {
+  content: "Release to move here";
+  color: var(--accent-dark, var(--accent));
+}
+
 /* Clear-checked cleanup bar */
 .grocery-cleanup-bar {
   display: flex;
