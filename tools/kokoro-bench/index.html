@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Kokoro in-browser benchmark</title>
+<style>
+  :root {
+    --bg: #f7f6f2; --card: #fffdf8; --ink: #23201b; --faint: #7c766c;
+    --line: #e3ddd0; --accent: #92400e; --good: #1b7f4d; --bad: #b3341f; --warn: #9a6a12;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#17150f; --card:#211e17; --ink:#ece7db; --faint:#9c958686; --line:#332e24; --accent:#e6a463; --good:#5bd196; --bad:#ff8a70; --warn:#e9c06a; }
+    :root { --faint:#9c9586; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 16px; -webkit-text-size-adjust: 100%; }
+  h1 { font-size: 1.25rem; margin: 4px 0 2px; }
+  .sub { color: var(--faint); font-size: 0.85rem; margin: 0 0 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin: 0 0 14px; }
+  .card h2 { font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); margin: 0 0 10px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .kv { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  .kv:last-child { border-bottom: 0; }
+  .kv .k { color: var(--faint); }
+  .kv .v { font-weight: 600; text-align: right; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 0.8rem; font-weight: 700; }
+  .ok { color: var(--good); } .no { color: var(--bad); } .mid { color: var(--warn); }
+  label.fld { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--faint); }
+  select, button, textarea { font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; }
+  button { cursor: pointer; font-weight: 650; background: var(--accent); color: #fff; border: none; }
+  button.secondary { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  textarea { width: 100%; min-height: 74px; resize: vertical; }
+  .big { font-size: 2rem; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .verdict { font-size: 0.9rem; font-weight: 700; margin-top: 6px; }
+  .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .metric { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .metric .lbl { font-size: 0.72rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.05em; }
+  #log { font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-word; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px; max-height: 220px; overflow: auto; color: var(--faint); }
+  .bar { height: 8px; border-radius: 6px; background: var(--line); overflow: hidden; margin-top: 8px; }
+  .bar > i { display: block; height: 100%; width: 0%; background: var(--accent); transition: width 0.15s; }
+  audio { width: 100%; margin-top: 10px; }
+  .hint { font-size: 0.8rem; color: var(--faint); margin-top: 8px; }
+</style>
+</head>
+<body>
+  <h1>Kokoro in-browser benchmark</h1>
+  <p class="sub">Measures whether Kokoro TTS runs fast enough on <em>this device</em> to play articles instantly — no server. Nothing is uploaded; the model runs 100% locally.</p>
+
+  <div class="card">
+    <h2>This device</h2>
+    <div class="kv"><span class="k">Secure context (HTTPS)</span><span class="v" id="envSecure">…</span></div>
+    <div class="kv"><span class="k">WebGPU available</span><span class="v" id="envGpu">…</span></div>
+    <div class="kv"><span class="k">GPU adapter</span><span class="v" id="envAdapter">…</span></div>
+    <div class="kv"><span class="k">Cache Storage (model persists)</span><span class="v" id="envCache">…</span></div>
+    <div class="kv"><span class="k">Device / browser</span><span class="v" id="envUA" style="font-weight:400;font-size:0.78rem">…</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Settings</h2>
+    <div class="row">
+      <label class="fld">Backend
+        <select id="device"><option value="webgpu">WebGPU (fast)</option><option value="wasm">WASM (fallback)</option></select>
+      </label>
+      <label class="fld">Model precision
+        <select id="dtype">
+          <option value="fp16" selected>fp16 · ~160 MB (best quality)</option>
+          <option value="q8">q8 · ~80 MB (balanced)</option>
+          <option value="q4">q4 · ~45 MB (smallest)</option>
+          <option value="fp32">fp32 · ~330 MB (max)</option>
+        </select>
+      </label>
+      <label class="fld">Voice
+        <select id="voice"></select>
+      </label>
+    </div>
+    <div class="hint">Tip: run once with <b>fp16 + WebGPU</b> (your chosen target). Then reload and load again — the second load should be near-instant (served from cache).</div>
+  </div>
+
+  <div class="card">
+    <h2>1 · Load model</h2>
+    <div class="row">
+      <button id="loadBtn">Download &amp; load model</button>
+      <span id="loadStatus" class="hint" style="margin:0"></span>
+    </div>
+    <div class="bar"><i id="loadBar"></i></div>
+  </div>
+
+  <div class="card">
+    <h2>2 · Synthesize</h2>
+    <textarea id="text">In-browser speech synthesis means the model runs entirely on your own device. There is no server round-trip, so once the voice is loaded, playback can begin the moment you select an article. This sentence is about sixty words long so the benchmark has enough audio to measure a stable real-time factor and a realistic time to first sound.</textarea>
+    <div class="row" style="margin-top:10px">
+      <button id="synthBtn" disabled>Synthesize &amp; play</button>
+      <button id="streamBtn" class="secondary" disabled>Streaming (time-to-first-audio)</button>
+    </div>
+    <audio id="player" controls></audio>
+  </div>
+
+  <div class="card">
+    <h2>Results</h2>
+    <div class="metrics">
+      <div class="metric"><div class="lbl">Model load</div><div class="big" id="mLoad">–</div></div>
+      <div class="metric"><div class="lbl">Real-time factor</div><div class="big" id="mRtf">–</div></div>
+      <div class="metric"><div class="lbl">Full synth</div><div class="big" id="mSynth">–</div></div>
+      <div class="metric"><div class="lbl">First audio (stream)</div><div class="big" id="mFirst">–</div></div>
+    </div>
+    <div class="verdict" id="verdict"></div>
+    <div class="hint">Real-time factor &lt; 1 means it generates <b>faster than it plays</b> — the condition for instant, gap-free playback. Lower is better (0.3 = 3× faster than realtime).</div>
+  </div>
+
+  <div class="card">
+    <h2>Log</h2>
+    <div id="log"></div>
+  </div>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const log = (m) => { const el = $("log"); el.textContent += (el.textContent ? "\n" : "") + m; el.scrollTop = el.scrollHeight; };
+const fmtMs = (ms) => ms >= 1000 ? (ms/1000).toFixed(ms<10000?2:1) + " s" : Math.round(ms) + " ms";
+
+const VOICES = [
+  "af_heart","af_bella","af_nicole","af_sarah","af_sky","af_nova","af_aoede","af_kore",
+  "am_michael","am_fenrir","am_puck","am_adam","am_liam","am_onyx",
+  "bf_emma","bf_isabella","bf_alice","bf_lily","bm_george","bm_fable","bm_daniel","bm_lewis"
+];
+const vsel = $("voice");
+for (const v of VOICES) { const o = document.createElement("option"); o.value = v; o.textContent = v; if (v === "af_bella") o.selected = true; vsel.appendChild(o); }
+
+// ── Environment probe ─────────────────────────────────────────────────────────
+$("envSecure").innerHTML = window.isSecureContext
+  ? '<span class="pill ok">yes</span>'
+  : '<span class="pill no">NO — WebGPU needs HTTPS</span>';
+$("envCache").innerHTML = ('caches' in window) ? '<span class="pill ok">yes</span>' : '<span class="pill mid">unavailable</span>';
+$("envUA").textContent = navigator.userAgent;
+
+(async () => {
+  if (!('gpu' in navigator)) {
+    $("envGpu").innerHTML = '<span class="pill no">not available</span>';
+    $("envAdapter").textContent = "—";
+    $("device").value = "wasm";
+    log("WebGPU is NOT available on this device/browser → only the slower WASM path can be tested.");
+    return;
+  }
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) { $("envGpu").innerHTML = '<span class="pill no">no adapter</span>'; $("device").value = "wasm"; return; }
+    $("envGpu").innerHTML = '<span class="pill ok">yes</span>';
+    let info = {};
+    try { info = adapter.info || (adapter.requestAdapterInfo ? await adapter.requestAdapterInfo() : {}); } catch {}
+    const desc = [info.vendor, info.architecture, info.device].filter(Boolean).join(" · ") || "present (details hidden)";
+    $("envAdapter").textContent = desc;
+    log("WebGPU adapter: " + desc);
+  } catch (e) {
+    $("envGpu").innerHTML = '<span class="pill mid">error</span>';
+    $("envAdapter").textContent = String(e);
+  }
+})();
+
+// ── Load kokoro-js (bundled ESM incl. transformers.js + onnxruntime-web) ───────
+let KokoroTTS, TextSplitterStream, tts = null;
+log("Loading kokoro-js library from CDN…");
+try {
+  ({ KokoroTTS, TextSplitterStream } = await import("https://cdn.jsdelivr.net/npm/kokoro-js/+esm"));
+  log("kokoro-js library loaded. Ready.");
+} catch (e) {
+  log("FAILED to load kokoro-js: " + e + "\nCheck the network / that this page is served over HTTPS with no CSP.");
+}
+
+// ── 1 · Load model ────────────────────────────────────────────────────────────
+$("loadBtn").addEventListener("click", async () => {
+  if (!KokoroTTS) { log("Library not loaded — cannot continue."); return; }
+  const device = $("device").value, dtype = $("dtype").value;
+  $("loadBtn").disabled = true; $("loadStatus").textContent = "starting…";
+  $("loadBar").style.width = "0%";
+  const files = {};
+  const t0 = performance.now();
+  log(`Loading model  dtype=${dtype}  device=${device} …`);
+  try {
+    tts = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
+      dtype, device,
+      progress_callback: (p) => {
+        if (p && p.status === "progress" && p.file) {
+          files[p.file] = p.progress || 0;
+          const vals = Object.values(files);
+          const avg = vals.reduce((a,b)=>a+b,0) / vals.length;
+          $("loadBar").style.width = avg.toFixed(0) + "%";
+          $("loadStatus").textContent = `downloading ${Object.keys(files).length} file(s)… ${avg.toFixed(0)}%`;
+        } else if (p && p.status) {
+          $("loadStatus").textContent = p.status + (p.file ? " " + p.file : "");
+        }
+      }
+    });
+    const ms = performance.now() - t0;
+    $("loadBar").style.width = "100%";
+    $("loadStatus").textContent = "loaded";
+    $("mLoad").textContent = fmtMs(ms);
+    log(`Model loaded in ${fmtMs(ms)}. (Reload the page and load again to see the cached-load time.)`);
+    $("synthBtn").disabled = false; $("streamBtn").disabled = false;
+  } catch (e) {
+    $("loadStatus").textContent = "failed";
+    log("Model load FAILED: " + e);
+  } finally {
+    $("loadBtn").disabled = false;
+  }
+});
+
+// ── audio helpers ─────────────────────────────────────────────────────────────
+function audioDurationSec(audio) {
+  if (audio && audio.audio && audio.sampling_rate) return audio.audio.length / audio.sampling_rate;
+  return null;
+}
+function toBlob(audio) {
+  if (audio && typeof audio.toBlob === "function") { try { return audio.toBlob(); } catch {} }
+  // Fallback: encode the Float32Array as a 16-bit PCM WAV.
+  const data = audio.audio, sr = audio.sampling_rate;
+  const buf = new ArrayBuffer(44 + data.length * 2), view = new DataView(buf);
+  const ws = (o,s)=>{ for(let i=0;i<s.length;i++) view.setUint8(o+i, s.charCodeAt(i)); };
+  ws(0,"RIFF"); view.setUint32(4, 36 + data.length*2, true); ws(8,"WAVE"); ws(12,"fmt ");
+  view.setUint32(16,16,true); view.setUint16(20,1,true); view.setUint16(22,1,true);
+  view.setUint32(24,sr,true); view.setUint32(28,sr*2,true); view.setUint16(32,2,true); view.setUint16(34,16,true);
+  ws(36,"data"); view.setUint32(40, data.length*2, true);
+  let o = 44; for (let i=0;i<data.length;i++){ let s=Math.max(-1,Math.min(1,data[i])); view.setInt16(o, s<0?s*0x8000:s*0x7fff, true); o+=2; }
+  return new Blob([buf], { type: "audio/wav" });
+}
+function play(audio) {
+  const url = URL.createObjectURL(toBlob(audio));
+  const p = $("player"); p.src = url; p.play().catch(()=>{});
+}
+
+// ── 2 · Synthesize (full) ─────────────────────────────────────────────────────
+$("synthBtn").addEventListener("click", async () => {
+  if (!tts) return;
+  const voice = $("voice").value, text = $("text").value.trim();
+  $("synthBtn").disabled = true; log(`Synthesizing (${voice})…`);
+  try {
+    const t0 = performance.now();
+    const audio = await tts.generate(text, { voice });
+    const ms = performance.now() - t0;
+    const dur = audioDurationSec(audio);
+    $("mSynth").textContent = fmtMs(ms);
+    if (dur) {
+      const rtf = (ms/1000) / dur;
+      $("mRtf").textContent = rtf.toFixed(2) + "×";
+      const v = $("verdict");
+      if (rtf < 0.6) { v.className = "verdict ok"; v.textContent = `✓ ${rtf.toFixed(2)}× realtime — comfortably fast enough for instant, gap-free playback.`; }
+      else if (rtf < 1) { v.className = "verdict mid"; v.textContent = `~ ${rtf.toFixed(2)}× realtime — faster than playback, so streaming works, but with little headroom.`; }
+      else { v.className = "verdict no"; v.textContent = `✗ ${rtf.toFixed(2)}× realtime — slower than playback. Not viable on this device/precision; try q8/q4 or WebGPU.`; }
+      log(`Full synth: ${fmtMs(ms)} for ${dur.toFixed(1)}s of audio → RTF ${rtf.toFixed(2)}×`);
+    } else {
+      log(`Full synth: ${fmtMs(ms)} (could not read audio duration for RTF)`);
+    }
+    play(audio);
+  } catch (e) {
+    log("Synth FAILED: " + e);
+  } finally {
+    $("synthBtn").disabled = false;
+  }
+});
+
+// ── 2b · Streaming (time-to-first-audio) ──────────────────────────────────────
+$("streamBtn").addEventListener("click", async () => {
+  if (!tts || !TextSplitterStream) return;
+  const voice = $("voice").value, text = $("text").value.trim();
+  $("streamBtn").disabled = true; log("Streaming synth (measuring time to first audio)…");
+  try {
+    const splitter = new TextSplitterStream();
+    const stream = tts.stream(splitter, { voice });
+    const t0 = performance.now();
+    splitter.push(text); splitter.close();
+    let first = null, chunks = 0, firstAudio = null;
+    for await (const chunk of stream) {
+      if (first === null) { first = performance.now() - t0; firstAudio = chunk.audio; }
+      chunks++;
+    }
+    if (first !== null) {
+      $("mFirst").textContent = fmtMs(first);
+      log(`First audio chunk ready in ${fmtMs(first)} (${chunks} chunks total). This is roughly what you'd wait before playback starts.`);
+      if (firstAudio) play(firstAudio);
+    } else {
+      log("Streaming produced no chunks.");
+    }
+  } catch (e) {
+    log("Streaming FAILED (the full-synth number above is the one that matters): " + e);
+  } finally {
+    $("streamBtn").disabled = false;
+  }
+});
+</script>
+</body>
+</html>
