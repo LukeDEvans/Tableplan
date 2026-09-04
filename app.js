@@ -956,8 +956,6 @@ const elements = {
   shopScanDirectInput: document.querySelector("#shopScanDirectInput"),
   inventoryMainPage: document.querySelector("#inventoryMainPage"),
   inventoryPlannerGrid: document.querySelector("#inventoryPlannerGrid"),
-  homeInventoryBtn: document.querySelector("#homeInventoryBtn"),
-  titleInventoryBtn: document.querySelector("#titleInventoryBtn"),
   inventoryBoxDialog: document.querySelector("#inventoryBoxDialog"),
   inventoryBoxDialogTitle: document.querySelector("#inventoryBoxDialogTitle"),
   inventoryBoxNameInput: document.querySelector("#inventoryBoxNameInput"),
@@ -2404,8 +2402,6 @@ function bindEvents() {
     elements.shopScanDirectInput.value = "";
     updateReceiptScanSelectionStatus();
   });
-  elements.homeInventoryBtn.addEventListener("click", showInventoryApp);
-  elements.titleInventoryBtn.addEventListener("click", showInventoryApp);
   elements.inventoryBoxDialog.addEventListener("click", closeDialogOnBackdropClick);
   document.querySelector("#closeInventoryBoxDialogBtn").addEventListener("click", () => elements.inventoryBoxDialog.close());
   document.querySelector("#cancelInventoryBoxBtn").addEventListener("click", () => elements.inventoryBoxDialog.close());
@@ -20966,7 +20962,6 @@ function updatePageTitleMenu() {
   elements.titleWatchBtn.hidden = true; // Watch moved into the Media page's sidebar — no top-level nav button
   elements.titleReadBtn.hidden = activeAppArea === "media" || !isPagePersonallyEnabled("read");
   elements.titleShopBtn.hidden = activeAppArea === "shop" || !isPagePersonallyEnabled("shop");
-  elements.titleInventoryBtn.hidden = activeAppArea === "inventory" || !isPagePersonallyEnabled("inventory");
   elements.titleRecreateBtn.hidden = activeAppArea === "recreate" || !isPagePersonallyEnabled("recreate");
   if (elements.titleFinanceBtn) elements.titleFinanceBtn.hidden = activeAppArea === "finance" || !isPagePersonallyEnabled("finance");
   elements.titlePlanBtn.hidden = activeAppArea === "plan" || !isPagePersonallyEnabled("plan");
@@ -20986,7 +20981,6 @@ function updatePageVisibility() {
   elements.homeWatchBtn.hidden = true; // Watch moved into the Media page's sidebar — no home-screen button
   elements.homeReadBtn.hidden = !isPagePersonallyEnabled("read");
   elements.homeShopBtn.hidden = !isPagePersonallyEnabled("shop");
-  elements.homeInventoryBtn.hidden = !isPagePersonallyEnabled("inventory");
   elements.homeRecreateBtn.hidden = !isPagePersonallyEnabled("recreate");
   if (elements.homeFinanceBtn) elements.homeFinanceBtn.hidden = !isPagePersonallyEnabled("finance");
   elements.homePlanBtn.hidden = !isPagePersonallyEnabled("plan");
