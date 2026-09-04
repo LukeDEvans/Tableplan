@@ -11274,13 +11274,20 @@ function renderWeatherPage() {
   const tz = s?.location?.timezone || loc?.timezone || "America/New_York";
   const label = s?.location?.label || loc?.label || "Weather";
   const updated = s ? `Updated ${wxAgo(s.fetchedAt)}` : "";
+  // The "+" next to the city adds the shown place to the saved list. Hidden once
+  // it's saved (or for the live "current" location, which isn't a saved place).
+  const savedLocs = state.weatherLocations || [];
+  const canSaveActive = !!(loc && loc.id !== "current" && !savedLocs.some((l) => l.id === loc.id));
   const header = `
     <div class="wx-header">
-      <button class="wx-location-btn" type="button" data-wx-action="toggle-picker" aria-expanded="${weatherPickerOpen}">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
-        <span class="wx-location-name">${escapeHtml(label)}</span>
-        <span class="wx-caret">▾</span>
-      </button>
+      <div class="wx-header-loc">
+        <button class="wx-location-btn" type="button" data-wx-action="toggle-picker" aria-expanded="${weatherPickerOpen}">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
+          <span class="wx-location-name">${escapeHtml(label)}</span>
+          <span class="wx-caret">▾</span>
+        </button>
+        ${canSaveActive ? `<button class="wx-add-btn" type="button" data-wx-action="save-current" title="Add ${escapeHtml(wxShortLoc(label))} to your weather page" aria-label="Add ${escapeHtml(wxShortLoc(label))} to your weather page">+</button>` : ""}
+      </div>
       <div class="wx-updated">${s?.isStale ? `<span class="wx-stale">Stale</span> ` : ""}${escapeHtml(updated)}</div>
     </div>`;
 
@@ -11301,14 +11308,12 @@ function renderWeatherPage() {
 function wxShortLoc(label) { return String(label || "").split(",")[0].trim() || "Location"; }
 
 function wxLocationRail() {
+  // Just the saved cities (quick-switch). "Current" moved to the search picker
+  // ("Use my location"); adding a place is the "+" beside the city name.
   const saved = state.weatherLocations || [];
+  if (!saved.length) return "";
   const active = weatherActiveLocation;
-  const cur = active && active.id === "current";
-  const chips = [
-    `<button class="wx-loc" type="button" data-wx-action="use-current" aria-current="${cur ? "true" : "false"}"><span class="wx-loc-t" aria-hidden="true">◎</span> Current</button>`,
-    ...saved.map((l) => `<button class="wx-loc" type="button" data-wx-action="select-saved" data-id="${escapeHtml(l.id)}" aria-current="${active && active.id === l.id ? "true" : "false"}">${escapeHtml(wxShortLoc(l.label))}</button>`),
-    `<button class="wx-loc wx-loc-add" type="button" data-wx-action="toggle-picker" aria-expanded="${weatherPickerOpen}">+ Add</button>`,
-  ];
+  const chips = saved.map((l) => `<button class="wx-loc" type="button" data-wx-action="select-saved" data-id="${escapeHtml(l.id)}" aria-current="${active && active.id === l.id ? "true" : "false"}">${escapeHtml(wxShortLoc(l.label))}</button>`);
   return `<div class="wx-locrail" role="group" aria-label="Saved locations">${chips.join("")}</div>`;
 }
 
