@@ -23342,6 +23342,11 @@ function deleteReceipt() {
   if (!editingReceiptId) return;
   const receipt = (state.receipts || []).find((r) => r.id === editingReceiptId);
   const lineItemIds = new Set((receipt?.lineItems || []).map((li) => li.id));
+  // Deleting the receipt deletes its preserved source image(s) — retention is
+  // "until the receipt is deleted" (best-effort local purge; cloud is RLS-scoped).
+  const deletedReceiptId = editingReceiptId;
+  const imageCount = Math.max(1, (receipt?.imageRefs || []).length);
+  getScanContent().then((sc) => sc && sc.removeImages(deletedReceiptId, imageCount)).catch(() => {});
   recordDeletion("receipts", editingReceiptId);
   state.receipts = (state.receipts || []).filter((r) => r.id !== editingReceiptId);
   state.priceHistory = normalizePriceHistory(
@@ -23404,6 +23409,31 @@ function updateReceiptScanSelectionStatus() {
   setReceiptScanStatus(`${receiptScanFiles.length} receipt photo${receiptScanFiles.length === 1 ? "" : "s"} selected.`);
 }
 
+function averageReceiptConfidence(receipt) {
+  const lines = Array.isArray(receipt?.lineItems) ? receipt.lineItems : [];
+  if (!lines.length) return 0;
+  return lines.reduce((sum, line) => sum + (Number(line?.confidenceScore) || 0), 0) / lines.length;
+}
+
+// Persist prepared scan blobs into the content store keyed by the receipt id.
+// Best-effort per image: a storage miss just means fewer preserved images, never a
+// failed scan. Returns the small imageRefs to carry on the receipt record.
+async function storeScanImages(receiptId, blobs) {
+  try {
+    const sc = await getScanContent();
+    if (!sc) return [];
+    const refs = [];
+    for (let i = 0; i < blobs.length; i++) {
+      try {
+        const bytes = new Uint8Array(await blobs[i].arrayBuffer());
+        const ref = await sc.saveImage(receiptId, i, bytes, blobs[i].type || "image/jpeg");
+        if (ref) refs.push(ref);
+      } catch { /* per-image best-effort */ }
+    }
+    return refs;
+  } catch { return []; }
+}
+
 async function scanReceiptImages() {
   if (!receiptScanFiles.length) {
     setReceiptScanStatus("Choose at least one receipt photo first.");
@@ -23415,12 +23445,9 @@ async function scanReceiptImages() {
   try {
     const helperUrl = receiptScanHelperUrl();
     if (!helperUrl) throw new Error("Receipt scanning needs the local helper or live app.");
-    const images = await Promise.all(receiptScanFiles.map(async (file) => (
-      fileToDataUrl(await prepareScanImage(file, receiptImageEdits.get(file), {
-        maxDimension: 1600,
-        quality: 0.82
-      }))
-    )));
+    const prepared = await Promise.all(receiptScanFiles.map((file) =>
+      prepareScanImage(file, receiptImageEdits.get(file), { maxDimension: 1600, quality: 0.82 })));
+    const images = await Promise.all(prepared.map(fileToDataUrl));
     const response = await fetch(helperUrl, {
       method: "POST",
       headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` },
@@ -23428,13 +23455,24 @@ async function scanReceiptImages() {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || `Receipt scan failed with status ${response.status}`);
-    pendingReceiptDraft = LiveReceiptDomain.applyReceiptMappings(
-      LiveReceiptDomain.normalizeReceipt({
-        ...payload.receipt,
-        fileRef: receiptScanFiles.map((file) => file.name).join(", ")
-      }, createId),
-      receiptItemMappings()
-    );
+    // Interpretation + the independent EXTRACTION record (engine/model/raw output).
+    const draft = LiveReceiptDomain.normalizeReceipt({
+      ...payload.receipt,
+      fileRef: receiptScanFiles.map((file) => file.name).join(", "),
+      extraction: {
+        engine: "claude-vision",
+        model: payload.model || "",
+        kind: "receipt",
+        rawOutput: payload.rawText || "",
+        extractedAt: new Date().toISOString(),
+        status: "ok",
+        confidence: averageReceiptConfidence(payload.receipt)
+      }
+    }, createId);
+    // SOURCE: preserve the original image(s) locally (best-effort), keyed by the
+    // receipt id, so the receipt can be re-reviewed/re-parsed without a rescan.
+    draft.imageRefs = await storeScanImages(draft.id, prepared);
+    pendingReceiptDraft = LiveReceiptDomain.applyReceiptMappings(draft, receiptItemMappings());
     renderReceiptReview();
     elements.receiptReviewForm.hidden = false;
     elements.scanReceiptImagesBtn.hidden = true;
@@ -47685,6 +47723,10 @@ async function purgeLocalArticleContent() {
     const ac = _articleContentPromise ? await _articleContentPromise.catch(() => null) : null;
     _articleContentPromise = null;
     if (ac?.close) await ac.close(); // release the connection so deleteDatabase isn't blocked
+    // Scan images share the "reading" DB — release that handle too before deleting.
+    const sc = _scanContentPromise ? await _scanContentPromise.catch(() => null) : null;
+    _scanContentPromise = null;
+    if (sc?.close) await sc.close();
     if (typeof indexedDB !== "undefined" && indexedDB.deleteDatabase) indexedDB.deleteDatabase("reading");
   } catch { /* best-effort */ }
 }
@@ -47715,6 +47757,25 @@ async function getArticleContent() {
     } catch { return null; }
   })();
   return _articleContentPromise;
+}
+
+// Source-image store for scanned documents (receipts today). Shares the "reading"
+// content DB/bucket (so the sign-out purge covers it) via a distinct blobId
+// namespace. Null when IndexedDB is unavailable — the scan still works, just
+// without a preserved source image.
+let _scanContentPromise = null;
+async function getScanContent() {
+  if (_scanContentPromise) return _scanContentPromise;
+  _scanContentPromise = (async () => {
+    try {
+      if (typeof indexedDB === "undefined") return null;
+      ensurePersistentStorage();
+      const [mc, sc, storageMod] = await Promise.all([import("./media-content.js"), import("./scan-content.js"), import("./content-store/storage.js")]);
+      const storage = storageMod.createIdbStorage(mc.READING_DB, 1, mc.READING_STORES);
+      return sc.createScanImages({ storage, cloudClient: supabaseClient || null, userId: authSession?.user?.id || "personal" });
+    } catch { return null; }
+  })();
+  return _scanContentPromise;
 }
 
 // Fire-and-forget: mirror an article's body into the content store and record the

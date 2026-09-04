@@ -35,7 +35,12 @@ async function scanReceiptFromImages(images, options = {}) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error?.message || `Receipt scan failed with status ${response.status}`);
   const { normalizeReceipt } = await getReceiptDomain();
-  return normalizeReceipt(parseReceiptJson(outputText(payload)));
+  // Preserve the model's RAW output + which model produced it, so the client can
+  // keep the extraction independent of the interpretation (re-parse later without
+  // a rescan). The normalized receipt is the interpretation.
+  const rawText = outputText(payload);
+  const model = options.model || process.env.ANTHROPIC_RECEIPT_SCAN_MODEL || DEFAULT_SCAN_MODEL;
+  return { receipt: normalizeReceipt(parseReceiptJson(rawText)), rawText, model };
 }
 
 function parseDataUrl(dataUrl) {
@@ -46,7 +51,7 @@ function parseDataUrl(dataUrl) {
 
 function validateImages(images) {
   if (!Array.isArray(images) || !images.length) throw new Error("At least one receipt image is required.");
-  if (images.length > 3) throw new Error("Use up to 3 images for one receipt.");
+  if (images.length > 6) throw new Error("Use up to 6 images for one receipt.");
   return images.map((image) => {
     const value = String(image || "");
     if (!/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(value)) {

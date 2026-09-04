@@ -7832,6 +7832,13 @@ textarea {
   line-height: 1.4;
 }
 
+.scan-privacy-note {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
 .restore-backup-list-label {
   font-size: 0.75rem;
   font-weight: 700;

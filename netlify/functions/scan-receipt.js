@@ -20,7 +20,8 @@ exports.handler = async (event) => {
     return jsonResponse(400, { error: "Invalid JSON body." });
   }
   try {
-    return jsonResponse(200, { receipt: await scanReceiptFromImages(payload.images || []) });
+    const result = await scanReceiptFromImages(payload.images || []);
+    return jsonResponse(200, { receipt: result.receipt, rawText: result.rawText, model: result.model });
   } catch (error) {
     return jsonResponse(500, { error: error.message || "Receipt scan failed." });
   }

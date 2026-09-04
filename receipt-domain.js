@@ -20,6 +20,44 @@
     return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
   }
 
+  // Source layer: content-store refs for the preserved original image(s). Kept
+  // separate from the parsed data so the source document survives corrections.
+  function normalizeImageRefs(refs) {
+    if (!Array.isArray(refs)) return [];
+    return refs
+      .map((ref, i) => {
+        if (typeof ref === "string") return { index: i, hash: text(ref), size: 0, mimeType: "image/jpeg", cloud: null };
+        if (!ref || typeof ref !== "object") return null;
+        const cloud = ref.cloud && typeof ref.cloud === "object"
+          ? { bucket: text(ref.cloud.bucket), path: text(ref.cloud.path) }
+          : null;
+        return {
+          index: Number.isFinite(Number(ref.index)) ? Number(ref.index) : i,
+          hash: text(ref.hash),
+          size: Math.max(0, number(ref.size)),
+          mimeType: text(ref.mimeType) || "image/jpeg",
+          cloud: cloud && cloud.bucket && cloud.path ? cloud : null,
+        };
+      })
+      .filter((r) => r && (r.hash || r.cloud));
+  }
+
+  // Extraction layer: what engine produced the parse + its raw output, kept
+  // INDEPENDENT of the interpretation so parsing can improve later (re-parse the
+  // raw output / re-run on the preserved image) without rescanning.
+  function normalizeExtraction(extraction) {
+    if (!extraction || typeof extraction !== "object") return null;
+    return {
+      engine: text(extraction.engine),
+      model: text(extraction.model),
+      kind: text(extraction.kind) || "receipt",
+      rawOutput: text(extraction.rawOutput),
+      extractedAt: text(extraction.extractedAt),
+      status: text(extraction.status) || "ok",
+      confidence: Math.min(1, Math.max(0, number(extraction.confidence, 0))),
+    };
+  }
+
   function normalizeReceipt(receipt, createId = defaultId) {
     const receiptId = text(receipt?.id) || createId("receipt");
     const purchaseDate = dateIso(receipt?.purchaseDate || receipt?.date) || new Date().toISOString().slice(0, 10);
@@ -38,6 +76,8 @@ return {
       total: number(receipt?.total),
       imageUrl: text(receipt?.imageUrl),
       fileRef: text(receipt?.fileRef),
+      imageRefs: normalizeImageRefs(receipt?.imageRefs),
+      extraction: normalizeExtraction(receipt?.extraction),
       createdAt: text(receipt?.createdAt) || new Date().toISOString(),
       lineItems
     };
