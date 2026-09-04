@@ -9328,6 +9328,28 @@ body.touch-drag-active * {
   margin-top: 6px;
 }
 
+/* Watch tab layout: the media panel is overflow:hidden, so (like Podcasts /
+   Radio / Music) the category bar stays pinned and the LIST is the scroll
+   region. Without this the watch list was clipped and couldn't scroll on
+   mobile — the core of the "disaster on mobile". Scoped to #watchPlannerGrid so
+   the Tasks planner (same .planner-grid class, different element) is untouched. */
+#mediaWatchPanel #watchPlannerGrid:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 0;
+  overflow: hidden;
+}
+#mediaWatchPanel #watchPlannerGrid .watch-category-bar { flex-shrink: 0; }
+#mediaWatchPanel #watchPlannerGrid .watch-list-panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 24px;
+}
+
 
 .watch-sections {
   display: grid;
