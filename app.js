@@ -42624,7 +42624,7 @@ function isArticlePubTab(tab) {
 // ─── Podcasts ─────────────────────────────────────────────────────────────────
 
 let activePodcastShowId = null;
-let activePodcastTab = "recent";
+let activePodcastTab = "shows";
 let activePodcastSavedCategory = "all";
 let podcastSavedCatInputActive = false;
 let podcastTabInputActive = false;
@@ -42735,12 +42735,9 @@ function renderPodcastPlaylistBar() {
   if (!bar) return;
   const playlists = state.podcastPlaylists || [];
   bar.innerHTML = `
-    <button class="podcast-tabs-menu-btn" type="button" id="podcastTabsMenuBtn" title="Folders" aria-label="Toggle folder menu">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-    </button>
     <div class="watch-category-tabs" role="tablist" aria-label="Podcast tabs">
-      <button class="watch-category-tab${activePodcastTab === "recent" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="recent">Recent</button>
       <button class="watch-category-tab${activePodcastTab === "shows" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="shows">Shows</button>
+      <button class="watch-category-tab${activePodcastTab === "recent" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="recent">Recent</button>
       <button class="watch-category-tab${activePodcastTab === "saved" ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="saved">Saved</button>
       ${playlists.map(pl => `
         <button class="watch-category-tab${activePodcastTab === pl.id ? " is-active" : ""}" type="button" role="tab" data-podcast-tab="${escapeHtml(pl.id)}">${escapeHtml(pl.name)}</button>
@@ -42760,10 +42757,6 @@ function renderPodcastPlaylistBar() {
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
       </button>
     </div>`;
-
-  bar.querySelector("#podcastTabsMenuBtn")?.addEventListener("click", () => {
-    document.getElementById("mediaSidebar")?.classList.toggle("is-expanded");
-  });
 
   bar.querySelectorAll("[data-podcast-tab]").forEach(btn => {
     btn.addEventListener("click", () => switchPodcastTab(btn.dataset.podcastTab));
@@ -43205,7 +43198,8 @@ function removePodcastFromCurrentScope(id) {
 function renderPodcastShowsGrid() {
   const listEl = document.getElementById("podcastEpisodeList");
   if (!listEl) return;
-  const podcasts = state.podcasts || [];
+  const podcasts = [...(state.podcasts || [])].sort((a, b) =>
+    (a.title || "").localeCompare(b.title || "", undefined, { sensitivity: "base" }));
   const addCard = `
     <button class="podcast-show-card podcast-show-card-add" type="button" id="podcastShowAddCard">
       <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
