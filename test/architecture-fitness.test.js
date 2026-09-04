@@ -34,7 +34,11 @@ const CLIENT_FILES = [
 describe("fitness: pure core stays DOM-free (logic out of the DOM)", () => {
   for (const mod of PURE_CORE) {
     it(`${mod} references no document/window/localStorage/indexedDB`, () => {
-      const hits = code(mod).match(/\b(document|window|localStorage|indexedDB)\b/g) || [];
+      // Strip string literals first: DOM usage is always code (document.x, window.x…),
+      // never text inside a string — so a data catalog naming "document-scan.js" is
+      // not a violation. Comments are already stripped by code().
+      const src = code(mod).replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`/g, '""');
+      const hits = src.match(/\b(document|window|localStorage|indexedDB)\b/g) || [];
       expect(hits).toEqual([]);
     });
   }
