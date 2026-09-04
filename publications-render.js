@@ -114,6 +114,7 @@ export function publicationsPanelHtml({ tab = "notifications", badge = 0, badgeL
         ${tabBtn("library", "Library")}
       </div>
       <div class="pub-head-actions">
+        <button class="icon-btn pub-scan" type="button" data-pub-scan title="Scan an article" aria-label="Scan an article"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10"/></svg></button>
         <button class="icon-btn pub-refresh" type="button" data-pub-refresh title="Refresh feeds" aria-label="Refresh feeds">↻</button>
         <button class="icon-btn std-add-btn pub-manage" type="button" data-pub-manage title="Manage publications" aria-label="Manage publications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
       </div>

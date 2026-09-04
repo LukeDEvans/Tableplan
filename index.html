@@ -801,6 +801,45 @@
               </div>
             </form>
           </dialog>
+          <dialog class="recipe-dialog std-form-dialog article-scan-dialog" id="articleScanDialog">
+            <form class="recipe-form" method="dialog">
+              <div class="recipe-form-head">
+                <h2>Scan article</h2>
+                <button class="icon-btn" type="button" id="closeArticleScanBtn" aria-label="Close">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                </button>
+              </div>
+              <div class="recipe-form-body">
+                <div class="scan-picker">
+                  <label>Article photos
+                    <input id="articleScanImages" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/*" multiple />
+                  </label>
+                  <input class="visually-hidden" id="articleScanCameraImage" type="file" accept="image/*" capture="environment" />
+                  <div class="scan-picker-actions">
+                    <button class="secondary-btn" type="button" id="articleScanCameraBtn">Take photo</button>
+                    <button class="secondary-btn" type="button" id="clearArticleScanBtn">Clear photos</button>
+                  </div>
+                  <div class="scan-image-preview-list" id="articleScanPreviewList" aria-label="Article photo previews"></div>
+                </div>
+                <p class="scan-privacy-note">Cloud scan sends photos to an AI model to read them. On-device scan (when available) keeps the photo on your phone but reads plainer.</p>
+                <div class="scan-buttons">
+                  <button class="primary-btn" type="button" id="scanArticleCloudBtn">Scan</button>
+                  <button class="secondary-btn" type="button" id="scanArticleLocalBtn" hidden>Scan on device</button>
+                </div>
+                <p class="import-status" id="articleScanStatus"></p>
+                <div class="article-scan-review" id="articleScanReview" hidden>
+                  <label>Title <input id="articleScanTitle" /></label>
+                  <label>Author <input id="articleScanAuthor" /></label>
+                  <label>Publication <input id="articleScanPublication" /></label>
+                  <label>Date <input id="articleScanDate" type="date" /></label>
+                  <label>Body <textarea id="articleScanBody" rows="10" placeholder="One blank line between paragraphs"></textarea></label>
+                </div>
+              </div>
+              <div class="dialog-actions">
+                <button class="primary-btn" type="button" id="saveArticleScanBtn" hidden style="margin-left:auto">Save to Library</button>
+              </div>
+            </form>
+          </dialog>
         </section>
         <section class="planner-column do-column mail-page" id="mailMainPage" aria-label="Mail" hidden>
           <div class="mail-page-inner">

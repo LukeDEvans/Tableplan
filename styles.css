@@ -7879,6 +7879,12 @@ textarea {
   cursor: zoom-in;
 }
 
+.scan-buttons { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
+.article-scan-review { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.article-scan-review label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--muted, #8a8175); }
+.article-scan-review textarea { font: inherit; resize: vertical; min-height: 160px; }
+.article-scan-dialog .recipe-form { align-content: start; }
+
 .restore-backup-list-label {
   font-size: 0.75rem;
   font-weight: 700;

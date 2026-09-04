@@ -36,7 +36,8 @@ import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition 
 import { runFeedIngestion } from './feed-ingest.js';
 import { markManyDiscovered, pruneNotifications, saveArticle as notifSaveArticle, dismissArticle as notifDismissArticle, pendingNotifications, notificationBadgeCount, badgeLabel, retainedArticles, isSaved as notifIsSaved } from './publications-notify.js';
 import { publicationsPanelHtml, subscriptionListHtml } from './publications-render.js';
-import { makePublication, makeFeed, unifiedLibraryArticles, ingestArticles } from './publications.js';
+import { makePublication, makeFeed, makeArticle, unifiedLibraryArticles, ingestArticles } from './publications.js';
+import { hasLocalTextDetection, detectText, linesToArticle } from './local-text-detect.js';
 import { articleToRow, articleFromRow, publicationToRow, feedToRow, feedFromRow, assemblePublications } from './publications-store.js';
 import { setReadingProgress, readingPercent, pruneReadingProgress, isFinished } from './reading-progress.js';
 import { bodyFetchRequest, normalizeFetchedBody, mergeFetchedMetadata } from './article-body.js';
@@ -1001,6 +1002,23 @@ const elements = {
   pubAddBtn: document.querySelector("#pubAddBtn"),
   pubManageClose: document.querySelector("#pubManageClose"),
   pubManageMsg: document.querySelector("#pubManageMsg"),
+  articleScanDialog: document.querySelector("#articleScanDialog"),
+  articleScanImages: document.querySelector("#articleScanImages"),
+  articleScanCameraImage: document.querySelector("#articleScanCameraImage"),
+  articleScanCameraBtn: document.querySelector("#articleScanCameraBtn"),
+  clearArticleScanBtn: document.querySelector("#clearArticleScanBtn"),
+  articleScanPreviewList: document.querySelector("#articleScanPreviewList"),
+  scanArticleCloudBtn: document.querySelector("#scanArticleCloudBtn"),
+  scanArticleLocalBtn: document.querySelector("#scanArticleLocalBtn"),
+  articleScanStatus: document.querySelector("#articleScanStatus"),
+  articleScanReview: document.querySelector("#articleScanReview"),
+  articleScanTitle: document.querySelector("#articleScanTitle"),
+  articleScanAuthor: document.querySelector("#articleScanAuthor"),
+  articleScanPublication: document.querySelector("#articleScanPublication"),
+  articleScanDate: document.querySelector("#articleScanDate"),
+  articleScanBody: document.querySelector("#articleScanBody"),
+  saveArticleScanBtn: document.querySelector("#saveArticleScanBtn"),
+  closeArticleScanBtn: document.querySelector("#closeArticleScanBtn"),
   weatherPageInner: document.querySelector("#weatherPageInner"),
   contactsGrid: document.querySelector("#contactsGrid"),
   contactsSearchInput: document.querySelector("#contactsSearchInput"),
@@ -1775,6 +1793,15 @@ function bindEvents() {
   elements.pubReaderListen?.addEventListener("click", () => { if (openPubArticleId) listenToPubArticle(openPubArticleId); });
   elements.pubAddBtn?.addEventListener("click", () => addSubscription());
   elements.pubManageClose?.addEventListener("click", () => elements.pubManageDialog?.close());
+  elements.closeArticleScanBtn?.addEventListener("click", () => elements.articleScanDialog?.close());
+  elements.articleScanImages?.addEventListener("change", replaceArticleScanFiles);
+  elements.articleScanCameraImage?.addEventListener("change", appendArticleScanCamera);
+  elements.articleScanCameraBtn?.addEventListener("click", () => elements.articleScanCameraImage?.click());
+  elements.clearArticleScanBtn?.addEventListener("click", clearArticleScanFiles);
+  elements.articleScanPreviewList?.addEventListener("click", handleArticleScanPreviewAction);
+  elements.scanArticleCloudBtn?.addEventListener("click", () => scanArticleCloud());
+  elements.scanArticleLocalBtn?.addEventListener("click", () => scanArticleLocal());
+  elements.saveArticleScanBtn?.addEventListener("click", () => saveArticleScan());
   elements.pubNewUrl?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addSubscription(); } });
   elements.pubReaderBody?.addEventListener("scroll", onPubReaderScroll, { passive: true });
   elements.pubReaderPanel?.addEventListener("keydown", (e) => { if (e.key === "Escape") closePubReader(); });
@@ -2833,6 +2860,8 @@ function setupDiagnostics() {
     upsertToDb: async () => { if (!localDevMode) return; await upsertPublicationsToDb(state.pubDefs || []); await upsertFeedsToDb(state.pubFeeds || []); await upsertArticlesToDb(state.pubArticles || []); return "ok"; },
     seedSaved: (art) => { if (!localDevMode) return; if (!Array.isArray(state.savedArticles)) state.savedArticles = []; state.savedArticles.push(art); persist(); },
     seedBody: async (id, html) => { if (!localDevMode) return null; const ac = await getArticleContent(); return ac ? ac.saveBody(id, html) : null; },
+    addScanned: async (fields, bodyHtml) => { if (!localDevMode) return null; return addScannedArticleToLibrary(fields || {}, bodyHtml || "", []); },
+    hasLocalOcr: () => hasLocalTextDetection(),
   };
   // Receipt review — test-only verbs (local dev) for headless verification of the
   // validation banner + per-line highlighting + source thumbnails.
@@ -3004,6 +3033,7 @@ function renderPublicationsPanel() {
   el.querySelectorAll("[data-pub-flip]").forEach((b) => b.addEventListener("click", () => b.closest(".pub-card")?.classList.toggle("is-flipped")));
   el.querySelector("[data-pub-refresh]")?.addEventListener("click", () => refreshAllFeeds());
   el.querySelector("[data-pub-manage]")?.addEventListener("click", () => openPubManage());
+  el.querySelector("[data-pub-scan]")?.addEventListener("click", () => openArticleScanDialog());
   // Library rows open the reader (triage cards deliberately do NOT — §16/§32/§33).
   el.querySelectorAll(".pub-lib-row").forEach((row) => {
     const open = () => openPubArticle(row.dataset.articleId);
@@ -3296,6 +3326,154 @@ function removeSubscription(pubId) {
   }
   renderPubSubList();
   renderPublicationsPanel();
+}
+
+// ── Article scanning → Publications Library ──────────────────────────────────
+// Photograph a printed article → the shared document-scan seam (cloud, via
+// /scan-article) or on-device TextDetector (offline, clean pages) → review → a
+// canonical article SAVED in the Library (body in the content store, source photo
+// in scan-content, opens in the pub reader). Reuses the scan-image toolkit.
+let articleScanFiles = [];
+let articleScanEdits = new Map();
+let _articleScanBlobs = [];
+
+function openArticleScanDialog() {
+  articleScanFiles = [];
+  articleScanEdits = new Map();
+  _articleScanBlobs = [];
+  if (elements.articleScanImages) elements.articleScanImages.value = "";
+  renderArticleScanPreviews();
+  if (elements.articleScanReview) elements.articleScanReview.hidden = true;
+  if (elements.saveArticleScanBtn) elements.saveArticleScanBtn.hidden = true;
+  if (elements.articleScanStatus) elements.articleScanStatus.textContent = "";
+  if (elements.scanArticleLocalBtn) elements.scanArticleLocalBtn.hidden = !hasLocalTextDetection();
+  elements.articleScanDialog?.showModal();
+}
+
+function renderArticleScanPreviews() {
+  renderScanImagePreviews(articleScanFiles, articleScanEdits, elements.articleScanPreviewList, "article");
+}
+function replaceArticleScanFiles(event) {
+  articleScanFiles = Array.from(event.target.files || []);
+  renderArticleScanPreviews();
+}
+function appendArticleScanCamera(event) {
+  const files = Array.from(event.target.files || []);
+  if (files.length) { articleScanFiles = [...articleScanFiles, ...files]; renderArticleScanPreviews(); }
+  event.target.value = "";
+}
+function clearArticleScanFiles() {
+  articleScanFiles = [];
+  articleScanEdits = new Map();
+  if (elements.articleScanImages) elements.articleScanImages.value = "";
+  renderArticleScanPreviews();
+}
+function handleArticleScanPreviewAction(event) {
+  const button = event.target.closest("[data-scan-image-action]");
+  if (!button) return;
+  const index = Number(button.dataset.scanImageIndex);
+  if (!Number.isInteger(index) || !articleScanFiles[index]) return;
+  const result = applyScanImageAction(articleScanFiles, articleScanEdits, index, button.dataset.scanImageAction);
+  articleScanFiles = result.files;
+  articleScanEdits = result.edits;
+  renderArticleScanPreviews();
+}
+
+async function scanArticleCloud() {
+  if (!articleScanFiles.length) { elements.articleScanStatus.textContent = "Choose at least one photo first."; return; }
+  trackUsage("claude_article_scan");
+  elements.articleScanStatus.textContent = "Reading article…";
+  elements.scanArticleCloudBtn.disabled = true;
+  try {
+    const url = canUseLocalBackend() ? "/api/scan-article" : "/.netlify/functions/scan-article";
+    const prepared = await Promise.all(articleScanFiles.map((f) => prepareScanImage(f, articleScanEdits.get(f), { maxDimension: 2000, quality: 0.85 })));
+    const images = await Promise.all(prepared.map(fileToDataUrl));
+    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` }, body: JSON.stringify({ images }) });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || `Article scan failed (${res.status})`);
+    populateArticleScanReview(payload.article, prepared);
+    elements.articleScanStatus.textContent = "Review and edit, then save to your Library.";
+  } catch (e) {
+    elements.articleScanStatus.textContent = e.message || "The article scan failed.";
+  } finally {
+    elements.scanArticleCloudBtn.disabled = false;
+  }
+}
+
+async function scanArticleLocal() {
+  if (!articleScanFiles.length) { elements.articleScanStatus.textContent = "Choose at least one photo first."; return; }
+  elements.articleScanStatus.textContent = "Reading on device…";
+  elements.scanArticleLocalBtn.disabled = true;
+  try {
+    const prepared = await Promise.all(articleScanFiles.map((f) => prepareScanImage(f, articleScanEdits.get(f), { maxDimension: 2000, quality: 0.9 })));
+    const allLines = [];
+    for (const blob of prepared) { const r = await detectText(blob); if (r.ok) allLines.push(...r.lines); }
+    if (!allLines.length) { elements.articleScanStatus.textContent = "No text found on device — try the cloud scan."; return; }
+    populateArticleScanReview(linesToArticle(allLines), prepared);
+    elements.articleScanStatus.textContent = "On-device read is rough — check the text before saving.";
+  } catch {
+    elements.articleScanStatus.textContent = "On-device scan failed — try the cloud scan.";
+  } finally {
+    elements.scanArticleLocalBtn.disabled = false;
+  }
+}
+
+function populateArticleScanReview(article, blobs) {
+  _articleScanBlobs = blobs || [];
+  const a = article || {};
+  elements.articleScanTitle.value = a.title || "";
+  elements.articleScanAuthor.value = a.author || "";
+  elements.articleScanPublication.value = a.publication || "";
+  elements.articleScanDate.value = /^\d{4}-\d{2}-\d{2}$/.test(a.date || "") ? a.date : "";
+  const paras = Array.isArray(a.paragraphs) ? a.paragraphs : (a.text ? plainTextFromHtml(a.text).split(/\n{2,}/) : []);
+  elements.articleScanBody.value = paras.map((p) => String(p).trim()).filter(Boolean).join("\n\n");
+  elements.articleScanReview.hidden = false;
+  elements.saveArticleScanBtn.hidden = false;
+}
+
+async function saveArticleScan() {
+  const title = elements.articleScanTitle.value.trim();
+  const bodyText = elements.articleScanBody.value.trim();
+  if (!title && !bodyText) { elements.articleScanStatus.textContent = "Add a title or some text first."; return; }
+  const paragraphs = bodyText.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  const bodyHtml = paragraphs.map((p) => `<p>${escapeHtml(p)}</p>`).join("");
+  const id = await addScannedArticleToLibrary({
+    title,
+    author: elements.articleScanAuthor.value.trim(),
+    publication: elements.articleScanPublication.value.trim(),
+    date: elements.articleScanDate.value || new Date().toISOString().slice(0, 10),
+  }, bodyHtml, _articleScanBlobs);
+  _articleScanBlobs = [];
+  elements.articleScanDialog?.close();
+  showPublicationsApp();
+  pubActiveTab = "library";
+  renderPublicationsPanel();
+  if (id) openPubArticle(id);
+}
+
+// Create a canonical Library article from a scan (metadata-only record; body in the
+// content store; source photo in scan-content). Marked SAVED so it lands in the
+// permanent Library, and mirrored to the relational store (cutover).
+async function addScannedArticleToLibrary(fields, bodyHtml, imageBlobs = []) {
+  const article = makeArticle({
+    id: createId("art"),
+    title: fields.title,
+    author: fields.author || null,
+    publishedAt: fields.date || new Date().toISOString().slice(0, 10),
+    category: fields.publication || null,
+    discoveredAt: new Date().toISOString(),
+    provenance: makeProvenance({ origin: PROV_ORIGIN.IMPORTED, source: "scan" }),
+  });
+  try { const ac = await getArticleContent(); if (ac && bodyHtml) await ac.saveBody(article.id, bodyHtml); } catch { /* body re-addable later */ }
+  try {
+    const sc = await getScanContent();
+    if (sc) { for (let i = 0; i < imageBlobs.length; i++) { const bytes = new Uint8Array(await imageBlobs[i].arrayBuffer()); await sc.saveImage(article.id, i, bytes, imageBlobs[i].type || "image/jpeg"); } }
+  } catch { /* source image best-effort */ }
+  state.pubArticles = ingestArticles(state.pubArticles || [], [article]).articles;
+  state.articleNotifications = notifSaveArticle(state.articleNotifications || {}, article.id);
+  persist();
+  if (pubDbReady()) upsertArticlesToDb([article]).catch((e) => console.warn("scanned article DB upsert failed", e));
+  return article.id;
 }
 
 // ── Publications relational store (Phase 3 cutover, slice 1) ──────────────────
