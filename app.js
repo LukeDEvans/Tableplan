@@ -3166,7 +3166,7 @@ async function listenToPubArticle(id) {
   catch (e) { setPubListenMsg("Couldn't prepare audio — " + (e?.message || "try again later")); return; }
   if (!data || !data.urls || !data.urls.length) { setPubListenMsg("No audio was produced for this article."); return; }
   setPubListenMsg("");
-  ttsPrefetchCache.set(adapter.id, Promise.resolve(data));
+  ttsPrefetchCache.set(articleTtsCacheKey(adapter.id), Promise.resolve(data));
   try { stopListen(); startListenTTS(adapter); }
   catch (e) { setPubListenMsg("Could not start audio: " + (e?.message || "unknown error")); }
 }
@@ -21175,7 +21175,12 @@ function setVoiceDefaultPref(patch) {
   if (!state.aiSettings || typeof state.aiSettings !== "object") state.aiSettings = {};
   const voice = (state.aiSettings.voice && typeof state.aiSettings.voice === "object") ? state.aiSettings.voice : {};
   state.aiSettings.voice = { ...voice, default: { voiceId: c.voiceId, speed: c.speed, ...patch } };
+  // Switching voices invalidates any audio the client prefetched under the OLD
+  // voice — the caches are keyed per (article + voice), so a stale Google clip
+  // never plays after picking a Kokoro voice. Then warm the newly-chosen box.
+  clearArticleTtsCaches();
   persist();
+  warmKokoroVoiceIfKokoro();
 }
 
 // Voice preview: synthesize a short sample in the chosen voice and play it. Uses
@@ -47912,6 +47917,7 @@ async function renderArticleBody(textEl, article, id) {
 function openArticle(id, fromListId) {
   const article = (state.savedArticles || []).find((a) => a.id === id);
   if (!article) return;
+  warmKokoroVoiceIfKokoro(); // opening an article → a Listen may be seconds away
   openArticleId = id;
   // Opening an article does NOT archive it — archiving is explicit (the
   // Archive button) or happens when it finishes playing in the listen queue.
@@ -48764,9 +48770,15 @@ const KOKORO_FATAL_CODES = new Set([
 const KOKORO_COLD_ATTEMPTS = 6;   // enough tries to outlast a ~60s cold start
 const KOKORO_COLD_DELAY_MS = 10000;
 
+// A single proxy call can't outlast a long cold start (the sync function has its
+// own platform cap), so we bound each attempt on the client too and let the retry
+// loop below cycle — rather than a mobile fetch hanging forever behind a locked
+// screen. Warm requests return well under this.
+const KOKORO_CALL_TIMEOUT_MS = 30000;
+
 async function kokoroSynthViaProxy({ text, refId, providerVoiceId, cacheKey, speed }) {
   for (let attempt = 1; ; attempt++) {
-    const res = await callNetlifyFunction("kokoro-tts", { text, refId, providerVoiceId, cacheKey, speed });
+    const res = await callNetlifyFunction("kokoro-tts", { text, refId, providerVoiceId, cacheKey, speed }, { timeoutMs: KOKORO_CALL_TIMEOUT_MS });
     if (Array.isArray(res?.urls) && res.urls.length) {
       return { urls: res.urls, timings: res.timings || null, cached: !!res.cached };
     }
@@ -48801,6 +48813,25 @@ function getVoiceService() {
   return voiceServiceSingleton;
 }
 
+// Keep-warm: when a Listen is plausibly imminent (an article opened, the media
+// view shown, a Kokoro voice just picked) nudge the scale-to-zero voice box awake
+// so it's booting + loading the model before play is tapped. Fire-and-forget and
+// debounced (the box stays warm for minutes after a hit), and a no-op unless the
+// article voice actually resolves to Kokoro — Google needs no warming.
+let lastKokoroWarmAt = 0;
+function warmKokoroVoiceIfKokoro() {
+  try {
+    const resolved = getVoiceService().voiceForDomain("article");
+    if (resolved?.voice?.provider !== "kokoro") return;
+    const now = Date.now();
+    if (now - lastKokoroWarmAt < 120000) return; // at most once / 2 min
+    lastKokoroWarmAt = now;
+    // Not awaited: warming must never block or surface an error in the UI path.
+    callNetlifyFunction("kokoro-tts", { warmup: true, providerVoiceId: resolved.voice.providerVoiceId }, { timeoutMs: 10000 })
+      .catch(() => {});
+  } catch { /* best effort */ }
+}
+
 async function generateTtsUrls(article) {
   const body = article.text?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || "";
   if (!body) return null;
@@ -48822,14 +48853,30 @@ async function generateTtsUrls(article) {
   return { urls: result.urls, timings: result.timings || null, introWords };
 }
 
-// Audio prefetched for upcoming All-queue items: articleId → Promise<urls>
+// Audio prefetched for upcoming All-queue items, keyed by (article + voice):
+// key → Promise<urls>. Voice is part of the key so switching voices never replays
+// a clip synthesized in the previous voice (the reported "old voice still plays").
 const ttsPrefetchCache = new Map();
-// Resolved (not just in-flight) TTS data for the next queue article, keyed by
-// id. Having the URLs available SYNCHRONOUSLY is what lets the article→article
+// Resolved (not just in-flight) TTS data for the next queue article, same key.
+// Having the URLs available SYNCHRONOUSLY is what lets the article→article
 // hand-off run inside the audio "ended" handler (see beginNextResolvedArticleSync)
 // so read-aloud keeps going while the app is backgrounded — an async
 // startListenTTS would defer the play() past an await, which iOS won't run.
 const ttsResolvedUrls = new Map();
+
+// Cache key = article id + the currently-resolved article voice/speed, so a voice
+// change is a natural miss (regenerate) rather than a stale hit. The server cache
+// is already voice-scoped; this makes the CLIENT short-circuit voice-scoped too.
+function articleTtsCacheKey(id) {
+  try {
+    const v = getVoiceService().voiceForDomain("article");
+    return `${id}::${v?.voiceId || "?"}::${v?.speed || 1}`;
+  } catch { return `${id}::?`; }
+}
+function clearArticleTtsCaches() {
+  ttsPrefetchCache.clear();
+  ttsResolvedUrls.clear();
+}
 
 // While something is playing, generate the NEXT queue article's audio in the
 // background so the hand-off between items is gapless.
@@ -48838,14 +48885,15 @@ function prefetchNextQueueAudio() {
   for (const id of mediaAllQueueRest) {
     const item = byId.get(id);
     if (!item || item.type === "book") continue;
-    if (item.type === "article" && !ttsPrefetchCache.has(id)) {
+    if (item.type === "article" && !ttsPrefetchCache.has(articleTtsCacheKey(id))) {
       const article = (state.savedArticles || []).find((a) => a.id === id);
       if (article) {
-        ttsPrefetchCache.set(id, generateTtsUrls(article).then((data) => {
-          if (data?.urls?.length) ttsResolvedUrls.set(id, data); // now available synchronously
+        const key = articleTtsCacheKey(id);
+        ttsPrefetchCache.set(key, generateTtsUrls(article).then((data) => {
+          if (data?.urls?.length) ttsResolvedUrls.set(key, data); // now available synchronously
           return data;
         }).catch((e) => {
-          ttsPrefetchCache.delete(id); // failed prefetch → regenerate on demand
+          ttsPrefetchCache.delete(key); // failed prefetch → regenerate on demand
           console.warn("TTS prefetch failed:", e.message);
           return null;
         }));
@@ -48870,14 +48918,15 @@ function beginNextResolvedArticleSync(finishedId) {
     if (it && it.type !== "book") { nextIdx = i; nextItem = it; break; }
   }
   if (!nextItem || nextItem.type !== "article") return false; // podcasts advance elsewhere
-  const data = ttsResolvedUrls.get(nextItem.id);
+  const nextKey = articleTtsCacheKey(nextItem.id);
+  const data = ttsResolvedUrls.get(nextKey);
   if (!data || !data.urls || !data.urls.length) return false; // not ready → async fallback
   const article = (state.savedArticles || []).find((a) => a.id === nextItem.id);
   if (!article) return false;
   mediaAllQueueRest.splice(0, nextIdx + 1);
   mediaAllQueueId = nextItem.id;
-  ttsResolvedUrls.delete(nextItem.id);
-  ttsPrefetchCache.delete(nextItem.id);
+  ttsResolvedUrls.delete(nextKey);
+  ttsPrefetchCache.delete(nextKey);
   const myGenId = ++listenGenId;
   listenArticle = article;
   listenAllUrls = [...data.urls];
@@ -48959,11 +49008,12 @@ async function startListenTTS(article) {
   updateListenPlayBtn();
 
   let data = null;
-  const prefetched = ttsPrefetchCache.get(article.id);
-  ttsResolvedUrls.delete(article.id);
+  const cacheKey = articleTtsCacheKey(article.id);
+  const prefetched = ttsPrefetchCache.get(cacheKey);
+  ttsResolvedUrls.delete(cacheKey);
   if (prefetched) {
     data = await prefetched;
-    ttsPrefetchCache.delete(article.id);
+    ttsPrefetchCache.delete(cacheKey);
     if (myGenId !== listenGenId) return;
   }
   if (!data) {
@@ -49091,18 +49141,25 @@ function updateListenPlayBtn() {
 }
 
 
-async function callNetlifyFunction(name, body) {
+async function callNetlifyFunction(name, body, { timeoutMs } = {}) {
   const session = supabaseClient ? await supabaseClient.auth.getSession() : null;
   const token = session?.data?.session?.access_token;
   const authHeader = token ? { authorization: `Bearer ${token}` } : {};
+  // Optional client-side timeout: without it a hung request (common on mobile when
+  // the screen locks mid-fetch) waits indefinitely. Callers that retry (Kokoro TTS)
+  // pass one so a stalled attempt is abandoned and the retry loop can advance.
+  const ctrl = timeoutMs ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
   try {
     const res = await fetch(`/.netlify/functions/${name}`, {
       method: "POST",
       headers: { "content-type": "application/json", ...authHeader },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: ctrl?.signal,
     });
     return await res.json();
   } catch (e) { return { error: String(e) }; }
+  finally { if (timer) clearTimeout(timer); }
 }
 
 // Books folder: a horizontal tab bar (Audible / Libby / Kindle / Wishlist)

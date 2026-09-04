@@ -15,7 +15,7 @@
 // Pure logic (validation/chunking/voices/errors) lives in ../../kokoro-core.js
 // (bundled via netlify.toml included_files) and is unit-tested.
 import {
-  validateKokoroRequest, chunkText, sanitizeKey, errorForStatus, categorizeFetchError, KOKORO_ERRORS,
+  validateKokoroRequest, chunkText, sanitizeKey, errorForStatus, categorizeFetchError, KOKORO_ERRORS, KOKORO_VOICES,
 } from "../../kokoro-core.mjs";
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
@@ -24,6 +24,7 @@ const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const BUCKET = "article-audio";
 const FORMAT_VERSION = 1;      // kokoro meta format (client KOKORO_MODEL busts content)
 const HOME_TIMEOUT_MS = 25000; // per-chunk home-server request timeout
+const WARM_TIMEOUT_MS = 8000;  // warm-up ping: short — we only need to WAKE the box
 
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return cors(json(200, {}));
@@ -54,6 +55,24 @@ export const handler = async (event) => {
 
   let body;
   try { body = JSON.parse(event.body || "{}"); } catch { return cors(json(400, { code: KOKORO_ERRORS.INVALID_REQUEST, error: "Invalid JSON" })); }
+
+  // Warm-up ping (keep-warm strategy): the client fires this when a Listen is
+  // likely soon (article opened / media view shown) so the scale-to-zero box is
+  // already booting + loading the model by the time real synthesis is requested.
+  // We just need to WAKE the instance — a tiny synth with a short timeout does
+  // that; even a timeout here already kicked the boot, so it NEVER hard-errors and
+  // carries no private text. Returns 200 { warmed } and is safe to fire-and-forget.
+  if (body?.warmup === true) {
+    const voice = KOKORO_VOICES.includes(body.providerVoiceId) ? body.providerVoiceId : KOKORO_VOICES[0];
+    try {
+      await synthChunk(kokoroUrl, kokoroToken, "Warming up.", voice, 1, WARM_TIMEOUT_MS);
+      log(reqId, { status: "warmed", voice });
+      return cors(json(200, { warmed: true }));
+    } catch (err) {
+      log(reqId, { status: "warming", code: err.kokoroCode || categorizeFetchError(err) });
+      return cors(json(200, { warmed: false })); // the request still kicked the instance
+    }
+  }
 
   const v = validateKokoroRequest(body);
   if (!v.ok) {
@@ -107,9 +126,9 @@ export const handler = async (event) => {
 
 // POST one chunk to the home server; return raw MP3 bytes. Throws Error with a
 // `.kokoroCode` on a typed failure. The text is never logged.
-async function synthChunk(url, token, text, voice, speed) {
+async function synthChunk(url, token, text, voice, speed, timeoutMs = HOME_TIMEOUT_MS) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), HOME_TIMEOUT_MS);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   let res;
   try {
     // Kokoro-FastAPI's OpenAI-compatible speech endpoint. KOKORO_URL must be the
