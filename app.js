@@ -45336,7 +45336,9 @@ const MEDIA_KINDS = {
     toggle: () => togglePodcastPlayPause(),
     skip: (sec) => skipPodcast(sec),
     open: () => goToOpenEpisode(),
-    info: () => { const f = findPodcastEpisode(openPodcastEpisodeId); const ep = f?.episode, sh = f?.show; if (!ep) return null; return { art: ep.art || sh?.art || "", title: ep.title || "", show: sh?.title || "", date: ep.pubDate ? formatArticleDate(ep.pubDate) : "", desc: plainTextFromHtml(ep.description) }; },
+    // The CURRENTLY-PLAYING episode (not whatever episode's details happen to be
+    // open) — so the mini-player + now-playing modal always track playback.
+    info: () => { const ep = podcastCurEpisode, sh = podcastCurShow; if (!ep) return null; return { art: ep.art || sh?.art || "", title: ep.title || "", show: sh?.title || "", date: ep.pubDate ? formatArticleDate(ep.pubDate) : "", desc: plainTextFromHtml(ep.description) }; },
   },
   radio: {
     live: true,
@@ -45391,11 +45393,12 @@ function getMediaEngine() {
   mediaEngine = createPlaybackEngine({ createAudio: ensureMediaAudioEl });
   const kind = () => mediaEngine.state().providerId; // active source's provider
   const h = () => MEDIA_KINDS[kind()] || null;
-  mediaEngine.on("loaded", () => h()?.onLoaded?.());
+  mediaEngine.on("loaded", () => { refreshMiniPlayerFromNowPlaying(); h()?.onLoaded?.(); });
   mediaEngine.on("timeupdate", () => h()?.onTimeupdate?.());
   mediaEngine.on("play", () => { mediaAudioUnlocked = true; if (kind() === "tts" && listenBuffering) { listenBuffering = false; updateListenPlayBtn(); } h()?.onPlay?.(); });
   mediaEngine.on("pause", () => h()?.onPause?.());
   mediaEngine.on("segment", (s) => {
+    refreshMiniPlayerFromNowPlaying(); // any source/segment change → keep the bar current
     if (kind() !== "tts") return; // chunk warming is a TTS concern (kept inline)
     if (listenBuffering) { listenBuffering = false; updateListenPlayBtn(); }
     listenChunkIdx = s.segIndex;
@@ -47005,6 +47008,25 @@ function nowPlayingOpen() { const k = nowPlayingKind(); MEDIA_KINDS[k]?.open?.()
 function showMiniPlayer(episode, show) {
   setMiniPlayer(episode.title || "", show?.title || "", episode.art || show?.art || "");
 }
+// Re-derive the bar's title/art from whatever is ACTUALLY playing right now.
+// Called on engine source-change events so a background queue advance (or any
+// path that forgot to call setMiniPlayer) still keeps the bar current — the bar
+// should reflect what's playing, never what was playing when it first appeared.
+function refreshMiniPlayerFromNowPlaying() {
+  const el = document.getElementById("miniPlayer");
+  if (!el || el.hidden) return;
+  const k = nowPlayingKind();
+  const info = k && MEDIA_KINDS[k]?.info ? MEDIA_KINDS[k].info() : null;
+  if (!info) return;
+  const t = document.getElementById("miniPlayerTitle");
+  const a = document.getElementById("miniPlayerArt");
+  const title = info.title || "";
+  if (t && t.textContent !== title) { t.textContent = title; setupMiniPlayerMarquee(); }
+  if (a) {
+    const art = info.art || "";
+    if ((a.dataset.art || "") !== art) { a.dataset.art = art; a.src = art; a.hidden = !art; }
+  }
+}
 function showMiniPlayerForArticle(article) {
   setMiniPlayer(article.title || "Article", article.author || article.publication || "", "");
 }
@@ -47014,7 +47036,7 @@ function setMiniPlayer(title, subtitle, art) {
   const t = document.getElementById("miniPlayerTitle");
   const a = document.getElementById("miniPlayerArt");
   if (t) t.textContent = title;
-  if (a) { a.src = art || ""; a.hidden = !art; }
+  if (a) { a.dataset.art = art || ""; a.src = art || ""; a.hidden = !art; }
   el.hidden = false;
   document.body.classList.add("has-mini-player");
   updateMiniPlayerPlayBtn();
