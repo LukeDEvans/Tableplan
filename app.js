@@ -2812,24 +2812,24 @@ function setupDiagnostics() {
     save: (id) => (savePubArticle(id), pubBadgeCount()),
     dismiss: (id) => (dismissPubArticle(id), pubBadgeCount()),
     refreshFeed: (feed) => refreshFeed(feed),
-    applyResponse: (feed, resp) => applyFeedIngestion(feed, resp), // for a seeded/manual response
     openReader: (id) => openPubArticle(id),
     closeReader: () => closePubReader(),
     readingPercent: (id) => readingPercent(state.readingProgress, id),
     consumed: (id) => (state.readArticleIds || []).includes(id),
     subscriptions: () => ({ pubs: (state.pubDefs || []).length, feeds: (state.pubFeeds || []).length }),
-    // Relational store (cutover slice 1) — needs a cloud session; the sync slice wires these in.
     dbReady: () => pubDbReady(),
     loadDb: () => loadPublicationsFromDb(),
     loadArticlesDb: (opts) => loadArticlesFromDb(opts),
-    upsertToDb: async () => { await upsertPublicationsToDb(state.pubDefs || []); await upsertFeedsToDb(state.pubFeeds || []); await upsertArticlesToDb(state.pubArticles || []); return "ok"; },
     resolveBody: (id) => resolvePubArticleBody(libraryArticleById(id) || { id }),
     library: (publicationId = null) => pubLibrary(publicationId).map((a) => ({ id: a.id, title: a.title, origins: a.origins || ["rss"] })),
-    seedSaved: (art) => { if (!Array.isArray(state.savedArticles)) state.savedArticles = []; state.savedArticles.push(art); persist(); },
     listen: (id) => listenToPubArticle(id),
-    // Seed a body straight into the content store so the reader path can be
-    // verified without a live fetch-article call (returns the stored ref).
-    seedBody: async (id, html) => { const ac = await getArticleContent(); return ac ? ac.saveBody(id, html) : null; },
+    // Test-only injection verbs (headless verification): gated at CALL time on
+    // localDevMode (which is set later in the local-dev boot than this hook), so
+    // they can never seed fake state / bodies / DB rows in production.
+    applyResponse: (feed, resp) => (localDevMode ? applyFeedIngestion(feed, resp) : undefined),
+    upsertToDb: async () => { if (!localDevMode) return; await upsertPublicationsToDb(state.pubDefs || []); await upsertFeedsToDb(state.pubFeeds || []); await upsertArticlesToDb(state.pubArticles || []); return "ok"; },
+    seedSaved: (art) => { if (!localDevMode) return; if (!Array.isArray(state.savedArticles)) state.savedArticles = []; state.savedArticles.push(art); persist(); },
+    seedBody: async (id, html) => { if (!localDevMode) return null; const ac = await getArticleContent(); return ac ? ac.saveBody(id, html) : null; },
   };
 }
 
