@@ -47,6 +47,7 @@ import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './me
 import { beginTasksWeekSession, stepTasksWeek, endTasksWeekSession, tasksBellState } from './tasks-overlay.js';
 import { createVoiceService } from './voice-service.js';
 import { createGoogleProvider, createKokoroProvider } from './tts-provider.js';
+import { chunkText as kokoroChunkText } from './kokoro-core.mjs';
 import * as TravelItinerary from './travel-itinerary.js';
 import * as TravelTransitions from './travel-transitions.js';
 import * as TravelModel from './travel-model.js';
@@ -45392,15 +45393,19 @@ function getMediaEngine() {
   const h = () => MEDIA_KINDS[kind()] || null;
   mediaEngine.on("loaded", () => h()?.onLoaded?.());
   mediaEngine.on("timeupdate", () => h()?.onTimeupdate?.());
-  mediaEngine.on("play", () => { mediaAudioUnlocked = true; h()?.onPlay?.(); });
+  mediaEngine.on("play", () => { mediaAudioUnlocked = true; if (kind() === "tts" && listenBuffering) { listenBuffering = false; updateListenPlayBtn(); } h()?.onPlay?.(); });
   mediaEngine.on("pause", () => h()?.onPause?.());
   mediaEngine.on("segment", (s) => {
     if (kind() !== "tts") return; // chunk warming is a TTS concern (kept inline)
+    if (listenBuffering) { listenBuffering = false; updateListenPlayBtn(); }
     listenChunkIdx = s.segIndex;
     if (listenNextAudio) { listenNextAudio.src = ""; listenNextAudio = null; }
     const next = s.segIndex + 1;
     if (listenAllUrls[next]) listenNextAudio = makeListenChunk(listenAllUrls[next]);
   });
+  // Streaming Kokoro: playback reached the not-yet-synthesized tail. Show a
+  // "Buffering…" spinner; a play/segment event clears it when the chunk lands.
+  mediaEngine.on("waiting", () => { if (kind() === "tts") { listenBuffering = true; updateListenPlayBtn(); updateMiniPlayerPlayBtn(); } });
   mediaEngine.on("ended", () => h()?.onEnded?.());
   mediaEngine.on("error", () => h()?.onError?.());
   // Ad-skip is podcast-only: reschedule when position/rate changes. Passive
@@ -48569,6 +48574,7 @@ let listenWordAbsTimes = null; // absolute start time (s) of each spoken word
 let listenActiveWordEl = null; // currently highlighted word span, if any
 let listenSpeaking = false;
 let listenLoading = false;
+let listenBuffering = false; // playback caught up to the not-yet-synthesized tail (streaming Kokoro)
 let listenLoadingLabel = "Loading…"; // spinner caption; a Kokoro cold start swaps in a friendlier note
 let listenGenId = 0;
 
@@ -48589,25 +48595,44 @@ function makeListenChunk(url) {
 
 // Load each chunk's duration (metadata only) so the unified bar can show a
 // real seek scale and elapsed/remaining across the whole article.
-async function loadListenChunkDurations(urls, genId) {
-  const durations = await Promise.all(urls.map((u) => new Promise((resolve) => {
+// Measure one chunk's duration via a throwaway metadata-only <audio> (0 on error).
+function measureAudioDuration(url) {
+  return new Promise((resolve) => {
     const a = new Audio();
     a.preload = "metadata";
     a.addEventListener("loadedmetadata", () => resolve(Number.isFinite(a.duration) ? a.duration : 0), { once: true });
     a.addEventListener("error", () => resolve(0), { once: true });
-    a.src = u;
-  })));
-  if (genId !== listenGenId) return; // playback moved on while we were measuring
-  listenChunkDurations = durations;
+    a.src = url;
+  });
+}
+
+// Recompute the app-level seek scale (offsets/total) from listenChunkDurations
+// and push each into the engine so its logical position sharpens. Word times
+// depend on the offsets, so they're recomputed here too.
+function refreshListenSeekScale() {
   listenChunkOffsets = [];
   let acc = 0;
-  for (const d of durations) { listenChunkOffsets.push(acc); acc += d; }
+  for (const d of listenChunkDurations) { listenChunkOffsets.push(acc); acc += (d || 0); }
   listenTotalDuration = acc;
-  // Hand the measured durations to the engine so its logical position + seek
-  // scale sharpen to match (word-timing still uses listenChunkOffsets below).
-  if (mediaEngine) durations.forEach((d, i) => mediaEngine.setSegmentDuration(i, d));
+  if (mediaEngine) listenChunkDurations.forEach((d, i) => mediaEngine.setSegmentDuration(i, d));
   computeWordAbsTimes();
   updateMiniPlayerProgress();
+}
+
+async function loadListenChunkDurations(urls, genId) {
+  const durations = await Promise.all(urls.map(measureAudioDuration));
+  if (genId !== listenGenId) return; // playback moved on while we were measuring
+  listenChunkDurations = durations;
+  refreshListenSeekScale();
+}
+
+// Incremental sibling: measure just the newly-appended chunk (streaming Kokoro)
+// and fold it into the seek scale, without re-measuring the chunks already known.
+async function measureAppendedListenChunk(url, index, genId) {
+  const d = await measureAudioDuration(url);
+  if (genId !== listenGenId) return;
+  listenChunkDurations[index] = d;
+  refreshListenSeekScale();
 }
 
 // Absolute start time of each spoken word = its chunk's offset + its in-chunk
@@ -48832,25 +48857,39 @@ function warmKokoroVoiceIfKokoro() {
   } catch { /* best effort */ }
 }
 
-async function generateTtsUrls(article) {
+// The spoken text for an article = a short intro (title + source, so a listener
+// not looking at the screen knows what's being read) followed by the body, plus
+// how many leading words are the intro (the body's highlightable words start
+// after these). Shared by the batch and incremental listen paths.
+function prepareArticleListenText(article) {
   const body = article.text?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || "";
   if (!body) return null;
-  // Announce the headline and its source before the article itself, so a
-  // listener (often not looking at the screen) knows what's being read.
   const source = (article.author || article.publication || "").trim();
   const intro = [
     (article.title || "").trim(),
     source && !/^email$/i.test(source) ? `From ${source}` : ""
   ].filter(Boolean).join(". ");
   const text = (intro ? intro + ". " : "") + body;
-  // How many leading words belong to the spoken intro — the article body words
-  // (what we highlight on screen) start after these.
   const introWords = intro ? (intro + ".").split(/\s+/).filter(Boolean).length : 0;
-  trackUsage("google_tts"); // article domain resolves to the Google provider in Phase 0
+  return { text, introWords };
+}
+
+// True when the article domain currently resolves to a Kokoro voice — the path
+// that gets incremental (chunk-by-chunk) playback. Kokoro carries no word
+// timings, so a chunk can play the moment it's synthesized.
+function isKokoroArticleVoice() {
+  try { return getVoiceService().voiceForDomain("article")?.voice?.provider === "kokoro"; }
+  catch { return false; }
+}
+
+async function generateTtsUrls(article) {
+  const prepared = prepareArticleListenText(article);
+  if (!prepared) return null;
+  trackUsage(isKokoroArticleVoice() ? "kokoro_tts" : "google_tts");
   // VoiceService throws on provider error / empty result, matching the previous
   // behavior; returns the same { urls, timings } shape the engine already consumes.
-  const result = await getVoiceService().synthesize({ text, domain: "article", refId: article.id });
-  return { urls: result.urls, timings: result.timings || null, introWords };
+  const result = await getVoiceService().synthesize({ text: prepared.text, domain: "article", refId: article.id });
+  return { urls: result.urls, timings: result.timings || null, introWords: prepared.introWords };
 }
 
 // Audio prefetched for upcoming All-queue items, keyed by (article + voice):
@@ -49016,6 +49055,13 @@ async function startListenTTS(article) {
     ttsPrefetchCache.delete(cacheKey);
     if (myGenId !== listenGenId) return;
   }
+  // Kokoro (no word timings): stream chunk-by-chunk so audio starts after the
+  // FIRST chunk instead of the whole article. Only for on-demand plays — a
+  // prefetched next-queue item already holds all its audio, so it uses that below.
+  if (!data && isKokoroArticleVoice()) {
+    await startListenTTSIncremental(article, myGenId);
+    return;
+  }
   if (!data) {
     // On a Kokoro cold start, swap the spinner caption to a reassuring note so a
     // ~1-minute wait doesn't look frozen. Cleared in finally either way.
@@ -49059,6 +49105,81 @@ async function startListenTTS(article) {
   // through the remaining chunks gaplessly on its own.
   getMediaEngine().load(buildTtsSource(article, listenAllUrls), { autoplay: true });
   setListenMediaSession(article);
+}
+
+// Kokoro incremental listen: synthesize + play the FIRST chunk immediately, then
+// stream the remaining chunks in the background, appending each to the engine as
+// it lands (the engine buffers if playback catches the tail). Time-to-first-audio
+// becomes one chunk instead of the whole article. The caller has already set
+// listenLoading + myGenId and stopped any prior audio.
+async function startListenTTSIncremental(article, myGenId) {
+  const prepared = prepareArticleListenText(article);
+  if (!prepared) { listenLoading = false; updateListenPlayBtn(); return; }
+  const chunks = kokoroChunkText(prepared.text);
+  if (!chunks.length) { listenLoading = false; updateListenPlayBtn(); return; }
+  trackUsage("kokoro_tts");
+
+  // First chunk (awaited) — what the user waits for. The cold-start retry lives
+  // in the provider; the box was likely warmed when the article opened.
+  onKokoroColdStart = () => { if (myGenId === listenGenId) { listenLoadingLabel = "Preparing voice…"; updateListenPlayBtn(); } };
+  let url0;
+  try {
+    const first = await getVoiceService().synthesize({ text: chunks[0], domain: "article", refId: article.id });
+    url0 = first?.urls?.[0];
+  } catch (e) {
+    if (myGenId !== listenGenId) return;
+    listenLoading = false; updateListenPlayBtn();
+    alert("Could not generate audio: " + e.message);
+    return;
+  } finally {
+    onKokoroColdStart = null; listenLoadingLabel = "Loading…";
+  }
+  if (myGenId !== listenGenId) return;
+  if (!url0) { listenLoading = false; updateListenPlayBtn(); alert("Could not generate audio."); return; }
+
+  // Set up listen state with just chunk 0 loaded (mirrors the batch path's block).
+  listenLoading = false;
+  listenBuffering = false;
+  listenArticle = article;
+  listenAllUrls = [url0];
+  listenTimings = null;              // Kokoro carries no word timings (no highlighting)
+  listenIntroWords = prepared.introWords || 0;
+  listenWordAbsTimes = null;
+  clearWordHighlight();
+  listenChunkDurations = [];
+  listenChunkOffsets = [];
+  listenTotalDuration = 0;
+  showMiniPlayerForArticle(article);
+  listenAudio = ensureListenAudioEl();
+  listenAudio.muted = false;
+  const source = buildTtsSource(article, listenAllUrls);
+  source.expectedSegments = chunks.length; // engine buffers (not ends) if a later chunk lags
+  getMediaEngine().load(source, { autoplay: true });
+  setListenMediaSession(article);
+  measureAppendedListenChunk(url0, 0, myGenId);
+
+  // Stream the rest, appending each chunk as it arrives.
+  for (let i = 1; i < chunks.length; i++) {
+    let url;
+    try {
+      const res = await getVoiceService().synthesize({ text: chunks[i], domain: "article", refId: article.id });
+      url = res?.urls?.[0];
+    } catch (e) {
+      if (myGenId !== listenGenId) return; // superseded/stopped — abandon quietly
+      console.warn("Kokoro chunk", i, "failed:", e?.message);
+      break; // stop synthesizing; the cap below ends playback cleanly at the last good chunk
+    }
+    if (myGenId !== listenGenId) return;
+    if (!url) break;
+    listenAllUrls.push(url);
+    getMediaEngine().appendSegment({ url });
+    measureAppendedListenChunk(url, listenAllUrls.length - 1, myGenId);
+  }
+  // Fewer chunks than expected (a later one failed) → tell the engine the real
+  // total so it ends after the last good chunk instead of buffering forever.
+  if (myGenId === listenGenId && listenAllUrls.length < chunks.length) {
+    getMediaEngine().setExpectedSegments(listenAllUrls.length);
+  }
 }
 
 function setMediaSessionPlaybackState(stateStr) {
@@ -49116,6 +49237,7 @@ function stopListen() {
   clearWordHighlight();
   listenSpeaking = false;
   listenLoading = false;
+  listenBuffering = false;
   updateListenPlayBtn();
   // Hide the bar only if a podcast isn't using it.
   if (!podcastAudio) hideMiniPlayer();
@@ -49126,8 +49248,8 @@ function updateListenPlayBtn() {
   const label = document.getElementById("listenBtnLabel");
   const icon = document.getElementById("listenBtnIcon");
   if (!btn) return;
-  if (listenLoading) {
-    if (label) label.textContent = listenLoadingLabel;
+  if (listenLoading || listenBuffering) {
+    if (label) label.textContent = listenLoading ? listenLoadingLabel : "Buffering…";
     if (icon) icon.innerHTML = `<circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="28" stroke-dashoffset="10"/>`;
     btn.disabled = true;
     return;

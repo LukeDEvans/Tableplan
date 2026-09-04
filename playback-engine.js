@@ -39,9 +39,19 @@ export function createPlaybackEngine({ createAudio } = {}) {
   let segIndex = 0;          // index of the segment currently loaded
   let rate = 1;              // playback rate applied to every segment
   let pendingSeekOffset = 0; // in-segment offset to apply once metadata is ready
+  let waiting = false;       // a segment ended but the NEXT one isn't ready yet
   const listeners = {
-    play: [], pause: [], ended: [], segment: [], timeupdate: [], error: [], loaded: [],
+    play: [], pause: [], ended: [], segment: [], timeupdate: [], error: [], loaded: [], waiting: [],
   };
+
+  // How many segments this source will ultimately have. For a progressive source
+  // (TTS synthesized chunk-by-chunk) the host sets `expectedSegments` up front, so
+  // the engine can WAIT for a not-yet-appended segment instead of ending early.
+  // A normal source omits it and ends when its last present segment finishes.
+  function expectedCount() {
+    if (!source) return 0;
+    return Math.max(source.segments.length, source.expectedSegments || 0);
+  }
 
   function emit(event, payload) {
     (listeners[event] || []).forEach((cb) => { try { cb(payload); } catch { /* listener errors are isolated */ } });
@@ -82,11 +92,19 @@ export function createPlaybackEngine({ createAudio } = {}) {
   function bindSegmentHandlers() {
     const a = el;
     a.onended = () => {
-      // Segment finished: advance to the next, or end the whole source.
-      if (source && segIndex + 1 < source.segments.length) {
-        loadSegment(segIndex + 1, 0, true);
+      // Segment finished: advance to the next, wait for a not-yet-ready one
+      // (progressive TTS), or end the whole source.
+      if (!source) return;
+      const nextIdx = segIndex + 1;
+      if (nextIdx < source.segments.length) {
+        loadSegment(nextIdx, 0, true);
+      } else if (nextIdx < expectedCount()) {
+        // More chunks are still synthesizing — stall here (buffering) rather than
+        // ending. appendSegment() resumes us the moment the next one lands.
+        waiting = true;
+        emit("waiting", { sourceId: source.id, segIndex: nextIdx });
       } else {
-        emit("ended", { sourceId: source && source.id });
+        emit("ended", { sourceId: source.id });
       }
     };
     a.onplay = () => emit("play", snapshot());
@@ -140,6 +158,7 @@ export function createPlaybackEngine({ createAudio } = {}) {
       sourceId: source && source.id,
       providerId: source && source.providerId,
       playing: !!(el && !el.paused && !el.ended),
+      waiting,
       position: logicalPosition(),
       duration: totalDuration(),
       segIndex,
@@ -154,10 +173,33 @@ export function createPlaybackEngine({ createAudio } = {}) {
         throw new Error("load() requires a source with at least one segment");
       }
       source = nextSource;
+      waiting = false;
       if (typeof nextSource.rate === "number") rate = nextSource.rate;
       const start = nextSource.startPosition > 0 ? locate(nextSource.startPosition) : { index: 0, offset: 0 };
       loadSegment(start.index, start.offset, autoplay);
       return snapshot();
+    },
+    // Progressive sources (chunk-by-chunk TTS): append a freshly-synthesized
+    // segment. If playback stalled waiting for exactly this one, resume it.
+    appendSegment(seg) {
+      if (!source || !seg || !seg.url) return snapshot();
+      source.segments.push(seg);
+      if (waiting && source.segments.length - 1 === segIndex + 1) {
+        waiting = false;
+        loadSegment(segIndex + 1, 0, true);
+      }
+      return snapshot();
+    },
+    // Adjust the expected total (e.g. a background chunk failed after retries, so
+    // cap the source at what actually synthesized). If we were stalled past the
+    // new total, end cleanly.
+    setExpectedSegments(n) {
+      if (!source) return;
+      source.expectedSegments = n;
+      if (waiting && segIndex + 1 >= expectedCount()) {
+        waiting = false;
+        emit("ended", { sourceId: source.id });
+      }
     },
     play() { const a = ensureEl(); const p = a.play && a.play(); if (p && typeof p.catch === "function") p.catch(() => {}); },
     pause() { if (el) el.pause(); },
@@ -179,7 +221,7 @@ export function createPlaybackEngine({ createAudio } = {}) {
         el.pause();
         el.onended = el.onplay = el.onpause = el.onerror = el.ontimeupdate = el.onloadedmetadata = null;
       }
-      source = null; segIndex = 0;
+      source = null; segIndex = 0; waiting = false;
     },
     // Host fills in a segment duration once known (e.g. TTS resolves it async),
     // sharpening the seek scale without reloading.

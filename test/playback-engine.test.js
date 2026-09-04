@@ -177,6 +177,78 @@ describe("playback engine — rate, resume location, and duration filling", () =
   });
 });
 
+describe("playback engine — progressive (streaming TTS) source", () => {
+  // A source that will ultimately have 3 segments but starts with only chunk 0.
+  const progressiveSource = () => ({
+    id: "art1", providerId: "tts",
+    segments: [{ url: "c0", duration: 10 }],
+    expectedSegments: 3,
+  });
+
+  it("waits (does not end) when a segment finishes but the next isn't ready", () => {
+    const a = makeFakeAudio();
+    const eng = engineWith(a);
+    const onEnded = vi.fn();
+    const onWaiting = vi.fn();
+    eng.on("ended", onEnded);
+    eng.on("waiting", onWaiting);
+    eng.load(progressiveSource());
+    a._end();                                  // chunk 0 done, chunk 1 not appended yet
+    expect(onEnded).not.toHaveBeenCalled();
+    expect(onWaiting).toHaveBeenCalledWith({ sourceId: "art1", segIndex: 1 });
+    expect(eng.state().waiting).toBe(true);
+  });
+
+  it("resumes automatically when the awaited segment is appended", () => {
+    const a = makeFakeAudio();
+    const eng = engineWith(a);
+    eng.load(progressiveSource());
+    a._end();                                  // stalled, waiting for chunk 1
+    eng.appendSegment({ url: "c1", duration: 20 });
+    expect(a.src).toBe("c1");                   // resumed onto the new chunk
+    expect(a.paused).toBe(false);
+    expect(eng.state().segIndex).toBe(1);
+    expect(eng.state().waiting).toBe(false);
+  });
+
+  it("advances normally when the next segment is appended BEFORE the current ends", () => {
+    const a = makeFakeAudio();
+    const eng = engineWith(a);
+    eng.load(progressiveSource());
+    eng.appendSegment({ url: "c1", duration: 20 }); // arrives early
+    a._end();                                        // chunk 0 ends
+    expect(a.src).toBe("c1");                         // no stall — advanced straight away
+    expect(eng.state().waiting).toBe(false);
+  });
+
+  it("ends only after the final expected segment plays", () => {
+    const a = makeFakeAudio();
+    const eng = engineWith(a);
+    const onEnded = vi.fn();
+    eng.on("ended", onEnded);
+    eng.load(progressiveSource());
+    eng.appendSegment({ url: "c1" });
+    eng.appendSegment({ url: "c2" });           // all 3 now present
+    a._end(); a._end();                          // through 0 and 1
+    expect(onEnded).not.toHaveBeenCalled();
+    a._end();                                    // chunk 2 (the last expected)
+    expect(onEnded).toHaveBeenCalledTimes(1);
+  });
+
+  it("setExpectedSegments caps a source when a later chunk fails, ending cleanly", () => {
+    const a = makeFakeAudio();
+    const eng = engineWith(a);
+    const onEnded = vi.fn();
+    eng.on("ended", onEnded);
+    eng.load(progressiveSource());
+    a._end();                                    // stalled waiting for chunk 1
+    expect(eng.state().waiting).toBe(true);
+    eng.setExpectedSegments(1);                  // nothing more is coming
+    expect(onEnded).toHaveBeenCalledTimes(1);
+    expect(eng.state().waiting).toBe(false);
+  });
+});
+
 describe("playback engine — guards", () => {
   it("requires a createAudio factory", () => {
     expect(() => createPlaybackEngine({})).toThrow(/createAudio/);
