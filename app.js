@@ -1316,6 +1316,7 @@ const elements = {
   scanReceiptImagesBtn: document.querySelector("#scanReceiptImagesBtn"),
   closeReceiptScanBtn: document.querySelector("#closeReceiptScanBtn"),
   receiptReviewForm: document.querySelector("#receiptReviewForm"),
+  receiptReconcileBanner: document.querySelector("#receiptReconcileBanner"),
   receiptStoreName: document.querySelector("#receiptStoreName"),
   receiptStoreId: document.querySelector("#receiptStoreId"),
   receiptPurchaseDate: document.querySelector("#receiptPurchaseDate"),
@@ -2218,6 +2219,7 @@ function bindEvents() {
   elements.receiptImagePreviewList.addEventListener("click", handleReceiptImagePreviewAction);
   elements.scanReceiptImagesBtn.addEventListener("click", scanReceiptImages);
   elements.receiptReviewForm.addEventListener("submit", saveReviewedReceipt);
+  elements.receiptReviewForm.addEventListener("input", refreshReceiptValidation);
   elements.addReceiptLineBtn.addEventListener("click", () => addReceiptReviewLine());
   elements.cancelReceiptReviewBtn.addEventListener("click", () => elements.receiptScanDialog.close());
   elements.groceryLibraryForm.addEventListener("submit", addGroceryLibraryItem);
@@ -23528,6 +23530,34 @@ function renderReceiptReview() {
   elements.receiptTotal.value = receipt.total || "";
   elements.receiptLineList.innerHTML = "";
   receipt.lineItems.forEach((line) => addReceiptReviewLine(line));
+  refreshReceiptValidation();
+}
+
+// Advisory reconciliation/validation banner — reads the current form, validates
+// (pure), and steers the reviewer. Never blocks saving. Per-line flag highlighting
+// builds on receiptValidationFlags (Phase 4).
+let receiptValidationFlags = [];
+function refreshReceiptValidation() {
+  const banner = elements.receiptReconcileBanner;
+  if (!banner || !pendingReceiptDraft) return;
+  let receipt;
+  try { receipt = reviewedReceiptFromForm(); } catch { return; }
+  const v = LiveReceiptDomain.validateReceipt(receipt);
+  receiptValidationFlags = v.flags;
+  const lineIssues = v.flags.filter((f) => f.lineId).length;
+  if (v.reconciles && !v.flags.length) {
+    banner.hidden = false;
+    banner.className = "receipt-reconcile is-ok";
+    banner.textContent = "✓ Line items reconcile with the total.";
+    return;
+  }
+  const parts = [];
+  const totalsFlag = v.flags.find((f) => f.type === "totals-mismatch" || f.type === "subtotal-mismatch");
+  if (totalsFlag) parts.push(totalsFlag.message);
+  if (lineIssues) parts.push(`${lineIssues} line${lineIssues === 1 ? "" : "s"} may need a look.`);
+  banner.hidden = false;
+  banner.className = "receipt-reconcile is-warn";
+  banner.textContent = "⚠ " + (parts.join(" ") || "Double-check the extracted values.");
 }
 
 function matchReceiptStoreId(storeName) {

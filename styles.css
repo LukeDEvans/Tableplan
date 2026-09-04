@@ -7839,6 +7839,25 @@ textarea {
   line-height: 1.4;
 }
 
+.receipt-reconcile {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  border: 1px solid transparent;
+}
+.receipt-reconcile.is-ok {
+  color: #1a7a4b;
+  background: rgba(26, 122, 75, 0.10);
+  border-color: rgba(26, 122, 75, 0.25);
+}
+.receipt-reconcile.is-warn {
+  color: #9a5b00;
+  background: rgba(200, 130, 0, 0.10);
+  border-color: rgba(200, 130, 0, 0.30);
+}
+
 .restore-backup-list-label {
   font-size: 0.75rem;
   font-weight: 700;

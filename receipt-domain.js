@@ -103,6 +103,53 @@ return {
     };
   }
 
+  // Lightweight, PURE validation to steer the reviewer (never blocks saving).
+  // Arithmetic reconciliation + per-line flags. The receipt TOTAL is treated as the
+  // ground truth to reconcile against; tolerance is the greater of an absolute floor
+  // and ±0.5% of the total (rounding/rounding-per-line noise).
+  function validateReceipt(receipt, options = {}) {
+    const tolerance = Number.isFinite(options.tolerance) ? options.tolerance : 0.02;
+    const round2 = (n) => Math.round(n * 100) / 100;
+    const lines = Array.isArray(receipt?.lineItems) ? receipt.lineItems : [];
+    const subtotal = number(receipt?.subtotal);
+    const tax = number(receipt?.tax);
+    const fees = number(receipt?.fees);
+    const discounts = number(receipt?.discounts);
+    const total = number(receipt?.total);
+    const lineSum = round2(lines.reduce((sum, line) => sum + number(line?.totalPrice), 0));
+    const computedTotal = round2(subtotal + tax + fees - discounts);
+    const subtotalDelta = round2(lineSum - subtotal);
+    const totalDelta = round2(computedTotal - total);
+    const tol = Math.max(tolerance, Math.abs(total) * 0.005);
+    const subtotalReconciles = subtotal === 0 || Math.abs(subtotalDelta) <= tol;
+    const reconciles = total === 0 || Math.abs(totalDelta) <= tol;
+
+    const flags = [];
+    if (total > 0 && !reconciles) {
+      flags.push({ type: "totals-mismatch", delta: totalDelta, message: `Subtotal + tax + fees − discounts (${computedTotal.toFixed(2)}) doesn't match the total (${total.toFixed(2)}).` });
+    }
+    if (subtotal > 0 && !subtotalReconciles) {
+      flags.push({ type: "subtotal-mismatch", delta: subtotalDelta, message: `Line items add to ${lineSum.toFixed(2)} but the subtotal says ${subtotal.toFixed(2)}.` });
+    }
+    const seen = new Set();
+    lines.forEach((line) => {
+      const name = text(line?.normalizedName || line?.rawText) || "This line";
+      const price = number(line?.totalPrice);
+      const qty = number(line?.quantity, 1);
+      if (price === 0 && number(line?.discountAmount) === 0) flags.push({ type: "missing-price", lineId: line?.id, message: `${name} has no price.` });
+      if (price < 0) flags.push({ type: "negative-line", lineId: line?.id, message: `${name} has a negative price — a discount or refund?` });
+      if (qty <= 0) flags.push({ type: "bad-quantity", lineId: line?.id, message: `${name} has quantity ${line?.quantity}.` });
+      if (number(line?.confidenceScore, 1) < 0.6 && !line?.userCorrected) flags.push({ type: "low-confidence", lineId: line?.id, message: `${name} was read with low confidence.` });
+      const key = `${normalizedName(line?.rawText)}|${price}`;
+      if (normalizedName(line?.rawText) && price !== 0) {
+        if (seen.has(key)) flags.push({ type: "duplicate", lineId: line?.id, message: `${name} looks like a duplicate line.` });
+        else seen.add(key);
+      }
+    });
+
+    return { reconciles, subtotalReconciles, lineSum, computedTotal, subtotalDelta, totalDelta, flags };
+  }
+
   function normalizeMappings(mappings) {
     const result = {};
     Object.entries(mappings && typeof mappings === "object" ? mappings : {}).forEach(([raw, mapping]) => {
@@ -207,6 +254,7 @@ return {
 export {
     normalizeReceipt,
     normalizeReceiptLineItem,
+    validateReceipt,
     normalizeMappings,
     applyReceiptMappings,
     correctedMappingsFromReceipt,
