@@ -15,7 +15,7 @@ const C = {
 // ── hero primitives (120×120 canvas) ─────────────────────────────────────────
 const SUN = `<circle cx="58" cy="50" r="19" fill="${C.sun}"/><g stroke="${C.ray}" stroke-width="3.4" stroke-linecap="round">
   <line x1="58" y1="18" x2="58" y2="9"/><line x1="58" y1="91" x2="58" y2="82"/><line x1="26" y1="50" x2="17" y2="50"/><line x1="99" y1="50" x2="90" y2="50"/>
-  <line x1="35" y1="27" x2="29" y2="21"/><line x1="87" y1="27" x2="81" y2="21"/><line x1="35" y1="73" x2="29" y2="79"/><line x1="87" y1="73" x2="81" y2="79"/></g>`;
+  <line x1="35" y1="27" x2="29" y2="21"/><line x1="81" y1="27" x2="87" y2="21"/><line x1="35" y1="73" x2="29" y2="79"/><line x1="81" y1="73" x2="87" y2="79"/></g>`;
 const MOON = `<path d="M78 30 a26 26 0 1 0 16 44 a22 22 0 0 1 -16 -44z" fill="${C.moon}"/>
   <circle cx="40" cy="30" r="1.7" fill="${C.moon}"/><circle cx="28" cy="46" r="1.3" fill="${C.moon}"/><circle cx="50" cy="20" r="1.2" fill="${C.moon}"/>`;
 // a soft cloud centred lower-right; `f` = fill

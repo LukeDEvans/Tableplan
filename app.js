@@ -11433,7 +11433,6 @@ function wxHero(s, c, cond) {
     <section class="wx-card wx-hero wx-span ${wxHeroMood(cond)}">
       ${heroArtSvg(cond.key, cond.isDay)}
       <div class="wx-hero-inner">
-        <button class="wx-hero-loc" type="button" data-wx-action="toggle-picker">◎ ${escapeHtml(wxShortLoc(s.location?.label || ""))} ▾</button>
         <div class="wx-hero-obs">${obs}</div>
         <div class="wx-temp">${c.temperatureF != null ? Math.round(c.temperatureF) : "—"}<sup>°F</sup></div>
         <div class="wx-hero-cond">${escapeHtml(condLabel)}</div>

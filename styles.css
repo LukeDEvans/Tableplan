@@ -21668,8 +21668,17 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   --wx-night1:#0f1a2e; --wx-night2:#243a56; --wx-night-ink:#eaf1fb;
   --wx-storm1:#2a343d; --wx-storm2:#3c4a55; --wx-storm-ink:#f3f6f9; }
 
-/* header */
-.wx-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+/* header — pinned to the top of the scrolling page so the location stays visible.
+   The page's top padding moves onto the header so nothing peeks above it. */
+.weather-page-inner { padding-top: 0; }
+.wx-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  position: sticky; top: 0; z-index: 30;
+  background: var(--window-bg);
+  padding: 14px 0 10px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 9%, transparent);
+}
 .wx-header-loc { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .wx-add-btn { flex: 0 0 auto; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--window-border); background: none; color: var(--window-border); border-radius: 50%; font-size: 1.25rem; line-height: 1; font-weight: 400; cursor: pointer; padding: 0; }
 .wx-add-btn:hover { background: color-mix(in srgb, var(--window-border) 10%, transparent); }
