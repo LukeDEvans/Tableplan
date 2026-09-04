@@ -86,7 +86,13 @@ return {
   function normalizeReceiptLineItem(line, receiptId, createId = defaultId) {
     const quantity = Math.max(0, number(line?.quantity, 1));
     const totalPrice = number(line?.totalPrice ?? line?.price);
-    const unitPrice = number(line?.unitPrice, quantity > 0 ? totalPrice / quantity : totalPrice);
+    // Derive unitPrice from total/qty whenever a real one wasn't provided. (number()
+    // can't fall back here: an absent/empty unitPrice parses to 0, which is finite —
+    // so a missing unitPrice must be detected explicitly, not via the fallback arg.)
+    const providedUnitPrice = number(line?.unitPrice);
+    const unitPrice = providedUnitPrice > 0
+      ? providedUnitPrice
+      : (quantity > 0 ? totalPrice / quantity : totalPrice);
 return {
       id: text(line?.id) || createId("receipt-line"),
       receiptId,
