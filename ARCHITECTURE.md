@@ -130,6 +130,20 @@ several domains model them ad hoc inside the state blob.
   handles errors, and returns a normalized shape.
 - Client providers take an **injected `fetchJson`** and are pure/testable (see the
   `media-*` and `music-*` providers — the reference pattern).
+- **Document scanning** (`document-scan.js`, the `document-scan` capability) is the
+  ONE vision-extraction seam behind every "image/PDF → structured JSON" scanner:
+  `scanDocument({items, prompt, options})` makes the single Anthropic vision call and
+  returns the intermediate `{rawText, model}`; each domain owns only a thin adapter
+  (prompt + normalizer) — `receipt-scan.js`, `recipe-scan.js`, `booking-scan.js`,
+  `article-scan.js`. This is the "Document → Text → Specialized Parser" foundation and
+  the image-source sibling of the URL **import gateway** (and the iOS ingestion path,
+  since Web Share Target is iOS-absent). Adding a new scan type = a prompt + a
+  normalizer + a thin auth-gated `scan-*` function; no new plumbing. Source images are
+  preserved in the content store (`scan-content.js`), the raw output is kept
+  independent of the parse (re-parse without a rescan), and corrections never
+  overwrite the source (`rawText` + `userCorrected`). A local/native OCR provider is a
+  planned slot behind the seam (`local-ocr` capability) — no reliable iOS-PWA local OCR
+  exists today, so cloud vision stays the accurate default.
 - Store external IDs on the canonical record (`meta.tmdbId`, `ProviderIds.Tmdb`).
 - **Retries must be bounded** and must never re-enter a webhook/notification loop
   (see §8). Prefer "return empty on missing config" over erroring (YouTube proxy).

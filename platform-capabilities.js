@@ -28,7 +28,7 @@ export const PLATFORM_CAPABILITIES = [
     consumers: ["recipes", "articles", "chrome-extension", "web-share"], status: "stable",
     description: "One SSRF-guarded gateway: acquire → detect → extract → contract, many acquisition clients." },
   { id: "document-scan",   label: "Document text extraction (scan)", module: "document-scan.js",
-    consumers: ["receipts", "recipes", "bookings", "future: articles"], status: "stable",
+    consumers: ["receipts", "recipes", "bookings", "articles (extractor ready, UI pending)"], status: "stable",
     description: "One vision-extraction seam: image/PDF → raw output → a domain parser. The image-source sibling of `import` (URL source) — the natural iOS ingestion path (Web Share Target is iOS-absent). Domains own only their prompt + normalizer." },
   { id: "local-ocr",       label: "On-device text recognition", module: "document-scan.js (provider slot)",
     consumers: ["future: receipts", "future: recipes"], status: "planned",
