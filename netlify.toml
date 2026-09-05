@@ -26,6 +26,11 @@
 [functions."kokoro-tts"]
   included_files = ["kokoro-core.mjs"]
 
+# tts-cache-cleanup imports the sweep + voice/key modules; bundle them + run weekly.
+[functions."tts-cache-cleanup"]
+  schedule = "0 9 * * 0"
+  included_files = ["tts-cache-sweep.mjs", "tts-article-text.mjs", "tts-cache-identity.js", "kokoro-core.mjs", "voice-prefs.js", "voice-registry.js", "tts-provider.js"]
+
 [functions."scheduled-email"]
   schedule = "*/15 * * * *"
 
