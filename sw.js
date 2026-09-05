@@ -1,4 +1,4 @@
-const CACHE = "live-v26";
+const CACHE = "live-v27";
 const PRECACHE = ["/", "/favicon.svg"];
 // Weather map tiles / radar frames must never be cached here (they'd bloat the
 // cache and serve stale radar) — pass them straight through to the network.

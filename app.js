@@ -619,6 +619,9 @@ const collapsedShowtimes = new Set();
 const showtimesCache = Object.assign({}, state.watchShowtimesData || {});  // itemId → { data, fetchedAt }
 let activeWatchCategory = "all";
 let watchCategoryInputActive = false;
+// Poster-grid: which card is tapped-open into its full-width detail row (providers,
+// episode tracking). One at a time; null = grid is all clean posters.
+let expandedWatchItemId = null;
 let watchLogPendingId = null;
 let watchLogRating = null;
 let watchLogEditMode = false;
@@ -34406,6 +34409,7 @@ function renderWatchPlanner() {
     btn.addEventListener("click", () => {
       activeWatchCategory = btn.dataset.watchCategory;
       watchCategoryInputActive = false;
+      expandedWatchItemId = null;
       renderWatchPlanner();
     });
     btn.addEventListener("dragover", (e) => {
@@ -34524,13 +34528,65 @@ function watchScheduledItemTemplate(item, dayId) {
   `;
 }
 
-// Poster placeholder for items without TMDB art — a centered glyph on a tinted
-// ground instead of a blank grey rectangle (which read as a broken image).
-function watchPosterPlaceholder(type) {
-  const icon = type === "tv"
+// Poster glyph for items without TMDB art — a film/TV mark instead of a blank
+// rectangle (which read as a broken image).
+function watchPosterGlyph(type) {
+  return type === "tv"
     ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="m8 3 4 4 4-4"/></svg>`
     : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4 5 20M17 4l2 16M3 9h18M3 15h18"/></svg>`;
-  return `<div class="watch-item-poster watch-item-poster-placeholder" data-poster-type="${escapeHtml(type || "movie")}">${icon}</div>`;
+}
+// Used by the scheduled-item (day column) card, which keeps its horizontal layout.
+function watchPosterPlaceholder(type) {
+  return `<div class="watch-item-poster watch-item-poster-placeholder" data-poster-type="${escapeHtml(type || "movie")}">${watchPosterGlyph(type)}</div>`;
+}
+
+// Compact availability hint shown on the poster (full provider list lives in the
+// expanded detail row). Kept deliberately short — it's a glance, not the detail.
+function watchAvailChip(item) {
+  if (item.inTheaters) return { label: "In theaters", cls: "theater" };
+  if (item.theatricalReleaseDate && !item.inTheaters) return { label: "Upcoming", cls: "theater" };
+  const p = item.streamingProviders;
+  if (!p) return null;
+  const free = [...(p.flatrate || []), ...(p.free || []), ...(p.ads || [])];
+  if (free.length) return { label: free[0].provider_name, cls: "stream" };
+  if ((p.rent || []).length) return { label: "Rent", cls: "rent" };
+  return null;
+}
+
+// TV watch progress as a 0–100 percent (or null when nothing is tracked yet),
+// mirroring the per-season counting in watchSeasonTemplate.
+function watchProgressPct(item) {
+  if (item.type !== "tv") return null;
+  const progress = item.seasonProgress || {};
+  const seasons = item.totalSeasons
+    ? Array.from({ length: item.totalSeasons }, (_, i) => i + 1)
+    : Object.keys(progress).map(Number);
+  let watched = 0, total = 0;
+  for (const s of seasons) {
+    const sd = progress[s] || {};
+    const eps = item.episodeData?.[s] || [];
+    const epTotal = eps.length || Object.keys(sd.episodes || {}).length;
+    const epWatched = Object.values(sd.episodes || {}).filter(Boolean).length;
+    if (sd.watched && epTotal) { watched += epTotal; total += epTotal; }
+    else { watched += epWatched; total += epTotal; }
+  }
+  if (!total) return null;
+  return Math.round((watched / total) * 100);
+}
+
+// One-line meta under the poster: year · runtime (movie) or year · seasons (tv).
+function watchCardSub(item) {
+  const bits = [];
+  if (item.year) bits.push(String(item.year));
+  if (item.type === "movie") {
+    const rt = formatWatchRuntime(item.runtime);
+    if (rt) bits.push(rt);
+  } else if (item.totalSeasons) {
+    bits.push(`${item.totalSeasons} season${item.totalSeasons !== 1 ? "s" : ""}`);
+  } else if (item.totalEpisodes) {
+    bits.push(`${item.totalEpisodes} eps`);
+  }
+  return bits.join(" · ");
 }
 
 function watchListTemplate() {
@@ -34583,7 +34639,7 @@ function watchSectionTemplate(label, items) {
         <svg class="watch-section-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
         <span>${escapeHtml(label)}</span>
       </button>
-      ${collapsed ? "" : `<div class="watch-item-list">${items.map((item) => watchItemTemplate(item)).join("")}</div>`}
+      ${collapsed ? "" : `<div class="watch-item-list watch-grid">${items.map((item) => watchItemTemplate(item)).join("")}</div>`}
     </div>
   `;
 }
@@ -34781,36 +34837,48 @@ function isWatchItemScheduled(id) {
 }
 
 function watchItemTemplate(item) {
-  const providerHtml = watchProviderOrShowtimesHtml(item);
+  const expanded = expandedWatchItemId === item.id;
+  const posterUrl = item.posterPath ? `https://image.tmdb.org/t/p/w342${item.posterPath}` : null;
+  const chip = watchAvailChip(item);
+  const pct = watchProgressPct(item);
+  const isTv = item.type === "tv";
 
-  const episodeProgressHtml = item.type === "tv" ? watchEpisodeProgressHtml(item) : "";
+  const posterInner = posterUrl
+    ? `<img class="watch-poster-img" src="${escapeHtml(posterUrl)}" alt="" aria-hidden="true" loading="lazy" />`
+    : watchPosterGlyph(item.type);
 
-  const posterUrl = item.posterPath ? `https://image.tmdb.org/t/p/w185${item.posterPath}` : null;
-  const posterHtml = posterUrl
-    ? `<img class="watch-item-poster" src="${escapeHtml(posterUrl)}" alt="" aria-hidden="true" loading="lazy" />`
-    : watchPosterPlaceholder(item.type);
-
-  return `
-    <article class="do-task-item watch-item" data-watch-item="${escapeHtml(item.id)}">
-      <div class="watch-item-layout">
-        ${posterHtml}
-        <div class="watch-item-main">
-          <div class="watch-item-row">
-            <div class="watch-item-title-group">
-              <span class="watch-item-title">${escapeHtml(item.title)}</span>
-              ${item.year ? `<span class="watch-item-year">${escapeHtml(item.year)}</span>` : ""}
-            </div>
-            <span class="watch-type-badge watch-type-${escapeHtml(item.type)}">${item.type === "tv" ? "TV" : "M"}</span>
-          </div>
-          ${watchItemMetaHtml(item)}
-          ${providerHtml}
-          ${!item.streamingProviders && !item.inTheaters && !item.theatricalReleaseDate && item.tmdbId ? `<button class="watch-load-providers-btn secondary-btn compact-btn" type="button" data-watch-load-providers="${escapeHtml(item.id)}">Load streaming info</button>` : ""}
-          ${!item.tmdbId ? `<button class="watch-find-btn secondary-btn compact-btn" type="button" data-watch-find="${escapeHtml(item.id)}">Find on TMDB</button>` : ""}
-          ${episodeProgressHtml}
-        </div>
+  const sub = watchCardSub(item);
+  const card = `
+    <article class="do-task-item watch-item watch-card${expanded ? " is-expanded" : ""}" data-watch-item="${escapeHtml(item.id)}" aria-expanded="${expanded}" tabindex="0">
+      <div class="watch-poster${posterUrl ? "" : " watch-poster--ph"}">
+        <span class="watch-badge watch-badge--${isTv ? "tv" : "movie"}">${isTv ? "TV" : "M"}</span>
+        ${chip ? `<span class="watch-avail watch-avail--${chip.cls}">${escapeHtml(chip.label)}</span>` : ""}
+        ${posterInner}
+        ${pct != null ? `<div class="watch-progress" aria-hidden="true"><i style="width:${pct}%"></i></div>` : ""}
+      </div>
+      <div class="watch-card-meta">
+        <span class="watch-card-title">${escapeHtml(item.title)}</span>
+        ${sub ? `<span class="watch-card-sub">${escapeHtml(sub)}</span>` : ""}
       </div>
     </article>
   `;
+  if (!expanded) return card;
+
+  // Full-width detail row (spans the grid) with the controls that used to crowd
+  // the card: providers/showtimes/hub-play, load-info/find, and TV episode tracking.
+  const providerHtml = watchProviderOrShowtimesHtml(item);
+  const episodeProgressHtml = isTv ? watchEpisodeProgressHtml(item) : "";
+  const detail = `
+    <div class="watch-detail-row" data-watch-detail="${escapeHtml(item.id)}">
+      <div class="watch-detail-inner">
+        ${providerHtml}
+        ${!item.streamingProviders && !item.inTheaters && !item.theatricalReleaseDate && item.tmdbId ? `<button class="watch-load-providers-btn secondary-btn compact-btn" type="button" data-watch-load-providers="${escapeHtml(item.id)}">Load streaming info</button>` : ""}
+        ${!item.tmdbId ? `<button class="watch-find-btn secondary-btn compact-btn" type="button" data-watch-find="${escapeHtml(item.id)}">Find on TMDB</button>` : ""}
+        ${episodeProgressHtml}
+      </div>
+    </div>
+  `;
+  return card + detail;
 }
 
 function watchEpisodeProgressHtml(item) {
@@ -34939,7 +35007,19 @@ function bindWatchControls(root = document) {
   root.querySelectorAll("[data-watch-expand-seasons]").forEach((btn) => {
     btn.addEventListener("click", () => initWatchSeasonTracking(btn.dataset.watchExpandSeasons));
   });
-  root.querySelectorAll("[data-watch-item]").forEach((a) => a.addEventListener("contextmenu", openWatchItemMenu));
+  root.querySelectorAll("[data-watch-item]").forEach((a) => {
+    a.addEventListener("contextmenu", openWatchItemMenu);
+    // Tap a poster → toggle its full-width detail row. A real drag suppresses the
+    // click (sortable's suppressClickOnce), so dragging to a tab never expands.
+    const toggle = () => {
+      expandedWatchItemId = expandedWatchItemId === a.dataset.watchItem ? null : a.dataset.watchItem;
+      renderWatchPlanner();
+    };
+    a.addEventListener("click", toggle);
+    a.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+    });
+  });
   root.querySelectorAll("[data-watch-scheduled]").forEach((a) => a.addEventListener("contextmenu", openWatchScheduledMenu));
   // Watch item move — shared sortable primitive (move mode). Library + scheduled items
   // drop onto a category tab (categorize), a day-tab/day-list (schedule/reschedule), or
