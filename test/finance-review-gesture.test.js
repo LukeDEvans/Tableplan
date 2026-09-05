@@ -18,14 +18,17 @@ describe("reviewGestureAction — SAFETY: vertical/left never approve", () => {
     expect(reviewGestureAction("x", 200)).toBe("approve");
     expect(reviewGestureAction("x", REVIEW_GESTURE.approveThresholdPx)).toBe("approve");
   });
-  it("NEVER approves on the vertical axis, even with a huge dx (diagonal finish)", () => {
+  it("NEVER approves or dismisses on the vertical axis, even with a huge dx (diagonal finish)", () => {
     expect(reviewGestureAction("y", 500)).toBe("browse");
     expect(reviewGestureAction("y", -500)).toBe("browse");
     expect(reviewGestureAction("y", 0)).toBe("browse");
   });
-  it("NEVER approves on a leftward horizontal drag (no-op)", () => {
-    expect(reviewGestureAction("x", -200)).toBe("none");
-    expect(reviewGestureAction("x", -1)).toBe("none");
+  it("NEVER approves on a leftward horizontal drag — a decisive left dismisses instead", () => {
+    expect(reviewGestureAction("x", -200)).toBe("dismiss");
+    expect(reviewGestureAction("x", REVIEW_GESTURE.dismissThresholdPx * -1)).toBe("dismiss");
+    expect(reviewGestureAction("x", -1)).toBe("none"); // too small either way
+    // never approve leftward, at any magnitude
+    expect(reviewGestureAction("x", -5000)).not.toBe("approve");
   });
   it("does not approve a horizontal-right drag that is too small", () => {
     expect(reviewGestureAction("x", 50)).toBe("none");

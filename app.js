@@ -316,7 +316,7 @@ const STATE_SECTIONS = {
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices"],
   contacts:  ["contacts", "contactGroups"],
 };
@@ -4384,6 +4384,11 @@ function defaultState() {
     // unlabeled charges drop out of the "to label" notifications.
     financeLabelSkips: {},
     financeLabelSnoozes: {},
+    // Notifications swipe-deck: transactions swiped LEFT are removed from the
+    // deck (id -> true) but keep a red "needs confirming" dot on the txn list;
+    // the dot clears only when the id is explicitly confirmed (financeTxnConfirmed).
+    financeNotifDismissed: {},
+    financeTxnConfirmed: {},
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -4566,6 +4571,8 @@ function normalizeState(parsed) {
     financeDismissedAlerts: (parsed?.financeDismissedAlerts && typeof parsed.financeDismissedAlerts === "object") ? parsed.financeDismissedAlerts : {},
     financeLabelSkips: (parsed?.financeLabelSkips && typeof parsed.financeLabelSkips === "object") ? parsed.financeLabelSkips : {},
     financeLabelSnoozes: (parsed?.financeLabelSnoozes && typeof parsed.financeLabelSnoozes === "object") ? parsed.financeLabelSnoozes : {},
+    financeNotifDismissed: (parsed?.financeNotifDismissed && typeof parsed.financeNotifDismissed === "object") ? parsed.financeNotifDismissed : {},
+    financeTxnConfirmed: (parsed?.financeTxnConfirmed && typeof parsed.financeTxnConfirmed === "object") ? parsed.financeTxnConfirmed : {},
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
@@ -6519,6 +6526,7 @@ function mergeStates(newer, older) {
     "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeMerchantNames",
     "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts",
     "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes",
+    "financeNotifDismissed", "financeTxnConfirmed",
     "articleNotifications",
   ]) {
     merged[key] = unionByKey(newer[key], older[key]);
@@ -8824,10 +8832,12 @@ function financeRecurringAlerts() {
 function financeUnlabeledByMerchant(txns) {
   const skips = (state.financeLabelSkips && typeof state.financeLabelSkips === "object") ? state.financeLabelSkips : {};
   const snoozes = (state.financeLabelSnoozes && typeof state.financeLabelSnoozes === "object") ? state.financeLabelSnoozes : {};
+  const dismissed = (state.financeNotifDismissed && typeof state.financeNotifDismissed === "object") ? state.financeNotifDismissed : {};
   const today = dateKeyFromDate(new Date());
   const byKey = new Map();
   for (const t of (txns || [])) {
     if (t.label) continue;
+    if (dismissed[t.id]) continue; // swiped left out of the notifications deck (keeps its red list dot until confirmed)
     const k = financeMerchantKey(t.description) || `id:${t.id}`;
     if (skips[k]) continue; // user chose to skip labeling this merchant's charges
     if (snoozes[k] === today) continue; // snoozed for today — returns tomorrow
@@ -8857,21 +8867,55 @@ function financeSnoozeLabelGroup(key) {
   persist();
 }
 
+// Swipe LEFT on a transaction card: drop every unlabeled charge from this
+// merchant group out of the notifications deck, but leave a red "needs
+// confirming" dot on each one's row in the Transactions list. The dot persists
+// (even once the txn is later labeled) until the row is explicitly confirmed.
+function financeDismissNotifGroup(key, repId) {
+  if (!state.financeNotifDismissed || typeof state.financeNotifDismissed !== "object") state.financeNotifDismissed = {};
+  const ids = new Set();
+  if (repId) ids.add(repId);
+  for (const t of financeLabeledTxns()) {
+    if (t.label) continue;
+    const k = financeMerchantKey(t.description) || `id:${t.id}`;
+    if (k === key) ids.add(t.id);
+  }
+  for (const id of ids) state.financeNotifDismissed[id] = true;
+  persist();
+  setPageNotifCount("finance", financeBellCount());
+}
+
+// Manual confirm from the Transactions list — clears the red "needs confirming"
+// dot for one transaction (the dot only clears on an explicit confirm).
+function financeConfirmTxn(id) {
+  if (!id) return;
+  if (!state.financeTxnConfirmed || typeof state.financeTxnConfirmed !== "object") state.financeTxnConfirmed = {};
+  state.financeTxnConfirmed[id] = true;
+  persist();
+}
+
+// A transaction that was swiped out of the deck and not yet confirmed → shows a
+// red, click-to-confirm dot on its list row.
+function financeTxnNeedsConfirm(t) {
+  const d = state.financeNotifDismissed, c = state.financeTxnConfirmed;
+  return !!(d && d[t.id]) && !(c && c[t.id]);
+}
+
 function financeReviewGroups() {
   return financeUnlabeledByMerchant(financeLabeledTxns());
 }
 
 function openFinanceTxnReview() {
-  if (!financeReviewGroups().length) { showMailToast("Everything is labeled."); return; }
+  if (!financeReviewGroups().length && !financeNotifDeckAlertsHtml()) { showMailToast("You're all caught up."); return; }
   financeNotifOpen = false;
   document.getElementById("finReviewOverlay")?.remove();
   const overlay = document.createElement("div");
   overlay.id = "finReviewOverlay";
   overlay.className = "fin-review-overlay";
   overlay.innerHTML = `
-    <div class="fin-review-modal" role="dialog" aria-modal="true" aria-label="Review transactions">
+    <div class="fin-review-modal" role="dialog" aria-modal="true" aria-label="Finance notifications">
       <div class="fin-review-head">
-        <span class="fin-review-title">Review transactions</span>
+        <span class="fin-review-title">Notifications</span>
         <span class="fin-review-count" data-fin-review-count aria-live="polite"></span>
         <button class="fin-review-close" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
@@ -8889,14 +8933,77 @@ function openFinanceTxnReview() {
   overlay.querySelector("[data-fin-review-deck]")?.focus();
 }
 
+// Non-transaction notifications rendered as their own (non-swipeable) cards at
+// the top of the deck. They reuse the finance page's own action/select handlers
+// (delegated in wireFinanceReviewDeck), so their buttons behave exactly as before.
+function financeNotifAlertCardWrap(kicker, body) {
+  return `
+    <div class="fin-notif-card fin-notif-alert-card">
+      <div class="fin-review-card-inner">
+        <div class="fin-review-body">
+          <div class="fin-notif-alert-kicker">${escapeHtml(kicker)}</div>
+          ${body}
+        </div>
+        <div class="fin-review-hint" aria-hidden="true"><span>↑ ↓ browse</span></div>
+      </div>
+    </div>`;
+}
+function financeRecurringAlertCardHtml(a) {
+  let body;
+  if (a.kind === "new") {
+    body = `
+      <div class="fin-alert-text">New recurring charge: <b>${escapeHtml(a.r.name)}</b> · ${formatFinMoney(a.r.lastAmount)} around day ${a.r.expectedDay}</div>
+      <div class="fin-item-row fin-item-row--tools">
+        <select class="fin-scenario-select fin-editor-select" data-fin-edit="recurring-link" data-id="${a.r.id}" aria-label="Budget line for ${escapeHtml(a.r.name)}">
+          <option value="">link to budget line…</option>
+          ${financeLineItemOptionsHtml("")}
+        </select>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-ignore" data-id="${a.r.id}">Ignore</button>
+        <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="recurring-not" data-id="${a.r.id}">Not recurring</button>
+      </div>`;
+  } else if (a.kind === "price") {
+    body = `
+      <div class="fin-alert-text"><b>${escapeHtml(a.r.name)}</b> charged ${formatFinMoney(a.r.lastAmount)} — the "${escapeHtml(a.li.c.name)} · ${escapeHtml(a.li.it.name)}" line budgets ${formatFinMoney(a.li.it.amount)}</div>
+      <div class="fin-item-row fin-item-row--tools">
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-price-update" data-id="${a.r.id}">Update line to ${formatFinMoney(a.r.lastAmount)}</button>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-price-keep" data-id="${a.r.id}">Keep budget</button>
+      </div>`;
+  } else {
+    body = `
+      <div class="fin-alert-text"><b>${escapeHtml(a.r.name)}</b> (~day ${a.r.expectedDay}, usually ${formatFinMoney(a.r.lastAmount)}) hasn't appeared this month</div>
+      <div class="fin-item-row fin-item-row--tools">
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-miss-dismiss" data-id="${a.r.id}">Dismiss</button>
+      </div>`;
+  }
+  return financeNotifAlertCardWrap("Recurring charge", body);
+}
+function financeAttentionCardHtml(a) {
+  const body = `
+    <div class="fin-alert-text"><b>${escapeHtml(a.label)}</b> — ${escapeHtml(a.detail)}</div>
+    <div class="fin-item-row fin-item-row--tools">
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="dismiss-alert" data-key="${escapeHtml(a.key)}">Dismiss</button>
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-finance-settings">Open bank settings</button>
+    </div>`;
+  return financeNotifAlertCardWrap("Account needs attention", body);
+}
+function financeNotifDeckAlertsHtml() {
+  const attention = financeAccountsNeedingAttention();
+  const recAlerts = financeRecurringAlerts();
+  return [
+    ...attention.slice(0, 8).map(financeAttentionCardHtml),
+    ...recAlerts.slice(0, 8).map(financeRecurringAlertCardHtml),
+  ].join("");
+}
+
 function renderFinanceReviewDeck() {
   const deck = document.querySelector("[data-fin-review-deck]");
   if (!deck) return;
   const groups = financeReviewGroups();
-  if (!groups.length) { updateFinanceReviewProgress(deck); return; } // paints the caught-up state
+  const alertsHtml = financeNotifDeckAlertsHtml();
+  if (!groups.length && !alertsHtml) { updateFinanceReviewProgress(deck); return; } // paints the caught-up state
   const names = state.financeMerchantNames || {};
   const noteOverrides = state.financeTxnNoteOverrides || {};
-  deck.innerHTML = groups.map((g) => {
+  deck.innerHTML = alertsHtml + groups.map((g) => {
     const t = g.rep;
     const mKey = financeMerchantKey(t.description);
     const nameVal = names[mKey] || "";
@@ -8908,7 +9015,8 @@ function renderFinanceReviewDeck() {
     const merchantTitle = nameVal || t.description || "Transaction";
     const showRaw = nameVal && nameVal !== t.description; // renamed → surface the original bank text
     return `
-    <div class="fin-review-card" data-review-key="${escapeHtml(g.key)}" data-txn-id="${escapeHtml(t.id)}">
+    <div class="fin-review-card fin-notif-card" data-review-key="${escapeHtml(g.key)}" data-txn-id="${escapeHtml(t.id)}">
+      <div class="fin-review-action fin-review-action-dismiss" aria-hidden="true">Skip ✕</div>
       <div class="fin-review-action fin-review-action-done" aria-hidden="true">✓ Approve</div>
       <div class="fin-review-card-inner">
         <div class="fin-review-body">
@@ -8933,10 +9041,10 @@ function renderFinanceReviewDeck() {
           <div class="fin-review-actions">
             <button class="fin-review-approve" type="button" data-fin-review-approve>✓ Approve</button>
             <button class="fin-review-secondary" type="button" data-fin-review-more>Edit details…</button>
-            <button class="fin-review-secondary" type="button" data-fin-review-skip>Skip for now</button>
+            <button class="fin-review-secondary" type="button" data-fin-review-skip title="Remove from notifications; keeps a red dot on the transaction until you confirm it">Skip</button>
           </div>
         </div>
-        <div class="fin-review-hint" aria-hidden="true"><span>↑ ↓ browse</span><span>swipe right to approve →</span></div>
+        <div class="fin-review-hint" aria-hidden="true"><span>← skip</span><span>↑ ↓ browse</span><span>approve →</span></div>
       </div>
     </div>`;
   }).join("");
@@ -8948,13 +9056,13 @@ function renderFinanceReviewDeck() {
 function updateFinanceReviewProgress(deck) {
   deck = deck || document.querySelector("[data-fin-review-deck]");
   if (!deck) return;
-  const cards = [...deck.querySelectorAll(".fin-review-card")];
+  const cards = [...deck.querySelectorAll(".fin-notif-card")];
   const countEl = document.querySelector("[data-fin-review-count]");
   if (!cards.length) {
     deck.innerHTML = `<div class="fin-review-empty">
       <div class="fin-review-empty-check" aria-hidden="true">✓</div>
       <div class="fin-review-empty-title">All caught up</div>
-      <div class="fin-review-empty-sub">You've reviewed every transaction that needed attention.</div>
+      <div class="fin-review-empty-sub">You've cleared every finance notification.</div>
       <button class="fin-review-approve" type="button" data-fin-review-close>Back to Transactions</button>
     </div>`;
     if (countEl) countEl.textContent = "";
@@ -8975,12 +9083,22 @@ function finishFinanceReviewCard(card, kind) {
   const done = () => { card.remove(); updateFinanceReviewProgress(deck); };
   if (inner && !finReviewReduceMotion()) {
     inner.style.transition = "transform 0.22s ease, opacity 0.22s ease";
-    inner.style.transform = kind === "approve" ? "translateX(120%) rotate(6deg)" : "scale(0.96)";
+    inner.style.transform = kind === "approve" ? "translateX(120%) rotate(6deg)"
+      : kind === "dismiss" ? "translateX(-120%) rotate(-6deg)"
+      : "scale(0.96)";
     inner.style.opacity = "0";
     setTimeout(done, 210);
   } else {
     done();
   }
+}
+
+// Swipe LEFT: drop this transaction group from the notifications deck. Its list
+// rows keep a red "needs confirming" dot until each is explicitly confirmed.
+function dismissFinanceReviewCard(card) {
+  if (!card) return;
+  financeDismissNotifGroup(card.dataset.reviewKey, card.dataset.txnId);
+  finishFinanceReviewCard(card, "dismiss");
 }
 
 // Approve = commit this review card and drop it from the queue. Requires a
@@ -9030,9 +9148,9 @@ function approveFinanceReviewCard(card) {
 }
 
 function skipFinanceReviewCard(card) {
-  if (!card) return;
-  financeSnoozeLabelGroup(card.dataset.reviewKey); // returns tomorrow; not an approval
-  finishFinanceReviewCard(card, "skip");
+  // The "Skip" button mirrors a left swipe: drop it from notifications and leave
+  // a red confirming-dot on the list (not a same-day snooze).
+  dismissFinanceReviewCard(card);
 }
 
 // "Edit details…" hands off to the existing main-list detail card, which owns
@@ -9119,6 +9237,19 @@ function wireFinanceReviewDeck(overlay) {
     if (e.target.closest("[data-fin-review-return]")) { handoffFinanceReviewCard(card, "return"); return; }
   });
 
+  // Alert cards (account/recurring) reuse the finance page's own handlers. After
+  // an action resolves the alert, drop its card from the deck (advance). The
+  // change path covers the "link to budget line" select.
+  const advanceAlertCard = (e, handler) => {
+    const alertCard = e.target.closest(".fin-notif-alert-card");
+    if (!alertCard || !e.target.closest("[data-fin-action], [data-fin-edit]")) return;
+    handler(e);
+    alertCard.remove();
+    updateFinanceReviewProgress(deck);
+  };
+  deck.addEventListener("click", (e) => advanceAlertCard(e, onFinanceGridClick));
+  deck.addEventListener("change", (e) => advanceAlertCard(e, onFinanceGridChange));
+
   deck.addEventListener("scroll", () => updateFinanceReviewProgress(deck), { passive: true });
 
   // Keyboard: ↑/↓ browse (never approves); form controls keep their own arrow
@@ -9135,10 +9266,10 @@ function wireFinanceReviewDeck(overlay) {
   // Touch swipe, axis-locked by the pure classifier so a vertical/diagonal drag
   // can never approve (see finance-review-gesture.js + its test).
   let card = null, sx = 0, sy = 0, axis = null;
-  const parts = (c) => ({ inner: c.querySelector(".fin-review-card-inner"), done: c.querySelector(".fin-review-action-done") });
-  const reset = (c) => { const { inner, done } = parts(c); if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = ""; } if (done) done.style.opacity = 0; };
+  const parts = (c) => ({ inner: c.querySelector(".fin-review-card-inner"), done: c.querySelector(".fin-review-action-done"), dismiss: c.querySelector(".fin-review-action-dismiss") });
+  const reset = (c) => { const { inner, done, dismiss } = parts(c); if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = ""; } if (done) done.style.opacity = 0; if (dismiss) dismiss.style.opacity = 0; };
   deck.addEventListener("touchstart", (e) => {
-    card = e.target.closest(".fin-review-card") || null;
+    card = e.target.closest(".fin-review-card") || null; // alert cards (.fin-notif-alert-card) aren't .fin-review-card → not swipeable
     if (!card) return;
     if (e.target.closest("input, select, textarea, button, a")) { card = null; return; } // let controls work
     sx = e.touches[0].clientX; sy = e.touches[0].clientY; axis = null;
@@ -9149,20 +9280,23 @@ function wireFinanceReviewDeck(overlay) {
     if (!axis) { axis = reviewGestureAxis(dx, dy); if (!axis) return; }
     if (axis !== "x") return; // vertical → let the deck scroll-snap (browse)
     e.preventDefault();
-    const { inner, done } = parts(card);
-    const shown = Math.max(dx, -48); // leftward barely follows (it's a no-op)
-    if (inner) { inner.style.transition = "none"; inner.style.transform = `translateX(${shown}px) rotate(${shown * 0.02}deg)`; }
+    const { inner, done, dismiss } = parts(card);
+    if (inner) { inner.style.transition = "none"; inner.style.transform = `translateX(${dx}px) rotate(${dx * 0.02}deg)`; }
     if (done) done.style.opacity = dx > 0 ? Math.min(1, dx / REVIEW_GESTURE.approveThresholdPx) : 0;
+    if (dismiss) dismiss.style.opacity = dx < 0 ? Math.min(1, -dx / REVIEW_GESTURE.dismissThresholdPx) : 0;
   }, { passive: false });
   deck.addEventListener("touchend", (e) => {
     if (!card) return;
     const c = card, ax = axis; card = null; axis = null;
     if (ax !== "x") return; // vertical was native scroll
     const dx = e.changedTouches[0].clientX - sx;
-    if (reviewGestureAction(ax, dx) === "approve") {
+    const act = reviewGestureAction(ax, dx);
+    if (act === "approve") {
       if (!approveFinanceReviewCard(c)) reset(c); // no category → snap back
+    } else if (act === "dismiss") {
+      dismissFinanceReviewCard(c); // remove from notifications, keep the red list dot
     } else {
-      reset(c); // leftward or too-small → no state change
+      reset(c); // too-small → no state change
     }
   }, { passive: true });
 }
@@ -10194,7 +10328,9 @@ function renderFinancePage() {
     return `
     <div class="fin-txn-row fin-txn-row--clickable${t.pending ? " is-pending" : ""}${financeDetailTxnId === t.id ? " is-open" : ""}" data-fin-action="open-txn-detail" data-id="${escapeHtml(t.id)}" data-fin-txn-id="${escapeHtml(t.id)}" role="button" tabindex="0" aria-expanded="${financeDetailTxnId === t.id}">
       <span class="fin-txn-date">${t.posted ? escapeHtml(new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>
-      ${!t.label ? `<span class="fin-txn-dot" title="Needs a label" aria-label="Needs a label"></span>` : ""}
+      ${financeTxnNeedsConfirm(t)
+        ? `<button class="fin-txn-dot fin-txn-dot--confirm" type="button" data-fin-action="confirm-txn" data-id="${escapeHtml(t.id)}" title="Skipped in notifications — click to confirm" aria-label="Confirm this transaction"></button>`
+        : (!t.label ? `<span class="fin-txn-dot" title="Needs a label" aria-label="Needs a label"></span>` : "")}
       <span class="fin-txn-desc" title="${descTitle}">${t.isManual ? `<span class="fin-txn-manual-tag" title="Manually entered">manual</span> ` : ""}${escapeHtml(t.displayName)}${t.pending ? " · pending" : ""}</span>
       <span class="fin-txn-amt${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</span>
     </div>`;
@@ -10326,63 +10462,14 @@ function renderFinancePage() {
   const bellSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
   const attention = financeAccountsNeedingAttention();
   const notifCount = needsLabelGroups.length + recAlerts.length + attention.length;
-  const alertHtml = (a) => {
-    if (a.kind === "new") return `
-      <div class="fin-alert">
-        <div class="fin-alert-text">New recurring charge: <b>${escapeHtml(a.r.name)}</b> · ${formatFinMoney(a.r.lastAmount)} around day ${a.r.expectedDay}</div>
-        <div class="fin-item-row fin-item-row--tools">
-          <select class="fin-scenario-select fin-editor-select" data-fin-edit="recurring-link" data-id="${a.r.id}" aria-label="Budget line for ${escapeHtml(a.r.name)}">
-            <option value="">link to budget line…</option>
-            ${financeLineItemOptionsHtml("")}
-          </select>
-          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-ignore" data-id="${a.r.id}">Ignore</button>
-          <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="recurring-not" data-id="${a.r.id}">Not recurring</button>
-        </div>
-      </div>`;
-    if (a.kind === "price") return `
-      <div class="fin-alert">
-        <div class="fin-alert-text"><b>${escapeHtml(a.r.name)}</b> charged ${formatFinMoney(a.r.lastAmount)} — the "${escapeHtml(a.li.c.name)} · ${escapeHtml(a.li.it.name)}" line budgets ${formatFinMoney(a.li.it.amount)}</div>
-        <div class="fin-item-row fin-item-row--tools">
-          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-price-update" data-id="${a.r.id}">Update line to ${formatFinMoney(a.r.lastAmount)}</button>
-          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-price-keep" data-id="${a.r.id}">Keep budget</button>
-        </div>
-      </div>`;
-    return `
-      <div class="fin-alert">
-        <div class="fin-alert-text"><b>${escapeHtml(a.r.name)}</b> (~day ${a.r.expectedDay}, usually ${formatFinMoney(a.r.lastAmount)}) hasn't appeared this month</div>
-        <div class="fin-item-row fin-item-row--tools">
-          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="recurring-miss-dismiss" data-id="${a.r.id}">Dismiss</button>
-        </div>
-      </div>`;
-  };
   const notifBell = !financeLinkStatus?.connected ? "" : `
     <button class="icon-btn fin-notif-btn" type="button" data-fin-action="toggle-notifs" title="Finance items that need attention" aria-label="Finance notifications">
       ${bellSvg}
       ${notifCount ? `<span class="fin-notif-badge">${notifCount}</span>` : ""}
     </button>`;
-  const notifPanel = (!financeLinkStatus?.connected || !financeNotifOpen) ? "" : `
-    <div class="fin-notif-panel">
-      ${attention.length ? `
-      <div class="fin-notif-head">Accounts need attention</div>
-      ${attention.slice(0, 8).map((a) => `
-      <div class="fin-alert fin-alert-attention">
-        <button class="fin-notif-x" type="button" data-fin-action="dismiss-alert" data-key="${escapeHtml(a.key)}" title="Dismiss" aria-label="Dismiss this alert">×</button>
-        <div class="fin-alert-text"><b>${escapeHtml(a.label)}</b> — ${escapeHtml(a.detail)}</div>
-        <div class="fin-item-row fin-item-row--tools">
-          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-finance-settings">Open bank settings</button>
-        </div>
-      </div>`).join("")}` : ""}
-      ${recAlerts.length ? `
-      <div class="fin-notif-head">Recurring charges</div>
-      ${recAlerts.slice(0, 8).map(alertHtml).join("")}` : ""}
-      <div class="fin-notif-head fin-notif-head--review">Transactions to label${needsLabelGroups.length ? `<button class="fin-notif-review-btn" type="button" data-fin-action="review-txns" title="Label one at a time">Review ${needsLabelGroups.length}</button>` : ""}</div>
-      ${needsLabelGroups.slice(0, 15).map((grp) => `
-      <div class="fin-notif-labelrow">
-        ${txnRow(grp.rep, { compact: true, dupCount: grp.count })}
-        <button class="fin-notif-x fin-notif-x--label" type="button" data-fin-action="skip-label-group" data-key="${escapeHtml(grp.key)}" title="Skip labeling this merchant" aria-label="Skip labeling ${escapeHtml(grp.rep.displayName || grp.rep.description || "this merchant")}">×</button>
-      </div>`).join("") || `<div class="fin-notif-empty">Everything is labeled.</div>`}
-      ${needsLabelGroups.length > 15 ? `<div class="fin-notif-more">+ ${needsLabelGroups.length - 15} more in the Transactions card</div>` : ""}
-    </div>`;
+  // The bell now opens the single-card notifications deck (openFinanceTxnReview)
+  // instead of an inline list — so no panel is embedded in the card head.
+  const notifPanel = "";
 
   const txnsOpen = financeExpanded.has("card:txns");
   const filterActive = Boolean(f.q || f.kind || f.account);
@@ -10682,8 +10769,9 @@ function onFinanceGridClick(e) {
   if (action === "link-banks") { linkFinanceBanks(); return; }
   if (action === "refresh-live") { refreshFinanceLive(true); return; }
   if (action === "unlink-banks") { unlinkFinanceBanks(); return; }
-  if (action === "toggle-notifs") { financeNotifOpen = !financeNotifOpen; renderFinancePage(); return; }
+  if (action === "toggle-notifs") { openFinanceTxnReview(); return; }
   if (action === "review-txns") { openFinanceTxnReview(); return; }
+  if (action === "confirm-txn") { financeConfirmTxn(btn.dataset.id); renderFinancePage(); return; }
   if (action === "toggle-txn-expand") { financeTxnListExpanded = !financeTxnListExpanded; renderFinancePage(); return; }
   if (action === "open-finance-settings") { openContextSettingsDialog("finance-accounts"); return; }
   if (action === "dismiss-alert") {

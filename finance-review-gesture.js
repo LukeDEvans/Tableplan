@@ -11,6 +11,7 @@
 export const REVIEW_GESTURE = Object.freeze({
   deadzonePx: 8,            // movement under this in both axes = undecided
   approveThresholdPx: 90,   // horizontal-right past this = approve on release
+  dismissThresholdPx: 90,   // horizontal-left past this = dismiss on release
 });
 
 // Lock the axis once the finger has moved past the deadzone. Returns
@@ -25,13 +26,18 @@ export function reviewGestureAxis(dx, dy, opts = {}) {
 // Given the LOCKED axis and the final horizontal displacement, decide what a
 // release does:
 //   "approve" — only when the axis is horizontal AND the drag went right past
-//               the threshold.
+//               the approve threshold.
+//   "dismiss" — only when the axis is horizontal AND the drag went left past the
+//               dismiss threshold (removes the card from the deck; no approval).
 //   "browse"  — any vertical gesture (the deck scroll-snaps to prev/next).
-//   "none"    — horizontal but left, or not far enough right: a no-op.
-// A vertical axis therefore can NEVER return "approve", regardless of dx.
+//   "none"    — horizontal but not far enough either way: a no-op.
+// A vertical axis therefore can NEVER return "approve" or "dismiss", and a
+// leftward drag can NEVER return "approve", regardless of dx.
 export function reviewGestureAction(axis, dx, opts = {}) {
   const th = opts.approveThresholdPx ?? REVIEW_GESTURE.approveThresholdPx;
+  const dth = opts.dismissThresholdPx ?? REVIEW_GESTURE.dismissThresholdPx;
   if (axis !== "x") return "browse";
   if (dx >= th) return "approve";
+  if (dx <= -dth) return "dismiss";
   return "none";
 }

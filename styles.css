@@ -21388,10 +21388,16 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-review-close:hover { background: color-mix(in srgb, var(--ink) 12%, transparent); }
 .fin-review-deck { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scroll-snap-type: y mandatory; -webkit-overflow-scrolling: touch; }
 .fin-review-empty { height: 100%; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; color: var(--muted); font-weight: 600; }
+/* Every full-window deck card (transaction OR alert) snaps the same way. */
+.fin-notif-card { position: relative; height: 100%; scroll-snap-align: center; scroll-snap-stop: always; overflow: hidden; }
 .fin-review-card { position: relative; height: 100%; scroll-snap-align: center; scroll-snap-stop: always; overflow: hidden; }
 .fin-review-action { position: absolute; top: 0; bottom: 0; width: 45%; display: flex; align-items: center; font-size: 1.4rem; font-weight: 850; color: #fff; opacity: 0; pointer-events: none; text-transform: uppercase; }
 .fin-review-action-done { right: 0; justify-content: flex-end; padding-right: 26px; background: linear-gradient(90deg, transparent, var(--accent)); }
 .fin-review-action-snooze { left: 0; justify-content: flex-start; padding-left: 26px; background: linear-gradient(-90deg, transparent, #c9902b); }
+/* Swipe-left "skip" (removes from notifications, keeps the red list dot). */
+.fin-review-action-dismiss { left: 0; justify-content: flex-start; padding-left: 26px; background: linear-gradient(-90deg, transparent, #b3261e); }
+/* Alert cards reuse the review card chrome; a small kicker labels the type. */
+.fin-notif-alert-kicker { font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 .fin-review-card-inner { position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column; background: var(--window-bg); will-change: transform; touch-action: pan-y; }
 .fin-review-card.fin-review-need-cat .fin-review-label { outline: 2px solid #c9902b; outline-offset: 1px; border-radius: 8px; animation: finReviewNudge 0.3s ease; }
 @keyframes finReviewNudge { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
@@ -21492,6 +21498,20 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   border-radius: 50%;
   background: #b3261e;
 }
+/* The click-to-confirm variant: a transaction skipped out of the notifications
+   deck. A ring makes it read as actionable; the ::after enlarges the tap target. */
+.fin-txn-dot--confirm {
+  position: relative;
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #b3261e 22%, transparent);
+}
+.fin-txn-dot--confirm:hover,
+.fin-txn-dot--confirm:focus-visible { box-shadow: 0 0 0 4px color-mix(in srgb, #b3261e 34%, transparent); outline: none; }
+.fin-txn-dot--confirm::after { content: ""; position: absolute; inset: -9px; border-radius: 50%; }
 .fin-txn-detail {
   margin: 2px 0 8px;
   padding: 10px 12px;
