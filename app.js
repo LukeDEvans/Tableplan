@@ -49203,6 +49203,7 @@ const PREFETCH_ARTICLE_COUNT = 6;
 let articleListPrefetchRunning = false;
 function prefetchListenArticles(articles) {
   if (articleListPrefetchRunning) return;
+  if (listenLoading) return; // never compete with a foreground synth for the box
   if (!isKokoroArticleVoice()) return; // only the free, self-hosted voice
   const targets = (articles || [])
     .filter((a) => a && a.text && a.id !== listenArticle?.id && !ttsPrefetchCache.has(articleTtsCacheKey(a.id)))
@@ -49212,6 +49213,7 @@ function prefetchListenArticles(articles) {
   articleListPrefetchRunning = true;
   (async () => {
     for (const article of targets) {
+      if (listenLoading) break; // a foreground play started — yield the box to it
       const key = articleTtsCacheKey(article.id);
       if (ttsPrefetchCache.has(key)) continue; // a real play (or earlier run) already took it
       const p = synthKokoroArticleChunks(article).then((data) => {

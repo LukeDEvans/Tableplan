@@ -31,6 +31,14 @@
   schedule = "0 9 * * 0"
   included_files = ["tts-cache-sweep.mjs", "tts-article-text.mjs", "tts-cache-identity.js", "kokoro-core.mjs", "voice-prefs.js", "voice-registry.js", "tts-provider.js"]
 
+# Pre-synthesis: a tiny cron fires the 15-min background worker every few hours,
+# which renders the newest unread articles into the audio cache (instant playback).
+[functions."presynth-cron"]
+  schedule = "0 */4 * * *"
+
+[functions."presynth-tts-background"]
+  included_files = ["tts-article-text.mjs", "kokoro-core.mjs", "tts-cache-identity.js", "kokoro-store.mjs", "voice-prefs.js", "voice-registry.js", "tts-provider.js"]
+
 [functions."scheduled-email"]
   schedule = "*/15 * * * *"
 
