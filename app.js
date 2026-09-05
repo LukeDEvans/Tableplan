@@ -12380,6 +12380,11 @@ function wireMealPlanNotifDelegation() {
     if (flip) { const card = flip.closest(".eat-swipe-card"); if (card) flipMealPlanCard(flip.dataset.eatNotifFlip, card); return; }
     const flipBack = e.target.closest("[data-eat-notif-flip-back]");
     if (flipBack) { const card = flipBack.closest(".eat-swipe-card"); if (card) unflipMealPlanCard(card); return; }
+    // A tap anywhere on the recipe (flipped) side — except a link/button — flips
+    // back to the photo. Scrolling the recipe never fires a click, so browsing
+    // the recipe still works; only a genuine tap returns to the photo.
+    const backFace = e.target.closest(".eat-swipe-back");
+    if (backFace && !e.target.closest("a, button")) { const card = backFace.closest(".eat-swipe-card"); if (card) unflipMealPlanCard(card); return; }
     const swipeAdd = e.target.closest("[data-eat-notif-swipe-add]");
     if (swipeAdd) { swipeAddMealPlanRecipe(swipeAdd.dataset.eatNotifSwipeAdd); return; }
     const dismiss = e.target.closest("[data-eat-notif-dismiss]");
