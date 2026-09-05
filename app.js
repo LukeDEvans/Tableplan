@@ -48057,6 +48057,11 @@ function renderArticleList(containerId, pub) {
 
   listEl.innerHTML = articles.map((a) => articleRowHtml(a, { pub, readIds, readDates })).join("");
   wireArticleRows(listEl, containerId);
+
+  // Instant-on-select: pre-render the top unread articles' audio in the chosen
+  // Kokoro voice so tapping one plays immediately (no-op for the archive view and
+  // for non-Kokoro voices; see prefetchListenArticles).
+  if (articleViewMode !== "archive") prefetchListenArticles(articles);
 }
 
 function renderArticleSearchResults(containerId) {
@@ -49105,6 +49110,37 @@ async function generateTtsUrls(article) {
   return { urls: result.urls, timings: result.timings || null, introWords: prepared.introWords };
 }
 
+// Render a Kokoro article the SAME way the live incremental player does — chunk
+// client-side and synthesize each chunk on its own — then return the assembled
+// { urls } so it can be cached. This matters for two reasons the whole-article
+// generateTtsUrls path gets wrong for Kokoro: (1) each proxy call carries a single
+// small chunk, so it stays under the Netlify function timeout (a whole article in
+// one call overruns it); (2) each chunk is stored under the exact per-chunk cache
+// key the incremental player later reads, so the audio is a real cache hit both
+// in this session (via ttsPrefetchCache below) AND on a later day (via storage).
+async function synthKokoroArticleChunks(article) {
+  const prepared = prepareArticleListenText(article);
+  if (!prepared) return null;
+  const chunks = kokoroChunkText(prepared.text);
+  if (!chunks.length) return null;
+  trackUsage("kokoro_tts");
+  const urls = [];
+  for (const chunk of chunks) {
+    const res = await getVoiceService().synthesize({ text: chunk, domain: "article", refId: article.id });
+    const u = res?.urls?.[0];
+    if (!u) throw new Error("Kokoro prefetch: empty chunk");
+    urls.push(u);
+  }
+  return { urls, timings: null, introWords: prepared.introWords };
+}
+
+// One entry point for "produce this article's audio and cache it": Kokoro takes
+// the per-chunk path above (cap-safe + correct keys); Google keeps the existing
+// single-call batch path. Both return the { urls, introWords } shape.
+function synthArticleAudioForCache(article) {
+  return isKokoroArticleVoice() ? synthKokoroArticleChunks(article) : generateTtsUrls(article);
+}
+
 // Audio prefetched for upcoming All-queue items, keyed by (article + voice):
 // key → Promise<urls>. Voice is part of the key so switching voices never replays
 // a clip synthesized in the previous voice (the reported "old voice still plays").
@@ -49141,7 +49177,7 @@ function prefetchNextQueueAudio() {
       const article = (state.savedArticles || []).find((a) => a.id === id);
       if (article) {
         const key = articleTtsCacheKey(id);
-        ttsPrefetchCache.set(key, generateTtsUrls(article).then((data) => {
+        ttsPrefetchCache.set(key, synthArticleAudioForCache(article).then((data) => {
           if (data?.urls?.length) ttsResolvedUrls.set(key, data); // now available synchronously
           return data;
         }).catch((e) => {
@@ -49153,6 +49189,39 @@ function prefetchNextQueueAudio() {
     }
     return; // only look at the immediate next playable item
   }
+}
+
+// ── Proactive article prefetch: instant-on-select ─────────────────────────────
+// When the article list is on screen and the article voice is the free, self-
+// hosted Kokoro engine, quietly render the top few unread articles into audio
+// ahead of time. Tapping one then starts instantly (an in-session cache hit via
+// ttsPrefetchCache), and because each chunk also lands in Storage under the key
+// the player reads, it stays fast on later days too. Kokoro-only on purpose:
+// Google TTS is metered per character, so we never pre-spend it on articles that
+// may never be played. Sequential + best-effort; the first call warms the box.
+const PREFETCH_ARTICLE_COUNT = 6;
+let articleListPrefetchRunning = false;
+function prefetchListenArticles(articles) {
+  if (articleListPrefetchRunning) return;
+  if (!isKokoroArticleVoice()) return; // only the free, self-hosted voice
+  const targets = (articles || [])
+    .filter((a) => a && a.text && a.id !== listenArticle?.id && !ttsPrefetchCache.has(articleTtsCacheKey(a.id)))
+    .slice(0, PREFETCH_ARTICLE_COUNT);
+  if (!targets.length) return;
+  warmKokoroVoiceIfKokoro(); // nudge the scale-to-zero box awake before the batch
+  articleListPrefetchRunning = true;
+  (async () => {
+    for (const article of targets) {
+      const key = articleTtsCacheKey(article.id);
+      if (ttsPrefetchCache.has(key)) continue; // a real play (or earlier run) already took it
+      const p = synthKokoroArticleChunks(article).then((data) => {
+        if (data?.urls?.length) ttsResolvedUrls.set(key, data);
+        return data;
+      }).catch((e) => { ttsPrefetchCache.delete(key); console.warn("Article prefetch failed:", e.message); return null; });
+      ttsPrefetchCache.set(key, p);
+      await p; // sequential: top article first, and never hammer the box in parallel
+    }
+  })().finally(() => { articleListPrefetchRunning = false; });
 }
 
 // Synchronously start the next queue article (if it's already prefetched) from
