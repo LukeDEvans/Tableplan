@@ -12855,11 +12855,7 @@ async function fetchAndRenderMailPage({ fresh = false } = {}) {
   elements.mailList.innerHTML = "";
   if (!messages.length) {
     if (mailPageIndex === 0) {
-      // "<Folder> empty", centered in the window — read the active folder's
-      // display name from the sidebar (falls back to a generic label).
-      const sysFolderNames = { INBOX: "Inbox", STARRED: "Starred", SENT: "Sent", DRAFT: "Drafts", SPAM: "Spam", TRASH: "Trash", IMPORTANT: "Important" };
-      const folderName = document.querySelector(".mail-label-item.is-active span")?.textContent?.trim() || sysFolderNames[currentMailbox] || "Folder";
-      elements.mailList.innerHTML = `<div class="mail-empty mail-empty-folder">${escapeHtml(folderName)} empty</div>`;
+      elements.mailList.innerHTML = mailEmptyFolderHtml();
     } else {
       elements.mailList.innerHTML = `<div class="mail-empty">No more messages.</div>`;
     }
@@ -12885,6 +12881,27 @@ function mailGoToPage(delta) {
   mailSelected.clear();
   updateMailBulkBar();
   fetchAndRenderMailPage();
+}
+
+// The "<Folder> empty" placeholder, centered in the list window. Reads the active
+// folder's display name from the sidebar (falls back to a system-folder label).
+function mailEmptyFolderHtml() {
+  const sysFolderNames = { INBOX: "Inbox", STARRED: "Starred", SENT: "Sent", DRAFT: "Drafts", SPAM: "Spam", TRASH: "Trash", IMPORTANT: "Important" };
+  const folderName = document.querySelector(".mail-label-item.is-active span")?.textContent?.trim() || sysFolderNames[currentMailbox] || "Folder";
+  return `<div class="mail-empty mail-empty-folder">${escapeHtml(folderName)} empty</div>`;
+}
+
+// After rows are removed by an action (archive/trash/move/snooze/bulk), show the
+// same "<Folder> empty" placeholder as a fresh empty load instead of leaving a
+// blank pane. Guarded so it never clobbers an existing placeholder (a load error,
+// the initial empty state, or "No more messages").
+function refreshMailListEmptyState() {
+  const listEl = elements.mailList;
+  if (!listEl) return;
+  if (mailPageBusy) return;                                      // a load owns the list (Loading… placeholder)
+  if (listEl.querySelector(".mail-row[data-thread-id]")) return; // rows remain
+  if (listEl.querySelector(".mail-empty")) return;               // a placeholder is already shown
+  listEl.innerHTML = mailPageIndex === 0 ? mailEmptyFolderHtml() : `<div class="mail-empty">No more messages.</div>`;
 }
 
 // The list toolbar above the rows: select-all, refresh, and "start–end of total"
@@ -12922,6 +12939,9 @@ function renderMailListToolbar() {
   if (next) next.disabled = mailPageBusy || !mailNextPageToken;
   document.getElementById("mailRefreshBtn")?.classList.toggle("is-spinning", mailPageBusy);
   updateMailSelectAllState();
+  // If an action emptied the list, show the "<Folder> empty" placeholder rather
+  // than a blank pane (guarded so it never overwrites an existing placeholder).
+  refreshMailListEmptyState();
 }
 
 function updateMailSelectAllState() {
@@ -13964,6 +13984,7 @@ function afterMailThreadAction(threadId) {
   elements.mailList.querySelectorAll(`[data-thread-id="${CSS.escape(threadId)}"]`).forEach((el) => el.remove());
   elements.mailThread.hidden = true;
   mailOpenThreadId = null;
+  renderMailListToolbar(); // update the range count + show "<Folder> empty" if that was the last row
 }
 
 function showMailMoreMenu(thread, lastMsg) {
@@ -14627,13 +14648,18 @@ function removeMailRowWithUndo(row, threadId, verb, forward, undo) {
   if (mailOpenThreadId === threadId) { elements.mailThread.hidden = true; mailOpenThreadId = null; }
   invalidateMailThreadCache(threadId);
   invalidateMailListPreload();
+  renderMailListToolbar(); // update the range + show "<Folder> empty" if that was the last row
   callGmailApi({ action: "move", threadId, ...forward });
   showMailToast(verb, async () => {
     invalidateMailThreadCache(threadId);
     const data = await callGmailApi({ action: "move", threadId, ...undo });
     if (data?.ok && list) {
+      // If removing this row emptied the list we swapped in a "<Folder> empty"
+      // placeholder — clear it before restoring the row so they don't stack.
+      elements.mailList.querySelector(".mail-empty")?.remove();
       if (anchor && anchor.parentNode === list) list.insertBefore(row, anchor);
       else list.appendChild(row);
+      renderMailListToolbar();
     } else if (!data?.ok) {
       showMailToast("Couldn't undo — " + (lastGmailApiError || "try refreshing"));
     }
