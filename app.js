@@ -34459,8 +34459,8 @@ function renderWatchPlanner() {
     });
   }
 
-  elements.watchPlannerGrid.querySelector("[data-open-watch-search]")
-    ?.addEventListener("click", openWatchSearchDialog);
+  elements.watchPlannerGrid.querySelectorAll("[data-open-watch-search]")
+    .forEach((btn) => btn.addEventListener("click", openWatchSearchDialog));
 
   elements.watchPlannerGrid.querySelectorAll("[data-watch-section-toggle]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -34502,7 +34502,7 @@ function watchScheduledItemTemplate(item, dayId) {
   const posterUrl = item.posterPath ? `https://image.tmdb.org/t/p/w185${item.posterPath}` : null;
   const posterHtml = posterUrl
     ? `<img class="watch-item-poster" src="${escapeHtml(posterUrl)}" alt="" aria-hidden="true" loading="lazy" />`
-    : `<div class="watch-item-poster watch-item-poster-placeholder"></div>`;
+    : watchPosterPlaceholder(item.type);
 
   return `
     <article class="do-task-item watch-item" data-watch-scheduled="${escapeHtml(item.id)}" data-watch-day="${escapeHtml(dayId)}">
@@ -34524,6 +34524,15 @@ function watchScheduledItemTemplate(item, dayId) {
   `;
 }
 
+// Poster placeholder for items without TMDB art — a centered glyph on a tinted
+// ground instead of a blank grey rectangle (which read as a broken image).
+function watchPosterPlaceholder(type) {
+  const icon = type === "tv"
+    ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="m8 3 4 4 4-4"/></svg>`
+    : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4 5 20M17 4l2 16M3 9h18M3 15h18"/></svg>`;
+  return `<div class="watch-item-poster watch-item-poster-placeholder" data-poster-type="${escapeHtml(type || "movie")}">${icon}</div>`;
+}
+
 function watchListTemplate() {
   let items = watchItemsList().filter((i) => i.status !== "watched");
   if (activeWatchCategory === "__upcoming") {
@@ -34536,10 +34545,32 @@ function watchListTemplate() {
   const movies = items.filter((i) => i.type === "movie");
   const tvShows = items.filter((i) => i.type === "tv");
 
+  if (!items.length) return watchEmptyStateTemplate();
+
   return `
     <div class="watch-sections">
-      ${watchSectionTemplate("Movies", movies)}
-      ${watchSectionTemplate("TV Shows", tvShows)}
+      ${movies.length ? watchSectionTemplate("Movies", movies) : ""}
+      ${tvShows.length ? watchSectionTemplate("TV Shows", tvShows) : ""}
+    </div>
+  `;
+}
+
+// Friendly empty state for the Watch list — replaces the two bare section
+// headers that used to sit over blank space when a tab had nothing in it.
+function watchEmptyStateTemplate() {
+  const cat = activeWatchCategory;
+  let msg, cta = true;
+  if (cat === "__upcoming") { msg = "Nothing upcoming. Movies with a future release date land here."; cta = false; }
+  else if (cat === "__in-theaters") { msg = "Nothing in theaters right now."; cta = false; }
+  else if (cat === "all") { msg = "No movies or shows saved yet."; }
+  else { msg = "Nothing in this tab yet."; }
+  return `
+    <div class="empty-state watch-list-empty">
+      <svg class="watch-empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M7 5 4.5 19M17 5l2.5 14M2.5 9.5h19M2.5 14.5h19"/>
+      </svg>
+      <p class="watch-empty-msg">${escapeHtml(msg)}</p>
+      ${cta ? `<button class="secondary-btn compact-btn" type="button" data-open-watch-search>Add a movie or show</button>` : ""}
     </div>
   `;
 }
@@ -34757,7 +34788,7 @@ function watchItemTemplate(item) {
   const posterUrl = item.posterPath ? `https://image.tmdb.org/t/p/w185${item.posterPath}` : null;
   const posterHtml = posterUrl
     ? `<img class="watch-item-poster" src="${escapeHtml(posterUrl)}" alt="" aria-hidden="true" loading="lazy" />`
-    : `<div class="watch-item-poster watch-item-poster-placeholder"></div>`;
+    : watchPosterPlaceholder(item.type);
 
   return `
     <article class="do-task-item watch-item" data-watch-item="${escapeHtml(item.id)}">

@@ -9763,6 +9763,56 @@ body.touch-drag-active * {
   color: var(--muted);
   border: 1px solid var(--line, #e4e0d8);
 }
+/* Restore the movie/TV colour-coding (the reskin's .watch-type-badge rule above
+   was flattening both to grey — these win on specificity, 0,2,0 > 0,1,0). */
+.watch-type-badge.watch-type-movie {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface, #fff));
+  color: var(--accent-dark, var(--accent));
+  border-color: transparent;
+}
+.watch-type-badge.watch-type-tv {
+  background: color-mix(in srgb, #7b5ea7 18%, var(--surface, #fff));
+  color: #5a3e86;
+  border-color: transparent;
+}
+body[data-theme="dark"] .watch-type-badge.watch-type-tv {
+  background: color-mix(in srgb, #7b5ea7 34%, #1c1c22);
+  color: #cdb6ee;
+}
+
+/* Poster placeholders: centre the glyph on a tinted ground so a missing cover
+   reads as "no art yet", not a broken image. */
+.watch-item-poster-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--muted) 70%, transparent);
+}
+.watch-item-poster-placeholder svg {
+  width: 40%;
+  height: 40%;
+}
+
+/* Empty Watch list — a calm centred state instead of two bare section heads. */
+.watch-list-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  padding: 40px 16px;
+  color: var(--muted);
+}
+.watch-empty-icon {
+  width: 42px;
+  height: 42px;
+  color: color-mix(in srgb, var(--muted) 60%, transparent);
+}
+.watch-empty-msg {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
 .watch-status-select {
   border: 1px solid var(--line, #e4e0d8);
   background: var(--surface, #fff);
@@ -9813,6 +9863,16 @@ body.touch-drag-active * {
 .watch-provider-rent {
   background: color-mix(in srgb, var(--accent) 15%, #fff);
   color: var(--accent-dark);
+}
+
+/* Dark-mode safety for the streaming-available links (hardcoded green above
+   was invisible on a dark surface). */
+body[data-theme="dark"] .watch-provider-link {
+  background: color-mix(in srgb, #2ecc71 22%, #1c1c22);
+  color: #7ee2a8;
+}
+body[data-theme="dark"] .watch-provider-link:hover {
+  background: color-mix(in srgb, #2ecc71 34%, #1c1c22);
 }
 
 .watch-provider-rent:hover {
