@@ -48,6 +48,7 @@ import { beginTasksWeekSession, stepTasksWeek, endTasksWeekSession, tasksBellSta
 import { createVoiceService } from './voice-service.js';
 import { createGoogleProvider, createKokoroProvider } from './tts-provider.js';
 import { chunkText as kokoroChunkText } from './kokoro-core.mjs';
+import { prepareArticleListenText } from './tts-article-text.mjs';
 import * as TravelItinerary from './travel-itinerary.js';
 import * as TravelTransitions from './travel-transitions.js';
 import * as TravelModel from './travel-model.js';
@@ -49082,22 +49083,9 @@ function warmKokoroVoiceIfKokoro() {
   } catch { /* best effort */ }
 }
 
-// The spoken text for an article = a short intro (title + source, so a listener
-// not looking at the screen knows what's being read) followed by the body, plus
-// how many leading words are the intro (the body's highlightable words start
-// after these). Shared by the batch and incremental listen paths.
-function prepareArticleListenText(article) {
-  const body = article.text?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || "";
-  if (!body) return null;
-  const source = (article.author || article.publication || "").trim();
-  const intro = [
-    (article.title || "").trim(),
-    source && !/^email$/i.test(source) ? `From ${source}` : ""
-  ].filter(Boolean).join(". ");
-  const text = (intro ? intro + ". " : "") + body;
-  const introWords = intro ? (intro + ".").split(/\s+/).filter(Boolean).length : 0;
-  return { text, introWords };
-}
+// prepareArticleListenText moved to ./tts-article-text.mjs so the client and the
+// server-side pre-synth job produce byte-identical spoken text (→ identical cache
+// keys). Imported at the top of this file.
 
 // True when the article domain currently resolves to a Kokoro voice — the path
 // that gets incremental (chunk-by-chunk) playback. Kokoro carries no word
