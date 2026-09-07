@@ -334,7 +334,7 @@ const STATE_SECTIONS = {
 // running code older than the row was last written with, so a stale device can
 // never drop budget categories or transaction annotations it doesn't know
 // about. MUST be incremented when finance* keys are added/restructured.
-const STATE_SCHEMA_VERSION = 2;
+const STATE_SCHEMA_VERSION = 3;
 
 const SECTION_SCOPE = {
   eat: "household",       // Meal Plan is exclusively shared
