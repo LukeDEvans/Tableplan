@@ -1191,11 +1191,12 @@ body {
 
 .planner-column {
   width: 100%;
-  /* No inner margin between the blue window-border and page content — the app-wide
+  /* A slight buffer between the blue window-border and page content — the app-wide
      default for every page (Meal Plan, Mail, Calendar, and the rest all use
-     .planner-column). Pages that need breathing room add it on their own inner
-     wrapper, not here. */
-  padding: 0;
+     .planner-column). box-sizing:border-box keeps full-height pages from
+     overflowing; the full-screen .app-page-panel dialogs are separate and keep
+     their own 16px. */
+  padding: 10px;
   min-width: 0;
   box-shadow: 0 22px 54px rgba(116, 85, 18, 0.18);
 }
