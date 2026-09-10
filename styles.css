@@ -1200,6 +1200,11 @@ body {
   min-width: 0;
   box-shadow: 0 22px 54px rgba(116, 85, 18, 0.18);
 }
+/* Mail, Media, and Calendar manage their own full-height, edge-to-edge layout —
+   keep them flush to the window-border (no buffer). */
+#mailMainPage.planner-column,
+#mediaMainPage.planner-column,
+#planMainPage.planner-column { padding: 0; }
 
 .side-stack {
   width: 100%;
