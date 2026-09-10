@@ -11091,7 +11091,25 @@ function renderFinancePage() {
           <div class="fin-report-bar"><i style="width:${Math.round((c.amount / reportMax) * 100)}%"></i></div>
         </div>`).join("") : `<div class="fin-hint">No categorized spending yet this month.</div>`}
     </div>` : "";
-  const insightsView = `${upcomingBillsCard}${subsCard}${cashFlowCard}${trendsCard}${reportsCard}`;
+  // Notable this month: the biggest spends + merchants first seen this month
+  // (within the loaded window — live txns cover ~45 days).
+  const largestTxns = monthTxns.filter((t) => (t.amount || 0) < 0).sort((a, b) => Math.abs(b.amount || 0) - Math.abs(a.amount || 0)).slice(0, 5);
+  const priorMerchantKeys = new Set(allTxns.filter((t) => (t.posted || "").slice(0, 7) !== monthKey).map((t) => financeMerchantKey(t.description)).filter(Boolean));
+  const newMerchants = [];
+  const seenNewKeys = new Set();
+  for (const t of monthTxns) {
+    const k = financeMerchantKey(t.description);
+    if (!k || priorMerchantKeys.has(k) || seenNewKeys.has(k) || (t.amount || 0) >= 0) continue;
+    seenNewKeys.add(k); newMerchants.push(t);
+  }
+  const notableRow = (t) => `<div class="fin-notable-row"><span class="fin-notable-name">${escapeHtml(t.displayName)}</span><span class="fin-notable-amt is-neg">${formatFinMoney(t.amount || 0)}</span></div>`;
+  const notableCard = (largestTxns.length || newMerchants.length) ? `
+    <div class="fin-card fin-insights-card">
+      <div class="fin-subhead fin-accounts-title">Notable this month</div>
+      ${largestTxns.length ? `<div class="fin-notable-sub">Largest</div>${largestTxns.map(notableRow).join("")}` : ""}
+      ${newMerchants.length ? `<div class="fin-notable-sub">New merchants</div>${newMerchants.slice(0, 5).map(notableRow).join("")}` : ""}
+    </div>` : "";
+  const insightsView = `${upcomingBillsCard}${subsCard}${cashFlowCard}${trendsCard}${reportsCard}${notableCard}`;
 
   // Savings goals (Accounts tab). Tap a goal to edit target/saved/date; progress
   // bar + on-track note derived on the fly.

@@ -21030,6 +21030,13 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-report-bar { height: 6px; border-radius: 99px; background: color-mix(in srgb, var(--ink) 8%, transparent); overflow: hidden; margin-top: 4px; }
 .fin-report-bar > i { display: block; height: 100%; border-radius: 99px; background: var(--accent); }
 
+/* Notable transactions (largest / new merchants). */
+.fin-notable-sub { font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 12px 2px 2px; }
+.fin-notable-row { display: flex; justify-content: space-between; gap: 10px; padding: 5px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.86rem; }
+.fin-notable-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-notable-amt { flex: 0 0 auto; font-weight: 750; font-variant-numeric: tabular-nums; }
+.fin-notable-amt.is-neg { color: #b3261e; }
+
 .fin-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
