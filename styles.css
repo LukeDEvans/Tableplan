@@ -20885,6 +20885,74 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 /* ─── Finance page ──────────────────────────────────────────────────────────── */
 .fin-panel { display: flex; flex-direction: column; gap: 16px; }
 
+/* ── Overview band (redesign slice 1): the always-on state-of-finances summary ── */
+.fin-overview { display: flex; flex-direction: column; gap: 12px; }
+.fin-ov-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: 12px;
+}
+.fin-ov-card {
+  min-width: 0;
+  background: var(--window-bg);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+/* Net worth is the hero — let it span the full width on top when it wraps. */
+.fin-ov-networth { grid-column: 1 / -1; }
+@media (min-width: 620px) { .fin-ov-networth { grid-column: auto; } }
+.fin-ov-label { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.fin-ov-value { font-size: 1.6rem; font-weight: 850; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.fin-ov-value.is-neg { color: #b3261e; }
+.fin-ov-networth .fin-ov-value { font-size: 2rem; }
+.fin-ov-sub { font-size: 0.76rem; color: var(--muted); font-weight: 600; }
+.fin-ov-trend { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.fin-ov-delta { font-weight: 800; color: #1f9d57; font-variant-numeric: tabular-nums; }
+.fin-ov-delta.is-neg { color: #b3261e; }
+.fin-ov-spark { flex: 1 1 60px; min-width: 60px; max-width: 160px; height: 26px; color: color-mix(in srgb, var(--ink) 45%, transparent); }
+.fin-gauge { height: 8px; border-radius: 99px; background: color-mix(in srgb, var(--ink) 10%, transparent); overflow: hidden; margin-top: 4px; }
+.fin-gauge > i { display: block; height: 100%; border-radius: 99px; background: var(--accent); transition: width 0.3s ease; }
+.fin-gauge > i.is-over { background: #b3261e; }
+.fin-ov-pace { font-size: 0.76rem; font-weight: 700; color: var(--muted); margin-top: 3px; }
+.fin-ov-pace.is-over { color: #b3261e; }
+
+.fin-ov-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.fin-chip {
+  font: inherit; font-size: 0.78rem; font-weight: 700; cursor: pointer;
+  padding: 6px 12px; border-radius: 99px; border: 1px solid transparent;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.fin-chip-review { background: var(--accent-soft, color-mix(in srgb, var(--accent) 16%, var(--window-bg))); color: var(--accent-dark, var(--accent)); }
+.fin-chip-warn { background: color-mix(in srgb, #b45309 16%, var(--window-bg)); color: #b45309; }
+.fin-chip-bad { background: color-mix(in srgb, #b3261e 15%, var(--window-bg)); color: #b3261e; }
+.fin-ov-clear { font-size: 0.8rem; font-weight: 700; color: color-mix(in srgb, #1f9d57 88%, var(--ink)); }
+
+/* ── Section tabs (Transactions · Budget · Accounts) ── */
+.fin-tabs { display: flex; gap: 6px; padding: 3px; background: color-mix(in srgb, var(--ink) 6%, transparent); border-radius: 12px; }
+.fin-tab {
+  flex: 1 1 0; min-width: 0; font: inherit; font-size: 0.88rem; font-weight: 750; cursor: pointer;
+  padding: 8px 10px; border-radius: 9px; border: none; background: transparent; color: var(--muted);
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap;
+}
+.fin-tab.is-active { background: var(--window-bg); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.fin-tab-badge { font-size: 0.68rem; font-weight: 900; background: #b3261e; color: #fff; border-radius: 99px; padding: 1px 6px; min-width: 18px; text-align: center; }
+/* Narrow phones: the review count already shows as the "N to review" chip above,
+   so drop the redundant tab badge and shrink the type so "Transactions" fits. */
+@media (max-width: 520px) {
+  .fin-tab { font-size: 0.78rem; padding: 8px 4px; gap: 4px; }
+  .fin-tab-badge { display: none; }
+}
+.fin-tab-body { display: flex; flex-direction: column; gap: 16px; }
+
+.fin-empty-onboard { text-align: center; padding: 32px 20px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.fin-empty-title { font-size: 1.05rem; font-weight: 800; color: var(--ink); }
+.fin-empty-sub { font-size: 0.86rem; color: var(--muted); max-width: 44ch; }
+.fin-empty-onboard .fin-add-btn { margin-top: 6px; }
+
 .fin-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));

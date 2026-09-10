@@ -8285,6 +8285,14 @@ async function linkFinanceBanks() {
 let financeNotifOpen = false;
 const financeTxnFilter = { q: "", kind: "", account: "", sort: "date" };
 let financeTxnFilterOpen = false;
+// Redesigned finance page: an always-on Overview band + a working area switched
+// between these tabs. "transactions" is the default (purchase tracking is primary).
+let financeTab = "transactions";
+const FINANCE_TABS = [
+  { id: "transactions", label: "Transactions" },
+  { id: "budget", label: "Budget" },
+  { id: "accounts", label: "Accounts" },
+];
 // The transaction list renders a light default slice (FIN_TXN_LIST_CAP); a
 // "Show all" toggle lifts it so months with more txns than the cap are fully
 // reachable for labeling. Reset on month change so each month starts collapsed.
@@ -9337,6 +9345,55 @@ function financeAccountsNeedingAttention() {
   const liveKeys = new Set(raw.map((r) => r.key));
   for (const k of Object.keys(dismissed)) { if (!liveKeys.has(k)) delete dismissed[k]; }
   return raw.filter((r) => !dismissed[r.key]);
+}
+
+// Per-account connection status — splits the two problems the notification count
+// conflates so the Overview/Accounts UI can say WHICH account and WHY:
+//   manual        — not bank-linked (a manual balance; nothing to sync)
+//   fresh         — linked, balance updated within FINANCE_STALE_DAYS
+//   stale         — linked and present, but the balance hasn't moved in N days
+//   disconnected  — linked, yet the bridge no longer returns it (needs re-auth)
+// Pure over its inputs (live account map + now), so it's easy to reason about.
+function financeAccountStatus(acct, liveById, now = Date.now()) {
+  if (!acct || !acct.linkedId) return { kind: "manual" };
+  const la = liveById.get(acct.linkedId);
+  if (!la) return { kind: "disconnected" };
+  if (!la.balanceDate) return { kind: "fresh", days: null, since: null };
+  const days = Math.floor((now - new Date(la.balanceDate).getTime()) / 86400000);
+  return { kind: days >= FINANCE_STALE_DAYS ? "stale" : "fresh", days, since: la.balanceDate };
+}
+
+// All linked accounts that need attention (stale or disconnected), plus whether
+// the bridge itself reported a connection-level error. Drives the Overview chips.
+function financeAccountHealth() {
+  const liveById = new Map((financeLive?.accounts || []).map((a) => [a.id, a]));
+  const accounts = (state.financeAccounts || []).map((a) => ({ acct: a, status: financeAccountStatus(a, liveById) }));
+  const needsAttention = accounts.filter((a) => a.status.kind === "stale" || a.status.kind === "disconnected");
+  const bridgeError = Boolean((financeLive?.errors || []).length);
+  return { accounts, needsAttention, bridgeError };
+}
+
+// Net-worth trend from the server's daily snapshots (financeHistory). Reused by
+// the Overview band and the Net-worth card. Bank-linked balances only, so it can
+// differ slightly from live net worth that also counts manual accounts.
+function financeHistoryDays() {
+  return financeHistory ? Object.keys(financeHistory).sort() : [];
+}
+function financeTrendSparklineHtml(cls = "fin-trend") {
+  const days = financeHistoryDays();
+  if (days.length < 2) return "";
+  const vals = days.map((d) => Number(financeHistory[d]?.netWorth) || 0);
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const span = (max - min) || 1;
+  const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * 100},${26 - ((v - min) / span) * 22}`).join(" ");
+  return `<svg class="${cls}" viewBox="0 0 100 28" preserveAspectRatio="none" role="img" aria-label="Net worth over time"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
+}
+function financeNetWorthDelta() {
+  const days = financeHistoryDays();
+  if (days.length < 2) return null;
+  const first = Number(financeHistory[days[0]]?.netWorth) || 0;
+  const last = Number(financeHistory[days[days.length - 1]]?.netWorth) || 0;
+  return { delta: last - first, sinceLabel: new Date(days[0] + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) };
 }
 
 // The finance bell / home-tile badge total.
@@ -10604,15 +10661,81 @@ function renderFinancePage() {
       ${budgetedOpen ? `<div class="fin-cards fin-budget-nested">${groupCards}</div>` : ""}`}
     </div>`;
 
-  // Order (top → bottom): Transactions, Monthly budget, Savings snapshot,
-  // Personal, then Net worth as its own full-width line at the very bottom.
+  // ── Overview band: the always-on "state of our finances" summary ──────────
+  const health = financeAccountHealth();
+  const reviewCount = financeUnlabeledCount();
+  // This month's actual net spend (spend portions are negative) vs total budgeted.
+  const monthActualSpend = showActuals ? -[...catActuals.values()].reduce((s, v) => s + v, 0) : null;
+  const nowD = new Date();
+  const daysInMonth = new Date(nowD.getFullYear(), nowD.getMonth() + 1, 0).getDate();
+  const dayOfMonth = nowD.getDate();
+  const projectedSpend = (isCurrentMonth && monthActualSpend != null && dayOfMonth > 0) ? (monthActualSpend / dayOfMonth) * daysInMonth : null;
+  const paceOver = (projectedSpend != null && expenses > 0) ? projectedSpend - expenses : null;
+  const monthPct = (monthActualSpend != null && expenses > 0) ? Math.min(100, Math.round((monthActualSpend / expenses) * 100)) : 0;
+  const monthOver = monthActualSpend != null && expenses > 0 && monthActualSpend > expenses;
+  const nwDelta = financeNetWorthDelta();
+
+  const chips = [];
+  if (reviewCount) chips.push(`<button class="fin-chip fin-chip-review" type="button" data-fin-action="review-txns">${reviewCount} to review</button>`);
+  if (health.bridgeError) chips.push(`<button class="fin-chip fin-chip-bad" type="button" data-fin-action="fin-tab" data-tab="accounts">Bank connection error</button>`);
+  for (const { acct, status } of health.needsAttention) {
+    const nm = escapeHtml(acct.name || "Account");
+    chips.push(status.kind === "disconnected"
+      ? `<button class="fin-chip fin-chip-bad" type="button" data-fin-action="fin-tab" data-tab="accounts">${nm} · disconnected</button>`
+      : `<button class="fin-chip fin-chip-warn" type="button" data-fin-action="fin-tab" data-tab="accounts">${nm} · stale ${status.days}d</button>`);
+  }
+
+  const overviewBand = `
+    <section class="fin-overview">
+      <div class="fin-ov-grid">
+        <div class="fin-ov-card fin-ov-networth">
+          <div class="fin-ov-label">Net worth</div>
+          <div class="fin-ov-value${netWorth != null && netWorth < 0 ? " is-neg" : ""}">${netWorth == null ? "—" : formatFinMoney(netWorth)}</div>
+          <div class="fin-ov-trend">
+            ${nwDelta ? `<span class="fin-ov-delta${nwDelta.delta < 0 ? " is-neg" : ""}">${nwDelta.delta >= 0 ? "+" : ""}${formatFinMoney(nwDelta.delta)}</span><span class="fin-of">since ${escapeHtml(nwDelta.sinceLabel)}</span>` : `<span class="fin-hint">Trend builds as balances are recorded.</span>`}
+            ${financeTrendSparklineHtml("fin-ov-spark")}
+          </div>
+        </div>
+        <div class="fin-ov-card">
+          <div class="fin-ov-label">Cash on hand</div>
+          <div class="fin-ov-value">${cashOnHand == null ? "—" : formatFinMoney(cashOnHand)}</div>
+        </div>
+        <div class="fin-ov-card fin-ov-month">
+          <div class="fin-ov-label">This month${isCurrentMonth ? "" : ` · ${escapeHtml(monthKey)}`}</div>
+          ${monthActualSpend == null
+            ? `<div class="fin-ov-value">${formatFinMoney(expenses)}</div><div class="fin-ov-sub">budgeted</div>`
+            : `<div class="fin-ov-value">${formatFinMoney(monthActualSpend)} <span class="fin-of">/ ${formatFinMoney(expenses)}</span></div>
+               <div class="fin-gauge"><i class="${monthOver ? "is-over" : ""}" style="width:${monthPct}%"></i></div>
+               ${paceOver != null ? `<div class="fin-ov-pace${paceOver > 0 ? " is-over" : ""}">${paceOver > 0 ? `~${formatFinMoney(paceOver)} over by month-end` : `on pace · ~${formatFinMoney(-paceOver)} under`}</div>` : ""}`}
+        </div>
+      </div>
+      ${chips.length ? `<div class="fin-ov-chips">${chips.join("")}</div>` : `<div class="fin-ov-chips fin-ov-clear">✓ Accounts fresh · nothing to review</div>`}
+    </section>`;
+
+  const financeTabNav = `
+    <div class="fin-tabs" role="tablist" aria-label="Finance sections">
+      ${FINANCE_TABS.map((t) => `<button class="fin-tab${financeTab === t.id ? " is-active" : ""}" type="button" role="tab" aria-selected="${financeTab === t.id}" data-fin-action="fin-tab" data-tab="${t.id}">${t.label}${t.id === "transactions" && reviewCount ? ` <span class="fin-tab-badge">${reviewCount}</span>` : ""}</button>`).join("")}
+    </div>`;
+
+  const connectPrompt = `
+    <div class="fin-card fin-empty-onboard">
+      <div class="fin-empty-title">${(state.financeAccounts || []).length ? "No bank connected" : "Set up your finances"}</div>
+      <div class="fin-empty-sub">Link a bank (read-only, via SimpleFIN) or add a manual account to track balances, spending, and net worth here.</div>
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-finance-settings">Open finance settings</button>
+    </div>`;
+
+  // Route the existing cards into tabs (they keep their own internals + wiring;
+  // later slices redesign each tab's contents). Overview stays pinned above.
+  const tabBody =
+    financeTab === "budget" ? `${monthlyBudgetCard}${personalCard}`
+    : financeTab === "accounts" ? ((savingsRow || netWorthCard) ? `${savingsRow}${netWorthCard}` : connectPrompt)
+    : (txnsCard || connectPrompt);
+
   grid.innerHTML = `
     <section class="fin-panel">
-      ${txnsCard}
-      ${monthlyBudgetCard}
-      ${savingsRow}
-      ${personalCard}
-      ${netWorthCard}
+      ${overviewBand}
+      ${financeTabNav}
+      <div class="fin-tab-body" data-fin-tab-body="${financeTab}">${tabBody}</div>
     </section>`;
 
   if (!financeGridWired) {
@@ -10771,6 +10894,7 @@ function onFinanceGridClick(e) {
   if (action === "unlink-banks") { unlinkFinanceBanks(); return; }
   if (action === "toggle-notifs") { openFinanceTxnReview(); return; }
   if (action === "review-txns") { openFinanceTxnReview(); return; }
+  if (action === "fin-tab") { financeTab = btn.dataset.tab || "transactions"; renderFinancePage(); return; }
   if (action === "confirm-txn") { financeConfirmTxn(btn.dataset.id); renderFinancePage(); return; }
   if (action === "toggle-txn-expand") { financeTxnListExpanded = !financeTxnListExpanded; renderFinancePage(); return; }
   if (action === "open-finance-settings") { openContextSettingsDialog("finance-accounts"); return; }
