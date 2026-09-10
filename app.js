@@ -8293,6 +8293,9 @@ const FINANCE_TABS = [
   { id: "budget", label: "Budget" },
   { id: "accounts", label: "Accounts" },
 ];
+// Budget tab: live client-side filter over category names (applied without a
+// full re-render; re-applied after each render so it survives edits).
+let financeBudgetSearch = "";
 // The transaction list renders a light default slice (FIN_TXN_LIST_CAP); a
 // "Show all" toggle lifts it so months with more txns than the cap are fully
 // reachable for labeling. Reset on month change so each month starts collapsed.
@@ -9909,6 +9912,21 @@ function renderFinanceAccountsPanel() {
     </div>`;
 }
 
+// Live-filter the budget categories by name without a full re-render (so the
+// search box keeps focus + caret as you type). Re-applied after each render.
+function applyBudgetSearch() {
+  const grid = elements.financePlannerGrid;
+  if (!grid) return;
+  const q = financeBudgetSearch.trim().toLowerCase();
+  grid.querySelectorAll(".fin-budget-groups [data-fin-cat-name]").forEach((cat) => {
+    cat.hidden = q ? !cat.dataset.finCatName.includes(q) : false;
+  });
+  grid.querySelectorAll('.fin-budget-groups [data-fin-card="group"]').forEach((card) => {
+    const cats = [...card.querySelectorAll("[data-fin-cat-name]")];
+    card.hidden = Boolean(q && cats.length && cats.every((c) => c.hidden));
+  });
+}
+
 function renderFinancePage() {
   const grid = elements.financePlannerGrid;
   if (!grid) return;
@@ -10057,23 +10075,49 @@ function renderFinancePage() {
       <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-person">+ Person</button>
     </div>`;
 
+  // Budget-vs-actual bar + optional pace note ("~$X over" for the current month).
+  const bNow = new Date();
+  const bDaysInMonth = new Date(bNow.getFullYear(), bNow.getMonth() + 1, 0).getDate();
+  const bDayOfMonth = bNow.getDate();
+  const budgetBar = (actual, budget) => {
+    if (!(budget > 0)) return "";
+    const pctb = Math.min(100, Math.round((Math.max(0, actual) / budget) * 100));
+    return `<div class="fin-budget-bar"><i class="${actual > budget ? "is-over" : ""}" style="width:${pctb}%"></i></div>`;
+  };
+  const budgetPace = (actual, budget) => {
+    if (!isCurrentMonth || !showActuals || !(budget > 0) || !(actual > 0) || bDayOfMonth < 3) return "";
+    const projected = (actual / bDayOfMonth) * bDaysInMonth;
+    const over = projected - budget;
+    if (over > Math.max(1, budget * 0.03)) return `<span class="fin-budget-pace is-over">~${formatFinMoney(over)} over by month-end</span>`;
+    if (actual > budget) return `<span class="fin-budget-pace is-over">over budget</span>`;
+    return "";
+  };
+
+  // Budget groups: default-open on the Budget tab so category numbers are visible
+  // without drilling (a "fold:" key optionally collapses a group). Each category
+  // shows a budget-vs-actual bar; tapping it opens the line-item editor.
   const groupCards = (state.financeBudgetGroups || []).map((g) => {
     const total = financeGroupTotal(g);
     const pct = income > 0 ? (total / income) * 100 : 0;
-    const cardOpen = financeExpanded.has(`card:${g.id}`);
+    const folded = financeExpanded.has(`fold:${g.id}`);
     const gActual = g.categories.reduce((s, c) => s + catActual(g, c), 0);
     const headTotal = showActuals
       ? `<span class="fin-cat-actual${gActual > total ? " is-over" : ""}">${formatFinMoney(gActual)}</span> <span class="fin-of">of</span> ${formatFinMoney(total)}`
       : formatFinMoney(total);
     return `
     <div class="fin-card" data-fin-card="group">
-      ${cardHead(`card:${g.id}`, g.label, headTotal)}
-      ${!cardOpen ? "" : `
+      <div class="fin-card-head fin-group-head" data-fin-action="toggle-expand" data-id="fold:${g.id}" role="button" tabindex="0" aria-expanded="${!folded}">
+        <h3>${escapeHtml(g.label)}</h3>
+        <span class="fin-card-total">${headTotal}</span>
+        <span class="fin-card-caret">${folded ? "▾" : "▴"}</span>
+      </div>
+      ${showActuals ? budgetBar(gActual, total) : ""}
+      ${folded ? "" : `
       <div class="fin-group-detail">
         <span class="fin-group-pct">${income > 0 ? `${pct.toFixed(1)}% of income` : "% of income shows once income is set"}${showActuals && lastMoGroupActual(g) !== null ? ` · last mo ${formatFinMoney(lastMoGroupActual(g))}` : ""}</span>
         <label class="fin-group-ideal">Ideal <input type="number" min="0" max="100" step="1" value="${g.idealPct}" data-fin-edit="group-ideal" data-id="${g.id}" aria-label="Ideal percent of income for ${escapeHtml(g.label)}" /> %</label>
-      </div>`}
-      ${!cardOpen ? "" : g.categories.map((c) => {
+      </div>
+      ${g.categories.map((c) => {
         const open = financeExpanded.has(c.id);
         const scope = `cat:${g.id}:${c.id}`;
         const pick = c.mode === "pick";
@@ -10100,8 +10144,10 @@ function renderFinancePage() {
             <span class="fin-category-caret">${open ? "▴" : "▾"}</span>
           </button>`;
         return `
-        <div class="fin-category">
+        <div class="fin-category" data-fin-cat-name="${escapeHtml((c.name || "").toLowerCase())}">
           ${rowHtml}
+          ${showActuals ? budgetBar(actual, budget) : ""}
+          ${budgetPace(actual, budget)}
           ${open ? `
           <div class="fin-category-items">
             ${c.items.map((it) => finItemRow(scope, it)).join("")}
@@ -10116,7 +10162,7 @@ function renderFinancePage() {
           </div>` : ""}
         </div>`;
       }).join("")}
-      ${!cardOpen ? "" : `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-category" data-group="${g.id}">+ Category</button>`}
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-category" data-group="${g.id}">+ Category</button>`}
     </div>`;
   }).join("");
 
@@ -10653,34 +10699,28 @@ function renderFinancePage() {
     </div>`;
   })();
 
-  // Monthly budget card — the three KPI figures, with a caret on Budgeted that
-  // expands to reveal the detailed Income, Needs, and Wants cards nested inside.
-  const budgetedOpen = financeExpanded.has("card:budgeted");
-  const monthlyOpen = financeExpanded.has("card:monthly");
-  // Collapsed: just the "budgeted / income" headline. Expanded: the three KPI
-  // cards. Income and Budgeted are each clickable and reveal their own detail
-  // (income sources / budget groups); Unallocated is a read-out.
+  // Budget view (Budget tab) — the KPI figures are always visible, Income expands
+  // to its detail, and the budget groups + categories render directly below with
+  // budget-vs-actual bars (no drilling to see a category number). A search box
+  // filters categories live.
   const budgetKpiBtn = (id, label, value, open) => `
         <button class="fin-stat fin-stat-btn fin-budget-toggle${open ? " is-open" : ""}" type="button" data-fin-action="toggle-expand" data-id="${id}" aria-expanded="${open}">
           <span class="fin-stat-label">${label} <span class="fin-budget-caret">${open ? "▴" : "▾"}</span></span>
           <span class="fin-stat-value">${value}</span>
         </button>`;
-  const monthlyBudgetCard = `
+  const budgetView = `
     <div class="fin-card fin-monthly-budget" data-fin-card="monthly-budget">
-      <div class="fin-card-head fin-budget-head" data-fin-action="toggle-expand" data-id="card:monthly" role="button" tabindex="0" aria-expanded="${monthlyOpen}">
-        <h3>Monthly budget</h3>
-        <span class="fin-card-total">${formatFinMoney(expenses)} <span class="fin-of">/</span> ${formatFinMoney(income)}</span>
-        <span class="fin-card-caret">${monthlyOpen ? "▴" : "▾"}</span>
-      </div>
-      ${!monthlyOpen ? "" : `
       <div class="fin-budget-kpis">
         ${budgetKpiBtn("card:income", "Income", formatFinMoney(income), incomeOpen)}
-        ${budgetKpiBtn("card:budgeted", "Budgeted", formatFinMoney(expenses), budgetedOpen)}
+        <div class="fin-stat"><span class="fin-stat-label">Budgeted</span><span class="fin-stat-value">${formatFinMoney(expenses)}</span></div>
         <div class="fin-stat"><span class="fin-stat-label">Unallocated</span><span class="fin-stat-value${cashFlow < 0 ? " is-neg" : ""}">${formatFinMoney(cashFlow)}</span></div>
       </div>
       ${incomeOpen ? `<div class="fin-cards fin-budget-nested">${incomeBreakdown}</div>` : ""}
-      ${budgetedOpen ? `<div class="fin-cards fin-budget-nested">${groupCards}</div>` : ""}`}
-    </div>`;
+      <div class="fin-budget-search-row">
+        <input type="search" class="fin-item-name fin-budget-search" placeholder="Search categories…" value="${escapeHtml(financeBudgetSearch)}" data-fin-budget-search aria-label="Search budget categories" />
+      </div>
+    </div>
+    <div class="fin-budget-groups">${groupCards}</div>`;
 
   // ── Overview band: the always-on "state of our finances" summary ──────────
   const health = financeAccountHealth();
@@ -10749,7 +10789,7 @@ function renderFinancePage() {
   // later slices redesign each tab's contents). Overview stays pinned above.
   const accountsPanel = `<div class="fin-card fin-accounts-card"><div class="fin-subhead fin-accounts-title">Accounts</div>${renderFinanceAccountsPanel()}</div>`;
   const tabBody =
-    financeTab === "budget" ? `${monthlyBudgetCard}${personalCard}`
+    financeTab === "budget" ? `${budgetView}${personalCard}`
     : financeTab === "accounts" ? `${savingsRow}${netWorthCard}${accountsPanel}`
     : (txnsCard || connectPrompt);
 
@@ -10764,6 +10804,11 @@ function renderFinancePage() {
     financeGridWired = true;
     grid.addEventListener("click", onFinanceGridClick);
     grid.addEventListener("change", onFinanceGridChange);
+    grid.addEventListener("input", (e) => {
+      if (!e.target.matches?.("[data-fin-budget-search]")) return;
+      financeBudgetSearch = e.target.value;
+      applyBudgetSearch(); // live filter, no re-render (keeps the box focused)
+    });
     grid.addEventListener("keydown", (e) => {
       if ((e.key === "Enter" || e.key === " ") && e.target.matches?.('[data-fin-action][role="button"]')) {
         e.preventDefault();
@@ -10805,6 +10850,8 @@ function renderFinancePage() {
   // Keep the Accounts panel (Settings › Finance) in sync when the finance page
   // re-renders — e.g. after an async bank refresh updates live balances.
   refreshFinanceSettingsIfOpen();
+  // Re-apply the budget category filter after a render (edits rebuild the list).
+  if (financeTab === "budget" && financeBudgetSearch) applyBudgetSearch();
 }
 
 // Right-click menu for the Accounts card — the edit/delete/label actions used

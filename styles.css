@@ -21135,6 +21135,21 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 }
 
 .fin-category { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); }
+
+/* Budget-vs-actual bars (category + group) and per-category pace note. */
+.fin-budget-bar { height: 6px; border-radius: 99px; background: color-mix(in srgb, var(--ink) 9%, transparent); overflow: hidden; margin: 0 2px 4px; }
+.fin-budget-bar > i { display: block; height: 100%; border-radius: 99px; background: var(--accent); }
+.fin-budget-bar > i.is-over { background: #b3261e; }
+[data-fin-card="group"] > .fin-budget-bar { height: 8px; margin: 2px 0 4px; }
+.fin-budget-pace { display: block; font-size: 0.72rem; font-weight: 700; color: var(--muted); padding: 0 2px 6px; }
+.fin-budget-pace.is-over { color: #b3261e; }
+.fin-group-head { cursor: pointer; }
+
+/* Budget tab: search box + group list. Hidden = filtered out by the search. */
+.fin-budget-search-row { padding-top: 8px; }
+.fin-budget-search { width: 100%; }
+.fin-budget-groups { display: flex; flex-direction: column; gap: 16px; margin-top: 8px; }
+.fin-budget-groups [hidden] { display: none !important; }
 .fin-category-row {
   display: flex;
   align-items: center;
