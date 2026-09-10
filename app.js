@@ -5358,6 +5358,30 @@ function normalizeFinanceAccounts(raw) {
   }));
 }
 
+// Download the viewed month's transactions as CSV (real app — blob download is
+// fine here; this is not an artifact/sandbox).
+function exportFinanceCsv(monthKey) {
+  const txns = financeLabeledTxns().filter((t) => (t.posted || "").slice(0, 7) === monthKey);
+  const esc = (s) => `"${String(s ?? "").replace(/"/g, '""')}"`;
+  const header = ["Date", "Merchant", "Bank description", "Amount", "Category", "Account"];
+  const lines = txns.map((t) => [
+    t.posted ? new Date(t.posted).toISOString().slice(0, 10) : "",
+    t.displayName || "",
+    t.description || "",
+    (t.amount || 0).toFixed(2),
+    t.label ? financeTxnLabelName(t.label) : "",
+    t.account || "",
+  ].map(esc).join(","));
+  const csv = [header.map(esc).join(","), ...lines].join("\n");
+  try {
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = `transactions-${monthKey}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch { showMailToast?.("Couldn't export CSV on this device."); }
+}
+
 // Months to pay off a debt at a fixed monthly payment (standard amortization).
 // null = no payment set; {neverPays} = payment ≤ monthly interest; {done} = paid.
 function financeDebtPayoff(balance, minPayment, annualRatePct) {
@@ -11041,7 +11065,33 @@ function renderFinancePage() {
           <span class="fin-sub-amt">${formatFinMoney(r.lastAmount || 0)}</span>
         </div>`).join("")}
     </div>` : "";
-  const insightsView = `${upcomingBillsCard}${subsCard}${cashFlowCard}${trendsCard}`;
+  // Reports: where the viewed month's spend went (category breakdown) + CSV export.
+  const catSpend = [...catActuals.entries()]
+    .map(([k, v]) => ({ key: k, name: financeTxnLabelName(`cat:${k}`), amount: Math.abs(Number(v) || 0) }))
+    .filter((c) => c.amount > 0)
+    .sort((a, b) => b.amount - a.amount);
+  const catTotal = catSpend.reduce((s, c) => s + c.amount, 0);
+  const reportRows = (() => {
+    const top = catSpend.slice(0, 8);
+    const restTotal = catSpend.slice(8).reduce((s, c) => s + c.amount, 0);
+    const rows = [...top];
+    if (restTotal > 0) rows.push({ key: "__other", name: "Other", amount: restTotal });
+    return rows;
+  })();
+  const reportMax = reportRows[0]?.amount || 1;
+  const reportsCard = financeLinkStatus?.connected ? `
+    <div class="fin-card fin-insights-card">
+      <div class="fin-report-head">
+        <div class="fin-subhead fin-accounts-title">Where it went${isCurrentMonth ? "" : ` · ${escapeHtml(monthKey)}`}</div>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="export-csv">Export CSV</button>
+      </div>
+      ${reportRows.length ? reportRows.map((c) => `
+        <div class="fin-report-row">
+          <div class="fin-report-top"><span class="fin-report-name">${escapeHtml(c.name)}</span><span class="fin-report-amt">${formatFinMoney(c.amount)} <span class="fin-of">· ${catTotal > 0 ? Math.round((c.amount / catTotal) * 100) : 0}%</span></span></div>
+          <div class="fin-report-bar"><i style="width:${Math.round((c.amount / reportMax) * 100)}%"></i></div>
+        </div>`).join("") : `<div class="fin-hint">No categorized spending yet this month.</div>`}
+    </div>` : "";
+  const insightsView = `${upcomingBillsCard}${subsCard}${cashFlowCard}${trendsCard}${reportsCard}`;
 
   // Savings goals (Accounts tab). Tap a goal to edit target/saved/date; progress
   // bar + on-track note derived on the fly.
@@ -11271,6 +11321,7 @@ function onFinanceGridClick(e) {
   if (action === "review-txns") { openFinanceTxnReview(); return; }
   if (action === "fin-tab") { financeTab = btn.dataset.tab || "transactions"; renderFinancePage(); return; }
   if (action === "fin-budget-group") { financeBudgetOpenGroup = financeBudgetOpenGroup === btn.dataset.id ? null : btn.dataset.id; renderFinancePage(); return; }
+  if (action === "export-csv") { exportFinanceCsv(financeViewMonth); return; }
   if (action === "confirm-txn") { financeConfirmTxn(btn.dataset.id); renderFinancePage(); return; }
   if (action === "quick-label") { recordFinanceTxnLabel(btn.dataset.id, btn.dataset.label, btn.dataset.desc || ""); renderFinancePage(); return; }
   if (action === "add-goal") {

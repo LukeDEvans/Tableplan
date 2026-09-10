@@ -21020,6 +21020,16 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-sub-day { flex: 0 0 auto; font-size: 0.72rem; color: var(--muted); }
 .fin-sub-amt { flex: 0 0 auto; font-weight: 750; font-variant-numeric: tabular-nums; }
 
+/* Reports: category breakdown bars + CSV export. */
+.fin-report-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.fin-report-head .fin-add-btn { flex: 0 0 auto; }
+.fin-report-row { padding: 6px 2px; }
+.fin-report-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 0.86rem; }
+.fin-report-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.fin-report-amt { flex: 0 0 auto; font-weight: 750; font-variant-numeric: tabular-nums; }
+.fin-report-bar { height: 6px; border-radius: 99px; background: color-mix(in srgb, var(--ink) 8%, transparent); overflow: hidden; margin-top: 4px; }
+.fin-report-bar > i { display: block; height: 100%; border-radius: 99px; background: var(--accent); }
+
 .fin-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
