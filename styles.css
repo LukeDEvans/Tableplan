@@ -21279,6 +21279,37 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-txn-date { flex: 0 0 52px; color: var(--muted); font-size: 0.76rem; }
 .fin-txn-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fin-txn-amt { font-weight: 750; }
+
+/* ── Transactions redesign (slice 4): day grouping, label pills, quick-labels ── */
+.fin-txn-day { display: flex; flex-direction: column; }
+.fin-txn-day + .fin-txn-day { margin-top: 6px; }
+.fin-txn-day-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  padding: 8px 2px 3px; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.03em;
+  text-transform: uppercase; color: var(--muted);
+}
+.fin-txn-day-total { font-weight: 700; text-transform: none; letter-spacing: 0; }
+
+/* Category pill on a row — see the label without opening the detail. */
+.fin-txn-label-pill {
+  flex: 0 0 auto; max-width: 40%; font-size: 0.7rem; font-weight: 700; padding: 2px 8px;
+  border-radius: 99px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: color-mix(in srgb, var(--accent) 14%, var(--window-bg)); color: var(--accent-dark, var(--accent));
+}
+.fin-txn-label-pill.is-auto { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--muted); font-style: italic; }
+.fin-txn-label-pill.is-split { background: color-mix(in srgb, #7b5ea7 16%, var(--window-bg)); color: #6a4d94; }
+/* Unlabeled spend gets a subtle left accent so it stands out for triage. */
+.fin-txn-row.is-unlabeled { box-shadow: inset 2px 0 0 color-mix(in srgb, #b3261e 55%, transparent); }
+
+/* One-tap quick-label chips under an unlabeled spend. */
+.fin-txn-quick { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 2px 8px 6px; }
+.fin-quick-chip {
+  font: inherit; font-size: 0.74rem; font-weight: 700; cursor: pointer;
+  padding: 4px 10px; border-radius: 99px; border: 1px solid var(--line);
+  background: var(--window-bg); color: var(--ink);
+}
+.fin-quick-chip:hover, .fin-quick-chip:focus-visible { border-color: var(--accent); color: var(--accent-dark, var(--accent)); outline: none; }
+.fin-quick-more { color: var(--muted); border-style: dashed; }
 .fin-acct-link { max-width: 34%; font-weight: 600; font-size: 0.74rem; }
 .fin-label-head { display: flex; align-items: center; gap: 2px; }
 .fin-label-head .fin-subhead { flex: 1; min-width: 0; }

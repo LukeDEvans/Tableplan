@@ -8609,7 +8609,7 @@ function openManualTxnForm(existing) {
   financeManualForm = existing
     ? { id: existing.id, date: (existing.posted || "").slice(0, 10), desc: existing.description || "", amount: String(existing.amount ?? ""), account: existing.account || "", label: (state.financeTxnLabels || {})[existing.id] || "" }
     : { id: null, date: new Date().toISOString().slice(0, 10), desc: "", amount: "", account: "", label: "" };
-  financeExpanded.add("card:txns");
+  financeTab = "transactions"; financeExpanded.add("card:txns");
   renderFinancePage();
 }
 
@@ -9174,7 +9174,7 @@ function openFinanceTxnDetailFromReview(card) {
   commitAllFinanceReviewCards(overlay); // don't lose staged edits when handing off to the detail card
   overlay?.remove();
   financeDetailTxnId = id;
-  financeExpanded.add("card:txns");
+  financeTab = "transactions"; financeExpanded.add("card:txns");
   if (activeAppArea === "finance") renderFinancePage();
 }
 
@@ -9218,7 +9218,7 @@ function handoffFinanceReviewCard(card, action) {
   commitAllFinanceReviewCards(overlay); // preserve staged edits across the handoff
   overlay?.remove();
   financeDetailTxnId = id;
-  financeExpanded.add("card:txns");
+  financeTab = "transactions"; financeExpanded.add("card:txns");
   if (action === "split") {
     startSplitTxn(id);           // opens the split editor (renders the page)
   } else if (action === "receipt") {
@@ -9470,7 +9470,7 @@ function startSplitTxn(txnId) {
     portions: (t.split && t.split.length ? t.split : [{ label: "", amount: "" }, { label: "", amount: "" }])
       .map((p) => ({ label: p.label || "", amount: p.amount ?? "" }))
   };
-  financeExpanded.add("card:txns");
+  financeTab = "transactions"; financeExpanded.add("card:txns");
   financeNotifOpen = false;
   renderFinancePage();
 }
@@ -10374,6 +10374,12 @@ function renderFinancePage() {
   // line items), drawn in the app's stroke-icon style (currentColor, no fill)
   // to match the bell/other icons rather than a raw 📷 emoji.
   const scanReceiptSvg = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="1.5" width="14" height="21" rx="2.5"/><path d="M9 4h4"/><path d="M10 20h2"/><path d="M7.5 7H14.5V15l-1 1-1-1-1 1-1-1-1 1-1-1-1 1V7Z"/><circle cx="9.4" cy="9.3" r="1.1"/><path d="M11.4 9.3h3M8 11.7h3.2M12.3 11.7h2M8 13.4h3.2M12.3 13.4h2"/></svg>`;
+  // Quick-label chips: the user's most-used budget categories, so an unlabeled
+  // spend can be filed in one tap without opening the detail dropdown.
+  const quickLabelFreq = new Map();
+  for (const t of allTxns) { if (t.label && t.label.startsWith("cat:")) quickLabelFreq.set(t.label, (quickLabelFreq.get(t.label) || 0) + 1); }
+  const quickLabels = [...quickLabelFreq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([label]) => ({ label, name: financeTxnLabelName(label) }));
+
   const txnSelect = (t) => {
     const isSplit = t.label === "split";
     const placeholder = isSplit ? `Split (${(t.split || []).length})` : t.labelSource === "auto" ? `auto: ${escapeHtml(financeTxnLabelName(t.label))}` : "label…";
@@ -10415,7 +10421,7 @@ function renderFinancePage() {
       </div>
     </div>`;
   };
-  const txnRow = (t, { compact = false, dupCount = 1 } = {}) => {
+  const txnRow = (t, { compact = false, dupCount = 1, grouped = false } = {}) => {
     // When the detail card is open for this txn, the rename UI lives there
     // instead of swapping the row, so the row stays a normal clickable row.
     const renaming = financeRenamingTxnId === t.id && financeDetailTxnId !== t.id;
@@ -10449,15 +10455,27 @@ function renderFinancePage() {
         ${txnSelect(t)}
       </div>`;
     }
+    // Status distinction: pending / unlabeled / auto-labeled / labeled.
+    const statusClass = t.pending ? " is-pending" : !t.label ? " is-unlabeled" : t.labelSource === "auto" ? " is-auto" : " is-labeled";
+    const labelPill = t.label && t.label !== "split"
+      ? `<span class="fin-txn-label-pill${t.labelSource === "auto" ? " is-auto" : ""}" title="${t.labelSource === "auto" ? "Auto-labeled — tap to change" : "Labeled"}">${escapeHtml(financeTxnLabelName(t.label))}</span>`
+      : (t.label === "split" ? `<span class="fin-txn-label-pill is-split" title="Split across categories">Split</span>` : "");
+    // Inline quick-labels for an unlabeled SPEND — one tap to file it.
+    const showQuick = !t.label && (t.amount || 0) < 0 && quickLabels.length > 0;
     return `
-    <div class="fin-txn-row fin-txn-row--clickable${t.pending ? " is-pending" : ""}${financeDetailTxnId === t.id ? " is-open" : ""}" data-fin-action="open-txn-detail" data-id="${escapeHtml(t.id)}" data-fin-txn-id="${escapeHtml(t.id)}" role="button" tabindex="0" aria-expanded="${financeDetailTxnId === t.id}">
-      <span class="fin-txn-date">${t.posted ? escapeHtml(new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>
+    <div class="fin-txn-row fin-txn-row--clickable${statusClass}${financeDetailTxnId === t.id ? " is-open" : ""}" data-fin-action="open-txn-detail" data-id="${escapeHtml(t.id)}" data-fin-txn-id="${escapeHtml(t.id)}" role="button" tabindex="0" aria-expanded="${financeDetailTxnId === t.id}">
+      ${grouped ? "" : `<span class="fin-txn-date">${t.posted ? escapeHtml(new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>`}
       ${financeTxnNeedsConfirm(t)
         ? `<button class="fin-txn-dot fin-txn-dot--confirm" type="button" data-fin-action="confirm-txn" data-id="${escapeHtml(t.id)}" title="Skipped in notifications — click to confirm" aria-label="Confirm this transaction"></button>`
         : (!t.label ? `<span class="fin-txn-dot" title="Needs a label" aria-label="Needs a label"></span>` : "")}
       <span class="fin-txn-desc" title="${descTitle}">${t.isManual ? `<span class="fin-txn-manual-tag" title="Manually entered">manual</span> ` : ""}${escapeHtml(t.displayName)}${t.pending ? " · pending" : ""}</span>
+      ${labelPill}
       <span class="fin-txn-amt${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</span>
-    </div>`;
+    </div>
+    ${showQuick ? `<div class="fin-txn-quick">
+      ${quickLabels.map((q) => `<button class="fin-quick-chip" type="button" data-fin-action="quick-label" data-id="${escapeHtml(t.id)}" data-label="${escapeHtml(q.label)}" data-desc="${escapeHtml(t.description)}">${escapeHtml(q.name)}</button>`).join("")}
+      <button class="fin-quick-chip fin-quick-more" type="button" data-fin-action="open-txn-detail" data-id="${escapeHtml(t.id)}">More…</button>
+    </div>` : ""}`;
   };
   const returnLinkHtml = (t) => {
     if (t.linkedPurchaseId) {
@@ -10595,8 +10613,41 @@ function renderFinancePage() {
   // instead of an inline list — so no panel is embedded in the card head.
   const notifPanel = "";
 
-  const txnsOpen = financeExpanded.has("card:txns");
   const filterActive = Boolean(f.q || f.kind || f.account);
+  // Build the list: grouped by day for the default (date) sort, flat otherwise.
+  const renderTxnBlock = (t) => txnRow(t, { grouped: f.sort === "date" }) + (financeDetailTxnId === t.id ? txnDetailHtml(t) : "") + (financeSplitDraft?.txnId === t.id ? splitEditorHtml(t) : "");
+  const txnDayLabel = (dayStr) => {
+    if (!dayStr || dayStr === "nodate") return "No date";
+    const d = new Date(dayStr + "T12:00:00");
+    const today = new Date(); today.setHours(12, 0, 0, 0);
+    const diff = Math.round((today - d) / 86400000);
+    if (diff === 0) return "Today";
+    if (diff === 1) return "Yesterday";
+    return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  };
+  let txnListHtml;
+  if (f.sort === "date") {
+    const days = [];
+    for (const t of txns) {
+      const day = (t.posted || "").slice(0, 10) || "nodate";
+      if (!days.length || days[days.length - 1].day !== day) days.push({ day, items: [] });
+      days[days.length - 1].items.push(t);
+    }
+    txnListHtml = days.map((g) => {
+      const spend = g.items.reduce((s, t) => s + Math.min(0, t.amount || 0), 0);
+      return `<div class="fin-txn-day">
+        <div class="fin-txn-day-head"><span>${escapeHtml(txnDayLabel(g.day))}</span>${spend < 0 ? `<span class="fin-txn-day-total">${formatFinMoney(spend)}</span>` : ""}</div>
+        ${g.items.map(renderTxnBlock).join("")}
+      </div>`;
+    }).join("");
+  } else {
+    txnListHtml = txns.map(renderTxnBlock).join("");
+  }
+  txnListHtml = txnListHtml || `<div class="empty-state">${filterActive ? "Nothing matches the filters." : `No transactions for ${escapeHtml(new Date(monthKey + "-15T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }))}.`}</div>`;
+
+  // On its own tab the Transactions list is the primary content — always shown
+  // (no card collapse to drill through).
+  const txnsOpen = true;
   const sortActive = f.sort !== "date";
   const accountOptions = [...new Map(allTxns.map((t) => [t.accountId, t.account])).entries()];
   const manualFormHtml = !financeManualForm ? "" : `
@@ -10622,10 +10673,9 @@ function renderFinancePage() {
     </div>`;
   const txnsCard = !financeLinkStatus?.connected ? "" : `
     <div class="fin-card" data-fin-card="txns">
-      <div class="fin-card-head fin-txns-head" data-fin-action="toggle-expand" data-id="card:txns" role="button" tabindex="0" aria-expanded="${txnsOpen}">
+      <div class="fin-card-head fin-txns-head">
         <h3>Transactions</h3>
         ${notifBell}
-        <span class="fin-card-caret">${txnsOpen ? "▴" : "▾"}</span>
       </div>
       ${notifPanel}
       ${!txnsOpen ? "" : `
@@ -10657,7 +10707,7 @@ function renderFinancePage() {
         ${filterActive || sortActive ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="txn-filter-clear">Clear</button>` : ""}
       </div>`}
       ${manualFormHtml}
-      ${txns.map((t) => txnRow(t) + (financeDetailTxnId === t.id ? txnDetailHtml(t) : "") + (financeSplitDraft?.txnId === t.id ? splitEditorHtml(t) : "")).join("") || `<div class="empty-state">${filterActive ? "Nothing matches the filters." : `No transactions for ${escapeHtml(new Date(monthKey + "-15T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }))}.`}</div>`}
+      ${txnListHtml}
       ${txnsTruncated ? `<button class="secondary-btn fin-add-btn fin-txn-showall" type="button" data-fin-action="toggle-txn-expand">Show all ${shownTxns.length}</button>`
         : (financeTxnListExpanded && shownTxns.length > FIN_TXN_LIST_CAP ? `<button class="secondary-btn fin-add-btn fin-txn-showall" type="button" data-fin-action="toggle-txn-expand">Show fewer</button>` : "")}`}
     </div>`;
@@ -10965,6 +11015,7 @@ function onFinanceGridClick(e) {
   if (action === "review-txns") { openFinanceTxnReview(); return; }
   if (action === "fin-tab") { financeTab = btn.dataset.tab || "transactions"; renderFinancePage(); return; }
   if (action === "confirm-txn") { financeConfirmTxn(btn.dataset.id); renderFinancePage(); return; }
+  if (action === "quick-label") { recordFinanceTxnLabel(btn.dataset.id, btn.dataset.label, btn.dataset.desc || ""); renderFinancePage(); return; }
   if (action === "toggle-txn-expand") { financeTxnListExpanded = !financeTxnListExpanded; renderFinancePage(); return; }
   if (action === "open-finance-settings") { openContextSettingsDialog("finance-accounts"); return; }
   if (action === "dismiss-alert") {
