@@ -38531,7 +38531,7 @@ const PLAN_COLORS = [
   "#db4437","#d50000","#e91e63","#ad1457","#9c27b0","#6a1b9a",
   "#ab47bc","#7986cb","#3f51b5","#795548","#607d8b","#616161",
 ];
-const PLAN_APP_COLORS = { eat: "#0f9d58", play: "#ff5722", do: "#1976d2", watch: "#7b1fa2", birthday: "#e91e63" };
+const PLAN_APP_COLORS = { eat: "#0f9d58", play: "#ff5722", do: "#1976d2", watch: "#7b1fa2", birthday: "#e91e63", finance: "#b8860b" };
 
 // Calendar color picker palette: 6 base hues, each a light→deep ramp of 7 shades
 // (Material 100→800). The base circle shows the mid (index 4) shade; clicking it
@@ -40119,6 +40119,24 @@ function buildPlanAppDataIndex() {
       push(key, { ...common, allDay: true, startTime: null, endTime: null, taskState: "due" });
     }
   });
+  // Finance: detected recurring bills as read-only all-day chips on their expected
+  // day, across a bounded window (−2…+14 months) so the index stays finite. The
+  // "Bills" sidebar overlay toggles them (planHiddenSources.finance) like eat/play.
+  const recBills = (state.financeRecurring || []).filter((r) => r.active !== false);
+  if (recBills.length) {
+    const base = new Date();
+    for (let mOff = -2; mOff <= 14; mOff++) {
+      const d = new Date(base.getFullYear(), base.getMonth() + mOff, 1);
+      const y = d.getFullYear(), mo = d.getMonth();
+      const dim = new Date(y, mo + 1, 0).getDate();
+      const mm = String(mo + 1).padStart(2, "0");
+      for (const r of recBills) {
+        const day = Math.min(Math.max(1, r.expectedDay || 1), dim);
+        const key = `${y}-${mm}-${String(day).padStart(2, "0")}`;
+        push(key, { id: `finbill-${r.id}-${key}`, title: `${r.name} · ${formatFinMoney(r.lastAmount || 0)}`, date: key, allDay: true, startTime: null, endTime: null, color: PLAN_APP_COLORS.finance, source: "finance", calendarName: "Bills", readOnly: true });
+      }
+    }
+  }
   return byDate;
 }
 
@@ -41906,6 +41924,7 @@ function renderPlanCalList() {
       ${planOverlayRowHtml("play", "Exercise", PLAN_APP_COLORS.play)}
       ${planOverlayRowHtml("do", "Tasks", PLAN_APP_COLORS.do)}
       ${planOverlayRowHtml("birthday", "Birthdays", PLAN_APP_COLORS.birthday)}
+      ${planOverlayRowHtml("finance", "Bills", PLAN_APP_COLORS.finance)}
     </div>
     <div class="plan-cal-divider"></div>
     ${sorted.map((c) => planCalRowHtml(c)).join("")}
