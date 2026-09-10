@@ -317,7 +317,7 @@ const STATE_SECTIONS = {
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals"],
-  config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices"],
+  config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "financeAlertPrefs"],
   contacts:  ["contacts", "contactGroups"],
 };
 
@@ -4351,6 +4351,7 @@ function defaultState() {
     activeCooking: [],
     weeklyEmailSettings: defaultWeeklyEmailSettings(),
     mailAiSettings: {},
+    financeAlertPrefs: {},
     mailMoveMemory: { threads: {}, senders: {} },
     financePeople: [],
     financeBudgetGroups: defaultFinanceBudgetGroups(),
@@ -4529,6 +4530,7 @@ function normalizeState(parsed) {
     activeCooking: normalizeActiveCooking(parsed?.activeCooking),
     weeklyEmailSettings: normalizeWeeklyEmailSettings(parsed?.weeklyEmailSettings),
     mailAiSettings: (parsed?.mailAiSettings && typeof parsed.mailAiSettings === "object") ? parsed.mailAiSettings : {},
+    financeAlertPrefs: (parsed?.financeAlertPrefs && typeof parsed.financeAlertPrefs === "object") ? parsed.financeAlertPrefs : {},
     mailMoveMemory: (parsed?.mailMoveMemory && typeof parsed.mailMoveMemory === "object") ? parsed.mailMoveMemory : { threads: {}, senders: {} },
     financePeople: normalizeFinancePeople(parsed?.financePeople),
     financeBudgetGroups: normalizeFinanceBudgetGroups(parsed?.financeBudgetGroups),
@@ -8938,7 +8940,7 @@ function financeRecurringAlerts() {
     const li = financeResolveLineItem(r.lineItemKey);
     if (li) {
       const diff = Math.abs((r.lastAmount || 0) - (li.it.amount || 0));
-      if (diff > Math.max(0.5, 0.02 * (li.it.amount || 0)) && r.ackAmount !== r.lastAmount) {
+      if (financeAlertPref("priceChange") && diff > Math.max(0.5, 0.02 * (li.it.amount || 0)) && r.ackAmount !== r.lastAmount) {
         out.push({ kind: "price", r, li });
       }
     }
@@ -9491,6 +9493,17 @@ function financeAccountHealth() {
   const bridgeError = Boolean((financeLive?.errors || []).length);
   return { accounts, needsAttention, bridgeError };
 }
+
+// User-configurable finance alerts (Settings › Finance). Default ON; stored in
+// the config section (state.financeAlertPrefs), NOT the schema-guarded finance
+// section — these are preferences, not ledger data.
+const FINANCE_ALERTS = [
+  { key: "overBudget", label: "Category over budget", desc: "Flag when a category's spending passes its budget this month." },
+  { key: "largeTxn", label: "Large purchase", desc: "Flag any single transaction over $400." },
+  { key: "lowBalance", label: "Low cash balance", desc: "Flag when a cash account drops below $100." },
+  { key: "priceChange", label: "Subscription price change", desc: "Flag when a recurring charge's amount changes vs its budget line." },
+];
+function financeAlertPref(key) { const p = state.financeAlertPrefs; return !p || p[key] !== false; }
 
 // A small connection-status pill for an account row (from financeAccountStatus).
 function financeAccountStatusPill(status) {
@@ -10941,6 +10954,23 @@ function renderFinancePage() {
     chips.push(status.kind === "disconnected"
       ? `<button class="fin-chip fin-chip-bad" type="button" data-fin-action="fin-tab" data-tab="accounts">${nm} · disconnected</button>`
       : `<button class="fin-chip fin-chip-warn" type="button" data-fin-action="fin-tab" data-tab="accounts">${nm} · stale ${status.days}d</button>`);
+  }
+  // Configurable alert chips (Settings › Finance › Alerts; default on).
+  if (showActuals && financeAlertPref("overBudget")) {
+    let overCount = 0;
+    for (const g of (state.financeBudgetGroups || [])) for (const c of g.categories) { const b = financeCategoryTotal(c); if (b > 0 && -catActual(g, c) > b) overCount++; }
+    if (overCount) chips.push(`<button class="fin-chip fin-chip-warn" type="button" data-fin-action="fin-tab" data-tab="budget">${overCount} over budget</button>`);
+  }
+  if (financeAlertPref("largeTxn")) {
+    const big = monthTxns.filter((t) => (t.amount || 0) <= -400).sort((a, b) => (a.amount || 0) - (b.amount || 0))[0];
+    if (big) chips.push(`<button class="fin-chip fin-chip-warn" type="button" data-fin-action="fin-tab" data-tab="transactions">Large: ${escapeHtml(big.displayName)} ${formatFinMoney(big.amount)}</button>`);
+  }
+  if (financeAlertPref("lowBalance")) {
+    for (const a of (state.financeAccounts || [])) {
+      if (financeAccountKind(a) !== "cash") continue;
+      const bal = financeAccountBalance(a, liveById);
+      if (bal != null && bal >= 0 && bal < 100) { chips.push(`<button class="fin-chip fin-chip-bad" type="button" data-fin-action="fin-tab" data-tab="accounts">Low: ${escapeHtml(a.name)} ${formatFinMoney(bal)}</button>`); break; }
+    }
   }
 
   const overviewBand = `
@@ -22081,7 +22111,30 @@ function renderContextSettingsDialog(kind) {
     if (financeLinkStatus === null) checkFinanceLinkStatus();
     elements.contextSettingsBody.innerHTML = `
       <p class="settings-hint">Your accounts, labels, balances and bank link. These feed net worth and the savings cards.</p>
-      <div class="fin-accounts-panel">${renderFinanceAccountsPanel()}</div>`;
+      <div class="fin-accounts-panel">${renderFinanceAccountsPanel()}</div>
+      <div class="fin-alerts-settings">
+        <div class="fin-subhead fin-alerts-title">Alerts</div>
+        <p class="settings-hint">Which finance alerts appear in the Overview and the notifications bell.</p>
+        ${FINANCE_ALERTS.map((a) => `
+          <div class="mail-ai-feature-row">
+            <div class="mail-ai-feature-text">
+              <span class="mail-ai-feature-label">${escapeHtml(a.label)}</span>
+              <span class="mail-ai-feature-desc">${escapeHtml(a.desc)}</span>
+            </div>
+            <label class="toggle-switch" aria-label="${escapeHtml(a.label)}">
+              <input type="checkbox" data-fin-alert-key="${escapeHtml(a.key)}" ${financeAlertPref(a.key) ? "checked" : ""}>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>`).join("")}
+      </div>`;
+    elements.contextSettingsBody.querySelectorAll("[data-fin-alert-key]").forEach((input) => {
+      input.addEventListener("change", () => {
+        if (!state.financeAlertPrefs || typeof state.financeAlertPrefs !== "object") state.financeAlertPrefs = {};
+        state.financeAlertPrefs[input.dataset.finAlertKey] = input.checked;
+        persist();
+        if (activeAppArea === "finance") renderFinancePage();
+      });
+    });
     return;
   }
 

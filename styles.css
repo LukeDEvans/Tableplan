@@ -22619,3 +22619,6 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
 .pub-reader-text img { max-width: 100%; height: auto; border-radius: 8px; }
 @media (max-width: 480px) { .pub-page-inner { padding: 8px; } .pub-card-img { width: 52px; height: 52px; }
   .pub-reader-body { padding: 14px 16px 40px; } .pub-reader-title { font-size: 20px; } .pub-reader-text { font-size: 16px; } }
+/* Finance alerts settings section (Settings › Finance). Reuses .mail-ai-feature-row. */
+.fin-alerts-settings { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
+.fin-alerts-title { margin-top: 8px; font-size: 0.95rem; font-weight: 800; color: var(--ink); }
