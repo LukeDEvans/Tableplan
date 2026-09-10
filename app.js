@@ -8853,6 +8853,21 @@ function financeSpendTrends(viewMonth) {
   return { series, movers: movers.slice(0, 5), hasData: series.some((s) => s.spend != null) };
 }
 
+// Cash flow (money in vs out) for the last 6 months, from the monthly snapshots.
+function financeCashFlow(viewMonth) {
+  const ma = (state.financeMonthActuals && typeof state.financeMonthActuals === "object") ? state.financeMonthActuals : {};
+  const [y, mo] = viewMonth.split("-").map(Number);
+  const months = [];
+  for (let i = 5; i >= 0; i--) months.push(new Date(y, mo - 1 - i, 1).toISOString().slice(0, 7));
+  const series = months.map((m) => {
+    const e = ma[m];
+    const income = e && e.income != null ? Math.abs(Number(e.income) || 0) : null;
+    const spend = e && e.cats ? Object.values(e.cats).reduce((s, v) => s + Math.abs(Number(v) || 0), 0) : null;
+    return { month: m, income, spend };
+  });
+  return { series, hasData: series.some((s) => s.income != null || s.spend != null) };
+}
+
 // Alerts the bell surfaces. kinds: "new" (unlinked recurring found),
 // "price" (charge differs from its budget line), "missing" (expected charge
 // hasn't arrived this month).
@@ -10945,7 +10960,33 @@ function renderFinancePage() {
               : `<span class="fin-mover-delta is-over">new</span>`}
           </div>`).join("")}` : ""}
     </div>` : "";
-  const insightsView = `${upcomingBillsCard}${trendsCard}`;
+  const cashflow = financeCashFlow(monthKey);
+  const cfMax = Math.max(1, ...cashflow.series.flatMap((s) => [s.income || 0, s.spend || 0]));
+  const cfIn = showActuals ? incomeActual : null;
+  const cfOut = monthActualSpend;
+  const cfNet = (cfIn != null && cfOut != null) ? cfIn - cfOut : null;
+  const cashFlowCard = cashflow.hasData ? `
+    <div class="fin-card fin-insights-card">
+      <div class="fin-subhead fin-accounts-title">Cash flow</div>
+      ${cfIn != null || cfOut != null ? `
+      <div class="fin-cf-summary">
+        <div class="fin-cf-stat"><span class="fin-cf-label">In</span><span class="fin-cf-val is-in">${formatFinMoney(cfIn || 0)}</span></div>
+        <div class="fin-cf-stat"><span class="fin-cf-label">Out</span><span class="fin-cf-val is-out">${formatFinMoney(-(cfOut || 0))}</span></div>
+        <div class="fin-cf-stat"><span class="fin-cf-label">Net</span><span class="fin-cf-val ${cfNet >= 0 ? "is-in" : "is-out"}">${cfNet >= 0 ? "+" : ""}${formatFinMoney(cfNet || 0)}</span></div>
+      </div>` : ""}
+      <div class="fin-cf-bars">
+        ${cashflow.series.map((s) => `
+          <div class="fin-cf-col${s.month === monthKey ? " is-current" : ""}" title="${escapeHtml(s.month)}${s.income != null ? ` · in ${formatFinMoney(s.income)}` : ""}${s.spend != null ? ` · out ${formatFinMoney(s.spend)}` : ""}">
+            <div class="fin-cf-pair">
+              <i class="fin-cf-in" style="height:${s.income != null ? Math.round((s.income / cfMax) * 100) : 0}%"></i>
+              <i class="fin-cf-out" style="height:${s.spend != null ? Math.round((s.spend / cfMax) * 100) : 0}%"></i>
+            </div>
+            <span class="fin-tbar-label">${new Date(s.month + "-15T12:00:00").toLocaleDateString(undefined, { month: "short" })}</span>
+          </div>`).join("")}
+      </div>
+      <div class="fin-cf-legend"><span class="fin-cf-key in">Money in</span><span class="fin-cf-key out">Money out</span></div>
+    </div>` : "";
+  const insightsView = `${upcomingBillsCard}${cashFlowCard}${trendsCard}`;
 
   // Route the existing cards into tabs (they keep their own internals + wiring).
   // Overview stays pinned above.

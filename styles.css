@@ -20991,6 +20991,27 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-mover-delta.is-over { color: #b3261e; }
 .fin-mover-delta.is-under { color: #1f9d57; }
 
+/* Cash flow (money in vs out) — summary stats + paired monthly bars. */
+.fin-cf-summary { display: flex; gap: 8px; margin-bottom: 10px; }
+.fin-cf-stat { flex: 1; display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.fin-cf-label { font-size: 0.66rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+.fin-cf-val { font-size: 1.02rem; font-weight: 850; font-variant-numeric: tabular-nums; }
+.fin-cf-val.is-in { color: #1f9d57; }
+.fin-cf-val.is-out { color: #b3261e; }
+.fin-cf-bars { display: flex; align-items: flex-end; gap: 10px; height: 96px; padding: 4px 2px 0; }
+.fin-cf-col { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 5px; height: 100%; }
+.fin-cf-pair { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 3px; }
+.fin-cf-pair > i { width: 42%; min-height: 2px; border-radius: 4px 4px 0 0; }
+.fin-cf-in { background: color-mix(in srgb, #1f9d57 62%, transparent); }
+.fin-cf-out { background: color-mix(in srgb, #b3261e 58%, transparent); }
+.fin-cf-col.is-current .fin-cf-in { background: #1f9d57; }
+.fin-cf-col.is-current .fin-cf-out { background: #b3261e; }
+.fin-cf-legend { display: flex; gap: 14px; margin-top: 8px; font-size: 0.72rem; font-weight: 700; color: var(--muted); }
+.fin-cf-key { display: inline-flex; align-items: center; gap: 5px; }
+.fin-cf-key::before { content: ""; width: 9px; height: 9px; border-radius: 2px; }
+.fin-cf-key.in::before { background: #1f9d57; }
+.fin-cf-key.out::before { background: #b3261e; }
+
 .fin-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
