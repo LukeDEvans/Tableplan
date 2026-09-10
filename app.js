@@ -5351,8 +5351,24 @@ function normalizeFinanceAccounts(raw) {
     kind: FINANCE_ACCOUNT_KINDS.includes(a?.kind) ? a.kind : "",
     // For accounts no aggregator reaches (loans, small 401(k)s): a manually
     // kept balance, negative for debts. null = not tracked.
-    manualBalance: Number.isFinite(Number(a?.manualBalance)) && a?.manualBalance !== null && a?.manualBalance !== "" ? Number(a.manualBalance) : null
+    manualBalance: Number.isFinite(Number(a?.manualBalance)) && a?.manualBalance !== null && a?.manualBalance !== "" ? Number(a.manualBalance) : null,
+    // Debt payoff (optional, debt accounts only): annual % + monthly payment.
+    interestRate: Number(a?.interestRate) || 0,
+    minPayment: Number(a?.minPayment) || 0,
   }));
+}
+
+// Months to pay off a debt at a fixed monthly payment (standard amortization).
+// null = no payment set; {neverPays} = payment ≤ monthly interest; {done} = paid.
+function financeDebtPayoff(balance, minPayment, annualRatePct) {
+  const P = Math.abs(Number(balance) || 0);
+  const M = Math.abs(Number(minPayment) || 0);
+  if (P <= 0) return { done: true };
+  if (M <= 0) return null;
+  const r = (Number(annualRatePct) || 0) / 100 / 12;
+  if (r <= 0) return { months: Math.ceil(P / M) };
+  if (M <= r * P) return { neverPays: true };
+  return { months: Math.ceil(-Math.log(1 - (r * P) / M) / Math.log(1 + r)) };
 }
 
 // Savings goals: id-keyed (union-by-id + tombstone on sync, like financeAccounts).
@@ -9934,6 +9950,19 @@ function renderFinanceAccountsPanel() {
         <input class="fin-item-amount fin-manual-bal" type="text" inputmode="decimal" value="${a.manualBalance === null ? "" : escapeHtml(String(a.manualBalance))}" placeholder="Balance (− for debts)" data-fin-edit="account-manual-balance" data-id="${a.id}" aria-label="Manual balance for ${escapeHtml(a.name)}" />
         <span class="fin-hint">manual balance — counts toward net worth</span>
       </div>` : ""}
+      ${(financeAccountKind(a) === "debt" || (financeAccountBalance(a, liveById) || 0) < 0) ? (() => {
+        const payoff = financeDebtPayoff(financeAccountBalance(a, liveById), a.minPayment, a.interestRate);
+        let est = "Add APR + monthly payment to estimate payoff.";
+        if (payoff?.done) est = "Paid off 🎉";
+        else if (payoff?.neverPays) est = "⚠ Payment barely covers the interest — it won't pay down.";
+        else if (payoff?.months != null) { const d = new Date(); d.setMonth(d.getMonth() + payoff.months); est = `~${payoff.months} month${payoff.months === 1 ? "" : "s"} · payoff ${d.toLocaleDateString(undefined, { month: "short", year: "numeric" })}`; }
+        return `
+        <div class="fin-item-row">
+          <input class="fin-item-amount" type="text" inputmode="decimal" value="${a.interestRate || ""}" placeholder="APR %" data-fin-edit="account-interest" data-id="${a.id}" aria-label="Interest rate APR percent for ${escapeHtml(a.name)}" />
+          <input class="fin-item-amount" type="text" inputmode="decimal" value="${a.minPayment || ""}" placeholder="$/mo payment" data-fin-edit="account-minpayment" data-id="${a.id}" aria-label="Monthly payment for ${escapeHtml(a.name)}" />
+        </div>
+        <div class="fin-hint fin-payoff-note${payoff?.neverPays ? " is-warn" : ""}">${escapeHtml(est)}</div>`;
+      })() : ""}
       <div class="fin-item-row fin-item-row--tools">
         <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="delete-account" data-id="${a.id}">Delete account</button>
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="toggle-expand" data-id="edit:${a.id}">Done</button>
@@ -11611,6 +11640,12 @@ function onFinanceGridChange(e) {
   } else if (kind === "account-kind") {
     const a = state.financeAccounts.find((x) => x.id === el.dataset.id);
     if (a) a.kind = FINANCE_ACCOUNT_KINDS.includes(el.value) ? el.value : "";
+  } else if (kind === "account-interest") {
+    const a = state.financeAccounts.find((x) => x.id === el.dataset.id);
+    if (a) a.interestRate = parseFinAmount(el.value) || 0;
+  } else if (kind === "account-minpayment") {
+    const a = state.financeAccounts.find((x) => x.id === el.dataset.id);
+    if (a) a.minPayment = parseFinAmount(el.value) || 0;
   } else if (kind === "account-name") {
     const a = state.financeAccounts.find((x) => x.id === el.dataset.id);
     if (a) a.name = el.value.trim();

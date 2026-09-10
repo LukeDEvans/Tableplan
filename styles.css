@@ -21413,6 +21413,8 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-goal-note.is-done { color: #1f9d57; }
 .fin-goal-editor { padding: 4px 2px 12px; display: flex; flex-direction: column; gap: 8px; }
 .fin-goals-card > .fin-add-btn { margin-top: 8px; }
+.fin-payoff-note { font-weight: 700; }
+.fin-payoff-note.is-warn { color: #b45309; }
 .fin-owner-select { max-width: 26%; font-weight: 600; font-size: 0.74rem; }
 @media (max-width: 700px) {
   [data-fin-card="accounts"] .fin-item-row { flex-wrap: wrap; }
