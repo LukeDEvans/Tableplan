@@ -10339,12 +10339,12 @@ function renderFinancePage() {
   const unlinkedLive = (financeLive?.accounts || []).filter((a) => !linkedIds.has(a.id));
 
   // Net worth: live balances for linked accounts + manual balances elsewhere
-  let netWorth = null;
+  let netWorth = null, nwAssets = 0, nwLiabilities = 0;
   {
     let sum = 0, any = false;
     for (const a of (state.financeAccounts || [])) {
       const bal = financeAccountBalance(a, liveById);
-      if (bal !== null) { sum += bal; any = true; }
+      if (bal !== null) { sum += bal; any = true; if (bal >= 0) nwAssets += bal; else nwLiabilities += -bal; }
     }
     if (any) netWorth = sum;
   }
@@ -10836,6 +10836,7 @@ function renderFinancePage() {
           <option value="account" ${f.sort === "account" ? "selected" : ""}>Sort: Account</option>
         </select>
         ${filterActive || sortActive ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="txn-filter-clear">Clear</button>` : ""}
+        <span class="fin-hint fin-txn-window-hint">Search covers the loaded window (~45 days + the viewed month); older months keep saved category totals, not individual transactions.</span>
       </div>`}
       ${manualFormHtml}
       ${txnListHtml}
@@ -10872,6 +10873,10 @@ function renderFinancePage() {
     <div class="fin-card fin-networth-line" data-fin-card="networth">
       ${cardHead("card:networth", "Net worth", `<span class="fin-cat-actual${netWorth < 0 ? " is-over" : ""}">${formatFinMoney(netWorth)}</span>`)}
       ${!nwOpen ? "" : `
+      <div class="fin-nw-split">
+        <div class="fin-nw-split-item"><span class="fin-nw-split-label">Assets</span><span class="fin-nw-split-val is-pos">${formatFinMoney(nwAssets)}</span></div>
+        <div class="fin-nw-split-item"><span class="fin-nw-split-label">Liabilities</span><span class="fin-nw-split-val${nwLiabilities > 0 ? " is-neg" : ""}">${formatFinMoney(-nwLiabilities)}</span></div>
+      </div>
       ${breakdownRow("Cash", cashOnHand)}
       ${breakdownRow("Investments", investmentTotal)}
       ${breakdownRow("Retirement", retirementTotal)}

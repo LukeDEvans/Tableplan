@@ -21037,6 +21037,15 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-notable-amt { flex: 0 0 auto; font-weight: 750; font-variant-numeric: tabular-nums; }
 .fin-notable-amt.is-neg { color: #b3261e; }
 
+/* Net worth assets vs liabilities split. */
+.fin-nw-split { display: flex; gap: 8px; margin: 4px 0 8px; }
+.fin-nw-split-item { flex: 1; display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.fin-nw-split-label { font-size: 0.66rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+.fin-nw-split-val { font-size: 1rem; font-weight: 850; font-variant-numeric: tabular-nums; }
+.fin-nw-split-val.is-pos { color: #1f9d57; }
+.fin-nw-split-val.is-neg { color: #b3261e; }
+.fin-txn-window-hint { flex: 1 1 100%; }
+
 .fin-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
