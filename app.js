@@ -10986,7 +10986,20 @@ function renderFinancePage() {
       </div>
       <div class="fin-cf-legend"><span class="fin-cf-key in">Money in</span><span class="fin-cf-key out">Money out</span></div>
     </div>` : "";
-  const insightsView = `${upcomingBillsCard}${cashFlowCard}${trendsCard}`;
+  const subs = (state.financeRecurring || []).filter((r) => r.active !== false).sort((a, b) => (b.lastAmount || 0) - (a.lastAmount || 0));
+  const subsTotal = subs.reduce((s, r) => s + (r.lastAmount || 0), 0);
+  const subsCard = subs.length ? `
+    <div class="fin-card fin-insights-card">
+      <div class="fin-subhead fin-accounts-title">Subscriptions &amp; recurring</div>
+      <div class="fin-subs-total"><span>${subs.length} recurring charge${subs.length === 1 ? "" : "s"}</span><span>${formatFinMoney(subsTotal)}<span class="fin-of">/mo</span></span></div>
+      ${subs.map((r) => `
+        <div class="fin-sub-row">
+          <span class="fin-sub-name">${escapeHtml(r.name)}</span>
+          <span class="fin-sub-day">day ${Math.min(28, Math.max(1, r.expectedDay || 1))}</span>
+          <span class="fin-sub-amt">${formatFinMoney(r.lastAmount || 0)}</span>
+        </div>`).join("")}
+    </div>` : "";
+  const insightsView = `${upcomingBillsCard}${subsCard}${cashFlowCard}${trendsCard}`;
 
   // Route the existing cards into tabs (they keep their own internals + wiring).
   // Overview stays pinned above.
