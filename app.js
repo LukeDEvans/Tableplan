@@ -9373,6 +9373,17 @@ function financeAccountHealth() {
   return { accounts, needsAttention, bridgeError };
 }
 
+// A small connection-status pill for an account row (from financeAccountStatus).
+function financeAccountStatusPill(status) {
+  if (!status) return "";
+  if (status.kind === "manual") return `<span class="fin-acct-status is-manual" title="Manually kept balance — not bank-linked">Manual</span>`;
+  if (status.kind === "disconnected") return `<span class="fin-acct-status is-bad" title="Linked, but the bank connection isn't returning this account — reconnect it">Disconnected</span>`;
+  if (status.kind === "stale") return `<span class="fin-acct-status is-warn" title="Balance hasn't updated recently">Stale ${status.days}d</span>`;
+  const d = status.days;
+  const label = d == null ? "Linked" : d <= 0 ? "Updated today" : d === 1 ? "Updated 1d ago" : `Updated ${d}d ago`;
+  return `<span class="fin-acct-status is-ok" title="Bank-linked and up to date">${label}</span>`;
+}
+
 // Net-worth trend from the server's daily snapshots (financeHistory). Reused by
 // the Overview band and the Net-worth card. Bank-linked balances only, so it can
 // differ slightly from live net worth that also counts manual accounts.
@@ -9799,8 +9810,9 @@ function renderFinanceAccountsPanel() {
     const subs = ownerSubs(a.owner || "Other");
     const shownBal = live ? (live.balance ?? 0) : a.manualBalance;
     return `
-    <div class="fin-item-row fin-acct-row" data-fin-acct-id="${escapeHtml(a.id)}" title="Right-click (or ✎) to edit or delete">
+    <div class="fin-item-row fin-acct-row" data-fin-acct-id="${escapeHtml(a.id)}">
       <span class="fin-acct-name">${escapeHtml(a.name)}</span>
+      ${financeAccountStatusPill(financeAccountStatus(a, liveById))}
       ${shownBal !== null && shownBal !== undefined ? `<span class="fin-live-bal${shownBal < 0 ? " is-neg" : ""}${live ? "" : " fin-bal-manual"}" ${live ? "" : `title="Manually kept balance"`}>${formatFinMoney(shownBal)}</span>` : ""}
       <button class="fin-acct-edit-btn" type="button" data-fin-action="toggle-expand" data-id="edit:${a.id}" aria-label="Edit ${escapeHtml(a.name)}">${editing ? "▴" : "✎"}</button>
     </div>
@@ -9855,16 +9867,25 @@ function renderFinanceAccountsPanel() {
     const subs = ownerSubs(owner);
     const noSub = ownerAccts.filter((x) => !x.sub);
     return `
-    <div class="fin-label-head" data-fin-owner="${escapeHtml(owner)}" title="Right-click to add a sub-label, rename, or delete">
+    <div class="fin-label-head" data-fin-owner="${escapeHtml(owner)}">
       <span class="fin-subhead">${escapeHtml(owner)}</span>
+      <span class="fin-label-actions">
+        <button class="fin-label-btn" type="button" data-fin-action="add-sublabel" data-label="${escapeHtml(owner)}" title="Add sub-label" aria-label="Add a sub-label under ${escapeHtml(owner)}">＋</button>
+        <button class="fin-label-btn" type="button" data-fin-action="rename-label" data-label="${escapeHtml(owner)}" title="Rename label" aria-label="Rename ${escapeHtml(owner)}">✎</button>
+        <button class="fin-label-btn fin-danger" type="button" data-fin-action="delete-label" data-label="${escapeHtml(owner)}" title="Delete label" aria-label="Delete ${escapeHtml(owner)}">✕</button>
+      </span>
     </div>
     ${noSub.map(finAcctRow).join("")}
     ${subs.map((sub) => `
-      <div class="fin-label-head fin-sublabel-head" data-fin-owner="${escapeHtml(owner)}" data-fin-sub="${escapeHtml(sub)}" title="Right-click to rename or delete">
+      <div class="fin-label-head fin-sublabel-head" data-fin-owner="${escapeHtml(owner)}" data-fin-sub="${escapeHtml(sub)}">
         <span class="fin-sublabel">${escapeHtml(sub)}</span>
+        <span class="fin-label-actions">
+          <button class="fin-label-btn" type="button" data-fin-action="rename-sublabel" data-label="${escapeHtml(owner)}" data-sub="${escapeHtml(sub)}" title="Rename sub-label" aria-label="Rename sub-label ${escapeHtml(sub)}">✎</button>
+          <button class="fin-label-btn fin-danger" type="button" data-fin-action="delete-sublabel" data-label="${escapeHtml(owner)}" data-sub="${escapeHtml(sub)}" title="Delete sub-label" aria-label="Delete sub-label ${escapeHtml(sub)}">✕</button>
+        </span>
       </div>
       <div class="fin-sub-group">
-        ${ownerAccts.filter((x) => x.sub === sub).map(finAcctRow).join("") || `<p class="fin-hint">Empty — right-click an account to file it here.</p>`}
+        ${ownerAccts.filter((x) => x.sub === sub).map(finAcctRow).join("") || `<p class="fin-hint">Empty — open an account's ✎ and pick this sub-label.</p>`}
       </div>`).join("")}
     ${!ownerAccts.length && !subs.length ? `<p class="fin-hint">No accounts under this label yet — open an account's ✎ and pick this label.</p>` : ""}`;
   }).join("");
@@ -9880,9 +9901,9 @@ function renderFinanceAccountsPanel() {
         <span class="fin-live-bal${(a.balance ?? 0) < 0 ? " is-neg" : ""}">${formatFinMoney(a.balance ?? 0)}</span>
       </div>`).join("")}` : ""}
     <div class="fin-account-add">
-      <input class="fin-item-name" type="text" list="finOwnerList" id="finNewAccountOwner" placeholder="Label (e.g. Family)" />
+      <input class="fin-item-name" type="text" list="finOwnerList" data-fin-new="owner" placeholder="Label (e.g. Family)" />
       <datalist id="finOwnerList">${owners.map((o) => `<option value="${escapeHtml(o)}"></option>`).join("")}</datalist>
-      <input class="fin-item-name" type="text" id="finNewAccountName" placeholder="Institution — account" />
+      <input class="fin-item-name" type="text" data-fin-new="name" placeholder="Institution — account" />
       <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-account">Add</button>
       <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-label">+ Label</button>
     </div>`;
@@ -10726,9 +10747,10 @@ function renderFinancePage() {
 
   // Route the existing cards into tabs (they keep their own internals + wiring;
   // later slices redesign each tab's contents). Overview stays pinned above.
+  const accountsPanel = `<div class="fin-card fin-accounts-card"><div class="fin-subhead fin-accounts-title">Accounts</div>${renderFinanceAccountsPanel()}</div>`;
   const tabBody =
     financeTab === "budget" ? `${monthlyBudgetCard}${personalCard}`
-    : financeTab === "accounts" ? ((savingsRow || netWorthCard) ? `${savingsRow}${netWorthCard}` : connectPrompt)
+    : financeTab === "accounts" ? `${savingsRow}${netWorthCard}${accountsPanel}`
     : (txnsCard || connectPrompt);
 
   grid.innerHTML = `
@@ -11093,8 +11115,11 @@ function onFinanceGridClick(e) {
     if (!name?.trim()) return;
     state.financePersonal.push({ id: createId("fin-personal"), person: name.trim(), incomeItems: [], expenseItems: [] });
   } else if (action === "add-account") {
-    const owner = document.getElementById("finNewAccountOwner")?.value.trim();
-    const name = document.getElementById("finNewAccountName")?.value.trim();
+    // Read from the clicked form's own inputs (the panel can render both on the
+    // Accounts tab and in Settings, so a global id would grab the wrong one).
+    const box = btn.closest(".fin-account-add");
+    const owner = box?.querySelector('[data-fin-new="owner"]')?.value.trim();
+    const name = box?.querySelector('[data-fin-new="name"]')?.value.trim();
     if (!name) return;
     state.financeAccounts.push({ id: createId("fin-account"), owner: owner || "Other", name });
   } else if (action === "delete-account") {

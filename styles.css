@@ -21266,17 +21266,36 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-txn-amt { font-weight: 750; }
 .fin-acct-link { max-width: 34%; font-weight: 600; font-size: 0.74rem; }
 .fin-label-head { display: flex; align-items: center; gap: 2px; }
-.fin-label-head .fin-subhead { flex: 1; }
-.fin-label-btn { width: 22px; height: 22px; min-height: 22px; font-size: 0.78rem; color: var(--muted); opacity: 0.7; }
-.fin-label-btn:hover { opacity: 1; color: var(--ink); }
+.fin-label-head .fin-subhead { flex: 1; min-width: 0; }
+.fin-label-actions { display: inline-flex; gap: 2px; flex: 0 0 auto; }
+.fin-label-btn {
+  width: 26px; height: 26px; min-height: 26px; display: inline-flex; align-items: center; justify-content: center;
+  border: none; background: transparent; border-radius: 7px; padding: 0; cursor: pointer;
+  font-size: 0.82rem; color: var(--muted); opacity: 0.75;
+}
+.fin-label-btn:hover, .fin-label-btn:focus-visible { opacity: 1; color: var(--ink); background: color-mix(in srgb, var(--ink) 8%, transparent); outline: none; }
+.fin-label-btn.fin-danger:hover, .fin-label-btn.fin-danger:focus-visible { color: #b3261e; background: color-mix(in srgb, #b3261e 10%, transparent); }
+
+/* Per-account connection-status pill (financeAccountStatusPill). */
+.fin-acct-status {
+  flex: 0 0 auto; font-size: 0.68rem; font-weight: 800; padding: 2px 7px; border-radius: 99px;
+  white-space: nowrap; letter-spacing: 0.01em;
+}
+.fin-acct-status.is-ok { background: color-mix(in srgb, #1f9d57 15%, var(--window-bg)); color: color-mix(in srgb, #1f9d57 78%, var(--ink)); }
+.fin-acct-status.is-warn { background: color-mix(in srgb, #b45309 16%, var(--window-bg)); color: #b45309; }
+.fin-acct-status.is-bad { background: color-mix(in srgb, #b3261e 15%, var(--window-bg)); color: #b3261e; }
+.fin-acct-status.is-manual { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--muted); }
+
+.fin-accounts-title { font-size: 1rem; font-weight: 800; color: var(--ink); margin-bottom: 6px; text-transform: none; letter-spacing: 0; }
 .fin-owner-select { max-width: 26%; font-weight: 600; font-size: 0.74rem; }
 @media (max-width: 700px) {
   [data-fin-card="accounts"] .fin-item-row { flex-wrap: wrap; }
   .fin-owner-select, .fin-acct-link { max-width: 44%; }
 }
-.fin-acct-row { min-height: 26px; }
-/* Edit/delete moved to a right-click menu — signal it, like the store headings */
-.fin-acct-row[data-fin-acct-id], .fin-label-head[data-fin-owner] { cursor: context-menu; }
+.fin-acct-row { min-height: 26px; gap: 8px; }
+/* Edit/delete + label management are now visible buttons (✎ / ＋ / ✕); right-click
+   still works as a desktop shortcut but is no longer the only way in. */
+.fin-acct-row[data-fin-acct-id], .fin-label-head[data-fin-owner] { cursor: default; }
 .fin-acct-row[data-fin-acct-id]:hover { background: color-mix(in srgb, var(--window-border) 8%, transparent); border-radius: 6px; }
 .fin-acct-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; }
 .fin-acct-editor {
