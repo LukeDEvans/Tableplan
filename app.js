@@ -8826,6 +8826,33 @@ function financeUpcomingBills(now = new Date()) {
   return { bills, total };
 }
 
+// Spending trend from the persisted monthly snapshots (financeMonthActuals):
+// total spend for the last 6 months + the categories that moved most vs their
+// 3-month average. Pure derivation from data we already keep — no new state.
+function financeSpendTrends(viewMonth) {
+  const ma = (state.financeMonthActuals && typeof state.financeMonthActuals === "object") ? state.financeMonthActuals : {};
+  const monthSpend = (m) => { const e = ma[m]; if (!e || !e.cats) return null; return Object.values(e.cats).reduce((s, v) => s + Math.abs(Number(v) || 0), 0); };
+  const [y, mo] = viewMonth.split("-").map(Number);
+  const months = [];
+  for (let i = 5; i >= 0; i--) months.push(new Date(y, mo - 1 - i, 1).toISOString().slice(0, 7));
+  const series = months.map((m) => ({ month: m, spend: monthSpend(m) }));
+  const priorMonths = months.slice(2, 5); // the 3 months before the viewed one
+  const curCats = ma[viewMonth]?.cats || {};
+  const keys = new Set(Object.keys(curCats));
+  for (const m of priorMonths) for (const k of Object.keys(ma[m]?.cats || {})) keys.add(k);
+  const movers = [];
+  for (const k of keys) {
+    const cur = Math.abs(Number(curCats[k]) || 0);
+    const priorVals = priorMonths.map((m) => ma[m]?.cats?.[k]).filter((v) => v != null).map((v) => Math.abs(Number(v) || 0));
+    const avg = priorVals.length ? priorVals.reduce((s, v) => s + v, 0) / priorVals.length : 0;
+    if (cur < 5 && avg < 5) continue;
+    const delta = cur - avg;
+    movers.push({ key: k, name: financeTxnLabelName(`cat:${k}`), cur, avg, delta, pct: avg > 0 ? Math.round((delta / avg) * 100) : null });
+  }
+  movers.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+  return { series, movers: movers.slice(0, 5), hasData: series.some((s) => s.spend != null) };
+}
+
 // Alerts the bell surfaces. kinds: "new" (unlinked recurring found),
 // "price" (charge differs from its budget line), "missing" (expected charge
 // hasn't arrived this month).
@@ -10895,7 +10922,30 @@ function renderFinancePage() {
         </div>` : ""}
       ` : `<div class="fin-hint">No upcoming recurring bills for the rest of this month${!financeLinkStatus?.connected ? " — connect a bank so recurring charges can be detected" : ""}.</div>`}
     </div>`;
-  const insightsView = upcomingBillsCard;
+  const trends = financeSpendTrends(monthKey);
+  const trendMax = Math.max(1, ...trends.series.map((s) => s.spend || 0));
+  const trendsCard = trends.hasData ? `
+    <div class="fin-card fin-insights-card">
+      <div class="fin-subhead fin-accounts-title">Spending trend</div>
+      <div class="fin-trend-bars">
+        ${trends.series.map((s) => `
+          <div class="fin-tbar${s.month === monthKey ? " is-current" : ""}" title="${escapeHtml(s.month)}${s.spend != null ? ` · ${formatFinMoney(s.spend)}` : ""}">
+            <div class="fin-tbar-col"><i style="height:${s.spend != null ? Math.round((s.spend / trendMax) * 100) : 0}%"></i></div>
+            <span class="fin-tbar-label">${new Date(s.month + "-15T12:00:00").toLocaleDateString(undefined, { month: "short" })}</span>
+          </div>`).join("")}
+      </div>
+      ${trends.movers.length ? `
+        <div class="fin-subhead" style="margin-top:14px;">Vs your recent average</div>
+        ${trends.movers.map((m) => `
+          <div class="fin-mover-row">
+            <span class="fin-mover-name">${escapeHtml(m.name)}</span>
+            <span class="fin-mover-cur">${formatFinMoney(m.cur)}</span>
+            ${m.pct != null
+              ? `<span class="fin-mover-delta ${m.delta > 0 ? "is-over" : "is-under"}" title="3-month average ${formatFinMoney(m.avg)}">${m.delta > 0 ? "▲" : "▼"} ${Math.abs(m.pct)}%</span>`
+              : `<span class="fin-mover-delta is-over">new</span>`}
+          </div>`).join("")}` : ""}
+    </div>` : "";
+  const insightsView = `${upcomingBillsCard}${trendsCard}`;
 
   // Route the existing cards into tabs (they keep their own internals + wiring).
   // Overview stays pinned above.

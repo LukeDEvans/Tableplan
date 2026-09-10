@@ -20976,6 +20976,21 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-safe-row.fin-safe-final { color: var(--ink); font-weight: 850; font-size: 1rem; border-top: 1px solid var(--line); margin-top: 4px; padding-top: 6px; }
 .fin-safe-final .is-neg { color: #b3261e; }
 
+/* Spending trend bars (last 6 months) + biggest movers vs recent average. */
+.fin-trend-bars { display: flex; align-items: flex-end; gap: 8px; height: 96px; padding: 6px 2px 0; }
+.fin-tbar { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 5px; height: 100%; }
+.fin-tbar-col { flex: 1; width: 100%; display: flex; align-items: flex-end; }
+.fin-tbar-col > i { width: 100%; min-height: 2px; border-radius: 5px 5px 0 0; background: color-mix(in srgb, var(--accent) 45%, transparent); transition: height 0.3s ease; }
+.fin-tbar.is-current .fin-tbar-col > i { background: var(--accent); }
+.fin-tbar-label { flex: 0 0 auto; font-size: 0.66rem; font-weight: 700; color: var(--muted); }
+.fin-tbar.is-current .fin-tbar-label { color: var(--ink); }
+.fin-mover-row { display: flex; align-items: baseline; gap: 10px; padding: 5px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.86rem; }
+.fin-mover-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-mover-cur { font-weight: 750; font-variant-numeric: tabular-nums; }
+.fin-mover-delta { flex: 0 0 auto; font-size: 0.76rem; font-weight: 800; }
+.fin-mover-delta.is-over { color: #b3261e; }
+.fin-mover-delta.is-under { color: #1f9d57; }
+
 .fin-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
