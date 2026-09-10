@@ -20938,10 +20938,13 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-ov-clear { font-size: 0.8rem; font-weight: 700; color: color-mix(in srgb, #1f9d57 88%, var(--ink)); }
 
 /* ── Section tabs (Transactions · Budget · Accounts) ── */
-.fin-tabs { display: flex; gap: 6px; padding: 3px; background: color-mix(in srgb, var(--ink) 6%, transparent); border-radius: 12px; }
+.fin-tabs { display: flex; gap: 6px; padding: 3px; background: color-mix(in srgb, var(--ink) 6%, transparent); border-radius: 12px; overflow-x: auto; scrollbar-width: none; }
+.fin-tabs::-webkit-scrollbar { display: none; }
 .fin-tab {
-  flex: 1 1 0; min-width: 0; font: inherit; font-size: 0.88rem; font-weight: 750; cursor: pointer;
-  padding: 8px 10px; border-radius: 9px; border: none; background: transparent; color: var(--muted);
+  /* grow to fill on desktop, but never shrink below the label (4 tabs) — on a
+     narrow phone the bar scrolls horizontally instead of clipping "Transactions". */
+  flex: 1 0 auto; min-width: 0; font: inherit; font-size: 0.88rem; font-weight: 750; cursor: pointer;
+  padding: 8px 12px; border-radius: 9px; border: none; background: transparent; color: var(--muted);
   display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap;
 }
 .fin-tab.is-active { background: var(--window-bg); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
@@ -20960,6 +20963,18 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-empty-title { font-size: 1.05rem; font-weight: 800; color: var(--ink); }
 .fin-empty-sub { font-size: 0.86rem; color: var(--muted); max-width: 44ch; }
 .fin-empty-onboard .fin-add-btn { margin-top: 6px; }
+
+/* ── Insights tab: upcoming bills + safe-to-spend ── */
+.fin-bill-row { display: flex; align-items: baseline; gap: 10px; padding: 6px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.86rem; }
+.fin-bill-day { flex: 0 0 64px; font-size: 0.74rem; font-weight: 700; color: var(--muted); }
+.fin-bill-row.is-overdue .fin-bill-day { color: #b3261e; }
+.fin-bill-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-bill-amt { font-weight: 750; }
+.fin-bill-total { display: flex; justify-content: space-between; padding: 8px 2px 4px; font-weight: 800; border-top: 2px solid color-mix(in srgb, var(--ink) 14%, transparent); margin-top: 2px; }
+.fin-safe-block { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.fin-safe-row { display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--muted); padding: 2px 0; }
+.fin-safe-row.fin-safe-final { color: var(--ink); font-weight: 850; font-size: 1rem; border-top: 1px solid var(--line); margin-top: 4px; padding-top: 6px; }
+.fin-safe-final .is-neg { color: #b3261e; }
 
 .fin-summary {
   display: grid;

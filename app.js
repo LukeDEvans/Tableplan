@@ -8292,6 +8292,7 @@ const FINANCE_TABS = [
   { id: "transactions", label: "Transactions" },
   { id: "budget", label: "Budget" },
   { id: "accounts", label: "Accounts" },
+  { id: "insights", label: "Insights" },
 ];
 // Budget tab: live client-side filter over category names (applied without a
 // full re-render; re-applied after each render so it survives edits).
@@ -8806,6 +8807,23 @@ function updateFinanceRecurring() {
   state.financeRecurring = state.financeRecurring.filter((r) => !r.lastSeen || new Date(r.lastSeen).getTime() >= cutoff);
   if (state.financeRecurring.length !== before) changed = true;
   if (changed) persist();
+}
+
+// Recurring charges that haven't posted yet THIS month — the upcoming bills.
+// Derived purely from the detected recurring list (no new data), sorted by the
+// day of the month they're expected, with a flag for ones already past-due.
+function financeUpcomingBills(now = new Date()) {
+  const curMonth = now.toISOString().slice(0, 7);
+  const today = now.getDate();
+  const bills = (state.financeRecurring || [])
+    .filter((r) => r.active !== false && (r.lastSeen || "").slice(0, 7) !== curMonth)
+    .map((r) => {
+      const dueDay = Math.min(Math.max(1, r.expectedDay || 1), 28);
+      return { id: r.id, name: r.name, amount: r.lastAmount || 0, dueDay, overdue: dueDay < today };
+    })
+    .sort((a, b) => a.dueDay - b.dueDay);
+  const total = bills.reduce((s, b) => s + (b.amount || 0), 0);
+  return { bills, total };
 }
 
 // Alerts the bell surfaces. kinds: "new" (unlinked recurring found),
@@ -10797,6 +10815,11 @@ function renderFinancePage() {
   const hasTxnAttention = reviewCount > 0 || unconfirmedCount > 0;
   const hasAcctAttention = health.needsAttention.length > 0 || Boolean(health.bridgeError);
 
+  // Forward-looking: recurring bills not yet posted this month, and what's left
+  // of cash once they clear ("safe to spend").
+  const upcoming = financeUpcomingBills();
+  const safeToSpend = cashOnHand != null ? cashOnHand - upcoming.total : null;
+
   const chips = [];
   if (reviewCount) chips.push(`<button class="fin-chip fin-chip-review" type="button" data-fin-action="review-txns">${reviewCount} to review</button>`);
   if (health.bridgeError) chips.push(`<button class="fin-chip fin-chip-bad" type="button" data-fin-action="fin-tab" data-tab="accounts">Bank connection error</button>`);
@@ -10821,6 +10844,7 @@ function renderFinancePage() {
         <div class="fin-ov-card">
           <div class="fin-ov-label">Cash on hand</div>
           <div class="fin-ov-value">${cashOnHand == null ? "—" : formatFinMoney(cashOnHand)}</div>
+          ${safeToSpend != null && upcoming.total > 0 ? `<div class="fin-ov-sub">${formatFinMoney(safeToSpend)} safe after bills</div>` : ""}
         </div>
         <div class="fin-ov-card fin-ov-month">
           <div class="fin-ov-label">This month${isCurrentMonth ? "" : ` · ${escapeHtml(monthKey)}`}</div>
@@ -10851,12 +10875,35 @@ function renderFinancePage() {
       <button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-finance-settings">Open finance settings</button>
     </div>`;
 
-  // Route the existing cards into tabs (they keep their own internals + wiring;
-  // later slices redesign each tab's contents). Overview stays pinned above.
+  // Insights tab — forward-looking & trend surfaces (upcoming bills first).
+  const upcomingBillsCard = `
+    <div class="fin-card fin-insights-card">
+      <div class="fin-subhead fin-accounts-title">Upcoming bills</div>
+      ${upcoming.bills.length ? `
+        ${upcoming.bills.map((b) => `
+          <div class="fin-bill-row${b.overdue ? " is-overdue" : ""}">
+            <span class="fin-bill-day">${b.overdue ? "Due now" : `Day ${b.dueDay}`}</span>
+            <span class="fin-bill-name">${escapeHtml(b.name)}</span>
+            <span class="fin-bill-amt">${formatFinMoney(-Math.abs(b.amount))}</span>
+          </div>`).join("")}
+        <div class="fin-bill-total"><span>Total upcoming</span><span>${formatFinMoney(-upcoming.total)}</span></div>
+        ${safeToSpend != null ? `
+        <div class="fin-safe-block">
+          <div class="fin-safe-row"><span>Cash on hand</span><span>${formatFinMoney(cashOnHand)}</span></div>
+          <div class="fin-safe-row"><span>Upcoming bills</span><span>${formatFinMoney(-upcoming.total)}</span></div>
+          <div class="fin-safe-row fin-safe-final"><span>Safe to spend</span><span class="${safeToSpend < 0 ? "is-neg" : ""}">${formatFinMoney(safeToSpend)}</span></div>
+        </div>` : ""}
+      ` : `<div class="fin-hint">No upcoming recurring bills for the rest of this month${!financeLinkStatus?.connected ? " — connect a bank so recurring charges can be detected" : ""}.</div>`}
+    </div>`;
+  const insightsView = upcomingBillsCard;
+
+  // Route the existing cards into tabs (they keep their own internals + wiring).
+  // Overview stays pinned above.
   const accountsPanel = `<div class="fin-card fin-accounts-card"><div class="fin-subhead fin-accounts-title">Accounts</div>${renderFinanceAccountsPanel()}</div>`;
   const tabBody =
     financeTab === "budget" ? `${budgetView}${personalCard}`
     : financeTab === "accounts" ? `${savingsRow}${netWorthCard}${accountsPanel}`
+    : financeTab === "insights" ? insightsView
     : (txnsCard || connectPrompt);
 
   grid.innerHTML = `
