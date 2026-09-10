@@ -316,7 +316,7 @@ const STATE_SECTIONS = {
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices"],
   contacts:  ["contacts", "contactGroups"],
 };
@@ -334,7 +334,7 @@ const STATE_SECTIONS = {
 // running code older than the row was last written with, so a stale device can
 // never drop budget categories or transaction annotations it doesn't know
 // about. MUST be incremented when finance* keys are added/restructured.
-const STATE_SCHEMA_VERSION = 3;
+const STATE_SCHEMA_VERSION = 4;
 
 const SECTION_SCOPE = {
   eat: "household",       // Meal Plan is exclusively shared
@@ -4082,7 +4082,7 @@ function mirrorStateToLocalStorage() {
   // the function: callers run during script evaluation, before top-level
   // consts declared later in the file initialize (TDZ).
   const base = { ...state };
-  for (const k of ["financePeople", "financeBudgetGroups", "financeAccounts", "financePersonal"]) delete base[k];
+  for (const k of ["financePeople", "financeBudgetGroups", "financeAccounts", "financePersonal", "financeGoals"]) delete base[k];
   // Drop per-episode show-notes here too (see extractSectionData) — they're
   // the biggest thing in state, re-fetchable, and keeping them risks blowing
   // the ~5 MB localStorage cap.
@@ -4355,6 +4355,7 @@ function defaultState() {
     financePeople: [],
     financeBudgetGroups: defaultFinanceBudgetGroups(),
     financeAccounts: [],
+    financeGoals: [],
     financeAccountLabels: [],
     financeAccountSubLabels: {},
     financePersonal: [],
@@ -4532,6 +4533,7 @@ function normalizeState(parsed) {
     financePeople: normalizeFinancePeople(parsed?.financePeople),
     financeBudgetGroups: normalizeFinanceBudgetGroups(parsed?.financeBudgetGroups),
     financeAccounts: normalizeFinanceAccounts(parsed?.financeAccounts),
+    financeGoals: normalizeFinanceGoals(parsed?.financeGoals),
     financeAccountLabels: [...new Set((Array.isArray(parsed?.financeAccountLabels) ? parsed.financeAccountLabels : []).map((l) => String(l || "").trim()).filter(Boolean))],
     financeAccountSubLabels: normalizeFinanceSubLabels(parsed?.financeAccountSubLabels),
     financeTxnLabels: (parsed?.financeTxnLabels && typeof parsed.financeTxnLabels === "object") ? parsed.financeTxnLabels : {},
@@ -5350,6 +5352,17 @@ function normalizeFinanceAccounts(raw) {
     // For accounts no aggregator reaches (loans, small 401(k)s): a manually
     // kept balance, negative for debts. null = not tracked.
     manualBalance: Number.isFinite(Number(a?.manualBalance)) && a?.manualBalance !== null && a?.manualBalance !== "" ? Number(a.manualBalance) : null
+  }));
+}
+
+// Savings goals: id-keyed (union-by-id + tombstone on sync, like financeAccounts).
+function normalizeFinanceGoals(raw) {
+  return (Array.isArray(raw) ? raw : []).filter((g) => g && g.id).map((g) => ({
+    id: String(g.id),
+    name: String(g.name || "").slice(0, 60),
+    target: Number(g.target) || 0,
+    current: Number(g.current) || 0,
+    targetDate: typeof g.targetDate === "string" ? g.targetDate : "",
   }));
 }
 
@@ -6468,7 +6481,7 @@ function mergeStates(newer, older) {
     // Travel
     "trips", "travelIdeas",
     // Finance (flat id-keyed — the nested ones are deep-merged below)
-    "financeAccounts", "financeManualTxns",
+    "financeAccounts", "financeManualTxns", "financeGoals",
     // Publications: articles/publications/feeds now live in the relational tables
     // (cutover slice 3) — they are no longer synced-state, so they are NOT merged
     // here; applyStoredState preserves the DB-loaded copies across a full replace.
@@ -11001,12 +11014,59 @@ function renderFinancePage() {
     </div>` : "";
   const insightsView = `${upcomingBillsCard}${subsCard}${cashFlowCard}${trendsCard}`;
 
+  // Savings goals (Accounts tab). Tap a goal to edit target/saved/date; progress
+  // bar + on-track note derived on the fly.
+  const goals = state.financeGoals || [];
+  const goalMonthsUntil = (dateStr) => {
+    if (!dateStr) return null;
+    const d = new Date(dateStr + "T12:00:00"); if (isNaN(d.getTime())) return null;
+    const now = new Date();
+    return (d.getFullYear() - now.getFullYear()) * 12 + (d.getMonth() - now.getMonth());
+  };
+  const goalRow = (g) => {
+    const editing = financeExpanded.has(`goal:${g.id}`);
+    const pct = g.target > 0 ? Math.min(100, Math.round((g.current / g.target) * 100)) : 0;
+    const reached = g.target > 0 && g.current >= g.target;
+    let note = "";
+    if (reached) note = "Reached 🎉";
+    else if (g.targetDate) {
+      const m = goalMonthsUntil(g.targetDate);
+      if (m != null) note = m <= 0 ? "Target date passed" : `${formatFinMoney((g.target - g.current) / m)}/mo to reach by ${new Date(g.targetDate + "T12:00:00").toLocaleDateString(undefined, { month: "short", year: "numeric" })}`;
+    } else if (g.target > 0) note = `${formatFinMoney(g.target - g.current)} to go`;
+    return `
+      <div class="fin-goal">
+        <button class="fin-goal-row" type="button" data-fin-action="toggle-expand" data-id="goal:${escapeHtml(g.id)}" aria-expanded="${editing}">
+          <div class="fin-goal-head-row"><span class="fin-goal-name">${escapeHtml(g.name || "Untitled goal")}</span><span class="fin-goal-nums">${formatFinMoney(g.current)} <span class="fin-of">/ ${formatFinMoney(g.target)}</span></span></div>
+          <div class="fin-gauge"><i class="${reached ? "is-done" : ""}" style="width:${pct}%"></i></div>
+          ${note ? `<div class="fin-goal-note${reached ? " is-done" : ""}">${escapeHtml(note)}</div>` : ""}
+        </button>
+        ${editing ? `
+        <div class="fin-goal-editor">
+          <div class="fin-item-row"><input class="fin-item-name" type="text" value="${escapeHtml(g.name)}" placeholder="Goal name (e.g. Vacation fund)" data-fin-edit="goal-name" data-id="${escapeHtml(g.id)}" aria-label="Goal name" /></div>
+          <div class="fin-item-row">
+            <input class="fin-item-amount" type="text" inputmode="decimal" value="${g.current || ""}" placeholder="Saved" data-fin-edit="goal-current" data-id="${escapeHtml(g.id)}" aria-label="Amount saved" />
+            <input class="fin-item-amount" type="text" inputmode="decimal" value="${g.target || ""}" placeholder="Target" data-fin-edit="goal-target" data-id="${escapeHtml(g.id)}" aria-label="Target amount" />
+          </div>
+          <div class="fin-item-row fin-item-row--tools">
+            <input type="date" class="fin-item-name fin-goal-date" value="${escapeHtml(g.targetDate || "")}" data-fin-edit="goal-date" data-id="${escapeHtml(g.id)}" aria-label="Target date (optional)" />
+            <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="delete-goal" data-id="${escapeHtml(g.id)}">Delete goal</button>
+          </div>
+        </div>` : ""}
+      </div>`;
+  };
+  const goalsCard = `
+    <div class="fin-card fin-goals-card">
+      <div class="fin-subhead fin-accounts-title">Savings goals</div>
+      ${goals.length ? goals.map(goalRow).join("") : `<div class="fin-hint">No goals yet — set a savings target to track your progress.</div>`}
+      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-goal">+ Goal</button>
+    </div>`;
+
   // Route the existing cards into tabs (they keep their own internals + wiring).
   // Overview stays pinned above.
   const accountsPanel = `<div class="fin-card fin-accounts-card"><div class="fin-subhead fin-accounts-title">Accounts</div>${renderFinanceAccountsPanel()}</div>`;
   const tabBody =
     financeTab === "budget" ? `${budgetView}${personalCard}`
-    : financeTab === "accounts" ? `${savingsRow}${netWorthCard}${accountsPanel}`
+    : financeTab === "accounts" ? `${goalsCard}${savingsRow}${netWorthCard}${accountsPanel}`
     : financeTab === "insights" ? insightsView
     : (txnsCard || connectPrompt);
 
@@ -11184,6 +11244,18 @@ function onFinanceGridClick(e) {
   if (action === "fin-budget-group") { financeBudgetOpenGroup = financeBudgetOpenGroup === btn.dataset.id ? null : btn.dataset.id; renderFinancePage(); return; }
   if (action === "confirm-txn") { financeConfirmTxn(btn.dataset.id); renderFinancePage(); return; }
   if (action === "quick-label") { recordFinanceTxnLabel(btn.dataset.id, btn.dataset.label, btn.dataset.desc || ""); renderFinancePage(); return; }
+  if (action === "add-goal") {
+    if (!Array.isArray(state.financeGoals)) state.financeGoals = [];
+    const id = createId("fin-goal");
+    state.financeGoals.push({ id, name: "", target: 0, current: 0, targetDate: "" });
+    financeExpanded.add(`goal:${id}`); // open the new goal's editor
+    persist(); renderFinancePage(); return;
+  }
+  if (action === "delete-goal") {
+    state.financeGoals = (state.financeGoals || []).filter((g) => g.id !== btn.dataset.id);
+    recordDeletion("financeGoals", btn.dataset.id); // tombstone so the delete survives sync
+    persist(); renderFinancePage(); return;
+  }
   if (action === "toggle-txn-expand") { financeTxnListExpanded = !financeTxnListExpanded; renderFinancePage(); return; }
   if (action === "open-finance-settings") { openContextSettingsDialog("finance-accounts"); return; }
   if (action === "dismiss-alert") {
@@ -11457,6 +11529,17 @@ function onFinanceGridChange(e) {
     if (!el.value) return; // picked the placeholder — nothing to record
     if (el.value === "__split__") { startSplitTxn(el.dataset.id); return; }
     recordFinanceTxnLabel(el.dataset.id, el.value, el.dataset.desc || "");
+    renderFinancePage();
+    return;
+  }
+  if (kind === "goal-name" || kind === "goal-target" || kind === "goal-current" || kind === "goal-date") {
+    const g = (state.financeGoals || []).find((x) => x.id === el.dataset.id);
+    if (!g) return;
+    if (kind === "goal-name") g.name = el.value.slice(0, 60);
+    else if (kind === "goal-target") g.target = parseFinAmount(el.value) || 0;
+    else if (kind === "goal-current") g.current = parseFinAmount(el.value) || 0;
+    else if (kind === "goal-date") g.targetDate = el.value || "";
+    persist();
     renderFinancePage();
     return;
   }

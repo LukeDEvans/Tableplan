@@ -21400,6 +21400,19 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-acct-status.is-manual { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--muted); }
 
 .fin-accounts-title { font-size: 1rem; font-weight: 800; color: var(--ink); margin-bottom: 6px; text-transform: none; letter-spacing: 0; }
+
+/* Savings goals */
+.fin-goal { border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); }
+.fin-goal:first-of-type { border-top: none; }
+.fin-goal-row { width: 100%; text-align: left; border: none; background: none; cursor: pointer; padding: 10px 2px; display: flex; flex-direction: column; gap: 6px; }
+.fin-goal-head-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.fin-goal-name { font-weight: 750; font-size: 0.9rem; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-goal-nums { flex: 0 0 auto; font-weight: 750; font-variant-numeric: tabular-nums; color: var(--ink); }
+.fin-goal .fin-gauge > i.is-done { background: #1f9d57; }
+.fin-goal-note { font-size: 0.74rem; font-weight: 600; color: var(--muted); }
+.fin-goal-note.is-done { color: #1f9d57; }
+.fin-goal-editor { padding: 4px 2px 12px; display: flex; flex-direction: column; gap: 8px; }
+.fin-goals-card > .fin-add-btn { margin-top: 8px; }
 .fin-owner-select { max-width: 26%; font-weight: 600; font-size: 0.74rem; }
 @media (max-width: 700px) {
   [data-fin-card="accounts"] .fin-item-row { flex-wrap: wrap; }
