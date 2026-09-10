@@ -10786,6 +10786,12 @@ function renderFinancePage() {
   const monthOver = monthActualSpend != null && expenses > 0 && monthActualSpend > expenses;
   const nwDelta = financeNetWorthDelta();
 
+  // Attention flags — drive the tab dots and whether the "all clear" line shows.
+  // Unaddressed = still to review OR swiped-out-but-not-yet-confirmed (red-dot).
+  const unconfirmedCount = allTxns.filter(financeTxnNeedsConfirm).length;
+  const hasTxnAttention = reviewCount > 0 || unconfirmedCount > 0;
+  const hasAcctAttention = health.needsAttention.length > 0 || Boolean(health.bridgeError);
+
   const chips = [];
   if (reviewCount) chips.push(`<button class="fin-chip fin-chip-review" type="button" data-fin-action="review-txns">${reviewCount} to review</button>`);
   if (health.bridgeError) chips.push(`<button class="fin-chip fin-chip-bad" type="button" data-fin-action="fin-tab" data-tab="accounts">Bank connection error</button>`);
@@ -10820,12 +10826,17 @@ function renderFinancePage() {
                ${paceOver != null ? `<div class="fin-ov-pace${paceOver > 0 ? " is-over" : ""}">${paceOver > 0 ? `~${formatFinMoney(paceOver)} over by month-end` : `on pace · ~${formatFinMoney(-paceOver)} under`}</div>` : ""}`}
         </div>
       </div>
-      ${chips.length ? `<div class="fin-ov-chips">${chips.join("")}</div>` : `<div class="fin-ov-chips fin-ov-clear">✓ Accounts fresh · nothing to review</div>`}
+      ${chips.length
+        ? `<div class="fin-ov-chips">${chips.join("")}</div>`
+        : (hasTxnAttention || hasAcctAttention ? "" : `<div class="fin-ov-chips fin-ov-clear">✓ Accounts fresh · nothing to review</div>`)}
     </section>`;
 
   const financeTabNav = `
     <div class="fin-tabs" role="tablist" aria-label="Finance sections">
-      ${FINANCE_TABS.map((t) => `<button class="fin-tab${financeTab === t.id ? " is-active" : ""}" type="button" role="tab" aria-selected="${financeTab === t.id}" data-fin-action="fin-tab" data-tab="${t.id}">${t.label}${t.id === "transactions" && reviewCount ? ` <span class="fin-tab-badge">${reviewCount}</span>` : ""}</button>`).join("")}
+      ${FINANCE_TABS.map((t) => {
+        const dot = (t.id === "transactions" && hasTxnAttention) || (t.id === "accounts" && hasAcctAttention);
+        return `<button class="fin-tab${financeTab === t.id ? " is-active" : ""}" type="button" role="tab" aria-selected="${financeTab === t.id}" data-fin-action="fin-tab" data-tab="${t.id}">${t.label}${dot ? ` <span class="fin-tab-dot" aria-label="Needs attention"></span>` : ""}</button>`;
+      }).join("")}
     </div>`;
 
   const connectPrompt = `

@@ -20946,6 +20946,8 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 }
 .fin-tab.is-active { background: var(--window-bg); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
 .fin-tab-badge { font-size: 0.68rem; font-weight: 900; background: #b3261e; color: #fff; border-radius: 99px; padding: 1px 6px; min-width: 18px; text-align: center; }
+/* Attention dot to the right of a tab label (unaddressed txns / account issue). */
+.fin-tab-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: #b3261e; }
 /* Narrow phones: the review count already shows as the "N to review" chip above,
    so drop the redundant tab badge and shrink the type so "Transactions" fits. */
 @media (max-width: 520px) {
