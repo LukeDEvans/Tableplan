@@ -8296,6 +8296,9 @@ const FINANCE_TABS = [
 // Budget tab: live client-side filter over category names (applied without a
 // full re-render; re-applied after each render so it survives edits).
 let financeBudgetSearch = "";
+// Budget groups are an accordion — one open at a time (null = all collapsed).
+// A search overrides it (opens all so the filter can reach every category).
+let financeBudgetOpenGroup = null;
 // The transaction list renders a light default slice (FIN_TXN_LIST_CAP); a
 // "Show all" toggle lifts it so months with more txns than the cap are fully
 // reachable for labeling. Reset on month change so each month starts collapsed.
@@ -10096,23 +10099,25 @@ function renderFinancePage() {
   // Budget groups: default-open on the Budget tab so category numbers are visible
   // without drilling (a "fold:" key optionally collapses a group). Each category
   // shows a budget-vs-actual bar; tapping it opens the line-item editor.
+  const budgetSearchActive = Boolean(financeBudgetSearch.trim());
   const groupCards = (state.financeBudgetGroups || []).map((g) => {
     const total = financeGroupTotal(g);
     const pct = income > 0 ? (total / income) * 100 : 0;
-    const folded = financeExpanded.has(`fold:${g.id}`);
+    // Accordion: collapsed by default, one open at a time; a search opens all.
+    const open = budgetSearchActive || financeBudgetOpenGroup === g.id;
     const gActual = g.categories.reduce((s, c) => s + catActual(g, c), 0);
     const headTotal = showActuals
       ? `<span class="fin-cat-actual${gActual > total ? " is-over" : ""}">${formatFinMoney(gActual)}</span> <span class="fin-of">of</span> ${formatFinMoney(total)}`
       : formatFinMoney(total);
     return `
     <div class="fin-card" data-fin-card="group">
-      <div class="fin-card-head fin-group-head" data-fin-action="toggle-expand" data-id="fold:${g.id}" role="button" tabindex="0" aria-expanded="${!folded}">
+      <div class="fin-card-head fin-group-head" data-fin-action="fin-budget-group" data-id="${g.id}" role="button" tabindex="0" aria-expanded="${open}">
         <h3>${escapeHtml(g.label)}</h3>
         <span class="fin-card-total">${headTotal}</span>
-        <span class="fin-card-caret">${folded ? "▾" : "▴"}</span>
+        <span class="fin-card-caret">${open ? "▴" : "▾"}</span>
       </div>
       ${showActuals ? budgetBar(gActual, total) : ""}
-      ${folded ? "" : `
+      ${!open ? "" : `
       <div class="fin-group-detail">
         <span class="fin-group-pct">${income > 0 ? `${pct.toFixed(1)}% of income` : "% of income shows once income is set"}${showActuals && lastMoGroupActual(g) !== null ? ` · last mo ${formatFinMoney(lastMoGroupActual(g))}` : ""}</span>
         <label class="fin-group-ideal">Ideal <input type="number" min="0" max="100" step="1" value="${g.idealPct}" data-fin-edit="group-ideal" data-id="${g.id}" aria-label="Ideal percent of income for ${escapeHtml(g.label)}" /> %</label>
@@ -11025,6 +11030,7 @@ function onFinanceGridClick(e) {
   if (action === "toggle-notifs") { openFinanceTxnReview(); return; }
   if (action === "review-txns") { openFinanceTxnReview(); return; }
   if (action === "fin-tab") { financeTab = btn.dataset.tab || "transactions"; renderFinancePage(); return; }
+  if (action === "fin-budget-group") { financeBudgetOpenGroup = financeBudgetOpenGroup === btn.dataset.id ? null : btn.dataset.id; renderFinancePage(); return; }
   if (action === "confirm-txn") { financeConfirmTxn(btn.dataset.id); renderFinancePage(); return; }
   if (action === "quick-label") { recordFinanceTxnLabel(btn.dataset.id, btn.dataset.label, btn.dataset.desc || ""); renderFinancePage(); return; }
   if (action === "toggle-txn-expand") { financeTxnListExpanded = !financeTxnListExpanded; renderFinancePage(); return; }
