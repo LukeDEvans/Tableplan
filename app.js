@@ -22497,6 +22497,9 @@ function resetVoicePreviewBtn(btn) {
 function stopVoicePreview() {
   voicePreviewToken++;
   if (voicePreviewAudio) { try { voicePreviewAudio.pause(); } catch { /* noop */ } voicePreviewAudio = null; }
+  // Cancel an on-device (speechSynthesis) preview too — but not while an article
+  // is actually being read aloud on the same engine.
+  if (typeof window !== "undefined" && "speechSynthesis" in window && !listenSpeechSynth) { try { window.speechSynthesis.cancel(); } catch { /* noop */ } }
   if (voicePreviewBtn) { resetVoicePreviewBtn(voicePreviewBtn); voicePreviewBtn = null; }
 }
 async function previewVoice(voiceId, btn) {
@@ -22509,9 +22512,23 @@ async function previewVoice(voiceId, btn) {
   btn.classList.add("playing");
   btn.innerHTML = mini ? VOICE_SPIN_SVG : `${VOICE_SPIN_SVG} Preparing…`;
 
+  const sample = "Hi, this is how I sound reading your articles aloud.";
+  // On-device voice: speak the sample directly via speechSynthesis (no URL).
+  if (getVoiceService().getVoice(voiceId)?.provider === "system" && systemVoiceAvailable()) {
+    try {
+      await ensureSystemVoices();
+      if (token !== voicePreviewToken) return;
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(sample);
+      const v = pickSystemVoice(); if (v) u.voice = v;
+      u.onend = () => { if (token === voicePreviewToken) { voicePreviewBtn = null; resetVoicePreviewBtn(btn); } };
+      window.speechSynthesis.speak(u);
+    } catch { voicePreviewBtn = null; resetVoicePreviewBtn(btn); }
+    return;
+  }
+
   let urls;
   try {
-    const sample = "Hi, this is how I sound reading your articles aloud.";
     const res = await getVoiceService().synthesize({ text: sample, domain: "article", voiceId });
     urls = res?.urls;
   } catch (e) {
@@ -22726,6 +22743,7 @@ function renderContextSettingsDialog(kind) {
     const curSpeed = cur.speed || 1;
     const priv = vs.getVoices({ provider: "kokoro", availableOnly: true });
     const cloud = vs.getVoices({ provider: "google", availableOnly: true });
+    const device = systemVoiceAvailable() ? vs.getVoices({ provider: "system", availableOnly: true }) : [];
     const SPEEDS = [
       { v: 0.75, label: "0.75×" }, { v: 0.9, label: "0.9×" }, { v: 1.0, label: "1.0×" },
       { v: 1.1, label: "1.1×" }, { v: 1.25, label: "1.25×" }, { v: 1.5, label: "1.5×" }, { v: 2.0, label: "2.0×" },
@@ -22767,9 +22785,10 @@ function renderContextSettingsDialog(kind) {
       <div class="vpick-card">
         <div class="vpick-head">Choose a voice <span class="vpick-hint">tap ▶ to preview</span></div>
         ${priv.length ? `<div class="vpick-group">Your voices · private</div>${priv.map(voiceRow).join("")}` : ""}
+        ${device.length ? `<div class="vpick-group">On-device · foreground only</div>${device.map(voiceRow).join("")}` : ""}
         ${cloud.length ? `<div class="vpick-group">Cloud</div>${cloud.map(voiceRow).join("")}` : ""}
       </div>
-      <p class="vpick-note">You pick a voice; the app picks the engine. A private voice can take a few extra seconds the first time after a while, as the voice server wakes up.</p>`;
+      <p class="vpick-note">You pick a voice; the app picks the engine. A private voice can take a few extra seconds the first time after a while, as the voice server wakes up.${device.length ? " An on-device voice (your iPhone's own voices) starts instantly and stays on your device, but pauses when you leave the app or lock the screen." : ""}</p>`;
 
     // Select a voice (writes the global default, preserving any other voice prefs).
     elements.contextSettingsBody.querySelectorAll(".vpick-voice").forEach((row) => {
@@ -48674,6 +48693,7 @@ function nowPlayingEngineState() {
 }
 function nowPlayingIsPlaying() {
   if (musicPlaybackProvider) return !!(musicOwnedNP && musicOwnedNP.isPlaying); // Apple Music owns its transport
+  if (listenSpeechSynth) { try { return window.speechSynthesis.speaking && !window.speechSynthesis.paused; } catch { return false; } } // on-device voice
   const s = nowPlayingEngineState();
   if (s) return !!s.playing;
   const el = nowPlayingEl();
@@ -50529,6 +50549,7 @@ function highlightCurrentWord() {
 // Seconds elapsed across the whole article (finished chunks + position in the
 // current one).
 function listenElapsed() {
+  if (listenSpeechSynth) return systemVoiceElapsedSec(); // on-device: estimate from chars spoken
   if (!listenAudio || !mediaEngine) return 0;
   return mediaEngine.state().position; // logical position across all chunks
 }
@@ -50544,6 +50565,7 @@ function listenSeekToTime(t) {
 }
 
 function listenSkip(seconds) {
+  if (listenSpeechSynth) { systemVoiceSkip(seconds); return; } // on-device: jump chunks
   if (!listenAudio) return;
   listenSeekToTime(listenElapsed() + seconds);
 }
@@ -50924,6 +50946,121 @@ function onListenArticleFinished() {
   }
 }
 
+// ── On-device (Web Speech API) reading — foreground-only ──────────────────────
+// A "system" voice speaks DIRECTLY via speechSynthesis: no audio file, no engine,
+// no Storage. Instant + local + free, but it stops when the PWA is backgrounded /
+// locked. All of it is guarded by `listenSpeechSynth` (non-null only while a
+// system-voice read is active), so the Kokoro/Google engine paths are untouched.
+let listenSpeechSynth = null; // { article, genId, chunks, idx, charsBefore, charsTotal, charIndex, rate }
+
+function systemVoiceAvailable() { return typeof window !== "undefined" && "speechSynthesis" in window; }
+function isSystemArticleVoice() {
+  try { return getVoiceService().voiceForDomain("article")?.voice?.provider === "system"; }
+  catch { return false; }
+}
+
+// The voice list can populate asynchronously (fires "voiceschanged"); resolve it
+// before picking so the first read isn't a silent default.
+function ensureSystemVoices() {
+  return new Promise((resolve) => {
+    if (!systemVoiceAvailable()) return resolve([]);
+    const have = window.speechSynthesis.getVoices();
+    if (have && have.length) return resolve(have);
+    let done = false;
+    const finish = () => { if (done) return; done = true; try { window.speechSynthesis.removeEventListener("voiceschanged", finish); } catch { /* noop */ } resolve(window.speechSynthesis.getVoices() || []); };
+    try { window.speechSynthesis.addEventListener("voiceschanged", finish); } catch { /* noop */ }
+    setTimeout(finish, 600);
+  });
+}
+
+// Best available on-device English voice (prefers a local/en-US one → an Apple
+// system voice on an iPhone), or the browser default.
+function pickSystemVoice() {
+  if (!systemVoiceAvailable()) return null;
+  const voices = window.speechSynthesis.getVoices() || [];
+  if (!voices.length) return null;
+  const en = voices.filter((v) => /^en(-|_|$)/i.test(v.lang || ""));
+  const pool = en.length ? en : voices;
+  return pool.find((v) => v.localService && /en[-_]us/i.test(v.lang || "")) || pool.find((v) => v.localService) || pool[0] || null;
+}
+
+function systemVoiceElapsedSec() {
+  const s = listenSpeechSynth; if (!s) return 0;
+  return Math.round((s.charsBefore + (s.charIndex || 0)) / (15 * (s.rate || 1)));
+}
+
+function teardownSystemVoice() {
+  if (systemVoiceAvailable()) { try { window.speechSynthesis.cancel(); } catch { /* noop */ } }
+  listenSpeechSynth = null;
+}
+
+async function startListenSystemVoice(article) {
+  if (!systemVoiceAvailable()) { alert("On-device voice isn't available in this browser."); listenLoading = false; updateListenPlayBtn(); return; }
+  const prepared = prepareArticleListenText(article);
+  if (!prepared) { listenLoading = false; updateListenPlayBtn(); return; }
+  await ensureSystemVoices();
+  const myGenId = listenGenId; // stopListen()/a newer read bumps this
+  if (myGenId !== listenGenId) return;
+  try { window.speechSynthesis.cancel(); } catch { /* noop */ }
+  const chunks = kokoroChunkText(prepared.text);
+  if (!chunks.length) { listenLoading = false; updateListenPlayBtn(); return; }
+  const rate = mediaPlaybackSpeed || 1;
+  const charsTotal = chunks.reduce((s, c) => s + c.length, 0);
+  listenLoading = false;
+  listenBuffering = false;
+  listenSpeaking = true;
+  listenArticle = article;
+  listenAllUrls = [];
+  listenTimings = null; listenWordAbsTimes = null; clearWordHighlight();
+  listenChunkDurations = []; listenChunkOffsets = [];
+  listenTotalDuration = Math.max(1, Math.round(charsTotal / (15 * rate))); // rough seconds estimate for the bar
+  listenSpeechSynth = { article, genId: myGenId, chunks, idx: 0, charsBefore: 0, charsTotal, charIndex: 0, rate };
+  showMiniPlayerForArticle(article);
+  listenAudio = null; // no shared element — this path drives the bar off listenSpeechSynth
+  setListenMediaSession(article);
+  updateListenPlayBtn();
+  speakSystemChunk();
+}
+
+function speakSystemChunk() {
+  const s = listenSpeechSynth;
+  if (!s || s.genId !== listenGenId) return;
+  if (s.idx >= s.chunks.length) { // whole article read → advance to the next (foreground)
+    const finishedId = listenArticle?.id;
+    teardownSystemVoice();
+    listenSpeaking = false;
+    if (!advanceListenArticle()) stopListen(); // queue drained
+    return;
+  }
+  const u = new SpeechSynthesisUtterance(s.chunks[s.idx]);
+  const v = pickSystemVoice();
+  if (v) u.voice = v;
+  u.rate = Math.max(0.5, Math.min(2, s.rate || 1));
+  u.onboundary = (e) => { if (s.genId === listenGenId && typeof e.charIndex === "number") { s.charIndex = e.charIndex; updateMiniPlayerProgress(); } };
+  u.onend = () => {
+    if (s.genId !== listenGenId) return;
+    s.charsBefore += s.chunks[s.idx].length; s.charIndex = 0; s.idx += 1;
+    speakSystemChunk();
+  };
+  u.onerror = () => { if (s.genId !== listenGenId) return; s.charsBefore += s.chunks[s.idx].length; s.charIndex = 0; s.idx += 1; speakSystemChunk(); };
+  try { window.speechSynthesis.speak(u); } catch { /* noop */ }
+  updateListenPlayBtn(); updateMiniPlayerPlayBtn(); setMediaSessionPlaybackState("playing");
+}
+
+// Skip = jump whole chunks (speechSynthesis has no seek). Re-speaks from the
+// target chunk so the bar + audio stay in sync.
+function systemVoiceSkip(seconds) {
+  const s = listenSpeechSynth;
+  if (!s) return;
+  const target = Math.max(0, Math.min(s.chunks.length - 1, s.idx + (seconds > 0 ? 1 : -1)));
+  if (target === s.idx && seconds < 0) return;
+  try { window.speechSynthesis.cancel(); } catch { /* noop */ }
+  s.idx = target;
+  s.charsBefore = s.chunks.slice(0, target).reduce((a, c) => a + c.length, 0);
+  s.charIndex = 0;
+  speakSystemChunk();
+}
+
 async function startListenTTS(article) {
   unlockListenAudio(); // bless the audio element NOW, while still in the user's tap
   stopMusicPlayback(); // don't overlap a playing music track
@@ -50943,6 +51080,10 @@ async function startListenTTS(article) {
   listenLoading = true;
   const myGenId = ++listenGenId;
   updateListenPlayBtn();
+
+  // On-device (Web Speech) voice: speak directly, bypassing the whole
+  // synth/engine/Storage pipeline. Foreground-only (see startListenSystemVoice).
+  if (isSystemArticleVoice()) { await startListenSystemVoice(article); return; }
 
   let data = null;
   const cacheKey = articleTtsCacheKey(article.id);
@@ -51131,6 +51272,15 @@ function advanceListenArticle() {
 
 function toggleListenPlayPause() {
   unlockListenAudio();
+  // On-device (speechSynthesis) session: pause/resume it directly.
+  if (listenSpeechSynth) {
+    try {
+      if (window.speechSynthesis.paused) { window.speechSynthesis.resume(); setMediaSessionPlaybackState("playing"); }
+      else { window.speechSynthesis.pause(); setMediaSessionPlaybackState("paused"); }
+    } catch { /* noop */ }
+    updateListenPlayBtn(); updateMiniPlayerPlayBtn();
+    return;
+  }
   if (!listenAudio && !listenLoading) {
     // Resume the article we were reading, or start the one that's open.
     const article = listenArticle || (openArticleId ? (state.savedArticles || []).find((a) => a.id === openArticleId) : null);
@@ -51143,6 +51293,7 @@ function toggleListenPlayPause() {
 
 function stopListen() {
   listenGenId++;
+  teardownSystemVoice(); // cancel any on-device (speechSynthesis) read
   // Engine pauses the element, detaches its handlers, and clears the source;
   // the element (and its iOS "blessing") is kept for reuse.
   if (mediaEngine) mediaEngine.stop();

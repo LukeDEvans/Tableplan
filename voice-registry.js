@@ -22,6 +22,15 @@ export const VOICES = Object.freeze([
   { id: "sky",     displayName: "Sky",     provider: "kokoro", providerVoiceId: "af_sky",     language: "en-US", accent: "American", availability: "available" },
   { id: "adam",    displayName: "Adam",    provider: "kokoro", providerVoiceId: "am_adam",    language: "en-US", accent: "American", availability: "available" },
   { id: "michael", displayName: "Michael", provider: "kokoro", providerVoiceId: "am_michael", language: "en-US", accent: "American", availability: "available" },
+
+  // ── On-device (Web Speech API / speechSynthesis) ───────────────────────────
+  // Speaks DIRECTLY through the device's own voices (Apple's system/Siri voices
+  // on an iPhone). Instant + fully local + free, but foreground-only: it stops
+  // when the PWA is backgrounded or the screen locks (a browser limitation), and
+  // it never produces an audio file, so it bypasses the synth/Storage pipeline.
+  // The runtime resolves the actual on-device voice; the picker gates this on
+  // `speechSynthesis` being present.
+  { id: "device", displayName: "On-device (Apple)", provider: "system", providerVoiceId: "", language: "en-US", accent: "On-device", availability: "available" },
 ]);
 
 const BY_ID = new Map(VOICES.map((v) => [v.id, v]));

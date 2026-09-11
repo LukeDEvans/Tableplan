@@ -40,3 +40,18 @@ describe("voice registry — availability & default", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 });
+
+describe("on-device (system) voice", () => {
+  it("registers a foreground-only system voice", () => {
+    const dev = getVoice("device");
+    expect(dev).toBeTruthy();
+    expect(dev.provider).toBe("system");
+    expect(dev.availability).toBe("available");
+  });
+  it("resolveProviderVoice returns the system provider (playback path branches on it)", () => {
+    expect(resolveProviderVoice("device").provider).toBe("system");
+  });
+  it("is listed among system-provider voices", () => {
+    expect(getVoices({ provider: "system" }).map((v) => v.id)).toContain("device");
+  });
+});
