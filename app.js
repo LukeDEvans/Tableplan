@@ -8908,6 +8908,33 @@ function financeSpendTrends(viewMonth) {
   return { series, movers: movers.slice(0, 5), hasData: series.some((s) => s.spend != null) };
 }
 
+// Average actual spend for one category over the last N complete months (from the
+// persisted monthly snapshots). null when there's no history to average.
+function financeCategoryHistoryAvg(gid, cid, months = 3) {
+  const ma = (state.financeMonthActuals && typeof state.financeMonthActuals === "object") ? state.financeMonthActuals : {};
+  const now = new Date();
+  const vals = [];
+  for (let i = 1; i <= months; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const v = ma[d.toISOString().slice(0, 7)]?.cats?.[`${gid}:${cid}`];
+    if (v != null) vals.push(Math.abs(Number(v) || 0));
+  }
+  if (!vals.length) return null;
+  return Math.round(vals.reduce((s, v) => s + v, 0) / vals.length);
+}
+// Set a category's budget to a target WITHOUT deleting any line items (so the
+// finance merge — which resurrects untombstoned items — stays safe): single-item
+// → set it; multi-item → scale proportionally; pick → set the active option.
+function financeSetCategoryBudget(c, target) {
+  if (!c) return;
+  if (c.mode === "pick") { const ai = financeCategoryActiveItem(c) || (c.items || [])[0]; if (ai) ai.amount = target; else c.items = [{ id: createId("fin-item"), name: "Monthly", amount: target }]; return; }
+  if (!c.items || !c.items.length) { c.items = [{ id: createId("fin-item"), name: "Monthly", amount: target }]; return; }
+  if (c.items.length === 1) { c.items[0].amount = target; return; }
+  const cur = c.items.reduce((s, it) => s + (Number(it.amount) || 0), 0);
+  if (cur > 0) { const f = target / cur; c.items.forEach((it) => { it.amount = Math.round((Number(it.amount) || 0) * f); }); }
+  else c.items[0].amount = target;
+}
+
 // Cash flow (money in vs out) for the last 6 months, from the monthly snapshots.
 function financeCashFlow(viewMonth) {
   const ma = (state.financeMonthActuals && typeof state.financeMonthActuals === "object") ? state.financeMonthActuals : {};
@@ -10305,6 +10332,14 @@ function renderFinancePage() {
           ${budgetPace(actual, budget)}
           ${open ? `
           <div class="fin-category-items">
+            ${(() => {
+              const avg = financeCategoryHistoryAvg(g.id, c.id);
+              if (avg == null || (budget && Math.abs(avg - budget) <= Math.max(1, budget * 0.02))) return "";
+              return `<div class="fin-cat-history">
+                <span class="fin-cat-history-label">3-mo avg <b>${formatFinMoney(avg)}</b>${budget ? ` · budget ${formatFinMoney(budget)}` : ""}</span>
+                <button class="secondary-btn fin-add-btn fin-set-avg-btn" type="button" data-fin-action="set-cat-budget" data-group="${g.id}" data-id="${c.id}" data-amount="${avg}">Set to avg</button>
+              </div>`;
+            })()}
             ${c.items.map((it) => finItemRow(scope, it)).join("")}
             <div class="fin-item-row fin-item-row--tools">
               <button class="secondary-btn fin-add-btn" type="button" data-fin-action="add-item" data-scope="${scope}">+ ${pick ? "Option" : "Line"}</button>
@@ -10945,6 +10980,7 @@ function renderFinancePage() {
       ${incomeOpen ? `<div class="fin-cards fin-budget-nested">${incomeBreakdown}</div>` : ""}
       <div class="fin-budget-search-row">
         <input type="search" class="fin-item-name fin-budget-search" placeholder="Search categories…" value="${escapeHtml(financeBudgetSearch)}" data-fin-budget-search aria-label="Search budget categories" />
+        <button class="secondary-btn fin-add-btn fin-draft-budget-btn" type="button" data-fin-action="draft-budget-from-history" title="Set each category to its recent average spend">✨ Draft from history</button>
       </div>
     </div>
     <div class="fin-budget-groups">${groupCards}</div>`;
@@ -11436,6 +11472,23 @@ function onFinanceGridClick(e) {
   if (action === "fin-tab") { financeTab = btn.dataset.tab || "transactions"; renderFinancePage(); return; }
   if (action === "fin-budget-group") { financeBudgetOpenGroup = financeBudgetOpenGroup === btn.dataset.id ? null : btn.dataset.id; renderFinancePage(); return; }
   if (action === "export-csv") { exportFinanceCsv(financeViewMonth); return; }
+  if (action === "set-cat-budget") {
+    const g = (state.financeBudgetGroups || []).find((x) => x.id === btn.dataset.group);
+    const c = g?.categories.find((x) => x.id === btn.dataset.id);
+    if (c) { financeSetCategoryBudget(c, Number(btn.dataset.amount) || 0); persist(); renderFinancePage(); }
+    return;
+  }
+  if (action === "draft-budget-from-history") {
+    const targets = [];
+    for (const g of (state.financeBudgetGroups || [])) for (const c of (g.categories || [])) {
+      const avg = financeCategoryHistoryAvg(g.id, c.id);
+      if (avg != null) targets.push({ c, avg });
+    }
+    if (!targets.length) { alert("No spending history yet to draft a budget from — this fills in once a couple of months of transactions are recorded."); return; }
+    if (!confirm(`Set ${targets.length} categor${targets.length === 1 ? "y" : "ies"} to recent-average spend? This replaces their current budget amounts (you can still tweak each afterward).`)) return;
+    targets.forEach(({ c, avg }) => financeSetCategoryBudget(c, avg));
+    persist(); renderFinancePage(); return;
+  }
   if (action === "start-split") { startSplitTxn(btn.dataset.id); return; }
   if (action === "itemize-email") {
     const t = financeLabeledTxns().find((x) => x.id === btn.dataset.id);

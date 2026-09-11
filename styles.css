@@ -21248,8 +21248,23 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-group-head { cursor: pointer; }
 
 /* Budget tab: search box + group list. Hidden = filtered out by the search. */
-.fin-budget-search-row { padding-top: 8px; }
-.fin-budget-search { width: 100%; }
+.fin-budget-search-row { padding-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.fin-budget-search { flex: 1 1 160px; min-width: 0; }
+.fin-draft-budget-btn { flex: 0 0 auto; white-space: nowrap; }
+
+/* Budget-from-history: per-category "3-mo avg · Set to avg" hint inside the editor. */
+.fin-cat-history {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 2px 8px;
+  margin-bottom: 2px;
+  border-bottom: 1px dashed var(--border, rgba(0,0,0,0.12));
+}
+.fin-cat-history-label { flex: 1 1 auto; font-size: 0.78rem; color: var(--muted); }
+.fin-cat-history-label b { color: var(--text); font-variant-numeric: tabular-nums; }
+.fin-set-avg-btn { flex: 0 0 auto; white-space: nowrap; }
 .fin-budget-groups { display: flex; flex-direction: column; gap: 16px; margin-top: 8px; }
 .fin-budget-groups [hidden] { display: none !important; }
 .fin-category-row {
