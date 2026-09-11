@@ -44097,6 +44097,13 @@ let radioSearchDebounce = null;
 let radioViewIndex = new Map();
 let musicStreamMod = null;     // lazy music-streaming.js
 let musicProviderRegistry = null;
+// Owns-playback session (Apple Music / any CAP.OWNS_PLAYBACK provider). NON-NULL
+// only while such a track is actively playing — every guard below keys off this,
+// so the existing engine-based music/podcast/radio/TTS paths are untouched
+// whenever it is null (which is always, until Apple Music is configured).
+let musicPlaybackProvider = null;
+let musicOwnedNP = null;    // last normalized NowPlaying snapshot from the provider
+let musicOwnedUnsub = null; // provider.onChange() unsubscribe
 let musicSearchQuery = "";
 let musicSearchResults = null; // { query, items, providerStatuses } | null
 let musicSearchLoading = false;
@@ -46917,7 +46924,7 @@ const MEDIA_KINDS = {
     info: () => { const s = radioCurStation; if (!s) return null; return { art: s.logoUrl || "", title: s.name || "Radio", show: radioStationSubtitle(s), date: "Live", desc: s.description || "" }; },
   },
   music: {
-    active: () => !!musicAudio,
+    active: () => !!musicAudio || !!musicPlaybackProvider,
     el: () => musicAudio,
     onTimeupdate: () => updateMiniPlayerProgress(),
     onPlay: () => { setMediaSessionPlaybackState("playing"); updateMiniPlayerPlayBtn(); if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel(); },
@@ -47209,6 +47216,7 @@ function playMusicDescriptor(desc, url, { isBlob = false } = {}) {
   stopPodcastAudio();   // never overlap with a podcast…
   stopListen();         // …or an article read-aloud
   stopRadio();          // …or a live radio stream
+  teardownOwnedMusic(); // …or an Apple Music (owns-playback) track we were driving
   if (musicCurUrl && musicCurUrl !== url) { try { URL.revokeObjectURL(musicCurUrl); } catch { /* noop */ } }
   musicCurUrl = isBlob ? url : null;
   musicCurTrack = desc;
@@ -47234,7 +47242,64 @@ async function startLibraryTrack(track) {
   return true;
 }
 
+// Tear down any active owns-playback session (unsubscribe + pause the provider).
+function teardownOwnedMusic() {
+  if (musicOwnedUnsub) { try { musicOwnedUnsub(); } catch { /* noop */ } musicOwnedUnsub = null; }
+  if (musicPlaybackProvider) { try { musicPlaybackProvider.pause(); } catch { /* noop */ } }
+  musicPlaybackProvider = null;
+  musicOwnedNP = null;
+}
+
+// Play a track whose provider OWNS its transport (Apple Music/MusicKit): there is
+// no URL for the shared engine, so we drive the provider directly and mirror its
+// now-playing into the same mini-player / MediaSession / history the URL path uses.
+// Queue advance reuses the existing musicQueueRest machinery: each track is a
+// fresh setQueue+play, so a mixed (Apple + Internet Archive) queue still advances.
+async function startOwnedMusicTrack(canonical, provider) {
+  stopPodcastAudio(); stopListen(); stopRadio();
+  if (mediaEngine && musicAudio) { mediaEngine.stop(); }  // release the shared engine if it held music
+  if (musicCurUrl) { try { URL.revokeObjectURL(musicCurUrl); } catch { /* noop */ } musicCurUrl = null; }
+  musicAudio = null;
+  teardownOwnedMusic();
+  musicPlaybackProvider = provider;
+  const artist = canonical.artists?.[0]?.name || canonical.composer?.name || canonical.album || "";
+  const desc = { id: canonical.id, title: canonical.title, artist, album: canonical.album, artworkUrl: canonical.artworkUrl || "", kind: "owned", canonical };
+  musicCurTrack = desc;
+  musicOwnedUnsub = provider.onChange((np) => {
+    if (provider !== musicPlaybackProvider) return; // stale session
+    musicOwnedNP = np;
+    updateMiniPlayerPlayBtn();
+    updateMiniPlayerProgress();
+    setMediaSessionPlaybackState(np.isPlaying ? "playing" : "paused");
+    if (np.state === "ended") onMusicEnded();
+  });
+  try {
+    await provider.setQueue([canonical]);
+    await provider.play(canonical);
+    musicOwnedNP = provider.getNowPlaying();
+  } catch (e) {
+    console.warn("apple music play failed", e);
+    showVoiceToast("Couldn't play this Apple Music track");
+    teardownOwnedMusic();
+    return false;
+  }
+  setMiniPlayer(desc.title || "Untitled", desc.artist || desc.album || "", desc.artworkUrl || "");
+  setMusicMediaSession(desc);
+  pushMusicHistory(desc);
+  updateMiniPlayerPlayBtn();
+  if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
+  return true;
+}
+
 async function startStreamingTrack(canonical) {
+  // Playback-owning provider (Apple Music) → drive its transport, not a URL.
+  try {
+    const reg = await getMusicProviders();
+    const prov = reg.get(canonical.provider);
+    if (prov && musicStreamMod && musicStreamMod.isPlaybackOwner(prov)) {
+      return await startOwnedMusicTrack(canonical, prov);
+    }
+  } catch (e) { console.warn("owns-playback route failed", e); }
   let src = canonical.playable;
   try {
     const reg = await getMusicProviders();
@@ -47284,6 +47349,7 @@ function onMusicEnded() {
 function stopMusicPlayback() {
   saveMusicPosition(); // capture the final resume point before tearing down
   window.clearInterval(musicPositionSaveTimer);
+  teardownOwnedMusic(); // no-op unless an owns-playback session is active
   if (mediaEngine && musicAudio) mediaEngine.stop();
   if (musicCurUrl) { try { URL.revokeObjectURL(musicCurUrl); } catch { /* noop */ } musicCurUrl = null; }
   musicAudio = null;
@@ -47295,11 +47361,21 @@ function stopMusicPlayback() {
 }
 
 function toggleMusicPlayPause() {
+  if (musicPlaybackProvider) {
+    if (musicOwnedNP && musicOwnedNP.isPlaying) musicPlaybackProvider.pause(); else musicPlaybackProvider.resume();
+    return;
+  }
   if (!musicAudio) return;
   if (musicAudio.paused) musicAudio.play().catch(() => {});
   else musicAudio.pause();
 }
 function skipMusic(seconds) {
+  if (musicPlaybackProvider) {
+    const cur = (musicOwnedNP && musicOwnedNP.positionMs) || 0;
+    const dur = (musicOwnedNP && musicOwnedNP.durationMs) || Infinity;
+    musicPlaybackProvider.seek(Math.max(0, Math.min(cur + seconds * 1000, dur)));
+    return;
+  }
   if (!musicAudio) return;
   musicAudio.currentTime = Math.max(0, Math.min((musicAudio.currentTime || 0) + seconds, musicAudio.duration || Infinity));
 }
@@ -47314,8 +47390,10 @@ function setMusicMediaSession(desc) {
       album: desc.album || "Music",
       artwork: art ? [{ src: art }] : undefined,
     });
-    navigator.mediaSession.setActionHandler("play", () => musicAudio?.play().catch(() => {}));
-    navigator.mediaSession.setActionHandler("pause", () => musicAudio?.pause());
+    // Route through the guarded controls so lock-screen play/pause drives the
+    // owns-playback provider (Apple Music) as well as the shared element.
+    navigator.mediaSession.setActionHandler("play", () => { if (musicPlaybackProvider) musicPlaybackProvider.resume(); else musicAudio?.play().catch(() => {}); });
+    navigator.mediaSession.setActionHandler("pause", () => { if (musicPlaybackProvider) musicPlaybackProvider.pause(); else musicAudio?.pause(); });
     navigator.mediaSession.setActionHandler("seekbackward", () => skipMusic(-10));
     navigator.mediaSession.setActionHandler("seekforward", () => skipMusic(10));
     navigator.mediaSession.setActionHandler("nexttrack", () => onMusicEnded());
@@ -47664,6 +47742,14 @@ async function getMusicProviders() {
   const providers = [ia.createInternetArchiveProvider(), ia.createMusopenProvider()];
   const jc = state.jamendo;
   if (jc && jc.clientId) providers.push(jam.createJamendoProvider({ clientId: jc.clientId }));
+  // Apple Music is a playback-owning provider (config-selected — requirement #5).
+  // Registered when enabled; it self-gates via isAvailable() (returns false until
+  // the developer token is configured), so search/playback silently exclude it
+  // until then — the architecture never depends on it, exactly like Jamendo.
+  if (state.appleMusic && state.appleMusic.enabled) {
+    const am = await import("./music-provider-applemusic.js");
+    providers.push(am.createAppleMusicProvider({ storefront: state.appleMusic.storefront || "us" }));
+  }
   musicProviderRegistry = stream.createMusicProviderRegistry(providers);
   return musicProviderRegistry;
 }
@@ -48522,6 +48608,7 @@ function nowPlayingEngineState() {
   return (k && s && s.providerId === k) ? s : null;
 }
 function nowPlayingIsPlaying() {
+  if (musicPlaybackProvider) return !!(musicOwnedNP && musicOwnedNP.isPlaying); // Apple Music owns its transport
   const s = nowPlayingEngineState();
   if (s) return !!s.playing;
   const el = nowPlayingEl();
@@ -48529,12 +48616,14 @@ function nowPlayingIsPlaying() {
   return !!(listenSpeaking && listenAudio && !listenAudio.paused);
 }
 function nowPlayingElapsed() {
+  if (musicPlaybackProvider) return musicOwnedNP ? (musicOwnedNP.positionMs || 0) / 1000 : 0;
   const s = nowPlayingEngineState();
   if (s) return s.position || 0;
   const el = nowPlayingEl(); return el ? (el.currentTime || 0) : listenElapsed();
 }
 // Live radio has no finite duration → 0 (the bar shows no progress for it).
 function nowPlayingTotal() {
+  if (musicPlaybackProvider) return (musicOwnedNP && musicOwnedNP.durationMs) ? musicOwnedNP.durationMs / 1000 : 0;
   const s = nowPlayingEngineState();
   if (s) return Number.isFinite(s.duration) ? s.duration : 0;
   const el = nowPlayingEl(); if (el) return Number.isFinite(el.duration) ? el.duration : 0; return listenTotalDuration || 0;
@@ -48562,6 +48651,11 @@ function nowPlayingEpisodeStep(dir) {
 }
 function nowPlayingSeekFraction(f) {
   if (nowPlayingIsLive()) return; // live: no seek
+  if (musicPlaybackProvider) { // Apple Music owns the transport
+    const dur = musicOwnedNP && musicOwnedNP.durationMs;
+    if (dur) musicPlaybackProvider.seek(Math.max(0, Math.min(1, f)) * dur);
+    return;
+  }
   // Logical seek through the engine (crosses chunk boundaries for multi-segment
   // TTS; identical to an element seek for single-segment podcast/music).
   const s = nowPlayingEngineState();
