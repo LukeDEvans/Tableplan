@@ -22366,7 +22366,7 @@ function openSettingsMenuDialog(openDialog) {
 }
 
 function openContextSettingsDialog(kind) {
-  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync", "ai-notes", "finance-accounts", "finance-emergency", "podcasts", "radio"].includes(kind) ? kind : "general";
+  const normalizedKind = ["general", "eat", "do", "play", "watch", "family", "recreate", "pages", "location-services", "voice-commands", "admin-pages", "read-sync", "ai-notes", "finance-accounts", "finance-emergency", "podcasts", "radio", "apple-music"].includes(kind) ? kind : "general";
   closeAppMenu();
   closeFloatingMenus();
   renderContextSettingsDialog(normalizedKind);
@@ -22442,6 +22442,23 @@ function refreshFinanceSettingsIfOpen() {
     renderContextSettingsDialog("finance-accounts");
   }
 }
+// Reflect the Apple Music auth + subscription state into the settings row.
+// All provider/MusicKit specifics stay behind the provider's normalized methods.
+async function refreshAppleMusicStatus() {
+  const el = document.getElementById("appleMusicStatus");
+  if (!el) return;
+  try {
+    const reg = await getMusicProviders();
+    const p = reg.get("applemusic");
+    if (!p) { el.textContent = "Not enabled."; return; }
+    const auth = await p.getAuthStatus();
+    if (auth.state === "not-configured") { el.textContent = "Server key not configured yet — finish the checklist below."; return; }
+    if (!auth.authorized) { el.textContent = "Not signed in."; return; }
+    const sub = await p.getSubscriptionStatus();
+    el.textContent = sub.canPlay ? "Signed in · subscription active." : `Signed in · ${sub.reason || "no active subscription"}`;
+  } catch { el.textContent = "Unavailable right now."; }
+}
+
 // ── Settings → AI → Voice: preview + preference helpers ──────────────────────
 const VOICE_PLAY_SVG = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>`;
 const VOICE_STOP_SVG = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>`;
@@ -22536,7 +22553,8 @@ function renderContextSettingsDialog(kind) {
     "ai-notes": "AI Notes",
     "mail-ai": "Mail AI",
     "voice": "Voice",
-    "podcasts": "Podcasts"
+    "podcasts": "Podcasts",
+    "apple-music": "Apple Music"
   };
   const isSubPanel = !["general", "eat", "do", "play", "watch", "recreate", "read-sync"].includes(kind);
   elements.contextSettingsBackBtn.hidden = !isSubPanel;
@@ -22550,6 +22568,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="weekly-email">Email</button>
         <button type="button" data-context-settings-action="mail-ai">Mail AI</button>
         <button type="button" data-context-settings-action="voice">Voice</button>
+        <button type="button" data-context-settings-action="apple-music">Apple Music</button>
         <button type="button" data-context-settings-action="family">Household</button>
         <button type="button" data-context-settings-action="voice-commands">Voice Commands</button>
         <button type="button" data-context-settings-action="ai-log">AI Action Log</button>
@@ -22596,6 +22615,49 @@ function renderContextSettingsDialog(kind) {
         if (activeAppArea === "finance") renderFinancePage();
       });
     });
+    return;
+  }
+
+  if (kind === "apple-music") {
+    const cfg = (state.mediaServices && state.mediaServices.appleMusic) || {};
+    const enabled = !!cfg.enabled;
+    elements.contextSettingsBody.innerHTML = `
+      <p class="settings-hint">Play Apple Music in the app (MusicKit). Needs your own Apple Developer key configured in the server environment — see the checklist. Playing full tracks also requires an active Apple Music subscription on this device.</p>
+      <label class="fin-set-row">
+        <span>Enable Apple Music</span>
+        <input type="checkbox" class="live-toggle" data-am-setting="enabled" ${enabled ? "checked" : ""} aria-label="Enable Apple Music" />
+      </label>
+      <div id="appleMusicAuthBlock" ${enabled ? "" : "hidden"}>
+        <div class="fin-set-row"><span>Status</span><span id="appleMusicStatus" class="settings-hint">Checking…</span></div>
+        <button class="secondary-btn" type="button" data-am-action="authorize">Sign in to Apple Music</button>
+      </div>
+      <details class="settings-details" style="margin-top:12px">
+        <summary>Setup checklist</summary>
+        <ol class="settings-hint" style="padding-left:1.2em; line-height:1.5">
+          <li>Apple Developer portal → <b>Certificates, Identifiers &amp; Profiles → Keys</b> → <b>+</b>, tick <b>MusicKit</b> (create/select a <b>Media ID</b> when prompted), register, then <b>download the .p8 (one time only)</b> and note the <b>Key ID</b>.</li>
+          <li>Note your <b>Team ID</b> (Membership page, top-right).</li>
+          <li>In <b>Netlify → Site settings → Environment variables</b>, set <code>APPLE_MUSIC_PRIVATE_KEY</code> (the .p8 file's contents), <code>APPLE_MUSIC_KEY_ID</code>, and <code>APPLE_MUSIC_TEAM_ID</code>, then redeploy.</li>
+          <li>Turn on the toggle above, tap <b>Sign in to Apple Music</b>, and approve. No bundle ID or redirect URL is needed for the web (MusicKit JS).</li>
+        </ol>
+      </details>`;
+    const toggle = elements.contextSettingsBody.querySelector('[data-am-setting="enabled"]');
+    toggle?.addEventListener("change", () => {
+      if (!state.mediaServices || typeof state.mediaServices !== "object") state.mediaServices = {};
+      state.mediaServices.appleMusic = { ...(state.mediaServices.appleMusic || {}), enabled: toggle.checked };
+      musicProviderRegistry = null; // rebuild the registry with/without Apple Music
+      persist();
+      renderContextSettingsDialog("apple-music");
+    });
+    elements.contextSettingsBody.querySelector('[data-am-action="authorize"]')?.addEventListener("click", async () => {
+      try {
+        const reg = await getMusicProviders();
+        const p = reg.get("applemusic");
+        if (!p) { alert("Enable Apple Music first."); return; }
+        await p.authorize();
+      } catch (e) { alert("Apple Music sign-in failed: " + (e?.message || e)); }
+      refreshAppleMusicStatus();
+    });
+    if (enabled) refreshAppleMusicStatus();
     return;
   }
 
@@ -23511,6 +23573,7 @@ function handleContextSettingsAction(event) {
     "weekly-email": () => closeAndRun(openWeeklyEmailDialog),
     "mail-ai": () => renderContextSettingsDialog("mail-ai"),
     "voice": () => renderContextSettingsDialog("voice"),
+    "apple-music": () => renderContextSettingsDialog("apple-music"),
     "backup-health": () => closeAndRun(openBackupHealthDialog),
     "restore-backup": () => closeAndRun(openRestoreDialog),
     "admin-pages": () => renderContextSettingsDialog("admin-pages"),
@@ -47747,9 +47810,10 @@ async function getMusicProviders() {
   // Registered when enabled; it self-gates via isAvailable() (returns false until
   // the developer token is configured), so search/playback silently exclude it
   // until then — the architecture never depends on it, exactly like Jamendo.
-  if (state.appleMusic && state.appleMusic.enabled) {
+  const amCfg = state.mediaServices && state.mediaServices.appleMusic;
+  if (amCfg && amCfg.enabled) {
     const am = await import("./music-provider-applemusic.js");
-    providers.push(am.createAppleMusicProvider({ storefront: state.appleMusic.storefront || "us" }));
+    providers.push(am.createAppleMusicProvider({ storefront: amCfg.storefront || "us" }));
   }
   musicProviderRegistry = stream.createMusicProviderRegistry(providers);
   return musicProviderRegistry;
