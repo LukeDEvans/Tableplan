@@ -24,6 +24,7 @@ import { taskIsScheduled } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot } from './finance-actuals.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance } from './finance-sync.js';
+import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
 import { clearLocalAccountState, accountTransitionKind } from './auth-account-reset.js';
 import { makeProvenance, ORIGIN as PROV_ORIGIN } from './provenance.js';
 import { collectDiagnostics, formatDiagnostics, createErrorLog } from './diagnostics.js';
@@ -5387,6 +5388,66 @@ function exportFinanceCsv(monthKey) {
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   } catch { showMailToast?.("Couldn't export CSV on this device."); }
+}
+
+// Backfill months of spending history from a transaction CSV (a bank export, or
+// a file exported from another device) so "Draft from history" has real data to
+// work with. Aggregates rows into per-month category totals and fills ONLY the
+// months state.financeMonthActuals doesn't already have — a month with real
+// snapshot data is never clobbered. Negative amount = spending, positive =
+// income (same as Export CSV). Pure parse/aggregate live in ./finance-csv.js.
+function financeImportCsvBackfill(text) {
+  const rows = parseCsvRows(text);
+  if (rows.length < 2) { alert("That file didn't look like a transaction CSV (no rows found)."); return; }
+  // Map both "Group · Category" and the bare category name to the budget key.
+  const nameToKey = new Map();
+  for (const g of (state.financeBudgetGroups || [])) {
+    for (const c of (g.categories || [])) {
+      const key = `cat:${g.id}:${c.id}`;
+      nameToKey.set(`${g.label} · ${c.name}`.toLowerCase(), key);
+      nameToKey.set(String(c.name || "").toLowerCase(), key);
+    }
+  }
+  const agg = aggregateCsvBackfill(rows, nameToKey);
+  if (agg.error === "missing-columns") { alert("Couldn't find Date and Amount columns in that CSV. Export from your bank with at least Date, Amount, and (ideally) Category columns."); return; }
+  if (!agg.applied) { alert("No usable rows found in that CSV (couldn't read dates/amounts)."); return; }
+
+  if (!state.financeMonthActuals || typeof state.financeMonthActuals !== "object") state.financeMonthActuals = {};
+  const filled = [];
+  let skippedExisting = 0;
+  for (const [month, entry] of Object.entries(agg.months)) {
+    if (state.financeMonthActuals[month]) { skippedExisting++; continue; } // never clobber real data
+    if (!Object.keys(entry.cats).length && !entry.income) continue; // nothing landed
+    state.financeMonthActuals[month] = entry;
+    filled.push(month);
+  }
+  // Keep the same 36-month cap the live snapshotter enforces.
+  const months = Object.keys(state.financeMonthActuals).sort();
+  for (let i = 0; i < months.length - 36; i++) delete state.financeMonthActuals[months[i]];
+  persist();
+  renderFinancePage();
+
+  const parts = [];
+  parts.push(filled.length ? `Backfilled ${filled.length} month${filled.length === 1 ? "" : "s"} (${filled.sort().join(", ")})` : "No new months added");
+  if (skippedExisting) parts.push(`${skippedExisting} month${skippedExisting === 1 ? "" : "s"} already had data (left as-is)`);
+  if (agg.uncategorized) parts.push(`${agg.uncategorized} row${agg.uncategorized === 1 ? "" : "s"} had no matching category${agg.unrecognized.length ? ` (e.g. ${agg.unrecognized.slice(0, 3).join(", ")})` : ""}`);
+  if (agg.invalid) parts.push(`${agg.invalid} row${agg.invalid === 1 ? "" : "s"} skipped (bad date/amount)`);
+  alert(parts.join(".\n") + ".\n\nNow open the Budget tab → “Draft from history” to set budgets from this.");
+}
+
+function startFinanceCsvImport() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".csv,text/csv,text/plain";
+  input.onchange = () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { try { financeImportCsvBackfill(String(reader.result || "")); } catch (e) { alert("Couldn't import that CSV: " + (e?.message || "unknown error")); } };
+    reader.onerror = () => alert("Couldn't read that file.");
+    reader.readAsText(file);
+  };
+  input.click();
 }
 
 // Months to pay off a debt at a fixed monthly payment (standard amortization).
@@ -11389,7 +11450,10 @@ function renderFinancePage() {
     <div class="fin-card fin-insights-card">
       <div class="fin-report-head">
         <div class="fin-subhead fin-accounts-title">Where it went${isCurrentMonth ? "" : ` · ${escapeHtml(monthKey)}`}</div>
-        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="export-csv">Export CSV</button>
+        <div class="fin-report-head-btns">
+          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="import-csv" title="Backfill past months from a transaction CSV">Import history</button>
+          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="export-csv">Export CSV</button>
+        </div>
       </div>
       ${reportRows.length ? reportRows.map((c) => `
         <div class="fin-report-row">
@@ -11666,6 +11730,7 @@ function onFinanceGridClick(e) {
   if (action === "fin-tab") { financeTab = btn.dataset.tab || "transactions"; renderFinancePage(); return; }
   if (action === "fin-budget-group") { financeBudgetOpenGroup = financeBudgetOpenGroup === btn.dataset.id ? null : btn.dataset.id; renderFinancePage(); return; }
   if (action === "export-csv") { exportFinanceCsv(financeViewMonth); return; }
+  if (action === "import-csv") { startFinanceCsvImport(); return; }
   if (action === "set-cat-budget") {
     const g = (state.financeBudgetGroups || []).find((x) => x.id === btn.dataset.group);
     const c = g?.categories.find((x) => x.id === btn.dataset.id);
@@ -11678,7 +11743,7 @@ function onFinanceGridClick(e) {
       const avg = financeCategoryHistoryAvg(g.id, c.id);
       if (avg != null) targets.push({ c, avg });
     }
-    if (!targets.length) { alert("No spending history yet to draft a budget from — this fills in once a couple of months of transactions are recorded."); return; }
+    if (!targets.length) { alert("No spending history yet to draft a budget from — it fills in as months of transactions are recorded, or import past months now via Insights → Reports → “Import history”."); return; }
     if (!confirm(`Set ${targets.length} categor${targets.length === 1 ? "y" : "ies"} to recent-average spend? This replaces their current budget amounts (you can still tweak each afterward).`)) return;
     targets.forEach(({ c, avg }) => financeSetCategoryBudget(c, avg));
     persist(); renderFinancePage(); return;

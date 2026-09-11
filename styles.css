@@ -21021,7 +21021,8 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-sub-amt { flex: 0 0 auto; font-weight: 750; font-variant-numeric: tabular-nums; }
 
 /* Reports: category breakdown bars + CSV export. */
-.fin-report-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.fin-report-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
+.fin-report-head-btns { display: flex; gap: 6px; flex-wrap: wrap; }
 .fin-report-head .fin-add-btn { flex: 0 0 auto; }
 .fin-report-row { padding: 6px 2px; }
 .fin-report-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 0.86rem; }
