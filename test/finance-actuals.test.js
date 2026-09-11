@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { financeEarliestTxnDate, financeMonthsToSnapshot } from "../finance-actuals.js";
+import { financeEarliestTxnDate, financeMonthsToSnapshot, financeOffsettingPairIds } from "../finance-actuals.js";
 
 const tx = (posted, label = "cat:g:c") => ({ posted, label });
 
@@ -57,5 +57,66 @@ describe("financeMonthsToSnapshot — coverage guard", () => {
     const txns = [tx("2026-05-05"), tx("2026-06-05")];
     expect(financeMonthsToSnapshot(txns, CUR).has("2026-05")).toBe(false);
     expect(financeMonthsToSnapshot(txns, CUR).has("2026-06")).toBe(true);
+  });
+});
+
+describe("financeOffsettingPairIds", () => {
+  // A simple merchant key that mirrors the app's (digits stripped) so
+  // "ISHARES TRUST 4.04" and "ISHARES TRUST -4.04" share a key.
+  const mkey = (d) => String(d || "").toLowerCase().replace(/[^a-z\s]/g, " ").trim().split(/\s+/).slice(0, 3).join(" ");
+  const t = (id, accountId, posted, amount, description) => ({ id, accountId, posted, amount, description });
+
+  it("hides a same-account, same-day, same-merchant +X/-X pair", () => {
+    const txns = [
+      t("a", "acct1", "2026-09-08", 4.04, "ISHARES TRUST 4.04"),
+      t("b", "acct1", "2026-09-08", -4.04, "ISHARES TRUST -4.04"),
+    ];
+    const hide = financeOffsettingPairIds(txns, mkey, () => false);
+    expect(hide.has("a")).toBe(true);
+    expect(hide.has("b")).toBe(true);
+  });
+
+  it("does NOT collapse an unrelated same-amount charge and refund (different merchants)", () => {
+    const txns = [
+      t("a", "acct1", "2026-09-08", -4.04, "BLUE BOTTLE COFFEE"),
+      t("b", "acct1", "2026-09-08", 4.04, "TARGET REFUND"),
+    ];
+    expect(financeOffsettingPairIds(txns, mkey, () => false).size).toBe(0);
+  });
+
+  it("does not pair across different accounts or different days", () => {
+    const txns = [
+      t("a", "acct1", "2026-09-08", 4.04, "ISHARES TRUST 4.04"),
+      t("b", "acct2", "2026-09-08", -4.04, "ISHARES TRUST -4.04"),
+      t("c", "acct1", "2026-09-09", -4.04, "ISHARES TRUST -4.04"),
+    ];
+    expect(financeOffsettingPairIds(txns, mkey, () => false).size).toBe(0);
+  });
+
+  it("never hides a transaction the user has labeled", () => {
+    const txns = [
+      t("a", "acct1", "2026-09-08", 4.04, "ISHARES TRUST 4.04"),
+      t("b", "acct1", "2026-09-08", -4.04, "ISHARES TRUST -4.04"),
+    ];
+    const hide = financeOffsettingPairIds(txns, mkey, (id) => id === "b");
+    expect(hide.size).toBe(0); // b is labeled → a has no partner → neither hidden
+  });
+
+  it("pairs only min(credits, debits), leaving the extra visible", () => {
+    const txns = [
+      t("a", "acct1", "2026-09-08", 4.04, "ISHARES TRUST 4.04"),
+      t("b", "acct1", "2026-09-08", 4.04, "ISHARES TRUST 4.04"),
+      t("c", "acct1", "2026-09-08", -4.04, "ISHARES TRUST -4.04"),
+    ];
+    const hide = financeOffsettingPairIds(txns, mkey, () => false);
+    expect(hide.size).toBe(2); // one +/- pair hidden, one +4.04 left
+  });
+
+  it("ignores zero amounts and undated rows", () => {
+    const txns = [
+      t("a", "acct1", "2026-09-08", 0, "ISHARES TRUST"),
+      t("b", "acct1", "", -4.04, "ISHARES TRUST"),
+    ];
+    expect(financeOffsettingPairIds(txns, mkey, () => false).size).toBe(0);
   });
 });

@@ -22,7 +22,7 @@ import { normalizeExternalEvent } from './calendar/normalize.js';
 import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap, upsertTitleOverride } from './calendar/reconcile.js';
 import { taskIsScheduled } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
-import { financeMonthsToSnapshot } from './finance-actuals.js';
+import { financeMonthsToSnapshot, financeOffsettingPairIds } from './finance-actuals.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
 import { clearLocalAccountState, accountTransitionKind } from './auth-account-reset.js';
@@ -8565,6 +8565,13 @@ function financeLabeledTxns() {
     if (dropIds.size) txns = txns.filter((t) => !dropIds.has(t.id));
     if (migrated) persist();
   }
+
+  // Self-canceling pairs (same account, same day, same amount, same merchant,
+  // opposite signs — e.g. "ISHARES TRUST 4.04" + "ISHARES TRUST -4.04") net to
+  // zero and are pure noise: hide them here so they're gone from the list AND
+  // don't inflate the "to label" count. Never touches a user-labeled txn.
+  const offsetting = financeOffsettingPairIds(txns, financeMerchantKey, (id) => Boolean((state.financeTxnLabels || {})[id]));
+  if (offsetting.size) txns = txns.filter((t) => !offsetting.has(t.id));
 
   // Transfer pairs: same magnitude, opposite signs, different accounts, ≤5d apart
   const mgmtPairs = new Set();
