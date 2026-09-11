@@ -31,10 +31,13 @@
   schedule = "0 9 * * 0"
   included_files = ["tts-cache-sweep.mjs", "tts-article-text.mjs", "tts-cache-identity.js", "kokoro-core.mjs", "voice-prefs.js", "voice-registry.js", "tts-provider.js"]
 
-# Pre-synthesis: a tiny cron fires the 15-min background worker every few hours,
-# which renders the newest unread articles into the audio cache (instant playback).
+# Pre-synthesis: a tiny cron fires the 15-min background worker every couple of
+# hours, which renders the newest unread articles into the audio cache (instant
+# playback). Every 2h (was 4h) so a freshly-saved article is pre-rendered sooner;
+# the worker is idempotent (already-rendered chunks are a free Storage check — no
+# box call), so a tighter cadence stays free on the self-hosted Kokoro box.
 [functions."presynth-cron"]
-  schedule = "0 */4 * * *"
+  schedule = "0 */2 * * *"
 
 [functions."presynth-tts-background"]
   included_files = ["tts-article-text.mjs", "kokoro-core.mjs", "tts-cache-identity.js", "kokoro-store.mjs", "voice-prefs.js", "voice-registry.js", "tts-provider.js"]

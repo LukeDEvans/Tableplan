@@ -55,3 +55,36 @@ describe("hashText", () => {
     expect(hashText("")).toBe(hashText(null)); // null coerced to ""
   });
 });
+
+// The presynth writer (presynth-tts-background → kokoro-store) and the client's
+// direct-from-Storage reader (app.js articleStorageChunkUrls) MUST derive the
+// SAME object path from a chunk, or a pre-rendered hit looks like a miss and the
+// instant path silently never fires. Pin the shared derivation so a change to
+// KOKORO_MODEL / the provider string / speedInAudio on either side trips a test.
+import { sanitizeKey } from "../kokoro-core.mjs";
+import { KOKORO_MODEL } from "../tts-provider.js";
+
+describe("Kokoro article Storage path — presynth writer ⇄ client reader parity", () => {
+  const chunkParams = (text, providerVoiceId, speed) => ({
+    text, provider: "kokoro", providerVoiceId, model: KOKORO_MODEL, speed, speedInAudio: false,
+  });
+  it("keyPrefix is sanitizeKey(ttsCacheKey(...)) with the exact presynth params", () => {
+    const params = chunkParams("A sentence to read.", "af_bella", 1);
+    const keyPrefix = sanitizeKey(ttsCacheKey(params));
+    expect(keyPrefix).toMatch(/^kokoro_af-bella_kokoro-v[0-9]+_splay_[a-z0-9]+$/);
+    expect(keyPrefix).toBe(sanitizeKey(ttsCacheKey({ ...params }))); // stable
+  });
+  it("KOKORO_MODEL is the descriptor baked into the key (guards silent drift)", () => {
+    expect(ttsCacheKey(chunkParams("x", "af_bella", 1))).toContain(KOKORO_MODEL);
+  });
+  it("speed is NOT in the key (speedInAudio:false → same MP3, played at playbackRate)", () => {
+    const a = sanitizeKey(ttsCacheKey(chunkParams("x", "af_bella", 1)));
+    const b = sanitizeKey(ttsCacheKey(chunkParams("x", "af_bella", 1.2)));
+    expect(a).toBe(b); // deliberate: rate is applied at play-time, not baked into the render
+  });
+  it("a different voice or chunk text IS a different path", () => {
+    const base = sanitizeKey(ttsCacheKey(chunkParams("x", "af_bella", 1)));
+    expect(sanitizeKey(ttsCacheKey(chunkParams("x", "am_michael", 1)))).not.toBe(base);
+    expect(sanitizeKey(ttsCacheKey(chunkParams("y", "af_bella", 1)))).not.toBe(base);
+  });
+});

@@ -47,8 +47,9 @@ import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHisto
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
 import { beginTasksWeekSession, stepTasksWeek, endTasksWeekSession, tasksBellState } from './tasks-overlay.js';
 import { createVoiceService } from './voice-service.js';
-import { createGoogleProvider, createKokoroProvider } from './tts-provider.js';
-import { chunkText as kokoroChunkText } from './kokoro-core.mjs';
+import { createGoogleProvider, createKokoroProvider, KOKORO_MODEL } from './tts-provider.js';
+import { chunkText as kokoroChunkText, sanitizeKey as kokoroSanitizeKey } from './kokoro-core.mjs';
+import { ttsCacheKey } from './tts-cache-identity.js';
 import { prepareArticleListenText } from './tts-article-text.mjs';
 import * as TravelItinerary from './travel-itinerary.js';
 import * as TravelTransitions from './travel-transitions.js';
@@ -50628,6 +50629,61 @@ async function synthKokoroArticleChunks(article) {
   return { urls, timings: null, introWords: prepared.introWords };
 }
 
+// ── Direct-from-Storage playback (the pre-rendered "saved reading") ────────────
+// The presynth job renders each Kokoro chunk into the PUBLIC "article-audio"
+// bucket under a content-addressed path (kokoro-store). That path is fully
+// deterministic from data the client already has, so we can build the URL here
+// with NO server call and hand it straight to the audio element — instant, no
+// kokoro-tts round-trip, no cold-start box. Only Kokoro pre-renders to Storage,
+// so this is a no-op for a Google article voice.
+const ARTICLE_AUDIO_PUBLIC_BASE = "https://noyocjcltrenwdovqrql.supabase.co/storage/v1/object/public/article-audio";
+
+// The deterministic public chunk URLs for an article, or null (wrong voice / no
+// text). MUST match presynth-tts-background's keyPrefix exactly (same helpers,
+// same KOKORO_MODEL/speedInAudio:false), or a hit would look like a miss.
+function articleStorageChunkUrls(article) {
+  if (!isKokoroArticleVoice()) return null;
+  const prepared = prepareArticleListenText(article);
+  if (!prepared) return null;
+  let providerVoiceId, speed;
+  try { const v = getVoiceService().voiceForDomain("article"); providerVoiceId = v?.voice?.providerVoiceId; speed = v?.speed; }
+  catch { return null; }
+  if (!providerVoiceId) return null;
+  const chunks = kokoroChunkText(prepared.text);
+  if (!chunks.length) return null;
+  const urls = chunks.map((chunk) => {
+    const keyPrefix = kokoroSanitizeKey(ttsCacheKey({ text: chunk, provider: "kokoro", providerVoiceId, model: KOKORO_MODEL, speed, speedInAudio: false }));
+    return `${ARTICLE_AUDIO_PUBLIC_BASE}/${keyPrefix}/0.mp3`;
+  });
+  return { urls, introWords: prepared.introWords };
+}
+
+// True only when EVERY chunk is already in Storage — a partial render must fall
+// back to the synth path so no chunk 404s mid-read. A ranged GET (1 byte) is the
+// robust existence probe (HEAD isn't always allowed); any failure ⇒ treat as
+// missing ⇒ fall back (safe: never worse than today).
+async function articleFullyRenderedInStorage(urls) {
+  if (!urls || !urls.length) return false;
+  try {
+    const results = await Promise.all(urls.map((u) =>
+      fetch(u, { method: "GET", headers: { Range: "bytes=0-0" }, cache: "no-store" })
+        .then((r) => r.status === 206 || r.ok).catch(() => false)));
+    return results.every(Boolean);
+  } catch { return false; }
+}
+
+// One entry point for "give me this article's playable audio, cheaply": prefer
+// the pre-rendered Storage URLs (free, no box); only synthesize on a miss. Used
+// by the prefetchers so a pre-rendered next article resolves WITHOUT a box call —
+// which is what makes the backgrounded hand-off reliable.
+async function resolveArticleAudioForCache(article) {
+  const direct = articleStorageChunkUrls(article);
+  if (direct && await articleFullyRenderedInStorage(direct.urls)) {
+    return { urls: direct.urls, timings: null, introWords: direct.introWords };
+  }
+  return synthArticleAudioForCache(article);
+}
+
 // One entry point for "produce this article's audio and cache it": Kokoro takes
 // the per-chunk path above (cap-safe + correct keys); Google keeps the existing
 // single-call batch path. Both return the { urls, introWords } shape.
@@ -50671,7 +50727,7 @@ function prefetchNextQueueAudio() {
       const article = (state.savedArticles || []).find((a) => a.id === id);
       if (article) {
         const key = articleTtsCacheKey(id);
-        ttsPrefetchCache.set(key, synthArticleAudioForCache(article).then((data) => {
+        ttsPrefetchCache.set(key, resolveArticleAudioForCache(article).then((data) => {
           if (data?.urls?.length) ttsResolvedUrls.set(key, data); // now available synchronously
           return data;
         }).catch((e) => {
@@ -50710,7 +50766,7 @@ function prefetchListenArticles(articles) {
       if (listenLoading) break; // a foreground play started — yield the box to it
       const key = articleTtsCacheKey(article.id);
       if (ttsPrefetchCache.has(key)) continue; // a real play (or earlier run) already took it
-      const p = synthKokoroArticleChunks(article).then((data) => {
+      const p = resolveArticleAudioForCache(article).then((data) => {
         if (data?.urls?.length) ttsResolvedUrls.set(key, data);
         return data;
       }).catch((e) => { ttsPrefetchCache.delete(key); console.warn("Article prefetch failed:", e.message); return null; });
@@ -50895,6 +50951,32 @@ async function startListenTTSIncremental(article, myGenId) {
   if (!prepared) { listenLoading = false; updateListenPlayBtn(); return; }
   const chunks = kokoroChunkText(prepared.text);
   if (!chunks.length) { listenLoading = false; updateListenPlayBtn(); return; }
+
+  // FAST PATH: if presynth already rendered every chunk to the public bucket,
+  // play those URLs directly — no box round-trip, instant, and the whole article
+  // is present so seek/auto-advance/backgrounding all work. Falls through to the
+  // chunk-by-chunk synth below on any miss.
+  const direct = articleStorageChunkUrls(article);
+  if (direct && await articleFullyRenderedInStorage(direct.urls)) {
+    if (myGenId !== listenGenId) return;
+    listenLoading = false;
+    listenBuffering = false;
+    listenArticle = article;
+    listenAllUrls = [...direct.urls];
+    listenTimings = null;
+    listenIntroWords = direct.introWords || 0;
+    listenWordAbsTimes = null;
+    clearWordHighlight();
+    listenChunkDurations = []; listenChunkOffsets = []; listenTotalDuration = 0;
+    showMiniPlayerForArticle(article);
+    listenAudio = ensureListenAudioEl();
+    listenAudio.muted = false;
+    loadListenChunkDurations(listenAllUrls, myGenId);
+    getMediaEngine().load(buildTtsSource(article, listenAllUrls), { autoplay: true });
+    setListenMediaSession(article);
+    return;
+  }
+  if (myGenId !== listenGenId) return;
   trackUsage("kokoro_tts");
 
   // First chunk (awaited) — what the user waits for. The cold-start retry lives
