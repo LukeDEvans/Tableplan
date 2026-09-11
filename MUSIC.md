@@ -47,7 +47,34 @@ A provider is a plain object:
 }
 ```
 
-`CAP` = `SEARCH, BROWSE, GET_ITEM, PLAYABLE, ARTWORK, LICENSE, PAGINATION, RECOMMEND`.
+`CAP` = `SEARCH, BROWSE, GET_ITEM, PLAYABLE, ARTWORK, LICENSE, PAGINATION, RECOMMEND, OWNS_PLAYBACK, AUTH`.
+
+### 2a. Playback-owning providers (`CAP.OWNS_PLAYBACK` + `CAP.AUTH`)
+Most providers resolve a track to a **URL** (`getPlayable`) that the shared engine
+plays. A DRM streamer whose SDK never hands out a URL (Apple Music/MusicKit,
+later Spotify) instead **owns its own transport**. Such a provider advertises
+`CAP.OWNS_PLAYBACK` (+ `CAP.AUTH`) and implements the lowest-common-denominator
+**Transport contract** documented in `music-streaming.js` *instead of* `PLAYABLE`:
+`play/pause/resume/seek(ms)/skipNext/skipPrevious`, `get/setQueue`,
+`getNowPlaying()`→`makeNowPlaying` (normalized `PLAYBACK_STATE`, never the SDK's
+own constants), `onChange(cb)`, and `authorize()/getAuthStatus()/
+getSubscriptionStatus()`. The app drives it through that surface; `app.js`
+`startOwnedMusicTrack()` mirrors its `onChange` into the same mini-player /
+MediaSession / history the URL path uses, guarded so engine-based playback is
+untouched whenever no owns-playback track is active. The active owner is chosen
+by config (`registry.activePlaybackProvider(id)`), so a second streamer is a new
+adapter + a config flip.
+
+**Apple Music** (`music-provider-applemusic.js`): all MusicKit specifics
+(SDK load, `/v1/catalog`+`/v1/me` paths, event names, `playbackState` ints,
+artwork templates) are confined to that file; the instance is injected
+(`deps.getInstance`) for tests. Registered in `getMusicProviders()` when
+`state.appleMusic.enabled`. The developer token (ES256 JWT) is minted server-side
+by `netlify/functions/apple-music-token.js` from `APPLE_MUSIC_PRIVATE_KEY` /
+`APPLE_MUSIC_KEY_ID` / `APPLE_MUSIC_TEAM_ID` — until those env vars are set it
+returns `{configured:false}` and the provider stays inert (`isAvailable()=false`).
+Prereqs outside the code: an Apple Developer membership + MusicKit key, and an
+Apple Music subscription on the listening device.
 
 `createMusicProviderRegistry(providers)` exposes `search(query)` = **aggregated, isolated** search: every SEARCH-capable available provider runs under `Promise.allSettled`, results merge, and per-provider failures are reported in `providerStatuses` **without breaking the others**. HTTP clients are **injected** (`deps.fetchJson`) so providers are testable and a Netlify proxy can slot in later without touching callers.
 
