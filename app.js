@@ -316,7 +316,7 @@ const STATE_SECTIONS = {
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "financeAlertPrefs"],
   contacts:  ["contacts", "contactGroups"],
 };
@@ -334,7 +334,7 @@ const STATE_SECTIONS = {
 // running code older than the row was last written with, so a stale device can
 // never drop budget categories or transaction annotations it doesn't know
 // about. MUST be incremented when finance* keys are added/restructured.
-const STATE_SCHEMA_VERSION = 4;
+const STATE_SCHEMA_VERSION = 5;
 
 const SECTION_SCOPE = {
   eat: "household",       // Meal Plan is exclusively shared
@@ -4391,6 +4391,10 @@ function defaultState() {
     // the dot clears only when the id is explicitly confirmed (financeTxnConfirmed).
     financeNotifDismissed: {},
     financeTxnConfirmed: {},
+    // Receipt images kept for a transaction (txnId -> {path,type,size,name,uploadedAt}).
+    // Only a small reference lives here; the image blob lives in the private
+    // "receipt-attachments" Supabase Storage bucket (per-user RLS), never in state.
+    financeTxnReceipts: {},
     doTasks: [],
     themeMode: "light",
     locationSharingEnabled: false,
@@ -4577,6 +4581,7 @@ function normalizeState(parsed) {
     financeLabelSnoozes: (parsed?.financeLabelSnoozes && typeof parsed.financeLabelSnoozes === "object") ? parsed.financeLabelSnoozes : {},
     financeNotifDismissed: (parsed?.financeNotifDismissed && typeof parsed.financeNotifDismissed === "object") ? parsed.financeNotifDismissed : {},
     financeTxnConfirmed: (parsed?.financeTxnConfirmed && typeof parsed.financeTxnConfirmed === "object") ? parsed.financeTxnConfirmed : {},
+    financeTxnReceipts: normalizeFinanceTxnReceipts(parsed?.financeTxnReceipts),
     financePersonal: normalizeFinancePersonal(parsed?.financePersonal),
     doTasks: normalizeDoTasks(parsed?.doTasks),
     themeMode: normalizeThemeMode(parsed?.themeMode),
@@ -5489,6 +5494,25 @@ function normalizeFinancePersonal(raw) {
     incomeItems: normalizeFinanceLineItems(p?.incomeItems),
     expenseItems: normalizeFinanceLineItems(p?.expenseItems)
   }));
+}
+
+// Receipt-image references kept per transaction: { txnId: {path,type,size,name,uploadedAt} }.
+// The blob itself lives in the private "receipt-attachments" Storage bucket; only a
+// path reference is persisted here, so a bad/oversized value can never bloat state.
+function normalizeFinanceTxnReceipts(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  const out = {};
+  for (const [id, r] of Object.entries(raw)) {
+    if (!r || typeof r !== "object" || typeof r.path !== "string" || !r.path) continue;
+    out[id] = {
+      path: r.path,
+      type: typeof r.type === "string" ? r.type : "",
+      size: Number(r.size) || 0,
+      name: typeof r.name === "string" ? r.name.slice(0, 120) : "",
+      uploadedAt: typeof r.uploadedAt === "string" ? r.uploadedAt : new Date().toISOString()
+    };
+  }
+  return out;
 }
 
 function normalizeRecreateHobbies(h) {
@@ -6581,7 +6605,7 @@ function mergeStates(newer, older) {
     "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeMerchantNames",
     "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts",
     "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes",
-    "financeNotifDismissed", "financeTxnConfirmed",
+    "financeNotifDismissed", "financeTxnConfirmed", "financeTxnReceipts",
     "articleNotifications",
   ]) {
     merged[key] = unionByKey(newer[key], older[key]);
@@ -8706,6 +8730,7 @@ function deleteManualTxn(id) {
   state.financeManualTxns = state.financeManualTxns.filter((m) => m.id !== id);
   if (state.financeTxnLabels) delete state.financeTxnLabels[id];
   if (state.financeTxnNoteOverrides) delete state.financeTxnNoteOverrides[id];
+  if (state.financeTxnReceipts && state.financeTxnReceipts[id]) deleteReceiptImage(id).catch(() => {});
   if (state.financeTxnLinks) {
     delete state.financeTxnLinks[id]; // this txn as a return, linked to some purchase
     for (const [retId, purchaseId] of Object.entries(state.financeTxnLinks)) {
@@ -9663,6 +9688,11 @@ async function scanReceiptIntoSplit(file) {
       }
       const grouped = [...byLabel.entries()].map(([label, amount]) => ({ label, amount: Math.round(amount * 100) / 100 }));
       financeSplitDraft.portions = grouped.length ? grouped : data.receipt.portions.map((p) => ({ label: p.label || "", amount: p.amount }));
+      // Keep the receipt image: best-effort upload + attach to this txn. Never
+      // let a storage hiccup (missing bucket, offline, not signed in) undo the
+      // split the user just got — the scan result stands on its own.
+      const txnId = financeSplitDraft.txnId;
+      uploadReceiptImage(txnId, file).catch((e) => console.warn("Receipt image not kept:", e?.message || e));
     } else {
       alert(data?.error ? `Scan failed: ${data.error}` : "Could not read a receipt from that photo — try a straighter, brighter shot.");
     }
@@ -9671,6 +9701,67 @@ async function scanReceiptIntoSplit(file) {
   }
   financeScanBusy = false;
   renderFinancePage();
+}
+
+// ── Receipt-image storage ─────────────────────────────────────────────────
+// Mirrors the trip-attachment helpers: a PRIVATE per-user Supabase Storage
+// bucket ("receipt-attachments", RLS-scoped to auth.uid()/…), signed URLs for
+// viewing, and only a small {path,type,size,name,uploadedAt} reference kept in
+// state.financeTxnReceipts. Financial receipts are private, so — unlike the
+// public recipe-photos/event-files buckets — the bucket is not public and the
+// path is prefixed with the user's id.
+const RECEIPT_BUCKET = "receipt-attachments";
+
+async function uploadReceiptImage(txnId, file) {
+  if (!supabaseClient) throw new Error("Not signed in");
+  const userId = authSession?.user?.id;
+  if (!userId) throw new Error("Not signed in");
+  if (!file) throw new Error("No file");
+  // Downscale before upload so kept receipts stay small (they're for reference,
+  // not archival) — reuses the same pipeline the scanner feeds the model.
+  const blob = await prepareScanImage(file, undefined, { maxDimension: 1600, quality: 0.82 });
+  const type = blob.type || file.type || "image/jpeg";
+  const ext = /png/.test(type) ? "png" : /webp/.test(type) ? "webp" : "jpg";
+  const path = `${userId}/${txnId}/${Date.now()}.${ext}`;
+  const { error } = await supabaseClient.storage.from(RECEIPT_BUCKET).upload(path, blob, { upsert: true, contentType: type });
+  if (error) throw error;
+  // Replace any prior image for this txn (best-effort cleanup of the old blob).
+  const prev = (state.financeTxnReceipts || {})[txnId];
+  if (prev?.path && prev.path !== path) supabaseClient.storage.from(RECEIPT_BUCKET).remove([prev.path]).catch(() => {});
+  if (!state.financeTxnReceipts || typeof state.financeTxnReceipts !== "object") state.financeTxnReceipts = {};
+  state.financeTxnReceipts[txnId] = { path, type, size: blob.size || 0, name: file.name || "", uploadedAt: new Date().toISOString() };
+  persist();
+  renderFinancePage();
+  return state.financeTxnReceipts[txnId];
+}
+
+async function getReceiptImageUrl(path) {
+  if (!supabaseClient || !path) throw new Error("Not signed in");
+  const { data, error } = await supabaseClient.storage.from(RECEIPT_BUCKET).createSignedUrl(path, 3600);
+  if (error) throw error;
+  return data.signedUrl;
+}
+
+async function deleteReceiptImage(txnId) {
+  const rec = (state.financeTxnReceipts || {})[txnId];
+  if (rec?.path && supabaseClient) {
+    await supabaseClient.storage.from(RECEIPT_BUCKET).remove([rec.path]).catch(() => {});
+  }
+  if (state.financeTxnReceipts) delete state.financeTxnReceipts[txnId];
+  persist();
+  renderFinancePage();
+}
+
+// Opens the kept receipt image for a txn in a new tab via a short-lived signed URL.
+async function viewReceiptImage(txnId) {
+  const rec = (state.financeTxnReceipts || {})[txnId];
+  if (!rec?.path) return;
+  try {
+    const url = await getReceiptImageUrl(rec.path);
+    window.open(url, "_blank", "noopener");
+  } catch (e) {
+    alert("Couldn't open the receipt image: " + (e?.message || "unknown error"));
+  }
 }
 
 // ── Merchant renaming ("Electronic Deposit Ur..." → "Urban Greens") ─────────
@@ -10751,6 +10842,7 @@ function renderFinancePage() {
     ].filter(Boolean).join(" · ");
     const isSplit = t.label === "split" && Array.isArray(t.split);
     const rc = financeReceiptForTxn(t);
+    const keptReceipt = (state.financeTxnReceipts || {})[t.id];
     return `
     <div class="fin-txn-detail fin-txn-card" data-fin-txn-id="${escapeHtml(t.id)}">
       <div class="fin-txn-card-head">
@@ -10803,6 +10895,18 @@ function renderFinancePage() {
         ${!isSplit && (rc.portions || rc.items || []).length > 1 ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="itemize-email" data-id="${escapeHtml(t.id)}">Itemize</button>` : ""}
         <a class="secondary-btn fin-add-btn" href="https://mail.google.com/mail/u/0/#all/${encodeURIComponent(rc.id)}" target="_blank" rel="noopener noreferrer">View email</a>
       </div>` : ""}
+      ${keptReceipt ? `
+      <div class="fin-return-box fin-receipt-kept">
+        <span class="fin-hint">📎 Receipt image kept${keptReceipt.uploadedAt ? ` · ${new Date(keptReceipt.uploadedAt).toLocaleDateString()}` : ""}</span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="view-receipt-image" data-id="${escapeHtml(t.id)}">View</button>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="attach-receipt-image" data-id="${escapeHtml(t.id)}">Replace</button>
+        <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="remove-receipt-image" data-id="${escapeHtml(t.id)}">Remove</button>
+      </div>`
+      : ((t.amount || 0) < 0 ? `
+      <div class="fin-return-box fin-receipt-kept">
+        <span class="fin-hint">No receipt image yet</span>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="attach-receipt-image" data-id="${escapeHtml(t.id)}">Attach image</button>
+      </div>` : "")}
     </div>`;
   };
   // Finance notifications — the bell lives in the Transactions card head (in
@@ -11549,6 +11653,23 @@ function onFinanceGridClick(e) {
   }
   if (action === "return-link-search-cancel") { financeReturnLinkSearch = null; renderFinancePage(); return; }
   if (action === "detail-scan-receipt") { startScanReceiptForTxn(btn.dataset.id); return; }
+  if (action === "view-receipt-image") { viewReceiptImage(btn.dataset.id); return; }
+  if (action === "remove-receipt-image") {
+    if (confirm("Remove the kept receipt image for this transaction?")) deleteReceiptImage(btn.dataset.id);
+    return;
+  }
+  if (action === "attach-receipt-image") {
+    const txnId = btn.dataset.id;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.onchange = () => {
+      const file = input.files && input.files[0];
+      if (file) uploadReceiptImage(txnId, file).catch((e) => alert("Couldn't keep that image: " + (e?.message || "unknown error")));
+    };
+    input.click();
+    return;
+  }
   if (action === "flip-txn-sign") { toggleFinanceTxnSignFlip(btn.dataset.id); return; }
   if (action === "open-txn-detail") {
     financeDetailTxnId = financeDetailTxnId === btn.dataset.id ? null : btn.dataset.id;

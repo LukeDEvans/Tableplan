@@ -21854,6 +21854,10 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 }
 .fin-return-box .fin-hint { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; }
 .fin-return-box .fin-add-btn { align-self: flex-start; }
+/* Kept receipt image: lay the View / Replace / Remove buttons in a wrap row. */
+.fin-receipt-kept { flex-direction: row; flex-wrap: wrap; align-items: center; }
+.fin-receipt-kept .fin-hint { flex: 1 1 100%; }
+.fin-receipt-kept .fin-add-btn { align-self: auto; }
 .fin-return-suggest {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--window-border));
   background: color-mix(in srgb, var(--accent) 10%, transparent);

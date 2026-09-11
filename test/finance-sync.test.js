@@ -316,7 +316,7 @@ describe("guardBootEmptyFinance — boot-empty write/merge protection", () => {
     for (const k of [
       "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeMerchantNames",
       "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts",
-      "financeManualTxns", "financeRecurring",
+      "financeManualTxns", "financeRecurring", "financeTxnReceipts",
     ]) {
       expect(FINANCE_LOCAL_AUTHORITATIVE_KEYS.has(k)).toBe(true);
     }

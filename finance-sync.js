@@ -165,7 +165,7 @@ export function dedupeFinanceRecurring(list) {
 export const FINANCE_LOCAL_AUTHORITATIVE_KEYS = new Set([
   "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeMerchantNames",
   "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts",
-  "financeManualTxns", "financeRecurring",
+  "financeManualTxns", "financeRecurring", "financeTxnReceipts",
 ]);
 
 // Until the cloud finance copy has actually hydrated this session, a boot-empty
