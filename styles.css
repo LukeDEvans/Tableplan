@@ -21798,6 +21798,26 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-split-chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 10px; border-radius: 99px; background: color-mix(in srgb, var(--accent) 14%, var(--window-bg)); font-size: 0.78rem; }
 .fin-split-cat { font-weight: 700; color: var(--accent-dark, var(--accent)); }
 .fin-split-amt { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
+
+/* Reimagined split editor. */
+.fin-split-card { gap: 10px; }
+.fin-split-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.fin-split-title { font-weight: 850; font-size: 0.95rem; color: var(--ink); }
+.fin-split-scan-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.fin-split-scan-row .fin-txn-act { flex: 1 1 auto; }
+.fin-split-portions { display: flex; flex-direction: column; gap: 6px; }
+.fin-split-portion { display: flex; align-items: center; gap: 8px; }
+.fin-split-portion .fin-split-select { flex: 1 1 auto; min-width: 0; max-width: none; }
+.fin-split-portion .fin-split-amt-in { flex: 0 0 96px; width: 96px; text-align: right; }
+.fin-split-meter { height: 8px; border-radius: 99px; background: color-mix(in srgb, var(--ink) 10%, transparent); overflow: hidden; }
+.fin-split-meter > i { display: block; height: 100%; border-radius: 99px; background: var(--accent); transition: width 0.2s ease; }
+.fin-split-meter > i.is-over { background: #b3261e; }
+.fin-split-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.fin-split-remaining { margin-left: auto; font-size: 0.8rem; font-weight: 800; }
+.fin-split-remaining.is-done { color: #1f9d57; }
+.fin-split-remaining.is-over { color: #b3261e; }
+.fin-split-remaining.is-under { color: var(--muted); }
+.fin-split-save:not([disabled]) { border-color: var(--accent); color: var(--accent-dark, var(--accent)); font-weight: 800; }
 .fin-return-box {
   display: flex;
   flex-direction: column;

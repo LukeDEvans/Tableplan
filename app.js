@@ -9624,7 +9624,18 @@ async function scanReceiptIntoSplit(file) {
     const image = await fileToDataUrl(await prepareScanImage(file, undefined, { maxDimension: 1600, quality: 0.82 }));
     const data = await callNetlifyFunction("simplefin", { action: "scanReceipt", image });
     if (data?.receipt?.portions?.length && financeSplitDraft) {
-      financeSplitDraft.portions = data.receipt.portions.map((p) => ({ label: p.label || "", amount: p.amount }));
+      // Group the scanned line items BY CATEGORY so a Target run collapses to
+      // "Groceries $X · Electronics $Y" instead of a long per-item list — the
+      // split is category-level, which is what budgeting needs.
+      const byLabel = new Map();
+      for (const p of data.receipt.portions) {
+        const amt = Math.abs(parseFinAmount(p.amount) || 0);
+        if (!amt) continue;
+        const label = p.label || "";
+        byLabel.set(label, (byLabel.get(label) || 0) + amt);
+      }
+      const grouped = [...byLabel.entries()].map(([label, amount]) => ({ label, amount: Math.round(amount * 100) / 100 }));
+      financeSplitDraft.portions = grouped.length ? grouped : data.receipt.portions.map((p) => ({ label: p.label || "", amount: p.amount }));
     } else {
       alert(data?.error ? `Scan failed: ${data.error}` : "Could not read a receipt from that photo — try a straighter, brighter shot.");
     }
@@ -10540,28 +10551,38 @@ function renderFinancePage() {
     const remaining = Math.round((total - assigned) * 100) / 100;
     const ok = Math.abs(remaining) <= 0.02 && financeSplitDraft.portions.some((p) => p.label && parseFinAmount(p.amount) > 0);
     const receipt = financeReceiptForTxn(t);
+    const pctAssigned = total > 0 ? Math.min(100, Math.round((assigned / total) * 100)) : 0;
+    const over = assigned - total > 0.02;
+    const balanced = Math.abs(remaining) <= 0.02;
     return `
-    <div class="fin-split-editor">
-      <div class="fin-subhead">Split ${formatFinMoney(total)} — ${escapeHtml(t.displayName)}</div>
-      <div class="fin-item-row fin-item-row--tools">
-        ${receipt ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="split-prefill" data-id="${escapeHtml(t.id)}">Use email receipt · ${escapeHtml(receipt.merchant || "receipt")}${(receipt.items || []).length ? ` (${receipt.items.length} items)` : ""}</button>` : ""}
-        <button class="secondary-btn fin-add-btn fin-scan-btn" type="button" data-fin-action="split-scan" ${financeScanBusy ? "disabled" : ""}>${financeScanBusy ? "Scanning…" : `${scanReceiptSvg}<span>Scan receipt</span>`}</button>
+    <div class="fin-split-editor fin-split-card">
+      <div class="fin-split-head"><span class="fin-split-title">Split ${formatFinMoney(total)}</span><span class="fin-hint">${escapeHtml(t.displayName)}</span></div>
+      <div class="fin-split-scan-row">
+        ${receipt ? `<button class="fin-txn-act" type="button" data-fin-action="split-prefill" data-id="${escapeHtml(t.id)}"><span>📧 Use email receipt${(receipt.items || []).length ? ` · ${receipt.items.length} items` : ""}</span></button>` : ""}
+        <button class="fin-txn-act fin-scan-btn" type="button" data-fin-action="split-scan" ${financeScanBusy ? "disabled" : ""}>${financeScanBusy ? "<span>Reading receipt…</span>" : `${scanReceiptSvg}<span>Scan receipt</span>`}</button>
         <input type="file" accept="image/*" capture="environment" data-fin-edit="split-scan-file" hidden />
       </div>
-      ${financeSplitDraft.portions.map((p, i) => `
-        <div class="fin-item-row">
-          <input class="fin-item-amount" type="text" inputmode="decimal" value="${escapeHtml(String(p.amount ?? ""))}" placeholder="0.00" data-fin-edit="split-amount" data-idx="${i}" aria-label="Portion amount" />
-          <select class="fin-txn-label fin-split-select" data-fin-edit="split-label" data-idx="${i}" aria-label="Portion label">
-            <option value="">label…</option>
-            ${financeTxnLabelOptionsHtml(p.label)}
-          </select>
-          <button class="icon-btn fin-del-btn" type="button" data-fin-action="split-remove-row" data-idx="${i}" title="Remove portion" aria-label="Remove portion">&times;</button>
-        </div>`).join("")}
+      <div class="fin-split-portions">
+        ${financeSplitDraft.portions.map((p, i) => `
+          <div class="fin-split-portion">
+            <select class="fin-txn-label fin-split-select" data-fin-edit="split-label" data-idx="${i}" aria-label="Portion category">
+              <option value="">category…</option>
+              ${financeTxnLabelOptionsHtml(p.label)}
+            </select>
+            <input class="fin-item-amount fin-split-amt-in" type="text" inputmode="decimal" value="${escapeHtml(String(p.amount ?? ""))}" placeholder="0.00" data-fin-edit="split-amount" data-idx="${i}" aria-label="Portion amount" />
+            <button class="icon-btn fin-del-btn" type="button" data-fin-action="split-remove-row" data-idx="${i}" title="Remove" aria-label="Remove portion">&times;</button>
+          </div>`).join("")}
+      </div>
+      <div class="fin-split-meter"><i class="${over ? "is-over" : ""}" style="width:${pctAssigned}%"></i></div>
+      <div class="fin-split-status">
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="split-add-row">+ Category</button>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="split-even">Even</button>
+        ${!balanced ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="split-remainder">Assign ${formatFinMoney(remaining)}</button>` : ""}
+        <span class="fin-split-remaining ${balanced ? "is-done" : over ? "is-over" : "is-under"}">${balanced ? "✓ balanced" : over ? `${formatFinMoney(-remaining)} over` : `${formatFinMoney(remaining)} left`}</span>
+      </div>
       <div class="fin-item-row fin-item-row--tools">
-        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="split-add-row">+ Portion</button>
-        <span class="fin-hint${Math.abs(remaining) > 0.02 ? " fin-split-off" : ""}">unassigned: ${formatFinMoney(remaining)}</span>
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="split-cancel">Cancel</button>
-        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="split-save" data-id="${escapeHtml(t.id)}" ${ok ? "" : "disabled"}>Save split</button>
+        <button class="secondary-btn fin-add-btn fin-split-save" type="button" data-fin-action="split-save" data-id="${escapeHtml(t.id)}" ${ok ? "" : "disabled"}>Save split</button>
       </div>
     </div>`;
   };
@@ -11475,6 +11496,29 @@ function onFinanceGridClick(e) {
   }
   if (action === "split-add-row") { financeSplitDraft?.portions.push({ label: "", amount: "" }); renderFinancePage(); return; }
   if (action === "split-remove-row") { financeSplitDraft?.portions.splice(Number(btn.dataset.idx), 1); renderFinancePage(); return; }
+  if (action === "split-remainder") {
+    if (!financeSplitDraft) return;
+    const t = financeLabeledTxns().find((x) => x.id === financeSplitDraft.txnId);
+    const total = Math.abs(t?.amount || 0);
+    const assigned = financeSplitDraft.portions.reduce((s, p) => s + Math.abs(parseFinAmount(p.amount) || 0), 0);
+    const remaining = Math.round((total - assigned) * 100) / 100;
+    if (Math.abs(remaining) <= 0.02) return;
+    const empty = financeSplitDraft.portions.find((p) => !parseFinAmount(p.amount));
+    if (empty) empty.amount = String(Math.abs(remaining));
+    else financeSplitDraft.portions.push({ label: "", amount: String(Math.abs(remaining)) });
+    renderFinancePage(); return;
+  }
+  if (action === "split-even") {
+    if (!financeSplitDraft) return;
+    const t = financeLabeledTxns().find((x) => x.id === financeSplitDraft.txnId);
+    const total = Math.abs(t?.amount || 0);
+    if (financeSplitDraft.portions.length < 2) financeSplitDraft.portions = [{ label: financeSplitDraft.portions[0]?.label || "", amount: "" }, { label: "", amount: "" }];
+    const n = financeSplitDraft.portions.length;
+    const per = Math.floor((total / n) * 100) / 100;
+    let acc = 0;
+    financeSplitDraft.portions.forEach((p, i) => { p.amount = String(i === n - 1 ? Math.round((total - acc) * 100) / 100 : per); acc += per; });
+    renderFinancePage(); return;
+  }
   if (action === "split-cancel") { financeSplitDraft = null; renderFinancePage(); return; }
   if (action === "split-save") {
     const portions = (financeSplitDraft?.portions || [])
