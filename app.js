@@ -10355,6 +10355,22 @@ function applyBudgetSearch() {
   });
 }
 
+// Compact "when was this last synced" label. Bank data refreshes ~once a day,
+// so exact minutes matter less than "today / yesterday / a date" — that's the
+// low-cost freshness cue in place of a refresh button that would fetch nothing new.
+function finUpdatedLabel(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const now = new Date();
+  const mins = Math.round((now - d) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  if (d.toDateString() === now.toDateString()) return `today ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+  const y = new Date(now); y.setDate(now.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return "yesterday";
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 function renderFinancePage() {
   const grid = elements.financePlannerGrid;
   if (!grid) return;
@@ -10782,14 +10798,17 @@ function renderFinancePage() {
   // renderFinanceAccountsPanel); it no longer renders as a card here.
 
   const f = financeTxnFilter;
+  // Trim only at point-of-use so live typing keeps spaces (f.q holds the raw box
+  // value, which stays the <input> value across the per-keystroke re-render).
+  const query = (f.q || "").trim().toLowerCase();
   // Keep the ledger to the viewed month: in August you see August's charges, and
   // paging to July shows July's (and only July's), not a rolling 45-day blur.
   const monthTxns = allTxns.filter((t) => (t.posted || "").slice(0, 7) === monthKey);
   // A search looks across the WHOLE loaded window (~45 days), not just the viewed
   // month — otherwise searching in September silently can't find an August charge,
   // which reads as "it's gone." No query = the viewed month's ledger as before.
-  let shownTxns = (f.q ? allTxns : monthTxns).slice(); // copy — sorting below must never mutate the cached/shared array
-  if (f.q) shownTxns = shownTxns.filter((t) => `${t.description || ""} ${t.displayName || ""}`.toLowerCase().includes(f.q.toLowerCase()));
+  let shownTxns = (query ? allTxns : monthTxns).slice(); // copy — sorting below must never mutate the cached/shared array
+  if (query) shownTxns = shownTxns.filter((t) => `${t.description || ""} ${t.displayName || ""}`.toLowerCase().includes(query));
   if (f.account) shownTxns = shownTxns.filter((t) => t.accountId === f.account);
   if (f.kind === "unlabeled") shownTxns = shownTxns.filter((t) => !t.label);
   else if (f.kind === "auto") shownTxns = shownTxns.filter((t) => t.labelSource === "auto");
@@ -11086,7 +11105,7 @@ function renderFinancePage() {
   // instead of an inline list — so no panel is embedded in the card head.
   const notifPanel = "";
 
-  const filterActive = Boolean(f.q || f.kind || f.account);
+  const filterActive = Boolean(query || f.kind || f.account);
   // Build the list: grouped by day for the default (date) sort, flat otherwise.
   const renderTxnBlock = (t) => txnRow(t, { grouped: f.sort === "date" }) + (financeDetailTxnId === t.id ? txnDetailHtml(t) : "") + (financeSplitDraft?.txnId === t.id ? splitEditorHtml(t) : "");
   const txnDayLabel = (dayStr) => {
@@ -11116,7 +11135,12 @@ function renderFinancePage() {
   } else {
     txnListHtml = txns.map(renderTxnBlock).join("");
   }
-  txnListHtml = txnListHtml || `<div class="empty-state">${filterActive ? "Nothing matches the filters." : `No transactions for ${escapeHtml(new Date(monthKey + "-15T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }))}.`}</div>`;
+  // While the first live fetch is in flight (and nothing cached to show yet),
+  // a skeleton makes "loading" distinct from a genuinely empty month or a
+  // failed load — the three used to look identical.
+  txnListHtml = txnListHtml || (financeLiveLoading && financeLinkStatus?.connected && !(financeLive?.errors || []).length
+    ? `<div class="fin-txn-loading" aria-live="polite" aria-busy="true"><span class="fin-txn-skel"></span><span class="fin-txn-skel"></span><span class="fin-txn-skel"></span><span class="fin-hint">Loading your transactions…</span></div>`
+    : `<div class="empty-state">${filterActive ? "Nothing matches the filters." : `No transactions for ${escapeHtml(new Date(monthKey + "-15T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }))}.`}</div>`);
 
   // On its own tab the Transactions list is the primary content — always shown
   // (no card collapse to drill through).
@@ -11150,6 +11174,7 @@ function renderFinancePage() {
         <h3>Transactions</h3>
         ${notifBell}
       </div>
+      <div class="fin-txn-status">${financeLiveLoading ? `<span class="fin-txn-status-load">Updating…</span>` : (financeLive?.at ? `Updated ${escapeHtml(finUpdatedLabel(financeLive.at))}` : "")}</div>
       ${notifPanel}
       ${!txnsOpen ? "" : `
       <div class="fin-txn-filters">
@@ -11163,7 +11188,7 @@ function renderFinancePage() {
         <button class="icon-btn fin-txn-icon-btn" type="button" data-fin-action="batch-scan-receipts" ${financeBatchScanBusy ? "disabled" : ""} aria-label="Scan receipts" title="Scan receipts to auto-file">${financeBatchScanBusy ? `<span class="fin-txn-icon-busy" aria-hidden="true">…</span>` : scanReceiptSvg}</button>
         <button class="icon-btn std-add-btn" type="button" data-fin-action="manual-txn-open" aria-label="Add transaction" title="Add a transaction"><svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
       </div>
-      ${f.q ? `<div class="fin-hint fin-txn-search-scope">Searching all loaded transactions (~45 days). Older months keep saved category totals only.</div>` : ""}
+      ${query ? `<div class="fin-hint fin-txn-search-scope">Searching all loaded transactions (~45 days). Older months keep saved category totals only.</div>` : ""}
       ${!financeTxnFilterOpen ? "" : `
       <div class="fin-txn-filter-panel">
         <select class="fin-scenario-select" data-fin-edit="txn-filter-kind" aria-label="Filter by label">
@@ -11182,6 +11207,7 @@ function renderFinancePage() {
         ${filterActive || sortActive ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="txn-filter-clear">Clear</button>` : ""}
         <span class="fin-hint fin-txn-window-hint">Search covers the loaded window (~45 days + the viewed month); older months keep saved category totals, not individual transactions.</span>
       </div>`}
+      ${(financeLive?.errors || []).length ? `<div class="fin-txn-error" role="alert">Couldn't load some transactions — ${escapeHtml(financeLive.errors.join(" · "))}</div>` : ""}
       ${manualFormHtml}
       ${txnListHtml}
       ${txnsTruncated ? `<button class="secondary-btn fin-add-btn fin-txn-showall" type="button" data-fin-action="toggle-txn-expand">Show all ${shownTxns.length}</button>`
@@ -11352,7 +11378,7 @@ function renderFinancePage() {
     <div class="fin-tabs" role="tablist" aria-label="Finance sections">
       ${FINANCE_TABS.map((t) => {
         const dot = (t.id === "transactions" && hasTxnAttention) || (t.id === "accounts" && hasAcctAttention);
-        return `<button class="fin-tab${financeTab === t.id ? " is-active" : ""}" type="button" role="tab" aria-selected="${financeTab === t.id}" data-fin-action="fin-tab" data-tab="${t.id}">${t.label}${dot ? ` <span class="fin-tab-dot" aria-label="Needs attention"></span>` : ""}</button>`;
+        return `<button class="fin-tab${financeTab === t.id ? " is-active" : ""}" type="button" role="tab" id="fin-tab-${t.id}" aria-controls="fin-tabpanel" aria-selected="${financeTab === t.id}" data-fin-action="fin-tab" data-tab="${t.id}">${t.label}${dot ? ` <span class="fin-tab-dot" aria-label="Needs attention"></span>` : ""}</button>`;
       }).join("")}
     </div>`;
 
@@ -11564,17 +11590,22 @@ function renderFinancePage() {
   // Route the existing cards into tabs (they keep their own internals + wiring).
   // Overview stays pinned above.
   const accountsPanel = `<div class="fin-card fin-accounts-card"><div class="fin-subhead fin-accounts-title">Accounts</div>${renderFinanceAccountsPanel()}</div>`;
+  // A brand-new user (nothing connected, no manual accounts) gets the connect
+  // prompt on EVERY tab, not just Transactions — so tapping Budget/Accounts/
+  // Insights first still guides them to set up instead of showing blank cards.
+  // An existing user with a transient disconnect keeps their planning views.
+  const showOnboard = !financeLinkStatus?.connected && !(state.financeAccounts || []).length;
   const tabBody =
-    financeTab === "budget" ? `${budgetView}${personalCard}`
-    : financeTab === "accounts" ? `${goalsCard}${savingsRow}${netWorthCard}${accountsPanel}`
-    : financeTab === "insights" ? insightsView
+    financeTab === "budget" ? `${showOnboard ? connectPrompt : ""}${budgetView}${personalCard}`
+    : financeTab === "accounts" ? `${showOnboard ? connectPrompt : ""}${goalsCard}${savingsRow}${netWorthCard}${accountsPanel}`
+    : financeTab === "insights" ? `${showOnboard ? connectPrompt : ""}${insightsView}`
     : (txnsCard || connectPrompt);
 
   grid.innerHTML = `
     <section class="fin-panel">
       ${overviewBand}
       ${financeTabNav}
-      <div class="fin-tab-body" data-fin-tab-body="${financeTab}">${tabBody}</div>
+      <div class="fin-tab-body" id="fin-tabpanel" role="tabpanel" aria-labelledby="fin-tab-${financeTab}" tabindex="0" data-fin-tab-body="${financeTab}">${tabBody}</div>
     </section>`;
 
   if (!financeGridWired) {
@@ -11582,9 +11613,21 @@ function renderFinancePage() {
     grid.addEventListener("click", onFinanceGridClick);
     grid.addEventListener("change", onFinanceGridChange);
     grid.addEventListener("input", (e) => {
-      if (!e.target.matches?.("[data-fin-budget-search]")) return;
-      financeBudgetSearch = e.target.value;
-      applyBudgetSearch(); // live filter, no re-render (keeps the box focused)
+      if (e.target.matches?.("[data-fin-budget-search]")) {
+        financeBudgetSearch = e.target.value;
+        applyBudgetSearch(); // live filter, no re-render (keeps the box focused)
+        return;
+      }
+      // Live transaction search: re-render on each keystroke (the list can pull
+      // in cross-month results, so a DOM-only filter won't do), then restore
+      // focus + caret to the search box so typing is unbroken.
+      if (e.target.matches?.('[data-fin-edit="txn-filter-q"]')) {
+        financeTxnFilter.q = e.target.value; // raw (untrimmed) so spaces survive
+        const caret = e.target.selectionStart;
+        renderFinancePage();
+        const box = grid.querySelector('[data-fin-edit="txn-filter-q"]');
+        if (box) { box.focus(); try { box.setSelectionRange(caret, caret); } catch {} }
+      }
     });
     grid.addEventListener("keydown", (e) => {
       if ((e.key === "Enter" || e.key === " ") && e.target.matches?.('[data-fin-action][role="button"]')) {

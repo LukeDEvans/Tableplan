@@ -21615,6 +21615,28 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-txn-icon-btn { flex: 0 0 auto; width: 34px; height: 34px; min-height: 34px; padding: 0; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; }
 .fin-txn-icon-busy { font-weight: 800; }
 .fin-txn-search-scope { display: block; padding: 0 2px 6px; }
+
+/* Freshness line under the Transactions header (bank data syncs ~once a day). */
+.fin-txn-status { font-size: 0.72rem; color: var(--muted); padding: 0 2px 4px; min-height: 0.9rem; }
+.fin-txn-status-load { color: var(--accent-dark, var(--accent)); }
+/* Inline "some transactions failed to load" note (distinct from an empty month). */
+.fin-txn-error {
+  font-size: 0.8rem; color: #b3261e; padding: 8px 10px; margin: 4px 0 6px;
+  border-radius: 8px; border: 1px solid color-mix(in srgb, #b3261e 30%, transparent);
+  background: color-mix(in srgb, #b3261e 8%, transparent);
+}
+/* Loading skeleton — distinguishes "fetching" from "empty month" / "failed". */
+.fin-txn-loading { display: flex; flex-direction: column; gap: 10px; padding: 12px 2px; }
+.fin-txn-loading .fin-hint { text-align: center; }
+.fin-txn-skel {
+  height: 16px; border-radius: 6px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--ink) 7%, transparent) 25%, color-mix(in srgb, var(--ink) 14%, transparent) 37%, color-mix(in srgb, var(--ink) 7%, transparent) 63%);
+  background-size: 400% 100%; animation: finSkel 1.4s ease infinite;
+}
+.fin-txn-skel:nth-child(2) { width: 82%; }
+.fin-txn-skel:nth-child(3) { width: 64%; }
+@keyframes finSkel { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .fin-txn-skel { animation: none; } }
 .fin-txn-filters .fin-add-btn.is-active { border-color: var(--accent); color: var(--accent); }
 .fin-txn-filter-panel { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding-bottom: 8px; }
 .fin-txn-filter-panel .fin-scenario-select { max-width: 32%; }
