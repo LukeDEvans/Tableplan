@@ -1,0 +1,12 @@
+{
+  "appId": "com.mrlukedevans.live",
+  "appName": "Live",
+  "webDir": "dist",
+  "ios": {
+    "contentInset": "always",
+    "limitsNavigationsToAppBoundDomains": false
+  },
+  "server": {
+    "iosScheme": "capacitor"
+  }
+}

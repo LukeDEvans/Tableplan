@@ -23,6 +23,7 @@ import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap,
 import { taskIsScheduled } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds } from './finance-actuals.js';
+import { isNativeApp } from './native-bridge.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
 import { clearLocalAccountState, accountTransitionKind } from './auth-account-reset.js';
@@ -7056,6 +7057,10 @@ async function writeStateToSharedStorage() {
 
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
+  // The Capacitor native shell serves the bundled assets itself; a service worker
+  // there fights Capacitor's asset scheme and can prevent the app from booting.
+  // The native app gets offline for free (assets are in the bundle), so skip it.
+  if (isNativeApp()) return;
 
   // No service worker in local dev (unless explicitly opted in for push testing
   // via localStorage "live-dev-sw" = "on"). A cached shell served over a dead

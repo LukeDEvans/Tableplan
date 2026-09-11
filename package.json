@@ -6,7 +6,9 @@
     "dev:local": "bash dev.sh",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "ios:sync": "vite build && npx cap sync ios",
+    "ios:open": "npx cap open ios"
   },
   "dependencies": {
     "fast-xml-parser": "^5.10.1",
