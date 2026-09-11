@@ -21777,6 +21777,27 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-txn-detail .fin-txn-label { max-width: none; width: 100%; }
 .fin-txn-amt-row { display: flex; align-items: center; gap: 4px; }
 .fin-sign-flip-btn { width: 22px; height: 22px; font-size: 0.8rem; line-height: 1; flex: 0 0 auto; }
+
+/* ── Reimagined transaction card (unified with the review-deck look) ── */
+.fin-txn-card { gap: 10px; }
+.fin-txn-card-head { display: flex; align-items: flex-start; gap: 8px; }
+.fin-txn-card-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.fin-txn-card-merchant { font-weight: 850; font-size: 1rem; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-txn-card-note-sub { font-size: 0.78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-txn-card-amount { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 1.9rem; font-weight: 850; font-variant-numeric: tabular-nums; color: var(--ink); padding: 2px 0; }
+.fin-txn-card-facts { text-align: center; font-size: 0.76rem; color: var(--muted); }
+.fin-txn-raw { opacity: 0.85; }
+.fin-txn-card-section { display: flex; flex-direction: column; gap: 4px; }
+.fin-txn-card-section > .fin-hint { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; }
+.fin-txn-card-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.fin-txn-act { flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font: inherit; font-size: 0.82rem; font-weight: 700; cursor: pointer; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--window-bg); color: var(--ink); }
+.fin-txn-act:hover, .fin-txn-act:focus-visible { border-color: var(--accent); color: var(--accent-dark, var(--accent)); outline: none; }
+.fin-txn-act svg { width: 16px; height: 16px; }
+.fin-txn-act-ic { font-size: 1rem; }
+.fin-split-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.fin-split-chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 10px; border-radius: 99px; background: color-mix(in srgb, var(--accent) 14%, var(--window-bg)); font-size: 0.78rem; }
+.fin-split-cat { font-weight: 700; color: var(--accent-dark, var(--accent)); }
+.fin-split-amt { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
 .fin-return-box {
   display: flex;
   flex-direction: column;

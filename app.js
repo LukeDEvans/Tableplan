@@ -10686,60 +10686,66 @@ function renderFinancePage() {
     const merchantKey = financeMerchantKey(raw);
     const currentMerchant = (state.financeMerchantNames || {})[merchantKey] || raw;
     const noteOverrides = state.financeTxnNoteOverrides || {};
-    const currentNote = Object.prototype.hasOwnProperty.call(noteOverrides, t.id)
-      ? noteOverrides[t.id]
-      : financeSuggestedNote((state.financeTxnNoteCounts || {})[merchantKey]);
-    const fullDate = t.posted ? new Date(t.posted).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" }) : "Unknown date";
+    const hasNote = Object.prototype.hasOwnProperty.call(noteOverrides, t.id);
+    const currentNote = hasNote ? noteOverrides[t.id] : financeSuggestedNote((state.financeTxnNoteCounts || {})[merchantKey]);
+    const facts = [
+      t.posted ? new Date(t.posted).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "—",
+      t.account,
+      t.pending ? "Pending" : "Posted",
+    ].filter(Boolean).join(" · ");
+    const isSplit = t.label === "split" && Array.isArray(t.split);
+    const rc = financeReceiptForTxn(t);
     return `
-    <div class="fin-txn-detail">
-      <div class="fin-txn-detail-head">
+    <div class="fin-txn-detail fin-txn-card" data-fin-txn-id="${escapeHtml(t.id)}">
+      <div class="fin-txn-card-head">
         ${renaming ? `
         <div class="fin-rename-fields">
           <input class="fin-item-name fin-txn-rename-input" type="text" value="${escapeHtml(currentMerchant)}" placeholder="${rawEsc}" data-fin-rename-id="${escapeHtml(t.id)}" data-fin-rename-raw="${rawEsc}" data-fin-rename-field="name" aria-label="Store or person name" />
-          <span class="fin-rename-sep">–</span>
           <input class="fin-item-name fin-txn-rename-input" type="text" value="${escapeHtml(currentNote)}" placeholder="what was purchased (optional)" data-fin-rename-id="${escapeHtml(t.id)}" data-fin-rename-raw="${rawEsc}" data-fin-rename-field="note" aria-label="What was purchased" />
-        </div>
-        <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-save" data-id="${escapeHtml(t.id)}" title="Save name" aria-label="Save name">✓</button>
-        <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-cancel" title="Cancel" aria-label="Cancel">&times;</button>
+          <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-save" data-id="${escapeHtml(t.id)}" title="Save" aria-label="Save">✓</button>
+          <button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-cancel" title="Cancel" aria-label="Cancel">&times;</button>
         ` : `
-        <span class="fin-txn-detail-name">${escapeHtml(t.displayName)}</span>
-        ${!t.isManual ? `<button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-start" data-id="${escapeHtml(t.id)}" title="Rename person/business" aria-label="Rename person or business">✎</button>` : ""}
-        ${(t.amount || 0) < 0 ? `<button class="icon-btn fin-del-btn" type="button" data-fin-action="detail-scan-receipt" data-id="${escapeHtml(t.id)}" title="Scan receipt" aria-label="Scan receipt">${scanReceiptSvg}</button>` : ""}
-        ${t.isManual ? `<button class="icon-btn fin-del-btn" type="button" data-fin-action="manual-txn-edit" data-id="${escapeHtml(t.id)}" title="Edit transaction" aria-label="Edit transaction">✎</button>
-        <button class="icon-btn fin-del-btn" type="button" data-fin-action="manual-txn-delete" data-id="${escapeHtml(t.id)}" title="Delete transaction" aria-label="Delete transaction">🗑</button>` : ""}
+        <div class="fin-txn-card-title">
+          <span class="fin-txn-card-merchant">${escapeHtml(t.displayName)}</span>
+          ${currentNote ? `<span class="fin-txn-card-note-sub">${escapeHtml(currentNote)}</span>` : ""}
+        </div>
+        ${t.isManual
+          ? `<button class="icon-btn fin-del-btn" type="button" data-fin-action="manual-txn-edit" data-id="${escapeHtml(t.id)}" title="Edit" aria-label="Edit transaction">✎</button>
+             <button class="icon-btn fin-del-btn" type="button" data-fin-action="manual-txn-delete" data-id="${escapeHtml(t.id)}" title="Delete" aria-label="Delete transaction">🗑</button>`
+          : `<button class="icon-btn fin-del-btn" type="button" data-fin-action="rename-txn-start" data-id="${escapeHtml(t.id)}" title="Rename / add note" aria-label="Rename or add a note">✎</button>`}
         <button class="icon-btn fin-del-btn" type="button" data-fin-action="close-txn-detail" title="Close" aria-label="Close">&times;</button>
         `}
       </div>
-      ${!renaming && t.displayName !== raw ? `<p class="fin-hint">Raw text: ${rawEsc}</p>` : ""}
-      <div class="fin-txn-detail-grid">
-        <div><span class="fin-hint">Date</span><div>${escapeHtml(fullDate)}</div></div>
-        <div>
-          <span class="fin-hint">Amount</span>
-          <div class="fin-txn-amt-row">
-            <span class="fin-txn-amt${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</span>
-            <button class="icon-btn fin-del-btn fin-sign-flip-btn" type="button" data-fin-action="flip-txn-sign" data-id="${escapeHtml(t.id)}" title="${t.signFlipped ? "Restore the original sign" : "Bank reported this backwards? Flip the sign"}" aria-label="${t.signFlipped ? "Restore original sign" : "Flip sign"}">⇄</button>
-          </div>
-          ${t.signFlipped ? `<span class="fin-hint">Sign corrected — bank reported ${formatFinMoney(-(t.amount || 0))}</span>` : ""}
-        </div>
-        <div><span class="fin-hint">Account</span><div>${escapeHtml(t.account)}</div></div>
-        <div><span class="fin-hint">Status</span><div>${t.pending ? "Pending" : "Posted"}</div></div>
+
+      <div class="fin-txn-card-amount${(t.amount || 0) < 0 ? " is-neg" : ""}">
+        <span>${formatFinMoney(t.amount || 0)}</span>
+        <button class="icon-btn fin-sign-flip-btn" type="button" data-fin-action="flip-txn-sign" data-id="${escapeHtml(t.id)}" title="${t.signFlipped ? "Restore the original sign" : "Flip the sign — bank reported it backwards"}" aria-label="Flip sign">⇄</button>
       </div>
+      <div class="fin-txn-card-facts">${escapeHtml(facts)}${t.signFlipped ? ` · sign corrected` : ""}${t.displayName !== raw ? ` · <span class="fin-txn-raw" title="Original bank text">${rawEsc}</span>` : ""}</div>
+
+      ${isSplit ? `
+      <div class="fin-txn-card-section">
+        <span class="fin-hint">Split across ${t.split.length} categories</span>
+        <div class="fin-split-chips">
+          ${t.split.map((p) => `<span class="fin-split-chip"><span class="fin-split-cat">${escapeHtml(financeTxnLabelName(p.label))}</span><span class="fin-split-amt">${formatFinMoney(-Math.abs(p.amount || 0))}</span></span>`).join("")}
+        </div>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="start-split" data-id="${escapeHtml(t.id)}">Edit split</button>
+      </div>` : `
+      <div class="fin-txn-card-section">
+        <span class="fin-hint">Category</span>
+        <div class="fin-item-row">${txnSelect(t)}</div>
+      </div>
+      <div class="fin-txn-card-actions">
+        ${(t.amount || 0) < 0 ? `<button class="fin-txn-act" type="button" data-fin-action="start-split" data-id="${escapeHtml(t.id)}"><span class="fin-txn-act-ic" aria-hidden="true">⑂</span><span>Split into categories</span></button>` : ""}
+        ${(t.amount || 0) < 0 ? `<button class="fin-txn-act" type="button" data-fin-action="detail-scan-receipt" data-id="${escapeHtml(t.id)}">${scanReceiptSvg}<span>Scan receipt</span></button>` : ""}
+      </div>`}
+
       ${returnLinkHtml(t)}
-      ${(() => {
-        const rc = financeReceiptForTxn(t);
-        if (!rc?.id) return "";
-        // Deep-link to the original order-confirmation email in Gmail (the
-        // receipt stores the Gmail message id). Lets you open the actual email
-        // behind a matched transaction, not just its extracted line items.
-        const url = `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(rc.id)}`;
-        return `
-        <div class="fin-return-box fin-receipt-email">
-          <span class="fin-hint">Order email${rc.merchant ? ` · ${escapeHtml(rc.merchant)}` : ""}${(rc.items || []).length ? ` · ${rc.items.length} item${rc.items.length === 1 ? "" : "s"}` : ""}</span>
-          <a class="secondary-btn fin-add-btn" href="${url}" target="_blank" rel="noopener noreferrer">View email</a>
-        </div>`;
-      })()}
-      <span class="fin-hint">Budget label</span>
-      <div class="fin-item-row">${txnSelect(t)}</div>
+      ${rc?.id ? `
+      <div class="fin-return-box fin-receipt-email">
+        <span class="fin-hint">Order email${rc.merchant ? ` · ${escapeHtml(rc.merchant)}` : ""}${(rc.items || []).length ? ` · ${rc.items.length} item${rc.items.length === 1 ? "" : "s"}` : ""}</span>
+        <a class="secondary-btn fin-add-btn" href="https://mail.google.com/mail/u/0/#all/${encodeURIComponent(rc.id)}" target="_blank" rel="noopener noreferrer">View email</a>
+      </div>` : ""}
     </div>`;
   };
   // Finance notifications — the bell lives in the Transactions card head (in
@@ -11375,6 +11381,7 @@ function onFinanceGridClick(e) {
   if (action === "fin-tab") { financeTab = btn.dataset.tab || "transactions"; renderFinancePage(); return; }
   if (action === "fin-budget-group") { financeBudgetOpenGroup = financeBudgetOpenGroup === btn.dataset.id ? null : btn.dataset.id; renderFinancePage(); return; }
   if (action === "export-csv") { exportFinanceCsv(financeViewMonth); return; }
+  if (action === "start-split") { startSplitTxn(btn.dataset.id); return; }
   if (action === "confirm-txn") { financeConfirmTxn(btn.dataset.id); renderFinancePage(); return; }
   if (action === "quick-label") { recordFinanceTxnLabel(btn.dataset.id, btn.dataset.label, btn.dataset.desc || ""); renderFinancePage(); return; }
   if (action === "add-goal") {
