@@ -29,11 +29,32 @@ export const CAP = Object.freeze({
   SEARCH: "search",
   BROWSE: "browse",
   GET_ITEM: "getItem",       // expand an album/work into its tracks
-  PLAYABLE: "playable",      // resolve a track to a streamable source
+  PLAYABLE: "playable",      // resolve a track to a streamable source (URL) for the shared engine
   ARTWORK: "artwork",
   LICENSE: "license",
   PAGINATION: "pagination",
   RECOMMEND: "recommend",
+  // A provider that OWNS its own playback (transport lives inside the provider,
+  // not the shared audio engine) — e.g. a DRM streamer whose SDK never hands out
+  // a raw URL (Apple Music/MusicKit, Spotify Web Playback SDK). Such a provider
+  // implements the Transport contract below INSTEAD of PLAYABLE, and the app
+  // drives it through that surface rather than mediaEngine.load(url).
+  OWNS_PLAYBACK: "ownsPlayback",
+  // A provider that requires the user to authorize / hold a subscription. It
+  // implements authorize()/getAuthStatus()/getSubscriptionStatus() (below).
+  AUTH: "auth",
+});
+
+// Normalized playback state — the lowest common denominator every streamer can
+// report. The app's mini-player/MediaSession consume THIS, never a provider's
+// own state constant.
+export const PLAYBACK_STATE = Object.freeze({
+  NONE: "none",        // nothing loaded
+  LOADING: "loading",  // buffering / preparing
+  PLAYING: "playing",
+  PAUSED: "paused",
+  STOPPED: "stopped",
+  ENDED: "ended",
 });
 
 // ── Normalized domain ─────────────────────────────────────────────────────────
@@ -122,6 +143,74 @@ export function makeCanonicalAlbum(p = {}) {
   };
 }
 
+// ── Playback-owning providers: normalized transport types ─────────────────────
+//
+// The Transport contract (implemented by a provider that advertises
+// CAP.OWNS_PLAYBACK). Every method is the lowest common denominator any major
+// streamer's playback SDK exposes; provider-specific SDK calls stay INSIDE the
+// adapter. Positions are MILLISECONDS (int); a track is a CanonicalTrack.
+//
+//   play(track): Promise<void>              start this track (replacing what plays)
+//   pause(): Promise<void>
+//   resume(): Promise<void>
+//   seek(positionMs): Promise<void>
+//   skipNext(): Promise<void>
+//   skipPrevious(): Promise<void>
+//   getQueue(): CanonicalTrack[]
+//   setQueue(tracks): Promise<void>         replace the queue (does not auto-play)
+//   getNowPlaying(): NowPlaying             current track + state (makeNowPlaying)
+//   onChange(cb): () => void                subscribe to now-playing/state changes;
+//                                           returns an unsubscribe fn. Fires on
+//                                           play/pause/seek/track-change/ended.
+//   getAuthStatus(): Promise<AuthStatus>    (CAP.AUTH) makeAuthStatus
+//   getSubscriptionStatus(): Promise<SubscriptionStatus>  (CAP.AUTH) makeSubscriptionStatus
+//   authorize(): Promise<AuthStatus>        (CAP.AUTH) trigger the provider's auth flow
+//
+// A playback-owning provider also implements the catalog surface it can
+// (search/getItem) but NOT getPlayable — there is no URL to hand out.
+
+export function makeNowPlaying(p = {}) {
+  const state = str(p.state) || PLAYBACK_STATE.NONE;
+  return {
+    track: p.track ? makeCanonicalTrack(p.track) : null,
+    state,                                       // one of PLAYBACK_STATE
+    isPlaying: state === PLAYBACK_STATE.PLAYING,
+    positionMs: Math.max(0, Math.round(numOrNull(p.positionMs) || 0)),
+    durationMs: numOrNull(p.durationMs),
+    canSeek: p.canSeek != null ? !!p.canSeek : true,
+    canSkipNext: p.canSkipNext != null ? !!p.canSkipNext : true,
+    canSkipPrevious: p.canSkipPrevious != null ? !!p.canSkipPrevious : true,
+  };
+}
+
+export function makeAuthStatus(p = {}) {
+  return {
+    authorized: !!p.authorized,
+    // "authorized" | "unauthorized" | "unavailable" | "not-configured"
+    state: str(p.state) || (p.authorized ? "authorized" : "unauthorized"),
+    reason: str(p.reason) || null,
+  };
+}
+
+// Whether the user can actually stream full tracks. Authorization alone is not
+// enough for a subscription service (an authorized user with no active plan can
+// only get previews) — the app checks `canPlay` before offering in-app playback.
+export function makeSubscriptionStatus(p = {}) {
+  const active = !!p.active;
+  return {
+    active,
+    canPlay: p.canPlay != null ? !!p.canPlay : active,
+    // "active" | "expired" | "none" | "unknown" | "not-configured"
+    state: str(p.state) || (active ? "active" : "unknown"),
+    reason: str(p.reason) || null,
+  };
+}
+
+export function isPlaybackOwner(provider) {
+  return !!(provider && provider.capabilities &&
+    (provider.capabilities.has ? provider.capabilities.has(CAP.OWNS_PLAYBACK) : arr(provider.capabilities).includes(CAP.OWNS_PLAYBACK)));
+}
+
 // ── Provider registry + aggregated search ─────────────────────────────────────
 export function createMusicProviderRegistry(providers = []) {
   const list = providers.filter(Boolean);
@@ -131,6 +220,17 @@ export function createMusicProviderRegistry(providers = []) {
     all: () => list.slice(),
     get: (id) => byId.get(id) || null,
     withCapability: (cap) => list.filter((p) => has(p, cap)),
+    // Every registered playback-owning provider (Apple Music, later Spotify, …).
+    playbackOwners: () => list.filter((p) => has(p, CAP.OWNS_PLAYBACK)),
+    // Which provider owns transport right now — chosen by a config value so a
+    // second streamer is "write the adapter + flip the config", never a code
+    // change here (requirement #5). Falls back to the sole owner when the config
+    // is unset/stale, and to null when none is registered.
+    activePlaybackProvider: (activeId) => {
+      const owners = list.filter((p) => has(p, CAP.OWNS_PLAYBACK));
+      if (activeId) { const p = byId.get(activeId); if (p && has(p, CAP.OWNS_PLAYBACK)) return p; }
+      return owners.length === 1 ? owners[0] : null;
+    },
     /**
      * Query every SEARCH-capable, available provider and merge normalized
      * results. Each provider is isolated: a throw/timeout/unavailable one
