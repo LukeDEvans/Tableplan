@@ -10778,7 +10778,10 @@ function renderFinancePage() {
   // Keep the ledger to the viewed month: in August you see August's charges, and
   // paging to July shows July's (and only July's), not a rolling 45-day blur.
   const monthTxns = allTxns.filter((t) => (t.posted || "").slice(0, 7) === monthKey);
-  let shownTxns = monthTxns.slice(); // copy — sorting below must never mutate the cached/shared array
+  // A search looks across the WHOLE loaded window (~45 days), not just the viewed
+  // month — otherwise searching in September silently can't find an August charge,
+  // which reads as "it's gone." No query = the viewed month's ledger as before.
+  let shownTxns = (f.q ? allTxns : monthTxns).slice(); // copy — sorting below must never mutate the cached/shared array
   if (f.q) shownTxns = shownTxns.filter((t) => `${t.description || ""} ${t.displayName || ""}`.toLowerCase().includes(f.q.toLowerCase()));
   if (f.account) shownTxns = shownTxns.filter((t) => t.accountId === f.account);
   if (f.kind === "unlabeled") shownTxns = shownTxns.filter((t) => !t.label);
@@ -10909,7 +10912,9 @@ function renderFinancePage() {
       ${financeTxnNeedsConfirm(t)
         ? `<button class="fin-txn-dot fin-txn-dot--confirm" type="button" data-fin-action="confirm-txn" data-id="${escapeHtml(t.id)}" title="Skipped in notifications — click to confirm" aria-label="Confirm this transaction"></button>`
         : (!t.label ? `<span class="fin-txn-dot" title="Needs a label" aria-label="Needs a label"></span>` : "")}
-      <span class="fin-txn-desc" title="${descTitle}">${t.isManual ? `<span class="fin-txn-manual-tag" title="Manually entered">manual</span> ` : ""}${escapeHtml(t.displayName)}${t.pending ? " · pending" : ""}</span>
+      <span class="fin-txn-desc" title="${descTitle}">${escapeHtml(t.displayName)}</span>
+      ${t.isManual ? `<span class="fin-txn-flag fin-txn-flag--manual" title="Manually entered">manual</span>` : ""}
+      ${t.pending ? `<span class="fin-txn-flag fin-txn-flag--pending" title="Pending — the amount may still change">pending</span>` : ""}
       ${labelPill}
       <span class="fin-txn-amt${(t.amount || 0) < 0 ? " is-neg" : ""}">${formatFinMoney(t.amount || 0)}</span>
     </div>
@@ -11142,10 +11147,16 @@ function renderFinancePage() {
       ${!txnsOpen ? "" : `
       <div class="fin-txn-filters">
         <input type="search" class="fin-item-name fin-txn-search" placeholder="Search…" value="${escapeHtml(f.q)}" data-fin-edit="txn-filter-q" aria-label="Search transactions" />
-        <button class="secondary-btn fin-add-btn${filterActive || sortActive ? " is-active" : ""}" type="button" data-fin-action="txn-filter-toggle" aria-expanded="${financeTxnFilterOpen}">Filter${filterActive || sortActive ? " •" : ""}</button>
-        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="batch-scan-receipts" ${financeBatchScanBusy ? "disabled" : ""}>${financeBatchScanBusy ? "Scanning…" : "Scan receipts"}</button>
-        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="manual-txn-open">+ Add transaction</button>
+        <select class="fin-scenario-select fin-txn-sort" data-fin-edit="txn-filter-sort" aria-label="Sort transactions">
+          <option value="date" ${f.sort === "date" ? "selected" : ""}>Sort: Date</option>
+          <option value="label" ${f.sort === "label" ? "selected" : ""}>Sort: Label</option>
+          <option value="account" ${f.sort === "account" ? "selected" : ""}>Sort: Account</option>
+        </select>
+        <button class="secondary-btn fin-add-btn${filterActive ? " is-active" : ""}" type="button" data-fin-action="txn-filter-toggle" aria-expanded="${financeTxnFilterOpen}">Filter${filterActive ? " •" : ""}</button>
+        <button class="icon-btn fin-txn-icon-btn" type="button" data-fin-action="batch-scan-receipts" ${financeBatchScanBusy ? "disabled" : ""} aria-label="Scan receipts" title="Scan receipts to auto-file">${financeBatchScanBusy ? `<span class="fin-txn-icon-busy" aria-hidden="true">…</span>` : scanReceiptSvg}</button>
+        <button class="icon-btn std-add-btn" type="button" data-fin-action="manual-txn-open" aria-label="Add transaction" title="Add a transaction"><svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
       </div>
+      ${f.q ? `<div class="fin-hint fin-txn-search-scope">Searching all loaded transactions (~45 days). Older months keep saved category totals only.</div>` : ""}
       ${!financeTxnFilterOpen ? "" : `
       <div class="fin-txn-filter-panel">
         <select class="fin-scenario-select" data-fin-edit="txn-filter-kind" aria-label="Filter by label">
@@ -11160,11 +11171,6 @@ function renderFinancePage() {
         <select class="fin-scenario-select" data-fin-edit="txn-filter-account" aria-label="Filter by account">
           <option value="">All accounts</option>
           ${accountOptions.map(([id, name]) => `<option value="${escapeHtml(id)}" ${f.account === id ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}
-        </select>
-        <select class="fin-scenario-select" data-fin-edit="txn-filter-sort" aria-label="Sort by">
-          <option value="date" ${f.sort === "date" ? "selected" : ""}>Sort: Date</option>
-          <option value="label" ${f.sort === "label" ? "selected" : ""}>Sort: Label</option>
-          <option value="account" ${f.sort === "account" ? "selected" : ""}>Sort: Account</option>
         </select>
         ${filterActive || sortActive ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="txn-filter-clear">Clear</button>` : ""}
         <span class="fin-hint fin-txn-window-hint">Search covers the loaded window (~45 days + the viewed month); older months keep saved category totals, not individual transactions.</span>

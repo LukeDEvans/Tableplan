@@ -21396,7 +21396,10 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-txn-row.is-pending { opacity: 0.65; }
 .fin-txn-date { flex: 0 0 52px; color: var(--muted); font-size: 0.76rem; }
 .fin-txn-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fin-txn-amt { font-weight: 750; }
+/* Amounts form a fixed right-hand column: tabular digits + a min-width so the
+   decimals line up down the list and the category pill butts against a stable
+   left edge (instead of floating at a ragged per-row position). */
+.fin-txn-amt { flex: 0 0 auto; font-weight: 750; font-variant-numeric: tabular-nums; text-align: right; min-width: 5.2em; }
 
 /* ── Transactions redesign (slice 4): day grouping, label pills, quick-labels ── */
 .fin-txn-day { display: flex; flex-direction: column; }
@@ -21406,7 +21409,17 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   padding: 8px 2px 3px; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.03em;
   text-transform: uppercase; color: var(--muted);
 }
-.fin-txn-day-total { font-weight: 700; text-transform: none; letter-spacing: 0; }
+.fin-txn-day-total { font-weight: 700; text-transform: none; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+
+/* Row status flags (manual entry, pending) — small chips in a consistent slot
+   between the merchant name and the category pill, instead of weak trailing text
+   that competed with the name. */
+.fin-txn-flag {
+  flex: 0 0 auto; font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.03em; padding: 1px 6px; border-radius: 99px; white-space: nowrap;
+}
+.fin-txn-flag--manual { color: var(--muted); border: 1px solid color-mix(in srgb, var(--muted) 40%, transparent); }
+.fin-txn-flag--pending { color: #9a6a00; background: color-mix(in srgb, #d99400 20%, transparent); }
 
 /* Category pill on a row — see the label without opening the detail. */
 .fin-txn-label-pill {
@@ -21596,6 +21609,12 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 /* Finance: filters, recurring, alerts, recap */
 .fin-txn-filters { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding-bottom: 6px; }
 .fin-txn-search { flex: 1 1 120px; min-width: 0; }
+/* Sort is now a visible control in the header (no longer buried in the Filter
+   panel); the rarer Scan / Add actions drop to icon buttons to keep it calm. */
+.fin-txn-sort { flex: 0 0 auto; }
+.fin-txn-icon-btn { flex: 0 0 auto; width: 34px; height: 34px; min-height: 34px; padding: 0; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; }
+.fin-txn-icon-busy { font-weight: 800; }
+.fin-txn-search-scope { display: block; padding: 0 2px 6px; }
 .fin-txn-filters .fin-add-btn.is-active { border-color: var(--accent); color: var(--accent); }
 .fin-txn-filter-panel { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding-bottom: 8px; }
 .fin-txn-filter-panel .fin-scenario-select { max-width: 32%; }
@@ -21757,15 +21776,20 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-txn-row--clickable { cursor: pointer; border-radius: 6px; }
 .fin-txn-row--clickable:hover, .fin-txn-row--clickable:focus-visible { background: color-mix(in srgb, var(--window-border) 6%, transparent); outline: none; }
 .fin-txn-row--clickable.is-open { background: color-mix(in srgb, var(--window-border) 8%, transparent); }
+/* "Needs a label" marker: a HOLLOW ring, so it's distinct at a glance from the
+   solid "needs confirming" dot below (both were solid red and unreadable apart). */
 .fin-txn-dot {
   flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
   border-radius: 50%;
-  background: #b3261e;
+  background: transparent;
+  border: 2px solid #b3261e;
 }
 /* The click-to-confirm variant: a transaction skipped out of the notifications
-   deck. A ring makes it read as actionable; the ::after enlarges the tap target. */
+   deck. A SOLID fill (vs. the hollow needs-label ring) plus an outer glow makes
+   it read as a distinct, actionable state; the ::after enlarges the tap target. */
 .fin-txn-dot--confirm {
   position: relative;
   width: 9px;
@@ -21773,6 +21797,7 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
   padding: 0;
   border: none;
   cursor: pointer;
+  background: #b3261e;
   box-shadow: 0 0 0 3px color-mix(in srgb, #b3261e 22%, transparent);
 }
 .fin-txn-dot--confirm:hover,
