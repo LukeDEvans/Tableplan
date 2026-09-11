@@ -45946,7 +45946,7 @@ registerMediaProvider({
 registerMediaProvider({
   id: "podcast",
   canPlay: () => true,
-  play: (item, { autoplay = true } = {}) => openPodcastEpisode(item.id, { autoplay }), // plays + shows player + registers queue-advance
+  play: (item, { autoplay = true, advance = false } = {}) => openPodcastEpisode(item.id, { autoplay, advance }), // plays + shows player + registers queue-advance
   isCurrent: (item) => !!podcastAudio && podcastCurEpisode?.id === item.id,
 });
 registerMediaProvider({
@@ -45975,8 +45975,8 @@ function playAllQueueFrom(id) {
   }
 }
 
-function playMediaAllItem(item) {
-  playMediaItem(item); // registry routes to the right provider by type
+function playMediaAllItem(item, opts = {}) {
+  playMediaItem(item, opts); // registry routes to the right provider by type
   // Warm up the next item's audio while this one plays
   prefetchNextQueueAudio();
 }
@@ -45992,7 +45992,11 @@ function advanceMediaAllQueue(finishedId) {
     const item = byId.get(nextId);
     if (item && mediaItemPlayable(item)) {
       mediaAllQueueId = item.id;
-      playMediaAllItem(item);
+      // advance:true → replace the source WITHOUT pausing the engine first, so a
+      // backgrounded hand-off keeps the iOS audio session active (a pause would
+      // let iOS deactivate it and block the next play()). This is what fixes
+      // "won't play the next show unless I reopen the app".
+      playMediaAllItem(item, { advance: true });
       if (activeMediaTab === "queue") renderMediaAllList();
       return true;
     }
@@ -46859,7 +46863,7 @@ function renderPodcastShowEpisodes(showId) {
 
 // ── Player ────────────────────────────────────────────────────────────────────
 
-function openPodcastEpisode(episodeId, { autoplay = true } = {}) {
+function openPodcastEpisode(episodeId, { autoplay = true, advance = false } = {}) {
   const { episode, show } = findPodcastEpisode(episodeId);
   if (!episode) return;
 
@@ -46887,7 +46891,7 @@ function openPodcastEpisode(episodeId, { autoplay = true } = {}) {
     r.classList.toggle("article-row--active", r.dataset.episodeId === episodeId);
   });
 
-  startPodcastPlayback(episode, show, { autoplay });
+  startPodcastPlayback(episode, show, { autoplay, advance });
   updatePodcastMarkBtn();
 }
 
@@ -47081,11 +47085,28 @@ function onPodcastEnded() {
   advanceMediaAllQueue(podcastCurEpisode.id); // seamless hand-off when playing the All queue
 }
 
-function startPodcastPlayback(episode, show, { autoplay = true } = {}) {
-  stopPodcastAudio();
-  stopListen(); // stop any article read-aloud so they don't overlap
-  stopMusicPlayback(); // …or a music track
-  stopRadio(); // …or a live radio stream
+function startPodcastPlayback(episode, show, { autoplay = true, advance = false } = {}) {
+  if (advance) {
+    // Queue auto-advance: NEVER pause the engine first. A pause deactivates the
+    // iOS audio session while backgrounded, and the follow-up play() on the new
+    // src is then blocked — the "won't play the next show unless I reopen the
+    // app" bug. Instead clear the outgoing item's flags in place (no
+    // mediaEngine.stop) and let engine.load() below swap the source continuously,
+    // exactly like beginNextResolvedArticleSync does for article→article.
+    clearAdSkipTimers();
+    if (podcastSaveTimer) { clearTimeout(podcastSaveTimer); podcastSaveTimer = null; }
+    if (listenArticle || listenAudio || listenLoading) { // outgoing article (mixed queue)
+      listenGenId++; teardownSystemVoice(); listenAudio = null; listenArticle = null;
+      listenSpeaking = false; listenLoading = false; clearWordHighlight();
+    }
+    if (musicPlaybackProvider) teardownOwnedMusic(); // outgoing owns-playback track
+    if (musicAudio) { musicAudio = null; musicCurTrack = null; }
+  } else {
+    stopPodcastAudio();
+    stopListen(); // stop any article read-aloud so they don't overlap
+    stopMusicPlayback(); // …or a music track
+    stopRadio(); // …or a live radio stream
+  }
 
   const progress = (state.podcastProgress || {})[episode.id] || {};
   const startPos = progress.played ? 0 : (progress.position || 0);
