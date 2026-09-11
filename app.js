@@ -9642,6 +9642,7 @@ function updateFinanceMonthActuals() {
 // (a mixed basket teaches nothing about the merchant's usual category).
 let financeSplitDraft = null; // { txnId, portions: [{label, amount}] }
 let financeScanBusy = false;
+let financeBatchScanBusy = false;
 
 function startSplitTxn(txnId) {
   const t = financeLabeledTxns().find((x) => x.id === txnId);
@@ -9762,6 +9763,94 @@ async function viewReceiptImage(txnId) {
   } catch (e) {
     alert("Couldn't open the receipt image: " + (e?.message || "unknown error"));
   }
+}
+
+// ── Batch receipt scan (scan a pile, auto-match by total + date) ────────────
+// Finds the ONE spend transaction a scanned receipt belongs to: same total
+// (±2¢), dated within 4 days, not already user-labeled/split, and not already
+// claimed earlier in this same batch. Closest by date wins a tie. This is the
+// reverse of financeReceiptForTxn (which matches an email receipt to a txn).
+function financeBatchMatchTxn(receipt, claimed) {
+  const total = Number(receipt?.total) || 0;
+  if (!total) return null;
+  const rDate = receipt.date ? new Date(receipt.date).getTime() : null;
+  const cands = financeLabeledTxns().filter((t) => {
+    if ((t.amount || 0) >= 0) return false;              // spend only
+    if (claimed.has(t.id)) return false;                 // one receipt per txn
+    if (t.labelSource === "manual") return false;        // never overwrite a user's own label/split
+    if (Math.abs(Math.abs(t.amount) - total) > 0.02) return false;
+    if (rDate == null) return true;
+    return Math.abs(new Date(t.posted || 0).getTime() - rDate) <= 4 * 86400000;
+  });
+  if (!cands.length) return null;
+  if (rDate != null) {
+    cands.sort((a, b) => Math.abs(new Date(a.posted || 0).getTime() - rDate) - Math.abs(new Date(b.posted || 0).getTime() - rDate));
+  }
+  return cands[0];
+}
+
+// Scan a pile of receipt photos at once: each is itemized+categorized by the
+// same server path the single scan uses, auto-matched to its transaction, then
+// its category split is applied and the image kept. Fully non-destructive —
+// only touches txns with no manual label, and every image is kept best-effort.
+async function financeBatchScanReceipts(files) {
+  const list = [...(files || [])].filter((f) => f && /^image\//.test(f.type || "")).slice(0, 20);
+  if (!list.length || financeBatchScanBusy) return;
+  financeBatchScanBusy = true;
+  renderFinancePage();
+  const res = { matched: 0, attached: 0, unmatched: 0, failed: 0 };
+  const claimed = new Set();
+  for (const file of list) {
+    try {
+      trackUsage("claude_receipt_scan");
+      const image = await fileToDataUrl(await prepareScanImage(file, undefined, { maxDimension: 1600, quality: 0.82 }));
+      const data = await callNetlifyFunction("simplefin", { action: "scanReceipt", image });
+      const receipt = data?.receipt;
+      if (!receipt || !Number(receipt.total)) { res.failed++; continue; }
+      const txn = financeBatchMatchTxn(receipt, claimed);
+      if (!txn) { res.unmatched++; continue; }
+      claimed.add(txn.id);
+      const total = Math.abs(txn.amount || 0);
+      // Group the receipt's line items by category (labeled portions only).
+      const byLabel = new Map();
+      for (const p of (receipt.portions || [])) {
+        const amt = Math.abs(parseFinAmount(p.amount) || 0);
+        if (!amt || !p.label) continue;
+        byLabel.set(p.label, (byLabel.get(p.label) || 0) + amt);
+      }
+      let portions = [...byLabel.entries()].map(([label, amount]) => ({ label, amount: Math.round(amount * 100) / 100 }));
+      const labeledSum = portions.reduce((s, p) => s + p.amount, 0);
+      const remainder = Math.round((total - labeledSum) * 100) / 100;
+      // Only categorize when the labeled items cover the transaction (a small
+      // tax/uncertain remainder is folded into the largest portion so the split
+      // totals exactly). A large unlabeled remainder = can't categorize with
+      // confidence, so keep the image and leave the category for the user.
+      const canCategorize = portions.length >= 1 && Math.abs(remainder) <= Math.max(2, total * 0.05);
+      if (canCategorize) {
+        if (Math.abs(remainder) > 0.02) {
+          portions.sort((a, b) => b.amount - a.amount);
+          portions[0].amount = Math.round((portions[0].amount + remainder) * 100) / 100;
+        }
+        if (portions.length >= 2) recordFinanceTxnSplit(txn.id, portions);
+        else recordFinanceTxnLabel(txn.id, portions[0].label, txn.description);
+        res.matched++;
+      } else {
+        res.attached++;
+      }
+      await uploadReceiptImage(txn.id, file).catch((e) => console.warn("Receipt image not kept:", e?.message || e));
+    } catch (e) {
+      res.failed++;
+    }
+  }
+  financeBatchScanBusy = false;
+  invalidateFinanceLabeled();
+  renderFinancePage();
+  const parts = [];
+  if (res.matched) parts.push(`${res.matched} matched & categorized`);
+  if (res.attached) parts.push(`${res.attached} matched — image kept, add a category`);
+  if (res.unmatched) parts.push(`${res.unmatched} with no matching transaction`);
+  if (res.failed) parts.push(`${res.failed} unreadable`);
+  alert(`Scanned ${list.length} receipt${list.length === 1 ? "" : "s"}: ${parts.join(" · ") || "nothing to apply"}.`);
 }
 
 // ── Merchant renaming ("Electronic Deposit Ur..." → "Urban Greens") ─────────
@@ -10993,6 +11082,7 @@ function renderFinancePage() {
       <div class="fin-txn-filters">
         <input type="search" class="fin-item-name fin-txn-search" placeholder="Search…" value="${escapeHtml(f.q)}" data-fin-edit="txn-filter-q" aria-label="Search transactions" />
         <button class="secondary-btn fin-add-btn${filterActive || sortActive ? " is-active" : ""}" type="button" data-fin-action="txn-filter-toggle" aria-expanded="${financeTxnFilterOpen}">Filter${filterActive || sortActive ? " •" : ""}</button>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="batch-scan-receipts" ${financeBatchScanBusy ? "disabled" : ""}>${financeBatchScanBusy ? "Scanning…" : "Scan receipts"}</button>
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="manual-txn-open">+ Add transaction</button>
       </div>
       ${!financeTxnFilterOpen ? "" : `
@@ -11667,6 +11757,16 @@ function onFinanceGridClick(e) {
       const file = input.files && input.files[0];
       if (file) uploadReceiptImage(txnId, file).catch((e) => alert("Couldn't keep that image: " + (e?.message || "unknown error")));
     };
+    input.click();
+    return;
+  }
+  if (action === "batch-scan-receipts") {
+    if (financeBatchScanBusy) return;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.multiple = true;
+    input.onchange = () => financeBatchScanReceipts(input.files);
     input.click();
     return;
   }
