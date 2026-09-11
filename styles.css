@@ -21037,6 +21037,15 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-notable-amt { flex: 0 0 auto; font-weight: 750; font-variant-numeric: tabular-nums; }
 .fin-notable-amt.is-neg { color: #b3261e; }
 
+/* Email receipts inbox. */
+.fin-receipts-prompt { margin-bottom: 8px; color: var(--accent-dark, var(--accent)); font-weight: 600; }
+.fin-receipt-row { display: flex; align-items: center; gap: 8px; padding: 6px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.86rem; }
+.fin-receipt-tag { flex: 0 0 auto; font-size: 0.66rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); min-width: 48px; }
+.fin-receipt-tag.is-done { color: #1f9d57; }
+.fin-receipt-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-receipt-amt { flex: 0 0 auto; font-weight: 750; font-variant-numeric: tabular-nums; }
+.fin-receipt-itemize, a.fin-receipt-row + .fin-quick-chip { flex: 0 0 auto; }
+
 /* Net worth assets vs liabilities split. */
 .fin-nw-split { display: flex; gap: 8px; margin: 4px 0 8px; }
 .fin-nw-split-item { flex: 1; display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--ink) 4%, transparent); }

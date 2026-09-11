@@ -10765,6 +10765,7 @@ function renderFinancePage() {
       ${rc?.id ? `
       <div class="fin-return-box fin-receipt-email">
         <span class="fin-hint">Order email${rc.merchant ? ` · ${escapeHtml(rc.merchant)}` : ""}${(rc.items || []).length ? ` · ${rc.items.length} item${rc.items.length === 1 ? "" : "s"}` : ""}</span>
+        ${!isSplit && (rc.portions || rc.items || []).length > 1 ? `<button class="secondary-btn fin-add-btn" type="button" data-fin-action="itemize-email" data-id="${escapeHtml(t.id)}">Itemize</button>` : ""}
         <a class="secondary-btn fin-add-btn" href="https://mail.google.com/mail/u/0/#all/${encodeURIComponent(rc.id)}" target="_blank" rel="noopener noreferrer">View email</a>
       </div>` : ""}
     </div>`;
@@ -10973,6 +10974,18 @@ function renderFinancePage() {
   const upcoming = financeUpcomingBills();
   const safeToSpend = cashOnHand != null ? cashOnHand - upcoming.total : null;
 
+  // Email receipts: match each harvested order email to a spend transaction (the
+  // reverse of financeReceiptForTxn). Drives the receipts inbox + itemize prompt.
+  const rSpendTxns = allTxns.filter((t) => (t.amount || 0) < 0);
+  const rMatched = [], rUnmatched = [];
+  for (const r of (financeReceipts || [])) {
+    const amt = Number(r.total) || 0;
+    const rDate = new Date(r.date || 0).getTime();
+    const t = rSpendTxns.find((x) => Math.abs(Math.abs(x.amount || 0) - amt) <= 0.02 && (!r.date || Math.abs(new Date(x.posted || 0).getTime() - rDate) <= 4 * 86400000));
+    if (t) rMatched.push({ r, t }); else rUnmatched.push(r);
+  }
+  const itemizable = rMatched.filter(({ r, t }) => t.label !== "split" && (r.portions || r.items || []).length > 1);
+
   const chips = [];
   if (reviewCount) chips.push(`<button class="fin-chip fin-chip-review" type="button" data-fin-action="review-txns">${reviewCount} to review</button>`);
   if (health.bridgeError) chips.push(`<button class="fin-chip fin-chip-bad" type="button" data-fin-action="fin-tab" data-tab="accounts">Bank connection error</button>`);
@@ -10999,6 +11012,7 @@ function renderFinancePage() {
       if (bal != null && bal >= 0 && bal < 100) { chips.push(`<button class="fin-chip fin-chip-bad" type="button" data-fin-action="fin-tab" data-tab="accounts">Low: ${escapeHtml(a.name)} ${formatFinMoney(bal)}</button>`); break; }
     }
   }
+  if (itemizable.length) chips.push(`<button class="fin-chip fin-chip-review" type="button" data-fin-action="fin-tab" data-tab="insights">${itemizable.length} to itemize</button>`);
 
   const overviewBand = `
     <section class="fin-overview">
@@ -11171,7 +11185,27 @@ function renderFinancePage() {
       ${largestTxns.length ? `<div class="fin-notable-sub">Largest</div>${largestTxns.map(notableRow).join("")}` : ""}
       ${newMerchants.length ? `<div class="fin-notable-sub">New merchants</div>${newMerchants.slice(0, 5).map(notableRow).join("")}` : ""}
     </div>` : "";
-  const insightsView = `${upcomingBillsCard}${subsCard}${cashFlowCard}${trendsCard}${reportsCard}${notableCard}`;
+  // Email receipts inbox — matched (itemizable) + unmatched order emails.
+  const receiptsCard = (financeReceipts || []).length ? `
+    <div class="fin-card fin-insights-card">
+      <div class="fin-subhead fin-accounts-title">Email receipts</div>
+      ${itemizable.length ? `<div class="fin-hint fin-receipts-prompt">${itemizable.length} transaction${itemizable.length === 1 ? "" : "s"} can be itemized from a matching order email — one tap builds the split.</div>` : ""}
+      ${rMatched.length ? rMatched.map(({ r, t }) => `
+        <div class="fin-receipt-row">
+          <span class="fin-receipt-tag${t.label === "split" ? " is-done" : ""}">${t.label === "split" ? "✓ split" : "matched"}</span>
+          <span class="fin-receipt-name">${escapeHtml(r.merchant || t.displayName)}${(r.items || []).length ? ` · ${r.items.length} items` : ""}</span>
+          <span class="fin-receipt-amt">${formatFinMoney(-Math.abs(r.total || 0))}</span>
+          ${t.label !== "split" && (r.portions || r.items || []).length > 1 ? `<button class="fin-quick-chip fin-receipt-itemize" type="button" data-fin-action="itemize-email" data-id="${escapeHtml(t.id)}">Itemize</button>` : ""}
+        </div>`).join("") : ""}
+      ${rUnmatched.length ? `<div class="fin-notable-sub">Unmatched — no transaction found yet</div>${rUnmatched.slice(0, 8).map((r) => `
+        <div class="fin-receipt-row">
+          <span class="fin-receipt-tag is-muted">${r.date ? escapeHtml(new Date(r.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "—"}</span>
+          <span class="fin-receipt-name">${escapeHtml(r.merchant || "Receipt")}</span>
+          <span class="fin-receipt-amt">${formatFinMoney(-Math.abs(r.total || 0))}</span>
+          ${r.id ? `<a class="fin-quick-chip" href="https://mail.google.com/mail/u/0/#all/${encodeURIComponent(r.id)}" target="_blank" rel="noopener noreferrer">Email</a>` : ""}
+        </div>`).join("")}` : ""}
+    </div>` : "";
+  const insightsView = `${upcomingBillsCard}${receiptsCard}${subsCard}${cashFlowCard}${trendsCard}${reportsCard}${notableCard}`;
 
   // Savings goals (Accounts tab). Tap a goal to edit target/saved/date; progress
   // bar + on-track note derived on the fly.
@@ -11403,6 +11437,17 @@ function onFinanceGridClick(e) {
   if (action === "fin-budget-group") { financeBudgetOpenGroup = financeBudgetOpenGroup === btn.dataset.id ? null : btn.dataset.id; renderFinancePage(); return; }
   if (action === "export-csv") { exportFinanceCsv(financeViewMonth); return; }
   if (action === "start-split") { startSplitTxn(btn.dataset.id); return; }
+  if (action === "itemize-email") {
+    const t = financeLabeledTxns().find((x) => x.id === btn.dataset.id);
+    const receipt = t && financeReceiptForTxn(t);
+    startSplitTxn(btn.dataset.id);
+    if (receipt && financeSplitDraft) {
+      const src = (receipt.portions || []).length ? receipt.portions : null;
+      if (src) financeSplitDraft.portions = src.map((p) => ({ label: p.label || "", amount: p.amount }));
+      renderFinancePage();
+    }
+    return;
+  }
   if (action === "confirm-txn") { financeConfirmTxn(btn.dataset.id); renderFinancePage(); return; }
   if (action === "quick-label") { recordFinanceTxnLabel(btn.dataset.id, btn.dataset.label, btn.dataset.desc || ""); renderFinancePage(); return; }
   if (action === "add-goal") {
