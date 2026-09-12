@@ -13,5 +13,8 @@
     "CapacitorHttp": {
       "enabled": true
     }
-  }
+  },
+  "packageClassList": [
+    "LiveTtsPlugin"
+  ]
 }
