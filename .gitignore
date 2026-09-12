@@ -19,3 +19,6 @@ ios/App/App/public/
 ios/DerivedData/
 *.xcworkspace/xcuserdata/
 *.xcodeproj/xcuserdata/
+
+# Xcode archive/ipa build output
+ios/App/build/
