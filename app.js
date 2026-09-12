@@ -13916,6 +13916,15 @@ async function connectGmail() {
     if (btn) { btn.disabled = false; btn.textContent = "Connect Gmail"; }
     return;
   }
+  // Google blocks its OAuth sign-in inside an embedded webview, so the in-app
+  // connect flow can't work yet (a native browser flow is coming). Gmail tokens
+  // are stored server-side per account, so connecting once in a real browser
+  // syncs straight through to this app.
+  if (isNativeApp()) {
+    alert("To connect Gmail, open Live in a web browser (e.g. Safari) and connect it there — it then syncs to this app automatically. In-app Gmail sign-in is coming in an update.");
+    if (btn) { btn.disabled = false; btn.textContent = "Connect Gmail"; }
+    return;
+  }
   try {
     const res = await fetch("/.netlify/functions/gmail-auth", {
       headers: { authorization: `Bearer ${token}` }
