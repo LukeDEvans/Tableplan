@@ -61,6 +61,30 @@ import * as TravelGeo from './travel-geo.js';
 import * as TravelMode from './travel-mode.js';
 import * as TravelIngest from './travel-ingest.js';
 
+// In the Capacitor native shell the web app is served from capacitor://localhost,
+// so every RELATIVE backend call (`/.netlify/functions/…`, `/api/…`) would resolve
+// against that origin and fail. Rewrite those to the deployed site so all existing
+// relative fetches keep working unchanged (the functions already send CORS headers).
+// No-op in a browser/PWA (same-origin), so this is zero-risk there.
+const NATIVE_API_BASE = "https://effervescent-malabi-e0af55.netlify.app";
+// Tag the document so native-only CSS (safe-area insets for the notch / home
+// indicator) can scope to the app without affecting the browser/PWA.
+if (isNativeApp() && typeof document !== "undefined") { try { document.documentElement.setAttribute("data-native", "ios"); } catch { /* noop */ } }
+if (isNativeApp() && typeof window !== "undefined" && window.fetch) {
+  const _nativeFetch = window.fetch.bind(window);
+  const rewrite = (u) => (typeof u === "string" && (u.startsWith("/.netlify/") || u.startsWith("/api/"))) ? NATIVE_API_BASE + u : u;
+  window.fetch = (input, init) => {
+    try {
+      if (typeof input === "string") input = rewrite(input);
+      else if (input && input.url) {
+        const p = input.url.replace(/^capacitor:\/\/localhost/, "");
+        if (p.startsWith("/.netlify/") || p.startsWith("/api/")) input = new Request(NATIVE_API_BASE + p, input);
+      }
+    } catch { /* fall through with the original input */ }
+    return _nativeFetch(input, init);
+  };
+}
+
 const STORAGE_KEY = "tableplan-state-v1";
 const TRAVEL_LOGISTIC_ICONS = { flight: "✈️", hotel: "🏨", car: "🚗", train: "🚆", ferry: "⛴️", other: "📌" };
 const TRAVEL_BUDGET_CATS = ["flights", "accommodation", "food", "activities", "transport", "other"];

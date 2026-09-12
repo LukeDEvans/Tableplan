@@ -3,7 +3,7 @@
   "appName": "Live",
   "webDir": "dist",
   "ios": {
-    "contentInset": "always",
+    "contentInset": "never",
     "limitsNavigationsToAppBoundDomains": false
   },
   "server": {

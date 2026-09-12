@@ -22739,3 +22739,14 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
 /* Finance alerts settings section (Settings › Finance). Reuses .mail-ai-feature-row. */
 .fin-alerts-settings { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
 .fin-alerts-title { margin-top: 8px; font-size: 0.95rem; font-weight: 800; color: var(--ink); }
+
+/* ── Native (Capacitor) safe-area insets ──────────────────────────────────────
+   The native webview is edge-to-edge (viewport-fit=cover + contentInset:never),
+   so inset the app for the status bar / notch (top) and home indicator (bottom).
+   Scoped to the native shell via html[data-native]; the browser/PWA is untouched.
+   env(safe-area-inset-*) is 0 where there's no inset, so this is safe. */
+html[data-native] body {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  box-sizing: border-box;
+}
