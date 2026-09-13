@@ -88,14 +88,18 @@ etc. (finalized per-commit).
 Two distinct receipt subsystems; **neither is touched this pass.**
 
 - **Finance txn-receipts** (attach/scan a receipt image to a transaction) — embedded
-  in the finance regions but **finance-only** (not called by Shop): `loadFinanceReceipts`
-  (8368), `financeReceiptForTxn` (8376), and the consecutive cluster
-  `startScanReceiptForTxn` (9763) → `scanReceiptIntoSplit` → `uploadReceiptImage` →
-  `getReceiptImageUrl` → `deleteReceiptImage` → `viewReceiptImage` → `financeBatchMatchTxn`
-  → `financeBatchScanReceipts` (~9920). These **stay in app.js** and are **injected**
-  into `finance-ui.js` (the txn UI that calls them uses injected refs — same technique as
-  inventory's grocery shopping-list ops). `startSplitTxn` (9747) is finance (moves) but
-  calls the injected `startScanReceiptForTxn`.
+  in the finance regions and **finance-only** (verified: not called by Shop):
+  `loadFinanceReceipts` (8368), `financeReceiptForTxn` (8376), and the consecutive
+  cluster `startScanReceiptForTxn` (9763) → `scanReceiptIntoSplit` → `uploadReceiptImage`
+  → `getReceiptImageUrl` → `deleteReceiptImage` → `viewReceiptImage` → `financeBatchMatchTxn`
+  → `financeBatchScanReceipts` (~9920). **CORRECTION (decided after Commit 0):** because
+  they are finance-owned with no shop boundary to protect, these **MOVE into
+  `finance-ui.js` like any other finance code — they are NOT injected and do NOT stay
+  behind.** They land in **Commit 3 (Transactions UI)**, since they are part of the
+  transaction detail/split/scan flow. They will import the shared `receipt-scan.js` /
+  `receipt-domain.js` modules and use injected Storage/scan helpers
+  (`prepareScanImage`, `callNetlifyFunction`, the Supabase client) — those seams stay
+  shared, but the finance receipt *functions* belong to finance.
 - **Shop receipts** (grocery receipt scanning) — a separate, Shop-owned cluster at
   24239–24728 (`openShopReceiptsDialog`, `openReceiptScanDialog`, `saveReviewedReceipt`,
   `renderReceiptPriceTrends`, …), plus `renderShopReceipts` (31134), `receiptSignature`/
@@ -115,6 +119,14 @@ They use the shared `receipt-scan.js` / `document-scan` seam + the private
   boot/render dispatch. → **`renderFinancePage` exposed** (destructure above `render()`, TDZ-safe).
 - `renderContextSettingsDialog(...)` (21899) → `renderFinancePage()` (21979, 22053) — the
   settings dialog re-renders finance when a finance setting changes. → same exposed const.
+
+**INBOUND — Calendar reads a finance compute fn (found during Commit-2 prep — the map's
+"no other domain calls finance" was incomplete):**
+- `paydaysByDate()` (Calendar, ~39159) → `financePaydaysInRange(startKey, endKey)` — the
+  calendar's read-only "payday dots" read finance's payday schedule. → `financePaydaysInRange`
+  must be exposed by the module (destructured const; calendar calls it after boot, TDZ-safe).
+- `applyStoredState()` (state-sync, ~7163) → `invalidateFinanceLabeled()` — a cloud state
+  replacement nudges the finance labeled-txn cache. → `invalidateFinanceLabeled` exposed too.
 
 **INBOUND — external reads of finance STATE (shared `state`, NOT a UI touchpoint — no injection needed):**
 - `STATE_SECTIONS.finance` (336) + `defaultState` (4426+) + `mergeStates` (6653–6660) reference
@@ -147,10 +159,10 @@ Finalized per-commit, but the expected set:
   bank link, live refresh, history/receipts load), `trackUsage` (API-usage metering),
   `dateKeyFromDate` (shared date helper), `prepareScanImage`/`fileToDataUrl` (only if a moved
   fn needs them; most are on the deferred receipt side).
-- **Deferred receipt fns (injected — stay in app.js, §4):** `loadFinanceReceipts`,
-  `financeReceiptForTxn`, `startScanReceiptForTxn`, `scanReceiptIntoSplit`, `uploadReceiptImage`,
-  `getReceiptImageUrl`, `deleteReceiptImage`, `viewReceiptImage`, `financeBatchMatchTxn`,
-  `financeBatchScanReceipts`.
+- **Finance txn-receipt fns MOVE into the module (Commit 3, §4)** — not injected. They
+  import `receipt-scan.js` / `receipt-domain.js` and use the injected scan/Storage helpers
+  (`prepareScanImage`, `callNetlifyFunction`, Supabase client). Only **Shop** receipts
+  (24239+) stay in app.js this pass.
 - **Imported directly by `finance-ui.js`** (not injected): the finance logic-module exports
   (`finance-actuals`, `finance-csv`, `finance-review-gesture`, and `dedupeFinanceRecurring`
   from `finance-sync`), plus `makeSortable` if the finance grid uses it.
@@ -168,7 +180,10 @@ Finalized per-commit, but the expected set:
 - **Commit 2** — core finance services + non-render state helpers (Region B services + the
   data/compute helpers from Region C: labels/rules/merchant, income/scenarios, budget/account
   math). Receipt fns injected, not moved.
-- **Commit 3** — Transactions tab UI (form/edit/split/label/link + the review deck).
+- **Commit 3** — Transactions tab UI (form/edit/split/label/link + the review deck) **+
+  the finance txn-receipt subsystem** (`loadFinanceReceipts`, `financeReceiptForTxn`, and
+  the `startScanReceiptForTxn`…`financeBatchScanReceipts` scan/upload/view cluster) — all
+  moved into `finance-ui.js`, not injected. Shop receipts (24239+) untouched.
 - **Commit 4** — Budget + Accounts tabs UI (`renderFinanceAccountsPanel`, budget rendering,
   goals/net-worth).
 - **Commit 5** — Insights/Reports + month nav + settings glue + `renderFinancePage` +
