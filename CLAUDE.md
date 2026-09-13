@@ -95,7 +95,7 @@ the recipes cluster (recipes / meal-plan / groceries / cook), or health.
 
 | Domain | Dedicated modules | `app.js` area (`activeAppArea`) | Data home |
 |---|---|---|---|
-| **finance** | `finance-actuals.js`, `finance-csv.js`, `finance-sync.js`, `finance-review-gesture.js`, `receipt-domain.js`, `receipt-scan.js` | `"finance"` | `tableplan_states` JSONB (`state.finance*`) — **Supabase-only, never localStorage** |
+| **finance** | `finance-ui.js` (`createFinanceModule(deps)` — the whole finance UI: services, transactions + review deck, txn-receipts, budget/accounts/income, insights) + pure logic in `finance-actuals.js` / `finance-csv.js` / `finance-sync.js` / `finance-review-gesture.js`; `receipt-*.js` shared with Shop — `app.js` keeps only `showFinanceApp`. ⚠️ **sync/hydration gate stays in app.js** (see below) | `"finance"` | `tableplan_states` JSONB (`state.finance*`) — **Supabase-only, never localStorage**. **Cross-domain:** Calendar reads `financePaydaysInRange` + `formatFinMoney` (payday dots / bill display); state-sync calls `invalidateFinanceLabeled` |
 | **calendar** | `calendar/` (`recurrence.js`, `model.js`, `projection.js`, `tasks-project.js`, `sources.js`, `reconcile.js`, `normalize.js`, `ics.mjs`) | `"plan"` (calendar) + `"do"` (Tasks) | `state.planEvents`; **`state.calendars` + `state.planCalendars` will be unified into one canonical list (`source: "linked" \| "ics"`) — see Architecture Decision #1** |
 | **recipes** | `recipe-scan.js` (recipe CRUD/folders + scan) | `"eat"` (recipes) | **relational** `eat_recipes` / `eat_folders` |
 | **meal-plan** | `meal-plan-servings.js` (planning + servings scaling) | `"eat"` (meal plan) | state sections |

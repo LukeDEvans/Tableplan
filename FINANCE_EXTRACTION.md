@@ -1,6 +1,15 @@
-# Finance extraction map (Commit 0)
+# Finance extraction map
 
-The safety net for the staged extraction of the Finance domain from `app.js` into
+> **STATUS (updated):** Commit 1 landed the pure normalizers/helpers. The remaining
+> finance UI was then extracted as **ONE whole-module commit (approach A)** rather than
+> the per-sub-area staged plan below — the ~15 shared mutable finance vars made a
+> partial move require fragile getter/setter plumbing, so moving the whole domain
+> together (vars included) was safer. **Receipts moved WITH finance** (they're
+> finance-owned; only Shop's own receipts stayed). See **§9** for the authoritative
+> post-move inventory + interface; §3–§7 below are the original Commit-0 plan, kept for
+> history — treat §9 as what actually happened.
+
+The safety net for the extraction of the Finance domain from `app.js` into
 `finance-ui.js`, mirroring the `contacts.js` / `weather-ui.js` / `inventory-ui.js`
 pattern (dependency-injected `createFinanceModule(deps)`; nav glue stays in app.js).
 
@@ -198,3 +207,20 @@ Finance has **8 test files** (`finance-actuals`, `finance-csv`, `finance-review-
 app.js or exercise the embedded UI/render/handler glue being moved. So each commit is verified
 by "it builds + the full suite stays green"; the moved **UI** remains unverified beyond that and
 needs a manual click-through before it's trusted at runtime.
+
+## 9. Commit 2 (whole-module) — function inventory diff (review artifact)
+
+**128 functions** moved from app.js (regions R1 5295–5419, R2 8156–12159 [carving out `showFinanceApp`], R3 20044–20078, R4 21602–21606) into `createFinanceModule(deps)` in `finance-ui.js`.
+
+- **Drops (moved fn missing from finance-ui.js):** NONE ✓
+- **Duplicates (defined >once):** NONE ✓
+- **Dangling refs (moved fn/var called from app.js outside the interface):** NONE ✓ (verified post-move; the only textual hits were in a code comment)
+- **New nav-glue helpers added to the factory (4):** `resetFinanceViewMonth`, `onEnterFinancePage`, `getFinanceViewMonth`, `getFinanceLinkStatus`
+- **Exposed interface (20 fns, destructured in app.js):** `checkFinanceLinkStatus`, `financeAlertPref`, `financeCurrentMonthKey`, `financePaydaysInRange`, `formatFinMoney`, `invalidateFinanceLabeled`, `jumpToFinanceMonth`, `navigateFinanceMonth`, `onFinanceGridChange`, `onFinanceGridClick`, `refreshFinanceLive`, `refreshFinanceSettingsIfOpen`, `renderFinanceAccountsPanel`, `renderFinanceMonthMenu`, `renderFinancePage`, `showFinAcctMenu`, `onEnterFinancePage`, `resetFinanceViewMonth`, `getFinanceViewMonth`, `getFinanceLinkStatus`
+- **Injected deps (19):** state, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, `getActiveAppArea` (→ activeAppArea), `getSupabaseClient` (→ supabaseClient, a reassigned let)
+- **Module imports (finance-ui.js):** finance-actuals (`financeMonthsToSnapshot`, `financeOffsettingPairIds`), finance-csv (`parseCsvRows`, `aggregateCsvBackfill`), finance-review-gesture (`reviewGesture*`, `REVIEW_GESTURE`), finance-sync (`dedupeFinanceRecurring`)
+- **Stays in app.js (verified untouched):** `showFinanceApp` nav entry; the sync/hydration machinery (§2); `defaultState`'s finance normalizer calls (Commit-1 imports).
+- **Verification:** `npm run build` ✓, full `vitest` 1444/1444 ✓. Finance UI has no test coverage → **manual click-through required** before trusting at runtime.
+
+### Moved functions (128)
+exportFinanceCsv financeImportCsvBackfill startFinanceCsvImport financeSumByKind financeCardAccountIds financeSumByAccountIds financeCurrentMonthKey navigateFinanceMonth loadFinanceHistory loadFinanceReceipts financeReceiptForTxn checkFinanceLinkStatus isLocalDevHost refreshFinanceLive linkFinanceBanks financeMerchantTokens financeMerchantKey financeSuggestedNote financeTxnRuleGuess invalidateFinanceLabeled financeLabeledTxns financeLinkedReturnsTotal financeSuggestReturnMatch financeReturnLinkCandidates recordFinanceTxnLink clearFinanceTxnLink toggleFinanceTxnSignFlip openManualTxnForm cancelManualTxnForm saveManualTxnForm deleteManualTxn financeTxnPortions financeTxnLabelName financeTxnLabelOptionsHtml financeResolveLineItem financeLineItemOptionsHtml updateFinanceRecurring financeUpcomingBills financeSpendTrends financeCategoryHistoryAvg financeSetCategoryBudget financeCashFlow financeRecurringAlerts financeUnlabeledByMerchant financeUnlabeledCount financeSnoozeLabelGroup financeDismissNotifGroup financeConfirmTxn financeTxnNeedsConfirm financeReviewGroups openFinanceTxnReview financeNotifAlertCardWrap financeRecurringAlertCardHtml financeAttentionCardHtml financeNotifDeckAlertsHtml renderFinanceReviewDeck updateFinanceReviewProgress finishFinanceReviewCard dismissFinanceReviewCard commitFinanceReviewEdits commitAllFinanceReviewCards approveFinanceReviewCard skipFinanceReviewCard openFinanceTxnDetailFromReview financeReviewQuickChipsHtml flipFinanceReviewCardSign handoffFinanceReviewCard wireFinanceReviewDeck financeAccountsNeedingAttention financeAccountStatus financeAccountHealth financeAlertPref financeAccountStatusPill financeHistoryDays financeTrendSparklineHtml financeNetWorthDelta financeBellCount updateFinanceMonthActuals startSplitTxn startScanReceiptForTxn scanReceiptIntoSplit uploadReceiptImage getReceiptImageUrl deleteReceiptImage viewReceiptImage financeBatchMatchTxn financeBatchScanReceipts startRenameTxn cancelRenameTxn saveRenameTxn saveRenameFromRow recordFinanceTxnSplit recordFinanceTxnLabel unlinkFinanceBanks formatFinMoney parseFinAmount financeActiveIncome payPeriodStepDays scenarioPaydaysInRange scenarioPaydaysInMonth scenarioPeriodsInMonth scenarioDeductionPerPeriod scenarioMonthlyGross scenarioMonthlyDeductions scenarioMonthlyIncome financeIncomeTotal financeGrossIncomeTotal financeDeductionLines financeDeductionsTotal financePaydaysInRange financeItemsTotal financeCategoryActiveItem financeCategoryTotal financeGroupTotal financeExpensesTotal renderFinanceAccountsPanel applyBudgetSearch finUpdatedLabel renderFinancePage showFinAcctMenu showFinTxnMenu financeScopeCategory financeScopeItems onFinanceGridClick onFinanceGridChange renderFinanceMonthMenu jumpToFinanceMonth refreshFinanceSettingsIfOpen
