@@ -23,7 +23,7 @@ import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap,
 import { taskIsScheduled } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds } from './finance-actuals.js';
-import { isNativeApp } from './native-bridge.js';
+import { isNativeApp, nativeTts } from './native-bridge.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
 import { clearLocalAccountState, accountTransitionKind } from './auth-account-reset.js';
@@ -344,7 +344,7 @@ const STATE_SECTIONS = {
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
   finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts"],
-  config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "financeAlertPrefs"],
+  config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs"],
   contacts:  ["contacts", "contactGroups"],
 };
 
@@ -4486,6 +4486,9 @@ function normalizeState(parsed) {
     jellyfin: (parsed?.jellyfin && typeof parsed.jellyfin === "object") ? parsed.jellyfin : null,
     // Streaming services the household subscribes to → "Your services" in Discover.
     mediaServices: Array.isArray(parsed?.mediaServices) ? parsed.mediaServices.map(String) : [],
+    // Apple Music config (enabled/storefront). Its OWN key — it can't live on the
+    // mediaServices array (JSON drops named props on arrays, so it never persisted).
+    appleMusic: (parsed?.appleMusic && typeof parsed.appleMusic === "object" && !Array.isArray(parsed.appleMusic)) ? parsed.appleMusic : {},
     inventoryBoxes: ensureDefaultInventoryRooms(normalizeInventoryBoxes(parsed?.inventoryBoxes)),
     inventoryItems: normalizeInventoryItems(parsed?.inventoryItems),
     inventoryRoomVisibility: normalizeInventoryRoomVisibility(parsed?.inventoryRoomVisibility),
@@ -22674,7 +22677,7 @@ function renderContextSettingsDialog(kind) {
   }
 
   if (kind === "apple-music") {
-    const cfg = (state.mediaServices && state.mediaServices.appleMusic) || {};
+    const cfg = (state.appleMusic && typeof state.appleMusic === "object" && !Array.isArray(state.appleMusic)) ? state.appleMusic : {};
     const enabled = !!cfg.enabled;
     elements.contextSettingsBody.innerHTML = `
       <p class="settings-hint">Play Apple Music in the app (MusicKit). Needs your own Apple Developer key configured in the server environment — see the checklist. Playing full tracks also requires an active Apple Music subscription on this device.</p>
@@ -22697,8 +22700,8 @@ function renderContextSettingsDialog(kind) {
       </details>`;
     const toggle = elements.contextSettingsBody.querySelector('[data-am-setting="enabled"]');
     toggle?.addEventListener("change", () => {
-      if (!state.mediaServices || typeof state.mediaServices !== "object") state.mediaServices = {};
-      state.mediaServices.appleMusic = { ...(state.mediaServices.appleMusic || {}), enabled: toggle.checked };
+      if (!state.appleMusic || typeof state.appleMusic !== "object" || Array.isArray(state.appleMusic)) state.appleMusic = {};
+      state.appleMusic = { ...state.appleMusic, enabled: toggle.checked };
       musicProviderRegistry = null; // rebuild the registry with/without Apple Music
       persist();
       renderContextSettingsDialog("apple-music");
@@ -22782,13 +22785,39 @@ function renderContextSettingsDialog(kind) {
     const priv = vs.getVoices({ provider: "kokoro", availableOnly: true });
     const cloud = vs.getVoices({ provider: "google", availableOnly: true });
     const device = systemVoiceAvailable() ? vs.getVoices({ provider: "system", availableOnly: true }) : [];
+    // In the native app, list the device's ACTUAL installed voices (Premium/
+    // Enhanced ≈ Siri quality) instead of the limited Web Speech "device" entry.
+    const nativeMode = !!nativeTts();
+    if (nativeMode && nativeVoicesCache === null) {
+      loadNativeVoices().then(() => { if (contextSettingsKind === "voice" && elements.contextSettingsDialog?.open) renderContextSettingsDialog("voice"); });
+    }
+    const curNativeId = nativeVoiceIdPref();
+    const nativeVoiceRow = (v) => `
+      <button class="vpick-voice" type="button" data-native-voice-id="${escapeHtml(v.id)}" aria-selected="${curVoice?.id === "device" && v.id === curNativeId ? "true" : "false"}">
+        <span class="vpick-dot">${escapeHtml((String(v.name)[0] || "?").toUpperCase())}</span>
+        <span class="vpick-nm">
+          <span class="n">${escapeHtml(v.name)}${v.quality === "premium" ? ' <span class="vpick-badge">Premium</span>' : v.quality === "enhanced" ? ' <span class="vpick-badge">Enhanced</span>' : ""}</span>
+          <span class="s">${escapeHtml(v.lang)} · on device</span>
+        </span>
+        <span class="vpick-mini" role="button" tabindex="0" data-native-preview-id="${escapeHtml(v.id)}" aria-label="Preview ${escapeHtml(v.name)}">${VOICE_PLAY_SVG}</span>
+        <svg class="vpick-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+      </button>`;
+    const nativeGroupHtml = nativeVoicesCache === null
+      ? `<div class="vpick-group">On-device · your iPhone voices</div><p class="vpick-note">Loading device voices…</p>`
+      : (nativeVoicesCache.length
+          ? `<div class="vpick-group">On-device · your iPhone voices</div>${nativeVoicesCache.map(nativeVoiceRow).join("")}`
+          : `<div class="vpick-group">On-device</div><p class="vpick-note">No English voices installed. Add higher-quality voices in Settings → Accessibility → Spoken Content → Voices.</p>`);
     const SPEEDS = [
       { v: 0.75, label: "0.75×" }, { v: 0.9, label: "0.9×" }, { v: 1.0, label: "1.0×" },
       { v: 1.1, label: "1.1×" }, { v: 1.25, label: "1.25×" }, { v: 1.5, label: "1.5×" }, { v: 2.0, label: "2.0×" },
     ];
     const isPrivate = (v) => !!v && v.provider === "kokoro";
     // Provider names stay hidden: strip a trailing "(Google)" etc. from the label.
-    const nameOf = (v) => (v?.displayName || "Voice").replace(/\s*\([^)]*\)\s*$/, "").trim();
+    // For the on-device provider in the native app, show the chosen device voice's name.
+    const nameOf = (v) => {
+      if (v && v.id === "device" && nativeMode) { const n = nativeVoiceName(curNativeId); if (n) return n; }
+      return (v?.displayName || "Voice").replace(/\s*\([^)]*\)\s*$/, "").trim();
+    };
     const initialOf = (v) => (nameOf(v)[0] || "?").toUpperCase();
     const accentOf = (v) => !v ? "" : `${v.accent || ""}${(v.language || "").startsWith("en") ? " English" : (v.language ? " " + v.language : "")}`.trim();
 
@@ -22823,7 +22852,7 @@ function renderContextSettingsDialog(kind) {
       <div class="vpick-card">
         <div class="vpick-head">Choose a voice <span class="vpick-hint">tap ▶ to preview</span></div>
         ${priv.length ? `<div class="vpick-group">Your voices · private</div>${priv.map(voiceRow).join("")}` : ""}
-        ${device.length ? `<div class="vpick-group">On-device · foreground only</div>${device.map(voiceRow).join("")}` : ""}
+        ${nativeMode ? nativeGroupHtml : (device.length ? `<div class="vpick-group">On-device · foreground only</div>${device.map(voiceRow).join("")}` : "")}
         ${cloud.length ? `<div class="vpick-group">Cloud</div>${cloud.map(voiceRow).join("")}` : ""}
       </div>
       <p class="vpick-note">You pick a voice; the app picks the engine. A private voice can take a few extra seconds the first time after a while, as the voice server wakes up.${device.length ? " An on-device voice (your iPhone's own voices) starts instantly and stays on your device, but pauses when you leave the app or lock the screen." : ""}</p>`;
@@ -22831,11 +22860,27 @@ function renderContextSettingsDialog(kind) {
     // Select a voice (writes the global default, preserving any other voice prefs).
     elements.contextSettingsBody.querySelectorAll(".vpick-voice").forEach((row) => {
       row.addEventListener("click", (e) => {
-        if (e.target.closest("[data-preview-id]")) return; // preview handled separately
+        if (row.dataset.nativeVoiceId) return;               // native rows handled below
+        if (e.target.closest("[data-preview-id]")) return;   // preview handled separately
         setVoiceDefaultPref({ voiceId: row.dataset.voiceId });
         stopVoicePreview();
         renderContextSettingsDialog("voice");
       });
+    });
+    // Select a specific on-device (native) voice → route the article voice to the
+    // on-device provider and remember which device voice to use.
+    elements.contextSettingsBody.querySelectorAll("[data-native-voice-id]").forEach((row) => {
+      row.addEventListener("click", (e) => {
+        if (e.target.closest("[data-native-preview-id]")) return;
+        if (!state.aiSettings || typeof state.aiSettings !== "object") state.aiSettings = {};
+        state.aiSettings.nativeVoiceId = row.dataset.nativeVoiceId;
+        setVoiceDefaultPref({ voiceId: "device" });
+        persist();
+        renderContextSettingsDialog("voice");
+      });
+    });
+    elements.contextSettingsBody.querySelectorAll("[data-native-preview-id]").forEach((btn) => {
+      btn.addEventListener("click", (e) => { e.stopPropagation(); previewNativeVoice(btn.dataset.nativePreviewId, btn); });
     });
     elements.contextSettingsBody.querySelectorAll("[data-speed]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -47888,7 +47933,7 @@ async function getMusicProviders() {
   // Registered when enabled; it self-gates via isAvailable() (returns false until
   // the developer token is configured), so search/playback silently exclude it
   // until then — the architecture never depends on it, exactly like Jamendo.
-  const amCfg = state.mediaServices && state.mediaServices.appleMusic;
+  const amCfg = state.appleMusic;
   if (amCfg && amCfg.enabled) {
     const am = await import("./music-provider-applemusic.js");
     providers.push(am.createAppleMusicProvider({ storefront: amCfg.storefront || "us" }));
@@ -48752,7 +48797,10 @@ function nowPlayingEngineState() {
 }
 function nowPlayingIsPlaying() {
   if (musicPlaybackProvider) return !!(musicOwnedNP && musicOwnedNP.isPlaying); // Apple Music owns its transport
-  if (listenSpeechSynth) { try { return window.speechSynthesis.speaking && !window.speechSynthesis.paused; } catch { return false; } } // on-device voice
+  if (listenSpeechSynth) { // on-device voice (native plugin or Web Speech)
+    if (listenSpeechSynth.native) return !listenSpeechSynth.paused;
+    try { return window.speechSynthesis.speaking && !window.speechSynthesis.paused; } catch { return false; }
+  }
   const s = nowPlayingEngineState();
   if (s) return !!s.playing;
   const el = nowPlayingEl();
@@ -51045,15 +51093,96 @@ function pickSystemVoice() {
 
 function systemVoiceElapsedSec() {
   const s = listenSpeechSynth; if (!s) return 0;
-  return Math.round((s.charsBefore + (s.charIndex || 0)) / (15 * (s.rate || 1)));
+  // Native reports an absolute char location; the web chunk path sums chunks.
+  const chars = s.native ? (s.charIndex || 0) : (s.charsBefore + (s.charIndex || 0));
+  return Math.round(chars / (15 * (s.rate || 1)));
+}
+
+// The user's chosen native (AVSpeechSynthesizer) voice identifier, or "" to let
+// the plugin pick a good en-US default.
+function nativeVoiceIdPref() {
+  try { return (state.aiSettings && state.aiSettings.nativeVoiceId) || ""; } catch { return ""; }
+}
+
+// The device's installed voices (via the native plugin), loaded once and cached.
+// English only, best quality first (Premium/Enhanced are the near-Siri voices).
+let nativeVoicesCache = null;
+async function loadNativeVoices() {
+  const tts = nativeTts();
+  if (!tts) { nativeVoicesCache = []; return []; }
+  try {
+    const r = await tts.getVoices();
+    let vs = Array.isArray(r && r.voices) ? r.voices : [];
+    vs = vs.filter((v) => /^en/i.test(v.lang || ""));
+    const rank = { premium: 0, enhanced: 1, default: 2 };
+    vs.sort((a, b) => ((rank[a.quality] ?? 3) - (rank[b.quality] ?? 3)) || String(a.name).localeCompare(String(b.name)));
+    nativeVoicesCache = vs;
+  } catch { nativeVoicesCache = []; }
+  return nativeVoicesCache;
+}
+function nativeVoiceName(id) {
+  const v = (nativeVoicesCache || []).find((x) => x.id === id);
+  return v ? v.name : null;
+}
+async function previewNativeVoice(voiceId, btn) {
+  const tts = nativeTts();
+  if (!tts) return;
+  if (btn) { btn.classList.add("playing"); setTimeout(() => btn.classList.remove("playing"), 2500); }
+  try { await tts.stop(); await tts.speak({ text: "Hi, this is how I sound reading your articles aloud.", voiceId, rate: mediaPlaybackSpeed || 1, title: "Voice preview" }); }
+  catch { /* best-effort */ }
 }
 
 function teardownSystemVoice() {
-  if (systemVoiceAvailable()) { try { window.speechSynthesis.cancel(); } catch { /* noop */ } }
+  const s = listenSpeechSynth;
+  if (s && s.native) {
+    const tts = nativeTts();
+    if (tts) { try { tts.stop(); } catch { /* noop */ } }
+    (s.subs || []).forEach((h) => { try { h && h.remove && h.remove(); } catch { /* noop */ } });
+  } else if (systemVoiceAvailable()) {
+    try { window.speechSynthesis.cancel(); } catch { /* noop */ }
+  }
   listenSpeechSynth = null;
 }
 
+// Native (AVSpeechSynthesizer) read-aloud: backgrounds + lock-screen controls,
+// and can use the device's Enhanced/Premium voices. Speaks the whole article in
+// one go (the OS handles long text); progress + advance come from plugin events.
+async function startListenNativeTts(article) {
+  const tts = nativeTts();
+  const prepared = prepareArticleListenText(article);
+  if (!tts || !prepared) { listenLoading = false; updateListenPlayBtn(); return; }
+  const myGenId = listenGenId;
+  const rate = mediaPlaybackSpeed || 1;
+  const charsTotal = (prepared.text || "").length;
+  teardownSystemVoice();
+  const session = { article, genId: myGenId, native: true, charsTotal, charIndex: 0, rate, paused: false, subs: [] };
+  listenSpeechSynth = session;
+  listenLoading = false; listenBuffering = false; listenSpeaking = true;
+  listenArticle = article; listenAudio = null;
+  listenTimings = null; listenWordAbsTimes = null; clearWordHighlight();
+  listenChunkDurations = []; listenChunkOffsets = [];
+  listenTotalDuration = Math.max(1, Math.round(charsTotal / (15 * rate)));
+  showMiniPlayerForArticle(article);
+  setListenMediaSession(article);
+  updateListenPlayBtn();
+  const advance = () => { if (session.genId !== listenGenId) return; teardownSystemVoice(); listenSpeaking = false; if (!advanceListenArticle()) stopListen(); };
+  try {
+    session.subs = [
+      await tts.addListener("ttsFinish", advance),
+      await tts.addListener("ttsNext", advance),
+      await tts.addListener("ttsRange", (e) => { if (session.genId === listenGenId) { session.charIndex = (e && e.location) || 0; updateMiniPlayerProgress(); } }),
+    ];
+  } catch { /* events best-effort */ }
+  try {
+    await tts.speak({ text: prepared.text, voiceId: nativeVoiceIdPref(), rate, title: article.title || "Article", subtitle: article.author || article.publication || "" });
+  } catch (e) {
+    if (session.genId === listenGenId) { listenSpeaking = false; teardownSystemVoice(); updateListenPlayBtn(); alert("Couldn't start on-device voice: " + (e && e.message || e)); }
+  }
+}
+
 async function startListenSystemVoice(article) {
+  // Native app → AVSpeechSynthesizer (backgrounds, device voices); else Web Speech.
+  if (nativeTts()) { await startListenNativeTts(article); return; }
   if (!systemVoiceAvailable()) { alert("On-device voice isn't available in this browser."); listenLoading = false; updateListenPlayBtn(); return; }
   const prepared = prepareArticleListenText(article);
   if (!prepared) { listenLoading = false; updateListenPlayBtn(); return; }
@@ -51111,6 +51240,13 @@ function speakSystemChunk() {
 function systemVoiceSkip(seconds) {
   const s = listenSpeechSynth;
   if (!s) return;
+  if (s.native) {
+    // AVSpeechSynthesizer can't seek within an utterance; skip forward advances
+    // to the next article, skip back restarts the current one.
+    if (seconds > 0) { teardownSystemVoice(); listenSpeaking = false; if (!advanceListenArticle()) stopListen(); }
+    else { startListenNativeTts(s.article); }
+    return;
+  }
   const target = Math.max(0, Math.min(s.chunks.length - 1, s.idx + (seconds > 0 ? 1 : -1)));
   if (target === s.idx && seconds < 0) return;
   try { window.speechSynthesis.cancel(); } catch { /* noop */ }
@@ -51331,10 +51467,15 @@ function advanceListenArticle() {
 
 function toggleListenPlayPause() {
   unlockListenAudio();
-  // On-device (speechSynthesis) session: pause/resume it directly.
+  // On-device voice session: pause/resume it directly (native plugin or Web Speech).
   if (listenSpeechSynth) {
+    const s = listenSpeechSynth;
     try {
-      if (window.speechSynthesis.paused) { window.speechSynthesis.resume(); setMediaSessionPlaybackState("playing"); }
+      if (s.native) {
+        const tts = nativeTts();
+        if (s.paused) { tts && tts.resume(); s.paused = false; setMediaSessionPlaybackState("playing"); }
+        else { tts && tts.pause(); s.paused = true; setMediaSessionPlaybackState("paused"); }
+      } else if (window.speechSynthesis.paused) { window.speechSynthesis.resume(); setMediaSessionPlaybackState("playing"); }
       else { window.speechSynthesis.pause(); setMediaSessionPlaybackState("paused"); }
     } catch { /* noop */ }
     updateListenPlayBtn(); updateMiniPlayerPlayBtn();
