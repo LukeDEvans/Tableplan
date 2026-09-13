@@ -89,16 +89,20 @@ Every AI email-processing feature MUST have an on/off toggle in Settings → Mai
 This repo is set up for **parallel, multi-agent work** (Claude Code subagents and
 cloud/web sessions) — one agent per domain. Per-domain subagents live in
 [.claude/agents/](.claude/agents/). [ARCHITECTURE.md](ARCHITECTURE.md) §4 is the
-source of truth for boundaries; this table maps the seven parallel-work domains to
-their code.
+source of truth for boundaries; this table maps the parallel-work domains to their
+code. Read **Architecture Decisions** (below the table) before working calendar,
+the recipes cluster (recipes / meal-plan / groceries / cook), or health.
 
 | Domain | Dedicated modules | `app.js` area (`activeAppArea`) | Data home |
 |---|---|---|---|
 | **finance** | `finance-actuals.js`, `finance-csv.js`, `finance-sync.js`, `finance-review-gesture.js`, `receipt-domain.js`, `receipt-scan.js` | `"finance"` | `tableplan_states` JSONB (`state.finance*`) — **Supabase-only, never localStorage** |
-| **calendar** | `calendar/` (`recurrence.js`, `model.js`, `projection.js`, `tasks-project.js`, `sources.js`, `reconcile.js`, `normalize.js`, `ics.mjs`) | `"plan"` (calendar) + `"do"` (Tasks) | `state.planEvents`, `state.planCalendars`, `state.calendars` |
-| **recipes** | `recipe-scan.js`, `meal-plan-servings.js`, `grocery-catalog.js`, `grocery-sources.js` | `"eat"` (meal plan) + `"shop"` (groceries) | **relational** `eat_recipes` / `eat_folders` (+ state) |
+| **calendar** | `calendar/` (`recurrence.js`, `model.js`, `projection.js`, `tasks-project.js`, `sources.js`, `reconcile.js`, `normalize.js`, `ics.mjs`) | `"plan"` (calendar) + `"do"` (Tasks) | `state.planEvents`; **`state.calendars` + `state.planCalendars` will be unified into one canonical list (`source: "linked" \| "ics"`) — see Architecture Decision #1** |
+| **recipes** | `recipe-scan.js` (recipe CRUD/folders + scan) | `"eat"` (recipes) | **relational** `eat_recipes` / `eat_folders` |
+| **meal-plan** | `meal-plan-servings.js` (planning + servings scaling) | `"eat"` (meal plan) | state sections |
+| **groceries** | `grocery-catalog.js`, `grocery-sources.js` | `"shop"` | state sections |
+| **cook** | *(cook mode — currently in `app.js`)* | `"eat"` (cook) | state sections |
 | **travel** | `travel-*.js` (geo, ingest, interpret, itinerary, mode, model, optimize, refs, transitions) | `"explore"` | `state.travel*` (canonical in `travel-model.js`) |
-| **health** | `food-health.js`, `food-health-checklists.js`, `daily-dozen.js`, `nutrition-domain.js`, `nutrition-provider.js` | `"sweat"` + nutrition/food-health | state sections |
+| **health** *(no health module yet)* | none — nutrition & Daily Dozen (`daily-dozen.js`, `nutrition-domain.js`, `nutrition-provider.js`) are **owned by the recipes cluster** (Decision #3); `food-health*.js` + the `"sweat"` exercise UI stay in `app.js` for now | `"sweat"` (exercise) | state sections |
 | **contacts** | `contacts.js` (rendering, editing, groups, photo, vCard import/export, all contacts state) — `app.js` keeps only the `showContactsApp` nav entry + the injected module wiring | `"contacts"` | `state.contacts`, `state.contactGroups` (no canonical `people` model yet — §21) |
 | **music** | `music-streaming.js`, `music-provider-*.js` (applemusic/internetarchive/jamendo), `music-canonical.js`, `music-library*.js`, `music-source-resolver.js`, `music-tags.js`, `media-provider-music.js` | `"media"` (music tab) | `state.musicLibrary`, `state.appleMusic`, media state |
 
@@ -110,6 +114,42 @@ keep each domain's edits inside that domain's own `render*`/handler sections and
 dedicated modules; prefer moving logic *into* a domain module over growing `app.js`;
 land small, frequent commits; and treat any `app.js` edit outside your domain's
 sections as a shared-infra change (below).
+
+### Architecture Decisions (recorded — do not re-litigate)
+
+Decisions Luke has already made about upcoming extractions. Agents working these
+domains **follow them and do not reopen the debate.** None are implemented yet —
+they are direction for when the work starts.
+
+**1. Calendar — unify the two calendar lists.**
+`state.calendars` (linked / eat-side calendars) and `state.planCalendars`
+(ICS-imported calendars) will be merged into a **single canonical list**, with a
+field (e.g. `source: "linked" | "ics"`) distinguishing origin. **Prerequisite before
+any calendar extraction or refactor begins:** map **every** read and write of both
+`state.calendars` and `state.planCalendars` across `app.js` (and record them here or
+in a linked doc) — the blast radius is large (`renderPlanPage()` alone has ~42 call
+sites), so it must be visible up front, **not discovered mid-refactor.** Do **not**
+start the unification opportunistically inside another change, and do not begin it
+until that map exists.
+
+**2. Recipes cluster — separate modules, not one domain.**
+Recipes, meal-plan, groceries, and cook are **separate modules** — not one "recipes"
+domain with internal files — because they evolve independently in practice. Shared
+behavior between them (meal-plan generating a grocery list; servings scaling) must be
+**explicit injected interfaces between modules** — the same pattern as contacts'
+`refreshPlanIfActive` hook — **never** direct cross-module reaches into another
+module's internals. The single `recipes` subagent should eventually be **split to
+match** (one agent per module: recipes / meal-plan / groceries / cook).
+
+**3. Nutrition / Daily Dozen — owned by recipes for now, behind a narrow interface.**
+There is **no health/wellness domain today, and none planned soon.** Nutrition and
+Daily Dozen tracking (`daily-dozen.js`, `nutrition-domain.js`,
+`nutrition-provider.js`) **stay owned by the recipes cluster.** Keep them behind a
+**small, narrow public interface** (a limited set of functions / data shapes), not
+tangled into recipe internals — so a future health/wellness domain, if one is ever
+built, can consume nutrition data through that interface **without re-extracting it.**
+**Do not build any health-side abstraction now** — just keep the recipes-side
+interface clean.
 
 ### Shared infrastructure — flag, don't silently change
 
