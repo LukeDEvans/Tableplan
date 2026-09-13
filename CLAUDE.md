@@ -99,7 +99,7 @@ their code.
 | **recipes** | `recipe-scan.js`, `meal-plan-servings.js`, `grocery-catalog.js`, `grocery-sources.js` | `"eat"` (meal plan) + `"shop"` (groceries) | **relational** `eat_recipes` / `eat_folders` (+ state) |
 | **travel** | `travel-*.js` (geo, ingest, interpret, itinerary, mode, model, optimize, refs, transitions) | `"explore"` | `state.travel*` (canonical in `travel-model.js`) |
 | **health** | `food-health.js`, `food-health-checklists.js`, `daily-dozen.js`, `nutrition-domain.js`, `nutrition-provider.js` | `"sweat"` + nutrition/food-health | state sections |
-| **contacts** | *(none — lives entirely inside `app.js`)* | `"contacts"` | state sections (no canonical `people` model yet — §21) |
+| **contacts** | `contacts.js` (rendering, editing, groups, photo, vCard import/export, all contacts state) — `app.js` keeps only the `showContactsApp` nav entry + the injected module wiring | `"contacts"` | `state.contacts`, `state.contactGroups` (no canonical `people` model yet — §21) |
 | **music** | `music-streaming.js`, `music-provider-*.js` (applemusic/internetarchive/jamendo), `music-canonical.js`, `music-library*.js`, `music-source-resolver.js`, `music-tags.js`, `media-provider-music.js` | `"media"` (music tab) | `state.musicLibrary`, `state.appleMusic`, media state |
 
 **⚠️ The central constraint: `app.js` is ONE shared file.** Every domain's
