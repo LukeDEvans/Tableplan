@@ -97,10 +97,10 @@ the recipes cluster (recipes / meal-plan / groceries / cook), or health.
 |---|---|---|---|
 | **finance** | `finance-ui.js` (`createFinanceModule(deps)` — the whole finance UI: services, transactions + review deck, txn-receipts, budget/accounts/income, insights) + pure logic in `finance-actuals.js` / `finance-csv.js` / `finance-sync.js` / `finance-review-gesture.js`; `receipt-*.js` shared with Shop — `app.js` keeps only `showFinanceApp`. ⚠️ **sync/hydration gate stays in app.js** (see below) | `"finance"` | `tableplan_states` JSONB (`state.finance*`) — **Supabase-only, never localStorage**. **Cross-domain:** Calendar reads `financePaydaysInRange` + `formatFinMoney` (payday dots / bill display); state-sync calls `invalidateFinanceLabeled` |
 | **calendar** | `calendar/` (`recurrence.js`, `model.js`, `projection.js`, `tasks-project.js`, `sources.js`, `reconcile.js`, `normalize.js`, `ics.mjs`) | `"plan"` (calendar) + `"do"` (Tasks) | `state.planEvents`; **`state.calendars` + `state.planCalendars` will be unified into one canonical list (`source: "linked" \| "ics"`) — see Architecture Decision #1** |
-| **recipes** | `recipe-scan.js` (recipe CRUD/folders + scan) | `"eat"` (recipes) | **relational** `eat_recipes` / `eat_folders` |
-| **meal-plan** | `meal-plan-servings.js` (planning + servings scaling) | `"eat"` (meal plan) | state sections |
-| **groceries** | `grocery-catalog.js`, `grocery-sources.js` | `"shop"` | state sections |
-| **cook** | *(cook mode — currently in `app.js`)* | `"eat"` (cook) | state sections |
+| **recipes** *(includes cook — see Decision #2)* | `recipe-scan.js` (recipe CRUD/folders + scan). **Cook folds in here as a feature, not a peer module** (no standalone surface; lives in the recipe-view template; shares `pendingCookLogId`). See **RECIPES_SPLIT_MAP.md** for the pre-extraction map. | `"eat"` (recipes + cook mode — one shared `eat` shell via `activateEatShell`, kept as glue in `app.js`) | **relational** `eat_recipes` / `eat_folders` **plus** JSONB `eat` section (`recipes, trashedRecipes, folders, recipeTags, ingredientOptions, activeCooking`, …). ⚠️ `prepareScanImage` is **app-wide scan infra** (also injected into finance) — leave shared, don't treat as recipe-owned |
+| **meal-plan** | `meal-plan-servings.js` (planning + servings scaling). See **RECIPES_SPLIT_MAP.md**. | `"eat"` (meal plan — same shared `eat` shell) | JSONB `eat` section: `plans` (per-week records), `publishedWeeks`, `mealPlanConfig`, `autoGenerateRules`. ⚠️ **Each week record also physically holds `manualGroceries` (grocery data) — Groceries reads/writes it here via an injected accessor; not migrated** (Decision #2). **Cross-domain:** creates Tasks via `addMakeAheadTaskForMealEntry`/`addPrepAheadTaskForMealEntry` (`"do"`); reads `state.planEvents` (calendar) via `eventCoversMeal`/`mealContextEvents`; owns the shared week cursor (`currentWeek`/`weekState`/`weekKey`) that Groceries also uses |
+| **groceries** | `groceries-ui.js` (planned — `createGroceriesModule(deps)`: shopping list, stores, pricing, receipts, checklist, pantry) + `grocery-catalog.js`, `grocery-sources.js`. See **GROCERIES_EXTRACTION.md**. | `"shop"` (a Shop space alongside `"checklist"`/`"inventory"`) | JSONB `grocery` section (`groceryStores, groceryBaseItems, receipts, groceryChecklist, pantry`, …). ⚠️ `manualGroceries` lives in **meal-plan's** `eat`-section week record — accessed via injected getter/setter, **storage not moved** (Decision #2). **Cross-domain:** injects `inventoryItemList()` + `seedGroceryChecklistFromInventory` (inventory — see inventory row), `selectRestaurantForMeal` (grocery-store ↔ meal seam); reads the shared week cursor from meal-plan |
+| **cook** | *(folded into **recipes** — not a separate module; see Decision #2)* | `"eat"` (part of the recipes view) | `state.activeCooking` + per-recipe `cookLog` (JSONB `eat` section) |
 | **travel** | `travel-*.js` (geo, ingest, interpret, itinerary, mode, model, optimize, refs, transitions) | `"explore"` | `state.travel*` (canonical in `travel-model.js`) |
 | **health** *(no health module yet)* | none — nutrition & Daily Dozen (`daily-dozen.js`, `nutrition-domain.js`, `nutrition-provider.js`) are **owned by the recipes cluster** (Decision #3); `food-health*.js` + the `"sweat"` exercise UI stay in `app.js` for now | `"sweat"` (exercise) | state sections |
 | **contacts** | `contacts.js` (rendering, editing, groups, photo, vCard import/export, all contacts state) — `app.js` keeps only the `showContactsApp` nav entry + the injected module wiring | `"contacts"` | `state.contacts`, `state.contactGroups` (no canonical `people` model yet — §21) |
@@ -135,13 +135,44 @@ start the unification opportunistically inside another change, and do not begin 
 until that map exists.
 
 **2. Recipes cluster — separate modules, not one domain.**
-Recipes, meal-plan, groceries, and cook are **separate modules** — not one "recipes"
+Recipes, meal-plan, and groceries are **separate modules** — not one "recipes"
 domain with internal files — because they evolve independently in practice. Shared
 behavior between them (meal-plan generating a grocery list; servings scaling) must be
 **explicit injected interfaces between modules** — the same pattern as contacts'
 `refreshPlanIfActive` hook — **never** direct cross-module reaches into another
-module's internals. The single `recipes` subagent should eventually be **split to
-match** (one agent per module: recipes / meal-plan / groceries / cook).
+module's internals. The single `recipes` subagent should be **split to match** (one
+agent per module: recipes / meal-plan / groceries).
+
+*Amended after RECIPES_SPLIT_MAP.md mapped the actual code (2026-09-13):*
+
+- **(a) Cook is NOT a peer module — it folds into recipes as a feature.** Cook has no
+  standalone nav area or surface: it renders inside the recipe-view template
+  (`activeRecipeViewTemplate(recipe, cookingItem)`, `cookLogTemplate`) and shares the
+  `pendingCookLogId` module var with the recipe form. Extracting it as a peer would
+  force circular access into the recipe view. So it moves **with** recipes. There is no
+  `cook.js`; the four-way agent split becomes **three** (recipes / meal-plan / groceries).
+- **(b) Groceries ⇄ meal-plan share stored data, not just behavior — do NOT migrate it.**
+  `manualGroceries` (grocery-list data) is physically stored **inside meal-plan's per-week
+  record** in the `eat` Supabase section (`createBlankWeek()` puts it next to `slots`). This
+  is a data-storage overlap, not merely a code touchpoint. **Decision: leave the storage
+  exactly where it is.** Groceries becomes its own module but reads/writes `manualGroceries`
+  through an **injected getter/setter** into its current location (owned by meal-plan's
+  section) — the same *"preserve structure, don't fix it mid-extraction"* principle applied
+  to finance's sync gate. A future data-migration task can revisit relocating it if ever
+  wanted; it is **out of scope** for this extraction.
+- **(c) One shared `eat` shell + section stays as glue — it is not being split apart.**
+  Recipes, meal-plan, and cook(-as-recipes-feature) all render within one shared shell
+  (`activateEatShell()`) and store in one shared `eat` Supabase section. That shell/section
+  stays as glue in `app.js` (or a shared injected utility); **each module owns its own
+  render + logic, but the shell and the section themselves are not split** — mirroring how
+  finance's UI moved into `finance-ui.js` while its sync/boot machinery stayed in `app.js`.
+- **(d) Additional touchpoints found beyond the original assessment** (preserve as injected
+  interfaces, per the no-direct-reach rule above): **Tasks/"do" seam** —
+  `addMakeAheadTaskForMealEntry` / `addPrepAheadTaskForMealEntry` create `do` tasks from
+  meal entries; **inventory seam** — `seedGroceryChecklistFromInventory` + the shared
+  `shopSpace` value (already documented on the **inventory** row — cross-reference it, don't
+  re-document); **restaurant seam** — `selectRestaurantForMeal` couples groceries'
+  store-search to a meal slot.
 
 **3. Nutrition / Daily Dozen — owned by recipes for now, behind a narrow interface.**
 There is **no health/wellness domain today, and none planned soon.** Nutrition and
