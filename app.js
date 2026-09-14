@@ -1524,10 +1524,10 @@ const { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions } = _weath
 // renderInventoryPage are consumed cross-domain by Groceries/Travel/Shop.
 const _inventory = createInventoryModule({
   state, elements, persist, createId, escapeHtml, recordDeletion, recordDeletions,
-  closeFolderMenu,
+  closeFolderMenu: (...a) => closeFolderMenu(...a),
   getActiveAppArea: () => activeAppArea,
-  renderShopSpaceNav, renderGroceries,
-  shoppingListHas, addToShoppingList, removeFromShoppingList,
+  renderShopSpaceNav: (...a) => renderShopSpaceNav(...a), renderGroceries: (...a) => renderGroceries(...a),
+  shoppingListHas: (...a) => shoppingListHas(...a), addToShoppingList: (...a) => addToShoppingList(...a), removeFromShoppingList: (...a) => removeFromShoppingList(...a),
 });
 const { inventoryItemList, renderInventoryPage, saveInventoryBox, saveInventoryItem, openInventoryRoomsDialog } = _inventory;
 
@@ -1568,14 +1568,14 @@ const _groceries = createGroceriesModule({
   getPendingAutoRuleIngredientSelection: () => pendingAutoRuleIngredientSelection,
   clearPendingMealIngredientSelection: () => { pendingMealIngredientSelection = null; },
   clearPendingAutoRuleIngredientSelection: () => { pendingAutoRuleIngredientSelection = null; },
-  activeRecipes, applyScanImageAction, canUseLocalBackend, chooseIngredientForPendingAutoRule,
-  chooseIngredientForPendingMeal, closeFloatingMenus, closeFloatingMenusOnPageScroll, closeFolderMenu,
+  activeRecipes: (...a) => activeRecipes(...a), applyScanImageAction, canUseLocalBackend, chooseIngredientForPendingAutoRule,
+  chooseIngredientForPendingMeal, closeFloatingMenus, closeFloatingMenusOnPageScroll, closeFolderMenu: (...a) => closeFolderMenu(...a),
   closeSettingsMenu, combinedMealSectionsForWeek, dailyDozenCategories, dailyDozenItemKey, dateFromWeekKey,
   dateKeyFromDate, escapeHtml, fileToDataUrl, formatShortDate, formatWeekRange, getScanContent,
-  groceryRecipeForSlot, maybeWriteCloudSnapshot, mealKeysForDay, mealSlotsForWeek, normalizeIngredients,
-  openRecipeDialog, parseIngredientLine, prepareScanImage, priceObservationAgeDays, recipeForSlot,
-  recordDeletion, renderDailyDozen, renderIngredientSuggestions, renderScanImagePreviews, retainScanImageEdits,
-  scaleIngredientAmount, scaledIngredientToText, sectionScope, setWeekToolsMode, showInventoryApp, showMailToast,
+  groceryRecipeForSlot, maybeWriteCloudSnapshot, mealKeysForDay, mealSlotsForWeek, normalizeIngredients: (...a) => normalizeIngredients(...a),
+  openRecipeDialog: (...a) => openRecipeDialog(...a), parseIngredientLine: (...a) => parseIngredientLine(...a), prepareScanImage, priceObservationAgeDays, recipeForSlot,
+  recordDeletion, renderDailyDozen, renderIngredientSuggestions: (...a) => renderIngredientSuggestions(...a), renderScanImagePreviews, retainScanImageEdits,
+  scaleIngredientAmount: (...a) => scaleIngredientAmount(...a), scaledIngredientToText: (...a) => scaledIngredientToText(...a), sectionScope, setWeekToolsMode, showInventoryApp, showMailToast,
   showShopApp, slotEntries, storeDirectionsUrl, trackUsage, updateTabIndicator, weekKey, weekState,
   inventoryItemList, renderInventoryPage,
 });
