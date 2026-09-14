@@ -99,7 +99,7 @@ the recipes cluster (recipes / meal-plan / groceries / cook), or health.
 | **calendar** | `calendar/` (`recurrence.js`, `model.js`, `projection.js`, `tasks-project.js`, `sources.js`, `reconcile.js`, `normalize.js`, `ics.mjs`) | `"plan"` (calendar) + `"do"` (Tasks) | `state.planEvents`; **`state.calendars` + `state.planCalendars` will be unified into one canonical list (`source: "linked" \| "ics"`) — see Architecture Decision #1** |
 | **recipes** *(includes cook — see Decision #2)* | `recipe-scan.js` (recipe CRUD/folders + scan). **Cook folds in here as a feature, not a peer module** (no standalone surface; lives in the recipe-view template; shares `pendingCookLogId`). See **RECIPES_SPLIT_MAP.md** for the pre-extraction map. | `"eat"` (recipes + cook mode — one shared `eat` shell via `activateEatShell`, kept as glue in `app.js`) | **relational** `eat_recipes` / `eat_folders` **plus** JSONB `eat` section (`recipes, trashedRecipes, folders, recipeTags, ingredientOptions, activeCooking`, …). ⚠️ `prepareScanImage` is **app-wide scan infra** (also injected into finance) — leave shared, don't treat as recipe-owned |
 | **meal-plan** | `meal-plan-servings.js` (planning + servings scaling). See **RECIPES_SPLIT_MAP.md**. | `"eat"` (meal plan — same shared `eat` shell) | JSONB `eat` section: `plans` (per-week records), `publishedWeeks`, `mealPlanConfig`, `autoGenerateRules`. ⚠️ **Each week record also physically holds `manualGroceries` (grocery data) — Groceries reads/writes it here via an injected accessor; not migrated** (Decision #2). **Cross-domain:** creates Tasks via `addMakeAheadTaskForMealEntry`/`addPrepAheadTaskForMealEntry` (`"do"`); reads `state.planEvents` (calendar) via `eventCoversMeal`/`mealContextEvents`; owns the shared week cursor (`currentWeek`/`weekState`/`weekKey`) that Groceries also uses |
-| **groceries** | `groceries-ui.js` (planned — `createGroceriesModule(deps)`: shopping list, stores, pricing, receipts, checklist, pantry) + `grocery-catalog.js`, `grocery-sources.js`. See **GROCERIES_EXTRACTION.md**. | `"shop"` (a Shop space alongside `"checklist"`/`"inventory"`) | JSONB `grocery` section (`groceryStores, groceryBaseItems, receipts, groceryChecklist, pantry`, …). ⚠️ `manualGroceries` lives in **meal-plan's** `eat`-section week record — accessed via injected getter/setter, **storage not moved** (Decision #2). **Cross-domain:** injects `inventoryItemList()` + `seedGroceryChecklistFromInventory` (inventory — see inventory row), `selectRestaurantForMeal` (grocery-store ↔ meal seam); reads the shared week cursor from meal-plan |
+| **groceries** | `groceries-ui.js` (`createGroceriesModule(deps)` — shopping list, stores, pricing, receipts + receipt-scan, checklist, next-stop, pantry; 290 fns) with 24 pure normalizers exported top-level (boot-called by `defaultState`/`normalizeState`/`mergeStates`); + `grocery-catalog.js`, `grocery-sources.js`. `app.js` keeps `showShopApp`/`showInventoryApp` nav + the restaurant seam. See **GROCERIES_EXTRACTION.md**. | `"shop"` (a Shop space alongside `"checklist"`/`"inventory"`) | JSONB `grocery` section (`groceryStores, groceryBaseItems, persistentManualGroceries, receipts, groceryChecklist, pantry, priceHistory`, …). The live manual-grocery list is `state.persistentManualGroceries` (grocery-owned). ⚠️ legacy `week.manualGroceries` in meal-plan's `eat` record is **not** migrated (Decision #2b) — only a boot normalizer in app.js folds it in. **Cross-domain (all injected):** `inventoryItemList()` + `seedGroceryChecklistFromInventory` (inventory — see inventory row); exposes `groceryPlacesApiUrl`/`groceryPlacesRequestOptions` to app.js's restaurant seam (`selectRestaurantForMeal`); reads the shared week cursor (`weekKey`/`weekState`) + `buildGroceryItems` reads meal-plan slots + recipe ingredients; seam accessors for `shopSpace`, store-search location, and the receipt-scan draft |
 | **cook** | *(folded into **recipes** — not a separate module; see Decision #2)* | `"eat"` (part of the recipes view) | `state.activeCooking` + per-recipe `cookLog` (JSONB `eat` section) |
 | **travel** | `travel-*.js` (geo, ingest, interpret, itinerary, mode, model, optimize, refs, transitions) | `"explore"` | `state.travel*` (canonical in `travel-model.js`) |
 | **health** *(no health module yet)* | none — nutrition & Daily Dozen (`daily-dozen.js`, `nutrition-domain.js`, `nutrition-provider.js`) are **owned by the recipes cluster** (Decision #3); `food-health*.js` + the `"sweat"` exercise UI stay in `app.js` for now | `"sweat"` (exercise) | state sections |
@@ -152,14 +152,18 @@ agent per module: recipes / meal-plan / groceries).
   force circular access into the recipe view. So it moves **with** recipes. There is no
   `cook.js`; the four-way agent split becomes **three** (recipes / meal-plan / groceries).
 - **(b) Groceries ⇄ meal-plan share stored data, not just behavior — do NOT migrate it.**
-  `manualGroceries` (grocery-list data) is physically stored **inside meal-plan's per-week
-  record** in the `eat` Supabase section (`createBlankWeek()` puts it next to `slots`). This
-  is a data-storage overlap, not merely a code touchpoint. **Decision: leave the storage
-  exactly where it is.** Groceries becomes its own module but reads/writes `manualGroceries`
-  through an **injected getter/setter** into its current location (owned by meal-plan's
-  section) — the same *"preserve structure, don't fix it mid-extraction"* principle applied
-  to finance's sync gate. A future data-migration task can revisit relocating it if ever
-  wanted; it is **out of scope** for this extraction.
+  The `eat`-section per-week record carries a legacy `manualGroceries` field
+  (`createBlankWeek()` puts it next to `slots`). **Decision: leave the storage exactly where
+  it is** (finance-sync-gate principle — preserve structure, don't fix it mid-extraction).
+  *Refined during the extraction (2026-09-13):* the closer read showed the **live**
+  manual-grocery list Groceries reads/writes at runtime is `state.persistentManualGroceries`
+  (in the **grocery** section, grocery-owned — reached through the injected `state`, no
+  special accessor). The `eat`-record `week.manualGroceries` is a **legacy** field touched
+  only by a boot normalizer (`normalizePersistentManualGroceries`, called from
+  `normalizeState`) that folds it into `persistentManualGroceries`. So **no live getter/setter
+  into meal-plan's record is needed**, and that boot normalizer **stays in app.js** as
+  hydration glue (Decision #2c). `groceries-ui.js` never references `week.manualGroceries`.
+  A future data-migration task can revisit relocating the legacy field; **out of scope** here.
 - **(c) One shared `eat` shell + section stays as glue — it is not being split apart.**
   Recipes, meal-plan, and cook(-as-recipes-feature) all render within one shared shell
   (`activateEatShell()`) and store in one shared `eat` Supabase section. That shell/section
