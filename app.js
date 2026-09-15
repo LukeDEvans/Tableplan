@@ -1456,6 +1456,15 @@ applyThemeMode();
 // the boot render/bind pass can touch the Contacts page (the consts are not
 // hoisted). Shared touchpoints are injected; refreshPlanIfActive() re-renders the
 // calendar when a contact's birthday/date changes while the Plan page is open.
+// Calendar event-color palette. Declared here (hoisted above the domain factories) because
+// it is injected into the meal-plan factory (planner event dots) — a factory-instantiation
+// dep is evaluated at module-load, so the const must exist before that point.
+const PLAN_COLORS = [
+  "#4285f4","#039be5","#00bcd4","#009688","#0f9d58","#0b8043",
+  "#7cb342","#c0ca33","#f4b400","#f6bf26","#e8710a","#ff5722",
+  "#db4437","#d50000","#e91e63","#ad1457","#9c27b0","#6a1b9a",
+  "#ab47bc","#7986cb","#3f51b5","#795548","#607d8b","#616161",
+];
 const _contacts = createContactsModule({
   state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion,
   refreshPlanIfActive: () => { if (activeAppArea === "plan") renderPlanPage(); },
@@ -23650,12 +23659,6 @@ function escapeHtml(value) {
 // Curated palette (harmonious, readable as dots/bars), ordered by hue. Includes
 // the original 8 so pre-existing calendars still highlight a palette swatch; a
 // "custom" chip in the picker covers anything beyond this set.
-const PLAN_COLORS = [
-  "#4285f4","#039be5","#00bcd4","#009688","#0f9d58","#0b8043",
-  "#7cb342","#c0ca33","#f4b400","#f6bf26","#e8710a","#ff5722",
-  "#db4437","#d50000","#e91e63","#ad1457","#9c27b0","#6a1b9a",
-  "#ab47bc","#7986cb","#3f51b5","#795548","#607d8b","#616161",
-];
 const PLAN_APP_COLORS = { eat: "#0f9d58", play: "#ff5722", do: "#1976d2", watch: "#7b1fa2", birthday: "#e91e63", finance: "#b8860b" };
 
 // Calendar color picker palette: 6 base hues, each a light→deep ramp of 7 shades

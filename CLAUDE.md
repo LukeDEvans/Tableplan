@@ -164,10 +164,19 @@ top-level `migrateLegacyRecipeOrganization()` threw "Cannot access … before in
 **(c)** a **factory-body `let`/`const` whose initializer references a name that stayed in `app.js`**
 (reachable only via an injected getter) — `let activeAutoRuleDayId = activePlannerDayId;` moved
 verbatim into the meal-plan factory threw "activePlannerDayId is not defined" at instantiation
-(init such vars from the injected getter/dep, not the bare name). When
+(init such vars from the injected getter/dep, not the bare name); and **(d)** a **factory-
+instantiation dep passed immediately (shorthand `X,` or non-thunk `key: EXPR`) that names a
+top-level `app.js` const/let declared further down the file** — the deps object is evaluated at
+module-load, so `createMealplanModule({ …, PLAN_COLORS, … })` with `const PLAN_COLORS` declared
+~22k lines later threw "Cannot access 'PLAN_COLORS' before initialization" at boot (fix: declare
+the const **above** the factory instantiations, or inject it via a deferred getter thunk — guards
+(b) and (d) treat `name: (...a) => name(...a)` / `getX: () => x` as safe *because* they defer). When
 you extract or move a domain: keep boot-called normalizers/config as top-level exports **only if
-they close over module scope** (else leave them in `app.js`), and run any one-time migration/
-cleanup **after** the factory instantiations. Keep this test green; don't weaken or delete it.
+they close over module scope** (else leave them in `app.js`), run any one-time migration/
+cleanup **after** the factory instantiations, and declare any module const you inject into a
+factory **above** the instantiations. Keep this test green; don't weaken or delete it. (An esbuild
+bundle can't verify this — it hoists top-level `const`→`var`, hiding module-const TDZ; the faithful
+check is a native-ESM import of the *unbundled* source, which these static guards stand in for.)
 
 *Amended after RECIPES_SPLIT_MAP.md mapped the actual code (2026-09-13):*
 

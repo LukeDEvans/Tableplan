@@ -19,10 +19,19 @@ import { fileURLToPath } from "node:url";
 //   • migrateLegacyRecipeOrganization() / migrateGroceryDescriptorNames() — bare top-level
 //     statements that called a factory-provided const declared ~200 lines later →
 //     "Cannot access 'X' before initialization" (TDZ) at boot.
+//   • PLAN_COLORS — a plain app.js top-level const (a color palette) declared at line ~23k but
+//     passed as SHORTHAND into `createMealplanModule({ …, PLAN_COLORS, … })` at line ~1.7k. A
+//     factory-instantiation deps object is evaluated immediately at module-load, so injecting a
+//     not-yet-declared module const throws "Cannot access 'PLAN_COLORS' before initialization"
+//     at boot. Guard (b) missed it: it only tracked factory-DESTRUCTURED consts and explicitly
+//     EXCLUDED the instantiation blocks from scanning. Guard (d) covers this class.
 //
-// These two guards fail loudly (with the exact line) if either pattern is reintroduced.
+// These guards fail loudly (with the exact line) if any pattern is reintroduced.
 // DO NOT weaken or delete them without understanding that history — they are the only thing
-// that catches these before a browser does.
+// that catches these before a browser does. A headless native-ESM boot eval (importing the
+// UNBUNDLED source, which preserves module-const TDZ — an esbuild bundle hoists top-level
+// const→var and is BLIND to it) confirmed PLAN_COLORS is the only such violation on the path
+// through render()/bindEvents()/initializeApp().
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const read = (p) => readFileSync(root + p, "utf8");
@@ -270,5 +279,73 @@ describe("fitness: no boot-time code touches a factory const before its factory 
     const findings = scanBootReachability(read("/app.js"));
     const report = findings.map((f) => `  app.js:${f.line} [${f.site}] -> ${f.const}() available at line ${f.available} [${f.how}]`).join("\n");
     expect(findings.length, `\nBOOT-TIME TDZ violations (executed at module-load before the factory that provides the\nconst — move the call after the factory instantiations, or move the function into app.js):\n${report}\n`).toBe(0);
+  });
+});
+
+// ── (d) Factory-deps ordering guard (app.js) ────────────────────────────────────────────
+// A `createXModule({ … })` deps object is evaluated at module-load (when the factory is
+// instantiated near the top of app.js). Any dep passed IMMEDIATELY — as shorthand
+// (`PLAN_COLORS,`) or a non-deferred value (`key: EXPR` where EXPR is not an arrow/function
+// thunk) — is read right then. If it names a top-level app.js const/let declared LATER in the
+// file, that's a TDZ crash at boot ("Cannot access 'PLAN_COLORS' before initialization").
+// Deferred thunks/getters (`name: (...a) => name(...a)`, `getX: () => x`) are evaluated at CALL
+// time, not now, so their bodies are skipped — that's the whole point of the thunk pattern.
+function scanFactoryDepsOrder(src) {
+  const lines = src.split("\n");
+
+  // top-level const/let/var declarations (column-0 in this file) → first declaration line
+  const declAt = new Map();
+  for (let i = 0; i < lines.length; i++) {
+    let m = /^(?:const|let|var)\s+(\w+)\b/.exec(lines[i]);
+    if (m) { if (!declAt.has(m[1])) declAt.set(m[1], i); continue; }
+    m = /^(?:const|let|var)\s+\{([^}]+)\}/.exec(lines[i]); // top-level destructuring decl
+    if (m) for (const raw of m[1].split(",")) {
+      const n = raw.trim().split(":").pop().trim().replace(/\s*=.*$/, "");
+      if (/^\w+$/.test(n) && !declAt.has(n)) declAt.set(n, i);
+    }
+  }
+
+  const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  // split an object-body's text into top-level entries (respect (), [], {} nesting)
+  const splitEntries = (txt) => {
+    const out = []; let d = 0, cur = "";
+    for (const ch of txt) {
+      if ("([{".includes(ch)) d++;
+      else if (")]}".includes(ch)) d--;
+      if (ch === "," && d === 0) { out.push(cur); cur = ""; } else cur += ch;
+    }
+    if (cur.trim()) out.push(cur);
+    return out;
+  };
+
+  const findings = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^const _\w+ = create\w+Module\(\{/.test(lines[i])) continue;
+    let j = i; while (j < lines.length && !/^\}\);/.test(lines[j])) j++;
+    const body = stripComments(lines.slice(i, j + 1).join("\n"))
+      .replace(/^const _\w+ = create\w+Module\(\{/, "").replace(/\}\);\s*$/, "");
+    for (const entry0 of splitEntries(body)) {
+      const entry = entry0.trim();
+      if (!entry) continue;
+      // deferred thunk / getter — value is a function, evaluated at CALL time, not now
+      if (/:\s*(async\s*)?(function\b|\([^)]*\)\s*=>|\w+\s*=>)/.test(entry)) continue;
+      let refs = [];
+      const sh = /^(\w+)$/.exec(entry);            // shorthand `PLAN_COLORS`
+      const kv = /^(\w+)\s*:\s*(.+)$/s.exec(entry); // `key: valueExpr`
+      if (sh) refs = [sh[1]];
+      else if (kv) refs = [...kv[2].matchAll(/(?<![\w.])([A-Za-z_]\w*)/g)].map((r) => r[1]);
+      for (const r of refs) {
+        if (declAt.has(r) && declAt.get(r) > i) findings.push({ line: i + 1, dep: r, available: declAt.get(r) + 1 });
+      }
+    }
+  }
+  return findings.sort((a, b) => a.line - b.line);
+}
+
+describe("fitness: no factory-instantiation dep references a later-declared module const", () => {
+  it("app.js — every immediately-evaluated dep is declared before the factory runs", () => {
+    const findings = scanFactoryDepsOrder(read("/app.js"));
+    const report = findings.map((f) => `  app.js:${f.line} createXModule({ … ${f.dep} … }) — ${f.dep} is a top-level const/let declared later at line ${f.available}`).join("\n");
+    expect(findings.length, `\nFACTORY-DEPS ordering TDZ (a dep passed immediately into a factory instantiation is a module\nconst/let declared further down the file → "Cannot access 'X' before initialization" at boot.\nMove the declaration above the factory instantiations, or pass it via a deferred getter thunk):\n${report}\n`).toBe(0);
   });
 });
