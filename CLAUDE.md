@@ -160,7 +160,11 @@ references an **injected-only** dep (it runs outside the factory, so the name is
 this is how `recomputeMealPlanLayout`'s `meals.length = 0` hung the app on "Checking sign-in"; and
 **(b)** any code reachable from module-top-level statements or `loadState`/`normalizeState` that
 calls a **factory-destructured const before its factory has run** (TDZ) — this is how a stray
-top-level `migrateLegacyRecipeOrganization()` threw "Cannot access … before initialization". When
+top-level `migrateLegacyRecipeOrganization()` threw "Cannot access … before initialization"; and
+**(c)** a **factory-body `let`/`const` whose initializer references a name that stayed in `app.js`**
+(reachable only via an injected getter) — `let activeAutoRuleDayId = activePlannerDayId;` moved
+verbatim into the meal-plan factory threw "activePlannerDayId is not defined" at instantiation
+(init such vars from the injected getter/dep, not the bare name). When
 you extract or move a domain: keep boot-called normalizers/config as top-level exports **only if
 they close over module scope** (else leave them in `app.js`), and run any one-time migration/
 cleanup **after** the factory instantiations. Keep this test green; don't weaken or delete it.

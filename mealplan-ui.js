@@ -122,7 +122,7 @@ export function createMealplanModule(deps) {
   } = deps;
   _appState = state;
 
-  let activeAutoRuleDayId = activePlannerDayId;
+  let activeAutoRuleDayId = getActivePlannerDayId();
   let autoRulePointerDrag = null;
   let autoRuleSwipeGesture = null;
   let copiedAutoRuleValue = null;

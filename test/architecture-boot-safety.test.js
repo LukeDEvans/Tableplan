@@ -194,6 +194,77 @@ describe("fitness: no module export references an injected-only dep (export-scop
   }
 });
 
+// ── (c) Factory-init scope guard ────────────────────────────────────────────────────────
+// A variable declared at the direct body of `createXModule(deps)` is initialized when the
+// factory is INSTANTIATED (at app.js module-eval). Its initializer can only see the deps it
+// destructured, module scope, and earlier factory-body declarations — never a name that
+// stayed in app.js behind an injected getter. `let activeAutoRuleDayId = activePlannerDayId;`
+// (moved verbatim into the meal-plan factory, but activePlannerDayId stayed in app.js) threw
+// "activePlannerDayId is not defined" at instantiation — a crash the export-scope and
+// boot-reachability guards can't see (it's a factory-internal let initializer, not an export
+// or a call). Found by a headless module-eval; encoded here so it can't recur.
+function scanFactoryInit(src) {
+  // scope available inside the factory
+  const depsMatch = src.match(/const\s*\{\s*([\s\S]*?)\s*\}\s*=\s*deps;/);
+  const scope = new Set(["createId", "normalize", "_appState", "deps"]);
+  if (depsMatch) for (let n of depsMatch[1].split(",")) { n = n.trim().split(":")[0].trim(); if (/^\w+$/.test(n)) scope.add(n); }
+  for (const m of src.matchAll(/^import\s+\*\s+as\s+(\w+)/gm)) scope.add(m[1]);
+  for (const m of src.matchAll(/^import\s+\{([^}]*)\}/gm)) for (const y of m[1].split(",")) { const n = y.trim().split(/\s+as\s+/).pop().trim(); if (n) scope.add(n); }
+  for (const m of src.matchAll(/\bfunction (\w+)/g)) scope.add(m[1]);
+  for (const m of src.matchAll(/^(?:export )?(?:let|const|var)\s+(\w+)/gm)) scope.add(m[1]);
+
+  const BUILTINS = new Set(("null undefined true false NaN Infinity this arguments Math JSON Object Array String " +
+    "Number Boolean Date Promise Set Map WeakMap WeakSet RegExp Symbol Proxy Reflect Error parseInt parseFloat " +
+    "isNaN isFinite encodeURIComponent decodeURIComponent Function window document localStorage sessionStorage " +
+    "navigator location history fetch setTimeout clearTimeout setInterval clearInterval requestAnimationFrame " +
+    "cancelAnimationFrame queueMicrotask console URL URLSearchParams Blob File FileReader FormData Headers Request " +
+    "Response AbortController TextEncoder TextDecoder IntersectionObserver ResizeObserver MutationObserver " +
+    "CustomEvent Event Image Audio Node HTMLElement crypto performance structuredClone atob btoa globalThis Intl " +
+    "Uint8Array Int32Array Float64Array ArrayBuffer DataView WeakRef alert confirm prompt getComputedStyle DOMParser " +
+    "Notification Worker new typeof void delete in of instanceof await return if else for while do switch case " +
+    "break continue try catch finally throw yield let const var function").split(" "));
+
+  // strip comments / strings / templates / regex literals so their contents aren't read as refs;
+  // then blank object-literal keys (`{ key: … }` / `, key: …`) which are keys, not references.
+  const clean = (s) => s
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "")
+    .replace(/`(?:\\.|[^`\\])*`/g, "``").replace(/'(?:\\.|[^'\\])*'/g, "''").replace(/"(?:\\.|[^"\\])*"/g, '""')
+    .replace(/(^|[=(,:[?&|!{]\s*)\/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\n])+\/[gimsuy]*/g, "$1 0 ")
+    .replace(/([{,]\s*)([A-Za-z_]\w*)(\s*:)/g, "$1$3");
+
+  const lines = src.split("\n");
+  const fi = lines.findIndex((l) => /^export function create\w+Module\(deps\)/.test(l));
+  if (fi < 0) return [];
+  const declared = new Set(scope);
+  const findings = [];
+  let depth = 0;
+  for (let i = fi; i < lines.length; i++) {
+    const line = clean(lines[i]);
+    if (depth === 1) {
+      const m = /^\s*(?:let|const|var)\s+(\w+)\s*=\s*(.+?);\s*$/.exec(line);
+      if (m) {
+        const ids = [...m[2].matchAll(/(?<![\w.])([A-Za-z_]\w*)/g)].map((r) => r[1]);
+        const bad = [...new Set(ids.filter((x) => !BUILTINS.has(x) && !declared.has(x)))].sort();
+        if (bad.length) findings.push({ line: i + 1, name: m[1], refs: bad });
+        declared.add(m[1]);
+      }
+    }
+    for (const ch of line) { if (ch === "{") depth++; else if (ch === "}") depth--; }
+    if (depth <= 0 && i > fi) break;
+  }
+  return findings;
+}
+
+describe("fitness: no factory-body initializer references a name outside the factory's scope", () => {
+  for (const mod of FACTORY_MODULES) {
+    it(`${mod} — every factory-body let/const initializes from in-scope names`, () => {
+      const findings = scanFactoryInit(read("/" + mod));
+      const report = findings.map((f) => `  ${mod}:${f.line} let ${f.name} = … references out-of-scope [${f.refs.join(", ")}]`).join("\n");
+      expect(findings.length, `\nFactory-init scope violations (a var declared at the factory body is initialized at\ninstantiation and can't see a name that stayed in app.js — init it from an injected getter/dep\nor a literal):\n${report}\n`).toBe(0);
+    });
+  }
+});
+
 describe("fitness: no boot-time code touches a factory const before its factory runs", () => {
   it("app.js — module-eval + loadState/normalizeState reach no later-destructured const", () => {
     const findings = scanBootReachability(read("/app.js"));
