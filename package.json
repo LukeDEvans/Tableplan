@@ -7,6 +7,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "boot:check": "node scripts/check-boot.mjs",
+    "check:boot": "vite build && node scripts/check-boot.mjs",
     "ios:sync": "vite build && npx cap sync ios",
     "ios:open": "npx cap open ios"
   },
@@ -20,6 +22,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^6.2.2",
+    "playwright": "1.54",
     "vite": "^6.0.0",
     "vitest": "^4.1.10"
   }

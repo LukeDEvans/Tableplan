@@ -1,5 +1,29 @@
 {
   "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run test:*)",
+      "Bash(npx vitest run:*)",
+      "Bash(npx vitest:*)",
+      "Bash(npm run boot:check:*)",
+      "Bash(npm run check:boot:*)",
+      "Bash(node scripts/*)",
+      "Bash(node --check:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git restore:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(cat:*)",
+      "Bash(grep:*)",
+      "Bash(wc:*)",
+      "Bash(ls:*)"
+    ],
     "ask": [
       "Bash(git push:*)",
       "Bash(git push)",

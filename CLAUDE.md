@@ -178,6 +178,21 @@ factory **above** the instantiations. Keep this test green; don't weaken or dele
 bundle can't verify this — it hoists top-level `const`→`var`, hiding module-const TDZ; the faithful
 check is a native-ESM import of the *unbundled* source, which these static guards stand in for.)
 
+**▶ Browser boot check — run after any boot-order-sensitive change.** `scripts/check-boot.mjs`
+(Playwright + headless system Chrome) launches the app against the **running dev server**
+(`http://localhost:4174/`), watches the sign-in gate actually lift, enters local-dev mode, and
+smoke-navigates **Weather + Contacts**, failing with the exact console/page-error output if boot
+throws or hangs. It runs against the **un-bundled** dev-server source (Vite), which is the only
+thing that reproduces module-const TDZ in a browser — a production bundle hoists `const`→`var`
+and would *hide* it — so it catches exactly the class the static guards above defend, from the
+runtime side. It would have caught tonight's **PLAN_COLORS** and **migrateLegacyRecipeOrganization**
+crashes directly (both surface as an uncaught `Cannot access 'X' before initialization`). Commands:
+- `npm run check:boot` — **one-command**: `vite build` (compile check) **+** the browser boot check.
+- `npm run boot:check` — just the browser check (dev server must already be up: `npm run dev:local`).
+Requires Playwright, pinned to **1.54.x** (last line supporting this machine's Node 18); it uses the
+system Chrome via `channel:"chrome"`, so no Chromium download is needed. Run it after touching
+factory instantiations / boot-order code, before proposing a commit.
+
 *Amended after RECIPES_SPLIT_MAP.md mapped the actual code (2026-09-13):*
 
 - **(a) Cook is NOT a peer module — it folds into recipes as a feature.** Cook has no
