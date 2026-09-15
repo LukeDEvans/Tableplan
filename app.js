@@ -1450,8 +1450,6 @@ function setPageNotifCount(page, count) {
 }
 
 applyThemeMode();
-migrateLegacyRecipeOrganization();
-migrateGroceryDescriptorNames();
 
 // ── Contacts domain (extracted to contacts.js) ─────────────────────────
 // Instantiated here — ABOVE render()/bindEvents() — so its functions exist before
@@ -1834,6 +1832,16 @@ const {
   updateMealPlannedServingsFromContext,
   warmMealPlanRecipes,
 } = _mealplan;
+
+// One-time state migrations run AFTER all domain factories are instantiated (they call
+// factory-provided consts like migrateLegacyRecipeOrganization / groceryBaseItems, which are
+// not hoisted — running them earlier hit a TDZ ReferenceError at boot).
+migrateLegacyRecipeOrganization();
+migrateGroceryDescriptorNames();
+// Recipe-aware future-defaults cleanup — moved OUT of boot-time normalizeState (it reaches
+// activeRecipes, a factory const that isn't available during loadState). Run here at boot,
+// after the factories, and inline in applyStoredState for runtime re-hydration.
+cleanupAutoAppliedFutureMealDefaults(state);
 
 render();
 bindEvents();
@@ -4917,7 +4925,6 @@ function normalizeState(parsed) {
   syncIngredientOptionGlobals(normalized);
   migrateRecipeFoldersToTags(normalized);
   migratePlayExercisesToWorkouts(normalized);
-  cleanupAutoAppliedFutureMealDefaults(normalized);
   syncPublishedWeekArchiveFromPlans(normalized);
   migrateTravelIdeasToTripsOnce(normalized);
   return normalized;
@@ -6747,6 +6754,7 @@ function applyStoredState(storedState) {
   };
   Object.keys(state).forEach((key) => delete state[key]);
   Object.assign(state, normalizeState(storedState));
+  cleanupAutoAppliedFutureMealDefaults(state); // deferred out of normalizeState (see boot)
   state.collapsedSections = currentCollapsedSections || state.collapsedSections || defaultCollapsedSections();
   if (keepPub.pubArticles !== undefined) state.pubArticles = keepPub.pubArticles;
   if (keepPub.pubDefs !== undefined) state.pubDefs = keepPub.pubDefs;
