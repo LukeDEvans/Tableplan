@@ -86,7 +86,7 @@ export function normalizeRecipeTagSelection(tags) {
   return [...normalizedTags.values()].sort((a, b) => normalize(a).localeCompare(normalize(b)));
 }
 
-export function migrateRecipeFoldersToTags(targetState = state) {
+export function migrateRecipeFoldersToTags(targetState) {
   const foldersById = new Map((targetState.folders || []).map((folder) => [folder.id, folder]));
   const tagValues = [...(targetState.recipeTags || [])];
   (targetState.recipes || []).forEach((recipe) => {

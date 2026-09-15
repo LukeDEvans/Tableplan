@@ -152,6 +152,19 @@ cross-module references are deferred via `(...a) => name(...a)` thunks to avoid 
 module load. Extraction maps: RECIPES_EXTRACTION.md, MEALPLAN_EXTRACTION.md,
 GROCERIES_EXTRACTION.md.
 
+**⚠️ Boot-safety guard — do not bypass.** `test/architecture-boot-safety.test.js` runs on every
+`npm test`/CI pass and fails (with the exact file:line) on the two module-load crashes this
+extraction repeatedly shipped — neither of which the build or the rest of the suite can catch,
+since nothing else executes `app.js`'s module body: **(a)** a top-level module `export` that
+references an **injected-only** dep (it runs outside the factory, so the name is undefined) —
+this is how `recomputeMealPlanLayout`'s `meals.length = 0` hung the app on "Checking sign-in"; and
+**(b)** any code reachable from module-top-level statements or `loadState`/`normalizeState` that
+calls a **factory-destructured const before its factory has run** (TDZ) — this is how a stray
+top-level `migrateLegacyRecipeOrganization()` threw "Cannot access … before initialization". When
+you extract or move a domain: keep boot-called normalizers/config as top-level exports **only if
+they close over module scope** (else leave them in `app.js`), and run any one-time migration/
+cleanup **after** the factory instantiations. Keep this test green; don't weaken or delete it.
+
 *Amended after RECIPES_SPLIT_MAP.md mapped the actual code (2026-09-13):*
 
 - **(a) Cook is NOT a peer module — it folds into recipes as a feature.** Cook has no
