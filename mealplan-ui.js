@@ -49,85 +49,6 @@ const MEAL_TIME_WINDOWS = {
 const expandedMealContext = new Set();
 
 // ── Pure normalizers (top-level exports; boot-safe) ───────────────────────
-export function cleanupAutoAppliedFutureMealDefaults(targetState) {
-  const currentKey = dateKeyFromDate(startOfPrepWindow(new Date()));
-  Object.entries(targetState.plans || {}).forEach(([key, week]) => {
-    if (String(key) <= currentKey || !week || week.mealPlanView === "published" || week.publishedSlots) return;
-    if (!week.slots || typeof week.slots !== "object") return;
-    prepDays.forEach((day) => {
-      if (weekdayDefaultDayIds.has(day.id)) {
-        defaultMealEntries.forEach((defaultEntry) => removeDefaultMealEntryForState(targetState, week, day, defaultEntry));
-      }
-      daySpecificDefaultMealEntries
-        .filter((defaultEntry) => defaultEntry.dayId === day.id)
-        .forEach((defaultEntry) => removeDefaultMealEntryForState(targetState, week, day, defaultEntry));
-    });
-    week.defaultMealEntriesApplied = false;
-  });
-}
-
-export function removeDefaultMealEntryForState(targetState, week, day, defaultEntry) {
-  if (!week.slots?.[day.id] || typeof week.slots[day.id][defaultEntry.meal] === "undefined") return;
-  const entries = mealEntryList(slotEntries(week.slots[day.id][defaultEntry.meal]), defaultEntry.meal);
-  const expectedValues = defaultMealEntryValuesForState(targetState, defaultEntry.value);
-  if (!expectedValues.has(recipeIdForSlot(entries[defaultEntry.index]))
-    && !expectedValues.has(entries[defaultEntry.index])) return;
-  entries[defaultEntry.index] = "";
-  week.slots[day.id][defaultEntry.meal] = compactMealSlotEntries(entries, defaultEntry.meal);
-}
-
-export function defaultMealEntryValuesForState(targetState, value) {
-  const values = new Set([value]);
-  const recipe = (targetState.recipes || []).find((item) => normalize(item.name) === normalize(value));
-  if (recipe?.id) values.add(recipe.id);
-  const groceryItem = normalizeGroceryBaseItems(targetState.groceryBaseItems || []).find((item) => normalize(item) === normalize(value));
-  if (groceryItem) values.add(groceryMealSlotId(groceryItem));
-  return values;
-}
-
-export function mergeMealPlanConfig(newer, older) {
-  if (!newer && !older) return undefined;
-  if (!newer) return older;
-  if (!older) return newer;
-  const nMembers = newer.members || [];
-  const oMembers = older.members || [];
-  // A completely empty newer household must never erase a saved one — a fresh
-  // device starts with zero members and is not an intentional "delete all".
-  // When newer HAS members, its list is authoritative (deletes respected),
-  // with newer's fields winning per member.
-  const authoritative = nMembers.length ? nMembers : oMembers;
-  // Match by a STABLE identity: a linked account's user id survives even when
-  // the member list is rebuilt from group membership (which mints fresh member
-  // ids and comes back with dob:""). Matching by id alone lost the birthday on
-  // every such rebuild. Fall back to id for unlinked members.
-  const keyOf = (m) => (m.linkedUserId ? `u:${m.linkedUserId}` : `i:${m.id}`);
-  const oByKey = new Map(oMembers.map((m) => [keyOf(m), m]));
-  const members = authoritative.map((n) => {
-    const o = oByKey.get(keyOf(n));
-    if (!o) return n;
-    const merged = { ...o, ...n };
-    // Empty-never-erases: a member rebuilt from group membership carries dob:""
-    // — don't let that blank a saved birthday.
-    if (!n.dob && o.dob) merged.dob = o.dob;
-    return merged;
-  });
-  // Meal-type ORDER is meaningful (it lays out the day: breakfast, AM snack,
-  // lunch, …), so the most recent writer must be authoritative for both the
-  // ordering AND deletions — exactly like members above. The old union-of-ids
-  // approach rebuilt the list in OLDER's order and appended newer-only types at
-  // the end, which silently shoved freshly-inserted meals (e.g. AM/PM snack)
-  // back to the bottom of the day after a sync. Empty-never-erases still holds:
-  // a fresh device with no types must not wipe a saved list.
-  const nTypes = newer.mealTypes || [];
-  const oTypes = older.mealTypes || [];
-  const oTypeById = new Map(oTypes.map((t) => [t.id, t]));
-  const authoritativeTypes = nTypes.length ? nTypes : oTypes;
-  const mealTypes = authoritativeTypes.map((n) => ({ ...(oTypeById.get(n.id) || {}), ...n }));
-  // notifView is a plain scalar preference — the most recent writer wins.
-  const notifView = newer.notifView || older.notifView;
-  return { members, mealTypes, notifView };
-}
-
 export function defaultMealPlanConfig() {
   return {
     // No seeded household — a fresh account starts with just the signed-in
@@ -164,67 +85,6 @@ export function normalizeMealPlanConfig(config) {
   };
 }
 
-export function recomputeMealPlanLayout(config) {
-  const cfg = config || normalizeMealPlanConfig(_appState.mealPlanConfig);
-  const memberLabels = cfg.members.map(m => m.label);
-  const keysByType = {};
-  cfg.mealTypes.forEach(type => {
-    keysByType[type.id] = memberLabels.map(m => `${m} ${type.label}`);
-  });
-  const firstType = cfg.mealTypes[0];
-  const lastType = cfg.mealTypes[cfg.mealTypes.length - 1];
-  const secondType = cfg.mealTypes[1];
-  const allKeys = cfg.mealTypes.flatMap(t => keysByType[t.id]);
-  const lastKeys = lastType ? keysByType[lastType.id] : [];
-  const allButLastKeys = cfg.mealTypes.slice(0, -1).flatMap(t => keysByType[t.id]);
-
-  breakfastMeals.length = 0;
-  (firstType ? keysByType[firstType.id] : []).forEach(k => breakfastMeals.push(k));
-  lunchMeals.length = 0;
-  (secondType ? keysByType[secondType.id] : []).forEach(k => lunchMeals.push(k));
-  dinnerMeals.length = 0;
-  lastKeys.forEach(k => dinnerMeals.push(k));
-
-  meals.length = 0;
-  allKeys.forEach(k => meals.push(k));
-
-  Object.keys(combinedMealSections).forEach(k => delete combinedMealSections[k]);
-  cfg.mealTypes.forEach(type => {
-    combinedMealSections[`Combined ${type.label}`] = {
-      label: type.label,
-      members: keysByType[type.id]
-    };
-  });
-
-  mealColumnConfigs.length = 0;
-  cfg.mealTypes.forEach(type => {
-    mealColumnConfigs.push({
-      label: type.label,
-      meals: keysByType[type.id],
-      combinedMeal: `Combined ${type.label}`
-    });
-  });
-
-  autoRuleMealKeys.length = 0;
-  [...meals, ...Object.keys(combinedMealSections)].forEach(k => autoRuleMealKeys.push(k));
-
-  prepDays.forEach(day => {
-    if (day.id === "friday-start") {
-      day.meals.length = 0;
-      lastKeys.forEach(k => day.meals.push(k));
-    } else if (day.id === "friday-finish") {
-      day.meals.length = 0;
-      allButLastKeys.forEach(k => day.meals.push(k));
-    }
-  });
-}
-
-export function defaultAutoGenerateRules() {
-  return meals.map(slotKey =>
-    autoRule(createId("rule"), prepDays.map(d => d.id), slotKey, 0, "skip")
-  );
-}
-
 export function autoRule(id, dayIds, meal, index, action = "any", folderName = "", value = "") {
   return {
     id,
@@ -238,45 +98,6 @@ export function autoRule(id, dayIds, meal, index, action = "any", folderName = "
     tagMatchMode: "any",
     selectionMode: "random"
   };
-}
-
-export function normalizeAutoGenerateRules(rules) {
-  const source = Array.isArray(rules) && rules.length ? rules : defaultAutoGenerateRules();
-  return source
-    .map((rule) => normalizeAutoGenerateRule(rule))
-    .filter(Boolean);
-}
-
-export function normalizeAutoGenerateRule(rule) {
-  const migrated = migrateLegacyAutoRuleTarget(rule);
-  if (!migrated) return null;
-  const legacyFolderTag = rule.folderName ? [rule.folderName] : [];
-  const action = ["folder", "folderSame"].includes(rule.action) ? "tags" : rule.action;
-  return {
-    id: rule.id || createId("rule"),
-    dayIds: Array.isArray(rule.dayIds) && rule.dayIds.length ? rule.dayIds.filter((dayId) => prepDays.some((day) => day.id === dayId)) : prepDays.map((day) => day.id),
-    meal: autoRuleMealKeys.includes(migrated.meal) ? migrated.meal : (autoRuleMealKeys[0] || ""),
-    index: Number.isInteger(migrated.index) ? migrated.index : 0,
-    action: ["any", "custom", "ingredient", "skip", "tags"].includes(action) ? action : "any",
-    folderName: rule.folderName || "",
-    value: rule.value || "",
-    tags: normalizeRecipeTagSelection([...(Array.isArray(rule.tags) ? rule.tags : []), ...legacyFolderTag]),
-    tagMatchMode: rule.tagMatchMode === "all" ? "all" : "any",
-    selectionMode: rule.selectionMode === "leastRecent" ? "leastRecent" : "random"
-  };
-}
-
-export function migrateLegacyAutoRuleTarget(rule) {
-  if (autoRuleMealKeys.includes(rule.meal)) return { meal: rule.meal, index: Number.isInteger(rule.index) ? rule.index : 0 };
-  const index = Number.isInteger(rule.index) ? rule.index : 0;
-  const legacyTargets = {
-    Breakfast: breakfastMeals,
-    Lunch: lunchMeals,
-    Dinner: dinnerMeals
-  };
-  if (legacyTargets[rule.meal]?.[index]) return { meal: legacyTargets[rule.meal][index], index: 0 };
-  if (rule.meal === "Extras") return { meal: "Extras", index: 0 };
-  return null;
 }
 
 export function mealEntryList(entries, meal) {
@@ -297,7 +118,7 @@ export function groceryMealSlotId(item, servings = 1) {
 // ══════════════════════════════════════════════════════════════════════════
 export function createMealplanModule(deps) {
   const {
-    state, elements, meals, prepDays, breakfastMeals, lunchMeals, dinnerMeals, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys, getActiveAppArea, getAuthSession, getCurrentWeek, getDraggedDoTask, getDraggedPlayTask, getActivePlannerDayId, setActivePlannerDayId, getLastMealDragPoint, setLastMealDragPoint, getRestaurantSearchPending, setRestaurantSearchPending, getRestaurantSearchSuggestions, setRestaurantSearchSuggestions, getSuppressNextWeekLabelClick, setSuppressNextWeekLabelClick, getPendingMealRecipeSelection, setPendingMealRecipeSelection, getPendingMealIngredientSelection, setPendingMealIngredientSelection, getPendingAutoRuleRecipeSelection, setPendingAutoRuleRecipeSelection, getPendingAutoRuleIngredientSelection, setPendingAutoRuleIngredientSelection, getMealPlanNotifOpen, setMealPlanNotifOpen, getMealPlanRecipes, setMealPlanRecipes, getRestaurantInfoPopoverContext, setRestaurantInfoPopoverContext, acquireGroceryStoreSearchLocation, activeDayEventsTemplate, activeRecipes, addDays, autoEstimateNutrition, bindConfigListDrag, calendarTabStyle, callGmailApi, clearDoTaskDragState, clearPlayTaskDragState, cloneCombinedMealSections, cloneMealSlots, closeFloatingMenus, closeFolderMenu, closeSettingsMenu, closeWeekJumpMenu, combinedMealSectionsForWeek, combinedRecipeTime, compactDayLabel, compactMealSlotEntries, compactSlotEntries, dateFromWeekKey, dateKeyFromDate, defaultCollapsedSections, deleteDraggedDoTask, deleteDraggedPlayTask, displayMealName, doBacklogTasks, ensureCombinedMealSectionShape, ensureMealSlotShape, escapeHtml, focusGroceryLibraryInput, folderName, formatDailyDozenServings, formatWeekRange, getAppName, getGroceryStoreSearchLocation, groceryBaseItems, groceryPlacesApiUrl, groceryPlacesRequestOptions, grocerySuggestionItems, importViaGateway, isDescendantFolder, isPlannedRecipeEntry, isPublishedMealPlanView, makeSortable, mealEntryValue, mealKeysForDay, mealSlotsForWeek, minutesOfDay, normalizeCookLog, normalizeDoTasks, normalizeGroceryBaseItems, normalizeIngredients, normalizeInstructionSteps, normalizeNutritionFacts, normalizePublishedWeeks, normalizeRecipeTagSelection, normalizeRecipeUrlInput, normalizedFolders, openDailyDozenPage, openGroceriesPage, openGroceryReviewItems, openPlanEventDialog, openPublishedGroceryReview, openRecipeBoxPage, openRecipeView, persist, persistImmediately, planEventOccursOn, plannedEntryAtLocation, plannedServingsForEntry, plannerDayIdForDate, recipeDefaultServings, recipeForSlot, recipeIdForSlot, recipeTags, render, renderCollapsedSections, renderDoPlanner, renderFolders, renderGroceries, renderGroceryLibrary, renderPlayPlanner, renderTasksPage, saveRecipeRow, scaledIngredientToText, setCombinedMealSection, setPageNotifCount, setPageTitle, showMailToast, slotEntries, startOfPrepWindow, storeDirectionsUrl, syncedCalendarEventsForDate, unlistedGroceryItemsForWeek, updateTabIndicator, weekKey, weekState,
+    state, elements, meals, prepDays, breakfastMeals, lunchMeals, dinnerMeals, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys, getActiveAppArea, getAuthSession, getCurrentWeek, getDraggedDoTask, getDraggedPlayTask, getActivePlannerDayId, setActivePlannerDayId, getLastMealDragPoint, setLastMealDragPoint, getRestaurantSearchPending, setRestaurantSearchPending, getRestaurantSearchSuggestions, setRestaurantSearchSuggestions, getSuppressNextWeekLabelClick, setSuppressNextWeekLabelClick, getPendingMealRecipeSelection, setPendingMealRecipeSelection, getPendingMealIngredientSelection, setPendingMealIngredientSelection, getPendingAutoRuleRecipeSelection, setPendingAutoRuleRecipeSelection, getPendingAutoRuleIngredientSelection, setPendingAutoRuleIngredientSelection, getMealPlanNotifOpen, setMealPlanNotifOpen, getMealPlanRecipes, setMealPlanRecipes, getRestaurantInfoPopoverContext, setRestaurantInfoPopoverContext, acquireGroceryStoreSearchLocation, activeDayEventsTemplate, activeRecipes, addDays, autoEstimateNutrition, bindConfigListDrag, calendarTabStyle, callGmailApi, clearDoTaskDragState, clearPlayTaskDragState, cloneCombinedMealSections, cloneMealSlots, closeFloatingMenus, closeFolderMenu, closeSettingsMenu, closeWeekJumpMenu, combinedMealSectionsForWeek, combinedRecipeTime, compactDayLabel, compactMealSlotEntries, compactSlotEntries, dateFromWeekKey, dateKeyFromDate, defaultCollapsedSections, deleteDraggedDoTask, deleteDraggedPlayTask, displayMealName, doBacklogTasks, ensureCombinedMealSectionShape, ensureMealSlotShape, escapeHtml, focusGroceryLibraryInput, folderName, formatDailyDozenServings, formatWeekRange, getAppName, getGroceryStoreSearchLocation, groceryPlacesApiUrl, groceryPlacesRequestOptions, grocerySuggestionItems, importViaGateway, isDescendantFolder, isPlannedRecipeEntry, isPublishedMealPlanView, makeSortable, mealEntryValue, mealKeysForDay, mealSlotsForWeek, minutesOfDay, normalizeAutoGenerateRule, normalizeAutoGenerateRules, normalizeCookLog, normalizeDoTasks, normalizeIngredients, normalizeInstructionSteps, normalizeNutritionFacts, normalizePlannedRecipeEntry, normalizePublishedWeeks, normalizeRecipeTagSelection, normalizeRecipeUrlInput, normalizedFolders, openDailyDozenPage, openGroceriesPage, openGroceryReviewItems, openPlanEventDialog, openPublishedGroceryReview, openRecipeBoxPage, openRecipeView, persist, persistImmediately, planEventOccursOn, plannedEntryAtLocation, plannedServingsForEntry, plannerDayIdForDate, recipeDefaultServings, recipeForSlot, recipeIdForSlot, recipeTags, recomputeMealPlanLayout, render, renderCollapsedSections, renderDoPlanner, renderFolders, renderGroceries, renderGroceryLibrary, renderPlayPlanner, renderTasksPage, saveRecipeRow, scaledIngredientToText, setCombinedMealSection, setPageNotifCount, setPageTitle, showMailToast, slotEntries, storeDirectionsUrl, syncedCalendarEventsForDate, unlistedGroceryItemsForWeek, updateTabIndicator, weekKey, weekState,
   } = deps;
   _appState = state;
 
@@ -332,11 +153,6 @@ function createPlannedRecipeEntry(recipe, dayId = "", meal = "", plannedServings
     mealType: meal,
     plannedServings: plannedServings ?? recipeDefaultServings(recipe)
   });
-}
-
-function normalizePlannedRecipeEntry(entry) {
-  if (!isPlannedRecipeEntry(entry)) return entry;
-  return LiveMealPlanServings.normalizeMealPlanRecipe(entry, activeRecipes().find((recipe) => recipe.id === entry.recipeId));
 }
 
 function mergeCombinedMealSections(newer, older) {
@@ -4246,7 +4062,6 @@ function mealPlanNutritionTotals(week = weekState()) {
     mealPlanNotifBellHtml,
     mergeCombinedMealSections,
     missingRestoreAutoRules,
-    normalizePlannedRecipeEntry,
     openAutoRulesDialog,
     openMealPlanContextMenu,
     openMealPlanSettingsDialog,

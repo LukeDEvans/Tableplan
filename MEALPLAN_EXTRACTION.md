@@ -269,3 +269,28 @@ which would have broken the app at browser load. The meal-plan wiring uses the s
 no regression elsewhere, not the meal-plan UI. Needs manual click-through (planner render, meal-entry
 drag/drop + editing, auto-rules, pickers, auto-generate, restaurant search, meal-plan settings,
 grocery-list refresh from the plan).
+
+
+## Post-extraction fix (2026-09-14) — boot hang on "Checking sign-in…"
+
+The first pass mis-classified 10 meal-plan config/model/boot functions as top-level exports of
+`mealplan-ui.js`, but they read/mutate the shared meal-layout arrays (`meals`, `prepDays`,
+`breakfastMeals`, `lunchMeals`, `dinnerMeals`, `combinedMealSections`, `mealColumnConfigs`,
+`autoRuleMealKeys`) that stayed in `app.js` and are only **injected into the factory** — a
+top-level export can't see injected deps. `recomputeMealPlanLayout` (called unconditionally from
+`normalizeState` during `const state = loadState()` at module-eval) hit `meals.length = 0` with
+`meals` undefined → `ReferenceError` → module evaluation aborted before `render()`/`initializeApp()`
+ran → the sign-in gate stuck on "Checking sign-in…".
+
+**Fix:** moved these 10 back to `app.js` (they belong with the shared arrays they own):
+`recomputeMealPlanLayout`, `mergeMealPlanConfig`, `defaultAutoGenerateRules`,
+`normalizeAutoGenerateRule`, `normalizeAutoGenerateRules`, `migrateLegacyAutoRuleTarget`,
+`cleanupAutoAppliedFutureMealDefaults`, `removeDefaultMealEntryForState`,
+`defaultMealEntryValuesForState`, `normalizePlannedRecipeEntry`. The factory injects the 3 of
+these its runtime code calls. `mealplan-ui.js` now has **6** clean top-level exports + **230**
+factory fns (236 moved total).
+
+**Verification tooling added:** an export-scope guard that flags any top-level module export
+referencing an injected-only name via *any* access form (call, property, mutation) — the exact
+gap that let this through. Re-scanned all modules: `mealplan-ui.js`, `recipes-ui.js`,
+`groceries-ui.js`, `finance-ui.js` (+ contacts/weather/inventory) are all clean.
