@@ -636,6 +636,10 @@ let mediaAudioUnlocked = false;
 // Articles we've already auto-fetched text for this session (avoid re-hammering
 // the fetch endpoint when a fetch legitimately returns nothing).
 const articleAutoFetchTried = new Set();
+// One-at-a-time guard for the background article-body backfill (below). Not a
+// "done" flag — the pass is resumable across boots (it only ever targets still-inline
+// articles), so a future boot re-runs it for anything left deferred.
+let articleBackfillRunning = false;
 function ensureMediaAudioEl() {
   if (!mediaAudioEl) { mediaAudioEl = new Audio(); mediaAudioEl.preload = "auto"; }
   return mediaAudioEl;
@@ -2828,6 +2832,7 @@ async function initializeApp() {
   initAiChatPanel();
   initRecipeTimer();
   wireMiniPlayer();
+  scheduleArticleBodyBackfill(); // offload any still-inline saved-article bodies (background)
 }
 
 function handleHashNavigation() {
@@ -33067,6 +33072,93 @@ function stashArticleBody(article) {
       if (ref?.cloud && JSON.stringify(article.bodyRef) !== JSON.stringify(ref)) { article.bodyRef = ref; persist(); }
     } catch { /* non-fatal — article.text remains authoritative */ }
   })();
+}
+
+// ── Background article-body backfill ─────────────────────────────────────────────
+// Extends the on-open stashArticleBody() pattern into a bounded, throttled, resumable
+// pass over the backlog: saved articles whose full text still rides the synced media
+// section (no bodyRef.cloud yet). Each body is uploaded to the reading-content bucket
+// via the same saveBody() path; only once the upload is CONFIRMED (ref.cloud present —
+// putBytes adds the cloud location solely after Storage returns success) do we record
+// bodyRef, which lets the write path strip the text from the synced row on the next sync.
+// We never strip here and never before a confirmed upload, so a failed/aborted upload
+// simply leaves the article inline for a later run. This is the "later, separately-
+// reviewed step" media-content.js's header anticipated — driven over the existing backlog.
+
+// Definitive readback for UNRECOVERABLE (email-sourced, url-less) bodies: prove the
+// bucket object is retrievable AND byte-exact before we ever let its inline text be
+// stripped. Prefer a false negative (stays inline) over any risk of a false positive.
+async function verifyCloudArticleBody(ref, expectedText) {
+  try {
+    if (!supabaseClient || !ref?.cloud?.bucket || !ref?.cloud?.path) return false;
+    const { data, error } = await supabaseClient.storage.from(ref.cloud.bucket).download(ref.cloud.path);
+    if (error || !data) return false;
+    const text = new TextDecoder().decode(new Uint8Array(await data.arrayBuffer()));
+    return text === expectedText;
+  } catch { return false; }
+}
+
+// Offload one article. Returns { status:"ok"|"deferred", reason?, unrecoverable }.
+// NEVER mutates article.text and only sets bodyRef on a confirmed (and, for url-less
+// articles, readback-verified) durable copy.
+async function backfillOneArticleBody(ac, article) {
+  const unrecoverable = !article.url; // email saves (and manual no-URL saves) can't be re-fetched
+  let ref;
+  try { ref = await ac.saveBody(article.id, article.text); }
+  catch (e) { return { status: "deferred", reason: "saveBody threw (" + (e?.message || e) + ")", unrecoverable }; }
+  if (!ref || !ref.cloud) return { status: "deferred", reason: "upload not confirmed (offline/transient)", unrecoverable };
+  if (unrecoverable && !(await verifyCloudArticleBody(ref, article.text))) {
+    return { status: "deferred", reason: "email readback verify failed — kept inline", unrecoverable };
+  }
+  article.bodyRef = ref; // durable elsewhere → the write path may now strip the synced text
+  return { status: "ok", unrecoverable };
+}
+
+async function backfillArticleBodies() {
+  if (articleBackfillRunning) return;
+  if (!canUseCloudStorage() || !authSession?.access_token) return; // local-dev/offline → retry next boot
+  let ac = null;
+  try { ac = await getArticleContent(); } catch { ac = null; }
+  if (!ac) return;
+
+  const candidates = (state.savedArticles || []).filter(
+    (a) => a && typeof a.text === "string" && a.text.length > 0 && !(a.bodyRef && a.bodyRef.cloud),
+  );
+  if (!candidates.length) return;
+
+  articleBackfillRunning = true;
+  const BATCH = 6, DELAY_MS = 2000;
+  let processed = 0, offloaded = 0, deferred = 0, emailOffloaded = 0, emailDeferred = 0;
+  const reasons = new Map();
+  console.info(`[article-backfill] start: ${candidates.length} inline article(s) to offload (batches of ${BATCH}, ${DELAY_MS}ms apart).`);
+  try {
+    for (let i = 0; i < candidates.length; i += BATCH) {
+      const batch = candidates.slice(i, i + BATCH);
+      let batchOffloaded = 0;
+      for (const article of batch) {
+        if (article.bodyRef?.cloud) continue; // an on-open stash may have offloaded it since
+        const r = await backfillOneArticleBody(ac, article);
+        processed++;
+        if (r.status === "ok") { offloaded++; batchOffloaded++; if (r.unrecoverable) emailOffloaded++; }
+        else { deferred++; if (r.unrecoverable) emailDeferred++; reasons.set(r.reason, (reasons.get(r.reason) || 0) + 1); }
+      }
+      if (batchOffloaded > 0) persist(); // converge the strip via the existing debounced write
+      console.info(`[article-backfill] progress ${Math.min(i + BATCH, candidates.length)}/${candidates.length} — offloaded ${offloaded}, deferred ${deferred}`);
+      if (i + BATCH < candidates.length) await new Promise((res) => setTimeout(res, DELAY_MS));
+    }
+  } finally {
+    articleBackfillRunning = false;
+    console.info(`[article-backfill] done: processed ${processed}, offloaded ${offloaded} (email ${emailOffloaded}), deferred ${deferred} (email ${emailDeferred}, left inline for next run).`);
+    for (const [reason, n] of reasons) console.info(`[article-backfill]   deferred ×${n}: ${reason}`);
+  }
+}
+
+// Kick the backfill off well after boot so it never competes with first paint or
+// hydration; fully non-blocking and self-throttling once running.
+function scheduleArticleBodyBackfill() {
+  const kick = () => backfillArticleBodies().catch((e) => console.warn("[article-backfill] aborted:", e?.message || e));
+  if (typeof requestIdleCallback === "function") requestIdleCallback(() => setTimeout(kick, 4000), { timeout: 12000 });
+  else setTimeout(kick, 6000);
 }
 
 // Fetches an article's body text into state (returns the outcome). Shared by
