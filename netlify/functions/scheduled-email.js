@@ -27,10 +27,15 @@ exports.handler = async () => {
   const resendKey = (process.env.RESEND_API_KEY || "").trim();
   if (!anthropicKey || !resendKey) { console.log("[scheduled-email] Missing API keys"); return ok(); }
 
-  const appState = await loadLatestState(serviceKey);
-  if (!appState) { console.log("[scheduled-email] No state found"); return ok(); }
+  const identity = await resolveAccountIdentity(serviceKey);
+  if (!identity) { console.log("[scheduled-email] No state found"); return ok(); }
 
-  const sched = appState.weeklyEmailSettings?.emailSchedule;
+  // Cheap pre-check: only the small "config" section is needed to know
+  // whether the feature is even on and whether it's due — the multi-MB
+  // full-state fetch (loadLatestState below) must not run on every 15-min
+  // tick just to find out the schedule is disabled.
+  const configState = assembleSections(await fetchSections(serviceKey, identity, ["config"]));
+  const sched = configState.weeklyEmailSettings?.emailSchedule;
   if (!sched?.enabled || !sched.days?.length) { console.log("[scheduled-email] Schedule disabled or no days"); return ok(); }
 
   if (!shouldSendNow(sched)) { console.log("[scheduled-email] Not time to send"); return ok(); }
@@ -46,6 +51,8 @@ exports.handler = async () => {
   try {
     const to = await resolveRecipientEmail(serviceKey);
     if (!to) { console.log("[scheduled-email] No recipient email could be determined"); return ok(); }
+    const appState = await loadLatestState(serviceKey, identity);
+    if (!appState) { console.log("[scheduled-email] No state found"); return ok(); }
     const html = await generateEmailHtml(anthropicKey, appState);
     const from = process.env.WEEKLY_REVIEW_FROM || DEFAULT_FROM_EMAIL;
     const subject = `Your Weekly Review – ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}`;
@@ -81,12 +88,20 @@ function shouldSendNow(sched) {
 
 const SECTION_NAMES = ["eat", "grocery", "do", "play", "watch", "media", "plan", "health", "inventory", "recreate", "config"]; // NOTE: "finance" is intentionally excluded — never feed financial data into AI prompts
 
-async function loadLatestState(serviceKey) {
-  const headers = { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" };
+function supabaseHeaders(serviceKey) {
+  return { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, accept: "application/json" };
+}
+
+// Finds the household (baseId) + admin uid this schedule/state belongs to,
+// WITHOUT pulling any `state` payload — just ids + timestamps, matching
+// daily-briefing.js's query shape. Section state is fetched separately
+// (fetchSections below), only for the sections actually needed.
+async function resolveAccountIdentity(serviceKey) {
+  const headers = supabaseHeaders(serviceKey);
 
   // Find the most recently updated row to determine the base stateId
   const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/tableplan_states?id=not.in.(email_schedule_log)&select=id,state,updated_at&order=updated_at.desc&limit=20`,
+    `${SUPABASE_URL}/rest/v1/tableplan_states?id=not.in.(email_schedule_log)&select=id,updated_at&order=updated_at.desc&limit=20`,
     { headers }
   );
   if (!res.ok) throw new Error(`Supabase load failed: ${res.status}`);
@@ -96,28 +111,11 @@ async function loadLatestState(serviceKey) {
   const rows = allRows.filter(r => !/^(gmail_|mailsugg_|mailai_|u-|backup-|email_schedule_log|push_schedule_log)/.test(r.id) && r.id.includes(":"));
   if (!rows.length) return null;
 
-  // Sort by inner stateUpdatedAt to find the most current base state
-  const sorted = rows
-    .filter(r => r.state)
-    .sort((a, b) => {
-      const ta = a.state.stateUpdatedAt || a.updated_at || "";
-      const tb = b.state.stateUpdatedAt || b.updated_at || "";
-      return tb.localeCompare(ta);
-    });
-  if (!sorted.length) return null;
+  const baseId = rows[0].id.split(":")[0];
 
-  const latestRow = sorted[0];
-  // Extract base stateId — strip ":section" suffix if present
-  const baseId = latestRow.id.includes(":") ? latestRow.id.split(":")[0] : latestRow.id;
-
-  if (!latestRow.id.includes(":")) {
-    // Old unified format — return state directly
-    return latestRow.state;
-  }
-
-  // Sectioned format: household rows overlaid with the admin's PERSONAL rows
-  // (day-to-day data lives in the member's personal store now; the email goes
-  // to the admin, so their personal data wins per key when it has content).
+  // Household rows overlaid with the admin's PERSONAL rows (day-to-day data
+  // lives in the member's personal store now; the email goes to the admin,
+  // so their personal data wins per key when it has content).
   let adminUid = null;
   try {
     const ar = await fetch(
@@ -127,17 +125,24 @@ async function loadLatestState(serviceKey) {
     if (ar.ok) adminUid = (await ar.json())[0]?.user_id || null;
   } catch { /* household-only */ }
 
+  return { baseId, adminUid };
+}
+
+async function fetchSections(serviceKey, { baseId, adminUid }, sectionNames) {
+  const headers = supabaseHeaders(serviceKey);
   const sectionIds = [
-    ...SECTION_NAMES.map(s => `${baseId}:${s}`),
-    ...(adminUid ? SECTION_NAMES.map(s => `u-${adminUid}:${s}`) : []),
+    ...sectionNames.map(s => `${baseId}:${s}`),
+    ...(adminUid ? sectionNames.map(s => `u-${adminUid}:${s}`) : []),
   ].join(",");
-  const sectionRes = await fetch(
+  const res = await fetch(
     `${SUPABASE_URL}/rest/v1/tableplan_states?id=in.(${sectionIds})&select=id,state`,
     { headers }
   );
-  if (!sectionRes.ok) throw new Error(`Supabase section load failed: ${sectionRes.status}`);
-  const sectionRows = await sectionRes.json();
+  if (!res.ok) throw new Error(`Supabase section load failed: ${res.status}`);
+  return res.json();
+}
 
+function assembleSections(sectionRows) {
   const assembled = {};
   const overlay = {};
   let latestTs = "";
@@ -153,6 +158,12 @@ async function loadLatestState(serviceKey) {
   }
   if (latestTs) assembled.stateUpdatedAt = latestTs;
   return assembled;
+}
+
+async function loadLatestState(serviceKey, identity) {
+  const sectionRows = await fetchSections(serviceKey, identity, SECTION_NAMES);
+  if (!sectionRows.length) return null;
+  return assembleSections(sectionRows);
 }
 
 async function readLastSentAt(serviceKey) {
