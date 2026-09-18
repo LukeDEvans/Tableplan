@@ -1957,7 +1957,7 @@ setInterval(() => {
 setInterval(() => {
   if (!canUseLocalBackend()) return;
   if (!(state.planCalendars || []).some((c) => c.url && c.enabled)) return;
-  fetchAllPlanCalendars();
+  refreshAllCalendarSources({ kinds: ["ics"] }); // 15-min background sweep — ics pipeline only (unchanged)
 }, 15 * 60 * 1000);
 
 function initTouchDragPolyfill() {
@@ -2895,7 +2895,7 @@ async function initializeApp() {
   applyInitialMealPlanFocus();
   handleImportUrlParameter();
   handleHashNavigation();
-  loadCalendarEvents();
+  refreshAllCalendarSources({ kinds: ["linked"] }); // boot: refresh the linked pipeline (ics refreshes on Plan-open)
   initAiChatPanel();
   initRecipeTimer();
   wireMiniPlayer();
@@ -7587,7 +7587,7 @@ function showPlanApp(event) {
   elements.activeCookingSection.hidden = true;
   setPageTitle("Calendar");
   setPageHash("schedule");
-  fetchAllPlanCalendars();
+  refreshAllCalendarSources({ kinds: ["ics"] }); // Plan-open: refresh the ics pipeline only (linked refreshes on boot/CRUD)
   renderPlanCalList(); // populate the left sidebar's calendar manager
   renderPlanPage();
   // T2: the bell is Tasks' only entry point — hide it when the Tasks page is
@@ -17395,7 +17395,7 @@ function saveCalendarSettings() {
   addCalendarFromEditor();
   persist();
   elements.calendarsDialog.close();
-  loadCalendarEvents();
+  refreshAllCalendarSources({ kinds: ["linked"] });
 }
 
 async function syncCalendarsNow() {
@@ -17403,7 +17403,7 @@ async function syncCalendarsNow() {
   persist();
   elements.calendarStatus.textContent = "Syncing calendars...";
   renderCalendarList();
-  await loadCalendarEvents({ force: true, statusElement: elements.calendarStatus });
+  await refreshAllCalendarSources({ kinds: ["linked"], force: true, statusElement: elements.calendarStatus });
 }
 
 function addCalendarFromEditor() {
@@ -17474,7 +17474,7 @@ function renderCalendarList() {
       state.calendars = state.calendars.filter((calendar) => calendar.id !== button.dataset.removeCalendar);
       persist();
       renderCalendarList();
-      loadCalendarEvents();
+      refreshAllCalendarSources({ kinds: ["linked"] });
     });
   });
 }
@@ -18684,7 +18684,7 @@ async function mergeMissingRecipesFromBackup() {
   await persistImmediately("backup restore");
   pendingFolders.forEach(saveFolderRow);
   restoredRecipes.forEach(saveRecipeRow);
-  if (restoredCalendars.length) await loadCalendarEvents({ force: true });
+  if (restoredCalendars.length) await refreshAllCalendarSources({ kinds: ["linked"], force: true });
   render();
   elements.restorePreview.innerHTML = `<div class="restore-preview-card"><strong>Merged ${restoredRecipes.length} missing recipe${restoredRecipes.length === 1 ? "" : "s"}, ${restoredWeeks.length} published week${restoredWeeks.length === 1 ? "" : "s"}, ${restoredCalendars.length} calendar${restoredCalendars.length === 1 ? "" : "s"}, and ${restoredUserDataCount} user setting/task item${restoredUserDataCount === 1 ? "" : "s"}.</strong></div>`;
   elements.mergeRestoreBtn.disabled = true;
@@ -26124,7 +26124,7 @@ function initPlanCalListDelegation() {
         state.calendars = (state.calendars || []).map((c) => c.id === id ? (now = c.enabled === false, { ...c, enabled: now }) : c);
         flipDot(calDot, now);
         persist();
-        loadCalendarEvents().then(() => { if (activeAppArea === "plan") renderPlanPage(); });
+        refreshAllCalendarSources({ kinds: ["linked"] }).then(() => { if (activeAppArea === "plan") renderPlanPage(); });
         return;
       }
       state.planCalendars = (state.planCalendars || []).map((c) => c.id === id ? (now = !c.enabled, { ...c, enabled: now }) : c);
@@ -26147,9 +26147,9 @@ function initPlanCalListDelegation() {
     const refreshBtn = e.target.closest("[data-refresh-cal]");
     if (refreshBtn) {
       const id = refreshBtn.dataset.refreshCal;
-      if (planCalIsGoogle(id)) { loadCalendarEvents({ force: true }).then(() => { renderPlanCalList(); if (activeAppArea === "plan") renderPlanPage(); }); return; }
+      if (planCalIsGoogle(id)) { refreshAllCalendarSources({ kinds: ["linked"], force: true }).then(() => { renderPlanCalList(); if (activeAppArea === "plan") renderPlanPage(); }); return; }
       const c = (state.calendarSources || []).find((x) => x.id === id); // reached only for non-linked (ics/local) ids
-      if (c) fetchOnePlanCalendar(c).then(() => renderPlanCalList());
+      if (c) refreshCalendarSource(c).then(() => renderPlanCalList()); // ics: per-cal refresh
       return;
     }
 
@@ -26214,7 +26214,7 @@ function deletePlanCalendar(id) {
   if (store === "planCalendars") { delete planCalendarCache[id]; }
   persist();
   renderPlanCalList();
-  if (store === "calendars") loadCalendarEvents();
+  if (store === "calendars") refreshAllCalendarSources({ kinds: ["linked"] });
   if (activeAppArea === "plan") renderPlanPage();
 }
 
@@ -26478,8 +26478,8 @@ async function addPlanCalendar() {
     maybeWriteCloudSnapshot({ force: true }).catch(() => {});
     renderPlanCalList();
     if (urlChanged && url) {
-      if (store === "calendars") await loadCalendarEvents({ force: true });
-      else { const updated = (state[store] || []).find((c) => c.id === id); if (updated) await fetchOnePlanCalendar(updated); }
+      if (store === "calendars") await refreshAllCalendarSources({ kinds: ["linked"], force: true });
+      else { const updated = (state[store] || []).find((c) => c.id === id); if (updated) await refreshCalendarSource(updated); } // ics: per-cal refresh
     }
     if (activeAppArea === "plan") renderPlanPage();
     return;
@@ -26495,7 +26495,7 @@ async function addPlanCalendar() {
     persist();
     maybeWriteCloudSnapshot({ force: true }).catch(() => {});
     renderPlanCalList();
-    await loadCalendarEvents({ force: true });
+    await refreshAllCalendarSources({ kinds: ["linked"], force: true });
     if (activeAppArea === "plan") renderPlanPage();
     return;
   }
@@ -26508,14 +26508,13 @@ async function addPlanCalendar() {
   persist();
   maybeWriteCloudSnapshot({ force: true }).catch(() => {});
   renderPlanCalList();
-  if (url) await fetchOnePlanCalendar(newCal);
+  if (url) await refreshCalendarSource(newCal); // ics: per-cal refresh of the new subscription
   if (activeAppArea === "plan") renderPlanPage();
 }
 
-async function fetchAllPlanCalendars() {
-  const cals = state.planCalendars || [];
-  await Promise.all(cals.map(fetchOnePlanCalendar)); // fetchOnePlanCalendar picks local vs Netlify proxy
-}
+// (Phase 3.3) fetchAllPlanCalendars removed — its two callers (the 15-min sweep
+// and Plan-open) now go through refreshAllCalendarSources({ kinds: ["ics"] }),
+// which fans out fetchOnePlanCalendar across the same non-linked source set.
 
 // The generic-ICS proxy URL: the local dev server in development, else the
 // deployed Netlify function (so subscriptions also refresh on the live site).
@@ -26575,8 +26574,8 @@ async function refreshAllCalendarSources(options = {}) {
   }
   if (kinds.includes("ics")) {
     // Per-cal isolation across the non-linked set (ics + local) — exactly the set
-    // fetchAllPlanCalendars iterated (state.planCalendars), since calendarSources
-    // unions the same objects id-for-id.
+    // the old fetchAllPlanCalendars iterated (state.planCalendars), since
+    // calendarSources unions the same objects id-for-id.
     sources.filter((s) => calendarSourceKind(s) === "ics")
       .forEach((s) => jobs.push(refreshCalendarSource(s)));
   }
