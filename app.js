@@ -702,6 +702,75 @@ function loadPlanIcsCache() {
 function savePlanIcsCache() {
   try { localStorage.setItem("live_plan_ics_cache", JSON.stringify(planCalendarCache)); } catch { /* quota/serialization */ }
 }
+
+// ── Unified calendar-source cache facade (Decision #1, Phase 3) ──────────────
+// One surface over the two physical event caches that still back the calendar:
+//   • linked    → the flat `calendarEvents` array + localStorage `eat-calendars-v1`
+//                 (ONE blob for ALL linked calendars, ONE 7-day-TTL timestamp).
+//   • ics/local → the per-calendar `planCalendarCache` map + `live_plan_ics_cache`
+//                 (one entry + timestamp per subscription; local buckets have no
+//                 url so their fetch is a documented no-op — no cache entry).
+// Phase 3 unifies the *surface* (read/write/clear + a policy table) while keeping
+// each store's timing BYTE-IDENTICAL. The physical shapes and the two TTL models
+// are deliberately NOT merged here (deferred — design §4). The timing differences
+// that used to be implicit in two divergent code paths are made explicit below as
+// per-source policy, so a future, separately-approved step can converge them from
+// one place instead of hunting both pipelines.
+const CALENDAR_SOURCE_POLICY = {
+  // readTtlMs:   drop cached events older than this on boot-read (null = never drop)
+  // background:  swept by the 15-min background refresh interval
+  // navRefetch:  refetched every time the Plan page is opened (showPlanApp)
+  // persistMeta: a fetch writes `lastFetched` onto the stored calendar record + persist()
+  linked: { readTtlMs: HOLIDAY_CACHE_TTL, background: false, navRefetch: false, persistMeta: false },
+  ics:    { readTtlMs: null,              background: true,  navRefetch: true,  persistMeta: true  },
+};
+// "linked" is the only distinguished kind; ics + local share the ics pipeline
+// (local has no url, so its fetch is the same no-op it is today).
+function calendarSourceKind(source) {
+  return source?.source === "linked" ? "linked" : "ics";
+}
+function calendarSourcePolicy(source) {
+  return CALENDAR_SOURCE_POLICY[calendarSourceKind(source)];
+}
+// Policy-aware boot-read freshness gate. Written to reproduce the legacy check
+// exactly: linked drops the blob only when `now - fetchedAt > readTtlMs` (so an
+// unparseable timestamp yields NaN, `NaN > ttl` is false, and the events are
+// kept — same latent behavior as before); ics has readTtlMs=null → always fresh.
+function calendarCacheFresh(policy, fetchedAt) {
+  if (!policy || policy.readTtlMs == null) return true;
+  return !(Date.now() - Date.parse(fetchedAt) > policy.readTtlMs);
+}
+// Read cached events for one source. Linked returns the whole flat linked set
+// (callers filter by calendarId, exactly as the projection does today); ics/local
+// returns that subscription's cached events ([] if never fetched or if local).
+function readCalendarSourceCache(source) {
+  if (calendarSourceKind(source) === "linked") return calendarEvents;
+  return planCalendarCache[source?.id]?.events || [];
+}
+// Persist the cache for one source. Linked replaces the whole flat set + rewrites
+// its single blob (ISO-string timestamp, matching the legacy writes); ics/local
+// writes that subscription's per-cal entry (Date-object timestamp, as today).
+function writeCalendarSourceCache(source, events, fetchedAt = new Date()) {
+  if (calendarSourceKind(source) === "linked") {
+    calendarEvents = events;
+    const iso = fetchedAt instanceof Date ? fetchedAt.toISOString() : fetchedAt;
+    try { localStorage.setItem(CALENDAR_CACHE_KEY, JSON.stringify({ fetchedAt: iso, events })); } catch { /* quota/serialization */ }
+    return;
+  }
+  planCalendarCache[source.id] = { fetchedAt, events };
+  savePlanIcsCache();
+}
+// Clear the cache for one source. Linked empties the flat set + removes its blob;
+// ics/local deletes that subscription's entry and re-persists the map.
+function clearCalendarSourceCache(source) {
+  if (calendarSourceKind(source) === "linked") {
+    calendarEvents = [];
+    try { localStorage.removeItem(CALENDAR_CACHE_KEY); } catch { /* ignore */ }
+    return;
+  }
+  delete planCalendarCache[source.id];
+  savePlanIcsCache();
+}
 let editingPlanEventId = null;
 let editingPlanEventOccurrenceDate = null; // which occurrence of a recurring event was opened
 // Which meal-plan context cards are expanded, keyed "dayId|columnLabel". Transient
@@ -17391,11 +17460,11 @@ function renderCalendarList() {
       state.calendars = state.calendars.map((calendar) => (
         calendar.id === input.dataset.calendarColor ? { ...calendar, color: normalizeCalendarColor(input.value) } : calendar
       ));
-      calendarEvents = calendarEvents.map((event) => (
+      const recolored = calendarEvents.map((event) => (
         event.calendarId === input.dataset.calendarColor ? { ...event, calendarColor: normalizeCalendarColor(input.value) } : event
       ));
       persist();
-      localStorage.setItem(CALENDAR_CACHE_KEY, JSON.stringify({ fetchedAt: new Date().toISOString(), events: calendarEvents }));
+      writeCalendarSourceCache({ source: "linked" }, recolored); // Phase 3: linked cache write via the facade
       renderPlanner();
     });
   });
@@ -19152,7 +19221,8 @@ function loadCachedCalendarEvents() {
   try {
     const cached = JSON.parse(localStorage.getItem(CALENDAR_CACHE_KEY) || "null");
     if (!cached?.fetchedAt || !Array.isArray(cached.events)) return [];
-    if (Date.now() - Date.parse(cached.fetchedAt) > HOLIDAY_CACHE_TTL) return [];
+    // Phase 3: same 7-day linked TTL, now expressed through the source-cache policy.
+    if (!calendarCacheFresh(CALENDAR_SOURCE_POLICY.linked, cached.fetchedAt)) return [];
     return cached.events;
   } catch {
     return [];
