@@ -80,9 +80,9 @@ Every AI email-processing feature MUST have an on/off toggle in Settings → Mai
 
 **Local commits are welcome — commit freely as work completes.** Luke likes reviewing changes locally before they go out.
 
-**Never `git push` without explicit permission — ask first, every time.** Pushing to main auto-triggers a Netlify deploy, which spends limited deploy credits (and GitHub pushes are capped ~20/month). Batch work into local commits, then when ready ask: "OK to push?" Never push automatically as part of a task.
+**Push to GitHub freely after any completed, verified commit — no need to ask first.** Netlify deploys (or anything that triggers one, e.g. merging to `main`, the production/auto-deploy branch — see below) still require explicit confirmation before proceeding. Pushing to any other branch is unambiguously safe and costless; `main` is the one boundary that matters, since it's the branch Netlify auto-deploys from. Netlify Free plan: ~20 production deploys/month (300 credits ÷ 15 credits/deploy) — this applies to merges into `main`, not to ordinary GitHub pushes, which have no comparable cap.
 
-**Before any push, run through [PRE_PUSH_CHECKLIST.md](PRE_PUSH_CHECKLIST.md)** — especially the mobile horizontal-fit pass (every page must lay out within a ~360px phone; no sideways scroll, nothing clipped at the right edge). Report anything that fails before pushing.
+**Before any push to `main` (or anything that triggers a Netlify deploy), run through [PRE_PUSH_CHECKLIST.md](PRE_PUSH_CHECKLIST.md)** — especially the mobile horizontal-fit pass (every page must lay out within a ~360px phone; no sideways scroll, nothing clipped at the right edge). Report anything that fails before proceeding.
 
 ## Domains & parallel-agent development
 

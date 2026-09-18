@@ -17,6 +17,8 @@
       "Bash(git log:*)",
       "Bash(git show:*)",
       "Bash(git restore:*)",
+      "Bash(git push:*)",
+      "Bash(git push)",
       "Bash(head:*)",
       "Bash(tail:*)",
       "Bash(cat:*)",
@@ -25,8 +27,6 @@
       "Bash(ls:*)"
     ],
     "ask": [
-      "Bash(git push:*)",
-      "Bash(git push)",
       "Bash(git push --force:*)",
       "Bash(git push -f:*)",
       "Bash(netlify deploy:*)",
