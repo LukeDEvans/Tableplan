@@ -277,7 +277,7 @@ const STATE_SECTIONS = {
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
   media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "mediaProgress", "articleNotifications", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
-  plan:      ["calendars", "planEvents", "planCalendars", "planHiddenSources", "planExternalExclusions", "planExternalOverrides"],
+  plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
   recreate:  ["sailingLog", "sailingBoats", "pianoSongs", "pianoLog", "recreateHobbies"],
@@ -4890,6 +4890,13 @@ function normalizeState(parsed) {
     collapsedDays: parsed?.collapsedDays || {},
     planEvents: normalizePlanEvents(parsed?.planEvents),
     planCalendars: normalizePlanCalendars(parsed?.planCalendars),
+    // Decision #1, Phase 1: derived canonical mirror of the two lists above, ids
+    // preserved. Re-derived here on every load/hydrate so it tracks the still-
+    // authoritative legacy lists as writers mutate them. Nothing reads it yet.
+    calendarSources: normalizeCalendarSources(
+      normalizeLinkedCalendars(parsed?.calendars, parsed?.birthdayCalendar),
+      normalizePlanCalendars(parsed?.planCalendars),
+    ),
     planHiddenSources: (parsed?.planHiddenSources && typeof parsed.planHiddenSources === "object") ? parsed.planHiddenSources : {},
     planExternalExclusions: normalizePlanExternalExclusions(parsed?.planExternalExclusions),
     planExternalOverrides: normalizePlanExternalOverrides(parsed?.planExternalOverrides),
@@ -5039,6 +5046,27 @@ function normalizeCalendarColor(value, index = 0) {
   const text = String(value || "").trim();
   if (/^#[0-9a-f]{6}$/i.test(text)) return text.toLowerCase();
   return defaultCalendarColors[index % defaultCalendarColors.length];
+}
+
+// Decision #1, Phase 1 (additive). Fold the two legacy calendar lists into one
+// canonical, source-tagged list — WITHOUT re-issuing a single id (planEvents and
+// meal-plan events reference calendars by id, so a new id would silently orphan
+// them). Inputs are the already-normalized lists, which already carry source/readOnly
+// from Phase 0 (linked → "linked", plan url → "ics", url-less → "local"). This is a
+// DERIVED mirror in Phase 1: the legacy lists stay authoritative (readers + writers
+// untouched); nothing consumes calendarSources yet. It's registered in the plan
+// section + the unionById set so the merge/tombstone infra is proven before Phase 2
+// flips authority onto it. Dedupe by id is defensive — the two lists use distinct
+// prefixes (cal… vs plan-cal…), so a collision would signal upstream corruption.
+function normalizeCalendarSources(linkedCalendars, planCalendars) {
+  const out = [];
+  const seen = new Set();
+  for (const cal of [...(Array.isArray(linkedCalendars) ? linkedCalendars : []), ...(Array.isArray(planCalendars) ? planCalendars : [])]) {
+    if (!cal || !cal.id || seen.has(cal.id)) continue;
+    seen.add(cal.id);
+    out.push(cal); // same object, same id — no reshaping, no re-id
+  }
+  return out;
 }
 
 function normalizeWeeklyEmailSettings(settings) {
@@ -6046,6 +6074,10 @@ function mergeStates(newer, older) {
     "recipes", "trashedRecipes", "folders",
     // Planning & tasks
     "planCalendars", "planEvents", "planExternalExclusions", "planExternalOverrides",
+    // Decision #1 Phase 1: derived mirror, id-keyed union + "calendarSources"
+    // tombstones from day one (re-derived from the legacy lists after every merge,
+    // so this is belt-and-suspenders until Phase 2 makes it authoritative).
+    "calendarSources",
     "doTasks", "doBacklog", "doArchive", "playBacklog",
     "recurringTasks", "playAutoRules",
     // Watch / Read / Recreate
@@ -26382,7 +26414,10 @@ async function addPlanCalendar() {
   }
   // Blank URL creates a personal calendar; a URL subscribes to an external one.
   const newCal = { id: createId("plan-cal"), name, url, color, enabled: true, lastFetched: null };
-  state.planCalendars = [...(state.planCalendars || []), newCal];
+  // Flag C: route through the normalizer so the new entry carries source/readOnly
+  // (and lands in the derived calendarSources) immediately, not only after a reload.
+  // normalizePlanCalendars preserves ids, so newCal's id is unchanged.
+  state.planCalendars = normalizePlanCalendars([...(state.planCalendars || []), newCal]);
   persist();
   maybeWriteCloudSnapshot({ force: true }).catch(() => {});
   renderPlanCalList();
