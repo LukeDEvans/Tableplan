@@ -1514,7 +1514,7 @@ const { inventoryItemList, renderInventoryPage, saveInventoryBox, saveInventoryI
 // Cross-domain: Calendar uses financePaydaysInRange + formatFinMoney; state-sync uses
 // invalidateFinanceLabeled. The sync/hydration machinery stays in app.js (not moved).
 const _finance = createFinanceModule({
-  state, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage,
+  state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage,
   dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember,
   renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl,
   getActiveAppArea: () => activeAppArea,
