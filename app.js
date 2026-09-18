@@ -1659,7 +1659,7 @@ const {
 // the shared Supabase primitives all stay in app.js and are injected. bindEvents wires the
 // recipe-view close handler via the exposed onRecipeViewDialogClose.
 const _recipes = createRecipesModule({
-  state, elements, persist, render,
+  state, elements, persist, render, trashItemTemplate,
   getActiveAppArea: () => activeAppArea,
   getAuthSession: () => authSession,
   getSupabaseClient: () => supabaseClient,

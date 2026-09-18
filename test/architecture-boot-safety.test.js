@@ -380,7 +380,6 @@ const FACTORY_GLOBALS = new Set(("Math JSON Object Array String Number Boolean D
 // are scheduled for a fix; each fix (inject the dep / a getter) shrinks this list.
 const KNOWN_FREE_VARS = {
   "inventory-ui.js": ["inventoryCollapsedBoxes", "inventoryBoxPendingId", "inventoryBoxPendingParentId", "inventoryItemPendingId"],
-  "recipes-ui.js": ["trashItemTemplate", "NutritionDomain"],
 };
 
 function blankNonCode(src) { // blank comments/strings/template-text/regex, preserve newlines
