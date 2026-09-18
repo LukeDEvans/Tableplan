@@ -378,9 +378,7 @@ const FACTORY_GLOBALS = new Set(("Math JSON Object Array String Number Boolean D
 // injected — real bugs, dev-server-only crashes; `readableDuration` lives only in server.js
 // so is undefined client-side entirely). Baselined so this guard blocks NEW ones while these
 // are scheduled for a fix; each fix (inject the dep / a getter) shrinks this list.
-const KNOWN_FREE_VARS = {
-  "inventory-ui.js": ["inventoryCollapsedBoxes", "inventoryBoxPendingId", "inventoryBoxPendingParentId", "inventoryItemPendingId"],
-};
+const KNOWN_FREE_VARS = {}; // empty — every extracted module is now free-var clean
 
 function blankNonCode(src) { // blank comments/strings/template-text/regex, preserve newlines
   const a = src.split(""), n = a.length, bl = (k) => { if (a[k] !== "\n") a[k] = " "; };

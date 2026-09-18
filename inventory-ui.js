@@ -74,6 +74,14 @@ export function normalizeInventoryRoomVisibility(raw) {
   return result;
 }
 
+// Inventory-only UI state — declared here (not injected) because it's used solely
+// within this module. These four stayed behind in app.js during the extraction and
+// were read as bundle-masked free variables; moved here so the module owns them.
+const inventoryCollapsedBoxes = new Set(); // box ids collapsed in the tree view
+let inventoryBoxPendingId = null;          // box being edited via the box dialog
+let inventoryBoxPendingParentId = null;    // parent for a new/edited box
+let inventoryItemPendingId = null;         // item being edited via the item dialog
+
 export function createInventoryModule(deps) {
   const { state, elements, persist, createId, escapeHtml, recordDeletion, recordDeletions,
           closeFolderMenu, getActiveAppArea, renderShopSpaceNav, renderGroceries,
