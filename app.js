@@ -5020,17 +5020,17 @@ function normalizeLinkedCalendars(calendars, legacyBirthdayCalendar = null) {
       url: String(calendar?.url || "").trim(),
       color: normalizeCalendarColor(calendar?.color, index),
       enabled: calendar?.enabled !== false,
-      // Phase 0 (Decision #1): source/readOnly are EMITTED here but not yet read
-      // anywhere — additive labelling only. "google" tags the linked/eat-pipeline
-      // feed. ⚠ It means "fetched via the google-calendar proxy", not literally a
-      // Google URL (the proxy relays any ICS url) — see the Phase-0 flag.
-      source: "google",
+      // Decision #1: source/readOnly label the entry for the coming unification.
+      // "linked" = the eat-side pipeline feed (fetched via the google-calendar
+      // proxy, which relays ANY ICS url — so this is NOT a vendor tag; a linked
+      // feed is generic ICS, same data as source:"ics", just a different fetcher).
+      source: "linked",
       readOnly: true
     }))
     .filter((calendar) => calendar.url);
   const legacyUrl = normalizeBirthdayCalendarSettings(legacyBirthdayCalendar).url;
   if (legacyUrl && !normalized.some((calendar) => calendar.url === legacyUrl)) {
-    normalized.push({ id: createId("cal"), name: "Birthdays", url: legacyUrl, color: normalizeCalendarColor("", normalized.length), enabled: true, source: "google", readOnly: true });
+    normalized.push({ id: createId("cal"), name: "Birthdays", url: legacyUrl, color: normalizeCalendarColor("", normalized.length), enabled: true, source: "linked", readOnly: true });
   }
   return normalized;
 }
