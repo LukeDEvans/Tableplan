@@ -6039,7 +6039,7 @@ function mergeStates(newer, older) {
     // Core content
     "recipes", "trashedRecipes", "folders",
     // Planning & tasks
-    "planCalendars", "planEvents", "planExternalExclusions", "planExternalOverrides", "autoGenerateRules",
+    "planCalendars", "planEvents", "planExternalExclusions", "planExternalOverrides",
     "doTasks", "doBacklog", "doArchive", "playBacklog",
     "recurringTasks", "playAutoRules",
     // Watch / Read / Recreate
@@ -6087,6 +6087,16 @@ function mergeStates(newer, older) {
   // duplicates (each a separate alert). Merge both sides then collapse per
   // merchant, keeping the answer state.
   merged.financeRecurring = dedupeFinanceRecurring([...(older.financeRecurring || []), ...(newer.financeRecurring || [])]);
+
+  // Auto-fill rules are unique per SLOT+ACTION (autoRuleSignature), not per id —
+  // a device that boots with empty localStorage regenerates a fresh set of
+  // default "skip" rules with brand-new random ids (normalizeAutoGenerateRules
+  // falls back to defaultAutoGenerateRules() when there's nothing cached).
+  // Unioning those by id alongside the cloud's already-equivalent rules let
+  // them accumulate without bound — the same failure mode as financeRecurring
+  // above. Union by id first (so tombstones still apply), then collapse
+  // signature-equivalent duplicates down to one.
+  merged.autoGenerateRules = dedupeAutoGenerateRules(unionById(newer.autoGenerateRules, older.autoGenerateRules, "autoGenerateRules"));
 
   // Finance records with nested child arrays: deep-merged so a just-booted
   // client's empty groups/people/personal budgets can never wipe the cloud's
@@ -18160,6 +18170,38 @@ function shouldRestorePersonChecklistSettings(backupState) {
   return JSON.stringify(backupState.personChecklistSettings) !== JSON.stringify(state.personChecklistSettings);
 }
 
+
+// A rule's real identity is its content (slot + action + value + tags), not its id.
+// Kept top-level in app.js (not the meal-plan factory's copy) because mergeStates runs
+// during loadState() at module-eval, before the factory is instantiated — and both deps
+// it needs, normalize() and normalizeRecipeTagSelection() (imported from recipes-ui.js),
+// are already in app.js module scope. Mirrors mealplan-ui.js's factory-internal
+// autoRuleSignature exactly so the two agree on rule identity.
+function autoRuleSignature(rule) {
+  return [
+    [...(rule.dayIds || [])].sort().join(","),
+    rule.meal,
+    rule.index,
+    rule.action,
+    normalize(rule.value || ""),
+    normalizeRecipeTagSelection(rule.tags).map(normalize).join(","),
+    rule.tagMatchMode || "any",
+    rule.selectionMode || "random"
+  ].join("|");
+}
+
+// Collapses signature-equivalent auto-fill rules to one entry each — used by
+// mergeStates so an id-only union can never let regenerated-default rules
+// (fresh random ids, identical content) accumulate across syncs.
+function dedupeAutoGenerateRules(rules) {
+  const bySignature = new Map();
+  for (const rule of rules || []) {
+    if (!rule) continue;
+    const key = autoRuleSignature(rule);
+    if (!bySignature.has(key)) bySignature.set(key, rule);
+  }
+  return [...bySignature.values()];
+}
 
 function missingRestoreRecurringTasks(backupState) {
   const current = new Set(normalizeRecurringTasks(state.recurringTasks).map(recurringTaskSignature));
