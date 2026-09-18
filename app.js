@@ -5019,12 +5019,18 @@ function normalizeLinkedCalendars(calendars, legacyBirthdayCalendar = null) {
       name: String(calendar?.name || "Calendar").trim() || "Calendar",
       url: String(calendar?.url || "").trim(),
       color: normalizeCalendarColor(calendar?.color, index),
-      enabled: calendar?.enabled !== false
+      enabled: calendar?.enabled !== false,
+      // Phase 0 (Decision #1): source/readOnly are EMITTED here but not yet read
+      // anywhere — additive labelling only. "google" tags the linked/eat-pipeline
+      // feed. ⚠ It means "fetched via the google-calendar proxy", not literally a
+      // Google URL (the proxy relays any ICS url) — see the Phase-0 flag.
+      source: "google",
+      readOnly: true
     }))
     .filter((calendar) => calendar.url);
   const legacyUrl = normalizeBirthdayCalendarSettings(legacyBirthdayCalendar).url;
   if (legacyUrl && !normalized.some((calendar) => calendar.url === legacyUrl)) {
-    normalized.push({ id: createId("cal"), name: "Birthdays", url: legacyUrl, color: normalizeCalendarColor("", normalized.length), enabled: true });
+    normalized.push({ id: createId("cal"), name: "Birthdays", url: legacyUrl, color: normalizeCalendarColor("", normalized.length), enabled: true, source: "google", readOnly: true });
   }
   return normalized;
 }
@@ -23766,14 +23772,23 @@ function planNthWeekdayInfo(d) {
 // expandRecurringOccurrences moved to ./calendar/recurrence.js (imported at top).
 
 function normalizePlanCalendars(calendars) {
-  return Array.isArray(calendars) ? calendars.map((c) => ({
-    id: c?.id || createId("plan-cal"),
-    name: String(c?.name || "Calendar").trim(),
-    url: String(c?.url || "").trim(),
-    color: String(c?.color || PLAN_COLORS[0]),
-    enabled: c?.enabled !== false,
-    lastFetched: c?.lastFetched || null
-  })).filter((c) => c.id) : [];
+  return Array.isArray(calendars) ? calendars.map((c) => {
+    const url = String(c?.url || "").trim();
+    return {
+      id: c?.id || createId("plan-cal"),
+      name: String(c?.name || "Calendar").trim(),
+      url,
+      color: String(c?.color || PLAN_COLORS[0]),
+      enabled: c?.enabled !== false,
+      lastFetched: c?.lastFetched || null,
+      // Phase 0 (Decision #1): source/readOnly are EMITTED here but not yet read
+      // anywhere — additive labelling only. A url ⇒ an ICS subscription; url-less ⇒
+      // a local organizational bucket a planEvent's calendarId points at
+      // (readOnly:false so it stays assignable in the event editor).
+      source: url ? "ics" : "local",
+      readOnly: Boolean(url)
+    };
+  }).filter((c) => c.id) : [];
 }
 
 // Local exclusions for read-only external events (§16). `id` is the canonical
