@@ -349,3 +349,118 @@ describe("fitness: no factory-instantiation dep references a later-declared modu
     expect(findings.length, `\nFACTORY-DEPS ordering TDZ (a dep passed immediately into a factory instantiation is a module\nconst/let declared further down the file → "Cannot access 'X' before initialization" at boot.\nMove the declaration above the factory instantiations, or pass it via a deferred getter thunk):\n${report}\n`).toBe(0);
   });
 });
+
+// ── (e) Factory free-variable guard ─────────────────────────────────────────────────────
+// A factory function body can reference a bare name that is NOT its dep, NOT module scope,
+// NOT a local, and NOT a builtin — a free variable. It resolves ONLY because esbuild bundles
+// every module into one shared top-level scope, so the reference silently finds app.js's
+// binding in the PRODUCTION build. On the UNBUNDLED dev server (native ESM, separate module
+// scopes) it throws "X is not defined" the moment that code runs. `renderFinancePage`'s bare
+// `elements` (finance-ui.js) was exactly this: it worked in prod but crashed Finance on
+// localhost — Finance had simply never been opened on the dev server (the boot-check only
+// smoke-tests Weather + Contacts). Guards (a)/(c) miss it: it's neither an export nor an
+// initializer, just a runtime reference deep inside the factory. This guard is a no-undef
+// lint scoped to each factory body; the character scanner blanks comments/strings/template
+// TEXT/regex (keeping ${…} interpolation code) so HTML in template literals isn't misread.
+const FACTORY_KEYWORDS = new Set(("null undefined true false NaN Infinity this arguments new typeof void delete in of instanceof await async " +
+  "return if else for while do switch case default break continue try catch finally throw yield let const var function class extends super static get set as from import export").split(/\s+/));
+const FACTORY_GLOBALS = new Set(("Math JSON Object Array String Number Boolean Date Promise Set Map WeakMap WeakSet RegExp Symbol Proxy Reflect " +
+  "Error TypeError RangeError SyntaxError parseInt parseFloat isNaN isFinite encodeURIComponent decodeURIComponent encodeURI decodeURI " +
+  "Function window document localStorage sessionStorage navigator location history fetch setTimeout clearTimeout setInterval clearInterval " +
+  "requestAnimationFrame cancelAnimationFrame requestIdleCallback cancelIdleCallback queueMicrotask console URL URLSearchParams Blob File " +
+  "FileReader FormData Headers Request Response AbortController AbortSignal TextEncoder TextDecoder IntersectionObserver ResizeObserver " +
+  "MutationObserver CustomEvent Event KeyboardEvent MouseEvent PointerEvent DragEvent DataTransfer ClipboardEvent Element Node NodeList " +
+  "HTMLElement HTMLInputElement Image Audio crypto performance structuredClone atob btoa globalThis Intl matchMedia getSelection " +
+  "speechSynthesis SpeechSynthesisUtterance caches indexedDB Uint8Array Uint8ClampedArray Int32Array Float64Array ArrayBuffer DataView WeakRef " +
+  "alert confirm prompt getComputedStyle DOMParser XMLSerializer Notification Worker CSS scrollTo scrollBy print postMessage").split(/\s+/));
+
+// Pre-existing bundle-masked free-var refs (a module reads an app.js-scoped name it never
+// injected — real bugs, dev-server-only crashes; `readableDuration` lives only in server.js
+// so is undefined client-side entirely). Baselined so this guard blocks NEW ones while these
+// are scheduled for a fix; each fix (inject the dep / a getter) shrinks this list.
+const KNOWN_FREE_VARS = {
+  "finance-ui.js": ["authSession", "contextSettingsKind"],
+  "inventory-ui.js": ["inventoryCollapsedBoxes", "inventoryBoxPendingId", "inventoryBoxPendingParentId", "inventoryItemPendingId"],
+  "recipes-ui.js": ["trashItemTemplate", "NutritionDomain", "readableDuration"],
+};
+
+function blankNonCode(src) { // blank comments/strings/template-text/regex, preserve newlines
+  const a = src.split(""), n = a.length, bl = (k) => { if (a[k] !== "\n") a[k] = " "; };
+  const stack = [], REGEX_KW = new Set(["return", "typeof", "instanceof", "in", "of", "case", "do", "else", "yield", "await", "delete", "void", "new"]);
+  let i = 0, lastSig = "", word = "";
+  while (i < n) {
+    const c = src[i], c2 = src[i + 1], top = stack[stack.length - 1];
+    if (top && top.t === "tmpl") {
+      if (c === "\\") { bl(i); bl(i + 1); i += 2; continue; }
+      if (c === "`") { stack.pop(); i++; continue; }
+      if (c === "$" && c2 === "{") { stack.push({ t: "expr", depth: 0 }); i += 2; lastSig = "{"; word = ""; continue; }
+      bl(i); i++; continue;
+    }
+    if (c === "/" && c2 === "/") { while (i < n && src[i] !== "\n") bl(i++); continue; }
+    if (c === "/" && c2 === "*") { bl(i); bl(i + 1); i += 2; while (i < n && !(src[i] === "*" && src[i + 1] === "/")) bl(i++); if (i < n) { bl(i); bl(i + 1); i += 2; } continue; }
+    if (c === "/" && (lastSig === "" || "(,;[{:=!&|?+-*%<>^~".includes(lastSig) || REGEX_KW.has(word))) {
+      bl(i); i++; let inClass = false;
+      while (i < n && src[i] !== "\n") { const d = src[i]; if (d === "\\") { bl(i); bl(i + 1); i += 2; continue; } if (d === "[") inClass = true; else if (d === "]") inClass = false; else if (d === "/" && !inClass) break; bl(i); i++; }
+      if (i < n && src[i] === "/") bl(i++);
+      while (i < n && /[a-z]/i.test(src[i])) bl(i++);
+      lastSig = "/"; word = ""; continue;
+    }
+    if (c === "'" || c === '"') { const q = c; i++; while (i < n && src[i] !== q) { if (src[i] === "\\") bl(i++); bl(i++); } if (i < n) i++; lastSig = q; word = ""; continue; }
+    if (c === "`") { stack.push({ t: "tmpl" }); i++; lastSig = "`"; word = ""; continue; }
+    if (top && top.t === "expr") {
+      if (c === "{") { top.depth++; i++; lastSig = "{"; word = ""; continue; }
+      if (c === "}") { if (top.depth === 0) { stack.pop(); i++; continue; } top.depth--; i++; lastSig = "}"; word = ""; continue; }
+    }
+    if (!/\s/.test(c)) { lastSig = c; word = /[\w$]/.test(c) ? word + c : ""; }
+    i++;
+  }
+  return a.join("").replace(/([{,]\s*)([A-Za-z_]\w*)(\s*:)/g, "$1 $3"); // blank object-literal keys
+}
+function factoryKnownNames(src, clean) {
+  const known = new Set([...FACTORY_KEYWORDS, ...FACTORY_GLOBALS, "createId", "normalize", "_appState", "deps"]);
+  const addBindings = (str) => { for (const m of (str || "").matchAll(/(?:^|[\s,{[])\.{0,3}\s*([A-Za-z_]\w*)\s*(?::\s*([A-Za-z_]\w*))?/g)) known.add(m[2] || m[1]); };
+  // deps destructure (brace-balanced — the lists are long and may contain arrow-default braces)
+  const dep = /\}\s*=\s*deps\b/.exec(clean);
+  if (dep) { const cb = clean.lastIndexOf("}", dep.index); let d = 0, o = -1; for (let k = cb; k >= 0; k--) { if (clean[k] === "}") d++; else if (clean[k] === "{") { d--; if (d === 0) { o = k; break; } } } if (o >= 0) for (const nm of clean.slice(o + 1, cb).split(",")) { const b = nm.trim().split(":")[0].split("=")[0].trim(); if (/^\w+$/.test(b)) known.add(b); } }
+  for (const m of src.matchAll(/^import\s+\*\s+as\s+(\w+)/gm)) known.add(m[1]);
+  for (const m of src.matchAll(/^import\s+(\w+)\s*(?:,|from)/gm)) known.add(m[1]);
+  for (const m of src.matchAll(/import\s+\{([^}]*)\}/g)) for (const y of m[1].split(",")) { const nm = y.trim().split(/\s+as\s+/).pop().trim(); if (nm) known.add(nm); }
+  for (const m of clean.matchAll(/\bfunction\s*\*?\s*(\w+)/g)) known.add(m[1]);
+  for (const m of clean.matchAll(/\bclass\s+(\w+)/g)) known.add(m[1]);
+  for (const m of clean.matchAll(/\b(?:const|let|var)\s+([^;\n]+)/g)) for (const part of m[1].split(",")) { const mm = /^\s*[{[]?\s*\.{0,3}\s*([A-Za-z_]\w*)/.exec(part); if (mm) known.add(mm[1]); }
+  for (const m of clean.matchAll(/\b(?:const|let|var)\s*([{[])([\s\S]*?)[}\]]\s*=/g)) addBindings(m[2]);
+  for (const m of clean.matchAll(/\bfunction\s*\*?\s*\w*\s*\(([^)]*)\)/g)) addBindings(m[1]);
+  for (const m of clean.matchAll(/\(([^()]*)\)\s*=>/g)) addBindings(m[1]);
+  for (const m of clean.matchAll(/(?<![\w$.])(\w+)\s*=>/g)) known.add(m[1]);
+  for (const m of clean.matchAll(/\bcatch\s*\(([^)]*)\)/g)) addBindings(m[1]);
+  return known;
+}
+function scanFactoryFreeVars(src) {
+  const clean = blankNonCode(src);
+  const known = factoryKnownNames(src, clean);
+  const cl = clean.split("\n");
+  const fi = cl.findIndex((l) => /^export function create\w+Module\(deps\)/.test(l));
+  if (fi < 0) return [];
+  let depth = 0, end = cl.length - 1;
+  for (let i = fi; i < cl.length; i++) { for (const ch of cl[i]) { if (ch === "{") depth++; else if (ch === "}") depth--; } if (depth <= 0 && i > fi) { end = i; break; } }
+  const seen = new Map();
+  for (let i = fi; i <= end; i++) for (const m of cl[i].matchAll(/(?<![\w$.])([A-Za-z_]\w*)\b/g)) {
+    const id = m[1];
+    if (known.has(id)) continue;
+    const after = cl[i].slice(m.index + id.length).replace(/^\s+/, "");
+    if (after[0] === ":" && after[1] !== ":") continue;
+    if (!seen.has(id)) seen.set(id, i + 1);
+  }
+  return [...seen].map(([id, line]) => ({ id, line })).sort((a, b) => a.line - b.line);
+}
+
+describe("fitness: no factory body references an app-scoped free variable (bundle-masked crash)", () => {
+  for (const mod of FACTORY_MODULES) {
+    it(`${mod} — every name used inside the factory is a dep, a local, or a builtin`, () => {
+      const baseline = new Set(KNOWN_FREE_VARS[mod] || []);
+      const findings = scanFactoryFreeVars(read("/" + mod)).filter((f) => !baseline.has(f.id));
+      const report = findings.map((f) => `  ${mod}:${f.line} references '${f.id}' — not injected/declared/builtin`).join("\n");
+      expect(findings.length, `\nFACTORY FREE-VARIABLE (a name used in the factory body isn't a dep, a module/local declaration,\nor a builtin — it only resolves via esbuild's shared bundle scope and throws "X is not defined"\non the unbundled dev server the moment that code runs). Inject it as a dep (a getter for values\nthat change), or declare it in the module:\n${report}\n`).toBe(0);
+    });
+  }
+});
