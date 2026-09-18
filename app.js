@@ -1519,6 +1519,8 @@ const _finance = createFinanceModule({
   renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl,
   getActiveAppArea: () => activeAppArea,
   getSupabaseClient: () => supabaseClient,
+  getAuthSession: () => authSession, // read-only getter (authSession is null until login)
+  getContextSettingsKind: () => contextSettingsKind, // read-only getter (changes per settings panel)
 });
 const {
   checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney,

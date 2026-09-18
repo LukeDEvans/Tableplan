@@ -379,7 +379,6 @@ const FACTORY_GLOBALS = new Set(("Math JSON Object Array String Number Boolean D
 // so is undefined client-side entirely). Baselined so this guard blocks NEW ones while these
 // are scheduled for a fix; each fix (inject the dep / a getter) shrinks this list.
 const KNOWN_FREE_VARS = {
-  "finance-ui.js": ["authSession", "contextSettingsKind"],
   "inventory-ui.js": ["inventoryCollapsedBoxes", "inventoryBoxPendingId", "inventoryBoxPendingParentId", "inventoryItemPendingId"],
   "recipes-ui.js": ["trashItemTemplate", "NutritionDomain", "readableDuration"],
 };

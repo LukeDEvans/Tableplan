@@ -213,7 +213,7 @@ export function normalizeFinanceTxnReceipts(raw) {
 // (payday dots / bill display); state-sync calls invalidateFinanceLabeled.
 // ══════════════════════════════════════════════════════════════════════════
 export function createFinanceModule(deps) {
-  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient } = deps;
+  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind } = deps;
 
 // Download the viewed month's transactions as CSV (real app — blob download is
 // fine here; this is not an artifact/sandbox).
@@ -1818,7 +1818,7 @@ const RECEIPT_BUCKET = "receipt-attachments";
 
 async function uploadReceiptImage(txnId, file) {
   if (!getSupabaseClient()) throw new Error("Not signed in");
-  const userId = authSession?.user?.id;
+  const userId = getAuthSession()?.user?.id;
   if (!userId) throw new Error("Not signed in");
   if (!file) throw new Error("No file");
   // Downscale before upload so kept receipts stay small (they're for reference,
@@ -4383,7 +4383,7 @@ function jumpToFinanceMonth(key) {
 }
 
 function refreshFinanceSettingsIfOpen() {
-  if (elements.contextSettingsDialog?.open && contextSettingsKind === "finance-accounts") {
+  if (elements.contextSettingsDialog?.open && getContextSettingsKind() === "finance-accounts") {
     renderContextSettingsDialog("finance-accounts");
   }
 }
