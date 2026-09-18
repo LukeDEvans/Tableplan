@@ -4412,6 +4412,11 @@ function persist() {
   state.stateUpdatedAt = new Date().toISOString();
   planRangeCache.clear(); // any state change can affect the calendar's merged events
   planAppDataIndex = null;
+  // Decision #1 Phase 2: calendarSources is the read-model the Plan UI now reads;
+  // keep it fresh after any write (the legacy lists stay authoritative until the
+  // Phase-4 flip). Cheap — the two lists are a handful of entries. Sits with the
+  // other derived-cache refreshes above.
+  state.calendarSources = normalizeCalendarSources(state.calendars, state.planCalendars);
   mirrorStateToLocalStorage();
   saveTripBackup();
   saveStateToSharedStorage();
@@ -23769,8 +23774,7 @@ function planHueOfColor(color) {
 // Colors currently assigned to calendars — used to block picking a shade twice.
 // `exceptId` keeps the edited calendar's own color available to itself.
 function usedCalendarColors(exceptId = null) {
-  const all = [...(state.calendars || []), ...(state.planCalendars || [])];
-  return all.filter((c) => c.id !== exceptId).map((c) => String(c.color || "").toLowerCase());
+  return (state.calendarSources || []).filter((c) => c.id !== exceptId).map((c) => String(c.color || "").toLowerCase());
 }
 
 // First shade (scanning hues in order, light→deep) not already taken, so a new
@@ -24380,9 +24384,12 @@ function getPlanEventsForRange(startKey, endKey) {
   const hit = planRangeCache.get(cacheKey);
   if (hit) { planRangeCache.delete(cacheKey); planRangeCache.set(cacheKey, hit); return hit; } // touch = most-recent
   const events = [];
-  const eventColor = (e) => e.color || ((state.planCalendars || []).find((c) => c.id === e.calendarId)?.color) || PLAN_COLORS[0];
-  // Calendars toggled off in the sidebar hide their events (personal + iCal).
-  const disabledCalIds = new Set((state.planCalendars || []).filter((c) => c.enabled === false).map((c) => c.id));
+  const eventColor = (e) => e.color || ((state.calendarSources || []).find((c) => c.id === e.calendarId)?.color) || PLAN_COLORS[0];
+  // Calendars toggled off in the sidebar hide their events (personal + iCal). Phase 2:
+  // one disabled-set over the whole source list (linked ids are never on personal
+  // events and gcal events are pre-filtered in syncedCalendarEventsForDate, so this
+  // is behaviourally identical to the old planCalendars-only set).
+  const disabledCalIds = new Set((state.calendarSources || []).filter((c) => c.enabled === false).map((c) => c.id));
   const excludedExternalIds = planExcludedEventIds(); // §16 per-event hides for read-only external events
   const externalTitleOverrides = planExternalTitleOverrides(); // §15 local renames
   (state.planEvents || []).forEach((e) => {
@@ -24407,7 +24414,10 @@ function getPlanEventsForRange(startKey, endKey) {
       else if (e.date >= startKey && e.date <= endKey) push(e.date);
     });
   }
-  (state.planCalendars || []).filter((c) => c.enabled).forEach((cal) => {
+  // Phase 2: the ICS-subscription set = non-linked enabled sources (ics + local).
+  // Identical to the old "enabled planCalendars": linked feeds render via the gcal
+  // block below, and local buckets simply have no planCalendarCache entry (skipped).
+  (state.calendarSources || []).filter((c) => c.source !== "linked" && c.enabled).forEach((cal) => {
     const cached = planCalendarCache[cal.id];
     if (!cached) return;
     // External events converge to the canonical shape here (same fields as before
@@ -25048,7 +25058,7 @@ function renderPlanEventDetail(ev) {
   }
 
   const isExternal = ev.source === "ical";
-  const calName = ev.calendarName || (ev.calendarId ? (state.planCalendars || []).find((c) => c.id === ev.calendarId)?.name : "") || "Personal";
+  const calName = ev.calendarName || (ev.calendarId ? (state.calendarSources || []).find((c) => c.id === ev.calendarId)?.name : "") || "Personal";
   let locText = "";
   if (typeof ev.location === "string") locText = ev.location;
   else if (ev.location && typeof ev.location === "object") locText = ev.location.name || ev.location.address || ev.location.label || "";
@@ -25057,7 +25067,10 @@ function renderPlanEventDetail(ev) {
 
   let sourceText;
   if (isExternal) {
-    const src = (state.planCalendars || []).find((c) => c.id === ev.sourceId || c.id === ev.calendarId);
+    // Phase 2: resolve the source in the unified list. Parity for gcal/linked events:
+    // linked entries carry no lastFetched, so `synced` stays empty exactly as when the
+    // old planCalendars lookup returned undefined for a linked id.
+    const src = (state.calendarSources || []).find((c) => c.id === ev.sourceId || c.id === ev.calendarId);
     const synced = src?.lastFetched ? ` · synced ${new Date(src.lastFetched).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "";
     sourceText = `Read-only — from “${calName}”${synced}`;
   } else if (ev.source === "personal-overlay") {
@@ -25425,7 +25438,7 @@ function renderPlanEventCalPicker(selectedCalId) {
   const picker = elements.planEventCalPicker; // a <select>
   const row = elements.planEventCalRow;
   if (!picker || !row) return;
-  const nativeCals = (state.planCalendars || []).filter((c) => !c.url);
+  const nativeCals = (state.calendarSources || []).filter((c) => c.source === "local"); // assignable buckets (url-less)
   if (!nativeCals.length) { row.hidden = true; return; }
   row.hidden = false;
   picker.innerHTML = [{ id: "", name: "No calendar" }, ...nativeCals].map((c) =>
@@ -25440,7 +25453,7 @@ function updatePlanEventCalDot() {
   const dot = document.getElementById("planEventCalDot");
   const picker = elements.planEventCalPicker;
   if (!dot || !picker) return;
-  const cal = (state.planCalendars || []).find((c) => c.id === picker.value);
+  const cal = (state.calendarSources || []).find((c) => c.id === picker.value);
   dot.style.background = cal?.color || "transparent";
   dot.style.visibility = cal ? "visible" : "hidden";
 }
@@ -25452,7 +25465,7 @@ async function savePlanEvent() {
   const allDay = elements.planEventAllDay.checked;
   const calId = elements.planEventCalPicker?.value || null;
   // Color always follows the event's calendar (no per-event picker)
-  const cal = calId ? (state.planCalendars || []).find((c) => c.id === calId) : null;
+  const cal = calId ? (state.calendarSources || []).find((c) => c.id === calId) : null;
   const existing = editingPlanEventId ? (state.planEvents || []).find((e) => e.id === editingPlanEventId) : null;
   const color = cal?.color || existing?.color || PLAN_COLORS[0];
   // Free-typed location (no suggestion picked) still saves as a plain name
@@ -26068,7 +26081,7 @@ function initPlanCalListDelegation() {
     if (refreshBtn) {
       const id = refreshBtn.dataset.refreshCal;
       if (planCalIsGoogle(id)) { loadCalendarEvents({ force: true }).then(() => { renderPlanCalList(); if (activeAppArea === "plan") renderPlanPage(); }); return; }
-      const c = (state.planCalendars || []).find((x) => x.id === id);
+      const c = (state.calendarSources || []).find((x) => x.id === id); // reached only for non-linked (ics/local) ids
       if (c) fetchOnePlanCalendar(c).then(() => renderPlanCalList());
       return;
     }
@@ -26142,7 +26155,10 @@ function deletePlanCalendar(id) {
 // styling + its outside-click/Escape auto-close via closeFloatingMenus).
 function openPlanCalContextMenu(event, id) {
   closeFolderMenu();
-  if (!(state.planCalendars || []).some((c) => c.id === id)) return;
+  // Phase 2: read the unified list but keep the old scope — the desktop context menu
+  // was only wired for planCalendars (ics/local) rows, never linked ones; preserve
+  // that exactly (unifying the menu to linked rows is a UX call, not this refactor's).
+  if (!(state.calendarSources || []).some((c) => c.id === id && c.source !== "linked")) return;
   const menu = document.createElement("div");
   menu.className = "folder-context-menu";
   menu.setAttribute("role", "menu");
@@ -26281,12 +26297,10 @@ function planOverlayRowHtml(source, name, color) {
 function renderPlanCalList() {
   // Leaving any inline-edit state; release the sidebar hover-rail pin.
   document.getElementById("planSidebar")?.classList.remove("is-pinned");
-  // One place to manage BOTH subscription backends: generic-ICS calendars
-  // (state.planCalendars) and Google calendars (state.calendars) are blended into
-  // one alphabetical list, each row tagged with its store so actions route right.
-  const planCals = (state.planCalendars || []).map((c) => ({ ...c, _store: "plan" }));
-  const googleCals = normalizeLinkedCalendars(state.calendars).map((c) => ({ ...c, _store: "google" }));
-  const sorted = [...planCals, ...googleCals].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  // Phase 2: one source-tagged list (linked | ics | local). Each row carries its
+  // source, so actions route by that instead of the old _store tag (Flag B: ics
+  // and local stay distinguishable per-entry, and render uniformly as before).
+  const sorted = [...(state.calendarSources || [])].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
   elements.planCalList.innerHTML = `
     <div class="plan-cal-list-head">
@@ -26329,7 +26343,10 @@ function planHiddenEventsSectionHtml() {
 function planCalRowHtml(cal) {
   // Edit/Delete are hidden by default: swipe-left reveals them on touch, and a
   // right-click opens a menu on desktop (see initPlanCalListDelegation).
-  const store = cal._store || "plan";
+  // Phase 2: derive the row's store/badge from source ("linked" → the Google store
+  // + G badge; "ics"/"local" → the plan store, no badge) — same values as the old
+  // _store tag, so data-cal-store and the badge are byte-identical to before.
+  const store = cal.source === "linked" ? "google" : "plan";
   const googleBadge = store === "google" ? '<span class="plan-cal-badge" title="Google Calendar">G</span>' : "";
   return `
     <div class="plan-cal-row" id="plan-cal-row-${escapeHtml(cal.id)}" data-cal-id="${escapeHtml(cal.id)}" data-cal-store="${store}">
@@ -26368,7 +26385,10 @@ function openPlanCalEditMode(id) {
 // Whether a sidebar calendar id belongs to the Google (state.calendars) store
 // rather than the generic-ICS (state.planCalendars) store.
 function planCalIsGoogle(id) {
-  return (state.calendars || []).some((c) => c.id === id);
+  // Phase 2: route writes to the right legacy store by the entry's source
+  // ("linked" ⇒ state.calendars; "ics"/"local" ⇒ state.planCalendars). Equivalent
+  // to the old state.calendars membership test, but read from the unified list.
+  return (state.calendarSources || []).find((c) => c.id === id)?.source === "linked";
 }
 
 async function addPlanCalendar() {
