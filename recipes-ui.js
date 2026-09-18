@@ -2769,6 +2769,16 @@ function textValue(value) {
   return value ? String(value) : "";
 }
 
+// ISO-8601 duration (PT1H30M) → "1 hr 30 min"; passes non-ISO strings through.
+// Ported from server.js (the only prior copy): parseRecipeText runs client-side too
+// (recipe import), where `readableDuration` was undefined → this threw in production.
+function readableDuration(value) {
+  if (!/^P(T|\d)/i.test(value)) return value;
+  const hours = Number(value.match(/(\d+)H/i)?.[1] || 0);
+  const minutes = Number(value.match(/(\d+)M/i)?.[1] || 0);
+  return [hours ? `${hours} hr` : "", minutes ? `${minutes} min` : ""].filter(Boolean).join(" ");
+}
+
 function parseServings(value) {
   const text = textValue(value);
   const match = text.match(/\d+/);
