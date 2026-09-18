@@ -19232,8 +19232,7 @@ function loadCachedCalendarEvents() {
 async function loadCalendarEvents(options = {}) {
   const calendars = normalizeLinkedCalendars(state.calendars).filter((calendar) => calendar.enabled);
   if (!calendars.length) {
-    calendarEvents = [];
-    localStorage.removeItem(CALENDAR_CACHE_KEY);
+    clearCalendarSourceCache({ source: "linked" }); // empties calendarEvents + removes the linked blob
     planRangeCache.clear(); // Google events also feed the Plan calendar (drop its memoized range)
     if (options.statusElement) options.statusElement.textContent = "No enabled calendars to sync.";
     renderPlanner();
@@ -19251,9 +19250,9 @@ async function loadCalendarEvents(options = {}) {
         calendarColor: calendar.color
       }));
     }));
-    calendarEvents = eventGroups.flat();
+    const flat = eventGroups.flat();
     planRangeCache.clear(); // Google events also feed the Plan calendar (drop its memoized range)
-    localStorage.setItem(CALENDAR_CACHE_KEY, JSON.stringify({ fetchedAt: new Date().toISOString(), events: calendarEvents }));
+    writeCalendarSourceCache({ source: "linked" }, flat); // sets calendarEvents + rewrites the linked blob (ISO timestamp) via the facade
     if (options.statusElement) {
       options.statusElement.textContent = `${calendarEvents.length} event${calendarEvents.length === 1 ? "" : "s"} synced from ${calendars.length} calendar${calendars.length === 1 ? "" : "s"}.`;
     }
@@ -26537,13 +26536,51 @@ async function fetchOnePlanCalendar(cal) {
     const res = await fetch(proxy, { headers: { Authorization: `Bearer ${authSession?.access_token || ""}` } });
     if (!res.ok) return;
     const data = await res.json();
-    planCalendarCache[cal.id] = { fetchedAt: new Date(), events: data.events || [] };
-    savePlanIcsCache(); // persist so it renders instantly on next reload
+    writeCalendarSourceCache(cal, data.events || []); // per-cal ics entry via the facade (persists so it renders instantly on next reload)
     planRangeCache.clear(); // fresh iCal events — drop the memoized range
     state.planCalendars = (state.planCalendars || []).map((c) => c.id === cal.id ? { ...c, lastFetched: new Date().toISOString() } : c);
     persist();
     schedulePlanRender(); // coalesce when several subscriptions resolve together
   } catch { }
+}
+
+// ── Unified calendar-source fetch dispatcher (Decision #1, Phase 3.2) ─────────
+// One entry point over the two fetch pipelines. It ROUTES to the existing fetch
+// functions rather than reimplementing them, so each source kind keeps its own,
+// unchanged failure-isolation boundary:
+//   • linked    — WHOLE-SET, all-or-nothing. loadCalendarEvents wraps its parallel
+//     fetch in a SINGLE try/catch, so any one linked failure leaves the entire
+//     linked set untouched (there is no per-linked-cal fetch — the provider returns
+//     the whole set), and the fn never rejects (it catches internally).
+//   • ics/local — PER-CAL isolation. Each source goes through fetchOnePlanCalendar,
+//     which owns its OWN try/catch and never rejects, so one bad feed can't abort
+//     the others (url-less local buckets self-skip — a documented no-op).
+// Because both underlying fns swallow their own errors and never reject, the outer
+// Promise.all below cannot propagate one kind's failure into another — the router
+// adds no new boundary that could blur isolation.
+function refreshCalendarSource(source, options = {}) {
+  if (calendarSourceKind(source) === "linked") return loadCalendarEvents(options); // whole-set (self-handles empty→clear)
+  return fetchOnePlanCalendar(source); // per-cal
+}
+async function refreshAllCalendarSources(options = {}) {
+  const { kinds = ["linked", "ics"], ...linkedOptions } = options;
+  const sources = state.calendarSources || [];
+  const jobs = [];
+  if (kinds.includes("linked")) {
+    // Run the single whole-set linked fetch once. It re-reads state.calendars
+    // itself (including the empty→clear case), so it runs regardless of whether an
+    // enabled linked source currently exists — matching every legacy caller of
+    // loadCalendarEvents. Its all-or-nothing try/catch is preserved untouched.
+    jobs.push(loadCalendarEvents(linkedOptions));
+  }
+  if (kinds.includes("ics")) {
+    // Per-cal isolation across the non-linked set (ics + local) — exactly the set
+    // fetchAllPlanCalendars iterated (state.planCalendars), since calendarSources
+    // unions the same objects id-for-id.
+    sources.filter((s) => calendarSourceKind(s) === "ics")
+      .forEach((s) => jobs.push(refreshCalendarSource(s)));
+  }
+  await Promise.all(jobs); // safe: neither underlying fn rejects, so no cross-kind blur
 }
 
 
