@@ -3304,6 +3304,41 @@ function setupDiagnostics() {
     // makes an end-to-end regen hard to force reliably.
     dedupeAutoRules: (rules) => (localDevMode ? dedupeAutoGenerateRules(rules) : null),
     autoRuleSig: (rule) => (localDevMode ? autoRuleSignature(rule) : null),
+    // Meal-plan state reads for the mp-* end-to-end checks (drive the flow via the
+    // real DOM, assert the resulting state here). weekKey()/slotEntries/state are all
+    // app.js-scope; the handlers themselves live in the mealplan factory and are
+    // exercised through their DOM bindings.
+    mpState: () => {
+      if (!localDevMode) return null;
+      const wk = weekKey();
+      const week = (state.plans || {})[wk] || {};
+      let entries = 0;
+      const slots = week.slots || {};
+      for (const day of Object.keys(slots)) for (const meal of Object.keys(slots[day] || {})) {
+        entries += slotEntries(slots[day][meal]).filter(Boolean).length;
+      }
+      return {
+        weekKey: wk,
+        members: (state.mealPlanConfig?.members || []).map((m) => m.label),
+        mealKeys: meals.slice(),
+        entryCount: entries,
+        publishedWeeks: Object.keys(state.publishedWeeks || {}),
+        groceryCount: (state.persistentManualGroceries || []).length,
+      };
+    },
+    // Ensure the meal-plan config has at least one member so the planner renders
+    // real slots (a fresh Playwright context has empty localStorage → boot-empty
+    // config → no members → empty planner). Deterministic alternative to relying on
+    // the boot-empty hydrate-merge to carry a seeded member.
+    ensureMealMember: () => {
+      if (!localDevMode) return null;
+      const cfg = normalizeMealPlanConfig(state.mealPlanConfig);
+      if (!cfg.members.length) cfg.members = [{ id: "member-qa", label: "QA", dob: "", linkedUserId: null }];
+      state.mealPlanConfig = cfg;
+      recomputeMealPlanLayout(state.mealPlanConfig);
+      persist();
+      return cfg.members.map((m) => m.label);
+    },
   };
 }
 
