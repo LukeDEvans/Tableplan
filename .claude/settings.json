@@ -27,8 +27,6 @@
       "Bash(ls:*)"
     ],
     "ask": [
-      "Bash(git push --force:*)",
-      "Bash(git push -f:*)",
       "Bash(netlify deploy:*)",
       "Bash(netlify env:set:*)",
       "Bash(netlify env:unset:*)",
@@ -37,6 +35,24 @@
       "mcp__claude_ai_Supabase__execute_sql",
       "mcp__claude_ai_Netlify__netlify-project-services-updater",
       "mcp__claude_ai_Netlify__netlify-deploy-services-updater"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --force-with-lease:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-git-push.mjs\""
+          }
+        ]
+      }
     ]
   }
 }
