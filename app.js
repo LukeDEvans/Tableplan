@@ -3297,6 +3297,13 @@ function setupDiagnostics() {
     autoRuleCount: () => (localDevMode ? (state.autoGenerateRules || []).length : null),
     autoRuleSignatures: () => (localDevMode ? (state.autoGenerateRules || []).map(autoRuleSignature) : null),
     defaultAutoRuleCount: () => (localDevMode ? defaultAutoGenerateRules().length : null),
+    // Expose the PURE dedup + signature that protect against the boot-empty
+    // regenerate-default-with-new-ids duplication (mergeStates → dedupeAutoGenerateRules
+    // by autoRuleSignature). Lets the extended runner assert the protection
+    // deterministically, sidestepping the members→meals→boot-ordering coupling that
+    // makes an end-to-end regen hard to force reliably.
+    dedupeAutoRules: (rules) => (localDevMode ? dedupeAutoGenerateRules(rules) : null),
+    autoRuleSig: (rule) => (localDevMode ? autoRuleSignature(rule) : null),
   };
 }
 

@@ -10,6 +10,7 @@
     "boot:check": "node scripts/check-boot.mjs",
     "check:boot": "vite build && node scripts/check-boot.mjs",
     "qa:p0p1": "node scripts/qa-p0p1.mjs",
+    "qa:p0p1-extended": "node scripts/qa-p0p1-extended.mjs",
     "ios:sync": "vite build && npx cap sync ios",
     "ios:open": "npx cap open ios"
   },
