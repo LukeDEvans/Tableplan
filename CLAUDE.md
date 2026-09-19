@@ -68,6 +68,30 @@ The recommended flow for substantial work — and the conventions behind it — 
 
 **Skills:** `/recap` (re-establish reality, read-only) and `/adversarial-review` (fresh subagent attacks a change before it ships). Durable project knowledge lives in `ARCHITECTURE.md` (the constitution) and the file-based memory (`~/.claude/projects/-Users-luke/memory/`) — prefer those over re-deriving context each session.
 
+### Run-the-whole-list workflow (don't stop between items)
+
+Luke often submits **a full list of items and expects the agent to run it end-to-end
+without stopping between them.** Default to that: work each item through
+`implement → test → boot-check → commit → push integration → next` at your own pace,
+and **do not pause for approval between routine, verified, test-covered items.** Keep
+moving; report at the end, not between steps. (This is the standing preference — see
+memory `feedback_move_fast_hold_shape`.)
+
+Two things still interrupt the run, regardless of pace:
+- **A real decision for Luke** — anything with the same shape as a data-authority
+  flip or a `STATE_SCHEMA_VERSION` bump, where *"tests pass" and "this is the right
+  call" are different questions* (the Decision-boundaries list above). Flag it, keep
+  going on everything else, and hold only that item.
+- **A blocked item** — if one item can't be done cleanly, **don't halt the whole
+  list**: log it to `ISSUES.md` (or hand it to the **reviewer** subagent), report it,
+  and continue with the rest. Pull a check/feature that would pass vacuously rather
+  than shipping it; record why.
+
+For a second, skeptical pass on finished work without stopping the line, use the
+**reviewer** subagent (`.claude/agents/reviewer.md`): it self-critiques and logs to
+`ISSUES.md` instead of blocking. `git push` to non-`main` branches is auto-approved;
+`main`/deploys/migrations stay gated (see Git / GitHub below).
+
 ## UI conventions
 
 **Toggle switches:** the house toggle is `<input type="checkbox" class="live-toggle">` — a 36×20 pill with sliding knob, defined in styles.css (search "House toggle switch"). Use it for every new on/off control instead of inventing a style. Beware the `.recipe-form label` grid rule: labels containing a toggle must be added to its `:not(...)` exclusion list or laid out with their own flex row.
