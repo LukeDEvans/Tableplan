@@ -1118,7 +1118,12 @@ async function handleState(request, response) {
       return;
     }
 
-    await writeStoredState(parsed.state || parsed);
+    let incoming = parsed.state || parsed;
+    if (STATE_GUARD_ENABLED) {
+      const stored = await readStoredState();
+      incoming = guardEmptyNeverErases(incoming, stored);
+    }
+    await writeStoredState(incoming);
     sendJson(response, 200, { ok: true });
     return;
   }
@@ -1183,6 +1188,35 @@ async function writeStoredState(state) {
   const tempFile = `${STATE_FILE}.tmp`;
   await fs.writeFile(tempFile, `${JSON.stringify(state, null, 2)}\n`);
   await fs.rename(tempFile, STATE_FILE);
+}
+
+// QA-only defense-in-depth mirroring the prod DB trigger's "empty-never-erases"
+// (finance-sync.js §1): when QA_STATE_GUARD=1, a PUT whose finance section is
+// empty/absent can NOT wipe a non-empty stored finance section — the multi-writer
+// stale/backgrounded-tab stomp. OFF by default so ordinary local dev keeps its
+// simple last-writer-wins semantics; the extended QA runner turns it on to
+// reproduce the trigger locally without the real cloud. Scoped to the finance
+// keys the documented P0 wipe vectors care about.
+const STATE_GUARD_ENABLED = process.env.QA_STATE_GUARD === "1";
+const GUARD_FINANCE_KEYS = [
+  "financeBudgetGroups", "financeAccounts", "financeCashAccountIds",
+  "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeManualTxns",
+  "financeTxnLabels", "financeMerchantNames", "financeRecurring",
+  "financePeople", "financePersonal",
+];
+function isEmptyStateValue(v) {
+  if (v == null) return true;
+  if (Array.isArray(v)) return v.length === 0;
+  if (typeof v === "object") return Object.keys(v).length === 0;
+  return false; // a scalar is never "empty" for erase purposes
+}
+function guardEmptyNeverErases(incoming, stored) {
+  if (!stored || typeof stored !== "object" || !incoming || typeof incoming !== "object") return incoming;
+  const out = { ...incoming };
+  for (const key of GUARD_FINANCE_KEYS) {
+    if (isEmptyStateValue(out[key]) && !isEmptyStateValue(stored[key])) out[key] = stored[key];
+  }
+  return out;
 }
 
 async function writeRotatingBackup(state, options = {}) {

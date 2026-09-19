@@ -3251,6 +3251,53 @@ function setupDiagnostics() {
     flaggedRows: () => (localDevMode ? (elements.receiptLineList?.querySelectorAll(".receipt-line--flagged").length || 0) : 0),
     thumbs: () => (localDevMode ? (elements.receiptSourceImages?.querySelectorAll("img").length || 0) : 0),
   };
+  // P0/P1 headless-QA verbs (scripts/qa-p0p1-extended.mjs). Gated at CALL time on
+  // localDevMode so they can never run off localhost. They exercise the REAL
+  // persist/merge + boot-empty guards + auto-rule dedup directly, instead of
+  // fragile gesture/UI simulation.
+  window.__liveQA = {
+    // Force a synchronous write to the local backend (bypasses the debounce) so a
+    // second context's stale/empty write can be sequenced deterministically. Uses
+    // the real write path (writeStateToLocalBackend → PUT /api/state).
+    persistNow: async () => { if (!localDevMode) return null; state.stateUpdatedAt = new Date().toISOString(); await writeStateToLocalBackend(); return true; },
+    // Distinctive finance markers, read from the live in-memory state.
+    financeMarkers: () => (localDevMode ? {
+      categoryNames: (state.financeBudgetGroups || []).flatMap((g) => (g.categories || []).map((c) => c.name)),
+      cashIds: state.financeCashAccountIds || [],
+      labels: state.financeTxnLabels || {},
+      merchants: state.financeMerchantNames || {},
+      recurringCount: (state.financeRecurring || []).length,
+    } : null),
+    financeHydrated: () => (localDevMode ? !!financeSectionHydrated : null),
+    // Add a distinctive budget category through state + the real persist path. The
+    // stomp defense lives in persist()/the write path, not the add UI, so this is a
+    // faithful way to plant a marker one context must not clobber.
+    addFinanceCategory: (groupId, catId, name) => {
+      if (!localDevMode) return null;
+      const groups = Array.isArray(state.financeBudgetGroups) ? state.financeBudgetGroups : (state.financeBudgetGroups = []);
+      const g = groups.find((x) => x.id === groupId) || groups[0];
+      if (!g) return null;
+      g.categories = [...(g.categories || []), { id: catId, name, activeItemId: "", items: [] }];
+      persist();
+      return catId;
+    },
+    // Wipe finance in memory (simulate a boot-empty / stale-tab client whose finance
+    // never hydrated) WITHOUT persisting — the caller then persistNow()s to drive the
+    // stale-write half of the two-writer stomp.
+    emptyFinanceInMemory: () => {
+      if (!localDevMode) return null;
+      for (const k of ["financeBudgetGroups", "financeAccounts", "financeCashAccountIds", "financeManualTxns", "financeTxnLabels", "financeMerchantNames", "financeRecurring"]) {
+        state[k] = Array.isArray(state[k]) ? [] : (typeof state[k] === "object" && state[k] ? {} : state[k]);
+      }
+      return true;
+    },
+    // Auto-generate-rules: the boot-empty client regenerates the DEFAULT rules with
+    // NEW ids; mergeStates must dedupe them against the cloud's by signature (slot+
+    // action), never duplicate. Expose the counts/signatures to assert that.
+    autoRuleCount: () => (localDevMode ? (state.autoGenerateRules || []).length : null),
+    autoRuleSignatures: () => (localDevMode ? (state.autoGenerateRules || []).map(autoRuleSignature) : null),
+    defaultAutoRuleCount: () => (localDevMode ? defaultAutoGenerateRules().length : null),
+  };
 }
 
 function renderDiagnosticsPanel(snap) {
