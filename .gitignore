@@ -22,3 +22,6 @@ ios/DerivedData/
 
 # Xcode archive/ipa build output
 ios/App/build/
+
+# Local live task checkpoint (usage-limit resume aid) — not committed
+PROGRESS.md
