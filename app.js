@@ -3339,6 +3339,30 @@ function setupDiagnostics() {
       persist();
       return cfg.members.map((m) => m.label);
     },
+    // Place a RECIPE-backed entry into a slot (the real planned-recipe shape via
+    // LiveMealPlanServings.createMealPlanRecipe), so recipe-only affordances light up:
+    // the planned-servings input (mp-serving) and the plan→grocery derivation
+    // (mp-grocery). The picker/setMeal handlers live in the mealplan factory closure;
+    // this reproduces their result from app.js scope and re-renders.
+    mpAddRecipeEntry: (day, meal, recipeId) => {
+      if (!localDevMode) return null;
+      const recipe = (state.recipes || []).find((r) => r.id === recipeId);
+      if (!recipe) return null;
+      const pd = prepDays.find((p) => p.id === day);
+      const date = pd ? dateKeyFromDate(addDays(currentWeek, pd.offset)) : "";
+      const entry = LiveMealPlanServings.createMealPlanRecipe(recipe, {
+        id: createId("meal-plan-recipe"), date, mealType: meal, plannedServings: recipe.servings || 1,
+      });
+      const week = weekState();
+      week.slots[day] = week.slots[day] || {};
+      week.slots[day][meal] = [entry];
+      persist();
+      render();
+      return { placed: true, recipeName: recipe.name };
+    },
+    // The plan→grocery derivation for the current week (ingredients from planned
+    // recipes not yet in the grocery catalog) — the real buildRawGroceryRows path.
+    mpUnlistedGroceryItems: () => (localDevMode ? unlistedGroceryItemsForWeek(weekState()).map((x) => x.item) : null),
   };
 }
 

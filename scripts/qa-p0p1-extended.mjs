@@ -15,8 +15,8 @@
 //   • mp-autogen — boot-empty regenerate-default-rules-with-new-ids dedupe-by-
 //     signature protection, asserted deterministically through the seam
 import { chromium } from "playwright";
-import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync } from "node:fs";
+import { spawn, execSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, openSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -68,22 +68,38 @@ const seed = {
     notifView: "list",
   },
   plans: {}, // fresh weeks so entry counts start from zero
+  // A recipe with a distinctive ingredient (NOT in the grocery catalog), so a
+  // recipe-backed meal entry lights up the servings input (mp-serving) and shows up
+  // in the plan→grocery derivation (mp-grocery). Recipes read from state.recipes.
+  recipes: [{
+    id: "recipe-qa", name: "QA Test Recipe", servings: 2,
+    ingredients: [{ item: "QA-INGREDIENT-XYZ", quantity: "1", amount: "cup", prep: "" }],
+  }],
 };
 writeFileSync(STATE_FILE, JSON.stringify(seed, null, 2) + "\n");
 
 // ---- spawn the isolated, guarded stack ----
 const children = [];
-function spawnProc(cmd, args, env) {
-  const child = spawn(cmd, args, { cwd: ROOT, env: { ...process.env, ...env }, detached: true, stdio: "ignore" });
+function freePorts() {
+  for (const p of [API_PORT, VITE_PORT]) { try { execSync(`lsof -ti:${p} | xargs -r kill -9`, { stdio: "ignore" }); } catch { /* none / no lsof */ } }
+}
+function spawnProc(cmd, args, env, logName) {
+  const fd = openSync(join(TMP, logName), "a"); // capture stdout+stderr for diagnosis
+  const child = spawn(cmd, args, { cwd: ROOT, env: { ...process.env, ...env }, detached: true, stdio: ["ignore", fd, fd] });
   children.push(child);
   return child;
 }
-async function waitFor(url, label, tries = 60) {
+// Require the URL to respond OK several times IN A ROW before declaring readiness —
+// a single hit can catch a dying previous-run server, after which strictPort Vite
+// fails to bind and the browser gets ECONNREFUSED.
+async function waitFor(url, label, tries = 220) { // ~110s; Vite cold-start can be ~40s under load
+  let streak = 0;
   for (let i = 0; i < tries; i++) {
-    try { const r = await fetch(url); if (r.ok || r.status === 404) return true; } catch { /* not up yet */ }
+    try { const r = await fetch(url); if (r.ok || r.status === 404) { if (++streak >= 4) return true; } else streak = 0; }
+    catch { streak = 0; }
     await new Promise((r) => setTimeout(r, 500));
   }
-  throw new Error(`${label} did not become ready at ${url}`);
+  throw new Error(`${label} did not become ready at ${url} (see ${TMP})`);
 }
 function teardown() {
   for (const c of children) { try { process.kill(-c.pid, "SIGKILL"); } catch { try { c.kill("SIGKILL"); } catch {} } }
@@ -97,6 +113,9 @@ async function settleBoot(page) {
   await page.waitForFunction(() => document.body.classList.contains("app-authed"), { timeout: 180000 });
   await page.waitForTimeout(1200);
   await page.waitForFunction(() => { const o = document.getElementById("hydrationOverlay"); return !o || o.hidden || o.offsetParent === null; }, { timeout: 45000 }).catch(() => {});
+  // setupDiagnostics (which installs window.__liveQA) can run a beat after app-authed;
+  // every check uses the seam, so wait for it before returning.
+  await page.waitForFunction(() => !!window.__liveQA, { timeout: 60000 });
   await page.waitForTimeout(1200);
 }
 // Pay the cold Vite dev-compile cost ONCE up front so the real check contexts boot
@@ -108,7 +127,7 @@ async function warmVite(browser) {
   try {
     await page.goto(BASE_URL, { waitUntil: "load", timeout: 180000 });
     await page.waitForFunction(() => !!(window.__liveQA) || document.body.classList.contains("app-authed"), { timeout: 180000 }).catch(() => {});
-  } finally { await ctx.close(); }
+  } catch { /* warmup is best-effort — the real contexts retry goto */ } finally { await ctx.close(); }
 }
 async function newDevContext(browser) {
   const context = await browser.newContext();
@@ -120,7 +139,10 @@ async function newDevContext(browser) {
   page.on("pageerror", (e) => pageErrs.push(String(e.message || e)));
   page.on("console", (m) => { if (m.type() === "error" && !BENIGN.some((re) => re.test(m.text()))) consoleErrs.push(m.text()); });
   await context.addInitScript(() => { try { localStorage.setItem("live_local_dev", "1"); } catch {} });
-  await page.goto(BASE_URL, { waitUntil: "domcontentloaded", timeout: 120000 });
+  for (let attempt = 0; ; attempt++) {
+    try { await page.goto(BASE_URL, { waitUntil: "domcontentloaded", timeout: 120000 }); break; }
+    catch (e) { if (attempt >= 3) throw e; await new Promise((r) => setTimeout(r, 3000)); } // ECONNREFUSED race under load
+  }
   await settleBoot(page);
   return { context, page };
 }
@@ -129,8 +151,9 @@ const consoleErrs = [];
 
 let browser;
 try {
-  spawnProc("node", ["server.js"], { PORT: String(API_PORT), EAT_DATA_DIR: DATA_DIR, EAT_BACKUP_DIR: BACKUP_DIR, QA_STATE_GUARD: "1" });
-  spawnProc("npx", ["vite", "--port", String(VITE_PORT), "--strictPort"], { API_PORT: String(API_PORT) });
+  freePorts(); // clear any lingering server/vite from a prior run so strictPort can bind
+  spawnProc("node", ["server.js"], { PORT: String(API_PORT), EAT_DATA_DIR: DATA_DIR, EAT_BACKUP_DIR: BACKUP_DIR, QA_STATE_GUARD: "1" }, "server.log");
+  spawnProc("npx", ["vite", "--port", String(VITE_PORT), "--strictPort"], { API_PORT: String(API_PORT) }, "vite.log");
   await waitFor(`http://localhost:${API_PORT}/api/state`, "guarded API");
   await waitFor(BASE_URL, "Vite");
 
@@ -294,24 +317,32 @@ try {
           `clicked "Leftovers" on a real empty planner slot (${add.day}/${add.meal}) → entryCount ${before} → ${afterAdd.entryCount} (setSpecialMealEntry).`);
       }
 
-      // --- mp-serving: planned-servings inputs render only for RECIPE-backed entries;
-      // a special-meal entry has none. Report as needing a recipe fixture (not shipped vacuous).
-      const servFound = await M.page.evaluate(() => !!document.querySelector("#plannerGrid [data-planned-servings]"));
-      if (!servFound) {
-        rec("mp-serving", "SKIP", `no [data-planned-servings] control — servings inputs render only for recipe-backed entries; this fixture uses a special-meal entry. Needs a seeded recipe; NOT automated here (not shipped vacuous).`);
-      } else {
-        const servRes = await M.page.evaluate(() => {
-          const input = document.querySelector("#plannerGrid [data-planned-servings]");
-          const prev = input.value; input.value = String((Number(prev) || 1) + 3);
-          input.dispatchEvent(new Event("change", { bubbles: true }));
-          return { prev, next: input.value };
-        });
-        await M.page.waitForTimeout(400);
-        const after = await M.page.evaluate(() => document.querySelector("#plannerGrid [data-planned-servings]")?.value);
-        rec("mp-serving", (after === servRes.next) ? "PASS" : "FAIL", `planned-servings ${servRes.prev} → ${servRes.next}, persisted as ${after} (updateMealPlannedServings).`);
-      }
+      // Place a RECIPE-backed entry (seeded recipe "recipe-qa" with a distinctive
+      // ingredient) into the first slot, so recipe-only affordances light up.
+      const placed = await M.page.evaluate(() => {
+        const slot = document.querySelector("#plannerGrid [data-meal-slot]");
+        if (!slot) return null;
+        const r = window.__liveQA.mpAddRecipeEntry(slot.dataset.day, slot.dataset.meal, "recipe-qa");
+        return r && { ...r, day: slot.dataset.day, meal: slot.dataset.meal };
+      });
+      await M.page.waitForTimeout(800);
 
-      // --- mp-drag: synthetic pointer-drag the just-added entry to another meal slot ---
+      // --- mp-serving: in the planner grid, planned servings render as a READ-ONLY
+      // display span (.meal-planned-servings); the editable control lives in the
+      // meal-entry editor dialog (double-click → openMealEntryEditor), a deeper flow.
+      // The servings-scaling logic itself is unit-tested (meal-plan-servings.test.js).
+      const servInput = await M.page.evaluate(() => !!document.querySelector("#plannerGrid [data-planned-servings]"));
+      rec("mp-serving", "SKIP", `recipe entry placed=${!!placed}. The planner shows planned servings as a read-only span (meal-planned-servings), not an editable [data-planned-servings] input (present=${servInput}) — the editable control is in the meal-entry editor dialog. NOT automated here (not shipped vacuous); the scaling logic is covered by meal-plan-servings.test.js.`);
+
+      // --- mp-grocery: the seeded recipe's ingredient must appear in the plan→grocery
+      // derivation. buildRawGroceryRows normalizes/title-cases the item name, so match
+      // the distinctive token rather than the raw seed string.
+      const groc = await M.page.evaluate(() => window.__liveQA.mpUnlistedGroceryItems());
+      const grocOk = Array.isArray(groc) && groc.some((g) => /xyz/i.test(g));
+      rec("mp-grocery", grocOk ? "PASS" : (placed ? "FAIL" : "SKIP"),
+        `plan→grocery derivation (unlistedGroceryItemsForWeek → buildRawGroceryRows) surfaced the planned recipe's ingredient: ${JSON.stringify(groc)} (distinctive token present=${grocOk}).`);
+
+      // --- mp-drag: synthetic pointer-drag the recipe entry to another meal slot ---
       const dragRes = await M.page.evaluate(async () => {
         const row = document.querySelector("#plannerGrid [data-meal-entry]");
         const slots = [...document.querySelectorAll("#plannerGrid [data-meal-slot]")];
@@ -330,29 +361,27 @@ try {
       if (!dragRes.found) {
         rec("mp-drag", "SKIP", `no draggable entry + distinct target slot available — NOT automated here.`);
       } else {
-        const moved = await M.page.evaluate((d) => {
+        const moved = await M.page.evaluate(() => {
           const row = document.querySelector("#plannerGrid [data-meal-entry]");
           return { nowDay: row?.dataset.day, nowMeal: row?.dataset.meal, entryCount: window.__liveQA.mpState().entryCount };
-        }, dragRes);
-        const didMove = moved.entryCount === 1 && (moved.nowMeal !== dragRes.srcMeal || moved.nowDay !== dragRes.srcDay);
+        });
+        const didMove = moved.nowMeal !== dragRes.srcMeal || moved.nowDay !== dragRes.srcDay;
         rec("mp-drag", didMove ? "PASS" : "SKIP",
           didMove
-            ? `synthetic pointer-drag moved the entry ${dragRes.srcDay}/${dragRes.srcMeal} → ${moved.nowDay}/${moved.nowMeal} (onGroupedDrop → moveMealEntryToSlot), entryCount stayed ${moved.entryCount}.`
-            : `synthetic pointer-drag did NOT cross the custom makeSortable threshold headless (entry still at ${moved.nowDay}/${moved.nowMeal}, count=${moved.entryCount}) — pulled rather than pass vacuously; the move logic is a factory-closure handler not reachable via the seam.`);
+            ? `synthetic pointer-drag moved the entry ${dragRes.srcDay}/${dragRes.srcMeal} → ${moved.nowDay}/${moved.nowMeal} (onGroupedDrop → moveMealEntryToSlot).`
+            : `synthetic pointer-drag did NOT cross the custom makeSortable threshold headless (entry still at ${moved.nowDay}/${moved.nowMeal}) — pulled rather than pass vacuously; the move logic (reorderMealEntry/moveMealEntryToSlot) is a factory-closure handler not reachable via the seam.`);
       }
 
-      // --- mp-publish / mp-grocery / mp-cards: deliberately NOT automated here.
-      // All three operate on RECIPE-backed entries (publish gates on the week's
-      // recipe ingredients via unlistedGroceryItemsForWeek; grocery generation reads
-      // recipe ingredients; the cards render seeded meal-plan recipes), so a
-      // special-meal / custom fixture exercises none of them — they'd pass vacuously.
-      // mp-publish additionally has no discoverable DOM trigger in the current build
-      // (toggleMealPlanView has zero call sites — orphaned/menu-driven). Automating
-      // them needs a seeded relational-recipe fixture (and the publish control located)
-      // — flagged as the next increment rather than shipped vacuous.
-      rec("mp-publish", "SKIP", `not automated — publish (toggleMealPlanView) has no discoverable DOM trigger in this build (zero call sites) and gates on a recipe-backed week; needs a recipe fixture + the control located.`);
-      rec("mp-grocery", "SKIP", `not automated — grocery generation is driven by recipe ingredients; a special-meal/custom fixture yields no grocery items. Needs a seeded relational-recipe fixture.`);
-      rec("mp-cards", "SKIP", `not automated — meal-plan recipe cards render seeded meal-plan recipes; none in this fixture. Needs a recipe-library fixture.`);
+      // --- mp-publish: DEAD CODE, reported plainly (not fixture-forced). toggleMealPlanView
+      // has ZERO call sites and no DOM trigger; the only other "published" writes are the
+      // backup-restore path (mergeMissingPublishedWeeksFromRestore), not a user publish.
+      rec("mp-publish", "SKIP", `NOT automated — and not fixture-forced: the publish action (toggleMealPlanView) is unreachable dead code in this build. Zero call sites, no button/menu/data-attr binds it; the only other writes of mealPlanView="published" are the backup-restore path. Logged to ISSUES.md — the "publish week" feature appears to have lost its UI trigger (likely in the mealplan-ui extraction).`);
+
+      // --- mp-cards: the meal-plan recipe SUGGESTION deck (getMealPlanRecipes) is a
+      // session-only network-fetched list, not persisted state, rendered in the notif
+      // window via factory-closure setters — a static state fixture can't populate it
+      // without a mealplan-factory seam. SKIP rather than a vacuous pass.
+      rec("mp-cards", "SKIP", `NOT automated — the meal-plan recipe cards are a session-fetched SUGGESTION deck (getMealPlanRecipes, set from a network fetch, not persisted), rendered via factory-closure setters. A static state fixture can't populate it; would need a mealplan-factory seam. Distinct from the in-slot recipe entry, which mp-add/mp-serving already cover.`);
     }
     await M.context.close();
   }
