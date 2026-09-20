@@ -421,10 +421,15 @@ try {
             : `synthetic pointer-drag did NOT cross the custom makeSortable threshold headless (entry still at ${moved.nowDay}/${moved.nowMeal}) — pulled rather than pass vacuously; the move logic (reorderMealEntry/moveMealEntryToSlot) is a factory-closure handler not reachable via the seam.`);
       }
 
-      // --- mp-publish: DEAD CODE, reported plainly (not fixture-forced). toggleMealPlanView
-      // has ZERO call sites and no DOM trigger; the only other "published" writes are the
-      // backup-restore path (mergeMissingPublishedWeeksFromRestore), not a user publish.
-      rec("mp-publish", "SKIP", `NOT automated — and not fixture-forced: the publish action (toggleMealPlanView) is unreachable dead code in this build. Zero call sites, no button/menu/data-attr binds it; the only other writes of mealPlanView="published" are the backup-restore path. Logged to ISSUES.md — the "publish week" feature appears to have lost its UI trigger (likely in the mealplan-ui extraction).`);
+      // --- mp-publish: REMOVED, not skipped. toggleMealPlanView (the only writer of
+      // mealPlanView="published" from a live user action) had zero call sites and no
+      // DOM trigger anywhere -- confirmed dead code, deleted 2026-09-20 along with its
+      // exclusive helper archivePublishedWeek. The backup-restore path
+      // (mergeMissingPublishedWeeksFromRestore) is untouched: a restored week can still
+      // carry mealPlanView="published" and still renders read-only correctly via
+      // isPublishedMealPlanView/the readOnly template branches, which are NOT dead (they
+      // serve that restore path) and were deliberately left alone. There is no longer a
+      // "publish" action for this item to check -- see ISSUES.md history for the audit trail.
 
       // --- mp-cards: the meal-plan recipe SUGGESTION deck (getMealPlanRecipes) is
       // normally populated by warmMealPlanRecipes() fetching Gmail's "pendingRecipes"

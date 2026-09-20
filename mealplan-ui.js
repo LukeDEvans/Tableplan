@@ -3928,54 +3928,6 @@ function repeatMeal(day, meal) {
   }
 }
 
-async function toggleMealPlanView() {
-  const week = weekState();
-  editingMealEntry = null;
-  let justPublished = false;
-  if (isPublishedMealPlanView(week)) {
-    week.mealPlanView = "edit";
-  } else {
-    const reviewItems = unlistedGroceryItemsForWeek(week);
-    if (reviewItems.length) {
-      openGroceryReviewItems(reviewItems, "Add these to Grocery Items, or edit the source recipe if there is a typo. Then press Publish again.");
-      return;
-    }
-    week.publishedSlots = cloneMealSlots(week.slots);
-    week.publishedCombinedMealSections = cloneCombinedMealSections(week.combinedMealSections);
-    ensureMealSlotShape(week.publishedSlots);
-    ensureCombinedMealSectionShape(week.publishedCombinedMealSections);
-    week.mealPlanView = "published";
-    archivePublishedWeek(week);
-    justPublished = true;
-  }
-  persist();
-  if (justPublished) {
-    await persistImmediately("published week");
-  }
-  renderPlanner();
-  renderGroceries();
-  if (isPublishedMealPlanView(week)) openPublishedGroceryReview();
-}
-
-function archivePublishedWeek(week) {
-  if (!state.publishedWeeks || Array.isArray(state.publishedWeeks)) {
-    state.publishedWeeks = normalizePublishedWeeks(state.publishedWeeks);
-  }
-  const key = weekKey();
-  const start = dateFromWeekKey(key);
-  state.publishedWeeks[key] = {
-    weekKey: key,
-    startDate: key,
-    endDate: dateKeyFromDate(addDays(start, 7)),
-    rangeLabel: formatWeekRange(start),
-    publishedAt: new Date().toISOString(),
-    slots: cloneMealSlots(week.publishedSlots || week.slots),
-    combinedMealSections: cloneCombinedMealSections(week.publishedCombinedMealSections || week.combinedMealSections),
-    manualGroceries: Array.isArray(week.manualGroceries) ? [...week.manualGroceries] : [],
-    notes: week.notes || ""
-  };
-}
-
 function applyDefaultMealEntries(week) {
   if (week.defaultMealEntriesApplied) return;
   prepDays.forEach((day) => {
