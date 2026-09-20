@@ -276,7 +276,7 @@ const STATE_SECTIONS = {
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "mediaProgress", "articleNotifications", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastProgress", "mediaProgress", "articleNotifications", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
   plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
@@ -4776,6 +4776,7 @@ function defaultState() {
     articleSortOrder: "newest",
     readArticleIds: [],
     articleReadDates: {},
+    articleHistory: [],
     podcasts: [],
     podcastProgress: {},
     mediaProgress: {},
@@ -4965,6 +4966,7 @@ function normalizeState(parsed) {
       : defaultReadPublications(),
     articleSortOrder: parsed?.articleSortOrder === "oldest" ? "oldest" : "newest",
     readArticleIds: Array.isArray(parsed?.readArticleIds) ? parsed.readArticleIds : [],
+    articleHistory: Array.isArray(parsed?.articleHistory) ? parsed.articleHistory : [],
     // Media: unified listening history + music library + radio (all in the media
     // section so they sync; newer-wins on merge — see mergeStates).
     mediaHistory: Array.isArray(parsed?.mediaHistory) ? parsed.mediaHistory : [],
@@ -6324,6 +6326,11 @@ function mergeStates(newer, older) {
     "calendars",
     // Saved articles (Read/Listen)
     "savedArticles",
+    // Lightweight read/deleted-article history (id/title/url/date only — the
+    // heavy record + its cached audio/body are gone once purged; see
+    // markArticleRead/deleteArticle). Union so a purge on one device is never
+    // lost when another device syncs.
+    "articleHistory",
     // Unified Saved media (Watch-Later/Listen-Later/Favourites; id === mediaKey)
     "mediaSaved",
     // Unified recently-played history (entries carry a stable id; union so a play
@@ -33073,14 +33080,13 @@ function formatPodcastDuration(seconds) {
 
 const ARTICLE_CHECK_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
 
-function articleRowHtml(a, { pub, readIds, readDates }) {
-  const isRead = readIds.has(a.id);
+function articleRowHtml(a, { pub }) {
   const pubEntry = getReadPublications().find(p => p.key === a.publication);
   const showPub = pub === "all" || articleSearchActive;
   const pubLabel = showPub ? (pubEntry?.label || (a.publication === "other" ? "Other" : a.publication)) : "";
   const artUrl = articleArtUrl(a) || "";
   return `
-    <div class="article-row${isRead ? " article-row--read" : ""}" data-article-id="${escapeHtml(a.id)}" role="button" tabindex="0">
+    <div class="article-row" data-article-id="${escapeHtml(a.id)}" role="button" tabindex="0">
       ${mediaRowArt(artUrl, "📰")}
       <div class="article-row-main">
         <div class="article-row-title">${escapeHtml(a.title || a.url)}</div>
@@ -33088,13 +33094,11 @@ function articleRowHtml(a, { pub, readIds, readDates }) {
           ${a.author ? `<span class="article-row-author">${escapeHtml(a.author)}</span>` : ""}
           ${pubLabel ? `<span class="article-row-pub">${escapeHtml(pubLabel)}</span>` : ""}
           <span class="article-row-date">${escapeHtml(formatArticleDate(a.savedAt))}</span>
-          ${articleViewMode === "archive" && readDates[a.id] ? `<span class="article-row-date">Read ${escapeHtml(formatArticleDate(readDates[a.id]))}</span>` : ""}
         </div>
       </div>
-      ${isRead ? `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Read"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
       <div class="article-row-actions">
-        <button class="article-row-action-btn" type="button" data-article-action="${isRead ? "unmark" : "mark"}" title="${isRead ? "Mark as unread" : "Mark as read"}" aria-label="${isRead ? "Mark as unread" : "Mark as read"}">
-          ${isRead ? ldeIcon("restore") : ARTICLE_CHECK_ICON}
+        <button class="article-row-action-btn" type="button" data-article-action="mark" title="Mark as read" aria-label="Mark as read">
+          ${ARTICLE_CHECK_ICON}
         </button>
         <button class="article-row-action-btn" type="button" data-article-action="delete" title="Delete" aria-label="Delete">
           ${ldeIcon("trash")}
@@ -33104,7 +33108,6 @@ function articleRowHtml(a, { pub, readIds, readDates }) {
 }
 
 function wireArticleRows(listEl, containerId) {
-  const unmarkIcon = ldeIcon("restore");
   listEl.querySelectorAll(".article-row").forEach((row) => {
     const id = row.dataset.articleId;
     row.addEventListener("click", (e) => { if (e.target.closest(".article-row-actions")) return; openArticle(id, containerId); });
@@ -33117,10 +33120,6 @@ function wireArticleRows(listEl, containerId) {
       const action = btn.dataset.articleAction;
       if (action === "mark") {
         markArticleRead(id);
-        btn.dataset.articleAction = "unmark"; btn.title = "Mark as unread"; btn.setAttribute("aria-label", "Mark as unread"); btn.innerHTML = unmarkIcon;
-      } else if (action === "unmark") {
-        markArticleUnread(id);
-        btn.dataset.articleAction = "mark"; btn.title = "Mark as read"; btn.setAttribute("aria-label", "Mark as read"); btn.innerHTML = ARTICLE_CHECK_ICON;
       } else if (action === "delete") {
         deleteArticle(id);
       }
@@ -33137,11 +33136,9 @@ function renderArticleList(containerId, pub) {
   const listEl = document.getElementById(containerId);
   if (!listEl) return;
   updateArticleActionButtons();
-  const readIds = new Set(state.readArticleIds || []);
-  const readDates = state.articleReadDates || {};
 
   // Search mode: a persistent search box plus a results container that updates
-  // as you type (so focus is never lost). Searches all saved articles.
+  // as you type (so focus is never lost). Searches all saved (unread) articles.
   if (articleSearchActive) {
     listEl.innerHTML = `
       <div class="article-search-bar">
@@ -33156,22 +33153,20 @@ function renderArticleList(containerId, pub) {
     return;
   }
 
-  const allArticles = getFilteredSortedArticles(pub);
-  const articles = articleViewMode === "archive"
-    ? allArticles.filter(a => readIds.has(a.id)).sort((a, b) => {
-        const da = readDates[a.id] || a.savedAt || "";
-        const db = readDates[b.id] || b.savedAt || "";
-        return db.localeCompare(da);
-      })
-    : allArticles.filter(a => !readIds.has(a.id));
+  // Archive = the lightweight read/deleted-article history (see the 2026-09-21
+  // storage audit: a read or deleted article's full record + cached audio are
+  // purged immediately, so there is no longer a full re-openable article here —
+  // just enough to remember what it was and jump back to the source).
+  if (articleViewMode === "archive") {
+    renderArticleHistoryList(listEl, pub);
+    return;
+  }
+
+  const articles = getFilteredSortedArticles(pub);
 
   if (!articles.length) {
     const pubEntry = getReadPublications().find(p => p.key === pub);
     const pubName = pub === "all" ? "saved" : pub === "other" ? "Other" : pub === "email" ? "email" : pub === "nutritionfacts" ? "Nutrition Facts" : (pubEntry?.label || pub);
-    if (articleViewMode === "archive") {
-      listEl.innerHTML = `<div class="article-empty"><p>No archived articles${pub === "all" ? "" : ` in ${pubName}`}.</p><p>Articles you mark read appear here.</p></div>`;
-      return;
-    }
     const hasCookies = hasSyncCookies();
     const isPub = !!pubEntry;
     const syncHint = pub === "email"
@@ -33183,20 +33178,63 @@ function renderArticleList(containerId, pub) {
     return;
   }
 
-  listEl.innerHTML = articles.map((a) => articleRowHtml(a, { pub, readIds, readDates })).join("");
+  listEl.innerHTML = articles.map((a) => articleRowHtml(a, { pub })).join("");
   wireArticleRows(listEl, containerId);
 
   // Instant-on-select: pre-render the top unread articles' audio in the chosen
-  // Kokoro voice so tapping one plays immediately (no-op for the archive view and
-  // for non-Kokoro voices; see prefetchListenArticles).
-  if (articleViewMode !== "archive") prefetchListenArticles(articles);
+  // Kokoro voice so tapping one plays immediately (see prefetchListenArticles).
+  prefetchListenArticles(articles);
+}
+
+// The Archive view: lightweight history entries only (id/title/url/date — see
+// recordArticleHistory). No body/audio to reopen in-app, so a row just links out
+// to the source and offers "Forget" (permanently remove the history entry).
+function articleHistoryRowHtml(h) {
+  return `
+    <div class="article-row article-history-row" data-history-id="${escapeHtml(h.id)}">
+      <div class="article-row-main">
+        <div class="article-row-title">${escapeHtml(h.title || h.url || "Untitled")}</div>
+        <div class="article-row-meta">
+          <span class="article-row-date">${escapeHtml(formatArticleDate(h.date))}</span>
+        </div>
+      </div>
+      <div class="article-row-actions">
+        ${h.url ? `<button class="article-row-action-btn" type="button" data-history-action="open" title="Open source" aria-label="Open source">${ldeIcon("link")}</button>` : ""}
+        <button class="article-row-action-btn" type="button" data-history-action="forget" title="Remove from history" aria-label="Remove from history">
+          ${ldeIcon("trash")}
+        </button>
+      </div>
+    </div>`;
+}
+
+function renderArticleHistoryList(listEl, pub) {
+  const pubEntry = getReadPublications().find(p => p.key === pub);
+  const pubName = pub === "all" ? "saved" : pub === "other" ? "Other" : pub === "email" ? "email" : pub === "nutritionfacts" ? "Nutrition Facts" : (pubEntry?.label || pub);
+  const history = [...(state.articleHistory || [])].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  if (!history.length) {
+    listEl.innerHTML = `<div class="article-empty"><p>No archived articles${pub === "all" ? "" : ` in ${pubName}`}.</p><p>Articles you mark read or delete appear here.</p></div>`;
+    return;
+  }
+  listEl.innerHTML = history.map(articleHistoryRowHtml).join("");
+  listEl.querySelectorAll(".article-history-row").forEach((row) => {
+    const id = row.dataset.historyId;
+    row.querySelector("[data-history-action='open']")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const entry = (state.articleHistory || []).find((h) => h.id === id);
+      if (entry?.url) window.open(entry.url, "_blank", "noopener");
+    });
+    row.querySelector("[data-history-action='forget']")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      state.articleHistory = (state.articleHistory || []).filter((h) => h.id !== id);
+      persist();
+      row.remove();
+    });
+  });
 }
 
 function renderArticleSearchResults(containerId) {
   const resultsEl = document.getElementById("articleSearchResults");
   if (!resultsEl) return;
-  const readIds = new Set(state.readArticleIds || []);
-  const readDates = state.articleReadDates || {};
   const q = articleSearchQuery.trim().toLowerCase();
   if (!q) { resultsEl.innerHTML = `<div class="article-empty"><p>Type to search your saved articles.</p></div>`; return; }
   const matches = (state.savedArticles || []).filter(a =>
@@ -33205,7 +33243,7 @@ function renderArticleSearchResults(containerId) {
     (a.url || "").toLowerCase().includes(q)
   ).sort((a, b) => new Date(b.savedAt || 0) - new Date(a.savedAt || 0));
   resultsEl.innerHTML = matches.length
-    ? matches.map((a) => articleRowHtml(a, { pub: "all", readIds, readDates })).join("")
+    ? matches.map((a) => articleRowHtml(a, { pub: "all" })).join("")
     : `<div class="article-empty"><p>No articles match “${escapeHtml(articleSearchQuery.trim())}”.</p></div>`;
   if (matches.length) wireArticleRows(resultsEl, containerId);
 }
@@ -33229,6 +33267,50 @@ function getFilteredSortedArticles(pub) {
   return filtered;
 }
 
+// Lightweight, permanent trace of a purged (read or deleted) article — just
+// enough to remember it existed (Archive view, Publications dedup) without the
+// heavy body text or cached audio that made savedArticles the storage hog.
+const ARTICLE_HISTORY_CAP = 2000; // id/title/url/date only, ~100 bytes each — generous
+function recordArticleHistory(article) {
+  if (!article?.id) return;
+  if (!Array.isArray(state.articleHistory)) state.articleHistory = [];
+  state.articleHistory = state.articleHistory.filter((h) => h.id !== article.id);
+  state.articleHistory.unshift({
+    id: article.id,
+    title: article.title || article.url || "Untitled",
+    url: article.url || "",
+    date: new Date().toISOString(),
+  });
+  if (state.articleHistory.length > ARTICLE_HISTORY_CAP) state.articleHistory.length = ARTICLE_HISTORY_CAP;
+}
+
+// Best-effort, fire-and-forget trigger for the server-side Storage sweep
+// (tts-cache-cleanup) right after a purge, so the cached audio + offloaded body
+// for a just-removed article are reclaimed promptly instead of waiting for its
+// weekly schedule. A failed trigger is not user-visible — the weekly run still
+// catches it — so this never blocks or surfaces an error to the read/delete action.
+let articleSweepPending = false;
+function triggerArticleStorageSweep() {
+  if (articleSweepPending) return; // one in-flight sweep already covers a burst of reads/deletes
+  articleSweepPending = true;
+  callNetlifyFunction("tts-cache-cleanup", {})
+    .catch((e) => console.warn("[article-sweep] on-demand trigger failed (weekly schedule will still catch it):", e.message))
+    .finally(() => { articleSweepPending = false; });
+}
+
+// Remove a saved article's full record immediately (its text + cached audio are
+// what made savedArticles the storage hog — see the 2026-09-21 storage audit),
+// recording a lightweight history entry and tombstoning the removal so it can't
+// resurrect from a stale device's sync. Shared by markArticleRead and deleteArticle.
+function purgeSavedArticle(id) {
+  const article = (state.savedArticles || []).find((a) => a.id === id);
+  if (!article) return;
+  recordArticleHistory(article);
+  recordDeletion("savedArticles", id);
+  state.savedArticles = (state.savedArticles || []).filter((a) => a.id !== id);
+  triggerArticleStorageSweep();
+}
+
 function markArticleRead(id) {
   if (!id) return;
   if (!Array.isArray(state.readArticleIds)) state.readArticleIds = [];
@@ -33236,14 +33318,13 @@ function markArticleRead(id) {
     state.readArticleIds.push(id);
     if (!state.articleReadDates) state.articleReadDates = {};
     if (!state.articleReadDates[id]) state.articleReadDates[id] = new Date().toISOString();
-    persist();
   }
-  document.querySelectorAll(`[data-article-id="${id}"]`).forEach((row) => {
-    row.classList.add("article-row--read");
-    if (!row.querySelector(".article-row-check")) {
-      row.insertAdjacentHTML("beforeend", `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Read"><polyline points="20 6 9 17 4 12"/></svg>`);
-    }
-  });
+  purgeSavedArticle(id);
+  persist();
+  // The article is fully gone now (not just flagged) — remove its row rather
+  // than toggle a read style. Callers that already re-render their own list
+  // after calling this (renderMediaAllList, renderActiveMediaView) are unaffected.
+  document.querySelectorAll(`[data-article-id="${id}"]`).forEach((row) => row.remove());
 }
 
 // Render an article's body into the reader. Prefers in-memory text (fast, no
@@ -33323,18 +33404,8 @@ function closeArticleReader() {
   document.querySelectorAll(".article-row--active").forEach((r) => r.classList.remove("article-row--active"));
 }
 
-function markArticleUnread(id) {
-  state.readArticleIds = (state.readArticleIds || []).filter((rid) => rid !== id);
-  persist();
-  document.querySelectorAll(`[data-article-id="${CSS.escape(id)}"]`).forEach((row) => {
-    row.classList.remove("article-row--read");
-    row.querySelector(".article-row-check")?.remove();
-  });
-}
-
 function deleteArticle(id) {
-  recordDeletion("savedArticles", id);
-  state.savedArticles = (state.savedArticles || []).filter((a) => a.id !== id);
+  purgeSavedArticle(id);
   state.readArticleIds = (state.readArticleIds || []).filter((rid) => rid !== id);
   persist();
   if (openArticleId === id) closeArticleReader();
