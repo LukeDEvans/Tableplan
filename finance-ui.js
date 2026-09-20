@@ -3483,6 +3483,34 @@ function renderFinancePage() {
     </div>`;
 
   // Insights tab — forward-looking & trend surfaces (upcoming bills first).
+  // Multi-month outlook: categories that have averaged over budget for the last
+  // 3 complete months (financeCategoryHistoryAvg), not just this month's
+  // in-progress pace (that's the Budget tab's budgetPaceCard, a same-month
+  // projection). A category can clear the month-end pace check most months yet
+  // still be a sustained problem the single-month view never surfaces.
+  const outlookCategories = [];
+  for (const g of (state.financeBudgetGroups || [])) {
+    for (const c of (g.categories || [])) {
+      const budget = financeCategoryTotal(c);
+      if (!(budget > 0)) continue;
+      const avg = financeCategoryHistoryAvg(g.id, c.id, 3);
+      if (avg == null) continue;
+      const over = avg - budget;
+      if (over > Math.max(1, budget * 0.03)) outlookCategories.push({ group: g.label, name: c.name, over });
+    }
+  }
+  outlookCategories.sort((a, b) => b.over - a.over);
+  const budgetOutlookCard = outlookCategories.length ? `
+    <div class="fin-card fin-insights-card">
+      <div class="fin-subhead fin-accounts-title">3-month budget outlook</div>
+      <div class="fin-hint">Averaged over budget for the last 3 months — likely to keep running over unless the budget or the spending changes.</div>
+      ${outlookCategories.slice(0, 6).map((p) => `
+        <div class="fin-pace-row">
+          <span class="fin-pace-name">${escapeHtml(p.name)}<span class="fin-of"> · ${escapeHtml(p.group)}</span></span>
+          <span class="fin-pace-amt is-over">~${formatFinMoney(p.over)}/mo over</span>
+        </div>`).join("")}
+      ${outlookCategories.length > 6 ? `<div class="fin-hint">+ ${outlookCategories.length - 6} more ${outlookCategories.length - 6 === 1 ? "category" : "categories"}.</div>` : ""}
+    </div>` : "";
   const upcomingBillsCard = `
     <div class="fin-card fin-insights-card">
       <div class="fin-subhead fin-accounts-title">Upcoming bills</div>
@@ -3631,7 +3659,7 @@ function renderFinancePage() {
           ${r.id ? `<a class="fin-quick-chip" href="https://mail.google.com/mail/u/0/#all/${encodeURIComponent(r.id)}" target="_blank" rel="noopener noreferrer">Email</a>` : ""}
         </div>`).join("")}` : ""}
     </div>` : "";
-  const insightsView = `${upcomingBillsCard}${receiptsCard}${subsCard}${cashFlowCard}${trendsCard}${reportsCard}${notableCard}`;
+  const insightsView = `${budgetOutlookCard}${upcomingBillsCard}${receiptsCard}${subsCard}${cashFlowCard}${trendsCard}${reportsCard}${notableCard}`;
 
   // Savings goals (Accounts tab). Tap a goal to edit target/saved/date; progress
   // bar + on-track note derived on the fly.
