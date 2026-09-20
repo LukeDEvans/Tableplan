@@ -66,7 +66,9 @@ The recommended flow for substantial work — and the conventions behind it — 
 - **Verification is mandatory.** "Implementation complete" (code written) and "task verified" (evidence it behaves correctly) are different states — a finished task carries verification evidence.
 - **Don't restart from zero.** When continuing work, run `/recap` first: inspect git state, artifacts, tests, and memory to establish what's actually done before assuming it isn't.
 
-**Skills:** `/recap` (re-establish reality, read-only) and `/adversarial-review` (fresh subagent attacks a change before it ships). Durable project knowledge lives in `ARCHITECTURE.md` (the constitution) and the file-based memory (`~/.claude/projects/-Users-luke/memory/`) — prefer those over re-deriving context each session.
+**Skills:** `/recap` (re-establish reality, read-only) and `/adversarial-review` (fresh subagent attacks a change before it ships). Durable project knowledge lives in **committed repo docs** — `ARCHITECTURE.md` (the constitution), the top-level design/decision docs (e.g. `CALENDAR_AUTHORITY_FLIP.md`), `ISSUES.md` (open findings), and `PAPERCUTS.md` (dev-time-sink log). **These are the source of truth for any session, local or cloud.** (Claude Code's file-based memory at `~/.claude/projects/.../memory/` is **local to one machine** and is NOT visible to cloud sessions — anything durable there must be mirrored into a committed doc.)
+
+**PAPERCUTS.md:** when you lose time to a tooling/gotcha issue, append one line — `date · symptom · fix · project`. Check it first when tooling fails mysteriously.
 
 ### Run-the-whole-list workflow (don't stop between items)
 
@@ -157,6 +159,12 @@ in a linked doc) — the blast radius is large (`renderPlanPage()` alone has ~42
 sites), so it must be visible up front, **not discovered mid-refactor.** Do **not**
 start the unification opportunistically inside another change, and do not begin it
 until that map exists.
+
+**STATUS (2026-09-19):** Phases 0–3 done (`state.calendarSources` is a forward-only
+derived mirror; readers repointed; fetch/cache unified). **Phase 4 (authority flip)
+is HELD** — the read-compat shim has a delete-resurrection gap that needs a scoped
+`mergeStates` tombstone-routing fix first, and there is **no** `STATE_SCHEMA_VERSION`
+bump (it's finance-only). Full record + the prerequisite fix: **[CALENDAR_AUTHORITY_FLIP.md](CALENDAR_AUTHORITY_FLIP.md)**.
 
 **2. Recipes cluster — separate modules, not one domain.**
 Recipes, meal-plan, and groceries are **separate modules** — not one "recipes"
