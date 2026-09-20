@@ -1292,6 +1292,21 @@ function financeNotifDeckAlertsHtml() {
   ].join("");
 }
 
+// Shared "facts" line (date/account/status) for a transaction's card display —
+// used identically by the review deck and the main-list detail card so the two
+// surfaces can't silently drift on what's shown or how it's formatted. (Fixes
+// a pre-existing inconsistency found while unifying: the detail card never
+// said "Manual" for a manual transaction's status, only Pending/Posted — the
+// review card already did.)
+function financeTxnFactsLine(t) {
+  const facts = [
+    t.posted ? new Date(t.posted).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "—",
+    t.account,
+    t.isManual ? "Manual" : (t.pending ? "Pending" : (t.posted ? "Posted" : "")),
+  ].filter(Boolean).join(" · ");
+  return facts + (t.signFlipped ? " · sign corrected" : "");
+}
+
 function renderFinanceReviewDeck() {
   const deck = document.querySelector("[data-fin-review-deck]");
   if (!deck) return;
@@ -1305,10 +1320,7 @@ function renderFinanceReviewDeck() {
     const mKey = financeMerchantKey(t.description);
     const nameVal = names[mKey] || "";
     const noteVal = Object.prototype.hasOwnProperty.call(noteOverrides, t.id) ? (noteOverrides[t.id] || "") : "";
-    const date = t.posted ? new Date(t.posted).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
-    // Bank facts (read-only): account · date · status. Manual entries say so.
-    const status = t.isManual ? "Manual" : (t.pending ? "Pending" : (t.posted ? "Posted" : ""));
-    const facts = [t.account, date, status].filter(Boolean).join(" · ");
+    const facts = financeTxnFactsLine(t);
     const merchantTitle = nameVal || t.description || "Transaction";
     const showRaw = nameVal && nameVal !== t.description; // renamed → surface the original bank text
     return `
@@ -3089,11 +3101,7 @@ function renderFinancePage() {
     const noteOverrides = state.financeTxnNoteOverrides || {};
     const hasNote = Object.prototype.hasOwnProperty.call(noteOverrides, t.id);
     const currentNote = hasNote ? noteOverrides[t.id] : financeSuggestedNote((state.financeTxnNoteCounts || {})[merchantKey]);
-    const facts = [
-      t.posted ? new Date(t.posted).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "—",
-      t.account,
-      t.pending ? "Pending" : "Posted",
-    ].filter(Boolean).join(" · ");
+    const facts = financeTxnFactsLine(t);
     const isSplit = t.label === "split" && Array.isArray(t.split);
     const rc = financeReceiptForTxn(t);
     const keptReceipt = (state.financeTxnReceipts || {})[t.id];
@@ -3123,7 +3131,7 @@ function renderFinancePage() {
         <span>${formatFinMoney(t.amount || 0)}</span>
         <button class="icon-btn fin-sign-flip-btn" type="button" data-fin-action="flip-txn-sign" data-id="${escapeHtml(t.id)}" title="${t.signFlipped ? "Restore the original sign" : "Flip the sign — bank reported it backwards"}" aria-label="Flip sign">⇄</button>
       </div>
-      <div class="fin-txn-card-facts">${escapeHtml(facts)}${t.signFlipped ? ` · sign corrected` : ""}${t.displayName !== raw ? ` · <span class="fin-txn-raw" title="Original bank text">${rawEsc}</span>` : ""}</div>
+      <div class="fin-txn-card-facts">${escapeHtml(facts)}${t.displayName !== raw ? ` · <span class="fin-txn-raw" title="Original bank text">${rawEsc}</span>` : ""}</div>
 
       ${isSplit ? `
       <div class="fin-txn-card-section">
