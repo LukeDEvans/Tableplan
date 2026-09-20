@@ -2581,6 +2581,35 @@ function renderFinancePage() {
     return "";
   };
 
+  // Budget-pace rollup: the same "at this rate" math as budgetPace() above, but
+  // surfaced as its own card so which categories are heading over budget is
+  // visible at a glance — previously this only showed up once a category's
+  // group was expanded, one at a time.
+  const paceCategories = [];
+  if (isCurrentMonth && showActuals && bDayOfMonth >= 3) {
+    for (const g of (state.financeBudgetGroups || [])) {
+      for (const c of (g.categories || [])) {
+        const budget = financeCategoryTotal(c);
+        const actual = catActual(g, c);
+        if (!(budget > 0) || !(actual > 0)) continue;
+        const projected = (actual / bDayOfMonth) * bDaysInMonth;
+        const over = projected - budget;
+        if (over > Math.max(1, budget * 0.03)) paceCategories.push({ group: g.label, name: c.name, over });
+      }
+    }
+    paceCategories.sort((a, b) => b.over - a.over);
+  }
+  const budgetPaceCard = paceCategories.length ? `
+    <div class="fin-card fin-budget-pace-card">
+      <div class="fin-subhead fin-accounts-title">On pace to go over this month</div>
+      ${paceCategories.slice(0, 6).map((p) => `
+        <div class="fin-pace-row">
+          <span class="fin-pace-name">${escapeHtml(p.name)}<span class="fin-of"> · ${escapeHtml(p.group)}</span></span>
+          <span class="fin-pace-amt is-over">~${formatFinMoney(p.over)} over by month-end</span>
+        </div>`).join("")}
+      ${paceCategories.length > 6 ? `<div class="fin-hint">+ ${paceCategories.length - 6} more ${paceCategories.length - 6 === 1 ? "category" : "categories"} pacing over.</div>` : ""}
+    </div>` : "";
+
   // Budget groups: default-open on the Budget tab so category numbers are visible
   // without drilling (a "fold:" key optionally collapses a group). Each category
   // shows a budget-vs-actual bar; tapping it opens the line-item editor.
@@ -3317,6 +3346,7 @@ function renderFinancePage() {
           <span class="fin-stat-value">${value}</span>
         </button>`;
   const budgetView = `
+    ${budgetPaceCard}
     <div class="fin-card fin-monthly-budget" data-fin-card="monthly-budget">
       <div class="fin-budget-kpis">
         ${budgetKpiBtn("card:income", "Income", formatFinMoney(income), incomeOpen)}

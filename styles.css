@@ -21249,6 +21249,11 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 [data-fin-card="group"] > .fin-budget-bar { height: 8px; margin: 2px 0 4px; }
 .fin-budget-pace { display: block; font-size: 0.72rem; font-weight: 700; color: var(--muted); padding: 0 2px 6px; }
 .fin-budget-pace.is-over { color: #b3261e; }
+.fin-pace-row { display: flex; align-items: baseline; gap: 10px; padding: 5px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.86rem; }
+.fin-pace-row:first-of-type { border-top: none; }
+.fin-pace-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-pace-amt { flex: 0 0 auto; font-size: 0.76rem; font-weight: 800; white-space: nowrap; }
+.fin-pace-amt.is-over { color: #b3261e; }
 .fin-group-head { cursor: pointer; }
 
 /* Budget tab: search box + group list. Hidden = filtered out by the search. */
