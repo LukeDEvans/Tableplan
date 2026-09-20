@@ -1272,13 +1272,16 @@ function financeRecurringAlertCardHtml(a) {
   return financeNotifAlertCardWrap("Recurring charge", body);
 }
 function financeAttentionCardHtml(a) {
+  // Kind-aware heading — a dropped connection and a merely-stale balance are
+  // different problems with different fixes, so say which one this is.
+  const kicker = a.kind === "disconnected" ? "Connection lost" : a.kind === "error" ? "Bank connection" : "Balance is stale";
   const body = `
     <div class="fin-alert-text"><b>${escapeHtml(a.label)}</b> — ${escapeHtml(a.detail)}</div>
     <div class="fin-item-row fin-item-row--tools">
       <button class="secondary-btn fin-add-btn" type="button" data-fin-action="dismiss-alert" data-key="${escapeHtml(a.key)}">Dismiss</button>
       <button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-finance-settings">Open bank settings</button>
     </div>`;
-  return financeNotifAlertCardWrap("Account needs attention", body);
+  return financeNotifAlertCardWrap(kicker, body);
 }
 function financeNotifDeckAlertsHtml() {
   const attention = financeAccountsNeedingAttention();
@@ -1608,20 +1611,25 @@ function financeAccountsNeedingAttention() {
     const detail = String(err || "").trim();
     if (detail) raw.push({ kind: "error", key: `error:${detail}`, label: "Bank connection", detail });
   }
-  // Per-account staleness — only meaningful once the fetch returned accounts.
+  // Per-account status — reuses financeAccountStatus (the same primitive the
+  // Accounts panel pills use) so "stale" and "disconnected" are genuinely
+  // distinct alerts here too, not folded into one undifferentiated notice.
+  // Only meaningful once the fetch returned accounts — an empty live.accounts
+  // right after a fetch starts would otherwise make every linked account look
+  // "disconnected" during normal loading, not just a real dropped connection.
   const live = financeLive.accounts || [];
   if (live.length) {
     const liveById = new Map(live.map((a) => [a.id, a]));
     const now = Date.now();
     for (const acct of (state.financeAccounts || [])) {
       if (!acct.linkedId) continue; // manual accounts don't sync
-      const la = liveById.get(acct.linkedId);
-      if (!la || !la.balanceDate) continue;
-      const days = Math.floor((now - new Date(la.balanceDate).getTime()) / 86400000);
-      if (days >= FINANCE_STALE_DAYS) {
-        // Key is per-account (not per day count) so a dismissal sticks as the
-        // days tick up, but clears if the account recovers.
-        raw.push({ kind: "stale", key: `stale:${acct.linkedId}`, label: acct.name || la.name || "Account", detail: `Balance hasn't updated in ${days} days.` });
+      const status = financeAccountStatus(acct, liveById, now);
+      // Keys stay per-account (not per day count / per detail) so a dismissal
+      // sticks as staleness days tick up, but clears once the account recovers.
+      if (status.kind === "disconnected") {
+        raw.push({ kind: "disconnected", key: `disconnected:${acct.linkedId}`, label: acct.name || "Account", detail: "The bank connection isn't returning this account anymore — it may need reconnecting." });
+      } else if (status.kind === "stale") {
+        raw.push({ kind: "stale", key: `stale:${acct.linkedId}`, label: acct.name || "Account", detail: `Balance hasn't updated in ${status.days} days.` });
       }
     }
   }
