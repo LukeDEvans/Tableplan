@@ -20963,6 +20963,9 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-empty-title { font-size: 1.05rem; font-weight: 800; color: var(--ink); }
 .fin-empty-sub { font-size: 0.86rem; color: var(--muted); max-width: 44ch; }
 .fin-empty-onboard .fin-add-btn { margin-top: 6px; }
+.fin-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 6px; }
+.fin-empty-actions .fin-add-btn { margin-top: 0; }
+.fin-empty-note { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
 
 /* ── Insights tab: upcoming bills + safe-to-spend ── */
 .fin-bill-row { display: flex; align-items: baseline; gap: 10px; padding: 6px 2px; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); font-size: 0.86rem; }

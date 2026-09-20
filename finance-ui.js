@@ -3434,11 +3434,22 @@ function renderFinancePage() {
       }).join("")}
     </div>`;
 
+  // Two distinct paths instead of one generic button: a returning user who
+  // dismissed bank linking already knows they want the manual path, and
+  // shouldn't be funneled back through "connect a bank" copy every time they
+  // land here. Both buttons open the same finance-accounts settings dialog
+  // (linking and manual-account creation already live in that one panel) —
+  // this is UI/copy only, no new state or write path.
+  const hasAccounts = (state.financeAccounts || []).length > 0;
   const connectPrompt = `
     <div class="fin-card fin-empty-onboard">
-      <div class="fin-empty-title">${(state.financeAccounts || []).length ? "No bank connected" : "Set up your finances"}</div>
-      <div class="fin-empty-sub">Link a bank (read-only, via SimpleFIN) or add a manual account to track balances, spending, and net worth here.</div>
-      <button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-finance-settings">Open finance settings</button>
+      <div class="fin-empty-title">${hasAccounts ? "No bank connected" : "Set up your finances"}</div>
+      <div class="fin-empty-sub">Track balances, spending, and net worth here — link a bank for automatic updates, or keep it manual if you'd rather not connect one.</div>
+      <div class="fin-empty-actions">
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-finance-settings">Link a bank</button>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="open-finance-settings">Track manually</button>
+      </div>
+      ${hasAccounts ? "" : `<div class="fin-empty-note">Read-only via SimpleFIN — Live never moves money.</div>`}
     </div>`;
 
   // Insights tab — forward-looking & trend surfaces (upcoming bills first).
