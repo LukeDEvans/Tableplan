@@ -30,13 +30,13 @@ let _appState = null;
 const groceryMealPrefix = "grocery-item::";
 const specialMealPrefix = "special-meal::";
 const mealPlanCustomOptions = ["n/a", "out", "leftovers"];
-const defaultMealEntries = [
+export const defaultMealEntries = [
   { meal: "Luke Breakfast", index: 0, value: "Tofu Scramble" },
   { meal: "Luke Lunch", index: 0, value: "Peanut Butter & Jelly with Veggies & Hummus" }
 ];
 const autoRuleBlankSlotValue = "__blank_auto_rule_slot__";
-const weekdayDefaultDayIds = new Set(["monday", "tuesday", "wednesday", "thursday"]);
-const daySpecificDefaultMealEntries = [
+export const weekdayDefaultDayIds = new Set(["monday", "tuesday", "wednesday", "thursday"]);
+export const daySpecificDefaultMealEntries = [
   { dayId: "wednesday", meal: "MJ Dinner", index: 0, value: "leftovers" },
   { dayId: "wednesday", meal: "Luke Dinner", index: 0, value: "leftovers" }
 ];

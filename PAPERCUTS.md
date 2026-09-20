@@ -14,6 +14,10 @@ Format: `YYYY-MM-DD · symptom · fix · project`
 
 - 2026-09-18 · `npm run boot:check` (and the browser half of `check:boot`) fails if the dev server isn't already up — `scripts/check-boot.mjs` hits http://localhost:4174/ and does not start its own server · Start it first: `npm run dev:local` (or `./dev.sh`) — serves 4174 + API on 4175 · Live/Tableplan
 
+- 2026-09-20 · On a fresh cloud sandbox, `npm run boot:check` fails both its launch attempts — `channel: "chrome"` (no Chrome installed) then plain `chromium.launch()` (looks for `chromium_headless_shell-1181`, but the sandbox's pre-installed browser is a different revision, e.g. `chromium-1194`) · Run `ls /opt/pw-browsers/` to find the actual installed revision dir, then launch with an explicit `executablePath: "/opt/pw-browsers/<revision>/chrome-linux/chrome"` in a throwaway probe script (same page-error-checking approach as check-boot.mjs) · Live/Tableplan
+
+- 2026-09-20 · A Playwright-launched Chromium in this sandbox fails all navigation with `net::ERR_CERT_AUTHORITY_INVALID` / `ERR_TUNNEL_CONNECTION_FAILED` even for `http://localhost` — Chrome inherits the sandbox's HTTPS_PROXY env var and tries to tunnel local traffic through it · Launch with `args: ["--no-proxy-server", "--proxy-bypass-list=*"]` · Live/Tableplan
+
 - 2026-09-19 · Playwright `page.goto` intermittently times out at 30s against a freshly-spawned Vite dev server — cold on-demand compile of the ~42k-line app.js module graph exceeds the 30s default, esp. under machine load · Bump `page.setDefaultNavigationTimeout(120000)` + `goto(..., {timeout:120000})`; subsequent loads are cached/fast · Live/Tableplan (qa-p0p1-extended)
 
 - 2026-09-19 · meal-plan `meals`/`prepDays` LOOK like static consts (app.js ~150-195) but `recomputeMealPlanLayout(config)` mutates them from config MEMBERS; a fresh/member-less state → empty `meals` → `defaultAutoGenerateRules()` returns [] and the planner renders no slots. Made a QA autogen check pass vacuously · When seeding meal-plan fixtures, include `mealPlanConfig.members`, or assert count>0; better, test pure logic (dedupeAutoGenerateRules/autoRuleSignature) directly · Live/Tableplan

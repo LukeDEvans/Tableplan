@@ -99,6 +99,16 @@ export function normalizeFinanceBudgetGroups(raw, createId) {
 }
 
 export const FINANCE_ACCOUNT_KINDS = ["cash", "retirement", "investment", "debt", "other"];
+
+// User-configurable finance alerts (Settings › Finance). Default ON; stored in
+// the config section (state.financeAlertPrefs), NOT the schema-guarded finance
+// section — these are preferences, not ledger data.
+export const FINANCE_ALERTS = [
+  { key: "overBudget", label: "Category over budget", desc: "Flag when a category's spending passes its budget this month." },
+  { key: "largeTxn", label: "Large purchase", desc: "Flag any single transaction over $400." },
+  { key: "lowBalance", label: "Low cash balance", desc: "Flag when a cash account drops below $100." },
+  { key: "priceChange", label: "Subscription price change", desc: "Flag when a recurring charge's amount changes vs its budget line." },
+];
 export function normalizeFinanceAccounts(raw, createId) {
   return (Array.isArray(raw) ? raw : []).map((a) => ({
     id: a?.id || createId("fin-account"),
@@ -1649,15 +1659,6 @@ function financeAccountHealth() {
   return { accounts, needsAttention, bridgeError };
 }
 
-// User-configurable finance alerts (Settings › Finance). Default ON; stored in
-// the config section (state.financeAlertPrefs), NOT the schema-guarded finance
-// section — these are preferences, not ledger data.
-const FINANCE_ALERTS = [
-  { key: "overBudget", label: "Category over budget", desc: "Flag when a category's spending passes its budget this month." },
-  { key: "largeTxn", label: "Large purchase", desc: "Flag any single transaction over $400." },
-  { key: "lowBalance", label: "Low cash balance", desc: "Flag when a cash account drops below $100." },
-  { key: "priceChange", label: "Subscription price change", desc: "Flag when a recurring charge's amount changes vs its budget line." },
-];
 function financeAlertPref(key) { const p = state.financeAlertPrefs; return !p || p[key] !== false; }
 
 // A small connection-status pill for an account row (from financeAccountStatus).
