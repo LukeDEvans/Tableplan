@@ -3363,6 +3363,30 @@ function setupDiagnostics() {
     // The plan→grocery derivation for the current week (ingredients from planned
     // recipes not yet in the grocery catalog) — the real buildRawGroceryRows path.
     mpUnlistedGroceryItems: () => (localDevMode ? unlistedGroceryItemsForWeek(weekState()).map((x) => x.item) : null),
+    // Seed a minimal recipe directly into state.recipes for manual/ad hoc verification
+    // against a live dev-data file that has no purpose-built fixture recipe (the
+    // isolated qa-p0p1-extended.mjs runner seeds its own "recipe-qa" instead and
+    // doesn't need this). Mirrors mpAddRecipeEntry's assumption that the recipe
+    // already exists in state -- this is how it gets there without one.
+    mpSeedRecipe: (recipe = {}) => {
+      if (!localDevMode) return null;
+      const id = recipe.id || createId("recipe-qa");
+      state.recipes = (state.recipes || []).filter((r) => r.id !== id);
+      state.recipes.push({ name: "QA Recipe", servings: 1, ingredients: [], ...recipe, id });
+      persist();
+      return id;
+    },
+    // Read back the raw plannedServings value straight from state for a slot's entry
+    // (mp-serving): lets the QA script assert the underlying entry actually changed
+    // after driving the [data-planned-servings] input through the DOM (change/blur →
+    // updateMealPlannedServings), not just that the input's redisplayed value looks
+    // plausible.
+    mpPlannedServings: (day, meal, index = 0) => {
+      if (!localDevMode) return null;
+      const week = weekState();
+      const entry = slotEntries(week.slots?.[day]?.[meal])[index];
+      return isPlannedRecipeEntry(entry) ? Number(entry.plannedServings) : null;
+    },
     // The meal-plan recipe SUGGESTION deck (mp-cards): normally populated by
     // warmMealPlanRecipes() fetching Gmail's "pendingRecipes" over the network — not
     // something a static state fixture can seed. `mealPlanRecipes` (this app.js-scope

@@ -341,19 +341,44 @@ try {
       });
       await M.page.waitForTimeout(800);
 
-      // --- mp-serving: NOT a "deeper flow" issue -- confirmed dead/unreachable UI.
-      // [data-planned-servings] is fully wired (change handler, updateMealPlannedServings)
-      // and the scaling logic is fully unit-tested (meal-plan-servings.test.js), but NO
-      // template anywhere renders an element with that attribute. The only servings
-      // display at all is a read-only <span class="meal-planned-servings"> gated on
-      // isPublishedMealPlanView(week), which itself is unreachable in live use since
-      // toggleMealPlanView (the only writer of mealPlanView="published") has zero call
-      // sites -- see mp-publish below and ISSUES.md. So there is no UI fixture could
-      // even open: a normal (non-readOnly) recipe entry shows only its name + Delete,
-      // no servings anywhere, editable or not. Logged as its own P1 in ISSUES.md.
-      const servInput = await M.page.evaluate(() => !!document.querySelector("#plannerGrid [data-planned-servings]"));
-      const servSpan = await M.page.evaluate(() => !!document.querySelector("#plannerGrid .meal-planned-servings"));
-      rec("mp-serving", "SKIP", `recipe entry placed=${!!placed}. No [data-planned-servings] input (present=${servInput}) and no read-only .meal-planned-servings span either (present=${servSpan}) in the normal (unpublished) planner view -- confirmed dead/unreachable UI, not a fixture gap. NOT automated (not shipped vacuous); the scaling logic itself is covered by meal-plan-servings.test.js. Logged as a P1 in ISSUES.md.`);
+      // --- mp-serving: RESTORED 2026-09-20 (was dead/unreachable code, ISSUES.md P1).
+      // [data-planned-servings] is now rendered in the normal (non-readOnly) recipe
+      // entry template (mealplan-ui.js mealEntryTemplate, the `if (recipe)` branch) --
+      // the original design's markup (a `.meal-recipe-plan` wrapper + `.meal-
+      // planned-servings-editor` label/input, found intact but unused in styles.css
+      // and in a pre-extraction commit), gated off for virtualGroceryRecipe entries
+      // (grocery-item slots, where updateMealPlannedServings is a deliberate no-op).
+      // Drive it through the REAL input the same way a user would (set .value, fire
+      // "change" -- updateMealPlannedServings listens on change AND blur), then assert
+      // the STATE actually moved (mpPlannedServings reads the raw entry back), not just
+      // that the input's redisplayed value looks right.
+      const servBefore = await M.page.evaluate(() => {
+        const input = document.querySelector("#plannerGrid [data-planned-servings]");
+        if (!input) return { found: false };
+        return {
+          found: true,
+          value: input.value,
+          day: input.dataset.day,
+          meal: input.dataset.meal,
+          index: Number(input.dataset.index),
+          state: window.__liveQA.mpPlannedServings(input.dataset.day, input.dataset.meal, Number(input.dataset.index)),
+        };
+      });
+      if (!servBefore.found) {
+        rec("mp-serving", "FAIL", `recipe entry placed=${!!placed} but no [data-planned-servings] input rendered in the normal planner view -- pulled rather than pass vacuously.`);
+      } else {
+        const defaultOk = servBefore.value === "2" && servBefore.state === 2; // recipe-qa servings=2, mpAddRecipeEntry seeds plannedServings=recipe.servings
+        const changed = await M.page.evaluate((sb) => {
+          const input = document.querySelector(`#plannerGrid [data-planned-servings][data-day="${sb.day}"][data-meal="${sb.meal}"][data-index="${sb.index}"]`);
+          if (!input) return { found: false };
+          input.value = "4";
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          return { found: true, redisplayed: input.value, state: window.__liveQA.mpPlannedServings(sb.day, sb.meal, sb.index) };
+        }, servBefore);
+        const scaledOk = changed.found && changed.redisplayed === "4" && changed.state === 4;
+        rec("mp-serving", defaultOk && scaledOk ? "PASS" : "FAIL",
+          `initial input value="${servBefore.value}" (state=${servBefore.state}, want "2"/2 from recipe-qa's default servings) -- ${defaultOk ? "matched" : "MISMATCH"}. Changed input to "4" and fired change -- updateMealPlannedServings redisplayed "${changed.redisplayed}" and wrote state=${changed.state} (want "4"/4) -- ${scaledOk ? "matched" : "MISMATCH"}.`);
+      }
 
       // --- mp-grocery: the seeded recipe's ingredient must appear in the plan→grocery
       // derivation. buildRawGroceryRows normalizes/title-cases the item name, so match

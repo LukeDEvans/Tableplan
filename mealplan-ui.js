@@ -2431,11 +2431,19 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
   }
 
   if (recipe) {
+    const servingsEditor = recipe.virtualGroceryRecipe ? "" : `
+          <label class="meal-planned-servings-editor">
+            <span>Cook</span>
+            <input type="number" min="0.25" step="0.25" inputmode="decimal" data-planned-servings data-day="${day.id}" data-meal="${meal}" data-index="${index}" value="${escapeHtml(String(plannedServingsForEntry(entry, recipe)))}" aria-label="Planned servings for ${escapeHtml(recipe.name)}" />
+            <span>servings</span>
+          </label>`;
     return `
       <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}">
-        <button class="recipe-meal-link" type="button" data-view-recipe="${escapeHtml(recipe.id)}" data-edit-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Double-click to edit">
-          ${escapeHtml(recipe.name)}
-        </button>
+        <div class="meal-recipe-plan">
+          <button class="recipe-meal-link" type="button" data-view-recipe="${escapeHtml(recipe.id)}" data-edit-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Double-click to edit">
+            ${escapeHtml(recipe.name)}
+          </button>${servingsEditor}
+        </div>
         <button class="meal-swipe-delete" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" aria-label="Delete ${escapeHtml(recipe.name)}">Delete</button>
       </div>
     `;
