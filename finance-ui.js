@@ -3126,13 +3126,21 @@ function renderFinancePage() {
       </div>` : "")}
     </div>`;
   };
+  // A brand-new user (nothing connected, no manual accounts) gets the connect
+  // prompt instead of the Transactions/Budget/Accounts/Insights content — so
+  // tapping any tab first still guides them to set up instead of showing blank
+  // cards. A user with manual-only accounts (no bank link, by choice) still
+  // counts as set up: they have real transactions/budget to see, just no live
+  // bank feed. An existing user with a transient disconnect keeps their
+  // planning views too.
+  const showOnboard = !financeLinkStatus?.connected && !(state.financeAccounts || []).length;
   // Finance notifications — the bell lives in the Transactions card head (in
   // place of the old "N to label · M" subtitle) and its panel nests inside the
   // Transactions card. Defined here so the Transactions card can embed them.
   const bellSvg = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
   const attention = financeAccountsNeedingAttention();
   const notifCount = needsLabelGroups.length + recAlerts.length + attention.length;
-  const notifBell = !financeLinkStatus?.connected ? "" : `
+  const notifBell = showOnboard ? "" : `
     <button class="icon-btn fin-notif-btn" type="button" data-fin-action="toggle-notifs" title="Finance items that need attention" aria-label="Finance notifications">
       ${bellSvg}
       ${notifCount ? `<span class="fin-notif-badge">${notifCount}</span>` : ""}
@@ -3204,7 +3212,7 @@ function renderFinancePage() {
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="manual-txn-save">Save</button>
       </div>
     </div>`;
-  const txnsCard = !financeLinkStatus?.connected ? "" : `
+  const txnsCard = showOnboard ? "" : `
     <div class="fin-card" data-fin-card="txns">
       <div class="fin-card-head fin-txns-head">
         <h3>Transactions</h3>
@@ -3626,11 +3634,6 @@ function renderFinancePage() {
   // Route the existing cards into tabs (they keep their own internals + wiring).
   // Overview stays pinned above.
   const accountsPanel = `<div class="fin-card fin-accounts-card"><div class="fin-subhead fin-accounts-title">Accounts</div>${renderFinanceAccountsPanel()}</div>`;
-  // A brand-new user (nothing connected, no manual accounts) gets the connect
-  // prompt on EVERY tab, not just Transactions — so tapping Budget/Accounts/
-  // Insights first still guides them to set up instead of showing blank cards.
-  // An existing user with a transient disconnect keeps their planning views.
-  const showOnboard = !financeLinkStatus?.connected && !(state.financeAccounts || []).length;
   const tabBody =
     financeTab === "budget" ? `${showOnboard ? connectPrompt : ""}${budgetView}${personalCard}`
     : financeTab === "accounts" ? `${showOnboard ? connectPrompt : ""}${goalsCard}${savingsRow}${netWorthCard}${accountsPanel}`
