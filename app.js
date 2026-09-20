@@ -3387,6 +3387,17 @@ function setupDiagnostics() {
       const entry = slotEntries(week.slots?.[day]?.[meal])[index];
       return isPlannedRecipeEntry(entry) ? Number(entry.plannedServings) : null;
     },
+    // Exercises ensureArticleText's backstop-recovery path (2026-09-21 TTS fix)
+    // without needing the full Listen/audio pipeline (Kokoro/Google credentials
+    // aren't available in every dev environment). Returns { ok, error } plus the
+    // recovered text so a test can confirm it came from the content store, not a
+    // live re-fetch.
+    ensureArticleText: async (id) => {
+      if (!localDevMode) return null;
+      const res = await ensureArticleText(id);
+      const article = (state.savedArticles || []).find((a) => a.id === id);
+      return { ...res, recoveredText: article?.text || null };
+    },
     // The meal-plan recipe SUGGESTION deck (mp-cards): normally populated by
     // warmMealPlanRecipes() fetching Gmail's "pendingRecipes" over the network — not
     // something a static state fixture can seed. `mealPlanRecipes` (this app.js-scope
@@ -33607,6 +33618,22 @@ async function ensureArticleText(id) {
   const article = (state.savedArticles || []).find((a) => a.id === id);
   if (!article) return { ok: false, error: "Article not found." };
   if (article.text) return { ok: true };
+  // BUG FIXED 2026-09-21: this used to skip straight to re-scraping the live URL
+  // whenever text wasn't inline -- but article.text is nulled once its body is
+  // durably offloaded to the reading-content backstop (true for most saved
+  // articles), so that was the COMMON case, not an edge case. Re-scraping is
+  // slower (a live fetch + parse on top of whatever follows, e.g. TTS synthesis)
+  // and can fail outright (paywall, page changed/removed) even though the
+  // original text is sitting safely in the backstop the whole time. Check there
+  // first, mirroring renderArticleBody's read path (local IndexedDB -> cloud
+  // backstop), and only fall back to a live fetch if that's genuinely empty.
+  try {
+    const ac = await getArticleContent();
+    if (ac) {
+      const body = await ac.loadBody(id, { ref: article.bodyRef, fallbackText: null });
+      if (body) { article.text = body; persist(); return { ok: true }; }
+    }
+  } catch { /* fall through to a live fetch */ }
   const res = await callNetlifyFunction("fetch-article", { url: article.url, publication: article.publication });
   if (res?.text) {
     article.text = res.text;
@@ -34548,8 +34575,14 @@ function prefetchListenArticles(articles) {
   if (articleListPrefetchRunning) return;
   if (listenLoading) return; // never compete with a foreground synth for the box
   if (!isKokoroArticleVoice()) return; // only the free, self-hosted voice
+  // BUG FIXED 2026-09-21: used to require `a.text` up front, which skips almost
+  // every saved article (text is nulled once its body is durably offloaded to the
+  // reading-content backstop — see ensureArticleText/presynth-tts-background for
+  // the same bug). Take the candidate slice first, then backfill text for just
+  // those from the backstop below, instead of filtering most of them out before
+  // ever trying.
   const targets = (articles || [])
-    .filter((a) => a && a.text && a.id !== listenArticle?.id && !ttsPrefetchCache.has(articleTtsCacheKey(a.id)))
+    .filter((a) => a && a.id !== listenArticle?.id && !ttsPrefetchCache.has(articleTtsCacheKey(a.id)))
     .slice(0, PREFETCH_ARTICLE_COUNT);
   if (!targets.length) return;
   warmKokoroVoiceIfKokoro(); // nudge the scale-to-zero box awake before the batch
@@ -34559,6 +34592,14 @@ function prefetchListenArticles(articles) {
       if (listenLoading) break; // a foreground play started — yield the box to it
       const key = articleTtsCacheKey(article.id);
       if (ttsPrefetchCache.has(key)) continue; // a real play (or earlier run) already took it
+      if (!article.text) {
+        try {
+          const ac = await getArticleContent();
+          const body = ac ? await ac.loadBody(article.id, { ref: article.bodyRef, fallbackText: null }) : null;
+          if (body) article.text = body;
+        } catch { /* no backstop hit — skip below */ }
+        if (!article.text) continue; // genuinely bodyless or backstop miss — nothing to prefetch
+      }
       const p = resolveArticleAudioForCache(article).then((data) => {
         if (data?.urls?.length) ttsResolvedUrls.set(key, data);
         return data;

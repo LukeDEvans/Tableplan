@@ -32,6 +32,7 @@ import { resolveVoicePrefs } from "../../voice-prefs.js";
 import { resolveProviderVoice } from "../../voice-registry.js";
 import { GOOGLE_MODEL, KOKORO_MODEL } from "../../tts-provider.js";
 import { liveAudioPrefixes, partitionAudioFolders } from "../../tts-cache-sweep.mjs";
+import { backfillArticleText } from "../../article-body-backfill.mjs";
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const AUDIO_BUCKET = "article-audio";
@@ -112,29 +113,6 @@ export default async () => {
   }
   return new Response("ok", { status: 200 });
 };
-
-// Fetch spoken text for any article missing it (its body was durably offloaded and
-// nulled from the synced row — normal, not an error) so its audio cache key can
-// still be computed. Returns { ok:false, failed } if any such fetch fails, so the
-// caller aborts the whole sweep rather than risk deleting still-live audio.
-async function backfillArticleText(headers, articles) {
-  let failed = 0;
-  const out = [];
-  for (const a of articles) {
-    if (!a || a.text || !a?.bodyRef?.cloud?.path) { out.push(a); continue; }
-    try {
-      const bucket = a.bodyRef.cloud.bucket || READING_CONTENT_BUCKET;
-      const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${a.bodyRef.cloud.path}`, { headers });
-      if (!res.ok) throw new Error(`fetch ${res.status}`);
-      out.push({ ...a, text: await res.text() });
-    } catch (e) {
-      failed++;
-      console.error(`[tts-cleanup] body backfill failed for article ${a.id}:`, e.message);
-      out.push(a); // stays textless; caller aborts on any failure anyway
-    }
-  }
-  return { ok: failed === 0, failed, articles: out };
-}
 
 // ── Supabase state (household rows overlaid with the admin's personal rows) ────
 async function loadState(headers) {
