@@ -3363,6 +3363,22 @@ function setupDiagnostics() {
     // The plan→grocery derivation for the current week (ingredients from planned
     // recipes not yet in the grocery catalog) — the real buildRawGroceryRows path.
     mpUnlistedGroceryItems: () => (localDevMode ? unlistedGroceryItemsForWeek(weekState()).map((x) => x.item) : null),
+    // The meal-plan recipe SUGGESTION deck (mp-cards): normally populated by
+    // warmMealPlanRecipes() fetching Gmail's "pendingRecipes" over the network — not
+    // something a static state fixture can seed. `mealPlanRecipes` (this app.js-scope
+    // `let`) is the real backing variable; getMealPlanRecipes/setMealPlanRecipes are
+    // just inline arrow-function VALUES inside the deps object literal passed to
+    // createMealplanModule (line ~1840) — not standalone top-level functions, so
+    // they're not callable from here by name. Assign the variable directly instead;
+    // this reproduces warmMealPlanRecipes' result, the same shortcut mpAddRecipeEntry
+    // takes for a picked recipe.
+    mpSetSuggestions: (recipes) => {
+      if (!localDevMode) return null;
+      mealPlanRecipes = recipes;
+      setPageNotifCount("eat", mealPlanRecipes.length);
+      render();
+      return mealPlanRecipes.length;
+    },
   };
 }
 

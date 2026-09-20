@@ -16,7 +16,10 @@ security), **P1** (real bug / silent behavior change), **P2** (test gap / scope 
 _(none)_
 
 ## P1
-_(none)_
+- [ ] **[P1] Planned meal servings have no reachable UI at all — view or edit — during normal (unpublished) planning** (meal-plan · mealplan-ui.js:1536,2382,2433-2441 · 2026-09-20)
+      Found automating mp-serving (the earlier QA skip's stated reason — "the editable control is in the meal-entry editor dialog" — turned out to be wrong; there is no such dialog). `[data-planned-servings]` is fully wired (querySelectorAll + change handler at line 1536, `updateMealPlannedServings()` at 3299, excluded from drag-start at 2545) and the scaling logic is fully implemented and unit-tested (`meal-plan-servings.js`/`.test.js`) — but **no template anywhere renders an element with that attribute.** The only place `plannedServings` is ever displayed is a read-only `<span class="meal-planned-servings">` (line 2382), and that's inside `mealEntryTemplate`'s `readOnly` branch, gated on `isPublishedMealPlanView(week)` — which can only be true via the backup-restore path, since `toggleMealPlanView` (the only live-UI writer of `mealPlanView="published"`, see the mp-publish entry below) has zero call sites. So during ordinary use, a recipe meal entry's normal (non-readOnly) template (line 2433-2441) shows only the recipe name + a delete button — **no servings display, no servings input, editable or otherwise** — and even the read-only span is itself unreachable outside a restored-from-backup week. The data model, the write path, and the grocery-scaling consumer of `plannedServings` all still work correctly (confirmed: mp-grocery's derivation scales correctly off the recipe's default servings) — only the UI to ever CHANGE it away from the default is gone. Likely the same mealplan-ui.js extraction regression window as mp-publish. Suggested: decide where this belongs in the entry UI (a stepper next to the recipe name in the normal template seems the natural spot) and re-wire `data-planned-servings` there. Verdict: CONFIRMED (dead/unreachable code), not fixed here (out of scope for the QA-fixture task that found it).
+
+
 
 ## P2
 - [ ] **[P2] Finance review-deck swipe hint overlaps its action buttons on short mobile viewports** (finance · styles.css:21748 (`.fin-review-hint`) · 2026-09-20)

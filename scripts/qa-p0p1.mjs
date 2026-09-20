@@ -7,7 +7,17 @@
 // Run from the project root with both dev servers up (npm run dev:local). It restores
 // the fixture file on exit. Reports pass/fail PER ITEM.
 import { chromium } from "playwright";
-import { readFileSync, writeFileSync, copyFileSync } from "node:fs";
+import { readFileSync, writeFileSync, copyFileSync, existsSync } from "node:fs";
+
+// Same robust launch as scripts/check-boot.mjs (see PAPERCUTS.md 2026-09-20).
+async function launchChromium() {
+  const args = ["--no-proxy-server", "--proxy-bypass-list=*"];
+  try { return await chromium.launch({ channel: "chrome", headless: true, args }); } catch { /* not installed here */ }
+  try { return await chromium.launch({ headless: true, args }); } catch { /* not installed for this Playwright version */ }
+  const sandboxChrome = `${process.env.PLAYWRIGHT_BROWSERS_PATH || "/opt/pw-browsers"}/chromium`;
+  if (existsSync(sandboxChrome)) return await chromium.launch({ headless: true, args, executablePath: sandboxChrome });
+  throw new Error(`No usable Chromium found (tried system Chrome, Playwright-managed Chromium, and ${sandboxChrome}).`);
+}
 
 const URL = "http://localhost:4174/";
 const FILE = "data/tableplan-state.json";
@@ -44,7 +54,7 @@ const BENIGN = [/failed to load resource/i, /\b(400|401|403|404|429|500|502|503)
 const pageErrs = [];
 const consoleErrs = [];
 
-const browser = await chromium.launch({ channel: "chrome", headless: true });
+const browser = await launchChromium();
 const page = await browser.newPage();
 page.on("pageerror", (e) => pageErrs.push(String(e.message || e)));
 page.on("console", (m) => { if (m.type() === "error" && !BENIGN.some((re) => re.test(m.text()))) consoleErrs.push(m.text()); });

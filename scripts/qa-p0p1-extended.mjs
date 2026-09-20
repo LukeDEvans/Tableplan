@@ -16,9 +16,23 @@
 //     signature protection, asserted deterministically through the seam
 import { chromium } from "playwright";
 import { spawn, execSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, openSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, openSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+// Same robust launch as scripts/check-boot.mjs (see PAPERCUTS.md 2026-09-20): a
+// pinned Playwright version's own managed-Chromium resolution can miss a cloud
+// sandbox's pre-staged browser (different revision, reachable only via the
+// stable $PLAYWRIGHT_BROWSERS_PATH/chromium symlink), and Chromium there can
+// inherit an HTTPS_PROXY env var that breaks even localhost navigation.
+async function launchChromium() {
+  const args = ["--no-proxy-server", "--proxy-bypass-list=*"];
+  try { return await chromium.launch({ channel: "chrome", headless: true, args }); } catch { /* not installed here */ }
+  try { return await chromium.launch({ headless: true, args }); } catch { /* not installed for this Playwright version */ }
+  const sandboxChrome = `${process.env.PLAYWRIGHT_BROWSERS_PATH || "/opt/pw-browsers"}/chromium`;
+  if (existsSync(sandboxChrome)) return await chromium.launch({ headless: true, args, executablePath: sandboxChrome });
+  throw new Error(`No usable Chromium found (tried system Chrome, Playwright-managed Chromium, and ${sandboxChrome}).`);
+}
 
 const API_PORT = 4176;
 const VITE_PORT = 4189;
@@ -157,7 +171,7 @@ try {
   await waitFor(`http://localhost:${API_PORT}/api/state`, "guarded API");
   await waitFor(BASE_URL, "Vite");
 
-  browser = await chromium.launch({ channel: "chrome", headless: true });
+  browser = await launchChromium();
   await warmVite(browser); // absorb the cold-compile cost once, before the real checks
 
   // ========== fin-cat-2dev / fin-txn-2dev — multi-writer stale-tab stomp ==========
@@ -327,12 +341,19 @@ try {
       });
       await M.page.waitForTimeout(800);
 
-      // --- mp-serving: in the planner grid, planned servings render as a READ-ONLY
-      // display span (.meal-planned-servings); the editable control lives in the
-      // meal-entry editor dialog (double-click → openMealEntryEditor), a deeper flow.
-      // The servings-scaling logic itself is unit-tested (meal-plan-servings.test.js).
+      // --- mp-serving: NOT a "deeper flow" issue -- confirmed dead/unreachable UI.
+      // [data-planned-servings] is fully wired (change handler, updateMealPlannedServings)
+      // and the scaling logic is fully unit-tested (meal-plan-servings.test.js), but NO
+      // template anywhere renders an element with that attribute. The only servings
+      // display at all is a read-only <span class="meal-planned-servings"> gated on
+      // isPublishedMealPlanView(week), which itself is unreachable in live use since
+      // toggleMealPlanView (the only writer of mealPlanView="published") has zero call
+      // sites -- see mp-publish below and ISSUES.md. So there is no UI fixture could
+      // even open: a normal (non-readOnly) recipe entry shows only its name + Delete,
+      // no servings anywhere, editable or not. Logged as its own P1 in ISSUES.md.
       const servInput = await M.page.evaluate(() => !!document.querySelector("#plannerGrid [data-planned-servings]"));
-      rec("mp-serving", "SKIP", `recipe entry placed=${!!placed}. The planner shows planned servings as a read-only span (meal-planned-servings), not an editable [data-planned-servings] input (present=${servInput}) — the editable control is in the meal-entry editor dialog. NOT automated here (not shipped vacuous); the scaling logic is covered by meal-plan-servings.test.js.`);
+      const servSpan = await M.page.evaluate(() => !!document.querySelector("#plannerGrid .meal-planned-servings"));
+      rec("mp-serving", "SKIP", `recipe entry placed=${!!placed}. No [data-planned-servings] input (present=${servInput}) and no read-only .meal-planned-servings span either (present=${servSpan}) in the normal (unpublished) planner view -- confirmed dead/unreachable UI, not a fixture gap. NOT automated (not shipped vacuous); the scaling logic itself is covered by meal-plan-servings.test.js. Logged as a P1 in ISSUES.md.`);
 
       // --- mp-grocery: the seeded recipe's ingredient must appear in the plan→grocery
       // derivation. buildRawGroceryRows normalizes/title-cases the item name, so match
@@ -349,11 +370,39 @@ try {
         const target = slots.find((s) => row && (s.dataset.meal !== row.dataset.meal || s.dataset.day !== row.dataset.day));
         if (!row || !target) return { found: false };
         const srcMeal = row.dataset.meal, srcDay = row.dataset.day;
+        target.scrollIntoView({ block: "nearest", inline: "nearest" });
         const rb = row.getBoundingClientRect(), tb = target.getBoundingClientRect();
-        const fire = (el, type, x, y) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, isPrimary: true, button: 0 }));
-        fire(row, "pointerdown", rb.x + rb.width / 2, rb.y + rb.height / 2);
-        for (let i = 1; i <= 8; i++) fire(document, "pointermove", rb.x + (tb.x - rb.x) * i / 8, rb.y + (tb.y - rb.y) * i / 8);
-        fire(target, "pointerup", tb.x + tb.width / 2, tb.y + tb.height / 2);
+        // Interpolate CENTER-to-CENTER throughout -- the original code interpolated
+        // toward the target's top-left corner (tb.x/tb.y) for every intermediate move
+        // but only the final pointerup used the center (tb.x+width/2, tb.y+height/2).
+        // The corner often lands on the slot's header/label/button chrome rather than
+        // its open content area, so elementFromPoint kept resolving back to whatever
+        // was under that edge instead of the target slot's own empty drop area.
+        const rcx = rb.x + rb.width / 2, rcy = rb.y + rb.height / 2;
+        const tcx = tb.x + tb.width / 2, tcy = tb.y + tb.height / 2;
+        // pointerType MUST be "mouse" -- sortable.js's gesture classifier
+        // (preActivationOutcome, sortable-core.js) branches on it: anything
+        // other than "mouse"/"pen" is treated as a TOUCH gesture with only a
+        // 9px tolerance before canceling as a scroll, vs. a 5px mouse-drag
+        // activation threshold. A bare PointerEvent defaults pointerType to
+        // "", which silently fell into the touch/cancel branch on the very
+        // first move -- this is why the drag "never crossed the threshold".
+        const fire = (el, type, x, y) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0 }));
+        const raf = () => new Promise((r) => requestAnimationFrame(r));
+        fire(row, "pointerdown", rcx, rcy);
+        // sortable.js's actual reorder (reorderToPointer, setting g.reordered) runs
+        // from a requestAnimationFrame loop started by activate() on the FIRST move
+        // past threshold -- not synchronously inside the pointermove handler. Firing
+        // all moves back-to-back in one synchronous burst (the original code) never
+        // let that rAF loop run even once before pointerup tore the drag down, so
+        // g.reordered stayed false and the drop was silently a no-op. Yield a real
+        // animation frame after each move so the loop actually processes the position.
+        for (let i = 1; i <= 8; i++) {
+          fire(document, "pointermove", rcx + (tcx - rcx) * i / 8, rcy + (tcy - rcy) * i / 8);
+          await raf();
+        }
+        await raf(); // one more frame at the final position before releasing
+        fire(target, "pointerup", tcx, tcy);
         await new Promise((r) => setTimeout(r, 60));
         return { found: true, srcDay, srcMeal, dstDay: target.dataset.day, dstMeal: target.dataset.meal };
       });
@@ -377,11 +426,52 @@ try {
       // backup-restore path (mergeMissingPublishedWeeksFromRestore), not a user publish.
       rec("mp-publish", "SKIP", `NOT automated — and not fixture-forced: the publish action (toggleMealPlanView) is unreachable dead code in this build. Zero call sites, no button/menu/data-attr binds it; the only other writes of mealPlanView="published" are the backup-restore path. Logged to ISSUES.md — the "publish week" feature appears to have lost its UI trigger (likely in the mealplan-ui extraction).`);
 
-      // --- mp-cards: the meal-plan recipe SUGGESTION deck (getMealPlanRecipes) is a
-      // session-only network-fetched list, not persisted state, rendered in the notif
-      // window via factory-closure setters — a static state fixture can't populate it
-      // without a mealplan-factory seam. SKIP rather than a vacuous pass.
-      rec("mp-cards", "SKIP", `NOT automated — the meal-plan recipe cards are a session-fetched SUGGESTION deck (getMealPlanRecipes, set from a network fetch, not persisted), rendered via factory-closure setters. A static state fixture can't populate it; would need a mealplan-factory seam. Distinct from the in-slot recipe entry, which mp-add/mp-serving already cover.`);
+      // --- mp-cards: the meal-plan recipe SUGGESTION deck (getMealPlanRecipes) is
+      // normally populated by warmMealPlanRecipes() fetching Gmail's "pendingRecipes"
+      // over the network. The backing `let mealPlanRecipes` (app.js:1499) turned out to
+      // be a plain app.js-scope variable, not buried in the mealplan factory closure as
+      // first assumed -- getMealPlanRecipes/setMealPlanRecipes themselves are just
+      // inline arrow-function VALUES inside the deps object passed to
+      // createMealplanModule, not standalone callable functions, so __liveQA.mpSetSuggestions
+      // (app.js) assigns the variable directly, the same shortcut mpAddRecipeEntry
+      // already takes for a picked recipe, then the real bell-click + dismiss-click flow is driven.
+      const cardsRes = await M.page.evaluate(() => {
+        const count = window.__liveQA.mpSetSuggestions([
+          { url: "https://example.com/qa-recipe-1", title: "QA Suggested Recipe One", source: "example.com" },
+          { url: "https://example.com/qa-recipe-2", title: "QA Suggested Recipe Two", source: "example.com" },
+        ]);
+        return { count };
+      });
+      await M.page.waitForTimeout(300);
+      const bellFound = await M.page.evaluate(() => !!document.querySelector("[data-eat-notif-toggle]"));
+      if (bellFound) await M.page.click("[data-eat-notif-toggle]");
+      await M.page.waitForTimeout(400);
+      const deckState = await M.page.evaluate(() => ({
+        cardCount: document.querySelectorAll(".eat-swipe-card").length,
+        firstTitle: document.querySelector(".eat-swipe-title")?.textContent || null,
+      }));
+      let dismissedCount = null;
+      if (deckState.cardCount) {
+        // CSS.escape is a browser API -- build + click the selector inside the page,
+        // not in this Node script's own scope.
+        const dismissed = await M.page.evaluate(() => {
+          const btn = document.querySelector(".eat-swipe-card [data-eat-notif-dismiss]");
+          if (!btn) return false;
+          btn.click();
+          return true;
+        });
+        if (dismissed) {
+          await M.page.waitForTimeout(300);
+          dismissedCount = await M.page.evaluate(() => document.querySelectorAll(".eat-swipe-card").length);
+        }
+      }
+      if (!bellFound || !deckState.cardCount) {
+        rec("mp-cards", "FAIL", `seeded ${cardsRes.count} suggestions via __liveQA.mpSetSuggestions but the deck didn't render — bellFound=${bellFound}, cardCount=${deckState.cardCount}. Pulled rather than pass vacuously.`);
+      } else {
+        const dismissOk = dismissedCount === 1; // started at 2, one dismissed
+        rec("mp-cards", dismissOk ? "PASS" : "PARTIAL",
+          `seeded 2 suggestions (__liveQA.mpSetSuggestions), opened the bell (data-eat-notif-toggle) → ${deckState.cardCount} cards rendered (first title="${deckState.firstTitle}"), dismissed one → ${dismissedCount} remaining (dismissMealPlanRecipe). ${dismissOk ? "" : "Dismiss count unexpected — investigate before trusting this path."}`);
+      }
     }
     await M.context.close();
   }
