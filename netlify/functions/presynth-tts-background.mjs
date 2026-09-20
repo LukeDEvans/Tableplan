@@ -19,6 +19,7 @@ import { prepareArticleListenText } from "../../tts-article-text.mjs";
 import { chunkText, sanitizeKey } from "../../kokoro-core.mjs";
 import { ttsCacheKey } from "../../tts-cache-identity.js";
 import { renderChunkToStorage } from "../../kokoro-store.mjs";
+import { backfillArticleText } from "../../article-body-backfill.mjs";
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const SECTION_NAMES = ["media", "config"];
@@ -42,11 +43,23 @@ export default async () => {
   const voice = resolveProviderVoice(prefs.voiceId);
   if (!voice || voice.provider !== "kokoro") { console.log(`[presynth] article voice is ${prefs.voiceId} (not kokoro) — nothing to pre-render`); return new Response("not kokoro", { status: 200 }); }
 
+  // BUG FIXED 2026-09-21: this used to filter on `a.text` directly, but a saved
+  // article's body is nulled from the synced row once durably offloaded to
+  // reading-content (true for most articles, read or not — see media-content.js).
+  // That made this job's candidate set empty in practice (confirmed: 0 of a real
+  // account's 12 unread saved articles had inline text), so it silently rendered
+  // nothing run after run — the actual reason "proactive caching" wasn't making
+  // Listen instant. Now: pick the newest-unread candidates first (cheap, no
+  // fetches), THEN backfill only THEIR text from reading-content (bounded to
+  // WORKING_SET articles, not the whole saved-articles list).
   const readIds = new Set(Array.isArray(state.readArticleIds) ? state.readArticleIds : []);
-  const articles = (Array.isArray(state.savedArticles) ? state.savedArticles : [])
-    .filter(a => a && a.text && !readIds.has(a.id))
+  const candidates = (Array.isArray(state.savedArticles) ? state.savedArticles : [])
+    .filter(a => a && !readIds.has(a.id))
     .sort((a, b) => String(b.savedAt || b.pubDate || "").localeCompare(String(a.savedAt || a.pubDate || "")))
     .slice(0, WORKING_SET);
+  const backfillHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, Accept: "application/json" };
+  const { articles, failed: backfillFailed } = await backfillArticleText(backfillHeaders, candidates);
+  if (backfillFailed) console.warn(`[presynth] ${backfillFailed} article body fetch(es) failed — those are skipped this run (prepareArticleListenText returns null for them below), not fatal.`);
 
   let synths = 0, cached = 0, failed = 0, articlesTouched = 0;
   outer: for (const article of articles) {

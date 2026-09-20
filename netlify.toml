@@ -29,7 +29,7 @@
 # tts-cache-cleanup imports the sweep + voice/key modules; bundle them + run weekly.
 [functions."tts-cache-cleanup"]
   schedule = "0 9 * * 0"
-  included_files = ["tts-cache-sweep.mjs", "tts-article-text.mjs", "tts-cache-identity.js", "kokoro-core.mjs", "voice-prefs.js", "voice-registry.js", "tts-provider.js"]
+  included_files = ["tts-cache-sweep.mjs", "tts-article-text.mjs", "tts-cache-identity.js", "kokoro-core.mjs", "voice-prefs.js", "voice-registry.js", "tts-provider.js", "article-body-backfill.mjs"]
 
 # Pre-synthesis: a tiny cron fires the 15-min background worker every couple of
 # hours, which renders the newest unread articles into the audio cache (instant
@@ -40,7 +40,7 @@
   schedule = "0 */2 * * *"
 
 [functions."presynth-tts-background"]
-  included_files = ["tts-article-text.mjs", "kokoro-core.mjs", "tts-cache-identity.js", "kokoro-store.mjs", "voice-prefs.js", "voice-registry.js", "tts-provider.js"]
+  included_files = ["tts-article-text.mjs", "kokoro-core.mjs", "tts-cache-identity.js", "kokoro-store.mjs", "voice-prefs.js", "voice-registry.js", "tts-provider.js", "article-body-backfill.mjs"]
 
 [functions."scheduled-email"]
   schedule = "*/15 * * * *"
