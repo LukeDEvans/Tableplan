@@ -13,6 +13,7 @@
 //   (npm run dev:local / dev.sh). Exit code 0 = pass, non-zero = fail.
 
 import { chromium } from "playwright";
+import { existsSync } from "node:fs";
 
 const URL = process.argv[2] || "http://localhost:4174/";
 const BOOT_TIMEOUT_MS = 30000;
@@ -72,14 +73,40 @@ async function preflight() {
   }
 }
 
+// `--no-proxy-server` matters in cloud sandboxes that export HTTPS_PROXY for outbound
+// traffic: Chrome inherits it and otherwise tries to tunnel even http://localhost
+// through it, failing with ERR_CERT_AUTHORITY_INVALID / ERR_TUNNEL_CONNECTION_FAILED.
+// A no-op on a normal machine with no proxy configured, so always safe to pass.
+const LAUNCH_ARGS = { headless: true, args: ["--no-proxy-server", "--proxy-bypass-list=*"] };
+
 async function launch() {
-  // Prefer the system Chrome (no bundled-Chromium download needed on this machine);
-  // fall back to Playwright's bundled Chromium if it's installed.
+  // 1) System Chrome — no bundled-Chromium download needed on a normal dev machine.
   try {
-    return await chromium.launch({ channel: "chrome", headless: true });
-  } catch {
-    return await chromium.launch({ headless: true });
+    return await chromium.launch({ ...LAUNCH_ARGS, channel: "chrome" });
+  } catch { /* not installed here */ }
+  // 2) Playwright's own managed Chromium, at the revision this exact `playwright`
+  //    version expects — works when `npx playwright install` has been run for it.
+  try {
+    return await chromium.launch(LAUNCH_ARGS);
+  } catch { /* not installed for this Playwright version */ }
+  // 3) Cloud sandbox fallback: Claude Code's cloud environments pre-provision ONE
+  //    Chromium build under $PLAYWRIGHT_BROWSERS_PATH at a version-independent
+  //    `chromium` symlink specifically so a repo's pinned Playwright version (here,
+  //    1.54.x, chosen for local Node 18 compat — see package.json) can differ from
+  //    whatever revision is actually on disk. Playwright's own resolution in (2) only
+  //    knows how to look for the revision matching ITS version, so it misses this even
+  //    though a perfectly good browser is sitting right there. Do NOT `npx playwright
+  //    install` here — these sandboxes explicitly pre-stage the browser instead of
+  //    downloading, and a version-coupled install would be reaching for the wrong thing.
+  const sandboxChrome = `${process.env.PLAYWRIGHT_BROWSERS_PATH || "/opt/pw-browsers"}/chromium`;
+  if (existsSync(sandboxChrome)) {
+    return await chromium.launch({ ...LAUNCH_ARGS, executablePath: sandboxChrome });
   }
+  throw new Error(
+    `No usable Chromium found (tried system Chrome, Playwright-managed Chromium for this ` +
+    `pinned version, and ${sandboxChrome}). Run "npx playwright install chromium" locally, ` +
+    `or check that this cloud sandbox pre-stages a browser under PLAYWRIGHT_BROWSERS_PATH.`
+  );
 }
 
 // Boot is "done" when the gate lifts: either the app authed, or the gate finished its

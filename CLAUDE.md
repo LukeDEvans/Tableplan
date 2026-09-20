@@ -94,6 +94,23 @@ For a second, skeptical pass on finished work without stopping the line, use the
 `ISSUES.md` instead of blocking. `git push` to non-`main` branches is auto-approved;
 `main`/deploys/migrations stay gated (see Git / GitHub below).
 
+**`ISSUES.md` isn't only for the reviewer subagent's formal pass.** Log to it in the
+moment, on *any* task, whenever you notice something real but not worth interrupting
+current work for — a shortcut taken to keep moving, a known gap, an environment quirk
+that isn't a `PAPERCUTS.md`-style tooling gotcha, dead code spotted in passing,
+anything you'd otherwise just mention in passing and lose. Same entry shape and
+severity tags as the reviewer's own entries (see the format note at the top of
+`ISSUES.md`) — this is a standing habit for every session, not a step that only fires
+when a dedicated review pass runs.
+
+**Lightweight triage between tasks.** When you're between tasks with nothing else
+queued, glance at `ISSUES.md` rather than letting it silently accumulate: skim for
+entries that are now stale (already fixed elsewhere, no longer reproducible, or
+overtaken by a later change — check them off or delete), and for anything that looks
+cheap to close (a one-line fix, a `P3` nit) — mention it to Luke rather than leaving it
+to rot. This is a glance, not a scheduled audit: don't derail onto fixing everything
+found this way unless it's genuinely trivial.
+
 ## UI conventions
 
 **Toggle switches:** the house toggle is `<input type="checkbox" class="live-toggle">` — a 36×20 pill with sliding knob, defined in styles.css (search "House toggle switch"). Use it for every new on/off control instead of inventing a style. Beware the `.recipe-form label` grid rule: labels containing a toggle must be added to its `:not(...)` exclusion list or laid out with their own flex row.
