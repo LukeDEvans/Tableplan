@@ -59,6 +59,22 @@ all your work is there. Make focused changes to the Finance domain only.
   budget-category wipe. Never move that logic into `finance-ui.js`; never "simplify"
   the deep-merge. If a change seems to need it, flag it.
 - Self-canceling transaction pairs are intentionally hidden (`finance-actuals.js`).
+- **Any future onboarding/setup UI that CREATES records (a "quick-start budget
+  template," seeding a default category, etc.) must gate on `financeSectionHydrated`,
+  not just on the empty-state condition (`!financeLinkStatus?.connected &&
+  !state.financeAccounts.length`) that decides whether to SHOW an onboarding prompt.**
+  That empty-state condition is also transiently true for an *existing* household on
+  every fresh boot, until the Supabase pull lands — it's fine for a purely-navigational
+  prompt (as the current one is), but not for anything that writes. `financeSectionHydrated`
+  stops a premature write from being *persisted* (app.js skips the finance section in the
+  write-out loop until hydrated — see `guardBootEmptyFinance`'s call sites), but does NOT
+  stop a record from being *created in memory* during that window — and because the finance
+  merges are deliberately non-destructive ("empty never erases," see `finance-sync.js`'s
+  own header comment), a phantom onboarding-seeded record created pre-hydration would
+  survive the next real merge as a permanent, unwanted addition once the cloud data lands,
+  not get cleaned up by it. (Raised during the finance UX overhaul's onboarding-redesign
+  increment, which stayed UI-only for exactly this reason — scoped out as a separate,
+  explicitly-flagged step if it's ever needed.)
 
 ## Out of scope — flag, don't touch silently
 `app.js` is ONE file shared by every domain, and other agents may be editing it
