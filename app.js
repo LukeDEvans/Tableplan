@@ -16160,6 +16160,17 @@ function renderContextSettingsDialog(kind) {
         <svg class="vpick-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
       </button>`;
 
+    // BUG FIXED 2026-09-23: this used to always warn "pauses when you leave the
+    // app or lock the screen" whenever ANY on-device voice was available
+    // (device.length, true in both web and the native app, since it only checks
+    // for window.speechSynthesis). That's true for the Web Speech fallback, but
+    // wrong and misleading for the native app: LiveTtsPlugin's AVSpeechSynthesizer
+    // path explicitly supports background playback + lock-screen controls (its
+    // whole reason for existing over Web Speech). Branch the copy on nativeMode.
+    const onDeviceNote = nativeMode
+      ? " An on-device voice (your iPhone's own voices) starts instantly, stays on your device, and keeps playing in the background with lock-screen controls."
+      : (device.length ? " An on-device voice (your iPhone's own voices) starts instantly and stays on your device, but pauses when you leave the app or lock the screen." : "");
+
     elements.contextSettingsBody.innerHTML = `
       <p class="settings-hint">One voice for reading your articles aloud. Voices marked <span class="vpick-badge">Private</span> are spoken on your own server — the text never goes to a third party.</p>
       <div class="vpick-card">
@@ -16183,7 +16194,7 @@ function renderContextSettingsDialog(kind) {
         ${nativeMode ? nativeGroupHtml : (device.length ? `<div class="vpick-group">On-device · foreground only</div>${device.map(voiceRow).join("")}` : "")}
         ${cloud.length ? `<div class="vpick-group">Cloud</div>${cloud.map(voiceRow).join("")}` : ""}
       </div>
-      <p class="vpick-note">You pick a voice; the app picks the engine. A private voice can take a few extra seconds the first time after a while, as the voice server wakes up.${device.length ? " An on-device voice (your iPhone's own voices) starts instantly and stays on your device, but pauses when you leave the app or lock the screen." : ""}</p>`;
+      <p class="vpick-note">You pick a voice; the app picks the engine. A private voice can take a few extra seconds the first time after a while, as the voice server wakes up.${onDeviceNote}</p>`;
 
     // Select a voice (writes the global default, preserving any other voice prefs).
     elements.contextSettingsBody.querySelectorAll(".vpick-voice").forEach((row) => {
@@ -34785,6 +34796,26 @@ function teardownSystemVoice() {
   listenSpeechSynth = null;
 }
 
+// Maps a character offset in the spoken text (as reported in real time by
+// native TTS's ttsRange event, willSpeakRangeOfSpeechString on the Swift side)
+// to a word index, using the EXACT SAME whitespace-delimited tokenization
+// wrapArticleWords uses to assign each rendered word its data-wi index — so the
+// two line up. (This is the same text→word-index alignment the Google/timings
+// highlighting path already relies on, just driven by a live character offset
+// instead of a precomputed per-word time array.)
+function wordIndexAtCharOffset(text, charOffset) {
+  if (!text) return 0;
+  let idx = -1, pos = 0;
+  for (const part of text.split(/(\s+)/)) {
+    if (!part) continue;
+    if (/^\s+$/.test(part)) { pos += part.length; continue; }
+    idx++;
+    if (pos + part.length > charOffset) return idx;
+    pos += part.length;
+  }
+  return Math.max(0, idx);
+}
+
 // Native (AVSpeechSynthesizer) read-aloud: backgrounds + lock-screen controls,
 // and can use the device's Enhanced/Premium voices. Speaks the whole article in
 // one go (the OS handles long text); progress + advance come from plugin events.
@@ -34811,7 +34842,20 @@ async function startListenNativeTts(article) {
     session.subs = [
       await tts.addListener("ttsFinish", advance),
       await tts.addListener("ttsNext", advance),
-      await tts.addListener("ttsRange", (e) => { if (session.genId === listenGenId) { session.charIndex = (e && e.location) || 0; updateMiniPlayerProgress(); } }),
+      // GAP FILLED 2026-09-23: the plugin already emitted this real-time
+      // character-range progress, but nothing used it for word highlighting
+      // (only the mini-player progress bar) -- Apple on-device voices never
+      // highlighted at all, unlike Google. Kokoro genuinely has no per-word
+      // data to offer here (see TTS_PHASE1A.md §12); native does.
+      await tts.addListener("ttsRange", (e) => {
+        if (session.genId !== listenGenId) return;
+        session.charIndex = (e && e.location) || 0;
+        updateMiniPlayerProgress();
+        if (listenArticle && openArticleId === listenArticle.id) {
+          const bodyIdx = wordIndexAtCharOffset(prepared.text, session.charIndex) - (prepared.introWords || 0);
+          if (bodyIdx >= 0) setWordHighlight(bodyIdx); else clearWordHighlight();
+        }
+      }),
     ];
   } catch { /* events best-effort */ }
   try {
@@ -35171,7 +35215,20 @@ function updateListenPlayBtn() {
     return;
   }
   btn.disabled = false;
-  const playing = listenSpeaking && listenAudio && !listenAudio.paused;
+  // BUG FIXED 2026-09-23: this used to check only `listenAudio` (the shared
+  // <audio> element used by the URL-based Kokoro/Google engine), which is always
+  // null for an on-device/native voice session (see startListenSystemVoice /
+  // startListenNativeTts) -- so this button silently showed "Play" the entire
+  // time an Apple on-device voice was actually speaking. Mirrors the same
+  // listenSpeechSynth branch nowPlayingIsPlaying() already uses for the
+  // mini-player's button (not delegated to that function directly -- it also
+  // covers music/podcasts, which this button, scoped to the article reader's
+  // own listen session, must not react to).
+  const playing = listenSpeechSynth
+    ? (listenSpeechSynth.native
+        ? !listenSpeechSynth.paused
+        : (() => { try { return window.speechSynthesis.speaking && !window.speechSynthesis.paused; } catch { return false; } })())
+    : (listenSpeaking && listenAudio && !listenAudio.paused);
   if (label) label.textContent = playing ? "Pause" : "Play";
   if (icon) icon.innerHTML = playing
     ? `<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>`
