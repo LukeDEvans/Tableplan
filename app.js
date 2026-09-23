@@ -35140,14 +35140,14 @@ function advanceListenArticle() {
   const articles = getFilteredSortedArticles(activeMediaTab);
   const currentIndex = articles.findIndex(a => a.id === anchorId);
   if (currentIndex === -1) return false;
-  for (let i = currentIndex + 1; i < articles.length; i++) {
-    if (articles[i].text) {
-      if (activeAppArea === "media" && !document.getElementById("articleReaderPanel")?.hidden) openArticle(articles[i].id, "articleList");
-      startListenTTS(articles[i]);
-      return true;
-    }
-  }
-  return false;
+  if (currentIndex + 1 >= articles.length) return false;
+  // startListenTTS recovers missing text itself (ensureArticleText) — most saved
+  // articles have .text offloaded to the backstop, so gating on it here made this
+  // loop find no eligible "next" article almost every time (item: TTS sweep).
+  const next = articles[currentIndex + 1];
+  if (activeAppArea === "media" && !document.getElementById("articleReaderPanel")?.hidden) openArticle(next.id, "articleList");
+  startListenTTS(next);
+  return true;
 }
 
 function toggleListenPlayPause() {
