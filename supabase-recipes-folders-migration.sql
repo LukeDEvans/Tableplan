@@ -103,6 +103,15 @@ for delete
 to authenticated
 using ((auth.jwt() ->> 'email') = 'YOUR-EMAIL@example.com');
 
+-- ── Data API grants ─────────────────────────────────────────────────────────
+-- Explicit grants (from 2026-10-30 Supabase no longer auto-grants new public tables to the Data
+-- API on 2026-10-30). Least-privilege: matches the RLS policies above; RLS still
+-- decides which rows. No anon grant — the app never reads these signed-out.
+grant select, insert, update, delete on public.eat_folders to authenticated;
+grant select, insert, update, delete on public.eat_folders to service_role;
+grant select, insert, update, delete on public.eat_recipes to authenticated;
+grant select, insert, update, delete on public.eat_recipes to service_role;
+
 insert into public.eat_folders (id, name, sort_order)
 select
   folder->>'id',

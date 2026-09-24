@@ -512,6 +512,12 @@ runner (idempotent, transactional per file). Applying a migration is a **product
 DB change — confirmation-gated (§16), out of local-only programs.** The runner is
 designed, not built, until there is a staging env or a second backend.
 
+**Data API grants (required from 2026-10-30):** Supabase no longer auto-grants new
+`public` tables to the Data API. Every SQL file that creates a table must, in the same
+file, `grant … to service_role` plus whatever `authenticated`/`anon` access its RLS
+policies need (least privilege — RLS still decides rows; grant `anon` only for tables
+read signed-out). Enforced by `test/architecture-supabase-grants.test.js`.
+
 **Phases:** (1) cloud (today). (2) home server — implement the `Storage` adapter +
 run the same schema on local Postgres; Jellyfin/Kokoro/etc. already sit behind
 provider/capability boundaries so they relocate without domain changes. (3) remote
