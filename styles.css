@@ -22599,6 +22599,19 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
 .music-attr { font-size: 0.7rem; color: var(--muted); }
 .music-provider-note { font-size: 0.76rem; color: var(--tomato); padding: 4px 14px; }
 
+/* Apple Music Discover: home shelves (horizontal, scroll inside the shelf — never
+   the page), sign-in prompt, and the collapsible "Free & open sources" section. */
+.music-shelf { display: flex; gap: 12px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; padding: 4px 12px 10px; max-width: 100%; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+.music-card { flex: 0 0 128px; width: 128px; min-width: 0; display: flex; flex-direction: column; gap: 3px; cursor: pointer; scroll-snap-align: start; border-radius: 10px; }
+.music-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.music-card-art { width: 128px; height: 128px; border-radius: 10px; object-fit: cover; background: var(--accent-soft); box-shadow: 0 1px 4px rgba(0,0,0,.12); display: inline-flex; align-items: center; justify-content: center; }
+.music-card:hover .music-card-art { filter: brightness(.94); }
+.music-card-title { font-weight: 600; font-size: 0.82rem; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.music-card-sub { font-size: 0.74rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.music-am-signin { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 8px 12px 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: 0.84rem; }
+.music-free-sources { margin-top: 10px; border-top: 1px solid var(--line); }
+.music-free-sources > summary { cursor: pointer; padding: 6px 0; }
+
 /* Music phase 2: canonical works, saved library, playlists */
 .music-add-btn { flex: 0 0 auto; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: none; background: transparent; color: var(--muted); border-radius: 8px; cursor: pointer; }
 .music-add-btn:hover { background: var(--accent-soft); color: var(--accent-dark); }

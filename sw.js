@@ -5,7 +5,11 @@ const PRECACHE = ["/", "/favicon.svg"];
 const SKIP_HOSTS = ["supabase.co", "googleapis.com", "gstatic.com", "cartocdn.com", "mapservices.weather.noaa.gov", "radar.weather.gov", "gibs.earthdata.nasa.gov", "server.arcgisonline.com", "openstreetmap.org",
   // On-demand Music streams from these directly; never let the SW cache audio
   // (large, range-based, and licence-restricted) or their search/art responses.
-  "archive.org", "api.jamendo.com", "jamendo.com",
+  "archive.org",
+  // Apple Music (MusicKit): catalog/personal API (api.music.apple.com — /v1/me
+  // responses must never be served from a URL-keyed cache), DRM playback + HLS
+  // segments (*.itunes.apple.com), sign-in, the SDK, and artwork (mzstatic.com).
+  "apple.com", "mzstatic.com",
   // Radio: MPR/APMG stream CDN + Radio Browser directory/streams.
   "publicradio.org", "api.radio-browser.info"];
 

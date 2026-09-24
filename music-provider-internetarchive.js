@@ -21,6 +21,9 @@ const encPath = (name) => String(name).split("/").map(encodeURIComponent).join("
 const streamUrl = (id, name) => `${IA}/download/${encodeURIComponent(id)}/${encPath(name)}`;
 const artUrl = (id) => `${IA}/services/img/${encodeURIComponent(id)}`;
 
+// IA collections that are audio but not music — excluded from unscoped search.
+const NON_MUSIC_COLLECTIONS = ["librivoxaudio", "audio_bookspoetry", "podcasts", "oldtimeradio", "radioprograms", "audio_religion", "audio_news", "audio_tech", "audio_foreign"];
+
 // IA audio file formats we can stream in a browser, best first.
 const AUDIO_FORMATS = ["VBR MP3", "128Kbps MP3", "256Kbps MP3", "64Kbps MP3", "MP3", "Ogg Vorbis", "Opus", "AAC"];
 const isPreferred = (fmt) => AUDIO_FORMATS.includes(String(fmt || ""));
@@ -58,7 +61,9 @@ export function createInternetArchiveProvider(opts = {}, deps = {}) {
   const label = opts.label || (collection ? "Internet Archive" : "Internet Archive");
 
   function buildSearchUrl(q, { limit = 25, page = 1 } = {}) {
-    const scoped = collection ? `(${q}) AND collection:(${collection})` : q;
+    // Unscoped searches exclude the big non-music audio collections (audiobooks,
+    // podcasts, old-time radio, spoken word) that otherwise flood music results.
+    const scoped = collection ? `(${q}) AND collection:(${collection})` : `(${q}) AND NOT collection:(${NON_MUSIC_COLLECTIONS.join(" OR ")})`;
     const query = `(${scoped}) AND mediatype:(audio)`;
     const fields = ["identifier", "title", "creator", "date", "licenseurl", "downloads", "collection"];
     const params = new URLSearchParams();
@@ -67,7 +72,8 @@ export function createInternetArchiveProvider(opts = {}, deps = {}) {
     params.set("rows", String(Math.max(1, Math.min(100, limit))));
     params.set("page", String(Math.max(1, page)));
     params.set("output", "json");
-    params.set("sort[]", "downloads desc");
+    // No explicit sort → the Archive's relevance ranking. (Sorting by downloads
+    // surfaced popular-but-unrelated items above the actual match.)
     return `${SEARCH_URL}?${params.toString()}`;
   }
 
