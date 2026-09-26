@@ -7,6 +7,7 @@ import * as LiveDailyDozen from './daily-dozen.js';
 import * as LiveFoodHealth from './food-health.js';
 import * as LiveFoodHealthChecklists from './food-health-checklists.js';
 import * as LiveMealPlanServings from './meal-plan-servings.js';
+import { isFridayBeforeLastMeal } from './meal-plan-time.js';
 import * as LiveReceiptDomain from './receipt-domain.js';
 import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
@@ -7565,13 +7566,28 @@ function showEatApp(event) {
     showHomeApp();
     return;
   }
-  // Open on the meal for the current time of day (noon → that day's Lunch).
+  // Open on today, at the meal for the current time of day (noon → Lunch).
+  focusMealPlanOnToday();
   requestMealPlanTimeOfDaySnap();
   activateEatShell();
   setPageTitle("Meal Plan");
   setPageHash("eat");
   closePageTitleMenu();
   closeAppMenu();
+}
+
+// Point the shared week cursor + planner day at today. On a Friday before
+// dinner, today's breakfast/lunch live on the previous prep window's closing
+// Friday (the new window's opening Friday holds only dinner).
+function focusMealPlanOnToday() {
+  const now = new Date();
+  if (isFridayBeforeLastMeal(mealColumnConfigs.map((column) => column.label), now)) {
+    currentWeek = startOfPrepWindow(addDays(now, -1));
+    activePlannerDayId = "friday-finish";
+    return;
+  }
+  currentWeek = startOfPrepWindow(now);
+  activePlannerDayId = plannerDayIdForDate(now);
 }
 
 function setWeekToolsMode(mode) {
