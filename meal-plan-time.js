@@ -41,3 +41,13 @@ export function mealColumnIndexForTime(labels, minutes) {
 export function minutesSinceMidnight(date = new Date()) {
   return date.getHours() * 60 + date.getMinutes();
 }
+
+// The prep window runs Friday → Friday: the opening Friday holds only the last
+// meal (dinner), while that Friday's earlier meals live on the PREVIOUS window's
+// closing Friday. True when `date` is a Friday and the time-of-day meal is one
+// of those earlier meals, i.e. "today" should open on the previous window.
+export function isFridayBeforeLastMeal(labels, date = new Date()) {
+  const list = Array.isArray(labels) ? labels : [];
+  if (date.getDay() !== 5 || list.length < 2) return false;
+  return mealColumnIndexForTime(list, minutesSinceMidnight(date)) < list.length - 1;
+}
