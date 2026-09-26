@@ -2,7 +2,7 @@ import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './financ
 import { financeMonthsToSnapshot, financeOffsettingPairIds } from './finance-actuals.js';
 import { dedupeFinanceRecurring } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill, csvRowsToTxns, dedupeImport } from './finance-csv.js';
-import { financeMerchantTokens, financeMerchantKey, storeAccountsView, snapshotWindowTxns, recentTxns } from './finance-transactions.js';
+import { financeMerchantTokens, financeMerchantKey, storeAccountsView, snapshotWindowTxns, recentTxns, manualTxnToRow, mergeManualTxns, manualRowsToCopy } from './finance-transactions.js';
 import { createFinanceTxnStore, FIN_TXN_DB, FIN_TXN_STORES } from './finance-txn-store.js';
 import { createIdbStorage, createMemoryStorage } from './content-store/storage.js';
 
@@ -560,6 +560,7 @@ async function syncFinanceTxnStore() {
   try {
     const { changed } = await store.sync();
     financeTxnStoreError = null;
+    await copyLegacyManualTxnsToStore();
     if (!changed && wasActive === financeStoreActive()) return;
   } catch (e) {
     financeTxnStoreError = e?.message || "Stored history unavailable";
@@ -592,6 +593,51 @@ function financeStoreStatusText() {
   const rows = financeTxnStore.rows().filter((r) => r.status === "active");
   const oldest = rows.reduce((m, r) => (r.posted && (!m || r.posted < m) ? r.posted : m), null);
   return `${rows.length} stored transactions${oldest ? ` since ${new Date(oldest).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}` : ""}.`;
+}
+// Manual transactions are dual-written (JSONB + store) whenever the store is
+// usable — REGARDLESS of the read setting — so a delete made while reading from
+// the feed can't leave an active store copy that reappears when the store is on.
+async function financeStoreWriteRows(rows) {
+  const groupId = getFinanceStoreGroupId?.();
+  if (!rows.length || !groupId || !canUseFinanceStore?.()) return false;
+  await writeSupabaseJson("finance_transactions?on_conflict=group_id,id", { method: "POST", body: rows, prefer: "resolution=merge-duplicates,return=minimal" });
+  return true;
+}
+function financeStoreUpsertManual(entry) {
+  const groupId = getFinanceStoreGroupId?.();
+  if (!groupId) return;
+  financeStoreWriteRows([manualTxnToRow(entry, groupId)])
+    .then((ok) => (ok ? financeTxnStore?.sync() : null))
+    .catch((e) => console.warn("Manual transaction not saved to stored history:", e?.message || e));
+}
+function financeStoreDeleteManual(id) {
+  const groupId = getFinanceStoreGroupId?.();
+  if (!groupId || !canUseFinanceStore?.()) return;
+  writeSupabaseJson(
+    `finance_transactions?group_id=eq.${encodeURIComponent(groupId)}&id=eq.${encodeURIComponent(id)}&origin=eq.manual`,
+    { method: "PATCH", body: { status: "deleted" }, prefer: "return=minimal" }
+  ).then(() => financeTxnStore?.sync())
+    .catch((e) => console.warn("Manual transaction delete not saved to stored history:", e?.message || e));
+}
+// The editable manual entry for an id: the JSONB record, or (store mode) the
+// store-only one rebuilt from its row, so it can still be edited/deleted.
+function financeManualEntry(id) {
+  const fromJsonb = (state.financeManualTxns || []).find((m) => m.id === id);
+  if (fromJsonb || !financeStoreActive()) return fromJsonb;
+  return mergeManualTxns([], financeTxnStore.rows()).find((m) => m.id === id);
+}
+// One-time (per session) copy of JSONB manual entries the store doesn't have yet.
+let financeManualCopyDone = false;
+async function copyLegacyManualTxnsToStore() {
+  if (financeManualCopyDone || !financeTxnStore?.isLoaded()) return;
+  financeManualCopyDone = true;
+  const rows = manualRowsToCopy(state.financeManualTxns, financeTxnStore.rows(), getFinanceStoreGroupId?.());
+  try {
+    if (await financeStoreWriteRows(rows)) await financeTxnStore.sync();
+  } catch (e) {
+    financeManualCopyDone = false; // retry on the next explicit sync
+    console.warn("Manual transactions not copied to stored history:", e?.message || e);
+  }
 }
 // Account-boundary purge (sign-out / account switch) — drops the local mirror.
 async function purgeLocalFinanceTxnStore() {
@@ -806,7 +852,10 @@ function financeLabeledTxns() {
   // pseudo-account) so they can never collide with or double-count a bank
   // transaction, and so mgmt-pair transfer detection can't pair them against
   // a real account by accident.
-  const manualTxns = (state.financeManualTxns || []).map((m) => ({
+  const manualSource = financeStoreActive()
+    ? mergeManualTxns(state.financeManualTxns, financeTxnStore.rows())
+    : (state.financeManualTxns || []);
+  const manualTxns = manualSource.map((m) => ({
     id: m.id,
     accountId: `manual:${(m.account || "cash").trim().toLowerCase().replace(/\s+/g, "-") || "cash"}`,
     account: m.account || "Cash",
@@ -1089,6 +1138,7 @@ function saveManualTxnForm(fields) {
   if (i >= 0) state.financeManualTxns[i] = entry; else state.financeManualTxns.unshift(entry);
   if (fields.label) recordFinanceTxnLabel(entry.id, fields.label, desc);
   else if (state.financeTxnLabels) delete state.financeTxnLabels[entry.id];
+  financeStoreUpsertManual(entry);
   invalidateFinanceLabeled();
   financeManualForm = null;
   setPageNotifCount("finance", financeBellCount());
@@ -1100,6 +1150,7 @@ function saveManualTxnForm(fields) {
 function deleteManualTxn(id) {
   if (!state.financeManualTxns || !confirm("Delete this transaction?")) return;
   state.financeManualTxns = state.financeManualTxns.filter((m) => m.id !== id);
+  financeStoreDeleteManual(id);
   if (state.financeTxnLabels) delete state.financeTxnLabels[id];
   if (state.financeTxnNoteOverrides) delete state.financeTxnNoteOverrides[id];
   if (state.financeTxnReceipts && state.financeTxnReceipts[id]) deleteReceiptImage(id).catch(() => {});
@@ -4139,7 +4190,7 @@ function showFinTxnMenu(x, y, txnId) {
   });
   menu.querySelector('[data-menu-action="edit"]')?.addEventListener("click", () => {
     menu.remove();
-    openManualTxnForm((state.financeManualTxns || []).find((m) => m.id === txnId));
+    openManualTxnForm(financeManualEntry(txnId));
   });
   menu.querySelector('[data-menu-action="delete"]')?.addEventListener("click", () => {
     menu.remove();
@@ -4304,7 +4355,7 @@ function onFinanceGridClick(e) {
   if (action === "manual-txn-open") { openManualTxnForm(null); return; }
   if (action === "manual-txn-edit") {
     const t = financeLabeledTxns().find((x) => x.id === btn.dataset.id);
-    if (t?.isManual) openManualTxnForm((state.financeManualTxns || []).find((m) => m.id === t.id));
+    if (t?.isManual) openManualTxnForm(financeManualEntry(t.id));
     return;
   }
   if (action === "manual-txn-delete") { deleteManualTxn(btn.dataset.id); return; }

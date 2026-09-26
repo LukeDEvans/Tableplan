@@ -221,3 +221,54 @@ export function mergeStoreRows(existing, incoming) {
   for (const r of Array.isArray(incoming) ? incoming : []) if (r?.id != null) byId.set(String(r.id), r);
   return [...byId.values()];
 }
+
+// ── Manual transactions ⇄ store (design §6) ─────────────────────────────────
+// Manual entries are DUAL-WRITTEN (JSONB financeManualTxns + a store row) during
+// the transition, so turning the store off loses nothing. The store adds two
+// things: a delete there is final (a JSONB copy resurrected by a device merge
+// stays hidden), and entries that only exist in the store (e.g. after the legacy
+// list is retired) still show.
+export function manualAccountSlug(account) {
+  return String(account || "cash").trim().toLowerCase().replace(/\s+/g, "-") || "cash";
+}
+
+export function manualTxnToRow(m, groupId) {
+  return {
+    id: String(m.id),
+    group_id: String(groupId),
+    origin: "manual",
+    account_id: `manual:${manualAccountSlug(m.account)}`,
+    posted: m.posted || null,
+    amount: round2(Number(m.amount) || 0),
+    description: String(m.description || "").slice(0, 200),
+    pending: false,
+    status: "active",
+  };
+}
+
+// JSONB list + store rows → the manual entries to show. JSONB content wins for
+// ids present in both (it's written first on every save, so it's never staler on
+// this device); a store row with status "deleted" hides its id everywhere.
+export function mergeManualTxns(jsonbList, storeRows) {
+  const storeManual = (Array.isArray(storeRows) ? storeRows : []).filter((r) => r?.origin === "manual");
+  const deleted = new Set(storeManual.filter((r) => r.status === "deleted").map((r) => String(r.id)));
+  const out = [];
+  const seen = new Set();
+  for (const m of Array.isArray(jsonbList) ? jsonbList : []) {
+    if (!m?.id || deleted.has(String(m.id))) continue;
+    seen.add(String(m.id));
+    out.push(m);
+  }
+  for (const r of storeManual) {
+    if (r.status !== "active" || seen.has(String(r.id))) continue;
+    const slug = String(r.account_id || "").replace(/^manual:/, "");
+    out.push({ id: String(r.id), posted: r.posted, amount: Number(r.amount) || 0, description: r.description || "", account: slug.replace(/-/g, " ") || "Cash" });
+  }
+  return out;
+}
+
+// JSONB manual entries not yet in the store → rows to copy (idempotent by id).
+export function manualRowsToCopy(jsonbList, storeRows, groupId) {
+  const have = new Set((Array.isArray(storeRows) ? storeRows : []).filter((r) => r?.origin === "manual").map((r) => String(r.id)));
+  return (Array.isArray(jsonbList) ? jsonbList : []).filter((m) => m?.id && !have.has(String(m.id))).map((m) => manualTxnToRow(m, groupId));
+}

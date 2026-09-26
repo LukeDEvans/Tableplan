@@ -149,3 +149,31 @@ describe("incremental-sync helpers", () => {
     expect(storeRowToTxn({ id: 5, amount: "-1.50", account_id: "A", import_label: "cat:x" })).toMatchObject({ id: "5", amount: -1.5, accountId: "A", importLabel: "cat:x", status: "active" });
   });
 });
+
+import { manualTxnToRow, mergeManualTxns, manualRowsToCopy, manualAccountSlug } from "../finance-transactions.js";
+
+describe("manual transactions ⇄ store", () => {
+  const m = (id, o = {}) => ({ id, posted: "2026-09-01T12:00:00.000Z", amount: -5, description: "Cash lunch", account: "Cash", ...o });
+  it("manualTxnToRow uses the same manual:<slug> account id financeLabeledTxns builds", () => {
+    expect(manualTxnToRow(m("fin-man-1", { account: "My Wallet" }), "g1")).toMatchObject({ id: "fin-man-1", origin: "manual", account_id: "manual:my-wallet", status: "active", amount: -5 });
+    expect(manualAccountSlug("")).toBe("cash");
+  });
+  it("store delete is final even if a device merge resurrects the JSONB entry", () => {
+    const out = mergeManualTxns([m("a"), m("b")], [{ id: "a", origin: "manual", status: "deleted" }]);
+    expect(out.map((x) => x.id)).toEqual(["b"]);
+  });
+  it("JSONB content wins for ids in both; store-only active rows still show", () => {
+    const out = mergeManualTxns([m("a", { amount: -7 })], [
+      { id: "a", origin: "manual", status: "active", amount: -5, account_id: "manual:cash" },
+      { id: "c", origin: "manual", status: "active", amount: -3, description: "Old", account_id: "manual:my-wallet", posted: "2026-01-01" },
+      { id: "x", origin: "csv", status: "active" },
+    ]);
+    expect(out.map((x) => [x.id, x.amount])).toEqual([["a", -7], ["c", -3]]);
+    expect(out[1].account).toBe("my wallet");
+  });
+  it("manualRowsToCopy copies only what the store doesn't have (idempotent)", () => {
+    const rows = manualRowsToCopy([m("a"), m("b")], [{ id: "a", origin: "manual", status: "deleted" }], "g1");
+    expect(rows.map((r) => r.id)).toEqual(["b"]);
+    expect(manualRowsToCopy([m("a")], [{ id: "a", origin: "manual" }], "g1")).toEqual([]);
+  });
+});

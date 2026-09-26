@@ -3,8 +3,9 @@
 > **Status: APPROVED 2026-09-26 (Q1 90-day backfill · Q2 annotations deferred · Q3 60-day deck).**
 > Progress:
 > - **Done:** steps 1 (pure core), 3 (server ingest), 4 (client store module), 5 (read flip
->   behind `financeTxnSource`, **default "feed"**) and 6 (CSV import → rows, with preview and
->   undo).
+>   behind `financeTxnSource`, **default "feed"**), 6 (CSV import → rows, with preview and
+>   undo) and 7 (manual txns dual-written; a store delete is final). The legacy
+>   `financeManualTxns` clear is still a separate, confirmed step.
 > - **Waiting on you:** applying the step 2 SQL (`migrations/2026-09-26-finance-transactions.sql`),
 >   then turning on "Use stored transaction history" (Settings › Finance › Bank link) to compare
 >   against the feed.
@@ -225,6 +226,12 @@ filter.
 
 - Copy `financeManualTxns` into the table (`origin='manual'`, same ids, so labels/notes/links
   keep working). This is idempotent by PK.
+- **As built — dual-write.** Every save and delete goes to **both** JSONB and the table, whatever
+  the read setting.
+  - Deletes must always reach the table: otherwise a delete made while reading from the feed
+    would leave an active table copy that reappears once the store is on.
+  - Store-mode reads use `mergeManualTxns`: JSONB content wins for ids in both, a table
+    `deleted` hides the id, and table-only rows still show.
 - New and edited manual txns are written to the table; deletes are row deletes.
 - `financeManualTxns` becomes **read-only legacy**. It's kept (not cleared) until you confirm,
   then cleared in a separate step. While both exist, reads use the table, plus any legacy

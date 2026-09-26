@@ -230,3 +230,79 @@ describe("CSV import → durable rows (through the real finance module)", () => 
     expect(h.toasts.at(-1).undo).toBeUndefined();
   });
 });
+
+describe("manual transactions ⇄ store (through the real finance module)", () => {
+  function harness(state, table) {
+    const writes = [];
+    let clock = 0;
+    const fin = createFinanceModule({
+      state, elements: {}, persist: () => {}, createId: (p) => `${p}-new`, escapeHtml: (s) => String(s),
+      showMailToast: () => {}, recordDeletion: () => {}, trackUsage: () => {},
+      callNetlifyFunction: async (_fn, body) => (body.action === "accounts"
+        ? { accounts: [{ id: "A1", org: "Bank", name: "Checking", balance: 1, transactions: feedTxns.map((t) => ({ ...t })) }], errors: [], fetchedAt: new Date().toISOString() }
+        : {}),
+      dateKeyFromDate: (d) => d.toISOString().slice(0, 10),
+      setPageNotifCount: () => {}, setWeekToolsMode: () => {}, closeWeekJumpMenu: () => {},
+      getCurrentProfileMember: () => null, renderContextSettingsDialog: () => {}, openContextSettingsDialog: () => {},
+      prepareScanImage: async () => null, fileToDataUrl: async () => "",
+      getActiveAppArea: () => "home", getSupabaseClient: () => null, getAuthSession: () => null, getContextSettingsKind: () => "",
+      getFinanceStoreGroupId: () => "g1", canUseFinanceStore: () => true,
+      fetchSupabaseJson: async (q) => {
+        const sorted = [...table.rows].sort((a, b) => (a.updated_at === b.updated_at ? (a.id < b.id ? -1 : 1) : a.updated_at < b.updated_at ? -1 : 1));
+        const m = decodeURIComponent(q).match(/updated_at\.gt\."([^"]+)",and\(updated_at\.eq\."[^"]+",id\.gt\."(.*)"\)\)/);
+        return m ? sorted.filter((r) => r.updated_at > m[1] || (r.updated_at === m[1] && r.id > m[2])) : sorted;
+      },
+      writeSupabaseJson: async (path, opts) => {
+        writes.push({ path, ...opts });
+        const at = `t${String(++clock).padStart(6, "0")}`;
+        if (opts.method === "POST") for (const r of opts.body) table.rows = [...table.rows.filter((x) => x.id !== r.id), { ...r, updated_at: at }];
+        if (opts.method === "PATCH") {
+          const id = decodeURIComponent(path.match(/[?&]id=eq\.([^&]+)/)[1]);
+          table.rows = table.rows.map((r) => (r.id === id ? { ...r, ...opts.body, updated_at: at } : r));
+        }
+      },
+    });
+    globalThis.confirm = () => true;
+    const click = (action, id) => fin.onFinanceGridClick({ target: { closest: () => ({ dataset: { finAction: action, id } }) } });
+    return { fin, writes, click };
+  }
+  const manual = (id, o = {}) => ({ id, posted: iso(2), amount: -8, description: "Cash lunch", account: "Cash", ...o });
+
+  it("enabling the store copies JSONB manual entries once (idempotent)", async () => {
+    const table = { rows: feedTxns.map((t) => ({ ...t, account_id: "A1", origin: "simplefin", status: "active", updated_at: "t000000" })) };
+    const state = { ...makeState(), financeTxnSource: "store", financeManualTxns: [manual("fin-man-1"), manual("fin-man-2")] };
+    const h = harness(state, table);
+    await h.fin.refreshFinanceLive(); await settle();
+    expect(table.rows.filter((r) => r.origin === "manual").map((r) => r.id).sort()).toEqual(["fin-man-1", "fin-man-2"]);
+    await h.fin.refreshFinanceLive(); await settle();
+    expect(h.writes.filter((w) => w.method === "POST")).toHaveLength(1); // no second copy
+  });
+
+  it("a delete is final in store mode even if a device merge resurrects the JSONB entry", async () => {
+    const table = { rows: feedTxns.map((t) => ({ ...t, account_id: "A1", origin: "simplefin", status: "active", updated_at: "t000000" })) };
+    const state = { ...makeState(), financeTxnSource: "store", financeManualTxns: [manual("fin-man-1")] };
+    state.financeTxnLabels["fin-man-1"] = "cat:g:c";
+    const h = harness(state, table);
+    await h.fin.refreshFinanceLive(); await settle();
+    const withManual = state.financeMonthActuals[monthOf(1)].cats["g:c"];
+    h.click("manual-txn-delete", "fin-man-1"); await settle();
+    expect(table.rows.find((r) => r.id === "fin-man-1").status).toBe("deleted");
+    // Another device's stale copy merges the JSONB entry back in…
+    state.financeManualTxns = [manual("fin-man-1")];
+    state.financeTxnLabels["fin-man-1"] = "cat:g:c";
+    h.fin.invalidateFinanceLabeled();
+    await h.fin.refreshFinanceLive(); await settle();
+    // …but it stays gone: this month's actuals no longer include the $8.
+    expect(state.financeMonthActuals[monthOf(1)].cats["g:c"]).toBeCloseTo(withManual - (monthOf(2) === monthOf(1) ? 8 : 0), 2);
+  });
+
+  it("deletes reach the store even while reading from the feed (no later resurrection)", async () => {
+    const table = { rows: [{ ...manualTxnRow("fin-man-1"), updated_at: "t000000" }] };
+    const state = { ...makeState(), financeTxnSource: "feed", financeManualTxns: [manual("fin-man-1")] };
+    const h = harness(state, table);
+    await h.fin.refreshFinanceLive(); await settle();
+    h.click("manual-txn-delete", "fin-man-1"); await settle();
+    expect(table.rows[0].status).toBe("deleted");
+  });
+  function manualTxnRow(id) { return { id, group_id: "g1", origin: "manual", account_id: "manual:cash", posted: iso(2), amount: -8, description: "Cash lunch", pending: false, status: "active" }; }
+});
