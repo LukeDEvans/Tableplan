@@ -4,7 +4,9 @@
 -- incremental sync re-downloaded all of them. Only bump updated_at when a column
 -- that clients read actually changed; last_seen_at alone is bookkeeping.
 --
--- ⏸ NOT YET APPLIED — awaiting Luke's OK. Idempotent (create or replace).
+-- ✅ APPLIED to production 2026-09-26 (MCP apply_migration "finance_transactions_touch_on_change"),
+-- at Luke's request. Verified in a rolled-back transaction: a last_seen_at-only update
+-- kept updated_at; an amount change bumped it. No rows left behind. Idempotent.
 
 create or replace function public.finance_transactions_touch() returns trigger
 language plpgsql set search_path = '' as $$
