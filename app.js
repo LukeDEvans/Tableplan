@@ -7,6 +7,7 @@ import * as LiveDailyDozen from './daily-dozen.js';
 import * as LiveFoodHealth from './food-health.js';
 import * as LiveFoodHealthChecklists from './food-health-checklists.js';
 import * as LiveMealPlanServings from './meal-plan-servings.js';
+import { isFridayBeforeLastMeal } from './meal-plan-time.js';
 import * as LiveReceiptDomain from './receipt-domain.js';
 import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
@@ -276,7 +277,7 @@ const STATE_SECTIONS = {
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "podcasts", "podcastProgress", "mediaProgress", "articleNotifications", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastProgress", "mediaProgress", "articleNotifications", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
   plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
@@ -1910,6 +1911,7 @@ const {
   updateGroceryMealServing,
   updateMealDragPoint,
   updateMealPlannedServingsFromContext,
+  requestMealPlanTimeOfDaySnap,
   warmMealPlanRecipes,
 } = _mealplan;
 
@@ -3387,6 +3389,17 @@ function setupDiagnostics() {
       const entry = slotEntries(week.slots?.[day]?.[meal])[index];
       return isPlannedRecipeEntry(entry) ? Number(entry.plannedServings) : null;
     },
+    // Exercises ensureArticleText's backstop-recovery path (2026-09-21 TTS fix)
+    // without needing the full Listen/audio pipeline (Kokoro/Google credentials
+    // aren't available in every dev environment). Returns { ok, error } plus the
+    // recovered text so a test can confirm it came from the content store, not a
+    // live re-fetch.
+    ensureArticleText: async (id) => {
+      if (!localDevMode) return null;
+      const res = await ensureArticleText(id);
+      const article = (state.savedArticles || []).find((a) => a.id === id);
+      return { ...res, recoveredText: article?.text || null };
+    },
     // The meal-plan recipe SUGGESTION deck (mp-cards): normally populated by
     // warmMealPlanRecipes() fetching Gmail's "pendingRecipes" over the network — not
     // something a static state fixture can seed. `mealPlanRecipes` (this app.js-scope
@@ -4776,6 +4789,7 @@ function defaultState() {
     articleSortOrder: "newest",
     readArticleIds: [],
     articleReadDates: {},
+    articleHistory: [],
     podcasts: [],
     podcastProgress: {},
     mediaProgress: {},
@@ -4965,6 +4979,7 @@ function normalizeState(parsed) {
       : defaultReadPublications(),
     articleSortOrder: parsed?.articleSortOrder === "oldest" ? "oldest" : "newest",
     readArticleIds: Array.isArray(parsed?.readArticleIds) ? parsed.readArticleIds : [],
+    articleHistory: Array.isArray(parsed?.articleHistory) ? parsed.articleHistory : [],
     // Media: unified listening history + music library + radio (all in the media
     // section so they sync; newer-wins on merge — see mergeStates).
     mediaHistory: Array.isArray(parsed?.mediaHistory) ? parsed.mediaHistory : [],
@@ -6324,6 +6339,11 @@ function mergeStates(newer, older) {
     "calendars",
     // Saved articles (Read/Listen)
     "savedArticles",
+    // Lightweight read/deleted-article history (id/title/url/date only — the
+    // heavy record + its cached audio/body are gone once purged; see
+    // markArticleRead/deleteArticle). Union so a purge on one device is never
+    // lost when another device syncs.
+    "articleHistory",
     // Unified Saved media (Watch-Later/Listen-Later/Favourites; id === mediaKey)
     "mediaSaved",
     // Unified recently-played history (entries carry a stable id; union so a play
@@ -7546,11 +7566,28 @@ function showEatApp(event) {
     showHomeApp();
     return;
   }
+  // Open on today, at the meal for the current time of day (noon → Lunch).
+  focusMealPlanOnToday();
+  requestMealPlanTimeOfDaySnap();
   activateEatShell();
   setPageTitle("Meal Plan");
   setPageHash("eat");
   closePageTitleMenu();
   closeAppMenu();
+}
+
+// Point the shared week cursor + planner day at today. On a Friday before
+// dinner, today's breakfast/lunch live on the previous prep window's closing
+// Friday (the new window's opening Friday holds only dinner).
+function focusMealPlanOnToday() {
+  const now = new Date();
+  if (isFridayBeforeLastMeal(mealColumnConfigs.map((column) => column.label), now)) {
+    currentWeek = startOfPrepWindow(addDays(now, -1));
+    activePlannerDayId = "friday-finish";
+    return;
+  }
+  currentWeek = startOfPrepWindow(now);
+  activePlannerDayId = plannerDayIdForDate(now);
 }
 
 function setWeekToolsMode(mode) {
@@ -16142,6 +16179,17 @@ function renderContextSettingsDialog(kind) {
         <svg class="vpick-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
       </button>`;
 
+    // BUG FIXED 2026-09-23: this used to always warn "pauses when you leave the
+    // app or lock the screen" whenever ANY on-device voice was available
+    // (device.length, true in both web and the native app, since it only checks
+    // for window.speechSynthesis). That's true for the Web Speech fallback, but
+    // wrong and misleading for the native app: LiveTtsPlugin's AVSpeechSynthesizer
+    // path explicitly supports background playback + lock-screen controls (its
+    // whole reason for existing over Web Speech). Branch the copy on nativeMode.
+    const onDeviceNote = nativeMode
+      ? " An on-device voice (your iPhone's own voices) starts instantly, stays on your device, and keeps playing in the background with lock-screen controls."
+      : (device.length ? " An on-device voice (your iPhone's own voices) starts instantly and stays on your device, but pauses when you leave the app or lock the screen." : "");
+
     elements.contextSettingsBody.innerHTML = `
       <p class="settings-hint">One voice for reading your articles aloud. Voices marked <span class="vpick-badge">Private</span> are spoken on your own server — the text never goes to a third party.</p>
       <div class="vpick-card">
@@ -16165,7 +16213,7 @@ function renderContextSettingsDialog(kind) {
         ${nativeMode ? nativeGroupHtml : (device.length ? `<div class="vpick-group">On-device · foreground only</div>${device.map(voiceRow).join("")}` : "")}
         ${cloud.length ? `<div class="vpick-group">Cloud</div>${cloud.map(voiceRow).join("")}` : ""}
       </div>
-      <p class="vpick-note">You pick a voice; the app picks the engine. A private voice can take a few extra seconds the first time after a while, as the voice server wakes up.${device.length ? " An on-device voice (your iPhone's own voices) starts instantly and stays on your device, but pauses when you leave the app or lock the screen." : ""}</p>`;
+      <p class="vpick-note">You pick a voice; the app picks the engine. A private voice can take a few extra seconds the first time after a while, as the voice server wakes up.${onDeviceNote}</p>`;
 
     // Select a voice (writes the global default, preserving any other voice prefs).
     elements.contextSettingsBody.querySelectorAll(".vpick-voice").forEach((row) => {
@@ -33073,14 +33121,13 @@ function formatPodcastDuration(seconds) {
 
 const ARTICLE_CHECK_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>`;
 
-function articleRowHtml(a, { pub, readIds, readDates }) {
-  const isRead = readIds.has(a.id);
+function articleRowHtml(a, { pub }) {
   const pubEntry = getReadPublications().find(p => p.key === a.publication);
   const showPub = pub === "all" || articleSearchActive;
   const pubLabel = showPub ? (pubEntry?.label || (a.publication === "other" ? "Other" : a.publication)) : "";
   const artUrl = articleArtUrl(a) || "";
   return `
-    <div class="article-row${isRead ? " article-row--read" : ""}" data-article-id="${escapeHtml(a.id)}" role="button" tabindex="0">
+    <div class="article-row" data-article-id="${escapeHtml(a.id)}" role="button" tabindex="0">
       ${mediaRowArt(artUrl, "📰")}
       <div class="article-row-main">
         <div class="article-row-title">${escapeHtml(a.title || a.url)}</div>
@@ -33088,13 +33135,11 @@ function articleRowHtml(a, { pub, readIds, readDates }) {
           ${a.author ? `<span class="article-row-author">${escapeHtml(a.author)}</span>` : ""}
           ${pubLabel ? `<span class="article-row-pub">${escapeHtml(pubLabel)}</span>` : ""}
           <span class="article-row-date">${escapeHtml(formatArticleDate(a.savedAt))}</span>
-          ${articleViewMode === "archive" && readDates[a.id] ? `<span class="article-row-date">Read ${escapeHtml(formatArticleDate(readDates[a.id]))}</span>` : ""}
         </div>
       </div>
-      ${isRead ? `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Read"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
       <div class="article-row-actions">
-        <button class="article-row-action-btn" type="button" data-article-action="${isRead ? "unmark" : "mark"}" title="${isRead ? "Mark as unread" : "Mark as read"}" aria-label="${isRead ? "Mark as unread" : "Mark as read"}">
-          ${isRead ? ldeIcon("restore") : ARTICLE_CHECK_ICON}
+        <button class="article-row-action-btn" type="button" data-article-action="mark" title="Mark as read" aria-label="Mark as read">
+          ${ARTICLE_CHECK_ICON}
         </button>
         <button class="article-row-action-btn" type="button" data-article-action="delete" title="Delete" aria-label="Delete">
           ${ldeIcon("trash")}
@@ -33104,7 +33149,6 @@ function articleRowHtml(a, { pub, readIds, readDates }) {
 }
 
 function wireArticleRows(listEl, containerId) {
-  const unmarkIcon = ldeIcon("restore");
   listEl.querySelectorAll(".article-row").forEach((row) => {
     const id = row.dataset.articleId;
     row.addEventListener("click", (e) => { if (e.target.closest(".article-row-actions")) return; openArticle(id, containerId); });
@@ -33117,10 +33161,6 @@ function wireArticleRows(listEl, containerId) {
       const action = btn.dataset.articleAction;
       if (action === "mark") {
         markArticleRead(id);
-        btn.dataset.articleAction = "unmark"; btn.title = "Mark as unread"; btn.setAttribute("aria-label", "Mark as unread"); btn.innerHTML = unmarkIcon;
-      } else if (action === "unmark") {
-        markArticleUnread(id);
-        btn.dataset.articleAction = "mark"; btn.title = "Mark as read"; btn.setAttribute("aria-label", "Mark as read"); btn.innerHTML = ARTICLE_CHECK_ICON;
       } else if (action === "delete") {
         deleteArticle(id);
       }
@@ -33137,11 +33177,9 @@ function renderArticleList(containerId, pub) {
   const listEl = document.getElementById(containerId);
   if (!listEl) return;
   updateArticleActionButtons();
-  const readIds = new Set(state.readArticleIds || []);
-  const readDates = state.articleReadDates || {};
 
   // Search mode: a persistent search box plus a results container that updates
-  // as you type (so focus is never lost). Searches all saved articles.
+  // as you type (so focus is never lost). Searches all saved (unread) articles.
   if (articleSearchActive) {
     listEl.innerHTML = `
       <div class="article-search-bar">
@@ -33156,22 +33194,20 @@ function renderArticleList(containerId, pub) {
     return;
   }
 
-  const allArticles = getFilteredSortedArticles(pub);
-  const articles = articleViewMode === "archive"
-    ? allArticles.filter(a => readIds.has(a.id)).sort((a, b) => {
-        const da = readDates[a.id] || a.savedAt || "";
-        const db = readDates[b.id] || b.savedAt || "";
-        return db.localeCompare(da);
-      })
-    : allArticles.filter(a => !readIds.has(a.id));
+  // Archive = the lightweight read/deleted-article history (see the 2026-09-21
+  // storage audit: a read or deleted article's full record + cached audio are
+  // purged immediately, so there is no longer a full re-openable article here —
+  // just enough to remember what it was and jump back to the source).
+  if (articleViewMode === "archive") {
+    renderArticleHistoryList(listEl, pub);
+    return;
+  }
+
+  const articles = getFilteredSortedArticles(pub);
 
   if (!articles.length) {
     const pubEntry = getReadPublications().find(p => p.key === pub);
     const pubName = pub === "all" ? "saved" : pub === "other" ? "Other" : pub === "email" ? "email" : pub === "nutritionfacts" ? "Nutrition Facts" : (pubEntry?.label || pub);
-    if (articleViewMode === "archive") {
-      listEl.innerHTML = `<div class="article-empty"><p>No archived articles${pub === "all" ? "" : ` in ${pubName}`}.</p><p>Articles you mark read appear here.</p></div>`;
-      return;
-    }
     const hasCookies = hasSyncCookies();
     const isPub = !!pubEntry;
     const syncHint = pub === "email"
@@ -33183,20 +33219,63 @@ function renderArticleList(containerId, pub) {
     return;
   }
 
-  listEl.innerHTML = articles.map((a) => articleRowHtml(a, { pub, readIds, readDates })).join("");
+  listEl.innerHTML = articles.map((a) => articleRowHtml(a, { pub })).join("");
   wireArticleRows(listEl, containerId);
 
   // Instant-on-select: pre-render the top unread articles' audio in the chosen
-  // Kokoro voice so tapping one plays immediately (no-op for the archive view and
-  // for non-Kokoro voices; see prefetchListenArticles).
-  if (articleViewMode !== "archive") prefetchListenArticles(articles);
+  // Kokoro voice so tapping one plays immediately (see prefetchListenArticles).
+  prefetchListenArticles(articles);
+}
+
+// The Archive view: lightweight history entries only (id/title/url/date — see
+// recordArticleHistory). No body/audio to reopen in-app, so a row just links out
+// to the source and offers "Forget" (permanently remove the history entry).
+function articleHistoryRowHtml(h) {
+  return `
+    <div class="article-row article-history-row" data-history-id="${escapeHtml(h.id)}">
+      <div class="article-row-main">
+        <div class="article-row-title">${escapeHtml(h.title || h.url || "Untitled")}</div>
+        <div class="article-row-meta">
+          <span class="article-row-date">${escapeHtml(formatArticleDate(h.date))}</span>
+        </div>
+      </div>
+      <div class="article-row-actions">
+        ${h.url ? `<button class="article-row-action-btn" type="button" data-history-action="open" title="Open source" aria-label="Open source">${ldeIcon("link")}</button>` : ""}
+        <button class="article-row-action-btn" type="button" data-history-action="forget" title="Remove from history" aria-label="Remove from history">
+          ${ldeIcon("trash")}
+        </button>
+      </div>
+    </div>`;
+}
+
+function renderArticleHistoryList(listEl, pub) {
+  const pubEntry = getReadPublications().find(p => p.key === pub);
+  const pubName = pub === "all" ? "saved" : pub === "other" ? "Other" : pub === "email" ? "email" : pub === "nutritionfacts" ? "Nutrition Facts" : (pubEntry?.label || pub);
+  const history = [...(state.articleHistory || [])].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  if (!history.length) {
+    listEl.innerHTML = `<div class="article-empty"><p>No archived articles${pub === "all" ? "" : ` in ${pubName}`}.</p><p>Articles you mark read or delete appear here.</p></div>`;
+    return;
+  }
+  listEl.innerHTML = history.map(articleHistoryRowHtml).join("");
+  listEl.querySelectorAll(".article-history-row").forEach((row) => {
+    const id = row.dataset.historyId;
+    row.querySelector("[data-history-action='open']")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const entry = (state.articleHistory || []).find((h) => h.id === id);
+      if (entry?.url) window.open(entry.url, "_blank", "noopener");
+    });
+    row.querySelector("[data-history-action='forget']")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      state.articleHistory = (state.articleHistory || []).filter((h) => h.id !== id);
+      persist();
+      row.remove();
+    });
+  });
 }
 
 function renderArticleSearchResults(containerId) {
   const resultsEl = document.getElementById("articleSearchResults");
   if (!resultsEl) return;
-  const readIds = new Set(state.readArticleIds || []);
-  const readDates = state.articleReadDates || {};
   const q = articleSearchQuery.trim().toLowerCase();
   if (!q) { resultsEl.innerHTML = `<div class="article-empty"><p>Type to search your saved articles.</p></div>`; return; }
   const matches = (state.savedArticles || []).filter(a =>
@@ -33205,7 +33284,7 @@ function renderArticleSearchResults(containerId) {
     (a.url || "").toLowerCase().includes(q)
   ).sort((a, b) => new Date(b.savedAt || 0) - new Date(a.savedAt || 0));
   resultsEl.innerHTML = matches.length
-    ? matches.map((a) => articleRowHtml(a, { pub: "all", readIds, readDates })).join("")
+    ? matches.map((a) => articleRowHtml(a, { pub: "all" })).join("")
     : `<div class="article-empty"><p>No articles match “${escapeHtml(articleSearchQuery.trim())}”.</p></div>`;
   if (matches.length) wireArticleRows(resultsEl, containerId);
 }
@@ -33229,6 +33308,50 @@ function getFilteredSortedArticles(pub) {
   return filtered;
 }
 
+// Lightweight, permanent trace of a purged (read or deleted) article — just
+// enough to remember it existed (Archive view, Publications dedup) without the
+// heavy body text or cached audio that made savedArticles the storage hog.
+const ARTICLE_HISTORY_CAP = 2000; // id/title/url/date only, ~100 bytes each — generous
+function recordArticleHistory(article) {
+  if (!article?.id) return;
+  if (!Array.isArray(state.articleHistory)) state.articleHistory = [];
+  state.articleHistory = state.articleHistory.filter((h) => h.id !== article.id);
+  state.articleHistory.unshift({
+    id: article.id,
+    title: article.title || article.url || "Untitled",
+    url: article.url || "",
+    date: new Date().toISOString(),
+  });
+  if (state.articleHistory.length > ARTICLE_HISTORY_CAP) state.articleHistory.length = ARTICLE_HISTORY_CAP;
+}
+
+// Best-effort, fire-and-forget trigger for the server-side Storage sweep
+// (tts-cache-cleanup) right after a purge, so the cached audio + offloaded body
+// for a just-removed article are reclaimed promptly instead of waiting for its
+// weekly schedule. A failed trigger is not user-visible — the weekly run still
+// catches it — so this never blocks or surfaces an error to the read/delete action.
+let articleSweepPending = false;
+function triggerArticleStorageSweep() {
+  if (articleSweepPending) return; // one in-flight sweep already covers a burst of reads/deletes
+  articleSweepPending = true;
+  callNetlifyFunction("tts-cache-cleanup", {})
+    .catch((e) => console.warn("[article-sweep] on-demand trigger failed (weekly schedule will still catch it):", e.message))
+    .finally(() => { articleSweepPending = false; });
+}
+
+// Remove a saved article's full record immediately (its text + cached audio are
+// what made savedArticles the storage hog — see the 2026-09-21 storage audit),
+// recording a lightweight history entry and tombstoning the removal so it can't
+// resurrect from a stale device's sync. Shared by markArticleRead and deleteArticle.
+function purgeSavedArticle(id) {
+  const article = (state.savedArticles || []).find((a) => a.id === id);
+  if (!article) return;
+  recordArticleHistory(article);
+  recordDeletion("savedArticles", id);
+  state.savedArticles = (state.savedArticles || []).filter((a) => a.id !== id);
+  triggerArticleStorageSweep();
+}
+
 function markArticleRead(id) {
   if (!id) return;
   if (!Array.isArray(state.readArticleIds)) state.readArticleIds = [];
@@ -33236,14 +33359,13 @@ function markArticleRead(id) {
     state.readArticleIds.push(id);
     if (!state.articleReadDates) state.articleReadDates = {};
     if (!state.articleReadDates[id]) state.articleReadDates[id] = new Date().toISOString();
-    persist();
   }
-  document.querySelectorAll(`[data-article-id="${id}"]`).forEach((row) => {
-    row.classList.add("article-row--read");
-    if (!row.querySelector(".article-row-check")) {
-      row.insertAdjacentHTML("beforeend", `<svg class="article-row-check" viewBox="0 0 24 24" aria-label="Read"><polyline points="20 6 9 17 4 12"/></svg>`);
-    }
-  });
+  purgeSavedArticle(id);
+  persist();
+  // The article is fully gone now (not just flagged) — remove its row rather
+  // than toggle a read style. Callers that already re-render their own list
+  // after calling this (renderMediaAllList, renderActiveMediaView) are unaffected.
+  document.querySelectorAll(`[data-article-id="${id}"]`).forEach((row) => row.remove());
 }
 
 // Render an article's body into the reader. Prefers in-memory text (fast, no
@@ -33323,18 +33445,8 @@ function closeArticleReader() {
   document.querySelectorAll(".article-row--active").forEach((r) => r.classList.remove("article-row--active"));
 }
 
-function markArticleUnread(id) {
-  state.readArticleIds = (state.readArticleIds || []).filter((rid) => rid !== id);
-  persist();
-  document.querySelectorAll(`[data-article-id="${CSS.escape(id)}"]`).forEach((row) => {
-    row.classList.remove("article-row--read");
-    row.querySelector(".article-row-check")?.remove();
-  });
-}
-
 function deleteArticle(id) {
-  recordDeletion("savedArticles", id);
-  state.savedArticles = (state.savedArticles || []).filter((a) => a.id !== id);
+  purgeSavedArticle(id);
   state.readArticleIds = (state.readArticleIds || []).filter((rid) => rid !== id);
   persist();
   if (openArticleId === id) closeArticleReader();
@@ -33536,6 +33648,22 @@ async function ensureArticleText(id) {
   const article = (state.savedArticles || []).find((a) => a.id === id);
   if (!article) return { ok: false, error: "Article not found." };
   if (article.text) return { ok: true };
+  // BUG FIXED 2026-09-21: this used to skip straight to re-scraping the live URL
+  // whenever text wasn't inline -- but article.text is nulled once its body is
+  // durably offloaded to the reading-content backstop (true for most saved
+  // articles), so that was the COMMON case, not an edge case. Re-scraping is
+  // slower (a live fetch + parse on top of whatever follows, e.g. TTS synthesis)
+  // and can fail outright (paywall, page changed/removed) even though the
+  // original text is sitting safely in the backstop the whole time. Check there
+  // first, mirroring renderArticleBody's read path (local IndexedDB -> cloud
+  // backstop), and only fall back to a live fetch if that's genuinely empty.
+  try {
+    const ac = await getArticleContent();
+    if (ac) {
+      const body = await ac.loadBody(id, { ref: article.bodyRef, fallbackText: null });
+      if (body) { article.text = body; persist(); return { ok: true }; }
+    }
+  } catch { /* fall through to a live fetch */ }
   const res = await callNetlifyFunction("fetch-article", { url: article.url, publication: article.publication });
   if (res?.text) {
     article.text = res.text;
@@ -34477,8 +34605,14 @@ function prefetchListenArticles(articles) {
   if (articleListPrefetchRunning) return;
   if (listenLoading) return; // never compete with a foreground synth for the box
   if (!isKokoroArticleVoice()) return; // only the free, self-hosted voice
+  // BUG FIXED 2026-09-21: used to require `a.text` up front, which skips almost
+  // every saved article (text is nulled once its body is durably offloaded to the
+  // reading-content backstop — see ensureArticleText/presynth-tts-background for
+  // the same bug). Take the candidate slice first, then backfill text for just
+  // those from the backstop below, instead of filtering most of them out before
+  // ever trying.
   const targets = (articles || [])
-    .filter((a) => a && a.text && a.id !== listenArticle?.id && !ttsPrefetchCache.has(articleTtsCacheKey(a.id)))
+    .filter((a) => a && a.id !== listenArticle?.id && !ttsPrefetchCache.has(articleTtsCacheKey(a.id)))
     .slice(0, PREFETCH_ARTICLE_COUNT);
   if (!targets.length) return;
   warmKokoroVoiceIfKokoro(); // nudge the scale-to-zero box awake before the batch
@@ -34488,6 +34622,14 @@ function prefetchListenArticles(articles) {
       if (listenLoading) break; // a foreground play started — yield the box to it
       const key = articleTtsCacheKey(article.id);
       if (ttsPrefetchCache.has(key)) continue; // a real play (or earlier run) already took it
+      if (!article.text) {
+        try {
+          const ac = await getArticleContent();
+          const body = ac ? await ac.loadBody(article.id, { ref: article.bodyRef, fallbackText: null }) : null;
+          if (body) article.text = body;
+        } catch { /* no backstop hit — skip below */ }
+        if (!article.text) continue; // genuinely bodyless or backstop miss — nothing to prefetch
+      }
       const p = resolveArticleAudioForCache(article).then((data) => {
         if (data?.urls?.length) ttsResolvedUrls.set(key, data);
         return data;
@@ -34673,6 +34815,26 @@ function teardownSystemVoice() {
   listenSpeechSynth = null;
 }
 
+// Maps a character offset in the spoken text (as reported in real time by
+// native TTS's ttsRange event, willSpeakRangeOfSpeechString on the Swift side)
+// to a word index, using the EXACT SAME whitespace-delimited tokenization
+// wrapArticleWords uses to assign each rendered word its data-wi index — so the
+// two line up. (This is the same text→word-index alignment the Google/timings
+// highlighting path already relies on, just driven by a live character offset
+// instead of a precomputed per-word time array.)
+function wordIndexAtCharOffset(text, charOffset) {
+  if (!text) return 0;
+  let idx = -1, pos = 0;
+  for (const part of text.split(/(\s+)/)) {
+    if (!part) continue;
+    if (/^\s+$/.test(part)) { pos += part.length; continue; }
+    idx++;
+    if (pos + part.length > charOffset) return idx;
+    pos += part.length;
+  }
+  return Math.max(0, idx);
+}
+
 // Native (AVSpeechSynthesizer) read-aloud: backgrounds + lock-screen controls,
 // and can use the device's Enhanced/Premium voices. Speaks the whole article in
 // one go (the OS handles long text); progress + advance come from plugin events.
@@ -34699,7 +34861,20 @@ async function startListenNativeTts(article) {
     session.subs = [
       await tts.addListener("ttsFinish", advance),
       await tts.addListener("ttsNext", advance),
-      await tts.addListener("ttsRange", (e) => { if (session.genId === listenGenId) { session.charIndex = (e && e.location) || 0; updateMiniPlayerProgress(); } }),
+      // GAP FILLED 2026-09-23: the plugin already emitted this real-time
+      // character-range progress, but nothing used it for word highlighting
+      // (only the mini-player progress bar) -- Apple on-device voices never
+      // highlighted at all, unlike Google. Kokoro genuinely has no per-word
+      // data to offer here (see TTS_PHASE1A.md §12); native does.
+      await tts.addListener("ttsRange", (e) => {
+        if (session.genId !== listenGenId) return;
+        session.charIndex = (e && e.location) || 0;
+        updateMiniPlayerProgress();
+        if (listenArticle && openArticleId === listenArticle.id) {
+          const bodyIdx = wordIndexAtCharOffset(prepared.text, session.charIndex) - (prepared.introWords || 0);
+          if (bodyIdx >= 0) setWordHighlight(bodyIdx); else clearWordHighlight();
+        }
+      }),
     ];
   } catch { /* events best-effort */ }
   try {
@@ -34984,14 +35159,14 @@ function advanceListenArticle() {
   const articles = getFilteredSortedArticles(activeMediaTab);
   const currentIndex = articles.findIndex(a => a.id === anchorId);
   if (currentIndex === -1) return false;
-  for (let i = currentIndex + 1; i < articles.length; i++) {
-    if (articles[i].text) {
-      if (activeAppArea === "media" && !document.getElementById("articleReaderPanel")?.hidden) openArticle(articles[i].id, "articleList");
-      startListenTTS(articles[i]);
-      return true;
-    }
-  }
-  return false;
+  if (currentIndex + 1 >= articles.length) return false;
+  // startListenTTS recovers missing text itself (ensureArticleText) — most saved
+  // articles have .text offloaded to the backstop, so gating on it here made this
+  // loop find no eligible "next" article almost every time (item: TTS sweep).
+  const next = articles[currentIndex + 1];
+  if (activeAppArea === "media" && !document.getElementById("articleReaderPanel")?.hidden) openArticle(next.id, "articleList");
+  startListenTTS(next);
+  return true;
 }
 
 function toggleListenPlayPause() {
@@ -35059,7 +35234,20 @@ function updateListenPlayBtn() {
     return;
   }
   btn.disabled = false;
-  const playing = listenSpeaking && listenAudio && !listenAudio.paused;
+  // BUG FIXED 2026-09-23: this used to check only `listenAudio` (the shared
+  // <audio> element used by the URL-based Kokoro/Google engine), which is always
+  // null for an on-device/native voice session (see startListenSystemVoice /
+  // startListenNativeTts) -- so this button silently showed "Play" the entire
+  // time an Apple on-device voice was actually speaking. Mirrors the same
+  // listenSpeechSynth branch nowPlayingIsPlaying() already uses for the
+  // mini-player's button (not delegated to that function directly -- it also
+  // covers music/podcasts, which this button, scoped to the article reader's
+  // own listen session, must not react to).
+  const playing = listenSpeechSynth
+    ? (listenSpeechSynth.native
+        ? !listenSpeechSynth.paused
+        : (() => { try { return window.speechSynthesis.speaking && !window.speechSynthesis.paused; } catch { return false; } })())
+    : (listenSpeaking && listenAudio && !listenAudio.paused);
   if (label) label.textContent = playing ? "Pause" : "Play";
   if (icon) icon.innerHTML = playing
     ? `<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>`
