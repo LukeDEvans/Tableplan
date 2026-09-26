@@ -1,6 +1,6 @@
 # Unified Receipts Ledger — Design (INTENT → SPEC → PLAN)
 
-> **Status: SPEC, waiting for Luke's OK.** Nothing is implemented. No DDL has been applied.
+> **Status: SPEC — Q1–Q3 decided (§12); Q4/Q5 clarifications pending.** Nothing is implemented. No DDL has been applied.
 > The SQL in Appendix A is a **draft for review** and is **not** in `migrations/` yet. It
 > goes there, and you apply it in the SQL editor, only after you approve this spec.
 > Baseline: `1e56f62` on `claude/intelligent-clarke-w9wefi`.
@@ -513,29 +513,50 @@ Live Supabase/Anthropic E2E needs your deploy, and I'll say so rather than claim
 
 ---
 
-## 12. Open questions (need your call)
+## 12. Decisions (Luke, 2026-09-26)
 
-- **Q1. Thresholds.** Auto-link at score ≥ **0.85** with a **0.15** uniqueness margin, and
-  only on exact / printed-tip / cash-back / split-tender amount fits. "Unmatched → offer
-  manual txn" after **10 days**. OK, or different numbers?
-- **Q2. Tip.** Allocate to the primary (largest) category, with a per-receipt override (my
-  default)? Or spread it proportionally?
-- **Q3. Split write-path.** Use the read-time overlay (§4.4: no finance-state change, but it
-  changes finance *logic* in 3 places), or write through `recordFinanceTxnSplit` plus a
-  `source:"receipt"` marker (a finance-state shape change)?
-- **Q4. CSV.** CSV import creates no transactions today (F2). Options:
-  - (a) exclude CSV from matching (receipts from CSV-only months get "Create manual txn" or
-    "Ignore");
-  - (b) a follow-up project to make CSV import create per-transaction records. That's a
-    finance-state change with double-count risk against the month actuals it already writes.
+- **Q1 — approved.** Auto-link at score ≥ 0.85 with a 0.15 uniqueness margin, and only on
+  exact / printed-tip / cash-back / split-tender amount fits. "Offer manual transaction" after
+  10 days unmatched.
+- **Q2 — tip goes to the main (largest) category**, with a per-receipt override.
+- **Q3 — read-time overlay (§4.4) accepted.** Finance state shape is unchanged. The three
+  finance *logic* changes are flagged in their commits.
+- **Q4 — CSV: build for the long term. Still open:** the options are in §12.1.
+- **Q5 — up to 8 images per receipt.** "Remove all past scans": exact scope still being
+  confirmed (§12.2).
 
-  I recommend (a) for this feature.
-- **Q5. Cost.** One more Haiku call per email receipt is unchanged. Camera receipts now go up
-  to 8 images. Also, the migration's "Re-scan to recover lines" for old finance image-only
-  receipts would be **opt-in per receipt** (not bulk-automatic), to avoid a surprise token
-  bill. OK?
+### 12.1 Q4 — what "matching against CSV" needs
+CSV import today writes only month totals (F2). SimpleFIN transactions exist only in a 45-day
+server cache (F1). **Neither is a durable record of individual transactions**, so neither can
+be matched once it's more than 45 days old.
 
----
+**Long-term answer [proposed, needs approval]: a durable relational transactions table.**
+- `finance_transactions`, which SimpleFIN sync, manual entry and CSV import all write into.
+  Each row has an `origin` (`simplefin`/`manual`/`csv`) plus a dedupe key, so a CSV row and
+  the SimpleFIN copy of the same charge collapse into one record.
+- The receipts matcher consumes transactions through one `financeTxnFeed()` interface. That
+  means CSV rows (and history older than 45 days) become matchable with no change to the
+  matcher.
+- It also fixes F1: links point at durable rows, and `txn_snapshot` becomes a fallback rather
+  than the only record.
+- **This is a finance data-authority change,** the same shape as the calendar authority flip.
+  It touches the finance sync gate, month actuals (CSV months would be computed from rows
+  instead of pasted aggregates), the 600-entry label cap, and `labelSource`. It needs its own
+  SPEC.
+
+**Proposal:** the receipts ledger is built against `financeTxnFeed()`, with
+`txn_source` accepting `csv` from day one. The transactions table is then a **separate,
+sequenced project**: its own SPEC, done right after (or before) this one. Receipts gain CSV
+matching the moment that table lands.
+
+### 12.2 Q5 — scope of "remove all past scans"
+Waiting on Luke to confirm which of these it covers:
+- legacy finance image-only scans (`financeTxnReceipts` + their Storage objects),
+- email receipts (`finreceipts_`),
+- Shop receipts (`state.receipts` and the price history derived from them).
+
+Deleting is irreversible, so this happens only after the new ledger is confirmed working, as
+its own step.
 
 ## Appendix A — DRAFT SQL (for review, not applied, not yet in `migrations/`)
 
