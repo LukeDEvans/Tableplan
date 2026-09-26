@@ -1,7 +1,10 @@
 -- Durable finance transaction store (FINANCE_TRANSACTIONS_DESIGN.md).
 --
--- ⚠️ NOT YET APPLIED. Apply in the Supabase SQL editor (project noyocjcltrenwdovqrql)
--- once reviewed. Idempotent: safe to re-run.
+-- ✅ APPLIED to production 2026-09-26 (project noyocjcltrenwdovqrql) via the Supabase
+-- MCP apply_migration ("finance_transactions"), at Luke's request. Verified after
+-- applying: RLS on, 3 policies (read/insert/update, authenticated), 6 indexes incl. PK,
+-- 1 touch trigger, 0 rows; security advisor shows no new findings. Idempotent: safe
+-- to re-run.
 --
 -- Every transaction the app ever sees — SimpleFIN pulls (server ingest), CSV imports,
 -- manual entries — stored once, permanently. `id` is the SAME id the app already keys

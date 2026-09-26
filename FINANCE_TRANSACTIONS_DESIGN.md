@@ -6,8 +6,8 @@
 >   behind `financeTxnSource`, **default "feed"**), 6 (CSV import → rows, with preview and
 >   undo) and 7 (manual txns dual-written; a store delete is final). The legacy
 >   `financeManualTxns` clear is still a separate, confirmed step.
-> - **Waiting on you:** applying the step 2 SQL (`migrations/2026-09-26-finance-transactions.sql`),
->   then turning on "Use stored transaction history" (Settings › Finance › Bank link) to compare
+> - **SQL applied 2026-09-26** (`migrations/2026-09-26-finance-transactions.sql`).
+> - **Waiting on you:** a deploy (so the daily job starts saving transactions), then turning on "Use stored transaction history" (Settings › Finance › Bank link) to compare
 >   against the feed.
 > This is a **finance data-authority change** (CLAUDE.md decision boundary): it has the same
 > shape as the calendar authority flip, so every phase that changes what finance *reads*
