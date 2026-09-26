@@ -92,6 +92,7 @@ reach into another domain's internals. Cross-domain needs go through a shared mo
 |---|---|---|
 | App state (calendar, tasks, media, finance, travel, …) | `tableplan_states.state` JSONB, sectioned | one row per user (`personal`) or group |
 | Recipes / folders | `eat_recipes`, `eat_folders` (relational) | the one fully-normalized domain |
+| Finance transactions (bank/CSV/manual) | `finance_transactions` (relational, group-scoped) | durable ledger — SimpleFIN pulls ingested server-side (bank rows service-role-only), CSV + manual rows client-written; soft-delete; annotations (labels/splits/notes) stay in the finance JSONB keyed by the same txn id. Read via `finance-txn-store.js` behind `financeTxnSource` ("feed" default). See FINANCE_TRANSACTIONS_DESIGN.md |
 | Mail processing | `mail_accounts`/`mail_sweep_state`/`mail_processed` | service-role only, hardened |
 | Sharing | `live_groups`/`live_group_members`/`live_group_invites` | family/group model |
 | Push | `live_push_subscriptions` | web-push endpoints |

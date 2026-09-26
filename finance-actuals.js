@@ -25,8 +25,13 @@ export function financeEarliestTxnDate(txns) {
 // The set of "YYYY-MM" months it is safe to (re)snapshot from these labeled
 // transactions, given the current month. Always includes currentMonth; includes
 // a past month only when the feed fully covers it (earliest txn <= its 1st day).
+// Coverage is measured from BANK-FEED transactions only: a manual entry (any age)
+// says nothing about what the feed covers, and letting two old labelled manual
+// entries mark an old month "covered" re-snapshotted it from manual rows alone,
+// shrinking a complete historical snapshot. With no feed transactions at all,
+// only the current month is eligible.
 export function financeMonthsToSnapshot(txns, currentMonth) {
-  const earliest = financeEarliestTxnDate(txns);
+  const earliest = financeEarliestTxnDate((txns || []).filter((t) => !t?.isManual));
   const months = new Set([currentMonth]);
   for (const t of txns || []) {
     const m = (t.posted || "").slice(0, 7);
