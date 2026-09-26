@@ -1,8 +1,12 @@
 # Durable Finance Transaction Store — Design (INTENT → SPEC → PLAN)
 
 > **Status: APPROVED 2026-09-26 (Q1 90-day backfill · Q2 annotations deferred · Q3 60-day deck).**
-> Step 1 (pure core) done; step 2 SQL is in `migrations/2026-09-26-finance-transactions.sql`,
-> **not yet applied**.
+> Progress:
+> - **Done:** steps 1 (pure core), 3 (server ingest), 4 (client store module) and 5 (read
+>   flip behind `financeTxnSource`, **default "feed"**).
+> - **Waiting on you:** applying the step 2 SQL (`migrations/2026-09-26-finance-transactions.sql`),
+>   then turning on "Use stored transaction history" (Settings › Finance › Bank link) to compare
+>   against the feed.
 > This is a **finance data-authority change** (CLAUDE.md decision boundary): it has the same
 > shape as the calendar authority flip, so every phase that changes what finance *reads*
 > is gated separately.

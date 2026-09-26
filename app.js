@@ -286,7 +286,7 @@ const STATE_SECTIONS = {
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs"],
   contacts:  ["contacts", "contactGroups"],
 };
@@ -1586,8 +1586,14 @@ const _finance = createFinanceModule({
   getSupabaseClient: () => supabaseClient,
   getAuthSession: () => authSession, // read-only getter (authSession is null until login)
   getContextSettingsKind: () => contextSettingsKind, // read-only getter (changes per settings panel)
+  // Durable transaction store (finance-txn-store.js) — deferred getters: userGroup /
+  // authSession resolve at call time, never at module load (boot-safety guard).
+  getFinanceStoreGroupId: () => userGroup?.id || null,
+  canUseFinanceStore: () => !localDevMode && canUseCloudStorage() && !!authSession?.access_token,
+  fetchSupabaseJson: (...a) => fetchSupabaseJson(...a),
 });
 const {
+  purgeLocalFinanceTxnStore,
   checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney,
   invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick,
   refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu,
@@ -2999,6 +3005,7 @@ async function initializeSupabaseAuth() {
         purgeLocalArticleContent(),
         purgeLocalCadenceContent(),
         purgeLocalMusicContent(),
+        purgeLocalFinanceTxnStore(),
       ]);
       window.location.reload();
       return;
@@ -4113,6 +4120,7 @@ async function toggleAuth() {
     purgeLocalArticleContent(); // privacy default: drop local article bodies (backstop rehydrates on re-login)
     purgeLocalCadenceContent(); // same: drop local Cadence score bytes (rehydrate from cadence-blobs on re-login)
     purgeLocalMusicContent();   // same: drop local uploaded-music blobs (live-music IDB)
+    purgeLocalFinanceTxnStore(); // same: drop the durable-transaction mirror (live-finance-txns IDB)
     try {
       await supabaseClient.auth.signOut();
     } finally {
@@ -4877,6 +4885,7 @@ function defaultState() {
     financeBudgetGroups: defaultFinanceBudgetGroups(),
     financeAccounts: [],
     financeGoals: [],
+    financeTxnSource: "feed", // "feed" (SimpleFIN 45-day window) | "store" (durable finance_transactions) — FINANCE_TRANSACTIONS_DESIGN.md §5.5
     financeAccountLabels: [],
     financeAccountSubLabels: {},
     financePersonal: [],
@@ -5063,6 +5072,7 @@ function normalizeState(parsed) {
     financeBudgetGroups: normalizeFinanceBudgetGroups(parsed?.financeBudgetGroups, createId),
     financeAccounts: normalizeFinanceAccounts(parsed?.financeAccounts, createId),
     financeGoals: normalizeFinanceGoals(parsed?.financeGoals),
+    financeTxnSource: parsed?.financeTxnSource === "store" ? "store" : "feed",
     financeAccountLabels: [...new Set((Array.isArray(parsed?.financeAccountLabels) ? parsed.financeAccountLabels : []).map((l) => String(l || "").trim()).filter(Boolean))],
     financeAccountSubLabels: normalizeFinanceSubLabels(parsed?.financeAccountSubLabels),
     financeTxnLabels: (parsed?.financeTxnLabels && typeof parsed.financeTxnLabels === "object") ? parsed.financeTxnLabels : {},
@@ -7362,6 +7372,14 @@ function supabaseStateUrl(selectState = false) {
   const id = encodeURIComponent(supabaseConfig().stateId);
   const select = selectState ? "&select=state" : "";
   return `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${id}${select}`;
+}
+
+// GET a PostgREST path (e.g. "finance_transactions?…") with the signed-in user's
+// headers; throws on a non-2xx so callers can fall back. Used by finance-txn-store.
+async function fetchSupabaseJson(path) {
+  const res = await fetch(`${supabaseBaseUrl()}/rest/v1/${path}`, { headers: supabaseHeaders(), cache: "no-store" });
+  if (!res.ok) throw new Error(`Supabase ${res.status}`);
+  return res.json();
 }
 
 function supabaseHeaders() {

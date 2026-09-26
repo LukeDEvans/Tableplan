@@ -2,7 +2,9 @@ import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './financ
 import { financeMonthsToSnapshot, financeOffsettingPairIds } from './finance-actuals.js';
 import { dedupeFinanceRecurring } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
-import { financeMerchantTokens, financeMerchantKey } from './finance-transactions.js';
+import { financeMerchantTokens, financeMerchantKey, storeAccountsView, snapshotWindowTxns, recentTxns } from './finance-transactions.js';
+import { createFinanceTxnStore, FIN_TXN_DB, FIN_TXN_STORES } from './finance-txn-store.js';
+import { createIdbStorage, createMemoryStorage } from './content-store/storage.js';
 
 // finance-ui.js — the Finance domain, being extracted from app.js in staged
 // commits (see FINANCE_EXTRACTION.md). This is COMMIT 1: the pure normalizers,
@@ -224,7 +226,7 @@ export function normalizeFinanceTxnReceipts(raw) {
 // (payday dots / bill display); state-sync calls invalidateFinanceLabeled.
 // ══════════════════════════════════════════════════════════════════════════
 export function createFinanceModule(deps) {
-  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind } = deps;
+  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, fetchSupabaseJson, canUseFinanceStore } = deps;
 
 // Download the viewed month's transactions as CSV (real app — blob download is
 // fine here; this is not an artifact/sandbox).
@@ -355,6 +357,87 @@ function financeSumByAccountIds(ids, liveById) {
 let financeLinkStatus = null; // null = unknown yet
 let financeLive = null;       // { accounts, errors, at }
 let financeLiveLoading = false;
+
+// ── Durable transaction store (FINANCE_TRANSACTIONS_DESIGN.md §5) ───────────
+// state.financeTxnSource: "feed" (default — today's 45-day SimpleFIN window,
+// unchanged) | "store" (the permanent finance_transactions ledger). The store is
+// only USED once its local mirror has loaded AND holds rows; otherwise every
+// reader falls back to the feed, so an unapplied migration / offline first boot /
+// empty store can never blank the finance page.
+let financeTxnStore = null;
+let financeTxnStoreStorage = null;
+let financeTxnStoreGroup = null;
+let financeTxnStoreError = null;
+function financeStoreEnabled() { return state.financeTxnSource === "store"; }
+function financeStoreActive() {
+  if (!financeStoreEnabled() || !financeTxnStore?.isLoaded()) return false;
+  const rows = financeTxnStore.rows();
+  return Array.isArray(rows) && rows.length > 0;
+}
+async function ensureFinanceTxnStore() {
+  if (!financeStoreEnabled() || !canUseFinanceStore?.()) return null;
+  const groupId = getFinanceStoreGroupId?.();
+  if (!groupId) return null;
+  if (!financeTxnStore || financeTxnStoreGroup !== groupId) {
+    try { financeTxnStoreStorage = createIdbStorage(FIN_TXN_DB, 1, FIN_TXN_STORES); }
+    catch { financeTxnStoreStorage = createMemoryStorage(FIN_TXN_STORES); } // private mode: session-only mirror
+    financeTxnStore = createFinanceTxnStore({ storage: financeTxnStoreStorage, fetchJson: fetchSupabaseJson, groupId });
+    financeTxnStoreGroup = groupId;
+  }
+  await financeTxnStore.load();
+  return financeTxnStore;
+}
+// Explicit-trigger sync only (finance refresh / enabling the store) — never on a timer.
+async function syncFinanceTxnStore() {
+  const store = await ensureFinanceTxnStore().catch(() => null);
+  if (!store) return;
+  const wasActive = financeStoreActive();
+  try {
+    const { changed } = await store.sync();
+    financeTxnStoreError = null;
+    if (!changed && wasActive === financeStoreActive()) return;
+  } catch (e) {
+    financeTxnStoreError = e?.message || "Stored history unavailable";
+  }
+  invalidateFinanceLabeled();
+  updateFinanceMonthActuals();
+  updateFinanceRecurring();
+  setPageNotifCount("finance", financeBellCount());
+  if (getActiveAppArea() === "finance") renderFinancePage();
+  refreshFinanceSettingsIfOpen();
+}
+// Accounts (with their transactions) every reader sees: the store view when
+// active, else the live feed exactly as before.
+function financeTxnSourceAccounts() {
+  if (!financeStoreActive()) return financeLive?.accounts || [];
+  // Names for accounts the live payload doesn't carry right now (bank offline):
+  // the user's own linked-account names, so rows never show as "Imported account".
+  const names = {};
+  for (const a of state.financeAccounts || []) if (a?.linkedId) names[a.linkedId] = a.name || "";
+  return storeAccountsView(financeTxnStore.rows(), financeLive?.accounts || [], names);
+}
+// Windows that keep store mode behaving like the 45-day feed where the code
+// assumes it (§5.3 month actuals, recurring detection) and cap the deck (§5.4).
+function financeFeedWindow(txns) { return financeStoreActive() ? snapshotWindowTxns(txns) : txns; }
+function financeDeckWindow(txns) { return financeStoreActive() ? recentTxns(txns, Date.now(), 60) : txns; }
+function financeStoreStatusText() {
+  if (!financeStoreEnabled()) return "Off — showing the bank's last ~45 days, as before.";
+  if (financeTxnStoreError) return `Stored history unavailable (${escapeHtml(financeTxnStoreError)}) — showing the bank's last ~45 days.`;
+  if (!financeStoreActive()) return "Loading stored history… (showing the bank's last ~45 days meanwhile)";
+  const rows = financeTxnStore.rows().filter((r) => r.status === "active");
+  const oldest = rows.reduce((m, r) => (r.posted && (!m || r.posted < m) ? r.posted : m), null);
+  return `${rows.length} stored transactions${oldest ? ` since ${new Date(oldest).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}` : ""}.`;
+}
+// Account-boundary purge (sign-out / account switch) — drops the local mirror.
+async function purgeLocalFinanceTxnStore() {
+  try {
+    financeTxnStoreStorage?.close?.();
+    financeTxnStore = null;
+    financeTxnStoreStorage = null;
+    financeTxnStoreGroup = null;
+    if (typeof indexedDB !== "undefined" && indexedDB.deleteDatabase) indexedDB.deleteDatabase(FIN_TXN_DB);
+  } catch { /* best-effort */ }
+}
 // Which month the finance page is showing ("YYYY-MM"). The budget is built to
 // fit one calendar month, so the date bar pages through months — back to review
 // past spend, forward to plan. Reset to the real current month on entry.
@@ -444,6 +527,7 @@ async function refreshFinanceLive(force = false) {
   if (financeReceipts === null) loadFinanceReceipts();
   if (getActiveAppArea() === "finance") renderFinancePage();
   refreshFinanceSettingsIfOpen();
+  if (financeStoreEnabled()) syncFinanceTxnStore(); // explicit trigger: a finance refresh
 }
 
 async function linkFinanceBanks() {
@@ -541,7 +625,7 @@ function financeLabeledTxns() {
   // here, first, so every downstream check (dedupe, mgmt-pair transfer
   // detection, income keywords, portions, return matching) sees the true sign.
   const flips = state.financeTxnSignFlips || {};
-  const bankTxns = (financeLive?.accounts || []).flatMap((a) =>
+  const bankTxns = financeTxnSourceAccounts().flatMap((a) =>
     a.transactions.map((t) => ({
       ...t,
       accountId: a.id,
@@ -569,6 +653,19 @@ function financeLabeledTxns() {
   }));
   if (!bankTxns.length && !manualTxns.length) return [];
   let txns = [...bankTxns, ...manualTxns];
+
+  // Store mode: the server already resolved pending→posted (incl. pre-auths whose
+  // amount changed, which the same-amount dedupe below can't see) and hides the
+  // superseded pending row — carry any label made while pending to its successor.
+  if (financeStoreActive()) {
+    const ex = state.financeTxnLabels || {};
+    let moved = false;
+    for (const r of financeTxnStore.rows()) {
+      if (r.status !== "superseded" || !r.superseded_by) continue;
+      if (ex[r.id] && !ex[r.superseded_by]) { ex[r.superseded_by] = ex[r.id]; delete ex[r.id]; moved = true; }
+    }
+    if (moved) persist();
+  }
 
   // Pending→posted dedupe: banks reissue transaction ids when a pending
   // charge posts, which would double-count anything labeled while pending.
@@ -942,7 +1039,9 @@ function updateFinanceRecurring() {
     persist();
   }
   const byMerchant = new Map();
-  for (const t of financeLabeledTxns()) {
+  // Same 45-day window as the feed in store mode, so years of history can't
+  // suddenly mint "recurring" charges from long-ago monthly gaps.
+  for (const t of financeFeedWindow(financeLabeledTxns())) {
     if ((t.amount || 0) >= 0 || t.pending) continue;
     const k = financeMerchantKey(t.description);
     if (!k) continue;
@@ -1137,7 +1236,7 @@ function financeUnlabeledByMerchant(txns) {
   return [...byKey.values()];
 }
 function financeUnlabeledCount() {
-  return financeUnlabeledByMerchant(financeLabeledTxns()).length;
+  return financeUnlabeledByMerchant(financeDeckWindow(financeLabeledTxns())).length;
 }
 
 // ── Transaction review: full-window swipe deck for labeling ───────────────────
@@ -1163,7 +1262,7 @@ function financeDismissNotifGroup(key, repId) {
   if (!state.financeNotifDismissed || typeof state.financeNotifDismissed !== "object") state.financeNotifDismissed = {};
   const ids = new Set();
   if (repId) ids.add(repId);
-  for (const t of financeLabeledTxns()) {
+  for (const t of financeDeckWindow(financeLabeledTxns())) {
     if (t.label) continue;
     const k = financeMerchantKey(t.description) || `id:${t.id}`;
     if (k === key) ids.add(t.id);
@@ -1190,7 +1289,7 @@ function financeTxnNeedsConfirm(t) {
 }
 
 function financeReviewGroups() {
-  return financeUnlabeledByMerchant(financeLabeledTxns());
+  return financeUnlabeledByMerchant(financeDeckWindow(financeLabeledTxns()));
 }
 
 function openFinanceTxnReview() {
@@ -1726,7 +1825,9 @@ function updateFinanceMonthActuals() {
   // older transaction still in the feed updates that month's totals, not only
   // the current month's, without a partial window undercounting a complete
   // historical snapshot. (Coverage guard is pure + tested in finance-actuals.js.)
-  const monthsToWrite = financeMonthsToSnapshot(txns, currentMonth);
+  // Store mode: only the feed-sized window decides eligibility, so permanent
+  // history can never mark (and re-snapshot) an old month — design §5.3.
+  const monthsToWrite = financeMonthsToSnapshot(financeFeedWindow(txns), currentMonth);
   if (!state.financeMonthActuals || typeof state.financeMonthActuals !== "object") state.financeMonthActuals = {};
   let changed = false;
   for (const month of monthsToWrite) {
@@ -2258,7 +2359,11 @@ function renderFinanceAccountsPanel() {
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="refresh-live" ${financeLiveLoading ? "disabled" : ""}>${financeLiveLoading ? "Refreshing…" : "Refresh"}</button>
         <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="unlink-banks">Disconnect</button>
       </div>
-      ${(financeLive?.errors || []).length ? `<p class="fin-hint">${escapeHtml(financeLive.errors.join(" · "))}</p>` : ""}`
+      ${(financeLive?.errors || []).length ? `<p class="fin-hint">${escapeHtml(financeLive.errors.join(" · "))}</p>` : ""}
+      <div class="fin-item-row">
+        <label class="fin-hint fin-store-toggle"><input type="checkbox" class="live-toggle" data-fin-edit="txn-source" ${financeStoreEnabled() ? "checked" : ""} /> Use stored transaction history</label>
+      </div>
+      <p class="fin-hint">${financeStoreStatusText()}</p>`
     : financeLinkStatus ? `
       <div class="fin-subhead">Bank link · SimpleFIN</div>
       <p class="fin-hint">Paste a one-time setup token from <a href="https://beta-bridge.simplefin.org" target="_blank" rel="noopener noreferrer">SimpleFIN Bridge</a>. Bank logins stay at the bridge — the app only ever receives read-only balances.</p>
@@ -4403,6 +4508,16 @@ function onFinanceGridChange(e) {
     } else {
       a.sub = el.value;
     }
+  } else if (kind === "txn-source") {
+    state.financeTxnSource = el.checked ? "store" : "feed";
+    persist();
+    invalidateFinanceLabeled();
+    updateFinanceMonthActuals();
+    updateFinanceRecurring();
+    setPageNotifCount("finance", financeBellCount());
+    renderFinancePage();
+    if (el.checked) syncFinanceTxnStore();
+    return;
   } else if (kind === "category-mode") {
     const c = financeScopeCategory(el.dataset.scope);
     if (!c) return;
@@ -4485,5 +4600,5 @@ function refreshFinanceSettingsIfOpen() {
   function getFinanceViewMonth() { return financeViewMonth; }
   function getFinanceLinkStatus() { return financeLinkStatus; }
 
-  return { checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
+  return { purgeLocalFinanceTxnStore, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
 }
