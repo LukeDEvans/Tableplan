@@ -2,6 +2,7 @@ import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './financ
 import { financeMonthsToSnapshot, financeOffsettingPairIds } from './finance-actuals.js';
 import { dedupeFinanceRecurring } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
+import { financeMerchantTokens, financeMerchantKey } from './finance-transactions.js';
 
 // finance-ui.js — the Finance domain, being extracted from app.js in staged
 // commits (see FINANCE_EXTRACTION.md). This is COMMIT 1: the pure normalizers,
@@ -490,15 +491,8 @@ let financeBudgetOpenGroup = null;
 // reachable for labeling. Reset on month change so each month starts collapsed.
 let financeTxnListExpanded = false;
 
-const FIN_MERCHANT_STOPWORDS = new Set(["pos", "debit", "credit", "card", "purchase", "ach", "web", "id", "des", "co", "the", "of", "and", "inc", "llc", "com"]);
-function financeMerchantTokens(desc) {
-  return String(desc || "").toLowerCase()
-    .replace(/[0-9#*]+/g, " ")
-    .replace(/[^a-z\s]/g, " ")
-    .split(/\s+/)
-    .filter((t) => t.length >= 2 && !FIN_MERCHANT_STOPWORDS.has(t));
-}
-function financeMerchantKey(desc) { return financeMerchantTokens(desc).slice(0, 3).join(" "); }
+// financeMerchantTokens / financeMerchantKey live in finance-transactions.js (shared
+// with the server-side transaction-store ingest); imported above.
 
 // Majority-vote default for a merchant's purchase note — same shape as
 // predictMailFolder's sender-count fallback and financeTxnRuleGuess's

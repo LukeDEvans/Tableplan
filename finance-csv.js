@@ -123,3 +123,130 @@ export function aggregateCsvBackfill(rows, nameToKey) {
   out.applied = Object.keys(out.months).length;
   return out;
 }
+
+// ── CSV → durable transaction rows (FINANCE_TRANSACTIONS_DESIGN.md §4) ──────────
+// Unlike aggregateCsvBackfill (month totals only), these turn each CSV row into a
+// real transaction for the finance_transactions store.
+
+// First column matching the EARLIEST name in `names` (priority order, unlike
+// findCol's any-match) — so "description" beats a later "name" column.
+function findColByPriority(header, names) {
+  for (const n of names) {
+    const i = header.findIndex((h) => String(h || "").trim().toLowerCase().includes(n));
+    if (i >= 0) return i;
+  }
+  return -1;
+}
+
+// "2026-09-08" / "09/08/2026" / "9/8/26" → "YYYY-MM-DD", or null.
+export function parseCsvDate(raw) {
+  const s = String(raw == null ? "" : raw).trim();
+  if (!s) return null;
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const us = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
+  if (us) {
+    const [, mo, da, yr] = us;
+    let y = Number(yr);
+    if (y < 100) y += y < 70 ? 2000 : 1900;
+    const m = Number(mo), d = Number(da);
+    if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+    return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  }
+  const t = Date.parse(s);
+  if (!isNaN(t)) return new Date(t).toISOString().slice(0, 10);
+  return null;
+}
+
+// cyrb53 — small, stable, dependency-free 53-bit string hash (deterministic ids).
+export function stableHash(str) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+const normDesc = (d) => String(d || "").toLowerCase().replace(/\s+/g, " ").trim();
+
+// rows (parseCsvRows output, header first) → { txns, invalid, error? }.
+// Each txn: { id, account_id, posted, amount, description, import_label, import_batch }.
+// The id is csv_<hash(account|date|amount|description|n)> where n is the
+// occurrence index of an identical row WITHIN THIS FILE — so two genuine identical
+// same-day charges stay two rows, while re-importing the same file yields the
+// same ids (and inserts nothing).
+export function csvRowsToTxns(rows, { accountId, nameToKey, batchId = "" } = {}) {
+  const out = { txns: [], invalid: 0 };
+  if (!Array.isArray(rows) || rows.length < 2) return out;
+  if (!accountId) { out.error = "missing-account"; return out; }
+  const lookup = nameToKey instanceof Map ? nameToKey : new Map(Object.entries(nameToKey || {}));
+  const header = rows[0];
+  const dateIdx = findColByPriority(header, ["date", "posted", "when"]);
+  const amtIdx = findColByPriority(header, ["amount", "debit", "value"]);
+  const descIdx = findColByPriority(header, ["description", "payee", "merchant", "memo", "name"]);
+  const catIdx = findColByPriority(header, ["category", "label"]);
+  if (dateIdx < 0 || amtIdx < 0) { out.error = "missing-columns"; return out; }
+  const occurrences = new Map();
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    const date = parseCsvDate(r[dateIdx]);
+    const amount = parseCsvAmount(r[amtIdx]);
+    if (!date || amount == null || amount === 0) { out.invalid++; continue; }
+    const description = String(descIdx >= 0 ? r[descIdx] || "" : "").trim().slice(0, 200);
+    const catText = catIdx >= 0 ? String(r[catIdx] || "").trim().toLowerCase() : "";
+    const base = `${accountId}|${date}|${amount.toFixed(2)}|${normDesc(description)}`;
+    const n = occurrences.get(base) || 0;
+    occurrences.set(base, n + 1);
+    out.txns.push({
+      id: `csv_${stableHash(`${base}|${n}`)}`,
+      account_id: String(accountId),
+      posted: `${date}T12:00:00.000Z`,
+      amount: Math.round(amount * 100) / 100,
+      description,
+      import_label: (catText && lookup.get(catText)) || null,
+      import_batch: batchId || null,
+    });
+  }
+  return out;
+}
+
+// Split CSV candidates into { fresh, sameFile, fromBank }:
+//   sameFile — id already stored and not soft-deleted (this file was imported before);
+//   fromBank — a stored NON-CSV row on the same account, date ±1 day, same amount,
+//              sharing a merchant token (the bank already gave us this charge).
+// Bank rows are claimed one-to-one in date order so two identical CSV charges can't
+// both collapse onto a single bank row. `merchantTokens` is injected (pure).
+export function dedupeImport(candidates, existingRows, merchantTokens) {
+  const tokens = typeof merchantTokens === "function" ? merchantTokens : (d) => normDesc(d).split(" ").filter(Boolean);
+  // A soft-deleted row (an undone import) doesn't count: re-importing revives it
+  // (the insert upserts it back to status "active").
+  const existingIds = new Set((existingRows || []).filter((r) => r && r.status !== "deleted").map((r) => String(r.id)));
+  const bankByAccount = new Map();
+  for (const r of existingRows || []) {
+    if (!r || r.origin === "csv" || (r.status && r.status !== "active")) continue;
+    const k = String(r.account_id);
+    if (!bankByAccount.has(k)) bankByAccount.set(k, []);
+    bankByAccount.get(k).push(r);
+  }
+  const claimed = new Set();
+  const res = { fresh: [], sameFile: [], fromBank: [] };
+  const sorted = [...(candidates || [])].sort((a, b) => String(a.posted).localeCompare(String(b.posted)));
+  for (const c of sorted) {
+    if (existingIds.has(String(c.id))) { res.sameFile.push(c); continue; }
+    const cTok = new Set(tokens(c.description).slice(0, 3));
+    const cTime = new Date(c.posted).getTime();
+    const pool = (bankByAccount.get(String(c.account_id)) || [])
+      .filter((b) => !claimed.has(String(b.id)))
+      .filter((b) => Math.abs((Number(b.amount) || 0) - c.amount) < 0.005)
+      .filter((b) => Math.abs(new Date(b.posted).getTime() - cTime) <= 86400000 * 1.5)
+      .filter((b) => !cTok.size || tokens(b.description).slice(0, 3).some((t) => cTok.has(t)))
+      .sort((a, b) => Math.abs(new Date(a.posted).getTime() - cTime) - Math.abs(new Date(b.posted).getTime() - cTime));
+    if (pool.length) { claimed.add(String(pool[0].id)); res.fromBank.push({ ...c, duplicateOf: String(pool[0].id) }); continue; }
+    res.fresh.push(c);
+  }
+  return res;
+}

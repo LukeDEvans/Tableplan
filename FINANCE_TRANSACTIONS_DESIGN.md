@@ -1,6 +1,8 @@
 # Durable Finance Transaction Store — Design (INTENT → SPEC → PLAN)
 
-> **Status: SPEC, waiting for Luke's OK.** Nothing is implemented and no DDL has been applied.
+> **Status: APPROVED 2026-09-26 (Q1 90-day backfill · Q2 annotations deferred · Q3 60-day deck).**
+> Step 1 (pure core) done; step 2 SQL is in `migrations/2026-09-26-finance-transactions.sql`,
+> **not yet applied**.
 > This is a **finance data-authority change** (CLAUDE.md decision boundary): it has the same
 > shape as the calendar authority flip, so every phase that changes what finance *reads*
 > is gated separately.
@@ -62,7 +64,7 @@ it.
 | `amount` | numeric(12,2) | signed, as the bank reports it (sign flips stay a JSONB overlay) |
 | `description` | text | raw bank/CSV text (≤ 200) |
 | `pending` | bool | |
-| `status` | text | `active` \| `superseded` (pending replaced by its posted copy) \| `vanished` (pending that never posted, e.g. a declined pre-auth) |
+| `status` | text | `active` \| `superseded` (pending replaced by its posted copy) \| `vanished` (pending that never posted, e.g. a declined pre-auth) \| `deleted` (**soft delete** for CSV undo / manual delete — incremental `updated_at` sync can't see a hard delete, so clients never hard-delete; re-importing an undone CSV revives its rows back to `active`) |
 | `superseded_by` | text null | id of the posted row that replaced this pending one |
 | `import_label` | text null | category key supplied **by the source** (the CSV Category column). It's the lowest-priority label, below explicit labels and rules, so CSV categories never touch the 600-capped `financeTxnLabels` (T4). |
 | `import_batch` | text null | CSV import batch id, so a batch can be undone |
@@ -305,81 +307,17 @@ folding it in. **Q2 below.**
 
 ---
 
-## 11. Open questions
+## 11. Decisions (Luke, 2026-09-26)
 
-- **Q1. Backfill depth.** Request SimpleFIN's full ~90 days once at first ingest (recommended),
-  or stay at 45?
-- **Q2. Annotations on rows (§9).** OK to defer moving labels/splits/notes onto the rows to a
-  follow-up SPEC right after the receipts ledger? The alternative is doing it inside this
-  project, which is bigger and riskier.
-- **Known risk (no decision needed now):** reconnecting SimpleFIN could re-ingest the same
-  charges under new ids (§2). I'll log it to `ISSUES.md`.
-- **Q3. Deck scope.** The "to label" deck and bell count only look back **60 days** (§5.4). OK?
+- **Q1 — backfill:** 90 days, once, at the first ingest.
+- **Q2 — annotations onto rows (§9):** deferred to its own SPEC, after the receipts ledger.
+- **Q3 — deck/bell scope:** last 60 days.
+- **Known risk (logged in ISSUES.md):** re-linking SimpleFIN could re-ingest the same charges
+  under new ids (§2). A "reconnect remap" tool is out of scope for now.
 
----
+## Appendix A — SQL
 
-## Appendix A — DRAFT SQL (for review, not applied, not yet in `migrations/`)
-
-```sql
-create table if not exists public.finance_transactions (
-  id            text not null,
-  group_id      text not null,
-  origin        text not null check (origin in ('simplefin','csv','manual')),
-  account_id    text not null,
-  posted        timestamptz,
-  amount        numeric(12,2) not null,
-  description   text not null default '' check (length(description) <= 200),
-  pending       boolean not null default false,
-  status        text not null default 'active' check (status in ('active','superseded','vanished')),
-  superseded_by text,
-  import_label  text,
-  import_batch  text,
-  first_seen_at timestamptz not null default now(),
-  last_seen_at  timestamptz not null default now(),
-  created_at    timestamptz not null default now(),
-  updated_at    timestamptz not null default now(),
-  primary key (group_id, id)
-);
-create index if not exists fin_txn_posted_idx  on public.finance_transactions (group_id, posted desc);
-create index if not exists fin_txn_updated_idx on public.finance_transactions (group_id, updated_at);
-create index if not exists fin_txn_account_idx on public.finance_transactions (group_id, account_id, posted);
-create index if not exists fin_txn_status_idx  on public.finance_transactions (group_id, status);
-create index if not exists fin_txn_batch_idx   on public.finance_transactions (group_id, import_batch) where import_batch is not null;
-
-create or replace function public.finance_transactions_touch() returns trigger
-language plpgsql set search_path = '' as $$
-begin new.updated_at := now(); return new; end $$;
-drop trigger if exists finance_transactions_touch on public.finance_transactions;
-create trigger finance_transactions_touch before update on public.finance_transactions
-for each row execute function public.finance_transactions_touch();
-
-alter table public.finance_transactions enable row level security;
-
-drop policy if exists "fin txn read"   on public.finance_transactions;
-drop policy if exists "fin txn insert" on public.finance_transactions;
-drop policy if exists "fin txn update" on public.finance_transactions;
-drop policy if exists "fin txn delete" on public.finance_transactions;
-
--- Members read everything in their group.
-create policy "fin txn read" on public.finance_transactions for select to authenticated
-using (group_id in (select g::text from public.live_get_my_group_ids() g)
-       or group_id = 'u-' || (select auth.uid())::text);
-
--- Members write only CSV/manual rows. SimpleFIN rows are service-role only
--- (the ingest function bypasses RLS), so a client can never forge a bank row.
-create policy "fin txn insert" on public.finance_transactions for insert to authenticated
-with check (origin in ('csv','manual')
-       and (group_id in (select g::text from public.live_get_my_group_ids() g)
-            or group_id = 'u-' || (select auth.uid())::text));
-create policy "fin txn update" on public.finance_transactions for update to authenticated
-using (origin in ('csv','manual')
-       and (group_id in (select g::text from public.live_get_my_group_ids() g)
-            or group_id = 'u-' || (select auth.uid())::text))
-with check (origin in ('csv','manual')
-       and (group_id in (select g::text from public.live_get_my_group_ids() g)
-            or group_id = 'u-' || (select auth.uid())::text));
-create policy "fin txn delete" on public.finance_transactions for delete to authenticated
-using (origin in ('csv','manual')
-       and (group_id in (select g::text from public.live_get_my_group_ids() g)
-            or group_id = 'u-' || (select auth.uid())::text));
-```
+Canonical: **`migrations/2026-09-26-finance-transactions.sql`**. Not yet applied. Compared
+with the earlier draft:
+- `status` gains `deleted`, because clients soft-delete;
+- the client DELETE policy is removed, so deletes fail closed.
