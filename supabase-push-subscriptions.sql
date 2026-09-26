@@ -29,3 +29,10 @@ create policy "Users can read own push subscriptions"
 
 -- Service role (used by scheduled function) can read all
 -- No explicit policy needed — service role bypasses RLS
+
+-- ── Data API grants ─────────────────────────────────────────────────────────
+-- Explicit grants (from 2026-10-30 Supabase no longer auto-grants new public tables to the Data
+-- API on 2026-10-30). Least-privilege: matches the RLS policies above; RLS still
+-- decides which rows. No anon grant — the app never reads these signed-out.
+grant select, insert, delete on public.live_push_subscriptions to authenticated;
+grant select, insert, update, delete on public.live_push_subscriptions to service_role;

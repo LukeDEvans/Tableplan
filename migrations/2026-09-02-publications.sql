@@ -30,6 +30,8 @@ create table if not exists public.publications (
 );
 create index if not exists publications_group_id_idx on public.publications (group_id);
 alter table public.publications enable row level security;
+grant select, insert, update, delete on public.publications to authenticated;  -- explicit Data API grant (post-2026-10-30)
+grant select, insert, update, delete on public.publications to service_role;
 create policy "pub read"   on public.publications for select
   using (group_id in (select g::text from public.live_get_my_group_ids() g));
 create policy "pub insert" on public.publications for insert
@@ -62,6 +64,8 @@ create table if not exists public.feeds (
 create index if not exists feeds_group_id_idx on public.feeds (group_id);
 create index if not exists feeds_publication_id_idx on public.feeds (publication_id); -- FK index (§6)
 alter table public.feeds enable row level security;
+grant select, insert, update, delete on public.feeds to authenticated;  -- explicit Data API grant (post-2026-10-30)
+grant select, insert, update, delete on public.feeds to service_role;
 create policy "feed read"   on public.feeds for select
   using (group_id in (select g::text from public.live_get_my_group_ids() g));
 create policy "feed insert" on public.feeds for insert
@@ -98,6 +102,8 @@ create index if not exists articles_group_id_idx on public.articles (group_id);
 create index if not exists articles_publication_id_idx on public.articles (publication_id); -- FK index (§6)
 create index if not exists articles_group_published_idx on public.articles (group_id, published_at desc); -- paginated "newest first"
 alter table public.articles enable row level security;
+grant select, insert, update, delete on public.articles to authenticated;  -- explicit Data API grant (post-2026-10-30)
+grant select, insert, update, delete on public.articles to service_role;
 create policy "art read"   on public.articles for select
   using (group_id in (select g::text from public.live_get_my_group_ids() g));
 create policy "art insert" on public.articles for insert

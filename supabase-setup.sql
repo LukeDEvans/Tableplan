@@ -55,3 +55,14 @@ create policy "group creator can add themselves as admin"
 create policy "admin can read invites for their group"
   on live_group_invites for select to authenticated
   using (group_id in (select group_id from live_group_members where user_id = auth.uid() and role = 'admin'));
+
+-- ── Data API grants ─────────────────────────────────────────────────────────
+-- Explicit grants (from 2026-10-30 Supabase no longer auto-grants new public tables to the Data
+-- API on 2026-10-30). Least-privilege: matches the RLS policies above; RLS still
+-- decides which rows. No anon grant — the app never reads these signed-out.
+grant select, insert, update on live_groups to authenticated;
+grant select, insert, update, delete on live_groups to service_role;
+grant select, insert, update on live_group_members to authenticated;
+grant select, insert, update, delete on live_group_members to service_role;
+grant select on live_group_invites to authenticated;  -- writes are server-side (service role)
+grant select, insert, update, delete on live_group_invites to service_role;
