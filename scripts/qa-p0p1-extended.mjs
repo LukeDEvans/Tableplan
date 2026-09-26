@@ -83,7 +83,7 @@ const seed = {
   },
   plans: {}, // fresh weeks so entry counts start from zero
   // A recipe with a distinctive ingredient (NOT in the grocery catalog), so a
-  // recipe-backed meal entry lights up the servings input (mp-serving) and shows up
+  // recipe-backed meal entry opens a recipe view with a servings adjuster (mp-serving) and shows up
   // in the plan→grocery derivation (mp-grocery). Recipes read from state.recipes.
   recipes: [{
     id: "recipe-qa", name: "QA Test Recipe", servings: 2,
@@ -341,43 +341,41 @@ try {
       });
       await M.page.waitForTimeout(800);
 
-      // --- mp-serving: RESTORED 2026-09-20 (was dead/unreachable code, ISSUES.md P1).
-      // [data-planned-servings] is now rendered in the normal (non-readOnly) recipe
-      // entry template (mealplan-ui.js mealEntryTemplate, the `if (recipe)` branch) --
-      // the original design's markup (a `.meal-recipe-plan` wrapper + `.meal-
-      // planned-servings-editor` label/input, found intact but unused in styles.css
-      // and in a pre-extraction commit), gated off for virtualGroceryRecipe entries
-      // (grocery-item slots, where updateMealPlannedServings is a deliberate no-op).
-      // Drive it through the REAL input the same way a user would (set .value, fire
-      // "change" -- updateMealPlannedServings listens on change AND blur), then assert
-      // the STATE actually moved (mpPlannedServings reads the raw entry back), not just
-      // that the input's redisplayed value looks right.
-      const servBefore = await M.page.evaluate(() => {
-        const input = document.querySelector("#plannerGrid [data-planned-servings]");
-        if (!input) return { found: false };
-        return {
-          found: true,
-          value: input.value,
-          day: input.dataset.day,
-          meal: input.dataset.meal,
-          index: Number(input.dataset.index),
-          state: window.__liveQA.mpPlannedServings(input.dataset.day, input.dataset.meal, Number(input.dataset.index)),
+      // --- mp-serving (2026-09-26, per Luke): servings are NOT shown on meal-plan
+      // cards any more -- they're adjusted inside the recipe view opened from the
+      // meal, which writes back to the entry's plannedServings via
+      // updateMealPlannedServingsFromContext. Assert both halves: (1) the card has
+      // no servings text/input, (2) the recipe view's [data-serving-adjuster] starts
+      // at the recipe default and changing it moves the STATE (mpPlannedServings
+      // reads the raw entry back), not just the redisplayed value.
+      const servCard = await M.page.evaluate(() => {
+        const btn = document.querySelector("#plannerGrid [data-view-recipe][data-day]");
+        const entry = btn?.closest("[data-meal-entry]");
+        return btn && {
+          day: btn.dataset.day, meal: btn.dataset.meal, index: Number(btn.dataset.index),
+          cardShowsServings: !!entry && (/serving/i.test(entry.textContent) || !!entry.querySelector("input[type=number]")),
         };
       });
-      if (!servBefore.found) {
-        rec("mp-serving", "FAIL", `recipe entry placed=${!!placed} but no [data-planned-servings] input rendered in the normal planner view -- pulled rather than pass vacuously.`);
+      if (!servCard) {
+        rec("mp-serving", "FAIL", `recipe entry placed=${!!placed} but no [data-view-recipe] meal-entry button rendered -- pulled rather than pass vacuously.`);
       } else {
-        const defaultOk = servBefore.value === "2" && servBefore.state === 2; // recipe-qa servings=2, mpAddRecipeEntry seeds plannedServings=recipe.servings
+        await M.page.click(`#plannerGrid [data-view-recipe][data-day="${servCard.day}"][data-meal="${servCard.meal}"][data-index="${servCard.index}"]`);
+        await M.page.waitForSelector("#recipeViewHeaderActions [data-serving-adjuster]", { timeout: 3000 }).catch(() => {});
         const changed = await M.page.evaluate((sb) => {
-          const input = document.querySelector(`#plannerGrid [data-planned-servings][data-day="${sb.day}"][data-meal="${sb.meal}"][data-index="${sb.index}"]`);
+          const input = document.querySelector("#recipeViewHeaderActions [data-serving-adjuster]");
           if (!input) return { found: false };
+          const before = { value: input.value, state: window.__liveQA.mpPlannedServings(sb.day, sb.meal, sb.index) };
           input.value = "4";
-          input.dispatchEvent(new Event("change", { bubbles: true }));
-          return { found: true, redisplayed: input.value, state: window.__liveQA.mpPlannedServings(sb.day, sb.meal, sb.index) };
-        }, servBefore);
-        const scaledOk = changed.found && changed.redisplayed === "4" && changed.state === 4;
-        rec("mp-serving", defaultOk && scaledOk ? "PASS" : "FAIL",
-          `initial input value="${servBefore.value}" (state=${servBefore.state}, want "2"/2 from recipe-qa's default servings) -- ${defaultOk ? "matched" : "MISMATCH"}. Changed input to "4" and fired change -- updateMealPlannedServings redisplayed "${changed.redisplayed}" and wrote state=${changed.state} (want "4"/4) -- ${scaledOk ? "matched" : "MISMATCH"}.`);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          const after = window.__liveQA.mpPlannedServings(sb.day, sb.meal, sb.index);
+          document.querySelector("#recipeViewDialog")?.close();
+          return { found: true, before, after };
+        }, servCard);
+        const noCardServings = !servCard.cardShowsServings;
+        const defaultOk = changed.found && changed.before.value === "2" && changed.before.state === 2; // recipe-qa servings=2
+        const scaledOk = changed.found && changed.after === 4;
+        rec("mp-serving", noCardServings && defaultOk && scaledOk ? "PASS" : "FAIL",
+          `card shows servings=${servCard.cardShowsServings} (want false). Recipe view adjuster found=${changed.found}, initial "${changed.before?.value}"/state=${changed.before?.state} (want "2"/2) -- ${defaultOk ? "matched" : "MISMATCH"}; set to 4 → state=${changed.after} (want 4) -- ${scaledOk ? "matched" : "MISMATCH"}.`);
       }
 
       // --- mp-grocery: the seeded recipe's ingredient must appear in the plan→grocery

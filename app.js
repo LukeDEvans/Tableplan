@@ -1910,6 +1910,7 @@ const {
   updateGroceryMealServing,
   updateMealDragPoint,
   updateMealPlannedServingsFromContext,
+  requestMealPlanTimeOfDaySnap,
   warmMealPlanRecipes,
 } = _mealplan;
 
@@ -7564,6 +7565,8 @@ function showEatApp(event) {
     showHomeApp();
     return;
   }
+  // Open on the meal for the current time of day (noon → that day's Lunch).
+  requestMealPlanTimeOfDaySnap();
   activateEatShell();
   setPageTitle("Meal Plan");
   setPageHash("eat");
