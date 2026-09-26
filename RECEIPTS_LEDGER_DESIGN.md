@@ -1,6 +1,7 @@
 # Unified Receipts Ledger — Design (INTENT → SPEC → PLAN)
 
-> **Status: SPEC — Q1–Q3 decided (§12); Q4/Q5 clarifications pending.** Nothing is implemented. No DDL has been applied.
+> **Status: SPEC — all questions decided (§12). Sequenced AFTER the durable transaction store
+> ([FINANCE_TRANSACTIONS_DESIGN.md](FINANCE_TRANSACTIONS_DESIGN.md)).** Nothing is implemented. No DDL has been applied.
 > The SQL in Appendix A is a **draft for review** and is **not** in `migrations/` yet. It
 > goes there, and you apply it in the SQL editor, only after you approve this spec.
 > Baseline: `1e56f62` on `claude/intelligent-clarke-w9wefi`.
@@ -562,8 +563,8 @@ of the following:
   `receipts.js` function).
 - **Shop receipts:** clears `state.receipts`, plus the `priceHistory` entries with
   `source === "receipt"`, plus the content-store blobs `receipt:<id>:<n>`.
-- **Kept:** manual `groceryPriceObservations` and `receiptItemMappings` (the mappings are the
-  learning loop — Luke to veto if he wants those gone too).
+- **Also wiped (Luke, 2026-09-26):** `receiptItemMappings`. The unified learning loop (§4.2)
+  starts empty. **Kept:** manual `groceryPriceObservations`.
 
 Before any of this runs, a dry-run shows the counts. The purge is then written to be
 idempotent, and nothing is deleted before Luke clicks confirm.
