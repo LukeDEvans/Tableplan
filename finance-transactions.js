@@ -180,7 +180,8 @@ export function storeAccountsView(rows, liveAccounts, accountNames = {}) {
   }
   for (const [k, transactions] of byAccount) {
     if (seen.has(k)) continue;
-    out.push({ id: k, org: "", name: accountNames[k] || "Imported account", currency: "USD", balance: null, available: null, balanceDate: null, imported: true, transactions });
+    const fallback = k.startsWith("csv:") ? k.slice(4) : "Imported account";
+    out.push({ id: k, org: "", name: accountNames[k] || fallback, currency: "USD", balance: null, available: null, balanceDate: null, imported: true, transactions });
   }
   return out;
 }

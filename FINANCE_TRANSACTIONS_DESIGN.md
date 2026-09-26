@@ -2,8 +2,9 @@
 
 > **Status: APPROVED 2026-09-26 (Q1 90-day backfill · Q2 annotations deferred · Q3 60-day deck).**
 > Progress:
-> - **Done:** steps 1 (pure core), 3 (server ingest), 4 (client store module) and 5 (read
->   flip behind `financeTxnSource`, **default "feed"**).
+> - **Done:** steps 1 (pure core), 3 (server ingest), 4 (client store module), 5 (read flip
+>   behind `financeTxnSource`, **default "feed"**) and 6 (CSV import → rows, with preview and
+>   undo).
 > - **Waiting on you:** applying the step 2 SQL (`migrations/2026-09-26-finance-transactions.sql`),
 >   then turning on "Use stored transaction history" (Settings › Finance › Bank link) to compare
 >   against the feed.

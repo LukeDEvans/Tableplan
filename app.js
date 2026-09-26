@@ -1591,6 +1591,7 @@ const _finance = createFinanceModule({
   getFinanceStoreGroupId: () => userGroup?.id || null,
   canUseFinanceStore: () => !localDevMode && canUseCloudStorage() && !!authSession?.access_token,
   fetchSupabaseJson: (...a) => fetchSupabaseJson(...a),
+  writeSupabaseJson: (...a) => writeSupabaseJson(...a),
 });
 const {
   purgeLocalFinanceTxnStore,
@@ -7380,6 +7381,18 @@ async function fetchSupabaseJson(path) {
   const res = await fetch(`${supabaseBaseUrl()}/rest/v1/${path}`, { headers: supabaseHeaders(), cache: "no-store" });
   if (!res.ok) throw new Error(`Supabase ${res.status}`);
   return res.json();
+}
+
+// POST/PATCH a PostgREST path with the signed-in user's headers (RLS applies).
+// Throws on a non-2xx. Used by finance CSV import / undo (finance_transactions).
+async function writeSupabaseJson(path, { method = "POST", body, prefer = "return=minimal" } = {}) {
+  const res = await fetch(`${supabaseBaseUrl()}/rest/v1/${path}`, {
+    method,
+    headers: { ...supabaseHeaders(), prefer },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Supabase ${res.status}`);
+  return null;
 }
 
 function supabaseHeaders() {

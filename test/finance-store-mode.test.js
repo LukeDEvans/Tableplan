@@ -133,3 +133,100 @@ describe("finance store mode — through the real finance module", () => {
     expect(bell.at(-1)).toBe(feedRun.bell.at(-1));
   });
 });
+
+describe("CSV import → durable rows (through the real finance module)", () => {
+  function harness({ storeRows = [], writeFails = false } = {}) {
+    const writes = [];
+    let table = storeRows.map((r) => ({ ...r }));
+    let clock = 0;
+    const stamp = () => `t${String(++clock).padStart(6, "0")}`;
+    const state = { ...makeState(), financeTxnSource: "store" };
+    const toasts = [];
+    const fin = createFinanceModule({
+      state, elements: {}, persist: () => {}, createId: (p) => `${p}-1`, escapeHtml: (s) => String(s),
+      showMailToast: (msg, undo) => toasts.push({ msg, undo }), recordDeletion: () => {}, trackUsage: () => {},
+      callNetlifyFunction: async (_fn, body) => (body.action === "accounts"
+        ? { accounts: [{ id: "A1", org: "Bank", name: "Checking", balance: 1, transactions: [] }], errors: [], fetchedAt: new Date().toISOString() }
+        : {}),
+      dateKeyFromDate: (d) => d.toISOString().slice(0, 10),
+      setPageNotifCount: () => {}, setWeekToolsMode: () => {}, closeWeekJumpMenu: () => {},
+      getCurrentProfileMember: () => null, renderContextSettingsDialog: () => {}, openContextSettingsDialog: () => {},
+      prepareScanImage: async () => null, fileToDataUrl: async () => "",
+      getActiveAppArea: () => "home", getSupabaseClient: () => null, getAuthSession: () => null, getContextSettingsKind: () => "",
+      getFinanceStoreGroupId: () => "g1", canUseFinanceStore: () => true,
+      // Honors the (updated_at, id) keyset cursor like PostgREST would.
+      fetchSupabaseJson: async (q) => {
+        const sorted = [...table].sort((a, b) => (a.updated_at === b.updated_at ? (a.id < b.id ? -1 : 1) : a.updated_at < b.updated_at ? -1 : 1));
+        const m = decodeURIComponent(q).match(/updated_at\.gt\."([^"]+)",and\(updated_at\.eq\."[^"]+",id\.gt\."(.*)"\)\)/);
+        return m ? sorted.filter((r) => r.updated_at > m[1] || (r.updated_at === m[1] && r.id > m[2])) : sorted;
+      },
+      writeSupabaseJson: async (path, opts) => {
+        if (writeFails) throw new Error("Supabase 403");
+        writes.push({ path, ...opts });
+        const at = stamp();
+        if (opts.method === "POST") for (const r of opts.body) table = [...table.filter((x) => x.id !== r.id), { ...r, updated_at: at }];
+        if (opts.method === "PATCH") table = table.map((r) => (r.import_batch && path.includes(`import_batch=eq.${r.import_batch}`) ? { ...r, ...opts.body, updated_at: at } : r));
+      },
+    });
+    // Stub the browser file picker + FileReader for startFinanceCsvImport.
+    globalThis.FileReader = class { readAsText(f) { this.result = f.text; this.onload(); } };
+    globalThis.document = { createElement: () => { const input = { files: null, click() { input.files = [globalThis.__csvFile]; input.onchange(); } }; return input; } };
+    globalThis.confirm = () => true;
+    const click = (action, id) => fin.onFinanceGridClick({ target: { closest: () => ({ dataset: { finAction: action, id } }) } });
+    return { fin, state, writes, toasts, click, table: () => table };
+  }
+  const CSV = [
+    "Date,Description,Amount,Category",
+    `${iso(400).slice(0, 10)},OLD GROCER,-30.00,Food`,
+    `${iso(399).slice(0, 10)},OLD GROCER,-31.00,Food`,
+    `${iso(2).slice(0, 10)},COFFEE SHOP,-12.50,Food`,
+  ].join("\n");
+
+  it("saves new rows once, skips a charge the bank already gave us, and a re-import inserts nothing", async () => {
+    const bankRow = { id: "cur2", account_id: "A1", origin: "simplefin", status: "active", posted: iso(2), amount: -12.5, description: "COFFEE SHOP", pending: false, updated_at: "t000000" };
+    const h = harness({ storeRows: [bankRow] });
+    await h.fin.refreshFinanceLive(); await settle();
+    globalThis.__csvFile = { name: "visa.csv", text: CSV };
+    h.click("import-csv"); await settle();
+    h.click("csv-import-confirm"); await settle();
+    const posted = h.writes.filter((w) => w.method === "POST").flatMap((w) => w.body);
+    expect(posted.map((r) => r.description).sort()).toEqual(["OLD GROCER", "OLD GROCER"]);
+    expect(posted.every((r) => r.origin === "csv" && r.account_id === "A1" && r.import_label === "cat:g:c" && r.status === "active")).toBe(true);
+    expect(h.toasts.at(-1).msg).toMatch(/2 transactions saved · 1 already from the bank/);
+
+    // Same file again → nothing new.
+    h.click("import-csv"); await settle();
+    h.click("csv-import-confirm"); await settle();
+    expect(h.writes.filter((w) => w.method === "POST")).toHaveLength(1);
+    expect(h.toasts.at(-1).msg).toMatch(/2 already imported · 1 already from the bank/);
+  });
+
+  it("undo soft-deletes the batch; importing the file again revives it", async () => {
+    const h = harness();
+    await h.fin.refreshFinanceLive(); await settle();
+    globalThis.__csvFile = { name: "visa.csv", text: CSV };
+    h.click("import-csv"); await settle();
+    h.click("csv-import-confirm"); await settle();
+    await h.toasts.at(-1).undo(); await settle();
+    const patch = h.writes.find((w) => w.method === "PATCH");
+    expect(patch.body).toEqual({ status: "deleted" });
+    expect(patch.path).toMatch(/origin=eq\.csv/);
+    expect(h.table().filter((r) => r.origin === "csv").every((r) => r.status === "deleted")).toBe(true);
+    h.click("import-csv"); await settle();
+    h.click("csv-import-confirm"); await settle();
+    expect(h.table().filter((r) => r.origin === "csv" && r.status === "active")).toHaveLength(3);
+  });
+
+  it("a failed save still backfills month totals as before and says the rows weren't saved", async () => {
+    const h = harness({ writeFails: true });
+    await h.fin.refreshFinanceLive(); await settle();
+    globalThis.__csvFile = { name: "visa.csv", text: CSV };
+    h.click("import-csv"); await settle();
+    h.click("csv-import-confirm"); await settle();
+    // Backfilled under the SAME "<gid>:<cid>" key the budget view reads (was "cat:…").
+    expect(h.state.financeMonthActuals[monthOf(400)].cats["g:c"]).toBe(monthOf(400) === monthOf(399) ? 61 : 30);
+    expect(Object.keys(h.state.financeMonthActuals[monthOf(400)].cats)).toEqual(["g:c"]);
+    expect(h.toasts.at(-1).msg).toMatch(/couldn't save rows: Supabase 403/);
+    expect(h.toasts.at(-1).undo).toBeUndefined();
+  });
+});
