@@ -88,20 +88,40 @@ function findCol(header, names) {
 //   nameToKey: { <lowercased category name> -> "cat:gid:cid" } lookup
 // Returns { months, applied, income, uncategorized, invalid, matched, total,
 //           unrecognized } where `months` = { "YYYY-MM": { cats, income, incomeBy } }.
+// Amount for one row, honoring the export's sign convention. Many bank exports
+// have SEPARATE "Debit" and "Credit" columns (both positive) instead of one signed
+// "Amount": then amount = credit − debit (spending negative, as everywhere else).
+// Previously the "debit" column alone was read as the amount, so debits landed as
+// positive (income) and credits were dropped.
+export function csvAmountResolver(header) {
+  const h = (header || []).map((c) => String(c || "").trim().toLowerCase());
+  const amountIdx = h.findIndex((c) => c.includes("amount") || c === "value");
+  if (amountIdx >= 0) return (r) => parseCsvAmount(r[amountIdx]);
+  const debitIdx = h.findIndex((c) => c.includes("debit") || c.includes("withdrawal"));
+  const creditIdx = h.findIndex((c) => c.includes("credit") || c.includes("deposit"));
+  if (debitIdx < 0 && creditIdx < 0) return null;
+  return (r) => {
+    const d = debitIdx >= 0 ? parseCsvAmount(r[debitIdx]) : null;
+    const c = creditIdx >= 0 ? parseCsvAmount(r[creditIdx]) : null;
+    if (d == null && c == null) return null;
+    return Math.round(((c ? Math.abs(c) : 0) - (d ? Math.abs(d) : 0)) * 100) / 100;
+  };
+}
+
 export function aggregateCsvBackfill(rows, nameToKey) {
   const out = { months: {}, applied: 0, income: 0, uncategorized: 0, invalid: 0, matched: 0, total: 0, unrecognized: [] };
   if (!Array.isArray(rows) || rows.length < 2) return out;
   const lookup = nameToKey instanceof Map ? nameToKey : new Map(Object.entries(nameToKey || {}));
   const header = rows[0];
   const dateIdx = findCol(header, ["date", "posted", "when"]);
-  const amtIdx = findCol(header, ["amount", "debit", "value"]);
+  const amountOf = csvAmountResolver(header);
   const catIdx = findCol(header, ["category", "label"]);
-  if (dateIdx < 0 || amtIdx < 0) { out.error = "missing-columns"; return out; }
+  if (dateIdx < 0 || !amountOf) { out.error = "missing-columns"; return out; }
   const seenUnrecognized = new Set();
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
     out.total++;
-    const amount = parseCsvAmount(r[amtIdx]);
+    const amount = amountOf(r);
     const month = parseCsvMonth(r[dateIdx]);
     if (amount == null || amount === 0 || !month) { out.invalid++; continue; }
     const catText = catIdx >= 0 ? String(r[catIdx] || "").trim().toLowerCase() : "";
@@ -186,15 +206,15 @@ export function csvRowsToTxns(rows, { accountId, nameToKey, batchId = "" } = {})
   const lookup = nameToKey instanceof Map ? nameToKey : new Map(Object.entries(nameToKey || {}));
   const header = rows[0];
   const dateIdx = findColByPriority(header, ["date", "posted", "when"]);
-  const amtIdx = findColByPriority(header, ["amount", "debit", "value"]);
+  const amountOf = csvAmountResolver(header);
   const descIdx = findColByPriority(header, ["description", "payee", "merchant", "memo", "name"]);
   const catIdx = findColByPriority(header, ["category", "label"]);
-  if (dateIdx < 0 || amtIdx < 0) { out.error = "missing-columns"; return out; }
+  if (dateIdx < 0 || !amountOf) { out.error = "missing-columns"; return out; }
   const occurrences = new Map();
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
     const date = parseCsvDate(r[dateIdx]);
-    const amount = parseCsvAmount(r[amtIdx]);
+    const amount = amountOf(r);
     if (!date || amount == null || amount === 0) { out.invalid++; continue; }
     const description = String(descIdx >= 0 ? r[descIdx] || "" : "").trim().slice(0, 200);
     const catText = catIdx >= 0 ? String(r[catIdx] || "").trim().toLowerCase() : "";

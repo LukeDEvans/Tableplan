@@ -5,7 +5,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
-const { ingestFeed, hasStoredTransactions, trimAccountsToDays } = require("../netlify/functions/_finance-ingest.js");
+const { ingestFeed, storeNeedsBackfill, trimAccountsToDays } = require("../netlify/functions/_finance-ingest.js");
 
 const NOW = Date.parse("2026-09-26T12:00:00Z");
 const day = (d) => new Date(NOW - d * 86400000).toISOString();
@@ -25,7 +25,7 @@ function makeDb({ tableExists = true } = {}) {
         const k = `${r.group_id}|${r.id}`;
         const prev = rows.get(k);
         // merge-duplicates: update ONLY the columns in the payload
-        rows.set(k, prev ? { ...prev, ...r } : { status: "active", superseded_by: null, import_label: null, ...r });
+        rows.set(k, prev ? { ...prev, ...r } : { status: "active", superseded_by: null, import_label: null, first_seen_at: new Date(NOW).toISOString(), ...r });
       }
       return resp(null, 201);
     }
@@ -35,10 +35,24 @@ function makeDb({ tableExists = true } = {}) {
       if (prev && prev.origin === "simplefin" && prev.pending) rows.set(k, { ...prev, ...JSON.parse(opts.body) });
       return resp(null, 204);
     }
+    // Honor the filters the ingest actually sends (review: fakes must model reality).
     const g = eq(q.group_id);
     let out = [...rows.values()].filter((r) => r.group_id === g);
-    if (q.posted) out = out.filter((r) => r.posted >= decodeURIComponent(q.posted.replace(/^gte\./, "")));
-    if (q.limit === "1") out = out.slice(0, 1);
+    if (q.origin) out = out.filter((r) => r.origin === eq(q.origin));
+    if (q.status) {
+      const allowed = decodeURIComponent(q.status).replace(/^in\.\(|\)$/g, "").split(",");
+      out = out.filter((r) => allowed.includes(r.status));
+    }
+    if (q.posted) {
+      const v = decodeURIComponent(q.posted);
+      if (v.startsWith("lt.")) out = out.filter((r) => r.posted && r.posted < v.slice(3));
+      if (v.startsWith("gte.")) out = out.filter((r) => r.posted && r.posted >= v.slice(4));
+    }
+    if (q.or) {
+      const m = decodeURIComponent(q.or).match(/^\(posted\.gte\."(.+)",posted\.is\.null\)$/);
+      if (m) out = out.filter((r) => !r.posted || r.posted >= m[1]);
+    }
+    if (q.limit) out = out.slice(0, Number(q.limit));
     return resp(out);
   }
   return { rows, calls, fetchImpl };
@@ -103,17 +117,37 @@ describe("ingestFeed", () => {
   });
 });
 
-describe("hasStoredTransactions (decides the one-time 90-day backfill)", () => {
-  it("false on an empty table, true once ingested, null when the table is missing", async () => {
+describe("storeNeedsBackfill (decides the 90-day pull)", () => {
+  const o = (fetchImpl) => ({ serviceKey: "s", groupId: "g1", fetchImpl, now: NOW });
+  it("true on an empty store AND after only a 45-day ingest; false once history > 60 days exists; null when missing", async () => {
     const db = makeDb();
-    expect(await hasStoredTransactions({ serviceKey: "s", groupId: "g1", fetchImpl: db.fetchImpl })).toBe(false);
-    await ingestFeed(opts(db, feed([{ id: "t1", posted: day(1), amount: -5, description: "X" }])));
-    expect(await hasStoredTransactions({ serviceKey: "s", groupId: "g1", fetchImpl: db.fetchImpl })).toBe(true);
-    expect(await hasStoredTransactions({ serviceKey: "s", groupId: "g1", fetchImpl: makeDb({ tableExists: false }).fetchImpl })).toBe(null);
+    expect(await storeNeedsBackfill(o(db.fetchImpl))).toBe(true);
+    await ingestFeed(opts(db, feed([{ id: "t1", posted: day(30), amount: -5, description: "X" }])));
+    expect(await storeNeedsBackfill(o(db.fetchImpl))).toBe(true); // an early 45-day ingest can't skip the backfill
+    await ingestFeed(opts(db, feed([{ id: "t2", posted: day(85), amount: -5, description: "X" }])));
+    expect(await storeNeedsBackfill(o(db.fetchImpl))).toBe(false);
+    expect(await storeNeedsBackfill(o(makeDb({ tableExists: false }).fetchImpl))).toBe(null);
   });
   it("network failure → null (skip ingest), never throws", async () => {
     const boom = vi.fn(async () => { throw new Error("offline"); });
-    expect(await hasStoredTransactions({ serviceKey: "s", groupId: "g1", fetchImpl: boom })).toBe(null);
+    expect(await storeNeedsBackfill(o(boom))).toBe(null);
+  });
+});
+
+describe("ingest — review regressions", () => {
+  it("M3: an undated pending row that leaves its account's pull is vanished (not a ghost forever)", async () => {
+    const db = makeDb();
+    await ingestFeed(opts(db, feed([{ id: "anchor", posted: day(20), amount: -2, description: "A" }, { id: "u1", posted: null, amount: -3, description: "PENDING", pending: true }])));
+    db.rows.set("g1|u1", { ...db.rows.get("g1|u1"), first_seen_at: day(5) });
+    await ingestFeed(opts(db, feed([{ id: "anchor", posted: day(20), amount: -2, description: "A" }])));
+    expect(db.rows.get("g1|u1").status).toBe("vanished");
+  });
+  it("M1: a pending row wrongly superseded during a partial pull heals when its account returns", async () => {
+    const db = makeDb();
+    await ingestFeed(opts(db, feed([{ id: "p1", posted: day(3), amount: -1, description: "SHELL OIL", pending: true }])));
+    db.rows.set("g1|p1", { ...db.rows.get("g1|p1"), status: "superseded", superseded_by: "q9" });
+    await ingestFeed(opts(db, feed([{ id: "p1", posted: day(3), amount: -1, description: "SHELL OIL", pending: true }])));
+    expect(db.rows.get("g1|p1")).toMatchObject({ status: "active", superseded_by: null });
   });
 });
 

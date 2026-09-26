@@ -19,7 +19,8 @@ import { mergeStoreRows } from "./finance-transactions.js";
 export const FIN_TXN_DB = "live-finance-txns";
 export const FIN_TXN_STORES = ["rows", "meta"];
 const PAGE = 1000;
-const MAX_PAGES = 50; // hard bound per sync (50k rows) — a first load of years of history fits easily
+const MAX_PAGES = 50;
+const LOOKBACK_MS = 2 * 60 * 1000; // hard bound per sync (50k rows) — a first load of years of history fits easily
 
 const SELECT = "id,group_id,origin,account_id,posted,amount,description,pending,status,superseded_by,import_label,import_batch,updated_at";
 
@@ -44,6 +45,7 @@ export function createFinanceTxnStore({ storage, fetchJson, groupId }) {
   let rows = null;          // null = mirror not loaded yet
   let cursor = null;
   let syncing = null;       // in-flight sync promise (re-entrant calls share it)
+  let disposed = false;     // set on account-boundary purge — never persist after it
 
   async function load() {
     if (rows) return rows;
@@ -65,17 +67,32 @@ export function createFinanceTxnStore({ storage, fetchJson, groupId }) {
     syncing = (async () => {
       await load();
       let changed = 0;
+      // Re-read a short overlap behind the cursor on the first page: updated_at is
+      // the writing transaction's START time, so a slow write can commit AFTER a
+      // later-starting one we already synced past. The merge is idempotent by id,
+      // so the overlap only costs a few duplicate rows.
+      const cursorMs = cursor?.updatedAt ? new Date(cursor.updatedAt).getTime() : NaN;
+      let pageCursor = Number.isFinite(cursorMs)
+        ? { updatedAt: new Date(cursorMs - LOOKBACK_MS).toISOString(), id: "" }
+        : cursor;
       for (let page = 0; page < MAX_PAGES; page++) {
-        const batch = await fetchJson(buildSyncQuery(groupId, cursor));
+        const batch = await fetchJson(buildSyncQuery(groupId, pageCursor));
         if (!Array.isArray(batch)) throw new Error("finance store: unexpected response");
         if (!batch.length) break;
+        // Count only rows that are new or actually different (the overlap re-reads
+        // rows we already hold — those aren't changes and shouldn't re-render).
+        const prev = new Map(rows.map((r) => [String(r.id), r]));
+        for (const r of batch) {
+          const old = prev.get(String(r.id));
+          if (!old || JSON.stringify(old) !== JSON.stringify(r)) changed++;
+        }
         rows = mergeStoreRows(rows, batch);
         const last = batch[batch.length - 1];
-        cursor = { updatedAt: last.updated_at, id: String(last.id) };
-        changed += batch.length;
+        pageCursor = { updatedAt: last.updated_at, id: String(last.id) };
+        if (!cursor?.updatedAt || String(last.updated_at) >= String(cursor.updatedAt)) cursor = pageCursor;
         if (batch.length < PAGE) break;
       }
-      if (changed) {
+      if (changed && !disposed) {
         try {
           await storage.put("rows", rowsKey, rows);
           await storage.put("meta", cursorKey, cursor);
@@ -91,5 +108,6 @@ export function createFinanceTxnStore({ storage, fetchJson, groupId }) {
     sync,
     rows: () => rows,          // null until load() — callers treat null as "not ready"
     isLoaded: () => rows !== null,
+    dispose: () => { disposed = true; },
   };
 }

@@ -28,18 +28,25 @@ function headers(serviceKey, extra = {}) {
   return { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "content-type": "application/json", ...extra };
 }
 
-// Has this group ever been ingested? Decides the one-time 90-day backfill.
-// Returns true/false, or null when the table isn't reachable (SQL not applied) —
-// callers then skip ingest entirely and keep today's 45-day behavior.
-async function hasStoredTransactions({ serviceKey, groupId, supabaseUrl = DEFAULT_SUPABASE_URL, fetchImpl = fetch }) {
+// Does this group still need the one-time 90-day backfill? true when the store
+// holds NO simplefin row older than 60 days (never ingested, or only 45-day pulls
+// so far — e.g. an interactive refresh ingested before the first cron ran). Keying
+// on "has history" rather than "has any row" means an early 45-day ingest can't
+// skip the backfill. (An account genuinely younger than 60 days keeps asking for 90
+// days — same ONE bridge call a day, just a longer window, so no extra cost.)
+// Returns null when the table isn't reachable (migration not applied) — callers
+// then skip ingest entirely and keep today's 45-day pull.
+async function storeNeedsBackfill({ serviceKey, groupId, supabaseUrl = DEFAULT_SUPABASE_URL, fetchImpl = fetch, now = Date.now() }) {
   try {
+    const cutoff = new Date(now - 60 * DAY_MS).toISOString();
     const res = await fetchImpl(
-      `${supabaseUrl}/rest/v1/finance_transactions?group_id=eq.${encodeURIComponent(groupId)}&select=id&limit=1`,
+      `${supabaseUrl}/rest/v1/finance_transactions?group_id=eq.${encodeURIComponent(groupId)}&origin=eq.simplefin` +
+      `&posted=lt.${encodeURIComponent(cutoff)}&select=id&limit=1`,
       { headers: headers(serviceKey), cache: "no-store" }
     );
     if (!res.ok) return null;
     const rows = await res.json();
-    return Array.isArray(rows) && rows.length > 0;
+    return !(Array.isArray(rows) && rows.length > 0);
   } catch {
     return null;
   }
@@ -69,8 +76,8 @@ async function ingestFeed({ serviceKey, groupId, accounts, supabaseUrl = DEFAULT
     const since = new Date(new Date(earliest).getTime() - 8 * DAY_MS).toISOString();
     const res = await fetchImpl(
       `${supabaseUrl}/rest/v1/finance_transactions?group_id=eq.${encodeURIComponent(groupId)}&origin=eq.simplefin` +
-      `&status=in.(active,superseded)&posted=gte.${encodeURIComponent(since)}` +
-      `&select=id,account_id,amount,description,posted,pending,status,superseded_by&limit=${MAX_ROWS}`,
+      `&status=in.(active,superseded)&or=(posted.gte."${encodeURIComponent(since)}",posted.is.null)` +
+      `&select=id,account_id,amount,description,posted,pending,status,superseded_by,first_seen_at&limit=${MAX_ROWS}`,
       { headers: headers(serviceKey), cache: "no-store" }
     );
     if (!res.ok) throw new Error(`reconcile read ${res.status}`);
@@ -107,4 +114,4 @@ function trimAccountsToDays(accounts, days, now = Date.now()) {
   }));
 }
 
-module.exports = { ingestFeed, hasStoredTransactions, trimAccountsToDays, MAX_ROWS };
+module.exports = { ingestFeed, storeNeedsBackfill, trimAccountsToDays, MAX_ROWS };

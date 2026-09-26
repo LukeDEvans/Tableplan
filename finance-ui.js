@@ -610,13 +610,16 @@ function financeStoreUpsertManual(entry) {
     .then((ok) => (ok ? financeTxnStore?.sync() : null))
     .catch((e) => console.warn("Manual transaction not saved to stored history:", e?.message || e));
 }
-function financeStoreDeleteManual(id) {
+// Delete = UPSERT a full row with status "deleted" (not a PATCH): a PATCH is a
+// no-op when the row never reached the store (created offline / before the copy),
+// and another device's legacy copy would then insert it as active — resurrecting
+// it for good (review M4). An upserted tombstone row wins over any later copy
+// (manualRowsToCopy skips ids the store already has, deleted or not).
+function financeStoreDeleteManual(entry) {
   const groupId = getFinanceStoreGroupId?.();
-  if (!groupId || !canUseFinanceStore?.()) return;
-  writeSupabaseJson(
-    `finance_transactions?group_id=eq.${encodeURIComponent(groupId)}&id=eq.${encodeURIComponent(id)}&origin=eq.manual`,
-    { method: "PATCH", body: { status: "deleted" }, prefer: "return=minimal" }
-  ).then(() => financeTxnStore?.sync())
+  if (!entry?.id || !groupId || !canUseFinanceStore?.()) return;
+  financeStoreWriteRows([{ ...manualTxnToRow(entry, groupId), status: "deleted" }])
+    .then((ok) => (ok ? financeTxnStore?.sync() : null))
     .catch((e) => console.warn("Manual transaction delete not saved to stored history:", e?.message || e));
 }
 // The editable manual entry for an id: the JSONB record, or (store mode) the
@@ -642,11 +645,19 @@ async function copyLegacyManualTxnsToStore() {
 // Account-boundary purge (sign-out / account switch) — drops the local mirror.
 async function purgeLocalFinanceTxnStore() {
   try {
-    financeTxnStoreStorage?.close?.();
+    financeTxnStore?.dispose?.(); // an in-flight sync must not re-persist into a deleted DB
+    const storage = financeTxnStoreStorage;
     financeTxnStore = null;
     financeTxnStoreStorage = null;
     financeTxnStoreGroup = null;
-    if (typeof indexedDB !== "undefined" && indexedDB.deleteDatabase) indexedDB.deleteDatabase(FIN_TXN_DB);
+    await Promise.resolve(storage?.close?.()).catch(() => {});
+    if (typeof indexedDB !== "undefined" && indexedDB.deleteDatabase) {
+      // Resolve on success/error/blocked so the caller's awaited reload can't abort it.
+      await new Promise((resolve) => {
+        const req = indexedDB.deleteDatabase(FIN_TXN_DB);
+        req.onsuccess = req.onerror = req.onblocked = () => resolve();
+      });
+    }
   } catch { /* best-effort */ }
 }
 // Which month the finance page is showing ("YYYY-MM"). The budget is built to
@@ -1149,8 +1160,8 @@ function saveManualTxnForm(fields) {
 
 function deleteManualTxn(id) {
   if (!state.financeManualTxns || !confirm("Delete this transaction?")) return;
+  financeStoreDeleteManual(financeManualEntry(id) || { id });
   state.financeManualTxns = state.financeManualTxns.filter((m) => m.id !== id);
-  financeStoreDeleteManual(id);
   if (state.financeTxnLabels) delete state.financeTxnLabels[id];
   if (state.financeTxnNoteOverrides) delete state.financeTxnNoteOverrides[id];
   if (state.financeTxnReceipts && state.financeTxnReceipts[id]) deleteReceiptImage(id).catch(() => {});

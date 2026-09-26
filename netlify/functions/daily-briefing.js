@@ -5,7 +5,7 @@
 // To change the time, update: [functions."daily-briefing"] schedule = "0 <hour> * * *"
 
 import webpush from "web-push";
-import { ingestFeed, hasStoredTransactions, trimAccountsToDays } from "./_finance-ingest.js";
+import { ingestFeed, storeNeedsBackfill, trimAccountsToDays } from "./_finance-ingest.js";
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const SECTION_NAMES = ["eat", "grocery", "do", "play", "watch", "media", "plan", "health", "inventory", "recreate", "config"]; // NOTE: "finance" is intentionally excluded — never feed financial data into AI prompts
@@ -238,12 +238,12 @@ async function snapshotFinanceBalances(serviceKey) {
       // (each Netlify egress IP differs). Bank data only changes once a day,
       // so a single daily pull loses nothing.
       //
-      // Durable transaction store (FINANCE_TRANSACTIONS_DESIGN.md §3): the FIRST
-      // pull for a group asks for SimpleFIN's full 90 days once, so the store
-      // starts with as much history as the bank will give. null = table not
+      // Durable transaction store (FINANCE_TRANSACTIONS_DESIGN.md §3): until the
+      // store holds real history, the pull asks for SimpleFIN's full 90 days, so
+      // the store starts with as much as the bank will give. null = table not
       // reachable (migration not applied) → skip ingest, keep the 45-day pull.
-      const storeHasRows = await hasStoredTransactions({ serviceKey, groupId });
-      const pullDays = storeHasRows === false ? 90 : 45;
+      const needsBackfill = await storeNeedsBackfill({ serviceKey, groupId });
+      const pullDays = needsBackfill === true ? 90 : 45;
       const start = Math.floor(Date.now() / 1000) - pullDays * 86400;
       const bridge = await fetch(`${url}/accounts?start-date=${start}`, {
         headers: { accept: "application/json", ...(auth ? { authorization: `Basic ${auth}` } : {}) }
@@ -284,7 +284,7 @@ async function snapshotFinanceBalances(serviceKey) {
         }).then((r) => { if (!r.ok) console.error(`[fin-snapshot] cache warm ${r.status}`); }).catch((e) => console.error("[fin-snapshot] cache warm threw", e.name || "error"));
         // Durable store ingest — additive, failure-isolated (never blocks the
         // cache warm above or the balance snapshot below).
-        if (storeHasRows !== null) {
+        if (needsBackfill !== null) {
           try { await ingestFeed({ serviceKey, groupId, accounts: normalized }); }
           catch (e) { console.error("[fin-ingest] failed", e.message || "error"); }
         }

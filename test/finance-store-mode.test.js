@@ -306,3 +306,52 @@ describe("manual transactions ⇄ store (through the real finance module)", () =
   });
   function manualTxnRow(id) { return { id, group_id: "g1", origin: "manual", account_id: "manual:cash", posted: iso(2), amount: -8, description: "Cash lunch", pending: false, status: "active" }; }
 });
+
+describe("review regressions (through the real finance module)", () => {
+  it("H1: store mode with a store holding ONLY manual rows computes the same actuals/bell as the feed", async () => {
+    const feedState = makeState();
+    const feedRun = build(feedState);
+    await feedRun.fin.refreshFinanceLive(); await settle();
+    const state = { ...makeState(), financeTxnSource: "store" };
+    const storeRows = [{ id: "fin-man-9", group_id: "g1", origin: "manual", account_id: "manual:cash", status: "active", posted: iso(400), amount: -1, description: "old cash", updated_at: "2026-01-01T00:00:00Z" }];
+    const run = build(state, { storeRows });
+    await run.fin.refreshFinanceLive(); await settle();
+    expect(state.financeMonthActuals).toEqual(feedState.financeMonthActuals);
+    expect(run.bell.at(-1)).toBe(feedRun.bell.at(-1));
+  });
+
+  it("H2: a CSV row imported before the bank delivered the same charge isn't double-counted", async () => {
+    const feedState = makeState();
+    const feedRun = build(feedState);
+    await feedRun.fin.refreshFinanceLive(); await settle();
+    const state = { ...makeState(), financeTxnSource: "store" };
+    // CSV copy of cur1 ($40 Trader Joe's, labeled via import_label) sits in the store.
+    const storeRows = [{ id: "csv_x", group_id: "g1", origin: "csv", account_id: "A1", status: "active", posted: iso(1), amount: -40, description: "TRADER JOES 552", import_label: "cat:g:c", updated_at: "2026-01-01T00:00:00Z" }];
+    const run = build(state, { storeRows });
+    await run.fin.refreshFinanceLive(); await settle();
+    expect(state.financeMonthActuals[monthOf(1)]).toEqual(feedState.financeMonthActuals[monthOf(1)]);
+  });
+});
+
+describe("M4: manual delete of an entry the store never had", () => {
+  it("writes a deleted TOMBSTONE row (upsert), so a later legacy copy can't resurrect it", async () => {
+    const writes = [];
+    const state = { ...makeState(), financeTxnSource: "feed", financeManualTxns: [{ id: "fin-man-7", posted: iso(2), amount: -4, description: "Tip", account: "Cash" }] };
+    const fin = createFinanceModule({
+      state, elements: {}, persist: () => {}, createId: (p) => p, escapeHtml: String, showMailToast: () => {}, recordDeletion: () => {}, trackUsage: () => {},
+      callNetlifyFunction: async () => ({}), dateKeyFromDate: (d) => d.toISOString().slice(0, 10), setPageNotifCount: () => {},
+      setWeekToolsMode: () => {}, closeWeekJumpMenu: () => {}, getCurrentProfileMember: () => null, renderContextSettingsDialog: () => {},
+      openContextSettingsDialog: () => {}, prepareScanImage: async () => null, fileToDataUrl: async () => "",
+      getActiveAppArea: () => "home", getSupabaseClient: () => null, getAuthSession: () => null, getContextSettingsKind: () => "",
+      getFinanceStoreGroupId: () => "g1", canUseFinanceStore: () => true,
+      fetchSupabaseJson: async () => [], writeSupabaseJson: async (path, o) => { writes.push({ path, ...o }); },
+    });
+    globalThis.confirm = () => true;
+    fin.onFinanceGridClick({ target: { closest: () => ({ dataset: { finAction: "manual-txn-delete", id: "fin-man-7" } }) } });
+    await settle();
+    expect(writes).toHaveLength(1);
+    expect(writes[0].method).toBe("POST");
+    expect(writes[0].body[0]).toMatchObject({ id: "fin-man-7", origin: "manual", status: "deleted", amount: -4 });
+    expect(state.financeManualTxns).toEqual([]);
+  });
+});

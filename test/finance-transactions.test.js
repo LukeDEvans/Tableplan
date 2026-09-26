@@ -29,10 +29,11 @@ describe("feedToStoreRows", () => {
     const rows = feedToStoreRows("g1", accounts, "2026-09-26T00:00:00Z");
     expect(rows).toEqual([{
       id: "t1", group_id: "g1", origin: "simplefin", account_id: "A1", posted: day(1),
-      amount: -12.35, description: "SHELL", pending: true, last_seen_at: "2026-09-26T00:00:00Z",
+      amount: -12.35, description: "SHELL", pending: true, status: "active", superseded_by: null,
+      last_seen_at: "2026-09-26T00:00:00Z",
     }]);
-    // App-owned columns must never be in an ingest upsert (merge-duplicates would clobber them).
-    for (const k of ["status", "superseded_by", "import_label", "import_batch"]) expect(rows[0]).not.toHaveProperty(k);
+    // Import metadata is never in an ingest upsert (merge-duplicates would clobber it).
+    for (const k of ["import_label", "import_batch"]) expect(rows[0]).not.toHaveProperty(k);
   });
   it("is deterministic — the same payload twice yields identical rows (idempotent upsert)", () => {
     expect(feedToStoreRows("g1", accounts, "x")).toEqual(feedToStoreRows("g1", accounts, "x"));
@@ -175,5 +176,70 @@ describe("manual transactions ⇄ store", () => {
     const rows = manualRowsToCopy([m("a"), m("b")], [{ id: "a", origin: "manual", status: "deleted" }], "g1");
     expect(rows.map((r) => r.id)).toEqual(["b"]);
     expect(manualRowsToCopy([m("a")], [{ id: "a", origin: "manual" }], "g1")).toEqual([]);
+  });
+});
+
+describe("adversarial-review regressions", () => {
+  const row = (id, o) => ({ id, account_id: "A1", status: "active", pending: false, amount: -10, description: "SHELL OIL 123", posted: day(3), ...o });
+
+  it("M1: a pending row on an account MISSING from a partial pull is never reconciled", () => {
+    const rows = [row("p1", { pending: true, posted: day(20) }), row("q1", { posted: day(19) })];
+    const partial = [{ id: "OTHER", transactions: [{ id: "x", posted: day(40) }] }];
+    expect(reconcilePending(rows, partial, { now: NOW })).toEqual([]);
+  });
+  it("M1: never supersedes onto an EARLIER charge at the same merchant", () => {
+    const rows = [row("p1", { pending: true, posted: day(3) }), row("older", { posted: day(4) })];
+    const feed = [{ id: "A1", transactions: [{ id: "anchor", posted: day(40) }, { id: "older", posted: day(4) }] }];
+    expect(reconcilePending(rows, feed, { now: NOW })).toEqual([]);
+  });
+  it("M1: a re-seen row is written back as active (heals a wrong reconcile)", () => {
+    const [r] = feedToStoreRows("g1", [{ id: "A1", transactions: [{ id: "p1", posted: day(1), amount: -1, description: "X", pending: true }] }]);
+    expect(r).toMatchObject({ status: "active", superseded_by: null });
+  });
+  it("M3: undated pending rows gone from their account's pull vanish after 2 days since first seen", () => {
+    const feed = [{ id: "A1", transactions: [{ id: "anchor", posted: day(40) }] }];
+    expect(reconcilePending([row("u1", { pending: true, posted: null, first_seen_at: day(3) })], feed, { now: NOW }))
+      .toEqual([{ id: "u1", status: "vanished", superseded_by: null }]);
+    expect(reconcilePending([row("u1", { pending: true, posted: null, first_seen_at: day(1) })], feed, { now: NOW })).toEqual([]);
+    expect(reconcilePending([row("u1", { pending: true, posted: null, first_seen_at: day(9), account_id: "B" })], feed, { now: NOW })).toEqual([]);
+  });
+
+  it("H1: a store holding only manual/CSV rows never hides the feed's bank transactions", () => {
+    const live = [{ id: "A1", name: "Checking", transactions: [{ id: "b1", posted: day(1), amount: -5, description: "COFFEE" }] }];
+    const store = [
+      { id: "fin-man-1", origin: "manual", account_id: "manual:cash", status: "active" },
+      { id: "csv_1", origin: "csv", account_id: "csv:Old Visa", status: "active", posted: day(400), amount: -9, description: "OLD" },
+    ];
+    const view = storeAccountsView(store, live);
+    expect(view.find((a) => a.id === "A1").transactions.map((t) => t.id)).toEqual(["b1"]);
+    expect(view.find((a) => a.id === "csv:Old Visa").transactions.map((t) => t.id)).toEqual(["csv_1"]);
+  });
+  it("H1: a feed txn the store marked superseded is hidden; store rows beyond the feed window are added", () => {
+    const live = [{ id: "A1", transactions: [{ id: "p1", posted: day(2), amount: -1, description: "SHELL", pending: true }, { id: "q1", posted: day(1), amount: -48, description: "SHELL" }] }];
+    const store = [
+      { id: "p1", origin: "simplefin", account_id: "A1", status: "superseded", superseded_by: "q1" },
+      { id: "q1", origin: "simplefin", account_id: "A1", status: "active", posted: day(1), amount: -48, description: "SHELL" },
+      { id: "old", origin: "simplefin", account_id: "A1", status: "active", posted: day(200), amount: -3, description: "OLD" },
+    ];
+    expect(storeAccountsView(store, live)[0].transactions.map((t) => t.id).sort()).toEqual(["old", "q1"]);
+  });
+  it("H2: a CSV row for a charge the bank delivered LATER is hidden (one-to-one)", () => {
+    const live = [{ id: "A1", transactions: [{ id: "b1", posted: "2026-09-02T04:00:00Z", amount: -45.1, description: "TRADER JOE S #552" }] }];
+    const store = [
+      { id: "c1", origin: "csv", account_id: "A1", status: "active", posted: "2026-09-01T12:00:00Z", amount: -45.1, description: "TRADER JOES 552" },
+      { id: "c2", origin: "csv", account_id: "A1", status: "active", posted: "2026-09-01T12:00:00Z", amount: -45.1, description: "TRADER JOES 552" },
+      { id: "c3", origin: "csv", account_id: "A1", status: "active", posted: "2026-03-01T12:00:00Z", amount: -45.1, description: "TRADER JOES 552" },
+    ];
+    const ids = storeAccountsView(store, live)[0].transactions.map((t) => t.id).sort();
+    expect(ids).toEqual(["b1", "c2", "c3"]); // c1 paired with b1; c2 (second real charge) and c3 (old) kept
+  });
+  it("M2: old labelled MANUAL entries no longer make old months eligible for re-snapshot", () => {
+    const txns = [
+      { id: "m1", isManual: true, posted: "2025-02-10T12:00:00Z", label: "cat:g:c" },
+      { id: "m2", isManual: true, posted: "2025-03-10T12:00:00Z", label: "cat:g:c" },
+      { id: "b1", posted: day(10), label: "cat:g:c" },
+    ];
+    const months = [...financeMonthsToSnapshot(txns, "2026-09")];
+    expect(months.some((m) => m.startsWith("2025"))).toBe(false);
   });
 });

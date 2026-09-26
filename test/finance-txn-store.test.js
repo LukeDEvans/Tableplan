@@ -91,3 +91,27 @@ describe("createFinanceTxnStore", () => {
     expect(changed).toBe(50 * 1000);
   });
 });
+
+describe("cursor overlap (review LOW: slow-commit skip)", () => {
+  it("a row committed late with an updated_at BEHIND the cursor is still picked up; overlap isn't counted as change", async () => {
+    const table = [row("a", "2026-09-26T10:00:00.000Z"), row("b", "2026-09-26T10:05:00.000Z")];
+    const srv = fakeServer(table);
+    const store = createFinanceTxnStore({ storage: createMemoryStorage(), fetchJson: srv.fetchJson, groupId: "g1" });
+    await store.sync();
+    table.push(row("late", "2026-09-26T10:04:00.000Z")); // started before b, committed after we synced b
+    const { changed, rows } = await store.sync();
+    expect(rows.map((r) => r.id).sort()).toEqual(["a", "b", "late"]);
+    expect(changed).toBe(1);
+  });
+  it("dispose() stops an in-flight sync from persisting (account-boundary purge)", async () => {
+    const storage = createMemoryStorage();
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const store = createFinanceTxnStore({ storage, fetchJson: async () => { await gate; return [row("a", "2026-09-26T10:00:00.000Z")]; }, groupId: "g1" });
+    const p = store.sync();
+    store.dispose();
+    release();
+    await p;
+    expect(await storage.get("rows", "rows:g1")).toBeUndefined();
+  });
+});

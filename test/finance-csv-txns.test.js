@@ -97,3 +97,21 @@ describe("dedupeImport", () => {
     expect(r.fresh.map((c) => c.id).sort()).toEqual(["c1", "c2", "c3", "c4"]);
   });
 });
+
+describe("Debit/Credit column exports (review LOW)", () => {
+  const rows = parseCsvRows(`Date,Description,Debit,Credit,Category
+09/01/2026,GROCER,45.10,,Groceries
+09/02/2026,REFUND,,5.00,Groceries
+09/03/2026,EMPTY,,,`);
+  it("csvRowsToTxns: debit → negative, credit → positive, empty row invalid", () => {
+    const { txns, invalid } = csvRowsToTxns(rows, { accountId: "a", nameToKey: { groceries: "cat:g:c" } });
+    expect(txns.map((t) => t.amount)).toEqual([-45.1, 5]);
+    expect(invalid).toBe(1);
+  });
+  it("aggregateCsvBackfill: debits count as spending (not income)", async () => {
+    const { aggregateCsvBackfill } = await import("../finance-csv.js");
+    const out = aggregateCsvBackfill(rows, { groceries: "cat:g:c" });
+    expect(out.months["2026-09"].cats["cat:g:c"]).toBe(50.1); // |−45.10| + |+5| — same magnitude rule as before for categorized rows
+    expect(out.months["2026-09"].income).toBe(0);
+  });
+});
