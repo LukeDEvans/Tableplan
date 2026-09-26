@@ -62,6 +62,12 @@ create trigger finance_transactions_touch before update on public.finance_transa
 for each row execute function public.finance_transactions_touch();
 
 alter table public.finance_transactions enable row level security;
+-- Explicit Data API grants (Supabase stops auto-granting new tables 2026-10-30;
+-- ARCHITECTURE §6). Least privilege matching the RLS below: clients read/insert/
+-- update (no DELETE — soft delete only); the service-role ingest gets full access.
+-- (Prod already holds broader auto-grants from creation; RLS still governs them.)
+grant select, insert, update on public.finance_transactions to authenticated;
+grant select, insert, update, delete on public.finance_transactions to service_role;
 
 drop policy if exists "fin txn read"   on public.finance_transactions;
 drop policy if exists "fin txn insert" on public.finance_transactions;
