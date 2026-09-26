@@ -36,3 +36,10 @@ with check (
   id = 'personal'
   and lower(coalesce(auth.jwt() ->> 'email', '')) = 'YOUR-EMAIL@example.com'
 );
+
+-- ── Data API grants ─────────────────────────────────────────────────────────
+-- Explicit grants (from 2026-10-30 Supabase no longer auto-grants new public tables to the Data
+-- API on 2026-10-30). Least-privilege: matches the RLS policies above; RLS still
+-- decides which rows. No anon grant — the app never reads these signed-out.
+grant select, insert, update on public.tableplan_states to authenticated;
+grant select, insert, update, delete on public.tableplan_states to service_role;

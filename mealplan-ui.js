@@ -13,6 +13,7 @@
 // the restore machinery, and the eat shell (activateEatShell). The legacy week.manualGroceries
 // field is untouched (Decision #2b).
 import * as LiveMealPlanServings from './meal-plan-servings.js';
+import { mealColumnIndexForTime, minutesSinceMidnight } from './meal-plan-time.js';
 import { icon as ldeIcon } from './live-icons.js';
 
 function createId(prefix = "id") {
@@ -137,6 +138,9 @@ export function createMealplanModule(deps) {
   let mealPlanContextPressTimer = null;
   let mealPlanNotifWired = false;
   let mealPlanSwipeIndex = 0;
+  // True until the carousel has been scrolled to the meal for the current time
+  // of day (noon → Lunch). Set on first load and whenever the meal plan is opened.
+  let pendingTimeOfDayMealSnap = true;
   let mealPointerDeleteGesture = null;
   let pendingAutoRuleCompaction = null;
   let restaurantSearchSessionToken = "";
@@ -1371,7 +1375,7 @@ function renderPlanner() {
       // One context card per column (Breakfast/Lunch/Dinner), above its meal(s) —
       // never per person, even when the column is split into individual meals.
       const columnHtml = slotsHtml.trim() ? mealContextCardTemplate(activeDay, column) + slotsHtml : "";
-      return { column, html: columnHtml };
+      return { column, html: columnHtml, label: column.label };
     })
     .filter((column) => column.html.trim());
   const mealPlanColumnCount = Math.max(1, mealPlanColumns.length);
@@ -1404,8 +1408,8 @@ function renderPlanner() {
     <section class="day-column planner-day-panel" role="tabpanel" id="panel-${activeDay.id}" aria-labelledby="tab-${activeDay.id}">
       ${activeDayEventsTemplate(activeDay)}
       <div class="day-slots-carousel" style="--meal-column-count: ${mealPlanColumnCount};" aria-label="${escapeHtml(activeDay.name)} meals">
-        ${mealPlanColumns.map(({ html }) => `
-          <div class="meal-plan-column">
+        ${mealPlanColumns.map(({ html, label }) => `
+          <div class="meal-plan-column" data-meal-column="${escapeHtml(label)}">
             ${html}
           </div>
         `).join("")}
@@ -1533,13 +1537,6 @@ function renderPlanner() {
     });
   });
 
-  elements.plannerGrid.querySelectorAll("[data-planned-servings]").forEach((input) => {
-    input.addEventListener("click", (event) => event.stopPropagation());
-    input.addEventListener("pointerdown", (event) => event.stopPropagation());
-    input.addEventListener("change", () => updateMealPlannedServings(input));
-    input.addEventListener("blur", () => updateMealPlannedServings(input));
-  });
-
   elements.plannerGrid.querySelectorAll("[data-generate-meal-section]").forEach((button) => {
     button.addEventListener("click", () => autoGenerateMealSection(button.dataset.day, button.dataset.meal));
   });
@@ -1648,16 +1645,61 @@ function currentPlannerCarouselState() {
   const carousel = elements.plannerGrid.querySelector(".day-slots-carousel");
   return {
     dayId: panel?.id?.replace(/^panel-/, "") || "",
-    scrollLeft: carousel?.scrollLeft || 0
+    scrollLeft: carousel?.scrollLeft || 0,
+    columnLabel: visibleMealColumnLabel(carousel)
   };
 }
 
+// The meal column currently snapped into view on a phone-width carousel.
+function visibleMealColumnLabel(carousel) {
+  if (!carousel || !carousel.clientWidth) return "";
+  const left = carousel.getBoundingClientRect().left;
+  let best = null;
+  let bestDistance = Infinity;
+  carousel.querySelectorAll(".meal-plan-column").forEach((column) => {
+    const distance = Math.abs(column.getBoundingClientRect().left - left);
+    if (distance < bestDistance) { bestDistance = distance; best = column; }
+  });
+  return best?.dataset.mealColumn || "";
+}
+
+function scrollCarouselToColumn(carousel, column) {
+  if (!column) return;
+  carousel.scrollLeft += column.getBoundingClientRect().left - carousel.getBoundingClientRect().left;
+}
+
+function timeOfDayMealColumn(columns) {
+  return columns[mealColumnIndexForTime(columns.map((c) => c.dataset.mealColumn), minutesSinceMidnight())];
+}
+
+function requestMealPlanTimeOfDaySnap() {
+  pendingTimeOfDayMealSnap = true;
+}
+
+// Opening the meal plan → the meal for the current time of day (noon → Lunch).
+// Same-day re-render → keep the exact scroll position (edits shouldn't jump).
+// Switching days → the same meal column (Lunch stays Lunch), else time of day.
 function restorePlannerCarouselState(previousState, activeDayId) {
-  if (!previousState?.dayId || previousState.dayId !== activeDayId) return;
   const carousel = elements.plannerGrid.querySelector(".day-slots-carousel");
   if (!carousel) return;
+  const sameDay = previousState?.dayId && previousState.dayId === activeDayId;
   window.requestAnimationFrame(() => {
-    carousel.scrollLeft = previousState.scrollLeft;
+    if (!carousel.isConnected) return;
+    const columns = [...carousel.querySelectorAll(".meal-plan-column")];
+    if (pendingTimeOfDayMealSnap) {
+      // A hidden (0-width) carousel can't scroll; stay pending until it's visible.
+      if (!carousel.clientWidth) return;
+      pendingTimeOfDayMealSnap = false;
+      scrollCarouselToColumn(carousel, timeOfDayMealColumn(columns));
+      return;
+    }
+    if (sameDay) {
+      carousel.scrollLeft = previousState.scrollLeft;
+      return;
+    }
+    const sameLabel = previousState?.columnLabel
+      && columns.find((c) => c.dataset.mealColumn === previousState.columnLabel);
+    scrollCarouselToColumn(carousel, sameLabel || timeOfDayMealColumn(columns));
   });
 }
 
@@ -2379,7 +2421,6 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
           <button class="recipe-meal-link" type="button" data-view-recipe="${escapeHtml(recipe.id)}">
             ${escapeHtml(recipe.name)}
           </button>
-          <span class="meal-planned-servings">${escapeHtml(formatPlannedServings(plannedServingsForEntry(entry, recipe)))}</span>
         </div>
       `;
     }
@@ -2431,18 +2472,12 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
   }
 
   if (recipe) {
-    const servingsEditor = recipe.virtualGroceryRecipe ? "" : `
-          <label class="meal-planned-servings-editor">
-            <span>Cook</span>
-            <input type="number" min="0.25" step="0.25" inputmode="decimal" data-planned-servings data-day="${day.id}" data-meal="${meal}" data-index="${index}" value="${escapeHtml(String(plannedServingsForEntry(entry, recipe)))}" aria-label="Planned servings for ${escapeHtml(recipe.name)}" />
-            <span>servings</span>
-          </label>`;
     return `
       <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}">
         <div class="meal-recipe-plan">
           <button class="recipe-meal-link" type="button" data-view-recipe="${escapeHtml(recipe.id)}" data-edit-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Double-click to edit">
             ${escapeHtml(recipe.name)}
-          </button>${servingsEditor}
+          </button>
         </div>
         <button class="meal-swipe-delete" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" aria-label="Delete ${escapeHtml(recipe.name)}">Delete</button>
       </div>
@@ -2476,11 +2511,6 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
       <button class="meal-swipe-delete" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" aria-label="Delete meal entry">Delete</button>
     </div>
   `;
-}
-
-function formatPlannedServings(value) {
-  const servings = Number(value) || 1;
-  return `${formatDailyDozenServings(servings)} serving${servings === 1 ? "" : "s"}`;
 }
 
 function isEditingMealEntry(dayId, meal, index) {
@@ -2550,7 +2580,7 @@ function leftoversIconTemplate() {
 
 function handleMealEntryDragStart(event) {
   if (event.currentTarget.querySelector("[data-meal-input]")
-    || event.target.closest("[data-special-meal-note], [data-planned-servings], [data-link-restaurant], [data-unlink-restaurant], [data-show-restaurant-info], .meal-restaurant-bar-link")) {
+    || event.target.closest("[data-special-meal-note], [data-link-restaurant], [data-unlink-restaurant], [data-show-restaurant-info], .meal-restaurant-bar-link")) {
     event.preventDefault();
     return;
   }
@@ -3304,23 +3334,6 @@ function commitMealInput(input) {
   setMeal(input.dataset.day, input.dataset.meal, compactMealSlotEntries(nextEntries, input.dataset.meal));
 }
 
-function updateMealPlannedServings(input) {
-  const day = input.dataset.day;
-  const meal = input.dataset.meal;
-  const index = Number(input.dataset.index);
-  const week = weekState();
-  const entries = mealEntryList(slotEntries(week.slots?.[day]?.[meal]), meal);
-  const recipe = recipeForSlot(entries[index]);
-  if (!recipe || recipe.virtualGroceryRecipe) return;
-  const currentEntry = isPlannedRecipeEntry(entries[index])
-    ? entries[index]
-    : createPlannedRecipeEntry(recipe, day, meal);
-  currentEntry.plannedServings = Math.max(0.25, Number(input.value) || recipeDefaultServings(recipe));
-  entries[index] = normalizePlannedRecipeEntry(currentEntry);
-  input.value = String(entries[index].plannedServings);
-  setMeal(day, meal, compactMealSlotEntries(entries, meal));
-}
-
 function mealInputValue(slotValue) {
   if (!slotValue) return "";
   const specialMeal = specialMealForSlot(slotValue);
@@ -4041,6 +4054,7 @@ function mealPlanNutritionTotals(week = weekState()) {
     updateGroceryMealServing,
     updateMealDragPoint,
     updateMealPlannedServingsFromContext,
+    requestMealPlanTimeOfDaySnap,
     warmMealPlanRecipes,
   };
 }

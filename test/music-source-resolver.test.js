@@ -51,6 +51,17 @@ describe("resolvePlayableSource — exact via own refs", () => {
   });
 });
 
+describe("resolvePlayableSource — playback-owning providers (Apple Music)", () => {
+  it("an OWNED source (no URL) still resolves exact, so saved Apple items play", async () => {
+    const apple = fakeProvider("applemusic", { refs: { "123": { provider: "applemusic", owned: true, externalId: "123", url: null } } });
+    const rec = recording([{ provider: "applemusic", externalId: "123" }]);
+    const r = await resolvePlayableSource(rec, { registry: registry([apple]) });
+    expect(r.status).toBe("exact");
+    expect(r.source.owned).toBe(true);
+    expect(r.providerRef.externalId).toBe("123");
+  });
+});
+
 describe("resolvePlayableSource — provider down / dynamic availability", () => {
   it("skips an unavailable provider without deleting refs, uses the next", async () => {
     const down = fakeProvider("musopen", { up: false, refs: { m: { provider: "musopen", url: "https://m" } } });

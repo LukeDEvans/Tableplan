@@ -42,3 +42,10 @@ CREATE POLICY "Members can delete group history"
         AND live_group_members.user_id = auth.uid()
     )
   );
+
+-- ── Data API grants ─────────────────────────────────────────────────────────
+-- Explicit grants (from 2026-10-30 Supabase no longer auto-grants new public tables to the Data
+-- API on 2026-10-30). Least-privilege: matches the RLS policies above; RLS still
+-- decides which rows. No anon grant — the app never reads these signed-out.
+grant select, insert, delete on tableplan_state_history to authenticated;
+grant select, insert, update, delete on tableplan_state_history to service_role;
