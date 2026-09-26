@@ -521,9 +521,12 @@ Live Supabase/Anthropic E2E needs your deploy, and I'll say so rather than claim
 - **Q2 — tip goes to the main (largest) category**, with a per-receipt override.
 - **Q3 — read-time overlay (§4.4) accepted.** Finance state shape is unchanged. The three
   finance *logic* changes are flagged in their commits.
-- **Q4 — CSV: build for the long term. Still open:** the options are in §12.1.
-- **Q5 — up to 8 images per receipt.** "Remove all past scans": exact scope still being
-  confirmed (§12.2).
+- **Q4 — build a durable transaction store (direction agreed; its own SPEC pending).** Every
+  daily SimpleFIN pull is kept permanently, and transactions already seen are not taken in
+  again. CSV and manual entries go into the same store. See §12.1.
+- **Q5 — up to 8 images per receipt. No legacy migration: past scans (a), (b) and (c) are
+  deleted** — see §12.2. **This supersedes §10:** the migration planner and the dry-run import
+  are dropped.
 
 ### 12.1 Q4 — what "matching against CSV" needs
 CSV import today writes only month totals (F2). SimpleFIN transactions exist only in a 45-day
@@ -549,14 +552,21 @@ be matched once it's more than 45 days old.
 sequenced project**: its own SPEC, done right after (or before) this one. Receipts gain CSV
 matching the moment that table lands.
 
-### 12.2 Q5 — scope of "remove all past scans"
-Waiting on Luke to confirm which of these it covers:
-- legacy finance image-only scans (`financeTxnReceipts` + their Storage objects),
-- email receipts (`finreceipts_`),
-- Shop receipts (`state.receipts` and the price history derived from them).
+### 12.2 Q5 — purge legacy receipt data (replaces §10 migration)
+Luke accepts losing the receipt-derived price history. **Nothing is imported.** After the new
+ledger is verified end to end, one confirmed, separate "Purge legacy receipts" step does all
+of the following:
+- **Finance photos:** clears `state.financeTxnReceipts` and removes those Storage objects
+  from the per-uid `receipt-attachments` paths.
+- **Email receipts:** deletes the `finreceipts_<group>` row (service role, from the
+  `receipts.js` function).
+- **Shop receipts:** clears `state.receipts`, plus the `priceHistory` entries with
+  `source === "receipt"`, plus the content-store blobs `receipt:<id>:<n>`.
+- **Kept:** manual `groceryPriceObservations` and `receiptItemMappings` (the mappings are the
+  learning loop — Luke to veto if he wants those gone too).
 
-Deleting is irreversible, so this happens only after the new ledger is confirmed working, as
-its own step.
+Before any of this runs, a dry-run shows the counts. The purge is then written to be
+idempotent, and nothing is deleted before Luke clicks confirm.
 
 ## Appendix A — DRAFT SQL (for review, not applied, not yet in `migrations/`)
 
