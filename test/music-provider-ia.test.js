@@ -46,6 +46,9 @@ describe("Internet Archive provider — search", () => {
     const u = c.calls[0];
     expect(u).toContain("mediatype%3A%28audio%29");
     expect(u).toContain("output=json");
+    // relevance-ranked, with non-music audio (audiobooks/podcasts/OTR) excluded
+    expect(u).not.toContain("downloads+desc");
+    expect(decodeURIComponent(u.replace(/\+/g, " "))).toContain("NOT collection:(librivoxaudio OR");
   });
 
   it("scopes the Musopen variant to the musopen collection", async () => {

@@ -54,7 +54,9 @@ export async function resolvePlayableSource(recording, opts = {}) {
     if (!p) { attempts.push({ provider: ref.provider, ok: false, reason: "no-provider" }); continue; }
     if (!(await providerUp(p))) { attempts.push({ provider: ref.provider, ok: false, reason: "unavailable" }); continue; }
     const src = await sourceFromRef(p, ref);
-    if (src && src.url) return { status: "exact", source: src, providerRef: ref, recording, attempts };
+    // A playback-owning provider (Apple Music) resolves to an `owned` source —
+    // no URL; the caller plays it through that provider's transport.
+    if (src && (src.url || src.owned)) return { status: "exact", source: src, providerRef: ref, recording, attempts };
     attempts.push({ provider: ref.provider, ok: false, reason: "no-source" });
   }
 

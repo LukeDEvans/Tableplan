@@ -5,7 +5,7 @@ The Music tab has **three modes over shared systems, one playback engine**:
 | Mode | What it is | Modules | Data |
 |---|---|---|---|
 | **Saved** | Your personal library — favourites (Works/Recordings) + playlists + recently played, all **canonical & provider-independent** | `music-canonical.js`, `music-library-model.js` | `state.musicLibrary` (local) |
-| **Discover** | Stream on demand from free/open providers; results **consolidated under canonical Works** | `music-streaming.js`, `music-provider-*.js`, `music-canonical.js` | nothing stored — metadata only, streamed from source |
+| **Discover** | **Apple Music first** when connected (search + home shelves), then free/open providers; results **consolidated under canonical Works** | `music-streaming.js`, `music-provider-*.js`, `music-canonical.js` | nothing stored — metadata only, streamed from source |
 | **Library** | Music you *own* — local uploads + a Jellyfin server | `music-library.js`, `music-tags.js`, `music-jellyfin.js` | audio **bytes** in IndexedDB / Jellyfin |
 
 Playback of a saved Recording goes through `music-source-resolver.js` (provider fallback). See §11–13 below.
@@ -76,6 +76,22 @@ returns `{configured:false}` and the provider stays inert (`isAvailable()=false`
 Prereqs outside the code: an Apple Developer membership + MusicKit key, and an
 Apple Music subscription on the listening device.
 
+**Apple Music is the primary catalog when enabled (2026-09-24).** Discover renders
+Apple results first in sections — Songs · Works (classical songs Apple tags with
+`composerName`/`workName`/`movementName`, consolidated under the Work) · Albums ·
+Artists · Playlists — with the free sources in a collapsible "Free & open sources"
+section below. The Discover home shows Apple shelves from `provider.getHome()`:
+charts always; recommendations + recently played once signed in (loaded once per
+session, 30-min in-memory TTL — never polled). Search covers songs, albums, artists
+and playlists; `getItem` expands albums, playlists (catalog `pl.…` and library
+`p.…`) and artists (top songs). The storefront is the signed-in user's
+(`music.storefrontId`) unless `state.appleMusic.storefront` is set. Saved Apple
+recordings play via `resolveRef()` → an **owned** (URL-less) source that the
+resolver accepts and `startRecordingResolved` routes to the transport. Settings →
+Apple Music runs `checkCatalog()` to tell "key missing" / "key rejected" / "ok"
+apart. `sw.js` skips `apple.com` + `mzstatic.com` so MusicKit API/DRM/HLS traffic
+is never cached.
+
 `createMusicProviderRegistry(providers)` exposes `search(query)` = **aggregated, isolated** search: every SEARCH-capable available provider runs under `Promise.allSettled`, results merge, and per-provider failures are reported in `providerStatuses` **without breaking the others**. HTTP clients are **injected** (`deps.fetchJson`) so providers are testable and a Netlify proxy can slot in later without touching callers.
 
 ---
@@ -86,7 +102,12 @@ Apple Music subscription on the listening device.
 |---|---|---|---|---|
 | **Internet Archive** | `internetarchive` | `advancedsearch.php` + `metadata/{id}`, streams `/download/{id}/{file}` | SEARCH, GET_ITEM, PLAYABLE, ARTWORK, LICENSE, PAGINATION | Auth-free, CORS-enabled. Search → albums; `getItem` reads metadata files, keeps one streamable file per track (prefers MP3, de-dups formats, **skips ZIP/non-audio**). The workhorse. |
 | **Musopen** | `musopen` | Internet Archive `collection:(musopen)` | same as IA | Musopen has no reliable standalone public streaming API; its catalogue lives on IA. `createMusopenProvider` = the IA provider scoped to that collection. **Some Musopen uploads are ZIP-only bundles → no individual tracks** (surfaced gracefully as "no streamable tracks"). |
-| **Jamendo** | `jamendo` | `api.jamendo.com/v3.0` | SEARCH, PLAYABLE, ARTWORK, LICENSE, PAGINATION | CC-licensed independent music. **Requires a `client_id`** (register at developer.jamendo.com; put it in `state.jamendo.clientId`). Inert/`isAvailable()=false` without one — the architecture never depends on it. Track-oriented: results are directly playable, no `getItem`. |
+| **Apple Music** | `applemusic` | MusicKit JS v3 (`/v1/catalog`, `/v1/me`) | SEARCH, GET_ITEM, ARTWORK, OWNS_PLAYBACK, AUTH, RECOMMEND | See §2a. Primary catalog when enabled. |
+
+*Jamendo (CC-licensed indie music) was **retired 2026-09-24**: it needed a `client_id`
+that had no settings UI and `state.jamendo` was never in `STATE_SECTIONS`, so it was
+never actually reachable; with Apple Music as the primary catalog it added little.
+The adapter was deleted; re-adding it is the normal "Adding a provider" recipe below.*
 
 ### Adding a provider
 1. Write `music-provider-<name>.js` exporting `create<Name>Provider(config, {fetchJson})` returning the interface above; map its API to the normalized types; keep the raw schema inside the file.
@@ -132,7 +153,7 @@ A saved Recording is canonical; the **currently-playable source is separate and 
 - **`alternate`** — the exact recording is unreachable, but a *different performance of the same Work* exists. **Offered to the user, never silently substituted** (§13) — the app shows a "Recording unavailable — play another performance?" prompt.
 - **`unavailable`** — nothing resolves right now.
 
-Providers implement `resolveRef(ref)` to reconstruct a stream URL from a stored reference **without a search** (IA: `identifier/filename`→download URL; Jamendo: track-id→mp3 endpoint). A provider failing is **skipped, never deleted** — availability is dynamic (§18). In a playlist queue, unresolvable/alternate items are skipped (not removed); an explicit single play prompts for the alternate.
+Providers implement `resolveRef(ref)` to reconstruct a stream URL from a stored reference **without a search** (IA: `identifier/filename`→download URL; Apple Music: catalog id → an `owned` source, played through the transport). A provider failing is **skipped, never deleted** — availability is dynamic (§18). In a playlist queue, unresolvable/alternate items are skipped (not removed); an explicit single play prompts for the alternate.
 
 ## 4. Playback flow
 
@@ -171,7 +192,7 @@ No Supabase tables were added; this matches how the rest of the app stores user 
 
 - **Metadata**: expanded items cached in-memory (`musicItemCache`). Search is debounced (380 ms) with an out-of-order guard (`musicSearchToken`).
 - **Images**: normal browser HTTP cache (IA `services/img`).
-- **Audio**: streamed, **never cached/downloaded**. `sw.js` `SKIP_HOSTS` excludes `archive.org`/`jamendo.com` so the service worker never caches streams or mangles range requests.
+- **Audio**: streamed, **never cached/downloaded**. `sw.js` `SKIP_HOSTS` excludes `archive.org` and `apple.com`/`mzstatic.com` (MusicKit) so the service worker never caches streams, personal API responses, or mangles range requests.
 - Providers fetch **directly** from the client (IA CORS verified; media plays cross-origin without CORS). If rate limits ever bite, inject a `fetchJson` that routes through a Netlify function — no caller changes.
 - No CSP is set on the site, so cross-origin fetch/img/audio to these hosts work on the deployed HTTPS PWA.
 
@@ -189,7 +210,8 @@ Live **Radio** will share the engine, session, favorites, history, and controls,
 
 ## 9. Known limitations / next steps
 - **Musopen** coverage is partial (IA ZIP bundles yield no tracks); a curated allow-list of good Musopen items would improve it.
-- **Jamendo** needs a `client_id` (no in-app settings field yet — set `state.jamendo.clientId`).
+- **Internet Archive** search is relevance-ranked and excludes non-music audio collections (audiobooks, podcasts, old-time radio, …) — `NON_MUSIC_COLLECTIONS` in the adapter.
+- **iOS app**: MusicKit JS sign-in (popup) and DRM playback inside the Capacitor WKWebView are unverified; the robust path there is native MusicKit via a Capacitor plugin (see ISSUES.md).
 - No cross-provider **entity resolution** beyond exact-identifier dedup (by design).
 - Browse-by-facet (composer/period/instrument) and Discover "home" sections beyond categories/recents/favourites are not built.
 - Ambient/meditation **classification** is search-driven (category chips), not tagged — the domain leaves room for local/AI tagging later without requiring it now.
