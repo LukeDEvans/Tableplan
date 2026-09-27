@@ -15,7 +15,8 @@ import { createWeatherModule } from './weather-ui.js';
 import { createInventoryModule, normalizeInventoryBoxes, normalizeInventoryItems, ensureDefaultInventoryRooms, normalizeInventoryRoomVisibility } from './inventory-ui.js';
 import { createFinanceModule, defaultFinanceBudgetGroups, retirementTargetMultiple, normalizeFinancePeople, normalizeFinanceBudgetGroups, normalizeFinanceAccounts, financeDebtPayoff, normalizeFinanceGoals, inferFinanceAccountKind, financeAccountKind, financeAccountBalance, normalizeFinanceSubLabels, normalizeFinancePersonal, normalizeFinanceTxnReceipts, FINANCE_ACCOUNT_KINDS, FINANCE_ALERTS } from './finance-ui.js';
 import { makeSortable } from './sortable.js';
-import { normalizeContacts, normalizeContactGroups, createContactsModule } from './contacts.js';
+import { normalizeContacts, normalizeContactGroups, createContactsModule, buildContactsVcf } from './contacts.js';
+import { createHistoryLog, historyRowFromMedia, historyRowFromArticle, historyRowFromPracticeEvent, historyRowFromChat, fetchAllHistory } from './history-log.js';
 import { canonicalizeUrl as canonicalizeImportUrl } from './import-canonical.js';
 import { createPlaybackEngine } from './playback-engine.js';
 import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones } from './state-sync.js';
@@ -541,6 +542,20 @@ let groupMembers = [];
 let adminDisabledPages = [];
 let personalDisabledPages = [];
 let pendingInviteToken = null;
+
+// Permanent personal history (history-log.js → live_history; DATA_EXPORT.md §3).
+// The capped in-state lists stay the UI's "recent" window; every entry is ALSO
+// appended here once. Writes only on user actions (debounced, batched, bounded);
+// no reads except "Export my data". getUserId is a deferred getter — authSession
+// resolves at call time, never at module load. No-op signed out / local-dev.
+const historyLog = createHistoryLog({
+  storage: { getItem: (k) => localStorage.getItem(k), setItem: (k, v) => localStorage.setItem(k, v) },
+  post: (rows) => postHistoryRows(rows),
+  getUserId: () => (!localDevMode && authSession?.access_token && authSession?.user?.id) || null,
+  schedule: (fn, ms) => window.setTimeout(fn, ms),
+  cancel: (t) => window.clearTimeout(t),
+  log: (m) => console.info(`[history] ${m}`),
+});
 let currentWeek = startOfPrepWindow(new Date());
 // Active Tasks-overlay week session (T1). While open, currentWeek is driven by the
 // overlay; this holds the shared week to restore on close so Meal Plan etc. are
@@ -1190,6 +1205,7 @@ const elements = {
   openWeeklyEmailBtn: document.querySelector("#openWeeklyEmailBtn"),
   openBackupHealthBtn: document.querySelector("#openBackupHealthBtn"),
   openRestoreBackupBtn: document.querySelector("#openRestoreBackupBtn"),
+  openExportDataBtn: document.querySelector("#openExportDataBtn"),
   openTrashBtn: document.querySelector("#openTrashBtn"),
   autoRulesDialog: document.querySelector("#autoRulesDialog"),
   mealAutoFillDialog: document.querySelector("#mealAutoFillDialog"),
@@ -1594,7 +1610,7 @@ const _finance = createFinanceModule({
   writeSupabaseJson: (...a) => writeSupabaseJson(...a),
 });
 const {
-  purgeLocalFinanceTxnStore,
+  purgeLocalFinanceTxnStore, financeExportTransactions,
   checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney,
   invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick,
   refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu,
@@ -2561,6 +2577,7 @@ function bindEvents() {
   elements.openWeeklyEmailBtn.addEventListener("click", openWeeklyEmailDialog);
   elements.openBackupHealthBtn.addEventListener("click", openBackupHealthDialog);
   elements.openRestoreBackupBtn.addEventListener("click", openRestoreDialog);
+  elements.openExportDataBtn?.addEventListener("click", exportMyData);
   elements.openTrashBtn.addEventListener("click", openTrashDialog);
   elements.openFamilyMembersBtn.addEventListener("click", openFamilyMembersDialog);
   elements.openMealPlanSettingsBtn.addEventListener("click", openMealPlanSettingsDialog);
@@ -6198,6 +6215,7 @@ async function hydrateStateFromSharedStorage() {
       sharedStorageReady = true;
       hydrateRetryCount = 0;
       hideHydrationOverlay(); // data is in — never leave the "Syncing…" cover up
+      backfillHistoryLog();
       return;
     } catch (error) {
       console.warn(`${provider.label} storage unavailable; trying the next option.`, error);
@@ -6868,6 +6886,26 @@ async function writeSupabaseJson(path, { method = "POST", body, prefer = "return
   });
   if (!res.ok) throw new Error(`Supabase ${res.status}`);
   return null;
+}
+
+async function postHistoryRows(rows) {
+  const res = await fetch(`${supabaseBaseUrl()}/rest/v1/live_history?on_conflict=user_id,id`, {
+    method: "POST",
+    headers: { ...supabaseHeaders(), Prefer: "resolution=ignore-duplicates,return=minimal" },
+    body: JSON.stringify(rows),
+  });
+  return { ok: res.ok, status: res.status };
+}
+
+// One-time upload (per user) of the history that existed before live_history —
+// idempotent server-side, so a repeat after sign-in again is harmless.
+function backfillHistoryLog() {
+  try {
+    historyLog.backfill("media-v1", (state.mediaHistory || []).map(historyRowFromMedia));
+    historyLog.backfill("articles-v1", (state.articleHistory || []).map(historyRowFromArticle));
+    historyLog.backfill("practice-v1", (state.cadenceEvents || []).map(historyRowFromPracticeEvent));
+    logChatTurns(chatMessages);
+  } catch (e) { console.warn("History backfill skipped:", e); }
 }
 
 function supabaseHeaders() {
@@ -15490,6 +15528,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="ai-notes">AI Notes</button>
         <button type="button" data-context-settings-action="import-ai">Import from AI Chat</button>
         <button type="button" data-context-settings-action="api-usage">API Usage</button>
+        <button type="button" data-context-settings-action="export-data">Export My Data</button>
       </div>
       ${isAdmin ? `
         <div class="settings-admin-section">
@@ -16548,6 +16587,7 @@ function handleContextSettingsAction(event) {
     "apple-music": () => renderContextSettingsDialog("apple-music"),
     "backup-health": () => closeAndRun(openBackupHealthDialog),
     "restore-backup": () => closeAndRun(openRestoreDialog),
+    "export-data": () => closeAndRun(exportMyData),
     "admin-pages": () => renderContextSettingsDialog("admin-pages"),
     "admin-users": () => closeAndRun(openAdminUsersDialog),
     "admin-households": () => closeAndRun(openAdminHouseholdsDialog),
@@ -17639,6 +17679,74 @@ function trashItemTemplate(item) {
 }
 
 
+
+// ── Export my data (data-export.js; DATA_EXPORT.md) ────────────────────────────
+// One zip: lossless live-export.json (Restore accepts it) + derived CSVs, calendar
+// .ics, contacts .vcf and an attachments index. Everything is derived from the same
+// in-memory state at click time; the only network reads are the explicit, bounded
+// fetches of the relational ledgers (finance store sync + live_history pages).
+let dataExportInProgress = false;
+async function exportMyData() {
+  if (dataExportInProgress) return;
+  dataExportInProgress = true;
+  showMailToast("Preparing your data export…");
+  const notes = [];
+  try {
+    let finance = { transactions: [] };
+    try {
+      finance = await financeExportTransactions();
+      if (finance.note) notes.push(finance.note);
+    } catch (e) { notes.push(`Finance transactions could not be gathered (${e?.message || "error"}).`); }
+
+    let history = [];
+    const uid = !localDevMode && authSession?.access_token ? authSession.user?.id : null;
+    if (uid) {
+      try {
+        await historyLog.flush(); // send what's queued so the export includes it
+        history = await fetchAllHistory((path) => fetchSupabaseJson(path), uid);
+      } catch (e) {
+        notes.push(`Permanent history (live_history) could not be read (${e?.message || "error"}) — history CSVs hold only the recent in-app window.`);
+      }
+      const queued = historyLog.status().queued;
+      if (queued) notes.push(`${queued} recent history entries were still waiting to upload and are not in history.csv (they are in the *_recent CSVs).`);
+    } else {
+      notes.push("Not signed in to the cloud — permanent history and stored transactions are not included.");
+    }
+
+    const [{ buildExportFiles, buildExportZip }, fflate] = await Promise.all([import("./data-export.js"), import("fflate")]);
+    const scopes = Object.fromEntries(Object.keys(STATE_SECTIONS).map((section) => [section, sectionScope(section)]));
+    const exportedAt = new Date().toISOString();
+    const { files, manifest } = buildExportFiles({
+      state, shadowSections, scopes, stateSections: STATE_SECTIONS, prepDays,
+      finance, history, contactsVcf: (state.contacts || []).length ? buildContactsVcf(state.contacts) : "",
+      exportedAt, schemaVersion: STATE_SCHEMA_VERSION, notes,
+    });
+    const zip = buildExportZip(files, fflate, `live-export-${exportedAt.slice(0, 10)}`);
+    const fileName = `live-export-${exportedAt.slice(0, 10)}.zip`;
+    const blob = new Blob([zip], { type: "application/zip" });
+    const file = typeof File === "function" ? new File([blob], fileName, { type: "application/zip" }) : null;
+    // The iOS app's web view can't download a blob; hand the file to the share sheet
+    // (Save to Files) there. Browsers get an ordinary download.
+    if (isNativeApp() && file && navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file], title: "Live data export" });
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = fileName;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+    const csvCount = manifest.files.filter((f) => f.file?.endsWith(".csv") && !f.error).length;
+    showMailToast(`Exported ${csvCount} spreadsheets + full backup${notes.length ? " (see README for notes)" : ""}.`);
+  } catch (e) {
+    if (e?.name !== "AbortError") {
+      console.error("Data export failed:", e);
+      showMailToast(`Couldn't export your data: ${e?.message || "unknown error"}`);
+    }
+  } finally {
+    dataExportInProgress = false;
+  }
+}
 
 function openRestoreDialog(event) {
   event?.stopPropagation();
@@ -22053,7 +22161,9 @@ function cadenceMirrorWork(work, asset) {
 // (music/events.js). Best-effort — a logging failure never breaks the action.
 function cadenceLogEvent(C, type, opts = {}) {
   try {
-    state.cadenceEvents = C.appendEvent(state.cadenceEvents, C.makeEvent({ type, ...opts }));
+    const event = C.makeEvent({ type, ...opts });
+    state.cadenceEvents = C.appendEvent(state.cadenceEvents, event);
+    historyLog.record(historyRowFromPracticeEvent(event));
     persist();
   } catch (e) { console.warn("Cadence event log failed:", e); }
 }
@@ -30605,6 +30715,7 @@ function migrateMediaHistoryOnce() {
 function recordMediaHistory(entry) {
   migrateMediaHistoryOnce();
   state.mediaHistory = pushMediaHistoryEntry(state.mediaHistory, entry);
+  historyLog.record(historyRowFromMedia(state.mediaHistory[0]));
   persist();
 }
 // Cross-app recency service (also the query surface for future AI/unified UI).
@@ -32949,6 +33060,7 @@ function recordArticleHistory(article) {
     date: new Date().toISOString(),
   });
   if (state.articleHistory.length > ARTICLE_HISTORY_CAP) state.articleHistory.length = ARTICLE_HISTORY_CAP;
+  historyLog.record(historyRowFromArticle(state.articleHistory[0]));
 }
 
 // Best-effort, fire-and-forget trigger for the server-side Storage sweep
@@ -36021,7 +36133,20 @@ const CHAT_STORAGE_KEY = "live-chat-history";
 const CHAT_MAX_HISTORY = 30; // messages kept in memory + localStorage
 const CHAT_MAX_STORED = 20;  // messages persisted to localStorage
 
+// Plain-text chat turns → permanent history (localStorage keeps only 20). Row ids
+// are content hashes, so re-logging a turn already sent is a no-op; the Set just
+// avoids re-queueing the whole conversation on every save.
+const chatLoggedIds = new Set();
+function logChatTurns(messages) {
+  for (const m of messages || []) {
+    const row = historyRowFromChat(m);
+    if (!row || chatLoggedIds.has(row.id)) continue;
+    if (historyLog.record(row)) chatLoggedIds.add(row.id);
+  }
+}
+
 function saveChatHistory() {
+  logChatTurns(chatMessages);
   try {
     // Only store plain text turns (not tool_use/tool_result objects)
     const storable = chatMessages

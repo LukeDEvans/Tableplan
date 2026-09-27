@@ -252,6 +252,62 @@ function exportFinanceCsv(monthKey) {
   } catch { showMailToast?.("Couldn't export CSV on this device."); }
 }
 
+// "Export my data" (data-export.js): every transaction the app knows, with the
+// user's annotations resolved to names. The union of the current labeled view
+// (feed or store, plus manual entries) and — when the durable ledger is reachable —
+// its full history via ONE explicit store sync (never a timer; same door the
+// finance page uses). Returns { transactions, note } (note explains any gap).
+async function financeExportTransactions() {
+  const noteOverrides = state.financeTxnNoteOverrides || {};
+  const explicit = state.financeTxnLabels || {};
+  const names = state.financeMerchantNames || {};
+  const day = (v) => (v ? new Date(v).toISOString().slice(0, 10) : "");
+  const labelText = (label, split) => {
+    if (split) return split.map((p) => `${financeTxnLabelName(p.label) || p.label} ${Number(p.amount || 0).toFixed(2)}`).join("; ");
+    return label ? (financeTxnLabelName(label) || label) : "";
+  };
+  const out = new Map();
+  for (const t of financeLabeledTxns()) {
+    out.set(t.id, {
+      id: t.id, date: day(t.posted), merchant: t.displayName || "", description: t.description || "",
+      amount: Number(t.amount || 0), category: t.label === "split" ? "Split" : labelText(t.label),
+      split: t.split ? labelText("split", t.split) : "", labelSource: t.labelSource || "",
+      note: Object.prototype.hasOwnProperty.call(noteOverrides, t.id) ? noteOverrides[t.id] : "",
+      account: t.account || "", pending: Boolean(t.pending), source: t.isManual ? "manual" : "bank",
+      status: "active", signFlipped: Boolean(t.signFlipped),
+    });
+  }
+  let note = "";
+  try {
+    const store = await ensureFinanceTxnStore({ force: true });
+    if (!store) note = "Stored transaction history was not reachable (signed out or offline) — finance_transactions.csv holds the bank's recent window plus manual entries only.";
+    else {
+      await store.sync();
+      const acctName = {};
+      for (const a of state.financeAccounts || []) if (a?.linkedId) acctName[a.linkedId] = a.name || "";
+      for (const r of store.rows()) {
+        if (out.has(r.id)) continue;
+        const ex = explicit[r.id];
+        const split = ex && typeof ex === "object" && Array.isArray(ex.split) ? ex.split : null;
+        const label = split ? "split" : (typeof ex === "string" ? ex : r.import_label || "");
+        out.set(r.id, {
+          id: r.id, date: day(r.posted), merchant: names[financeMerchantKey(r.description)] || r.description || "",
+          description: r.description || "", amount: Number(r.amount || 0),
+          category: split ? "Split" : labelText(label), split: split ? labelText("split", split) : "",
+          labelSource: ex ? "manual" : (r.import_label ? "import" : ""),
+          note: Object.prototype.hasOwnProperty.call(noteOverrides, r.id) ? noteOverrides[r.id] : "",
+          account: acctName[r.account_id] || r.account_id || "", pending: Boolean(r.pending),
+          source: r.origin === "simplefin" ? "bank" : r.origin, status: r.status || "active", signFlipped: false,
+        });
+      }
+    }
+  } catch (e) {
+    note = `Stored transaction history could not be read (${e?.message || "error"}) — finance_transactions.csv holds the bank's recent window plus manual entries only.`;
+  }
+  const transactions = [...out.values()].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  return { transactions, note };
+}
+
 // Backfill months of spending history from a transaction CSV (a bank export, or
 // a file exported from another device) so "Draft from history" has real data to
 // work with. Aggregates rows into per-month category totals and fills ONLY the
@@ -290,9 +346,8 @@ function applyCsvMonthBackfill(agg) {
     state.financeMonthActuals[month] = { ...entry, cats };
     filled.push(month);
   }
-  // Keep the same 36-month cap the live snapshotter enforces.
-  const months = Object.keys(state.financeMonthActuals).sort();
-  for (let i = 0; i < months.length - 36; i++) delete state.financeMonthActuals[months[i]];
+  // No age cap: month totals are the only record of spending older than the bank
+  // window, and each month is ~1 KB (DATA_EXPORT.md §3 — history is never pruned).
   return { filled, skippedExisting };
 }
 
@@ -2082,8 +2137,6 @@ function updateFinanceMonthActuals() {
     changed = true;
   }
   if (!changed) return;
-  const months = Object.keys(state.financeMonthActuals).sort();
-  for (let i = 0; i < months.length - 36; i++) delete state.financeMonthActuals[months[i]];
   persist();
 }
 
@@ -4847,5 +4900,5 @@ function refreshFinanceSettingsIfOpen() {
   function getFinanceViewMonth() { return financeViewMonth; }
   function getFinanceLinkStatus() { return financeLinkStatus; }
 
-  return { purgeLocalFinanceTxnStore, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
+  return { purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
 }
