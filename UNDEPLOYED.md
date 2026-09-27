@@ -27,3 +27,12 @@ PR: https://github.com/LukeDEvans/Tableplan/pull/7 · spec: NEWS_INTAKE_DESIGN.m
 2. After the first few real emails, check the Netlify function logs for
    `[news-links] <paper>: N new of M unseen`. `0 of 0` on a newsletter full of articles
    means the link patterns missed (ISSUES.md, "News intake URL/sender patterns").
+
+## Finance: "Use stored transaction history" toggle layout fix (PR #8)
+PR: https://github.com/LukeDEvans/Tableplan/pull/8
+
+- Finance › Accounts tab › Accounts card › Bank link: the switch and its label now sit on
+  one row (the label used to wrap under the switch on phones). CSS only.
+- Also closes the ISSUES.md "verify finance ingest on deployed runtime" item (docs).
+
+**After deploying:** nothing.

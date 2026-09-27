@@ -21276,6 +21276,9 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 
 .fin-item-row { display: flex; align-items: center; gap: 6px; }
 .fin-item-row--tools { padding-top: 4px; }
+/* "Use stored transaction history" (Accounts › Bank link): switch + label on one row. */
+.fin-store-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.fin-store-toggle .live-toggle { flex: 0 0 auto; }
 .fin-item-name {
   flex: 1;
   min-width: 0;
