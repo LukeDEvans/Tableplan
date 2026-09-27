@@ -8,6 +8,7 @@ import * as LiveFoodHealth from './food-health.js';
 import * as LiveFoodHealthChecklists from './food-health-checklists.js';
 import * as LiveMealPlanServings from './meal-plan-servings.js';
 import { isFridayBeforeLastMeal } from './meal-plan-time.js';
+import { categoriesFor, categoryById, resolveGenreId, filterSavedLibrary, filterTracks, textMatches, entityText, greetingFor } from './music-discover.js';
 import * as LiveReceiptDomain from './receipt-domain.js';
 import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
@@ -27244,8 +27245,12 @@ let musicLibraryLoaded = false;// library fetched from storage at least once
 const musicArtUrls = new Map();// artwork blobId → object URL (built once, reused across renders)
 
 // On-demand Discover (streaming providers — music-streaming.js + adapters)
-let musicTabMode = "saved";    // "saved" | "discover" | "library"
-let musicOpenPlaylistId = null; // when viewing a single playlist in Saved
+let musicTabMode = "discover"; // "discover" | "saved" | "library" | "pl:<playlistId>" (a playlist tab)
+let musicLocalQuery = "";      // the search bar's text on Saved / Library / playlist tabs (local filter)
+let musicPlTabInputActive = false; // the tab strip's inline "new playlist" field is open
+let musicDiscoverCategory = null;  // Browse category id while its page is open in Discover
+const musicCategoryCache = new Map(); // category id → { shelves, at, loading?, error? }
+let musicShelfLists = new Map();   // per-render shelf key → items (so a ranked song row can queue the rest)
 
 // Radio (live audio) — separate domain from music; shares the one engine.
 let radioAudio = null;         // shared element while a radio stream is active, else null
@@ -30627,38 +30632,53 @@ function initMusicPanel() {
   if (!musicPanelWired) {
     musicPanelWired = true;
     panel.addEventListener("click", (e) => {
-      // Mode switch (Saved / Discover / Library)
+      // Tabs (Discover / Saved / Library / playlist tabs) + the inline new-playlist field
       const modeBtn = e.target.closest("[data-music-mode]");
       if (modeBtn) { enterMusicMode(modeBtn.dataset.musicMode); return; }
+      if (e.target.closest("#musicPlAddBtn")) { musicPlTabInputActive = true; renderMusicPanel(); return; }
 
-      // ── Favourite / add-to-playlist (both Discover & Saved) ──
+      // ── Search bar (every tab) ──
+      if (e.target.closest("[data-music-search-clear]")) { clearMusicSearch(); return; }
+      if (e.target.closest("[data-music-search-all]")) { searchAllMusic(musicLocalQuery); return; }
+
+      // ── Favourite / add-to-playlist (Discover, Saved, playlists) ──
       const fav = e.target.closest("[data-music-fav]");
       if (fav) { e.stopPropagation(); musicToggleFav(fav.dataset.favType, musicViewIndex.get(fav.dataset.musicFav)); return; }
       const add = e.target.closest("[data-music-add]");
       if (add) { e.stopPropagation(); const r = canonicalRecordingFromView(add.dataset.musicAdd) || musicViewIndex.get(add.dataset.musicAdd); openAddToPlaylistMenu(r); return; }
 
       // ── Saved / playlist actions ──
-      if (e.target.closest("[data-music-new-playlist]")) { createNewMusicPlaylist(); return; }
       const openPl = e.target.closest("[data-open-playlist]");
-      if (openPl) { musicOpenPlaylistId = openPl.dataset.openPlaylist; renderMusicPanel(); return; }
-      if (e.target.closest("[data-playlist-back]")) { musicOpenPlaylistId = null; renderMusicPanel(); return; }
+      if (openPl) { enterMusicMode(`pl:${openPl.dataset.openPlaylist}`); return; }
+      if (e.target.closest("[data-music-csv-export]")) { exportMusicLibraryCsv(); return; }
+      if (e.target.closest("[data-music-csv-import]")) { panel.querySelector("#musicCsvInput")?.click(); return; }
       const plPlay = e.target.closest("[data-playlist-play]"); if (plPlay) { playPlaylist(plPlay.dataset.playlistPlay, 0, false); return; }
       const plShuf = e.target.closest("[data-playlist-shuffle]"); if (plShuf) { playPlaylist(plShuf.dataset.playlistShuffle, 0, true); return; }
       const plRen = e.target.closest("[data-playlist-rename]"); if (plRen) { renameMusicPlaylist(plRen.dataset.playlistRename); return; }
       const plDel = e.target.closest("[data-playlist-delete]"); if (plDel) { deleteMusicPlaylist(plDel.dataset.playlistDelete); return; }
       const plItemRemove = e.target.closest("[data-pl-remove]"); if (plItemRemove) { e.stopPropagation(); const [pid, idx] = plItemRemove.dataset.plRemove.split(":"); saveMusicLibrary(musicLibModelMod.removeFromPlaylist(getMusicLibraryState(), pid, +idx)); renderMusicPanel(); return; }
-      const plMove = e.target.closest("[data-pl-move]"); if (plMove) { e.stopPropagation(); const [pid, idx, dir] = plMove.dataset.plMove.split(":"); const i = +idx; saveMusicLibrary(musicLibModelMod.reorderPlaylist(getMusicLibraryState(), pid, i, dir === "up" ? i - 1 : i + 1)); renderMusicPanel(); return; }
+      const plMove = e.target.closest("[data-pl-move]"); if (plMove) { e.stopPropagation(); const [pid, idx, dir] = plMove.dataset.plMove.split(":"); const i = +idx; saveMusicLibrary(musicLibModelMod.reorderPlaylist(getMusicLibraryState(), pid, i, dir === "up" ? i - 1 : i + 1)); updateMusicBody(); return; }
       const plItemPlay = e.target.closest("[data-pl-play]"); if (plItemPlay) { const [pid, idx] = plItemPlay.dataset.plPlay.split(":"); playPlaylist(pid, +idx, false); return; }
       const playRec = e.target.closest("[data-play-recording]"); if (playRec) { const r = musicViewIndex.get(playRec.dataset.playRecording); if (r) playCanonicalRecording(r); return; }
-      const workSearch = e.target.closest("[data-work-search]"); if (workSearch) { const q = workSearch.dataset.workSearch; enterMusicMode("discover"); musicSearchQuery = q; setTimeout(() => { const si = document.getElementById("musicSearchInput"); if (si) si.value = q; doMusicSearch(q); }, 0); return; }
+      const workSearch = e.target.closest("[data-work-search]"); if (workSearch) { searchAllMusic(workSearch.dataset.workSearch); return; }
 
       // ── Discover actions ──
       if (e.target.closest("[data-music-back]")) { closeMusicItem(); return; }
+      if (e.target.closest("[data-music-cat-back]")) { musicDiscoverCategory = null; updateMusicBody(); return; }
       if (e.target.closest("[data-music-am-signin]")) { signInAppleMusicFromDiscover(); return; }
-      const cat = e.target.closest("[data-music-cat]");
-      if (cat) { musicSearchQuery = cat.dataset.musicCat; const si = panel.querySelector("#musicSearchInput"); if (si) si.value = musicSearchQuery; doMusicSearch(musicSearchQuery); return; }
+      const browse = e.target.closest("[data-music-browse]");
+      if (browse) { openMusicCategory(browse.dataset.musicBrowse); return; }
       const replay = e.target.closest("[data-music-replay]");
       if (replay) { replayMusicHistory(replay.dataset.musicReplay); return; }
+      const shelfRow = e.target.closest("[data-shelf-track]");
+      if (shelfRow) {
+        const id = shelfRow.dataset.trackId;
+        if (musicCurTrack && musicCurTrack.id === id && (musicAudio || musicPlaybackProvider)) { toggleMusicPlayPause(); return; }
+        const list = (musicShelfLists.get(shelfRow.dataset.shelfTrack) || []).filter((x) => x.entity === "track");
+        const at = list.findIndex((x) => x.id === id);
+        if (at >= 0) playStreamingTrack(list[at], list.slice(at + 1)); // the rest of the shelf queues up
+        return;
+      }
       const streamRow = e.target.closest("[data-stream-play]");
       if (streamRow) {
         const id = streamRow.dataset.streamPlay;
@@ -30685,37 +30705,69 @@ function initMusicPanel() {
       }
     });
     panel.addEventListener("keydown", (e) => {
+      if (e.target.id === "musicPlInlineInput" && e.key === "Escape") { musicPlTabInputActive = false; renderMusicPanel(); return; }
+      if (e.target.id === "musicSearchInput") {
+        if (e.key === "Enter" && musicTabMode === "discover") { e.preventDefault(); clearTimeout(musicSearchDebounce); doMusicSearch(e.target.value); }
+        if (e.key === "Escape" && e.target.value) { e.preventDefault(); clearMusicSearch(); }
+        return;
+      }
       const row = e.target.closest?.("[data-music-track]");
       if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); playMusicTrackById(row.dataset.musicTrack); return; }
-      if (e.target.id === "musicSearchInput" && e.key === "Enter") { e.preventDefault(); clearTimeout(musicSearchDebounce); doMusicSearch(e.target.value); }
+      // Cards / tiles / rows are role="button" divs: make Enter/Space activate them.
+      const rb = e.target.matches?.('[role="button"]:not(button)') ? e.target : null;
+      if (rb && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); rb.click(); }
     });
     panel.addEventListener("input", (e) => {
-      if (e.target.id === "musicSearchInput") queueMusicSearch(e.target.value);
+      if (e.target.id !== "musicSearchInput") return;
+      const v = e.target.value;
+      panel.querySelector("[data-music-search-clear]")?.toggleAttribute("hidden", !v);
+      if (musicTabMode === "discover") queueMusicSearch(v);
+      else { musicLocalQuery = v; updateMusicBody(); } // local filter: instant, no network
+    });
+    panel.addEventListener("submit", (e) => {
+      if (e.target.id !== "musicPlInlineForm") return;
+      e.preventDefault();
+      const name = (panel.querySelector("#musicPlInlineInput")?.value || "").trim();
+      musicPlTabInputActive = false;
+      if (name) createMusicPlaylistNamed(name); else renderMusicPanel();
+    });
+    panel.addEventListener("focusout", (e) => {
+      // Leaving the new-playlist field empty cancels it (like Podcasts' tab strip).
+      if (e.target.id === "musicPlInlineInput" && !e.target.value.trim()) setTimeout(() => { if (musicPlTabInputActive) { musicPlTabInputActive = false; renderMusicPanel(); } }, 150);
     });
     panel.addEventListener("toggle", (e) => {
       if (e.target.classList?.contains("music-free-sources")) musicFreeSourcesOpen = e.target.open;
     }, true);
     panel.addEventListener("change", (e) => {
       const inp = e.target.closest("#musicFileInput");
-      if (inp && inp.files && inp.files.length) { handleMusicImport(inp.files); inp.value = ""; }
+      if (inp && inp.files && inp.files.length) { handleMusicImport(inp.files); inp.value = ""; return; }
+      const csv = e.target.closest("#musicCsvInput");
+      if (csv && csv.files && csv.files[0]) { importMusicLibraryCsv(csv.files[0]); csv.value = ""; }
     });
   }
   enterMusicMode(musicTabMode);
 }
 
-// Enter a Music sub-mode, lazy-loading the pieces that mode needs.
+// Enter a Music tab, lazy-loading the pieces it needs. The local search text is
+// per-visit (a fresh tab starts unfiltered); Discover keeps its catalog search.
 function enterMusicMode(mode) {
+  if (mode !== musicTabMode) musicLocalQuery = "";
   musicTabMode = mode;
-  musicOpenPlaylistId = null;
+  musicPlTabInputActive = false;
   renderMusicPanel();
-  if (mode === "saved") {
-    getMusicCanon().then(renderMusicPanel).catch((e) => console.warn("music canon load failed", e));
-  } else if (mode === "discover") {
-    Promise.all([getMusicCanon(), getMusicProviders()]).then(() => renderMusicPanel()).catch((e) => console.warn("music discover load failed", e));
-    setTimeout(() => document.getElementById("musicSearchInput")?.focus(), 0);
-  } else if (mode === "library" && !musicLibraryLoaded) {
-    musicLibraryLoaded = true;
-    refreshMusicLibrary().then(renderMusicPanel).catch((e) => console.warn("music library load failed", e));
+  // A playlist tab (e.g. one just created) may sit past the strip's edge.
+  const activeTab = document.querySelector("#musicBar .watch-category-tab.is-active");
+  const strip = activeTab?.parentElement;
+  if (activeTab && strip) strip.scrollLeft = Math.max(0, activeTab.offsetLeft - (strip.clientWidth - activeTab.offsetWidth) / 2);
+  if (mode === "discover") {
+    Promise.all([getMusicCanon(), getMusicProviders()]).then(() => { if (musicTabMode === "discover") updateMusicBody(); }).catch((e) => console.warn("music discover load failed", e));
+  } else if (mode === "library") {
+    if (!musicLibraryLoaded) {
+      musicLibraryLoaded = true;
+      refreshMusicLibrary().then(renderMusicPanel).catch((e) => console.warn("music library load failed", e));
+    }
+  } else {
+    getMusicCanon().then(() => { if (musicTabMode === mode) updateMusicBody(); }).catch((e) => console.warn("music canon load failed", e));
   }
 }
 
@@ -30775,53 +30827,135 @@ function musicAlbumGroup(g) {
 }
 
 function musicModeTabs() {
-  // Match the Podcasts tab style (.watch-category-tabs / .watch-category-tab).
-  const tab = (mode, label) => `<button class="watch-category-tab${musicTabMode === mode ? " is-active" : ""}" type="button" role="tab" aria-selected="${musicTabMode === mode}" data-music-mode="${mode}">${label}</button>`;
-  return `<div class="watch-category-tabs" role="tablist" aria-label="Music mode">${tab("saved", "Saved")}${tab("discover", "Discover")}${tab("library", "Library")}</div>`;
+  // Match the Podcasts tab strip: fixed tabs, then one tab per playlist, then +.
+  const tab = (mode, label) => `<button class="watch-category-tab${musicTabMode === mode ? " is-active" : ""}" type="button" role="tab" aria-selected="${musicTabMode === mode}" data-music-mode="${escapeHtml(mode)}">${escapeHtml(label)}</button>`;
+  const pls = getMusicLibraryState().playlists;
+  const add = musicPlTabInputActive
+    ? `<form class="watch-category-new-form" id="musicPlInlineForm"><input class="watch-category-new-input" id="musicPlInlineInput" type="text" placeholder="Playlist name" autocomplete="off" maxlength="40" /></form>`
+    : `<button class="watch-category-tab watch-category-add-tab" type="button" id="musicPlAddBtn" title="New playlist" aria-label="New playlist">+</button>`;
+  return `<div class="watch-category-tabs" role="tablist" aria-label="Music">${tab("discover", "Discover")}${tab("saved", "Saved")}${tab("library", "Library")}${pls.map((p) => tab(`pl:${p.id}`, p.name)).join("")}${add}</div>`;
 }
 
+function musicBarActions() {
+  if (musicTabMode !== "library") return "";
+  const list = musicLibrary || [];
+  return `${list.length ? `<button class="podcast-tabs-action-btn" type="button" data-music-play-all title="Play all" aria-label="Play all">${MUSIC_PLAY_SVG}</button>` : ""}
+    <button class="podcast-tabs-action-btn${musicJellyfinEnabled() ? " is-on" : ""}" type="button" data-music-config title="Music server (Jellyfin)" aria-label="Connect a music server">${MUSIC_SERVER_SVG}</button>
+    <button class="icon-btn std-add-btn" type="button" data-music-import title="Import audio" aria-label="Import audio files">${MUSIC_PLUS_SVG}</button>`;
+}
+
+// The panel is a fixed shell — tab bar, search bar, body — so the search field
+// survives re-renders (playback state changes re-render often) and keeps focus
+// while typing; only the tab bar and the body are redrawn.
 function renderMusicPanel() {
   const panel = document.getElementById("mediaMusicPanel");
   if (!panel) return;
-  if (musicTabMode === "saved") {
-    panel.innerHTML = `
-      <div class="podcast-playlist-bar music-bar">${musicModeTabs()}<div class="podcast-tabs-actions">
-        <button class="podcast-tabs-action-btn" type="button" data-music-new-playlist title="New playlist" aria-label="New playlist">${MUSIC_PLUS_SVG}</button>
-      </div></div>
-      ${renderMusicSavedBody()}`;
-    return;
+  if (!panel.querySelector("#musicModeBody")) {
+    panel.innerHTML = `<div class="podcast-playlist-bar music-bar" id="musicBar"></div><div id="musicSearchWrap"></div><div id="musicModeBody" class="music-mode-body"></div>`;
   }
-  if (musicTabMode === "discover") {
-    panel.innerHTML = `
-      <div class="podcast-playlist-bar music-bar">${musicModeTabs()}<div class="podcast-tabs-actions"></div></div>
-      ${renderMusicDiscoverBody()}`;
-    const input = panel.querySelector("#musicSearchInput");
-    if (input && document.activeElement !== input) { input.value = musicSearchQuery; }
-    return;
+  // Don't redraw the tab strip under a half-typed playlist name (playback
+  // state changes re-render the panel while the field is open).
+  const typing = musicPlTabInputActive && panel.querySelector("#musicPlInlineInput");
+  if (!typing) panel.querySelector("#musicBar").innerHTML = `${musicModeTabs()}<div class="podcast-tabs-actions">${musicBarActions()}</div>`;
+  syncMusicSearchBar(panel);
+  updateMusicBody();
+  if (musicPlTabInputActive && !typing) panel.querySelector("#musicPlInlineInput")?.focus();
+}
+
+const musicActiveQuery = () => (musicTabMode === "discover" ? musicSearchQuery : musicLocalQuery);
+function musicSearchPlaceholder() {
+  if (musicTabMode === "discover") return musicAppleEnabled() ? "Artists, songs, albums, playlists" : "Composers, works, moods";
+  if (musicTabMode === "saved") return "Search your saved music";
+  if (musicTabMode === "library") return "Search your library";
+  return "Search this playlist";
+}
+function syncMusicSearchBar(panel) {
+  const wrap = panel.querySelector("#musicSearchWrap");
+  if (!wrap) return;
+  let input = wrap.querySelector("#musicSearchInput");
+  if (!input) {
+    wrap.innerHTML = `<div class="music-search-bar">
+        <svg class="music-search-ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input type="search" id="musicSearchInput" class="music-search-input" autocomplete="off" spellcheck="false" enterkeyhint="search">
+        <button type="button" class="music-search-clear" data-music-search-clear aria-label="Clear search" hidden>${MUSIC_X_SVG}</button>
+      </div>`;
+    input = wrap.querySelector("#musicSearchInput");
   }
-  const list = musicLibrary || [];
+  const ph = musicSearchPlaceholder();
+  input.placeholder = ph;
+  input.setAttribute("aria-label", ph);
+  if (document.activeElement !== input) input.value = musicActiveQuery();
+  wrap.querySelector("[data-music-search-clear]")?.toggleAttribute("hidden", !input.value);
+}
+function clearMusicSearch() {
+  const input = document.getElementById("musicSearchInput");
+  if (input) input.value = "";
+  document.querySelector("#mediaMusicPanel [data-music-search-clear]")?.setAttribute("hidden", "");
+  if (musicTabMode === "discover") { clearTimeout(musicSearchDebounce); doMusicSearch(""); }
+  else { musicLocalQuery = ""; updateMusicBody(); }
+}
+// Jump from a local tab (or a favourite work) to a catalog search in Discover.
+function searchAllMusic(q) {
+  const query = String(q || "").trim();
+  enterMusicMode("discover");
+  musicSearchQuery = query;
+  const input = document.getElementById("musicSearchInput");
+  if (input) input.value = query;
+  document.querySelector("#mediaMusicPanel [data-music-search-clear]")?.toggleAttribute("hidden", !query);
+  doMusicSearch(query);
+}
+
+// Redraw just the body for the current tab. Horizontal shelves keep their
+// scroll position across redraws (a play/pause re-render mustn't snap them back).
+function updateMusicBody() {
+  const body = document.getElementById("musicModeBody");
+  if (!body) return;
+  const scroll = [];
+  body.querySelectorAll("[data-shelf-key]").forEach((el) => { if (el.scrollLeft) scroll.push([el.dataset.shelfKey, el.scrollLeft]); });
+  body.innerHTML = musicModeBodyHtml();
+  for (const [k, left] of scroll) {
+    const el = [...body.querySelectorAll("[data-shelf-key]")].find((x) => x.dataset.shelfKey === k);
+    if (el) el.scrollLeft = left;
+  }
+}
+function musicModeBodyHtml() {
+  if (musicTabMode === "discover") return renderMusicDiscoverBody();
+  if (musicTabMode === "saved") return renderMusicSavedBody();
+  if (musicTabMode === "library") return renderMusicLibraryBody();
+  if (musicTabMode.startsWith("pl:")) return renderPlaylistView(musicTabMode.slice(3));
+  return "";
+}
+
+function renderMusicLibraryBody() {
+  const all = musicLibrary || [];
+  const list = filterTracks(all, musicLocalQuery);
   const groups = groupMusicByAlbum(list).map(musicAlbumGroup).join("");
-  panel.innerHTML = `
-    <div class="podcast-playlist-bar music-bar">
-      ${musicModeTabs()}
-      <div class="podcast-tabs-actions">
-        ${list.length ? `<button class="podcast-tabs-action-btn" type="button" data-music-play-all title="Play all" aria-label="Play all">${MUSIC_PLAY_SVG}</button>` : ""}
-        <button class="podcast-tabs-action-btn${musicJellyfinEnabled() ? " is-on" : ""}" type="button" data-music-config title="Music server (Jellyfin)" aria-label="Connect a music server">${MUSIC_SERVER_SVG}</button>
-        <button class="icon-btn std-add-btn" type="button" data-music-import title="Import audio" aria-label="Import audio files">${MUSIC_PLUS_SVG}</button>
-      </div>
-    </div>
+  return `
     ${musicJellyfinEnabled() ? `<div class="music-server-note" data-music-server-note>${escapeHtml(musicServerStatusText())}</div>` : ""}
     <input type="file" id="musicFileInput" accept="audio/*,.mp3,.m4a,.aac,.ogg,.oga,.opus,.wav,.flac" multiple hidden />
     <div class="music-body">
       ${musicImporting ? `<p class="music-status">Importing…</p>` : ""}
       ${list.length
         ? `<div class="music-albums">${groups}</div>`
-        : (musicImporting ? "" : `<div class="music-empty">
+        : all.length
+          ? `<p class="music-status">Nothing in your library matches “${escapeHtml(musicLocalQuery)}”.</p>${musicSearchAllRow(musicLocalQuery)}`
+          : (musicImporting ? "" : `<div class="music-empty">
             <div class="music-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
             <p class="music-empty-title">Your library is empty</p>
-            <p class="music-empty-sub">Import audio files from this device, or switch to <strong>Discover</strong> to stream free & open music.</p>
+            <p class="music-empty-sub">Import audio files from this device, or head to <strong>Discover</strong> to find something to play.</p>
             <button class="primary-btn" type="button" data-music-import>Import audio</button>
           </div>`)}
+    </div>`;
+}
+
+const MUSIC_SEARCH_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>`;
+function musicSearchAllRow(q) {
+  const query = String(q || "").trim();
+  if (!query) return "";
+  return `<div class="music-row music-search-all" data-music-search-all role="button" tabindex="0">
+      <span class="music-row-icon" aria-hidden="true">${MUSIC_SEARCH_SVG}</span>
+      <span class="music-row-main"><span class="music-row-title">Search all music for “${escapeHtml(query)}”</span></span>
+      <span class="music-result-go" aria-hidden="true">›</span>
     </div>`;
 }
 
@@ -30994,18 +31128,11 @@ function musicIsFav(type, entity) { return musicLibModelMod ? musicLibModelMod.i
 function musicToggleFav(type, entity) {
   if (!musicLibModelMod || !entity) return;
   saveMusicLibrary(musicLibModelMod.toggleFavorite(getMusicLibraryState(), type, entity));
-  if (musicTabMode === "saved") renderMusicPanel(); else updateDiscoverResults();
+  updateMusicBody();
 }
 
 const MUSIC_PROVIDER_LABELS = { applemusic: "Apple Music", internetarchive: "Internet Archive", musopen: "Musopen" };
 const musicAppleEnabled = () => !!(state.appleMusic && state.appleMusic.enabled);
-const MUSIC_CATEGORIES = [
-  { label: "Classical", q: "classical" }, { label: "Piano", q: "piano" },
-  { label: "Ambient", q: "ambient" }, { label: "Meditation", q: "meditation" },
-  { label: "Relaxation", q: "relaxation" }, { label: "Instrumental", q: "instrumental" },
-  { label: "Nature", q: "nature soundscape" },
-];
-
 // A per-render lookup so DOM handlers resolve an item by id without embedding JSON.
 let musicViewIndex = new Map();
 const indexMusicItem = (it) => { if (it && it.id) musicViewIndex.set(it.id, it); return it; };
@@ -31181,18 +31308,128 @@ function musicOpenItemHtml() {
   return head + `<div class="music-list">${tracks.map(musicStreamTrackRow).join("")}</div>`;
 }
 
+// ── Discover home (Apple Music / Spotify-style) ───────────────────────────────
+// Greeting → hero shelf (featured playlists) → "Jump back in" quick tiles (this
+// app's recents, any source) → the browse provider's shelves (for-you, recently
+// played, ranked top songs, top albums) → Browse categories. Without a browse-
+// capable catalog (no Apple Music) it's recents + the free-source categories.
 function musicDiscoverHomeHtml() {
-  const chips = MUSIC_CATEGORIES.map((c) => `<button class="music-chip" type="button" data-music-cat="${escapeHtml(c.q)}">${escapeHtml(c.label)}</button>`).join("");
-  const hist = getRecentMedia({ kind: "music", limit: 8 });
-  const histHtml = hist.length ? `<h4 class="music-section-h">Recently played here</h4><div class="music-list">${hist.map(musicHistoryRow).join("")}</div>` : "";
-  const sources = musicAppleEnabled() ? "Apple Music first, then the Internet Archive and Musopen" : "the Internet Archive and Musopen (connect Apple Music in Settings → Apple Music)";
-  if (musicAppleEnabled()) ensureAppleMusicHome();
-  return `<div class="music-discover-home">
-      ${musicAppleEnabled() ? musicAppleHomeHtml() : ""}
-      <div class="music-chips">${chips}</div>
-      ${histHtml}
-      ${!hist.length ? `<p class="music-empty-sub music-discover-hint">Search for an artist, song, composer, work, or mood — or tap a category above. One search across ${sources}.</p>` : ""}
+  const full = musicAppleEnabled();
+  if (full) ensureAppleMusicHome();
+  const hist = getRecentMedia({ kind: "music", limit: 6 });
+  const jump = hist.length ? `<section class="md-sec"><h3 class="md-h">Jump back in</h3><div class="md-quick">${hist.map(musicQuickTile).join("")}</div></section>` : "";
+  const parts = full ? musicBrowseHomeParts() : { top: "", rest: "" };
+  const tiles = `<section class="md-sec"><h3 class="md-h">Browse categories</h3><div class="md-tiles">${categoriesFor({ fullCatalog: full }).map(musicCategoryTile).join("")}</div></section>`;
+  const hint = full ? "" : `<p class="music-empty-sub music-discover-hint">Streaming free &amp; open music from the Internet Archive and Musopen. Connect Apple Music in Settings → Apple Music for charts, new music and picks for you.</p>`;
+  return `<div class="md-home">
+      <h2 class="md-greeting">${escapeHtml(greetingFor())}</h2>
+      ${parts.top}${jump}${parts.rest}${tiles}${hint}
     </div>`;
+}
+
+function musicQuickTile(h) {
+  const art = h.artworkUrl
+    ? `<img class="md-quick-art" src="${escapeHtml(h.artworkUrl)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
+    : `<span class="md-quick-art music-thumb--ph" aria-hidden="true">${MUSIC_ALBUM_PH_SVG}</span>`;
+  return `<div class="md-quick-tile" data-music-replay="${escapeHtml(h.id)}" role="button" tabindex="0" title="${escapeHtml(h.title || "")}">${art}<span class="md-quick-title">${escapeHtml(h.title || "Untitled")}</span></div>`;
+}
+
+function musicCategoryTile(c) {
+  return `<button class="md-tile" type="button" data-music-browse="${escapeHtml(c.id)}" style="--tile-h:${Number(c.hue) || 0}"><span class="md-tile-label">${escapeHtml(c.label)}</span></button>`;
+}
+
+// A shelf of items. `style` (from the provider — music-streaming "Browse
+// contract") picks the layout: ranked song columns, large hero cards, or cards.
+function musicShelfHtml(shelf, scope) {
+  const key = `${scope}:${shelf.id}`;
+  const items = shelf.items || [];
+  musicShelfLists.set(key, items);
+  const h = `<h3 class="md-h">${escapeHtml(shelf.title)}</h3>`;
+  if (shelf.style === "ranked") {
+    return `<section class="md-sec">${h}<div class="md-ranked" data-shelf-key="${escapeHtml(key)}">${items.map((it, i) => musicRankedRow(it, i, key)).join("")}</div></section>`;
+  }
+  const hero = shelf.style === "hero";
+  return `<section class="md-sec">${h}<div class="music-shelf${hero ? " md-hero-shelf" : ""}" data-shelf-key="${escapeHtml(key)}">${items.map(hero ? musicHeroCard : musicShelfCard).join("")}</div></section>`;
+}
+
+const musicItemKindLabel = (item) => (item.entity === "track" ? "Song" : item.kind === "playlist" ? "Playlist" : item.kind === "artist" ? "Artist" : "Album");
+function musicHeroCard(item) {
+  indexMusicItem(item);
+  const sub = item.entity === "track" ? (item.artists?.[0]?.name || "") : (item.artist || "");
+  return `<div class="md-hero" data-music-open="${escapeHtml(item.id)}" role="button" tabindex="0" title="${escapeHtml(item.title)}">
+      <span class="md-hero-kicker">${escapeHtml(musicItemKindLabel(item))}</span>
+      <span class="md-hero-title">${escapeHtml(item.title)}</span>
+      <span class="md-hero-sub">${escapeHtml(sub)}</span>
+      ${item.artworkUrl ? `<img class="md-hero-art" src="${escapeHtml(item.artworkUrl)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : `<span class="md-hero-art music-thumb--ph" aria-hidden="true">${MUSIC_ALBUM_PH_SVG}</span>`}
+    </div>`;
+}
+
+function musicRankedRow(item, i, key) {
+  indexMusicItem(item);
+  const isTrack = item.entity === "track";
+  const active = isTrack && musicCurTrack && musicCurTrack.id === item.id;
+  const playing = active && (musicPlaybackProvider ? !!(musicOwnedNP && musicOwnedNP.isPlaying) : (musicAudio && !musicAudio.paused && !musicAudio.ended));
+  const sub = isTrack ? (item.artists?.[0]?.name || "") : (item.artist || "");
+  const act = isTrack ? `data-shelf-track="${escapeHtml(key)}" data-track-id="${escapeHtml(item.id)}"` : `data-music-open="${escapeHtml(item.id)}"`;
+  return `<div class="md-rank-row${active ? " is-active" : ""}" ${act} role="button" tabindex="0" aria-label="${escapeHtml(item.title)}">
+      ${musicThumb(item.artworkUrl, "music-thumb--sm")}
+      <span class="md-rank-no" aria-hidden="true">${active ? (playing ? MUSIC_PAUSE_SVG : MUSIC_PLAY_SVG) : i + 1}</span>
+      <span class="md-rank-main"><span class="md-rank-title">${escapeHtml(item.title)}</span>${sub ? `<span class="md-rank-sub">${escapeHtml(sub)}</span>` : ""}</span>
+      ${isTrack ? musicAddBtn(item.id) + musicFavBtn("recording", canonicalRecordingFromView(item.id)) : ""}
+    </div>`;
+}
+
+// ── Browse categories (Discover → a category page) ─────────────────────────────
+// The first available BROWSE-capable provider (Apple Music today) supplies the
+// shelves; a provider swap needs no change here. Loaded on tap, cached in memory
+// for APPLE_HOME_TTL_MS — never polled. A failed load isn't cached.
+async function musicBrowseProvider() {
+  const reg = await getMusicProviders();
+  for (const p of reg.withCapability(musicStreamMod.CAP.BROWSE)) {
+    if (typeof p.getBrowseCategory !== "function") continue;
+    try { if (!p.isAvailable || await p.isAvailable()) return p; } catch { /* try the next */ }
+  }
+  return null;
+}
+async function openMusicCategory(id) {
+  const cat = categoryById(id);
+  if (!cat) return;
+  let p = null;
+  try { p = await musicBrowseProvider(); } catch { p = null; }
+  if (!p) { searchAllMusic(cat.query); return; } // free sources: a category is a search
+  musicDiscoverCategory = id;
+  musicOpenItem = null;
+  updateMusicBody();
+  document.getElementById("mediaMusicPanel")?.scrollIntoView({ block: "start", behavior: "smooth" });
+  const c = musicCategoryCache.get(id);
+  if (c && (c.loading || (!c.error && Date.now() - c.at < APPLE_HOME_TTL_MS))) return;
+  musicCategoryCache.set(id, { loading: true, shelves: [], at: Date.now() });
+  try {
+    let genres = null;
+    if (typeof p.getGenres === "function") { try { genres = await p.getGenres(); } catch { genres = null; } }
+    const shelves = await p.getBrowseCategory({ label: cat.label, query: cat.query, genreId: resolveGenreId(cat, genres) }, { perShelf: 15 });
+    musicCategoryCache.set(id, { shelves: shelves || [], at: Date.now() });
+  } catch (e) {
+    console.warn("music category load failed", e);
+    musicCategoryCache.set(id, { shelves: [], at: Date.now(), error: true });
+  } finally {
+    if (musicTabMode === "discover" && musicDiscoverCategory === id) updateMusicBody();
+  }
+}
+function musicCategoryPageHtml() {
+  const cat = categoryById(musicDiscoverCategory);
+  if (!cat) { musicDiscoverCategory = null; return musicDiscoverHomeHtml(); }
+  const c = musicCategoryCache.get(cat.id);
+  const banner = `<div class="md-cat-banner" style="--tile-h:${Number(cat.hue) || 0}">
+      <button class="md-cat-back" type="button" data-music-cat-back aria-label="Back to Discover"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <h2 class="md-cat-title">${escapeHtml(cat.label)}</h2>
+    </div>`;
+  let body;
+  if (!c || c.loading) body = `<p class="music-status">Loading ${escapeHtml(cat.label)}…</p>`;
+  else if (c.error) body = `<p class="music-status">Couldn’t load ${escapeHtml(cat.label)} right now.</p><div class="md-retry"><button class="secondary-btn" type="button" data-music-browse="${escapeHtml(cat.id)}">Try again</button></div>`;
+  else if (!c.shelves.length) body = `<p class="music-status">Nothing here yet.</p>${musicSearchAllRow(cat.query)}`;
+  else body = c.shelves.map((sh) => musicShelfHtml(sh, `cat-${cat.id}`)).join("");
+  return `<div class="md-cat">${banner}${body}</div>`;
 }
 
 // ── Apple Music Discover home (recommendations / recently played / charts) ─────
@@ -31225,21 +31462,26 @@ async function ensureAppleMusicHome() {
 function musicShelfCard(item) {
   indexMusicItem(item);
   const sub = item.entity === "track" ? (item.artists?.[0]?.name || "") : (item.artist || "");
+  const round = item.kind === "artist" ? " md-card-art--round" : "";
   return `<div class="music-card" data-music-open="${escapeHtml(item.id)}" role="button" tabindex="0" title="${escapeHtml(item.title)}">
-      ${item.artworkUrl ? `<img class="music-card-art" src="${escapeHtml(item.artworkUrl)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : `<span class="music-card-art music-thumb--ph" aria-hidden="true">${MUSIC_ALBUM_PH_SVG}</span>`}
+      ${item.artworkUrl ? `<img class="music-card-art${round}" src="${escapeHtml(item.artworkUrl)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : `<span class="music-card-art music-thumb--ph${round}" aria-hidden="true">${MUSIC_ALBUM_PH_SVG}</span>`}
       <span class="music-card-title">${escapeHtml(item.title)}</span>
       ${sub ? `<span class="music-card-sub">${escapeHtml(sub)}</span>` : ""}
     </div>`;
 }
-function musicAppleHomeHtml() {
+// Home shelves split so the hero shelf leads the page and the rest follow
+// "Jump back in".
+function musicBrowseHomeParts() {
   const h = musicAppleHome;
-  if (!h) return `<p class="music-status">Loading Apple Music…</p>`;
-  if (h.error === "unavailable") return `<p class="music-provider-note">Apple Music isn’t reachable — check Settings → Apple Music.</p>`;
+  if (!h) return { top: `<p class="music-status">Loading Apple Music…</p>`, rest: "" };
+  if (h.error === "unavailable") return { top: `<p class="music-provider-note">Apple Music isn’t reachable — check Settings → Apple Music.</p>`, rest: "" };
   const signIn = !h.authorized
     ? `<div class="music-am-signin"><span>Sign in to Apple Music for full-length playback and picks for you.</span><button class="secondary-btn" type="button" data-music-am-signin>Sign in</button></div>`
     : "";
-  const shelves = (h.shelves || []).map((sh) => `<h4 class="music-section-h">${escapeHtml(sh.title)}</h4><div class="music-shelf">${sh.items.map(musicShelfCard).join("")}</div>`).join("");
-  return signIn + shelves;
+  const shelves = h.shelves || [];
+  const hero = shelves.filter((sh) => sh.style === "hero").map((sh) => musicShelfHtml(sh, "home")).join("");
+  const rest = shelves.filter((sh) => sh.style !== "hero").map((sh) => musicShelfHtml(sh, "home")).join("");
+  return { top: signIn + hero, rest };
 }
 async function signInAppleMusicFromDiscover() {
   try {
@@ -31260,6 +31502,7 @@ function musicHistoryRow(h) {
 
 function discoverResultsHtml() {
   musicViewIndex = new Map();
+  musicShelfLists = new Map();
   if (musicOpenItem) return musicOpenItemHtml();
   if (musicSearchLoading) return `<p class="music-status">Searching…</p>`;
   if (musicSearchResults) {
@@ -31278,7 +31521,7 @@ function discoverResultsHtml() {
       : "";
     return note + musicAppleResultsHtml(apple) + freeHtml;
   }
-  return musicDiscoverHomeHtml();
+  return musicDiscoverCategory ? musicCategoryPageHtml() : musicDiscoverHomeHtml();
 }
 
 // Provider hits consolidated under canonical Works; ungroupable items stay loose.
@@ -31317,19 +31560,13 @@ function musicAppleResultsHtml(items) {
 }
 
 function renderMusicDiscoverBody() {
-  return `<div class="music-discover">
-      <div class="music-search-bar">
-        <svg class="music-search-ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input type="search" id="musicSearchInput" class="music-search-input" placeholder="${musicAppleEnabled() ? "Search artists, songs, albums, composers…" : "Search composers, works, moods…"}" autocomplete="off" spellcheck="false" value="${escapeHtml(musicSearchQuery)}">
-      </div>
-      <div id="musicDiscoverResults" class="music-discover-results">${discoverResultsHtml()}</div>
-    </div>`;
+  return `<div class="music-discover"><div id="musicDiscoverResults" class="music-discover-results">${discoverResultsHtml()}</div></div>`;
 }
 
+// Discover's async loads (search, item expand, home shelves) redraw the body —
+// only while Discover is the visible tab.
 function updateDiscoverResults() {
-  const el = document.getElementById("musicDiscoverResults");
-  if (el) el.innerHTML = discoverResultsHtml();
-  else if (musicTabMode === "discover") renderMusicPanel();
+  if (musicTabMode === "discover") updateMusicBody();
 }
 
 // ── Saved (personal library: favourites + playlists + recently played) ─────────
@@ -31349,26 +31586,28 @@ function musicRecordingRow(recording, opts = {}) {
     </div>`;
 }
 
+const MUSIC_PLAYLIST_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.2"/><circle cx="3.5" cy="12" r="1.2"/><circle cx="3.5" cy="18" r="1.2"/></svg>`;
+
 function renderMusicSavedBody() {
   if (!musicLibModelMod) return `<div class="music-body"><p class="music-status">Loading…</p></div>`;
-  if (musicOpenPlaylistId) return renderPlaylistView(musicOpenPlaylistId);
   musicViewIndex = new Map();
   const lib = getMusicLibraryState();
-  const works = lib.favorites.filter((f) => f.type === "work");
-  const recs = lib.favorites.filter((f) => f.type === "recording" || f.type === "album");
-  const hist = getRecentMedia({ kind: "music", limit: 10 });
-  const pls = lib.playlists;
+  const f = filterSavedLibrary(lib, musicLocalQuery);
+  const works = f.favorites.filter((x) => x.type === "work");
+  const recs = f.favorites.filter((x) => x.type === "recording" || x.type === "album");
+  const hist = f.active ? [] : getRecentMedia({ kind: "music", limit: 10 });
+  const pls = f.playlists;
 
-  const plHtml = `<div class="music-saved-sec"><h4 class="music-section-h">Playlists</h4>${pls.length
+  const plHtml = pls.length || !f.active ? `<div class="music-saved-sec"><h4 class="music-section-h">Playlists</h4>${pls.length
     ? `<div class="music-list">${pls.map((p) => `<div class="music-row" data-open-playlist="${escapeHtml(p.id)}" role="button" tabindex="0">
-          <span class="music-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.2"/><circle cx="3.5" cy="12" r="1.2"/><circle cx="3.5" cy="18" r="1.2"/></svg></span>
+          <span class="music-row-icon" aria-hidden="true">${MUSIC_PLAYLIST_SVG}</span>
           <span class="music-row-main"><span class="music-row-title">${escapeHtml(p.name)}</span><span class="music-row-sub">${p.items.length} track${p.items.length === 1 ? "" : "s"}</span></span>
           <span class="music-result-go" aria-hidden="true">›</span>
         </div>`).join("")}</div>`
-    : `<p class="music-empty-sub" style="padding:6px 14px">No playlists yet — use + above, or add a recording from Discover.</p>`}</div>`;
+    : `<p class="music-empty-sub" style="padding:6px 14px">No playlists yet — tap + in the tabs above, or add a song from Discover.</p>`}</div>` : "";
 
-  const worksHtml = works.length ? `<div class="music-saved-sec"><h4 class="music-section-h">Favourite works</h4><div class="music-list">${works.map((f) => {
-    const w = f.entity; indexMusicItem(w);
+  const worksHtml = works.length ? `<div class="music-saved-sec"><h4 class="music-section-h">Favourite works</h4><div class="music-list">${works.map((fw) => {
+    const w = fw.entity; indexMusicItem(w);
     const q = [w.composer, w.catalog || w.title].filter(Boolean).join(" ");
     return `<div class="music-row" data-work-search="${escapeHtml(q)}" role="button" tabindex="0">
         <span class="music-row-icon" aria-hidden="true">${MUSIC_ALBUM_PH_SVG}</span>
@@ -31377,24 +31616,45 @@ function renderMusicSavedBody() {
       </div>`;
   }).join("")}</div></div>` : "";
 
-  const recsHtml = recs.length ? `<div class="music-saved-sec"><h4 class="music-section-h">Favourite recordings</h4><div class="music-list">${recs.map((f) => musicRecordingRow(f.entity)).join("")}</div></div>` : "";
+  const recsHtml = recs.length ? `<div class="music-saved-sec"><h4 class="music-section-h">Favourite recordings</h4><div class="music-list">${recs.map((fr) => musicRecordingRow(fr.entity)).join("")}</div></div>` : "";
   const histHtml = hist.length ? `<div class="music-saved-sec"><h4 class="music-section-h">Recently played</h4><div class="music-list">${hist.map(musicHistoryRow).join("")}</div></div>` : "";
 
+  // Portability: the library itself stays in synced app state (provider-
+  // independent canonical entries — music-library-model.js); CSV is the backup /
+  // move-it-elsewhere format (music-portable.js).
+  const portable = f.active ? "" : `<div class="music-saved-sec music-portable">
+      <h4 class="music-section-h">Back up &amp; move your music</h4>
+      <p class="music-empty-sub">Export your favourites and playlists as a CSV — a spreadsheet-friendly backup you can import here again or take to another music service. Import also accepts playlist CSVs from other apps (e.g. an Exportify export from Spotify).</p>
+      <div class="music-portable-actions">
+        <button class="secondary-btn" type="button" data-music-csv-export>Export CSV</button>
+        <button class="secondary-btn" type="button" data-music-csv-import>Import CSV</button>
+      </div>
+      <input type="file" id="musicCsvInput" accept=".csv,text/csv" hidden>
+    </div>`;
+
+  if (f.active) {
+    const any = pls.length || works.length || recs.length;
+    return `<div class="music-saved">${any ? "" : `<p class="music-status">Nothing saved matches “${escapeHtml(musicLocalQuery)}”.</p>`}${plHtml}${worksHtml}${recsHtml}${musicSearchAllRow(musicLocalQuery)}</div>`;
+  }
   const empty = !pls.length && !works.length && !recs.length && !hist.length;
   return `<div class="music-saved">
       ${empty ? `<div class="music-empty"><div class="music-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
         <p class="music-empty-title">Your saved music lives here</p>
-        <p class="music-empty-sub">Favourite works & recordings and build playlists from <strong>Discover</strong> — they stay yours even if a provider changes.</p></div>`
+        <p class="music-empty-sub">Favourite songs, albums &amp; works and build playlists from <strong>Discover</strong> — they stay yours even if you change music providers.</p></div>`
     : plHtml + worksHtml + recsHtml + histHtml}
+      ${portable}
     </div>`;
 }
 
+// A playlist's own tab. The search bar filters its entries in place (reorder
+// controls hide while filtered, since positions would be ambiguous).
 function renderPlaylistView(id) {
   musicViewIndex = new Map();
+  if (!musicLibModelMod) return `<div class="music-body"><p class="music-status">Loading…</p></div>`;
   const p = musicLibModelMod.getPlaylist(getMusicLibraryState(), id);
-  if (!p) { musicOpenPlaylistId = null; return renderMusicSavedBody(); }
-  const head = `<div class="music-item-head">
-      <button class="music-back-btn" type="button" data-playlist-back aria-label="Back"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></button>
+  if (!p) return `<p class="music-status">This playlist no longer exists.</p>`;
+  const head = `<div class="music-item-head music-pl-head">
+      <span class="music-pl-art" aria-hidden="true">${MUSIC_PLAYLIST_SVG}</span>
       <span class="music-item-meta"><span class="music-item-title">${escapeHtml(p.name)}</span><span class="music-item-artist">${p.items.length} track${p.items.length === 1 ? "" : "s"}</span></span>
       <span class="music-item-badges">
         ${p.items.length ? `<button class="music-chip" type="button" data-playlist-play="${escapeHtml(p.id)}">▶ Play</button><button class="music-chip" type="button" data-playlist-shuffle="${escapeHtml(p.id)}">⇄ Shuffle</button>` : ""}
@@ -31402,13 +31662,48 @@ function renderPlaylistView(id) {
         <button class="music-chip" type="button" data-playlist-delete="${escapeHtml(p.id)}">Delete</button>
       </span>
     </div>`;
-  if (!p.items.length) return head + `<p class="music-status">Empty playlist. Add recordings from Discover with the + button.</p>`;
-  const rows = p.items.map((r, i) => `<div class="music-pl-item">${musicRecordingRow(r, { playlistId: p.id, index: i })}
-      <span class="music-pl-move">
+  if (!p.items.length) return head + `<p class="music-status">Empty playlist. Add songs from Discover with the + button.</p>`;
+  const q = musicLocalQuery.trim();
+  const shown = p.items.map((r, i) => [r, i]).filter(([r]) => !q || textMatches(entityText(r), q));
+  if (!shown.length) return head + `<p class="music-status">Nothing in this playlist matches “${escapeHtml(q)}”.</p>${musicSearchAllRow(q)}`;
+  const rows = shown.map(([r, i]) => `<div class="music-pl-item">${musicRecordingRow(r, { playlistId: p.id, index: i })}
+      ${q ? "" : `<span class="music-pl-move">
         <button type="button" data-pl-move="${escapeHtml(p.id)}:${i}:up" aria-label="Move up" ${i === 0 ? "disabled" : ""}>▲</button>
         <button type="button" data-pl-move="${escapeHtml(p.id)}:${i}:down" aria-label="Move down" ${i === p.items.length - 1 ? "disabled" : ""}>▼</button>
-      </span></div>`).join("");
-  return head + `<div class="music-list">${rows}</div>`;
+      </span>`}</div>`).join("");
+  return head + `<div class="music-list">${rows}</div>${q ? musicSearchAllRow(q) : ""}`;
+}
+
+// ── Library portability: CSV export / import (music-portable.js) ───────────────
+async function exportMusicLibraryCsv() {
+  try {
+    const mod = await import("./music-portable.js");
+    const csv = mod.libraryToCsv(getMusicLibraryState());
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = `music-library-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) { console.warn("music CSV export failed", e); alert("Couldn't export your music library."); }
+}
+async function importMusicLibraryCsv(file) {
+  try {
+    const [mod] = await Promise.all([import("./music-portable.js"), getMusicCanon()]);
+    const text = await file.text();
+    // Work on a copy: nothing touches state unless the import succeeds.
+    const { library, stats } = mod.importCsvIntoLibrary(structuredClone(getMusicLibraryState()), text, { fileName: file.name });
+    if (!stats.favorites && !stats.items && !stats.playlists) {
+      alert(stats.skipped ? "No songs recognised in that file. It needs at least a title (or ISRC) column." : "Nothing new — everything in that file is already in your library.");
+      return;
+    }
+    saveMusicLibrary(library);
+    renderMusicPanel();
+    const bits = [];
+    if (stats.items) bits.push(`${stats.items} song${stats.items === 1 ? "" : "s"}`);
+    if (stats.playlists) bits.push(`${stats.playlists} new playlist${stats.playlists === 1 ? "" : "s"}`);
+    if (stats.favorites) bits.push(`${stats.favorites} favourite${stats.favorites === 1 ? "" : "s"}`);
+    showVoiceToast(`Imported ${bits.join(", ")}.`);
+  } catch (e) { console.warn("music CSV import failed", e); alert("Couldn't read that CSV file."); }
 }
 
 // ── Resolver-backed playback + provider fallback ──────────────────────────────
@@ -31423,6 +31718,13 @@ async function startRecordingResolved(recording, { queueMode = false } = {}) {
   catch { return false; }
   let res = await resolver.resolvePlayableSource(recording, { registry: reg, allowAlternate: false });
   if (res.status !== "exact") res = await resolver.resolvePlayableSource(recording, { registry: reg, allowAlternate: true });
+  // Found the same song on a provider this recording had no ref for (e.g. after
+  // switching players): remember it on the saved entry so next time is direct.
+  // Appended, so the favourite key (first ref) never changes.
+  if (res.learnedRef && Array.isArray(recording.providerRefs) && !recording.providerRefs.some((r) => r.provider === res.learnedRef.provider && r.externalId === res.learnedRef.externalId)) {
+    recording.providerRefs.push({ ...res.learnedRef });
+    persist();
+  }
   if (res.status === "exact" && res.source && res.source.owned) {
     // Apple Music (owns its transport): play the saved recording by its catalog id.
     const prov = reg.get(res.source.provider);
@@ -31492,12 +31794,14 @@ function openAddToPlaylistMenu(recording) {
   ov.querySelector("[data-add-cancel]").addEventListener("click", close);
   ov.querySelectorAll("[data-add-to]").forEach((b) => b.addEventListener("click", () => {
     saveMusicLibrary(musicLibModelMod.addToPlaylist(getMusicLibraryState(), b.dataset.addTo, recording));
+    if (musicTabMode === `pl:${b.dataset.addTo}` || musicTabMode === "saved") updateMusicBody();
     showVoiceToast("Added to playlist"); close();
   }));
   ov.querySelector("[data-add-new]").addEventListener("click", () => {
     const name = prompt("Playlist name", "New playlist"); if (name == null) return;
     const { library, playlist } = musicLibModelMod.createPlaylist(getMusicLibraryState(), name);
     saveMusicLibrary(musicLibModelMod.addToPlaylist(library, playlist.id, recording));
+    if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel(); // the new playlist's tab
     showVoiceToast("Added to new playlist"); close();
   });
   document.body.appendChild(ov);
@@ -31857,12 +32161,11 @@ function initRadioPanel() {
   if (!radioCatalog) ensureRadioCatalog().then(() => { if (activeMediaTab === "radio") renderRadioPanel(); }).catch((err) => console.warn("radio catalog load failed", err));
 }
 
-function createNewMusicPlaylist() {
-  if (!musicLibModelMod) { getMusicCanon().then(createNewMusicPlaylist); return; }
-  const name = prompt("Playlist name", "New playlist"); if (name == null) return;
+function createMusicPlaylistNamed(name) {
+  if (!musicLibModelMod) { getMusicCanon().then(() => createMusicPlaylistNamed(name)); return; }
   const { library, playlist } = musicLibModelMod.createPlaylist(getMusicLibraryState(), name);
   saveMusicLibrary(library);
-  musicOpenPlaylistId = playlist.id; renderMusicPanel();
+  enterMusicMode(`pl:${playlist.id}`);
 }
 function renameMusicPlaylist(id) {
   const p = musicLibModelMod && musicLibModelMod.getPlaylist(getMusicLibraryState(), id); if (!p) return;
@@ -31873,7 +32176,7 @@ function deleteMusicPlaylist(id) {
   const p = musicLibModelMod && musicLibModelMod.getPlaylist(getMusicLibraryState(), id); if (!p) return;
   if (!confirm(`Delete playlist “${p.name}”?`)) return;
   saveMusicLibrary(musicLibModelMod.deletePlaylist(getMusicLibraryState(), id));
-  musicOpenPlaylistId = null; renderMusicPanel();
+  if (musicTabMode === `pl:${id}`) enterMusicMode("saved"); else renderMusicPanel();
 }
 
 // ── Unified now-playing bar (podcasts + article/email TTS + music) ────────────

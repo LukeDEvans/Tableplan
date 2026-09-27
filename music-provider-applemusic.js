@@ -29,7 +29,7 @@ const DEFAULT_TOKEN_ENDPOINT = "/.netlify/functions/apple-music-token";
 const str = (v, d = "") => (v == null ? d : String(v));
 
 // MusicKit artwork is a template ({w}/{h} placeholders); render a concrete URL.
-function appleArtwork(art, size = 300) {
+function appleArtwork(art, size = 400) {
   if (!art || !art.url) return null;
   return str(art.url).replace("{w}", size).replace("{h}", size).replace("{f}", "jpg");
 }
@@ -62,6 +62,7 @@ function songToTrack(song) {
     album: a.albumName || null,
     trackNo: a.trackNumber || null,
     durationMs: msFromMinutes(a.durationInMillis),
+    isrc: a.isrc || null,
     artworkUrl: appleArtwork(a.artwork),
     provider: PROVIDER_ID,
     providerRefs: [makeProviderRef({ provider: PROVIDER_ID, externalId: id, url: a.url })],
@@ -126,6 +127,19 @@ function resourceToItem(r) {
     case "artists": return artistToAlbum(r);
     default: return null;
   }
+}
+
+// Charts response → shelves. `style` is a layout hint the Discover UI may use:
+// "ranked" (numbered song list), "hero" (large cards), default (cards).
+function chartShelves(charts, keep, prefix) {
+  const results = (charts && charts.data && charts.data.results) || {};
+  const out = [];
+  for (const [k, label, style] of [["songs", "Top songs", "ranked"], ["albums", "Top albums", null], ["playlists", "Top playlists", null]]) {
+    const chart = (results[k] || [])[0];
+    const items = keep(chart && chart.data);
+    if (items.length) out.push({ id: `${prefix}:${k}`, title: label, items, ...(style ? { style } : {}) });
+  }
+  return out;
 }
 
 // The Apple catalog id lives in the canonical track's providerRef.
@@ -246,6 +260,8 @@ export function createAppleMusicProvider(config = {}, deps = {}) {
     });
   }
 
+  let genresCache = null;
+
   let current = null; // last instance used for playback (sync now-playing reads)
   async function ensureQueueAndPlay(track) {
     const music = await getInstance(); // throws if not configured — caller handles
@@ -285,7 +301,7 @@ export function createAppleMusicProvider(config = {}, deps = {}) {
   return {
     id: PROVIDER_ID,
     label: config.label || "Apple Music",
-    capabilities: new Set([CAP.SEARCH, CAP.GET_ITEM, CAP.ARTWORK, CAP.OWNS_PLAYBACK, CAP.AUTH, CAP.RECOMMEND]),
+    capabilities: new Set([CAP.SEARCH, CAP.BROWSE, CAP.GET_ITEM, CAP.ARTWORK, CAP.OWNS_PLAYBACK, CAP.AUTH, CAP.RECOMMEND]),
 
     // Cheap gate: available only once a developer token is configured (the key
     // has been added to the Netlify function's env). Inert otherwise — the
@@ -351,12 +367,45 @@ export function createAppleMusicProvider(config = {}, deps = {}) {
         const items = keep(rec.relationships && rec.relationships.contents && rec.relationships.contents.data);
         if (items.length) shelves.push({ id: `rec:${rec.id}`, title: String(title), items });
       }
-      const results = (charts && charts.data && charts.data.results) || {};
-      for (const [k, label] of [["songs", "Top songs"], ["albums", "Top albums"], ["playlists", "Top playlists"]]) {
-        const chart = (results[k] || [])[0];
-        const items = keep(chart && chart.data);
-        if (items.length) shelves.push({ id: `chart:${k}`, title: label, items });
-      }
+      // Top playlists lead the Discover page as the large "hero" shelf.
+      const chartsOut = chartShelves(charts, keep, "chart").map((sh) => (sh.id === "chart:playlists" ? { ...sh, style: "hero" } : sh));
+      return [...chartsOut.filter((sh) => sh.style === "hero"), ...shelves, ...chartsOut.filter((sh) => sh.style !== "hero")];
+    },
+
+    // Browse categories: the storefront's genre list, [{ id, name }]. Cached for
+    // the provider's lifetime (genres change rarely; one request per session).
+    async getGenres() {
+      if (genresCache) return genresCache;
+      const music = await getInstance();
+      const res = await music.api.music(`/v1/catalog/${storefrontOf(music)}/genres`, { limit: 100 });
+      const list = ((res && res.data && res.data.data) || []).map((g) => ({ id: str(g.id), name: str(g.attributes && g.attributes.name) })).filter((g) => g.id && g.name);
+      genresCache = list;
+      return list;
+    },
+
+    // One category page as shelves. A genre category reads that genre's charts; a
+    // mood/activity category (no genre) — or any category's "Playlists" row —
+    // comes from a catalog search for its query. Each call isolated like getHome.
+    async getBrowseCategory(cat = {}, o = {}) {
+      const music = await getInstance();
+      const sf = storefrontOf(music);
+      const cap = o.perShelf || 15;
+      const keep = (list) => (list || []).map(resourceToItem).filter(Boolean).slice(0, cap);
+      const safeCall = (p) => p.then((r) => r, () => null);
+      const q = str(cat.query || cat.label).trim();
+      const [charts, found] = await Promise.all([
+        cat.genreId ? safeCall(music.api.music(`/v1/catalog/${sf}/charts`, { types: "songs,albums,playlists", genre: str(cat.genreId), limit: cap })) : null,
+        q ? safeCall(music.api.music(`/v1/catalog/${sf}/search`, { term: q, types: cat.genreId ? "playlists" : "playlists,songs,albums", limit: Math.min(25, cap) })) : null,
+      ]);
+      const shelves = [];
+      const fr = (found && found.data && found.data.results) || {};
+      const pls = keep(fr.playlists && fr.playlists.data);
+      if (pls.length) shelves.push({ id: "cat:playlists", title: "Playlists", style: "hero", items: pls });
+      shelves.push(...chartShelves(charts, keep, "cat"));
+      const songs = keep(fr.songs && fr.songs.data);
+      if (songs.length) shelves.push({ id: "cat:search-songs", title: "Songs", style: "ranked", items: songs });
+      const albums = keep(fr.albums && fr.albums.data);
+      if (albums.length) shelves.push({ id: "cat:search-albums", title: "Albums", items: albums });
       return shelves;
     },
 
