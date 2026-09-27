@@ -40,14 +40,7 @@ import { buildAgentContext } from './ai-context.js';
 import { indexFromState, search as searchIndexQuery } from './search-index.js';
 import { createOperationTracker } from './async-operation.js';
 import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition as clearMediaPosition, resumePositionFor, pruneMediaProgress } from './media-progress.js';
-import { runFeedIngestion } from './feed-ingest.js';
-import { markManyDiscovered, pruneNotifications, saveArticle as notifSaveArticle, dismissArticle as notifDismissArticle, pendingNotifications, notificationBadgeCount, badgeLabel, retainedArticles, isSaved as notifIsSaved } from './publications-notify.js';
-import { publicationsPanelHtml, subscriptionListHtml } from './publications-render.js';
-import { makePublication, makeFeed, makeArticle, unifiedLibraryArticles, ingestArticles } from './publications.js';
 import { hasLocalTextDetection, detectText, linesToArticle } from './local-text-detect.js';
-import { articleToRow, articleFromRow, publicationToRow, feedToRow, feedFromRow, assemblePublications } from './publications-store.js';
-import { setReadingProgress, readingPercent, pruneReadingProgress, isFinished } from './reading-progress.js';
-import { bodyFetchRequest, normalizeFetchedBody, mergeFetchedMetadata } from './article-body.js';
 import { deriveMediaTierCount } from './media-tier.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
@@ -963,25 +956,6 @@ const elements = {
   homeWeatherBtn: document.querySelector("#homeWeatherBtn"),
   titleWeatherBtn: document.querySelector("#titleWeatherBtn"),
   weatherMainPage: document.querySelector("#weatherMainPage"),
-  publicationsMainPage: document.querySelector("#publicationsMainPage"),
-  publicationsPanel: document.querySelector("#publicationsPanel"),
-  homePublicationsBtn: document.querySelector("#homePublicationsBtn"),
-  pubReaderPanel: document.querySelector("#pubReaderPanel"),
-  pubReaderBody: document.querySelector("#pubReaderBody"),
-  pubReaderText: document.querySelector("#pubReaderText"),
-  pubReaderTitle: document.querySelector("#pubReaderTitle"),
-  pubReaderMeta: document.querySelector("#pubReaderMeta"),
-  pubReaderOrig: document.querySelector("#pubReaderOrig"),
-  pubReaderClose: document.querySelector("#pubReaderClose"),
-  pubReaderListen: document.querySelector("#pubReaderListen"),
-  pubReaderListenMsg: document.querySelector("#pubReaderListenMsg"),
-  pubManageDialog: document.querySelector("#pubManageDialog"),
-  pubSubList: document.querySelector("#pubSubList"),
-  pubNewName: document.querySelector("#pubNewName"),
-  pubNewUrl: document.querySelector("#pubNewUrl"),
-  pubAddBtn: document.querySelector("#pubAddBtn"),
-  pubManageClose: document.querySelector("#pubManageClose"),
-  pubManageMsg: document.querySelector("#pubManageMsg"),
   articleScanDialog: document.querySelector("#articleScanDialog"),
   articleScanImages: document.querySelector("#articleScanImages"),
   articleScanCameraImage: document.querySelector("#articleScanCameraImage"),
@@ -2198,12 +2172,8 @@ function bindEvents() {
   elements.homeContactsBtn?.addEventListener("click", showContactsApp);
   elements.titleContactsBtn?.addEventListener("click", showContactsApp);
   elements.homeWeatherBtn?.addEventListener("click", showWeatherApp);
-  elements.homePublicationsBtn?.addEventListener("click", showPublicationsApp);
-  elements.pubReaderClose?.addEventListener("click", closePubReader);
-  elements.pubReaderListen?.addEventListener("click", () => { if (openPubArticleId) listenToPubArticle(openPubArticleId); });
-  elements.pubAddBtn?.addEventListener("click", () => addSubscription());
-  elements.pubManageClose?.addEventListener("click", () => elements.pubManageDialog?.close());
   elements.closeArticleScanBtn?.addEventListener("click", () => elements.articleScanDialog?.close());
+  document.getElementById("articleScanBtn")?.addEventListener("click", () => openArticleScanDialog());
   elements.articleScanImages?.addEventListener("change", replaceArticleScanFiles);
   elements.articleScanCameraImage?.addEventListener("change", appendArticleScanCamera);
   elements.articleScanCameraBtn?.addEventListener("click", () => elements.articleScanCameraImage?.click());
@@ -2212,9 +2182,6 @@ function bindEvents() {
   elements.scanArticleCloudBtn?.addEventListener("click", () => scanArticleCloud());
   elements.scanArticleLocalBtn?.addEventListener("click", () => scanArticleLocal());
   elements.saveArticleScanBtn?.addEventListener("click", () => saveArticleScan());
-  elements.pubNewUrl?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addSubscription(); } });
-  elements.pubReaderBody?.addEventListener("scroll", onPubReaderScroll, { passive: true });
-  elements.pubReaderPanel?.addEventListener("keydown", (e) => { if (e.key === "Escape") closePubReader(); });
   elements.titleWeatherBtn?.addEventListener("click", showWeatherApp);
   elements.contactsAddBtn?.addEventListener("click", () => openContactDialog(null));
   elements.contactsSearchInput?.addEventListener("input", () => renderContactsPage());
@@ -2923,7 +2890,6 @@ async function initializeApp() {
     await hydrateStateFromSharedStorage();
   }
   await hydrateRecipeRowsFromSupabase();
-  await hydratePublicationsFromDb();
   resyncAllEventChores(); // roll recurring-event chores forward into the To-Do planner
   applyInitialMealPlanFocus();
   handleImportUrlParameter();
@@ -2952,7 +2918,6 @@ function handleHashNavigation() {
     schedule: showPlanApp,
     contacts: showContactsApp,
     weather: showWeatherApp,
-    publications: showPublicationsApp,
     settings: showSettingsApp,
     home: showHomeApp,
     read: showMediaApp,
@@ -3057,7 +3022,6 @@ async function initializeSupabaseAuth() {
       maybeShowHydrationOverlay();
       await hydrateStateFromSharedStorage();
       await hydrateRecipeRowsFromSupabase();
-      await hydratePublicationsFromDb();
       maybeAutoLinkProfile();
       restoreProfileDobFromAuth();
       warmMailStatus();
@@ -3230,36 +3194,6 @@ function setupDiagnostics() {
   window.__liveToday = (now) => projectToday(state, now instanceof Date ? now : new Date());
   window.__liveContext = (now) => buildAgentContext(state, now instanceof Date ? now : new Date());
   window.__liveSearch = (q, opts) => searchIndexQuery(indexFromState(state), q, opts || {});
-  // Publications (Phase 2B) dev/inspection surface: triage deck, badge, library,
-  // and a demand-driven feed refresh — the interactive UI consumes these verbs.
-  window.__livePublications = {
-    pending: () => pubPending(),
-    badge: () => pubBadgeCount(),
-    retained: (publicationId = null) => pubRetained(publicationId),
-    save: (id) => (savePubArticle(id), pubBadgeCount()),
-    dismiss: (id) => (dismissPubArticle(id), pubBadgeCount()),
-    refreshFeed: (feed) => refreshFeed(feed),
-    openReader: (id) => openPubArticle(id),
-    closeReader: () => closePubReader(),
-    readingPercent: (id) => readingPercent(state.readingProgress, id),
-    consumed: (id) => (state.readArticleIds || []).includes(id),
-    subscriptions: () => ({ pubs: (state.pubDefs || []).length, feeds: (state.pubFeeds || []).length }),
-    dbReady: () => pubDbReady(),
-    loadDb: () => loadPublicationsFromDb(),
-    loadArticlesDb: (opts) => loadArticlesFromDb(opts),
-    resolveBody: (id) => resolvePubArticleBody(libraryArticleById(id) || { id }),
-    library: (publicationId = null) => pubLibrary(publicationId).map((a) => ({ id: a.id, title: a.title, origins: a.origins || ["rss"] })),
-    listen: (id) => listenToPubArticle(id),
-    // Test-only injection verbs (headless verification): gated at CALL time on
-    // localDevMode (which is set later in the local-dev boot than this hook), so
-    // they can never seed fake state / bodies / DB rows in production.
-    applyResponse: (feed, resp) => (localDevMode ? applyFeedIngestion(feed, resp) : undefined),
-    upsertToDb: async () => { if (!localDevMode) return; await upsertPublicationsToDb(state.pubDefs || []); await upsertFeedsToDb(state.pubFeeds || []); await upsertArticlesToDb(state.pubArticles || []); return "ok"; },
-    seedSaved: (art) => { if (!localDevMode) return; if (!Array.isArray(state.savedArticles)) state.savedArticles = []; state.savedArticles.push(art); persist(); },
-    seedBody: async (id, html) => { if (!localDevMode) return null; const ac = await getArticleContent(); return ac ? ac.saveBody(id, html) : null; },
-    addScanned: async (fields, bodyHtml) => { if (!localDevMode) return null; return addScannedArticleToLibrary(fields || {}, bodyHtml || "", []); },
-    hasLocalOcr: () => hasLocalTextDetection(),
-  };
   // Receipt review — test-only verbs (local dev) for headless verification of the
   // validation banner + per-line highlighting + source thumbnails.
   window.__liveReceiptScan = {
@@ -3469,445 +3403,17 @@ function renderDiagnosticsPanel(snap) {
   panel.querySelector("#liveDiagClose").addEventListener("click", () => panel.remove());
 }
 
-// ── Publications (Phase 2B): demand-driven ingestion applier + triage ─────────
-// Bound the interim state-backed article store (until the relational table is
-// applied): ALWAYS keep saved/permanent articles; cap the rest, newest first. This
-// guarantees notification retention/pruning can never drop the permanent library.
-function capPubArticles(list, notifMap, cap = 1000) {
-  const arr = Array.isArray(list) ? list : [];
-  if (arr.length <= cap) return arr;
-  const ms = (iso) => { const t = Date.parse(iso); return Number.isNaN(t) ? 0 : t; };
-  const saved = arr.filter((a) => notifIsSaved(notifMap, a.id));
-  const rest = arr.filter((a) => !notifIsSaved(notifMap, a.id))
-    .sort((a, b) => (ms(b.publishedAt) - ms(a.publishedAt)) || (ms(b.discoveredAt) - ms(a.discoveredAt)));
-  const keep = new Set(saved.map((a) => a.id));
-  for (const a of rest) { if (keep.size >= cap) break; keep.add(a.id); }
-  return arr.filter((a) => keep.has(a.id));
-}
-
-// Apply a fetch-feed RESPONSE to state via the Phase-2A/1 pipeline. On failure or
-// 304 it does NOT mutate the article store (only records feed metadata). New article
-// ids become PENDING notifications; rediscovered ones keep their lifecycle.
-function applyFeedIngestion(feed, response) {
-  const before = new Set((state.pubArticles || []).map((a) => a.id));
-  const r = runFeedIngestion({ feed, response, existingList: state.pubArticles || [] });
-  applyFeedRecordUpdate(feed, r.feedUpdate);
-  if (r.failure || r.notModified) { persist(); return r; } // transient/no-change → never touch articles
-  const newIds = (r.articles || []).filter((a) => !before.has(a.id)).map((a) => a.id);
-  state.articleNotifications = markManyDiscovered(state.articleNotifications || {}, newIds);
-  state.pubArticles = capPubArticles(r.articles, state.articleNotifications);
-  const liveIds = state.pubArticles.map((a) => a.id);
-  state.articleNotifications = pruneNotifications(state.articleNotifications, liveIds);
-  // Reading progress spans the UNIFIED library, so keep manual-save ids too.
-  state.readingProgress = pruneReadingProgress(state.readingProgress, [...liveIds, ...(state.savedArticles || []).map((a) => a.id)]);
-  persist();
-  // Best-effort write-through: mirror new articles + the feed's fetch metadata to
-  // the tables. Fire-and-forget — a DB failure never breaks the in-memory flow, and
-  // the next boot hydrate reconciles anything missed.
-  if (pubDbReady()) {
-    const newSet = new Set(newIds);
-    const changed = state.pubArticles.filter((a) => newSet.has(a.id));
-    if (changed.length) upsertArticlesToDb(changed).catch((e) => console.warn("pub article DB upsert failed", e));
-    const f = (state.pubFeeds || []).find((x) => x.id === feed?.id);
-    if (f) upsertFeedsToDb([f]).catch(() => {});
-  }
-  return r;
-}
-
-// Persist the feed's fetch metadata (etag/lastModified/lastSuccessAt/errorCount/…)
-// onto the matching pubFeeds record, so the next refresh can send a conditional GET.
-function applyFeedRecordUpdate(feed, update) {
-  if (!feed?.id || !update) return;
-  if (!Array.isArray(state.pubFeeds)) state.pubFeeds = [];
-  const i = state.pubFeeds.findIndex((f) => f.id === feed.id);
-  if (i >= 0) state.pubFeeds[i] = { ...state.pubFeeds[i], ...update };
-}
-
-// Demand-driven refresh of ONE feed through the SSRF-guarded server boundary
-// (fetch-feed). Never polls; a caller (manual refresh) invokes it explicitly.
-async function refreshFeed(feed) {
-  if (!feed?.url) return { failure: { message: "feed has no url" } };
-  let resp;
-  try {
-    const res = await fetch("/.netlify/functions/fetch-feed", {
-      method: "POST",
-      headers: { "content-type": "application/json", ...(authSession?.access_token ? { authorization: `Bearer ${authSession.access_token}` } : {}) },
-      body: JSON.stringify({ url: feed.url, etag: feed.etag || null, lastModified: feed.lastModified || null }),
-    });
-    resp = await res.json();
-  } catch (e) {
-    resp = { status: null, error: (e && e.message) || "network error" };
-  }
-  return applyFeedIngestion(feed, resp);
-}
-
-// Runtime triage helpers used by the UI (save/dismiss resolve the notification only).
-function savePubArticle(articleId) { state.articleNotifications = notifSaveArticle(state.articleNotifications || {}, articleId); persist(); }
-function dismissPubArticle(articleId) { state.articleNotifications = notifDismissArticle(state.articleNotifications || {}, articleId); persist(); }
-function pubPending() { return pendingNotifications(state.pubArticles || [], state.articleNotifications || {}, new Date().toISOString()); }
-function pubBadgeCount() { return notificationBadgeCount(state.pubArticles || [], state.articleNotifications || {}, new Date().toISOString()); }
-function pubRetained(publicationId = null) { return retainedArticles(state.pubArticles || [], state.articleNotifications || {}, { publicationId }); }
-
-// The UNIFIED library (audit §213): RSS-saved articles converged with the manual
-// savedArticles store into one deduplicated canonical list — non-destructive, read
-// only. Filter by publication (manual saves have none → only under "All"); newest
-// first. This is the migration-ready convergence WITHOUT moving/removing any data.
-function pubLibrary(publicationId = null) {
-  const unified = unifiedLibraryArticles(pubRetained(null), state.savedArticles || []);
-  const filtered = publicationId ? unified.filter((a) => a.publicationId === publicationId) : unified;
-  const ms = (iso) => { const t = Date.parse(iso); return Number.isNaN(t) ? 0 : t; };
-  return filtered.sort((a, b) => (ms(b.publishedAt) - ms(a.publishedAt)) || (ms(b.discoveredAt) - ms(a.discoveredAt)));
-}
-
-// Resolve a library article by id from EITHER source (canonical pub store or a
-// manual save surfaced through the convergence), so the reader/listen paths open
-// manual saves too.
-function libraryArticleById(id) {
-  return pubArticleById(id) || pubLibrary(null).find((a) => a.id === id) || null;
-}
-
-let pubActiveTab = "notifications";  // "notifications" | "library"
-let pubActiveFilter = null;          // publicationId or null (= All)
-
-function showPublicationsApp(event) {
-  event?.stopPropagation();
-  activeAppArea = "publications";
-  hideAllPages();
-  elements.publicationsMainPage.hidden = false;
-  setPageTitle("Publications");
-  setPageHash("publications");
-  closePageTitleMenu();
-  closeAppMenu();
-  renderPublicationsPanel();
-}
-
-function renderPublicationsPanel() {
-  const el = elements.publicationsPanel;
-  if (!el) return;
-  const pubs = Array.isArray(state.pubDefs) ? state.pubDefs : [];
-  const pubsById = Object.fromEntries(pubs.map((p) => [p.id, p]));
-  const badge = pubBadgeCount();
-  el.innerHTML = publicationsPanelHtml({
-    tab: pubActiveTab, badge, badgeLabel: badgeLabel(badge),
-    pending: pubPending(), retained: pubLibrary(pubActiveFilter),
-    pubs, activePublicationId: pubActiveFilter, pubsById,
-    readIds: new Set(state.readArticleIds || []),
-  });
-  el.querySelectorAll("[data-pub-tab]").forEach((b) => b.addEventListener("click", () => { pubActiveTab = b.dataset.pubTab; renderPublicationsPanel(); }));
-  el.querySelectorAll("[data-pub-filter]").forEach((b) => b.addEventListener("click", () => { pubActiveFilter = b.dataset.pubFilter === "all" ? null : b.dataset.pubFilter; renderPublicationsPanel(); }));
-  el.querySelectorAll("[data-pub-save]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); savePubArticle(b.dataset.pubSave); renderPublicationsPanel(); }));
-  el.querySelectorAll("[data-pub-dismiss]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); dismissPubArticle(b.dataset.pubDismiss); renderPublicationsPanel(); }));
-  el.querySelectorAll("[data-pub-flip]").forEach((b) => b.addEventListener("click", () => b.closest(".pub-card")?.classList.toggle("is-flipped")));
-  el.querySelector("[data-pub-refresh]")?.addEventListener("click", () => refreshAllFeeds());
-  el.querySelector("[data-pub-manage]")?.addEventListener("click", () => openPubManage());
-  el.querySelector("[data-pub-scan]")?.addEventListener("click", () => openArticleScanDialog());
-  // Library rows open the reader (triage cards deliberately do NOT — §16/§32/§33).
-  el.querySelectorAll(".pub-lib-row").forEach((row) => {
-    const open = () => openPubArticle(row.dataset.articleId);
-    row.addEventListener("click", open);
-    row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
-  });
-}
-
-// ── Publications reader (Phase 3): on-demand body → content store, reading progress ──
-// A DEDICATED panel (isolated from the savedArticles reader so its Delete/Close
-// handlers can't touch a canonical pub article). Body is fetched on demand into the
-// shared content store, keyed by the article id; the metadata record stays body-free
-// (only a small cross-device bodyRef is stored on it). Opening never marks the
-// article consumed (audit §279–283) — it only saves a READING position.
-let openPubArticleId = null;
-let _pubScrollTimer = null;
-
-function pubArticleById(id) { return (state.pubArticles || []).find((a) => a.id === id) || null; }
-
-// Persist a small content-store ref + any non-destructive metadata refresh back
-// onto the canonical article. NEVER writes a body onto the synced record.
-function updatePubArticle(id, patch) {
-  const i = (state.pubArticles || []).findIndex((a) => a.id === id);
-  if (i < 0) return;
-  state.pubArticles[i] = { ...state.pubArticles[i], ...patch };
-  if ("text" in state.pubArticles[i]) delete state.pubArticles[i].text;
-  if ("body" in state.pubArticles[i]) delete state.pubArticles[i].body;
-  persist();
-}
-
-function openPubArticle(id) {
-  const article = libraryArticleById(id);
-  const panel = elements.pubReaderPanel;
-  if (!article || !panel) return;
-  openPubArticleId = id;
-  panel.hidden = false;
-  setPubListenMsg("");
-  if (elements.pubReaderTitle) elements.pubReaderTitle.textContent = article.title || article.canonicalUrl || article.url || "(untitled)";
-  if (elements.pubReaderMeta) {
-    const pub = article.publicationId ? (state.pubDefs || []).find((p) => p.id === article.publicationId) : null;
-    const dt = article.publishedAt ? new Date(Date.parse(article.publishedAt)) : null;
-    const dateLbl = dt && !Number.isNaN(dt.getTime()) ? dt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "";
-    elements.pubReaderMeta.textContent = [pub?.name || article.category || "", article.author || "", dateLbl].filter(Boolean).join(" · ");
-  }
-  const orig = article.canonicalUrl || article.url || "";
-  if (elements.pubReaderOrig) { elements.pubReaderOrig.href = orig || "#"; elements.pubReaderOrig.hidden = !orig; }
-  if (elements.pubReaderBody) elements.pubReaderBody.scrollTop = 0;
-  renderPubArticleBody(article);
-}
-
-// Resolve an article's body HTML: content store first (local IndexedDB → durable
-// Supabase-Storage backstop via bodyRef), else the SSRF-guarded fetch-article
-// boundary — mirroring the result into the content store (keyed by id) and
-// recording only a small bodyRef + non-destructive metadata refresh. Returns
-// { ok, text } | { ok:false, error }. Shared by the reader and the listen path.
-async function resolvePubArticleBody(article) {
-  const id = article.id;
-  // A manual save surfaced through the convergence already holds its body in
-  // state.savedArticles (text or a content-store bodyRef) — use it, no fetch.
-  const saved = (state.savedArticles || []).find((s) => s.id === id);
-  if (saved?.text) return { ok: true, text: saved.text };
-  try {
-    const ac = await getArticleContent();
-    const ref = article.bodyRef || saved?.bodyRef;
-    if (ac) { const body = await ac.loadBody(id, { ref, fallbackText: null }); if (body) return { ok: true, text: body }; }
-  } catch { /* fall through to a network fetch */ }
-
-  const req = bodyFetchRequest(article, { pubsById: Object.fromEntries((state.pubDefs || []).map((p) => [p.id, p])) });
-  if (!req.ok) return { ok: false, error: req.error };
-  let res;
-  try { res = await callNetlifyFunction("fetch-article", { url: req.url, publication: req.publication }); }
-  catch { res = null; }
-  const norm = normalizeFetchedBody(res);
-  if (!norm.ok) return { ok: false, error: norm.error };
-  try {
-    const ac = await getArticleContent();
-    const ref = ac ? await ac.saveBody(id, norm.text) : null;
-    const { article: refreshed, changed } = mergeFetchedMetadata(article, norm);
-    const patch = changed ? { ...refreshed } : {};
-    if (ref?.cloud) patch.bodyRef = ref;
-    if (Object.keys(patch).length) updatePubArticle(id, patch);
-  } catch { /* non-fatal — the caller still has the body text */ }
-  return { ok: true, text: norm.text };
-}
-
-async function renderPubArticleBody(article) {
-  const id = article.id;
-  const textEl = elements.pubReaderText;
-  if (!textEl) return;
-  const paint = (html) => {
-    if (openPubArticleId !== id) return;
-    textEl.innerHTML = html;
-    restorePubReadingScroll(id);
-  };
-  // Show a fetching hint only if the content store misses (a fetch is coming).
-  let acHit = false;
-  try { const ac = await getArticleContent(); if (ac) acHit = await ac.hasLocal(id); } catch { /* ignore */ }
-  if (openPubArticleId !== id) return;
-  if (!acHit) textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
-
-  const r = await resolvePubArticleBody(article);
-  if (openPubArticleId !== id) return;
-  if (r.ok) { paint(r.text); return; }
-  const orig = escapeHtml(article.canonicalUrl || article.url || "#");
-  paint(`<div class="article-fetch-prompt"><p class="article-fetch-hint">${escapeHtml(r.error)}</p><a href="${orig}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`);
-}
-
-// Listen to a Library article: resolve its body, then reuse the shared article-TTS
-// engine via a savedArticle-shaped adapter (audit "article as audio"). Audio is
-// synthesized + cached by the voice service (keyed by the article id); listening
-// is a SEPARATE concern from reading progress and from consumption.
-async function listenToPubArticle(id) {
-  const article = libraryArticleById(id);
-  if (!article) return;
-  unlockListenAudio(); // bless the audio element NOW, inside the user's tap (iOS)
-  setPubListenMsg("Loading…");
-  const r = await resolvePubArticleBody(article);
-  if (!r.ok || !r.text) { setPubListenMsg(r.error || "Couldn't load this article to read aloud."); return; }
-  const pub = article.publicationId ? (state.pubDefs || []).find((p) => p.id === article.publicationId) : null;
-  const adapter = {
-    id: article.id,
-    text: r.text,
-    title: article.title || "",
-    author: article.author || "",
-    publication: pub?.name || article.category || "",
-    pubDate: article.publishedAt || null,
-  };
-  // Pre-generate the audio ourselves so a synth failure surfaces inline (rather
-  // than through the shared engine's blocking alert), and a success is reused via
-  // the engine's prefetch cache (no second synthesis).
-  setPubListenMsg("Preparing audio…");
-  let data;
-  try { data = await generateTtsUrls(adapter); }
-  catch (e) { setPubListenMsg("Couldn't prepare audio — " + (e?.message || "try again later")); return; }
-  if (!data || !data.urls || !data.urls.length) { setPubListenMsg("No audio was produced for this article."); return; }
-  setPubListenMsg("");
-  ttsPrefetchCache.set(articleTtsCacheKey(adapter.id), Promise.resolve(data));
-  try { stopListen(); startListenTTS(adapter); }
-  catch (e) { setPubListenMsg("Could not start audio: " + (e?.message || "unknown error")); }
-}
-
-function setPubListenMsg(text) {
-  const el = elements.pubReaderListenMsg;
-  if (!el) return;
-  el.textContent = text || "";
-  el.hidden = !text;
-}
-
-// Restore the saved reading position (percent → scrollTop) once the body is laid out.
-function restorePubReadingScroll(id) {
-  const body = elements.pubReaderBody;
-  if (!body) return;
-  const pct = readingPercent(state.readingProgress, id);
-  if (pct <= 0) return;
-  requestAnimationFrame(() => {
-    if (openPubArticleId !== id) return;
-    const max = body.scrollHeight - body.clientHeight;
-    if (max > 0) body.scrollTop = Math.round(pct * max);
-  });
-}
-
-// Record a COMPLETE read as consumption — the shared history the rest of the app
-// uses (readArticleIds + articleReadDates), so a finished pub article reads the
-// same everywhere. Idempotent. This is the ONLY place the pub reader consumes:
-// opening and partial reading never do (audit §279–283). The article stays in the
-// Library (consumption ≠ deletion/dismissal).
-function markPubArticleConsumed(id) {
-  if (!id) return false;
-  if (!Array.isArray(state.readArticleIds)) state.readArticleIds = [];
-  if (state.readArticleIds.includes(id)) return false;
-  state.readArticleIds.push(id);
-  if (!state.articleReadDates || typeof state.articleReadDates !== "object") state.articleReadDates = {};
-  if (!state.articleReadDates[id]) state.articleReadDates[id] = new Date().toISOString();
-  persist();
-  return true;
-}
-
-// Save reading position on scroll (debounced). Opening/scrolling never consumes;
-// only crossing the finished threshold (reaching the end) records consumption.
-function onPubReaderScroll() {
-  const body = elements.pubReaderBody;
-  if (!body || !openPubArticleId) return;
-  if (_pubScrollTimer) clearTimeout(_pubScrollTimer);
-  _pubScrollTimer = setTimeout(() => {
-    const id = openPubArticleId;
-    if (!id) return;
-    const max = body.scrollHeight - body.clientHeight;
-    const pct = max > 0 ? body.scrollTop / max : 0;
-    state.readingProgress = setReadingProgress(state.readingProgress, id, { percent: pct, position: body.scrollTop });
-    persist();
-    // Reached the end → consume (once). Re-render the library so the row shows read.
-    if (isFinished(state.readingProgress, id) && markPubArticleConsumed(id) && activeAppArea === "publications") {
-      renderPublicationsPanel();
-    }
-  }, 400);
-}
-
-function closePubReader() {
-  if (elements.pubReaderPanel) elements.pubReaderPanel.hidden = true;
-  if (_pubScrollTimer) { clearTimeout(_pubScrollTimer); _pubScrollTimer = null; }
-  openPubArticleId = null;
-}
-
-// Manual, demand-driven refresh of every enabled feed (never polls). Re-renders when done.
-async function refreshAllFeeds() {
-  const feeds = (state.pubFeeds || []).filter((f) => f && f.enabled !== false && f.url);
-  for (const f of feeds) { try { await refreshFeed(f); } catch { /* per-feed failure is recorded on the feed */ } }
-  renderPublicationsPanel();
-}
-
-// ── Subscription management: add/remove a Publication + its Feed ──────────────
-// The only user path to populate pubDefs/pubFeeds. Reuses the canonical shapes
-// (makePublication/makeFeed) and the existing SSRF-guarded fetch pipeline.
-function openPubManage() {
-  if (!elements.pubManageDialog) return;
-  renderPubSubList();
-  if (elements.pubNewName) elements.pubNewName.value = "";
-  if (elements.pubNewUrl) elements.pubNewUrl.value = "";
-  setPubManageMsg("");
-  elements.pubManageDialog.showModal();
-}
-
-function setPubManageMsg(text) {
-  const el = elements.pubManageMsg;
-  if (!el) return;
-  el.textContent = text || "";
-  el.hidden = !text;
-}
-
-function renderPubSubList() {
-  if (!elements.pubSubList) return;
-  const pubs = Array.isArray(state.pubDefs) ? state.pubDefs : [];
-  const feedUrlById = Object.fromEntries((state.pubFeeds || []).map((f) => [f.id, f.url]));
-  elements.pubSubList.innerHTML = subscriptionListHtml(pubs, { feedUrlById });
-  elements.pubSubList.querySelectorAll("[data-pub-remove]").forEach((b) =>
-    b.addEventListener("click", () => removeSubscription(b.dataset.pubRemove)));
-}
-
-// Validate + create a Publication with one Feed, then pull it through the normal
-// fetch pipeline so its articles surface as notifications immediately.
-async function addSubscription() {
-  const name = (elements.pubNewName?.value || "").trim();
-  const url = (elements.pubNewUrl?.value || "").trim();
-  if (!url) { setPubManageMsg("Enter a feed URL."); return; }
-  let parsed;
-  try { parsed = new URL(url); } catch { setPubManageMsg("That doesn't look like a valid URL."); return; }
-  if (!/^https?:$/.test(parsed.protocol)) { setPubManageMsg("Feed URLs must start with http:// or https://."); return; }
-  if ((state.pubFeeds || []).some((f) => f.url === url)) { setPubManageMsg("That feed is already added."); return; }
-
-  const feedId = createId("feed");
-  const pub = makePublication({ id: createId("pub"), name: name || parsed.hostname, feedIds: [feedId] });
-  const feed = makeFeed({ id: feedId, publicationId: pub.id, url, title: name || parsed.hostname });
-  if (!Array.isArray(state.pubDefs)) state.pubDefs = [];
-  if (!Array.isArray(state.pubFeeds)) state.pubFeeds = [];
-  state.pubDefs.push(pub);
-  state.pubFeeds.push(feed);
-  persist();
-  if (pubDbReady()) {
-    upsertPublicationsToDb([pub]).catch((e) => console.warn("pub DB upsert failed", e));
-    upsertFeedsToDb([feed]).catch((e) => console.warn("feed DB upsert failed", e));
-  }
-  if (elements.pubNewName) elements.pubNewName.value = "";
-  if (elements.pubNewUrl) elements.pubNewUrl.value = "";
-  renderPubSubList();
-  setPubManageMsg("Fetching…");
-  try {
-    const r = await refreshFeed(feed);
-    setPubManageMsg(r?.failure ? "Added, but the fetch failed — try Refresh later." : "Added.");
-  } catch { setPubManageMsg("Added, but the fetch failed — try Refresh later."); }
-  renderPublicationsPanel();
-}
-
-// Remove a subscription: tombstone the Publication + its Feeds so a sync can't
-// resurrect them. Articles/notifications are left to age out normally.
-function removeSubscription(pubId) {
-  if (!pubId) return;
-  const pub = (state.pubDefs || []).find((p) => p.id === pubId);
-  const feedIds = pub?.feedIds || [];
-  recordDeletion("pubDefs", pubId);
-  for (const fid of feedIds) recordDeletion("pubFeeds", fid);
-  state.pubDefs = (state.pubDefs || []).filter((p) => p.id !== pubId);
-  state.pubFeeds = (state.pubFeeds || []).filter((f) => !feedIds.includes(f.id) && f.publicationId !== pubId);
-  persist();
-  if (pubDbReady()) {
-    // Delete feeds first (FK), then the publication. Best-effort; ON DELETE CASCADE
-    // would also clear feeds, but we delete explicitly to be backend-agnostic.
-    Promise.all(feedIds.map((fid) => deleteSupabaseRow("feeds", fid).catch(() => {})))
-      .then(() => deleteSupabaseRow("publications", pubId).catch(() => {}))
-      .catch(() => {});
-  }
-  renderPubSubList();
-  renderPublicationsPanel();
-}
-
-// ── Article scanning → Publications Library ──────────────────────────────────
+// ── Article scanning → Media → Publications ──────────────────────────────────
 // Photograph a printed article → the shared document-scan seam (cloud, via
 // /scan-article) or on-device TextDetector (offline, clean pages) → review → a
-// canonical article SAVED in the Library (body in the content store, source photo
-// in scan-content, opens in the pub reader). Reuses the scan-image toolkit.
+// saved article in Media → Publications (savedArticles; the body is mirrored into
+// the content store like any other saved article). Reuses the scan-image toolkit.
 let articleScanFiles = [];
 let articleScanEdits = new Map();
-let _articleScanBlobs = [];
 
 function openArticleScanDialog() {
   articleScanFiles = [];
   articleScanEdits = new Map();
-  _articleScanBlobs = [];
   if (elements.articleScanImages) elements.articleScanImages.value = "";
   renderArticleScanPreviews();
   if (elements.articleScanReview) elements.articleScanReview.hidden = true;
@@ -3958,8 +3464,8 @@ async function scanArticleCloud() {
     const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` }, body: JSON.stringify({ images }) });
     const payload = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(payload.error || `Article scan failed (${res.status})`);
-    populateArticleScanReview(payload.article, prepared);
-    elements.articleScanStatus.textContent = "Review and edit, then save to your Library.";
+    populateArticleScanReview(payload.article);
+    elements.articleScanStatus.textContent = "Review and edit, then save to Publications.";
   } catch (e) {
     elements.articleScanStatus.textContent = e.message || "The article scan failed.";
   } finally {
@@ -3976,7 +3482,7 @@ async function scanArticleLocal() {
     const allLines = [];
     for (const blob of prepared) { const r = await detectText(blob); if (r.ok) allLines.push(...r.lines); }
     if (!allLines.length) { elements.articleScanStatus.textContent = "No text found on device — try the cloud scan."; return; }
-    populateArticleScanReview(linesToArticle(allLines), prepared);
+    populateArticleScanReview(linesToArticle(allLines));
     elements.articleScanStatus.textContent = "On-device read is rough — check the text before saving.";
   } catch {
     elements.articleScanStatus.textContent = "On-device scan failed — try the cloud scan.";
@@ -3985,8 +3491,7 @@ async function scanArticleLocal() {
   }
 }
 
-function populateArticleScanReview(article, blobs) {
-  _articleScanBlobs = blobs || [];
+function populateArticleScanReview(article) {
   const a = article || {};
   elements.articleScanTitle.value = a.title || "";
   elements.articleScanAuthor.value = a.author || "";
@@ -4004,133 +3509,52 @@ async function saveArticleScan() {
   if (!title && !bodyText) { elements.articleScanStatus.textContent = "Add a title or some text first."; return; }
   const paragraphs = bodyText.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
   const bodyHtml = paragraphs.map((p) => `<p>${escapeHtml(p)}</p>`).join("");
-  const id = await addScannedArticleToLibrary({
+  const article = addScannedArticle({
     title,
     author: elements.articleScanAuthor.value.trim(),
     publication: elements.articleScanPublication.value.trim(),
     date: elements.articleScanDate.value || new Date().toISOString().slice(0, 10),
-  }, bodyHtml, _articleScanBlobs);
-  _articleScanBlobs = [];
+  }, bodyHtml);
   elements.articleScanDialog?.close();
-  showPublicationsApp();
-  pubActiveTab = "library";
-  renderPublicationsPanel();
-  if (id) openPubArticle(id);
+  if (activeAppArea !== "media") showMediaApp();
+  switchMediaTab(article.publication);
+  openArticle(article.id, "articleList");
 }
 
-// Create a canonical Library article from a scan (metadata-only record; body in the
-// content store; source photo in scan-content). Marked SAVED so it lands in the
-// permanent Library, and mirrored to the relational store (cutover).
-async function addScannedArticleToLibrary(fields, bodyHtml, imageBlobs = []) {
-  const article = makeArticle({
+// The typed publication name → a Media → Publications key ("nyt", "economist", …)
+// when it matches one of the reading publications, else "other".
+function scannedPublicationKey(name) {
+  const n = String(name || "").trim().toLowerCase().replace(/^the\s+/, "");
+  if (!n) return "other";
+  const hit = getReadPublications().find((p) => {
+    const label = String(p.label || "").toLowerCase().replace(/^the\s+/, "");
+    return p.key === n || label === n || (p.domain && n.includes(String(p.domain).split(".")[0]));
+  });
+  return hit?.key || "other";
+}
+
+// Save a scanned article into savedArticles (Media → Publications). The body rides
+// `text` and is mirrored to the content store (stashArticleBody), like any saved
+// article. Returns the new record.
+function addScannedArticle(fields, bodyHtml) {
+  const savedAt = new Date().toISOString();
+  const pubName = String(fields.publication || "").trim();
+  const article = {
     id: createId("art"),
-    title: fields.title,
-    author: fields.author || null,
-    publishedAt: fields.date || new Date().toISOString().slice(0, 10),
-    category: fields.publication || null,
-    discoveredAt: new Date().toISOString(),
-    provenance: makeProvenance({ origin: PROV_ORIGIN.IMPORTED, source: "scan" }),
-  });
-  try { const ac = await getArticleContent(); if (ac && bodyHtml) await ac.saveBody(article.id, bodyHtml); } catch { /* body re-addable later */ }
-  try {
-    const sc = await getScanContent();
-    if (sc) { for (let i = 0; i < imageBlobs.length; i++) { const bytes = new Uint8Array(await imageBlobs[i].arrayBuffer()); await sc.saveImage(article.id, i, bytes, imageBlobs[i].type || "image/jpeg"); } }
-  } catch { /* source image best-effort */ }
-  state.pubArticles = ingestArticles(state.pubArticles || [], [article]).articles;
-  state.articleNotifications = notifSaveArticle(state.articleNotifications || {}, article.id);
+    url: null,
+    title: fields.title || "Scanned article",
+    author: [fields.author, pubName].filter(Boolean).join(" · ") || null,
+    publication: scannedPublicationKey(pubName),
+    date: fields.date || savedAt.slice(0, 10),
+    savedAt,
+    text: bodyHtml || null,
+    provenance: makeProvenance({ origin: PROV_ORIGIN.IMPORTED, source: "scan", importedAt: savedAt }),
+  };
+  if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
+  state.savedArticles.push(article);
   persist();
-  if (pubDbReady()) upsertArticlesToDb([article]).catch((e) => console.warn("scanned article DB upsert failed", e));
-  return article.id;
-}
-
-// ── Publications relational store (Phase 3 cutover, slice 1) ──────────────────
-// Thin PostgREST data-access over the publications/feeds/articles tables, mirroring
-// the eat_recipes pattern (supabaseHeaders + supabaseBaseUrl + on_conflict upsert).
-// The pure row⇄model mapping lives in publications-store.js. group_id is the current
-// group (userGroup.id) so the group-scoped RLS passes. NOT yet wired into the live
-// read/write flow — the sync slice consumes these. Every call needs a cloud session.
-function pubDbGroupId() { return userGroup?.id || null; }
-function pubDbReady() { return !localDevMode && canUseCloudStorage() && !!authSession?.access_token && !!pubDbGroupId(); }
-
-// Load publications + their feeds and assemble the client pubDefs/pubFeeds shapes.
-async function loadPublicationsFromDb() {
-  const base = supabaseBaseUrl();
-  const [pubRes, feedRes] = await Promise.all([
-    fetch(`${base}/rest/v1/publications?select=id,name,key,enabled&order=name.asc`, { headers: supabaseHeaders(), cache: "no-store" }),
-    fetch(`${base}/rest/v1/feeds?select=*&order=created_at.asc`, { headers: supabaseHeaders(), cache: "no-store" }),
-  ]);
-  if (!pubRes.ok) throw new Error(`publications load failed (${pubRes.status})`);
-  if (!feedRes.ok) throw new Error(`feeds load failed (${feedRes.status})`);
-  const pubRows = await pubRes.json();
-  const feedRows = await feedRes.json();
-  return { pubDefs: assemblePublications(pubRows, feedRows), pubFeeds: feedRows.map(feedFromRow) };
-}
-
-// Load a page of articles, newest-published first (indexed by group_published_idx).
-// `before` (ISO) pages backwards from a prior page's last publishedAt.
-async function loadArticlesFromDb({ limit = 200, before = null } = {}) {
-  const base = supabaseBaseUrl();
-  const beforeClause = before ? `&published_at=lt.${encodeURIComponent(before)}` : "";
-  const res = await fetch(`${base}/rest/v1/articles?select=*&order=published_at.desc.nullslast,discovered_at.desc&limit=${Number(limit) || 200}${beforeClause}`, { headers: supabaseHeaders(), cache: "no-store" });
-  if (!res.ok) throw new Error(`articles load failed (${res.status})`);
-  return (await res.json()).map(articleFromRow);
-}
-
-async function upsertRowsToDb(table, rows) {
-  if (!rows.length) return;
-  const res = await fetch(`${supabaseBaseUrl()}/rest/v1/${table}?on_conflict=id`, {
-    method: "POST",
-    headers: { ...supabaseHeaders(), Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify(rows),
-  });
-  if (!res.ok) throw new Error(`${table} upsert failed (${res.status})`);
-}
-
-function upsertArticlesToDb(articles) { const g = pubDbGroupId(); return upsertRowsToDb("articles", (articles || []).filter((a) => a.id).map((a) => articleToRow(a, g))); }
-function upsertPublicationsToDb(pubs) { const g = pubDbGroupId(); return upsertRowsToDb("publications", (pubs || []).filter((p) => p.id).map((p) => publicationToRow(p, g))); }
-function upsertFeedsToDb(feeds) { const g = pubDbGroupId(); return upsertRowsToDb("feeds", (feeds || []).filter((f) => f.id).map((f) => feedToRow(f, g))); }
-// Deletes reuse the generic deleteSupabaseRow("articles"|"feeds"|"publications", id).
-
-// One-time (idempotent) push of the current interim JSONB store into the tables —
-// on_conflict=id makes re-running a no-op beyond metadata refresh. Used both as the
-// initial backfill (empty DB) and to lift any local-only rows the DB lacks yet.
-async function backfillPublicationsToDb() {
-  if (!pubDbReady()) return { skipped: true };
-  await upsertPublicationsToDb(state.pubDefs || []);
-  await upsertFeedsToDb(state.pubFeeds || []);
-  await upsertArticlesToDb(state.pubArticles || []);
-  return { pubs: (state.pubDefs || []).length, feeds: (state.pubFeeds || []).length, articles: (state.pubArticles || []).length };
-}
-
-// Boot hydration: when a cloud session exists, the RELATIONAL tables are the durable
-// source for publications/feeds/articles. Load them into memory (unioning any
-// local-only rows by canonical identity so nothing is lost), then lift local-only
-// rows back to the DB. On an empty DB this is the initial backfill. Best-effort:
-// any failure leaves the interim JSONB store in charge (no throw to the caller).
-async function hydratePublicationsFromDb() {
-  if (!pubDbReady()) return; // no cloud session → the interim JSONB store stays authoritative
-  try {
-    const [{ pubDefs, pubFeeds }, articles] = await Promise.all([
-      loadPublicationsFromDb(),
-      loadArticlesFromDb({ limit: 500 }),
-    ]);
-    if (pubDefs.length || pubFeeds.length || articles.length) {
-      if (pubDefs.length) state.pubDefs = pubDefs;
-      if (pubFeeds.length) state.pubFeeds = pubFeeds;
-      // DB articles are the base; local-only ones (discovered since last sync) union in.
-      state.pubArticles = ingestArticles(articles, state.pubArticles || []).articles;
-      const liveIds = state.pubArticles.map((a) => a.id);
-      state.articleNotifications = pruneNotifications(state.articleNotifications || {}, liveIds);
-      state.readingProgress = pruneReadingProgress(state.readingProgress, [...liveIds, ...(state.savedArticles || []).map((a) => a.id)]);
-      persist();
-      await backfillPublicationsToDb(); // lift any local-only rows up (idempotent)
-      if (activeAppArea === "publications") renderPublicationsPanel();
-      return;
-    }
-    await backfillPublicationsToDb(); // empty DB → seed it from the interim store
-  } catch (e) {
-    console.warn("Publications DB unavailable; using the interim store.", e);
-  }
+  stashArticleBody(article);
+  return article;
 }
 
 async function toggleAuth() {
@@ -7725,7 +7149,6 @@ function hideAllPages() {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.mediaMainPage.hidden = true;
-  if (elements.publicationsMainPage) elements.publicationsMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;

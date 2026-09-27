@@ -1,7 +1,7 @@
 # News Intake — Design (Intent / Spec / Plan)
 
-**Status:** IMPLEMENTED 2026-09-27 (all of §3). **§5 removal is HELD** pending Luke's call
-(see §5). §8 lists where the build deviated from the first draft of this spec and why.
+**Status:** IMPLEMENTED 2026-09-27, including the §5 removal (scanning moved into
+Media → Publications). §8 lists where the build deviated from the first draft of this spec and why.
 
 ## 1. Intent
 
@@ -184,23 +184,36 @@ Strib, and NYT Cooking) for link extraction, canonicalization, dedup, and the
 route order; a browser check of the bell and deck; and a real-email check after
 deploy (confirm fixture patterns match live mail).
 
-## 5. Removal — standalone Publications page — **HELD**
+## 5. Removal — standalone Publications page — **DONE**
 
-Luke asked for it to be removed entirely. While implementing, it turned out that page is
-the **only entry point for article scanning** (photograph a printed article → saved to
-the Library, `openArticleScanDialog`). It also owns its own reader, and it runs a boot-time
-hydrate of up to 500 rows from the relational `articles` table. Deleting it would
-silently remove a working feature, so this is held for Luke to decide where scanning
-should live (e.g. a Scan button in Media → Publications that saves into
-`savedArticles`) before removal.
+The page turned out to be the only entry point for **article scanning**. Luke decided
+(2026-09-27) to **move scanning into Media → Publications**:
 
-When unblocked, the removal list is: `homePublicationsBtn` + `#publicationsMainPage` +
-the `publications` route, the pub reader, the Manage dialog, `refreshFeed`/
-`refreshAllFeeds`, `hydratePublicationsFromDb`, the `window.__livePublications` dev
-hook, and the client wiring for `pubDefs`/`pubFeeds`/`pubArticles`/
-`articleNotifications`. Also the modules and tests that become dead: `feed-*.js`,
-`publications*.js`, `fetch-feed.js`. Grep for other importers before deleting each one,
-and keep the Supabase tables (dropping them is a gated DB change).
+- A Scan button sits in the Publications toolbar, next to search and archive. A scanned
+  article saves into `savedArticles` and opens in the Media reader.
+  - Its body rides `text` and is mirrored to the content store, like any saved article.
+  - The typed publication name maps to a paper key (NYT / Economist / Star Tribune…),
+    falling back to "Other".
+  - The source photos are no longer kept; nothing ever displayed them.
+- Removed:
+  - `homePublicationsBtn`, `#publicationsMainPage`, the `publications` route, the pub
+    reader, and the Manage dialog.
+  - The RSS client: `refreshFeed` and triage.
+  - `hydratePublicationsFromDb`, which loaded up to 500 relational `articles` rows on
+    every boot.
+  - The `window.__livePublications` dev hook.
+  - The modules `feed-parse.js`, `feed-ingest.js`, `publications.js`,
+    `publications-render.js`, `publications-store.js`, `reading-progress.js`,
+    `article-body.js`, and `netlify/functions/fetch-feed.js`, with their tests and
+    styles.
+- **Deliberately left** (logged in ISSUES.md):
+  - The state-shape entries for `pubDefs`/`pubFeeds`/`pubArticles`/
+    `articleNotifications` (defaults, normalize, sync sections, merge lists). These are
+    shared sync infrastructure, and stale keys are harmless.
+  - `publications-notify.js`, still used by `today-projection.js`. Its Publications
+    figures are now always zero.
+  - The Supabase `publications`/`feeds`/`articles` tables. Dropping them is a gated DB
+    change.
 
 ## 6. Decided — Q-A: which emails get newsletter → article conversion
 
