@@ -1,7 +1,7 @@
 # News Intake — Design (Intent / Spec / Plan)
 
-**Status:** SPEC — agreed in conversation 2026-09-27, awaiting go-ahead to implement.
-One open question remains (§6, Q-A). Nothing here is implemented yet.
+**Status:** IMPLEMENTED 2026-09-27 (all of §3). **§5 removal is HELD** pending Luke's call
+(see §5). §8 lists where the build deviated from the first draft of this spec and why.
 
 ## 1. Intent
 
@@ -36,9 +36,10 @@ notifications.
 | Paper keys | `defaultReadPublications()` → `nyt`, `economist`, `startribune` | `publication` field on saves |
 | Standalone Publications page + RSS pipeline | `showPublicationsApp`, `homePublicationsBtn`, `publications*.js`, `feed-*.js`, `fetch-feed.js` | **Removed** (§5) |
 
-**Known gap in the recipe flow (not changed here):** recipes have no "seen" record,
-so a dismissed recipe can come back if a later email links it again. News adds
-that record. Recipes could adopt it later (logged to ISSUES.md).
+**Recipes intentionally allow repeats (Luke, 2026-09-27):** recipes have no "seen"
+record, so a dismissed recipe can come back if a later email links it again. **That is
+desired** (recipes age well; a recipe skipped this year may be wanted next year).
+Do not add a seen record to recipes. News is the opposite: never repeat, never stale.
 
 ## 3. Spec
 
@@ -63,6 +64,11 @@ Match on sender (`nytimes.com`, `economist.com`, `startribune.com`), gated by a
      host, and remove the trailing slash. The canonical URL is the identity.
 3. **Dedupe against `newsSeen`** (in the `mailai_<user>` row). Only unseen URLs go
    on.
+3a. **Freshness cutoff: drop anything published more than 7 days ago.** Luke: "I will
+   never want 1 year old news." The publish date comes from the URL (NYT/Economist
+   carry `/YYYY/MM/DD/`), else `article:published_time`, else the email's date. An
+   article with no knowable date uses the email date. Old articles are still recorded
+   in `newsSeen` so they aren't re-checked.
 4. **Build each card** (best effort; a card needs only `url` + `title`):
    - `title`: `og:title`, else the email's link text, else a title from the slug.
    - `subtitle`: `og:description`, else none.
@@ -88,7 +94,7 @@ article's id `news-<messageId>` already prevents duplicate saves. A retry never
 multiplies cards. Emails with no article links and no conversion do nothing
 beyond filing.
 
-### 3.2 Storage (`tableplan_states` row `mailai_<userId>`)
+### 3.2 Storage — *as built: two dedicated rows and a 30-day seen window, see §8*
 
 ```
 newsPending: [{ url, title, subtitle?, image?, publication: "nyt"|"economist"|"startribune",
@@ -97,11 +103,14 @@ newsSeen:    { "<canonicalUrl>": "<firstSeenISO>" }
 ```
 
 - `newsPending` is capped at the newest **300** entries, as `recipesPending` is.
-- `newsSeen` is pruned to **120 days** on every write. If a paper re-promotes a
-  4-month-old article, it may reappear; that's acceptable. Expected size is about
+- `newsSeen` is pruned to **120 days** on every write. Because of the 7-day
+  freshness cutoff (step 3a), an article pruned from `newsSeen` is long past the
+  cutoff and can never come back. Expected size is about
   100 URLs a day × 120 days ≈ 12k entries, roughly 1 MB. **If that's too big for the
   row, drop the window to 60 days** (decide at implementation after measuring real
   volume).
+- **Pending cards also expire after 7 days** (pruned on every write and on read), so
+  an ignored deck never serves week-old news.
 - Accept and dismiss both remove the card from `newsPending`. Neither touches
   `newsSeen`: a card that has been seen stays seen.
 
@@ -175,42 +184,39 @@ Strib, and NYT Cooking) for link extraction, canonicalization, dedup, and the
 route order; a browser check of the bell and deck; and a real-email check after
 deploy (confirm fixture patterns match live mail).
 
-## 5. Removal — standalone Publications page
+## 5. Removal — standalone Publications page — **HELD**
 
-Luke confirmed: only Media → Publications should exist, and assume nothing was
-saved through the RSS page.
+Luke asked for it to be removed entirely. While implementing, it turned out that page is
+the **only entry point for article scanning** (photograph a printed article → saved to
+the Library, `openArticleScanDialog`). It also owns its own reader, and it runs a boot-time
+hydrate of up to 500 rows from the relational `articles` table. Deleting it would
+silently remove a working feature, so this is held for Luke to decide where scanning
+should live (e.g. a Scan button in Media → Publications that saves into
+`savedArticles`) before removal.
 
-- Remove: `homePublicationsBtn` + `#publicationsMainPage` + the `publications` route,
-  the pub reader panel, the Manage dialog, `refreshFeed`/`refreshAllFeeds`, and the
-  client wiring for `pubDefs`/`pubFeeds`/`pubArticles`/`articleNotifications` and
-  the relational `publications`/`feeds`/`articles` access.
-- Remove the modules and tests that become dead: `feed-parse.js`, `feed-ingest.js`,
-  `publications*.js`, `fetch-feed.js`. Before deleting each one, **grep for other
-  importers** (e.g. `publications.js` may be imported by the media reader) and keep
-  anything still used.
-- **Keep** the Supabase tables `publications` / `feeds` / `articles`. Dropping them
-  is a gated prod DB change; logged to ISSUES.md.
-- Stale state keys (`pubDefs`, …) are left in existing rows. They're harmless, and
-  there's no migration or `STATE_SCHEMA_VERSION` bump.
+When unblocked, the removal list is: `homePublicationsBtn` + `#publicationsMainPage` +
+the `publications` route, the pub reader, the Manage dialog, `refreshFeed`/
+`refreshAllFeeds`, `hydratePublicationsFromDb`, the `window.__livePublications` dev
+hook, and the client wiring for `pubDefs`/`pubFeeds`/`pubArticles`/
+`articleNotifications`. Also the modules and tests that become dead: `feed-*.js`,
+`publications*.js`, `fetch-feed.js`. Grep for other importers before deleting each one,
+and keep the Supabase tables (dropping them is a gated DB change).
 
-## 6. Open question
+## 6. Decided — Q-A: which emails get newsletter → article conversion
 
-**Q-A — which emails get the newsletter → article conversion?** Luke: "do all mail
-from these publications… some of this will require more color of the newsletter
-emails being extracted to be sent to media to listen to, which is good."
+**Luke (2026-09-27): conversion runs on every real newsletter from the three papers.**
+"If it becomes a problem, we can address it then."
 
-Proposed reading, to confirm:
 - **Link extraction runs on all mail** from the three papers (per toggle).
-- **Conversion runs on any real newsletter** from the three papers, not only
-  "The Morning" and "World in Brief". A newsletter counts as real when its
-  simplified text is ≥1,500 characters and it isn't a breaking-news alert or a
-  marketing/account email (sender/subject heuristics). Short alerts and promos
-  get links only, no article.
-- Cost: one Haiku call per qualifying newsletter, maybe 3–10 a day across the three
-  papers.
-- Today, a too-short newsletter **throws and is retried** (`_gmail-shared.js:552`).
-  With more emails converted, that must become "skip conversion, still file"; a
-  hard failure retries only on a real error.
+- **Conversion runs on any real newsletter** from the three papers, not only "The
+  Morning" and "World in Brief". A newsletter counts as real when its simplified text
+  is ≥1,500 characters and it isn't a breaking-news alert or a marketing/account
+  email (sender/subject heuristics). Short alerts and promos get links only.
+- Cost: one Haiku call per qualifying newsletter, maybe 3–10 a day.
+- Today a too-short newsletter **throws and is retried** (`_gmail-shared.js:552`).
+  That becomes "skip conversion, still file"; only a real error retries.
+- Gated by the same per-paper news toggle; the existing `nytMorningToArticle` /
+  `economistBriefToArticle` toggles still control those two newsletters.
 
 ## 7. Plan (implementation order)
 
@@ -225,3 +231,32 @@ Proposed reading, to confirm:
 7. Remove the standalone Publications page and the dead RSS code (§5).
 8. `npm test`, `npm run check:boot`, 360 px pass, adversarial review, then a real-email
    check after deploy (deploy gated on Luke).
+
+## 8. As built — deviations from the first draft (and why)
+
+- **Storage is two dedicated rows, not the `mailai` row.** `mailnews_<user>` holds
+  `{ newsPending }` (read by the bell, rewritten by swipes) and `mailnewsseen_<user>`
+  holds `{ newsSeen }` (touched only by the sweep). The recipe bell reads the whole
+  `mailai` row on every Meal Plan open, so putting a large seen record there would have
+  added egress to every recipe check. Splitting the rows keeps each read to what it needs.
+- **The seen record is compact and short-lived.** It stores `{ hash: dayNumber }` for
+  **30 days** rather than 120. The 7-day freshness cutoff means anything older than the
+  window could never be delivered anyway.
+- **Swipes are batched.** The client queues decisions and sends one `resolveNews
+  { decisions: [...] }` 1.5 s after the last swipe, on panel close, or when the page is
+  hidden. A swiping session costs one read+write, not one per card.
+- **Sweep writes once per batch.** Messages are processed in parallel, so each news email
+  returns its cards and the sweep does ONE merged write, then files those emails. If the
+  write fails, the emails are not filed and are retried; the seen record makes retries
+  idempotent.
+- **What counts as a news email** (filed to Apps/AI trash): one from an enabled paper
+  that links at least one article, even if every article was delivered before. One with
+  no article links (account/billing mail) falls through to normal triage, untouched.
+  An NYT Cooking email keeps its recipe behavior and filing, and is never converted by
+  the generic newsletter path.
+- **Accepted articles open in the Media reader,** not straight to the URL. The reader
+  already fetches the body on open (using the subscriber-cookie sync when configured) and
+  falls back to "Open in browser".
+- **Shared redirect cache.** `_recipe-digest.followRedirects` delegates to
+  `_news-links.followRedirects`, which caches resolved click-tracker hops per function
+  instance, so NYT tracker links are resolved once per email instead of twice.

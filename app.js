@@ -65,6 +65,7 @@ import * as TravelRefs from './travel-refs.js';
 import * as TravelGeo from './travel-geo.js';
 import * as TravelMode from './travel-mode.js';
 import * as TravelIngest from './travel-ingest.js';
+import { createNewsNotifModule } from './news-notif-ui.js';
 
 // In the Capacitor native shell the web app is served from capacitor://localhost,
 // so every RELATIVE backend call (`/.netlify/functions/…`, `/api/…`) would resolve
@@ -1511,7 +1512,30 @@ const PAGE_NOTIF_BUTTONS = {
   do: ["planTasksBtn"], // Tasks notif dot now lives on the Calendar page's bell
   eat: ["homeEatBtn", "titleMealPlanBtn"],
   explore: ["homeExploreBtn", "titleExploreBtn"],
+  media: ["homeReadBtn", "titleReadBtn"],
 };
+
+// ── Media news notifications (news-notif-ui.js) ─────────────────────────────
+// Articles linked in NYT / Economist / Star Tribune email, collected server-side
+// by the mail sweep (_news-links.js). Saving one adds it to Media → Publications
+// right away (the server saves the same record by id; savedArticles unions by id).
+// All deps are hoisted function declarations or deferred closures (boot-safe).
+const _newsNotif = createNewsNotifModule({
+  callGmailApi: (...a) => callGmailApi(...a),
+  escapeHtml: (...a) => escapeHtml(...a),
+  showToast: (...a) => showMailToast(...a),
+  isSignedIn: () => !!authSession?.access_token,
+  setDotCount: (...a) => setNewsNotifDot(...a),
+  onAccepted: (...a) => addAcceptedNewsArticle(...a)
+});
+const { wire: wireNewsNotif, warm: warmNewsNotif, seed: seedNewsNotif } = _newsNotif;
+function setNewsNotifDot(n) { setPageNotifCount("media", n); }
+function addAcceptedNewsArticle(article) {
+  if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
+  if (!state.savedArticles.some((a) => a.id === article.id)) state.savedArticles.unshift(article);
+  persist();
+  if (activeAppArea === "media" && isArticlePubTab(activeMediaTab)) renderArticleList("articleList", activeMediaTab);
+}
 
 function setPageNotifCount(page, count) {
   (PAGE_NOTIF_BUTTONS[page] || []).forEach((key) => {
@@ -3417,6 +3441,12 @@ function setupDiagnostics() {
     // they're not callable from here by name. Assign the variable directly instead;
     // this reproduces warmMealPlanRecipes' result, the same shortcut mpAddRecipeEntry
     // takes for a picked recipe.
+    // The Media news deck (news-notif-ui.js) — normally filled from Gmail's
+    // "pendingNews"; seeds it directly so the deck can be exercised locally.
+    newsSetPending: (articles) => {
+      if (!localDevMode) return null;
+      return seedNewsNotif(articles);
+    },
     mpSetSuggestions: (recipes) => {
       if (!localDevMode) return null;
       mealPlanRecipes = recipes;
@@ -8075,6 +8105,7 @@ function warmPageNotifs() {
   // Fetches live accounts when connected, which also sets the finance dot
   if (getFinanceLinkStatus() === null) checkFinanceLinkStatus();
   warmMealPlanRecipes();
+  warmNewsNotif();
 }
 
 // ── Meal Plan recipe notifications ───────────────────────────────────────────
@@ -15843,6 +15874,24 @@ const MAIL_AI_FEATURES = [
     defaultOn: true,
     label: "“The world in brief” → article",
     desc: "Same for The Economist's daily briefing — saved as a listenable article on the Media page, email filed away."
+  },
+  {
+    key: "nytNewsLinks",
+    defaultOn: false,
+    label: "NYT articles → Media notifications",
+    desc: "Every New York Times article linked in an NYT email becomes a card in the Media page's notification bell (swipe right to save it to Publications, left to dismiss). An article is never delivered twice, and nothing older than a week. Real newsletters are also converted into a listenable article. The email is then filed to Apps/AI trash."
+  },
+  {
+    key: "economistNewsLinks",
+    defaultOn: false,
+    label: "Economist articles → Media notifications",
+    desc: "Same for The Economist's emails."
+  },
+  {
+    key: "startribuneNewsLinks",
+    defaultOn: false,
+    label: "Star Tribune articles → Media notifications",
+    desc: "Same for the Minnesota Star Tribune's emails."
   },
   {
     key: "autoDeleteSimplefin",
@@ -26964,9 +27013,8 @@ function wireMediaTabs() {
     if (mediaSearchQuery) renderMediaSearchResults();
     else exitMediaSearch();
   });
-  document.getElementById("mediaNotificationsBtn")?.addEventListener("click", () => {
-    showMailToast("Media notifications are coming soon."); // placeholder until media notifications land
-  });
+  // Media bell → news-article deck (news-notif-ui.js, NEWS_INTAKE_DESIGN.md).
+  wireNewsNotif();
 
   // (Reset-order moved into the Playlist settings modal.)
 
