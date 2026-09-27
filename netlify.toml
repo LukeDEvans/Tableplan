@@ -1,6 +1,9 @@
 [build]
   command = "npm run build"
   publish = "dist"
+  # Merging to main does NOT deploy by itself: production builds run only when the
+  # commit message contains [deploy] (see scripts/netlify-ignore.sh, UNDEPLOYED.md).
+  ignore = "bash scripts/netlify-ignore.sh"
 
 [build.environment]
   # VAPID_CONTACT_EMAIL is a contact address, not a credential — it is embedded

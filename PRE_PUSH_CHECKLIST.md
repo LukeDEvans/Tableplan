@@ -1,7 +1,9 @@
 # Pre-push checklist
 
-Run through this every time before pushing (push = Netlify deploy). Claude: do
-this pass whenever Luke says he's about to push, and report anything that fails.
+Run through this every time before deploying. A production deploy happens only when a
+commit on `main` has `[deploy]` in its message; plain merges to `main` don't deploy
+(scripts/netlify-ignore.sh). Claude: do this pass whenever Luke says he's about to
+deploy, and report anything that fails.
 
 ## 1. Mobile horizontal fit (the recurring one)
 On a ~360px-wide viewport (iPhone), **no page may scroll sideways.** A global
@@ -32,6 +34,10 @@ screen, nothing important clipped at the right edge:
 - [ ] Service worker `CACHE` bumped if shipping client changes that must invalidate cache.
 
 ## 4. Deploy hygiene
-- [ ] Confirm with Luke before pushing (deploy credit + GitHub push cap).
+- [ ] Confirm with Luke before deploying (deploy credit).
+- [ ] Read [UNDEPLOYED.md](UNDEPLOYED.md): everything listed ships with this deploy. Do
+      each entry's post-deploy steps afterwards, then empty the list.
+- [ ] Deploy = a commit on `main` whose message contains `[deploy]` (e.g. merge a PR
+      titled "… [deploy]").
 - [ ] After deploy: any pending post-deploy reminders (finance version-stamp +
       category rebuild, Chase Gmail filter).
