@@ -36,3 +36,13 @@ PR: https://github.com/LukeDEvans/Tableplan/pull/8
 - Also closes the ISSUES.md "verify finance ingest on deployed runtime" item (docs).
 
 **After deploying:** nothing.
+
+## Page windows fit the screen; stop above the mini-player (PR #9)
+PR: https://github.com/LukeDEvans/Tableplan/pull/9
+
+- Page windows no longer run past the bottom of the screen on iPhone (Safari toolbars,
+  home indicator in the PWA, Explore in the native app). While the audio mini-player is
+  showing, every window stops 10px above it. CSS only.
+
+**After deploying:** on an iPhone, check a few pages with and without the mini-player
+showing, in both the installed web app and the native app.

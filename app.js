@@ -67,8 +67,9 @@ import { createNewsNotifModule } from './news-notif-ui.js';
 // relative fetches keep working unchanged (the functions already send CORS headers).
 // No-op in a browser/PWA (same-origin), so this is zero-risk there.
 const NATIVE_API_BASE = "https://effervescent-malabi-e0af55.netlify.app";
-// Tag the document so native-only CSS (safe-area insets for the notch / home
-// indicator) can scope to the app without affecting the browser/PWA.
+// Tag the document so native-only CSS can scope to the app without affecting the
+// browser/PWA. (Safe-area insets for the notch / home indicator now apply everywhere
+// via the body's env(safe-area-inset-*) padding in styles.css.)
 if (isNativeApp() && typeof document !== "undefined") { try { document.documentElement.setAttribute("data-native", "ios"); } catch { /* noop */ } }
 if (isNativeApp() && typeof window !== "undefined" && window.fetch) {
   const _nativeFetch = window.fetch.bind(window);

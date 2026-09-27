@@ -1,5 +1,14 @@
 :root {
   color-scheme: light;
+  /* Device safe-area insets (notch / home indicator). env() is 0 where there's
+     no inset, so these are no-ops on desktop and in a normal browser tab. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* Height of the fixed audio mini-player bar above the safe area (1px border
+     + 3px progress line + 90px body; see the Mini-player section), and the gap
+     page windows keep above it while it's showing. */
+  --mini-player-h: 94px;
+  --mini-player-gap: 10px;
   --bg: #f7f5ef;
   --surface: #fffdf8;
   --surface-strong: #ffffff;
@@ -899,10 +908,23 @@ h3 {
 /* Every page window fits the viewport: the body never scrolls; the
    app shell is exactly one screen tall and any overflow scrolls INSIDE
    the active white/navy page window. (This generalizes the pattern the
-   Mail/Media pages already used via per-page body:has rules.) */
+   Mail/Media pages already used via per-page body:has rules.)
+   - min-height is reset: the base body rule's `min-height: 100vh` would win over
+     `height: 100dvh` whenever the large viewport is taller than the visible one
+     (iOS Safari with its toolbars showing), pushing every window's bottom edge
+     off screen.
+   - 100vh is a fallback for WebKit builds without dvh support.
+   - The safe-area padding keeps windows out from under the notch/status bar and
+     the home indicator (the viewport is edge-to-edge: viewport-fit=cover, and
+     contentInset:never in the native shell). */
 body {
   overflow: hidden;
+  height: 100vh;
   height: 100dvh;
+  min-height: 0;
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
+  box-sizing: border-box;
 }
 
 .app-shell {
@@ -16942,6 +16964,8 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   overflow: hidden;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+  /* Extend under the home indicator so the controls sit above it. */
+  padding-bottom: var(--safe-bottom);
 }
 /* Thin non-interactive episode-progress line pinned to the top edge. */
 .mini-player-progress {
@@ -17091,14 +17115,14 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
 .mini-player-play-btn svg { display: block; width: 34px; height: 34px; }
 .mini-player-skip-btn svg { display: block; width: 32px; height: 32px; }
 
-/* Nudge body content up so it isn't hidden behind the fixed bar (progress 3px
-   + body 90px). */
-body.has-mini-player .app-shell { padding-bottom: 114px; }
-body.has-mini-player .article-list,
-body.has-mini-player .podcast-list-panel .article-list,
-body.has-mini-player .mail-list { padding-bottom: 114px; }
+/* While the bar is showing, the app shell stops just above it: every page
+   window ends --mini-player-gap above the bar, with a strip of page background
+   between them. The body's safe-area padding already clears the home indicator,
+   which the bar's own bottom padding fills, so only the bar height is added. */
+body.has-mini-player .app-shell { padding-bottom: calc(var(--mini-player-h) + var(--mini-player-gap)); }
 
 @media (max-width: 640px) {
+  :root { --mini-player-h: 88px; }
   .mini-player-body { height: 84px; }   /* 1.5× the former 56px */
   .mini-player-play-btn { width: 56px; height: 56px; }
   .mini-player-skip-btn { width: 52px; height: 52px; }
@@ -17328,7 +17352,7 @@ body.has-mini-player .mail-list { padding-bottom: 114px; }
 
 /* ── Explore page ────────────────────────────────────────────────────────── */
 body:has(#exploreMainPage:not([hidden])) .app-shell {
-  height: 100dvh;
+  height: 100%;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -22782,13 +22806,3 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
 .fin-alerts-settings { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
 .fin-alerts-title { margin-top: 8px; font-size: 0.95rem; font-weight: 800; color: var(--ink); }
 
-/* ── Native (Capacitor) safe-area insets ──────────────────────────────────────
-   The native webview is edge-to-edge (viewport-fit=cover + contentInset:never),
-   so inset the app for the status bar / notch (top) and home indicator (bottom).
-   Scoped to the native shell via html[data-native]; the browser/PWA is untouched.
-   env(safe-area-inset-*) is 0 where there's no inset, so this is safe. */
-html[data-native] body {
-  padding-top: env(safe-area-inset-top);
-  padding-bottom: env(safe-area-inset-bottom);
-  box-sizing: border-box;
-}
