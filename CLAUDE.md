@@ -123,9 +123,11 @@ Every AI email-processing feature MUST have an on/off toggle in Settings → Mai
 
 **Local commits are welcome — commit freely as work completes.** Luke likes reviewing changes locally before they go out.
 
-**Push to GitHub freely after any completed, verified commit — no need to ask first.** Netlify deploys (or anything that triggers one, e.g. merging to `main`, the production/auto-deploy branch — see below) still require explicit confirmation before proceeding. Pushing to any other branch is unambiguously safe and costless; `main` is the one boundary that matters, since it's the branch Netlify auto-deploys from. Netlify Free plan: ~20 production deploys/month (300 credits ÷ 15 credits/deploy) — this applies to merges into `main`, not to ordinary GitHub pushes, which have no comparable cap.
+**Push to GitHub freely after any completed, verified commit — no need to ask first.** Netlify deploys still require explicit confirmation before proceeding. **Merging to `main` no longer deploys by itself (2026-09-27):** a production build runs only when the commit on `main` has **`[deploy]`** in its message (`netlify.toml` `ignore` → `scripts/netlify-ignore.sh`; deploy previews always build). So a merge is safe once Luke has OK'd it; a `[deploy]` commit is the boundary that matters. Netlify Free plan: ~20 production deploys/month (300 credits ÷ 15 credits/deploy).
 
-**Before any push to `main` (or anything that triggers a Netlify deploy), run through [PRE_PUSH_CHECKLIST.md](PRE_PUSH_CHECKLIST.md)** — especially the mobile horizontal-fit pass (every page must lay out within a ~360px phone; no sideways scroll, nothing clipped at the right edge). Report anything that fails before proceeding.
+**Every merge to `main` that isn't deployed adds an entry to [UNDEPLOYED.md](UNDEPLOYED.md)** (what shipped, the PR, post-deploy steps), so undeployed work isn't forgotten.
+
+**Before any deploy (a `[deploy]` commit on `main`), run through [PRE_PUSH_CHECKLIST.md](PRE_PUSH_CHECKLIST.md)** — especially the mobile horizontal-fit pass (every page must lay out within a ~360px phone; no sideways scroll, nothing clipped at the right edge) — and include everything in UNDEPLOYED.md. Report anything that fails before proceeding.
 
 ## Domains & parallel-agent development
 

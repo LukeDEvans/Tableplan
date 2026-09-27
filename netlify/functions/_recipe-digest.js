@@ -222,20 +222,11 @@ function unwrapParamRedirect(raw) {
   return url;
 }
 
-async function followRedirects(url, hops = 3) {
-  let cur = url;
-  for (let i = 0; i < hops; i++) {
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 4000);
-      const res = await fetch(cur, { method: "GET", redirect: "manual", signal: ctrl.signal });
-      clearTimeout(t);
-      const loc = res.headers.get("location");
-      if (!loc) return cur;
-      cur = new URL(loc, cur).toString();
-    } catch { return cur; }
-  }
-  return cur;
+// Shared with news-link extraction (_news-links.js), which caches resolved hops
+// per function instance — NYT recipe and news mail wrap links in the same
+// nl.nytimes.com trackers, so one email's trackers are resolved only once.
+function followRedirects(url, hops = 3) {
+  return require("./_news-links.js").followRedirects(url, hops);
 }
 
 function titleFromSlug(url, source) {
