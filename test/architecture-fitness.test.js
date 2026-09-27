@@ -21,7 +21,7 @@ const PURE_CORE = [
   "calendar/recurrence.js", "calendar/model.js", "calendar/projection.js", "calendar/reconcile.js",
   "calendar/normalize.js", "calendar/sources.js", "calendar/tasks-project.js",
   "grocery-catalog.js", "grocery-sources.js", "nutrition-domain.js", "receipt-domain.js",
-  "daily-dozen.js", "food-health.js", "meal-plan-servings.js", "music-canonical.js", "provenance.js", "platform-capabilities.js", "diagnostics.js", "today-projection.js", "ai-context.js", "search-index.js", "async-operation.js", "publications.js", "feed-parse.js", "feed-ingest.js", "publications-notify.js",
+  "daily-dozen.js", "food-health.js", "meal-plan-servings.js", "music-canonical.js", "provenance.js", "platform-capabilities.js", "diagnostics.js", "today-projection.js", "ai-context.js", "search-index.js", "async-operation.js", "publications-notify.js",
 ];
 
 // Client-served source (secrets must never reach here — ARCH §10). Excludes netlify/
@@ -135,84 +135,21 @@ describe("fitness: media-state separation — progress never defines current pla
   });
 });
 
-describe("fitness: canonical Article stays OUT of the hot media JSONB (Phase 1)", () => {
+describe("fitness: Publications lives only in Media → Publications (NEWS_INTAKE_DESIGN.md)", () => {
   it("the media state section does not hold canonical publications/feeds/articles tables", () => {
     const app = code("app.js");
     const media = app.slice(app.indexOf("media:"), app.indexOf("media:") + 1200);
-    // The canonical Article library is RELATIONAL (migrations/2026-09-02-publications.sql),
-    // never in the hot media section. (Legacy manual `savedArticles` stays until migrated.)
     expect(/["']articleLibrary["']|["']canonicalArticles["']|["']publicationsTable["']/.test(media)).toBe(false);
   });
-  it("publications.js is pure and reuses the existing canonical-URL utility", () => {
-    const src = code("publications.js");
-    expect(src.includes('from "./import-canonical.js"')).toBe(true); // reuse, not reinvent
-    expect(src.includes('from "./provenance.js"')).toBe(true);       // reuse provenance
-  });
-});
-
-describe("fitness: RSS ingestion boundary (Phase 2A)", () => {
-  it("feed ingestion converges through the Phase-1 canonical reconciliation", () => {
-    const src = code("feed-ingest.js");
-    expect(/ingestArticles|canonicalKey|makeArticle/.test(src)).toBe(true);
-    expect(src.includes('from "./publications.js"')).toBe(true); // reuse, not a second Article model
-  });
-  it("the RSS layer introduces NO scheduler/polling (demand-driven only)", () => {
-    for (const f of ["feed-parse.js", "feed-ingest.js", "publications-notify.js", "netlify/functions/fetch-feed.js"]) {
-      const src = code(f);
-      expect(/setInterval|setTimeout|cron|scheduled|node-cron|nextFetchAt\s*=/.test(src)).toBe(false);
-    }
-  });
-  it("the feed fetch reuses the shared SSRF-guarded safeFetch (no second fetch impl)", () => {
-    const src = code("netlify/functions/fetch-feed.js");
-    expect(src.includes('require("./_import-fetch.js")')).toBe(true);
-    expect(src.includes("safeFetch(")).toBe(true);
-    expect(/\bfetch\s*\(/.test(src.replace(/safeFetch/g, ""))).toBe(false); // no bare fetch()
-  });
-  it("the RSS layer does not give Article a body/audio/playback field", () => {
-    const pub = code("publications.js");
-    const makeArt = pub.slice(pub.indexOf("export function makeArticle"), pub.indexOf("export function reconcileArticle"));
-    for (const banned of ["text:", "body:", "audioUrl", "listeningProgress", "readingProgress", "playbackPosition"]) {
-      expect(makeArt.includes(banned)).toBe(false);
-    }
-  });
-  it("feed-ingest does not reimplement URL normalization (reuses import-canonical via publications)", () => {
-    const src = code("feed-ingest.js");
-    expect(src.includes("canonicalizeUrl")).toBe(false); // it comes through publications.js, not redefined here
-  });
-});
-
-describe("fitness: Publications notifications/library (Phase 2B)", () => {
-  it("notification/lifecycle state is NOT stored on the canonical Article", () => {
-    const pub = code("publications.js");
-    const makeArt = pub.slice(pub.indexOf("export function makeArticle"), pub.indexOf("export function reconcileArticle"));
-    for (const banned of ["notification", "dismissed:", "saved:", "notifState"]) {
-      expect(makeArt.includes(banned)).toBe(false);
-    }
-    // the lifecycle lives in its own module, keyed by articleId
-    expect(code("publications-notify.js").includes("articleId")).toBe(true);
-  });
-  it("notification map stays a synced key-union; articles moved to the relational store", () => {
+  it("the standalone Publications page and its RSS client are gone (no second Publications surface)", () => {
     const app = code("app.js");
-    const body = app.slice(app.indexOf("function mergeStates(newer, older)"));
-    const mergeBody = body.slice(0, body.indexOf("\nfunction ", 1));
-    expect(mergeBody.includes('"articleNotifications"')).toBe(true);   // notifications stay JSONB (key union)
-    // Cutover: articles/publications/feeds are relational — NOT synced-state, so not merged here.
-    expect(mergeBody.includes('"pubArticles"')).toBe(false);
-    // The relational data-access layer owns them, and the app writes through to it.
-    expect(code("publications-store.js").includes("articleToRow")).toBe(true);
-    expect(app.includes("upsertArticlesToDb")).toBe(true);
+    for (const gone of ["showPublicationsApp", "hydratePublicationsFromDb", "refreshFeed(", "fetch-feed"]) {
+      expect(app.includes(gone)).toBe(false);
+    }
+    expect(code("index.html").includes("publicationsMainPage")).toBe(false);
   });
-  it("the ingestion applier converges through canonical reconciliation (no bypass)", () => {
-    const app = code("app.js");
-    const fn = app.slice(app.indexOf("function applyFeedIngestion"));
-    const body = fn.slice(0, 900);
-    expect(body.includes("runFeedIngestion")).toBe(true);
-    // failure/304 must not mutate the article store
-    expect(/failure\s*\|\|\s*.*notModified/.test(body) || body.includes("r.failure || r.notModified")).toBe(true);
-  });
-  it("Publications introduces NO scheduler/polling (demand-driven refresh only)", () => {
-    const app = code("app.js");
-    const region = app.slice(app.indexOf("function refreshFeed"), app.indexOf("function refreshFeed") + 800);
-    expect(/setInterval|setTimeout|cron|scheduled/.test(region)).toBe(false);
+  it("article scanning is reachable from Media → Publications", () => {
+    expect(code("index.html").includes('id="articleScanBtn"')).toBe(true);
+    expect(code("app.js").includes('getElementById("articleScanBtn")')).toBe(true);
   });
 });

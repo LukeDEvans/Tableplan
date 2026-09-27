@@ -15,6 +15,7 @@
 import * as LiveMealPlanServings from './meal-plan-servings.js';
 import { mealColumnIndexForTime, minutesSinceMidnight } from './meal-plan-time.js';
 import { icon as ldeIcon } from './live-icons.js';
+import { attachSwipeGesture } from './swipe-deck.js';
 
 function createId(prefix = "id") {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -405,63 +406,11 @@ function wireMealPlanNotifDelegation() {
     mealPlanSwipeIndex = Math.round(deck.scrollTop / deck.clientHeight);
   }, { capture: true });
 
-  // Swipe-card gestures (touch only). A horizontal drag past threshold flings
-  // the card off and acts on it; a vertical drag is left to the deck's native
-  // scroll-snap so up/down browses between recipes.
-  let swipeCard = null, swipeStartX = 0, swipeStartY = 0, swipeAxis = null;
-  const swipeLabels = (card) => ({
-    add: card.querySelector(".eat-swipe-action-add"),
-    del: card.querySelector(".eat-swipe-action-del"),
-    inner: card.querySelector(".eat-swipe-card-inner")
+  // Swipe-card gestures (touch only) — shared with the Media news deck.
+  attachSwipeGesture(elements.plannerGrid, {
+    onAccept: (card) => swipeAddMealPlanRecipe(card.dataset.swipeUrl),
+    onDismiss: (card) => dismissMealPlanRecipe(card.dataset.swipeUrl)
   });
-  elements.plannerGrid.addEventListener("touchstart", (e) => {
-    const card = e.target.closest(".eat-swipe-card");
-    // A flipped card shows the recipe (scrolls vertically on its own) — the
-    // dismiss/add fling belongs to the photo side only.
-    if (card && card.querySelector(".eat-swipe-flip.is-flipped")) { swipeCard = null; return; }
-    swipeCard = card || null;
-    if (!card) return;
-    swipeStartX = e.touches[0].clientX;
-    swipeStartY = e.touches[0].clientY;
-    swipeAxis = null;
-  }, { passive: true });
-  elements.plannerGrid.addEventListener("touchmove", (e) => {
-    if (!swipeCard) return;
-    const dx = e.touches[0].clientX - swipeStartX;
-    const dy = e.touches[0].clientY - swipeStartY;
-    if (!swipeAxis) {
-      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-      swipeAxis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
-    }
-    if (swipeAxis !== "x") return; // vertical → let the deck scroll natively
-    e.preventDefault(); // we own this horizontal gesture now
-    const { add, del, inner } = swipeLabels(swipeCard);
-    if (inner) { inner.style.transition = "none"; inner.style.transform = `translateX(${dx}px) rotate(${dx * 0.02}deg)`; }
-    const t = Math.min(1, Math.abs(dx) / 120);
-    if (add) add.style.opacity = dx > 0 ? t : 0;
-    if (del) del.style.opacity = dx < 0 ? t : 0;
-  }, { passive: false });
-  elements.plannerGrid.addEventListener("touchend", (e) => {
-    if (!swipeCard) return;
-    const card = swipeCard; const axis = swipeAxis;
-    swipeCard = null; swipeAxis = null;
-    if (axis !== "x") return;
-    const dx = e.changedTouches[0].clientX - swipeStartX;
-    const { add, del, inner } = swipeLabels(card);
-    const url = card.dataset.swipeUrl;
-    const THRESH = 90;
-    if (dx > THRESH) {
-      if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = "translateX(120%) rotate(6deg)"; }
-      setTimeout(() => swipeAddMealPlanRecipe(url), 170); // let the fling show before the re-render
-    } else if (dx < -THRESH) {
-      if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = "translateX(-120%) rotate(-6deg)"; }
-      setTimeout(() => dismissMealPlanRecipe(url), 170);
-    } else {
-      if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = ""; }
-      if (add) add.style.opacity = 0;
-      if (del) del.style.opacity = 0;
-    }
-  }, { passive: true });
 }
 
 function positionMealPlanNotifPanel() {

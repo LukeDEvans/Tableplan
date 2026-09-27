@@ -5,6 +5,7 @@
 // To change the time, update: [functions."daily-briefing"] schedule = "0 <hour> * * *"
 
 import webpush from "web-push";
+import { ingestFeed, storeNeedsBackfill, trimAccountsToDays } from "./_finance-ingest.js";
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const SECTION_NAMES = ["eat", "grocery", "do", "play", "watch", "media", "plan", "health", "inventory", "recreate", "config"]; // NOTE: "finance" is intentionally excluded — never feed financial data into AI prompts
@@ -236,7 +237,14 @@ async function snapshotFinanceBalances(serviceKey) {
       // what was generating a "new IP" email on nearly every phone visit
       // (each Netlify egress IP differs). Bank data only changes once a day,
       // so a single daily pull loses nothing.
-      const start = Math.floor(Date.now() / 1000) - 45 * 86400;
+      //
+      // Durable transaction store (FINANCE_TRANSACTIONS_DESIGN.md §3): until the
+      // store holds real history, the pull asks for SimpleFIN's full 90 days, so
+      // the store starts with as much as the bank will give. null = table not
+      // reachable (migration not applied) → skip ingest, keep the 45-day pull.
+      const needsBackfill = await storeNeedsBackfill({ serviceKey, groupId });
+      const pullDays = needsBackfill === true ? 90 : 45;
+      const start = Math.floor(Date.now() / 1000) - pullDays * 86400;
       const bridge = await fetch(`${url}/accounts?start-date=${start}`, {
         headers: { accept: "application/json", ...(auth ? { authorization: `Basic ${auth}` } : {}) }
       });
@@ -266,11 +274,20 @@ async function snapshotFinanceBalances(serviceKey) {
           }))
         }));
         const errors = Array.isArray(data.errors) ? data.errors.map(String).slice(0, 5) : [];
+        // Cache keeps the 45-day shape even on the 90-day backfill pull, so the
+        // client's feed (and its month-actuals coverage) is unchanged.
+        const cached = trimAccountsToDays(normalized, 45);
         await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?on_conflict=id`, {
           method: "POST",
           headers: { ...headers, prefer: "resolution=merge-duplicates,return=minimal" },
-          body: JSON.stringify({ id: `finaccts_${groupId}`, state: { accounts: normalized, errors, fetchedAt: new Date().toISOString() }, updated_at: new Date().toISOString() })
+          body: JSON.stringify({ id: `finaccts_${groupId}`, state: { accounts: cached, errors, fetchedAt: new Date().toISOString() }, updated_at: new Date().toISOString() })
         }).then((r) => { if (!r.ok) console.error(`[fin-snapshot] cache warm ${r.status}`); }).catch((e) => console.error("[fin-snapshot] cache warm threw", e.name || "error"));
+        // Durable store ingest — additive, failure-isolated (never blocks the
+        // cache warm above or the balance snapshot below).
+        if (needsBackfill !== null) {
+          try { await ingestFeed({ serviceKey, groupId, accounts: normalized }); }
+          catch (e) { console.error("[fin-ingest] failed", e.message || "error"); }
+        }
       }
 
       const finRes = await fetch(`${SUPABASE_URL}/rest/v1/tableplan_states?id=eq.${encodeURIComponent(groupId + ":finance")}&select=state`, { headers });

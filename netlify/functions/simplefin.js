@@ -11,6 +11,7 @@
 // - The token is read-only by protocol: it can list balances/transactions,
 //   nothing else. Revocable any time at beta-bridge.simplefin.org.
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
+const { ingestFeed } = require("./_finance-ingest.js");
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return cors(json(200, {}));
@@ -227,6 +228,11 @@ exports.handler = async (event) => {
       const errors = Array.isArray(data.errors) ? data.errors.map(String).slice(0, 5) : [];
       const fetchedAt = new Date().toISOString();
       await saveRawCache(serviceKey, cacheId, { accounts, errors, fetchedAt });
+      // Durable transaction store (FINANCE_TRANSACTIONS_DESIGN.md §3): keep every
+      // real bridge pull. Additive + failure-isolated — never fails this response.
+      // (The one-time 90-day backfill happens in the daily cron, not here.)
+      try { await ingestFeed({ serviceKey, groupId, accounts }); }
+      catch (e) { console.error("[fin-ingest] failed", e.message || "error"); }
       return cors(json(200, { accounts, errors, cached: false, fetchedAt }));
     }
 

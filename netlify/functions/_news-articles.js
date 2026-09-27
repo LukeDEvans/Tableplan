@@ -26,6 +26,29 @@ const NEWS_SOURCES = [
   },
 ];
 
+// Newsletter → article for EVERY real newsletter from the three news papers
+// (NEWS_INTAKE_DESIGN.md §6), gated by that paper's news-links toggle. The two
+// named newsletters above keep their own toggles and labels. Alerts, promos and
+// account mail are skipped by subject; anything too short to be a newsletter is
+// skipped by length (see conversionTooShort).
+const ALERT_OR_PROMO_RE = /breaking|news alert|\balert\b|developing|just in|your (account|subscription|order|receipt|password|payment)|receipt|verify|confirm|welcome to|\boffers?\b|\bsale\b|% off|\bsave\b|limited time|subscribe|renew|\bgift\b|billing|sign in|log in|reset|survey|cooking|recipe|wirecutter|crossword|wordle|\bgames?\b|athletic/i;
+const GENERIC_MIN_CHARS = 1500;
+
+function conversionSourceFor(from, subject, mailAiSettings) {
+  const named = newsSourceForMessage(from, subject, mailAiSettings);
+  if (named) return named;
+  const { newsLinkSourceForSender } = require("./_news-links.js");
+  const paper = newsLinkSourceForSender(from, mailAiSettings);
+  if (!paper || ALERT_OR_PROMO_RE.test(String(subject || ""))) return null;
+  return { key: paper.key, name: `${paper.name} newsletter`, publication: paper.name, minChars: GENERIC_MIN_CHARS, generic: true };
+}
+
+// A short email isn't a newsletter worth converting: skip it (and still file
+// it) instead of throwing, which used to retry the message until quarantine.
+function conversionTooShort(source, html) {
+  return simplifyNewsletterHtml(html).length < (source?.minChars || 400);
+}
+
 function newsSourceForMessage(from, subject, mailAiSettings) {
   // Features default ON: only an explicit false (user toggled off) disables.
   return NEWS_SOURCES.find((s) =>
@@ -121,4 +144,4 @@ async function saveArticleToMediaSection(serviceKey, userId, article) {
   return { ok: true, duplicate };
 }
 
-module.exports = { NEWS_SOURCES, newsSourceForMessage, simplifyNewsletterHtml, convertNewsEmailToArticle, saveArticleToMediaSection };
+module.exports = { NEWS_SOURCES, newsSourceForMessage, conversionSourceFor, conversionTooShort, simplifyNewsletterHtml, convertNewsEmailToArticle, saveArticleToMediaSection };
