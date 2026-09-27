@@ -13,7 +13,8 @@ const { scanBookingFromEmailText } = require("../../booking-scan");
 const { claudeCall } = require("./_claude");
 const { recipeSourceForSender, extractRecipes, handleExtractedRecipes, aiTrashTestMode, findAiTrashLabelId, disposeProcessedEmail, enabledRecipeSources } = require("./_recipe-digest");
 const MailJobs = require("./_mail-jobs");
-const { newsSourceForMessage, convertNewsEmailToArticle, saveArticleToMediaSection } = require("./_news-articles");
+const { conversionSourceFor, conversionTooShort, convertNewsEmailToArticle, saveArticleToMediaSection } = require("./_news-articles");
+const NewsLinks = require("./_news-links");
 
 // ─── Token storage (Supabase tableplan_states, id = gmail_<userId>) ──────────
 
@@ -468,9 +469,19 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey, preClai
     const mailAi = appCfg?.mailAiSettings || {};
     const testMode = aiTrashTestMode(mailAi);
     const autoDeleteSimplefin = mailAi.autoDeleteSimplefin === true;
-    const aiTrashLabelId = ((enabledRecipeSources(mailAi).length || autoDeleteSimplefin) && testMode)
+    const newsEnabled = NewsLinks.enabledNewsLinkSources(mailAi).length > 0;
+    // News mail is ALWAYS filed to Apps/AI trash (Luke, 2026-09-27), regardless
+    // of test mode, so the label is needed whenever a news paper is enabled.
+    const aiTrashLabelId = (((enabledRecipeSources(mailAi).length || autoDeleteSimplefin) && testMode) || newsEnabled)
       ? await findAiTrashLabelId(gFetch, gToken)
       : null;
+    // The news seen record, read once per sweep (not per message). A failed
+    // read just means cross-sweep dedup happens at merge time instead.
+    let newsSeenAtStart = {};
+    if (newsEnabled) {
+      try { newsSeenAtStart = await NewsLinks.loadNewsSeen(serviceKey, userId); }
+      catch (e) { console.error("[news-links] seen load failed:", e.message); }
+    }
     const receiptCtx = await loadReceiptContext(serviceKey, userId, mailAi);
     const sugg = await loadMailSuggestions(serviceKey, userId);
 
@@ -510,16 +521,24 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey, preClai
 
       const rawBody = extractBody(msg.payload) || "";
 
-      // Recipe digests: collect recipe links (idempotent — URL-keyed), then file.
+      // One email can feed several outputs (NEWS_INTAKE_DESIGN.md §3.1): recipe
+      // links, news-article cards, and a listenable newsletter article. Each is
+      // idempotent on retry (recipes URL-keyed, news via the seen record, the
+      // article by id news-<messageId>). If ANY produced something, the email is
+      // filed; otherwise it falls through to normal triage.
       const recipeSource = recipeSourceForSender(hdrs.from, mailAi);
+      const newsLinkSource = NewsLinks.newsLinkSourceForSender(hdrs.from, mailAi);
+      const convSource = conversionSourceFor(hdrs.from, hdrs.subject, mailAi);
+      let recipeHandled = false;
+
+      // Recipe digests: collect recipe links first.
       if (recipeSource) {
         try {
           const recipes = await extractRecipes(rawBody, recipeSource);
           if (recipes.length) {
             const result = await handleExtractedRecipes(serviceKey, userId, mailAi, anthropicKey, recipes);
-            await disposeProcessedEmail(gFetch, gToken, messageId, { testMode, aiTrashLabelId });
-            console.log(`[recipe-digest] ${recipeSource.name}: queued ${result.queued}, filtered ${result.filtered}, health ${result.health} from ${messageId} (${testMode ? "AI trash" : "trash"})`);
-            return { suggestions: [], disposed: true };
+            recipeHandled = true;
+            console.log(`[recipe-digest] ${recipeSource.name}: queued ${result.queued}, filtered ${result.filtered}, health ${result.health} from ${messageId}`);
           }
         } catch (e) {
           console.error(`[recipe-digest] ${recipeSource.name} failed — left for retry:`, e.message);
@@ -527,31 +546,49 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey, preClai
         }
       }
 
+      // News links → cards. Collected here, written ONCE for the whole batch
+      // after all messages finish (parallel per-message writes would race).
+      let news = null;
+      if (newsLinkSource) {
+        news = await NewsLinks.collectNewsCards(rawBody, newsLinkSource, { emailDate: hdrs.date || "", seen: newsSeenAtStart });
+        console.log(`[news-links] ${newsLinkSource.name}: ${news.cards.length} new of ${news.seenIds.length} unseen from ${messageId}`);
+      }
+
       // News → listenable article, saved before the email is filed away.
-      const newsSource = newsSourceForMessage(hdrs.from, hdrs.subject, mailAi);
-      if (newsSource) {
+      let converted = false;
+      // A recipe email (NYT Cooking) is never converted by the generic path.
+      if (convSource && !(convSource.generic && recipeHandled) && !conversionTooShort(convSource, rawBody)) {
         try {
-          const articleHtml = await convertNewsEmailToArticle(anthropicKey, newsSource, {
+          const articleHtml = await convertNewsEmailToArticle(anthropicKey, convSource, {
             subject: hdrs.subject || "", date: hdrs.date || "", html: rawBody
           });
           const article = {
             id: "news-" + messageId,
             url: null,
-            title: hdrs.subject || newsSource.name,
-            author: newsSource.publication,
+            title: hdrs.subject || convSource.name,
+            author: convSource.publication,
             date: hdrs.date ? new Date(hdrs.date).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "",
             publication: "email",
             savedAt: (hdrs.date && !isNaN(new Date(hdrs.date)) ? new Date(hdrs.date) : new Date()).toISOString(),
             text: articleHtml
           };
           await saveArticleToMediaSection(serviceKey, userId, article);
-          await disposeProcessedEmail(gFetch, gToken, messageId, { testMode, aiTrashLabelId });
-          console.log(`[news-article] ${newsSource.name}: saved "${article.title}" (${testMode ? "AI trash" : "trash"})`);
-          return { suggestions: [], disposed: true };
+          converted = true;
+          console.log(`[news-article] ${convSource.name}: saved "${article.title}"`);
         } catch (e) {
-          console.error(`[news-article] ${newsSource.name} failed — left for retry:`, e.message);
+          console.error(`[news-article] ${convSource.name} failed — left for retry:`, e.message);
           return { suggestions: [], retry: true };
         }
+      }
+
+      const newsHandled = !!news && news.found > 0;
+      if (recipeHandled || newsHandled || converted) {
+        // News mail (it linked articles) is filed after the batch's news write
+        // (below), always to Apps/AI trash; everything else is filed now, as before.
+        if (newsHandled) return { suggestions: [], news, messageId };
+        const filed = await disposeProcessedEmail(gFetch, gToken, messageId, { testMode, aiTrashLabelId });
+        console.log(`[mail-ai] filed ${messageId} (${testMode ? "AI trash" : "trash"}${filed ? "" : " — FAILED"})`);
+        return { suggestions: [], disposed: true };
       }
 
       // Triage only the NEW text (replies quote the whole thread).
@@ -611,6 +648,25 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey, preClai
       }
       return { suggestions: out, receipt };
     }));
+
+    // News cards from the whole batch → ONE row write (re-read fresh), then file
+    // those emails to Apps/AI trash. If the write fails, the emails stay put and
+    // are retried next sweep (the seen record makes the retry idempotent).
+    const newsMsgs = perMessage.filter((r) => r.news);
+    if (newsMsgs.length) {
+      try {
+        const { added, pending } = await NewsLinks.saveNewsBatch(serviceKey, userId, newsMsgs.map((r) => r.news));
+        console.log(`[news-links] batch: +${added} cards (${pending} pending)`);
+        await Promise.all(newsMsgs.map(async (r) => {
+          const filed = await disposeProcessedEmail(gFetch, gToken, r.messageId, { testMode: true, aiTrashLabelId });
+          r.disposed = true;
+          if (!filed) console.error(`[news-links] could not file ${r.messageId} to Apps/AI trash`);
+        }));
+      } catch (e) {
+        console.error("[news-links] batch save failed — emails left for retry:", e.message);
+        for (const r of newsMsgs) r.retry = true;
+      }
+    }
 
     // Successfully-handled messages → done; retry=true ones stay pending.
     const doneIds = fresh.filter((_, i) => !perMessage[i].retry);
