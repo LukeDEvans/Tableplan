@@ -1,5 +1,14 @@
 :root {
   color-scheme: light;
+  /* Device safe-area insets (notch / home indicator). env() is 0 where there's
+     no inset, so these are no-ops on desktop and in a normal browser tab. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* Height of the fixed audio mini-player bar above the safe area (1px border
+     + 3px progress line + 90px body; see the Mini-player section), and the gap
+     page windows keep above it while it's showing. */
+  --mini-player-h: 94px;
+  --mini-player-gap: 10px;
   --bg: #f7f5ef;
   --surface: #fffdf8;
   --surface-strong: #ffffff;
@@ -899,10 +908,23 @@ h3 {
 /* Every page window fits the viewport: the body never scrolls; the
    app shell is exactly one screen tall and any overflow scrolls INSIDE
    the active white/navy page window. (This generalizes the pattern the
-   Mail/Media pages already used via per-page body:has rules.) */
+   Mail/Media pages already used via per-page body:has rules.)
+   - min-height is reset: the base body rule's `min-height: 100vh` would win over
+     `height: 100dvh` whenever the large viewport is taller than the visible one
+     (iOS Safari with its toolbars showing), pushing every window's bottom edge
+     off screen.
+   - 100vh is a fallback for WebKit builds without dvh support.
+   - The safe-area padding keeps windows out from under the notch/status bar and
+     the home indicator (the viewport is edge-to-edge: viewport-fit=cover, and
+     contentInset:never in the native shell). */
 body {
   overflow: hidden;
+  height: 100vh;
   height: 100dvh;
+  min-height: 0;
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
+  box-sizing: border-box;
 }
 
 .app-shell {
@@ -3242,7 +3264,9 @@ input.live-toggle:checked::before,
 
 .slot-label[draggable="true"] {
   cursor: grab;
-  touch-action: none;
+  /* Allow swiping the meal carousel from the section header; the long-press
+     touch-drag shim (app.js) prevents scrolling itself once a drag is active. */
+  touch-action: pan-x pan-y;
 }
 
 .slot-label[draggable="true"]:active {
@@ -3955,6 +3979,18 @@ body.shop-move-dragging { user-select: none; -webkit-user-select: none; }
 
 /* Per-store "show N bought" toggle, sitting to the right of the store name in
    the heading (and in a store tab's solo action row). */
+/* Instacart hand-off bar (per Instacart-enabled store section) */
+.grocery-instacart-bar { display: grid; gap: 4px; padding: 2px 0 6px; min-width: 0; }
+.grocery-instacart-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; }
+.grocery-instacart-status { font-size: 0.8rem; color: var(--muted); overflow-wrap: anywhere; }
+.grocery-instacart-status.is-sent { color: var(--accent-dark, var(--accent)); }
+.grocery-instacart-send { font-weight: 600; }
+.grocery-instacart-send[disabled] { opacity: 0.6; cursor: progress; }
+.grocery-instacart-unmatched { font-size: 0.8rem; color: var(--muted); overflow-wrap: anywhere; }
+.grocery-store-instacart-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.grocery-store-instacart-row > span { display: grid; gap: 2px; }
+.grocery-store-instacart-row small { color: var(--muted); font-weight: 400; }
+
 .grocery-store-bought-toggle {
   flex: 0 0 auto;
   white-space: nowrap;
@@ -6794,30 +6830,6 @@ textarea {
   background: transparent;
 }
 
-.meal-planned-servings-editor {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 750;
-}
-
-.meal-planned-servings-editor input {
-  width: 58px;
-  min-height: 28px;
-  padding: 3px 6px;
-  border-radius: var(--radius);
-  font: inherit;
-  color: var(--ink);
-}
-
-.meal-planned-servings {
-  color: var(--muted);
-  font-size: 0.76rem;
-  font-weight: 750;
-}
-
 .daily-dozen-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -7385,7 +7397,7 @@ textarea {
   text-align: center;
 }
 
-.recipe-form label:not(.travel-leg-mode-radio):not(.toggle-switch):not(.act-endloc-toggle):not(.group-page-toggle-row):not(.add-task-time-row):not(.plan-todo-toggle):not(.mealplan-notifview-row) {
+.recipe-form label:not(.travel-leg-mode-radio):not(.toggle-switch):not(.act-endloc-toggle):not(.group-page-toggle-row):not(.add-task-time-row):not(.plan-todo-toggle):not(.mealplan-notifview-row):not(.grocery-store-instacart-row) {
   display: grid;
   gap: 6px;
   color: #4f493f;
@@ -9018,8 +9030,11 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
     scroll-snap-align: start;
   }
 
+  /* Both axes: a horizontal swipe that starts on a meal card must still page the
+     day's meal carousel (pan-y alone blocked it). Long-press drag (sortable.js)
+     cancels native scrolling itself once armed. */
   .draggable-meal-entry {
-    touch-action: pan-y;
+    touch-action: pan-x pan-y;
   }
 
   .meal-swipe-delete {
@@ -16974,6 +16989,8 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   overflow: hidden;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+  /* Extend under the home indicator so the controls sit above it. */
+  padding-bottom: var(--safe-bottom);
 }
 /* Thin non-interactive episode-progress line pinned to the top edge. */
 .mini-player-progress {
@@ -17123,14 +17140,14 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
 .mini-player-play-btn svg { display: block; width: 34px; height: 34px; }
 .mini-player-skip-btn svg { display: block; width: 32px; height: 32px; }
 
-/* Nudge body content up so it isn't hidden behind the fixed bar (progress 3px
-   + body 90px). */
-body.has-mini-player .app-shell { padding-bottom: 114px; }
-body.has-mini-player .article-list,
-body.has-mini-player .podcast-list-panel .article-list,
-body.has-mini-player .mail-list { padding-bottom: 114px; }
+/* While the bar is showing, the app shell stops just above it: every page
+   window ends --mini-player-gap above the bar, with a strip of page background
+   between them. The body's safe-area padding already clears the home indicator,
+   which the bar's own bottom padding fills, so only the bar height is added. */
+body.has-mini-player .app-shell { padding-bottom: calc(var(--mini-player-h) + var(--mini-player-gap)); }
 
 @media (max-width: 640px) {
+  :root { --mini-player-h: 88px; }
   .mini-player-body { height: 84px; }   /* 1.5× the former 56px */
   .mini-player-play-btn { width: 56px; height: 56px; }
   .mini-player-skip-btn { width: 52px; height: 52px; }
@@ -17360,7 +17377,7 @@ body.has-mini-player .mail-list { padding-bottom: 114px; }
 
 /* ── Explore page ────────────────────────────────────────────────────────── */
 body:has(#exploreMainPage:not([hidden])) .app-shell {
-  height: 100dvh;
+  height: 100%;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -21308,6 +21325,9 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 
 .fin-item-row { display: flex; align-items: center; gap: 6px; }
 .fin-item-row--tools { padding-top: 4px; }
+/* "Use stored transaction history" (Accounts › Bank link): switch + label on one row. */
+.fin-store-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.fin-store-toggle .live-toggle { flex: 0 0 auto; }
 .fin-item-name {
   flex: 1;
   min-width: 0;
@@ -22219,6 +22239,23 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
 .eat-swipe-recipe-steps { margin: 0; padding-left: 22px; display: grid; gap: 8px; font-size: 0.88rem; line-height: 1.5; }
 .eat-swipe-recipe-loading, .eat-swipe-recipe-empty, .eat-swipe-recipe-err { padding: 24px 4px; text-align: center; color: var(--muted); font-size: 0.88rem; }
 .eat-swipe-recipe-err a, .eat-swipe-recipe-loading a { color: var(--accent); font-weight: 700; }
+/* Media news deck (news-notif-ui.js) — reuses the recipe deck's .eat-swipe-* cards. */
+.media-news-panel { z-index: 70; }
+.media-news-head, .media-news-empty { padding-left: 16px; padding-right: 16px; }
+.media-news-empty { padding-top: 16px; padding-bottom: 16px; }
+.media-news-subtitle {
+  font-size: 0.88rem;
+  line-height: 1.4;
+  color: var(--ink);
+  opacity: 0.8;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.media-news-summary { margin: 8px 0 0; font-size: 0.95rem; line-height: 1.5; color: var(--ink); overflow-wrap: anywhere; }
+.media-news-panel .eat-swipe-title { overflow-wrap: anywhere; }
 .eat-swipe-hint {
   flex: 0 0 auto;
   display: flex;
@@ -22612,6 +22649,19 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
 .music-attr { font-size: 0.7rem; color: var(--muted); }
 .music-provider-note { font-size: 0.76rem; color: var(--tomato); padding: 4px 14px; }
 
+/* Apple Music Discover: home shelves (horizontal, scroll inside the shelf — never
+   the page), sign-in prompt, and the collapsible "Free & open sources" section. */
+.music-shelf { display: flex; gap: 12px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; padding: 4px 12px 10px; max-width: 100%; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+.music-card { flex: 0 0 128px; width: 128px; min-width: 0; display: flex; flex-direction: column; gap: 3px; cursor: pointer; scroll-snap-align: start; border-radius: 10px; }
+.music-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.music-card-art { width: 128px; height: 128px; border-radius: 10px; object-fit: cover; background: var(--accent-soft); box-shadow: 0 1px 4px rgba(0,0,0,.12); display: inline-flex; align-items: center; justify-content: center; }
+.music-card:hover .music-card-art { filter: brightness(.94); }
+.music-card-title { font-weight: 600; font-size: 0.82rem; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.music-card-sub { font-size: 0.74rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.music-am-signin { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 8px 12px 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: 0.84rem; }
+.music-free-sources { margin-top: 10px; border-top: 1px solid var(--line); }
+.music-free-sources > summary { cursor: pointer; padding: 6px 0; }
+
 /* Music phase 2: canonical works, saved library, playlists */
 .music-add-btn { flex: 0 0 auto; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: none; background: transparent; color: var(--muted); border-radius: 8px; cursor: pointer; }
 .music-add-btn:hover { background: var(--accent-soft); color: var(--accent-dark); }
@@ -22648,6 +22698,86 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
 .radio-now--last { background: var(--surface); }
 .radio-now:hover { border-color: var(--accent); }
 .radio-now .music-thumb--sm { width: 52px; height: 52px; }
+
+/* ── Music tab shell: tabs → search (every tab) → body ─────────────────────── */
+.music-search-bar .music-search-input, .music-search-bar .music-search-input:focus { border: none; box-shadow: none; outline: none; background: transparent; padding: 2px 0; min-width: 0; }
+.music-search-input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; display: none; }
+.music-mode-body { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.music-mode-body .music-discover-results { overflow: visible; }
+.music-search-all .music-row-title { color: var(--accent-dark, var(--accent)); }
+.music-portable-actions { display: flex; gap: 8px; flex-wrap: wrap; padding: 6px 14px 4px; }
+.music-portable .music-empty-sub { padding: 0 14px; text-align: left; }
+.music-pl-head { padding-top: 12px; }
+.music-pl-art { flex: 0 0 auto; width: 56px; height: 56px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; color: #fff;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #000)); }
+.music-pl-head .music-item-badges { flex-basis: 100%; }
+.music-pl-head { flex-wrap: wrap; }
+
+/* ── Discover (Apple Music / Spotify-style home) ───────────────────────────── */
+.md-home, .md-cat { padding-bottom: 18px; }
+.md-greeting { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.01em; color: var(--ink); margin: 10px 14px 14px; }
+.md-sec { margin: 6px 0 14px; min-width: 0; }
+.md-h { font-size: 1.08rem; font-weight: 750; color: var(--ink); margin: 0 14px 8px; letter-spacing: -0.005em; }
+/* One 14px gutter for headings and content; scroll-padding keeps snap from
+   swallowing a shelf's leading padding. */
+.md-sec .music-shelf, .md-ranked { padding-left: 14px; padding-right: 14px; scroll-padding-inline: 14px; }
+
+/* Jump back in — 2-column compact tiles */
+.md-quick { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 0 14px; }
+@media (min-width: 700px) { .md-quick { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.md-quick-tile { display: flex; align-items: center; gap: 10px; min-width: 0; height: 52px; padding-right: 8px; border-radius: 8px; overflow: hidden; cursor: pointer;
+  background: color-mix(in srgb, var(--ink) 7%, var(--surface)); }
+.md-quick-tile:hover { background: color-mix(in srgb, var(--ink) 12%, var(--surface)); }
+.md-quick-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.md-quick-art { width: 52px; height: 52px; flex: 0 0 52px; object-fit: cover; background: var(--accent-soft); display: inline-flex; align-items: center; justify-content: center; }
+.md-quick-title { font-weight: 650; font-size: 0.82rem; line-height: 1.2; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-width: 0; }
+
+/* Hero shelf — large cards */
+.md-hero-shelf { gap: 14px; }
+.md-hero { flex: 0 0 min(66vw, 240px); width: min(66vw, 240px); min-width: 0; display: flex; flex-direction: column; gap: 2px; cursor: pointer; scroll-snap-align: start; }
+.md-hero:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 12px; }
+.md-hero-kicker { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.md-hero-title { font-weight: 700; font-size: 0.98rem; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.md-hero-sub { font-size: 0.8rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 1em; }
+.md-hero-art { width: 100%; aspect-ratio: 1 / 1; height: auto; margin-top: 6px; border-radius: 12px; object-fit: cover; background: var(--accent-soft); box-shadow: 0 2px 10px rgba(0,0,0,.16);
+  display: inline-flex; align-items: center; justify-content: center; }
+.md-hero:hover .md-hero-art { filter: brightness(.95); }
+.md-card-art--round { border-radius: 50% !important; }
+
+/* Ranked songs — horizontally paged columns of 4 numbered rows */
+.md-ranked { display: grid; grid-auto-flow: column; grid-template-rows: repeat(4, auto); grid-auto-columns: min(86%, 340px); column-gap: 16px;
+  overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; padding-top: 0; padding-bottom: 6px; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+.md-rank-row { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 6px 0; cursor: pointer; scroll-snap-align: start;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); }
+.md-rank-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px; }
+.md-rank-row:hover .md-rank-title { color: var(--accent-dark, var(--accent)); }
+.md-rank-no { flex: 0 0 18px; text-align: center; font-weight: 700; font-size: 0.86rem; color: var(--muted); display: inline-flex; justify-content: center; }
+.md-rank-row.is-active .md-rank-no, .md-rank-row.is-active .md-rank-title { color: var(--accent-dark, var(--accent)); }
+.md-rank-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.md-rank-title { font-weight: 600; font-size: 0.88rem; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.md-rank-sub { font-size: 0.76rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.md-rank-row .music-add-btn, .md-rank-row .music-fav-btn { flex: 0 0 auto; }
+
+/* Browse categories — colourful tiles. Fixed saturated colours with white text
+   read the same in light and dark themes (Spotify/Apple convention). */
+.md-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(146px, 1fr)); gap: 10px; padding: 0 14px; }
+.md-tile { --tile-h: 210; position: relative; height: 84px; border: none; border-radius: 12px; cursor: pointer; overflow: hidden; text-align: left; padding: 10px 12px;
+  display: flex; align-items: flex-start; color: #fff;
+  background: linear-gradient(135deg, hsl(var(--tile-h) 72% 46%), hsl(calc(var(--tile-h) + 38) 70% 32%)); box-shadow: 0 1px 4px rgba(0,0,0,.14); }
+.md-tile::after { content: ""; position: absolute; right: -14px; bottom: -18px; width: 64px; height: 64px; border-radius: 10px; transform: rotate(24deg);
+  background: hsl(calc(var(--tile-h) - 24) 80% 62% / .55); }
+.md-tile:hover { filter: brightness(1.06); }
+.md-tile:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.md-tile-label { position: relative; z-index: 1; min-width: 0; overflow-wrap: anywhere; font-weight: 800; font-size: 0.98rem; line-height: 1.15; text-shadow: 0 1px 2px rgba(0,0,0,.25); }
+
+/* Category page banner */
+.md-cat-banner { --tile-h: 210; display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; gap: 14px; min-height: 124px; margin: 0 0 12px; padding: 12px 14px 14px; color: #fff;
+  background: linear-gradient(160deg, hsl(var(--tile-h) 72% 46%), hsl(calc(var(--tile-h) + 38) 70% 26%)); }
+.md-cat-back { flex: 0 0 auto; width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 50%; cursor: pointer;
+  color: #fff; background: rgba(0,0,0,.28); }
+.md-cat-back:hover { background: rgba(0,0,0,.4); }
+.md-cat-title { margin: 0; font-size: 1.8rem; font-weight: 850; letter-spacing: -0.015em; text-shadow: 0 1px 3px rgba(0,0,0,.25); min-width: 0; overflow-wrap: anywhere; }
+.md-retry { padding: 0 14px; }
 .radio-now-meta { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .radio-now-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
 .radio-now-title { font-weight: 700; font-size: 1.02rem; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -22697,77 +22827,7 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
 .vpick-mini svg { width: 13px; height: 13px; }
 .vpick-note { margin-top: 6px; font-size: 0.8rem; color: var(--muted); border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 10px 13px; border-radius: 0 10px 10px 0; }
 
-/* ── Publications (Phase 2B-UI) ─────────────────────────────────────────────── */
-.pub-page-inner { padding: 12px; max-width: 720px; margin: 0 auto; }
-.pub-panel-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
-.pub-panel-head .watch-category-tabs { flex: 1 1 auto; min-width: 0; overflow-x: auto; }
-.pub-refresh { flex: 0 0 auto; font-size: 18px; }
-.pub-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px;
-  padding: 0 5px; margin-left: 4px; border-radius: 9px; background: #d33; color: #fff; font-size: 11px; font-weight: 700; }
-.pub-panel-body { display: flex; flex-direction: column; }
-.pub-deck { display: flex; flex-direction: column; gap: 12px; }
-.pub-card { border: 1px solid var(--hairline, #e2ddd2); border-radius: 12px; background: var(--window-bg, #fff);
-  overflow: hidden; display: flex; flex-direction: column; }
-.pub-card-flip { border: 0; background: none; padding: 0; text-align: left; cursor: pointer; width: 100%; font: inherit; color: inherit; }
-.pub-card-face { padding: 12px 14px; }
-.pub-card-back { display: none; }
-.pub-card.is-flipped .pub-card-front { display: none; }
-.pub-card.is-flipped .pub-card-back { display: block; }
-.pub-card-front { display: flex; gap: 12px; align-items: flex-start; }
-.pub-card-img { flex: 0 0 auto; width: 64px; height: 64px; object-fit: cover; border-radius: 8px; }
-.pub-card-text { min-width: 0; }
-.pub-card-title { font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
-.pub-card-meta { margin-top: 4px; font-size: 12px; color: var(--muted, #8a8175); overflow-wrap: anywhere; }
-.pub-card-excerpt { font-size: 14px; line-height: 1.5; color: var(--text, inherit); overflow-wrap: anywhere; }
-.pub-card-actions { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--hairline, #eee); }
-.pub-btn { flex: 1 1 0; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--hairline, #d8d2c6);
-  background: var(--window-bg, #fff); font: inherit; cursor: pointer; }
-.pub-btn.pub-save { flex: 2 1 0; background: var(--accent, #2f9e78); color: #fffaf0; font-weight: 700; border-color: transparent; }
-.pub-empty { padding: 32px 16px; text-align: center; color: var(--muted, #8a8175); }
-.pub-head-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-.pub-sub-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
-.pub-sub-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--hairline, #e5e0d6); border-radius: 8px; }
-.pub-sub-main { min-width: 0; flex: 1 1 auto; }
-.pub-sub-name { font-weight: 600; overflow-wrap: anywhere; }
-.pub-sub-url { font-size: 12px; color: var(--muted, #8a8175); overflow-wrap: anywhere; }
-.pub-sub-remove { flex: 0 0 auto; color: var(--muted, #8a8175); }
-.pub-manage-msg { margin-top: 8px; font-size: 13px; color: var(--muted, #8a8175); }
-/* Keep the grid rows natural-height + top-aligned on the full-height mobile sheet,
-   so the Add button isn't stretched to fill distributed grid slack. */
-.pub-manage-dialog .recipe-form { align-content: start; }
-.pub-lib-list { display: flex; flex-direction: column; }
-.pub-lib-row { cursor: pointer; }
-/* Publications reader (Phase 3): a full-screen sheet over the app; body scrolls. */
-.pub-reader { position: fixed; inset: 0; z-index: 1200; background: var(--window-bg, #fff);
-  display: flex; justify-content: center; }
-.pub-reader-inner { display: flex; flex-direction: column; width: 100%; max-width: 720px; height: 100%; }
-.pub-reader-head { display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 10px 14px; border-bottom: 1px solid var(--hairline, #eee); flex: 0 0 auto; }
-.pub-reader-close { flex: 0 0 auto; }
-.pub-reader-head-actions { display: flex; align-items: center; gap: 12px; }
-.pub-reader-listen { font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
-  color: #fffaf0; background: var(--accent, #2f9e78); border: 0; border-radius: 999px; padding: 6px 14px; }
-.pub-reader-listen-msg { padding: 0 14px 6px; font-size: 12px; color: var(--muted, #8a8175); }
-.pub-reader-orig { font-size: 13px; color: var(--accent, #2f9e78); text-decoration: none; white-space: nowrap; }
-.pub-reader-body { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 18px 20px 48px;
-  -webkit-overflow-scrolling: touch; }
-.pub-reader-title { font-size: 22px; line-height: 1.25; margin: 0 0 6px; overflow-wrap: anywhere; text-wrap: balance; }
-.pub-reader-meta { font-size: 13px; color: var(--muted, #8a8175); margin-bottom: 16px; overflow-wrap: anywhere; }
-.pub-reader-text { font-size: 17px; line-height: 1.65; overflow-wrap: anywhere; }
-.pub-reader-text img { max-width: 100%; height: auto; border-radius: 8px; }
-@media (max-width: 480px) { .pub-page-inner { padding: 8px; } .pub-card-img { width: 52px; height: 52px; }
-  .pub-reader-body { padding: 14px 16px 40px; } .pub-reader-title { font-size: 20px; } .pub-reader-text { font-size: 16px; } }
 /* Finance alerts settings section (Settings › Finance). Reuses .mail-ai-feature-row. */
 .fin-alerts-settings { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
 .fin-alerts-title { margin-top: 8px; font-size: 0.95rem; font-weight: 800; color: var(--ink); }
 
-/* ── Native (Capacitor) safe-area insets ──────────────────────────────────────
-   The native webview is edge-to-edge (viewport-fit=cover + contentInset:never),
-   so inset the app for the status bar / notch (top) and home indicator (bottom).
-   Scoped to the native shell via html[data-native]; the browser/PWA is untouched.
-   env(safe-area-inset-*) is 0 where there's no inset, so this is safe. */
-html[data-native] body {
-  padding-top: env(safe-area-inset-top);
-  padding-bottom: env(safe-area-inset-bottom);
-  box-sizing: border-box;
-}

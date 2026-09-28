@@ -24,6 +24,7 @@ export const ACCOUNT_SCOPED_STORAGE_KEYS = [
   "live_watch_search_scope", // WATCH_SCOPE_KEY — watch search scope
   "live-explore-last-trip",  // last-opened trip id (account-owned)
   "live-travel-mode-trip",   // active Travel-Mode trip id (account-owned)
+  "live-history-queue-v1",   // HISTORY_QUEUE_KEY (history-log.js) — unsent permanent-history rows
 ];
 
 // Some account-scoped keys are DYNAMIC (a stable prefix + a variable suffix), so

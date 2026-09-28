@@ -1,7 +1,10 @@
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds } from './finance-actuals.js';
 import { dedupeFinanceRecurring } from './finance-sync.js';
-import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
+import { parseCsvRows, aggregateCsvBackfill, csvRowsToTxns, dedupeImport } from './finance-csv.js';
+import { financeMerchantTokens, financeMerchantKey, storeAccountsView, snapshotWindowTxns, recentTxns, manualTxnToRow, mergeManualTxns, manualRowsToCopy } from './finance-transactions.js';
+import { createFinanceTxnStore, FIN_TXN_DB, FIN_TXN_STORES } from './finance-txn-store.js';
+import { createIdbStorage, createMemoryStorage } from './content-store/storage.js';
 
 // finance-ui.js — the Finance domain, being extracted from app.js in staged
 // commits (see FINANCE_EXTRACTION.md). This is COMMIT 1: the pure normalizers,
@@ -223,7 +226,7 @@ export function normalizeFinanceTxnReceipts(raw) {
 // (payday dots / bill display); state-sync calls invalidateFinanceLabeled.
 // ══════════════════════════════════════════════════════════════════════════
 export function createFinanceModule(deps) {
-  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind } = deps;
+  const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, callNetlifyFunction, trackUsage, dateKeyFromDate, setPageNotifCount, setWeekToolsMode, closeWeekJumpMenu, getCurrentProfileMember, renderContextSettingsDialog, openContextSettingsDialog, prepareScanImage, fileToDataUrl, getActiveAppArea, getSupabaseClient, getAuthSession, getContextSettingsKind, getFinanceStoreGroupId, fetchSupabaseJson, writeSupabaseJson, canUseFinanceStore } = deps;
 
 // Download the viewed month's transactions as CSV (real app — blob download is
 // fine here; this is not an artifact/sandbox).
@@ -249,16 +252,70 @@ function exportFinanceCsv(monthKey) {
   } catch { showMailToast?.("Couldn't export CSV on this device."); }
 }
 
+// "Export my data" (data-export.js): every transaction the app knows, with the
+// user's annotations resolved to names. The union of the current labeled view
+// (feed or store, plus manual entries) and — when the durable ledger is reachable —
+// its full history via ONE explicit store sync (never a timer; same door the
+// finance page uses). Returns { transactions, note } (note explains any gap).
+async function financeExportTransactions() {
+  const noteOverrides = state.financeTxnNoteOverrides || {};
+  const explicit = state.financeTxnLabels || {};
+  const names = state.financeMerchantNames || {};
+  const day = (v) => (v ? new Date(v).toISOString().slice(0, 10) : "");
+  const labelText = (label, split) => {
+    if (split) return split.map((p) => `${financeTxnLabelName(p.label) || p.label} ${Number(p.amount || 0).toFixed(2)}`).join("; ");
+    return label ? (financeTxnLabelName(label) || label) : "";
+  };
+  const out = new Map();
+  for (const t of financeLabeledTxns()) {
+    out.set(t.id, {
+      id: t.id, date: day(t.posted), merchant: t.displayName || "", description: t.description || "",
+      amount: Number(t.amount || 0), category: t.label === "split" ? "Split" : labelText(t.label),
+      split: t.split ? labelText("split", t.split) : "", labelSource: t.labelSource || "",
+      note: Object.prototype.hasOwnProperty.call(noteOverrides, t.id) ? noteOverrides[t.id] : "",
+      account: t.account || "", pending: Boolean(t.pending), source: t.isManual ? "manual" : "bank",
+      status: "active", signFlipped: Boolean(t.signFlipped),
+    });
+  }
+  let note = "";
+  try {
+    const store = await ensureFinanceTxnStore({ force: true });
+    if (!store) note = "Stored transaction history was not reachable (signed out or offline) — finance_transactions.csv holds the bank's recent window plus manual entries only.";
+    else {
+      await store.sync();
+      const acctName = {};
+      for (const a of state.financeAccounts || []) if (a?.linkedId) acctName[a.linkedId] = a.name || "";
+      for (const r of store.rows()) {
+        if (out.has(r.id)) continue;
+        const ex = explicit[r.id];
+        const split = ex && typeof ex === "object" && Array.isArray(ex.split) ? ex.split : null;
+        const label = split ? "split" : (typeof ex === "string" ? ex : r.import_label || "");
+        out.set(r.id, {
+          id: r.id, date: day(r.posted), merchant: names[financeMerchantKey(r.description)] || r.description || "",
+          description: r.description || "", amount: Number(r.amount || 0),
+          category: split ? "Split" : labelText(label), split: split ? labelText("split", split) : "",
+          labelSource: ex ? "manual" : (r.import_label ? "import" : ""),
+          note: Object.prototype.hasOwnProperty.call(noteOverrides, r.id) ? noteOverrides[r.id] : "",
+          account: acctName[r.account_id] || r.account_id || "", pending: Boolean(r.pending),
+          source: r.origin === "simplefin" ? "bank" : r.origin, status: r.status || "active", signFlipped: false,
+        });
+      }
+    }
+  } catch (e) {
+    note = `Stored transaction history could not be read (${e?.message || "error"}) — finance_transactions.csv holds the bank's recent window plus manual entries only.`;
+  }
+  const transactions = [...out.values()].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  return { transactions, note };
+}
+
 // Backfill months of spending history from a transaction CSV (a bank export, or
 // a file exported from another device) so "Draft from history" has real data to
 // work with. Aggregates rows into per-month category totals and fills ONLY the
 // months state.financeMonthActuals doesn't already have — a month with real
 // snapshot data is never clobbered. Negative amount = spending, positive =
 // income (same as Export CSV). Pure parse/aggregate live in ./finance-csv.js.
-function financeImportCsvBackfill(text) {
-  const rows = parseCsvRows(text);
-  if (rows.length < 2) { alert("That file didn't look like a transaction CSV (no rows found)."); return; }
-  // Map both "Group · Category" and the bare category name to the budget key.
+// "Group · Category" and bare category name → budget key (CSV Category column).
+function financeCsvNameToKey() {
   const nameToKey = new Map();
   for (const g of (state.financeBudgetGroups || [])) {
     for (const c of (g.categories || [])) {
@@ -267,31 +324,66 @@ function financeImportCsvBackfill(text) {
       nameToKey.set(String(c.name || "").toLowerCase(), key);
     }
   }
-  const agg = aggregateCsvBackfill(rows, nameToKey);
-  if (agg.error === "missing-columns") { alert("Couldn't find Date and Amount columns in that CSV. Export from your bank with at least Date, Amount, and (ideally) Category columns."); return; }
-  if (!agg.applied) { alert("No usable rows found in that CSV (couldn't read dates/amounts)."); return; }
+  return nameToKey;
+}
 
+// Month-actuals backfill — UNCHANGED behavior: fills only months with no snapshot.
+function applyCsvMonthBackfill(agg) {
   if (!state.financeMonthActuals || typeof state.financeMonthActuals !== "object") state.financeMonthActuals = {};
   const filled = [];
   let skippedExisting = 0;
   for (const [month, entry] of Object.entries(agg.months)) {
     if (state.financeMonthActuals[month]) { skippedExisting++; continue; } // never clobber real data
     if (!Object.keys(entry.cats).length && !entry.income) continue; // nothing landed
-    state.financeMonthActuals[month] = entry;
+    // aggregateCsvBackfill keys cats by the full label ("cat:<gid>:<cid>") but every
+    // reader (budget view, last-month, draft-from-history) and the live snapshotter
+    // use "<gid>:<cid>" — normalize so backfilled categories actually show up.
+    const cats = {};
+    for (const [k, v] of Object.entries(entry.cats)) {
+      const key = k.startsWith("cat:") ? k.slice(4) : k;
+      cats[key] = Math.round(((cats[key] || 0) + v) * 100) / 100;
+    }
+    state.financeMonthActuals[month] = { ...entry, cats };
     filled.push(month);
   }
-  // Keep the same 36-month cap the live snapshotter enforces.
-  const months = Object.keys(state.financeMonthActuals).sort();
-  for (let i = 0; i < months.length - 36; i++) delete state.financeMonthActuals[months[i]];
-  persist();
-  renderFinancePage();
+  // No age cap: month totals are the only record of spending older than the bank
+  // window, and each month is ~1 KB (DATA_EXPORT.md §3 — history is never pruned).
+  return { filled, skippedExisting };
+}
 
-  const parts = [];
-  parts.push(filled.length ? `Backfilled ${filled.length} month${filled.length === 1 ? "" : "s"} (${filled.sort().join(", ")})` : "No new months added");
-  if (skippedExisting) parts.push(`${skippedExisting} month${skippedExisting === 1 ? "" : "s"} already had data (left as-is)`);
-  if (agg.uncategorized) parts.push(`${agg.uncategorized} row${agg.uncategorized === 1 ? "" : "s"} had no matching category${agg.unrecognized.length ? ` (e.g. ${agg.unrecognized.slice(0, 3).join(", ")})` : ""}`);
-  if (agg.invalid) parts.push(`${agg.invalid} row${agg.invalid === 1 ? "" : "s"} skipped (bad date/amount)`);
-  alert(parts.join(".\n") + ".\n\nNow open the Budget tab → “Draft from history” to set budgets from this.");
+// ── CSV import → month backfill (as before) + real rows in the durable store ──
+// FINANCE_TRANSACTIONS_DESIGN.md §4. Flow: pick file → pick the account it
+// belongs to → preview (new / already imported / already from the bank) →
+// Import. Rows go into finance_transactions (so they're searchable and matchable
+// forever); an import can be undone (soft delete by batch).
+let financeCsvImport = null; // { fileName, rows, accountChoice, newName, batchId, preview, busy }
+
+function financeCsvImportAccountId(d) {
+  if (d.accountChoice !== "__new__") return d.accountChoice;
+  const name = String(d.newName || "").trim().slice(0, 60) || "Imported account";
+  return `csv:${name}`;
+}
+
+async function refreshCsvImportPreview() {
+  const d = financeCsvImport;
+  if (!d) return;
+  const nameToKey = financeCsvNameToKey();
+  const agg = aggregateCsvBackfill(d.rows, nameToKey);
+  const preview = { agg, error: agg.error || null, storeOk: false, storeError: null, fresh: [], sameFile: 0, fromBank: 0, invalid: 0 };
+  if (!agg.error) {
+    const conv = csvRowsToTxns(d.rows, { accountId: financeCsvImportAccountId(d), nameToKey, batchId: d.batchId });
+    preview.invalid = conv.invalid;
+    try {
+      const store = await ensureFinanceTxnStore({ force: true });
+      if (!store) throw new Error("Sign in to save transactions");
+      await store.sync();
+      const dd = dedupeImport(conv.txns, store.rows(), financeMerchantTokens);
+      Object.assign(preview, { storeOk: true, fresh: dd.fresh, sameFile: dd.sameFile.length, fromBank: dd.fromBank.length });
+    } catch (e) {
+      preview.storeError = e?.message || "Stored history unavailable";
+    }
+  }
+  if (financeCsvImport === d) { d.preview = preview; renderFinancePage(); }
 }
 
 function startFinanceCsvImport() {
@@ -302,11 +394,141 @@ function startFinanceCsvImport() {
     const file = input.files && input.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => { try { financeImportCsvBackfill(String(reader.result || "")); } catch (e) { alert("Couldn't import that CSV: " + (e?.message || "unknown error")); } };
+    reader.onload = () => {
+      try {
+        const rows = parseCsvRows(String(reader.result || ""));
+        if (rows.length < 2) { alert("That file didn't look like a transaction CSV (no rows found)."); return; }
+        const firstLinked = (state.financeAccounts || []).find((a) => a.linkedId)?.linkedId || "__new__";
+        financeCsvImport = {
+          fileName: file.name || "import.csv",
+          rows,
+          accountChoice: firstLinked,
+          newName: String(file.name || "").replace(/\.[^.]+$/, "").slice(0, 60),
+          batchId: `csvb_${Date.now().toString(36)}`,
+          preview: null,
+          busy: false,
+        };
+        renderFinancePage();
+        refreshCsvImportPreview();
+      } catch (e) { alert("Couldn't import that CSV: " + (e?.message || "unknown error")); }
+    };
     reader.onerror = () => alert("Couldn't read that file.");
     reader.readAsText(file);
   };
   input.click();
+}
+
+async function confirmFinanceCsvImport() {
+  const d = financeCsvImport;
+  const p = d?.preview;
+  if (!d || !p || p.error || d.busy) return;
+  d.busy = true;
+  renderFinancePage();
+  const { filled, skippedExisting } = applyCsvMonthBackfill(p.agg);
+  let saved = 0, saveError = null;
+  if (p.storeOk && p.fresh.length) {
+    const groupId = getFinanceStoreGroupId?.();
+    try {
+      for (let i = 0; i < p.fresh.length; i += 500) {
+        const chunk = p.fresh.slice(i, i + 500).map((t) => ({
+          id: t.id, group_id: groupId, origin: "csv", account_id: t.account_id, posted: t.posted,
+          amount: t.amount, description: t.description, pending: false, status: "active",
+          import_label: t.import_label, import_batch: d.batchId,
+        }));
+        await writeSupabaseJson("finance_transactions?on_conflict=group_id,id", { method: "POST", body: chunk, prefer: "resolution=merge-duplicates,return=minimal" });
+        saved += chunk.length;
+      }
+    } catch (e) { saveError = e?.message || "save failed"; }
+    await financeTxnStore?.sync().catch(() => {});
+  }
+  financeCsvImport = null;
+  invalidateFinanceLabeled();
+  updateFinanceMonthActuals();
+  setPageNotifCount("finance", financeBellCount());
+  persist();
+  renderFinancePage();
+  refreshFinanceSettingsIfOpen();
+  const parts = [];
+  if (saved) parts.push(`${saved} transaction${saved === 1 ? "" : "s"} saved${financeStoreEnabled() ? "" : " (turn on stored history in Settings to see them)"}`);
+  if (p.sameFile) parts.push(`${p.sameFile} already imported`);
+  if (p.fromBank) parts.push(`${p.fromBank} already from the bank`);
+  if (filled.length) parts.push(`backfilled ${filled.length} month${filled.length === 1 ? "" : "s"}`);
+  if (skippedExisting) parts.push(`${skippedExisting} month${skippedExisting === 1 ? "" : "s"} already had totals`);
+  if (saveError) parts.push(`couldn't save rows: ${saveError}`);
+  const batchId = d.batchId;
+  showMailToast(parts.join(" · ") || "Nothing new to import.", saved ? () => undoFinanceCsvImport(batchId) : undefined);
+}
+
+// Undo = soft-delete the batch's rows (status "deleted" — visible to incremental
+// sync). Month totals it backfilled are left alone (same as before: the backfill
+// never had an undo, and a month's snapshot may since hold real data).
+async function undoFinanceCsvImport(batchId) {
+  const groupId = getFinanceStoreGroupId?.();
+  if (!batchId || !groupId) return;
+  try {
+    await writeSupabaseJson(
+      `finance_transactions?group_id=eq.${encodeURIComponent(groupId)}&import_batch=eq.${encodeURIComponent(batchId)}&origin=eq.csv`,
+      { method: "PATCH", body: { status: "deleted" }, prefer: "return=minimal" }
+    );
+    await financeTxnStore?.sync().catch(() => {});
+    invalidateFinanceLabeled();
+    setPageNotifCount("finance", financeBellCount());
+    renderFinancePage();
+    refreshFinanceSettingsIfOpen();
+    showMailToast("Import undone.");
+  } catch (e) {
+    alert("Couldn't undo that import: " + (e?.message || "unknown error"));
+  }
+}
+
+// Live CSV batches in the local mirror, newest first (for Settings › Undo).
+function financeCsvBatches() {
+  const rows = financeTxnStore?.rows() || [];
+  const byBatch = new Map();
+  for (const r of rows) {
+    if (r.origin !== "csv" || r.status !== "active" || !r.import_batch) continue;
+    const b = byBatch.get(r.import_batch) || { id: r.import_batch, count: 0, account: r.account_id, from: r.posted, to: r.posted };
+    b.count++;
+    if (r.posted && r.posted < b.from) b.from = r.posted;
+    if (r.posted && r.posted > b.to) b.to = r.posted;
+    byBatch.set(r.import_batch, b);
+  }
+  return [...byBatch.values()].sort((a, b) => String(b.id).localeCompare(String(a.id)));
+}
+
+function financeCsvImportPanelHtml() {
+  const d = financeCsvImport;
+  if (!d) return "";
+  const p = d.preview;
+  const linked = (state.financeAccounts || []).filter((a) => a.linkedId);
+  const csvAccounts = [...new Set((financeTxnStore?.rows() || []).filter((r) => String(r.account_id).startsWith("csv:")).map((r) => r.account_id))];
+  const fmtDay = (iso) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  const body = !p ? `<p class="fin-hint">Checking what's new…</p>`
+    : p.error === "missing-columns" ? `<p class="fin-hint">Couldn't find Date and Amount columns in that CSV. Export from your bank with at least Date, Amount, and (ideally) Description and Category columns.</p>`
+    : `<ul class="fin-hint fin-csv-preview">
+        ${p.storeOk ? `<li><strong>${p.fresh.length}</strong> new transaction${p.fresh.length === 1 ? "" : "s"} to save</li>` : `<li>Transactions can't be saved right now (${escapeHtml(p.storeError || "")}) — only month totals will be backfilled.</li>`}
+        ${p.sameFile ? `<li>${p.sameFile} already imported (skipped)</li>` : ""}
+        ${p.fromBank ? `<li>${p.fromBank} already came from the bank (skipped)</li>` : ""}
+        ${p.invalid ? `<li>${p.invalid} row${p.invalid === 1 ? "" : "s"} unreadable (bad date/amount)</li>` : ""}
+        ${p.fresh.length ? `<li>${escapeHtml(fmtDay(p.fresh[0].posted))} – ${escapeHtml(fmtDay(p.fresh[p.fresh.length - 1].posted))}</li>` : ""}
+      </ul>`;
+  return `
+    <div class="fin-split-editor fin-csv-import">
+      <div class="fin-subhead">Import ${escapeHtml(d.fileName)}</div>
+      <div class="fin-item-row">
+        <select class="fin-scenario-select fin-editor-select" data-fin-edit="csv-account" aria-label="Which account is this CSV from?">
+          ${linked.map((a) => `<option value="${escapeHtml(a.linkedId)}" ${d.accountChoice === a.linkedId ? "selected" : ""}>${escapeHtml(a.name)}</option>`).join("")}
+          ${csvAccounts.map((id) => `<option value="${escapeHtml(id)}" ${d.accountChoice === id ? "selected" : ""}>${escapeHtml(id.slice(4))} (imported)</option>`).join("")}
+          <option value="__new__" ${d.accountChoice === "__new__" ? "selected" : ""}>New imported account…</option>
+        </select>
+        ${d.accountChoice === "__new__" ? `<input class="fin-item-name" type="text" value="${escapeHtml(d.newName)}" placeholder="Account name" data-fin-edit="csv-account-name" aria-label="Imported account name" />` : ""}
+      </div>
+      ${body}
+      <div class="fin-item-row fin-item-row--tools">
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="csv-import-cancel">Cancel</button>
+        <button class="secondary-btn fin-add-btn" type="button" data-fin-action="csv-import-confirm" ${!p || p.error || d.busy ? "disabled" : ""}>${d.busy ? "Importing…" : "Import"}</button>
+      </div>
+    </div>`;
 }
 
 // Sum of current balances of accounts of the given kind(s).
@@ -354,6 +576,145 @@ function financeSumByAccountIds(ids, liveById) {
 let financeLinkStatus = null; // null = unknown yet
 let financeLive = null;       // { accounts, errors, at }
 let financeLiveLoading = false;
+
+// ── Durable transaction store (FINANCE_TRANSACTIONS_DESIGN.md §5) ───────────
+// state.financeTxnSource: "feed" (default — today's 45-day SimpleFIN window,
+// unchanged) | "store" (the permanent finance_transactions ledger). The store is
+// only USED once its local mirror has loaded AND holds rows; otherwise every
+// reader falls back to the feed, so an unapplied migration / offline first boot /
+// empty store can never blank the finance page.
+let financeTxnStore = null;
+let financeTxnStoreStorage = null;
+let financeTxnStoreGroup = null;
+let financeTxnStoreError = null;
+function financeStoreEnabled() { return state.financeTxnSource === "store"; }
+function financeStoreActive() {
+  if (!financeStoreEnabled() || !financeTxnStore?.isLoaded()) return false;
+  const rows = financeTxnStore.rows();
+  return Array.isArray(rows) && rows.length > 0;
+}
+// `force`: CSV import writes to the store even while reads still use the feed.
+async function ensureFinanceTxnStore({ force = false } = {}) {
+  if ((!financeStoreEnabled() && !force) || !canUseFinanceStore?.()) return null;
+  const groupId = getFinanceStoreGroupId?.();
+  if (!groupId) return null;
+  if (!financeTxnStore || financeTxnStoreGroup !== groupId) {
+    try { financeTxnStoreStorage = createIdbStorage(FIN_TXN_DB, 1, FIN_TXN_STORES); }
+    catch { financeTxnStoreStorage = createMemoryStorage(FIN_TXN_STORES); } // private mode: session-only mirror
+    financeTxnStore = createFinanceTxnStore({ storage: financeTxnStoreStorage, fetchJson: fetchSupabaseJson, groupId });
+    financeTxnStoreGroup = groupId;
+  }
+  await financeTxnStore.load();
+  return financeTxnStore;
+}
+// Explicit-trigger sync only (finance refresh / enabling the store) — never on a timer.
+async function syncFinanceTxnStore() {
+  const store = await ensureFinanceTxnStore().catch(() => null);
+  if (!store) return;
+  const wasActive = financeStoreActive();
+  try {
+    const { changed } = await store.sync();
+    financeTxnStoreError = null;
+    await copyLegacyManualTxnsToStore();
+    if (!changed && wasActive === financeStoreActive()) return;
+  } catch (e) {
+    financeTxnStoreError = e?.message || "Stored history unavailable";
+  }
+  invalidateFinanceLabeled();
+  updateFinanceMonthActuals();
+  updateFinanceRecurring();
+  setPageNotifCount("finance", financeBellCount());
+  if (getActiveAppArea() === "finance") renderFinancePage();
+  refreshFinanceSettingsIfOpen();
+}
+// Accounts (with their transactions) every reader sees: the store view when
+// active, else the live feed exactly as before.
+function financeTxnSourceAccounts() {
+  if (!financeStoreActive()) return financeLive?.accounts || [];
+  // Names for accounts the live payload doesn't carry right now (bank offline):
+  // the user's own linked-account names, so rows never show as "Imported account".
+  const names = {};
+  for (const a of state.financeAccounts || []) if (a?.linkedId) names[a.linkedId] = a.name || "";
+  return storeAccountsView(financeTxnStore.rows(), financeLive?.accounts || [], names);
+}
+// Windows that keep store mode behaving like the 45-day feed where the code
+// assumes it (§5.3 month actuals, recurring detection) and cap the deck (§5.4).
+function financeFeedWindow(txns) { return financeStoreActive() ? snapshotWindowTxns(txns) : txns; }
+function financeDeckWindow(txns) { return financeStoreActive() ? recentTxns(txns, Date.now(), 60) : txns; }
+function financeStoreStatusText() {
+  if (!financeStoreEnabled()) return "Off — showing the bank's last ~45 days, as before.";
+  if (financeTxnStoreError) return `Stored history unavailable (${escapeHtml(financeTxnStoreError)}) — showing the bank's last ~45 days.`;
+  if (!financeStoreActive()) return "Loading stored history… (showing the bank's last ~45 days meanwhile)";
+  const rows = financeTxnStore.rows().filter((r) => r.status === "active");
+  const oldest = rows.reduce((m, r) => (r.posted && (!m || r.posted < m) ? r.posted : m), null);
+  return `${rows.length} stored transactions${oldest ? ` since ${new Date(oldest).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}` : ""}.`;
+}
+// Manual transactions are dual-written (JSONB + store) whenever the store is
+// usable — REGARDLESS of the read setting — so a delete made while reading from
+// the feed can't leave an active store copy that reappears when the store is on.
+async function financeStoreWriteRows(rows) {
+  const groupId = getFinanceStoreGroupId?.();
+  if (!rows.length || !groupId || !canUseFinanceStore?.()) return false;
+  await writeSupabaseJson("finance_transactions?on_conflict=group_id,id", { method: "POST", body: rows, prefer: "resolution=merge-duplicates,return=minimal" });
+  return true;
+}
+function financeStoreUpsertManual(entry) {
+  const groupId = getFinanceStoreGroupId?.();
+  if (!groupId) return;
+  financeStoreWriteRows([manualTxnToRow(entry, groupId)])
+    .then((ok) => (ok ? financeTxnStore?.sync() : null))
+    .catch((e) => console.warn("Manual transaction not saved to stored history:", e?.message || e));
+}
+// Delete = UPSERT a full row with status "deleted" (not a PATCH): a PATCH is a
+// no-op when the row never reached the store (created offline / before the copy),
+// and another device's legacy copy would then insert it as active — resurrecting
+// it for good (review M4). An upserted tombstone row wins over any later copy
+// (manualRowsToCopy skips ids the store already has, deleted or not).
+function financeStoreDeleteManual(entry) {
+  const groupId = getFinanceStoreGroupId?.();
+  if (!entry?.id || !groupId || !canUseFinanceStore?.()) return;
+  financeStoreWriteRows([{ ...manualTxnToRow(entry, groupId), status: "deleted" }])
+    .then((ok) => (ok ? financeTxnStore?.sync() : null))
+    .catch((e) => console.warn("Manual transaction delete not saved to stored history:", e?.message || e));
+}
+// The editable manual entry for an id: the JSONB record, or (store mode) the
+// store-only one rebuilt from its row, so it can still be edited/deleted.
+function financeManualEntry(id) {
+  const fromJsonb = (state.financeManualTxns || []).find((m) => m.id === id);
+  if (fromJsonb || !financeStoreActive()) return fromJsonb;
+  return mergeManualTxns([], financeTxnStore.rows()).find((m) => m.id === id);
+}
+// One-time (per session) copy of JSONB manual entries the store doesn't have yet.
+let financeManualCopyDone = false;
+async function copyLegacyManualTxnsToStore() {
+  if (financeManualCopyDone || !financeTxnStore?.isLoaded()) return;
+  financeManualCopyDone = true;
+  const rows = manualRowsToCopy(state.financeManualTxns, financeTxnStore.rows(), getFinanceStoreGroupId?.());
+  try {
+    if (await financeStoreWriteRows(rows)) await financeTxnStore.sync();
+  } catch (e) {
+    financeManualCopyDone = false; // retry on the next explicit sync
+    console.warn("Manual transactions not copied to stored history:", e?.message || e);
+  }
+}
+// Account-boundary purge (sign-out / account switch) — drops the local mirror.
+async function purgeLocalFinanceTxnStore() {
+  try {
+    financeTxnStore?.dispose?.(); // an in-flight sync must not re-persist into a deleted DB
+    const storage = financeTxnStoreStorage;
+    financeTxnStore = null;
+    financeTxnStoreStorage = null;
+    financeTxnStoreGroup = null;
+    await Promise.resolve(storage?.close?.()).catch(() => {});
+    if (typeof indexedDB !== "undefined" && indexedDB.deleteDatabase) {
+      // Resolve on success/error/blocked so the caller's awaited reload can't abort it.
+      await new Promise((resolve) => {
+        const req = indexedDB.deleteDatabase(FIN_TXN_DB);
+        req.onsuccess = req.onerror = req.onblocked = () => resolve();
+      });
+    }
+  } catch { /* best-effort */ }
+}
 // Which month the finance page is showing ("YYYY-MM"). The budget is built to
 // fit one calendar month, so the date bar pages through months — back to review
 // past spend, forward to plan. Reset to the real current month on entry.
@@ -443,6 +804,7 @@ async function refreshFinanceLive(force = false) {
   if (financeReceipts === null) loadFinanceReceipts();
   if (getActiveAppArea() === "finance") renderFinancePage();
   refreshFinanceSettingsIfOpen();
+  if (financeStoreEnabled()) syncFinanceTxnStore(); // explicit trigger: a finance refresh
 }
 
 async function linkFinanceBanks() {
@@ -490,15 +852,8 @@ let financeBudgetOpenGroup = null;
 // reachable for labeling. Reset on month change so each month starts collapsed.
 let financeTxnListExpanded = false;
 
-const FIN_MERCHANT_STOPWORDS = new Set(["pos", "debit", "credit", "card", "purchase", "ach", "web", "id", "des", "co", "the", "of", "and", "inc", "llc", "com"]);
-function financeMerchantTokens(desc) {
-  return String(desc || "").toLowerCase()
-    .replace(/[0-9#*]+/g, " ")
-    .replace(/[^a-z\s]/g, " ")
-    .split(/\s+/)
-    .filter((t) => t.length >= 2 && !FIN_MERCHANT_STOPWORDS.has(t));
-}
-function financeMerchantKey(desc) { return financeMerchantTokens(desc).slice(0, 3).join(" "); }
+// financeMerchantTokens / financeMerchantKey live in finance-transactions.js (shared
+// with the server-side transaction-store ingest); imported above.
 
 // Majority-vote default for a merchant's purchase note — same shape as
 // predictMailFolder's sender-count fallback and financeTxnRuleGuess's
@@ -547,7 +902,7 @@ function financeLabeledTxns() {
   // here, first, so every downstream check (dedupe, mgmt-pair transfer
   // detection, income keywords, portions, return matching) sees the true sign.
   const flips = state.financeTxnSignFlips || {};
-  const bankTxns = (financeLive?.accounts || []).flatMap((a) =>
+  const bankTxns = financeTxnSourceAccounts().flatMap((a) =>
     a.transactions.map((t) => ({
       ...t,
       accountId: a.id,
@@ -563,7 +918,10 @@ function financeLabeledTxns() {
   // pseudo-account) so they can never collide with or double-count a bank
   // transaction, and so mgmt-pair transfer detection can't pair them against
   // a real account by accident.
-  const manualTxns = (state.financeManualTxns || []).map((m) => ({
+  const manualSource = financeStoreActive()
+    ? mergeManualTxns(state.financeManualTxns, financeTxnStore.rows())
+    : (state.financeManualTxns || []);
+  const manualTxns = manualSource.map((m) => ({
     id: m.id,
     accountId: `manual:${(m.account || "cash").trim().toLowerCase().replace(/\s+/g, "-") || "cash"}`,
     account: m.account || "Cash",
@@ -575,6 +933,19 @@ function financeLabeledTxns() {
   }));
   if (!bankTxns.length && !manualTxns.length) return [];
   let txns = [...bankTxns, ...manualTxns];
+
+  // Store mode: the server already resolved pending→posted (incl. pre-auths whose
+  // amount changed, which the same-amount dedupe below can't see) and hides the
+  // superseded pending row — carry any label made while pending to its successor.
+  if (financeStoreActive()) {
+    const ex = state.financeTxnLabels || {};
+    let moved = false;
+    for (const r of financeTxnStore.rows()) {
+      if (r.status !== "superseded" || !r.superseded_by) continue;
+      if (ex[r.id] && !ex[r.superseded_by]) { ex[r.superseded_by] = ex[r.id]; delete ex[r.id]; moved = true; }
+    }
+    if (moved) persist();
+  }
 
   // Pending→posted dedupe: banks reissue transaction ids when a pending
   // charge posts, which would double-count anything labeled while pending.
@@ -666,6 +1037,9 @@ function financeLabeledTxns() {
       t.labelSource = "manual";
       continue;
     }
+    // CSV-supplied category (import_label): below your own labels, above rules.
+    // Shown like an auto label (a suggestion you can confirm or change).
+    if (t.importLabel) { t.label = t.importLabel; t.labelSource = "auto"; continue; }
     const rule = financeTxnRuleGuess(t.description);
     if (rule) { t.label = rule; t.labelSource = "auto"; continue; }
     if (mgmtPairs.has(t.id) || FIN_MGMT_KEYWORDS.test(t.description)) { t.label = "mgmt"; t.labelSource = "auto"; continue; }
@@ -830,6 +1204,7 @@ function saveManualTxnForm(fields) {
   if (i >= 0) state.financeManualTxns[i] = entry; else state.financeManualTxns.unshift(entry);
   if (fields.label) recordFinanceTxnLabel(entry.id, fields.label, desc);
   else if (state.financeTxnLabels) delete state.financeTxnLabels[entry.id];
+  financeStoreUpsertManual(entry);
   invalidateFinanceLabeled();
   financeManualForm = null;
   setPageNotifCount("finance", financeBellCount());
@@ -840,6 +1215,7 @@ function saveManualTxnForm(fields) {
 
 function deleteManualTxn(id) {
   if (!state.financeManualTxns || !confirm("Delete this transaction?")) return;
+  financeStoreDeleteManual(financeManualEntry(id) || { id });
   state.financeManualTxns = state.financeManualTxns.filter((m) => m.id !== id);
   if (state.financeTxnLabels) delete state.financeTxnLabels[id];
   if (state.financeTxnNoteOverrides) delete state.financeTxnNoteOverrides[id];
@@ -948,7 +1324,9 @@ function updateFinanceRecurring() {
     persist();
   }
   const byMerchant = new Map();
-  for (const t of financeLabeledTxns()) {
+  // Same 45-day window as the feed in store mode, so years of history can't
+  // suddenly mint "recurring" charges from long-ago monthly gaps.
+  for (const t of financeFeedWindow(financeLabeledTxns())) {
     if ((t.amount || 0) >= 0 || t.pending) continue;
     const k = financeMerchantKey(t.description);
     if (!k) continue;
@@ -1143,7 +1521,7 @@ function financeUnlabeledByMerchant(txns) {
   return [...byKey.values()];
 }
 function financeUnlabeledCount() {
-  return financeUnlabeledByMerchant(financeLabeledTxns()).length;
+  return financeUnlabeledByMerchant(financeDeckWindow(financeLabeledTxns())).length;
 }
 
 // ── Transaction review: full-window swipe deck for labeling ───────────────────
@@ -1169,7 +1547,7 @@ function financeDismissNotifGroup(key, repId) {
   if (!state.financeNotifDismissed || typeof state.financeNotifDismissed !== "object") state.financeNotifDismissed = {};
   const ids = new Set();
   if (repId) ids.add(repId);
-  for (const t of financeLabeledTxns()) {
+  for (const t of financeDeckWindow(financeLabeledTxns())) {
     if (t.label) continue;
     const k = financeMerchantKey(t.description) || `id:${t.id}`;
     if (k === key) ids.add(t.id);
@@ -1196,7 +1574,7 @@ function financeTxnNeedsConfirm(t) {
 }
 
 function financeReviewGroups() {
-  return financeUnlabeledByMerchant(financeLabeledTxns());
+  return financeUnlabeledByMerchant(financeDeckWindow(financeLabeledTxns()));
 }
 
 function openFinanceTxnReview() {
@@ -1732,7 +2110,9 @@ function updateFinanceMonthActuals() {
   // older transaction still in the feed updates that month's totals, not only
   // the current month's, without a partial window undercounting a complete
   // historical snapshot. (Coverage guard is pure + tested in finance-actuals.js.)
-  const monthsToWrite = financeMonthsToSnapshot(txns, currentMonth);
+  // Store mode: only the feed-sized window decides eligibility, so permanent
+  // history can never mark (and re-snapshot) an old month — design §5.3.
+  const monthsToWrite = financeMonthsToSnapshot(financeFeedWindow(txns), currentMonth);
   if (!state.financeMonthActuals || typeof state.financeMonthActuals !== "object") state.financeMonthActuals = {};
   let changed = false;
   for (const month of monthsToWrite) {
@@ -1757,8 +2137,6 @@ function updateFinanceMonthActuals() {
     changed = true;
   }
   if (!changed) return;
-  const months = Object.keys(state.financeMonthActuals).sort();
-  for (let i = 0; i < months.length - 36; i++) delete state.financeMonthActuals[months[i]];
   persist();
 }
 
@@ -2264,7 +2642,16 @@ function renderFinanceAccountsPanel() {
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="refresh-live" ${financeLiveLoading ? "disabled" : ""}>${financeLiveLoading ? "Refreshing…" : "Refresh"}</button>
         <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="unlink-banks">Disconnect</button>
       </div>
-      ${(financeLive?.errors || []).length ? `<p class="fin-hint">${escapeHtml(financeLive.errors.join(" · "))}</p>` : ""}`
+      ${(financeLive?.errors || []).length ? `<p class="fin-hint">${escapeHtml(financeLive.errors.join(" · "))}</p>` : ""}
+      <div class="fin-item-row">
+        <label class="fin-hint fin-store-toggle"><input type="checkbox" class="live-toggle" data-fin-edit="txn-source" ${financeStoreEnabled() ? "checked" : ""} /> Use stored transaction history</label>
+      </div>
+      <p class="fin-hint">${financeStoreStatusText()}</p>
+      ${financeCsvBatches().map((b) => `
+        <div class="fin-item-row fin-item-row--tools">
+          <span class="fin-hint">CSV · ${escapeHtml(String(b.account).replace(/^csv:/, ""))} · ${b.count} txns · ${escapeHtml(String(b.from || "").slice(0, 10))} – ${escapeHtml(String(b.to || "").slice(0, 10))}</span>
+          <button class="secondary-btn fin-add-btn fin-danger" type="button" data-fin-action="csv-import-undo" data-id="${escapeHtml(b.id)}">Undo import</button>
+        </div>`).join("")}`
     : financeLinkStatus ? `
       <div class="fin-subhead">Bank link · SimpleFIN</div>
       <p class="fin-hint">Paste a one-time setup token from <a href="https://beta-bridge.simplefin.org" target="_blank" rel="noopener noreferrer">SimpleFIN Bridge</a>. Bank logins stay at the bridge — the app only ever receives read-only balances.</p>
@@ -3623,6 +4010,7 @@ function renderFinancePage() {
           <button class="secondary-btn fin-add-btn" type="button" data-fin-action="export-csv">Export CSV</button>
         </div>
       </div>
+      ${financeCsvImportPanelHtml()}
       ${reportRows.length ? reportRows.map((c) => `
         <div class="fin-report-row">
           <div class="fin-report-top"><span class="fin-report-name">${escapeHtml(c.name)}</span><span class="fin-report-amt">${formatFinMoney(c.amount)} <span class="fin-of">· ${catTotal > 0 ? Math.round((c.amount / catTotal) * 100) : 0}%</span></span></div>
@@ -3866,7 +4254,7 @@ function showFinTxnMenu(x, y, txnId) {
   });
   menu.querySelector('[data-menu-action="edit"]')?.addEventListener("click", () => {
     menu.remove();
-    openManualTxnForm((state.financeManualTxns || []).find((m) => m.id === txnId));
+    openManualTxnForm(financeManualEntry(txnId));
   });
   menu.querySelector('[data-menu-action="delete"]')?.addEventListener("click", () => {
     menu.remove();
@@ -4031,11 +4419,14 @@ function onFinanceGridClick(e) {
   if (action === "manual-txn-open") { openManualTxnForm(null); return; }
   if (action === "manual-txn-edit") {
     const t = financeLabeledTxns().find((x) => x.id === btn.dataset.id);
-    if (t?.isManual) openManualTxnForm((state.financeManualTxns || []).find((m) => m.id === t.id));
+    if (t?.isManual) openManualTxnForm(financeManualEntry(t.id));
     return;
   }
   if (action === "manual-txn-delete") { deleteManualTxn(btn.dataset.id); return; }
   if (action === "manual-txn-cancel") { cancelManualTxnForm(); return; }
+  if (action === "csv-import-cancel") { financeCsvImport = null; renderFinancePage(); return; }
+  if (action === "csv-import-confirm") { confirmFinanceCsvImport(); return; }
+  if (action === "csv-import-undo") { if (confirm("Remove the transactions from this import?")) undoFinanceCsvImport(btn.dataset.id); return; }
   if (action === "manual-txn-save") {
     const box = btn.closest(".fin-split-editor");
     const field = (name) => box?.querySelector(`[data-fin-manual="${name}"]`)?.value || "";
@@ -4409,6 +4800,24 @@ function onFinanceGridChange(e) {
     } else {
       a.sub = el.value;
     }
+  } else if (kind === "csv-account" || kind === "csv-account-name") {
+    if (!financeCsvImport) return;
+    if (kind === "csv-account") financeCsvImport.accountChoice = el.value;
+    else financeCsvImport.newName = el.value;
+    financeCsvImport.preview = null;
+    renderFinancePage();
+    refreshCsvImportPreview();
+    return;
+  } else if (kind === "txn-source") {
+    state.financeTxnSource = el.checked ? "store" : "feed";
+    persist();
+    invalidateFinanceLabeled();
+    updateFinanceMonthActuals();
+    updateFinanceRecurring();
+    setPageNotifCount("finance", financeBellCount());
+    renderFinancePage();
+    if (el.checked) syncFinanceTxnStore();
+    return;
   } else if (kind === "category-mode") {
     const c = financeScopeCategory(el.dataset.scope);
     if (!c) return;
@@ -4491,5 +4900,5 @@ function refreshFinanceSettingsIfOpen() {
   function getFinanceViewMonth() { return financeViewMonth; }
   function getFinanceLinkStatus() { return financeLinkStatus; }
 
-  return { checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
+  return { purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
 }

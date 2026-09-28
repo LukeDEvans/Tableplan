@@ -17,6 +17,10 @@ function makeMock() {
     calls: [],
     done: new Set(),
     recipesPending: [],
+    mailAi: { receiptExtract: false },
+    newsRow: null,     // mailnews_ (pending)
+    seenRow: null,     // mailnewsseen_
+    newsSaveFails: false,
     delta: ["m1"],
     claim: true,
     message: {
@@ -44,7 +48,14 @@ function makeMock() {
     else if (u.includes("/rpc/mail_prune_processed")) { cat = "db-rpc"; out = resp(null); }
     else if (u.includes("/mail_sweep_state")) { cat = "db-read"; out = resp([{ last_history_id: "100" }]); }
     else if (u.includes("/live_group_members")) { cat = "db-read"; out = resp([{ group_id: "g1" }]); }
-    else if (u.includes("tableplan_states") && method === "GET" && u.includes("config")) { cat = "db-read"; out = resp([{ state: { mailAiSettings: { receiptExtract: false } } }]); }
+    else if (u.includes("tableplan_states") && method === "GET" && u.includes("config")) { cat = "db-read"; out = resp([{ state: { mailAiSettings: state.mailAi } }]); }
+    else if (u.includes("tableplan_states") && method === "GET" && u.includes("mailnewsseen_")) { cat = "db-read"; out = resp(state.seenRow ? [{ state: JSON.parse(JSON.stringify(state.seenRow)) }] : []); }
+    else if (u.includes("tableplan_states") && method === "GET" && u.includes("mailnews_")) { cat = "db-read"; out = resp(state.newsRow ? [{ state: JSON.parse(JSON.stringify(state.newsRow)) }] : []); }
+    else if (u.includes("tableplan_states") && method === "POST" && body?.id?.startsWith("mailnews")) {
+      cat = "db-write";
+      if (state.newsSaveFails) out = resp({}, { ok: false, status: 500 });
+      else { if (body.id.startsWith("mailnewsseen_")) state.seenRow = body.state; else state.newsRow = body.state; out = resp(null); }
+    }
     else if (u.includes("tableplan_states") && method === "GET" && u.includes("mailsugg")) { cat = "db-read"; out = resp([{ state: { suggestions: [] } }]); }
     else if (u.includes("tableplan_states") && method === "GET" && u.includes("mailai")) { cat = "db-read"; out = resp([{ state: { recipesPending: [...state.recipesPending] } }]); }
     else if (u.includes("tableplan_states") && method === "POST") { cat = "db-write"; if (Array.isArray(body?.state?.recipesPending)) state.recipesPending = body.state.recipesPending; out = resp(null); }
@@ -54,7 +65,7 @@ function makeMock() {
     else if (u.includes("/labels")) { cat = "gmail"; out = resp({ labels: [{ id: "Label_AITrash", name: "Apps/AI trash" }] }); }
     else if (u.includes("/profile")) { cat = "gmail"; out = resp({ historyId: "101" }); }
     else if (u.includes("api.anthropic.com")) { cat = "anthropic"; out = resp({ content: [{ type: "text", text: state.triage }] }); }
-    else if (u.includes("nytimes.com") || u.includes("bonappetit.com")) { cat = "external"; out = resp("<html><head></head></html>"); }
+    else if (u.includes("nytimes.com") || u.includes("bonappetit.com") || u.includes("economist.com")) { cat = "external"; out = resp("<html><head></head></html>"); }
 
     state.calls.push({ url: u, method, cat });
     return out;
@@ -140,5 +151,77 @@ describe("runInboxSweep — recipe email converges (no duplicates on repeat)", (
     // Re-trigger: m1 is done → no re-extract, recipe count unchanged (converges).
     await shared.runInboxSweep(recipeTokens, "svc", USER, { anthropicKey: "ak", preClaimed: true });
     expect(mock.state.recipesPending).toHaveLength(1);
+  });
+});
+
+describe("runInboxSweep — news email → Media notification cards (NEWS_INTAKE_DESIGN.md)", () => {
+  const newsTokens = { ...tokens, email: "me@example.com" };
+  // Dated today so the 7-day freshness cutoff keeps it.
+  const ARTICLE = `https://www.economist.com/leaders/${new Date().toISOString().slice(0, 10).replace(/-/g, "/")}/the-case-for-cheaper-housing`;
+  function newsMock({ enabled = true } = {}) {
+    const mock = makeMock();
+    mock.state.mailAi = { receiptExtract: false, economistNewsLinks: enabled };
+    mock.state.message = {
+      id: "m1", threadId: "t1",
+      payload: {
+        mimeType: "text/html", headers: [
+          { name: "From", value: "The Economist <newsletters@economist.com>" },
+          { name: "Subject", value: "This week's leaders" },
+          { name: "Date", value: new Date().toUTCString() }
+        ],
+        body: { data: b64(`<a href="${ARTICLE}?utm_source=nl">The case for cheaper housing</a>`) }
+      }
+    };
+    return mock;
+  }
+
+  it("cards the article, files the email to Apps/AI trash AFTER the write, and never re-adds it", async () => {
+    const mock = newsMock();
+    vi.spyOn(global, "fetch").mockImplementation(mock);
+    await shared.runInboxSweep(newsTokens, "svc", USER, { anthropicKey: "ak", preClaimed: true });
+    expect(mock.state.newsRow.newsPending.map((c) => c.url)).toEqual([ARTICLE]);
+    expect(mock.state.newsRow.newsPending[0]).toMatchObject({ paper: "economist", title: "The case for cheaper housing" });
+    const writeIdx = mock.state.calls.findIndex((c) => c.method === "POST" && c.url.includes("tableplan_states"));
+    const fileIdx = mock.state.calls.findIndex((c) => /\/messages\/m1\/modify/.test(c.url));
+    expect(fileIdx).toBeGreaterThan(writeIdx); // filed only after the save
+    expect(mock.state.done.has("m1")).toBe(true);
+    expect(mock.count("anthropic")).toBe(0); // too short for conversion, no triage
+
+    // A second email linking the same article: no new card (the seen record).
+    mock.state.newsRow.newsPending = []; // e.g. already dismissed
+    mock.state.message = { ...mock.state.message, id: "m2" };
+    mock.state.delta = ["m2"];
+    await shared.runInboxSweep(newsTokens, "svc", USER, { anthropicKey: "ak", preClaimed: true });
+    expect(mock.state.newsRow.newsPending).toEqual([]);
+  });
+
+  it("an email whose articles were ALL delivered before is still filed (not sent to AI triage)", async () => {
+    const mock = newsMock();
+    vi.spyOn(global, "fetch").mockImplementation(mock);
+    await shared.runInboxSweep(newsTokens, "svc", USER, { anthropicKey: "ak", preClaimed: true });
+    mock.state.message = { ...mock.state.message, id: "m2" };
+    mock.state.delta = ["m2"];
+    const before = mock.state.calls.length;
+    await shared.runInboxSweep(newsTokens, "svc", USER, { anthropicKey: "ak", preClaimed: true });
+    const second = mock.state.calls.slice(before);
+    expect(second.some((c) => /\/messages\/m2\/modify/.test(c.url))).toBe(true);
+    expect(second.some((c) => c.cat === "anthropic")).toBe(false);
+  });
+
+  it("a failed news write leaves the email unfiled and pending for retry", async () => {
+    const mock = newsMock();
+    mock.state.newsSaveFails = true;
+    vi.spyOn(global, "fetch").mockImplementation(mock);
+    await shared.runInboxSweep(newsTokens, "svc", USER, { anthropicKey: "ak", preClaimed: true });
+    expect(mock.state.calls.some((c) => /\/messages\/m1\/(modify|trash)/.test(c.url))).toBe(false);
+    expect(mock.state.done.has("m1")).toBe(false);
+  });
+
+  it("with the paper's toggle off, the email is not carded or filed", async () => {
+    const mock = newsMock({ enabled: false });
+    vi.spyOn(global, "fetch").mockImplementation(mock);
+    await shared.runInboxSweep(newsTokens, "svc", USER, { anthropicKey: "ak", preClaimed: true });
+    expect(mock.state.newsRow).toBeNull();
+    expect(mock.state.calls.some((c) => /\/messages\/m1\/(modify|trash)/.test(c.url))).toBe(false);
   });
 });

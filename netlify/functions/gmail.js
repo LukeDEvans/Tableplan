@@ -7,6 +7,8 @@ const {
   loadSnoozes, saveSnoozes, findOrCreateSnoozedLabel, modifyWholeThread
 } = require("./_gmail-shared");
 const { loadMailAiRow, dismissPendingRecipe } = require("./_recipe-digest");
+const NewsLinks = require("./_news-links");
+const { saveArticleToMediaSection } = require("./_news-articles");
 
 // Domains that send travel booking confirmations, used by listBookingEmails
 const TRAVEL_SENDERS = [
@@ -87,6 +89,32 @@ exports.handler = async (event) => {
     if (!url) return json(400, { error: "url required" });
     const recipes = await dismissPendingRecipe(serviceKey, userId, url);
     return json(200, { ok: true, recipes });
+  }
+
+  // News-article cards collected from NYT / Economist / Star Tribune mail
+  // (NEWS_INTAKE_DESIGN.md) — the Media page's notification bell. Reads only
+  // the pending list, never the seen record.
+  if (action === "pendingNews") {
+    return json(200, { articles: await NewsLinks.loadPendingNews(serviceKey, userId) });
+  }
+
+  // Accept (→ Media → Publications, under its paper) or dismiss cards, batched
+  // by the client ({ decisions: [{ id, decision }] }) so a swiping session costs
+  // one read+write, not one per card. Saves happen first, so a failed save
+  // leaves the cards for another try. The seen record keeps them from ever
+  // coming back either way.
+  if (action === "resolveNews") {
+    const decisions = Array.isArray(body.decisions) ? body.decisions.slice(0, 300) : [];
+    if (!decisions.length || decisions.some((d) => !d?.id || !["accept", "dismiss"].includes(d.decision))) {
+      return json(400, { error: "decisions: [{ id, decision: accept|dismiss }] required" });
+    }
+    const accepts = new Set(decisions.filter((d) => d.decision === "accept").map((d) => d.id));
+    if (accepts.size) {
+      const cards = (await NewsLinks.loadPendingNews(serviceKey, userId)).filter((c) => accepts.has(c.id));
+      for (const card of cards) await saveArticleToMediaSection(serviceKey, userId, NewsLinks.acceptedArticleRecord(card));
+    }
+    const articles = await NewsLinks.removePendingNews(serviceKey, userId, decisions.map((d) => d.id));
+    return json(200, { ok: true, articles });
   }
 
   // Wake-time metadata for the client's Snoozed folder (the threads themselves

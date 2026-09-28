@@ -1,6 +1,9 @@
 [build]
   command = "npm run build"
   publish = "dist"
+  # Merging to main does NOT deploy by itself: production builds run only when the
+  # commit message contains [deploy] (see scripts/netlify-ignore.sh, UNDEPLOYED.md).
+  ignore = "bash scripts/netlify-ignore.sh"
 
 [build.environment]
   # VAPID_CONTACT_EMAIL is a contact address, not a credential — it is embedded
@@ -21,6 +24,10 @@
 # with the function regardless of the bundler's import tracing.
 [functions."ics-proxy"]
   included_files = ["calendar/ics.mjs"]
+
+# instacart-list imports the shared pure Instacart payload/response logic.
+[functions."instacart-list"]
+  included_files = ["instacart.js"]
 
 # kokoro-tts imports the shared pure core (validation/chunking/voices/errors).
 [functions."kokoro-tts"]
@@ -45,8 +52,14 @@
 [functions."scheduled-email"]
   schedule = "*/15 * * * *"
 
+# daily-briefing + simplefin ingest bank pulls into the durable transaction store
+# via _finance-ingest.js, which dynamically imports the shared pure module.
 [functions."daily-briefing"]
   schedule = "0 13 * * *"
+  included_files = ["finance-transactions.js"]
+
+[functions."simplefin"]
+  included_files = ["finance-transactions.js"]
 
 [functions."gmail-watch-rearm"]
   schedule = "0 11 * * *"

@@ -3,10 +3,13 @@ import { createMealplanModule, autoRule, defaultMealPlanConfig, groceryMealSlotI
 import { createRecipesModule, combinedRecipeTime, defaultRecipeTags, migrateRecipeFoldersToTags, normalizeActiveCooking, normalizeCookLog, normalizeInstructionSteps, normalizeNutritionCandidate, normalizeNutritionFacts, normalizeRecipe, normalizeRecipeTagSelection, normalizeRecipeTags, normalizeTrashedRecipe, seedFolders } from './recipes-ui.js';
 import { createGroceriesModule, baseGroceryItemKey, defaultGroceryBaseItems, defaultGroceryDailyDozenTags, ensureGroceryCatalog, mergeGroceryStoreItemSections, normalizeGroceryAliases, normalizeGroceryBaseItems, normalizeGroceryChecklist, normalizeGroceryDailyDozenTags, normalizeGroceryItemLocations, normalizeGroceryPriceObservations, normalizeGroceryPricingSettings, normalizeGrocerySplitPreferences, normalizeGroceryStoreItemSections, normalizeGroceryStoreSections, normalizeGroceryStores, normalizePriceHistory, normalizeReceipts } from './groceries-ui.js';
 import * as LiveGrocerySources from './grocery-sources.js';
+import { normalizeInstacartOrders } from './instacart.js';
 import * as LiveDailyDozen from './daily-dozen.js';
 import * as LiveFoodHealth from './food-health.js';
 import * as LiveFoodHealthChecklists from './food-health-checklists.js';
 import * as LiveMealPlanServings from './meal-plan-servings.js';
+import { isFridayBeforeLastMeal } from './meal-plan-time.js';
+import { categoriesFor, categoryById, resolveGenreId, filterSavedLibrary, filterTracks, textMatches, entityText, greetingFor } from './music-discover.js';
 import * as LiveReceiptDomain from './receipt-domain.js';
 import * as NutritionDomain from './nutrition-domain.js';
 import { icon as ldeIcon } from './live-icons.js';
@@ -14,7 +17,8 @@ import { createWeatherModule } from './weather-ui.js';
 import { createInventoryModule, normalizeInventoryBoxes, normalizeInventoryItems, ensureDefaultInventoryRooms, normalizeInventoryRoomVisibility } from './inventory-ui.js';
 import { createFinanceModule, defaultFinanceBudgetGroups, retirementTargetMultiple, normalizeFinancePeople, normalizeFinanceBudgetGroups, normalizeFinanceAccounts, financeDebtPayoff, normalizeFinanceGoals, inferFinanceAccountKind, financeAccountKind, financeAccountBalance, normalizeFinanceSubLabels, normalizeFinancePersonal, normalizeFinanceTxnReceipts, FINANCE_ACCOUNT_KINDS, FINANCE_ALERTS } from './finance-ui.js';
 import { makeSortable } from './sortable.js';
-import { normalizeContacts, normalizeContactGroups, createContactsModule } from './contacts.js';
+import { normalizeContacts, normalizeContactGroups, createContactsModule, buildContactsVcf } from './contacts.js';
+import { createHistoryLog, historyRowFromMedia, historyRowFromArticle, historyRowFromPracticeEvent, historyRowFromChat, fetchAllHistory } from './history-log.js';
 import { canonicalizeUrl as canonicalizeImportUrl } from './import-canonical.js';
 import { createPlaybackEngine } from './playback-engine.js';
 import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones } from './state-sync.js';
@@ -39,14 +43,7 @@ import { buildAgentContext } from './ai-context.js';
 import { indexFromState, search as searchIndexQuery } from './search-index.js';
 import { createOperationTracker } from './async-operation.js';
 import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition as clearMediaPosition, resumePositionFor, pruneMediaProgress } from './media-progress.js';
-import { runFeedIngestion } from './feed-ingest.js';
-import { markManyDiscovered, pruneNotifications, saveArticle as notifSaveArticle, dismissArticle as notifDismissArticle, pendingNotifications, notificationBadgeCount, badgeLabel, retainedArticles, isSaved as notifIsSaved } from './publications-notify.js';
-import { publicationsPanelHtml, subscriptionListHtml } from './publications-render.js';
-import { makePublication, makeFeed, makeArticle, unifiedLibraryArticles, ingestArticles } from './publications.js';
 import { hasLocalTextDetection, detectText, linesToArticle } from './local-text-detect.js';
-import { articleToRow, articleFromRow, publicationToRow, feedToRow, feedFromRow, assemblePublications } from './publications-store.js';
-import { setReadingProgress, readingPercent, pruneReadingProgress, isFinished } from './reading-progress.js';
-import { bodyFetchRequest, normalizeFetchedBody, mergeFetchedMetadata } from './article-body.js';
 import { deriveMediaTierCount } from './media-tier.js';
 import { pushHistory as pushMediaHistoryEntry, recentHistory as recentMediaHistory, lastPlayed as lastPlayedMedia, migrateLegacyHistory as migrateLegacyMediaHistory } from './media-history.js';
 import { WATCH_SCOPE_TYPES, normalizeWatchScope, allowedProviderIds } from './media-search-scope.js';
@@ -64,6 +61,7 @@ import * as TravelRefs from './travel-refs.js';
 import * as TravelGeo from './travel-geo.js';
 import * as TravelMode from './travel-mode.js';
 import * as TravelIngest from './travel-ingest.js';
+import { createNewsNotifModule } from './news-notif-ui.js';
 
 // In the Capacitor native shell the web app is served from capacitor://localhost,
 // so every RELATIVE backend call (`/.netlify/functions/…`, `/api/…`) would resolve
@@ -71,8 +69,9 @@ import * as TravelIngest from './travel-ingest.js';
 // relative fetches keep working unchanged (the functions already send CORS headers).
 // No-op in a browser/PWA (same-origin), so this is zero-risk there.
 const NATIVE_API_BASE = "https://effervescent-malabi-e0af55.netlify.app";
-// Tag the document so native-only CSS (safe-area insets for the notch / home
-// indicator) can scope to the app without affecting the browser/PWA.
+// Tag the document so native-only CSS can scope to the app without affecting the
+// browser/PWA. (Safe-area insets for the notch / home indicator now apply everywhere
+// via the body's env(safe-area-inset-*) padding in styles.css.)
 if (isNativeApp() && typeof document !== "undefined") { try { document.documentElement.setAttribute("data-native", "ios"); } catch { /* noop */ } }
 if (isNativeApp() && typeof window !== "undefined" && window.fetch) {
   const _nativeFetch = window.fetch.bind(window);
@@ -272,7 +271,7 @@ const CLOUD_SNAPSHOT_HOURLY_MAX = 72;  // then 1 per hour back ~3 days (plenty f
 // Each section is stored as its own Supabase row: id = "{stateId}:{section}"
 const STATE_SECTIONS = {
   eat:       ["recipes", "trashedRecipes", "folders", "plans", "publishedWeeks", "recipeTags", "ingredientOptions", "autoGenerateRules", "mealPlanConfig", "activeCooking"],
-  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems"],
+  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems", "instacartOrders"],
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
@@ -286,7 +285,7 @@ const STATE_SECTIONS = {
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs"],
   contacts:  ["contacts", "contactGroups"],
 };
@@ -304,7 +303,7 @@ const STATE_SECTIONS = {
 // running code older than the row was last written with, so a stale device can
 // never drop budget categories or transaction annotations it doesn't know
 // about. MUST be incremented when finance* keys are added/restructured.
-const STATE_SCHEMA_VERSION = 5;
+const STATE_SCHEMA_VERSION = 6;
 
 const SECTION_SCOPE = {
   eat: "household",       // Meal Plan is exclusively shared
@@ -545,6 +544,20 @@ let groupMembers = [];
 let adminDisabledPages = [];
 let personalDisabledPages = [];
 let pendingInviteToken = null;
+
+// Permanent personal history (history-log.js → live_history; DATA_EXPORT.md §3).
+// The capped in-state lists stay the UI's "recent" window; every entry is ALSO
+// appended here once. Writes only on user actions (debounced, batched, bounded);
+// no reads except "Export my data". getUserId is a deferred getter — authSession
+// resolves at call time, never at module load. No-op signed out / local-dev.
+const historyLog = createHistoryLog({
+  storage: { getItem: (k) => localStorage.getItem(k), setItem: (k, v) => localStorage.setItem(k, v) },
+  post: (rows) => postHistoryRows(rows),
+  getUserId: () => (!localDevMode && authSession?.access_token && authSession?.user?.id) || null,
+  schedule: (fn, ms) => window.setTimeout(fn, ms),
+  cancel: (t) => window.clearTimeout(t),
+  log: (m) => console.info(`[history] ${m}`),
+});
 let currentWeek = startOfPrepWindow(new Date());
 // Active Tasks-overlay week session (T1). While open, currentWeek is driven by the
 // overlay; this holds the shared week to restore on close so Meal Plan etc. are
@@ -608,6 +621,14 @@ function setMediaPlaybackSpeed(v) {
   // mid-playback speed change would revert at the next TTS chunk boundary (the
   // engine re-applies its rate on every segment).
   if (typeof mediaEngine !== "undefined" && mediaEngine) mediaEngine.setRate(rate);
+  // …and the native queue player (audio retimes at once; speech re-speaks from
+  // the current word). Guarded: listenSpeechSynth is declared further down.
+  try {
+    if (listenSpeechSynth && listenSpeechSynth.native) {
+      listenSpeechSynth.rate = rate;
+      nativeTts()?.setRate({ rate }).catch(() => {});
+    }
+  } catch { /* not initialised yet */ }
   syncSpeedSelectsUi();
 }
 function syncSpeedSelectsUi() {
@@ -961,25 +982,6 @@ const elements = {
   homeWeatherBtn: document.querySelector("#homeWeatherBtn"),
   titleWeatherBtn: document.querySelector("#titleWeatherBtn"),
   weatherMainPage: document.querySelector("#weatherMainPage"),
-  publicationsMainPage: document.querySelector("#publicationsMainPage"),
-  publicationsPanel: document.querySelector("#publicationsPanel"),
-  homePublicationsBtn: document.querySelector("#homePublicationsBtn"),
-  pubReaderPanel: document.querySelector("#pubReaderPanel"),
-  pubReaderBody: document.querySelector("#pubReaderBody"),
-  pubReaderText: document.querySelector("#pubReaderText"),
-  pubReaderTitle: document.querySelector("#pubReaderTitle"),
-  pubReaderMeta: document.querySelector("#pubReaderMeta"),
-  pubReaderOrig: document.querySelector("#pubReaderOrig"),
-  pubReaderClose: document.querySelector("#pubReaderClose"),
-  pubReaderListen: document.querySelector("#pubReaderListen"),
-  pubReaderListenMsg: document.querySelector("#pubReaderListenMsg"),
-  pubManageDialog: document.querySelector("#pubManageDialog"),
-  pubSubList: document.querySelector("#pubSubList"),
-  pubNewName: document.querySelector("#pubNewName"),
-  pubNewUrl: document.querySelector("#pubNewUrl"),
-  pubAddBtn: document.querySelector("#pubAddBtn"),
-  pubManageClose: document.querySelector("#pubManageClose"),
-  pubManageMsg: document.querySelector("#pubManageMsg"),
   articleScanDialog: document.querySelector("#articleScanDialog"),
   articleScanImages: document.querySelector("#articleScanImages"),
   articleScanCameraImage: document.querySelector("#articleScanCameraImage"),
@@ -1213,6 +1215,7 @@ const elements = {
   openWeeklyEmailBtn: document.querySelector("#openWeeklyEmailBtn"),
   openBackupHealthBtn: document.querySelector("#openBackupHealthBtn"),
   openRestoreBackupBtn: document.querySelector("#openRestoreBackupBtn"),
+  openExportDataBtn: document.querySelector("#openExportDataBtn"),
   openTrashBtn: document.querySelector("#openTrashBtn"),
   autoRulesDialog: document.querySelector("#autoRulesDialog"),
   mealAutoFillDialog: document.querySelector("#mealAutoFillDialog"),
@@ -1282,6 +1285,7 @@ const elements = {
   groceryStoreLayoutForm: document.querySelector("#groceryStoreLayoutForm"),
   groceryStoreLayoutName: document.querySelector("#groceryStoreLayoutName"),
   groceryStoreLayoutAddress: document.querySelector("#groceryStoreLayoutAddress"),
+  groceryStoreLayoutInstacart: document.querySelector("#groceryStoreLayoutInstacart"),
   groceryStoreLayoutList: document.querySelector("#groceryStoreLayoutList"),
   groceryStoreSectionInput: document.querySelector("#groceryStoreSectionInput"),
   addGroceryStoreSectionBtn: document.querySelector("#addGroceryStoreSectionBtn"),
@@ -1510,7 +1514,30 @@ const PAGE_NOTIF_BUTTONS = {
   do: ["planTasksBtn"], // Tasks notif dot now lives on the Calendar page's bell
   eat: ["homeEatBtn", "titleMealPlanBtn"],
   explore: ["homeExploreBtn", "titleExploreBtn"],
+  media: ["homeReadBtn", "titleReadBtn"],
 };
+
+// ── Media news notifications (news-notif-ui.js) ─────────────────────────────
+// Articles linked in NYT / Economist / Star Tribune email, collected server-side
+// by the mail sweep (_news-links.js). Saving one adds it to Media → Publications
+// right away (the server saves the same record by id; savedArticles unions by id).
+// All deps are hoisted function declarations or deferred closures (boot-safe).
+const _newsNotif = createNewsNotifModule({
+  callGmailApi: (...a) => callGmailApi(...a),
+  escapeHtml: (...a) => escapeHtml(...a),
+  showToast: (...a) => showMailToast(...a),
+  isSignedIn: () => !!authSession?.access_token,
+  setDotCount: (...a) => setNewsNotifDot(...a),
+  onAccepted: (...a) => addAcceptedNewsArticle(...a)
+});
+const { wire: wireNewsNotif, warm: warmNewsNotif, seed: seedNewsNotif } = _newsNotif;
+function setNewsNotifDot(n) { setPageNotifCount("media", n); }
+function addAcceptedNewsArticle(article) {
+  if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
+  if (!state.savedArticles.some((a) => a.id === article.id)) state.savedArticles.unshift(article);
+  persist();
+  if (activeAppArea === "media" && isArticlePubTab(activeMediaTab)) renderArticleList("articleList", activeMediaTab);
+}
 
 function setPageNotifCount(page, count) {
   (PAGE_NOTIF_BUTTONS[page] || []).forEach((key) => {
@@ -1586,8 +1613,15 @@ const _finance = createFinanceModule({
   getSupabaseClient: () => supabaseClient,
   getAuthSession: () => authSession, // read-only getter (authSession is null until login)
   getContextSettingsKind: () => contextSettingsKind, // read-only getter (changes per settings panel)
+  // Durable transaction store (finance-txn-store.js) — deferred getters: userGroup /
+  // authSession resolve at call time, never at module load (boot-safety guard).
+  getFinanceStoreGroupId: () => userGroup?.id || null,
+  canUseFinanceStore: () => !localDevMode && canUseCloudStorage() && !!authSession?.access_token,
+  fetchSupabaseJson: (...a) => fetchSupabaseJson(...a),
+  writeSupabaseJson: (...a) => writeSupabaseJson(...a),
 });
 const {
+  purgeLocalFinanceTxnStore, financeExportTransactions,
   checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney,
   invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick,
   refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu,
@@ -1910,6 +1944,7 @@ const {
   updateGroceryMealServing,
   updateMealDragPoint,
   updateMealPlannedServingsFromContext,
+  requestMealPlanTimeOfDaySnap,
   warmMealPlanRecipes,
 } = _mealplan;
 
@@ -2165,12 +2200,8 @@ function bindEvents() {
   elements.homeContactsBtn?.addEventListener("click", showContactsApp);
   elements.titleContactsBtn?.addEventListener("click", showContactsApp);
   elements.homeWeatherBtn?.addEventListener("click", showWeatherApp);
-  elements.homePublicationsBtn?.addEventListener("click", showPublicationsApp);
-  elements.pubReaderClose?.addEventListener("click", closePubReader);
-  elements.pubReaderListen?.addEventListener("click", () => { if (openPubArticleId) listenToPubArticle(openPubArticleId); });
-  elements.pubAddBtn?.addEventListener("click", () => addSubscription());
-  elements.pubManageClose?.addEventListener("click", () => elements.pubManageDialog?.close());
   elements.closeArticleScanBtn?.addEventListener("click", () => elements.articleScanDialog?.close());
+  document.getElementById("articleScanBtn")?.addEventListener("click", () => openArticleScanDialog());
   elements.articleScanImages?.addEventListener("change", replaceArticleScanFiles);
   elements.articleScanCameraImage?.addEventListener("change", appendArticleScanCamera);
   elements.articleScanCameraBtn?.addEventListener("click", () => elements.articleScanCameraImage?.click());
@@ -2179,9 +2210,6 @@ function bindEvents() {
   elements.scanArticleCloudBtn?.addEventListener("click", () => scanArticleCloud());
   elements.scanArticleLocalBtn?.addEventListener("click", () => scanArticleLocal());
   elements.saveArticleScanBtn?.addEventListener("click", () => saveArticleScan());
-  elements.pubNewUrl?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addSubscription(); } });
-  elements.pubReaderBody?.addEventListener("scroll", onPubReaderScroll, { passive: true });
-  elements.pubReaderPanel?.addEventListener("keydown", (e) => { if (e.key === "Escape") closePubReader(); });
   elements.titleWeatherBtn?.addEventListener("click", showWeatherApp);
   elements.contactsAddBtn?.addEventListener("click", () => openContactDialog(null));
   elements.contactsSearchInput?.addEventListener("input", () => renderContactsPage());
@@ -2560,6 +2588,7 @@ function bindEvents() {
   elements.openWeeklyEmailBtn.addEventListener("click", openWeeklyEmailDialog);
   elements.openBackupHealthBtn.addEventListener("click", openBackupHealthDialog);
   elements.openRestoreBackupBtn.addEventListener("click", openRestoreDialog);
+  elements.openExportDataBtn?.addEventListener("click", exportMyData);
   elements.openTrashBtn.addEventListener("click", openTrashDialog);
   elements.openFamilyMembersBtn.addEventListener("click", openFamilyMembersDialog);
   elements.openMealPlanSettingsBtn.addEventListener("click", openMealPlanSettingsDialog);
@@ -2890,7 +2919,6 @@ async function initializeApp() {
     await hydrateStateFromSharedStorage();
   }
   await hydrateRecipeRowsFromSupabase();
-  await hydratePublicationsFromDb();
   resyncAllEventChores(); // roll recurring-event chores forward into the To-Do planner
   applyInitialMealPlanFocus();
   handleImportUrlParameter();
@@ -2919,7 +2947,6 @@ function handleHashNavigation() {
     schedule: showPlanApp,
     contacts: showContactsApp,
     weather: showWeatherApp,
-    publications: showPublicationsApp,
     settings: showSettingsApp,
     home: showHomeApp,
     read: showMediaApp,
@@ -2999,6 +3026,7 @@ async function initializeSupabaseAuth() {
         purgeLocalArticleContent(),
         purgeLocalCadenceContent(),
         purgeLocalMusicContent(),
+        purgeLocalFinanceTxnStore(),
       ]);
       window.location.reload();
       return;
@@ -3023,7 +3051,6 @@ async function initializeSupabaseAuth() {
       maybeShowHydrationOverlay();
       await hydrateStateFromSharedStorage();
       await hydrateRecipeRowsFromSupabase();
-      await hydratePublicationsFromDb();
       maybeAutoLinkProfile();
       restoreProfileDobFromAuth();
       warmMailStatus();
@@ -3196,36 +3223,6 @@ function setupDiagnostics() {
   window.__liveToday = (now) => projectToday(state, now instanceof Date ? now : new Date());
   window.__liveContext = (now) => buildAgentContext(state, now instanceof Date ? now : new Date());
   window.__liveSearch = (q, opts) => searchIndexQuery(indexFromState(state), q, opts || {});
-  // Publications (Phase 2B) dev/inspection surface: triage deck, badge, library,
-  // and a demand-driven feed refresh — the interactive UI consumes these verbs.
-  window.__livePublications = {
-    pending: () => pubPending(),
-    badge: () => pubBadgeCount(),
-    retained: (publicationId = null) => pubRetained(publicationId),
-    save: (id) => (savePubArticle(id), pubBadgeCount()),
-    dismiss: (id) => (dismissPubArticle(id), pubBadgeCount()),
-    refreshFeed: (feed) => refreshFeed(feed),
-    openReader: (id) => openPubArticle(id),
-    closeReader: () => closePubReader(),
-    readingPercent: (id) => readingPercent(state.readingProgress, id),
-    consumed: (id) => (state.readArticleIds || []).includes(id),
-    subscriptions: () => ({ pubs: (state.pubDefs || []).length, feeds: (state.pubFeeds || []).length }),
-    dbReady: () => pubDbReady(),
-    loadDb: () => loadPublicationsFromDb(),
-    loadArticlesDb: (opts) => loadArticlesFromDb(opts),
-    resolveBody: (id) => resolvePubArticleBody(libraryArticleById(id) || { id }),
-    library: (publicationId = null) => pubLibrary(publicationId).map((a) => ({ id: a.id, title: a.title, origins: a.origins || ["rss"] })),
-    listen: (id) => listenToPubArticle(id),
-    // Test-only injection verbs (headless verification): gated at CALL time on
-    // localDevMode (which is set later in the local-dev boot than this hook), so
-    // they can never seed fake state / bodies / DB rows in production.
-    applyResponse: (feed, resp) => (localDevMode ? applyFeedIngestion(feed, resp) : undefined),
-    upsertToDb: async () => { if (!localDevMode) return; await upsertPublicationsToDb(state.pubDefs || []); await upsertFeedsToDb(state.pubFeeds || []); await upsertArticlesToDb(state.pubArticles || []); return "ok"; },
-    seedSaved: (art) => { if (!localDevMode) return; if (!Array.isArray(state.savedArticles)) state.savedArticles = []; state.savedArticles.push(art); persist(); },
-    seedBody: async (id, html) => { if (!localDevMode) return null; const ac = await getArticleContent(); return ac ? ac.saveBody(id, html) : null; },
-    addScanned: async (fields, bodyHtml) => { if (!localDevMode) return null; return addScannedArticleToLibrary(fields || {}, bodyHtml || "", []); },
-    hasLocalOcr: () => hasLocalTextDetection(),
-  };
   // Receipt review — test-only verbs (local dev) for headless verification of the
   // validation banner + per-line highlighting + source thumbnails.
   window.__liveReceiptScan = {
@@ -3407,6 +3404,12 @@ function setupDiagnostics() {
     // they're not callable from here by name. Assign the variable directly instead;
     // this reproduces warmMealPlanRecipes' result, the same shortcut mpAddRecipeEntry
     // takes for a picked recipe.
+    // The Media news deck (news-notif-ui.js) — normally filled from Gmail's
+    // "pendingNews"; seeds it directly so the deck can be exercised locally.
+    newsSetPending: (articles) => {
+      if (!localDevMode) return null;
+      return seedNewsNotif(articles);
+    },
     mpSetSuggestions: (recipes) => {
       if (!localDevMode) return null;
       mealPlanRecipes = recipes;
@@ -3429,445 +3432,17 @@ function renderDiagnosticsPanel(snap) {
   panel.querySelector("#liveDiagClose").addEventListener("click", () => panel.remove());
 }
 
-// ── Publications (Phase 2B): demand-driven ingestion applier + triage ─────────
-// Bound the interim state-backed article store (until the relational table is
-// applied): ALWAYS keep saved/permanent articles; cap the rest, newest first. This
-// guarantees notification retention/pruning can never drop the permanent library.
-function capPubArticles(list, notifMap, cap = 1000) {
-  const arr = Array.isArray(list) ? list : [];
-  if (arr.length <= cap) return arr;
-  const ms = (iso) => { const t = Date.parse(iso); return Number.isNaN(t) ? 0 : t; };
-  const saved = arr.filter((a) => notifIsSaved(notifMap, a.id));
-  const rest = arr.filter((a) => !notifIsSaved(notifMap, a.id))
-    .sort((a, b) => (ms(b.publishedAt) - ms(a.publishedAt)) || (ms(b.discoveredAt) - ms(a.discoveredAt)));
-  const keep = new Set(saved.map((a) => a.id));
-  for (const a of rest) { if (keep.size >= cap) break; keep.add(a.id); }
-  return arr.filter((a) => keep.has(a.id));
-}
-
-// Apply a fetch-feed RESPONSE to state via the Phase-2A/1 pipeline. On failure or
-// 304 it does NOT mutate the article store (only records feed metadata). New article
-// ids become PENDING notifications; rediscovered ones keep their lifecycle.
-function applyFeedIngestion(feed, response) {
-  const before = new Set((state.pubArticles || []).map((a) => a.id));
-  const r = runFeedIngestion({ feed, response, existingList: state.pubArticles || [] });
-  applyFeedRecordUpdate(feed, r.feedUpdate);
-  if (r.failure || r.notModified) { persist(); return r; } // transient/no-change → never touch articles
-  const newIds = (r.articles || []).filter((a) => !before.has(a.id)).map((a) => a.id);
-  state.articleNotifications = markManyDiscovered(state.articleNotifications || {}, newIds);
-  state.pubArticles = capPubArticles(r.articles, state.articleNotifications);
-  const liveIds = state.pubArticles.map((a) => a.id);
-  state.articleNotifications = pruneNotifications(state.articleNotifications, liveIds);
-  // Reading progress spans the UNIFIED library, so keep manual-save ids too.
-  state.readingProgress = pruneReadingProgress(state.readingProgress, [...liveIds, ...(state.savedArticles || []).map((a) => a.id)]);
-  persist();
-  // Best-effort write-through: mirror new articles + the feed's fetch metadata to
-  // the tables. Fire-and-forget — a DB failure never breaks the in-memory flow, and
-  // the next boot hydrate reconciles anything missed.
-  if (pubDbReady()) {
-    const newSet = new Set(newIds);
-    const changed = state.pubArticles.filter((a) => newSet.has(a.id));
-    if (changed.length) upsertArticlesToDb(changed).catch((e) => console.warn("pub article DB upsert failed", e));
-    const f = (state.pubFeeds || []).find((x) => x.id === feed?.id);
-    if (f) upsertFeedsToDb([f]).catch(() => {});
-  }
-  return r;
-}
-
-// Persist the feed's fetch metadata (etag/lastModified/lastSuccessAt/errorCount/…)
-// onto the matching pubFeeds record, so the next refresh can send a conditional GET.
-function applyFeedRecordUpdate(feed, update) {
-  if (!feed?.id || !update) return;
-  if (!Array.isArray(state.pubFeeds)) state.pubFeeds = [];
-  const i = state.pubFeeds.findIndex((f) => f.id === feed.id);
-  if (i >= 0) state.pubFeeds[i] = { ...state.pubFeeds[i], ...update };
-}
-
-// Demand-driven refresh of ONE feed through the SSRF-guarded server boundary
-// (fetch-feed). Never polls; a caller (manual refresh) invokes it explicitly.
-async function refreshFeed(feed) {
-  if (!feed?.url) return { failure: { message: "feed has no url" } };
-  let resp;
-  try {
-    const res = await fetch("/.netlify/functions/fetch-feed", {
-      method: "POST",
-      headers: { "content-type": "application/json", ...(authSession?.access_token ? { authorization: `Bearer ${authSession.access_token}` } : {}) },
-      body: JSON.stringify({ url: feed.url, etag: feed.etag || null, lastModified: feed.lastModified || null }),
-    });
-    resp = await res.json();
-  } catch (e) {
-    resp = { status: null, error: (e && e.message) || "network error" };
-  }
-  return applyFeedIngestion(feed, resp);
-}
-
-// Runtime triage helpers used by the UI (save/dismiss resolve the notification only).
-function savePubArticle(articleId) { state.articleNotifications = notifSaveArticle(state.articleNotifications || {}, articleId); persist(); }
-function dismissPubArticle(articleId) { state.articleNotifications = notifDismissArticle(state.articleNotifications || {}, articleId); persist(); }
-function pubPending() { return pendingNotifications(state.pubArticles || [], state.articleNotifications || {}, new Date().toISOString()); }
-function pubBadgeCount() { return notificationBadgeCount(state.pubArticles || [], state.articleNotifications || {}, new Date().toISOString()); }
-function pubRetained(publicationId = null) { return retainedArticles(state.pubArticles || [], state.articleNotifications || {}, { publicationId }); }
-
-// The UNIFIED library (audit §213): RSS-saved articles converged with the manual
-// savedArticles store into one deduplicated canonical list — non-destructive, read
-// only. Filter by publication (manual saves have none → only under "All"); newest
-// first. This is the migration-ready convergence WITHOUT moving/removing any data.
-function pubLibrary(publicationId = null) {
-  const unified = unifiedLibraryArticles(pubRetained(null), state.savedArticles || []);
-  const filtered = publicationId ? unified.filter((a) => a.publicationId === publicationId) : unified;
-  const ms = (iso) => { const t = Date.parse(iso); return Number.isNaN(t) ? 0 : t; };
-  return filtered.sort((a, b) => (ms(b.publishedAt) - ms(a.publishedAt)) || (ms(b.discoveredAt) - ms(a.discoveredAt)));
-}
-
-// Resolve a library article by id from EITHER source (canonical pub store or a
-// manual save surfaced through the convergence), so the reader/listen paths open
-// manual saves too.
-function libraryArticleById(id) {
-  return pubArticleById(id) || pubLibrary(null).find((a) => a.id === id) || null;
-}
-
-let pubActiveTab = "notifications";  // "notifications" | "library"
-let pubActiveFilter = null;          // publicationId or null (= All)
-
-function showPublicationsApp(event) {
-  event?.stopPropagation();
-  activeAppArea = "publications";
-  hideAllPages();
-  elements.publicationsMainPage.hidden = false;
-  setPageTitle("Publications");
-  setPageHash("publications");
-  closePageTitleMenu();
-  closeAppMenu();
-  renderPublicationsPanel();
-}
-
-function renderPublicationsPanel() {
-  const el = elements.publicationsPanel;
-  if (!el) return;
-  const pubs = Array.isArray(state.pubDefs) ? state.pubDefs : [];
-  const pubsById = Object.fromEntries(pubs.map((p) => [p.id, p]));
-  const badge = pubBadgeCount();
-  el.innerHTML = publicationsPanelHtml({
-    tab: pubActiveTab, badge, badgeLabel: badgeLabel(badge),
-    pending: pubPending(), retained: pubLibrary(pubActiveFilter),
-    pubs, activePublicationId: pubActiveFilter, pubsById,
-    readIds: new Set(state.readArticleIds || []),
-  });
-  el.querySelectorAll("[data-pub-tab]").forEach((b) => b.addEventListener("click", () => { pubActiveTab = b.dataset.pubTab; renderPublicationsPanel(); }));
-  el.querySelectorAll("[data-pub-filter]").forEach((b) => b.addEventListener("click", () => { pubActiveFilter = b.dataset.pubFilter === "all" ? null : b.dataset.pubFilter; renderPublicationsPanel(); }));
-  el.querySelectorAll("[data-pub-save]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); savePubArticle(b.dataset.pubSave); renderPublicationsPanel(); }));
-  el.querySelectorAll("[data-pub-dismiss]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); dismissPubArticle(b.dataset.pubDismiss); renderPublicationsPanel(); }));
-  el.querySelectorAll("[data-pub-flip]").forEach((b) => b.addEventListener("click", () => b.closest(".pub-card")?.classList.toggle("is-flipped")));
-  el.querySelector("[data-pub-refresh]")?.addEventListener("click", () => refreshAllFeeds());
-  el.querySelector("[data-pub-manage]")?.addEventListener("click", () => openPubManage());
-  el.querySelector("[data-pub-scan]")?.addEventListener("click", () => openArticleScanDialog());
-  // Library rows open the reader (triage cards deliberately do NOT — §16/§32/§33).
-  el.querySelectorAll(".pub-lib-row").forEach((row) => {
-    const open = () => openPubArticle(row.dataset.articleId);
-    row.addEventListener("click", open);
-    row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
-  });
-}
-
-// ── Publications reader (Phase 3): on-demand body → content store, reading progress ──
-// A DEDICATED panel (isolated from the savedArticles reader so its Delete/Close
-// handlers can't touch a canonical pub article). Body is fetched on demand into the
-// shared content store, keyed by the article id; the metadata record stays body-free
-// (only a small cross-device bodyRef is stored on it). Opening never marks the
-// article consumed (audit §279–283) — it only saves a READING position.
-let openPubArticleId = null;
-let _pubScrollTimer = null;
-
-function pubArticleById(id) { return (state.pubArticles || []).find((a) => a.id === id) || null; }
-
-// Persist a small content-store ref + any non-destructive metadata refresh back
-// onto the canonical article. NEVER writes a body onto the synced record.
-function updatePubArticle(id, patch) {
-  const i = (state.pubArticles || []).findIndex((a) => a.id === id);
-  if (i < 0) return;
-  state.pubArticles[i] = { ...state.pubArticles[i], ...patch };
-  if ("text" in state.pubArticles[i]) delete state.pubArticles[i].text;
-  if ("body" in state.pubArticles[i]) delete state.pubArticles[i].body;
-  persist();
-}
-
-function openPubArticle(id) {
-  const article = libraryArticleById(id);
-  const panel = elements.pubReaderPanel;
-  if (!article || !panel) return;
-  openPubArticleId = id;
-  panel.hidden = false;
-  setPubListenMsg("");
-  if (elements.pubReaderTitle) elements.pubReaderTitle.textContent = article.title || article.canonicalUrl || article.url || "(untitled)";
-  if (elements.pubReaderMeta) {
-    const pub = article.publicationId ? (state.pubDefs || []).find((p) => p.id === article.publicationId) : null;
-    const dt = article.publishedAt ? new Date(Date.parse(article.publishedAt)) : null;
-    const dateLbl = dt && !Number.isNaN(dt.getTime()) ? dt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "";
-    elements.pubReaderMeta.textContent = [pub?.name || article.category || "", article.author || "", dateLbl].filter(Boolean).join(" · ");
-  }
-  const orig = article.canonicalUrl || article.url || "";
-  if (elements.pubReaderOrig) { elements.pubReaderOrig.href = orig || "#"; elements.pubReaderOrig.hidden = !orig; }
-  if (elements.pubReaderBody) elements.pubReaderBody.scrollTop = 0;
-  renderPubArticleBody(article);
-}
-
-// Resolve an article's body HTML: content store first (local IndexedDB → durable
-// Supabase-Storage backstop via bodyRef), else the SSRF-guarded fetch-article
-// boundary — mirroring the result into the content store (keyed by id) and
-// recording only a small bodyRef + non-destructive metadata refresh. Returns
-// { ok, text } | { ok:false, error }. Shared by the reader and the listen path.
-async function resolvePubArticleBody(article) {
-  const id = article.id;
-  // A manual save surfaced through the convergence already holds its body in
-  // state.savedArticles (text or a content-store bodyRef) — use it, no fetch.
-  const saved = (state.savedArticles || []).find((s) => s.id === id);
-  if (saved?.text) return { ok: true, text: saved.text };
-  try {
-    const ac = await getArticleContent();
-    const ref = article.bodyRef || saved?.bodyRef;
-    if (ac) { const body = await ac.loadBody(id, { ref, fallbackText: null }); if (body) return { ok: true, text: body }; }
-  } catch { /* fall through to a network fetch */ }
-
-  const req = bodyFetchRequest(article, { pubsById: Object.fromEntries((state.pubDefs || []).map((p) => [p.id, p])) });
-  if (!req.ok) return { ok: false, error: req.error };
-  let res;
-  try { res = await callNetlifyFunction("fetch-article", { url: req.url, publication: req.publication }); }
-  catch { res = null; }
-  const norm = normalizeFetchedBody(res);
-  if (!norm.ok) return { ok: false, error: norm.error };
-  try {
-    const ac = await getArticleContent();
-    const ref = ac ? await ac.saveBody(id, norm.text) : null;
-    const { article: refreshed, changed } = mergeFetchedMetadata(article, norm);
-    const patch = changed ? { ...refreshed } : {};
-    if (ref?.cloud) patch.bodyRef = ref;
-    if (Object.keys(patch).length) updatePubArticle(id, patch);
-  } catch { /* non-fatal — the caller still has the body text */ }
-  return { ok: true, text: norm.text };
-}
-
-async function renderPubArticleBody(article) {
-  const id = article.id;
-  const textEl = elements.pubReaderText;
-  if (!textEl) return;
-  const paint = (html) => {
-    if (openPubArticleId !== id) return;
-    textEl.innerHTML = html;
-    restorePubReadingScroll(id);
-  };
-  // Show a fetching hint only if the content store misses (a fetch is coming).
-  let acHit = false;
-  try { const ac = await getArticleContent(); if (ac) acHit = await ac.hasLocal(id); } catch { /* ignore */ }
-  if (openPubArticleId !== id) return;
-  if (!acHit) textEl.innerHTML = `<div class="article-empty">Fetching…</div>`;
-
-  const r = await resolvePubArticleBody(article);
-  if (openPubArticleId !== id) return;
-  if (r.ok) { paint(r.text); return; }
-  const orig = escapeHtml(article.canonicalUrl || article.url || "#");
-  paint(`<div class="article-fetch-prompt"><p class="article-fetch-hint">${escapeHtml(r.error)}</p><a href="${orig}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`);
-}
-
-// Listen to a Library article: resolve its body, then reuse the shared article-TTS
-// engine via a savedArticle-shaped adapter (audit "article as audio"). Audio is
-// synthesized + cached by the voice service (keyed by the article id); listening
-// is a SEPARATE concern from reading progress and from consumption.
-async function listenToPubArticle(id) {
-  const article = libraryArticleById(id);
-  if (!article) return;
-  unlockListenAudio(); // bless the audio element NOW, inside the user's tap (iOS)
-  setPubListenMsg("Loading…");
-  const r = await resolvePubArticleBody(article);
-  if (!r.ok || !r.text) { setPubListenMsg(r.error || "Couldn't load this article to read aloud."); return; }
-  const pub = article.publicationId ? (state.pubDefs || []).find((p) => p.id === article.publicationId) : null;
-  const adapter = {
-    id: article.id,
-    text: r.text,
-    title: article.title || "",
-    author: article.author || "",
-    publication: pub?.name || article.category || "",
-    pubDate: article.publishedAt || null,
-  };
-  // Pre-generate the audio ourselves so a synth failure surfaces inline (rather
-  // than through the shared engine's blocking alert), and a success is reused via
-  // the engine's prefetch cache (no second synthesis).
-  setPubListenMsg("Preparing audio…");
-  let data;
-  try { data = await generateTtsUrls(adapter); }
-  catch (e) { setPubListenMsg("Couldn't prepare audio — " + (e?.message || "try again later")); return; }
-  if (!data || !data.urls || !data.urls.length) { setPubListenMsg("No audio was produced for this article."); return; }
-  setPubListenMsg("");
-  ttsPrefetchCache.set(articleTtsCacheKey(adapter.id), Promise.resolve(data));
-  try { stopListen(); startListenTTS(adapter); }
-  catch (e) { setPubListenMsg("Could not start audio: " + (e?.message || "unknown error")); }
-}
-
-function setPubListenMsg(text) {
-  const el = elements.pubReaderListenMsg;
-  if (!el) return;
-  el.textContent = text || "";
-  el.hidden = !text;
-}
-
-// Restore the saved reading position (percent → scrollTop) once the body is laid out.
-function restorePubReadingScroll(id) {
-  const body = elements.pubReaderBody;
-  if (!body) return;
-  const pct = readingPercent(state.readingProgress, id);
-  if (pct <= 0) return;
-  requestAnimationFrame(() => {
-    if (openPubArticleId !== id) return;
-    const max = body.scrollHeight - body.clientHeight;
-    if (max > 0) body.scrollTop = Math.round(pct * max);
-  });
-}
-
-// Record a COMPLETE read as consumption — the shared history the rest of the app
-// uses (readArticleIds + articleReadDates), so a finished pub article reads the
-// same everywhere. Idempotent. This is the ONLY place the pub reader consumes:
-// opening and partial reading never do (audit §279–283). The article stays in the
-// Library (consumption ≠ deletion/dismissal).
-function markPubArticleConsumed(id) {
-  if (!id) return false;
-  if (!Array.isArray(state.readArticleIds)) state.readArticleIds = [];
-  if (state.readArticleIds.includes(id)) return false;
-  state.readArticleIds.push(id);
-  if (!state.articleReadDates || typeof state.articleReadDates !== "object") state.articleReadDates = {};
-  if (!state.articleReadDates[id]) state.articleReadDates[id] = new Date().toISOString();
-  persist();
-  return true;
-}
-
-// Save reading position on scroll (debounced). Opening/scrolling never consumes;
-// only crossing the finished threshold (reaching the end) records consumption.
-function onPubReaderScroll() {
-  const body = elements.pubReaderBody;
-  if (!body || !openPubArticleId) return;
-  if (_pubScrollTimer) clearTimeout(_pubScrollTimer);
-  _pubScrollTimer = setTimeout(() => {
-    const id = openPubArticleId;
-    if (!id) return;
-    const max = body.scrollHeight - body.clientHeight;
-    const pct = max > 0 ? body.scrollTop / max : 0;
-    state.readingProgress = setReadingProgress(state.readingProgress, id, { percent: pct, position: body.scrollTop });
-    persist();
-    // Reached the end → consume (once). Re-render the library so the row shows read.
-    if (isFinished(state.readingProgress, id) && markPubArticleConsumed(id) && activeAppArea === "publications") {
-      renderPublicationsPanel();
-    }
-  }, 400);
-}
-
-function closePubReader() {
-  if (elements.pubReaderPanel) elements.pubReaderPanel.hidden = true;
-  if (_pubScrollTimer) { clearTimeout(_pubScrollTimer); _pubScrollTimer = null; }
-  openPubArticleId = null;
-}
-
-// Manual, demand-driven refresh of every enabled feed (never polls). Re-renders when done.
-async function refreshAllFeeds() {
-  const feeds = (state.pubFeeds || []).filter((f) => f && f.enabled !== false && f.url);
-  for (const f of feeds) { try { await refreshFeed(f); } catch { /* per-feed failure is recorded on the feed */ } }
-  renderPublicationsPanel();
-}
-
-// ── Subscription management: add/remove a Publication + its Feed ──────────────
-// The only user path to populate pubDefs/pubFeeds. Reuses the canonical shapes
-// (makePublication/makeFeed) and the existing SSRF-guarded fetch pipeline.
-function openPubManage() {
-  if (!elements.pubManageDialog) return;
-  renderPubSubList();
-  if (elements.pubNewName) elements.pubNewName.value = "";
-  if (elements.pubNewUrl) elements.pubNewUrl.value = "";
-  setPubManageMsg("");
-  elements.pubManageDialog.showModal();
-}
-
-function setPubManageMsg(text) {
-  const el = elements.pubManageMsg;
-  if (!el) return;
-  el.textContent = text || "";
-  el.hidden = !text;
-}
-
-function renderPubSubList() {
-  if (!elements.pubSubList) return;
-  const pubs = Array.isArray(state.pubDefs) ? state.pubDefs : [];
-  const feedUrlById = Object.fromEntries((state.pubFeeds || []).map((f) => [f.id, f.url]));
-  elements.pubSubList.innerHTML = subscriptionListHtml(pubs, { feedUrlById });
-  elements.pubSubList.querySelectorAll("[data-pub-remove]").forEach((b) =>
-    b.addEventListener("click", () => removeSubscription(b.dataset.pubRemove)));
-}
-
-// Validate + create a Publication with one Feed, then pull it through the normal
-// fetch pipeline so its articles surface as notifications immediately.
-async function addSubscription() {
-  const name = (elements.pubNewName?.value || "").trim();
-  const url = (elements.pubNewUrl?.value || "").trim();
-  if (!url) { setPubManageMsg("Enter a feed URL."); return; }
-  let parsed;
-  try { parsed = new URL(url); } catch { setPubManageMsg("That doesn't look like a valid URL."); return; }
-  if (!/^https?:$/.test(parsed.protocol)) { setPubManageMsg("Feed URLs must start with http:// or https://."); return; }
-  if ((state.pubFeeds || []).some((f) => f.url === url)) { setPubManageMsg("That feed is already added."); return; }
-
-  const feedId = createId("feed");
-  const pub = makePublication({ id: createId("pub"), name: name || parsed.hostname, feedIds: [feedId] });
-  const feed = makeFeed({ id: feedId, publicationId: pub.id, url, title: name || parsed.hostname });
-  if (!Array.isArray(state.pubDefs)) state.pubDefs = [];
-  if (!Array.isArray(state.pubFeeds)) state.pubFeeds = [];
-  state.pubDefs.push(pub);
-  state.pubFeeds.push(feed);
-  persist();
-  if (pubDbReady()) {
-    upsertPublicationsToDb([pub]).catch((e) => console.warn("pub DB upsert failed", e));
-    upsertFeedsToDb([feed]).catch((e) => console.warn("feed DB upsert failed", e));
-  }
-  if (elements.pubNewName) elements.pubNewName.value = "";
-  if (elements.pubNewUrl) elements.pubNewUrl.value = "";
-  renderPubSubList();
-  setPubManageMsg("Fetching…");
-  try {
-    const r = await refreshFeed(feed);
-    setPubManageMsg(r?.failure ? "Added, but the fetch failed — try Refresh later." : "Added.");
-  } catch { setPubManageMsg("Added, but the fetch failed — try Refresh later."); }
-  renderPublicationsPanel();
-}
-
-// Remove a subscription: tombstone the Publication + its Feeds so a sync can't
-// resurrect them. Articles/notifications are left to age out normally.
-function removeSubscription(pubId) {
-  if (!pubId) return;
-  const pub = (state.pubDefs || []).find((p) => p.id === pubId);
-  const feedIds = pub?.feedIds || [];
-  recordDeletion("pubDefs", pubId);
-  for (const fid of feedIds) recordDeletion("pubFeeds", fid);
-  state.pubDefs = (state.pubDefs || []).filter((p) => p.id !== pubId);
-  state.pubFeeds = (state.pubFeeds || []).filter((f) => !feedIds.includes(f.id) && f.publicationId !== pubId);
-  persist();
-  if (pubDbReady()) {
-    // Delete feeds first (FK), then the publication. Best-effort; ON DELETE CASCADE
-    // would also clear feeds, but we delete explicitly to be backend-agnostic.
-    Promise.all(feedIds.map((fid) => deleteSupabaseRow("feeds", fid).catch(() => {})))
-      .then(() => deleteSupabaseRow("publications", pubId).catch(() => {}))
-      .catch(() => {});
-  }
-  renderPubSubList();
-  renderPublicationsPanel();
-}
-
-// ── Article scanning → Publications Library ──────────────────────────────────
+// ── Article scanning → Media → Publications ──────────────────────────────────
 // Photograph a printed article → the shared document-scan seam (cloud, via
 // /scan-article) or on-device TextDetector (offline, clean pages) → review → a
-// canonical article SAVED in the Library (body in the content store, source photo
-// in scan-content, opens in the pub reader). Reuses the scan-image toolkit.
+// saved article in Media → Publications (savedArticles; the body is mirrored into
+// the content store like any other saved article). Reuses the scan-image toolkit.
 let articleScanFiles = [];
 let articleScanEdits = new Map();
-let _articleScanBlobs = [];
 
 function openArticleScanDialog() {
   articleScanFiles = [];
   articleScanEdits = new Map();
-  _articleScanBlobs = [];
   if (elements.articleScanImages) elements.articleScanImages.value = "";
   renderArticleScanPreviews();
   if (elements.articleScanReview) elements.articleScanReview.hidden = true;
@@ -3918,8 +3493,8 @@ async function scanArticleCloud() {
     const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json", Authorization: `Bearer ${authSession?.access_token || ""}` }, body: JSON.stringify({ images }) });
     const payload = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(payload.error || `Article scan failed (${res.status})`);
-    populateArticleScanReview(payload.article, prepared);
-    elements.articleScanStatus.textContent = "Review and edit, then save to your Library.";
+    populateArticleScanReview(payload.article);
+    elements.articleScanStatus.textContent = "Review and edit, then save to Publications.";
   } catch (e) {
     elements.articleScanStatus.textContent = e.message || "The article scan failed.";
   } finally {
@@ -3936,7 +3511,7 @@ async function scanArticleLocal() {
     const allLines = [];
     for (const blob of prepared) { const r = await detectText(blob); if (r.ok) allLines.push(...r.lines); }
     if (!allLines.length) { elements.articleScanStatus.textContent = "No text found on device — try the cloud scan."; return; }
-    populateArticleScanReview(linesToArticle(allLines), prepared);
+    populateArticleScanReview(linesToArticle(allLines));
     elements.articleScanStatus.textContent = "On-device read is rough — check the text before saving.";
   } catch {
     elements.articleScanStatus.textContent = "On-device scan failed — try the cloud scan.";
@@ -3945,8 +3520,7 @@ async function scanArticleLocal() {
   }
 }
 
-function populateArticleScanReview(article, blobs) {
-  _articleScanBlobs = blobs || [];
+function populateArticleScanReview(article) {
   const a = article || {};
   elements.articleScanTitle.value = a.title || "";
   elements.articleScanAuthor.value = a.author || "";
@@ -3964,133 +3538,52 @@ async function saveArticleScan() {
   if (!title && !bodyText) { elements.articleScanStatus.textContent = "Add a title or some text first."; return; }
   const paragraphs = bodyText.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
   const bodyHtml = paragraphs.map((p) => `<p>${escapeHtml(p)}</p>`).join("");
-  const id = await addScannedArticleToLibrary({
+  const article = addScannedArticle({
     title,
     author: elements.articleScanAuthor.value.trim(),
     publication: elements.articleScanPublication.value.trim(),
     date: elements.articleScanDate.value || new Date().toISOString().slice(0, 10),
-  }, bodyHtml, _articleScanBlobs);
-  _articleScanBlobs = [];
+  }, bodyHtml);
   elements.articleScanDialog?.close();
-  showPublicationsApp();
-  pubActiveTab = "library";
-  renderPublicationsPanel();
-  if (id) openPubArticle(id);
+  if (activeAppArea !== "media") showMediaApp();
+  switchMediaTab(article.publication);
+  openArticle(article.id, "articleList");
 }
 
-// Create a canonical Library article from a scan (metadata-only record; body in the
-// content store; source photo in scan-content). Marked SAVED so it lands in the
-// permanent Library, and mirrored to the relational store (cutover).
-async function addScannedArticleToLibrary(fields, bodyHtml, imageBlobs = []) {
-  const article = makeArticle({
+// The typed publication name → a Media → Publications key ("nyt", "economist", …)
+// when it matches one of the reading publications, else "other".
+function scannedPublicationKey(name) {
+  const n = String(name || "").trim().toLowerCase().replace(/^the\s+/, "");
+  if (!n) return "other";
+  const hit = getReadPublications().find((p) => {
+    const label = String(p.label || "").toLowerCase().replace(/^the\s+/, "");
+    return p.key === n || label === n || (p.domain && n.includes(String(p.domain).split(".")[0]));
+  });
+  return hit?.key || "other";
+}
+
+// Save a scanned article into savedArticles (Media → Publications). The body rides
+// `text` and is mirrored to the content store (stashArticleBody), like any saved
+// article. Returns the new record.
+function addScannedArticle(fields, bodyHtml) {
+  const savedAt = new Date().toISOString();
+  const pubName = String(fields.publication || "").trim();
+  const article = {
     id: createId("art"),
-    title: fields.title,
-    author: fields.author || null,
-    publishedAt: fields.date || new Date().toISOString().slice(0, 10),
-    category: fields.publication || null,
-    discoveredAt: new Date().toISOString(),
-    provenance: makeProvenance({ origin: PROV_ORIGIN.IMPORTED, source: "scan" }),
-  });
-  try { const ac = await getArticleContent(); if (ac && bodyHtml) await ac.saveBody(article.id, bodyHtml); } catch { /* body re-addable later */ }
-  try {
-    const sc = await getScanContent();
-    if (sc) { for (let i = 0; i < imageBlobs.length; i++) { const bytes = new Uint8Array(await imageBlobs[i].arrayBuffer()); await sc.saveImage(article.id, i, bytes, imageBlobs[i].type || "image/jpeg"); } }
-  } catch { /* source image best-effort */ }
-  state.pubArticles = ingestArticles(state.pubArticles || [], [article]).articles;
-  state.articleNotifications = notifSaveArticle(state.articleNotifications || {}, article.id);
+    url: null,
+    title: fields.title || "Scanned article",
+    author: [fields.author, pubName].filter(Boolean).join(" · ") || null,
+    publication: scannedPublicationKey(pubName),
+    date: fields.date || savedAt.slice(0, 10),
+    savedAt,
+    text: bodyHtml || null,
+    provenance: makeProvenance({ origin: PROV_ORIGIN.IMPORTED, source: "scan", importedAt: savedAt }),
+  };
+  if (!Array.isArray(state.savedArticles)) state.savedArticles = [];
+  state.savedArticles.push(article);
   persist();
-  if (pubDbReady()) upsertArticlesToDb([article]).catch((e) => console.warn("scanned article DB upsert failed", e));
-  return article.id;
-}
-
-// ── Publications relational store (Phase 3 cutover, slice 1) ──────────────────
-// Thin PostgREST data-access over the publications/feeds/articles tables, mirroring
-// the eat_recipes pattern (supabaseHeaders + supabaseBaseUrl + on_conflict upsert).
-// The pure row⇄model mapping lives in publications-store.js. group_id is the current
-// group (userGroup.id) so the group-scoped RLS passes. NOT yet wired into the live
-// read/write flow — the sync slice consumes these. Every call needs a cloud session.
-function pubDbGroupId() { return userGroup?.id || null; }
-function pubDbReady() { return !localDevMode && canUseCloudStorage() && !!authSession?.access_token && !!pubDbGroupId(); }
-
-// Load publications + their feeds and assemble the client pubDefs/pubFeeds shapes.
-async function loadPublicationsFromDb() {
-  const base = supabaseBaseUrl();
-  const [pubRes, feedRes] = await Promise.all([
-    fetch(`${base}/rest/v1/publications?select=id,name,key,enabled&order=name.asc`, { headers: supabaseHeaders(), cache: "no-store" }),
-    fetch(`${base}/rest/v1/feeds?select=*&order=created_at.asc`, { headers: supabaseHeaders(), cache: "no-store" }),
-  ]);
-  if (!pubRes.ok) throw new Error(`publications load failed (${pubRes.status})`);
-  if (!feedRes.ok) throw new Error(`feeds load failed (${feedRes.status})`);
-  const pubRows = await pubRes.json();
-  const feedRows = await feedRes.json();
-  return { pubDefs: assemblePublications(pubRows, feedRows), pubFeeds: feedRows.map(feedFromRow) };
-}
-
-// Load a page of articles, newest-published first (indexed by group_published_idx).
-// `before` (ISO) pages backwards from a prior page's last publishedAt.
-async function loadArticlesFromDb({ limit = 200, before = null } = {}) {
-  const base = supabaseBaseUrl();
-  const beforeClause = before ? `&published_at=lt.${encodeURIComponent(before)}` : "";
-  const res = await fetch(`${base}/rest/v1/articles?select=*&order=published_at.desc.nullslast,discovered_at.desc&limit=${Number(limit) || 200}${beforeClause}`, { headers: supabaseHeaders(), cache: "no-store" });
-  if (!res.ok) throw new Error(`articles load failed (${res.status})`);
-  return (await res.json()).map(articleFromRow);
-}
-
-async function upsertRowsToDb(table, rows) {
-  if (!rows.length) return;
-  const res = await fetch(`${supabaseBaseUrl()}/rest/v1/${table}?on_conflict=id`, {
-    method: "POST",
-    headers: { ...supabaseHeaders(), Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify(rows),
-  });
-  if (!res.ok) throw new Error(`${table} upsert failed (${res.status})`);
-}
-
-function upsertArticlesToDb(articles) { const g = pubDbGroupId(); return upsertRowsToDb("articles", (articles || []).filter((a) => a.id).map((a) => articleToRow(a, g))); }
-function upsertPublicationsToDb(pubs) { const g = pubDbGroupId(); return upsertRowsToDb("publications", (pubs || []).filter((p) => p.id).map((p) => publicationToRow(p, g))); }
-function upsertFeedsToDb(feeds) { const g = pubDbGroupId(); return upsertRowsToDb("feeds", (feeds || []).filter((f) => f.id).map((f) => feedToRow(f, g))); }
-// Deletes reuse the generic deleteSupabaseRow("articles"|"feeds"|"publications", id).
-
-// One-time (idempotent) push of the current interim JSONB store into the tables —
-// on_conflict=id makes re-running a no-op beyond metadata refresh. Used both as the
-// initial backfill (empty DB) and to lift any local-only rows the DB lacks yet.
-async function backfillPublicationsToDb() {
-  if (!pubDbReady()) return { skipped: true };
-  await upsertPublicationsToDb(state.pubDefs || []);
-  await upsertFeedsToDb(state.pubFeeds || []);
-  await upsertArticlesToDb(state.pubArticles || []);
-  return { pubs: (state.pubDefs || []).length, feeds: (state.pubFeeds || []).length, articles: (state.pubArticles || []).length };
-}
-
-// Boot hydration: when a cloud session exists, the RELATIONAL tables are the durable
-// source for publications/feeds/articles. Load them into memory (unioning any
-// local-only rows by canonical identity so nothing is lost), then lift local-only
-// rows back to the DB. On an empty DB this is the initial backfill. Best-effort:
-// any failure leaves the interim JSONB store in charge (no throw to the caller).
-async function hydratePublicationsFromDb() {
-  if (!pubDbReady()) return; // no cloud session → the interim JSONB store stays authoritative
-  try {
-    const [{ pubDefs, pubFeeds }, articles] = await Promise.all([
-      loadPublicationsFromDb(),
-      loadArticlesFromDb({ limit: 500 }),
-    ]);
-    if (pubDefs.length || pubFeeds.length || articles.length) {
-      if (pubDefs.length) state.pubDefs = pubDefs;
-      if (pubFeeds.length) state.pubFeeds = pubFeeds;
-      // DB articles are the base; local-only ones (discovered since last sync) union in.
-      state.pubArticles = ingestArticles(articles, state.pubArticles || []).articles;
-      const liveIds = state.pubArticles.map((a) => a.id);
-      state.articleNotifications = pruneNotifications(state.articleNotifications || {}, liveIds);
-      state.readingProgress = pruneReadingProgress(state.readingProgress, [...liveIds, ...(state.savedArticles || []).map((a) => a.id)]);
-      persist();
-      await backfillPublicationsToDb(); // lift any local-only rows up (idempotent)
-      if (activeAppArea === "publications") renderPublicationsPanel();
-      return;
-    }
-    await backfillPublicationsToDb(); // empty DB → seed it from the interim store
-  } catch (e) {
-    console.warn("Publications DB unavailable; using the interim store.", e);
-  }
+  stashArticleBody(article);
+  return article;
 }
 
 async function toggleAuth() {
@@ -4124,6 +3617,7 @@ async function toggleAuth() {
     purgeLocalArticleContent(); // privacy default: drop local article bodies (backstop rehydrates on re-login)
     purgeLocalCadenceContent(); // same: drop local Cadence score bytes (rehydrate from cadence-blobs on re-login)
     purgeLocalMusicContent();   // same: drop local uploaded-music blobs (live-music IDB)
+    purgeLocalFinanceTxnStore(); // same: drop the durable-transaction mirror (live-finance-txns IDB)
     try {
       await supabaseClient.auth.signOut();
     } finally {
@@ -4840,6 +4334,7 @@ function defaultState() {
     persistentManualGroceries: [],
     checkedGroceries: {},
     grocerySkippedStores: {},
+    instacartOrders: {},
     groceryItemWeekOverride: {},
     groceryCleared: {},
     groceryChecklist: { config: [], provisional: {}, submissions: {} },
@@ -4889,6 +4384,7 @@ function defaultState() {
     financeBudgetGroups: defaultFinanceBudgetGroups(),
     financeAccounts: [],
     financeGoals: [],
+    financeTxnSource: "feed", // "feed" (SimpleFIN 45-day window) | "store" (durable finance_transactions) — FINANCE_TRANSACTIONS_DESIGN.md §5.5
     financeAccountLabels: [],
     financeAccountSubLabels: {},
     financePersonal: [],
@@ -5020,6 +4516,7 @@ function normalizeState(parsed) {
     persistentManualGroceries: normalizePersistentManualGroceries(parsed),
     checkedGroceries: parsed?.checkedGroceries || {},
     grocerySkippedStores: parsed?.grocerySkippedStores && typeof parsed.grocerySkippedStores === "object" ? parsed.grocerySkippedStores : {},
+    instacartOrders: normalizeInstacartOrders(parsed?.instacartOrders),
     groceryItemWeekOverride: parsed?.groceryItemWeekOverride && typeof parsed.groceryItemWeekOverride === "object" ? parsed.groceryItemWeekOverride : {},
     groceryCleared: parsed?.groceryCleared && typeof parsed.groceryCleared === "object" ? parsed.groceryCleared : {},
     groceryChecklist: normalizeGroceryChecklist(parsed?.groceryChecklist),
@@ -5076,6 +4573,7 @@ function normalizeState(parsed) {
     financeBudgetGroups: normalizeFinanceBudgetGroups(parsed?.financeBudgetGroups, createId),
     financeAccounts: normalizeFinanceAccounts(parsed?.financeAccounts, createId),
     financeGoals: normalizeFinanceGoals(parsed?.financeGoals),
+    financeTxnSource: parsed?.financeTxnSource === "store" ? "store" : "feed",
     financeAccountLabels: [...new Set((Array.isArray(parsed?.financeAccountLabels) ? parsed.financeAccountLabels : []).map((l) => String(l || "").trim()).filter(Boolean))],
     financeAccountSubLabels: normalizeFinanceSubLabels(parsed?.financeAccountSubLabels),
     financeTxnLabels: (parsed?.financeTxnLabels && typeof parsed.financeTxnLabels === "object") ? parsed.financeTxnLabels : {},
@@ -6407,6 +5905,7 @@ function mergeStates(newer, older) {
   for (const key of [
     "groceryItemLocations", "groceryAliases", "grocerySplitPreferences",
     "receiptItemMappings", "personGoals", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared",
+    "instacartOrders",
     "nutritionIngredientMappings", "publishedWeeks",
     "inventoryRoomVisibility", "watchShowtimesData",
     "groceryReviewDismissed", "collapsedDays",
@@ -6730,6 +6229,7 @@ async function hydrateStateFromSharedStorage() {
       sharedStorageReady = true;
       hydrateRetryCount = 0;
       hideHydrationOverlay(); // data is in — never leave the "Syncing…" cover up
+      backfillHistoryLog();
       return;
     } catch (error) {
       console.warn(`${provider.label} storage unavailable; trying the next option.`, error);
@@ -7382,6 +6882,46 @@ function supabaseStateUrl(selectState = false) {
   return `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=eq.${id}${select}`;
 }
 
+// GET a PostgREST path (e.g. "finance_transactions?…") with the signed-in user's
+// headers; throws on a non-2xx so callers can fall back. Used by finance-txn-store.
+async function fetchSupabaseJson(path) {
+  const res = await fetch(`${supabaseBaseUrl()}/rest/v1/${path}`, { headers: supabaseHeaders(), cache: "no-store" });
+  if (!res.ok) throw new Error(`Supabase ${res.status}`);
+  return res.json();
+}
+
+// POST/PATCH a PostgREST path with the signed-in user's headers (RLS applies).
+// Throws on a non-2xx. Used by finance CSV import / undo (finance_transactions).
+async function writeSupabaseJson(path, { method = "POST", body, prefer = "return=minimal" } = {}) {
+  const res = await fetch(`${supabaseBaseUrl()}/rest/v1/${path}`, {
+    method,
+    headers: { ...supabaseHeaders(), prefer },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Supabase ${res.status}`);
+  return null;
+}
+
+async function postHistoryRows(rows) {
+  const res = await fetch(`${supabaseBaseUrl()}/rest/v1/live_history?on_conflict=user_id,id`, {
+    method: "POST",
+    headers: { ...supabaseHeaders(), Prefer: "resolution=ignore-duplicates,return=minimal" },
+    body: JSON.stringify(rows),
+  });
+  return { ok: res.ok, status: res.status };
+}
+
+// One-time upload (per user) of the history that existed before live_history —
+// idempotent server-side, so a repeat after sign-in again is harmless.
+function backfillHistoryLog() {
+  try {
+    historyLog.backfill("media-v1", (state.mediaHistory || []).map(historyRowFromMedia));
+    historyLog.backfill("articles-v1", (state.articleHistory || []).map(historyRowFromArticle));
+    historyLog.backfill("practice-v1", (state.cadenceEvents || []).map(historyRowFromPracticeEvent));
+    logChatTurns(chatMessages);
+  } catch (e) { console.warn("History backfill skipped:", e); }
+}
+
 function supabaseHeaders() {
   const anonKey = supabaseConfig().anonKey;
   const accessToken = authSession?.access_token || anonKey;
@@ -7564,11 +7104,28 @@ function showEatApp(event) {
     showHomeApp();
     return;
   }
+  // Open on today, at the meal for the current time of day (noon → Lunch).
+  focusMealPlanOnToday();
+  requestMealPlanTimeOfDaySnap();
   activateEatShell();
   setPageTitle("Meal Plan");
   setPageHash("eat");
   closePageTitleMenu();
   closeAppMenu();
+}
+
+// Point the shared week cursor + planner day at today. On a Friday before
+// dinner, today's breakfast/lunch live on the previous prep window's closing
+// Friday (the new window's opening Friday holds only dinner).
+function focusMealPlanOnToday() {
+  const now = new Date();
+  if (isFridayBeforeLastMeal(mealColumnConfigs.map((column) => column.label), now)) {
+    currentWeek = startOfPrepWindow(addDays(now, -1));
+    activePlannerDayId = "friday-finish";
+    return;
+  }
+  currentWeek = startOfPrepWindow(now);
+  activePlannerDayId = plannerDayIdForDate(now);
 }
 
 function setWeekToolsMode(mode) {
@@ -7645,7 +7202,6 @@ function hideAllPages() {
   elements.doMainPage.hidden = true;
   elements.playMainPage.hidden = true;
   elements.mediaMainPage.hidden = true;
-  if (elements.publicationsMainPage) elements.publicationsMainPage.hidden = true;
   elements.shopMainPage.hidden = true;
   elements.inventoryMainPage.hidden = true;
   elements.recreateMainPage.hidden = true;
@@ -8220,6 +7776,7 @@ function warmPageNotifs() {
   // Fetches live accounts when connected, which also sets the finance dot
   if (getFinanceLinkStatus() === null) checkFinanceLinkStatus();
   warmMealPlanRecipes();
+  warmNewsNotif();
 }
 
 // ── Meal Plan recipe notifications ───────────────────────────────────────────
@@ -15963,6 +15520,24 @@ const MAIL_AI_FEATURES = [
     desc: "Same for The Economist's daily briefing — saved as a listenable article on the Media page, email filed away."
   },
   {
+    key: "nytNewsLinks",
+    defaultOn: false,
+    label: "NYT articles → Media notifications",
+    desc: "Every New York Times article linked in an NYT email becomes a card in the Media page's notification bell (swipe right to save it to Publications, left to dismiss). An article is never delivered twice, and nothing older than a week. Real newsletters are also converted into a listenable article. The email is then filed to Apps/AI trash."
+  },
+  {
+    key: "economistNewsLinks",
+    defaultOn: false,
+    label: "Economist articles → Media notifications",
+    desc: "Same for The Economist's emails."
+  },
+  {
+    key: "startribuneNewsLinks",
+    defaultOn: false,
+    label: "Star Tribune articles → Media notifications",
+    desc: "Same for the Minnesota Star Tribune's emails."
+  },
+  {
     key: "autoDeleteSimplefin",
     defaultOn: false,
     label: "Auto-delete SimpleFIN access alerts",
@@ -15988,11 +15563,17 @@ async function refreshAppleMusicStatus() {
     const reg = await getMusicProviders();
     const p = reg.get("applemusic");
     if (!p) { el.textContent = "Not enabled."; return; }
+    // First: can the server's developer token read Apple's catalog at all? This
+    // tells "key missing" / "key rejected" apart from "just not signed in".
+    const cat = p.checkCatalog ? await p.checkCatalog() : { ok: true };
+    if (cat.state === "not-configured") { el.textContent = "Server key not configured yet — finish the checklist below."; return; }
+    if (cat.state === "load-failed") { el.textContent = "Couldn’t load Apple’s MusicKit script — check your connection or content blockers."; return; }
+    if (cat.state === "rejected") { el.textContent = "Apple rejected the server key — check it’s a MusicKit key and the Key ID / Team ID match."; return; }
     const auth = await p.getAuthStatus();
-    if (auth.state === "not-configured") { el.textContent = "Server key not configured yet — finish the checklist below."; return; }
-    if (!auth.authorized) { el.textContent = "Not signed in."; return; }
+    const sf = cat.storefront ? ` · storefront ${String(cat.storefront).toUpperCase()}` : "";
+    if (!auth.authorized) { el.textContent = `Catalog connected${sf} · not signed in — sign in to play full tracks.`; return; }
     const sub = await p.getSubscriptionStatus();
-    el.textContent = sub.canPlay ? "Signed in · subscription active." : `Signed in · ${sub.reason || "no active subscription"}`;
+    el.textContent = sub.canPlay ? `Signed in · subscription active${sf}.` : `Signed in · ${sub.reason || "no active subscription"}`;
   } catch { el.textContent = "Unavailable right now."; }
 }
 
@@ -16129,6 +15710,7 @@ function renderContextSettingsDialog(kind) {
         <button type="button" data-context-settings-action="ai-notes">AI Notes</button>
         <button type="button" data-context-settings-action="import-ai">Import from AI Chat</button>
         <button type="button" data-context-settings-action="api-usage">API Usage</button>
+        <button type="button" data-context-settings-action="export-data">Export My Data</button>
       </div>
       ${isAdmin ? `
         <div class="settings-admin-section">
@@ -16199,6 +15781,7 @@ function renderContextSettingsDialog(kind) {
       if (!state.appleMusic || typeof state.appleMusic !== "object" || Array.isArray(state.appleMusic)) state.appleMusic = {};
       state.appleMusic = { ...state.appleMusic, enabled: toggle.checked };
       musicProviderRegistry = null; // rebuild the registry with/without Apple Music
+      resetAppleMusicHome();
       persist();
       renderContextSettingsDialog("apple-music");
     });
@@ -16209,6 +15792,7 @@ function renderContextSettingsDialog(kind) {
         if (!p) { alert("Enable Apple Music first."); return; }
         await p.authorize();
       } catch (e) { alert("Apple Music sign-in failed: " + (e?.message || e)); }
+      resetAppleMusicHome(); // signed-in shelves (recommendations) differ
       refreshAppleMusicStatus();
     });
     if (enabled) refreshAppleMusicStatus();
@@ -17185,6 +16769,7 @@ function handleContextSettingsAction(event) {
     "apple-music": () => renderContextSettingsDialog("apple-music"),
     "backup-health": () => closeAndRun(openBackupHealthDialog),
     "restore-backup": () => closeAndRun(openRestoreDialog),
+    "export-data": () => closeAndRun(exportMyData),
     "admin-pages": () => renderContextSettingsDialog("admin-pages"),
     "admin-users": () => closeAndRun(openAdminUsersDialog),
     "admin-households": () => closeAndRun(openAdminHouseholdsDialog),
@@ -18276,6 +17861,74 @@ function trashItemTemplate(item) {
 }
 
 
+
+// ── Export my data (data-export.js; DATA_EXPORT.md) ────────────────────────────
+// One zip: lossless live-export.json (Restore accepts it) + derived CSVs, calendar
+// .ics, contacts .vcf and an attachments index. Everything is derived from the same
+// in-memory state at click time; the only network reads are the explicit, bounded
+// fetches of the relational ledgers (finance store sync + live_history pages).
+let dataExportInProgress = false;
+async function exportMyData() {
+  if (dataExportInProgress) return;
+  dataExportInProgress = true;
+  showMailToast("Preparing your data export…");
+  const notes = [];
+  try {
+    let finance = { transactions: [] };
+    try {
+      finance = await financeExportTransactions();
+      if (finance.note) notes.push(finance.note);
+    } catch (e) { notes.push(`Finance transactions could not be gathered (${e?.message || "error"}).`); }
+
+    let history = [];
+    const uid = !localDevMode && authSession?.access_token ? authSession.user?.id : null;
+    if (uid) {
+      try {
+        await historyLog.flush(); // send what's queued so the export includes it
+        history = await fetchAllHistory((path) => fetchSupabaseJson(path), uid);
+      } catch (e) {
+        notes.push(`Permanent history (live_history) could not be read (${e?.message || "error"}) — history CSVs hold only the recent in-app window.`);
+      }
+      const queued = historyLog.status().queued;
+      if (queued) notes.push(`${queued} recent history entries were still waiting to upload and are not in history.csv (they are in the *_recent CSVs).`);
+    } else {
+      notes.push("Not signed in to the cloud — permanent history and stored transactions are not included.");
+    }
+
+    const [{ buildExportFiles, buildExportZip }, fflate] = await Promise.all([import("./data-export.js"), import("fflate")]);
+    const scopes = Object.fromEntries(Object.keys(STATE_SECTIONS).map((section) => [section, sectionScope(section)]));
+    const exportedAt = new Date().toISOString();
+    const { files, manifest } = buildExportFiles({
+      state, shadowSections, scopes, stateSections: STATE_SECTIONS, prepDays,
+      finance, history, contactsVcf: (state.contacts || []).length ? buildContactsVcf(state.contacts) : "",
+      exportedAt, schemaVersion: STATE_SCHEMA_VERSION, notes,
+    });
+    const zip = buildExportZip(files, fflate, `live-export-${exportedAt.slice(0, 10)}`);
+    const fileName = `live-export-${exportedAt.slice(0, 10)}.zip`;
+    const blob = new Blob([zip], { type: "application/zip" });
+    const file = typeof File === "function" ? new File([blob], fileName, { type: "application/zip" }) : null;
+    // The iOS app's web view can't download a blob; hand the file to the share sheet
+    // (Save to Files) there. Browsers get an ordinary download.
+    if (isNativeApp() && file && navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file], title: "Live data export" });
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = fileName;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+    const csvCount = manifest.files.filter((f) => f.file?.endsWith(".csv") && !f.error).length;
+    showMailToast(`Exported ${csvCount} spreadsheets + full backup${notes.length ? " (see README for notes)" : ""}.`);
+  } catch (e) {
+    if (e?.name !== "AbortError") {
+      console.error("Data export failed:", e);
+      showMailToast(`Couldn't export your data: ${e?.message || "unknown error"}`);
+    }
+  } finally {
+    dataExportInProgress = false;
+  }
+}
 
 function openRestoreDialog(event) {
   event?.stopPropagation();
@@ -22690,7 +22343,9 @@ function cadenceMirrorWork(work, asset) {
 // (music/events.js). Best-effort — a logging failure never breaks the action.
 function cadenceLogEvent(C, type, opts = {}) {
   try {
-    state.cadenceEvents = C.appendEvent(state.cadenceEvents, C.makeEvent({ type, ...opts }));
+    const event = C.makeEvent({ type, ...opts });
+    state.cadenceEvents = C.appendEvent(state.cadenceEvents, event);
+    historyLog.record(historyRowFromPracticeEvent(event));
     persist();
   } catch (e) { console.warn("Cadence event log failed:", e); }
 }
@@ -27074,9 +26729,8 @@ function wireMediaTabs() {
     if (mediaSearchQuery) renderMediaSearchResults();
     else exitMediaSearch();
   });
-  document.getElementById("mediaNotificationsBtn")?.addEventListener("click", () => {
-    showMailToast("Media notifications are coming soon."); // placeholder until media notifications land
-  });
+  // Media bell → news-article deck (news-notif-ui.js, NEWS_INTAKE_DESIGN.md).
+  wireNewsNotif();
 
   // (Reset-order moved into the Playlist settings modal.)
 
@@ -27883,8 +27537,12 @@ let musicLibraryLoaded = false;// library fetched from storage at least once
 const musicArtUrls = new Map();// artwork blobId → object URL (built once, reused across renders)
 
 // On-demand Discover (streaming providers — music-streaming.js + adapters)
-let musicTabMode = "saved";    // "saved" | "discover" | "library"
-let musicOpenPlaylistId = null; // when viewing a single playlist in Saved
+let musicTabMode = "discover"; // "discover" | "saved" | "library" | "pl:<playlistId>" (a playlist tab)
+let musicLocalQuery = "";      // the search bar's text on Saved / Library / playlist tabs (local filter)
+let musicPlTabInputActive = false; // the tab strip's inline "new playlist" field is open
+let musicDiscoverCategory = null;  // Browse category id while its page is open in Discover
+const musicCategoryCache = new Map(); // category id → { shelves, at, loading?, error? }
+let musicShelfLists = new Map();   // per-render shelf key → items (so a ranked song row can queue the rest)
 
 // Radio (live audio) — separate domain from music; shares the one engine.
 let radioAudio = null;         // shared element while a radio stream is active, else null
@@ -27962,6 +27620,10 @@ function wirePodcastPanel() {
   document.getElementById("podcastSeekBar")?.addEventListener("input", (e) => {
     if (podcastAudio && podcastAudio.duration) {
       podcastAudio.currentTime = (parseFloat(e.target.value) / 100) * podcastAudio.duration;
+    } else {
+      const ns = nativePodcastSession();
+      const tts = nativeTts();
+      if (ns && ns.audioDur && tts) tts.seekTo({ position: (parseFloat(e.target.value) / 100) * ns.audioDur }).catch(() => {});
     }
   });
 }
@@ -29102,6 +28764,7 @@ function nowPlayingQueueId() {
   const k = nowPlayingKind();
   if (k === "podcast") return podcastCurEpisode?.id || null;
   if (k === "tts") return listenArticle?.id || null;
+  if (k === "nativeAudio") return listenSpeechSynth?.currentId || null;
   return null;
 }
 
@@ -29668,8 +29331,16 @@ registerMediaProvider({
 registerMediaProvider({
   id: "podcast",
   canPlay: () => true,
-  play: (item, { autoplay = true, advance = false } = {}) => openPodcastEpisode(item.id, { autoplay, advance }), // plays + shows player + registers queue-advance
-  isCurrent: (item) => !!podcastAudio && podcastCurEpisode?.id === item.id,
+  play: (item, { autoplay = true, advance = false } = {}) => {
+    // All queue + Apple voice in the native app → the plugin plays it (see
+    // nativeQueueHandlesPodcasts); falls back to the web player if it can't.
+    if (autoplay && mediaAllQueueId === item.id && nativeQueueHandlesPodcasts()) {
+      startNativePodcast(item.id).then((ok) => { if (!ok) openPodcastEpisode(item.id, { autoplay, advance }); });
+      return;
+    }
+    openPodcastEpisode(item.id, { autoplay, advance }); // plays + shows player + registers queue-advance
+  },
+  isCurrent: (item) => (!!podcastAudio && podcastCurEpisode?.id === item.id) || nativePodcastSession()?.currentId === item.id,
 });
 registerMediaProvider({
   id: "book",
@@ -30588,6 +30259,16 @@ function renderPodcastShowEpisodes(showId) {
 function openPodcastEpisode(episodeId, { autoplay = true, advance = false } = {}) {
   const { episode, show } = findPodcastEpisode(episodeId);
   if (!episode) return;
+  showPodcastEpisodePanel(episodeId);
+  startPodcastPlayback(episode, show, { autoplay, advance });
+  updatePodcastMarkBtn();
+}
+
+// The episode-details panel (title/show/art/description + active row), without
+// touching playback — shared by the web player and the native queue.
+function showPodcastEpisodePanel(episodeId) {
+  const { episode, show } = findPodcastEpisode(episodeId);
+  if (!episode) return;
 
   openPodcastEpisodeId = episodeId;
 
@@ -30612,9 +30293,9 @@ function openPodcastEpisode(episodeId, { autoplay = true, advance = false } = {}
   document.querySelectorAll(".podcast-episode-row").forEach(r => {
     r.classList.toggle("article-row--active", r.dataset.episodeId === episodeId);
   });
-
-  startPodcastPlayback(episode, show, { autoplay, advance });
   updatePodcastMarkBtn();
+  updatePodcastPlayBtn();
+  if (nativePodcastSession()?.currentId === episodeId) updatePodcastProgressUI(episode);
 }
 
 function findPodcastEpisode(episodeId) {
@@ -30745,6 +30426,18 @@ const MEDIA_KINDS = {
     open: () => { showMediaApp(); switchMediaTab("music"); },
     info: () => { const t = musicCurTrack; if (!t) return null; return { art: t.artworkUrl || "", title: t.title || "Untitled", show: t.artist || "", date: t.album || "", desc: "" }; },
   },
+  // A podcast episode the native plugin (LiveTtsPlugin's AVPlayer) is playing
+  // because it came after an on-device-voice article in the listen queue. The
+  // web engine isn't involved: transport goes to the plugin, and position
+  // arrives as ttsPosition events (see startListenNativeTts).
+  nativeAudio: {
+    active: () => !!(listenSpeechSynth && listenSpeechSynth.native && listenSpeechSynth.kind === "audio"),
+    el: () => null,
+    toggle: () => toggleListenPlayPause(),
+    skip: (sec) => listenSkip(sec),
+    open: () => { const id = listenSpeechSynth?.currentId; if (id) { showPodcastEpisodePanel(id); goToOpenEpisode(); } },
+    info: () => { const s = listenSpeechSynth, ep = s && s.episode, sh = s && s.show; if (!ep) return null; return { art: ep.art || sh?.art || "", title: ep.title || "", show: sh?.title || "", date: ep.pubDate ? formatArticleDate(ep.pubDate) : "", desc: plainTextFromHtml(ep.description) }; },
+  },
   tts: {
     active: () => !!(listenAudio || listenLoading || listenArticle),
     el: () => null, // TTS uses its own elapsed/total readout, not the shared element
@@ -30759,7 +30452,7 @@ const MEDIA_KINDS = {
     info: () => { const a = listenArticle; return { art: a ? articleArtUrl(a) : "", title: a?.title || "Now playing", show: a?.author || a?.publication || "", date: a?.pubDate ? formatArticleDate(a.pubDate) : "", desc: plainTextFromHtml(a?.text || a?.excerpt).slice(0, 2000) }; },
   },
 };
-const NOW_PLAYING_ORDER = ["podcast", "radio", "music", "tts"];
+const NOW_PLAYING_ORDER = ["podcast", "radio", "music", "nativeAudio", "tts"];
 
 // THE one playback engine for the whole app. It owns the single shared media
 // element and drives every source; feature behavior is dispatched by the
@@ -30817,7 +30510,7 @@ function startPodcastPlayback(episode, show, { autoplay = true, advance = false 
     // exactly like beginNextResolvedArticleSync does for article→article.
     clearAdSkipTimers();
     if (podcastSaveTimer) { clearTimeout(podcastSaveTimer); podcastSaveTimer = null; }
-    if (listenArticle || listenAudio || listenLoading) { // outgoing article (mixed queue)
+    if (listenArticle || listenAudio || listenLoading || listenSpeechSynth) { // outgoing article / native item (mixed queue)
       listenGenId++; teardownSystemVoice(); listenAudio = null; listenArticle = null;
       listenSpeaking = false; listenLoading = false; clearWordHighlight();
     }
@@ -30885,9 +30578,10 @@ function startPodcastPlayback(episode, show, { autoplay = true, advance = false 
 }
 
 function updatePodcastProgressUI(episode) {
-  if (!podcastAudio) return;
-  const cur = podcastAudio.currentTime || 0;
-  const dur = podcastAudio.duration || episode.duration || 0;
+  const ns = !podcastAudio ? nativePodcastSession() : null;
+  if (!podcastAudio && !(ns && episode && ns.currentId === episode.id)) return;
+  const cur = ns ? (ns.audioPos || 0) : (podcastAudio.currentTime || 0);
+  const dur = (ns ? ns.audioDur : podcastAudio.duration) || episode.duration || 0;
   const curEl = document.getElementById("podcastCurrentTime");
   const durEl = document.getElementById("podcastDuration");
   const seekBar = document.getElementById("podcastSeekBar");
@@ -30916,7 +30610,8 @@ function updatePodcastPlayBtn() {
   const icon = document.getElementById("podcastBtnIcon");
   const btn = document.getElementById("podcastPlayPauseBtn");
   if (!icon || !btn) return;
-  const playing = podcastAudio && !podcastAudio.paused && !podcastAudio.ended;
+  const ns = nativePodcastSession();
+  const playing = podcastAudio ? (!podcastAudio.paused && !podcastAudio.ended) : !!(ns && !ns.paused);
   btn.setAttribute("aria-label", playing ? "Pause" : "Play");
   icon.innerHTML = playing
     ? `<rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/>`
@@ -30932,13 +30627,13 @@ function updatePodcastMarkBtn() {
 }
 
 function togglePodcastPlayPause() {
-  if (!podcastAudio) return;
+  if (!podcastAudio) { if (nativePodcastSession()) toggleListenPlayPause(); return; }
   if (podcastAudio.paused) { podcastAudio.play().catch(() => {}); }
   else { podcastAudio.pause(); }
 }
 
 function skipPodcast(seconds) {
-  if (!podcastAudio) return;
+  if (!podcastAudio) { if (nativePodcastSession()) listenSkip(seconds); return; }
   podcastAudio.currentTime = Math.max(0, Math.min(podcastAudio.currentTime + seconds, podcastAudio.duration || Infinity));
 }
 
@@ -31091,17 +30786,19 @@ async function startOwnedMusicTrack(canonical, provider) {
   const artist = canonical.artists?.[0]?.name || canonical.composer?.name || canonical.album || "";
   const desc = { id: canonical.id, title: canonical.title, artist, album: canonical.album, artworkUrl: canonical.artworkUrl || "", kind: "owned", canonical };
   musicCurTrack = desc;
+  // MusicKit reports the end of a song more than once (ended, then completed) —
+  // advance the queue exactly once per started track, or every other song skips.
+  let endedHandled = false;
   musicOwnedUnsub = provider.onChange((np) => {
     if (provider !== musicPlaybackProvider) return; // stale session
     musicOwnedNP = np;
     updateMiniPlayerPlayBtn();
     updateMiniPlayerProgress();
     setMediaSessionPlaybackState(np.isPlaying ? "playing" : "paused");
-    if (np.state === "ended") onMusicEnded();
+    if (np.state === "ended" && !endedHandled) { endedHandled = true; onMusicEnded(); }
   });
   try {
-    await provider.setQueue([canonical]);
-    await provider.play(canonical);
+    await provider.play(canonical); // sets the provider's queue to this track, then plays
     musicOwnedNP = provider.getNowPlaying();
   } catch (e) {
     console.warn("apple music play failed", e);
@@ -31241,6 +30938,7 @@ function migrateMediaHistoryOnce() {
 function recordMediaHistory(entry) {
   migrateMediaHistoryOnce();
   state.mediaHistory = pushMediaHistoryEntry(state.mediaHistory, entry);
+  historyLog.record(historyRowFromMedia(state.mediaHistory[0]));
   persist();
 }
 // Cross-app recency service (also the query surface for future AI/unified UI).
@@ -31264,41 +30962,57 @@ function initMusicPanel() {
   if (!musicPanelWired) {
     musicPanelWired = true;
     panel.addEventListener("click", (e) => {
-      // Mode switch (Saved / Discover / Library)
+      // Tabs (Discover / Saved / Library / playlist tabs) + the inline new-playlist field
       const modeBtn = e.target.closest("[data-music-mode]");
       if (modeBtn) { enterMusicMode(modeBtn.dataset.musicMode); return; }
+      if (e.target.closest("#musicPlAddBtn")) { musicPlTabInputActive = true; renderMusicPanel(); return; }
 
-      // ── Favourite / add-to-playlist (both Discover & Saved) ──
+      // ── Search bar (every tab) ──
+      if (e.target.closest("[data-music-search-clear]")) { clearMusicSearch(); return; }
+      if (e.target.closest("[data-music-search-all]")) { searchAllMusic(musicLocalQuery); return; }
+
+      // ── Favourite / add-to-playlist (Discover, Saved, playlists) ──
       const fav = e.target.closest("[data-music-fav]");
       if (fav) { e.stopPropagation(); musicToggleFav(fav.dataset.favType, musicViewIndex.get(fav.dataset.musicFav)); return; }
       const add = e.target.closest("[data-music-add]");
       if (add) { e.stopPropagation(); const r = canonicalRecordingFromView(add.dataset.musicAdd) || musicViewIndex.get(add.dataset.musicAdd); openAddToPlaylistMenu(r); return; }
 
       // ── Saved / playlist actions ──
-      if (e.target.closest("[data-music-new-playlist]")) { createNewMusicPlaylist(); return; }
       const openPl = e.target.closest("[data-open-playlist]");
-      if (openPl) { musicOpenPlaylistId = openPl.dataset.openPlaylist; renderMusicPanel(); return; }
-      if (e.target.closest("[data-playlist-back]")) { musicOpenPlaylistId = null; renderMusicPanel(); return; }
+      if (openPl) { enterMusicMode(`pl:${openPl.dataset.openPlaylist}`); return; }
+      if (e.target.closest("[data-music-csv-export]")) { exportMusicLibraryCsv(); return; }
+      if (e.target.closest("[data-music-csv-import]")) { panel.querySelector("#musicCsvInput")?.click(); return; }
       const plPlay = e.target.closest("[data-playlist-play]"); if (plPlay) { playPlaylist(plPlay.dataset.playlistPlay, 0, false); return; }
       const plShuf = e.target.closest("[data-playlist-shuffle]"); if (plShuf) { playPlaylist(plShuf.dataset.playlistShuffle, 0, true); return; }
       const plRen = e.target.closest("[data-playlist-rename]"); if (plRen) { renameMusicPlaylist(plRen.dataset.playlistRename); return; }
       const plDel = e.target.closest("[data-playlist-delete]"); if (plDel) { deleteMusicPlaylist(plDel.dataset.playlistDelete); return; }
       const plItemRemove = e.target.closest("[data-pl-remove]"); if (plItemRemove) { e.stopPropagation(); const [pid, idx] = plItemRemove.dataset.plRemove.split(":"); saveMusicLibrary(musicLibModelMod.removeFromPlaylist(getMusicLibraryState(), pid, +idx)); renderMusicPanel(); return; }
-      const plMove = e.target.closest("[data-pl-move]"); if (plMove) { e.stopPropagation(); const [pid, idx, dir] = plMove.dataset.plMove.split(":"); const i = +idx; saveMusicLibrary(musicLibModelMod.reorderPlaylist(getMusicLibraryState(), pid, i, dir === "up" ? i - 1 : i + 1)); renderMusicPanel(); return; }
+      const plMove = e.target.closest("[data-pl-move]"); if (plMove) { e.stopPropagation(); const [pid, idx, dir] = plMove.dataset.plMove.split(":"); const i = +idx; saveMusicLibrary(musicLibModelMod.reorderPlaylist(getMusicLibraryState(), pid, i, dir === "up" ? i - 1 : i + 1)); updateMusicBody(); return; }
       const plItemPlay = e.target.closest("[data-pl-play]"); if (plItemPlay) { const [pid, idx] = plItemPlay.dataset.plPlay.split(":"); playPlaylist(pid, +idx, false); return; }
       const playRec = e.target.closest("[data-play-recording]"); if (playRec) { const r = musicViewIndex.get(playRec.dataset.playRecording); if (r) playCanonicalRecording(r); return; }
-      const workSearch = e.target.closest("[data-work-search]"); if (workSearch) { const q = workSearch.dataset.workSearch; enterMusicMode("discover"); musicSearchQuery = q; setTimeout(() => { const si = document.getElementById("musicSearchInput"); if (si) si.value = q; doMusicSearch(q); }, 0); return; }
+      const workSearch = e.target.closest("[data-work-search]"); if (workSearch) { searchAllMusic(workSearch.dataset.workSearch); return; }
 
       // ── Discover actions ──
       if (e.target.closest("[data-music-back]")) { closeMusicItem(); return; }
-      const cat = e.target.closest("[data-music-cat]");
-      if (cat) { musicSearchQuery = cat.dataset.musicCat; const si = panel.querySelector("#musicSearchInput"); if (si) si.value = musicSearchQuery; doMusicSearch(musicSearchQuery); return; }
+      if (e.target.closest("[data-music-cat-back]")) { musicDiscoverCategory = null; updateMusicBody(); return; }
+      if (e.target.closest("[data-music-am-signin]")) { signInAppleMusicFromDiscover(); return; }
+      const browse = e.target.closest("[data-music-browse]");
+      if (browse) { openMusicCategory(browse.dataset.musicBrowse); return; }
       const replay = e.target.closest("[data-music-replay]");
       if (replay) { replayMusicHistory(replay.dataset.musicReplay); return; }
+      const shelfRow = e.target.closest("[data-shelf-track]");
+      if (shelfRow) {
+        const id = shelfRow.dataset.trackId;
+        if (musicCurTrack && musicCurTrack.id === id && (musicAudio || musicPlaybackProvider)) { toggleMusicPlayPause(); return; }
+        const list = (musicShelfLists.get(shelfRow.dataset.shelfTrack) || []).filter((x) => x.entity === "track");
+        const at = list.findIndex((x) => x.id === id);
+        if (at >= 0) playStreamingTrack(list[at], list.slice(at + 1)); // the rest of the shelf queues up
+        return;
+      }
       const streamRow = e.target.closest("[data-stream-play]");
       if (streamRow) {
         const id = streamRow.dataset.streamPlay;
-        if (musicCurTrack && musicCurTrack.id === id && musicAudio) { toggleMusicPlayPause(); return; }
+        if (musicCurTrack && musicCurTrack.id === id && (musicAudio || musicPlaybackProvider)) { toggleMusicPlayPause(); return; }
         const t = musicViewIndex.get(id);
         const rest = (musicOpenItem?.tracks || []).slice((musicOpenItem?.tracks || []).findIndex((x) => x.id === id) + 1);
         if (t) playStreamingTrack(t, rest);
@@ -31321,34 +31035,69 @@ function initMusicPanel() {
       }
     });
     panel.addEventListener("keydown", (e) => {
+      if (e.target.id === "musicPlInlineInput" && e.key === "Escape") { musicPlTabInputActive = false; renderMusicPanel(); return; }
+      if (e.target.id === "musicSearchInput") {
+        if (e.key === "Enter" && musicTabMode === "discover") { e.preventDefault(); clearTimeout(musicSearchDebounce); doMusicSearch(e.target.value); }
+        if (e.key === "Escape" && e.target.value) { e.preventDefault(); clearMusicSearch(); }
+        return;
+      }
       const row = e.target.closest?.("[data-music-track]");
       if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); playMusicTrackById(row.dataset.musicTrack); return; }
-      if (e.target.id === "musicSearchInput" && e.key === "Enter") { e.preventDefault(); clearTimeout(musicSearchDebounce); doMusicSearch(e.target.value); }
+      // Cards / tiles / rows are role="button" divs: make Enter/Space activate them.
+      const rb = e.target.matches?.('[role="button"]:not(button)') ? e.target : null;
+      if (rb && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); rb.click(); }
     });
     panel.addEventListener("input", (e) => {
-      if (e.target.id === "musicSearchInput") queueMusicSearch(e.target.value);
+      if (e.target.id !== "musicSearchInput") return;
+      const v = e.target.value;
+      panel.querySelector("[data-music-search-clear]")?.toggleAttribute("hidden", !v);
+      if (musicTabMode === "discover") queueMusicSearch(v);
+      else { musicLocalQuery = v; updateMusicBody(); } // local filter: instant, no network
     });
+    panel.addEventListener("submit", (e) => {
+      if (e.target.id !== "musicPlInlineForm") return;
+      e.preventDefault();
+      const name = (panel.querySelector("#musicPlInlineInput")?.value || "").trim();
+      musicPlTabInputActive = false;
+      if (name) createMusicPlaylistNamed(name); else renderMusicPanel();
+    });
+    panel.addEventListener("focusout", (e) => {
+      // Leaving the new-playlist field empty cancels it (like Podcasts' tab strip).
+      if (e.target.id === "musicPlInlineInput" && !e.target.value.trim()) setTimeout(() => { if (musicPlTabInputActive) { musicPlTabInputActive = false; renderMusicPanel(); } }, 150);
+    });
+    panel.addEventListener("toggle", (e) => {
+      if (e.target.classList?.contains("music-free-sources")) musicFreeSourcesOpen = e.target.open;
+    }, true);
     panel.addEventListener("change", (e) => {
       const inp = e.target.closest("#musicFileInput");
-      if (inp && inp.files && inp.files.length) { handleMusicImport(inp.files); inp.value = ""; }
+      if (inp && inp.files && inp.files.length) { handleMusicImport(inp.files); inp.value = ""; return; }
+      const csv = e.target.closest("#musicCsvInput");
+      if (csv && csv.files && csv.files[0]) { importMusicLibraryCsv(csv.files[0]); csv.value = ""; }
     });
   }
   enterMusicMode(musicTabMode);
 }
 
-// Enter a Music sub-mode, lazy-loading the pieces that mode needs.
+// Enter a Music tab, lazy-loading the pieces it needs. The local search text is
+// per-visit (a fresh tab starts unfiltered); Discover keeps its catalog search.
 function enterMusicMode(mode) {
+  if (mode !== musicTabMode) musicLocalQuery = "";
   musicTabMode = mode;
-  musicOpenPlaylistId = null;
+  musicPlTabInputActive = false;
   renderMusicPanel();
-  if (mode === "saved") {
-    getMusicCanon().then(renderMusicPanel).catch((e) => console.warn("music canon load failed", e));
-  } else if (mode === "discover") {
-    Promise.all([getMusicCanon(), getMusicProviders()]).then(() => renderMusicPanel()).catch((e) => console.warn("music discover load failed", e));
-    setTimeout(() => document.getElementById("musicSearchInput")?.focus(), 0);
-  } else if (mode === "library" && !musicLibraryLoaded) {
-    musicLibraryLoaded = true;
-    refreshMusicLibrary().then(renderMusicPanel).catch((e) => console.warn("music library load failed", e));
+  // A playlist tab (e.g. one just created) may sit past the strip's edge.
+  const activeTab = document.querySelector("#musicBar .watch-category-tab.is-active");
+  const strip = activeTab?.parentElement;
+  if (activeTab && strip) strip.scrollLeft = Math.max(0, activeTab.offsetLeft - (strip.clientWidth - activeTab.offsetWidth) / 2);
+  if (mode === "discover") {
+    Promise.all([getMusicCanon(), getMusicProviders()]).then(() => { if (musicTabMode === "discover") updateMusicBody(); }).catch((e) => console.warn("music discover load failed", e));
+  } else if (mode === "library") {
+    if (!musicLibraryLoaded) {
+      musicLibraryLoaded = true;
+      refreshMusicLibrary().then(renderMusicPanel).catch((e) => console.warn("music library load failed", e));
+    }
+  } else {
+    getMusicCanon().then(() => { if (musicTabMode === mode) updateMusicBody(); }).catch((e) => console.warn("music canon load failed", e));
   }
 }
 
@@ -31408,53 +31157,135 @@ function musicAlbumGroup(g) {
 }
 
 function musicModeTabs() {
-  // Match the Podcasts tab style (.watch-category-tabs / .watch-category-tab).
-  const tab = (mode, label) => `<button class="watch-category-tab${musicTabMode === mode ? " is-active" : ""}" type="button" role="tab" aria-selected="${musicTabMode === mode}" data-music-mode="${mode}">${label}</button>`;
-  return `<div class="watch-category-tabs" role="tablist" aria-label="Music mode">${tab("saved", "Saved")}${tab("discover", "Discover")}${tab("library", "Library")}</div>`;
+  // Match the Podcasts tab strip: fixed tabs, then one tab per playlist, then +.
+  const tab = (mode, label) => `<button class="watch-category-tab${musicTabMode === mode ? " is-active" : ""}" type="button" role="tab" aria-selected="${musicTabMode === mode}" data-music-mode="${escapeHtml(mode)}">${escapeHtml(label)}</button>`;
+  const pls = getMusicLibraryState().playlists;
+  const add = musicPlTabInputActive
+    ? `<form class="watch-category-new-form" id="musicPlInlineForm"><input class="watch-category-new-input" id="musicPlInlineInput" type="text" placeholder="Playlist name" autocomplete="off" maxlength="40" /></form>`
+    : `<button class="watch-category-tab watch-category-add-tab" type="button" id="musicPlAddBtn" title="New playlist" aria-label="New playlist">+</button>`;
+  return `<div class="watch-category-tabs" role="tablist" aria-label="Music">${tab("discover", "Discover")}${tab("saved", "Saved")}${tab("library", "Library")}${pls.map((p) => tab(`pl:${p.id}`, p.name)).join("")}${add}</div>`;
 }
 
+function musicBarActions() {
+  if (musicTabMode !== "library") return "";
+  const list = musicLibrary || [];
+  return `${list.length ? `<button class="podcast-tabs-action-btn" type="button" data-music-play-all title="Play all" aria-label="Play all">${MUSIC_PLAY_SVG}</button>` : ""}
+    <button class="podcast-tabs-action-btn${musicJellyfinEnabled() ? " is-on" : ""}" type="button" data-music-config title="Music server (Jellyfin)" aria-label="Connect a music server">${MUSIC_SERVER_SVG}</button>
+    <button class="icon-btn std-add-btn" type="button" data-music-import title="Import audio" aria-label="Import audio files">${MUSIC_PLUS_SVG}</button>`;
+}
+
+// The panel is a fixed shell — tab bar, search bar, body — so the search field
+// survives re-renders (playback state changes re-render often) and keeps focus
+// while typing; only the tab bar and the body are redrawn.
 function renderMusicPanel() {
   const panel = document.getElementById("mediaMusicPanel");
   if (!panel) return;
-  if (musicTabMode === "saved") {
-    panel.innerHTML = `
-      <div class="podcast-playlist-bar music-bar">${musicModeTabs()}<div class="podcast-tabs-actions">
-        <button class="podcast-tabs-action-btn" type="button" data-music-new-playlist title="New playlist" aria-label="New playlist">${MUSIC_PLUS_SVG}</button>
-      </div></div>
-      ${renderMusicSavedBody()}`;
-    return;
+  if (!panel.querySelector("#musicModeBody")) {
+    panel.innerHTML = `<div class="podcast-playlist-bar music-bar" id="musicBar"></div><div id="musicSearchWrap"></div><div id="musicModeBody" class="music-mode-body"></div>`;
   }
-  if (musicTabMode === "discover") {
-    panel.innerHTML = `
-      <div class="podcast-playlist-bar music-bar">${musicModeTabs()}<div class="podcast-tabs-actions"></div></div>
-      ${renderMusicDiscoverBody()}`;
-    const input = panel.querySelector("#musicSearchInput");
-    if (input && document.activeElement !== input) { input.value = musicSearchQuery; }
-    return;
+  // Don't redraw the tab strip under a half-typed playlist name (playback
+  // state changes re-render the panel while the field is open).
+  const typing = musicPlTabInputActive && panel.querySelector("#musicPlInlineInput");
+  if (!typing) panel.querySelector("#musicBar").innerHTML = `${musicModeTabs()}<div class="podcast-tabs-actions">${musicBarActions()}</div>`;
+  syncMusicSearchBar(panel);
+  updateMusicBody();
+  if (musicPlTabInputActive && !typing) panel.querySelector("#musicPlInlineInput")?.focus();
+}
+
+const musicActiveQuery = () => (musicTabMode === "discover" ? musicSearchQuery : musicLocalQuery);
+function musicSearchPlaceholder() {
+  if (musicTabMode === "discover") return musicAppleEnabled() ? "Artists, songs, albums, playlists" : "Composers, works, moods";
+  if (musicTabMode === "saved") return "Search your saved music";
+  if (musicTabMode === "library") return "Search your library";
+  return "Search this playlist";
+}
+function syncMusicSearchBar(panel) {
+  const wrap = panel.querySelector("#musicSearchWrap");
+  if (!wrap) return;
+  let input = wrap.querySelector("#musicSearchInput");
+  if (!input) {
+    wrap.innerHTML = `<div class="music-search-bar">
+        <svg class="music-search-ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input type="search" id="musicSearchInput" class="music-search-input" autocomplete="off" spellcheck="false" enterkeyhint="search">
+        <button type="button" class="music-search-clear" data-music-search-clear aria-label="Clear search" hidden>${MUSIC_X_SVG}</button>
+      </div>`;
+    input = wrap.querySelector("#musicSearchInput");
   }
-  const list = musicLibrary || [];
+  const ph = musicSearchPlaceholder();
+  input.placeholder = ph;
+  input.setAttribute("aria-label", ph);
+  if (document.activeElement !== input) input.value = musicActiveQuery();
+  wrap.querySelector("[data-music-search-clear]")?.toggleAttribute("hidden", !input.value);
+}
+function clearMusicSearch() {
+  const input = document.getElementById("musicSearchInput");
+  if (input) input.value = "";
+  document.querySelector("#mediaMusicPanel [data-music-search-clear]")?.setAttribute("hidden", "");
+  if (musicTabMode === "discover") { clearTimeout(musicSearchDebounce); doMusicSearch(""); }
+  else { musicLocalQuery = ""; updateMusicBody(); }
+}
+// Jump from a local tab (or a favourite work) to a catalog search in Discover.
+function searchAllMusic(q) {
+  const query = String(q || "").trim();
+  enterMusicMode("discover");
+  musicSearchQuery = query;
+  const input = document.getElementById("musicSearchInput");
+  if (input) input.value = query;
+  document.querySelector("#mediaMusicPanel [data-music-search-clear]")?.toggleAttribute("hidden", !query);
+  doMusicSearch(query);
+}
+
+// Redraw just the body for the current tab. Horizontal shelves keep their
+// scroll position across redraws (a play/pause re-render mustn't snap them back).
+function updateMusicBody() {
+  const body = document.getElementById("musicModeBody");
+  if (!body) return;
+  const scroll = [];
+  body.querySelectorAll("[data-shelf-key]").forEach((el) => { if (el.scrollLeft) scroll.push([el.dataset.shelfKey, el.scrollLeft]); });
+  body.innerHTML = musicModeBodyHtml();
+  for (const [k, left] of scroll) {
+    const el = [...body.querySelectorAll("[data-shelf-key]")].find((x) => x.dataset.shelfKey === k);
+    if (el) el.scrollLeft = left;
+  }
+}
+function musicModeBodyHtml() {
+  if (musicTabMode === "discover") return renderMusicDiscoverBody();
+  if (musicTabMode === "saved") return renderMusicSavedBody();
+  if (musicTabMode === "library") return renderMusicLibraryBody();
+  if (musicTabMode.startsWith("pl:")) return renderPlaylistView(musicTabMode.slice(3));
+  return "";
+}
+
+function renderMusicLibraryBody() {
+  const all = musicLibrary || [];
+  const list = filterTracks(all, musicLocalQuery);
   const groups = groupMusicByAlbum(list).map(musicAlbumGroup).join("");
-  panel.innerHTML = `
-    <div class="podcast-playlist-bar music-bar">
-      ${musicModeTabs()}
-      <div class="podcast-tabs-actions">
-        ${list.length ? `<button class="podcast-tabs-action-btn" type="button" data-music-play-all title="Play all" aria-label="Play all">${MUSIC_PLAY_SVG}</button>` : ""}
-        <button class="podcast-tabs-action-btn${musicJellyfinEnabled() ? " is-on" : ""}" type="button" data-music-config title="Music server (Jellyfin)" aria-label="Connect a music server">${MUSIC_SERVER_SVG}</button>
-        <button class="icon-btn std-add-btn" type="button" data-music-import title="Import audio" aria-label="Import audio files">${MUSIC_PLUS_SVG}</button>
-      </div>
-    </div>
+  return `
     ${musicJellyfinEnabled() ? `<div class="music-server-note" data-music-server-note>${escapeHtml(musicServerStatusText())}</div>` : ""}
     <input type="file" id="musicFileInput" accept="audio/*,.mp3,.m4a,.aac,.ogg,.oga,.opus,.wav,.flac" multiple hidden />
     <div class="music-body">
       ${musicImporting ? `<p class="music-status">Importing…</p>` : ""}
       ${list.length
         ? `<div class="music-albums">${groups}</div>`
-        : (musicImporting ? "" : `<div class="music-empty">
+        : all.length
+          ? `<p class="music-status">Nothing in your library matches “${escapeHtml(musicLocalQuery)}”.</p>${musicSearchAllRow(musicLocalQuery)}`
+          : (musicImporting ? "" : `<div class="music-empty">
             <div class="music-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
             <p class="music-empty-title">Your library is empty</p>
-            <p class="music-empty-sub">Import audio files from this device, or switch to <strong>Discover</strong> to stream free & open music.</p>
+            <p class="music-empty-sub">Import audio files from this device, or head to <strong>Discover</strong> to find something to play.</p>
             <button class="primary-btn" type="button" data-music-import>Import audio</button>
           </div>`)}
+    </div>`;
+}
+
+const MUSIC_SEARCH_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>`;
+function musicSearchAllRow(q) {
+  const query = String(q || "").trim();
+  if (!query) return "";
+  return `<div class="music-row music-search-all" data-music-search-all role="button" tabindex="0">
+      <span class="music-row-icon" aria-hidden="true">${MUSIC_SEARCH_SVG}</span>
+      <span class="music-row-main"><span class="music-row-title">Search all music for “${escapeHtml(query)}”</span></span>
+      <span class="music-result-go" aria-hidden="true">›</span>
     </div>`;
 }
 
@@ -31559,24 +31390,23 @@ async function saveJellyfinConfig(cfg) {
 // only use the local Library.
 async function getMusicProviders() {
   if (musicProviderRegistry) return musicProviderRegistry;
-  const [stream, ia, jam] = await Promise.all([
+  const [stream, ia] = await Promise.all([
     import("./music-streaming.js"),
     import("./music-provider-internetarchive.js"),
-    import("./music-provider-jamendo.js"),
   ]);
   musicStreamMod = stream;
-  const providers = [ia.createInternetArchiveProvider(), ia.createMusopenProvider()];
-  const jc = state.jamendo;
-  if (jc && jc.clientId) providers.push(jam.createJamendoProvider({ clientId: jc.clientId }));
-  // Apple Music is a playback-owning provider (config-selected — requirement #5).
-  // Registered when enabled; it self-gates via isAvailable() (returns false until
-  // the developer token is configured), so search/playback silently exclude it
-  // until then — the architecture never depends on it, exactly like Jamendo.
+  const providers = [];
+  // Apple Music is a playback-owning provider and, when enabled, the PRIMARY
+  // catalog (Discover renders it first; the free sources sit below). It self-
+  // gates via isAvailable() (false until the developer token is configured), so
+  // search/playback silently exclude it until then. Storefront: an explicit
+  // config wins, else the signed-in user's own (detected by the provider).
   const amCfg = state.appleMusic;
   if (amCfg && amCfg.enabled) {
     const am = await import("./music-provider-applemusic.js");
-    providers.push(am.createAppleMusicProvider({ storefront: amCfg.storefront || "us" }));
+    providers.push(am.createAppleMusicProvider({ storefront: amCfg.storefront || null }));
   }
+  providers.push(ia.createInternetArchiveProvider(), ia.createMusopenProvider());
   musicProviderRegistry = stream.createMusicProviderRegistry(providers);
   return musicProviderRegistry;
 }
@@ -31628,17 +31458,11 @@ function musicIsFav(type, entity) { return musicLibModelMod ? musicLibModelMod.i
 function musicToggleFav(type, entity) {
   if (!musicLibModelMod || !entity) return;
   saveMusicLibrary(musicLibModelMod.toggleFavorite(getMusicLibraryState(), type, entity));
-  if (musicTabMode === "saved") renderMusicPanel(); else updateDiscoverResults();
+  updateMusicBody();
 }
 
-const MUSIC_PROVIDER_LABELS = { internetarchive: "Internet Archive", musopen: "Musopen", jamendo: "Jamendo" };
-const MUSIC_CATEGORIES = [
-  { label: "Classical", q: "classical" }, { label: "Piano", q: "piano" },
-  { label: "Ambient", q: "ambient" }, { label: "Meditation", q: "meditation" },
-  { label: "Relaxation", q: "relaxation" }, { label: "Instrumental", q: "instrumental" },
-  { label: "Nature", q: "nature soundscape" },
-];
-
+const MUSIC_PROVIDER_LABELS = { applemusic: "Apple Music", internetarchive: "Internet Archive", musopen: "Musopen" };
+const musicAppleEnabled = () => !!(state.appleMusic && state.appleMusic.enabled);
 // A per-render lookup so DOM handlers resolve an item by id without embedding JSON.
 let musicViewIndex = new Map();
 const indexMusicItem = (it) => { if (it && it.id) musicViewIndex.set(it.id, it); return it; };
@@ -31705,7 +31529,7 @@ function replayMusicHistory(id) {
   if (!h) return;
   const r = h.ref || {};
   if (r.mkind === "recording" && r.recording) playCanonicalRecording(r.recording);
-  else if (r.mkind === "stream" && r.canonical) playStreamingTrack(r.canonical, []);
+  else if ((r.mkind === "stream" || r.mkind === "owned") && r.canonical) playStreamingTrack(r.canonical, []); // "owned" = Apple Music
   else playMusicTrackById(h.id);
 }
 
@@ -31783,7 +31607,7 @@ function musicWorkGroupHtml(group) {
 function musicStreamTrackRow(track) {
   indexMusicItem(track);
   const active = musicCurTrack && musicCurTrack.id === track.id;
-  const playing = active && musicAudio && !musicAudio.paused && !musicAudio.ended;
+  const playing = active && (musicPlaybackProvider ? !!(musicOwnedNP && musicOwnedNP.isPlaying) : (musicAudio && !musicAudio.paused && !musicAudio.ended));
   const dur = track.durationMs ? formatPodcastDuration(Math.round(track.durationMs / 1000)) : "";
   const no = track.trackNo != null ? `<span class="music-row-no">${track.trackNo}</span>` : `<span class="music-row-no music-row-no--dot">•</span>`;
   return `<div class="music-row${active ? " is-active" : ""}" data-stream-play="${escapeHtml(track.id)}" role="button" tabindex="0" aria-label="${escapeHtml(track.title)}">
@@ -31814,15 +31638,190 @@ function musicOpenItemHtml() {
   return head + `<div class="music-list">${tracks.map(musicStreamTrackRow).join("")}</div>`;
 }
 
+// ── Discover home (Apple Music / Spotify-style) ───────────────────────────────
+// Greeting → hero shelf (featured playlists) → "Jump back in" quick tiles (this
+// app's recents, any source) → the browse provider's shelves (for-you, recently
+// played, ranked top songs, top albums) → Browse categories. Without a browse-
+// capable catalog (no Apple Music) it's recents + the free-source categories.
 function musicDiscoverHomeHtml() {
-  const chips = MUSIC_CATEGORIES.map((c) => `<button class="music-chip" type="button" data-music-cat="${escapeHtml(c.q)}">${escapeHtml(c.label)}</button>`).join("");
-  const hist = getRecentMedia({ kind: "music", limit: 8 });
-  const histHtml = hist.length ? `<h4 class="music-section-h">Recently played</h4><div class="music-list">${hist.map(musicHistoryRow).join("")}</div>` : "";
-  return `<div class="music-discover-home">
-      <div class="music-chips">${chips}</div>
-      ${histHtml}
-      ${!hist.length ? `<p class="music-empty-sub music-discover-hint">Search for a composer, work, or mood — or tap a category above. One search across the Internet Archive and Musopen; results group under the Work, streamed from the source.</p>` : ""}
+  const full = musicAppleEnabled();
+  if (full) ensureAppleMusicHome();
+  const hist = getRecentMedia({ kind: "music", limit: 6 });
+  const jump = hist.length ? `<section class="md-sec"><h3 class="md-h">Jump back in</h3><div class="md-quick">${hist.map(musicQuickTile).join("")}</div></section>` : "";
+  const parts = full ? musicBrowseHomeParts() : { top: "", rest: "" };
+  const tiles = `<section class="md-sec"><h3 class="md-h">Browse categories</h3><div class="md-tiles">${categoriesFor({ fullCatalog: full }).map(musicCategoryTile).join("")}</div></section>`;
+  const hint = full ? "" : `<p class="music-empty-sub music-discover-hint">Streaming free &amp; open music from the Internet Archive and Musopen. Connect Apple Music in Settings → Apple Music for charts, new music and picks for you.</p>`;
+  return `<div class="md-home">
+      <h2 class="md-greeting">${escapeHtml(greetingFor())}</h2>
+      ${parts.top}${jump}${parts.rest}${tiles}${hint}
     </div>`;
+}
+
+function musicQuickTile(h) {
+  const art = h.artworkUrl
+    ? `<img class="md-quick-art" src="${escapeHtml(h.artworkUrl)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
+    : `<span class="md-quick-art music-thumb--ph" aria-hidden="true">${MUSIC_ALBUM_PH_SVG}</span>`;
+  return `<div class="md-quick-tile" data-music-replay="${escapeHtml(h.id)}" role="button" tabindex="0" title="${escapeHtml(h.title || "")}">${art}<span class="md-quick-title">${escapeHtml(h.title || "Untitled")}</span></div>`;
+}
+
+function musicCategoryTile(c) {
+  return `<button class="md-tile" type="button" data-music-browse="${escapeHtml(c.id)}" style="--tile-h:${Number(c.hue) || 0}"><span class="md-tile-label">${escapeHtml(c.label)}</span></button>`;
+}
+
+// A shelf of items. `style` (from the provider — music-streaming "Browse
+// contract") picks the layout: ranked song columns, large hero cards, or cards.
+function musicShelfHtml(shelf, scope) {
+  const key = `${scope}:${shelf.id}`;
+  const items = shelf.items || [];
+  musicShelfLists.set(key, items);
+  const h = `<h3 class="md-h">${escapeHtml(shelf.title)}</h3>`;
+  if (shelf.style === "ranked") {
+    return `<section class="md-sec">${h}<div class="md-ranked" data-shelf-key="${escapeHtml(key)}">${items.map((it, i) => musicRankedRow(it, i, key)).join("")}</div></section>`;
+  }
+  const hero = shelf.style === "hero";
+  return `<section class="md-sec">${h}<div class="music-shelf${hero ? " md-hero-shelf" : ""}" data-shelf-key="${escapeHtml(key)}">${items.map(hero ? musicHeroCard : musicShelfCard).join("")}</div></section>`;
+}
+
+const musicItemKindLabel = (item) => (item.entity === "track" ? "Song" : item.kind === "playlist" ? "Playlist" : item.kind === "artist" ? "Artist" : "Album");
+function musicHeroCard(item) {
+  indexMusicItem(item);
+  const sub = item.entity === "track" ? (item.artists?.[0]?.name || "") : (item.artist || "");
+  return `<div class="md-hero" data-music-open="${escapeHtml(item.id)}" role="button" tabindex="0" title="${escapeHtml(item.title)}">
+      <span class="md-hero-kicker">${escapeHtml(musicItemKindLabel(item))}</span>
+      <span class="md-hero-title">${escapeHtml(item.title)}</span>
+      <span class="md-hero-sub">${escapeHtml(sub)}</span>
+      ${item.artworkUrl ? `<img class="md-hero-art" src="${escapeHtml(item.artworkUrl)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : `<span class="md-hero-art music-thumb--ph" aria-hidden="true">${MUSIC_ALBUM_PH_SVG}</span>`}
+    </div>`;
+}
+
+function musicRankedRow(item, i, key) {
+  indexMusicItem(item);
+  const isTrack = item.entity === "track";
+  const active = isTrack && musicCurTrack && musicCurTrack.id === item.id;
+  const playing = active && (musicPlaybackProvider ? !!(musicOwnedNP && musicOwnedNP.isPlaying) : (musicAudio && !musicAudio.paused && !musicAudio.ended));
+  const sub = isTrack ? (item.artists?.[0]?.name || "") : (item.artist || "");
+  const act = isTrack ? `data-shelf-track="${escapeHtml(key)}" data-track-id="${escapeHtml(item.id)}"` : `data-music-open="${escapeHtml(item.id)}"`;
+  return `<div class="md-rank-row${active ? " is-active" : ""}" ${act} role="button" tabindex="0" aria-label="${escapeHtml(item.title)}">
+      ${musicThumb(item.artworkUrl, "music-thumb--sm")}
+      <span class="md-rank-no" aria-hidden="true">${active ? (playing ? MUSIC_PAUSE_SVG : MUSIC_PLAY_SVG) : i + 1}</span>
+      <span class="md-rank-main"><span class="md-rank-title">${escapeHtml(item.title)}</span>${sub ? `<span class="md-rank-sub">${escapeHtml(sub)}</span>` : ""}</span>
+      ${isTrack ? musicAddBtn(item.id) + musicFavBtn("recording", canonicalRecordingFromView(item.id)) : ""}
+    </div>`;
+}
+
+// ── Browse categories (Discover → a category page) ─────────────────────────────
+// The first available BROWSE-capable provider (Apple Music today) supplies the
+// shelves; a provider swap needs no change here. Loaded on tap, cached in memory
+// for APPLE_HOME_TTL_MS — never polled. A failed load isn't cached.
+async function musicBrowseProvider() {
+  const reg = await getMusicProviders();
+  for (const p of reg.withCapability(musicStreamMod.CAP.BROWSE)) {
+    if (typeof p.getBrowseCategory !== "function") continue;
+    try { if (!p.isAvailable || await p.isAvailable()) return p; } catch { /* try the next */ }
+  }
+  return null;
+}
+async function openMusicCategory(id) {
+  const cat = categoryById(id);
+  if (!cat) return;
+  let p = null;
+  try { p = await musicBrowseProvider(); } catch { p = null; }
+  if (!p) { searchAllMusic(cat.query); return; } // free sources: a category is a search
+  musicDiscoverCategory = id;
+  musicOpenItem = null;
+  updateMusicBody();
+  document.getElementById("mediaMusicPanel")?.scrollIntoView({ block: "start", behavior: "smooth" });
+  const c = musicCategoryCache.get(id);
+  if (c && (c.loading || (!c.error && Date.now() - c.at < APPLE_HOME_TTL_MS))) return;
+  musicCategoryCache.set(id, { loading: true, shelves: [], at: Date.now() });
+  try {
+    let genres = null;
+    if (typeof p.getGenres === "function") { try { genres = await p.getGenres(); } catch { genres = null; } }
+    const shelves = await p.getBrowseCategory({ label: cat.label, query: cat.query, genreId: resolveGenreId(cat, genres) }, { perShelf: 15 });
+    musicCategoryCache.set(id, { shelves: shelves || [], at: Date.now() });
+  } catch (e) {
+    console.warn("music category load failed", e);
+    musicCategoryCache.set(id, { shelves: [], at: Date.now(), error: true });
+  } finally {
+    if (musicTabMode === "discover" && musicDiscoverCategory === id) updateMusicBody();
+  }
+}
+function musicCategoryPageHtml() {
+  const cat = categoryById(musicDiscoverCategory);
+  if (!cat) { musicDiscoverCategory = null; return musicDiscoverHomeHtml(); }
+  const c = musicCategoryCache.get(cat.id);
+  const banner = `<div class="md-cat-banner" style="--tile-h:${Number(cat.hue) || 0}">
+      <button class="md-cat-back" type="button" data-music-cat-back aria-label="Back to Discover"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <h2 class="md-cat-title">${escapeHtml(cat.label)}</h2>
+    </div>`;
+  let body;
+  if (!c || c.loading) body = `<p class="music-status">Loading ${escapeHtml(cat.label)}…</p>`;
+  else if (c.error) body = `<p class="music-status">Couldn’t load ${escapeHtml(cat.label)} right now.</p><div class="md-retry"><button class="secondary-btn" type="button" data-music-browse="${escapeHtml(cat.id)}">Try again</button></div>`;
+  else if (!c.shelves.length) body = `<p class="music-status">Nothing here yet.</p>${musicSearchAllRow(cat.query)}`;
+  else body = c.shelves.map((sh) => musicShelfHtml(sh, `cat-${cat.id}`)).join("");
+  return `<div class="md-cat">${banner}${body}</div>`;
+}
+
+// ── Apple Music Discover home (recommendations / recently played / charts) ─────
+// Loaded once per session on first Discover-home view and kept in memory for
+// APPLE_HOME_TTL_MS — a handful of Apple API calls, never a polling loop.
+const APPLE_HOME_TTL_MS = 30 * 60 * 1000;
+let musicAppleHome = null;        // { shelves[], authorized, at, error? } | null
+let musicAppleHomeLoading = false;
+let musicFreeSourcesOpen = false; // remembered open state of the "Free & open sources" section
+function resetAppleMusicHome() { musicAppleHome = null; }
+async function ensureAppleMusicHome() {
+  if (musicAppleHomeLoading) return;
+  if (musicAppleHome && Date.now() - musicAppleHome.at < APPLE_HOME_TTL_MS) return;
+  musicAppleHomeLoading = true;
+  try {
+    const reg = await getMusicProviders();
+    const p = reg.get("applemusic");
+    if (!p || !(await p.isAvailable())) { musicAppleHome = { shelves: [], authorized: false, at: Date.now(), error: "unavailable" }; return; }
+    const auth = await p.getAuthStatus();
+    const shelves = await p.getHome({ perShelf: 12 });
+    musicAppleHome = { shelves, authorized: !!auth.authorized, at: Date.now() };
+  } catch (e) {
+    console.warn("apple music home failed", e);
+    musicAppleHome = { shelves: [], authorized: false, at: Date.now(), error: "failed" };
+  } finally {
+    musicAppleHomeLoading = false;
+    if (musicTabMode === "discover" && !musicSearchResults && !musicOpenItem && !musicSearchLoading) updateDiscoverResults();
+  }
+}
+function musicShelfCard(item) {
+  indexMusicItem(item);
+  const sub = item.entity === "track" ? (item.artists?.[0]?.name || "") : (item.artist || "");
+  const round = item.kind === "artist" ? " md-card-art--round" : "";
+  return `<div class="music-card" data-music-open="${escapeHtml(item.id)}" role="button" tabindex="0" title="${escapeHtml(item.title)}">
+      ${item.artworkUrl ? `<img class="music-card-art${round}" src="${escapeHtml(item.artworkUrl)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : `<span class="music-card-art music-thumb--ph${round}" aria-hidden="true">${MUSIC_ALBUM_PH_SVG}</span>`}
+      <span class="music-card-title">${escapeHtml(item.title)}</span>
+      ${sub ? `<span class="music-card-sub">${escapeHtml(sub)}</span>` : ""}
+    </div>`;
+}
+// Home shelves split so the hero shelf leads the page and the rest follow
+// "Jump back in".
+function musicBrowseHomeParts() {
+  const h = musicAppleHome;
+  if (!h) return { top: `<p class="music-status">Loading Apple Music…</p>`, rest: "" };
+  if (h.error === "unavailable") return { top: `<p class="music-provider-note">Apple Music isn’t reachable — check Settings → Apple Music.</p>`, rest: "" };
+  const signIn = !h.authorized
+    ? `<div class="music-am-signin"><span>Sign in to Apple Music for full-length playback and picks for you.</span><button class="secondary-btn" type="button" data-music-am-signin>Sign in</button></div>`
+    : "";
+  const shelves = h.shelves || [];
+  const hero = shelves.filter((sh) => sh.style === "hero").map((sh) => musicShelfHtml(sh, "home")).join("");
+  const rest = shelves.filter((sh) => sh.style !== "hero").map((sh) => musicShelfHtml(sh, "home")).join("");
+  return { top: signIn + hero, rest };
+}
+async function signInAppleMusicFromDiscover() {
+  try {
+    const reg = await getMusicProviders();
+    const p = reg.get("applemusic");
+    if (!p) return;
+    await p.authorize();
+  } catch (e) { alert("Apple Music sign-in failed: " + (e?.message || e)); }
+  resetAppleMusicHome();
+  updateDiscoverResults();
 }
 function musicHistoryRow(h) {
   return `<div class="music-row" data-music-replay="${escapeHtml(h.id)}" role="button" tabindex="0">
@@ -31833,6 +31832,7 @@ function musicHistoryRow(h) {
 
 function discoverResultsHtml() {
   musicViewIndex = new Map();
+  musicShelfLists = new Map();
   if (musicOpenItem) return musicOpenItemHtml();
   if (musicSearchLoading) return `<p class="music-status">Searching…</p>`;
   if (musicSearchResults) {
@@ -31840,32 +31840,63 @@ function discoverResultsHtml() {
     const failed = (providerStatuses || []).filter((s) => !s.ok);
     const note = failed.length ? `<p class="music-provider-note">${failed.map((s) => escapeHtml(MUSIC_PROVIDER_LABELS[s.provider] || s.provider)).join(", ")} unavailable — showing the rest.</p>` : "";
     if (!items.length) return note + `<p class="music-status">No results for “${escapeHtml(musicSearchQuery)}”.</p>`;
-    // Consolidate provider hits under canonical Works; ungroupable items stay loose.
-    if (musicCanonMod) {
-      const { groups, loose } = musicCanonMod.consolidateSearchResults(items);
-      const g = groups.map(musicWorkGroupHtml).join("");
-      const l = loose.length ? `<div class="music-results">${loose.map(musicResultRow).join("")}</div>` : "";
-      return note + g + l;
-    }
-    return note + `<div class="music-results">${items.map(musicResultRow).join("")}</div>`;
+    // Apple Music is the primary catalog when connected: its results lead, and the
+    // free/open sources follow in a collapsible section. Without Apple, the free
+    // sources render exactly as before.
+    const apple = items.filter((i) => i.provider === "applemusic");
+    const free = items.filter((i) => i.provider !== "applemusic");
+    if (!apple.length) return note + musicConsolidatedHtml(free);
+    const freeHtml = free.length
+      ? `<details class="music-free-sources"${musicFreeSourcesOpen ? " open" : ""}><summary class="music-section-h">Free &amp; open sources (${free.length})</summary>${musicConsolidatedHtml(free)}</details>`
+      : "";
+    return note + musicAppleResultsHtml(apple) + freeHtml;
   }
-  return musicDiscoverHomeHtml();
+  return musicDiscoverCategory ? musicCategoryPageHtml() : musicDiscoverHomeHtml();
 }
 
-function renderMusicDiscoverBody() {
-  return `<div class="music-discover">
-      <div class="music-search-bar">
-        <svg class="music-search-ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input type="search" id="musicSearchInput" class="music-search-input" placeholder="Search composers, works, moods…" autocomplete="off" spellcheck="false" value="${escapeHtml(musicSearchQuery)}">
-      </div>
-      <div id="musicDiscoverResults" class="music-discover-results">${discoverResultsHtml()}</div>
+// Provider hits consolidated under canonical Works; ungroupable items stay loose.
+function musicConsolidatedHtml(items) {
+  if (musicCanonMod) {
+    const { groups, loose } = musicCanonMod.consolidateSearchResults(items);
+    const g = groups.map(musicWorkGroupHtml).join("");
+    const l = loose.length ? `<div class="music-results">${loose.map(musicResultRow).join("")}</div>` : "";
+    return g + l;
+  }
+  return `<div class="music-results">${items.map(musicResultRow).join("")}</div>`;
+}
+
+// Apple results in Apple-Music-like sections. Classical songs Apple tags with a
+// work (composer/work/movement) group under the Work first; the rest split into
+// Songs / Albums / Artists / Playlists, each capped so the page stays scannable.
+function musicAppleResultsHtml(items) {
+  let works = "", rest = items;
+  if (musicCanonMod) {
+    const { groups } = musicCanonMod.consolidateSearchResults(items.filter((i) => i.entity === "track" && i.work));
+    works = groups.map(musicWorkGroupHtml).join("");
+    const grouped = new Set(groups.flatMap((g) => g.items.map((i) => i.id)));
+    rest = items.filter((i) => !grouped.has(i.id));
+  }
+  const section = (title, list, cap) => list.length
+    ? `<h4 class="music-section-h">${title}</h4><div class="music-results">${list.slice(0, cap).map(musicResultRow).join("")}</div>`
+    : "";
+  const of = (kind) => rest.filter((i) => i.entity === "album" && (i.kind || "album") === kind);
+  return `<div class="music-apple-results">
+      ${section("Songs", rest.filter((i) => i.entity === "track"), 10)}
+      ${works ? `<h4 class="music-section-h">Works</h4>${works}` : ""}
+      ${section("Albums", of("album"), 10)}
+      ${section("Artists", of("artist"), 5)}
+      ${section("Playlists", of("playlist"), 8)}
     </div>`;
 }
 
+function renderMusicDiscoverBody() {
+  return `<div class="music-discover"><div id="musicDiscoverResults" class="music-discover-results">${discoverResultsHtml()}</div></div>`;
+}
+
+// Discover's async loads (search, item expand, home shelves) redraw the body —
+// only while Discover is the visible tab.
 function updateDiscoverResults() {
-  const el = document.getElementById("musicDiscoverResults");
-  if (el) el.innerHTML = discoverResultsHtml();
-  else if (musicTabMode === "discover") renderMusicPanel();
+  if (musicTabMode === "discover") updateMusicBody();
 }
 
 // ── Saved (personal library: favourites + playlists + recently played) ─────────
@@ -31885,26 +31916,28 @@ function musicRecordingRow(recording, opts = {}) {
     </div>`;
 }
 
+const MUSIC_PLAYLIST_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.2"/><circle cx="3.5" cy="12" r="1.2"/><circle cx="3.5" cy="18" r="1.2"/></svg>`;
+
 function renderMusicSavedBody() {
   if (!musicLibModelMod) return `<div class="music-body"><p class="music-status">Loading…</p></div>`;
-  if (musicOpenPlaylistId) return renderPlaylistView(musicOpenPlaylistId);
   musicViewIndex = new Map();
   const lib = getMusicLibraryState();
-  const works = lib.favorites.filter((f) => f.type === "work");
-  const recs = lib.favorites.filter((f) => f.type === "recording" || f.type === "album");
-  const hist = getRecentMedia({ kind: "music", limit: 10 });
-  const pls = lib.playlists;
+  const f = filterSavedLibrary(lib, musicLocalQuery);
+  const works = f.favorites.filter((x) => x.type === "work");
+  const recs = f.favorites.filter((x) => x.type === "recording" || x.type === "album");
+  const hist = f.active ? [] : getRecentMedia({ kind: "music", limit: 10 });
+  const pls = f.playlists;
 
-  const plHtml = `<div class="music-saved-sec"><h4 class="music-section-h">Playlists</h4>${pls.length
+  const plHtml = pls.length || !f.active ? `<div class="music-saved-sec"><h4 class="music-section-h">Playlists</h4>${pls.length
     ? `<div class="music-list">${pls.map((p) => `<div class="music-row" data-open-playlist="${escapeHtml(p.id)}" role="button" tabindex="0">
-          <span class="music-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.2"/><circle cx="3.5" cy="12" r="1.2"/><circle cx="3.5" cy="18" r="1.2"/></svg></span>
+          <span class="music-row-icon" aria-hidden="true">${MUSIC_PLAYLIST_SVG}</span>
           <span class="music-row-main"><span class="music-row-title">${escapeHtml(p.name)}</span><span class="music-row-sub">${p.items.length} track${p.items.length === 1 ? "" : "s"}</span></span>
           <span class="music-result-go" aria-hidden="true">›</span>
         </div>`).join("")}</div>`
-    : `<p class="music-empty-sub" style="padding:6px 14px">No playlists yet — use + above, or add a recording from Discover.</p>`}</div>`;
+    : `<p class="music-empty-sub" style="padding:6px 14px">No playlists yet — tap + in the tabs above, or add a song from Discover.</p>`}</div>` : "";
 
-  const worksHtml = works.length ? `<div class="music-saved-sec"><h4 class="music-section-h">Favourite works</h4><div class="music-list">${works.map((f) => {
-    const w = f.entity; indexMusicItem(w);
+  const worksHtml = works.length ? `<div class="music-saved-sec"><h4 class="music-section-h">Favourite works</h4><div class="music-list">${works.map((fw) => {
+    const w = fw.entity; indexMusicItem(w);
     const q = [w.composer, w.catalog || w.title].filter(Boolean).join(" ");
     return `<div class="music-row" data-work-search="${escapeHtml(q)}" role="button" tabindex="0">
         <span class="music-row-icon" aria-hidden="true">${MUSIC_ALBUM_PH_SVG}</span>
@@ -31913,24 +31946,45 @@ function renderMusicSavedBody() {
       </div>`;
   }).join("")}</div></div>` : "";
 
-  const recsHtml = recs.length ? `<div class="music-saved-sec"><h4 class="music-section-h">Favourite recordings</h4><div class="music-list">${recs.map((f) => musicRecordingRow(f.entity)).join("")}</div></div>` : "";
+  const recsHtml = recs.length ? `<div class="music-saved-sec"><h4 class="music-section-h">Favourite recordings</h4><div class="music-list">${recs.map((fr) => musicRecordingRow(fr.entity)).join("")}</div></div>` : "";
   const histHtml = hist.length ? `<div class="music-saved-sec"><h4 class="music-section-h">Recently played</h4><div class="music-list">${hist.map(musicHistoryRow).join("")}</div></div>` : "";
 
+  // Portability: the library itself stays in synced app state (provider-
+  // independent canonical entries — music-library-model.js); CSV is the backup /
+  // move-it-elsewhere format (music-portable.js).
+  const portable = f.active ? "" : `<div class="music-saved-sec music-portable">
+      <h4 class="music-section-h">Back up &amp; move your music</h4>
+      <p class="music-empty-sub">Export your favourites and playlists as a CSV — a spreadsheet-friendly backup you can import here again or take to another music service. Import also accepts playlist CSVs from other apps (e.g. an Exportify export from Spotify).</p>
+      <div class="music-portable-actions">
+        <button class="secondary-btn" type="button" data-music-csv-export>Export CSV</button>
+        <button class="secondary-btn" type="button" data-music-csv-import>Import CSV</button>
+      </div>
+      <input type="file" id="musicCsvInput" accept=".csv,text/csv" hidden>
+    </div>`;
+
+  if (f.active) {
+    const any = pls.length || works.length || recs.length;
+    return `<div class="music-saved">${any ? "" : `<p class="music-status">Nothing saved matches “${escapeHtml(musicLocalQuery)}”.</p>`}${plHtml}${worksHtml}${recsHtml}${musicSearchAllRow(musicLocalQuery)}</div>`;
+  }
   const empty = !pls.length && !works.length && !recs.length && !hist.length;
   return `<div class="music-saved">
       ${empty ? `<div class="music-empty"><div class="music-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
         <p class="music-empty-title">Your saved music lives here</p>
-        <p class="music-empty-sub">Favourite works & recordings and build playlists from <strong>Discover</strong> — they stay yours even if a provider changes.</p></div>`
+        <p class="music-empty-sub">Favourite songs, albums &amp; works and build playlists from <strong>Discover</strong> — they stay yours even if you change music providers.</p></div>`
     : plHtml + worksHtml + recsHtml + histHtml}
+      ${portable}
     </div>`;
 }
 
+// A playlist's own tab. The search bar filters its entries in place (reorder
+// controls hide while filtered, since positions would be ambiguous).
 function renderPlaylistView(id) {
   musicViewIndex = new Map();
+  if (!musicLibModelMod) return `<div class="music-body"><p class="music-status">Loading…</p></div>`;
   const p = musicLibModelMod.getPlaylist(getMusicLibraryState(), id);
-  if (!p) { musicOpenPlaylistId = null; return renderMusicSavedBody(); }
-  const head = `<div class="music-item-head">
-      <button class="music-back-btn" type="button" data-playlist-back aria-label="Back"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></button>
+  if (!p) return `<p class="music-status">This playlist no longer exists.</p>`;
+  const head = `<div class="music-item-head music-pl-head">
+      <span class="music-pl-art" aria-hidden="true">${MUSIC_PLAYLIST_SVG}</span>
       <span class="music-item-meta"><span class="music-item-title">${escapeHtml(p.name)}</span><span class="music-item-artist">${p.items.length} track${p.items.length === 1 ? "" : "s"}</span></span>
       <span class="music-item-badges">
         ${p.items.length ? `<button class="music-chip" type="button" data-playlist-play="${escapeHtml(p.id)}">▶ Play</button><button class="music-chip" type="button" data-playlist-shuffle="${escapeHtml(p.id)}">⇄ Shuffle</button>` : ""}
@@ -31938,13 +31992,48 @@ function renderPlaylistView(id) {
         <button class="music-chip" type="button" data-playlist-delete="${escapeHtml(p.id)}">Delete</button>
       </span>
     </div>`;
-  if (!p.items.length) return head + `<p class="music-status">Empty playlist. Add recordings from Discover with the + button.</p>`;
-  const rows = p.items.map((r, i) => `<div class="music-pl-item">${musicRecordingRow(r, { playlistId: p.id, index: i })}
-      <span class="music-pl-move">
+  if (!p.items.length) return head + `<p class="music-status">Empty playlist. Add songs from Discover with the + button.</p>`;
+  const q = musicLocalQuery.trim();
+  const shown = p.items.map((r, i) => [r, i]).filter(([r]) => !q || textMatches(entityText(r), q));
+  if (!shown.length) return head + `<p class="music-status">Nothing in this playlist matches “${escapeHtml(q)}”.</p>${musicSearchAllRow(q)}`;
+  const rows = shown.map(([r, i]) => `<div class="music-pl-item">${musicRecordingRow(r, { playlistId: p.id, index: i })}
+      ${q ? "" : `<span class="music-pl-move">
         <button type="button" data-pl-move="${escapeHtml(p.id)}:${i}:up" aria-label="Move up" ${i === 0 ? "disabled" : ""}>▲</button>
         <button type="button" data-pl-move="${escapeHtml(p.id)}:${i}:down" aria-label="Move down" ${i === p.items.length - 1 ? "disabled" : ""}>▼</button>
-      </span></div>`).join("");
-  return head + `<div class="music-list">${rows}</div>`;
+      </span>`}</div>`).join("");
+  return head + `<div class="music-list">${rows}</div>${q ? musicSearchAllRow(q) : ""}`;
+}
+
+// ── Library portability: CSV export / import (music-portable.js) ───────────────
+async function exportMusicLibraryCsv() {
+  try {
+    const mod = await import("./music-portable.js");
+    const csv = mod.libraryToCsv(getMusicLibraryState());
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = `music-library-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) { console.warn("music CSV export failed", e); alert("Couldn't export your music library."); }
+}
+async function importMusicLibraryCsv(file) {
+  try {
+    const [mod] = await Promise.all([import("./music-portable.js"), getMusicCanon()]);
+    const text = await file.text();
+    // Work on a copy: nothing touches state unless the import succeeds.
+    const { library, stats } = mod.importCsvIntoLibrary(structuredClone(getMusicLibraryState()), text, { fileName: file.name });
+    if (!stats.favorites && !stats.items && !stats.playlists) {
+      alert(stats.skipped ? "No songs recognised in that file. It needs at least a title (or ISRC) column." : "Nothing new — everything in that file is already in your library.");
+      return;
+    }
+    saveMusicLibrary(library);
+    renderMusicPanel();
+    const bits = [];
+    if (stats.items) bits.push(`${stats.items} song${stats.items === 1 ? "" : "s"}`);
+    if (stats.playlists) bits.push(`${stats.playlists} new playlist${stats.playlists === 1 ? "" : "s"}`);
+    if (stats.favorites) bits.push(`${stats.favorites} favourite${stats.favorites === 1 ? "" : "s"}`);
+    showVoiceToast(`Imported ${bits.join(", ")}.`);
+  } catch (e) { console.warn("music CSV import failed", e); alert("Couldn't read that CSV file."); }
 }
 
 // ── Resolver-backed playback + provider fallback ──────────────────────────────
@@ -31959,6 +32048,25 @@ async function startRecordingResolved(recording, { queueMode = false } = {}) {
   catch { return false; }
   let res = await resolver.resolvePlayableSource(recording, { registry: reg, allowAlternate: false });
   if (res.status !== "exact") res = await resolver.resolvePlayableSource(recording, { registry: reg, allowAlternate: true });
+  // Found the same song on a provider this recording had no ref for (e.g. after
+  // switching players): remember it on the saved entry so next time is direct.
+  // Appended, so the favourite key (first ref) never changes.
+  if (res.learnedRef && Array.isArray(recording.providerRefs) && !recording.providerRefs.some((r) => r.provider === res.learnedRef.provider && r.externalId === res.learnedRef.externalId)) {
+    recording.providerRefs.push({ ...res.learnedRef });
+    persist();
+  }
+  if (res.status === "exact" && res.source && res.source.owned) {
+    // Apple Music (owns its transport): play the saved recording by its catalog id.
+    const prov = reg.get(res.source.provider);
+    if (!prov) return false;
+    const canonical = {
+      id: `${res.source.provider}:${res.source.externalId}`, title: recording.title || recording.workTitle || "Recording",
+      artists: recording.performers || [], composer: recording.composer ? { name: recording.composer } : null,
+      album: recording.album || null, artworkUrl: recording.artworkUrl || null, provider: res.source.provider,
+      providerRefs: [res.providerRef],
+    };
+    return await startOwnedMusicTrack(canonical, prov);
+  }
   if (res.status === "exact") { playRecordingDescriptor(recording, res.source); return true; }
   if (res.status === "alternate") {
     if (queueMode) return false;            // in a queue, skip rather than interrupt with a prompt
@@ -32016,12 +32124,14 @@ function openAddToPlaylistMenu(recording) {
   ov.querySelector("[data-add-cancel]").addEventListener("click", close);
   ov.querySelectorAll("[data-add-to]").forEach((b) => b.addEventListener("click", () => {
     saveMusicLibrary(musicLibModelMod.addToPlaylist(getMusicLibraryState(), b.dataset.addTo, recording));
+    if (musicTabMode === `pl:${b.dataset.addTo}` || musicTabMode === "saved") updateMusicBody();
     showVoiceToast("Added to playlist"); close();
   }));
   ov.querySelector("[data-add-new]").addEventListener("click", () => {
     const name = prompt("Playlist name", "New playlist"); if (name == null) return;
     const { library, playlist } = musicLibModelMod.createPlaylist(getMusicLibraryState(), name);
     saveMusicLibrary(musicLibModelMod.addToPlaylist(library, playlist.id, recording));
+    if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel(); // the new playlist's tab
     showVoiceToast("Added to new playlist"); close();
   });
   document.body.appendChild(ov);
@@ -32381,12 +32491,11 @@ function initRadioPanel() {
   if (!radioCatalog) ensureRadioCatalog().then(() => { if (activeMediaTab === "radio") renderRadioPanel(); }).catch((err) => console.warn("radio catalog load failed", err));
 }
 
-function createNewMusicPlaylist() {
-  if (!musicLibModelMod) { getMusicCanon().then(createNewMusicPlaylist); return; }
-  const name = prompt("Playlist name", "New playlist"); if (name == null) return;
+function createMusicPlaylistNamed(name) {
+  if (!musicLibModelMod) { getMusicCanon().then(() => createMusicPlaylistNamed(name)); return; }
   const { library, playlist } = musicLibModelMod.createPlaylist(getMusicLibraryState(), name);
   saveMusicLibrary(library);
-  musicOpenPlaylistId = playlist.id; renderMusicPanel();
+  enterMusicMode(`pl:${playlist.id}`);
 }
 function renameMusicPlaylist(id) {
   const p = musicLibModelMod && musicLibModelMod.getPlaylist(getMusicLibraryState(), id); if (!p) return;
@@ -32397,7 +32506,7 @@ function deleteMusicPlaylist(id) {
   const p = musicLibModelMod && musicLibModelMod.getPlaylist(getMusicLibraryState(), id); if (!p) return;
   if (!confirm(`Delete playlist “${p.name}”?`)) return;
   saveMusicLibrary(musicLibModelMod.deletePlaylist(getMusicLibraryState(), id));
-  musicOpenPlaylistId = null; renderMusicPanel();
+  if (musicTabMode === `pl:${id}`) enterMusicMode("saved"); else renderMusicPanel();
 }
 
 // ── Unified now-playing bar (podcasts + article/email TTS + music) ────────────
@@ -32414,6 +32523,7 @@ function activeMediaKey() {
   if (k === "podcast") return podcastCurEpisode ? `podcast:${podcastCurEpisode.id}` : null;
   if (k === "music") return musicCurTrack ? `music:${musicCurTrack.id}` : null;
   if (k === "tts") return listenArticle ? `article:${listenArticle.id}` : null;
+  if (k === "nativeAudio") return listenSpeechSynth?.currentId ? `podcast:${listenSpeechSynth.currentId}` : null;
   if (k === "radio") return radioCurStation ? `radio:${radioCurStation.id || radioCurStation.name || ""}` : null;
   return null;
 }
@@ -32464,7 +32574,7 @@ function nowPlayingToggle() { const k = nowPlayingKind(); MEDIA_KINDS[k]?.toggle
 function nowPlayingSkip(sec) { const k = nowPlayingKind(); MEDIA_KINDS[k]?.skip?.(sec); } // radio's skip is a no-op (live)
 // Is prev/next-episode navigation meaningful for what's playing? Only the
 // queue-based kinds (podcasts + article TTS) run off the shared listen list.
-function nowPlayingHasEpisodeNav() { const k = nowPlayingKind(); return k === "podcast" || k === "tts"; }
+function nowPlayingHasEpisodeNav() { const k = nowPlayingKind(); return k === "podcast" || k === "tts" || k === "nativeAudio"; }
 // Step to the previous (dir=-1) or next (dir=+1) playable item in the listen
 // playlist. Uses the natural (un-hoisted) order so both directions are stable,
 // then hands off to playAllQueueFrom so the queue's advance state stays correct.
@@ -32485,6 +32595,12 @@ function nowPlayingSeekFraction(f) {
   if (musicPlaybackProvider) { // Apple Music owns the transport
     const dur = musicOwnedNP && musicOwnedNP.durationMs;
     if (dur) musicPlaybackProvider.seek(Math.max(0, Math.min(1, f)) * dur);
+    return;
+  }
+  if (nowPlayingKind() === "nativeAudio") { // the plugin's AVPlayer owns the transport
+    const total = listenSpeechSynth?.audioDur || 0;
+    const tts = nativeTts();
+    if (tts && total) tts.seekTo({ position: Math.max(0, Math.min(1, f)) * total }).catch(() => {});
     return;
   }
   // Logical seek through the engine (crosses chunk boundaries for multi-segment
@@ -33472,6 +33588,7 @@ function recordArticleHistory(article) {
     date: new Date().toISOString(),
   });
   if (state.articleHistory.length > ARTICLE_HISTORY_CAP) state.articleHistory.length = ARTICLE_HISTORY_CAP;
+  historyLog.record(historyRowFromArticle(state.articleHistory[0]));
 }
 
 // Best-effort, fire-and-forget trigger for the server-side Storage sweep
@@ -34841,6 +34958,11 @@ function buildTtsSource(article, urls) {
 
 function setListenMediaSession(article) {
   if (!("mediaSession" in navigator) || !article) return;
+  // Native (AVSpeechSynthesizer) voice: LiveTtsPlugin owns the lock screen and
+  // AirPod controls through MPRemoteCommandCenter. The web handlers below would
+  // compete for the same commands and drive the <audio> engine, which isn't
+  // playing anything (and whose JS is suspended while the phone is locked).
+  if (listenSpeechSynth && listenSpeechSynth.native) { clearWebMediaSession(); return; }
   navigator.mediaSession.metadata = new MediaMetadata({
     title: article.title || "Article",
     artist: article.author || article.publication || "Live",
@@ -34913,6 +35035,7 @@ function pickSystemVoice() {
 
 function systemVoiceElapsedSec() {
   const s = listenSpeechSynth; if (!s) return 0;
+  if (s.native && s.kind === "audio") return s.audioPos || 0; // plugin reports seconds
   // Native reports an absolute char location; the web chunk path sums chunks.
   const chars = s.native ? (s.charIndex || 0) : (s.charsBefore + (s.charIndex || 0));
   return Math.round(chars / (15 * (s.rate || 1)));
@@ -34984,6 +35107,85 @@ function wordIndexAtCharOffset(text, charOffset) {
   return Math.max(0, idx);
 }
 
+// A native (LiveTtsPlugin) playback session: the plugin plays a queue of
+// items — "speech" (an article read by the Apple voice) or "audio" (a podcast
+// episode on AVPlayer) — and advances through it by itself, even while the
+// page's JS is suspended. `kind`/`currentId` track the item playing now.
+function newNativeSession(fields) {
+  return {
+    genId: listenGenId, native: true, kind: "speech", currentId: null,
+    article: null, prepared: null, charsTotal: 0, charIndex: 0,
+    episode: null, show: null, audioPos: 0, audioDur: 0,
+    rate: mediaPlaybackSpeed || 1, paused: false, subs: [],
+    listTab: activeMediaTab, upcomingPrepared: new Map(), upcomingToken: 0,
+    ...fields,
+  };
+}
+
+// Subscribe a session to the plugin's events (removed by teardownSystemVoice).
+async function wireNativeSession(tts, session) {
+  // JS-side advance, used only when the plugin had nothing queued. Mirrors the
+  // engine path (onListenArticleFinished): the All queue first, else the list.
+  const advance = () => {
+    if (session.genId !== listenGenId) return;
+    const finishedId = session.currentId;
+    const wasAudio = session.kind === "audio";
+    teardownSystemVoice(); listenSpeaking = false;
+    if (finishedId && mediaAllQueueId === finishedId) {
+      advanceMediaAllQueue(finishedId);
+      if (!mediaAllQueueId) stopListen(); // queue drained
+      return;
+    }
+    if (wasAudio || !advanceListenArticle()) stopListen();
+  };
+  try {
+    session.subs = [
+      // hasNext → the plugin is already playing the next item on its own
+      // (ttsItemStart follows); only an empty native queue falls back to JS.
+      await tts.addListener("ttsFinish", (e) => {
+        if (session.genId !== listenGenId) return;
+        if (!(e && e.hasNext)) advance(); // pick the next item BEFORE marking (read articles drop out of the lists)
+        markNativeItemDone(e);
+      }),
+      await tts.addListener("ttsNext", advance),
+      await tts.addListener("ttsItemStart", (e) => onNativeTtsItemStart(session, e)),
+      // Lock-screen / AirPod play-pause handled natively — mirror it here.
+      await tts.addListener("ttsState", (e) => {
+        if (session.genId !== listenGenId) return;
+        session.paused = !(e && e.playing);
+        if (session.kind === "speech") listenSpeaking = !session.paused;
+        if (session.kind === "audio" && session.paused) saveNativePodcastProgress(session.currentId, session.audioPos, session.audioDur, true);
+        updateListenPlayBtn(); updateMiniPlayerPlayBtn(); updatePodcastPlayBtn();
+      }),
+      // A natively-playing podcast's position (1 s on screen, 30 s locked).
+      await tts.addListener("ttsPosition", (e) => {
+        if (session.genId !== listenGenId || !e || e.id !== session.currentId) return;
+        session.audioPos = e.position || 0;
+        if (e.duration > 0) { session.audioDur = e.duration; listenTotalDuration = e.duration; }
+        updateMiniPlayerProgress();
+        if (session.episode && openPodcastEpisodeId === session.currentId) updatePodcastProgressUI(session.episode);
+        saveNativePodcastProgress(e.id, session.audioPos, session.audioDur, false);
+      }),
+      await tts.addListener("ttsAdSkipped", () => { if (session.genId === listenGenId) showAdSkippedToast(); }),
+      // GAP FILLED 2026-09-23: the plugin already emitted this real-time
+      // character-range progress, but nothing used it for word highlighting
+      // (only the mini-player progress bar) -- Apple on-device voices never
+      // highlighted at all, unlike Google. Kokoro genuinely has no per-word
+      // data to offer here (see TTS_PHASE1A.md §12); native does.
+      await tts.addListener("ttsRange", (e) => {
+        if (session.genId !== listenGenId) return;
+        if (e && e.id && e.id !== session.currentId) return; // stale (pre-advance) event
+        session.charIndex = (e && e.location) || 0;
+        updateMiniPlayerProgress();
+        if (listenArticle && openArticleId === listenArticle.id && session.prepared) {
+          const bodyIdx = wordIndexAtCharOffset(session.prepared.text, session.charIndex) - (session.prepared.introWords || 0);
+          if (bodyIdx >= 0) setWordHighlight(bodyIdx); else clearWordHighlight();
+        }
+      }),
+    ];
+  } catch { /* events best-effort */ }
+}
+
 // Native (AVSpeechSynthesizer) read-aloud: backgrounds + lock-screen controls,
 // and can use the device's Enhanced/Premium voices. Speaks the whole article in
 // one go (the OS handles long text); progress + advance come from plugin events.
@@ -34991,11 +35193,10 @@ async function startListenNativeTts(article) {
   const tts = nativeTts();
   const prepared = prepareArticleListenText(article);
   if (!tts || !prepared) { listenLoading = false; updateListenPlayBtn(); return; }
-  const myGenId = listenGenId;
   const rate = mediaPlaybackSpeed || 1;
   const charsTotal = (prepared.text || "").length;
   teardownSystemVoice();
-  const session = { article, genId: myGenId, native: true, charsTotal, charIndex: 0, rate, paused: false, subs: [] };
+  const session = newNativeSession({ kind: "speech", currentId: article.id, article, prepared, charsTotal, rate });
   listenSpeechSynth = session;
   listenLoading = false; listenBuffering = false; listenSpeaking = true;
   listenArticle = article; listenAudio = null;
@@ -35005,32 +35206,240 @@ async function startListenNativeTts(article) {
   showMiniPlayerForArticle(article);
   setListenMediaSession(article);
   updateListenPlayBtn();
-  const advance = () => { if (session.genId !== listenGenId) return; teardownSystemVoice(); listenSpeaking = false; if (!advanceListenArticle()) stopListen(); };
+  await wireNativeSession(tts, session);
   try {
-    session.subs = [
-      await tts.addListener("ttsFinish", advance),
-      await tts.addListener("ttsNext", advance),
-      // GAP FILLED 2026-09-23: the plugin already emitted this real-time
-      // character-range progress, but nothing used it for word highlighting
-      // (only the mini-player progress bar) -- Apple on-device voices never
-      // highlighted at all, unlike Google. Kokoro genuinely has no per-word
-      // data to offer here (see TTS_PHASE1A.md §12); native does.
-      await tts.addListener("ttsRange", (e) => {
-        if (session.genId !== listenGenId) return;
-        session.charIndex = (e && e.location) || 0;
-        updateMiniPlayerProgress();
-        if (listenArticle && openArticleId === listenArticle.id) {
-          const bodyIdx = wordIndexAtCharOffset(prepared.text, session.charIndex) - (prepared.introWords || 0);
-          if (bodyIdx >= 0) setWordHighlight(bodyIdx); else clearWordHighlight();
-        }
-      }),
-    ];
-  } catch { /* events best-effort */ }
-  try {
-    await tts.speak({ text: prepared.text, voiceId: nativeVoiceIdPref(), rate, title: article.title || "Article", subtitle: article.author || article.publication || "" });
+    await tts.speak({ id: article.id, text: prepared.text, voiceId: nativeVoiceIdPref(), rate, title: article.title || "Article", subtitle: article.author || article.publication || "" });
+    queueNativeUpcoming(session);
   } catch (e) {
     if (session.genId === listenGenId) { listenSpeaking = false; teardownSystemVoice(); updateListenPlayBtn(); alert("Couldn't start on-device voice: " + (e && e.message || e)); }
   }
+}
+
+// In the native app with the Apple voice, the Media "All" queue runs entirely
+// on the plugin — podcasts included — so every hand-off (article→podcast,
+// podcast→article, podcast→podcast) happens natively and survives a locked
+// screen. Podcasts played from the Podcasts tab keep the web player.
+function nativeQueueHandlesPodcasts() {
+  return !!nativeTts() && isSystemArticleVoice();
+}
+
+// Start an All-queue podcast episode on the native player. Returns false when it
+// can't (no audio URL / no plugin) so the caller uses the web player instead.
+async function startNativePodcast(episodeId) {
+  const tts = nativeTts();
+  const { episode, show } = findPodcastEpisode(episodeId);
+  if (!tts || !episode || !episode.audioUrl) return false;
+  // Same rule as startPodcastPlayback: nothing else plays at the same time.
+  stopPodcastAudio(); stopListen(); stopMusicPlayback(); stopRadio();
+  const genId = ++listenGenId;
+  showPodcastEpisodePanel(episodeId);
+  showMiniPlayer(episode, show);
+  const item = await nativePodcastItem(episode, show);
+  if (genId !== listenGenId) return true; // superseded while chapters loaded
+  const progressDur = ((state.podcastProgress || {})[episode.id] || {}).duration || 0;
+  const session = newNativeSession({ kind: "audio", currentId: episode.id, episode, show, audioPos: item.startPosition, audioDur: episode.duration || progressDur });
+  listenSpeechSynth = session;
+  listenArticle = null; listenAudio = null; listenLoading = false; listenSpeaking = false;
+  listenTotalDuration = session.audioDur;
+  clearWebMediaSession();
+  recordMediaHistory({ kind: "podcast", id: episode.id, title: episode.title || "", subtitle: (show && show.title) || "", artworkUrl: episode.art || (show && show.art) || "", ref: { episodeId: episode.id, showId: show && show.id } });
+  await wireNativeSession(tts, session);
+  try {
+    await tts.play({ item, voiceId: nativeVoiceIdPref(), rate: session.rate });
+    updatePodcastPlayBtn(); updateMiniPlayerPlayBtn();
+    queueNativeUpcoming(session);
+  } catch {
+    if (session.genId !== listenGenId) return true;
+    teardownSystemVoice();
+    openPodcastEpisode(episodeId); // fall back to the web player
+  }
+  return true;
+}
+
+// The native session when it is playing a podcast episode, else null — lets the
+// Podcasts-tab player panel drive/reflect it like the web player.
+function nativePodcastSession() {
+  const s = listenSpeechSynth;
+  return (s && s.native && s.kind === "audio") ? s : null;
+}
+
+// How many following items to hand the native plugin up front. JS is suspended
+// while the phone is locked, so this is how far the listen queue can carry on
+// without the app being opened.
+const NATIVE_TTS_LOOKAHEAD = 5;
+
+// What would play after `anchorId`, in the same order the JS advance walks it:
+// the Media "All" queue when that's what is playing (advanceMediaAllQueue —
+// articles AND podcast episodes), else the article list (advanceListenArticle).
+// → [{ type: "article", article } | { type: "podcast", episode, show }]
+function nativeUpcomingItems(anchorId, listTab, n) {
+  const byArticleId = new Map((state.savedArticles || []).map((a) => [a.id, a]));
+  if (mediaAllQueueId && mediaAllQueueId === anchorId) {
+    const byId = new Map(getAllListenList().map((i) => [i.id, i]));
+    const out = [];
+    for (const id of mediaAllQueueRest) {
+      if (out.length >= n) break;
+      const item = byId.get(id);
+      if (!item || !mediaItemPlayable(item)) continue; // advanceMediaAllQueue skips these too
+      if (item.type === "article") {
+        const a = byArticleId.get(id);
+        if (!a) break;
+        out.push({ type: "article", article: a });
+      } else if (item.providerId === "podcast") {
+        const { episode, show } = findPodcastEpisode(id);
+        if (!episode || !episode.audioUrl) break;
+        out.push({ type: "podcast", episode, show });
+      } else break; // anything else stays with the JS advance
+    }
+    return out;
+  }
+  if (!byArticleId.has(anchorId)) return []; // a podcast only comes from the All queue
+  const articles = getFilteredSortedArticles(listTab);
+  const i = articles.findIndex((a) => a.id === anchorId);
+  return i === -1 ? [] : articles.slice(i + 1, i + 1 + n).map((a) => ({ type: "article", article: a }));
+}
+
+// Resolve an article's body for the lookahead WITHOUT inlining it back into
+// state (ensureArticleText persists it, which would re-bloat the synced blob for
+// articles that may never be read). Inline text → local/cloud backstop; no live
+// scrape — an article that needs one is left to the foreground JS advance.
+async function nativeLookaheadText(article) {
+  if (article.text) return article.text;
+  try {
+    const ac = await getArticleContent();
+    if (ac) return (await ac.loadBody(article.id, { ref: article.bodyRef, fallbackText: null })) || null;
+  } catch { /* unavailable */ }
+  return null;
+}
+
+// A podcast episode as a native audio item: resume point (as the web player
+// uses it) + ad ranges to jump over (when "skip ads" is on and it has chapters).
+async function nativePodcastItem(episode, show) {
+  const progress = (state.podcastProgress || {})[episode.id] || {};
+  const pos = progress.played ? 0 : (progress.position || 0);
+  let skipRanges = [];
+  if (state.podcastSkipAds && episode.chaptersUrl) {
+    // Don't hold playback hostage to a slow chapters host: give up after 2 s.
+    const chapters = await Promise.race([loadEpisodeChapters(episode), new Promise((r) => setTimeout(() => r(null), 2000))]);
+    skipRanges = (chapters || []).filter((ch) => isAdChapter(ch.title)).map((ch) => [
+      ch.startTime,
+      Number.isFinite(ch.endTime) ? ch.endTime : 1e9, // plugin clamps to the real duration
+    ]);
+  }
+  return {
+    id: episode.id, kind: "audio", url: episode.audioUrl,
+    title: episode.title || "Podcast", subtitle: show?.title || "Podcast",
+    startPosition: pos > 10 ? pos : 0, skipRanges,
+  };
+}
+
+// Hand the plugin the next few items so it can keep playing natively when one
+// finishes (see LiveTtsPlugin.swift). Re-run on every native advance to top the
+// list back up; a newer run supersedes an older in-flight one.
+async function queueNativeUpcoming(session) {
+  const tts = nativeTts();
+  if (!tts || !session.currentId) return;
+  const token = ++session.upcomingToken;
+  const live = () => token === session.upcomingToken && session.genId === listenGenId;
+  const items = [];
+  const prepared = new Map();
+  for (const next of nativeUpcomingItems(session.currentId, session.listTab, NATIVE_TTS_LOOKAHEAD)) {
+    if (next.type === "article") {
+      const a = next.article;
+      const text = await nativeLookaheadText(a);
+      if (!live()) return;
+      const p = text ? prepareArticleListenText({ ...a, text }) : null;
+      if (!p) break; // keep native order identical to the JS advance order
+      prepared.set(a.id, p);
+      items.push({ id: a.id, kind: "speech", text: p.text, title: a.title || "Article", subtitle: a.author || a.publication || "" });
+    } else {
+      const item = await nativePodcastItem(next.episode, next.show);
+      if (!live()) return;
+      items.push(item);
+    }
+    session.upcomingPrepared = prepared;
+    // Send as we go, so a short current item can't finish before the list lands.
+    try { await tts.setUpcoming({ items }); } catch { return; }
+    if (!live()) return;
+  }
+  if (!items.length) { try { await tts.setUpcoming({ items: [] }); } catch { /* best-effort */ } }
+}
+
+// Finished natively → same bookkeeping as the web engine: an article is marked
+// read (onListenArticleFinished), an episode played (onPodcastEnded). A failed
+// audio load isn't "played".
+function markNativeItemDone(e) {
+  if (!e || !e.id || e.failed) return;
+  if (e.kind === "audio") setPodcastEpisodePlayed(e.id, true);
+  else if (e.kind === "speech") markArticleRead(e.id);
+}
+
+// Saved position for a natively-playing episode. Throttled (position events
+// arrive every second in the foreground); `force` for pause/finish.
+let nativePodcastSavedAt = 0;
+function saveNativePodcastProgress(id, position, duration, force) {
+  if (!id || !Number.isFinite(position)) return;
+  if (!force && Date.now() - nativePodcastSavedAt < 15000) return;
+  nativePodcastSavedAt = Date.now();
+  if (!state.podcastProgress) state.podcastProgress = {};
+  const prev = state.podcastProgress[id] || {};
+  state.podcastProgress[id] = {
+    ...prev,
+    position: Math.floor(position),
+    duration: Math.floor(duration || prev.duration || 0),
+    lastPlayedAt: new Date().toISOString(),
+  };
+  persist();
+}
+
+// The plugin moved on to the next item by itself (auto-advance or the
+// lock-screen next button) — bring the reader/mini-player/queue state along.
+function onNativeTtsItemStart(session, e) {
+  if (session.genId !== listenGenId || !e || !e.id) return;
+  let article = null, episode = null, show = null;
+  if (e.kind === "audio") {
+    ({ episode, show } = findPodcastEpisode(e.id));
+    if (!episode) return;
+  } else {
+    article = (state.savedArticles || []).find((a) => a.id === e.id);
+    if (!article) return;
+  }
+  session.currentId = e.id;
+  session.kind = e.kind === "audio" ? "audio" : "speech";
+  session.paused = false;
+  if (mediaAllQueueId) { // keep the All-queue cursor in step with what's playing
+    const qi = mediaAllQueueRest.indexOf(e.id);
+    if (qi !== -1) { mediaAllQueueRest.splice(0, qi + 1); mediaAllQueueId = e.id; }
+  }
+  clearWordHighlight();
+  if (episode) {
+    session.article = null; session.prepared = null;
+    session.episode = episode; session.show = show;
+    session.audioPos = e.position || 0;
+    session.audioDur = episode.duration || ((state.podcastProgress || {})[episode.id]?.duration) || 0;
+    listenArticle = null;
+    listenSpeaking = false;
+    listenTotalDuration = session.audioDur;
+    podcastCurrentChapters = null;
+    showMiniPlayer(episode, show);
+    showPodcastEpisodePanel(episode.id); // like the web queue advance (openPodcastEpisode)
+    recordMediaHistory({ kind: "podcast", id: episode.id, title: episode.title || "", subtitle: (show && show.title) || "", artworkUrl: episode.art || (show && show.art) || "", ref: { episodeId: episode.id, showId: show && show.id } });
+  } else {
+    const p = session.upcomingPrepared.get(e.id) || null;
+    session.episode = null; session.show = null;
+    session.article = article;
+    session.prepared = p;
+    session.charIndex = 0;
+    session.charsTotal = e.total || (p ? p.text.length : 0);
+    listenArticle = article;
+    listenSpeaking = true;
+    listenTotalDuration = Math.max(1, Math.round(session.charsTotal / (15 * (session.rate || 1))));
+    if (activeAppArea === "media" && !document.getElementById("articleReaderPanel")?.hidden) openArticle(article.id, "articleList");
+    showMiniPlayerForArticle(article);
+  }
+  updateListenPlayBtn(); updateMiniPlayerPlayBtn();
+  if (activeMediaTab === "queue") renderMediaAllList();
+  queueNativeUpcoming(session);
 }
 
 async function startListenSystemVoice(article) {
@@ -35071,6 +35480,7 @@ function speakSystemChunk() {
     teardownSystemVoice();
     listenSpeaking = false;
     if (!advanceListenArticle()) stopListen(); // queue drained
+    markArticleRead(finishedId); // after the advance picked the next one (read articles drop out of the list)
     return;
   }
   const u = new SpeechSynthesisUtterance(s.chunks[s.idx]);
@@ -35093,10 +35503,22 @@ function speakSystemChunk() {
 function systemVoiceSkip(seconds) {
   const s = listenSpeechSynth;
   if (!s) return;
+  if (s.native && s.kind === "audio") { // a podcast the plugin is playing: real seek
+    const tts = nativeTts();
+    if (tts) tts.seekBy({ seconds }).catch(() => {});
+    return;
+  }
   if (s.native) {
     // AVSpeechSynthesizer can't seek within an utterance; skip forward advances
     // to the next article, skip back restarts the current one.
-    if (seconds > 0) { teardownSystemVoice(); listenSpeaking = false; if (!advanceListenArticle()) stopListen(); }
+    if (seconds > 0) {
+      const tts = nativeTts();
+      Promise.resolve(tts ? tts.next() : null).catch(() => null).then((r) => {
+        if (r && r.advanced) return; // ttsItemStart syncs the UI
+        if (s.genId !== listenGenId) return;
+        teardownSystemVoice(); listenSpeaking = false; if (!advanceListenArticle()) stopListen();
+      });
+    }
     else { startListenNativeTts(s.article); }
     return;
   }
@@ -35295,6 +35717,16 @@ async function startListenTTSIncremental(article, myGenId) {
   }
 }
 
+function clearWebMediaSession() {
+  try {
+    navigator.mediaSession.metadata = null;
+    navigator.mediaSession.playbackState = "none";
+    for (const action of ["play", "pause", "stop", "seekbackward", "seekforward", "nexttrack", "previoustrack"]) {
+      try { navigator.mediaSession.setActionHandler(action, null); } catch { /* unsupported action */ }
+    }
+  } catch { /* unsupported */ }
+}
+
 function setMediaSessionPlaybackState(stateStr) {
   if ("mediaSession" in navigator) {
     try { navigator.mediaSession.playbackState = stateStr; } catch { /* unsupported */ }
@@ -35326,8 +35758,9 @@ function toggleListenPlayPause() {
     try {
       if (s.native) {
         const tts = nativeTts();
-        if (s.paused) { tts && tts.resume(); s.paused = false; setMediaSessionPlaybackState("playing"); }
-        else { tts && tts.pause(); s.paused = true; setMediaSessionPlaybackState("paused"); }
+        if (s.paused) { tts && tts.resume(); s.paused = false; if (s.kind === "speech") listenSpeaking = true; }
+        else { tts && tts.pause(); s.paused = true; if (s.kind === "audio") saveNativePodcastProgress(s.currentId, s.audioPos, s.audioDur, true); }
+        updatePodcastPlayBtn();
       } else if (window.speechSynthesis.paused) { window.speechSynthesis.resume(); setMediaSessionPlaybackState("playing"); }
       else { window.speechSynthesis.pause(); setMediaSessionPlaybackState("paused"); }
     } catch { /* noop */ }
@@ -35394,7 +35827,7 @@ function updateListenPlayBtn() {
   // own listen session, must not react to).
   const playing = listenSpeechSynth
     ? (listenSpeechSynth.native
-        ? !listenSpeechSynth.paused
+        ? (listenSpeechSynth.kind !== "audio" && !listenSpeechSynth.paused) // a native podcast isn't the article's audio
         : (() => { try { return window.speechSynthesis.speaking && !window.speechSynthesis.paused; } catch { return false; } })())
     : (listenSpeaking && listenAudio && !listenAudio.paused);
   if (label) label.textContent = playing ? "Pause" : "Play";
@@ -36544,7 +36977,20 @@ const CHAT_STORAGE_KEY = "live-chat-history";
 const CHAT_MAX_HISTORY = 30; // messages kept in memory + localStorage
 const CHAT_MAX_STORED = 20;  // messages persisted to localStorage
 
+// Plain-text chat turns → permanent history (localStorage keeps only 20). Row ids
+// are content hashes, so re-logging a turn already sent is a no-op; the Set just
+// avoids re-queueing the whole conversation on every save.
+const chatLoggedIds = new Set();
+function logChatTurns(messages) {
+  for (const m of messages || []) {
+    const row = historyRowFromChat(m);
+    if (!row || chatLoggedIds.has(row.id)) continue;
+    if (historyLog.record(row)) chatLoggedIds.add(row.id);
+  }
+}
+
 function saveChatHistory() {
+  logChatTurns(chatMessages);
   try {
     // Only store plain text turns (not tool_use/tool_result objects)
     const storable = chatMessages

@@ -13,6 +13,7 @@ import * as LiveGrocerySources from './grocery-sources.js';
 import * as LiveReceiptDomain from './receipt-domain.js';
 import * as LiveDailyDozen from './daily-dozen.js';
 import * as LiveMealPlanServings from './meal-plan-servings.js';
+import * as LiveInstacart from './instacart.js';
 import { makeSortable } from './sortable.js';
 
 // Module-scope copies of two tiny standalone helpers (identical to app.js) so the pure
@@ -144,7 +145,10 @@ export function normalizeGroceryStores(stores) {
         longitude: normalizeStoreCoordinate(store?.longitude),
         types: Array.isArray(store?.types) ? store.types.map((type) => String(type || "").trim()).filter(Boolean) : [],
         sections: normalizeGroceryStoreSections(store?.sections, id),
-        enabled: store?.enabled !== false
+        enabled: store?.enabled !== false,
+        // Instacart hand-off is per-store DATA (seeded from the chain name only when
+        // the flag has never been set; the store dialog toggle owns it after that).
+        instacartEnabled: LiveInstacart.normalizeInstacartEnabled(store)
       };
     })
     .filter((store) => {
@@ -211,6 +215,24 @@ export function normalizeStoreCoordinate(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+// One item, one store: partition rows into store groups so each row key lands in
+// EXACTLY one group. `resolveStoreId(row)` is called once per row; a store id not in
+// `storeIds` (or empty) falls into the "" (Unassigned/Other) group. Duplicate row
+// keys keep the first occurrence, so the same item can never appear under two
+// stores (which is what makes per-store Instacart sends double-order-proof).
+export function partitionGroceryRowsByStore(rows, storeIds, resolveStoreId) {
+  const groups = new Map([...storeIds, ""].map((id) => [id, []]));
+  const seen = new Set();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const key = row?.key;
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    const resolved = String(resolveStoreId(row) || "");
+    (groups.get(resolved) || groups.get("")).push(row);
+  }
+  return groups;
+}
+
 export function normalizeGroceryItemLocations(locations, stores = []) {
   const validStoreIds = new Set(normalizeGroceryStores(stores).map((store) => store.id));
   const normalizedLocations = {};
@@ -219,8 +241,10 @@ export function normalizeGroceryItemLocations(locations, stores = []) {
     if (!key || !location || typeof location !== "object") return;
     const storeId = validStoreIds.has(String(location.storeId || "")) ? String(location.storeId) : "";
     const order = Number(location.order);
+    // De-duplicated: an item's rank is an ordered fallback list, never a set of
+    // simultaneous memberships — one item resolves to exactly one store.
     const existingRank = Array.isArray(location.storeRank)
-      ? location.storeRank.map(String).filter((id) => validStoreIds.has(id))
+      ? [...new Set(location.storeRank.map(String).filter((id) => validStoreIds.has(id)))]
       : [];
     const storeRank = storeId
       ? [storeId, ...existingRank.filter((id) => id !== storeId)]
@@ -388,6 +412,15 @@ export function createGroceriesModule(deps) {
   let storeRankItemKey = "";
   let showClearedGroceries = false; // (legacy) global reveal — superseded by per-store below
   const groceryBoughtShownStores = new Set();
+  // Instacart hand-off: rows each store section rendered with (the send button
+  // reads exactly what the user is looking at) + in-flight guard per store.
+  let instacartRenderedRows = new Map();
+  const instacartSendingStores = new Set();
+  // Server config probe: the Send button stays hidden until the function reports
+  // an API key is set. null = unknown. Probed at most once per page load (no
+  // retry/polling); a failed probe keeps the button hidden until reload.
+  let instacartConfigured = null;
+  let instacartConfigProbe = null;
   let shopSpace = "shop"; // "shop" | "checklist" | "inventory"
 
 function groceryBaseItems() {
@@ -869,6 +902,7 @@ function editGroceryStore(storeId) {
   activeGroceryStoreLayoutId = store.id;
   elements.groceryStoreLayoutName.value = store.name;
   elements.groceryStoreLayoutAddress.value = store.address || "";
+  if (elements.groceryStoreLayoutInstacart) elements.groceryStoreLayoutInstacart.checked = store.instacartEnabled === true;
   elements.groceryStoreSectionInput.value = "";
   renderGroceryStoreLayoutEditor(store.sections);
   elements.groceryStoreLayoutDialog.showModal();
@@ -1006,6 +1040,7 @@ function saveGroceryStoreLayout(event) {
     chainName: name,
     address,
     sections,
+    ...(elements.groceryStoreLayoutInstacart ? { instacartEnabled: elements.groceryStoreLayoutInstacart.checked } : {}),
     ...(addressChanged ? { placeId: "", latitude: null, longitude: null, types: [] } : {})
   } : item);
   state.groceryStoreItemSections = normalizeGroceryStoreItemSections(state.groceryStoreItemSections, state.groceryStores);
@@ -2364,6 +2399,7 @@ function renderGroceries() {
     const broomBtn = storeChecked
       ? `<button class="icon-btn grocery-store-clear" type="button" data-grocery-clear-store="${escapeHtml(storeId)}" title="Sweep ${storeChecked} checked" aria-label="Sweep ${storeChecked} checked items into bought">${groceryBroomSvg()}</button>`
       : "";
+    if (storeId && LiveInstacart.isInstacartStore(store)) instacartRenderedRows.set(storeId, activeRows);
     return `
       <section class="grocery-store-section${isCollapsed ? " is-collapsed" : ""}" data-grocery-store-section="${escapeHtml(storeId)}">
         ${activeGroceryStoreTab === "all" ? `
@@ -2381,6 +2417,7 @@ function renderGroceries() {
             ${broomBtn}
           </div>
         ` : `<div class="grocery-store-solo-actions">${boughtToggleBtn(storeId, boughtRows)}${broomBtn}</div>`}
+        ${isCollapsed ? "" : instacartBarTemplate(storeId, store, activeRows)}
         <div class="grocery-store-list ${rowsToRender.length ? "" : "is-empty"}"
           data-grocery-store-list="${escapeHtml(storeId)}"
           data-grocery-store-section-list="">
@@ -2390,6 +2427,7 @@ function renderGroceries() {
     `;
   };
 
+  instacartRenderedRows = new Map();
   const skippedIds = skippedGroceryStoreIds();
   const skippedStrip = skippedIds.size ? `
     <div class="grocery-skipped-strip">
@@ -2415,6 +2453,7 @@ function renderGroceries() {
   `;
 
   elements.groceryList.innerHTML = planSections;
+  bindInstacartBars(elements.groceryList);
 
   elements.groceryList.querySelectorAll("[data-grocery-clear-store]").forEach((btn) => {
     btn.addEventListener("click", (e) => { e.stopPropagation(); clearCheckedGroceriesForStore(btn.dataset.groceryClearStore); });
@@ -2710,15 +2749,15 @@ function groceryStoreSections(rows, priceAssignments = {}, priceEstimates = {}, 
   // (buildGroceryText) keep the old first-store fallback.
   const fallbackStoreId = options.otherFallback ? "" : (stores[0]?.storeId || "");
   const sections = [...stores, { storeId: "", name: "Unassigned", store: null }];
+  const partition = partitionGroceryRowsByStore(rows, stores.map((s) => s.storeId), (row) => {
+    const effective = resolveItemEffectiveStoreId(row.key, locations, enabledStoreIds);
+    // Price-plan assignments to a skipped store must not strand the item
+    const assigned = enabledStoreIds.has(priceAssignments[row.key]) ? priceAssignments[row.key] : "";
+    return effective || assigned || fallbackStoreId;
+  });
   return sections
     .map((section) => {
-      const storeRows = rows
-        .filter((row) => {
-          const effective = resolveItemEffectiveStoreId(row.key, locations, enabledStoreIds);
-          // Price-plan assignments to a skipped store must not strand the item
-          const assigned = enabledStoreIds.has(priceAssignments[row.key]) ? priceAssignments[row.key] : "";
-          return (effective || assigned || fallbackStoreId) === section.storeId;
-        })
+      const storeRows = (partition.get(section.storeId) || [])
         .map((row) => ({ ...row, priceEstimate: priceEstimates[row.key] || null }))
         .sort((a, b) => Number(a.checked) - Number(b.checked)
           || groceryRowStoreOrder(a, locations) - groceryRowStoreOrder(b, locations)
@@ -3996,6 +4035,157 @@ function clearCheckedGroceriesForStore(storeId) {
   keys.forEach((k) => setGroceryCleared(k, true));
   persist();
   renderGroceries();
+}
+
+// ── Instacart hand-off (per store) ──────────────────────────────────────────
+// The button builds line_items from that store's UNCHECKED rows only (checked =
+// already on hand), calls the instacart-list function (key held server-side), and
+// opens the returned Instacart page. States: sent_to_instacart on a successful
+// hand-off; delivered only when the user marks it. No polling.
+function instacartOrders() {
+  state.instacartOrders = LiveInstacart.normalizeInstacartOrders(state.instacartOrders);
+  return state.instacartOrders;
+}
+
+function instacartOrderFor(storeId) {
+  return instacartOrders()[LiveInstacart.instacartOrderKey(groceryCycleKey(), storeId)] || null;
+}
+
+function setInstacartOrder(storeId, order) {
+  const orders = instacartOrders();
+  const key = LiveInstacart.instacartOrderKey(groceryCycleKey(), storeId);
+  if (order) orders[key] = order;
+  state.instacartOrders = orders;
+}
+
+function instacartApiUrl() {
+  if (canUseLocalBackend()) return "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/instacart-list";
+  if (window.location.protocol.startsWith("http")) return "/.netlify/functions/instacart-list";
+  return "/api/instacart-list";
+}
+
+function ensureInstacartConfigProbed() {
+  if (instacartConfigured !== null || instacartConfigProbe) return;
+  const token = getAuthSession()?.access_token;
+  if (!token) return; // not signed in yet — a later render probes once a session exists
+  instacartConfigProbe = fetch(instacartApiUrl(), { cache: "no-store", headers: { Authorization: `Bearer ${token}` } })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((body) => { instacartConfigured = body?.configured === true; })
+    .catch(() => { instacartConfigured = false; })
+    .finally(() => { if (instacartConfigured) renderGroceries(); });
+}
+
+function instacartBarTemplate(storeId, store, activeRows) {
+  if (!storeId || !LiveInstacart.isInstacartStore(store)) return "";
+  ensureInstacartConfigProbed();
+  const pending = activeRows.filter((row) => !row.checked).length;
+  const order = instacartOrderFor(storeId);
+  const sending = instacartSendingStores.has(storeId);
+  const S = LiveInstacart.INSTACART_ORDER_STATUS;
+  const sendLabel = sending ? "Sending…" : `${order ? "Resend" : "Send"} to Instacart${pending ? ` (${pending})` : ""}`;
+  const sendBtn = instacartConfigured === true && (pending || sending)
+    ? `<button class="grocery-cleanup-link grocery-instacart-send" type="button" data-instacart-send="${escapeHtml(storeId)}" ${sending ? "disabled" : ""}>${escapeHtml(sendLabel)}</button>`
+    : "";
+  let status = "";
+  if (order) {
+    const when = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? "" : d.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }); };
+    const openLink = order.url ? `<a class="grocery-cleanup-link" href="${escapeHtml(order.url)}" target="_blank" rel="noopener">Open list</a>` : "";
+    status = order.status === S.DELIVERED
+      ? `<span class="grocery-instacart-status is-delivered">Delivered${when(order.deliveredAt) ? ` · ${escapeHtml(when(order.deliveredAt))}` : ""}</span>
+         <button class="grocery-cleanup-link" type="button" data-instacart-undeliver="${escapeHtml(storeId)}">Undo</button>`
+      : `<span class="grocery-instacart-status is-sent">Sent to Instacart · ${order.itemCount} item${order.itemCount === 1 ? "" : "s"}${when(order.sentAt) ? ` · ${escapeHtml(when(order.sentAt))}` : ""}</span>
+         ${openLink}
+         <button class="grocery-cleanup-link" type="button" data-instacart-delivered="${escapeHtml(storeId)}">Mark delivered</button>`;
+  }
+  if (!sendBtn && !status) return "";
+  const problems = order ? [...order.unmatched, ...order.skipped] : [];
+  const problemNote = problems.length
+    ? `<div class="grocery-instacart-unmatched" role="status"><strong>Not found on Instacart — buy these manually:</strong> ${problems.map(escapeHtml).join(", ")}</div>`
+    : "";
+  return `<div class="grocery-instacart-bar" data-instacart-bar="${escapeHtml(storeId)}"><div class="grocery-instacart-row">${status}${sendBtn}</div>${problemNote}</div>`;
+}
+
+function bindInstacartBars(root) {
+  root.querySelectorAll("[data-instacart-send]").forEach((btn) => {
+    btn.addEventListener("click", (e) => { e.stopPropagation(); sendStoreToInstacart(btn.dataset.instacartSend); });
+  });
+  root.querySelectorAll("[data-instacart-delivered]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const storeId = btn.dataset.instacartDelivered;
+      const next = LiveInstacart.markOrderDelivered(instacartOrderFor(storeId));
+      if (!next) return;
+      setInstacartOrder(storeId, next);
+      persist();
+      renderGroceries();
+    });
+  });
+  root.querySelectorAll("[data-instacart-undeliver]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const storeId = btn.dataset.instacartUndeliver;
+      const next = LiveInstacart.markOrderNotDelivered(instacartOrderFor(storeId));
+      if (!next) return;
+      setInstacartOrder(storeId, next);
+      persist();
+      renderGroceries();
+    });
+  });
+}
+
+async function sendStoreToInstacart(storeId) {
+  if (!storeId || instacartSendingStores.has(storeId)) return;
+  const store = groceryStores().find((item) => item.id === storeId);
+  if (!LiveInstacart.isInstacartStore(store) || instacartConfigured !== true) return;
+  const rows = instacartRenderedRows.get(storeId) || [];
+  const { lineItems, skipped, itemKeys } = LiveInstacart.buildInstacartLineItems(rows);
+  if (!lineItems.length) {
+    window.alert(skipped.length ? `Nothing could be sent. Buy these manually: ${skipped.join(", ")}` : "Everything for this store is already checked off.");
+    return;
+  }
+  const token = getAuthSession()?.access_token;
+  if (!token) { window.alert("Sign in to send your list to Instacart."); return; }
+  // Open the tab synchronously inside the tap so Safari/iOS doesn't block it as a
+  // popup; it's pointed at the Instacart page once the link comes back.
+  let popup = null;
+  try { popup = window.open("", "_blank"); } catch { popup = null; }
+  instacartSendingStores.add(storeId);
+  renderGroceries();
+  try {
+    const response = await fetch(instacartApiUrl(), {
+      method: "POST",
+      cache: "no-store",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ title: `${store.name} — ${groceryCycleKey()}`, lineItems })
+    });
+    let body = {};
+    try { body = await response.json(); } catch { body = {}; }
+    if (!response.ok || !body.url) {
+      try { popup?.close(); } catch {}
+      const unmatched = Array.isArray(body.unmatched) ? body.unmatched : [];
+      window.alert([
+        body.error || "Couldn't create the Instacart list.",
+        unmatched.length ? `Items Instacart couldn't match: ${unmatched.join(", ")}` : ""
+      ].filter(Boolean).join("\n\n"));
+      return;
+    }
+    setInstacartOrder(storeId, LiveInstacart.createSentOrder({
+      storeId,
+      url: body.url,
+      itemKeys,
+      unmatched: Array.isArray(body.unmatched) ? body.unmatched : [],
+      skipped
+    }));
+    persist();
+    if (popup && !popup.closed) popup.location.href = body.url;
+    else window.open(body.url, "_blank", "noopener");
+  } catch (error) {
+    try { popup?.close(); } catch {}
+    window.alert(`Couldn't reach Instacart: ${error?.message || "network error"}`);
+  } finally {
+    instacartSendingStores.delete(storeId);
+    renderGroceries();
+  }
 }
 
 function restoreClearedGroceries() {

@@ -11,7 +11,7 @@ focused changes to the streaming-music domain only.
 ## ⚠️ Naming trap — read this first
 There are **two unrelated "music" things** in this repo:
 - **YOUR domain:** the root `music-*.js` files + the **"media"** hub music tab
-  (streaming: search, library, Apple Music/Internet Archive/Jamendo playback).
+  (streaming: search, library, Apple Music/Internet Archive playback).
 - **NOT yours:** the `music/` **directory** — that's a *different* subsystem,
   **piano-practice / score-following (Cadence).** Never edit it as part of this work.
 
@@ -24,7 +24,7 @@ There are **two unrelated "music" things** in this repo:
 
 ## Your scope (edit these)
 - **Modules:** `music-streaming.js` (provider registry + capabilities),
-  `music-provider-applemusic.js` / `-internetarchive.js` / `-jamendo.js`,
+  `music-provider-applemusic.js` / `-internetarchive.js`,
   `music-canonical.js`, `music-library.js`, `music-library-model.js`,
   `music-source-resolver.js`, `music-tags.js`, `music-jellyfin.js`,
   `media-provider-music.js`.

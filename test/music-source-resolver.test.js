@@ -51,6 +51,17 @@ describe("resolvePlayableSource — exact via own refs", () => {
   });
 });
 
+describe("resolvePlayableSource — playback-owning providers (Apple Music)", () => {
+  it("an OWNED source (no URL) still resolves exact, so saved Apple items play", async () => {
+    const apple = fakeProvider("applemusic", { refs: { "123": { provider: "applemusic", owned: true, externalId: "123", url: null } } });
+    const rec = recording([{ provider: "applemusic", externalId: "123" }]);
+    const r = await resolvePlayableSource(rec, { registry: registry([apple]) });
+    expect(r.status).toBe("exact");
+    expect(r.source.owned).toBe(true);
+    expect(r.providerRef.externalId).toBe("123");
+  });
+});
+
 describe("resolvePlayableSource — provider down / dynamic availability", () => {
   it("skips an unavailable provider without deleting refs, uses the next", async () => {
     const down = fakeProvider("musopen", { up: false, refs: { m: { provider: "musopen", url: "https://m" } } });
@@ -101,5 +112,49 @@ describe("resolvePlayableSource — search fallback", () => {
     const rec = recording([{ provider: "dead", externalId: "gone" }]);
     const r = await resolvePlayableSource(rec, { registry: registry([ia]), allowAlternate: true });
     expect(r.status).toBe("unavailable"); // Op. 67 ≠ Op. 27 No. 2
+  });
+});
+
+// ── same-song (non-classical) fallback: what carries a library across providers ─
+import { isSameSong, songTitleKey } from "../music-source-resolver.js";
+
+describe("same-song matching", () => {
+  it("normalizes release decorations out of titles", () => {
+    expect(songTitleKey("Come Together (Remastered 2009)")).toBe("come together");
+    expect(songTitleKey("Hey Jude - 2015 Remaster")).toBe("hey jude");
+    expect(songTitleKey("Stay [Live]")).toBe("stay");
+  });
+  it("ISRC decides when both sides have one", () => {
+    expect(isSameSong({ isrc: "GBAYE0601690", title: "x" }, { isrc: "GBAYE0601690", title: "y" })).toBe(true);
+    expect(isSameSong({ isrc: "GBAYE0601690", title: "x" }, { isrc: "USUM71703861", title: "x" })).toBe(false);
+  });
+  it("otherwise needs title + artist (+ duration within 5s when both known)", () => {
+    const rec = { title: "Come Together", performers: [{ name: "The Beatles" }], durationMs: 259000 };
+    expect(isSameSong(rec, { title: "Come Together (Remastered 2009)", artists: [{ name: "The Beatles" }], durationMs: 260000 })).toBe(true);
+    expect(isSameSong(rec, { title: "Come Together", artists: [{ name: "Aerosmith" }], durationMs: 259000 })).toBe(false);
+    expect(isSameSong(rec, { title: "Come Together", artists: [{ name: "The Beatles" }], durationMs: 300000 })).toBe(false);
+    expect(isSameSong(rec, { title: "Something", artists: [{ name: "The Beatles" }] })).toBe(false);
+  });
+});
+
+describe("resolvePlayableSource — same song on another provider", () => {
+  const song = { id: "rec_s", entity: "recording", title: "Come Together", workTitle: "Abbey Road", composer: "", performers: [{ name: "The Beatles" }], album: "Abbey Road", durationMs: 259000, isrc: "GBAYE0601690", providerRefs: [{ provider: "oldstreamer", externalId: "old1" }] };
+  it("finds it by ISRC via search and reports the learned ref", async () => {
+    const other = fakeProvider("newstreamer", {
+      refs: { n1: { provider: "newstreamer", owned: true, externalId: "n1" } },
+      searchItems: [
+        { entity: "track", provider: "newstreamer", title: "Come Together - Cover", artists: [{ name: "Somebody" }], isrc: "USXXX0000001", providerRefs: [{ provider: "newstreamer", externalId: "n0" }] },
+        { entity: "track", provider: "newstreamer", title: "Come Together (2019 Mix)", artists: [{ name: "The Beatles" }], isrc: "GBAYE0601690", providerRefs: [{ provider: "newstreamer", externalId: "n1" }] },
+      ],
+    });
+    const r = await resolvePlayableSource(song, { registry: registry([other]), allowAlternate: true });
+    expect(r.status).toBe("exact");
+    expect(r.source.owned).toBe(true);
+    expect(r.learnedRef).toMatchObject({ provider: "newstreamer", externalId: "n1" });
+  });
+  it("does not substitute a different song", async () => {
+    const other = fakeProvider("newstreamer", { searchItems: [{ entity: "track", provider: "newstreamer", title: "Something", artists: [{ name: "The Beatles" }], playable: { url: "https://x" }, providerRefs: [{ provider: "newstreamer", externalId: "z" }] }] });
+    const r = await resolvePlayableSource(song, { registry: registry([other]), allowAlternate: true });
+    expect(r.status).toBe("unavailable");
   });
 });

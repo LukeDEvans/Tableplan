@@ -83,7 +83,7 @@ describe("AppleMusicProvider", () => {
     expect(track.title).toBe("Song One");
     expect(track.provider).toBe("applemusic");
     expect(track.providerRefs[0].externalId).toBe("s1");
-    expect(track.artworkUrl).toBe("https://img/300x300.jpg"); // template rendered
+    expect(track.artworkUrl).toBe("https://img/400x400.jpg"); // template rendered
     expect(track.playable).toBe(null); // no URL — Apple owns playback
   });
 
@@ -158,5 +158,147 @@ describe("AppleMusicProvider", () => {
     expect(auth.authorized).toBe(false);
     expect(auth.state).toBe("not-configured");
     expect((await p.getSubscriptionStatus()).state).toBe("not-configured");
+  });
+
+  it("maps Apple's classical tags (composer/work/movement) and only then", async () => {
+    const music = fakeMusic({ api: { music: async () => ({ data: { results: { songs: { data: [
+      { id: "c1", type: "songs", attributes: { name: "I. Adagio sostenuto", artistName: "Igor Levit", composerName: "Ludwig van Beethoven", workName: "Piano Sonata No. 14 in C-Sharp Minor, Op. 27 No. 2", movementName: "Adagio sostenuto", movementNumber: 1 } },
+      { id: "p1", type: "songs", attributes: { name: "Pop Song", artistName: "Singer", composerName: "Writer A & Writer B" } },
+    ] } } } }) } });
+    const [classical, pop] = await withInstance(music).search("moonlight");
+    expect(classical.composer.name).toBe("Ludwig van Beethoven");
+    expect(classical.work.title).toMatch(/Op\. 27 No\. 2/);
+    expect(classical.movement).toBe("Adagio sostenuto");
+    expect(classical.movementNo).toBe(1);
+    expect(pop.composer).toBe(null); // songwriter credits are not a classical composer
+    expect(pop.work).toBe(null);
+  });
+
+  it("search asks for songs, albums, artists and playlists — songs first", async () => {
+    let params = null;
+    const music = fakeMusic({ api: { music: async (path, p) => { params = p; return { data: { results: {
+      artists: { data: [{ id: "ar1", attributes: { name: "Artist", genreNames: ["Pop"] } }] },
+      playlists: { data: [{ id: "pl.1", attributes: { name: "Chill", curatorName: "Apple Music" } }] },
+      songs: { data: [{ id: "s1", attributes: { name: "Song" } }] },
+    } } }; } } });
+    const items = await withInstance(music).search("x");
+    expect(params.types).toBe("songs,albums,artists,playlists");
+    expect(items.map((i) => i.entity === "track" ? "track" : i.kind)).toEqual(["track", "artist", "playlist"]);
+  });
+
+  it("uses the signed-in user's storefront unless one is configured", async () => {
+    const paths = [];
+    const music = fakeMusic({ storefrontId: "gb", api: { music: async (path) => { paths.push(path); return { data: { results: {} } }; } } });
+    await withInstance(music).search("x");
+    await withInstance(music, { storefront: "us" }).search("x");
+    expect(paths[0]).toBe("/v1/catalog/gb/search");
+    expect(paths[1]).toBe("/v1/catalog/us/search");
+  });
+
+  it("getItem expands playlists and artists via their own endpoints", async () => {
+    const paths = [];
+    const music = fakeMusic({ api: { music: async (path) => {
+      paths.push(path);
+      if (path.includes("/playlists/")) return { data: { data: [{ id: "pl.1", attributes: { name: "Chill" }, relationships: { tracks: { data: [
+        { id: "s1", type: "songs", attributes: { name: "A" } }, { id: "v1", type: "music-videos", attributes: { name: "Video" } },
+      ] } } }] } };
+      if (path.endsWith("/top-songs")) return { data: { data: [{ id: "s2", type: "songs", attributes: { name: "Hit" } }] } };
+      if (path.includes("/artists/")) return { data: { data: [{ id: "ar1", attributes: { name: "Artist" } }] } };
+      return { data: {} };
+    } } });
+    const p = withInstance(music, { storefront: "us" });
+    const pl = await p.getItem({ entity: "album", kind: "playlist", id: "applemusic:pl.1", providerRefs: [{ provider: "applemusic", externalId: "pl.1" }] });
+    expect(pl.album.kind).toBe("playlist");
+    expect(pl.tracks.map((t) => t.title)).toEqual(["A"]); // music video dropped
+    const ar = await p.getItem({ entity: "album", kind: "artist", id: "applemusic:ar1", providerRefs: [{ provider: "applemusic", externalId: "ar1" }] });
+    expect(ar.album.title).toBe("Artist");
+    expect(ar.tracks[0].title).toBe("Hit");
+    expect(paths).toContain("/v1/catalog/us/artists/ar1/view/top-songs");
+  });
+
+  it("library songs play by their catalog id (playParams.catalogId)", async () => {
+    const music = fakeMusic({ api: { music: async () => ({ data: { data: [
+      { id: "i.abc", type: "library-songs", attributes: { name: "Mine", playParams: { id: "i.abc", catalogId: "999" } } },
+    ] } }) } });
+    const { tracks } = await withInstance(music).getItem({ entity: "album", kind: "playlist", id: "applemusic:p.xyz", providerRefs: [{ provider: "applemusic", externalId: "p.xyz" }] });
+    expect(tracks[0].providerRefs[0].externalId).toBe("999");
+  });
+
+  it("resolveRef returns an owned (URL-less) source for saved recordings", async () => {
+    const p = withInstance(fakeMusic());
+    expect(await p.resolveRef({ provider: "applemusic", externalId: "s1" })).toMatchObject({ owned: true, externalId: "s1", url: null });
+    expect(await p.resolveRef({ provider: "applemusic" })).toBe(null);
+  });
+
+  it("getHome: charts always; recommendations + recently played only when signed in; failures drop a shelf", async () => {
+    const api = (authed) => async (path) => {
+      if (path.includes("/charts")) return { data: { results: { songs: [{ data: [{ id: "s1", type: "songs", attributes: { name: "Top" } }] }], albums: [{ data: [{ id: "al1", type: "albums", attributes: { name: "Alb" } }] }] } } };
+      if (path === "/v1/me/recommendations") return { data: { data: [{ id: "r1", attributes: { title: { stringForDisplay: "Made for You" } }, relationships: { contents: { data: [
+        { id: "pl.1", type: "playlists", attributes: { name: "Mix" } }, { id: "ra.1", type: "stations", attributes: { name: "Station" } },
+      ] } } }] } };
+      if (path === "/v1/me/recent/played") throw new Error("boom");
+      return { data: {} };
+    };
+    const anon = await withInstance(fakeMusic({ api: { music: api(false) } })).getHome();
+    expect(anon.map((s) => s.title)).toEqual(["Top songs", "Top albums"]);
+    const signed = await withInstance(fakeMusic({ isAuthorized: true, api: { music: api(true) } })).getHome();
+    expect(signed.map((s) => s.title)).toEqual(["Made for You", "Top songs", "Top albums"]); // recent failed → dropped
+    expect(signed[0].items.map((i) => i.kind)).toEqual(["playlist"]); // station dropped
+  });
+
+  it("getHome: top playlists lead as the hero shelf", async () => {
+    const api = async (path) => (path.includes("/charts")
+      ? { data: { results: { songs: [{ data: [{ id: "s1", type: "songs", attributes: { name: "Top" } }] }], playlists: [{ data: [{ id: "pl.9", type: "playlists", attributes: { name: "Today's Hits" } }] }] } } }
+      : { data: {} });
+    const shelves = await withInstance(fakeMusic({ api: { music: api } })).getHome();
+    expect(shelves.map((s) => [s.title, s.style || null])).toEqual([["Top playlists", "hero"], ["Top songs", "ranked"]]);
+  });
+
+  it("checkCatalog tells missing key / rejected key / ok apart", async () => {
+    const missing = createAppleMusicProvider({}, { getInstance: async () => { const e = new Error("nc"); e.code = "not-configured"; throw e; } });
+    expect((await missing.checkCatalog()).state).toBe("not-configured");
+    const rejected = withInstance(fakeMusic({ api: { music: async () => { throw new Error("401"); } } }));
+    expect((await rejected.checkCatalog()).state).toBe("rejected");
+    const ok = await withInstance(fakeMusic()).checkCatalog();
+    expect(ok).toMatchObject({ ok: true, storefront: "us" });
+  });
+});
+
+describe("Apple Music browse (Discover categories)", () => {
+  const song = (id, name, extra = {}) => ({ id, type: "songs", attributes: { name, artistName: "A", durationInMillis: 1000, isrc: "usum71703861", ...extra } });
+  function browseMusic(calls) {
+    return fakeMusic({ api: { music: async (path, params) => {
+      calls.push({ path, params });
+      if (path.endsWith("/genres")) return { data: { data: [{ id: "14", attributes: { name: "Pop" } }, { id: "18", attributes: { name: "Hip-Hop/Rap" } }] } };
+      if (path.includes("/charts")) return { data: { results: { songs: [{ data: [song("c1", "Chart Song")] }], albums: [{ data: [{ id: "al1", type: "albums", attributes: { name: "Chart Album" } }] }] } } };
+      if (path.includes("/search")) return { data: { results: { playlists: { data: [{ id: "pl.1", type: "playlists", attributes: { name: "Pop Hits", curatorName: "Apple Music" } }] }, songs: { data: [song("s9", "Found Song")] } } } };
+      return { data: {} };
+    } } });
+  }
+  it("fetches genres once and caches them", async () => {
+    const calls = []; const p = withInstance(browseMusic(calls));
+    expect(await p.getGenres()).toEqual([{ id: "14", name: "Pop" }, { id: "18", name: "Hip-Hop/Rap" }]);
+    await p.getGenres();
+    expect(calls.filter((c) => c.path.endsWith("/genres")).length).toBe(1);
+  });
+  it("a genre category reads genre charts + a playlists search", async () => {
+    const calls = []; const p = withInstance(browseMusic(calls));
+    const shelves = await p.getBrowseCategory({ label: "Pop", query: "pop hits", genreId: "14" });
+    const chart = calls.find((c) => c.path.includes("/charts"));
+    expect(chart.params.genre).toBe("14");
+    expect(calls.find((c) => c.path.includes("/search")).params.types).toBe("playlists");
+    expect(shelves.map((s) => [s.id, s.style || null])).toEqual([["cat:playlists", "hero"], ["cat:songs", "ranked"], ["cat:albums", null], ["cat:search-songs", "ranked"]]);
+    expect(shelves[0].items[0]).toMatchObject({ entity: "album", kind: "playlist", title: "Pop Hits" });
+  });
+  it("a mood category (no genre) is search-only", async () => {
+    const calls = []; const p = withInstance(browseMusic(calls));
+    const shelves = await p.getBrowseCategory({ label: "Chill", query: "chill" });
+    expect(calls.some((c) => c.path.includes("/charts"))).toBe(false);
+    expect(shelves.map((s) => s.title)).toEqual(["Playlists", "Songs"]);
+  });
+  it("captures ISRC on songs (normalized)", async () => {
+    const calls = []; const p = withInstance(browseMusic(calls));
+    const shelves = await p.getBrowseCategory({ label: "Chill", query: "chill" });
+    expect(shelves[1].items[0].isrc).toBe("USUM71703861");
   });
 });

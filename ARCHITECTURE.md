@@ -92,10 +92,13 @@ reach into another domain's internals. Cross-domain needs go through a shared mo
 |---|---|---|
 | App state (calendar, tasks, media, finance, travel, …) | `tableplan_states.state` JSONB, sectioned | one row per user (`personal`) or group |
 | Recipes / folders | `eat_recipes`, `eat_folders` (relational) | the one fully-normalized domain |
+| Finance transactions (bank/CSV/manual) | `finance_transactions` (relational, group-scoped) | durable ledger — SimpleFIN pulls ingested server-side (bank rows service-role-only), CSV + manual rows client-written; soft-delete; annotations (labels/splits/notes) stay in the finance JSONB keyed by the same txn id. Read via `finance-txn-store.js` behind `financeTxnSource` ("feed" default). See FINANCE_TRANSACTIONS_DESIGN.md |
 | Mail processing | `mail_accounts`/`mail_sweep_state`/`mail_processed` | service-role only, hardened |
 | Sharing | `live_groups`/`live_group_members`/`live_group_invites` | family/group model |
 | Push | `live_push_subscriptions` | web-push endpoints |
 | History/backup | `tableplan_state_history` | periodic snapshots |
+| Permanent personal history (media plays, article reads, practice events, AI chat) | `live_history` (relational, per-user, append-only) | the capped in-state lists stay as the UI's recent window; `history-log.js` appends each entry once (debounced, batched, bounded, never polled). Read only by Export my data. See DATA_EXPORT.md |
+| Export my data | derived at click time (`data-export.js`) | lossless JSON (restorable) + CSV/ICS/vCard, secrets removed — no parallel collection path. See DATA_EXPORT.md |
 | Media (content/provider/target/user-state) | canonical envelope in `media-model.js` | wraps native records, no migration |
 
 **Provenance:** records that ENTER Live from a source (imported / provider-fetched /
@@ -511,6 +514,12 @@ applied in filename order, recorded in a `schema_migrations` table, by a small l
 runner (idempotent, transactional per file). Applying a migration is a **production
 DB change — confirmation-gated (§16), out of local-only programs.** The runner is
 designed, not built, until there is a staging env or a second backend.
+
+**Data API grants (required from 2026-10-30):** Supabase no longer auto-grants new
+`public` tables to the Data API. Every SQL file that creates a table must, in the same
+file, `grant … to service_role` plus whatever `authenticated`/`anon` access its RLS
+policies need (least privilege — RLS still decides rows; grant `anon` only for tables
+read signed-out). Enforced by `test/architecture-supabase-grants.test.js`.
 
 **Phases:** (1) cloud (today). (2) home server — implement the `Storage` adapter +
 run the same schema on local Postgres; Jellyfin/Kokoro/etc. already sit behind

@@ -56,6 +56,15 @@ alter table public.mail_accounts    enable row level security;
 alter table public.mail_sweep_state enable row level security;
 alter table public.mail_processed   enable row level security;
 
+-- ── Data API grants ─────────────────────────────────────────────────────────
+-- Explicit grants (from 2026-10-30 Supabase no longer auto-grants new public tables to the Data
+-- API on 2026-10-30). Least-privilege: matches the RLS policies above; RLS still
+-- decides which rows.
+-- Service-role only (Netlify functions): no authenticated grant either.
+grant select, insert, update, delete on public.mail_accounts to service_role;
+grant select, insert, update, delete on public.mail_sweep_state to service_role;
+grant select, insert, update, delete on public.mail_processed to service_role;
+
 -- ── Atomic functions ─────────────────────────────────────────────────────────
 
 -- Atomically claim the right to sweep for a user. Returns true only to the ONE

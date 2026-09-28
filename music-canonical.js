@@ -166,6 +166,8 @@ export function workGroupingKey(desc) {
 // Same performance? (for exact-recording fallback across providers)
 export function matchRecording(a, b) {
   if (!a || !b) return { matched: false, confidence: 0 };
+  // Same ISRC ⇒ same recording, whatever the metadata says (strongest signal).
+  if (a.isrc && b.isrc) return a.isrc === b.isrc ? { matched: true, confidence: 1, signals: ["isrc"] } : { matched: false, confidence: 0, reason: "isrc-mismatch" };
   const perfA = clean((a.performers || []).map((p) => p.name).join(" ") || a.performer || "");
   const perfB = clean((b.performers || []).map((p) => p.name).join(" ") || b.performer || "");
   const albumA = clean(a.album), albumB = clean(b.album);
@@ -229,6 +231,7 @@ export function makeCanonicalRecording(p = {}) {
     album: p.album || null,
     releaseDate: p.releaseDate || null,
     durationMs: p.durationMs != null ? p.durationMs : null,
+    isrc: p.isrc || null,                    // cross-provider recording code (music-streaming normalizeIsrc)
     artworkUrl: p.artworkUrl || null,
     originProvider: p.originProvider || (p.providerRefs && p.providerRefs[0] && p.providerRefs[0].provider) || null,
     providerRefs: Array.isArray(p.providerRefs) ? p.providerRefs : [],
@@ -257,6 +260,7 @@ export function deriveRecordingFromRecord(rec, workId = null) {
     performers: (rec.artists || []).filter((a) => a.role !== "composer"),
     album: rec.album || null,
     durationMs: rec.durationMs != null ? rec.durationMs : null,
+    isrc: rec.isrc || null,
     artworkUrl: rec.artworkUrl || null,
     originProvider: rec.provider,
     providerRefs: rec.providerRefs || [],

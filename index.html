@@ -233,7 +233,6 @@
                 <button type="button" id="homeMailBtn">Mail</button>
                 <button type="button" id="homeEatBtn">Meal Plan</button>
                 <button type="button" id="homeReadBtn">Media</button>
-                <button type="button" id="homePublicationsBtn">Publications</button>
                 <button type="button" id="homeRecreateBtn">Recreate</button>
                 <button type="button" id="homeExploreBtn">Explore</button>
                 <button type="button" id="homeFinanceBtn">Finance</button>
@@ -338,6 +337,9 @@
                   <div class="podcast-playlist-bar article-pub-bar">
                     <div class="watch-category-tabs" id="mediaPubTabs" role="tablist" aria-label="Saved article publications"></div>
                     <div class="podcast-tabs-actions">
+                      <button class="podcast-tabs-action-btn" type="button" id="articleScanBtn" title="Scan a printed article" aria-label="Scan a printed article">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10"/></svg>
+                      </button>
                       <button class="podcast-tabs-action-btn" type="button" id="articleSearchBtn" title="Search articles" aria-label="Search articles">
                         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
                       </button>
@@ -761,84 +763,6 @@
         <section class="planner-column do-column weather-page" id="weatherMainPage" aria-label="Weather" hidden>
           <div class="weather-page-inner" id="weatherPageInner"></div>
         </section>
-        <section class="planner-column do-column" id="publicationsMainPage" aria-label="Publications" hidden>
-          <div class="pub-page-inner" id="publicationsPanel"></div>
-          <div class="pub-reader" id="pubReaderPanel" role="dialog" aria-modal="true" aria-label="Article reader" tabindex="-1" hidden>
-            <div class="pub-reader-inner">
-              <div class="pub-reader-head">
-                <button type="button" class="icon-btn pub-reader-close" id="pubReaderClose" aria-label="Close reader">✕</button>
-                <div class="pub-reader-head-actions">
-                  <button type="button" class="pub-reader-listen" id="pubReaderListen">▶ Listen</button>
-                  <a class="pub-reader-orig" id="pubReaderOrig" href="#" target="_blank" rel="noopener">Open original ↗</a>
-                </div>
-              </div>
-              <div class="pub-reader-listen-msg" id="pubReaderListenMsg" hidden></div>
-              <div class="pub-reader-body" id="pubReaderBody">
-                <h1 class="pub-reader-title" id="pubReaderTitle"></h1>
-                <div class="pub-reader-meta" id="pubReaderMeta"></div>
-                <div class="pub-reader-text article-reader-text" id="pubReaderText"></div>
-              </div>
-            </div>
-          </div>
-          <dialog class="recipe-dialog std-form-dialog pub-manage-dialog" id="pubManageDialog">
-            <form class="recipe-form" method="dialog">
-              <div class="recipe-form-head">
-                <h2>Publications</h2>
-                <button class="icon-btn" type="button" id="pubManageClose" aria-label="Close">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
-                </button>
-              </div>
-              <div class="recipe-form-body">
-                <div id="pubSubList"></div>
-                <input type="text" id="pubNewName" class="plan-title-input" placeholder="Publication name" autocomplete="off" maxlength="80" />
-                <input type="url" id="pubNewUrl" class="plan-title-input" placeholder="RSS / Atom feed URL" autocomplete="off" />
-                <div class="pub-manage-msg" id="pubManageMsg" hidden></div>
-              </div>
-              <div class="dialog-actions">
-                <button class="primary-btn" type="button" id="pubAddBtn" style="margin-left:auto">Add</button>
-              </div>
-            </form>
-          </dialog>
-          <dialog class="recipe-dialog std-form-dialog article-scan-dialog" id="articleScanDialog">
-            <form class="recipe-form" method="dialog">
-              <div class="recipe-form-head">
-                <h2>Scan article</h2>
-                <button class="icon-btn" type="button" id="closeArticleScanBtn" aria-label="Close">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-                </button>
-              </div>
-              <div class="recipe-form-body">
-                <div class="scan-picker">
-                  <label>Article photos
-                    <input id="articleScanImages" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/*" multiple />
-                  </label>
-                  <input class="visually-hidden" id="articleScanCameraImage" type="file" accept="image/*" capture="environment" />
-                  <div class="scan-picker-actions">
-                    <button class="secondary-btn" type="button" id="articleScanCameraBtn">Take photo</button>
-                    <button class="secondary-btn" type="button" id="clearArticleScanBtn">Clear photos</button>
-                  </div>
-                  <div class="scan-image-preview-list" id="articleScanPreviewList" aria-label="Article photo previews"></div>
-                </div>
-                <p class="scan-privacy-note">Cloud scan sends photos to an AI model to read them. On-device scan (when available) keeps the photo on your phone but reads plainer.</p>
-                <div class="scan-buttons">
-                  <button class="primary-btn" type="button" id="scanArticleCloudBtn">Scan</button>
-                  <button class="secondary-btn" type="button" id="scanArticleLocalBtn" hidden>Scan on device</button>
-                </div>
-                <p class="import-status" id="articleScanStatus"></p>
-                <div class="article-scan-review" id="articleScanReview" hidden>
-                  <label>Title <input id="articleScanTitle" /></label>
-                  <label>Author <input id="articleScanAuthor" /></label>
-                  <label>Publication <input id="articleScanPublication" /></label>
-                  <label>Date <input id="articleScanDate" type="date" /></label>
-                  <label>Body <textarea id="articleScanBody" rows="10" placeholder="One blank line between paragraphs"></textarea></label>
-                </div>
-              </div>
-              <div class="dialog-actions">
-                <button class="primary-btn" type="button" id="saveArticleScanBtn" hidden style="margin-left:auto">Save to Library</button>
-              </div>
-            </form>
-          </dialog>
-        </section>
         <section class="planner-column do-column mail-page" id="mailMainPage" aria-label="Mail" hidden>
           <div class="mail-page-inner">
             <!-- Not connected -->
@@ -976,6 +900,7 @@
                   <button type="button" id="openWeeklyEmailBtn">Email</button>
                   <button type="button" id="openBackupHealthBtn">Backup Health</button>
                   <button type="button" id="openRestoreBackupBtn">Restore Backup</button>
+                  <button type="button" id="openExportDataBtn">Export My Data</button>
                   <button type="button" id="openTrashBtn">Trash</button>
                   <button type="button" id="openFamilyMembersBtn">Family Members</button>
                 </div>
@@ -1196,6 +1121,45 @@
         </div>
       </dialog>
 
+      <dialog class="recipe-dialog std-form-dialog article-scan-dialog" id="articleScanDialog">
+        <form class="recipe-form" method="dialog">
+          <div class="recipe-form-head">
+            <h2>Scan article</h2>
+            <button class="icon-btn" type="button" id="closeArticleScanBtn" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div class="recipe-form-body">
+            <div class="scan-picker">
+              <label>Article photos
+                <input id="articleScanImages" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/*" multiple />
+              </label>
+              <input class="visually-hidden" id="articleScanCameraImage" type="file" accept="image/*" capture="environment" />
+              <div class="scan-picker-actions">
+                <button class="secondary-btn" type="button" id="articleScanCameraBtn">Take photo</button>
+                <button class="secondary-btn" type="button" id="clearArticleScanBtn">Clear photos</button>
+              </div>
+              <div class="scan-image-preview-list" id="articleScanPreviewList" aria-label="Article photo previews"></div>
+            </div>
+            <p class="scan-privacy-note">Cloud scan sends photos to an AI model to read them. On-device scan (when available) keeps the photo on your phone but reads plainer.</p>
+            <div class="scan-buttons">
+              <button class="primary-btn" type="button" id="scanArticleCloudBtn">Scan</button>
+              <button class="secondary-btn" type="button" id="scanArticleLocalBtn" hidden>Scan on device</button>
+            </div>
+            <p class="import-status" id="articleScanStatus"></p>
+            <div class="article-scan-review" id="articleScanReview" hidden>
+              <label>Title <input id="articleScanTitle" /></label>
+              <label>Author <input id="articleScanAuthor" /></label>
+              <label>Publication <input id="articleScanPublication" /></label>
+              <label>Date <input id="articleScanDate" type="date" /></label>
+              <label>Body <textarea id="articleScanBody" rows="10" placeholder="One blank line between paragraphs"></textarea></label>
+            </div>
+          </div>
+          <div class="dialog-actions">
+            <button class="primary-btn" type="button" id="saveArticleScanBtn" hidden style="margin-left:auto">Save to Publications</button>
+          </div>
+        </form>
+      </dialog>
       <dialog class="recipe-dialog article-save-dialog" id="articleSaveDialog">
         <div class="recipe-form">
           <div class="dialog-head">
@@ -2640,6 +2604,10 @@
         <label>
           Address
           <input id="groceryStoreLayoutAddress" />
+        </label>
+        <label class="grocery-store-instacart-row">
+          <span>Order via Instacart<small>Adds a “Send to Instacart” button to this store’s list</small></span>
+          <input type="checkbox" class="live-toggle" id="groceryStoreLayoutInstacart" />
         </label>
         <div class="grocery-store-layout-heading">
           <strong>Sections</strong>
