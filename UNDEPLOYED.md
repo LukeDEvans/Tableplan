@@ -46,3 +46,20 @@ PR: https://github.com/LukeDEvans/Tableplan/pull/9
 
 **After deploying:** on an iPhone, check a few pages with and without the mini-player
 showing, in both the installed web app and the native app.
+
+## Music: Discover-first redesign, search on every tab, portable library (PR #10)
+PR: https://github.com/LukeDEvans/Tableplan/pull/10 · docs: MUSIC.md §3e/§3f
+
+- Media → Music opens on **Discover** (Apple Music / Spotify-style home: top playlists,
+  Jump back in, for-you, ranked Top songs, top albums, Browse categories → category pages).
+  Tabs: Discover · Saved · Library · one tab per playlist · +.
+- One search bar on every tab (Discover = catalog; other tabs filter locally).
+- Portability: ISRC saved on songs; a saved song that can't play on its provider is found
+  on another by ISRC/title+artist; Saved → "Back up & move your music" CSV export/import.
+
+**After deploying:**
+1. With Apple Music connected, open Discover → Pop / Hip-Hop and confirm the Top songs /
+   albums are genre-specific (ISSUES.md "Music Discover browse verified only against a
+   mocked MusicKit").
+2. On the iPhone app, try Saved → Export CSV (ISSUES.md "Music CSV export download").
+

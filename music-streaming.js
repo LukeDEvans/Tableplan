@@ -92,6 +92,12 @@ export function makePlayableSource(p = {}) {
   };
 }
 
+// ISRC: 12 chars, CC-XXX-YY-NNNNN, commonly written with or without dashes.
+export function normalizeIsrc(v) {
+  const s = str(v).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return /^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(s) ? s : null;
+}
+
 // A contributor with a role, so a classical performer/ensemble/composer and a
 // pop artist all normalize the same way.
 export function makeContributor(p = {}) {
@@ -115,6 +121,10 @@ export function makeCanonicalTrack(p = {}) {
     album: str(p.album) || null,
     trackNo: numOrNull(p.trackNo),
     durationMs: numOrNull(p.durationMs),
+    // ISRC — the industry-wide recording code. Unlike a provider id it is the
+    // SAME on Apple Music, Spotify, Deezer, Tidal…, so it is what lets a saved
+    // song follow the user to another provider (music-source-resolver.js).
+    isrc: normalizeIsrc(p.isrc),
     artworkUrl: str(p.artworkUrl) || null,
     provider: str(p.provider),
     providerRefs: arr(p.providerRefs).map(makeProviderRef),
@@ -168,6 +178,17 @@ export function makeCanonicalAlbum(p = {}) {
 //
 // A playback-owning provider also implements the catalog surface it can
 // (search/getItem) but NOT getPlayable — there is no URL to hand out.
+//
+// The Browse contract (CAP.BROWSE, optional — drives the Discover tab):
+//
+//   getHome({ perShelf }): Promise<Shelf[]>          home shelves (for-you, charts…)
+//   getGenres(): Promise<{ id, name }[]>             the catalog's genre list
+//   getBrowseCategory({ label, query, genreId }, { perShelf }): Promise<Shelf[]>
+//
+//   Shelf = { id, title, items: (CanonicalTrack|CanonicalAlbum)[], style? }
+//   style is a layout hint: "ranked" (numbered song list) | "hero" (large
+//   cards) | undefined (standard cards). The UI never asks which provider made
+//   a shelf, so a second streamer drops in by implementing these three.
 
 export function makeNowPlaying(p = {}) {
   const state = str(p.state) || PLAYBACK_STATE.NONE;

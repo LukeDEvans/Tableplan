@@ -1,11 +1,12 @@
 # Music architecture (Media → Music tab)
 
-The Music tab has **three modes over shared systems, one playback engine**:
+The Music tab is **tabs over shared systems, one playback engine**. Tab order: **Discover** (the default when Music opens) · **Saved** · **Library** · one tab per **playlist** · **+** (new playlist, inline — same pattern as Podcasts). One **search bar sits under the tabs on every tab**: on Discover it searches the catalog; on Saved / Library / a playlist it filters what you already have, with a "Search all music for …" row that jumps to a Discover search.
 
-| Mode | What it is | Modules | Data |
+| Tab | What it is | Modules | Data |
 |---|---|---|---|
-| **Saved** | Your personal library — favourites (Works/Recordings) + playlists + recently played, all **canonical & provider-independent** | `music-canonical.js`, `music-library-model.js` | `state.musicLibrary` (local) |
-| **Discover** | **Apple Music first** when connected (search + home shelves), then free/open providers; results **consolidated under canonical Works** | `music-streaming.js`, `music-provider-*.js`, `music-canonical.js` | nothing stored — metadata only, streamed from source |
+| **Discover** | Apple Music / Spotify-style home: greeting → hero shelf (top playlists) → *Jump back in* → for-you / recently played / ranked top songs / top albums → **Browse categories** (genre + mood tiles → a category page of shelves). Search results: **Apple Music first**, then free/open providers, **consolidated under canonical Works** | `music-discover.js`, `music-streaming.js`, `music-provider-*.js`, `music-canonical.js` | nothing stored — metadata only, streamed from source; shelves cached in memory 30 min |
+| **Saved** | Your personal library — favourites (songs/albums/Works) + playlists + recently played, all **canonical & provider-independent**; plus **CSV export/import** | `music-canonical.js`, `music-library-model.js`, `music-portable.js` | `state.musicLibrary` (`media` section — synced like the rest of state) |
+| **Playlist tabs** | One tab per playlist: play / shuffle / reorder / rename / delete; the search bar filters the entries | `music-library-model.js` | `state.musicLibrary.playlists` |
 | **Library** | Music you *own* — local uploads + a Jellyfin server | `music-library.js`, `music-tags.js`, `music-jellyfin.js` | audio **bytes** in IndexedDB / Jellyfin |
 
 Playback of a saved Recording goes through `music-source-resolver.js` (provider fallback). See §11–13 below.
@@ -139,17 +140,37 @@ Each canonical entity keeps **provenance** (`{provider, providerId, matchType: a
 
 ## 3c. Personal library & playlists (`music-library-model.js`)
 
-Pure ops over `state.musicLibrary = { favorites, playlists }` (local-first; no cloud):
+Pure ops over `state.musicLibrary = { favorites, playlists }` (stored in the `media` state section, synced like the rest of state):
 - **Favorites reference canonical entities** (`{ key, type: work|recording|album|artist|composer, entity }`). `favoriteKey` is content-derived and stable: Works key on composer+catalog (provider-independent); recordings/albums on their provider-ref (identity of that found performance). So a favourite survives provider id/metadata changes.
 - **Playlists** hold canonical Recordings (each with `providerRefs`), so one playlist mixes providers. `add/remove/reorder/rename/delete`, de-duped by recording key.
 
 Migration: the old provider-record `state.musicFavorites` is migrated once into canonical recording favourites on first Saved/Discover use.
 
+## 3e. Discover & browse (`music-discover.js` + the Browse contract)
+
+Providers that can browse advertise `CAP.BROWSE` and implement (documented in `music-streaming.js`):
+`getHome({perShelf})`, `getGenres()`, `getBrowseCategory({label, query, genreId}, {perShelf})`, each returning **shelves** `{ id, title, items, style? }`. `style` is a layout hint only — `"hero"` (large cards), `"ranked"` (numbered song columns, tap = play with the rest of the shelf queued), default (cards). **The UI never asks which provider made a shelf**, so another streamer drops in by implementing these three methods; `app.js` picks the first available BROWSE provider.
+
+`music-discover.js` (pure) owns the **category list** — genres (Pop, Hip-Hop, Rock, R&B, …) and moods/activities (Chill, Focus, Workout, Sleep, …), each with a search query, genre-name hints and a tile hue. A provider resolves a category's genre by **name** from its own genre list (`resolveGenreId`; a stable fallback id is used only when the list can't be fetched). Genre categories read that genre's charts + a playlists search; mood categories are search-only. Without a browse-capable catalog (no Apple Music) Discover shows the categories that make sense on the free sources, and a tile runs a search. It also owns the **local search filters** (`filterSavedLibrary`, `filterTracks`, `textMatches`: every word must match, order-free, accent-insensitive).
+
+Loads are on demand and **never polled**: home shelves once per 30 min, a category page on tap (cached 30 min; a failed load isn't cached so "Try again" works).
+
+## 3f. Portability — switching players without losing your music (`music-portable.js`)
+
+The source of truth stays `state.musicLibrary` (synced JSONB): entries are canonical entities that keep **every provider ref** they were found under **plus an ISRC** (the industry recording code, identical across Apple Music / Spotify / Deezer / Tidal — captured from Apple's `isrc` attribute into `CanonicalTrack.isrc` → `Recording.isrc`). That is what makes a player switch safe:
+
+1. A saved song whose own refs can't play (old provider removed/disabled) goes through the resolver's **same-song search** (§3d): match by **ISRC**, else title (release decorations like "(Remastered 2009)" stripped) + artist + duration ±5 s. Never fuzzy beyond that — a wrong song is worse than "unavailable".
+2. A match is returned as `learnedRef`; `app.js` **appends** it to the saved entry, so the next play is direct. (Appended, so `favoriteKey` — first ref — never changes.)
+
+**CSV** is the portability layer on top, not the store (a file can't sync or merge between devices; the JSONB section already does): Saved → *Back up & move your music* → **Export CSV** writes one file, one row per favourite and per playlist entry (`type, list, list_id, position, item_type, title, artist, album, composer, work, catalog, catalog_id, isrc, duration_ms, provider_refs, artwork_url, kind, added_at`). **Import CSV** merges (never deletes, de-dupes, playlists matched by id then name) and also accepts foreign playlist CSVs — e.g. Exportify's Spotify export (`Track Name`, `Artist Name(s)`, `ISRC`, `Track URI`…) becomes a playlist named after the file, with Spotify refs + ISRCs ready for a future Spotify provider. Migration tools (TuneMyMusic, Soundiiz) read the same title/artist/album/ISRC columns. Cells are guarded against spreadsheet formula injection.
+
+**Adding another player later** = write `music-provider-<x>.js` (search + `resolveRef`, plus the Transport if it owns playback and Browse if it has a catalog home), register it in `getMusicProviders()`. Saved favourites/playlists need no migration: existing entries resolve via their refs or the same-song search and learn the new ref on first play.
+
 ## 3d. Source resolution & provider fallback (`music-source-resolver.js`)
 
 A saved Recording is canonical; the **currently-playable source is separate and dynamic**. `resolvePlayableSource(recording, { registry, preferredProvider, allowAlternate })` tries refs in order (preferred → origin → rest) and returns a **typed** result:
 
-- **`exact`** — the same recording (its own ref, or the *same performance* found on another provider via search). Play it.
+- **`exact`** — the same recording (its own ref, the *same song* found on another provider by ISRC / title+artist+duration — §3f — or the *same performance* of a Work found via search). Play it. A search hit carries `learnedRef`.
 - **`alternate`** — the exact recording is unreachable, but a *different performance of the same Work* exists. **Offered to the user, never silently substituted** (§13) — the app shows a "Recording unavailable — play another performance?" prompt.
 - **`unavailable`** — nothing resolves right now.
 
@@ -182,9 +203,9 @@ The queue interleaves library and streaming items; `onMusicEnded` advances it; a
 
 Stored in **local sectioned `state`** (persisted via `persist()`), normalized and provider-independent:
 - **Recently played** lives in the **unified `state.mediaHistory`** (see `media-history.js`) shared with podcasts/radio, not a music-only list; music reads it via `getRecentMedia({kind:"music"})`. Each entry's `ref` carries what replay needs (`{mkind, canonical, recording}`).
-- `state.musicFavorites` — favorited canonical tracks/albums, capped at 200.
+- Favourites + playlists: `state.musicLibrary` (§3c); the legacy `state.musicFavorites` list is migrated into it once.
 
-No Supabase tables were added; this matches how the rest of the app stores user data and keeps favorites/history provider-agnostic. Playlists are not built yet but the normalized items + `providerRefs` make a `state.musicPlaylists[]` of canonical items a straightforward later addition.
+No Supabase tables were added; this matches how the rest of the app stores user data and keeps favorites/history provider-agnostic. Portability across providers: §3f.
 
 ---
 
@@ -213,14 +234,16 @@ Live **Radio** will share the engine, session, favorites, history, and controls,
 - **Internet Archive** search is relevance-ranked and excludes non-music audio collections (audiobooks, podcasts, old-time radio, …) — `NON_MUSIC_COLLECTIONS` in the adapter.
 - **iOS app**: MusicKit JS sign-in (popup) and DRM playback inside the Capacitor WKWebView are unverified; the robust path there is native MusicKit via a Capacitor plugin (see ISSUES.md).
 - No cross-provider **entity resolution** beyond exact-identifier dedup (by design).
-- Browse-by-facet (composer/period/instrument) and Discover "home" sections beyond categories/recents/favourites are not built.
-- Ambient/meditation **classification** is search-driven (category chips), not tagged — the domain leaves room for local/AI tagging later without requiring it now.
+- Browse-by-facet (composer/period/instrument) is not built; Discover categories are genre/mood only (§3e). Home shelves beyond Apple's recommendations/recent/charts (e.g. new releases) would need an editorial endpoint.
+- No **preferred-player setting** yet: with one playback-owning provider it's moot. When a second one lands, pass `preferredProvider` to `resolvePlayableSource` from a setting (the resolver and `registry.activePlaybackProvider(id)` already support it).
+- CSV export uses a blob download link (same as the Cadence MusicXML export); inside the iOS Capacitor wrapper that may need the Share sheet instead — unverified.
+- Ambient/meditation **classification** is search-driven (category tiles), not tagged — the domain leaves room for local/AI tagging later without requiring it now.
 - Offline audio is intentionally out of scope (licence-respecting future capability).
 
 ---
 
 ## 10. Tests
-Provider/streaming: `test/music-streaming.test.js`, `test/music-provider-ia.test.js`. Canonical layer: `test/music-canonical.test.js` (composer identity, catalog/number conflicts, nickname resolution, consolidation, enrichment), `test/music-library-model.test.js` (canonical favourites survive provider changes; multi-provider playlists), `test/music-source-resolver.test.js` (exact via own ref / secondary provider / search; provider-down skip; exact-vs-alternate; different-work rejection; unavailable). Plus the Library-layer suites (`music-library`, `music-tags`, `music-jellyfin`). Run `npm test`.
+Provider/streaming: `test/music-streaming.test.js`, `test/music-provider-ia.test.js`. Canonical layer: `test/music-canonical.test.js` (composer identity, catalog/number conflicts, nickname resolution, consolidation, enrichment), `test/music-library-model.test.js` (canonical favourites survive provider changes; multi-provider playlists), `test/music-source-resolver.test.js` (exact via own ref / secondary provider / search; provider-down skip; exact-vs-alternate; different-work rejection; unavailable). Discover & portability: `test/music-discover.test.js` (categories, genre resolution, local search), `test/music-portable.test.js` (CSV round-trip preserves favourite keys / order / ISRC / refs, idempotent re-import, Exportify import, formula guard), resolver same-song tests (ISRC, decorated titles, no wrong-song substitution, `learnedRef`), Apple browse tests (genres cached, genre charts vs mood search, hero ordering, ISRC capture). Plus the Library-layer suites (`music-library`, `music-tags`, `music-jellyfin`). Run `npm test`.
 
 ## 11. Connection to the piano/score system
 Canonical `Work`/`Movement`/`Recording` align by shape with the Cadence score domain (`music/domain.js`). A future score-following/practice/annotation system references the same canonical Work; reconcile a score's Work with a listening Work via `matchWork` + `providerRefs` (no entity store is forced today — the seam is `consolidateSearchResults`/`enrichWork`).
