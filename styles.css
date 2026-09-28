@@ -22673,6 +22673,86 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
 .radio-now--last { background: var(--surface); }
 .radio-now:hover { border-color: var(--accent); }
 .radio-now .music-thumb--sm { width: 52px; height: 52px; }
+
+/* ── Music tab shell: tabs → search (every tab) → body ─────────────────────── */
+.music-search-bar .music-search-input, .music-search-bar .music-search-input:focus { border: none; box-shadow: none; outline: none; background: transparent; padding: 2px 0; min-width: 0; }
+.music-search-input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; display: none; }
+.music-mode-body { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.music-mode-body .music-discover-results { overflow: visible; }
+.music-search-all .music-row-title { color: var(--accent-dark, var(--accent)); }
+.music-portable-actions { display: flex; gap: 8px; flex-wrap: wrap; padding: 6px 14px 4px; }
+.music-portable .music-empty-sub { padding: 0 14px; text-align: left; }
+.music-pl-head { padding-top: 12px; }
+.music-pl-art { flex: 0 0 auto; width: 56px; height: 56px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; color: #fff;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #000)); }
+.music-pl-head .music-item-badges { flex-basis: 100%; }
+.music-pl-head { flex-wrap: wrap; }
+
+/* ── Discover (Apple Music / Spotify-style home) ───────────────────────────── */
+.md-home, .md-cat { padding-bottom: 18px; }
+.md-greeting { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.01em; color: var(--ink); margin: 10px 14px 14px; }
+.md-sec { margin: 6px 0 14px; min-width: 0; }
+.md-h { font-size: 1.08rem; font-weight: 750; color: var(--ink); margin: 0 14px 8px; letter-spacing: -0.005em; }
+/* One 14px gutter for headings and content; scroll-padding keeps snap from
+   swallowing a shelf's leading padding. */
+.md-sec .music-shelf, .md-ranked { padding-left: 14px; padding-right: 14px; scroll-padding-inline: 14px; }
+
+/* Jump back in — 2-column compact tiles */
+.md-quick { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 0 14px; }
+@media (min-width: 700px) { .md-quick { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.md-quick-tile { display: flex; align-items: center; gap: 10px; min-width: 0; height: 52px; padding-right: 8px; border-radius: 8px; overflow: hidden; cursor: pointer;
+  background: color-mix(in srgb, var(--ink) 7%, var(--surface)); }
+.md-quick-tile:hover { background: color-mix(in srgb, var(--ink) 12%, var(--surface)); }
+.md-quick-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.md-quick-art { width: 52px; height: 52px; flex: 0 0 52px; object-fit: cover; background: var(--accent-soft); display: inline-flex; align-items: center; justify-content: center; }
+.md-quick-title { font-weight: 650; font-size: 0.82rem; line-height: 1.2; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-width: 0; }
+
+/* Hero shelf — large cards */
+.md-hero-shelf { gap: 14px; }
+.md-hero { flex: 0 0 min(66vw, 240px); width: min(66vw, 240px); min-width: 0; display: flex; flex-direction: column; gap: 2px; cursor: pointer; scroll-snap-align: start; }
+.md-hero:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 12px; }
+.md-hero-kicker { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.md-hero-title { font-weight: 700; font-size: 0.98rem; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.md-hero-sub { font-size: 0.8rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 1em; }
+.md-hero-art { width: 100%; aspect-ratio: 1 / 1; height: auto; margin-top: 6px; border-radius: 12px; object-fit: cover; background: var(--accent-soft); box-shadow: 0 2px 10px rgba(0,0,0,.16);
+  display: inline-flex; align-items: center; justify-content: center; }
+.md-hero:hover .md-hero-art { filter: brightness(.95); }
+.md-card-art--round { border-radius: 50% !important; }
+
+/* Ranked songs — horizontally paged columns of 4 numbered rows */
+.md-ranked { display: grid; grid-auto-flow: column; grid-template-rows: repeat(4, auto); grid-auto-columns: min(86%, 340px); column-gap: 16px;
+  overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; padding-top: 0; padding-bottom: 6px; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+.md-rank-row { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 6px 0; cursor: pointer; scroll-snap-align: start;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); }
+.md-rank-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px; }
+.md-rank-row:hover .md-rank-title { color: var(--accent-dark, var(--accent)); }
+.md-rank-no { flex: 0 0 18px; text-align: center; font-weight: 700; font-size: 0.86rem; color: var(--muted); display: inline-flex; justify-content: center; }
+.md-rank-row.is-active .md-rank-no, .md-rank-row.is-active .md-rank-title { color: var(--accent-dark, var(--accent)); }
+.md-rank-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.md-rank-title { font-weight: 600; font-size: 0.88rem; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.md-rank-sub { font-size: 0.76rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.md-rank-row .music-add-btn, .md-rank-row .music-fav-btn { flex: 0 0 auto; }
+
+/* Browse categories — colourful tiles. Fixed saturated colours with white text
+   read the same in light and dark themes (Spotify/Apple convention). */
+.md-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(146px, 1fr)); gap: 10px; padding: 0 14px; }
+.md-tile { --tile-h: 210; position: relative; height: 84px; border: none; border-radius: 12px; cursor: pointer; overflow: hidden; text-align: left; padding: 10px 12px;
+  display: flex; align-items: flex-start; color: #fff;
+  background: linear-gradient(135deg, hsl(var(--tile-h) 72% 46%), hsl(calc(var(--tile-h) + 38) 70% 32%)); box-shadow: 0 1px 4px rgba(0,0,0,.14); }
+.md-tile::after { content: ""; position: absolute; right: -14px; bottom: -18px; width: 64px; height: 64px; border-radius: 10px; transform: rotate(24deg);
+  background: hsl(calc(var(--tile-h) - 24) 80% 62% / .55); }
+.md-tile:hover { filter: brightness(1.06); }
+.md-tile:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.md-tile-label { position: relative; z-index: 1; min-width: 0; overflow-wrap: anywhere; font-weight: 800; font-size: 0.98rem; line-height: 1.15; text-shadow: 0 1px 2px rgba(0,0,0,.25); }
+
+/* Category page banner */
+.md-cat-banner { --tile-h: 210; display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; gap: 14px; min-height: 124px; margin: 0 0 12px; padding: 12px 14px 14px; color: #fff;
+  background: linear-gradient(160deg, hsl(var(--tile-h) 72% 46%), hsl(calc(var(--tile-h) + 38) 70% 26%)); }
+.md-cat-back { flex: 0 0 auto; width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 50%; cursor: pointer;
+  color: #fff; background: rgba(0,0,0,.28); }
+.md-cat-back:hover { background: rgba(0,0,0,.4); }
+.md-cat-title { margin: 0; font-size: 1.8rem; font-weight: 850; letter-spacing: -0.015em; text-shadow: 0 1px 3px rgba(0,0,0,.25); min-width: 0; overflow-wrap: anywhere; }
+.md-retry { padding: 0 14px; }
 .radio-now-meta { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .radio-now-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
 .radio-now-title { font-weight: 700; font-size: 1.02rem; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
