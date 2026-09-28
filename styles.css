@@ -14706,6 +14706,19 @@ body:has(#mailMainPage:not([hidden])) .mail-page { flex: 1; }
   --muted: #6b6459;
 }
 
+/* Swipe-between-emails pager: the neighbouring email's preview slides in
+   beside the open thread (positioned by JS over .mail-content). */
+.mail-content { position: relative; }
+.mail-swipe-peek {
+  position: absolute;
+  z-index: 5;
+  flex: none;
+  overflow: hidden;
+  pointer-events: none;
+  box-shadow: 0 0 18px rgba(0, 0, 0, 0.12);
+  will-change: transform;
+}
+
 /* Thread toolbar — white to match the reading surface below it */
 .mail-thread-toolbar {
   display: flex;
