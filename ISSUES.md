@@ -27,6 +27,21 @@ _(none)_
 
 
 ## P2
+- [x] **[P2] Native (on-device voice) read-aloud never marks a finished article read** (media · app.js startListenNativeTts · 2026-09-27)
+      The engine path marked read on finish; the Apple-voice paths never did. **RESOLVED 2026-09-28 (Luke: "Apple voice should also mark as read"):** native `ttsFinish` → `markNativeItemDone` (article → `markArticleRead`, podcast → `setPodcastEpisodePlayed`). The Web Speech path does the same in `speakSystemChunk`. Marking happens *after* the JS advance picks the next item, because read articles drop out of the lists. Skipping (next) doesn't mark, same as the engine path.
+
+- [x] **[P2] All-queue podcast after a natively-read article can't start while the phone is locked** (media · LiveTtsPlugin.swift · 2026-09-27)
+      **RESOLVED 2026-09-28:** LiveTtsPlugin is now a mixed native queue: AVSpeechSynthesizer for articles plus AVPlayer for podcast episodes. The All-queue lookahead (`nativeUpcomingItems`) includes episodes, with resume position and ad-skip ranges. Still open: see the native-podcast follow-ups below.
+
+- [x] **[P2] Natively-played podcast (after an Apple-voice article) has only the mini-player** (media · app.js MEDIA_KINDS.nativeAudio · 2026-09-28)
+      **RESOLVED 2026-09-28:** the Podcasts-tab player panel is bound to the native session via `nativePodcastSession()`. Details come from `showPodcastEpisodePanel`, split out of `openPodcastEpisode`. The play button, progress/seek bar and skip all drive and reflect the plugin. Speed changes reach it through `setMediaPlaybackSpeed` → plugin `setRate`: audio retimes at once, speech re-speaks from the current word.
+
+- [x] **[P3] Plain-http podcast enclosures will fail in the native player** (ios · Info.plist ATS · 2026-09-28)
+      **RESOLVED 2026-09-28:** `NSAppTransportSecurity → NSAllowsArbitraryLoadsForMedia = true`. It applies to AVFoundation media loads only, not general networking.
+
+- [x] **[P2] Podcast → Apple-voice article hand-off while locked is still JS-driven** (media · app.js podcast provider · 2026-09-28)
+      **RESOLVED 2026-09-28:** in the native app with the Apple voice, All-queue podcasts start on the plugin too (`nativeQueueHandlesPodcasts` → `startNativePodcast`). The whole queue runs natively, so podcast→article and podcast→podcast hand-offs don't need JS. If the plugin can't start an episode, it falls back to the web player. Podcasts played from the Podcasts tab still use the web player. Not device-verified.
+
 - [x] **[P2] `live_history` migration not applied yet — permanent history isn't being saved until it is** (infra/Supabase · migrations/2026-09-27-live-history.sql · 2026-09-27)
       The client code is written and falls back safely: it sees the 404, stops sending for the session, and keeps up to 5000 queued rows in localStorage. But until the SQL runs in the SQL editor, history beyond the in-state caps is still lost, and each session makes one failed POST. Apply it, then check `select kind, count(*) from live_history group by kind`. Verdict: KNOWN GAP (DB change is confirmation-gated).
       **RESOLVED 2026-09-28:** applied via Supabase MCP at Luke's request; RLS + 3 policies verified, `authenticated` trimmed to select/insert/delete, `anon` none, advisor shows no new findings. Rows start arriving once the client ships.

@@ -620,6 +620,14 @@ function setMediaPlaybackSpeed(v) {
   // mid-playback speed change would revert at the next TTS chunk boundary (the
   // engine re-applies its rate on every segment).
   if (typeof mediaEngine !== "undefined" && mediaEngine) mediaEngine.setRate(rate);
+  // …and the native queue player (audio retimes at once; speech re-speaks from
+  // the current word). Guarded: listenSpeechSynth is declared further down.
+  try {
+    if (listenSpeechSynth && listenSpeechSynth.native) {
+      listenSpeechSynth.rate = rate;
+      nativeTts()?.setRate({ rate }).catch(() => {});
+    }
+  } catch { /* not initialised yet */ }
   syncSpeedSelectsUi();
 }
 function syncSpeedSelectsUi() {
@@ -27439,6 +27447,10 @@ function wirePodcastPanel() {
   document.getElementById("podcastSeekBar")?.addEventListener("input", (e) => {
     if (podcastAudio && podcastAudio.duration) {
       podcastAudio.currentTime = (parseFloat(e.target.value) / 100) * podcastAudio.duration;
+    } else {
+      const ns = nativePodcastSession();
+      const tts = nativeTts();
+      if (ns && ns.audioDur && tts) tts.seekTo({ position: (parseFloat(e.target.value) / 100) * ns.audioDur }).catch(() => {});
     }
   });
 }
@@ -28579,6 +28591,7 @@ function nowPlayingQueueId() {
   const k = nowPlayingKind();
   if (k === "podcast") return podcastCurEpisode?.id || null;
   if (k === "tts") return listenArticle?.id || null;
+  if (k === "nativeAudio") return listenSpeechSynth?.currentId || null;
   return null;
 }
 
@@ -29145,8 +29158,16 @@ registerMediaProvider({
 registerMediaProvider({
   id: "podcast",
   canPlay: () => true,
-  play: (item, { autoplay = true, advance = false } = {}) => openPodcastEpisode(item.id, { autoplay, advance }), // plays + shows player + registers queue-advance
-  isCurrent: (item) => !!podcastAudio && podcastCurEpisode?.id === item.id,
+  play: (item, { autoplay = true, advance = false } = {}) => {
+    // All queue + Apple voice in the native app → the plugin plays it (see
+    // nativeQueueHandlesPodcasts); falls back to the web player if it can't.
+    if (autoplay && mediaAllQueueId === item.id && nativeQueueHandlesPodcasts()) {
+      startNativePodcast(item.id).then((ok) => { if (!ok) openPodcastEpisode(item.id, { autoplay, advance }); });
+      return;
+    }
+    openPodcastEpisode(item.id, { autoplay, advance }); // plays + shows player + registers queue-advance
+  },
+  isCurrent: (item) => (!!podcastAudio && podcastCurEpisode?.id === item.id) || nativePodcastSession()?.currentId === item.id,
 });
 registerMediaProvider({
   id: "book",
@@ -30065,6 +30086,16 @@ function renderPodcastShowEpisodes(showId) {
 function openPodcastEpisode(episodeId, { autoplay = true, advance = false } = {}) {
   const { episode, show } = findPodcastEpisode(episodeId);
   if (!episode) return;
+  showPodcastEpisodePanel(episodeId);
+  startPodcastPlayback(episode, show, { autoplay, advance });
+  updatePodcastMarkBtn();
+}
+
+// The episode-details panel (title/show/art/description + active row), without
+// touching playback — shared by the web player and the native queue.
+function showPodcastEpisodePanel(episodeId) {
+  const { episode, show } = findPodcastEpisode(episodeId);
+  if (!episode) return;
 
   openPodcastEpisodeId = episodeId;
 
@@ -30089,9 +30120,9 @@ function openPodcastEpisode(episodeId, { autoplay = true, advance = false } = {}
   document.querySelectorAll(".podcast-episode-row").forEach(r => {
     r.classList.toggle("article-row--active", r.dataset.episodeId === episodeId);
   });
-
-  startPodcastPlayback(episode, show, { autoplay, advance });
   updatePodcastMarkBtn();
+  updatePodcastPlayBtn();
+  if (nativePodcastSession()?.currentId === episodeId) updatePodcastProgressUI(episode);
 }
 
 function findPodcastEpisode(episodeId) {
@@ -30222,6 +30253,18 @@ const MEDIA_KINDS = {
     open: () => { showMediaApp(); switchMediaTab("music"); },
     info: () => { const t = musicCurTrack; if (!t) return null; return { art: t.artworkUrl || "", title: t.title || "Untitled", show: t.artist || "", date: t.album || "", desc: "" }; },
   },
+  // A podcast episode the native plugin (LiveTtsPlugin's AVPlayer) is playing
+  // because it came after an on-device-voice article in the listen queue. The
+  // web engine isn't involved: transport goes to the plugin, and position
+  // arrives as ttsPosition events (see startListenNativeTts).
+  nativeAudio: {
+    active: () => !!(listenSpeechSynth && listenSpeechSynth.native && listenSpeechSynth.kind === "audio"),
+    el: () => null,
+    toggle: () => toggleListenPlayPause(),
+    skip: (sec) => listenSkip(sec),
+    open: () => { const id = listenSpeechSynth?.currentId; if (id) { showPodcastEpisodePanel(id); goToOpenEpisode(); } },
+    info: () => { const s = listenSpeechSynth, ep = s && s.episode, sh = s && s.show; if (!ep) return null; return { art: ep.art || sh?.art || "", title: ep.title || "", show: sh?.title || "", date: ep.pubDate ? formatArticleDate(ep.pubDate) : "", desc: plainTextFromHtml(ep.description) }; },
+  },
   tts: {
     active: () => !!(listenAudio || listenLoading || listenArticle),
     el: () => null, // TTS uses its own elapsed/total readout, not the shared element
@@ -30236,7 +30279,7 @@ const MEDIA_KINDS = {
     info: () => { const a = listenArticle; return { art: a ? articleArtUrl(a) : "", title: a?.title || "Now playing", show: a?.author || a?.publication || "", date: a?.pubDate ? formatArticleDate(a.pubDate) : "", desc: plainTextFromHtml(a?.text || a?.excerpt).slice(0, 2000) }; },
   },
 };
-const NOW_PLAYING_ORDER = ["podcast", "radio", "music", "tts"];
+const NOW_PLAYING_ORDER = ["podcast", "radio", "music", "nativeAudio", "tts"];
 
 // THE one playback engine for the whole app. It owns the single shared media
 // element and drives every source; feature behavior is dispatched by the
@@ -30294,7 +30337,7 @@ function startPodcastPlayback(episode, show, { autoplay = true, advance = false 
     // exactly like beginNextResolvedArticleSync does for article→article.
     clearAdSkipTimers();
     if (podcastSaveTimer) { clearTimeout(podcastSaveTimer); podcastSaveTimer = null; }
-    if (listenArticle || listenAudio || listenLoading) { // outgoing article (mixed queue)
+    if (listenArticle || listenAudio || listenLoading || listenSpeechSynth) { // outgoing article / native item (mixed queue)
       listenGenId++; teardownSystemVoice(); listenAudio = null; listenArticle = null;
       listenSpeaking = false; listenLoading = false; clearWordHighlight();
     }
@@ -30362,9 +30405,10 @@ function startPodcastPlayback(episode, show, { autoplay = true, advance = false 
 }
 
 function updatePodcastProgressUI(episode) {
-  if (!podcastAudio) return;
-  const cur = podcastAudio.currentTime || 0;
-  const dur = podcastAudio.duration || episode.duration || 0;
+  const ns = !podcastAudio ? nativePodcastSession() : null;
+  if (!podcastAudio && !(ns && episode && ns.currentId === episode.id)) return;
+  const cur = ns ? (ns.audioPos || 0) : (podcastAudio.currentTime || 0);
+  const dur = (ns ? ns.audioDur : podcastAudio.duration) || episode.duration || 0;
   const curEl = document.getElementById("podcastCurrentTime");
   const durEl = document.getElementById("podcastDuration");
   const seekBar = document.getElementById("podcastSeekBar");
@@ -30393,7 +30437,8 @@ function updatePodcastPlayBtn() {
   const icon = document.getElementById("podcastBtnIcon");
   const btn = document.getElementById("podcastPlayPauseBtn");
   if (!icon || !btn) return;
-  const playing = podcastAudio && !podcastAudio.paused && !podcastAudio.ended;
+  const ns = nativePodcastSession();
+  const playing = podcastAudio ? (!podcastAudio.paused && !podcastAudio.ended) : !!(ns && !ns.paused);
   btn.setAttribute("aria-label", playing ? "Pause" : "Play");
   icon.innerHTML = playing
     ? `<rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/>`
@@ -30409,13 +30454,13 @@ function updatePodcastMarkBtn() {
 }
 
 function togglePodcastPlayPause() {
-  if (!podcastAudio) return;
+  if (!podcastAudio) { if (nativePodcastSession()) toggleListenPlayPause(); return; }
   if (podcastAudio.paused) { podcastAudio.play().catch(() => {}); }
   else { podcastAudio.pause(); }
 }
 
 function skipPodcast(seconds) {
-  if (!podcastAudio) return;
+  if (!podcastAudio) { if (nativePodcastSession()) listenSkip(seconds); return; }
   podcastAudio.currentTime = Math.max(0, Math.min(podcastAudio.currentTime + seconds, podcastAudio.duration || Infinity));
 }
 
@@ -32305,6 +32350,7 @@ function activeMediaKey() {
   if (k === "podcast") return podcastCurEpisode ? `podcast:${podcastCurEpisode.id}` : null;
   if (k === "music") return musicCurTrack ? `music:${musicCurTrack.id}` : null;
   if (k === "tts") return listenArticle ? `article:${listenArticle.id}` : null;
+  if (k === "nativeAudio") return listenSpeechSynth?.currentId ? `podcast:${listenSpeechSynth.currentId}` : null;
   if (k === "radio") return radioCurStation ? `radio:${radioCurStation.id || radioCurStation.name || ""}` : null;
   return null;
 }
@@ -32355,7 +32401,7 @@ function nowPlayingToggle() { const k = nowPlayingKind(); MEDIA_KINDS[k]?.toggle
 function nowPlayingSkip(sec) { const k = nowPlayingKind(); MEDIA_KINDS[k]?.skip?.(sec); } // radio's skip is a no-op (live)
 // Is prev/next-episode navigation meaningful for what's playing? Only the
 // queue-based kinds (podcasts + article TTS) run off the shared listen list.
-function nowPlayingHasEpisodeNav() { const k = nowPlayingKind(); return k === "podcast" || k === "tts"; }
+function nowPlayingHasEpisodeNav() { const k = nowPlayingKind(); return k === "podcast" || k === "tts" || k === "nativeAudio"; }
 // Step to the previous (dir=-1) or next (dir=+1) playable item in the listen
 // playlist. Uses the natural (un-hoisted) order so both directions are stable,
 // then hands off to playAllQueueFrom so the queue's advance state stays correct.
@@ -32376,6 +32422,12 @@ function nowPlayingSeekFraction(f) {
   if (musicPlaybackProvider) { // Apple Music owns the transport
     const dur = musicOwnedNP && musicOwnedNP.durationMs;
     if (dur) musicPlaybackProvider.seek(Math.max(0, Math.min(1, f)) * dur);
+    return;
+  }
+  if (nowPlayingKind() === "nativeAudio") { // the plugin's AVPlayer owns the transport
+    const total = listenSpeechSynth?.audioDur || 0;
+    const tts = nativeTts();
+    if (tts && total) tts.seekTo({ position: Math.max(0, Math.min(1, f)) * total }).catch(() => {});
     return;
   }
   // Logical seek through the engine (crosses chunk boundaries for multi-segment
@@ -34733,6 +34785,11 @@ function buildTtsSource(article, urls) {
 
 function setListenMediaSession(article) {
   if (!("mediaSession" in navigator) || !article) return;
+  // Native (AVSpeechSynthesizer) voice: LiveTtsPlugin owns the lock screen and
+  // AirPod controls through MPRemoteCommandCenter. The web handlers below would
+  // compete for the same commands and drive the <audio> engine, which isn't
+  // playing anything (and whose JS is suspended while the phone is locked).
+  if (listenSpeechSynth && listenSpeechSynth.native) { clearWebMediaSession(); return; }
   navigator.mediaSession.metadata = new MediaMetadata({
     title: article.title || "Article",
     artist: article.author || article.publication || "Live",
@@ -34805,6 +34862,7 @@ function pickSystemVoice() {
 
 function systemVoiceElapsedSec() {
   const s = listenSpeechSynth; if (!s) return 0;
+  if (s.native && s.kind === "audio") return s.audioPos || 0; // plugin reports seconds
   // Native reports an absolute char location; the web chunk path sums chunks.
   const chars = s.native ? (s.charIndex || 0) : (s.charsBefore + (s.charIndex || 0));
   return Math.round(chars / (15 * (s.rate || 1)));
@@ -34876,6 +34934,85 @@ function wordIndexAtCharOffset(text, charOffset) {
   return Math.max(0, idx);
 }
 
+// A native (LiveTtsPlugin) playback session: the plugin plays a queue of
+// items — "speech" (an article read by the Apple voice) or "audio" (a podcast
+// episode on AVPlayer) — and advances through it by itself, even while the
+// page's JS is suspended. `kind`/`currentId` track the item playing now.
+function newNativeSession(fields) {
+  return {
+    genId: listenGenId, native: true, kind: "speech", currentId: null,
+    article: null, prepared: null, charsTotal: 0, charIndex: 0,
+    episode: null, show: null, audioPos: 0, audioDur: 0,
+    rate: mediaPlaybackSpeed || 1, paused: false, subs: [],
+    listTab: activeMediaTab, upcomingPrepared: new Map(), upcomingToken: 0,
+    ...fields,
+  };
+}
+
+// Subscribe a session to the plugin's events (removed by teardownSystemVoice).
+async function wireNativeSession(tts, session) {
+  // JS-side advance, used only when the plugin had nothing queued. Mirrors the
+  // engine path (onListenArticleFinished): the All queue first, else the list.
+  const advance = () => {
+    if (session.genId !== listenGenId) return;
+    const finishedId = session.currentId;
+    const wasAudio = session.kind === "audio";
+    teardownSystemVoice(); listenSpeaking = false;
+    if (finishedId && mediaAllQueueId === finishedId) {
+      advanceMediaAllQueue(finishedId);
+      if (!mediaAllQueueId) stopListen(); // queue drained
+      return;
+    }
+    if (wasAudio || !advanceListenArticle()) stopListen();
+  };
+  try {
+    session.subs = [
+      // hasNext → the plugin is already playing the next item on its own
+      // (ttsItemStart follows); only an empty native queue falls back to JS.
+      await tts.addListener("ttsFinish", (e) => {
+        if (session.genId !== listenGenId) return;
+        if (!(e && e.hasNext)) advance(); // pick the next item BEFORE marking (read articles drop out of the lists)
+        markNativeItemDone(e);
+      }),
+      await tts.addListener("ttsNext", advance),
+      await tts.addListener("ttsItemStart", (e) => onNativeTtsItemStart(session, e)),
+      // Lock-screen / AirPod play-pause handled natively — mirror it here.
+      await tts.addListener("ttsState", (e) => {
+        if (session.genId !== listenGenId) return;
+        session.paused = !(e && e.playing);
+        if (session.kind === "speech") listenSpeaking = !session.paused;
+        if (session.kind === "audio" && session.paused) saveNativePodcastProgress(session.currentId, session.audioPos, session.audioDur, true);
+        updateListenPlayBtn(); updateMiniPlayerPlayBtn(); updatePodcastPlayBtn();
+      }),
+      // A natively-playing podcast's position (1 s on screen, 30 s locked).
+      await tts.addListener("ttsPosition", (e) => {
+        if (session.genId !== listenGenId || !e || e.id !== session.currentId) return;
+        session.audioPos = e.position || 0;
+        if (e.duration > 0) { session.audioDur = e.duration; listenTotalDuration = e.duration; }
+        updateMiniPlayerProgress();
+        if (session.episode && openPodcastEpisodeId === session.currentId) updatePodcastProgressUI(session.episode);
+        saveNativePodcastProgress(e.id, session.audioPos, session.audioDur, false);
+      }),
+      await tts.addListener("ttsAdSkipped", () => { if (session.genId === listenGenId) showAdSkippedToast(); }),
+      // GAP FILLED 2026-09-23: the plugin already emitted this real-time
+      // character-range progress, but nothing used it for word highlighting
+      // (only the mini-player progress bar) -- Apple on-device voices never
+      // highlighted at all, unlike Google. Kokoro genuinely has no per-word
+      // data to offer here (see TTS_PHASE1A.md §12); native does.
+      await tts.addListener("ttsRange", (e) => {
+        if (session.genId !== listenGenId) return;
+        if (e && e.id && e.id !== session.currentId) return; // stale (pre-advance) event
+        session.charIndex = (e && e.location) || 0;
+        updateMiniPlayerProgress();
+        if (listenArticle && openArticleId === listenArticle.id && session.prepared) {
+          const bodyIdx = wordIndexAtCharOffset(session.prepared.text, session.charIndex) - (session.prepared.introWords || 0);
+          if (bodyIdx >= 0) setWordHighlight(bodyIdx); else clearWordHighlight();
+        }
+      }),
+    ];
+  } catch { /* events best-effort */ }
+}
+
 // Native (AVSpeechSynthesizer) read-aloud: backgrounds + lock-screen controls,
 // and can use the device's Enhanced/Premium voices. Speaks the whole article in
 // one go (the OS handles long text); progress + advance come from plugin events.
@@ -34883,11 +35020,10 @@ async function startListenNativeTts(article) {
   const tts = nativeTts();
   const prepared = prepareArticleListenText(article);
   if (!tts || !prepared) { listenLoading = false; updateListenPlayBtn(); return; }
-  const myGenId = listenGenId;
   const rate = mediaPlaybackSpeed || 1;
   const charsTotal = (prepared.text || "").length;
   teardownSystemVoice();
-  const session = { article, genId: myGenId, native: true, charsTotal, charIndex: 0, rate, paused: false, subs: [] };
+  const session = newNativeSession({ kind: "speech", currentId: article.id, article, prepared, charsTotal, rate });
   listenSpeechSynth = session;
   listenLoading = false; listenBuffering = false; listenSpeaking = true;
   listenArticle = article; listenAudio = null;
@@ -34897,32 +35033,240 @@ async function startListenNativeTts(article) {
   showMiniPlayerForArticle(article);
   setListenMediaSession(article);
   updateListenPlayBtn();
-  const advance = () => { if (session.genId !== listenGenId) return; teardownSystemVoice(); listenSpeaking = false; if (!advanceListenArticle()) stopListen(); };
+  await wireNativeSession(tts, session);
   try {
-    session.subs = [
-      await tts.addListener("ttsFinish", advance),
-      await tts.addListener("ttsNext", advance),
-      // GAP FILLED 2026-09-23: the plugin already emitted this real-time
-      // character-range progress, but nothing used it for word highlighting
-      // (only the mini-player progress bar) -- Apple on-device voices never
-      // highlighted at all, unlike Google. Kokoro genuinely has no per-word
-      // data to offer here (see TTS_PHASE1A.md §12); native does.
-      await tts.addListener("ttsRange", (e) => {
-        if (session.genId !== listenGenId) return;
-        session.charIndex = (e && e.location) || 0;
-        updateMiniPlayerProgress();
-        if (listenArticle && openArticleId === listenArticle.id) {
-          const bodyIdx = wordIndexAtCharOffset(prepared.text, session.charIndex) - (prepared.introWords || 0);
-          if (bodyIdx >= 0) setWordHighlight(bodyIdx); else clearWordHighlight();
-        }
-      }),
-    ];
-  } catch { /* events best-effort */ }
-  try {
-    await tts.speak({ text: prepared.text, voiceId: nativeVoiceIdPref(), rate, title: article.title || "Article", subtitle: article.author || article.publication || "" });
+    await tts.speak({ id: article.id, text: prepared.text, voiceId: nativeVoiceIdPref(), rate, title: article.title || "Article", subtitle: article.author || article.publication || "" });
+    queueNativeUpcoming(session);
   } catch (e) {
     if (session.genId === listenGenId) { listenSpeaking = false; teardownSystemVoice(); updateListenPlayBtn(); alert("Couldn't start on-device voice: " + (e && e.message || e)); }
   }
+}
+
+// In the native app with the Apple voice, the Media "All" queue runs entirely
+// on the plugin — podcasts included — so every hand-off (article→podcast,
+// podcast→article, podcast→podcast) happens natively and survives a locked
+// screen. Podcasts played from the Podcasts tab keep the web player.
+function nativeQueueHandlesPodcasts() {
+  return !!nativeTts() && isSystemArticleVoice();
+}
+
+// Start an All-queue podcast episode on the native player. Returns false when it
+// can't (no audio URL / no plugin) so the caller uses the web player instead.
+async function startNativePodcast(episodeId) {
+  const tts = nativeTts();
+  const { episode, show } = findPodcastEpisode(episodeId);
+  if (!tts || !episode || !episode.audioUrl) return false;
+  // Same rule as startPodcastPlayback: nothing else plays at the same time.
+  stopPodcastAudio(); stopListen(); stopMusicPlayback(); stopRadio();
+  const genId = ++listenGenId;
+  showPodcastEpisodePanel(episodeId);
+  showMiniPlayer(episode, show);
+  const item = await nativePodcastItem(episode, show);
+  if (genId !== listenGenId) return true; // superseded while chapters loaded
+  const progressDur = ((state.podcastProgress || {})[episode.id] || {}).duration || 0;
+  const session = newNativeSession({ kind: "audio", currentId: episode.id, episode, show, audioPos: item.startPosition, audioDur: episode.duration || progressDur });
+  listenSpeechSynth = session;
+  listenArticle = null; listenAudio = null; listenLoading = false; listenSpeaking = false;
+  listenTotalDuration = session.audioDur;
+  clearWebMediaSession();
+  recordMediaHistory({ kind: "podcast", id: episode.id, title: episode.title || "", subtitle: (show && show.title) || "", artworkUrl: episode.art || (show && show.art) || "", ref: { episodeId: episode.id, showId: show && show.id } });
+  await wireNativeSession(tts, session);
+  try {
+    await tts.play({ item, voiceId: nativeVoiceIdPref(), rate: session.rate });
+    updatePodcastPlayBtn(); updateMiniPlayerPlayBtn();
+    queueNativeUpcoming(session);
+  } catch {
+    if (session.genId !== listenGenId) return true;
+    teardownSystemVoice();
+    openPodcastEpisode(episodeId); // fall back to the web player
+  }
+  return true;
+}
+
+// The native session when it is playing a podcast episode, else null — lets the
+// Podcasts-tab player panel drive/reflect it like the web player.
+function nativePodcastSession() {
+  const s = listenSpeechSynth;
+  return (s && s.native && s.kind === "audio") ? s : null;
+}
+
+// How many following items to hand the native plugin up front. JS is suspended
+// while the phone is locked, so this is how far the listen queue can carry on
+// without the app being opened.
+const NATIVE_TTS_LOOKAHEAD = 5;
+
+// What would play after `anchorId`, in the same order the JS advance walks it:
+// the Media "All" queue when that's what is playing (advanceMediaAllQueue —
+// articles AND podcast episodes), else the article list (advanceListenArticle).
+// → [{ type: "article", article } | { type: "podcast", episode, show }]
+function nativeUpcomingItems(anchorId, listTab, n) {
+  const byArticleId = new Map((state.savedArticles || []).map((a) => [a.id, a]));
+  if (mediaAllQueueId && mediaAllQueueId === anchorId) {
+    const byId = new Map(getAllListenList().map((i) => [i.id, i]));
+    const out = [];
+    for (const id of mediaAllQueueRest) {
+      if (out.length >= n) break;
+      const item = byId.get(id);
+      if (!item || !mediaItemPlayable(item)) continue; // advanceMediaAllQueue skips these too
+      if (item.type === "article") {
+        const a = byArticleId.get(id);
+        if (!a) break;
+        out.push({ type: "article", article: a });
+      } else if (item.providerId === "podcast") {
+        const { episode, show } = findPodcastEpisode(id);
+        if (!episode || !episode.audioUrl) break;
+        out.push({ type: "podcast", episode, show });
+      } else break; // anything else stays with the JS advance
+    }
+    return out;
+  }
+  if (!byArticleId.has(anchorId)) return []; // a podcast only comes from the All queue
+  const articles = getFilteredSortedArticles(listTab);
+  const i = articles.findIndex((a) => a.id === anchorId);
+  return i === -1 ? [] : articles.slice(i + 1, i + 1 + n).map((a) => ({ type: "article", article: a }));
+}
+
+// Resolve an article's body for the lookahead WITHOUT inlining it back into
+// state (ensureArticleText persists it, which would re-bloat the synced blob for
+// articles that may never be read). Inline text → local/cloud backstop; no live
+// scrape — an article that needs one is left to the foreground JS advance.
+async function nativeLookaheadText(article) {
+  if (article.text) return article.text;
+  try {
+    const ac = await getArticleContent();
+    if (ac) return (await ac.loadBody(article.id, { ref: article.bodyRef, fallbackText: null })) || null;
+  } catch { /* unavailable */ }
+  return null;
+}
+
+// A podcast episode as a native audio item: resume point (as the web player
+// uses it) + ad ranges to jump over (when "skip ads" is on and it has chapters).
+async function nativePodcastItem(episode, show) {
+  const progress = (state.podcastProgress || {})[episode.id] || {};
+  const pos = progress.played ? 0 : (progress.position || 0);
+  let skipRanges = [];
+  if (state.podcastSkipAds && episode.chaptersUrl) {
+    // Don't hold playback hostage to a slow chapters host: give up after 2 s.
+    const chapters = await Promise.race([loadEpisodeChapters(episode), new Promise((r) => setTimeout(() => r(null), 2000))]);
+    skipRanges = (chapters || []).filter((ch) => isAdChapter(ch.title)).map((ch) => [
+      ch.startTime,
+      Number.isFinite(ch.endTime) ? ch.endTime : 1e9, // plugin clamps to the real duration
+    ]);
+  }
+  return {
+    id: episode.id, kind: "audio", url: episode.audioUrl,
+    title: episode.title || "Podcast", subtitle: show?.title || "Podcast",
+    startPosition: pos > 10 ? pos : 0, skipRanges,
+  };
+}
+
+// Hand the plugin the next few items so it can keep playing natively when one
+// finishes (see LiveTtsPlugin.swift). Re-run on every native advance to top the
+// list back up; a newer run supersedes an older in-flight one.
+async function queueNativeUpcoming(session) {
+  const tts = nativeTts();
+  if (!tts || !session.currentId) return;
+  const token = ++session.upcomingToken;
+  const live = () => token === session.upcomingToken && session.genId === listenGenId;
+  const items = [];
+  const prepared = new Map();
+  for (const next of nativeUpcomingItems(session.currentId, session.listTab, NATIVE_TTS_LOOKAHEAD)) {
+    if (next.type === "article") {
+      const a = next.article;
+      const text = await nativeLookaheadText(a);
+      if (!live()) return;
+      const p = text ? prepareArticleListenText({ ...a, text }) : null;
+      if (!p) break; // keep native order identical to the JS advance order
+      prepared.set(a.id, p);
+      items.push({ id: a.id, kind: "speech", text: p.text, title: a.title || "Article", subtitle: a.author || a.publication || "" });
+    } else {
+      const item = await nativePodcastItem(next.episode, next.show);
+      if (!live()) return;
+      items.push(item);
+    }
+    session.upcomingPrepared = prepared;
+    // Send as we go, so a short current item can't finish before the list lands.
+    try { await tts.setUpcoming({ items }); } catch { return; }
+    if (!live()) return;
+  }
+  if (!items.length) { try { await tts.setUpcoming({ items: [] }); } catch { /* best-effort */ } }
+}
+
+// Finished natively → same bookkeeping as the web engine: an article is marked
+// read (onListenArticleFinished), an episode played (onPodcastEnded). A failed
+// audio load isn't "played".
+function markNativeItemDone(e) {
+  if (!e || !e.id || e.failed) return;
+  if (e.kind === "audio") setPodcastEpisodePlayed(e.id, true);
+  else if (e.kind === "speech") markArticleRead(e.id);
+}
+
+// Saved position for a natively-playing episode. Throttled (position events
+// arrive every second in the foreground); `force` for pause/finish.
+let nativePodcastSavedAt = 0;
+function saveNativePodcastProgress(id, position, duration, force) {
+  if (!id || !Number.isFinite(position)) return;
+  if (!force && Date.now() - nativePodcastSavedAt < 15000) return;
+  nativePodcastSavedAt = Date.now();
+  if (!state.podcastProgress) state.podcastProgress = {};
+  const prev = state.podcastProgress[id] || {};
+  state.podcastProgress[id] = {
+    ...prev,
+    position: Math.floor(position),
+    duration: Math.floor(duration || prev.duration || 0),
+    lastPlayedAt: new Date().toISOString(),
+  };
+  persist();
+}
+
+// The plugin moved on to the next item by itself (auto-advance or the
+// lock-screen next button) — bring the reader/mini-player/queue state along.
+function onNativeTtsItemStart(session, e) {
+  if (session.genId !== listenGenId || !e || !e.id) return;
+  let article = null, episode = null, show = null;
+  if (e.kind === "audio") {
+    ({ episode, show } = findPodcastEpisode(e.id));
+    if (!episode) return;
+  } else {
+    article = (state.savedArticles || []).find((a) => a.id === e.id);
+    if (!article) return;
+  }
+  session.currentId = e.id;
+  session.kind = e.kind === "audio" ? "audio" : "speech";
+  session.paused = false;
+  if (mediaAllQueueId) { // keep the All-queue cursor in step with what's playing
+    const qi = mediaAllQueueRest.indexOf(e.id);
+    if (qi !== -1) { mediaAllQueueRest.splice(0, qi + 1); mediaAllQueueId = e.id; }
+  }
+  clearWordHighlight();
+  if (episode) {
+    session.article = null; session.prepared = null;
+    session.episode = episode; session.show = show;
+    session.audioPos = e.position || 0;
+    session.audioDur = episode.duration || ((state.podcastProgress || {})[episode.id]?.duration) || 0;
+    listenArticle = null;
+    listenSpeaking = false;
+    listenTotalDuration = session.audioDur;
+    podcastCurrentChapters = null;
+    showMiniPlayer(episode, show);
+    showPodcastEpisodePanel(episode.id); // like the web queue advance (openPodcastEpisode)
+    recordMediaHistory({ kind: "podcast", id: episode.id, title: episode.title || "", subtitle: (show && show.title) || "", artworkUrl: episode.art || (show && show.art) || "", ref: { episodeId: episode.id, showId: show && show.id } });
+  } else {
+    const p = session.upcomingPrepared.get(e.id) || null;
+    session.episode = null; session.show = null;
+    session.article = article;
+    session.prepared = p;
+    session.charIndex = 0;
+    session.charsTotal = e.total || (p ? p.text.length : 0);
+    listenArticle = article;
+    listenSpeaking = true;
+    listenTotalDuration = Math.max(1, Math.round(session.charsTotal / (15 * (session.rate || 1))));
+    if (activeAppArea === "media" && !document.getElementById("articleReaderPanel")?.hidden) openArticle(article.id, "articleList");
+    showMiniPlayerForArticle(article);
+  }
+  updateListenPlayBtn(); updateMiniPlayerPlayBtn();
+  if (activeMediaTab === "queue") renderMediaAllList();
+  queueNativeUpcoming(session);
 }
 
 async function startListenSystemVoice(article) {
@@ -34963,6 +35307,7 @@ function speakSystemChunk() {
     teardownSystemVoice();
     listenSpeaking = false;
     if (!advanceListenArticle()) stopListen(); // queue drained
+    markArticleRead(finishedId); // after the advance picked the next one (read articles drop out of the list)
     return;
   }
   const u = new SpeechSynthesisUtterance(s.chunks[s.idx]);
@@ -34985,10 +35330,22 @@ function speakSystemChunk() {
 function systemVoiceSkip(seconds) {
   const s = listenSpeechSynth;
   if (!s) return;
+  if (s.native && s.kind === "audio") { // a podcast the plugin is playing: real seek
+    const tts = nativeTts();
+    if (tts) tts.seekBy({ seconds }).catch(() => {});
+    return;
+  }
   if (s.native) {
     // AVSpeechSynthesizer can't seek within an utterance; skip forward advances
     // to the next article, skip back restarts the current one.
-    if (seconds > 0) { teardownSystemVoice(); listenSpeaking = false; if (!advanceListenArticle()) stopListen(); }
+    if (seconds > 0) {
+      const tts = nativeTts();
+      Promise.resolve(tts ? tts.next() : null).catch(() => null).then((r) => {
+        if (r && r.advanced) return; // ttsItemStart syncs the UI
+        if (s.genId !== listenGenId) return;
+        teardownSystemVoice(); listenSpeaking = false; if (!advanceListenArticle()) stopListen();
+      });
+    }
     else { startListenNativeTts(s.article); }
     return;
   }
@@ -35187,6 +35544,16 @@ async function startListenTTSIncremental(article, myGenId) {
   }
 }
 
+function clearWebMediaSession() {
+  try {
+    navigator.mediaSession.metadata = null;
+    navigator.mediaSession.playbackState = "none";
+    for (const action of ["play", "pause", "stop", "seekbackward", "seekforward", "nexttrack", "previoustrack"]) {
+      try { navigator.mediaSession.setActionHandler(action, null); } catch { /* unsupported action */ }
+    }
+  } catch { /* unsupported */ }
+}
+
 function setMediaSessionPlaybackState(stateStr) {
   if ("mediaSession" in navigator) {
     try { navigator.mediaSession.playbackState = stateStr; } catch { /* unsupported */ }
@@ -35218,8 +35585,9 @@ function toggleListenPlayPause() {
     try {
       if (s.native) {
         const tts = nativeTts();
-        if (s.paused) { tts && tts.resume(); s.paused = false; setMediaSessionPlaybackState("playing"); }
-        else { tts && tts.pause(); s.paused = true; setMediaSessionPlaybackState("paused"); }
+        if (s.paused) { tts && tts.resume(); s.paused = false; if (s.kind === "speech") listenSpeaking = true; }
+        else { tts && tts.pause(); s.paused = true; if (s.kind === "audio") saveNativePodcastProgress(s.currentId, s.audioPos, s.audioDur, true); }
+        updatePodcastPlayBtn();
       } else if (window.speechSynthesis.paused) { window.speechSynthesis.resume(); setMediaSessionPlaybackState("playing"); }
       else { window.speechSynthesis.pause(); setMediaSessionPlaybackState("paused"); }
     } catch { /* noop */ }
@@ -35286,7 +35654,7 @@ function updateListenPlayBtn() {
   // own listen session, must not react to).
   const playing = listenSpeechSynth
     ? (listenSpeechSynth.native
-        ? !listenSpeechSynth.paused
+        ? (listenSpeechSynth.kind !== "audio" && !listenSpeechSynth.paused) // a native podcast isn't the article's audio
         : (() => { try { return window.speechSynthesis.speaking && !window.speechSynthesis.paused; } catch { return false; } })())
     : (listenSpeaking && listenAudio && !listenAudio.paused);
   if (label) label.textContent = playing ? "Pause" : "Play";

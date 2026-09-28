@@ -81,3 +81,22 @@ PR: https://github.com/LukeDEvans/Tableplan/pull/12 · docs: DATA_EXPORT.md
    appear (media_play / article_read / practice_event / ai_chat).
 2. Settings → Export My Data on a computer; open a couple of CSVs and check `README.txt`
    for notes. On the iPhone app, check it opens the share sheet (untested there).
+
+## Native listen queue + app icon (PR #11)
+PR: https://github.com/LukeDEvans/Tableplan/pull/11
+
+Mostly **native iOS**. It reaches the phone only through an Xcode/TestFlight build
+(`npm run ios:sync`, then Archive in Xcode). A Netlify deploy doesn't update the app.
+- Apple-voice article reading keeps going while locked. Lock-screen and AirPod play,
+  pause and resume work.
+- In the native app with the Apple voice, the Media "All" queue (articles + podcasts)
+  runs on the native player. The Podcasts-tab panel and speed follow it.
+- Finished articles are marked read (Apple voice too); finished episodes are marked played.
+- Info.plist: background audio mode, plus plain-http podcast audio allowed.
+- App icon + launch screen are now the web app's sailboat L (were Capacitor placeholders).
+- Web app effect only: Apple-voice (Web Speech) reads in the browser now mark articles read.
+
+**After deploying / building:** on the phone, check lock-screen play/pause, an AirPod tap,
+auto-advance while locked (article→article, article→podcast, podcast→article), podcast
+resume position, and a speed change mid-item. The Swift was never compiled in CI.
+
