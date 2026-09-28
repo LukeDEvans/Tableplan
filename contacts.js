@@ -70,6 +70,28 @@ export function normalizeContactGroups(list) {
   return Array.isArray(list) ? [...new Set(list.map((g) => String(g || "").trim()).filter(Boolean))] : [];
 }
 
+// vCard 3.0 text for a contact list — pure, top-level so the app-wide data export
+// (data-export.js) reuses the exact format the Contacts page exports.
+function vcardEscape(s) { return String(s || "").replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/,/g, "\\,").replace(/;/g, "\\;"); }
+export function buildContactsVcf(cs) {
+  const lines = [];
+  (cs || []).forEach((c) => {
+    lines.push("BEGIN:VCARD", "VERSION:3.0");
+    lines.push(`N:${vcardEscape(c.lastName)};${vcardEscape(c.firstName)};;;`);
+    lines.push(`FN:${vcardEscape(c.name)}`);
+    (c.phones || []).forEach((p) => lines.push(`TEL;TYPE=${vcardEscape(p.label || "Mobile")}:${vcardEscape(p.value)}`));
+    (c.emails || []).forEach((e) => lines.push(`EMAIL;TYPE=${vcardEscape(e.label || "Email")}:${vcardEscape(e.value)}`));
+    if (c.birthday) lines.push(`BDAY:${c.birthday.length > 5 ? c.birthday : "--" + c.birthday.replace("-", "")}`);
+    (c.dates || []).forEach((d) => lines.push(`X-DATE;TYPE=${vcardEscape(d.label || "Date")}:${d.value}`));
+    (c.addresses || []).forEach((a) => lines.push(`ADR;TYPE=${vcardEscape(a.label || "Home")}:;;${vcardEscape(a.value)};;;;`));
+    if ((c.groups || []).length) lines.push(`CATEGORIES:${c.groups.map(vcardEscape).join(",")}`);
+    if (c.photo && c.photo.includes(",")) lines.push(`PHOTO;ENCODING=b;TYPE=JPEG:${c.photo.split(",")[1]}`);
+    if (c.notes) lines.push(`NOTE:${vcardEscape(c.notes)}`);
+    lines.push("END:VCARD");
+  });
+  return lines.join("\r\n");
+}
+
 export function createContactsModule(deps) {
   const { state, elements, persist, createId, escapeHtml, showMailToast, recordDeletion, refreshPlanIfActive } = deps;
 
@@ -704,28 +726,12 @@ function deleteContact() {
 }
 
 // ── vCard import / export ─────────────────────────────────────────────────────
-function vcardEscape(s) { return String(s || "").replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/,/g, "\\,").replace(/;/g, "\\;"); }
 function vcardUnescape(s) { return String(s || "").replace(/\\n/gi, "\n").replace(/\\,/g, ",").replace(/\\;/g, ";").replace(/\\\\/g, "\\"); }
 
 function exportContactsVcf() {
   const cs = state.contacts || [];
   if (!cs.length) { showMailToast("No contacts to export"); return; }
-  const lines = [];
-  cs.forEach((c) => {
-    lines.push("BEGIN:VCARD", "VERSION:3.0");
-    lines.push(`N:${vcardEscape(c.lastName)};${vcardEscape(c.firstName)};;;`);
-    lines.push(`FN:${vcardEscape(c.name)}`);
-    (c.phones || []).forEach((p) => lines.push(`TEL;TYPE=${vcardEscape(p.label || "Mobile")}:${vcardEscape(p.value)}`));
-    (c.emails || []).forEach((e) => lines.push(`EMAIL;TYPE=${vcardEscape(e.label || "Email")}:${vcardEscape(e.value)}`));
-    if (c.birthday) lines.push(`BDAY:${c.birthday.length > 5 ? c.birthday : "--" + c.birthday.replace("-", "")}`);
-    (c.dates || []).forEach((d) => lines.push(`X-DATE;TYPE=${vcardEscape(d.label || "Date")}:${d.value}`));
-    (c.addresses || []).forEach((a) => lines.push(`ADR;TYPE=${vcardEscape(a.label || "Home")}:;;${vcardEscape(a.value)};;;;`));
-    if ((c.groups || []).length) lines.push(`CATEGORIES:${c.groups.map(vcardEscape).join(",")}`);
-    if (c.photo && c.photo.includes(",")) lines.push(`PHOTO;ENCODING=b;TYPE=JPEG:${c.photo.split(",")[1]}`);
-    if (c.notes) lines.push(`NOTE:${vcardEscape(c.notes)}`);
-    lines.push("END:VCARD");
-  });
-  const blob = new Blob([lines.join("\r\n")], { type: "text/vcard" });
+  const blob = new Blob([buildContactsVcf(cs)], { type: "text/vcard" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a"); a.href = url; a.download = "contacts.vcf"; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);

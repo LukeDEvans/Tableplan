@@ -63,3 +63,21 @@ PR: https://github.com/LukeDEvans/Tableplan/pull/10 · docs: MUSIC.md §3e/§3f
    mocked MusicKit").
 2. On the iPhone app, try Saved → Export CSV (ISSUES.md "Music CSV export download").
 
+
+## Export my data + permanent history log (PR #12)
+PR: https://github.com/LukeDEvans/Tableplan/pull/12 · docs: DATA_EXPORT.md
+
+- Settings → **Export My Data** downloads one zip: `live-export.json` (everything, and
+  Restore accepts it; logins/tokens removed), ~50 CSVs (one per kind of record, plus the
+  other household/personal view), `calendar.ics`, `contacts.vcf`, `attachments.csv` (links).
+- Media plays, article reads, piano practice events and AI chat are now also saved to the
+  `live_history` table, so the in-app "recent" limits no longer delete history. Existing
+  history uploads once per user. Finance monthly totals are no longer trimmed to 36 months.
+- DB: `live_history` is **already applied** to production (2026-09-28) — no SQL step.
+
+**After deploying:**
+1. Use the app for a minute (play something, open an article), then run
+   `select kind, count(*) from live_history group by kind` in the SQL editor — rows should
+   appear (media_play / article_read / practice_event / ai_chat).
+2. Settings → Export My Data on a computer; open a couple of CSVs and check `README.txt`
+   for notes. On the iPhone app, check it opens the share sheet (untested there).

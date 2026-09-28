@@ -27,6 +27,15 @@ _(none)_
 
 
 ## P2
+- [x] **[P2] `live_history` migration not applied yet — permanent history isn't being saved until it is** (infra/Supabase · migrations/2026-09-27-live-history.sql · 2026-09-27)
+      The client code is written and falls back safely: it sees the 404, stops sending for the session, and keeps up to 5000 queued rows in localStorage. But until the SQL runs in the SQL editor, history beyond the in-state caps is still lost, and each session makes one failed POST. Apply it, then check `select kind, count(*) from live_history group by kind`. Verdict: KNOWN GAP (DB change is confirmation-gated).
+      **RESOLVED 2026-09-28:** applied via Supabase MCP at Luke's request; RLS + 3 policies verified, `authenticated` trimmed to select/insert/delete, `anon` none, advisor shows no new findings. Rows start arriving once the client ships.
+- [ ] **[P2] Self-uploaded music files are device-only and not in "Export my data"** (music · music-library.js IndexedDB `live-music` · 2026-09-27)
+      The export covers `state.musicLibrary` metadata but not the audio/artwork bytes in the browser database, which are also not in any cloud bucket. Clearing site data or losing the device loses them. Suggested: an opt-in "include my uploaded music" export, or cloud-bucket sync like cadence-blobs. Verdict: CONFIRMED by reading.
+- [ ] **[P3] Identical chat turns collapse into one history row** (history · history-log.js historyRowFromChat · 2026-09-27)
+      Chat row ids hash role+content (chatMessages can't carry extra fields — they're sent to the API as-is — so a reload can't be told apart from a new turn any other way). Asking the exact same question twice keeps only the first. Verdict: ACCEPTED trade-off.
+- [ ] **[P3] Full restore from an export blanks the redacted logins** (backup · data-export.js redactSecrets · 2026-09-27)
+      By design the export removes cookies/tokens/keys (listed in manifest.redactedKeys and README). A FULL restore from it therefore drops them; merge restore is unaffected. Suggested if it bites: have full-restore keep current values for any key listed as redacted. Verdict: BY DESIGN, documented.
 - [ ] **[P2] Music Discover browse verified only against a mocked MusicKit** (music · music-provider-applemusic.js getGenres/getBrowseCategory · 2026-09-27)
       The Discover redesign's category pages call Apple's `/v1/catalog/{sf}/genres` and `/charts?genre=<id>` plus a playlists search. Unit tests + a Playwright pass used a fake MusicKit instance (network-mocked); no real developer token was available in the cloud session. Failure scenario: Apple's `genre` chart filter or genre names differ from what `music-discover.js` expects → a genre page falls back to search-only shelves (degrades, doesn't break — each call is isolated). Suggested: open Discover → Pop / Hip-Hop with Apple Music connected and confirm the Top songs/albums shelves are genre-specific. Also confirm real `isrc` lands on songs (it's a documented Apple attribute). Verdict: PLAUSIBLE until checked live.
 - [ ] **[P2] Music CSV export download unverified inside the iOS Capacitor app** (music · app.js exportMusicLibraryCsv · 2026-09-27)
