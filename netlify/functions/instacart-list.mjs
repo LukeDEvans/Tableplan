@@ -3,7 +3,8 @@
 //
 // The Instacart API key lives ONLY here (Netlify env INSTACART_API_KEY); the
 // browser never sees it (ARCHITECTURE §7). Request/response only: one vendor
-// call per user tap, no retries, no polling, no state writes — the client
+// call per user tap, no retries, no polling, no state writes. GET is a config
+// probe ({ configured }) the client calls at most once per page load — the client
 // records the sent_to_instacart state itself from the response.
 //
 // Env:
@@ -45,12 +46,15 @@ export const handler = async (event, _context, deps = {}) => {
     body: JSON.stringify(body)
   });
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers, body: "" };
-  if (event.httpMethod !== "POST") return respond(405, { error: "Method not allowed." });
+  if (event.httpMethod !== "POST" && event.httpMethod !== "GET") return respond(405, { error: "Method not allowed." });
 
   const auth = await authorizeRequest(event, env, fetchImpl);
   if (!auth.ok) return respond(auth.statusCode, { error: auth.error });
 
   const apiKey = String(env.INSTACART_API_KEY || "").trim();
+  // GET = config probe: lets the client hide the Send button until the key is set.
+  // Reports only a boolean — never the key — and never calls Instacart.
+  if (event.httpMethod === "GET") return respond(200, { configured: Boolean(apiKey) });
   if (!apiKey) return respond(503, { error: "Instacart is not configured yet." });
 
   if (String(event.body || "").length > MAX_BODY_BYTES) return respond(413, { error: "Shopping list is too large." });
@@ -107,7 +111,7 @@ function corsHeaders(origin) {
   const allowedOrigin = ALLOWED_ORIGINS.has(String(origin || "")) ? String(origin) : "";
   return {
     ...(allowedOrigin ? { "access-control-allow-origin": allowedOrigin } : {}),
-    "access-control-allow-methods": "POST, OPTIONS",
+    "access-control-allow-methods": "GET, POST, OPTIONS",
     "access-control-allow-headers": "authorization, content-type",
     vary: "Origin"
   };

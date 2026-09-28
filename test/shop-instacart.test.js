@@ -208,6 +208,18 @@ describe("instacart-list function", () => {
     expect(JSON.parse(res.body)).toEqual({ error: "bad items", unmatched: ["Zatar"] });
   });
 
+  it("GET reports only whether a key is configured, without calling Instacart", async () => {
+    const fetch = fakeFetch({ status: 200, body: {} });
+    const get = { httpMethod: "GET", headers: { authorization: "Bearer user-jwt" } };
+    const on = await handler(get, {}, { fetch, env });
+    expect(JSON.parse(on.body)).toEqual({ configured: true });
+    expect(on.body).not.toContain("sk-test");
+    const off = await handler(get, {}, { fetch, env: { SUPABASE_SERVICE_ROLE_KEY: "svc" } });
+    expect(JSON.parse(off.body)).toEqual({ configured: false });
+    expect((await handler({ httpMethod: "GET", headers: {} }, {}, { fetch, env })).statusCode).toBe(401);
+    expect(fetch.calls.some((c) => c.url.includes("instacart"))).toBe(false);
+  });
+
   it("400s on an empty list", async () => {
     const fetch = fakeFetch({ status: 200, body: {} });
     const res = await handler(event({ lineItems: [{ name: "  " }] }), {}, { fetch, env });
