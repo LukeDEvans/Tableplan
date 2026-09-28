@@ -3,6 +3,7 @@ import { createMealplanModule, autoRule, defaultMealPlanConfig, groceryMealSlotI
 import { createRecipesModule, combinedRecipeTime, defaultRecipeTags, migrateRecipeFoldersToTags, normalizeActiveCooking, normalizeCookLog, normalizeInstructionSteps, normalizeNutritionCandidate, normalizeNutritionFacts, normalizeRecipe, normalizeRecipeTagSelection, normalizeRecipeTags, normalizeTrashedRecipe, seedFolders } from './recipes-ui.js';
 import { createGroceriesModule, baseGroceryItemKey, defaultGroceryBaseItems, defaultGroceryDailyDozenTags, ensureGroceryCatalog, mergeGroceryStoreItemSections, normalizeGroceryAliases, normalizeGroceryBaseItems, normalizeGroceryChecklist, normalizeGroceryDailyDozenTags, normalizeGroceryItemLocations, normalizeGroceryPriceObservations, normalizeGroceryPricingSettings, normalizeGrocerySplitPreferences, normalizeGroceryStoreItemSections, normalizeGroceryStoreSections, normalizeGroceryStores, normalizePriceHistory, normalizeReceipts } from './groceries-ui.js';
 import * as LiveGrocerySources from './grocery-sources.js';
+import { normalizeInstacartOrders } from './instacart.js';
 import * as LiveDailyDozen from './daily-dozen.js';
 import * as LiveFoodHealth from './food-health.js';
 import * as LiveFoodHealthChecklists from './food-health-checklists.js';
@@ -272,7 +273,7 @@ const CLOUD_SNAPSHOT_HOURLY_MAX = 72;  // then 1 per hour back ~3 days (plenty f
 // Each section is stored as its own Supabase row: id = "{stateId}:{section}"
 const STATE_SECTIONS = {
   eat:       ["recipes", "trashedRecipes", "folders", "plans", "publishedWeeks", "recipeTags", "ingredientOptions", "autoGenerateRules", "mealPlanConfig", "activeCooking"],
-  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems"],
+  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems", "instacartOrders"],
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
@@ -1282,6 +1283,7 @@ const elements = {
   groceryStoreLayoutForm: document.querySelector("#groceryStoreLayoutForm"),
   groceryStoreLayoutName: document.querySelector("#groceryStoreLayoutName"),
   groceryStoreLayoutAddress: document.querySelector("#groceryStoreLayoutAddress"),
+  groceryStoreLayoutInstacart: document.querySelector("#groceryStoreLayoutInstacart"),
   groceryStoreLayoutList: document.querySelector("#groceryStoreLayoutList"),
   groceryStoreSectionInput: document.querySelector("#groceryStoreSectionInput"),
   addGroceryStoreSectionBtn: document.querySelector("#addGroceryStoreSectionBtn"),
@@ -4840,6 +4842,7 @@ function defaultState() {
     persistentManualGroceries: [],
     checkedGroceries: {},
     grocerySkippedStores: {},
+    instacartOrders: {},
     groceryItemWeekOverride: {},
     groceryCleared: {},
     groceryChecklist: { config: [], provisional: {}, submissions: {} },
@@ -5020,6 +5023,7 @@ function normalizeState(parsed) {
     persistentManualGroceries: normalizePersistentManualGroceries(parsed),
     checkedGroceries: parsed?.checkedGroceries || {},
     grocerySkippedStores: parsed?.grocerySkippedStores && typeof parsed.grocerySkippedStores === "object" ? parsed.grocerySkippedStores : {},
+    instacartOrders: normalizeInstacartOrders(parsed?.instacartOrders),
     groceryItemWeekOverride: parsed?.groceryItemWeekOverride && typeof parsed.groceryItemWeekOverride === "object" ? parsed.groceryItemWeekOverride : {},
     groceryCleared: parsed?.groceryCleared && typeof parsed.groceryCleared === "object" ? parsed.groceryCleared : {},
     groceryChecklist: normalizeGroceryChecklist(parsed?.groceryChecklist),
@@ -6407,6 +6411,7 @@ function mergeStates(newer, older) {
   for (const key of [
     "groceryItemLocations", "groceryAliases", "grocerySplitPreferences",
     "receiptItemMappings", "personGoals", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared",
+    "instacartOrders",
     "nutritionIngredientMappings", "publishedWeeks",
     "inventoryRoomVisibility", "watchShowtimesData",
     "groceryReviewDismissed", "collapsedDays",
