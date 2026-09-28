@@ -71,5 +71,6 @@ browser. Set in Netlify → Site configuration → Environment variables:
   the dev server `https://connect.dev.instacart.tools` (dev keys only work there).
 - `SUPABASE_SERVICE_ROLE_KEY` — already required by other functions (session check).
 
-Without `INSTACART_API_KEY` the button returns "Instacart is not configured yet."
+Until `INSTACART_API_KEY` is set the button stays hidden (the app asks the function once
+per page load whether a key is configured; no redeploy needed after adding it).
 

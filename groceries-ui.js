@@ -416,6 +416,11 @@ export function createGroceriesModule(deps) {
   // reads exactly what the user is looking at) + in-flight guard per store.
   let instacartRenderedRows = new Map();
   const instacartSendingStores = new Set();
+  // Server config probe: the Send button stays hidden until the function reports
+  // an API key is set. null = unknown. Probed at most once per page load (no
+  // retry/polling); a failed probe keeps the button hidden until reload.
+  let instacartConfigured = null;
+  let instacartConfigProbe = null;
   let shopSpace = "shop"; // "shop" | "checklist" | "inventory"
 
 function groceryBaseItems() {
@@ -4059,14 +4064,26 @@ function instacartApiUrl() {
   return "/api/instacart-list";
 }
 
+function ensureInstacartConfigProbed() {
+  if (instacartConfigured !== null || instacartConfigProbe) return;
+  const token = getAuthSession()?.access_token;
+  if (!token) return; // not signed in yet — a later render probes once a session exists
+  instacartConfigProbe = fetch(instacartApiUrl(), { cache: "no-store", headers: { Authorization: `Bearer ${token}` } })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((body) => { instacartConfigured = body?.configured === true; })
+    .catch(() => { instacartConfigured = false; })
+    .finally(() => { if (instacartConfigured) renderGroceries(); });
+}
+
 function instacartBarTemplate(storeId, store, activeRows) {
   if (!storeId || !LiveInstacart.isInstacartStore(store)) return "";
+  ensureInstacartConfigProbed();
   const pending = activeRows.filter((row) => !row.checked).length;
   const order = instacartOrderFor(storeId);
   const sending = instacartSendingStores.has(storeId);
   const S = LiveInstacart.INSTACART_ORDER_STATUS;
   const sendLabel = sending ? "Sending…" : `${order ? "Resend" : "Send"} to Instacart${pending ? ` (${pending})` : ""}`;
-  const sendBtn = pending || sending
+  const sendBtn = instacartConfigured === true && (pending || sending)
     ? `<button class="grocery-cleanup-link grocery-instacart-send" type="button" data-instacart-send="${escapeHtml(storeId)}" ${sending ? "disabled" : ""}>${escapeHtml(sendLabel)}</button>`
     : "";
   let status = "";
@@ -4119,7 +4136,7 @@ function bindInstacartBars(root) {
 async function sendStoreToInstacart(storeId) {
   if (!storeId || instacartSendingStores.has(storeId)) return;
   const store = groceryStores().find((item) => item.id === storeId);
-  if (!LiveInstacart.isInstacartStore(store)) return;
+  if (!LiveInstacart.isInstacartStore(store) || instacartConfigured !== true) return;
   const rows = instacartRenderedRows.get(storeId) || [];
   const { lineItems, skipped, itemKeys } = LiveInstacart.buildInstacartLineItems(rows);
   if (!lineItems.length) {
