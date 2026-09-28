@@ -31,6 +31,8 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "getVoices", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "speak", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "play", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setRate", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setUpcoming", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "next", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pause", returnType: CAPPluginReturnPromise),
@@ -60,6 +62,9 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     private var upcoming: [Item] = []
     private var userPaused = false
     private var interrupted = false
+    // Speech can't change rate mid-utterance: a rate change while paused is
+    // applied on resume by re-speaking from the last word.
+    private var speechRateDirty = false
 
     // Speech state
     private var currentUtterance: AVSpeechUtterance?
@@ -125,6 +130,43 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         DispatchQueue.main.async {
             self.upcoming = []
             self.start(item)
+            call.resolve()
+        }
+    }
+
+    // Start any queue item now (speech or audio), replacing whatever was playing
+    // and clearing the upcoming list. { item, voiceId?, rate? }
+    @objc func play(_ call: CAPPluginCall) {
+        guard let obj = call.getObject("item"), let item = LiveTtsPlugin.parseItem(obj) else {
+            call.reject("valid item required")
+            return
+        }
+        if let v = call.getString("voiceId") { voiceId = v }
+        if let r = call.getDouble("rate") { rate = Float(r) }
+        DispatchQueue.main.async {
+            self.upcoming = []
+            self.start(item)
+            call.resolve()
+        }
+    }
+
+    // Playback speed (1.0 = normal). Audio changes immediately; speech re-speaks
+    // from the current word at the new rate (AVSpeech can't retime an utterance).
+    @objc func setRate(_ call: CAPPluginCall) {
+        let r = Float(call.getDouble("rate") ?? 1.0)
+        DispatchQueue.main.async {
+            guard abs(r - self.rate) > 0.001 else { call.resolve(); return }
+            self.rate = r
+            if let item = self.current {
+                switch item.kind {
+                case .audio:
+                    if !self.userPaused, let p = self.player, p.rate > 0 { p.rate = max(0.5, min(3.0, r)) }
+                    self.updateNowPlaying(playing: !self.userPaused)
+                case .speech:
+                    if self.isActivelyPlaying() { self.start(item, speechOffset: self.lastLocation) }
+                    else { self.speechRateDirty = true }
+                }
+            }
             call.resolve()
         }
     }
@@ -264,6 +306,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         activateSession()
         current = item
         userPaused = false
+        speechRateDirty = false
         switch item.kind {
         case .speech: startSpeech(item, from: speechOffset)
         case .audio: startAudio(item, at: audioPosition ?? item.startPosition)
@@ -460,7 +503,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         switch item.kind {
         case .speech:
             var resumed = synth.isSpeaking && !synth.isPaused // already playing
-            if synth.isPaused { resumed = synth.continueSpeaking() }
+            if synth.isPaused && !speechRateDirty { resumed = synth.continueSpeaking() }
             if !resumed {
                 // The synthesizer lost the paused utterance (or refused to
                 // continue): re-speak from the last word reached.
