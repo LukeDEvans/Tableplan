@@ -3979,6 +3979,18 @@ body.shop-move-dragging { user-select: none; -webkit-user-select: none; }
 
 /* Per-store "show N bought" toggle, sitting to the right of the store name in
    the heading (and in a store tab's solo action row). */
+/* Instacart hand-off bar (per Instacart-enabled store section) */
+.grocery-instacart-bar { display: grid; gap: 4px; padding: 2px 0 6px; min-width: 0; }
+.grocery-instacart-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; }
+.grocery-instacart-status { font-size: 0.8rem; color: var(--muted); overflow-wrap: anywhere; }
+.grocery-instacart-status.is-sent { color: var(--accent-dark, var(--accent)); }
+.grocery-instacart-send { font-weight: 600; }
+.grocery-instacart-send[disabled] { opacity: 0.6; cursor: progress; }
+.grocery-instacart-unmatched { font-size: 0.8rem; color: var(--muted); overflow-wrap: anywhere; }
+.grocery-store-instacart-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.grocery-store-instacart-row > span { display: grid; gap: 2px; }
+.grocery-store-instacart-row small { color: var(--muted); font-weight: 400; }
+
 .grocery-store-bought-toggle {
   flex: 0 0 auto;
   white-space: nowrap;
@@ -7385,7 +7397,7 @@ textarea {
   text-align: center;
 }
 
-.recipe-form label:not(.travel-leg-mode-radio):not(.toggle-switch):not(.act-endloc-toggle):not(.group-page-toggle-row):not(.add-task-time-row):not(.plan-todo-toggle):not(.mealplan-notifview-row) {
+.recipe-form label:not(.travel-leg-mode-radio):not(.toggle-switch):not(.act-endloc-toggle):not(.group-page-toggle-row):not(.add-task-time-row):not(.plan-todo-toggle):not(.mealplan-notifview-row):not(.grocery-store-instacart-row) {
   display: grid;
   gap: 6px;
   color: #4f493f;

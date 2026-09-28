@@ -58,3 +58,19 @@ The function is scheduled for Thursdays at 14:00 UTC. One weekly function run is
 ## 6. Optional recipe photos
 
 Run `supabase-photo-storage.sql` in the Supabase SQL Editor before using recipe photo uploads. This creates the `recipe-photos` Storage bucket and restricts upload/update/delete to the owner account.
+
+## 7. Optional Instacart ordering (Shop → "Send to Instacart")
+
+Stores whose **Order via Instacart** toggle is on (seeded on for Aldi / Costco / Cub
+Foods; edit a store to change it) get a per-store **Send to Instacart** button. The
+call goes through `netlify/functions/instacart-list.mjs`; the key never reaches the
+browser. Set in Netlify → Site configuration → Environment variables:
+
+- `INSTACART_API_KEY` — Instacart Developer Platform API key (required).
+- `INSTACART_ENV` — `production` to use `https://connect.instacart.com`; unset uses
+  the dev server `https://connect.dev.instacart.tools` (dev keys only work there).
+- `SUPABASE_SERVICE_ROLE_KEY` — already required by other functions (session check).
+
+Until `INSTACART_API_KEY` is set the button stays hidden (the app asks the function once
+per page load whether a key is configured; no redeploy needed after adding it).
+

@@ -10,6 +10,23 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+## Instacart: per-store "Send to Instacart" (PR #15)
+PR: https://github.com/LukeDEvans/Tableplan/pull/15
+
+- Shop: stores with **Order via Instacart** on (on by default for Aldi, Costco and Cub Foods;
+  change it in the store's Edit dialog) get a Send button. It sends that store's unchecked
+  items to an Instacart shopping-list page. The store then shows "Sent to Instacart" with
+  Mark delivered / Undo. Items Instacart couldn't match are listed under the store.
+- The button stays **hidden until an API key is set**, so nothing changes visibly until then.
+- New Netlify function `instacart-list`. It adds the `instacartOrders` key to the grocery
+  state section.
+
+**After deploying:**
+1. Netlify env: set `INSTACART_API_KEY`, plus `INSTACART_ENV=production` for the live
+   Instacart API (unset uses the dev server). No redeploy is needed after adding them.
+2. Do one real send, then check whether items Instacart didn't match are listed under the
+   store (ISSUES.md, "Instacart match failures").
+
 ## News intake: email-linked articles → Media bell swipe deck (merged 2026-09-27)
 PR: https://github.com/LukeDEvans/Tableplan/pull/7 · spec: NEWS_INTAKE_DESIGN.md
 
