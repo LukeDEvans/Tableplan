@@ -64,6 +64,12 @@ export async function resolvePlayableSource(recording, opts = {}) {
   //    provider we had no ref for (→ exact), else a DIFFERENT performance of the
   //    same work (→ alternate, offered explicitly).
   if (opts.allowAlternate) {
+    // 2a) Same SONG on another provider (ISRC, or artist + title + duration). This
+    //     is what carries non-classical favourites/playlists across a provider
+    //     switch: the saved item keeps its old ref, and the first play on the new
+    //     provider finds it here and reports `learnedRef` so the caller can save it.
+    const song = await findSameSongViaSearch(recording, registry, attempts);
+    if (song) return { ...song, recording, attempts };
     const found = await findViaSearch(recording, registry, attempts);
     if (found) return { ...found, recording, attempts };
   }
@@ -118,4 +124,50 @@ async function collectCandidates(items, registry, wantWork, cap = 6) {
     if (track) out.push({ recording: deriveRecordingFromRecord(track), source: track.playable, ref: (track.providerRefs || [])[0] || null });
   }
   return out;
+}
+
+// ── same-song (non-classical) cross-provider matching ─────────────────────────
+// A song title key tolerant of the usual release decorations: "(Remastered
+// 2011)", "[Live]", "- 2009 Remaster", "feat. X". Deliberately NOT fuzzy beyond
+// that — a wrong match silently plays the wrong song (§13).
+export function songTitleKey(title) {
+  return clean(String(title || "")
+    .replace(/\s*[([][^)\]]*[)\]]/g, " ")
+    .replace(/\s+-\s+.*(remaster|version|edit|mix|live|mono|stereo).*$/i, " ")
+    .replace(/\b(feat|ft)\.?\s.*$/i, " "));
+}
+const firstArtist = (r) => clean((r && r.performers && r.performers[0] && r.performers[0].name) || (r && r.artists && r.artists[0] && r.artists[0].name) || (r && r.artist) || "");
+
+/** Is provider track `t` the same song as saved recording `rec`? */
+export function isSameSong(rec, t) {
+  if (!rec || !t) return false;
+  if (rec.isrc && t.isrc) return rec.isrc === t.isrc;
+  const ta = songTitleKey(rec.title), tb = songTitleKey(t.title);
+  if (!ta || ta !== tb) return false;
+  const aa = firstArtist(rec), ab = firstArtist(t);
+  if (!aa || !ab || !(aa === ab || aa.startsWith(ab) || ab.startsWith(aa))) return false;
+  if (rec.durationMs && t.durationMs) return Math.abs(rec.durationMs - t.durationMs) <= 5000;
+  return true;
+}
+
+async function findSameSongViaSearch(recording, registry, attempts) {
+  if (!registry || typeof registry.search !== "function") return null;
+  const artist = (recording.performers && recording.performers[0] && recording.performers[0].name) || "";
+  const title = songTitleKey(recording.title);
+  if (!title || (!artist && !recording.isrc)) return null; // too weak to search safely
+  const known = new Set((recording.providerRefs || []).map((r) => r.provider));
+  let res;
+  try { res = await registry.search(`${artist} ${title}`.trim(), { limit: 15 }); } catch { return null; }
+  for (const item of (res.items || [])) {
+    if (item.entity !== "track" || known.has(item.provider) || !isSameSong(recording, item)) continue;
+    const ref = (item.providerRefs || [])[0] || null;
+    const p = registry.get ? registry.get(item.provider) : null;
+    let src = item.playable && item.playable.url ? item.playable : null;
+    if (!src && p && ref) src = await sourceFromRef(p, ref);
+    if (src && (src.url || src.owned)) {
+      attempts.push({ provider: item.provider, ok: true, reason: "same-song-search" });
+      return { status: "exact", source: src, providerRef: ref, learnedRef: ref };
+    }
+  }
+  return null;
 }

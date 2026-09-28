@@ -97,6 +97,8 @@ reach into another domain's internals. Cross-domain needs go through a shared mo
 | Sharing | `live_groups`/`live_group_members`/`live_group_invites` | family/group model |
 | Push | `live_push_subscriptions` | web-push endpoints |
 | History/backup | `tableplan_state_history` | periodic snapshots |
+| Permanent personal history (media plays, article reads, practice events, AI chat) | `live_history` (relational, per-user, append-only) | the capped in-state lists stay as the UI's recent window; `history-log.js` appends each entry once (debounced, batched, bounded, never polled). Read only by Export my data. See DATA_EXPORT.md |
+| Export my data | derived at click time (`data-export.js`) | lossless JSON (restorable) + CSV/ICS/vCard, secrets removed — no parallel collection path. See DATA_EXPORT.md |
 | Media (content/provider/target/user-state) | canonical envelope in `media-model.js` | wraps native records, no migration |
 
 **Provenance:** records that ENTER Live from a source (imported / provider-fetched /
