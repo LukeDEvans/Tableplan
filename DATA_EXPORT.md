@@ -3,10 +3,8 @@
 > **Status (2026-09-27):** implemented on branch `claude/optimistic-heisenberg-i77pwn`.
 > Decisions (Luke, 2026-09-27): **manual** export only (no scheduled job) · **fix the
 > history caps now** · attachments as **links only**.
-> **Waiting on you:** run `migrations/2026-09-27-live-history.sql` in the Supabase SQL
-> editor. Until then the app behaves exactly as before, apart from the new export button.
-> The history log notices the table is missing, stops sending for the session, and keeps
-> its bounded local queue.
+> **Migration applied to production 2026-09-28** (`live_history`, least-privilege grants,
+> advisor clean). History starts saving to the table once this branch is deployed.
 
 Evidence labels: **[observed]** read in code · **[verified]** run and checked · **[inferred]**.
 

@@ -27,8 +27,9 @@ _(none)_
 
 
 ## P2
-- [ ] **[P2] `live_history` migration not applied yet — permanent history isn't being saved until it is** (infra/Supabase · migrations/2026-09-27-live-history.sql · 2026-09-27)
+- [x] **[P2] `live_history` migration not applied yet — permanent history isn't being saved until it is** (infra/Supabase · migrations/2026-09-27-live-history.sql · 2026-09-27)
       The client code is written and falls back safely: it sees the 404, stops sending for the session, and keeps up to 5000 queued rows in localStorage. But until the SQL runs in the SQL editor, history beyond the in-state caps is still lost, and each session makes one failed POST. Apply it, then check `select kind, count(*) from live_history group by kind`. Verdict: KNOWN GAP (DB change is confirmation-gated).
+      **RESOLVED 2026-09-28:** applied via Supabase MCP at Luke's request; RLS + 3 policies verified, `authenticated` trimmed to select/insert/delete, `anon` none, advisor shows no new findings. Rows start arriving once the client ships.
 - [ ] **[P2] Self-uploaded music files are device-only and not in "Export my data"** (music · music-library.js IndexedDB `live-music` · 2026-09-27)
       The export covers `state.musicLibrary` metadata but not the audio/artwork bytes in the browser database, which are also not in any cloud bucket. Clearing site data or losing the device loses them. Suggested: an opt-in "include my uploaded music" export, or cloud-bucket sync like cadence-blobs. Verdict: CONFIRMED by reading.
 - [ ] **[P3] Identical chat turns collapse into one history row** (history · history-log.js historyRowFromChat · 2026-09-27)

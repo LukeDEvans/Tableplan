@@ -1,9 +1,10 @@
 -- Permanent personal history log (DATA_EXPORT.md §3).
 --
--- ⏳ NOT YET APPLIED. Run in the Supabase SQL editor (project noyocjcltrenwdovqrql).
--- Idempotent: safe to re-run. Until it is applied the app keeps working exactly as
--- before — history-log.js detects the missing table, stops sending for the session,
--- and keeps its (bounded) local queue so nothing recorded meanwhile is lost.
+-- ✅ APPLIED to production 2026-09-28 (project noyocjcltrenwdovqrql) via the Supabase
+-- MCP apply_migration ("live_history" + "live_history_least_privilege"), at Luke's
+-- request. Verified after applying: RLS on, 3 policies (select/insert/delete, own rows),
+-- 3 indexes incl. PK, anon has no grants, authenticated has select/insert/delete only,
+-- 0 rows; security advisor shows no new findings. Idempotent: safe to re-run.
 --
 -- Why a table: the in-state history lists are CAPPED so the synced JSONB sections
 -- stay small (media plays 60, article reads 2000, practice events 1000, AI chat 20
@@ -38,6 +39,11 @@ create index if not exists live_history_user_kind_idx on public.live_history (us
 alter table public.live_history enable row level security;
 grant select, insert, delete on public.live_history to authenticated;
 grant select, insert, update, delete on public.live_history to service_role;
+-- Signed-out callers get nothing (defense in depth; RLS already admits only authenticated).
+revoke all on public.live_history from anon;
+-- The project's default privileges also auto-grant UPDATE/TRUNCATE/… to authenticated;
+-- strip them so the grants match the append-only policy set (TRUNCATE ignores RLS).
+revoke update, truncate, references, trigger on public.live_history from authenticated;
 
 drop policy if exists "history read own"   on public.live_history;
 drop policy if exists "history insert own" on public.live_history;
