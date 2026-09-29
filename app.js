@@ -18735,7 +18735,11 @@ async function fullRestoreFromBackup() {
   if (!pendingRestore) return;
   if (!window.confirm("This will replace all current data with the selected backup. Any changes since that backup will be lost. Continue?")) return;
   if (!(await tryPreChangeBackup("full restore from backup"))) return;
-  applyStoredState(pendingRestore.state);
+  // An "Export my data" file has its logins/tokens redacted; keep the current ones
+  // rather than blanking them (a backup that carries them still wins).
+  const { keepRedactedSecrets } = await import("./data-export.js");
+  const { value: restoredState } = keepRedactedSecrets(pendingRestore.state, state);
+  applyStoredState(restoredState);
   persist();
   await persistImmediately("backup restore");
   elements.restorePreview.innerHTML = `<div class="restore-preview-card"><strong>Backup restored successfully.</strong></div>`;
@@ -36855,15 +36859,21 @@ function applyVoiceActions(actions, transcript) {
 
       const recipe = action.recipeId ? activeRecipes().find((r) => r.id === action.recipeId) : null;
 
+      // The meal layout comes from the household's members, so a day can have no
+      // slot for this meal — say so instead of claiming it was added.
+      let written = 0;
       for (const slot of config.meals) {
         if (!day.meals.includes(slot)) continue;
         const existing = slotEntries(weekState().slots?.[day.id]?.[slot]);
         const entry = recipe ? createPlannedRecipeEntry(recipe, day.id, slot) : (action.recipeName || "");
         setMeal(day.id, slot, compactMealSlotEntries([...existing, entry], slot));
+        written++;
       }
 
       const displayName = recipe?.name || action.recipeName || "item";
-      messages.push(`Added ${displayName} to ${day.name} ${config.label.toLowerCase()}`);
+      messages.push(written
+        ? `Added ${displayName} to ${day.name} ${config.label.toLowerCase()}`
+        : `Couldn't add ${displayName}: ${day.name} has no ${config.label.toLowerCase()} slots in your meal plan layout.`);
 
     } else if (action.action === "addGrocery") {
       const item = String(action.item || "").trim();
@@ -36899,6 +36909,7 @@ function applyVoiceActions(actions, transcript) {
   }
 
   showVoiceToast(messages.join(" · ") || "Done");
+  return messages;
 }
 
 function showVoiceToast(message, duration = 4500) {
@@ -37544,13 +37555,14 @@ async function executeChatTool(name, input) {
       }
 
       case "set_meal": {
-        applyVoiceActions([{
+        // Report what actually happened (applyVoiceActions returns its messages).
+        const [message] = applyVoiceActions([{
           action: "setMeal",
           dayId: input.day_id,
           mealType: input.meal_type,
           recipeName: input.recipe_name
-        }], "");
-        return `Added ${input.recipe_name} to ${input.day_id} ${input.meal_type}.`;
+        }], "") || [];
+        return message ? `${message}.` : `Couldn't add ${input.recipe_name}.`;
       }
 
       case "add_to_watchlist": {

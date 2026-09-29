@@ -12,6 +12,7 @@
 //      restores the event under a fresh id
 //   4. a gated tool (search_mail) is refused while email access is off
 //   5. a trip starting soon with nothing packed shows a suggestion when the panel opens
+//   6. set_meal's reply matches what was actually written to the meal plan
 // (The evening "no dinner planned" rule is unit-tested only: whether dinner slots
 // exist depends on the household's meal layout in the local state.)
 //
@@ -189,6 +190,20 @@ async function main() {
   await sug.locator(".ai-suggestion-dismiss").click();
   if (await page.locator(".ai-suggestion", { hasText: "Assistant check trip" }).count()) fail("dismissed suggestion still showing");
   ok("trip suggestion shown on open, and dismissal sticks");
+
+  // 6: set_meal reports what actually happened. The meal layout depends on the
+  // household, so either outcome is valid — but the message must match state.
+  script.push(sseTools([{ name: "set_meal", input: { recipe_name: "Assistant check tacos", day_id: "monday", meal_type: "dinner" } }]));
+  script.push(sseText("Ok."));
+  await send("tacos monday dinner");
+  await waitIdle();
+  await page.waitForTimeout(800);
+  const mealResult = requests.at(-1)?.messages?.at(-1)?.content?.[0]?.content || "";
+  const planned = JSON.stringify((await storedState()).plans || {}).includes("Assistant check tacos");
+  if (/^Added /.test(mealResult) && !planned) fail(`set_meal said "${mealResult}" but nothing was written`);
+  if (/^Couldn't add/.test(mealResult) && planned) fail(`set_meal said "${mealResult}" but the meal was written`);
+  if (!/^(Added |Couldn't add)/.test(mealResult)) fail(`unexpected set_meal result: ${mealResult}`);
+  ok(`set_meal result matches state (${planned ? "written" : "no dinner slots"}: "${mealResult.slice(0, 70)}")`);
 
   if (pageErrors.length) fail(`page errors: ${pageErrors.join(" | ")}`);
   await browser.close();
