@@ -15785,7 +15785,9 @@ function renderContextSettingsDialog(kind) {
     });
     elements.contextSettingsBody.querySelector('[data-am-action="authorize"]')?.addEventListener("click", async () => {
       try {
-        const reg = await getMusicProviders();
+        // Keep the popup inside the click's user activation (Safari): the status
+        // refresh below already loaded the registry, so don't await it again.
+        const reg = musicProviderRegistry || await getMusicProviders();
         const p = reg.get("applemusic");
         if (!p) { alert("Enable Apple Music first."); return; }
         await p.authorize();
@@ -31842,7 +31844,12 @@ function musicBrowseHomeParts() {
 }
 async function signInAppleMusicFromDiscover() {
   try {
-    const reg = await getMusicProviders();
+    // Safari only lets MusicKit open Apple's sign-in popup while the click's user
+    // activation is still live, so don't wait on anything avoidable first. The
+    // Sign in button only renders after the Apple home loaded, i.e. the registry
+    // and MusicKit instance already exist — use the registry synchronously and
+    // call authorize() straight from the click (its getInstance() is cached).
+    const reg = musicProviderRegistry || await getMusicProviders();
     const p = reg.get("applemusic");
     if (!p) return;
     await p.authorize();
@@ -36947,6 +36954,7 @@ function openAiPanel(autoListen = false) {
   const briefingBtn = document.getElementById("aiChatBriefingBtn");
   if (briefingBtn) briefingBtn.hidden = state.aiSettings?.dailyBriefingEnabled === false;
   renderAssistantSuggestions();
+  refreshStaleIcsForAssistant().catch(() => {}); // bounded: ≤ once/hour, only stale feeds
   requestAnimationFrame(() => panel.classList.add("is-open"));
   if (autoListen) {
     setTimeout(() => startChatVoice(), 150);
@@ -37321,6 +37329,29 @@ async function runChatTurn(depth = 0) {
     }
     setChatLoading(false);
   }
+}
+
+// Subscribed (ICS) calendars only refetch when the Plan page opens in production
+// (the 15-min sweep is local-dev only), so the assistant could answer from a
+// stale copy. Before a calendar lookup, refetch feeds older than 3h — at most
+// once an hour per session, waiting at most 4s (a slow feed keeps its cache).
+// These go through the ICS proxy function, not Supabase.
+let assistantIcsRefreshAt = 0;
+async function refreshStaleIcsForAssistant() {
+  if (Date.now() - assistantIcsRefreshAt < 60 * 60 * 1000) return;
+  const stale = (state.calendarSources || [])
+    .filter((c) => calendarSourceKind(c) === "ics" && c.enabled !== false && c.url)
+    .filter((c) => {
+      const cached = planCalendarCache[c.id];
+      const at = cached ? Date.parse(cached.fetchedAt) : NaN;
+      return !(at > 0) || Date.now() - at > 3 * 60 * 60 * 1000;
+    });
+  if (!stale.length) return;
+  assistantIcsRefreshAt = Date.now();
+  await Promise.race([
+    Promise.all(stale.map((c) => refreshCalendarSource(c))),
+    new Promise((r) => setTimeout(r, 4000)),
+  ]);
 }
 
 // ── Assistant tool calls: gating, confirmation, undo ─────────────────────────
@@ -37943,6 +37974,7 @@ async function executeChatTool(name, input) {
       case "get_calendar_range": {
         const r = normalizeDateRange(input.start_date, input.end_date);
         if (!r.ok) return r.error;
+        await refreshStaleIcsForAssistant();
         return formatCalendarRange(getPlanEventsForRange(r.start, r.end), r.start, r.end);
       }
 
