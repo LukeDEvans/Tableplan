@@ -30,7 +30,7 @@ import { normalizeExternalEvent } from './calendar/normalize.js';
 import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap, upsertTitleOverride } from './calendar/reconcile.js';
 import { taskIsScheduled } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
-import { financeMonthsToSnapshot, financeOffsettingPairIds } from './finance-actuals.js';
+import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
 import { isNativeApp, nativeTts } from './native-bridge.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
@@ -4584,7 +4584,8 @@ function normalizeState(parsed) {
     financeAccountSubLabels: normalizeFinanceSubLabels(parsed?.financeAccountSubLabels),
     financeTxnLabels: (parsed?.financeTxnLabels && typeof parsed.financeTxnLabels === "object") ? parsed.financeTxnLabels : {},
     financeTxnRules: (parsed?.financeTxnRules && typeof parsed.financeTxnRules === "object") ? parsed.financeTxnRules : {},
-    financeMonthActuals: (parsed?.financeMonthActuals && typeof parsed.financeMonthActuals === "object") ? parsed.financeMonthActuals : {},
+    // normalizeFinanceMonthActuals also repairs months the old CSV import keyed "cat:<gid>:<cid>".
+    financeMonthActuals: normalizeFinanceMonthActuals(parsed?.financeMonthActuals),
     financeRecurring: dedupeFinanceRecurring((Array.isArray(parsed?.financeRecurring) ? parsed.financeRecurring : []).map((r) => ({
       id: r?.id || createId("fin-rec"),
       merchantKey: r?.merchantKey || "",
