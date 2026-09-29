@@ -7509,41 +7509,236 @@ let mailTotalEstimate = null;
 let mailPageBusy = false;
 let mailLastPageCount = 0;
 
-// dir > 0 = next email, dir < 0 = previous. No-op at the ends of the list.
-function mailSwipeNavigate(dir) {
-  const id = dir > 0 ? mailNavNextId : mailNavPrevId;
-  if (id) openMailThread(id);
-}
+// Interactive pager for swiping between emails — the same feel as the meal-plan
+// day carousel: the open email tracks the finger, the neighbouring email peeks
+// in from the edge, and on release it either slides across (commit) or springs
+// back. Driven from the thread panel AND from inside each email-body iframe
+// (which swallows touches over the body) — both feed viewport coordinates in.
+const mailPager = (() => {
+  const EASE = "cubic-bezier(0.22, 0.7, 0.3, 1)";
+  const DUR = 220;
+  let tracking = false, busy = false, axis = null;
+  let sx = 0, sy = 0, width = 0;
+  let samples = []; // recent [x, t] for release velocity
+  let peek = null, peekDir = 0;
+  const panel = () => elements.mailThread;
+  const neighbourId = (dir) => (dir > 0 ? mailNavNextId : mailNavPrevId);
 
-// Shared swipe test for switching emails. Returns 1 (next), -1 (prev), or 0.
-// Forgiving: the horizontal move only needs to lead the vertical one, and
-// either a ~45px drag OR a ~28px quick flick counts — so a slightly diagonal
-// swipe still works.
-function mailNavSwipeDir(dx, dy, dtMs) {
-  const adx = Math.abs(dx), ady = Math.abs(dy);
-  if (adx <= ady * 1.15) return 0;
-  if (adx > 45 || (dtMs < 350 && adx > 28)) return dx < 0 ? 1 : -1;
-  return 0;
-}
+  // Header-only preview of the neighbour: toolbar strip, subject, and the newest
+  // message's sender/snippet — from the thread cache when prefetched, else the
+  // list row's subject/sender.
+  function peekHtml(id) {
+    const cached = mailThreadCache.get(id)?.thread;
+    const newest = cached?.messages?.[cached.messages.length - 1];
+    const summary = mailRowSummary.get(id) || {};
+    const subject = newest?.subject || summary.subject || "(no subject)";
+    const from = parseDisplayName(newest?.from || summary.from || "");
+    const snippet = newest?.snippet ? cleanMailSnippet(newest.snippet) : "";
+    // Same toolbar icons as the real thread (ids stripped, counter dropped) so
+    // the incoming page reads as a whole email, not a bare header.
+    const bar = panel().querySelector(".mail-thread-toolbar")?.cloneNode(true);
+    bar?.querySelectorAll("[id]").forEach((el) => el.removeAttribute("id"));
+    bar?.querySelector(".mail-nav-counter")?.replaceChildren();
+    return `
+      ${bar ? bar.outerHTML : ""}
+      <div class="mail-thread-body">
+        <div class="mail-thread-subject-bar"><h2 class="mail-thread-subject">${escapeHtml(subject)}</h2></div>
+        <div class="mail-thread-messages"><div class="mail-msg">
+          <div class="mail-msg-meta">
+            <span class="mail-msg-from">${escapeHtml(from)}</span>
+            <span class="mail-msg-snippet">${escapeHtml(snippet)}</span>
+          </div>
+          ${cached ? "" : `<div class="mail-loading">Loading…</div>`}
+        </div></div>
+      </div>`;
+  }
 
-// Detects a horizontal swipe on `target` and navigates: left → next, right →
-// previous. Ignores vertical drags (scrolling) and multi-touch. Kept forgiving:
-// the horizontal component only needs to lead the vertical one, and either a
-// modest drag OR a quick flick counts — so it doesn't demand a perfectly
-// straight, long swipe.
-function wireMailSwipeNav(target) {
-  let sx = 0, sy = 0, st = 0, tracking = false;
-  target.addEventListener("touchstart", (e) => {
-    if (e.touches.length !== 1) { tracking = false; return; }
-    sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now(); tracking = true;
-  }, { passive: true });
-  target.addEventListener("touchend", (e) => {
+  function showPeek(dir) {
+    if (peekDir === dir && peek) return;
+    removePeek();
+    const id = neighbourId(dir);
+    const host = panel().parentElement;
+    if (!id || !host) return;
+    const r = panel().getBoundingClientRect(), hr = host.getBoundingClientRect();
+    peek = document.createElement("div");
+    peek.className = "mail-thread-panel mail-swipe-peek";
+    peek.setAttribute("aria-hidden", "true");
+    Object.assign(peek.style, {
+      left: `${r.left - hr.left}px`, top: `${r.top - hr.top}px`,
+      width: `${r.width}px`, height: `${r.height}px`
+    });
+    peek.innerHTML = peekHtml(id);
+    host.appendChild(peek);
+    peekDir = dir;
+  }
+
+  function removePeek() {
+    peek?.remove();
+    peek = null; peekDir = 0;
+  }
+
+  function place(offset, animate) {
+    const t = animate ? `transform ${DUR}ms ${EASE}` : "none";
+    const p = panel();
+    p.style.transition = t;
+    p.style.transform = offset ? `translate3d(${offset}px,0,0)` : "";
+    if (peek) {
+      peek.style.transition = t;
+      // dir 1 (next) sits off the right edge; dir -1 (previous) off the left.
+      peek.style.transform = `translate3d(${peekDir * width + offset}px,0,0)`;
+    }
+  }
+
+  function reset() {
+    const p = panel();
+    p.style.transition = "";
+    p.style.transform = "";
+    p.style.willChange = "";
+    p.classList.remove("is-swiping");
+    removePeek();
+  }
+
+  // Start tracking unless the touch began on something that owns horizontal
+  // movement itself (a text field, or a sideways-scrollable strip).
+  function start(x, y, target) {
+    if (busy) return;
+    tracking = false;
+    const p = panel();
+    for (let el = target; el && el !== p && el.nodeType === 1; el = el.parentElement) {
+      if (el.matches("input, textarea, select, [contenteditable], .mail-reply-compose")) return;
+      if (el.scrollWidth > el.clientWidth + 1 && /auto|scroll/.test(el.ownerDocument.defaultView.getComputedStyle(el).overflowX)) return;
+    }
+    tracking = true; axis = null;
+    sx = x; sy = y; samples = [[x, performance.now()]];
+  }
+
+  function move(x, y, e) {
+    if (!tracking) return;
+    const mx = x - sx, my = y - sy;
+    if (!axis) {
+      if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+      // Same forgiving lean as before: horizontal only needs to lead vertical.
+      axis = Math.abs(mx) > Math.abs(my) * 1.15 ? "x" : "y";
+      if (axis === "y") { tracking = false; return; } // vertical → native scroll
+      width = panel().clientWidth || window.innerWidth;
+      panel().style.willChange = "transform";
+      panel().classList.add("is-swiping");
+    }
+    if (e?.cancelable) e.preventDefault(); // we own this horizontal gesture now
+    const now = performance.now();
+    samples.push([x, now]);
+    while (samples.length > 2 && now - samples[0][1] > 120) samples.shift();
+    const dir = mx < 0 ? 1 : -1;
+    if (neighbourId(dir)) {
+      showPeek(dir);
+      place(mx, false);
+    } else {
+      // End of the list: rubber-band so the edge still feels physical.
+      removePeek();
+      place(Math.sign(mx) * Math.min(width * 0.18, Math.abs(mx) * 0.3), false);
+    }
+  }
+
+  function end() {
     if (!tracking) return;
     tracking = false;
-    const t = e.changedTouches[0];
-    const dir = mailNavSwipeDir(t.clientX - sx, t.clientY - sy, Date.now() - st);
-    if (dir) mailSwipeNavigate(dir);
+    if (axis !== "x") return;
+    // The finger's last tracked position (touchend reports the same spot).
+    const x = samples[samples.length - 1][0];
+    const mx = x - sx;
+    const dir = mx < 0 ? 1 : -1;
+    const id = neighbourId(dir);
+    // Release velocity over the last ~120ms (px/ms) — measured across a window,
+    // not the final two events, which can land in the same frame and spike.
+    const now = performance.now();
+    const [ox, ot] = samples[0] || [x, now];
+    const vel = now - ot > 16 ? (x - ox) / (now - ot) : 0;
+    // Commit on a drag past ~a third of the pane, or a quick flick the same way.
+    const flick = Math.abs(vel) > 0.45 && Math.sign(vel) === Math.sign(mx) && Math.abs(mx) > 24;
+    if (!id || !peek || peekDir !== dir || !(Math.abs(mx) > width * 0.33 || flick)) {
+      place(0, true);
+      if (peek) peek.style.transform = `translate3d(${peekDir * width}px,0,0)`;
+      busy = true;
+      setTimeout(() => { busy = false; reset(); }, DUR);
+      return;
+    }
+    busy = true;
+    place(-dir * width, true);
+    setTimeout(() => {
+      // The peek now covers the pane; swap the real thread in underneath it.
+      const leaving = peek;
+      peek = null; peekDir = 0;
+      openMailThread(id);
+      const p = panel();
+      p.scrollTop = 0;
+      reset();
+      if (leaving) {
+        leaving.style.transition = "opacity 140ms ease";
+        leaving.style.opacity = "0";
+        setTimeout(() => leaving.remove(), 150);
+      }
+      busy = false;
+    }, DUR);
+  }
+
+  function cancel() {
+    if (!tracking) return;
+    tracking = false;
+    if (axis === "x") { place(0, true); busy = true; setTimeout(() => { busy = false; reset(); }, DUR); }
+  }
+
+  return { start, move, end, cancel };
+})();
+
+// Adjacent threads in the list power both the prev/next buttons and the swipe
+// pager. Set on open (not just on render) so a second swipe while a cache-miss
+// thread is still loading moves on from IT, not from the previous email.
+function setMailNeighbours(threadId) {
+  const rows = [...elements.mailList.querySelectorAll(".mail-row[data-thread-id]")];
+  const idx = rows.findIndex((r) => r.dataset.threadId === threadId);
+  mailNavPrevId = idx > 0 ? rows[idx - 1].dataset.threadId : null;
+  mailNavNextId = (idx !== -1 && idx < rows.length - 1) ? rows[idx + 1].dataset.threadId : null;
+  return { rows, idx };
+}
+
+// Wires the pager onto a touch surface. `toViewport` maps the event's touch to
+// top-level viewport coordinates (identity for the panel itself; the iframe
+// wiring offsets by the frame's live position — which moves WITH the drag).
+function wireMailPager(target, toViewport = (t) => [t.clientX, t.clientY]) {
+  target.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) { mailPager.cancel(); return; }
+    const [x, y] = toViewport(e.touches[0]);
+    mailPager.start(x, y, e.target);
   }, { passive: true });
+  target.addEventListener("touchmove", (e) => {
+    if (e.touches.length !== 1) { mailPager.cancel(); return; }
+    const [x, y] = toViewport(e.touches[0]);
+    mailPager.move(x, y, e);
+  }, { passive: false });
+  target.addEventListener("touchend", () => mailPager.end(), { passive: true });
+  target.addEventListener("touchcancel", () => mailPager.cancel(), { passive: true });
+}
+
+// Background-fetch the neighbours of the open email (peek mode — never marks
+// read) so a swipe lands on a fully rendered thread instead of "Loading…".
+// Bounded: at most the two adjacent ids per open, skipped when cached/in flight.
+const mailNeighbourInflight = new Set();
+function prefetchMailNeighbours() {
+  [mailNavNextId, mailNavPrevId].forEach(async (id) => {
+    if (!id || mailNeighbourInflight.has(id)) return;
+    const c = mailThreadCache.get(id);
+    if (c && Date.now() - c.at < MAIL_THREAD_CACHE_TTL) return;
+    mailNeighbourInflight.add(id);
+    try {
+      const data = await callGmailApi({ action: "get", threadId: id, peek: true });
+      if (data?.thread) {
+        mailThreadCache.set(id, { thread: data.thread, at: Date.now() });
+        while (mailThreadCache.size > 60) mailThreadCache.delete(mailThreadCache.keys().next().value);
+      }
+    } finally {
+      mailNeighbourInflight.delete(id);
+    }
+  });
 }
 let mailCurrentQuery = "";
 let mailLabels = [];
@@ -7684,24 +7879,6 @@ async function prefetchMailThreads(messages) {
     }
   }
 }
-
-(function setupMailSwipe() {
-  let touchStartX = 0, touchStartY = 0;
-  elements.mailThread.addEventListener("touchstart", (e) => {
-    touchStartX = e.touches[0].clientX;
-    touchStartY = e.touches[0].clientY;
-  }, { passive: true });
-  elements.mailThread.addEventListener("touchend", (e) => {
-    const dx = e.changedTouches[0].clientX - touchStartX;
-    const dy = e.changedTouches[0].clientY - touchStartY;
-    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
-    const rows = [...elements.mailList.querySelectorAll(".mail-row[data-thread-id]")];
-    const idx = rows.findIndex(r => r.dataset.threadId === mailOpenThreadId);
-    if (idx === -1) return;
-    const target = dx < 0 ? rows[idx + 1] : rows[idx - 1];
-    if (target) openMailThread(target.dataset.threadId);
-  }, { passive: true });
-})()
 
 // Keep the "start–end of total" toolbar in sync no matter which code path
 // removes a row (row-hover archive/trash, open-thread actions, bulk actions,
@@ -8856,6 +9033,7 @@ async function openMailThread(threadId) {
   trackUsage("gmail_thread");
   mailOpenThreadId = threadId;
   elements.mailThread.hidden = false;
+  setMailNeighbours(threadId);
   const cached = mailThreadCache.get(threadId);
   if (cached && Date.now() - cached.at < MAIL_THREAD_CACHE_TTL) {
     renderMailThread(cached.thread);
@@ -9006,14 +9184,11 @@ function renderMailThread(thread) {
     mailOpenThreadId = null;
     elements.mailList.querySelectorAll(".mail-row--active").forEach((r) => r.classList.remove("mail-row--active"));
   });
-  const mailRows = [...elements.mailList.querySelectorAll(".mail-row[data-thread-id]")];
-  const mailIdx = mailRows.findIndex(r => r.dataset.threadId === thread.id);
-  // Adjacent threads power both the prev/next buttons and the swipe gesture.
-  mailNavPrevId = mailIdx > 0 ? mailRows[mailIdx - 1].dataset.threadId : null;
-  mailNavNextId = (mailIdx !== -1 && mailIdx < mailRows.length - 1) ? mailRows[mailIdx + 1].dataset.threadId : null;
+  const { rows: mailRows, idx: mailIdx } = setMailNeighbours(thread.id);
   // The thread container persists across renders — wire the swipe once so
   // listeners don't stack (it reads the module-level adjacent ids each time).
-  if (!mailSwipeNavWired) { wireMailSwipeNav(elements.mailThread); mailSwipeNavWired = true; }
+  if (!mailSwipeNavWired) { wireMailPager(elements.mailThread); mailSwipeNavWired = true; }
+  prefetchMailNeighbours();
   const navCounter = document.getElementById("mailNavCounter");
   if (mailIdx !== -1) {
     navCounter.innerHTML = `
@@ -10367,20 +10542,13 @@ function buildMailBodyFrame(html, { showImages = false } = {}) {
     try {
       const doc = iframe.contentDocument;
       // The email body fills most of the reader; the iframe swallows touches
-      // over it, so detect horizontal swipes here too and forward them to the
-      // list navigation (left → next email, right → previous).
-      let sx = 0, sy = 0, stime = 0, tr = false;
-      doc.addEventListener("touchstart", (e) => {
-        if (e.touches.length !== 1) { tr = false; return; }
-        sx = e.touches[0].clientX; sy = e.touches[0].clientY; stime = Date.now(); tr = true;
-      }, { passive: true });
-      doc.addEventListener("touchend", (e) => {
-        if (!tr) return;
-        tr = false;
-        const t = e.changedTouches[0];
-        const dir = mailNavSwipeDir(t.clientX - sx, t.clientY - sy, Date.now() - stime);
-        if (dir) mailSwipeNavigate(dir);
-      }, { passive: true });
+      // over it, so drive the swipe-between-emails pager from here too. Touch
+      // coords are frame-relative and the frame moves with the drag, so add
+      // the frame's live offset to get the finger's true viewport position.
+      wireMailPager(doc, (t) => {
+        const r = iframe.getBoundingClientRect();
+        return [r.left + t.clientX, r.top + t.clientY];
+      });
       // Re-fit whenever an image settles — load AND error both finalize layout,
       // so a blocked or broken remote image (common under no-referrer) can no
       // longer leave the frame stuck at a too-short height.

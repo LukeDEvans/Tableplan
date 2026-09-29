@@ -10,6 +10,19 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+## Mail: swipe between emails follows your finger (PR #16)
+PR: https://github.com/LukeDEvans/Tableplan/pull/16
+
+- Mail on a phone: the open email now moves with your finger while the next or previous one
+  slides in beside it, like the meal-plan day swipe. Let go past about a third of the screen
+  (or flick) to switch; otherwise it springs back. At the first or last email it bounces.
+- The emails either side of the open one are fetched in the background (without marking
+  them read), so a swipe usually lands on a loaded email.
+- Removes a duplicate old swipe handler. Client-only (`app.js` + `styles.css`).
+
+**After deploying:** try it on the iPhone app (not tested on a real device yet). If flicks
+feel too eager or too stiff, the thresholds are in `mailPager` in app.js.
+
 ## Instacart: per-store "Send to Instacart" (PR #15)
 PR: https://github.com/LukeDEvans/Tableplan/pull/15
 
