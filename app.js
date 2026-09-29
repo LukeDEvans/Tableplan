@@ -34,7 +34,7 @@ import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMont
 import { isNativeApp, nativeTts } from './native-bridge.js';
 import { saveFile } from './save-file.js';
 import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, pruneGroceryStamps } from './grocery-list-stamps.js';
-import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance } from './finance-sync.js';
+import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance, pickLatestSetting } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
 import { clearLocalAccountState, accountTransitionKind } from './auth-account-reset.js';
 import { makeProvenance, ORIGIN as PROV_ORIGIN } from './provenance.js';
@@ -292,7 +292,7 @@ const STATE_SECTIONS = {
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs"],
   contacts:  ["contacts", "contactGroups"],
 };
@@ -310,7 +310,8 @@ const STATE_SECTIONS = {
 // running code older than the row was last written with, so a stale device can
 // never drop budget categories or transaction annotations it doesn't know
 // about. MUST be incremented when finance* keys are added/restructured.
-const STATE_SCHEMA_VERSION = 6;
+// 7 (2026-09-30): financeTxnSourceSetAt added (financeTxnSource is latest-choice-wins).
+const STATE_SCHEMA_VERSION = 7;
 
 const SECTION_SCOPE = {
   eat: "household",       // Meal Plan is exclusively shared
@@ -4395,6 +4396,7 @@ function defaultState() {
     financeAccounts: [],
     financeGoals: [],
     financeTxnSource: "feed", // "feed" (SimpleFIN 45-day window) | "store" (durable finance_transactions) — FINANCE_TRANSACTIONS_DESIGN.md §5.5
+    financeTxnSourceSetAt: "", // when financeTxnSource was last chosen; merge keeps the latest choice
     financeAccountLabels: [],
     financeAccountSubLabels: {},
     financePersonal: [],
@@ -4586,6 +4588,7 @@ function normalizeState(parsed) {
     financeAccounts: normalizeFinanceAccounts(parsed?.financeAccounts, createId),
     financeGoals: normalizeFinanceGoals(parsed?.financeGoals),
     financeTxnSource: parsed?.financeTxnSource === "store" ? "store" : "feed",
+    financeTxnSourceSetAt: typeof parsed?.financeTxnSourceSetAt === "string" && !Number.isNaN(Date.parse(parsed.financeTxnSourceSetAt)) ? parsed.financeTxnSourceSetAt : "",
     financeAccountLabels: [...new Set((Array.isArray(parsed?.financeAccountLabels) ? parsed.financeAccountLabels : []).map((l) => String(l || "").trim()).filter(Boolean))],
     financeAccountSubLabels: normalizeFinanceSubLabels(parsed?.financeAccountSubLabels),
     financeTxnLabels: (parsed?.financeTxnLabels && typeof parsed.financeTxnLabels === "object") ? parsed.financeTxnLabels : {},
@@ -5888,6 +5891,17 @@ function mergeStates(newer, older) {
   // duplicates (each a separate alert). Merge both sides then collapse per
   // merchant, keeping the answer state.
   merged.financeRecurring = dedupeFinanceRecurring([...(older.financeRecurring || []), ...(newer.financeRecurring || [])]);
+
+  // Where the transaction list reads from: the latest explicit choice wins, so a
+  // device still carrying the default "feed" can't flip back a "store" choice.
+  {
+    const pick = pickLatestSetting(
+      { value: newer.financeTxnSource, at: newer.financeTxnSourceSetAt },
+      { value: older.financeTxnSource, at: older.financeTxnSourceSetAt },
+    );
+    merged.financeTxnSource = pick.value === "store" ? "store" : "feed";
+    merged.financeTxnSourceSetAt = pick.at;
+  }
 
   // Auto-fill rules are unique per SLOT+ACTION (autoRuleSignature), not per id —
   // a device that boots with empty localStorage regenerates a fresh set of
