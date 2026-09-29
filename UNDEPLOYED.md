@@ -151,3 +151,13 @@ Mostly **native iOS**. It reaches the phone only through an Xcode/TestFlight bui
 auto-advance while locked (article→article, article→podcast, podcast→article), podcast
 resume position, and a speed change mid-item. The Swift was never compiled in CI.
 
+
+## iOS: TestFlight from GitHub Actions + native compile check (PR #13)
+PR: https://github.com/LukeDEvans/Tableplan/pull/13 · docs: CAPACITOR.md → "TestFlight from GitHub Actions"
+
+- CI only; nothing changes on the website. Actions → "iOS → TestFlight" → Run workflow
+  builds on a hosted Mac and uploads to TestFlight. Repo secrets `ASC_KEY_ID`,
+  `ASC_ISSUER_ID` and `ASC_KEY_P8` are set (2026-09-29).
+- "iOS compile check" compiles the app unsigned on PRs/pushes that touch native code.
+
+**After deploying:** nothing.
