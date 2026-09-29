@@ -105,8 +105,9 @@ _(none)_
       - `today-projection.js` still projects Publications counts via `publications-notify.js`; they're always 0 now.
       - The Supabase tables `publications`/`feeds`/`articles` are unused.
       Suggested cleanup (one small, reviewed change): drop the keys from the state shape, remove the Today publications projection plus `publications-notify.js`, and drop the three tables via the SQL editor (gated). Verdict: CONFIRMED (by reading), intentionally deferred.
-- [ ] **[P3] "The Morning" / "World in brief" Mail AI toggles default ON** (mail · app.js MAIL_AI_FEATURES, _news-articles.js newsSourceForMessage · 2026-09-27)
+- [x] **[P3] "The Morning" / "World in brief" Mail AI toggles default ON** (mail · app.js MAIL_AI_FEATURES, _news-articles.js newsSourceForMessage · 2026-09-27)
       Predates the CLAUDE.md rule "features are off by default" (server checks `!== false`). Left as-is so existing behavior doesn't change silently; the three new news-links toggles are off by default (`=== true`). Flip only with Luke's OK. Verdict: CONFIRMED (by reading).
+      **RESOLVED 2026-09-29 (Luke):** the rule flipped instead — every Mail AI feature now defaults ON (CLAUDE.md updated). The five that were off (veg-only filter, NYT/Economist/Star Tribune news links, SimpleFIN auto-delete) now default on; servers check `!== false`. Saved explicit settings are unchanged.
 - [ ] **[P3] `financeTxnSource` can be flipped back by a stale device** (finance · app.js STATE_SECTIONS.finance · 2026-09-26)
       A plain scalar in the finance section (newer-wins merge), so a device still carrying the default `"feed"` can overwrite a `"store"` choice made elsewhere — same exposure as every finance scalar (e.g. `financeEmergencyMonths`). Harmless (feed mode is the safe default), just surprising. Consider making it per-device (localStorage) if it becomes annoying. From the adversarial review. Verdict: PLAUSIBLE.
 - [ ] **[P3] Re-importing a CSV under a different "New imported account" name duplicates its rows** (finance · finance-ui.js financeCsvImportAccountId · 2026-09-26)

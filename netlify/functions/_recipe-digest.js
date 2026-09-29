@@ -369,7 +369,7 @@ async function handleExtractedRecipes(serviceKey, userId, mailAi, anthropicKey, 
   const healthItems = recipes.filter((r) => (r.category || "Recipes") === "Health");
 
   let toQueue = recipeItems;
-  if (mailAi?.recipeDigestVegOnly && recipeItems.length) {
+  if (mailAi?.recipeDigestVegOnly !== false && recipeItems.length) {
     const isVeg = await classifyVegetarian(anthropicKey, recipeItems);
     if (isVeg) toQueue = recipeItems.filter((_, i) => isVeg[i]);
     else console.error(`[recipe-digest] ${userId}: vegetarian classification unavailable — queuing unfiltered`);

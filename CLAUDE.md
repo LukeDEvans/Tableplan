@@ -117,7 +117,7 @@ found this way unless it's genuinely trivial.
 
 ## Mail AI features
 
-Every AI email-processing feature MUST have an on/off toggle in Settings → Mail AI. To add one: (1) add an entry to the `MAIL_AI_FEATURES` registry in app.js (key, label, description) — the toggle UI renders automatically; (2) the server-side function must check its flag in `state.mailAiSettings.<key>` (config section, row `personal:config`) and do nothing when off. Features are off by default.
+Every AI email-processing feature MUST have an on/off toggle in Settings → Mail AI. To add one: (1) add an entry to the `MAIL_AI_FEATURES` registry in app.js (key, label, description) — the toggle UI renders automatically; (2) the server-side function must check its flag in `state.mailAiSettings.<key>` (config section, row `personal:config`) and do nothing when off. **Features are on by default** (Luke, 2026-09-29): set `defaultOn: true` and have the server treat only an explicit `false` as off (`mailAiSettings?.<key> !== false`).
 
 ## Git / GitHub
 

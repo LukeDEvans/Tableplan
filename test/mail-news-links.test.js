@@ -191,8 +191,9 @@ describe("mergeNewsResults — never twice, never stale", () => {
 });
 
 describe("toggles", () => {
-  it("off by default; only an explicit true enables a paper", () => {
-    expect(N.newsLinkSourceForSender("The New York Times <nytdirect@nytimes.com>", {})).toBeNull();
+  it("on by default; only an explicit false disables a paper", () => {
+    expect(N.newsLinkSourceForSender("The New York Times <nytdirect@nytimes.com>", {})?.paper).toBe("nyt");
+    expect(N.newsLinkSourceForSender("The New York Times <nytdirect@nytimes.com>", { nytNewsLinks: false })).toBeNull();
     expect(N.newsLinkSourceForSender("The New York Times <nytdirect@nytimes.com>", { nytNewsLinks: true })?.paper).toBe("nyt");
     expect(N.newsLinkSourceForSender("Star Tribune <news@email.startribune.com>", { startribuneNewsLinks: true })?.paper).toBe("startribune");
   });

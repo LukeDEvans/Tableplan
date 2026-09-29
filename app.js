@@ -15505,9 +15505,9 @@ const MAIL_AI_FEATURES = [
   },
   {
     key: "recipeDigestVegOnly",
-    defaultOn: false,
+    defaultOn: true,
     label: "Vegetarian recipes only",
-    desc: "As each NYT Cooking / Bon Appétit recipe is collected, an AI pass drops it before it ever reaches the notification bell if it isn't vegetarian (dairy, eggs, and honey are fine — meat, poultry, and fish/seafood are not). Off by default. Doesn't touch NutritionFacts health links."
+    desc: "As each NYT Cooking / Bon Appétit recipe is collected, an AI pass drops it before it ever reaches the notification bell if it isn't vegetarian (dairy, eggs, and honey are fine — meat, poultry, and fish/seafood are not). Doesn't touch NutritionFacts health links."
   },
   {
     key: "nutritionFactsDigest",
@@ -15529,27 +15529,27 @@ const MAIL_AI_FEATURES = [
   },
   {
     key: "nytNewsLinks",
-    defaultOn: false,
+    defaultOn: true,
     label: "NYT articles → Media notifications",
     desc: "Every New York Times article linked in an NYT email becomes a card in the Media page's notification bell (swipe right to save it to Publications, left to dismiss). An article is never delivered twice, and nothing older than a week. Real newsletters are also converted into a listenable article. The email is then filed to Apps/AI trash."
   },
   {
     key: "economistNewsLinks",
-    defaultOn: false,
+    defaultOn: true,
     label: "Economist articles → Media notifications",
     desc: "Same for The Economist's emails."
   },
   {
     key: "startribuneNewsLinks",
-    defaultOn: false,
+    defaultOn: true,
     label: "Star Tribune articles → Media notifications",
     desc: "Same for the Minnesota Star Tribune's emails."
   },
   {
     key: "autoDeleteSimplefin",
-    defaultOn: false,
+    defaultOn: true,
     label: "Auto-delete SimpleFIN access alerts",
-    desc: "SimpleFIN Bridge sends a “Transaction data accessed from new IP” email every time the app syncs your accounts. When on, each of these is moved to Trash automatically as it arrives (subject to the testing setting below). Off by default."
+    desc: "SimpleFIN Bridge sends a “Transaction data accessed from new IP” email every time the app syncs your accounts. When on, each of these is moved to Trash automatically as it arrives (subject to the testing setting below)."
   },
   {
     key: "aiTrashTestMode",
