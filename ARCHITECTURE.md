@@ -208,16 +208,40 @@ per-notification unbounded reads.
 
 ## 9. AI architecture
 
-- The AI acts **only through the typed tool layer** (`chat.js` `TOOLS`): each tool
-  is a bounded, validated action (`add_task`, `set_meal`, `add_event`,
-  `add_to_watchlist`, `write_note`, …). **No arbitrary AI-generated SQL/DB writes.**
+- The AI acts **only through the typed tool layer** — one registry,
+  `assistant-tools.js` (shared by `netlify/functions/chat.js`, which sends the specs,
+  and `app.js`, which applies calls): each tool is a bounded, validated action
+  (`add_task`, `set_meal`, `add_event`, `write_note`, …) or a bounded read
+  (`get_calendar_range`, `list_tasks`, `find_contact`, `get_weather`,
+  `query_transactions`, `search_mail`, …). Each tool declares `access` (read/write),
+  `risk` (destructive → confirmation card before it runs), and an optional `gate`.
+  **No arbitrary AI-generated SQL/DB writes.**
+- **Opt-in domains:** email (`state.mailAiSettings.assistantMailRead`, Settings → Mail
+  AI) and finance (`state.aiSettings.assistantFinanceRead`, Settings → AI Notes) are
+  OFF by default. `chat.js` reads both flags from the household config row (two JSON
+  paths only) and offers gated tools only when on; the client refuses gated calls too.
+- **Undo:** every write tool is snapshotted (`assistant-undo.js`); its chat bubble
+  offers Undo while the touched keys are unchanged since. Undo speaks the sync
+  language: undoing an add tombstones the item; undoing a delete restores it under a
+  fresh id (tombstones are unioned across devices, so the old id stays dead).
+- **Context:** every conversation gets a cross-domain OVERVIEW (tasks, meals, next
+  7 days of calendar, trips, birthdays, access flags) plus detail for the open page,
+  refreshed on page change and every 30 min. Pure formatters live in
+  `assistant-queries.js`; memory ops (id-addressable, deduped, bounded notes incl.
+  `openThreads`) in `assistant-memory.js`.
+- **Suggestions:** `assistant-suggestions.js` — pure rules over a snapshot the shell
+  builds from each domain's readers, recomputed when the chat panel opens (never on a
+  timer; no model call). Accepting one sends a prompt or runs one typed tool.
 - Tool results are applied to `state` on the client and synced through the normal
   path (so RLS, merge, and tombstones all still apply).
 - Keys server-side only (`ANTHROPIC_API_KEY`). Default model Haiku 4.5; escalate
   per task. Prompt caching on the tools/system block.
 - Confirmation-first for outward or destructive actions; the model suggests, the
   user confirms. Context is passed as a `CURRENT CONTEXT` snapshot, not DB access.
-- Adding a tool = adding a typed entry + a client applier; never widen to raw writes.
+- Adding a tool = a typed entry in `assistant-tools.js` + a client applier in
+  `executeChatTool` + (for writes) its state keys in `assistant-undo.js` `UNDO_KEYS`
+  (a test fails otherwise); never widen to raw writes. Browser check:
+  `npm run assistant:check` (dev server up; `/api/chat` mocked, no tokens spent).
 
 **AI-readiness substrate (no framework).** The app is made *legible* to a future
 agent by the application's own structure, not by AI infrastructure: canonical

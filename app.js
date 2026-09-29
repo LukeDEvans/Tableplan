@@ -40,6 +40,11 @@ import { collectDiagnostics, formatDiagnostics, createErrorLog } from './diagnos
 import { describeCapabilities } from './platform-capabilities.js';
 import { projectToday } from './today-projection.js';
 import { buildAgentContext } from './ai-context.js';
+import { toolAllowed, requiresConfirmation, isReadTool, AI_NOTE_CATEGORIES } from './assistant-tools.js';
+import { normalizeDateRange, formatCalendarRange, formatTaskList, findContacts, formatContacts, summarizeTransactions, formatWeather, formatMailSearch, formatMailThread, addDaysKey, daysUntilAnnual, weekdayLabel } from './assistant-queries.js';
+import { captureBefore, captureAfter, canUndo, buildUndo } from './assistant-undo.js';
+import { computeSuggestions, pruneDismissed } from './assistant-suggestions.js';
+import { normalizeAiNotes, addNote, updateNote, forgetNote, formatNotesContext, AI_NOTE_LABELS } from './assistant-memory.js';
 import { indexFromState, search as searchIndexQuery } from './search-index.js';
 import { createOperationTracker } from './async-operation.js';
 import { normalizeMediaProgress, setPosition as setMediaPosition, clearPosition as clearMediaPosition, resumePositionFor, pruneMediaProgress } from './media-progress.js';
@@ -1581,7 +1586,7 @@ const _weather = createWeatherModule({
   getActiveAppArea: () => activeAppArea,
   ensureLeaflet,
 });
-const { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions } = _weather;
+const { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport } = _weather;
 
 // ── Inventory domain (extracted to inventory-ui.js) ────────────────────
 // Instantiated above render() (consts not hoisted). Nav entry showInventoryApp
@@ -1621,7 +1626,7 @@ const _finance = createFinanceModule({
   writeSupabaseJson: (...a) => writeSupabaseJson(...a),
 });
 const {
-  purgeLocalFinanceTxnStore, financeExportTransactions,
+  financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions,
   checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney,
   invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick,
   refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu,
@@ -15462,6 +15467,14 @@ function openContextSettingsDialog(kind) {
 // state.mailAiSettings before acting.
 const MAIL_AI_FEATURES = [
   {
+    // Checked server-side by netlify/functions/chat.js (it only offers the mail
+    // tools when this is true) and client-side in runAssistantToolCall.
+    key: "assistantMailRead",
+    defaultOn: false,
+    label: "Assistant can read email",
+    desc: "Lets the chat assistant search your Gmail and read a conversation when you ask it something (\u201cwhen does my flight leave?\u201d). It only reads — it can't send, move, or delete mail — and only when you ask. Off by default."
+  },
+  {
     key: "receiptExtract",
     defaultOn: true,
     label: "Receipt extraction for Finance",
@@ -16182,13 +16195,8 @@ function renderContextSettingsDialog(kind) {
   }
 
   if (kind === "ai-notes") {
-    const notes = state.aiNotes || {};
-    const categories = [
-      { key: "userPreferences", label: "User Preferences", hint: "How Luke likes to work and communicate" },
-      { key: "patterns",        label: "Usage Patterns",   hint: "Recurring behaviours and common requests" },
-      { key: "appGaps",         label: "App Gaps",         hint: "Things you asked for that the assistant can't do yet" },
-      { key: "suggestions",     label: "Improvement Ideas",hint: "Features or changes to consider building" },
-    ];
+    const notes = normalizeAiNotes(state.aiNotes);
+    const categories = AI_NOTE_CATEGORIES.map((key) => ({ key, label: AI_NOTE_LABELS[key].label, hint: AI_NOTE_LABELS[key].hint }));
     const fmt = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
     const totalNotes = categories.reduce((s, c) => s + (Array.isArray(notes[c.key]) ? notes[c.key].length : 0), 0);
     const sections = categories.map(({ key, label, hint }) => {
@@ -16197,7 +16205,8 @@ function renderContextSettingsDialog(kind) {
         ? entries.map((n) => `
             <div class="ai-note-row" data-note-id="${escapeHtml(n.id)}" data-note-cat="${escapeHtml(key)}">
               <span class="ai-note-text">${escapeHtml(n.text)}</span>
-              <span class="ai-note-date">${fmt(n.timestamp)}</span>
+              <span class="ai-note-date">${fmt(n.updatedAt || n.timestamp)}</span>
+              <button class="ai-note-edit" type="button" aria-label="Edit note" data-note-id="${escapeHtml(n.id)}">✎</button>
               <button class="ai-note-delete" type="button" aria-label="Delete note" data-note-id="${escapeHtml(n.id)}" data-note-cat="${escapeHtml(key)}">✕</button>
             </div>`).join("")
         : `<p class="muted-label ai-note-empty">Nothing noted yet</p>`;
@@ -16211,6 +16220,9 @@ function renderContextSettingsDialog(kind) {
         </div>`;
     }).join("");
     const briefingOn = state.aiSettings?.dailyBriefingEnabled !== false;
+    const financeAccessOn = state.aiSettings?.assistantFinanceRead === true;
+    const suggestionsOn = state.aiSettings?.assistantSuggestionsEnabled !== false;
+    const mailAccessOn = state.mailAiSettings?.assistantMailRead === true;
     const pushSupported = "PushManager" in window && "serviceWorker" in navigator;
     const pushSubscribed = localStorage.getItem("live_push_subscribed") === "1";
     const pushPermission = pushSupported ? Notification.permission : "denied";
@@ -16245,6 +16257,23 @@ function renderContextSettingsDialog(kind) {
           ${!pushSupported || pushPermission === "denied" ? "" : `<p class="muted-label" style="font-size:0.75rem;margin-top:6px">On iOS: add this app to your Home Screen first, then enable notifications here.</p>`}
         </div>` : ""}
       </div>
+      <div class="ai-settings-section" style="margin-top:12px">
+        <div class="ai-settings-row">
+          <div>
+            <strong>Suggestions in the assistant</strong>
+            <p class="muted-label" style="margin:2px 0 0;font-size:0.8rem">When you open the assistant it points out things worth acting on — a trip with nothing packed, a birthday this week, no dinner planned.</p>
+          </div>
+          <input type="checkbox" class="live-toggle" id="assistantSuggestionsToggle" aria-label="Assistant suggestions" ${suggestionsOn ? "checked" : ""} />
+        </div>
+        <div class="ai-settings-row" style="border-top:1px solid var(--border-subtle,#e5e7eb);margin-top:12px;padding-top:12px">
+          <div>
+            <strong>Assistant can read Finance</strong>
+            <p class="muted-label" style="margin:2px 0 0;font-size:0.8rem">Lets the assistant look up your transactions and recurring charges to answer spending questions. Transaction details are sent to the AI model only when you ask. Off by default.</p>
+          </div>
+          <input type="checkbox" class="live-toggle" id="assistantFinanceToggle" aria-label="Assistant can read Finance" ${financeAccessOn ? "checked" : ""} />
+        </div>
+        <p class="muted-label" style="margin:10px 0 0;font-size:0.78rem">Email access: ${mailAccessOn ? "on" : "off"} — change it in Settings → Mail AI.</p>
+      </div>
       <p class="muted-label" style="margin:16px 0 10px;font-size:0.82rem">
         Notes the AI assistant has saved about you and the app. Included in every conversation so the assistant remembers context across sessions.
       </p>
@@ -16265,18 +16294,41 @@ function renderContextSettingsDialog(kind) {
       await disablePushNotifications();
       renderContextSettingsDialog("ai-notes");
     });
+    document.getElementById("assistantSuggestionsToggle")?.addEventListener("change", (e) => {
+      if (!state.aiSettings) state.aiSettings = {};
+      state.aiSettings.assistantSuggestionsEnabled = e.target.checked;
+      persist();
+    });
+    document.getElementById("assistantFinanceToggle")?.addEventListener("change", (e) => {
+      if (!state.aiSettings) state.aiSettings = {};
+      state.aiSettings.assistantFinanceRead = e.target.checked;
+      persist();
+    });
     elements.contextSettingsBody.querySelectorAll(".ai-note-delete").forEach((btn) => {
       btn.addEventListener("click", () => {
-        const { noteId, noteCat } = btn.dataset;
-        if (!Array.isArray(state.aiNotes?.[noteCat])) return;
-        state.aiNotes[noteCat] = state.aiNotes[noteCat].filter((n) => n.id !== noteId);
+        const { notes } = forgetNote(state.aiNotes, btn.dataset.noteId);
+        if (notes === state.aiNotes) return;
+        state.aiNotes = notes;
+        persist();
+        renderContextSettingsDialog("ai-notes");
+      });
+    });
+    elements.contextSettingsBody.querySelectorAll(".ai-note-edit").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const current = normalizeAiNotes(state.aiNotes);
+        const note = AI_NOTE_CATEGORIES.flatMap((c) => current[c]).find((n) => n.id === btn.dataset.noteId);
+        if (!note) return;
+        const text = window.prompt("Edit note", note.text);
+        if (text == null || !text.trim() || text.trim() === note.text) return;
+        const { notes } = updateNote(state.aiNotes, note.id, text, { now: new Date().toISOString() });
+        state.aiNotes = notes;
         persist();
         renderContextSettingsDialog("ai-notes");
       });
     });
     document.getElementById("aiNotesClearBtn")?.addEventListener("click", () => {
       if (!confirm("Clear all AI notes? This cannot be undone.")) return;
-      state.aiNotes = { userPreferences: [], appGaps: [], suggestions: [], patterns: [] };
+      state.aiNotes = normalizeAiNotes({});
       persist();
       renderContextSettingsDialog("ai-notes");
     });
@@ -36866,6 +36918,7 @@ function showVoiceToast(message, duration = 4500) {
 
 let chatMessages = [];       // full conversation history (role + content)
 let chatContextSent = false; // true after context injected for current section
+let chatContextSentAt = 0;   // when it was last injected (refreshed after 30 min)
 let chatLastSection = null;  // re-inject context when section changes
 let chatIsLoading = false;
 let chatAbortController = null;
@@ -36898,12 +36951,90 @@ function openAiPanel(autoListen = false) {
   panel.removeAttribute("hidden");
   const briefingBtn = document.getElementById("aiChatBriefingBtn");
   if (briefingBtn) briefingBtn.hidden = state.aiSettings?.dailyBriefingEnabled === false;
+  renderAssistantSuggestions();
   requestAnimationFrame(() => panel.classList.add("is-open"));
   if (autoListen) {
     setTimeout(() => startChatVoice(), 150);
   } else {
     document.getElementById("aiChatInput")?.focus();
   }
+}
+
+// ── Assistant suggestions (assistant-suggestions.js) ─────────────────────────
+// Recomputed each time the panel opens — never on a timer. The snapshot is built
+// from each domain's own readers; the rules themselves are pure and tested.
+function assistantSuggestionSnapshot(now = new Date()) {
+  const todayKey = dateKeyFromDate(now);
+  // Dinner: only after noon, and only when this week has a meal-plan record.
+  let dinnerPlannedToday = null;
+  if (now.getHours() >= 12) {
+    const ws = startOfPrepWindow(now);
+    const plan = state.plans?.[dateKeyFromDate(ws)];
+    const day = doPrepDays.find((d) => dateKeyFromDate(addDays(ws, d.offset)) === todayKey);
+    // Dinner slots are per person ("Luke Dinner", …) plus the combined slot.
+    const daySlots = plan?.slots?.[day?.id];
+    // dinnerMeals is rebuilt from the household's members; none → no dinner slots,
+    // so there's nothing to say (null), not "nothing planned".
+    if (plan?.slots && day && dinnerMeals.length) dinnerPlannedToday = [...dinnerMeals, "Combined Dinner"].some((slot) => slotEntries(daySlots?.[slot]).filter(Boolean).length > 0);
+  }
+  const access = assistantAccessFlags();
+  const monthStart = `${todayKey.slice(0, 7)}-01`;
+  return {
+    todayKey,
+    trips: travelTrips().map((t) => ({ id: t.id, name: t.name, startDate: t.startDate, status: t.status, packingCount: (t.packingList || []).length })),
+    contacts: (state.contacts || []).map((c) => ({ id: c.id, name: c.name, birthday: c.birthday })),
+    tomorrowEvents: getPlanEventsForRange(addDaysKey(todayKey, 1), addDaysKey(todayKey, 1)),
+    dinnerPlannedToday,
+    backlogOpenCount: doBacklogTasks().filter((t) => !t.done).length,
+    // Recurring charges already seen this month are skipped (already paid).
+    bills: access.finance
+      ? (state.financeRecurring || []).filter((r) => r && r.active !== false && !(r.lastSeen && r.lastSeen >= monthStart))
+        .map((r) => ({ name: r.name, expectedDay: r.expectedDay, lastAmount: r.lastAmount }))
+      : null,
+  };
+}
+
+function dismissAssistantSuggestion(id) {
+  if (!state.aiSettings || typeof state.aiSettings !== "object") state.aiSettings = {};
+  const todayKey = dateKeyFromDate(new Date());
+  state.aiSettings.dismissedSuggestions = pruneDismissed({ ...(state.aiSettings.dismissedSuggestions || {}), [id]: todayKey }, todayKey);
+  persist();
+}
+
+function renderAssistantSuggestions() {
+  const host = document.getElementById("aiChatSuggestions");
+  if (!host) return;
+  let list = [];
+  try {
+    list = state.aiSettings?.assistantSuggestionsEnabled === false
+      ? []
+      : computeSuggestions(assistantSuggestionSnapshot(), state.aiSettings?.dismissedSuggestions || {});
+  } catch (e) { console.error("[assistant suggestions]", e); }
+  host.hidden = !list.length;
+  host.innerHTML = list.map((sug) => `
+    <div class="ai-suggestion" data-suggestion-id="${escapeHtml(sug.id)}">
+      <div class="ai-suggestion-text">
+        <strong>${escapeHtml(sug.title)}</strong>
+        <span>${escapeHtml(sug.detail || "")}</span>
+      </div>
+      <button type="button" class="ai-suggestion-go" data-suggestion-go="${escapeHtml(sug.id)}">${escapeHtml(sug.cta || "Go")}</button>
+      <button type="button" class="ai-suggestion-dismiss" data-suggestion-dismiss="${escapeHtml(sug.id)}" aria-label="Dismiss suggestion">✕</button>
+    </div>`).join("");
+  host.querySelectorAll("[data-suggestion-dismiss]").forEach((btn) => btn.addEventListener("click", () => {
+    dismissAssistantSuggestion(btn.dataset.suggestionDismiss);
+    renderAssistantSuggestions();
+  }));
+  host.querySelectorAll("[data-suggestion-go]").forEach((btn) => btn.addEventListener("click", async () => {
+    const sug = list.find((x) => x.id === btn.dataset.suggestionGo);
+    if (!sug || chatIsLoading) return;
+    dismissAssistantSuggestion(sug.id);
+    renderAssistantSuggestions();
+    if (sug.action?.type === "prompt") {
+      sendChatMessage(sug.action.text);
+    } else if (sug.action?.type === "tool") {
+      await runAssistantToolCall(sug.action.name, sug.action.input || {});
+    }
+  }));
 }
 
 function closeAiPanel() {
@@ -36991,7 +37122,8 @@ function loadChatHistory() {
     const stored = JSON.parse(raw);
     if (!Array.isArray(stored) || !stored.length) return;
     chatMessages = stored;
-    chatContextSent = true; // context was sent in a previous session
+    // Leave chatContextSent false: the first message after a reload re-sends a
+    // fresh snapshot (the stored one may be from another day).
     const container = document.getElementById("aiChatMessages");
     if (!container) return;
     stored.forEach((m) => {
@@ -37015,10 +37147,14 @@ async function sendChatMessage(text) {
 
   const section = location.hash.replace("#", "") || "home";
   let userContent = text;
-  if (!chatContextSent || section !== chatLastSection) {
+  // Re-send the snapshot on a new page, and at least every 30 min so a long-open
+  // conversation doesn't reason from stale facts (tools the assistant just ran
+  // are reflected in their own results in between).
+  if (!chatContextSent || section !== chatLastSection || Date.now() - chatContextSentAt > 30 * 60 * 1000) {
     const ctx = buildChatContext(section);
     if (ctx) userContent = `CURRENT CONTEXT:\n${ctx}\n\n---\n\n${text}`;
     chatContextSent = true;
+    chatContextSentAt = Date.now();
     chatLastSection = section;
   }
 
@@ -37129,9 +37265,7 @@ async function runChatTurn(depth = 0) {
               const toolResults = [];
               for (const { tool_use_id, name, input } of calls) {
                 assistantContent.push({ type: "tool_use", id: tool_use_id, name, input });
-                const resultText = await executeChatTool(name, input);
-                logAiAction(name, input, resultText);
-                appendChatBubble("tool", `✓ ${resultText}`);
+                const resultText = await runAssistantToolCall(name, input);
                 toolResults.push({ type: "tool_result", tool_use_id, content: resultText });
               }
               chatMessages.push({ role: "assistant", content: assistantContent });
@@ -37170,9 +37304,7 @@ async function runChatTurn(depth = 0) {
         const toolResults = [];
         for (const { tool_use_id, name, input } of (data.calls || [])) {
           assistantContent.push({ type: "tool_use", id: tool_use_id, name, input });
-          const resultText = await executeChatTool(name, input);
-          logAiAction(name, input, resultText);
-          appendChatBubble("tool", `✓ ${resultText}`);
+          const resultText = await runAssistantToolCall(name, input);
           toolResults.push({ type: "tool_result", tool_use_id, content: resultText });
         }
         chatMessages.push({ role: "assistant", content: assistantContent });
@@ -37194,6 +37326,133 @@ async function runChatTurn(depth = 0) {
     }
     setChatLoading(false);
   }
+}
+
+// ── Assistant tool calls: gating, confirmation, undo ─────────────────────────
+// Every tool call from the model goes through here (both the streaming and the
+// JSON path): gated tools are refused unless Luke opted in; removals wait for his
+// OK; write tools are snapshotted so their bubble can offer Undo
+// (assistant-undo.js). Reads show a short "looked up" line, not the raw result.
+
+// Mail + finance are opt-in (both OFF by default). The server applies the same
+// flags when it decides which tools to offer; this is the client-side backstop.
+function assistantAccessFlags() {
+  return {
+    mail: state.mailAiSettings?.assistantMailRead === true,
+    finance: state.aiSettings?.assistantFinanceRead === true,
+  };
+}
+
+function describeAssistantRead(name, input) {
+  switch (name) {
+    case "get_calendar_range": return `Checked calendar ${input.start_date}${input.end_date && input.end_date !== input.start_date ? ` → ${input.end_date}` : ""}`;
+    case "list_tasks": return "Checked tasks";
+    case "find_contact": return `Looked up contact "${input.query}"`;
+    case "get_weather": return "Checked the weather";
+    case "query_transactions": return "Looked at transactions";
+    case "search_mail": return `Searched mail: ${input.query}`;
+    case "read_mail_thread": return "Read an email conversation";
+    case "search_recipes": return "Searched recipes";
+    case "get_recipe": return `Opened recipe "${input.name}"`;
+    default: return "Looked something up";
+  }
+}
+
+function describeAssistantRemoval(name, input) {
+  const t = String(input?.title || "").trim();
+  if (name === "delete_task") return `Delete the task matching "${t}"?`;
+  if (name === "delete_event") return `Delete the calendar event matching "${t}"?`;
+  if (name === "remove_from_list") return `Remove "${t}" from your ${input?.list === "reading" ? "reading list" : "watchlist"}?`;
+  return `Allow "${name}"?`;
+}
+
+// Inline Confirm / Cancel card in the chat; resolves true only on Confirm.
+function confirmAssistantAction(message) {
+  return new Promise((resolve) => {
+    const el = appendChatBubble("confirm", message);
+    if (!el) { resolve(false); return; }
+    el.textContent = message;
+    const row = document.createElement("div");
+    row.className = "ai-chat-confirm-actions";
+    const yes = document.createElement("button");
+    yes.type = "button"; yes.className = "ai-chat-confirm-yes"; yes.textContent = "Confirm";
+    const no = document.createElement("button");
+    no.type = "button"; no.className = "ai-chat-confirm-no"; no.textContent = "Cancel";
+    const done = (ok) => {
+      row.remove();
+      el.classList.add(ok ? "is-confirmed" : "is-cancelled");
+      el.append(document.createTextNode(ok ? " — confirmed" : " — cancelled"));
+      resolve(ok);
+    };
+    yes.addEventListener("click", () => done(true), { once: true });
+    no.addEventListener("click", () => done(false), { once: true });
+    row.append(yes, no);
+    el.appendChild(row);
+    el.parentElement.scrollTop = el.parentElement.scrollHeight;
+    yes.focus();
+  });
+}
+
+async function runAssistantToolCall(name, input = {}) {
+  if (!toolAllowed(name, assistantAccessFlags())) {
+    const msg = name === "search_mail" || name === "read_mail_thread"
+      ? "Email access is switched off (Settings → Mail AI → “Assistant can read email”)."
+      : name === "query_transactions"
+        ? "Finance access is switched off (Settings → AI Notes → “Assistant can read Finance”)."
+        : `Unknown tool: ${name}`;
+    appendChatBubble("tool", `✕ ${msg}`);
+    return msg;
+  }
+  if (requiresConfirmation(name)) {
+    // Sending stays disabled while the card waits, so a new message can't start
+    // a second turn mid-confirmation; the card's own buttons stay clickable.
+    const ok = await confirmAssistantAction(describeAssistantRemoval(name, input));
+    if (!ok) return "Luke declined — nothing was changed. Don't retry unless he asks.";
+  }
+  if (isReadTool(name)) {
+    const bubble = appendChatBubble("tool", `🔎 ${describeAssistantRead(name, input)}…`);
+    const resultText = await executeChatTool(name, input);
+    if (bubble) bubble.innerHTML = renderMarkdown(`🔎 ${describeAssistantRead(name, input)}`);
+    return resultText;
+  }
+  const pending = captureBefore(state, name);
+  const resultText = await executeChatTool(name, input);
+  const record = captureAfter(state, pending);
+  logAiAction(name, input, resultText);
+  const bubble = appendChatBubble("tool", `✓ ${resultText}`);
+  if (bubble && record) attachAssistantUndo(bubble, record, resultText);
+  return resultText;
+}
+
+function attachAssistantUndo(bubble, record, resultText) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "ai-chat-undo-btn";
+  btn.textContent = "Undo";
+  btn.addEventListener("click", () => {
+    const undo = buildUndo(state, record, () => createId("undo"));
+    if (!undo) {
+      btn.disabled = true;
+      btn.textContent = "Changed since — can't undo";
+      return;
+    }
+    for (const [key, value] of Object.entries(undo.patch)) {
+      if (value === undefined) delete state[key];
+      else state[key] = value;
+    }
+    undo.deletions.forEach(({ key, id }) => recordDeletion(key, id));
+    record.undone = true;
+    persist();
+    render();
+    btn.replaceWith(Object.assign(document.createElement("span"), { className: "ai-chat-undone", textContent: "Undone" }));
+    bubble.classList.add("is-undone");
+    // Tell the model on the next turn, so it doesn't assume the change stands.
+    chatMessages.push({ role: "user", content: `(Luke undid this change: ${resultText})` });
+    saveChatHistory();
+  });
+  bubble.appendChild(btn);
+  // The button disappears once undo is no longer safe (checked when shown/clicked).
+  if (!canUndo(state, record)) btn.remove();
 }
 
 function logAiAction(name, input, result) {
@@ -37528,7 +37787,7 @@ async function executeChatTool(name, input) {
           const idx = backlog.findIndex((t) => t.title?.toLowerCase().includes(query));
           if (idx >= 0) {
             deleted = backlog[idx];
-            recordDeletion("doPlanTasks", deleted.id);
+            recordDeletion("doBacklog", deleted.id); // mergeStates filters doBacklog by this key
             state.doBacklog = backlog.filter((_, i) => i !== idx);
           }
         }
@@ -37564,6 +37823,7 @@ async function executeChatTool(name, input) {
         const idx = (state.planEvents || []).findIndex((e) => e.title?.toLowerCase().includes(query));
         if (idx < 0) return `No event found matching "${input.title}". Note: only events added through the app can be deleted, not synced calendar events.`;
         const deleted = state.planEvents[idx];
+        recordDeletion("planEvents", deleted.id); // tombstone, or the next sync union re-adds it
         state.planEvents = state.planEvents.filter((_, i) => i !== idx);
         persist();
         if (activeAppArea === "plan") renderPlanPage();
@@ -37578,6 +37838,7 @@ async function executeChatTool(name, input) {
           const idx = watchItemsList().findIndex((i) => i.title?.toLowerCase().includes(query));
           if (idx < 0) return `"${input.title}" not found in watchlist.`;
           const removed = watchItemsList()[idx];
+          recordDeletion("watchItems", removed.id);
           state.watchItems = watchItemsList().filter((_, i) => i !== idx);
           persist();
           if (activeAppArea === "media" && activeMediaTab === "watch") renderWatchPlanner();
@@ -37587,6 +37848,7 @@ async function executeChatTool(name, input) {
           const idx = readingItemsList().findIndex((i) => i.title?.toLowerCase().includes(query));
           if (idx < 0) return `"${input.title}" not found in reading list.`;
           const removed = readingItemsList()[idx];
+          recordDeletion("readingItems", removed.id);
           state.readingItems = readingItemsList().filter((_, i) => i !== idx);
           persist();
           if (activeAppArea === "media") render();
@@ -37664,18 +37926,86 @@ async function executeChatTool(name, input) {
       }
 
       case "write_note": {
-        const validCategories = ["userPreferences", "appGaps", "suggestions", "patterns"];
-        const category = String(input.category || "").trim();
-        const noteText = String(input.note || "").trim();
-        if (!validCategories.includes(category)) return `Invalid category "${category}". Use one of: ${validCategories.join(", ")}`;
-        if (!noteText) return "No note text provided.";
-        if (!state.aiNotes || typeof state.aiNotes !== "object") {
-          state.aiNotes = { userPreferences: [], appGaps: [], suggestions: [], patterns: [] };
+        const { notes, message } = addNote(state.aiNotes, String(input.category || "").trim(), input.note, { makeId: () => createId("note"), now: new Date().toISOString() });
+        if (notes !== state.aiNotes) { state.aiNotes = notes; persist(); }
+        return message;
+      }
+
+      case "update_note": {
+        const { notes, message } = updateNote(state.aiNotes, input.note_id, input.note, { now: new Date().toISOString() });
+        if (notes !== state.aiNotes) { state.aiNotes = notes; persist(); }
+        return message;
+      }
+
+      case "forget_note": {
+        const { notes, message } = forgetNote(state.aiNotes, input.note_id);
+        if (notes !== state.aiNotes) { state.aiNotes = notes; persist(); }
+        return message;
+      }
+
+      // ── Cross-domain lookups (read-only) ──────────────────────────────────
+      case "get_calendar_range": {
+        const r = normalizeDateRange(input.start_date, input.end_date);
+        if (!r.ok) return r.error;
+        return formatCalendarRange(getPlanEventsForRange(r.start, r.end), r.start, r.end);
+      }
+
+      case "list_tasks": {
+        const wk = weekKey();
+        const days = doPrepDays.map((d) => ({
+          name: d.name,
+          date: /^\d{4}-\d{2}-\d{2}$/.test(wk) ? addDaysKey(wk, d.offset) : "",
+          tasks: rawDoTasksForDay(d.id, wk),
+        }));
+        const scope = ["this_week", "backlog", "all"].includes(input.scope) ? input.scope : "all";
+        return formatTaskList({ days, backlog: doBacklogTasks() }, { scope, includeDone: input.include_done === true });
+      }
+
+      case "find_contact": {
+        const q = String(input.query || "").trim();
+        if (!q) return "No search text provided.";
+        return formatContacts(findContacts(state.contacts || [], q), q);
+      }
+
+      case "get_weather": {
+        try {
+          return formatWeather(await getAssistantWeatherReport());
+        } catch (e) {
+          return `Weather lookup failed: ${e.message}`;
         }
-        if (!Array.isArray(state.aiNotes[category])) state.aiNotes[category] = [];
-        state.aiNotes[category].push({ id: createId("note"), text: noteText, timestamp: new Date().toISOString() });
-        persist();
-        return `Note saved to ${category}.`;
+      }
+
+      case "query_transactions": {
+        const today = dateKeyFromDate(new Date());
+        const r = normalizeDateRange(input.start_date || addDaysKey(today, -30), input.end_date || today, { maxDays: 400 });
+        if (!r.ok) return r.error;
+        const txns = await financeAssistantTxns();
+        if (!txns.length) return "No transactions are available — the bank link may not be set up, or Finance hasn't loaded yet.";
+        return summarizeTransactions(txns, {
+          start: r.start, end: r.end,
+          category: input.category, merchant: input.merchant,
+          kind: ["spending", "income", "all"].includes(input.kind) ? input.kind : "spending",
+          groupBy: ["category", "merchant", "none"].includes(input.group_by) ? input.group_by : "category",
+          limit: input.limit,
+        });
+      }
+
+      case "search_mail": {
+        const q = String(input.query || "").trim();
+        if (!q) return "No search query provided.";
+        const max = Math.min(15, Math.max(1, Number(input.max_results) || 8));
+        // labelIds: [] searches all mail, not just the inbox.
+        const data = await callGmailApi({ action: "list", q, maxResults: max, labelIds: [] });
+        if (!data) return `Mail search failed: ${lastGmailApiError || "Gmail isn't connected."}`;
+        return formatMailSearch(data.messages, q);
+      }
+
+      case "read_mail_thread": {
+        const threadId = String(input.thread_id || "").trim();
+        if (!/^[A-Za-z0-9_-]{6,40}$/.test(threadId)) return "Invalid thread_id — use one from search_mail.";
+        const data = await callGmailApi({ action: "get", threadId, peek: true }); // peek: never marks it read
+        if (!data?.thread) return `Couldn't open that conversation: ${lastGmailApiError || "not found."}`;
+        return formatMailThread(data.thread);
       }
 
       case "add_travel_idea": {
@@ -37766,17 +38096,7 @@ async function executeChatTool(name, input) {
 // ── Chat context serializers ───────────────────────────────────────────────────
 
 function buildAiNotesContext() {
-  const notes = state.aiNotes;
-  if (!notes) return "";
-  const labels = { userPreferences: "USER PREFERENCES", appGaps: "APP GAPS", suggestions: "IMPROVEMENT SUGGESTIONS", patterns: "USAGE PATTERNS" };
-  const lines = [];
-  for (const [key, label] of Object.entries(labels)) {
-    const entries = Array.isArray(notes[key]) ? notes[key] : [];
-    if (!entries.length) continue;
-    lines.push(`${label}:`);
-    entries.forEach((n) => lines.push(`  - ${n.text}`));
-  }
-  return lines.length ? `ASSISTANT MEMORY (from previous conversations):\n${lines.join("\n")}` : "";
+  return formatNotesContext(state.aiNotes);
 }
 
 // ── Push notifications ─────────────────────────────────────────────────────────
@@ -42704,6 +43024,13 @@ function buildChatContext(section) {
   let ctx = `Today: ${today}\nSection open: ${section || "home"}\n\n`;
   const notesCtx = buildAiNotesContext();
   if (notesCtx) ctx += notesCtx + "\n\n";
+  // Every conversation sees every area (not just the open page), so "what's my
+  // week look like?" works from anywhere; the open page adds its detail below.
+  try {
+    const overview = buildChatOverviewContext();
+    if (overview) ctx += `OVERVIEW:\n${overview}\n\n`;
+  } catch (e) { console.error("[chat overview]", e); }
+  if (section && section !== "home") ctx += `DETAIL FOR THE OPEN PAGE (${section}):\n`;
   try {
     switch (section) {
       case "eat":      ctx += buildChatEatContext();      break;
@@ -42719,6 +43046,47 @@ function buildChatContext(section) {
     }
   } catch (e) { console.error("[chat context]", e); }
   return ctx;
+}
+
+// Compact cross-domain snapshot: the general summary plus the next week of
+// calendar, upcoming trips and birthdays, and which opt-in areas are on.
+function buildChatOverviewContext() {
+  const lines = [];
+  const general = buildChatGeneralContext();
+  if (general) lines.push(general);
+  const todayKey = dateKeyFromDate(new Date());
+  const weekEnd = addDaysKey(todayKey, 6);
+  const events = getPlanEventsForRange(todayKey, weekEnd).filter((e) => String(e.title || "").trim());
+  if (events.length) {
+    const byDay = new Map();
+    [...events].sort((a, b) => a.date.localeCompare(b.date) || String(a.startTime || "").localeCompare(String(b.startTime || "")))
+      .forEach((e) => {
+        if (!byDay.has(e.date)) byDay.set(e.date, []);
+        byDay.get(e.date).push(`${e.allDay || !e.startTime ? "" : `${e.startTime} `}${String(e.title).trim()}`);
+      });
+    lines.push("NEXT 7 DAYS (calendar; use get_calendar_range for other dates):");
+    for (const [day, items] of byDay) {
+      lines.push(`  ${weekdayLabel(day)}: ${items.slice(0, 8).join("; ")}${items.length > 8 ? ` (+${items.length - 8} more)` : ""}`);
+    }
+  } else {
+    lines.push("NEXT 7 DAYS: nothing on the calendar.");
+  }
+  const trips = travelTrips()
+    .filter((t) => t.startDate && t.startDate >= todayKey && t.startDate <= addDaysKey(todayKey, 60))
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
+  if (trips.length) {
+    lines.push(`UPCOMING TRIPS: ${trips.map((t) => `${t.name} (${t.startDate}${t.endDate ? `→${t.endDate}` : ""}, ${t.status || "planning"})`).join("; ")}`);
+  }
+  const bdays = (state.contacts || [])
+    .map((c) => ({ name: c.name, d: daysUntilAnnual(c.birthday, todayKey) }))
+    .filter((x) => x.d != null && x.d <= 14)
+    .sort((a, b) => a.d - b.d);
+  if (bdays.length) {
+    lines.push(`BIRTHDAYS SOON: ${bdays.map((x) => `${x.name} (${x.d === 0 ? "today" : `in ${x.d}d`})`).join(", ")}`);
+  }
+  const access = assistantAccessFlags();
+  lines.push(`ACCESS: email ${access.mail ? "on (search_mail / read_mail_thread)" : "off"}; finance ${access.finance ? "on (query_transactions)" : "off"}`);
+  return lines.join("\n");
 }
 
 function buildChatEatContext() {
