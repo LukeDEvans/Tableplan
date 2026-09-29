@@ -326,6 +326,58 @@ folding it in. **Q2 below.**
 - **Q3 — deck/bell scope:** last 60 days.
 - **Known risk (logged in ISSUES.md):** re-linking SimpleFIN could re-ingest the same charges
   under new ids (§2). A "reconnect remap" tool is out of scope for now.
+  **Superseded 2026-09-29 (Luke):** build it — see §12.
+
+## 12. SimpleFIN reconnect merge [built 2026-09-29]
+
+**Problem.** Relinking SimpleFIN can make the bank issue new account and transaction ids. The
+next ingest then stores the same real charges again on a new account, and the old account's
+rows stay `active` beside them: duplicates in lists and in live-window actuals, and the
+annotations (keyed by the old txn ids) stay on the old copies.
+
+**Flow.** Finance › Accounts › Bank link shows a **Relinked accounts** block in store mode when
+the store holds active SimpleFIN rows for an account the live feed no longer sends. For each,
+the user picks the account that replaced it (pre-selected: the live account most of its
+charges match), sees a preview, confirms, and taps **Merge**.
+
+**Plan** (pure `planAccountRemap(rows, oldAccountId, newAccountId)` in finance-transactions.js,
+shared by the client preview and the server):
+- An old row matches a new row when the amount is equal and posted within 2 days. Among
+  those candidates, one sharing a merchant token wins (nearest date first); with none sharing,
+  only a sole candidate matches. Pairing is one-to-one.
+- Matched → `status='superseded'`, `superseded_by=<new id>` (the same mechanism as
+  pending→posted, so the row is hidden everywhere).
+- Unmatched posted → `account_id=<new account>`: real history the new connection doesn't
+  reach (SimpleFIN only goes back 90 days). The id is unchanged, so its annotations stay.
+- Unmatched pending → `status='vanished'`.
+- `overlapUnmatched` counts unmatched rows inside the new account's date range. The preview
+  shows it as "may appear twice".
+
+**Server** (`simplefin` action `remapAccount` → `_finance-ingest.js remapAccount`). SimpleFIN
+rows are service-role-only writes, so the merge can only happen here. The client sends only
+the two account ids; the server recomputes the plan from the stored rows.
+- **Guards:** the old account must be absent from the live feed (read from the `finaccts_`
+  cache, never the bridge). Otherwise the next ingest, which re-activates any row the bank
+  still sends, would undo the merge. The new account must be present in that feed.
+- **Bounded:** one read of the two accounts' active rows and one bulk upsert of the changed
+  rows.
+- **Idempotent:** a merged account has no active rows left, so a re-run is a no-op.
+
+**Client after a merge:**
+- `financeAccounts[].linkedId` old→new, unless another row already shows the new account.
+- Store sync.
+- `carrySupersededAnnotations` moves every txn-id annotation to its successor:
+  - maps moved: labels, sign flips, notes, receipts, confirmed, notification dismissals and
+    return links, including a link's purchase id when it appears as a value;
+  - if the successor already has an entry, the successor keeps its own;
+  - this replaced the labels-only pending→posted carry, which now moves every annotation too.
+
+**Not included:** undo (the old account id is dead after a merge), and feed mode. Without the
+store, the old rows simply drop out of the 45-day feed, so there are no duplicates to merge.
+
+**Tests:** finance-reconnect-remap.test.js (plan / candidates / suggestion / carry);
+finance-ingest.test.js `remapAccount` (stateful PostgREST fake: result, idempotency, guards,
+and a later ingest doesn't undo it).
 
 ## Appendix A — SQL
 

@@ -21788,6 +21788,9 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-review-empty-sub { font-size: 0.9rem; color: var(--muted); margin: 6px 0 18px; max-width: 300px; }
 .fin-review-empty .fin-review-approve { max-width: 260px; flex: 0 0 auto; }
 .fin-review-hint { flex: 0 0 auto; display: flex; justify-content: space-between; padding: 6px 20px 14px; font-size: 0.72rem; font-weight: 700; color: var(--muted); pointer-events: none; }
+/* SimpleFIN reconnect merge rows (Accounts › Bank link). */
+.fin-remap-row { display: grid; gap: 4px; margin: 6px 0 12px; }
+.fin-remap-row .fin-hint { margin: 0; }
 .fin-rec-row { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding-top: 6px; }
 .fin-rec-link-row { padding-bottom: 6px; }
 .fin-recap-row { min-height: 24px; }
