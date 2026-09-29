@@ -18,8 +18,8 @@ const RESOLVE_CAP = 60;        // click-trackers resolved per email
 const META_CONCURRENCY = 6;
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17 Safari/605.1.15";
 
-// One entry per paper. `key` is the Settings → Mail AI toggle (off by default:
-// only an explicit true enables). `paper` is the Media → Publications key.
+// One entry per paper. `key` is the Settings → Mail AI toggle (on by default:
+// only an explicit false disables — Luke, 2026-09-29). `paper` is the Media → Publications key.
 const NEWS_LINK_SOURCES = [
   {
     key: "nytNewsLinks",
@@ -54,7 +54,7 @@ const NEWS_LINK_SOURCES = [
 ];
 
 function enabledNewsLinkSources(mailAiSettings) {
-  return NEWS_LINK_SOURCES.filter((s) => mailAiSettings?.[s.key] === true);
+  return NEWS_LINK_SOURCES.filter((s) => mailAiSettings?.[s.key] !== false);
 }
 
 function newsLinkSourceForSender(from, mailAiSettings) {

@@ -4,7 +4,10 @@
      no inset, so these are no-ops on desktop and in a normal browser tab. */
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
-  /* Height of the fixed audio mini-player bar above the safe area (1px border
+  /* The screen height left between those insets: inner panels of full-screen
+     dialogs use it (the dialog itself pads by the insets — see the end of file). */
+  --safe-screen-h: calc(100dvh - var(--safe-top) - var(--safe-bottom));
+  /* Height of the fixed audio mini-player bar, measured from the screen bottom (1px border
      + 3px progress line + 90px body; see the Mini-player section), and the gap
      page windows keep above it while it's showing. */
   --mini-player-h: 94px;
@@ -1171,15 +1174,20 @@ body {
   overflow: hidden;
 }
 
+/* Full-screen page windows sit in the top layer, outside the body's safe-area
+   padding, so they pad for the notch/status bar and home indicator themselves
+   (env() is 0 on desktop and in a normal browser tab). The strips take the
+   window colour so the panel reads as one sheet; the panel fills what's left. */
 .page-dialog {
   width: 100vw;
   max-width: 100vw;
   height: 100dvh;
   max-height: 100dvh;
+  box-sizing: border-box;
   border: 0;
   border-radius: 0;
-  padding: 0;
-  background: transparent;
+  padding: var(--safe-top) 0 var(--safe-bottom);
+  background: var(--window-bg);
   overflow: visible;
 }
 
@@ -1189,8 +1197,8 @@ body {
 
 .app-page-panel {
   width: 100%;
-  min-height: 100dvh;
-  max-height: 100dvh;
+  min-height: 100%;
+  max-height: 100%;
   overflow: auto;
   border-radius: 0;
 }
@@ -5683,8 +5691,8 @@ body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
 
 #activeExerciseDialog .recipe-form {
   grid-template-rows: auto 1fr auto;
-  height: 100dvh;
-  max-height: 100dvh;
+  height: var(--safe-screen-h);
+  max-height: var(--safe-screen-h);
   border: 0;
   border-radius: 0;
   padding: 32px 24px 24px;
@@ -5722,7 +5730,6 @@ body.do-task-touch-dragging .do-task-item.is-dragging { opacity: 0.4; }
   display: flex;
   gap: 12px;
   padding-top: 18px;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
   border-top: 1px solid color-mix(in srgb, var(--sun) 40%, var(--line));
   margin-top: 8px;
 }
@@ -8700,8 +8707,8 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
   #groceryPricingDialog .recipe-form {
     width: 100%;
     max-width: 100vw;
-    min-height: 100dvh;
-    max-height: 100dvh;
+    min-height: var(--safe-screen-h);
+    max-height: var(--safe-screen-h);
     box-sizing: border-box;
     overflow-x: hidden;
     border-radius: 0;
@@ -8716,8 +8723,8 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
   #receiptScanDialog .recipe-form {
     width: 100%;
     max-width: 100vw;
-    min-height: 100dvh;
-    max-height: 100dvh;
+    min-height: var(--safe-screen-h);
+    max-height: var(--safe-screen-h);
     box-sizing: border-box;
     overflow-x: hidden;
     border-radius: 0;
@@ -8772,7 +8779,7 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
   #recipeViewDialog .recipe-form {
     width: 100%;
     max-width: 100vw;
-    max-height: 100dvh;
+    max-height: var(--safe-screen-h);
     box-sizing: border-box;
     overflow-x: hidden;
     padding: 14px;
@@ -8840,8 +8847,8 @@ body[data-theme="dark"] .published-meal-entry .custom-meal-link {
   }
 
   .app-page-panel {
-    min-height: 100dvh;
-    max-height: 100dvh;
+    min-height: 100%;
+    max-height: 100%;
     border-radius: 0;
     border-left: 0;
     border-right: 0;
@@ -11886,10 +11893,11 @@ body[data-theme="dark"] .watch-provider-link:hover {
   flex-direction: column;
   width: min(380px, 100vw);
   height: 100dvh;
+  box-sizing: border-box;
   background: var(--window-bg);
   border-left: 1px solid var(--line);
   box-shadow: var(--shadow);
-  padding: 18px 18px 16px;
+  padding: calc(18px + var(--safe-top)) 18px calc(16px + var(--safe-bottom));
   gap: 14px;
   overflow-y: auto;
   animation: planDetailIn 0.18s ease;
@@ -11957,8 +11965,8 @@ body[data-theme="dark"] .watch-provider-link:hover {
     height: 100dvh;
   }
   .plan-event-dialog .recipe-form {
-    max-height: 100dvh;
-    min-height: 100dvh;
+    max-height: var(--safe-screen-h);
+    min-height: var(--safe-screen-h);
     border-radius: 0;
     border: 0;
   }
@@ -12157,7 +12165,7 @@ body[data-theme="dark"] .watch-provider-link:hover {
 }
 @media (max-width: 560px) {
   .std-form-dialog { width: 100vw; max-width: none; height: 100dvh; max-height: 100dvh; }
-  .std-form-dialog .recipe-form { min-height: 100dvh; max-height: 100dvh; border-radius: 0; border: 0; }
+  .std-form-dialog .recipe-form { min-height: var(--safe-screen-h); max-height: var(--safe-screen-h); border-radius: 0; border: 0; }
 }
 /* Bare-X close pinned to the window's top-right corner — just the glyph. */
 .std-form-dialog .recipe-form-head { padding-right: 30px; }
@@ -12898,7 +12906,7 @@ body[data-theme="dark"] .watch-provider-link:hover {
 .add-task-dialog[open] { display: flex; flex-direction: column; }
 .add-task-dialog .recipe-form {
   flex: 1; display: flex; flex-direction: column; gap: 0;
-  border-radius: 0; border: 0; max-height: 100dvh;
+  border-radius: 0; border: 0; max-height: var(--safe-screen-h);
   padding: 0; overflow: hidden;
 }
 .add-task-dialog .dialog-head { padding: 16px 16px 0; flex-shrink: 0; }
@@ -16694,8 +16702,8 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
 
 /* Phone: full-height sheet + a touch more breathing room per tile. */
 @media (max-width: 640px) {
-  .priority-overlay { padding: 0; align-items: stretch; justify-content: stretch; }
-  .priority-modal { width: 100%; max-height: 100dvh; border-radius: 0; }
+  .priority-overlay { padding: var(--safe-top) 0 var(--safe-bottom); align-items: stretch; justify-content: stretch; background: var(--window-bg); }
+  .priority-modal { width: 100%; max-height: var(--safe-screen-h); border-radius: 0; }
   .priority-tiers-body { padding: 12px 12px 4px; }
   .priority-show-label { max-width: 132px; }
 }
@@ -16989,8 +16997,8 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   overflow: hidden;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  /* Extend under the home indicator so the controls sit above it. */
-  padding-bottom: var(--safe-bottom);
+  /* No safe-area padding: the bar body runs flush to the bottom edge of the
+     screen (the home indicator overlays it, like Apple's own media bars). */
 }
 /* Thin non-interactive episode-progress line pinned to the top edge. */
 .mini-player-progress {
@@ -17142,9 +17150,9 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
 
 /* While the bar is showing, the app shell stops just above it: every page
    window ends --mini-player-gap above the bar, with a strip of page background
-   between them. The body's safe-area padding already clears the home indicator,
-   which the bar's own bottom padding fills, so only the bar height is added. */
-body.has-mini-player .app-shell { padding-bottom: calc(var(--mini-player-h) + var(--mini-player-gap)); }
+   between them. The bar sits flush to the screen bottom, but the body already
+   pads by the safe-area inset, so that inset is subtracted here. */
+body.has-mini-player .app-shell { padding-bottom: max(0px, calc(var(--mini-player-h) + var(--mini-player-gap) - var(--safe-bottom))); }
 
 @media (max-width: 640px) {
   :root { --mini-player-h: 88px; }
@@ -21751,8 +21759,9 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 @keyframes finReviewNudge { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
 @media (prefers-reduced-motion: reduce) { .fin-review-card.fin-review-need-cat .fin-review-label { animation: none; } }
 /* Scrollable content column so a full card (facts + fields + actions) fits any
-   viewport; the hint pins to the bottom. */
-.fin-review-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 22px 24px 60px; text-align: center; }
+   viewport; the hint sits in its own row below it, so content never scrolls
+   under it. */
+.fin-review-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 22px 24px 16px; text-align: center; }
 .fin-review-count { margin-left: auto; margin-right: 12px; font-size: 0.82rem; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
 .fin-review-amount { font-size: 2.4rem; font-weight: 850; color: var(--accent-dark); }
 .fin-review-amount.is-neg { color: var(--ink); }
@@ -21778,7 +21787,10 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-review-empty-title { font-size: 1.3rem; font-weight: 850; color: var(--ink); }
 .fin-review-empty-sub { font-size: 0.9rem; color: var(--muted); margin: 6px 0 18px; max-width: 300px; }
 .fin-review-empty .fin-review-approve { max-width: 260px; flex: 0 0 auto; }
-.fin-review-hint { flex: 0 0 auto; position: absolute; left: 0; right: 0; bottom: 14px; display: flex; justify-content: space-between; padding: 0 20px; font-size: 0.72rem; font-weight: 700; color: var(--muted); pointer-events: none; }
+.fin-review-hint { flex: 0 0 auto; display: flex; justify-content: space-between; padding: 6px 20px 14px; font-size: 0.72rem; font-weight: 700; color: var(--muted); pointer-events: none; }
+/* SimpleFIN reconnect merge rows (Accounts › Bank link). */
+.fin-remap-row { display: grid; gap: 4px; margin: 6px 0 12px; }
+.fin-remap-row .fin-hint { margin: 0; }
 .fin-rec-row { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding-top: 6px; }
 .fin-rec-link-row { padding-bottom: 6px; }
 .fin-recap-row { min-height: 24px; }
@@ -22852,3 +22864,32 @@ button.eat-swipe-media { border: none; padding: 0; cursor: pointer; width: 100%;
 .fin-alerts-settings { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
 .fin-alerts-title { margin-top: 8px; font-size: 0.95rem; font-weight: 800; color: var(--ink); }
 
+/* ── Safe-area insets for full-screen dialogs ──────────────────────────────────
+   Dialogs render in the top layer, outside the body's safe-area padding, so a
+   full-screen one pads itself: its header clears the notch/status bar and its
+   actions clear the home indicator. The strips take the form's own colour; the
+   inner form is sized to --safe-screen-h (rules above). Kept last so it wins
+   over each dialog's own `padding: 0`. env() is 0 on desktop, so this is a no-op
+   there. (.page-dialog windows have the same treatment in their own rule.) */
+#activeExerciseDialog,
+.add-task-dialog {
+  box-sizing: border-box;
+  padding: var(--safe-top) 0 var(--safe-bottom);
+  background: var(--surface);
+}
+@media (max-width: 560px) {
+  #groceryPricingDialog,
+  #receiptScanDialog,
+  #recipeDialog,
+  #recipeViewDialog {
+    box-sizing: border-box;
+    padding: var(--safe-top) 0 var(--safe-bottom);
+    background: var(--surface);
+  }
+  .std-form-dialog,
+  .plan-event-dialog {
+    box-sizing: border-box;
+    padding: var(--safe-top) 0 var(--safe-bottom);
+    background: var(--window-bg);
+  }
+}

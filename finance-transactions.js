@@ -328,3 +328,119 @@ export function manualRowsToCopy(jsonbList, storeRows, groupId) {
   const have = new Set((Array.isArray(storeRows) ? storeRows : []).filter((r) => r?.origin === "manual").map((r) => String(r.id)));
   return (Array.isArray(jsonbList) ? jsonbList : []).filter((m) => m?.id && !have.has(String(m.id))).map((m) => manualTxnToRow(m, groupId));
 }
+
+// ── SimpleFIN reconnect remap (design §12) ───────────────────────────────────
+// Relinking SimpleFIN can make the bank issue NEW account and transaction ids, so
+// the next ingest stores the same real charges again under the new account. A
+// remap merges an OLD account (in the store, no longer in the live feed) into the
+// NEW account that replaced it:
+//   • each old row that matches a new row (same amount, posted within 2 days,
+//     a shared merchant token — or the only candidate) → superseded_by the new row,
+//     so it's hidden and its annotations follow it (carrySupersededAnnotations);
+//   • old posted rows with no match are real history the new connection doesn't
+//     reach → moved onto the new account (same id, so annotations stay put);
+//   • old pending rows with no match never posted under the old connection → vanished.
+// Pure and deterministic: the server recomputes it from the stored rows and never
+// trusts a plan sent by the client; the client uses it only to preview.
+
+const REMAP_WINDOW_DAYS = 2;
+const activeSimplefin = (r, accountId) => r && r.origin === "simplefin" && String(r.account_id) === String(accountId)
+  && (r.status || "active") === "active";
+
+export function planAccountRemap(storeRows, oldAccountId, newAccountId) {
+  const rows = Array.isArray(storeRows) ? storeRows : [];
+  const oldRows = rows.filter((r) => activeSimplefin(r, oldAccountId)).sort((a, b) => time(a.posted) - time(b.posted));
+  const newRows = rows.filter((r) => activeSimplefin(r, newAccountId));
+  const plan = { oldAccountId: String(oldAccountId), newAccountId: String(newAccountId), supersede: [], move: [], vanish: [], overlapUnmatched: 0 };
+  if (!oldAccountId || !newAccountId || String(oldAccountId) === String(newAccountId)) return plan;
+  const newEarliest = newRows.reduce((m, r) => (r.posted && (!m || time(r.posted) < m) ? time(r.posted) : m), null);
+  const claimed = new Set();
+  for (const o of oldRows) {
+    const oAmt = Number(o.amount) || 0;
+    const oTime = time(o.posted);
+    const cands = o.posted ? newRows.filter((n) => !claimed.has(String(n.id))
+      && n.posted && Math.abs((Number(n.amount) || 0) - oAmt) < 0.005
+      && Math.abs(time(n.posted) - oTime) <= REMAP_WINDOW_DAYS * DAY_MS) : [];
+    const byNearest = (a, b) => Math.abs(time(a.posted) - oTime) - Math.abs(time(b.posted) - oTime);
+    const sharing = cands.filter((n) => sharesMerchantToken(o.description, n.description)).sort(byNearest);
+    const match = sharing[0] || (cands.length === 1 ? cands[0] : null);
+    if (match) {
+      claimed.add(String(match.id));
+      plan.supersede.push({ id: String(o.id), superseded_by: String(match.id) });
+    } else if (o.pending) {
+      plan.vanish.push(String(o.id));
+    } else {
+      plan.move.push(String(o.id));
+      if (newEarliest != null && oTime >= newEarliest) plan.overlapUnmatched++;
+    }
+  }
+  return plan;
+}
+
+// Old SimpleFIN accounts worth offering for a remap: they still hold active rows
+// in the store but are missing from the live feed (a remap on an account the bank
+// still sends would be undone by the next ingest, which re-activates live rows).
+export function remapCandidateAccounts(storeRows, liveAccountIds) {
+  const live = new Set((liveAccountIds || []).map(String));
+  const byAccount = new Map();
+  for (const r of Array.isArray(storeRows) ? storeRows : []) {
+    if (!r || r.origin !== "simplefin" || (r.status || "active") !== "active" || !r.account_id) continue;
+    const k = String(r.account_id);
+    if (live.has(k)) continue;
+    const e = byAccount.get(k) || { accountId: k, count: 0, from: null, to: null };
+    e.count++;
+    const d = (r.posted || "").slice(0, 10);
+    if (d && (!e.from || d < e.from)) e.from = d;
+    if (d && (!e.to || d > e.to)) e.to = d;
+    byAccount.set(k, e);
+  }
+  return [...byAccount.values()].sort((a, b) => String(b.to || "").localeCompare(String(a.to || "")));
+}
+
+// The live account that most of an old account's charges match (null if none).
+export function suggestRemapTarget(storeRows, oldAccountId, liveAccountIds) {
+  let best = null;
+  for (const id of liveAccountIds || []) {
+    const n = planAccountRemap(storeRows, oldAccountId, id).supersede.length;
+    if (n > 0 && (!best || n > best.matched)) best = { accountId: String(id), matched: n };
+  }
+  return best;
+}
+
+// JSONB annotation maps keyed by transaction id (finance section). When the store
+// marks a row superseded (pending→posted, or a reconnect remap), each annotation
+// moves from the old id to its successor unless the successor already has one.
+export const FINANCE_TXN_ID_MAPS = [
+  "financeTxnLabels", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnReceipts",
+  "financeTxnConfirmed", "financeNotifDismissed", "financeTxnLinks",
+];
+
+// Mutates `state`'s maps in place; returns true if anything moved. financeTxnLinks
+// maps a return's id → its purchase's id, so a superseded PURCHASE id is also
+// rewritten where it appears as a value.
+export function carrySupersededAnnotations(state, storeRows) {
+  const next = new Map();
+  for (const r of Array.isArray(storeRows) ? storeRows : []) {
+    if (r && r.status === "superseded" && r.superseded_by) next.set(String(r.id), String(r.superseded_by));
+  }
+  if (!next.size || !state) return false;
+  let moved = false;
+  for (const key of FINANCE_TXN_ID_MAPS) {
+    const map = state[key];
+    if (!map || typeof map !== "object") continue;
+    for (const [oldId, newId] of next) {
+      if (!Object.prototype.hasOwnProperty.call(map, oldId)) continue;
+      if (!Object.prototype.hasOwnProperty.call(map, newId)) map[newId] = map[oldId];
+      delete map[oldId];
+      moved = true;
+    }
+  }
+  const links = state.financeTxnLinks;
+  if (links && typeof links === "object") {
+    for (const [ret, purchase] of Object.entries(links)) {
+      const to = next.get(String(purchase));
+      if (to) { links[ret] = to; moved = true; }
+    }
+  }
+  return moved;
+}

@@ -117,7 +117,7 @@ found this way unless it's genuinely trivial.
 
 ## Mail AI features
 
-Every AI email-processing feature MUST have an on/off toggle in Settings → Mail AI. To add one: (1) add an entry to the `MAIL_AI_FEATURES` registry in app.js (key, label, description) — the toggle UI renders automatically; (2) the server-side function must check its flag in `state.mailAiSettings.<key>` (config section, row `personal:config`) and do nothing when off. Features are off by default.
+Every AI email-processing feature MUST have an on/off toggle in Settings → Mail AI. To add one: (1) add an entry to the `MAIL_AI_FEATURES` registry in app.js (key, label, description) — the toggle UI renders automatically; (2) the server-side function must check its flag in `state.mailAiSettings.<key>` (config section, row `personal:config`) and do nothing when off. **Features are on by default** (Luke, 2026-09-29): set `defaultOn: true` and have the server treat only an explicit `false` as off (`mailAiSettings?.<key> !== false`).
 
 ## Git / GitHub
 
@@ -228,6 +228,10 @@ cleanup **after** the factory instantiations, and declare any module const you i
 factory **above** the instantiations. Keep this test green; don't weaken or delete it. (An esbuild
 bundle can't verify this — it hoists top-level `const`→`var`, hiding module-const TDZ; the faithful
 check is a native-ESM import of the *unbundled* source, which these static guards stand in for.)
+**(e)** A companion guard, `test/architecture-injected-names.test.js`, parses every `create*Module`
+factory and fails (file:line) on any name it uses that is neither injected, declared in the module,
+nor a browser/JS global — the class that made Recipe Box "+" silently do nothing. Fix a failure by
+injecting the name, never by adding it to the test's browser-global allowlist.
 
 **▶ Browser boot check — run after any boot-order-sensitive change.** `scripts/check-boot.mjs`
 (Playwright + headless system Chrome) launches the app against the **running dev server**

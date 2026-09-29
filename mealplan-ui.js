@@ -205,7 +205,9 @@ function restoreMealPlanSwipeScroll() {
   if (idx > 0) deck.scrollTop = idx * deck.clientHeight;
 }
 
-function dismissMealPlanRecipe(url) {
+// `serverDismiss: false` only hides the card locally (swipe-Add dismisses on the
+// server itself once the recipe is safely queued — see swipeAddMealPlanRecipe).
+function dismissMealPlanRecipe(url, { serverDismiss = true } = {}) {
   if (!getMealPlanRecipes()) return;
   // Keep the notifications window where the user was scrolled — renderPlanner()
   // rebuilds the whole grid, which would otherwise snap it back to the top. In
@@ -217,17 +219,29 @@ function dismissMealPlanRecipe(url) {
   renderPlanner();
   const newPanel = elements.plannerGrid.querySelector(".eat-notif-panel:not(.eat-notif-panel-swipe)");
   if (newPanel) newPanel.scrollTop = savedScroll;
-  callGmailApi({ action: "dismissRecipe", url });
+  if (serverDismiss) callGmailApi({ action: "dismissRecipe", url });
 }
 
 function swipeAddMealPlanRecipe(url) {
   const recipe = (getMealPlanRecipes() || []).find((r) => r.url === url);
-  dismissMealPlanRecipe(url); // remove from the deck + server-side dismiss
-  if (!recipe) return;
+  if (!recipe) { dismissMealPlanRecipe(url); return; }
+  // Hide the card now so the deck stays instant, but only dismiss it on the
+  // server once the recipe is in the review queue. On failure the card comes
+  // back, so the recipe isn't lost.
+  dismissMealPlanRecipe(url, { serverDismiss: false });
   importMealPlanRecipeDirect(recipe).then((ok) => {
-    showMailToast(ok
-      ? `Sent “${recipe.title || "recipe"}” to the Recipe Box for review.`
-      : `Couldn't read “${recipe.title || "that recipe"}” — open it to add manually.`);
+    if (ok) {
+      callGmailApi({ action: "dismissRecipe", url });
+      showMailToast(`Sent “${recipe.title || "recipe"}” to the Recipe Box for review.`);
+      return;
+    }
+    const current = getMealPlanRecipes() || [];
+    if (!current.some((r) => r.url === url)) {
+      setMealPlanRecipes([recipe, ...current]);
+      setPageNotifCount("eat", getMealPlanRecipes().length);
+      if (getActiveAppArea() === "eat") renderPlanner();
+    }
+    showMailToast(`Couldn't read “${recipe.title || "that recipe"}” — it's back in the list; open it to add manually.`);
   });
 }
 

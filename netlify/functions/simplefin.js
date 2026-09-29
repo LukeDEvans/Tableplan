@@ -11,7 +11,7 @@
 // - The token is read-only by protocol: it can list balances/transactions,
 //   nothing else. Revocable any time at beta-bridge.simplefin.org.
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
-const { ingestFeed } = require("./_finance-ingest.js");
+const { ingestFeed, remapAccount } = require("./_finance-ingest.js");
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return cors(json(200, {}));
@@ -234,6 +234,18 @@ exports.handler = async (event) => {
       try { await ingestFeed({ serviceKey, groupId, accounts }); }
       catch (e) { console.error("[fin-ingest] failed", e.message || "error"); }
       return cors(json(200, { accounts, errors, cached: false, fetchedAt }));
+    }
+
+    if (action === "remapAccount") {
+      // Merge an old account (left over from a SimpleFIN relink) into the account
+      // that replaced it — FINANCE_TRANSACTIONS_DESIGN.md §12. "Live" accounts come
+      // from the finaccts_ cache, so this never calls the bridge.
+      const cache = await loadRawCache(serviceKey, `finaccts_${groupId}`);
+      const liveAccountIds = (cache?.accounts || []).map((a) => String(a?.id || "")).filter(Boolean);
+      if (!liveAccountIds.length) return cors(json(409, { error: "No bank data yet — refresh first." }));
+      const result = await remapAccount({ serviceKey, groupId, oldAccountId: body.oldAccountId, newAccountId: body.newAccountId, liveAccountIds });
+      if (result.error) return cors(json(400, { error: result.error }));
+      return cors(json(200, result));
     }
 
     return cors(json(400, { error: `Unknown action: ${action}` }));

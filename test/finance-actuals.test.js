@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { financeEarliestTxnDate, financeMonthsToSnapshot, financeOffsettingPairIds } from "../finance-actuals.js";
+import { financeEarliestTxnDate, financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from "../finance-actuals.js";
 
 const tx = (posted, label = "cat:g:c") => ({ posted, label });
 
@@ -118,5 +118,31 @@ describe("financeOffsettingPairIds", () => {
       t("b", "acct1", "", -4.04, "ISHARES TRUST"),
     ];
     expect(financeOffsettingPairIds(txns, mkey, () => false).size).toBe(0);
+  });
+});
+
+describe("normalizeFinanceMonthActuals — old CSV backfill repair", () => {
+  it("strips the cat: prefix so readers keyed <gid>:<cid> find the amounts", () => {
+    const out = normalizeFinanceMonthActuals({
+      "2025-03": { cats: { "cat:g1:c1": -40, "cat:g1:c2": -12.5 }, income: 900, incomeBy: {} },
+    });
+    expect(out["2025-03"]).toEqual({ cats: { "g1:c1": -40, "g1:c2": -12.5 }, income: 900, incomeBy: {} });
+  });
+
+  it("keeps the plain key when both forms exist (never double-counts)", () => {
+    const out = normalizeFinanceMonthActuals({ "2025-03": { cats: { "g1:c1": -40, "cat:g1:c1": -40 } } });
+    expect(out["2025-03"].cats).toEqual({ "g1:c1": -40 });
+  });
+
+  it("is idempotent and returns the same object when nothing needs repair", () => {
+    const clean = { "2025-04": { cats: { "g1:c1": -3 }, income: 0 } };
+    expect(normalizeFinanceMonthActuals(clean)).toBe(clean);
+    const once = normalizeFinanceMonthActuals({ "2025-03": { cats: { "cat:g:c": -1 } } });
+    expect(normalizeFinanceMonthActuals(once)).toBe(once);
+  });
+
+  it("tolerates junk", () => {
+    expect(normalizeFinanceMonthActuals(null)).toEqual({});
+    expect(normalizeFinanceMonthActuals({ "2025-01": null, "2025-02": { income: 5 } })).toEqual({ "2025-01": null, "2025-02": { income: 5 } });
   });
 });
