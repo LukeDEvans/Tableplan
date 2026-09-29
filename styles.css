@@ -4,7 +4,7 @@
      no inset, so these are no-ops on desktop and in a normal browser tab. */
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
-  /* Height of the fixed audio mini-player bar above the safe area (1px border
+  /* Height of the fixed audio mini-player bar, measured from the screen bottom (1px border
      + 3px progress line + 90px body; see the Mini-player section), and the gap
      page windows keep above it while it's showing. */
   --mini-player-h: 94px;
@@ -16989,8 +16989,8 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   overflow: hidden;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  /* Extend under the home indicator so the controls sit above it. */
-  padding-bottom: var(--safe-bottom);
+  /* No safe-area padding: the bar body runs flush to the bottom edge of the
+     screen (the home indicator overlays it, like Apple's own media bars). */
 }
 /* Thin non-interactive episode-progress line pinned to the top edge. */
 .mini-player-progress {
@@ -17142,9 +17142,9 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
 
 /* While the bar is showing, the app shell stops just above it: every page
    window ends --mini-player-gap above the bar, with a strip of page background
-   between them. The body's safe-area padding already clears the home indicator,
-   which the bar's own bottom padding fills, so only the bar height is added. */
-body.has-mini-player .app-shell { padding-bottom: calc(var(--mini-player-h) + var(--mini-player-gap)); }
+   between them. The bar sits flush to the screen bottom, but the body already
+   pads by the safe-area inset, so that inset is subtracted here. */
+body.has-mini-player .app-shell { padding-bottom: max(0px, calc(var(--mini-player-h) + var(--mini-player-gap) - var(--safe-bottom))); }
 
 @media (max-width: 640px) {
   :root { --mini-player-h: 88px; }
