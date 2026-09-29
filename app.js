@@ -1778,7 +1778,7 @@ const _recipes = createRecipesModule({
   recordDeletion, removeRecipeFromMealSlots: (...a) => removeRecipeFromMealSlots(...a), renderPlanner: (...a) => renderPlanner(...a), renderScanImagePreviews, retainScanImageEdits,
   rowStorageCanWrite, saveImportedArticle, scheduleLocalBackup, setPageTitle, supabaseBaseUrl, supabaseHeaders,
   trackUsage, tryPreChangeBackup, unrecordDeletion, updateGroceryMealServing: (...a) => updateGroceryMealServing(...a), updateMealPlannedServingsFromContext: (...a) => updateMealPlannedServingsFromContext(...a),
-  formatGroceryAmount, groceryAmountToNumber, renderGroceries,
+  formatGroceryAmount, groceryAmountToNumber, grocerySuggestionItems: (...a) => grocerySuggestionItems(...a), renderGroceries,
 });
 const {
   activeRecipes,
@@ -1824,6 +1824,10 @@ const {
   openRecipeDialog,
   openRecipeView,
   openScanDialog,
+  bindRecipeReviewEvents,
+  queueRecipeForReview,
+  recipeReviewCount,
+  refreshRecipeReviewQueue,
   parseIngredientLine,
   recalculatePendingNutritionEstimate,
   recipeDefaultServings,
@@ -1890,6 +1894,7 @@ const _mealplan = createMealplanModule({
   renderGroceryLibrary, renderPlayPlanner, renderTasksPage, saveRecipeRow, scaledIngredientToText, setCombinedMealSection,
   setPageNotifCount, setPageTitle, showMailToast, slotEntries, storeDirectionsUrl, syncedCalendarEventsForDate,
   unlistedGroceryItemsForWeek, updateTabIndicator, weekKey, weekState,
+  queueRecipeForReview: (...a) => queueRecipeForReview(...a), recipeReviewCount: (...a) => recipeReviewCount(...a),
 });
 const {
   addMealType,
@@ -2487,6 +2492,7 @@ function bindEvents() {
     openRecipeBoxPage();
     openRecipeDialog();
   });
+  bindRecipeReviewEvents();
   elements.recipeForm.addEventListener("submit", saveRecipeFromForm);
   elements.recipePhotoInput.addEventListener("change", handleRecipePhotoSelection);
   elements.removeRecipePhotoBtn.addEventListener("click", removeRecipePhotoSelection);
@@ -7776,6 +7782,7 @@ function warmPageNotifs() {
   // Fetches live accounts when connected, which also sets the finance dot
   if (getFinanceLinkStatus() === null) checkFinanceLinkStatus();
   warmMealPlanRecipes();
+  refreshRecipeReviewQueue();
   warmNewsNotif();
 }
 
@@ -7799,13 +7806,13 @@ function isCoarsePointer() {
 
 
 
-// Swipe view: adds the recipe straight to the book (no dialog) and stays in the
-// cards so triage can continue uninterrupted.
+// Swipe view: sends the recipe to the Recipe Box review queue (no dialog) and
+// stays in the cards so triage can continue uninterrupted.
 
-// Fetch a pending recipe's structured data and save it directly to the book,
-// mirroring saveRecipeFromForm's recipe shape (see openImportedRecipe for the
-// interactive path). Returns true on success. The pending notif thumbnail
-// (recipe.image) becomes the dish photo since the parser doesn't return one.
+// Fetch a pending recipe's structured data and park it in the Recipe Box review
+// queue (queueRecipeForReview) — it reaches the book once reviewed + saved there.
+// Returns true on success. The pending notif thumbnail (recipe.image) becomes the
+// dish photo since the parser doesn't return one.
 
 // One full-window card per recipe in a vertical scroll-snap deck. Up/down scroll
 // (from the photo side) browses recipes; a horizontal drag dismisses/adds; tapping

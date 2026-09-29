@@ -10,6 +10,27 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+## Recipe Box: "+" fixed, plus a review queue for new recipes (PR #17)
+PR: https://github.com/LukeDEvans/Tableplan/pull/17
+
+- The **+** in Meal Plan → Recipe Book opens the Add-recipe form again. It was crashing
+  on a function the recipes module was never given.
+- A **bell** next to + and × holds recipes that weren't typed in by hand: Gmail finds,
+  the Chrome extension, and URL import / paste / scan / share. **Review** opens one in
+  the editor, and saving adds it to the book. **×** dismisses it. The Meal Plan Recipe
+  Book button shows the count.
+- In-app imports still open the editor straight away; closing without saving now keeps
+  the recipe in the queue instead of losing it.
+- New Netlify function `recipe-review`. It stores the queue in one service-only row per
+  user (`recipereview_<userId>`). No DB migration.
+
+**After deploying:**
+1. **Reload the Chrome extension.** It now sends recipes to the queue, so until the
+   function is live, recipe imports from the extension fail.
+2. Import one recipe signed in on the real app, then check it appears under the bell and
+   that saving it moves it into the book. The server path was only unit-tested with
+   the network mocked.
+
 ## Mail: swipe between emails follows your finger (PR #16)
 PR: https://github.com/LukeDEvans/Tableplan/pull/16
 
