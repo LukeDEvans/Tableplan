@@ -1,0 +1,67 @@
+# Compile the native iOS app (unsigned) whenever native code changes, so a
+# Swift error shows up on the PR instead of at TestFlight time. Needs no
+# secrets. Runs on a macOS runner, which uses more GitHub Actions minutes than
+# Linux, so it's limited to changes that can affect the native build.
+name: iOS compile check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - "native-bridge.js"
+      - "capacitor.config.json"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/ios-*.yml"
+  pull_request:
+    paths:
+      - "ios/**"
+      - "native-bridge.js"
+      - "capacitor.config.json"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/ios-*.yml"
+  workflow_dispatch:
+
+jobs:
+  compile:
+    name: xcodebuild (unsigned)
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - name: Select Xcode 26+
+        # App Store Connect only accepts builds made with the iOS 26 SDK or later
+        # (Xcode 26+). Pick the newest Xcode 26+ installed on the runner.
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          XC=$(ls -d /Applications/Xcode_2[6-9]*.app /Applications/Xcode_[3-9]*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XC" ]; then echo "::error::No Xcode 26+ on this runner image"; exit 1; fi
+          sudo xcode-select -s "$XC/Contents/Developer"
+          xcodebuild -version
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web app + sync into iOS project
+        run: npm run ios:sync
+
+      - name: Compile (no signing)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee "$RUNNER_TEMP/build.log" | grep -E "error:|\*\* BUILD" || { tail -80 "$RUNNER_TEMP/build.log"; exit 1; }

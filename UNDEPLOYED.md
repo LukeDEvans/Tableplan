@@ -10,6 +10,54 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+## iPhone layout fixes + ISSUES.md cleanup (PR #19)
+PR: https://github.com/LukeDEvans/Tableplan/pull/19
+
+- **Mini-player** runs flush to the bottom of the screen (no empty strip under the controls).
+- **Full-screen windows and dialogs** stay clear of the notch/status bar and home indicator:
+  Recipe Box (its bell / + / × were untappable), Tasks, Nutrition, Receipts, add task, event
+  editor, exercise recorder, recipe editor/view, contacts, and others. CSS only.
+- **Finance:** old CSV-backfilled months show their per-category amounts again (repaired on
+  load); the review-deck swipe hint no longer covers the buttons; new **Relinked accounts**
+  merge under Accounts › Bank link (FINANCE_TRANSACTIONS_DESIGN.md §12) — appears only if a
+  SimpleFIN relink ever duplicates an account.
+- **Mail AI:** every feature now defaults **on** — including the vegetarian-only recipe filter,
+  NYT / Economist / Star Tribune articles, and SimpleFIN alert auto-delete. Anything already
+  switched off stays off.
+- **Meal plan:** a failed Gmail swipe-"Add" puts the card back instead of losing it.
+- Publications leftovers removed from the code; iOS minimum raised to 15.0; new
+  architecture test for un-injected module names.
+
+**After deploying:**
+1. Supabase SQL editor: run `migrations/2026-09-29-drop-publications.sql` (drops the unused
+   `publications` / `feeds` / `articles` tables).
+2. Settings → Mail AI: check the newly-on features are what you want (the vegetarian filter
+   drops meat/fish recipes; SimpleFIN auto-delete trashes those alert emails).
+3. On the iPhone (web app and native app): open Recipe Box and a couple of dialogs and check
+   the headers sit below the status bar; start audio and check the mini-player.
+4. iOS 15 minimum reaches the phone only through the next TestFlight build.
+
+## Recipe Box: "+" fixed, plus a review queue for new recipes (PR #17)
+PR: https://github.com/LukeDEvans/Tableplan/pull/17
+
+- The **+** in Meal Plan → Recipe Book opens the Add-recipe form again. It was crashing
+  on a function the recipes module was never given.
+- A **bell** next to + and × holds recipes that weren't typed in by hand: Gmail finds,
+  the Chrome extension, and URL import / paste / scan / share. **Review** opens one in
+  the editor, and saving adds it to the book. **×** dismisses it. The Meal Plan Recipe
+  Book button shows the count.
+- In-app imports still open the editor straight away; closing without saving now keeps
+  the recipe in the queue instead of losing it.
+- New Netlify function `recipe-review`. It stores the queue in one service-only row per
+  user (`recipereview_<userId>`). No DB migration.
+
+**After deploying:**
+1. **Reload the Chrome extension.** It now sends recipes to the queue, so until the
+   function is live, recipe imports from the extension fail.
+2. Import one recipe signed in on the real app, then check it appears under the bell and
+   that saving it moves it into the book. The server path was only unit-tested with
+   the network mocked.
+
 ## Mail: swipe between emails follows your finger (PR #16)
 PR: https://github.com/LukeDEvans/Tableplan/pull/16
 
@@ -130,3 +178,13 @@ Mostly **native iOS**. It reaches the phone only through an Xcode/TestFlight bui
 auto-advance while locked (article→article, article→podcast, podcast→article), podcast
 resume position, and a speed change mid-item. The Swift was never compiled in CI.
 
+
+## iOS: TestFlight from GitHub Actions + native compile check (PR #13)
+PR: https://github.com/LukeDEvans/Tableplan/pull/13 · docs: CAPACITOR.md → "TestFlight from GitHub Actions"
+
+- CI only; nothing changes on the website. Actions → "iOS → TestFlight" → Run workflow
+  builds on a hosted Mac and uploads to TestFlight. Repo secrets `ASC_KEY_ID`,
+  `ASC_ISSUER_ID` and `ASC_KEY_P8` are set (2026-09-29).
+- "iOS compile check" compiles the app unsigned on PRs/pushes that touch native code.
+
+**After deploying:** nothing.

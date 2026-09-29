@@ -198,6 +198,10 @@ const server = http.createServer(async (request, response) => {
       await handleNetlifyFunction("./netlify/functions/recipe-digest", request, response);
       return;
     }
+    if (url.pathname === "/.netlify/functions/recipe-review") {
+      await handleNetlifyFunction("./netlify/functions/recipe-review", request, response);
+      return;
+    }
     if (url.pathname === "/.netlify/functions/generate-tts") {
       await handleNetlifyFunction("./netlify/functions/generate-tts", request, response);
       return;

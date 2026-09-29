@@ -144,10 +144,10 @@ newsSeen:    { "<canonicalUrl>": "<firstSeenISO>" }
 
 ### 3.5 Settings → Mail AI
 
-Three new `MAIL_AI_FEATURES` entries, **off by default** (per CLAUDE.md):
+Three new `MAIL_AI_FEATURES` entries, **on by default** since 2026-09-29 (Luke; originally off):
 `nytNewsLinks`, `economistNewsLinks`, `startribuneNewsLinks` — "Articles from
-<paper> emails → Media notifications". The server checks each flag (explicit
-`true` required). The existing `nytMorningToArticle` / `economistBriefToArticle`
+<paper> emails → Media notifications". The server checks each flag (only an
+explicit `false` disables). The existing `nytMorningToArticle` / `economistBriefToArticle`
 toggles are unchanged. Their "default ON unless explicitly false" behavior
 predates the CLAUDE.md rule; logged to ISSUES.md, not changed here.
 
