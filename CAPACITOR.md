@@ -82,6 +82,56 @@ npm run ios:sync   # rebuild web + copy into iOS
 ```
 No Netlify deploy is involved for the native app.
 
+## TestFlight from GitHub Actions (no Mac needed, works from a phone)
+
+`.github/workflows/ios-testflight.yml` builds the app on a GitHub-hosted Mac and
+uploads it to TestFlight. It runs the tests, `npm run ios:sync`, then archives,
+signs and uploads. Signing is automatic via an App Store Connect API key (Apple's
+cloud-managed certificate), so nothing is exported from a Mac. The build number
+is a UTC timestamp (e.g. `20260928.1845`), so it always increases.
+`.github/workflows/ios-compile.yml` compiles the app unsigned on every PR/push
+that touches native code (`ios/**`, `native-bridge.js`, Capacitor config,
+package files), so a Swift error shows up on the PR.
+
+### One-time setup (all doable in a phone browser)
+1. **Create the API key.** appstoreconnect.apple.com → Users and Access →
+   Integrations → App Store Connect API → Team Keys → **+**.
+   - Name it e.g. "GitHub TestFlight".
+   - Access: **Admin**. Cloud-managed signing needs Admin; App Manager can
+     upload but can't create the distribution certificate.
+   - Note the **Key ID** and the **Issuer ID** (shown above the key list).
+   - **Download** the `.p8` file. Apple lets you download it only once.
+2. **Add GitHub secrets.** github.com → LukeDEvans/Tableplan → Settings →
+   Secrets and variables → Actions → *New repository secret*. The GitHub mobile
+   app can't edit secrets, so use the website (fine in a phone browser).
+   - `ASC_KEY_ID`: the Key ID
+   - `ASC_ISSUER_ID`: the Issuer ID
+   - `ASC_KEY_P8`: the full text of the `.p8` file, including the
+     `-----BEGIN PRIVATE KEY-----` / `-----END PRIVATE KEY-----` lines. A
+     base64 of the file also works.
+   - *(optional)* `VITE_VAPID_PUBLIC_KEY`: same value as in Netlify, if web
+     push should work in the native build.
+
+   On an iPhone: open the downloaded `.p8` in Files, copy its text, and paste
+   it into the secret.
+3. The app record (bundle ID `com.mrlukedevans.live`, team `6RTNUZR7K5`) must
+   already exist in App Store Connect. It does if TestFlight has had a build.
+
+### Sending a build
+- **GitHub mobile app:** Tableplan → Actions → *iOS → TestFlight* → **Run
+  workflow** (branch: `main`).
+- **Website:** the same place, under the Actions tab.
+- **Or ask Claude** in a session: "send main to TestFlight". It can start the
+  workflow.
+
+About 15–25 min for the build, then 5–15 min of App Store Connect processing
+before it appears in TestFlight. If a step fails, the run log shows the
+`xcodebuild` errors.
+
+**Cost:** macOS runners use GitHub Actions minutes at 10× the Linux rate on
+private repos. The free 2,000 min/month comes to roughly 200 macOS minutes,
+about 8–12 TestFlight builds, less whatever the compile check uses.
+
 ## Coming next (not now)
 - **Stage 1:** CORS + Supabase auth + Gmail native OAuth + confirm asset serving.
 - **Stage 2:** native background-audio queue + on-device TTS behind `native-bridge.js`.

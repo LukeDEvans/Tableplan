@@ -30,7 +30,7 @@ import { normalizeExternalEvent } from './calendar/normalize.js';
 import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap, upsertTitleOverride } from './calendar/reconcile.js';
 import { taskIsScheduled } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
-import { financeMonthsToSnapshot, financeOffsettingPairIds } from './finance-actuals.js';
+import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
 import { isNativeApp, nativeTts } from './native-bridge.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
@@ -280,7 +280,7 @@ const STATE_SECTIONS = {
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
-  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastProgress", "mediaProgress", "articleNotifications", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
+  media:     ["readingItems", "readingSettings", "savedArticles", "articleSync", "readPublications", "articleSortOrder", "readArticleIds", "articleReadDates", "articleHistory", "podcasts", "podcastProgress", "mediaProgress", "readingProgress", "podcastPlaylists", "podcastPlaylistItems", "podcastQueue", "podcastSaved", "podcastSavedCategories", "podcastSavedEpisodeCategories", "podcastShowTiers", "podcastEpisodeTiers", "podcastTierCount", "podcastPrioritySort", "podcastPlaylistWindow", "podcastRecentWindow", "podcastPlaylistIncludeArticles", "podcastAutoSkipped", "podcastSkipAds", "publicationTiers", "libraryKey", "mediaAllPinnedOrder", "podcastBundleSeries", "podcastReleasedSeries", "mediaHistory", "mediaSaved", "musicLibrary", "radioFavorites", "radioFollowedPrograms", "radioUserStations"],
   plan:      ["calendars", "planEvents", "planCalendars", "calendarSources", "planHiddenSources", "planExternalExclusions", "planExternalOverrides"],
   health:    ["familyMembers", "dailyDozenCategories", "dailyDozenEntries", "dailyChecklistEntries", "foodLogEntries", "nutritionIngredientMappings", "checklistTemplates", "personChecklistSettings", "personGoals", "foodHealthVersion"],
   inventory: ["inventoryBoxes", "inventoryItems", "inventoryRoomVisibility"],
@@ -1783,7 +1783,7 @@ const _recipes = createRecipesModule({
   recordDeletion, removeRecipeFromMealSlots: (...a) => removeRecipeFromMealSlots(...a), renderPlanner: (...a) => renderPlanner(...a), renderScanImagePreviews, retainScanImageEdits,
   rowStorageCanWrite, saveImportedArticle, scheduleLocalBackup, setPageTitle, supabaseBaseUrl, supabaseHeaders,
   trackUsage, tryPreChangeBackup, unrecordDeletion, updateGroceryMealServing: (...a) => updateGroceryMealServing(...a), updateMealPlannedServingsFromContext: (...a) => updateMealPlannedServingsFromContext(...a),
-  formatGroceryAmount, groceryAmountToNumber, renderGroceries,
+  formatGroceryAmount, groceryAmountToNumber, grocerySuggestionItems: (...a) => grocerySuggestionItems(...a), renderGroceries,
 });
 const {
   activeRecipes,
@@ -1829,6 +1829,10 @@ const {
   openRecipeDialog,
   openRecipeView,
   openScanDialog,
+  bindRecipeReviewEvents,
+  queueRecipeForReview,
+  recipeReviewCount,
+  refreshRecipeReviewQueue,
   parseIngredientLine,
   recalculatePendingNutritionEstimate,
   recipeDefaultServings,
@@ -1895,6 +1899,7 @@ const _mealplan = createMealplanModule({
   renderGroceryLibrary, renderPlayPlanner, renderTasksPage, saveRecipeRow, scaledIngredientToText, setCombinedMealSection,
   setPageNotifCount, setPageTitle, showMailToast, slotEntries, storeDirectionsUrl, syncedCalendarEventsForDate,
   unlistedGroceryItemsForWeek, updateTabIndicator, weekKey, weekState,
+  queueRecipeForReview: (...a) => queueRecipeForReview(...a), recipeReviewCount: (...a) => recipeReviewCount(...a),
 });
 const {
   addMealType,
@@ -2492,6 +2497,7 @@ function bindEvents() {
     openRecipeBoxPage();
     openRecipeDialog();
   });
+  bindRecipeReviewEvents();
   elements.recipeForm.addEventListener("submit", saveRecipeFromForm);
   elements.recipePhotoInput.addEventListener("change", handleRecipePhotoSelection);
   elements.removeRecipePhotoBtn.addEventListener("click", removeRecipePhotoSelection);
@@ -4290,10 +4296,6 @@ function defaultState() {
     podcasts: [],
     podcastProgress: {},
     mediaProgress: {},
-    pubArticles: [],
-    articleNotifications: {},
-    pubDefs: [],
-    pubFeeds: [],
     readingProgress: {},
     podcastPlaylists: [],
     podcastPlaylistItems: {},
@@ -4583,7 +4585,8 @@ function normalizeState(parsed) {
     financeAccountSubLabels: normalizeFinanceSubLabels(parsed?.financeAccountSubLabels),
     financeTxnLabels: (parsed?.financeTxnLabels && typeof parsed.financeTxnLabels === "object") ? parsed.financeTxnLabels : {},
     financeTxnRules: (parsed?.financeTxnRules && typeof parsed.financeTxnRules === "object") ? parsed.financeTxnRules : {},
-    financeMonthActuals: (parsed?.financeMonthActuals && typeof parsed.financeMonthActuals === "object") ? parsed.financeMonthActuals : {},
+    // normalizeFinanceMonthActuals also repairs months the old CSV import keyed "cat:<gid>:<cid>".
+    financeMonthActuals: normalizeFinanceMonthActuals(parsed?.financeMonthActuals),
     financeRecurring: dedupeFinanceRecurring((Array.isArray(parsed?.financeRecurring) ? parsed.financeRecurring : []).map((r) => ({
       id: r?.id || createId("fin-rec"),
       merchantKey: r?.merchantKey || "",
@@ -4657,10 +4660,6 @@ function normalizeState(parsed) {
     podcasts: Array.isArray(parsed?.podcasts) ? parsed.podcasts : [],
     podcastProgress: (parsed?.podcastProgress !== null && typeof parsed?.podcastProgress === "object" && !Array.isArray(parsed?.podcastProgress)) ? parsed.podcastProgress : {},
     mediaProgress: normalizeMediaProgress(parsed?.mediaProgress),
-    pubArticles: Array.isArray(parsed?.pubArticles) ? parsed.pubArticles : [],
-    articleNotifications: (parsed?.articleNotifications && typeof parsed.articleNotifications === "object" && !Array.isArray(parsed.articleNotifications)) ? parsed.articleNotifications : {},
-    pubDefs: Array.isArray(parsed?.pubDefs) ? parsed.pubDefs : [],
-    pubFeeds: Array.isArray(parsed?.pubFeeds) ? parsed.pubFeeds : [],
     readingProgress: (parsed?.readingProgress && typeof parsed.readingProgress === "object" && !Array.isArray(parsed.readingProgress)) ? parsed.readingProgress : {},
     podcastSaved: Array.isArray(parsed?.podcastSaved) ? parsed.podcastSaved : [],
     podcastQueue: Array.isArray(parsed?.podcastQueue) ? parsed.podcastQueue : [],
@@ -5857,9 +5856,6 @@ function mergeStates(newer, older) {
     "trips", "travelIdeas",
     // Finance (flat id-keyed — the nested ones are deep-merged below)
     "financeAccounts", "financeManualTxns", "financeGoals",
-    // Publications: articles/publications/feeds now live in the relational tables
-    // (cutover slice 3) — they are no longer synced-state, so they are NOT merged
-    // here; applyStoredState preserves the DB-loaded copies across a full replace.
     // Contacts (address book)
     "contacts",
   ]) {
@@ -5926,7 +5922,6 @@ function mergeStates(newer, older) {
     "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts",
     "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes",
     "financeNotifDismissed", "financeTxnConfirmed", "financeTxnReceipts",
-    "articleNotifications",
   ]) {
     merged[key] = unionByKey(newer[key], older[key]);
   }
@@ -6553,22 +6548,10 @@ async function tryPreChangeBackup(actionLabel) {
 
 function applyStoredState(storedState) {
   const currentCollapsedSections = state.collapsedSections;
-  // Publications/feeds/articles live in the relational tables now (cutover slice 3),
-  // not in the synced blob. A full state replace whose incoming blob doesn't carry
-  // them (post-migration) must NOT wipe the DB-loaded copies — preserve them, keyed
-  // on the RAW input having the field at all (a legacy blob still carrying them wins).
-  const keepPub = {
-    pubArticles: storedState?.pubArticles === undefined ? state.pubArticles : undefined,
-    pubDefs: storedState?.pubDefs === undefined ? state.pubDefs : undefined,
-    pubFeeds: storedState?.pubFeeds === undefined ? state.pubFeeds : undefined,
-  };
   Object.keys(state).forEach((key) => delete state[key]);
   Object.assign(state, normalizeState(storedState));
   cleanupAutoAppliedFutureMealDefaults(state); // deferred out of normalizeState (see boot)
   state.collapsedSections = currentCollapsedSections || state.collapsedSections || defaultCollapsedSections();
-  if (keepPub.pubArticles !== undefined) state.pubArticles = keepPub.pubArticles;
-  if (keepPub.pubDefs !== undefined) state.pubDefs = keepPub.pubDefs;
-  if (keepPub.pubFeeds !== undefined) state.pubFeeds = keepPub.pubFeeds;
   // If the incoming state has no trips but the local trip backup has non-tombstoned trips,
   // restore them. This catches accidental syncs that wipe travel data.
   // Explicitly deleted trips are tombstoned by the delete handler, so they won't come back.
@@ -7781,6 +7764,7 @@ function warmPageNotifs() {
   // Fetches live accounts when connected, which also sets the finance dot
   if (getFinanceLinkStatus() === null) checkFinanceLinkStatus();
   warmMealPlanRecipes();
+  refreshRecipeReviewQueue();
   warmNewsNotif();
 }
 
@@ -7804,13 +7788,13 @@ function isCoarsePointer() {
 
 
 
-// Swipe view: adds the recipe straight to the book (no dialog) and stays in the
-// cards so triage can continue uninterrupted.
+// Swipe view: sends the recipe to the Recipe Box review queue (no dialog) and
+// stays in the cards so triage can continue uninterrupted.
 
-// Fetch a pending recipe's structured data and save it directly to the book,
-// mirroring saveRecipeFromForm's recipe shape (see openImportedRecipe for the
-// interactive path). Returns true on success. The pending notif thumbnail
-// (recipe.image) becomes the dish photo since the parser doesn't return one.
+// Fetch a pending recipe's structured data and park it in the Recipe Box review
+// queue (queueRecipeForReview) — it reaches the book once reviewed + saved there.
+// Returns true on success. The pending notif thumbnail (recipe.image) becomes the
+// dish photo since the parser doesn't return one.
 
 // One full-window card per recipe in a vertical scroll-snap deck. Up/down scroll
 // (from the photo side) browses recipes; a horizontal drag dismisses/adds; tapping
@@ -15510,9 +15494,9 @@ const MAIL_AI_FEATURES = [
   },
   {
     key: "recipeDigestVegOnly",
-    defaultOn: false,
+    defaultOn: true,
     label: "Vegetarian recipes only",
-    desc: "As each NYT Cooking / Bon Appétit recipe is collected, an AI pass drops it before it ever reaches the notification bell if it isn't vegetarian (dairy, eggs, and honey are fine — meat, poultry, and fish/seafood are not). Off by default. Doesn't touch NutritionFacts health links."
+    desc: "As each NYT Cooking / Bon Appétit recipe is collected, an AI pass drops it before it ever reaches the notification bell if it isn't vegetarian (dairy, eggs, and honey are fine — meat, poultry, and fish/seafood are not). Doesn't touch NutritionFacts health links."
   },
   {
     key: "nutritionFactsDigest",
@@ -15534,27 +15518,27 @@ const MAIL_AI_FEATURES = [
   },
   {
     key: "nytNewsLinks",
-    defaultOn: false,
+    defaultOn: true,
     label: "NYT articles → Media notifications",
     desc: "Every New York Times article linked in an NYT email becomes a card in the Media page's notification bell (swipe right to save it to Publications, left to dismiss). An article is never delivered twice, and nothing older than a week. Real newsletters are also converted into a listenable article. The email is then filed to Apps/AI trash."
   },
   {
     key: "economistNewsLinks",
-    defaultOn: false,
+    defaultOn: true,
     label: "Economist articles → Media notifications",
     desc: "Same for The Economist's emails."
   },
   {
     key: "startribuneNewsLinks",
-    defaultOn: false,
+    defaultOn: true,
     label: "Star Tribune articles → Media notifications",
     desc: "Same for the Minnesota Star Tribune's emails."
   },
   {
     key: "autoDeleteSimplefin",
-    defaultOn: false,
+    defaultOn: true,
     label: "Auto-delete SimpleFIN access alerts",
-    desc: "SimpleFIN Bridge sends a “Transaction data accessed from new IP” email every time the app syncs your accounts. When on, each of these is moved to Trash automatically as it arrives (subject to the testing setting below). Off by default."
+    desc: "SimpleFIN Bridge sends a “Transaction data accessed from new IP” email every time the app syncs your accounts. When on, each of these is moved to Trash automatically as it arrives (subject to the testing setting below)."
   },
   {
     key: "aiTrashTestMode",

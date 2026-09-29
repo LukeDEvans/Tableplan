@@ -265,10 +265,11 @@ export function normalizeNutritionEstimate(estimate) {
 // ══════════════════════════════════════════════════════════════════════════
 export function createRecipesModule(deps) {
   const {
-    state, elements, persist, render, trashItemTemplate, getActiveAppArea, getAuthSession, getSupabaseClient, setRowStorageReady, getAmountOptions, getQuantityOptions, getPrepOptions, getPendingMealRecipeSelection, getPendingAutoRuleRecipeSelection, clearPendingMealRecipeSelection, clearPendingAutoRuleRecipeSelection, activateEatShell, allowScreenOff, applyScanImageAction, canUseCloudStorage, canUseLocalBackend, chooseRecipeForPendingAutoRule, chooseRecipeForPendingMeal, closeFloatingMenus, dailyDozenCategoryName, dailyDozenRecipeSuggestions, dateInputToIso, dateInputValue, deleteSupabaseRow, displayMealName, escapeHtml, fileToDataUrl, formatServingsLabel, imageElementFromFile, keepScreenOn, mealEntryValue, mirrorStateToLocalStorage, normalizeIngredientOptions, openDailyDozenPage, plannedServingsForEntry, prepareScanImage, recipeForSlot, recordDeletion, removeRecipeFromMealSlots, renderPlanner, renderScanImagePreviews, retainScanImageEdits, rowStorageCanWrite, saveImportedArticle, scheduleLocalBackup, setPageTitle, supabaseBaseUrl, supabaseHeaders, trackUsage, tryPreChangeBackup, unrecordDeletion, updateGroceryMealServing, updateMealPlannedServingsFromContext, formatGroceryAmount, groceryAmountToNumber, renderGroceries,
+    state, elements, persist, render, trashItemTemplate, getActiveAppArea, getAuthSession, getSupabaseClient, setRowStorageReady, getAmountOptions, getQuantityOptions, getPrepOptions, getPendingMealRecipeSelection, getPendingAutoRuleRecipeSelection, clearPendingMealRecipeSelection, clearPendingAutoRuleRecipeSelection, activateEatShell, allowScreenOff, applyScanImageAction, canUseCloudStorage, canUseLocalBackend, chooseRecipeForPendingAutoRule, chooseRecipeForPendingMeal, closeFloatingMenus, dailyDozenCategoryName, dailyDozenRecipeSuggestions, dateInputToIso, dateInputValue, deleteSupabaseRow, displayMealName, escapeHtml, fileToDataUrl, formatServingsLabel, imageElementFromFile, keepScreenOn, mealEntryValue, mirrorStateToLocalStorage, normalizeIngredientOptions, openDailyDozenPage, plannedServingsForEntry, prepareScanImage, recipeForSlot, recordDeletion, removeRecipeFromMealSlots, renderPlanner, renderScanImagePreviews, retainScanImageEdits, rowStorageCanWrite, saveImportedArticle, scheduleLocalBackup, setPageTitle, supabaseBaseUrl, supabaseHeaders, trackUsage, tryPreChangeBackup, unrecordDeletion, updateGroceryMealServing, updateMealPlannedServingsFromContext, formatGroceryAmount, groceryAmountToNumber, grocerySuggestionItems, renderGroceries,
   } = deps;
 
   let activeCookingInterval = null;
+  let importSource = "import";
   let activeFolder = "";
   let activeRecipeTag = "";
   let currentActiveRecipeViewId = "";
@@ -590,7 +591,9 @@ function openRecipeBoxPage() {
     : getPendingAutoRuleRecipeSelection()
       ? `Choose ${displayMealName(getPendingAutoRuleRecipeSelection().meal)} rule`
       : "Recipe Box");
+  setRecipeReviewPanelOpen(false);
   if (!elements.recipeBoxPageDialog.open) elements.recipeBoxPageDialog.showModal();
+  refreshRecipeReviewQueue();
   requestAnimationFrame(() => elements.recipeSearch.focus());
 }
 
@@ -618,7 +621,241 @@ function updateRecipeSearchClearButton() {
 function closeRecipeBoxPage() {
   clearPendingMealRecipeSelection();
   clearPendingAutoRuleRecipeSelection();
+  setRecipeReviewPanelOpen(false);
   elements.recipeBoxPageDialog.close();
+}
+
+// ── Recipe review queue ──────────────────────────────────────────────────────
+// Recipes that weren't typed in by hand (Gmail finds, the Chrome extension,
+// in-app URL/text import, scan, share target) wait in a per-user server-side
+// queue (netlify/functions/recipe-review.js) and only reach the recipe book once
+// the user opens one in the editor and saves it. The bell in the Recipe Box
+// header shows the queue. It's read on demand (app start, opening the Recipe
+// Box), never polled. Signed-out local dev keeps the queue in localStorage.
+const RECIPE_REVIEW_LOCAL_KEY = "live.recipeReviewQueue.localDev";
+const RECIPE_REVIEW_SOURCE_LABELS = {
+  gmail: "From Gmail",
+  extension: "From Chrome extension",
+  import: "Imported",
+  scan: "Scanned",
+  share: "Shared",
+  other: "Added automatically"
+};
+let recipeReviewItems = [];
+let recipeReviewLoaded = false;
+let recipeReviewPanelOpen = false;
+let activeReviewItemId = "";
+let recipeReviewRefresh = null;
+
+function recipeReviewCount() {
+  return recipeReviewItems.length;
+}
+
+function readLocalRecipeReview() {
+  try {
+    const items = JSON.parse(window.localStorage.getItem(RECIPE_REVIEW_LOCAL_KEY) || "[]");
+    return Array.isArray(items) ? items : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalRecipeReview(items) {
+  try {
+    window.localStorage.setItem(RECIPE_REVIEW_LOCAL_KEY, JSON.stringify(items));
+  } catch { /* storage blocked — the queue just won't survive a reload */ }
+}
+
+function localRecipeReviewCall(body) {
+  let items = readLocalRecipeReview();
+  if (body.action === "add") {
+    const id = createId("review");
+    const sourceUrl = String(body.recipe?.sourceUrl || "").trim();
+    items = [
+      { id, source: body.source || "other", queuedAt: new Date().toISOString(), recipe: body.recipe || {} },
+      ...items.filter((item) => !(sourceUrl && item.recipe?.sourceUrl === sourceUrl))
+    ].slice(0, 50);
+    writeLocalRecipeReview(items);
+    return { ok: true, id, items };
+  }
+  if (body.action === "remove") {
+    const drop = new Set(body.ids || []);
+    items = items.filter((item) => !drop.has(item.id));
+    writeLocalRecipeReview(items);
+  }
+  return { ok: true, items };
+}
+
+async function callRecipeReviewApi(body) {
+  const token = getAuthSession()?.access_token;
+  // Signed out, or local-dev mode's synthetic session → the localStorage queue.
+  if (!token || token === "local-dev") return localRecipeReviewCall(body);
+  const response = await fetch("/.netlify/functions/recipe-review", {
+    method: "POST",
+    headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body)
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `Recipe review queue failed with status ${response.status}`);
+  return payload;
+}
+
+function setRecipeReviewItems(items) {
+  const before = recipeReviewItems.length;
+  recipeReviewItems = Array.isArray(items) ? items : [];
+  recipeReviewLoaded = true;
+  renderRecipeReviewBell();
+  if (recipeReviewPanelOpen) renderRecipeReviewPanel();
+  // The meal-plan Recipe Book button carries the same count.
+  if (before !== recipeReviewItems.length && getActiveAppArea() === "eat") render();
+}
+
+// One read, de-duplicated while in flight. Called at app start and whenever the
+// Recipe Box opens — not on a timer.
+function refreshRecipeReviewQueue() {
+  if (recipeReviewRefresh) return recipeReviewRefresh;
+  recipeReviewRefresh = callRecipeReviewApi({ action: "list" })
+    .then((payload) => setRecipeReviewItems(payload.items))
+    .catch((error) => console.warn("Recipe review queue load failed.", error))
+    .finally(() => { recipeReviewRefresh = null; });
+  return recipeReviewRefresh;
+}
+
+// Park a recipe for review. Resolves to the queued item's id, or "" if the
+// queue couldn't be reached (callers still open the editor so nothing is lost).
+async function queueRecipeForReview(recipe, source = "other") {
+  const { id: _ignoredId, folderId: _ignoredFolder, ...rest } = recipe || {};
+  const payload = await callRecipeReviewApi({ action: "add", source, recipe: rest });
+  setRecipeReviewItems(payload.items);
+  return payload.id || "";
+}
+
+async function removeRecipeReviewItem(itemId) {
+  if (!itemId) return;
+  recipeReviewItems = recipeReviewItems.filter((item) => item.id !== itemId);
+  renderRecipeReviewBell();
+  if (recipeReviewPanelOpen) renderRecipeReviewPanel();
+  try {
+    const payload = await callRecipeReviewApi({ action: "remove", ids: [itemId] });
+    setRecipeReviewItems(payload.items);
+  } catch (error) {
+    console.warn("Recipe review queue update failed.", error);
+  }
+}
+
+// Queue an automatically-read recipe AND open it in the editor straight away, so
+// the in-app import/scan flow feels the same as before — but closing the editor
+// without saving leaves it waiting in the queue instead of losing it.
+async function queueAndReviewRecipe(recipe, source) {
+  let itemId = "";
+  try {
+    itemId = await queueRecipeForReview(recipe, source);
+  } catch (error) {
+    console.warn("Could not queue recipe for review; opening the editor anyway.", error);
+  }
+  openRecipeReviewEditor(recipe, itemId);
+}
+
+function openRecipeReviewEditor(recipe, itemId = "") {
+  // A reviewed recipe is always saved as a NEW book entry.
+  populateRecipeForm({ ...recipe, id: "" });
+  activeReviewItemId = itemId;
+  elements.dialogTitle.textContent = "Review recipe";
+  elements.deleteRecipeBtn.hidden = true;
+  if (!elements.recipeDialog.open) elements.recipeDialog.showModal();
+}
+
+function openRecipeReviewItem(itemId) {
+  const item = recipeReviewItems.find((entry) => entry.id === itemId);
+  if (!item) return;
+  openRecipeReviewEditor(item.recipe || {}, item.id);
+}
+
+function dismissRecipeReviewItem(itemId) {
+  const item = recipeReviewItems.find((entry) => entry.id === itemId);
+  if (!item) return;
+  if (!window.confirm(`Dismiss "${item.recipe?.name || "this recipe"}"? It won't be added to your recipe book.`)) return;
+  removeRecipeReviewItem(itemId);
+}
+
+function setRecipeReviewPanelOpen(open) {
+  recipeReviewPanelOpen = Boolean(open);
+  const panel = document.getElementById("recipeReviewPanel");
+  const button = document.getElementById("recipeReviewBtn");
+  const library = document.getElementById("section-recipes");
+  if (panel) panel.hidden = !recipeReviewPanelOpen;
+  if (library) library.hidden = recipeReviewPanelOpen;
+  if (button) button.setAttribute("aria-expanded", String(recipeReviewPanelOpen));
+  if (recipeReviewPanelOpen) {
+    renderRecipeReviewPanel();
+    refreshRecipeReviewQueue();
+  }
+}
+
+function toggleRecipeReviewPanel() {
+  setRecipeReviewPanelOpen(!recipeReviewPanelOpen);
+}
+
+function renderRecipeReviewBell() {
+  const badge = document.getElementById("recipeReviewBadge");
+  if (!badge) return;
+  const count = recipeReviewItems.length;
+  badge.hidden = !count;
+  badge.textContent = count ? String(count) : "";
+}
+
+function recipeReviewRowTemplate(item) {
+  const recipe = item.recipe || {};
+  const photo = recipe.photoUrl ? recipePhotoProxyUrl(recipe.photoUrl) : "";
+  const sourceUrl = String(recipe.sourceUrl || "").trim();
+  const duplicate = sourceUrl && activeRecipes().some((existing) => String(existing.sourceUrl || "").trim() === sourceUrl);
+  const queued = item.queuedAt ? new Date(item.queuedAt) : null;
+  const when = queued && !Number.isNaN(queued.getTime())
+    ? queued.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+    : "";
+  const meta = [RECIPE_REVIEW_SOURCE_LABELS[item.source] || RECIPE_REVIEW_SOURCE_LABELS.other, when].filter(Boolean).join(" · ");
+  const thumb = photo
+    ? `<img class="recipe-review-thumb" src="${escapeHtml(photo)}" alt="" loading="lazy" />`
+    : `<span class="recipe-review-thumb" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 2v7a3 3 0 0 0 6 0V2M6 2v20M17 2c-1.7 0-3 2.7-3 6s1.3 5 3 5 3 .6 3 2v7"/></svg></span>`;
+  return `
+    <div class="recipe-review-row">
+      <button class="recipe-review-open" type="button" data-review-recipe="${escapeHtml(item.id)}" title="Review and save">
+        ${thumb}
+        <span class="eat-notif-text">
+          <span class="eat-notif-item-title">${escapeHtml(recipe.name || "Untitled recipe")}</span>
+          <span class="recipe-review-meta">${escapeHtml(meta)}</span>
+          ${duplicate ? `<span class="recipe-review-meta recipe-review-dup">Already in your recipe book</span>` : ""}
+        </span>
+      </button>
+      <div class="recipe-review-actions">
+        <button class="secondary-btn" type="button" data-review-recipe="${escapeHtml(item.id)}">Review</button>
+        <button class="icon-btn" type="button" data-dismiss-review-recipe="${escapeHtml(item.id)}" title="Dismiss" aria-label="Dismiss ${escapeHtml(recipe.name || "recipe")}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+        </button>
+      </div>
+    </div>`;
+}
+
+function renderRecipeReviewPanel() {
+  const panel = document.getElementById("recipeReviewPanel");
+  if (!panel) return;
+  const items = recipeReviewItems;
+  panel.innerHTML = `
+    <div class="eat-notif-head">New recipes to review</div>
+    ${items.length
+      ? items.map(recipeReviewRowTemplate).join("")
+      : `<div class="eat-notif-empty">${recipeReviewLoaded ? "Nothing to review. Recipes from Gmail, the Chrome extension, imports and scans will show up here before they go into your recipe book." : "Loading…"}</div>`}
+  `;
+}
+
+function bindRecipeReviewEvents() {
+  document.getElementById("recipeReviewBtn")?.addEventListener("click", toggleRecipeReviewPanel);
+  document.getElementById("recipeReviewPanel")?.addEventListener("click", (event) => {
+    const review = event.target.closest("[data-review-recipe]");
+    if (review) { openRecipeReviewItem(review.dataset.reviewRecipe); return; }
+    const dismiss = event.target.closest("[data-dismiss-review-recipe]");
+    if (dismiss) dismissRecipeReviewItem(dismiss.dataset.dismissReviewRecipe);
+  });
 }
 
 function renderActiveCooking() {
@@ -1872,6 +2109,7 @@ function scaleIngredientAmount(amount, scale) {
 }
 
 function populateRecipeForm(recipe) {
+  activeReviewItemId = ""; // openRecipeReviewEditor sets it after populating
   renderRecipeFolderOptions();
   elements.dialogTitle.textContent = recipe ? "Edit recipe" : "Add recipe";
   elements.recipeId.value = recipe?.id || "";
@@ -1988,6 +2226,11 @@ async function saveRecipeFromForm(event) {
   persist();
   saveRecipeRow(recipe);
   pendingRecipePhotoFile = null;
+  // Saving a queued recipe is the approval: it's in the book now, so drop it
+  // from the review queue.
+  const reviewedItemId = activeReviewItemId;
+  activeReviewItemId = "";
+  if (reviewedItemId) removeRecipeReviewItem(reviewedItemId);
   elements.recipeDialog.close();
   render();
 
@@ -2417,8 +2660,9 @@ function formatNutritionNumber(value) {
   return number >= 10 ? String(Math.round(number)) : number.toFixed(1).replace(/\.0$/, "");
 }
 
-function openImportDialog(prefilledUrl = "", shouldAutoFetch = false) {
+function openImportDialog(prefilledUrl = "", shouldAutoFetch = false, source = "import") {
   openRecipeBoxPage();
+  importSource = source;
   elements.importUrl.value = normalizeRecipeUrlInput(prefilledUrl);
   elements.importText.value = "";
   elements.importStatus.textContent = "";
@@ -2443,7 +2687,7 @@ async function importRecipeFromUrl() {
     // a recipe opens the recipe form, an article is saved to the reading list.
     const result = await importViaGateway(url);
     if (result?.type === "recipe" && result.data && (result.data.name || result.data.ingredients?.length)) {
-      openImportedRecipe({ ...result.data, folderId: "" });
+      openImportedRecipe({ ...result.data, folderId: "" }, importSource);
       return;
     }
     if (result?.type === "article" && result.data && (result.data.text || result.data.title)) {
@@ -2505,7 +2749,7 @@ function handleImportUrlParameter() {
   const nextQuery = params.toString();
   const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`;
   window.history.replaceState({}, "", nextUrl);
-  openImportDialog(importUrl, true);
+  openImportDialog(importUrl, true, "share");
 }
 
 function importRecipeFromText() {
@@ -2515,13 +2759,14 @@ function importRecipeFromText() {
     return;
   }
 
-  openImportedRecipe(parseRecipeText(text, elements.importUrl.value.trim()));
+  openImportedRecipe(parseRecipeText(text, elements.importUrl.value.trim()), importSource);
 }
 
-function openImportedRecipe(recipe) {
+// Automatically-read recipes go through the review queue (and open in the
+// editor right away) instead of straight into the book.
+function openImportedRecipe(recipe, source = "import") {
   elements.importDialog.close();
-  populateRecipeForm(recipe);
-  elements.recipeDialog.showModal();
+  return queueAndReviewRecipe(recipe, source);
 }
 
 function setImportStatus(message) {
@@ -2603,8 +2848,7 @@ async function scanRecipeFromImages() {
     });
     if (!recipe.name && !normalizeIngredients(recipe.ingredients).length) throw new Error("No recipe could be read from those images.");
     elements.scanDialog.close();
-    populateRecipeForm(recipe);
-    elements.recipeDialog.showModal();
+    await queueAndReviewRecipe(recipe, "scan");
   } catch (error) {
     setScanStatus(error.message || "The recipe scan failed.");
   } finally {
@@ -3332,6 +3576,10 @@ function initRecipeTimer() {
 
   return {
     activeRecipes,
+    bindRecipeReviewEvents,
+    queueRecipeForReview,
+    recipeReviewCount,
+    refreshRecipeReviewQueue,
     addCookLogRow,
     addIngredientRow,
     addNutritionRow,

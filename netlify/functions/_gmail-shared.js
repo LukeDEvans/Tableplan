@@ -468,7 +468,7 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey, preClai
     const appCfg = await loadAppConfig(serviceKey, userId);
     const mailAi = appCfg?.mailAiSettings || {};
     const testMode = aiTrashTestMode(mailAi);
-    const autoDeleteSimplefin = mailAi.autoDeleteSimplefin === true;
+    const autoDeleteSimplefin = mailAi.autoDeleteSimplefin !== false;
     const newsEnabled = NewsLinks.enabledNewsLinkSources(mailAi).length > 0;
     // News mail is ALWAYS filed to Apps/AI trash (Luke, 2026-09-27), regardless
     // of test mode, so the label is needed whenever a news paper is enabled.

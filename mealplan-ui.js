@@ -120,7 +120,7 @@ export function groceryMealSlotId(item, servings = 1) {
 // ══════════════════════════════════════════════════════════════════════════
 export function createMealplanModule(deps) {
   const {
-    state, elements, meals, prepDays, breakfastMeals, lunchMeals, dinnerMeals, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys, getActiveAppArea, getAuthSession, getCurrentWeek, getDraggedDoTask, getDraggedPlayTask, getActivePlannerDayId, setActivePlannerDayId, getLastMealDragPoint, setLastMealDragPoint, getRestaurantSearchPending, setRestaurantSearchPending, getRestaurantSearchSuggestions, setRestaurantSearchSuggestions, getSuppressNextWeekLabelClick, setSuppressNextWeekLabelClick, getPendingMealRecipeSelection, setPendingMealRecipeSelection, getPendingMealIngredientSelection, setPendingMealIngredientSelection, getPendingAutoRuleRecipeSelection, setPendingAutoRuleRecipeSelection, getPendingAutoRuleIngredientSelection, setPendingAutoRuleIngredientSelection, getMealPlanNotifOpen, setMealPlanNotifOpen, getMealPlanRecipes, setMealPlanRecipes, getRestaurantInfoPopoverContext, setRestaurantInfoPopoverContext, acquireGroceryStoreSearchLocation, activeDayEventsTemplate, activeRecipes, addDays, autoEstimateNutrition, bindConfigListDrag, calendarTabStyle, callGmailApi, clearDoTaskDragState, clearPlayTaskDragState, cloneCombinedMealSections, cloneMealSlots, closeFloatingMenus, closeFolderMenu, closeSettingsMenu, closeWeekJumpMenu, combinedMealSectionsForWeek, combinedRecipeTime, compactDayLabel, compactMealSlotEntries, compactSlotEntries, dateFromWeekKey, dateKeyFromDate, defaultCollapsedSections, deleteDraggedDoTask, deleteDraggedPlayTask, displayMealName, doBacklogTasks, ensureCombinedMealSectionShape, ensureMealSlotShape, escapeHtml, focusGroceryLibraryInput, folderName, formatDailyDozenServings, formatWeekRange, getAppName, getGroceryStoreSearchLocation, groceryPlacesApiUrl, groceryPlacesRequestOptions, grocerySuggestionItems, importViaGateway, isDescendantFolder, isPlannedRecipeEntry, isPublishedMealPlanView, makeSortable, mealEntryValue, mealKeysForDay, mealSlotsForWeek, minutesOfDay, normalizeAutoGenerateRule, normalizeAutoGenerateRules, normalizeCookLog, normalizeDoTasks, normalizeIngredients, normalizeInstructionSteps, normalizeNutritionFacts, normalizePlannedRecipeEntry, normalizePublishedWeeks, normalizeRecipeTagSelection, normalizeRecipeUrlInput, normalizedFolders, openDailyDozenPage, openGroceriesPage, openGroceryReviewItems, openPlanEventDialog, openPublishedGroceryReview, openRecipeBoxPage, openRecipeView, persist, persistImmediately, planEventOccursOn, plannedEntryAtLocation, plannedServingsForEntry, plannerDayIdForDate, recipeDefaultServings, recipeForSlot, recipeIdForSlot, recipeTags, recomputeMealPlanLayout, render, renderCollapsedSections, renderDoPlanner, renderFolders, renderGroceries, renderGroceryLibrary, renderPlayPlanner, renderTasksPage, saveRecipeRow, scaledIngredientToText, setCombinedMealSection, setPageNotifCount, setPageTitle, showMailToast, slotEntries, storeDirectionsUrl, syncedCalendarEventsForDate, unlistedGroceryItemsForWeek, updateTabIndicator, weekKey, weekState,
+    state, elements, meals, prepDays, breakfastMeals, lunchMeals, dinnerMeals, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys, getActiveAppArea, getAuthSession, getCurrentWeek, getDraggedDoTask, getDraggedPlayTask, getActivePlannerDayId, setActivePlannerDayId, getLastMealDragPoint, setLastMealDragPoint, getRestaurantSearchPending, setRestaurantSearchPending, getRestaurantSearchSuggestions, setRestaurantSearchSuggestions, getSuppressNextWeekLabelClick, setSuppressNextWeekLabelClick, getPendingMealRecipeSelection, setPendingMealRecipeSelection, getPendingMealIngredientSelection, setPendingMealIngredientSelection, getPendingAutoRuleRecipeSelection, setPendingAutoRuleRecipeSelection, getPendingAutoRuleIngredientSelection, setPendingAutoRuleIngredientSelection, getMealPlanNotifOpen, setMealPlanNotifOpen, getMealPlanRecipes, setMealPlanRecipes, getRestaurantInfoPopoverContext, setRestaurantInfoPopoverContext, acquireGroceryStoreSearchLocation, activeDayEventsTemplate, activeRecipes, addDays, autoEstimateNutrition, bindConfigListDrag, calendarTabStyle, callGmailApi, clearDoTaskDragState, clearPlayTaskDragState, cloneCombinedMealSections, cloneMealSlots, closeFloatingMenus, closeFolderMenu, closeSettingsMenu, closeWeekJumpMenu, combinedMealSectionsForWeek, combinedRecipeTime, compactDayLabel, compactMealSlotEntries, compactSlotEntries, dateFromWeekKey, dateKeyFromDate, defaultCollapsedSections, deleteDraggedDoTask, deleteDraggedPlayTask, displayMealName, doBacklogTasks, ensureCombinedMealSectionShape, ensureMealSlotShape, escapeHtml, focusGroceryLibraryInput, folderName, formatDailyDozenServings, formatWeekRange, getAppName, getGroceryStoreSearchLocation, groceryPlacesApiUrl, groceryPlacesRequestOptions, grocerySuggestionItems, importViaGateway, isDescendantFolder, isPlannedRecipeEntry, isPublishedMealPlanView, makeSortable, mealEntryValue, mealKeysForDay, mealSlotsForWeek, minutesOfDay, normalizeAutoGenerateRule, normalizeAutoGenerateRules, normalizeCookLog, normalizeDoTasks, normalizeIngredients, normalizeInstructionSteps, normalizeNutritionFacts, normalizePlannedRecipeEntry, normalizePublishedWeeks, normalizeRecipeTagSelection, normalizeRecipeUrlInput, normalizedFolders, openDailyDozenPage, openGroceriesPage, openGroceryReviewItems, openPlanEventDialog, openPublishedGroceryReview, openRecipeBoxPage, openRecipeView, persist, persistImmediately, planEventOccursOn, plannedEntryAtLocation, plannedServingsForEntry, plannerDayIdForDate, recipeDefaultServings, recipeForSlot, recipeIdForSlot, recipeTags, recomputeMealPlanLayout, render, renderCollapsedSections, renderDoPlanner, renderFolders, renderGroceries, renderGroceryLibrary, renderPlayPlanner, renderTasksPage, saveRecipeRow, scaledIngredientToText, setCombinedMealSection, setPageNotifCount, setPageTitle, showMailToast, slotEntries, storeDirectionsUrl, syncedCalendarEventsForDate, unlistedGroceryItemsForWeek, updateTabIndicator, weekKey, weekState, queueRecipeForReview, recipeReviewCount,
   } = deps;
   _appState = state;
 
@@ -205,7 +205,9 @@ function restoreMealPlanSwipeScroll() {
   if (idx > 0) deck.scrollTop = idx * deck.clientHeight;
 }
 
-function dismissMealPlanRecipe(url) {
+// `serverDismiss: false` only hides the card locally (swipe-Add dismisses on the
+// server itself once the recipe is safely queued — see swipeAddMealPlanRecipe).
+function dismissMealPlanRecipe(url, { serverDismiss = true } = {}) {
   if (!getMealPlanRecipes()) return;
   // Keep the notifications window where the user was scrolled — renderPlanner()
   // rebuilds the whole grid, which would otherwise snap it back to the top. In
@@ -217,20 +219,35 @@ function dismissMealPlanRecipe(url) {
   renderPlanner();
   const newPanel = elements.plannerGrid.querySelector(".eat-notif-panel:not(.eat-notif-panel-swipe)");
   if (newPanel) newPanel.scrollTop = savedScroll;
-  callGmailApi({ action: "dismissRecipe", url });
+  if (serverDismiss) callGmailApi({ action: "dismissRecipe", url });
 }
 
 function swipeAddMealPlanRecipe(url) {
   const recipe = (getMealPlanRecipes() || []).find((r) => r.url === url);
-  dismissMealPlanRecipe(url); // remove from the deck + server-side dismiss
-  if (!recipe) return;
+  if (!recipe) { dismissMealPlanRecipe(url); return; }
+  // Hide the card now so the deck stays instant, but only dismiss it on the
+  // server once the recipe is in the review queue. On failure the card comes
+  // back, so the recipe isn't lost.
+  dismissMealPlanRecipe(url, { serverDismiss: false });
   importMealPlanRecipeDirect(recipe).then((ok) => {
-    showMailToast(ok
-      ? `Added “${recipe.title || "recipe"}” to your recipe book.`
-      : `Couldn't read “${recipe.title || "that recipe"}” — open it to add manually.`);
+    if (ok) {
+      callGmailApi({ action: "dismissRecipe", url });
+      showMailToast(`Sent “${recipe.title || "recipe"}” to the Recipe Box for review.`);
+      return;
+    }
+    const current = getMealPlanRecipes() || [];
+    if (!current.some((r) => r.url === url)) {
+      setMealPlanRecipes([recipe, ...current]);
+      setPageNotifCount("eat", getMealPlanRecipes().length);
+      if (getActiveAppArea() === "eat") renderPlanner();
+    }
+    showMailToast(`Couldn't read “${recipe.title || "that recipe"}” — it's back in the list; open it to add manually.`);
   });
 }
 
+// Reads the recipe and parks it in the Recipe Box review queue — Gmail finds
+// never go straight into the recipe book; they're approved by saving them from
+// the Recipe Box bell (see queueRecipeForReview in recipes-ui.js).
 async function importMealPlanRecipeDirect(recipe) {
   const url = normalizeRecipeUrlInput(recipe.url) || recipe.url;
   try {
@@ -241,36 +258,22 @@ async function importMealPlanRecipeDirect(recipe) {
     const result = await importViaGateway(url);
     const fetched = result?.type === "recipe" ? result.data : null;
     if (!fetched || (!fetched.name && !(fetched.ingredients || []).length)) return false;
-    const id = createId("recipe");
     const prepTime = (fetched.prepTime || "").trim();
     const cookTime = (fetched.cookTime || "").trim();
     const servings = Number(fetched.servings) || 1;
-    const saved = {
-      id,
+    await queueRecipeForReview({
       name: (fetched.name || recipe.title || "Untitled recipe").trim(),
       prepTime,
       cookTime,
       time: combinedRecipeTime({ prepTime, cookTime }) || (fetched.time || "").trim(),
       servings,
-      defaultServings: servings,
-      folderId: "",
       sourceUrl: (fetched.sourceUrl || url || "").trim(),
       photoUrl: recipe.image || fetched.photoUrl || "",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      cookLog: [],
       tags: [],
       ingredients: normalizeIngredients(fetched.ingredients),
       nutrition: normalizeNutritionFacts(fetched.nutrition),
-      nutritionEstimate: null,
-      ingredientNutritionMatches: [],
       steps: normalizeInstructionSteps(fetched.steps).join("\n")
-    };
-    activeRecipes().push(saved);
-    persist();
-    saveRecipeRow(saved);
-    render();
-    if (saved.ingredients?.length) autoEstimateNutrition(saved.id);
+    }, "gmail");
     return true;
   } catch {
     return false;
@@ -1366,8 +1369,9 @@ function renderPlanner() {
       <div class="meal-plan-publish-row">
         <div class="meal-plan-page-actions">
           <div class="meal-plan-btns-left">
-            <button class="secondary-btn planner-page-btn" type="button" data-open-recipe-box-page title="Recipe Book" aria-label="Recipe Book">
+            <button class="secondary-btn planner-page-btn" type="button" data-open-recipe-box-page title="Recipe Book" aria-label="Recipe Book${recipeReviewCount() ? ` (${recipeReviewCount()} to review)` : ""}">
               ${ldeIcon("recipeBook", { size: 20, cls: "planner-icon" })}
+              ${recipeReviewCount() ? `<span class="eat-notif-badge" aria-hidden="true">${recipeReviewCount()}</span>` : ""}
             </button>
             <button class="secondary-btn planner-page-btn" type="button" data-open-groceries-page title="Groceries" aria-label="Groceries">
               ${ldeIcon("groceryList", { size: 20, cls: "planner-icon" })}
