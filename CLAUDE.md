@@ -228,6 +228,10 @@ cleanup **after** the factory instantiations, and declare any module const you i
 factory **above** the instantiations. Keep this test green; don't weaken or delete it. (An esbuild
 bundle can't verify this — it hoists top-level `const`→`var`, hiding module-const TDZ; the faithful
 check is a native-ESM import of the *unbundled* source, which these static guards stand in for.)
+**(e)** A companion guard, `test/architecture-injected-names.test.js`, parses every `create*Module`
+factory and fails (file:line) on any name it uses that is neither injected, declared in the module,
+nor a browser/JS global — the class that made Recipe Box "+" silently do nothing. Fix a failure by
+injecting the name, never by adding it to the test's browser-global allowlist.
 
 **▶ Browser boot check — run after any boot-order-sensitive change.** `scripts/check-boot.mjs`
 (Playwright + headless system Chrome) launches the app against the **running dev server**

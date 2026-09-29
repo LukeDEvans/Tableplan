@@ -28,8 +28,9 @@ _(none)_
 
 
 ## P2
-- [ ] **[P2] No guard catches a name an extracted module calls but was never injected** (architecture · recipes-ui.js renderIngredientSuggestions · 2026-09-29)
+- [x] **[P2] No guard catches a name an extracted module calls but was never injected** (architecture · recipes-ui.js renderIngredientSuggestions · 2026-09-29)
       `recipes-ui.js` called `grocerySuggestionItems()` without it in `createRecipesModule`'s deps. The build and boot check can't see this: the name only resolves when the code runs, so the Recipe Box "+" threw `ReferenceError` and did nothing. Fixed by injecting it. The same class could lurk in any `*-ui.js` factory. Suggestion: a static test in `architecture-boot-safety.test.js` that lists free identifiers inside each `create*Module` body and fails on any that isn't a destructured dep, a local, or a known global. That needs a parser (acorn is not a dep today). Verdict: CONFIRMED for this instance; the general guard is unbuilt.
+      **RESOLVED 2026-09-29:** `test/architecture-injected-names.test.js` (+ `test/_free-identifiers.js`, a scope-aware walker over Rollup's `parseAst`, already installed via Vite) checks all 8 `create*Module` factories. All clean today; verified it flags `grocerySuggestionItems` at the original crash line when run on the pre-fix `recipes-ui.js`.
 
 - [x] **[P3] Gmail swipe-"Add" drops the card before the queue write succeeds** (meal-plan · mealplan-ui.js swipeAddMealPlanRecipe · 2026-09-29)
       `dismissMealPlanRecipe` runs first (server-side dismiss), then `importMealPlanRecipeDirect` parses the recipe and queues it for review. If parsing or the `recipe-review` call fails, the toast says so, but the Gmail card is already gone. The import-failure case behaved this way before the review queue. Suggestion: dismiss only after `queueRecipeForReview` resolves. Verdict: CONFIRMED by reading; left as-is to keep the swipe deck instant.
