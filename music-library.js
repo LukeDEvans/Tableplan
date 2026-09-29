@@ -175,6 +175,21 @@ export function createLocalMusicSource(store) {
       const blob = new Blob([rec.bytes], { type: rec.mimeType || "audio/mpeg" });
       return URL.createObjectURL(blob);
     },
+    /** Every uploaded file's original bytes, for "Download my uploaded music".
+     *  { entries: [{ name, bytes, track }], missing: [track] } — missing = a track
+     *  record whose bytes aren't on this device. */
+    async exportUploads() {
+      const used = new Set();
+      const entries = [];
+      const missing = [];
+      const tracks = (await store.getAll("tracks")).map(makeTrack).filter((t) => t.sourceId === SOURCE_ID).sort(compareTracks);
+      for (const track of tracks) {
+        const rec = track.locator?.blobId ? await store.get("audio", track.locator.blobId) : null;
+        if (!rec || !rec.bytes) { missing.push(track); continue; }
+        entries.push({ name: uploadedMusicFileName(track, rec.mimeType, used), bytes: rec.bytes, track });
+      }
+      return { entries, missing };
+    },
     async deleteTrack(track) {
       const blobId = track?.locator?.blobId;
       if (blobId) await store.delete("audio", blobId);
@@ -183,6 +198,35 @@ export function createLocalMusicSource(store) {
       await store.delete("tracks", track.id);
     },
   };
+}
+
+// ── export: the uploaded files themselves (they live only on this device) ────
+const EXT_BY_MIME = {
+  "audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/mp4": "m4a", "audio/x-m4a": "m4a", "audio/aac": "aac",
+  "audio/flac": "flac", "audio/x-flac": "flac", "audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav",
+  "audio/ogg": "ogg", "audio/opus": "opus", "audio/webm": "webm", "audio/aiff": "aiff", "audio/x-aiff": "aiff",
+};
+
+/** "Artist - Album - 03 Title.mp3", filesystem-safe and unique within `used`. */
+export function uploadedMusicFileName(track, mimeType, used = new Set()) {
+  const clean = (s) => String(s || "").replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+  const title = `${track?.trackNo ? `${String(track.trackNo).padStart(2, "0")} ` : ""}${clean(track?.title) || "Untitled"}`;
+  const base = [clean(track?.artist), clean(track?.album), title].filter(Boolean).join(" - ");
+  const ext = EXT_BY_MIME[String(mimeType || "").toLowerCase()] || "audio";
+  let name = `${base}.${ext}`;
+  for (let n = 2; used.has(name.toLowerCase()); n++) name = `${base} (${n}).${ext}`;
+  used.add(name.toLowerCase());
+  return name;
+}
+
+/** tracks.csv for an uploaded-music export (file ↔ metadata). */
+export function uploadedMusicCsv(entries) {
+  const cell = (v) => { const t = v == null ? "" : String(v); return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+  const rows = [["file", "title", "artist", "album", "track_no", "duration_sec"]];
+  for (const { name, track } of entries) {
+    rows.push([name, track.title, track.artist, track.album, track.trackNo ?? "", track.durationMs ? Math.round(track.durationMs / 1000) : ""]);
+  }
+  return rows.map((r) => r.map(cell).join(",")).join("\r\n") + "\r\n";
 }
 
 // ── library: the source registry the provider talks to ───────────────────────

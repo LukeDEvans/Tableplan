@@ -31010,6 +31010,7 @@ function initMusicPanel() {
       const openPl = e.target.closest("[data-open-playlist]");
       if (openPl) { enterMusicMode(`pl:${openPl.dataset.openPlaylist}`); return; }
       if (e.target.closest("[data-music-csv-export]")) { exportMusicLibraryCsv(); return; }
+      if (e.target.closest("[data-music-uploads-export]")) { exportUploadedMusic(); return; }
       if (e.target.closest("[data-music-csv-import]")) { panel.querySelector("#musicCsvInput")?.click(); return; }
       const plPlay = e.target.closest("[data-playlist-play]"); if (plPlay) { playPlaylist(plPlay.dataset.playlistPlay, 0, false); return; }
       const plShuf = e.target.closest("[data-playlist-shuffle]"); if (plShuf) { playPlaylist(plShuf.dataset.playlistShuffle, 0, true); return; }
@@ -31993,6 +31994,10 @@ function renderMusicSavedBody() {
         <button class="secondary-btn" type="button" data-music-csv-export>Export CSV</button>
         <button class="secondary-btn" type="button" data-music-csv-import>Import CSV</button>
       </div>
+      <p class="music-empty-sub">Songs you uploaded are stored only on this device (not in the cloud or in “Export my data”). Download them to keep a copy — the files can be uploaded here again later.</p>
+      <div class="music-portable-actions">
+        <button class="secondary-btn" type="button" data-music-uploads-export>Download my uploaded music</button>
+      </div>
       <input type="file" id="musicCsvInput" accept=".csv,text/csv" hidden>
     </div>`;
 
@@ -32046,6 +32051,35 @@ async function exportMusicLibraryCsv() {
     // saveFile: share sheet in the iOS app (its web view ignores <a download>), else a download.
     await saveFile(new Blob([csv], { type: "text/csv;charset=utf-8" }), `music-library-${new Date().toISOString().slice(0, 10)}.csv`, { title: "Music library" });
   } catch (e) { console.warn("music CSV export failed", e); alert("Couldn't export your music library."); }
+}
+// Uploaded songs live only in this device's IndexedDB. Zip their ORIGINAL files
+// (stored, not recompressed — audio is already compressed) plus tracks.csv, and
+// hand the zip to saveFile (share sheet in the iOS app, download elsewhere).
+let uploadedMusicExportBusy = false;
+async function exportUploadedMusic() {
+  if (uploadedMusicExportBusy) return;
+  uploadedMusicExportBusy = true;
+  try {
+    const lib = await getMusicLib();
+    const local = (lib.sources || []).find((src) => src.id === "local");
+    const { entries, missing } = local?.exportUploads ? await local.exportUploads() : { entries: [], missing: [] };
+    if (!entries.length) { alert(missing.length ? "Your uploaded songs' files aren't on this device." : "You haven't uploaded any music on this device."); return; }
+    const mb = entries.reduce((n, e) => n + e.bytes.length, 0) / 1048576;
+    if (mb > 200 && !confirm(`That's ${entries.length} songs (${Math.round(mb)} MB). Building the zip can take a while and needs that much free memory. Continue?`)) return;
+    showMailToast(`Preparing ${entries.length} song${entries.length === 1 ? "" : "s"}…`);
+    const [{ zipSync, strToU8 }, { uploadedMusicCsv }] = await Promise.all([import("fflate"), import("./music-library.js")]);
+    const files = { "tracks.csv": strToU8(uploadedMusicCsv(entries)) };
+    for (const e of entries) files[e.name] = [e.bytes, { level: 0 }];
+    const zip = zipSync(files);
+    const name = `uploaded-music-${new Date().toISOString().slice(0, 10)}.zip`;
+    const r = await saveFile(new Blob([zip], { type: "application/zip" }), name, { title: "Uploaded music" });
+    if (r !== "cancelled") showMailToast(`Saved ${entries.length} song${entries.length === 1 ? "" : "s"}${missing.length ? ` (${missing.length} missing on this device)` : ""}.`);
+  } catch (e) {
+    console.warn("uploaded music export failed", e);
+    alert("Couldn't export your uploaded music: " + (e?.message || "unknown error"));
+  } finally {
+    uploadedMusicExportBusy = false;
+  }
 }
 async function importMusicLibraryCsv(file) {
   try {
