@@ -22138,6 +22138,27 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 }
 .eat-notif-item-title:hover { text-decoration: underline; }
 .eat-notif-source { font-size: 0.7rem; font-weight: 600; color: var(--muted); }
+
+/* Recipe Box: review queue for recipes that weren't typed in by hand (Gmail,
+   Chrome extension, import/scan/share). The bell sits next to + and ×; the
+   panel replaces the library list while it's open. Badge reuses .eat-notif-badge. */
+.recipe-review-btn { position: relative; }
+.recipe-review-btn svg { fill: none; stroke: currentColor; stroke-width: 1.8; }
+.recipe-review-btn[aria-expanded="true"] { background: color-mix(in srgb, var(--ink) 10%, var(--window-bg)); }
+.planner-page-btn { position: relative; }
+.planner-page-btn .eat-notif-badge { top: -7px; right: -7px; }
+.recipe-review-panel { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.recipe-review-panel[hidden] { display: none; }
+.recipe-review-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); min-width: 0; }
+.recipe-review-row:first-of-type { border-top: none; }
+.recipe-review-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; font: inherit; }
+.recipe-review-thumb { flex: 0 0 auto; width: 56px; height: 56px; border-radius: 8px; object-fit: cover; background: color-mix(in srgb, var(--ink) 8%, transparent); display: grid; place-items: center; color: var(--muted); }
+.recipe-review-thumb svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.recipe-review-meta { font-size: 0.72rem; font-weight: 600; color: var(--muted); }
+.recipe-review-dup { color: var(--tomato); }
+.recipe-review-actions { flex: 0 0 auto; display: flex; gap: 6px; }
+.recipe-review-actions .secondary-btn { min-height: 34px; }
+
 .eat-notif-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
 .eat-notif-add { flex: 0 0 auto; font-size: 0.72rem; padding: 4px 10px; min-height: 26px; }
 .eat-notif-dismiss { flex: 0 0 auto; width: 24px; height: 24px; color: var(--muted); }
