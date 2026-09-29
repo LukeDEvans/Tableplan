@@ -1778,7 +1778,7 @@ const _recipes = createRecipesModule({
   recordDeletion, removeRecipeFromMealSlots: (...a) => removeRecipeFromMealSlots(...a), renderPlanner: (...a) => renderPlanner(...a), renderScanImagePreviews, retainScanImageEdits,
   rowStorageCanWrite, saveImportedArticle, scheduleLocalBackup, setPageTitle, supabaseBaseUrl, supabaseHeaders,
   trackUsage, tryPreChangeBackup, unrecordDeletion, updateGroceryMealServing: (...a) => updateGroceryMealServing(...a), updateMealPlannedServingsFromContext: (...a) => updateMealPlannedServingsFromContext(...a),
-  formatGroceryAmount, groceryAmountToNumber, renderGroceries,
+  formatGroceryAmount, groceryAmountToNumber, grocerySuggestionItems: (...a) => grocerySuggestionItems(...a), renderGroceries,
 });
 const {
   activeRecipes,
