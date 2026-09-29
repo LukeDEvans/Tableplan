@@ -8,6 +8,9 @@ const SAVE_ARTICLE_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlif
 const IMPORT_PDF_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/import-pdf-background";
 const SAVE_PAGE_ARTICLES_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/save-page-articles";
 const SIMPLEFIN_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/simplefin";
+// Recipe Box review queue: recipes added from the extension wait here until they
+// are reviewed and saved in the app (they never write eat_recipes directly).
+const RECIPE_REVIEW_URL = "https://effervescent-malabi-e0af55.netlify.app/.netlify/functions/recipe-review";
 const SESSION_KEY = "eatSupabaseSession";
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -97,16 +100,9 @@ async function importRecipe(url) {
   if (!recipeUrl) throw new Error("Open a supported recipe URL first.");
 
   const parsedRecipe = await parseRecipe(recipeUrl, session.access_token);
-  const existing = await recipeBySourceUrl(recipeUrl, session.access_token);
-  const recipe = {
-    ...parsedRecipe,
-    id: existing?.id || parsedRecipe.id || createId("recipe"),
-    folderId: "",
-    sourceUrl: recipeUrl
-  };
-
-  await saveRecipe(recipe, session.access_token, Boolean(existing?.id));
-  return { ok: true, updated: Boolean(existing?.id), name: recipe.name || "Recipe" };
+  const recipe = { ...parsedRecipe, sourceUrl: recipeUrl };
+  await queueRecipeForReview(recipe, session.access_token);
+  return { ok: true, queued: true, name: recipe.name || "Recipe" };
 }
 
 async function saveArticle(url, title, tabId) {
@@ -235,12 +231,12 @@ async function addToTableplan(url, title, tabId) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || payload.warnings?.[0] || `Import failed with status ${response.status}`);
 
-  // Recipe → eat_recipes (dedupe on the source URL, like importRecipe).
+  // Recipe → the Recipe Box review queue (like importRecipe); it reaches the
+  // recipe book only once it's reviewed and saved in the app.
   if (payload.type === "recipe" && payload.data && (payload.data.name || payload.data.ingredients?.length)) {
-    const existing = await recipeBySourceUrl(url, session.access_token);
-    const recipe = { ...payload.data, id: existing?.id || payload.data.id || createId("recipe"), folderId: "", sourceUrl: url };
-    await saveRecipe(recipe, session.access_token, Boolean(existing?.id));
-    return { ok: true, kind: "recipe", updated: Boolean(existing?.id), name: recipe.name || "Recipe" };
+    const recipe = { ...payload.data, sourceUrl: url };
+    await queueRecipeForReview(recipe, session.access_token);
+    return { ok: true, kind: "recipe", queued: true, name: recipe.name || "Recipe" };
   }
 
   // Article → media.savedArticles (prefer the gateway's cleaned data; fall back
@@ -505,41 +501,15 @@ async function parseRecipe(recipeUrl, accessToken) {
   throw new Error("No recipe data found.");
 }
 
-async function recipeBySourceUrl(sourceUrl, accessToken) {
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/eat_recipes?select=id&source_url=eq.${encodeURIComponent(sourceUrl)}&limit=1`, {
-    headers: supabaseHeaders(accessToken)
+async function queueRecipeForReview(recipe, accessToken) {
+  const response = await fetch(RECIPE_REVIEW_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ action: "add", source: "extension", recipe })
   });
-  if (!response.ok) throw new Error(`Recipe lookup failed with status ${response.status}`);
-  const rows = await response.json();
-  return rows[0] || null;
-}
-
-async function saveRecipe(recipe, accessToken, isUpdate) {
-  const row = recipeToRow(recipe);
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/eat_recipes${isUpdate ? `?id=eq.${encodeURIComponent(recipe.id)}` : ""}`, {
-    method: isUpdate ? "PATCH" : "POST",
-    headers: {
-      ...supabaseHeaders(accessToken),
-      Prefer: "return=minimal"
-    },
-    body: JSON.stringify(isUpdate ? row : [row])
-  });
-  if (!response.ok) throw new Error(`Recipe save failed with status ${response.status}`);
-}
-
-function recipeToRow(recipe) {
-  return {
-    id: recipe.id,
-    name: recipe.name || "Untitled recipe",
-    time: recipe.time || "",
-    servings: Number(recipe.servings) || 1,
-    folder_id: null,
-    source_url: recipe.sourceUrl || "",
-    photo_url: recipe.photoUrl || "",
-    ingredients: Array.isArray(recipe.ingredients) ? recipe.ingredients : [],
-    steps: recipe.steps || "",
-    updated_at: new Date().toISOString()
-  };
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `Queueing the recipe failed with status ${response.status}`);
+  return payload;
 }
 
 async function getValidSession(requireSession) {

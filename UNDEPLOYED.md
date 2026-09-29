@@ -10,6 +10,57 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+## Recipe Box: "+" fixed, plus a review queue for new recipes (PR #17)
+PR: https://github.com/LukeDEvans/Tableplan/pull/17
+
+- The **+** in Meal Plan → Recipe Book opens the Add-recipe form again. It was crashing
+  on a function the recipes module was never given.
+- A **bell** next to + and × holds recipes that weren't typed in by hand: Gmail finds,
+  the Chrome extension, and URL import / paste / scan / share. **Review** opens one in
+  the editor, and saving adds it to the book. **×** dismisses it. The Meal Plan Recipe
+  Book button shows the count.
+- In-app imports still open the editor straight away; closing without saving now keeps
+  the recipe in the queue instead of losing it.
+- New Netlify function `recipe-review`. It stores the queue in one service-only row per
+  user (`recipereview_<userId>`). No DB migration.
+
+**After deploying:**
+1. **Reload the Chrome extension.** It now sends recipes to the queue, so until the
+   function is live, recipe imports from the extension fail.
+2. Import one recipe signed in on the real app, then check it appears under the bell and
+   that saving it moves it into the book. The server path was only unit-tested with
+   the network mocked.
+
+## Mail: swipe between emails follows your finger (PR #16)
+PR: https://github.com/LukeDEvans/Tableplan/pull/16
+
+- Mail on a phone: the open email now moves with your finger while the next or previous one
+  slides in beside it, like the meal-plan day swipe. Let go past about a third of the screen
+  (or flick) to switch; otherwise it springs back. At the first or last email it bounces.
+- The emails either side of the open one are fetched in the background (without marking
+  them read), so a swipe usually lands on a loaded email.
+- Removes a duplicate old swipe handler. Client-only (`app.js` + `styles.css`).
+
+**After deploying:** try it on the iPhone app (not tested on a real device yet). If flicks
+feel too eager or too stiff, the thresholds are in `mailPager` in app.js.
+
+## Instacart: per-store "Send to Instacart" (PR #15)
+PR: https://github.com/LukeDEvans/Tableplan/pull/15
+
+- Shop: stores with **Order via Instacart** on (on by default for Aldi, Costco and Cub Foods;
+  change it in the store's Edit dialog) get a Send button. It sends that store's unchecked
+  items to an Instacart shopping-list page. The store then shows "Sent to Instacart" with
+  Mark delivered / Undo. Items Instacart couldn't match are listed under the store.
+- The button stays **hidden until an API key is set**, so nothing changes visibly until then.
+- New Netlify function `instacart-list`. It adds the `instacartOrders` key to the grocery
+  state section.
+
+**After deploying:**
+1. Netlify env: set `INSTACART_API_KEY`, plus `INSTACART_ENV=production` for the live
+   Instacart API (unset uses the dev server). No redeploy is needed after adding them.
+2. Do one real send, then check whether items Instacart didn't match are listed under the
+   store (ISSUES.md, "Instacart match failures").
+
 ## News intake: email-linked articles → Media bell swipe deck (merged 2026-09-27)
 PR: https://github.com/LukeDEvans/Tableplan/pull/7 · spec: NEWS_INTAKE_DESIGN.md
 
