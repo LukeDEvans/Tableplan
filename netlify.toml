@@ -124,3 +124,7 @@
   from = "/*.sql"
   to = "/index.html"
   status = 404
+
+# chat imports the shared assistant tool registry (also used by app.js).
+[functions."chat"]
+  included_files = ["assistant-tools.js"]

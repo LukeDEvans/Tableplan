@@ -725,6 +725,26 @@ async function openWeatherRadarMap() {
   setTimeout(() => { try { map.invalidateSize(); } catch {} }, 60); // correct sizing after the overlay lays out
 }
 
-  return { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions };
+// Assistant read (assistant-queries.js formatWeather shape) for the active saved
+// location. Goes through getWeatherSnapshot, so it shares the page's TTL cache and
+// in-flight de-dup — an assistant question never adds a polling loop.
+async function getAssistantWeatherReport() {
+  const saved = state.weatherLocations || [];
+  const loc = saved.find((l) => l.id === state.weatherActiveLocationId) || saved[0] || weatherCurrentGeoLoc;
+  if (!loc?.latitude || !loc?.longitude) return null;
+  const s = await getWeatherSnapshot(loc);
+  const c = s?.current || {};
+  if (c.temperatureF == null) return null;
+  const tz = s?.location?.timezone || loc.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const wind = c.windMph != null ? `${Math.round(c.windMph)} mph${c.windDirectionCardinal ? ` ${c.windDirectionCardinal}` : ""}` : "";
+  return {
+    location: loc.label || loc.name || s?.location?.label || "",
+    current: { temp: c.temperatureF, condition: c.description || "", feelsLike: c.apparentTemperatureF, humidity: c.humidityPercent, wind },
+    daily: wxFoldDaily(s.daily || [], tz).slice(0, 5).map((d) => ({ name: d.name, high: d.hi, low: d.lo, condition: d.cond ? conditionLabel(d.cond.key) : "", precipChance: d.pop })),
+    alerts: (s.alerts || []).map((a) => a.event || a.headline).filter(Boolean),
+  };
+}
+
+  return { initWeatherPage, stopWeatherRefreshLoop, getCurrentConditions, getAssistantWeatherReport };
 }
 

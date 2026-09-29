@@ -1263,6 +1263,23 @@ function financeTxnLabelName(key) {
   return g && c ? `${g.label} · ${c.name}` : "";
 }
 
+// Assistant read (query_transactions — only offered when Luke has opted Finance in):
+// labeled transactions as plain rows with the category's display name. Loads the
+// live feed once if this session hasn't yet — refreshFinanceLive goes through the
+// server's cache (1h floor), so a question can't cause a bridge storm.
+async function financeAssistantTxns() {
+  if (!financeLive && !financeLiveLoading) await refreshFinanceLive(false);
+  if (financeStoreEnabled()) await ensureFinanceTxnStore().catch(() => null);
+  return financeLabeledTxns().map((t) => ({
+    posted: t.posted,
+    amount: t.amount,
+    description: t.description || "",
+    category: t.label === "split" ? "Split" : financeTxnLabelName(t.label),
+    account: t.account || "",
+    pending: Boolean(t.pending),
+  }));
+}
+
 function financeTxnLabelOptionsHtml(selected) {
   return `
     <optgroup label="Income">
@@ -4900,5 +4917,5 @@ function refreshFinanceSettingsIfOpen() {
   function getFinanceViewMonth() { return financeViewMonth; }
   function getFinanceLinkStatus() { return financeLinkStatus; }
 
-  return { purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
+  return { financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
 }
