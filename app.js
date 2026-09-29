@@ -32,6 +32,7 @@ import { taskIsScheduled } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
 import { isNativeApp, nativeTts } from './native-bridge.js';
+import { saveFile } from './save-file.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
 import { clearLocalAccountState, accountTransitionKind } from './auth-account-reset.js';
@@ -17941,19 +17942,9 @@ async function exportMyData() {
     });
     const zip = buildExportZip(files, fflate, `live-export-${exportedAt.slice(0, 10)}`);
     const fileName = `live-export-${exportedAt.slice(0, 10)}.zip`;
-    const blob = new Blob([zip], { type: "application/zip" });
-    const file = typeof File === "function" ? new File([blob], fileName, { type: "application/zip" }) : null;
-    // The iOS app's web view can't download a blob; hand the file to the share sheet
-    // (Save to Files) there. Browsers get an ordinary download.
-    if (isNativeApp() && file && navigator.canShare?.({ files: [file] })) {
-      await navigator.share({ files: [file], title: "Live data export" });
-    } else {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = fileName;
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
-    }
+    // Share sheet (Save to Files) in the iOS app, an ordinary download elsewhere.
+    const saved = await saveFile(new Blob([zip], { type: "application/zip" }), fileName, { title: "Live data export" });
+    if (saved === "cancelled") return;
     const csvCount = manifest.files.filter((f) => f.file?.endsWith(".csv") && !f.error).length;
     showMailToast(`Exported ${csvCount} spreadsheets + full backup${notes.length ? " (see README for notes)" : ""}.`);
   } catch (e) {
@@ -22718,11 +22709,7 @@ async function exportCadenceMusicXml() {
     if (xml == null && w.model) xml = C.serializeToMusicXml(w.model).xml;
     if (xml == null) { alert("This score's file isn't on this device yet — open it once to download it."); return; }
     const safe = (w.work.title || "score").replace(/[^\w.-]+/g, "_").slice(0, 60) || "score";
-    const url = URL.createObjectURL(new Blob([xml], { type: "application/vnd.recordare.musicxml+xml" }));
-    const a = document.createElement("a");
-    a.href = url; a.download = `${safe}.musicxml`;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    await saveFile(new Blob([xml], { type: "application/vnd.recordare.musicxml+xml" }), `${safe}.musicxml`, { title: w.work.title || "Score" });
   } catch (e) { console.warn("Cadence export failed:", e); alert("Couldn't export this score."); }
 }
 
@@ -32049,11 +32036,8 @@ async function exportMusicLibraryCsv() {
   try {
     const mod = await import("./music-portable.js");
     const csv = mod.libraryToCsv(getMusicLibraryState());
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const a = document.createElement("a");
-    a.href = url; a.download = `music-library-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    // saveFile: share sheet in the iOS app (its web view ignores <a download>), else a download.
+    await saveFile(new Blob([csv], { type: "text/csv;charset=utf-8" }), `music-library-${new Date().toISOString().slice(0, 10)}.csv`, { title: "Music library" });
   } catch (e) { console.warn("music CSV export failed", e); alert("Couldn't export your music library."); }
 }
 async function importMusicLibraryCsv(file) {

@@ -2,6 +2,7 @@ import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './financ
 import { financeMonthsToSnapshot, financeOffsettingPairIds } from './finance-actuals.js';
 import { dedupeFinanceRecurring } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill, csvRowsToTxns, dedupeImport, findDuplicateCsvAccount } from './finance-csv.js';
+import { saveFile } from './save-file.js';
 import { financeMerchantTokens, financeMerchantKey, storeAccountsView, snapshotWindowTxns, recentTxns, manualTxnToRow, mergeManualTxns, manualRowsToCopy, planAccountRemap, remapCandidateAccounts, suggestRemapTarget, carrySupersededAnnotations } from './finance-transactions.js';
 import { createFinanceTxnStore, FIN_TXN_DB, FIN_TXN_STORES } from './finance-txn-store.js';
 import { createIdbStorage, createMemoryStorage } from './content-store/storage.js';
@@ -243,13 +244,9 @@ function exportFinanceCsv(monthKey) {
     t.account || "",
   ].map(esc).join(","));
   const csv = [header.map(esc).join(","), ...lines].join("\n");
-  try {
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-    const a = document.createElement("a");
-    a.href = url; a.download = `transactions-${monthKey}.csv`;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  } catch { showMailToast?.("Couldn't export CSV on this device."); }
+  // Share sheet in the iOS app (its web view ignores <a download>), else a download.
+  saveFile(new Blob([csv], { type: "text/csv" }), `transactions-${monthKey}.csv`, { title: "Transactions" })
+    .catch(() => showMailToast?.("Couldn't export CSV on this device."));
 }
 
 // "Export my data" (data-export.js): every transaction the app knows, with the
