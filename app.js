@@ -33,6 +33,7 @@ import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './financ
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
 import { isNativeApp, nativeTts } from './native-bridge.js';
 import { saveFile } from './save-file.js';
+import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, pruneGroceryStamps } from './grocery-list-stamps.js';
 import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
 import { clearLocalAccountState, accountTransitionKind } from './auth-account-reset.js';
@@ -277,7 +278,7 @@ const CLOUD_SNAPSHOT_HOURLY_MAX = 72;  // then 1 per hour back ~3 days (plenty f
 // Each section is stored as its own Supabase row: id = "{stateId}:{section}"
 const STATE_SECTIONS = {
   eat:       ["recipes", "trashedRecipes", "folders", "plans", "publishedWeeks", "recipeTags", "ingredientOptions", "autoGenerateRules", "mealPlanConfig", "activeCooking"],
-  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems", "instacartOrders"],
+  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "persistentManualGroceryStamps", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems", "instacartOrders"],
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
@@ -4340,6 +4341,7 @@ function defaultState() {
     playAutoRules: [],
     pantry: ["olive oil", "salt", "pepper"],
     persistentManualGroceries: [],
+    persistentManualGroceryStamps: {},
     checkedGroceries: {},
     grocerySkippedStores: {},
     instacartOrders: {},
@@ -4521,7 +4523,9 @@ function normalizeState(parsed) {
     workouts: normalizeWorkouts(parsed?.workouts),
     playAutoRules: normalizePlayAutoRules(parsed?.playAutoRules),
     pantry: Array.isArray(parsed?.pantry) ? parsed.pantry : [],
-    persistentManualGroceries: normalizePersistentManualGroceries(parsed),
+    // Removed-item stamps also filter the load-time fold of legacy week.manualGroceries,
+    // which otherwise re-added removed items on every load (grocery-list-stamps.js).
+    ...loadManualGroceriesWithStamps(parsed),
     checkedGroceries: parsed?.checkedGroceries || {},
     grocerySkippedStores: parsed?.grocerySkippedStores && typeof parsed.grocerySkippedStores === "object" ? parsed.grocerySkippedStores : {},
     instacartOrders: normalizeInstacartOrders(parsed?.instacartOrders),
@@ -5731,6 +5735,22 @@ function dailyDozenEntries() {
 
 
 
+// The manual list + its add/remove stamps, as loaded: removed items filtered out
+// (including ones the legacy week.manualGroceries fold would re-add) and stale
+// stamps pruned.
+function loadManualGroceriesWithStamps(parsed) {
+  const stamps = normalizeGroceryStamps(parsed?.persistentManualGroceryStamps);
+  const list = applyGroceryStamps(normalizePersistentManualGroceries(parsed), stamps);
+  return { persistentManualGroceries: list, persistentManualGroceryStamps: pruneGroceryStamps(stamps, list, new Date().toISOString()) };
+}
+
+// The live stamps object on state (created on first use) — every add/remove of a
+// manual grocery item stamps it so a sync can't resurrect a removal.
+function groceryListStamps() {
+  if (!state.persistentManualGroceryStamps || typeof state.persistentManualGroceryStamps !== "object" || Array.isArray(state.persistentManualGroceryStamps)) state.persistentManualGroceryStamps = {};
+  return state.persistentManualGroceryStamps;
+}
+
 function normalizePersistentManualGroceries(parsed) {
   const saved = Array.isArray(parsed?.persistentManualGroceries) ? parsed.persistentManualGroceries : [];
   const fromWeeks = Object.values(parsed?.plans || {}).flatMap((week) =>
@@ -5895,7 +5915,13 @@ function mergeStates(newer, older) {
 
   // ── String-set arrays: additive ───────────────────────────────────────────
   merged.pantry = unionStrings(newer.pantry, older.pantry);
-  merged.persistentManualGroceries = unionStrings(newer.persistentManualGroceries, older.persistentManualGroceries);
+  // Union the lists, then drop items the merged add/remove stamps say were removed
+  // (and not re-added since) — so a removal on one device survives an older copy.
+  merged.persistentManualGroceryStamps = mergeGroceryStamps(newer.persistentManualGroceryStamps, older.persistentManualGroceryStamps);
+  merged.persistentManualGroceries = applyGroceryStamps(
+    unionStrings(newer.persistentManualGroceries, older.persistentManualGroceries),
+    merged.persistentManualGroceryStamps
+  );
   merged.recipeTags = unionStrings(newer.recipeTags, older.recipeTags);
   merged.contactGroups = unionStrings(newer.contactGroups, older.contactGroups);
   merged.readArticleIds = unionStrings(newer.readArticleIds, older.readArticleIds);
@@ -11137,6 +11163,7 @@ function applyImportAiItems() {
       addedCalendar = true;
     } else if (item.section === "shopping") {
       if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
+      stampGroceryAdd(groceryListStamps(), item.title, new Date().toISOString());
       if (!state.persistentManualGroceries.some((existing) => normalize(existing) === normalize(item.title))) {
         state.persistentManualGroceries.push(item.title);
         state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
@@ -36904,6 +36931,7 @@ function applyVoiceActions(actions, transcript) {
       const item = String(action.item || "").trim();
       if (!item) { messages.push("No item name given."); continue; }
       if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
+      stampGroceryAdd(groceryListStamps(), item, new Date().toISOString());
       if (!state.persistentManualGroceries.some((e) => normalize(e) === normalize(item))) {
         state.persistentManualGroceries.push(item);
         state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
@@ -37502,6 +37530,11 @@ function attachAssistantUndo(bubble, record, resultText) {
       btn.textContent = "Changed since — can't undo";
       return;
     }
+    // The grocery list is a plain string list merged by union: stamp what the undo
+    // adds back / takes away so a sync can't reverse it (grocery-list-stamps.js).
+    if ("persistentManualGroceries" in undo.patch) {
+      stampGroceryListDiff(groceryListStamps(), state.persistentManualGroceries, undo.patch.persistentManualGroceries, new Date().toISOString());
+    }
     for (const [key, value] of Object.entries(undo.patch)) {
       if (value === undefined) delete state[key];
       else state[key] = value;
@@ -37587,6 +37620,7 @@ async function executeChatTool(name, input) {
         const item = String(input.item || "").trim();
         if (!item) return "No item name provided.";
         if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
+        stampGroceryAdd(groceryListStamps(), item, new Date().toISOString());
         if (!state.persistentManualGroceries.some((e) => normalize(e) === normalize(item))) {
           state.persistentManualGroceries.push(item);
           state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
@@ -37602,6 +37636,7 @@ async function executeChatTool(name, input) {
         state.persistentManualGroceries = (state.persistentManualGroceries || [])
           .filter((e) => normalize(e) !== normalize(item));
         if ((state.persistentManualGroceries?.length || 0) < before) {
+          stampGroceryRemove(groceryListStamps(), item, new Date().toISOString());
           persist();
           renderGroceries();
           return `Removed "${item}" from grocery list.`;

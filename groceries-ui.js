@@ -15,6 +15,7 @@ import * as LiveDailyDozen from './daily-dozen.js';
 import * as LiveMealPlanServings from './meal-plan-servings.js';
 import * as LiveInstacart from './instacart.js';
 import { makeSortable } from './sortable.js';
+import { stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff } from './grocery-list-stamps.js';
 
 // Module-scope copies of two tiny standalone helpers (identical to app.js) so the pure
 // exports and the factory share one definition without threading them through as deps.
@@ -31,6 +32,16 @@ function normalize(value) {
 // matching app.js's pre-hydration behavior; `state` is a const in app.js (never
 // reassigned), so this reference stays valid for the app's lifetime once set.
 let _appState = null;
+
+// Add/remove stamps for the manual list (grocery-list-stamps.js): every add and
+// removal is stamped so a sync from an older copy can't bring a removed item back.
+// Uses the module's _appState reference (set by the factory before any caller runs).
+function manualListStamps() {
+  const st = _appState;
+  if (!st.persistentManualGroceryStamps || typeof st.persistentManualGroceryStamps !== "object" || Array.isArray(st.persistentManualGroceryStamps)) st.persistentManualGroceryStamps = {};
+  return st.persistentManualGroceryStamps;
+}
+const stampNow = () => new Date().toISOString();
 
 // Grocery constant data (moved verbatim from app.js).
 const commonGroceryItems = [
@@ -3548,6 +3559,7 @@ function addManualGroceryItem(event) {
     return;
   }
   if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
+  stampGroceryAdd(manualListStamps(), item, stampNow());
   if (!state.persistentManualGroceries.some((existing) => normalize(existing) === normalize(item))) {
     state.persistentManualGroceries.push(item);
     state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
@@ -3585,6 +3597,7 @@ function setGroceryItemStoreForTrip(itemKey, storeId) {
 
 function removeManualGroceryItem(item) {
   state.persistentManualGroceries = (state.persistentManualGroceries || []).filter((existing) => existing !== item);
+  stampGroceryRemove(manualListStamps(), item, stampNow());
   const itemKey = manualGroceryRow(item).key;
   Object.keys(state.checkedGroceries).forEach((key) => {
     if (key.endsWith(`|${itemKey}`)) delete state.checkedGroceries[key];
@@ -3603,7 +3616,9 @@ function editGroceryItem(key) {
     if (updated === null) return;
     const trimmed = updated.trim();
     if (!trimmed || trimmed === row.manualValue) return;
-    state.persistentManualGroceries = (state.persistentManualGroceries || []).map((v) => (v === row.manualValue ? trimmed : v));
+    const before = state.persistentManualGroceries || [];
+    state.persistentManualGroceries = before.map((v) => (v === row.manualValue ? trimmed : v));
+    stampGroceryListDiff(manualListStamps(), before, state.persistentManualGroceries, stampNow()); // rename = remove old + add new
     persist();
     renderGroceries();
   } else {
@@ -4831,6 +4846,7 @@ function shoppingListHas(name) {
 
 function addToShoppingList(name) {
   if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
+  stampGroceryAdd(manualListStamps(), name, stampNow());
   if (!shoppingListHas(name)) {
     state.persistentManualGroceries.push(name);
     state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
@@ -4840,6 +4856,7 @@ function addToShoppingList(name) {
 function removeFromShoppingList(name) {
   const n = normalize(name);
   state.persistentManualGroceries = (state.persistentManualGroceries || []).filter((x) => normalize(x) !== n);
+  stampGroceryRemove(manualListStamps(), name, stampNow());
 }
 
 function renderShopPage() {
