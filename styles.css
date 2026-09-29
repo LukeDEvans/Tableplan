@@ -21759,8 +21759,9 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 @keyframes finReviewNudge { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
 @media (prefers-reduced-motion: reduce) { .fin-review-card.fin-review-need-cat .fin-review-label { animation: none; } }
 /* Scrollable content column so a full card (facts + fields + actions) fits any
-   viewport; the hint pins to the bottom. */
-.fin-review-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 22px 24px 60px; text-align: center; }
+   viewport; the hint sits in its own row below it, so content never scrolls
+   under it. */
+.fin-review-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 22px 24px 16px; text-align: center; }
 .fin-review-count { margin-left: auto; margin-right: 12px; font-size: 0.82rem; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
 .fin-review-amount { font-size: 2.4rem; font-weight: 850; color: var(--accent-dark); }
 .fin-review-amount.is-neg { color: var(--ink); }
@@ -21786,7 +21787,7 @@ body:has(#overflowMainPage:not([hidden])) .travel-page { flex: 1; min-height: 0;
 .fin-review-empty-title { font-size: 1.3rem; font-weight: 850; color: var(--ink); }
 .fin-review-empty-sub { font-size: 0.9rem; color: var(--muted); margin: 6px 0 18px; max-width: 300px; }
 .fin-review-empty .fin-review-approve { max-width: 260px; flex: 0 0 auto; }
-.fin-review-hint { flex: 0 0 auto; position: absolute; left: 0; right: 0; bottom: 14px; display: flex; justify-content: space-between; padding: 0 20px; font-size: 0.72rem; font-weight: 700; color: var(--muted); pointer-events: none; }
+.fin-review-hint { flex: 0 0 auto; display: flex; justify-content: space-between; padding: 6px 20px 14px; font-size: 0.72rem; font-weight: 700; color: var(--muted); pointer-events: none; }
 .fin-rec-row { border-top: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); padding-top: 6px; }
 .fin-rec-link-row { padding-bottom: 6px; }
 .fin-recap-row { min-height: 24px; }
