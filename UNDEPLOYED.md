@@ -10,6 +10,28 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+## Assistant upgrade: whole-app context, lookups, confirm/undo, suggestions, memory (PR #20)
+PR: https://github.com/LukeDEvans/Tableplan/pull/20
+
+- **The chat assistant now sees every area** (tasks, meals, next 7 days of calendar, trips,
+  birthdays), not just the open page, and can **look things up**: calendar ranges, tasks,
+  contacts, weather — plus email search/read and spending questions **only if you switch
+  those on** (both off by default: Settings → Mail AI “Assistant can read email”, Settings →
+  AI Notes “Assistant can read Finance”).
+- **Deletions ask first** (Confirm / Cancel), and **every change it makes has Undo**.
+- **Suggestions** when you open the assistant: a trip with nothing packed, a birthday this
+  week, an early start, no dinner planned, bills due (finance on only), a long backlog.
+- **Memory:** it can edit/forget its own notes; new “Open Threads” category; edit notes in
+  Settings → AI Notes.
+- Fixed: chat deletes of calendar events / watchlist / reading items / backlog tasks could
+  come back after a sync.
+
+**After deploying:**
+1. Open the assistant and ask something cross-area (“what’s my week look like?”) — first
+   real model call with the new tools.
+2. Decide on the two access toggles above (email default is an open question in ISSUES.md).
+3. Optional: set `ASSISTANT_CHAT_MODEL` in Netlify to change the chat model (default unchanged).
+
 ## iPhone layout fixes + ISSUES.md cleanup (PR #19)
 PR: https://github.com/LukeDEvans/Tableplan/pull/19
 
