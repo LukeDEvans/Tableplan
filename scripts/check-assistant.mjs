@@ -112,6 +112,9 @@ async function main() {
   if (!/CURRENT CONTEXT:[\s\S]*OVERVIEW:[\s\S]*NEXT 7 DAYS/.test(first)) fail("first request is missing the OVERVIEW context");
   if (!/ACCESS: email off; finance off/.test(first)) fail("context doesn't report email/finance access as off by default");
   ok("first request carries the cross-domain OVERVIEW (email + finance access off by default)");
+  const extraKeys = requests[0].messages.flatMap((m) => Object.keys(m)).filter((k) => k !== "role" && k !== "content");
+  if (extraKeys.length) fail(`chat request sent non-API message fields: ${[...new Set(extraKeys)].join(", ")}`);
+  ok("messages reach the API as role + content only (local turn stamps stripped)");
   const undoBtn = page.locator(".ai-chat-msg--tool .ai-chat-undo-btn").last();
   if (!(await undoBtn.count())) fail("write-tool bubble has no Undo button");
   await page.waitForTimeout(800);

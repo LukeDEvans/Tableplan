@@ -37135,6 +37135,9 @@ const CHAT_MAX_STORED = 20;  // messages persisted to localStorage
 const chatLoggedIds = new Set();
 function logChatTurns(messages) {
   for (const m of messages || []) {
+    // Stamp each plain-text turn the first time it's logged (kept beside the
+    // message, stripped before the API call) so repeats get their own row.
+    if (m && m.at === undefined && typeof m.content === "string") m.at = Date.now();
     const row = historyRowFromChat(m);
     if (!row || chatLoggedIds.has(row.id)) continue;
     if (historyLog.record(row)) chatLoggedIds.add(row.id);
@@ -37158,7 +37161,9 @@ function loadChatHistory() {
     if (!raw) return;
     const stored = JSON.parse(raw);
     if (!Array.isArray(stored) || !stored.length) return;
-    chatMessages = stored;
+    // Turns stored before stamping existed get at:null → they keep their old
+    // content-only history id instead of being re-recorded as new.
+    chatMessages = stored.map((m) => (m && m.at === undefined ? { ...m, at: null } : m));
     // Leave chatContextSent false: the first message after a reload re-sends a
     // fresh snapshot (the stored one may be from another day).
     const container = document.getElementById("aiChatMessages");
@@ -37225,7 +37230,8 @@ async function runChatTurn(depth = 0) {
         "content-type": "application/json",
         Authorization: `Bearer ${authSession?.access_token || ""}`
       },
-      body: JSON.stringify({ messages: chatMessages }),
+      // Only role + content go to the API (turns also carry a local `at` stamp).
+      body: JSON.stringify({ messages: chatMessages.map(({ role, content }) => ({ role, content })) }),
       signal: chatAbortController.signal
     });
 
