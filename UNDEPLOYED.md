@@ -10,6 +10,33 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+## iPhone layout fixes + ISSUES.md cleanup (PR #19)
+PR: https://github.com/LukeDEvans/Tableplan/pull/19
+
+- **Mini-player** runs flush to the bottom of the screen (no empty strip under the controls).
+- **Full-screen windows and dialogs** stay clear of the notch/status bar and home indicator:
+  Recipe Box (its bell / + / × were untappable), Tasks, Nutrition, Receipts, add task, event
+  editor, exercise recorder, recipe editor/view, contacts, and others. CSS only.
+- **Finance:** old CSV-backfilled months show their per-category amounts again (repaired on
+  load); the review-deck swipe hint no longer covers the buttons; new **Relinked accounts**
+  merge under Accounts › Bank link (FINANCE_TRANSACTIONS_DESIGN.md §12) — appears only if a
+  SimpleFIN relink ever duplicates an account.
+- **Mail AI:** every feature now defaults **on** — including the vegetarian-only recipe filter,
+  NYT / Economist / Star Tribune articles, and SimpleFIN alert auto-delete. Anything already
+  switched off stays off.
+- **Meal plan:** a failed Gmail swipe-"Add" puts the card back instead of losing it.
+- Publications leftovers removed from the code; iOS minimum raised to 15.0; new
+  architecture test for un-injected module names.
+
+**After deploying:**
+1. Supabase SQL editor: run `migrations/2026-09-29-drop-publications.sql` (drops the unused
+   `publications` / `feeds` / `articles` tables).
+2. Settings → Mail AI: check the newly-on features are what you want (the vegetarian filter
+   drops meat/fish recipes; SimpleFIN auto-delete trashes those alert emails).
+3. On the iPhone (web app and native app): open Recipe Box and a couple of dialogs and check
+   the headers sit below the status bar; start audio and check the mini-player.
+4. iOS 15 minimum reaches the phone only through the next TestFlight build.
+
 ## Recipe Box: "+" fixed, plus a review queue for new recipes (PR #17)
 PR: https://github.com/LukeDEvans/Tableplan/pull/17
 
