@@ -393,6 +393,28 @@ export function packageCostForQuantity(desired, packageQuantity, packageUnit, pr
   return Math.max(1, Math.ceil(desired.quantity / pkg.quantity - 1e-9)) * price;
 }
 
+// Display a (possibly scaled) amount: whole numbers stay whole, a remainder within
+// ~0.06 of a common kitchen fraction snaps to it ("1 1/2", "2/3"), anything else
+// is a trimmed decimal ("1.6") — never the old whole-plus-decimal "1 0.6".
+const GROCERY_AMOUNT_FRACTIONS = [
+  ["1/8", 1 / 8], ["1/4", 1 / 4], ["1/3", 1 / 3], ["1/2", 1 / 2], ["2/3", 2 / 3], ["3/4", 3 / 4]
+];
+export function formatScaledGroceryAmount(value) {
+  if (!Number.isFinite(value) || value <= 0) return "";
+  const roundedWhole = Math.round(value);
+  if (Math.abs(value - roundedWhole) < 0.01) return roundedWhole ? String(roundedWhole) : "";
+  const whole = Math.floor(value);
+  const remainder = value - whole;
+  let nearest = null;
+  GROCERY_AMOUNT_FRACTIONS.forEach(([label, fraction]) => {
+    const distance = Math.abs(remainder - fraction);
+    if (distance <= 0.06 && (!nearest || distance < nearest.distance)) nearest = { label, distance };
+  });
+  if (nearest) return [whole || "", nearest.label].filter(Boolean).join(" ");
+  const decimal = value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  return decimal === "0" ? "" : decimal;
+}
+
 export function validDateIso(value) {
   const date = new Date(value || "");
   return Number.isNaN(date.getTime()) ? "" : date.toISOString();
@@ -4902,30 +4924,7 @@ function groceryFractionToNumber(value) {
 }
 
 function formatGroceryAmount(value) {
-  if (!Number.isFinite(value) || value <= 0) return "";
-  const roundedWhole = Math.round(value);
-  if (Math.abs(value - roundedWhole) < 0.01) return String(roundedWhole);
-  const whole = Math.floor(value);
-  const remainder = value - whole;
-  const fraction = closestGroceryFraction(remainder);
-  if (!whole && !fraction) return "";
-  if (!fraction) return String(whole);
-  return [whole || "", fraction].filter(Boolean).join(" ");
-}
-
-function closestGroceryFraction(value) {
-  const fractions = [
-    ["1/8", 1 / 8],
-    ["1/4", 1 / 4],
-    ["1/3", 1 / 3],
-    ["1/2", 1 / 2],
-    ["2/3", 2 / 3],
-    ["3/4", 3 / 4]
-  ];
-  const match = fractions.find(([, fractionValue]) => Math.abs(value - fractionValue) < 0.01);
-  if (match) return match[0];
-  if (value > 0.99) return "";
-  return value < 0.01 ? "" : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  return formatScaledGroceryAmount(value);
 }
 
 function groceryRowKey(item) {

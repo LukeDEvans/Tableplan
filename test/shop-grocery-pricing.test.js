@@ -19,3 +19,22 @@ describe("price quantity comparison (GRO-5)", () => {
     expect(convertComparablePriceQuantity(2, "")).toBeNull();
   });
 });
+
+import { formatScaledGroceryAmount } from "../groceries-ui.js";
+
+describe("scaled amount display (REC-14)", () => {
+  it("never renders whole-plus-decimal", () => {
+    expect(formatScaledGroceryAmount(2 * 0.8)).toBe("1.6");
+    expect(formatScaledGroceryAmount(1.5)).toBe("1 1/2");
+    expect(formatScaledGroceryAmount(0.34)).toBe("1/3");
+    expect(formatScaledGroceryAmount(2.7)).toBe("2 2/3");
+    expect(formatScaledGroceryAmount(1.3)).toBe("1 1/3");
+    expect(formatScaledGroceryAmount(0.26)).toBe("1/4");
+    expect(formatScaledGroceryAmount(3)).toBe("3");
+    expect(formatScaledGroceryAmount(2.005)).toBe("2");
+    expect(formatScaledGroceryAmount(0.05)).toBe("0.05");
+    expect(formatScaledGroceryAmount(0.001)).toBe("");
+    expect(formatScaledGroceryAmount(0)).toBe("");
+    expect(formatScaledGroceryAmount(NaN)).toBe("");
+  });
+});
