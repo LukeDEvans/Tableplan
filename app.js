@@ -26751,13 +26751,21 @@ function refreshStalePodcastFeeds() {
       await Promise.all(stale.slice(i, i + batchSize).map(async (p) => {
         try {
           const fetched = await callNetlifyFunction("fetch-podcast", { url: p.url });
-          if (fetched?.error || !Array.isArray(fetched?.episodes)) return;
+          if (fetched?.error || !Array.isArray(fetched?.episodes)) {
+            // Keep the stale copy (still browsable) but remember why, so the show
+            // page can say it isn't updating instead of failing silently. Only
+            // persist when the message changes — this runs every TTL window.
+            const msg = String(fetched?.error || "Feed returned no episodes").slice(0, 200);
+            if (p.lastError !== msg) { p.lastError = msg; updated = true; }
+            return;
+          }
           p.episodes = fetched.episodes;
           if (fetched.title) p.title = fetched.title;
           if (fetched.art) p.art = fetched.art;
           p.lastFetched = new Date().toISOString();
+          delete p.lastError;
           updated = true;
-        } catch { /* keep the stale copy — still browsable */ }
+        } catch { /* network blip — keep the stale copy, retry next window */ }
       }));
     }
     podcastFeedRefreshInFlight = null;
@@ -30294,6 +30302,7 @@ function renderPodcastShowEpisodes(showId) {
         <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
       </button>
     </div>
+    ${show.lastError ? `<p class="podcast-feed-error" role="status">Not updating since ${escapeHtml(formatArticleDate(show.lastFetched))}: ${escapeHtml(show.lastError)}</p>` : ""}
     ${bundleControls}
     ${waitingHtml}
     ${episodes.map(e => podcastEpisodeRowHtml(e, { showShowTitle: false, hasPlaylists })).join("")}`;
@@ -33382,7 +33391,7 @@ async function subscribeFromTabSearch(result, btn) {
 
   try {
     const fetched = await callNetlifyFunction("fetch-podcast", { url: feedUrl });
-    if (fetched.error) { if (actionEl) actionEl.textContent = "Failed"; btn.classList.remove("is-loading"); return; }
+    if (fetched.error) { if (actionEl) actionEl.textContent = podcastFetchFailLabel(fetched.error); btn.classList.remove("is-loading"); return; }
     const id = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `pod_${Date.now()}`;
     state.podcasts.push({
       id, url: feedUrl,
@@ -33473,7 +33482,7 @@ async function addPodcastFromSearchResult(result, btn) {
   try {
     const fetched = await callNetlifyFunction("fetch-podcast", { url: feedUrl });
     if (fetched.error) {
-      if (actionEl) actionEl.textContent = "Failed";
+      if (actionEl) actionEl.textContent = podcastFetchFailLabel(fetched.error);
       btn.classList.remove("is-loading");
       return;
     }
@@ -33529,6 +33538,13 @@ async function confirmAddPodcast() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "Add Podcast"; }
   }
+}
+
+// Short, button-sized version of a fetch-podcast error for the subscribe buttons.
+function podcastFetchFailLabel(error) {
+  const msg = String(error || "").trim();
+  if (!msg) return "Failed";
+  return `Failed: ${msg.length > 60 ? msg.slice(0, 57) + "…" : msg}`;
 }
 
 function formatPodcastDuration(seconds) {
