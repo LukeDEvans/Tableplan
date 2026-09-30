@@ -29,7 +29,7 @@ import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } f
 import { sourceFromPlanCalendar, isGoogleCalendarUrl } from './calendar/sources.js';
 import { normalizeExternalEvent } from './calendar/normalize.js';
 import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap, upsertTitleOverride } from './calendar/reconcile.js';
-import { taskIsScheduled } from './calendar/tasks-project.js';
+import { taskIsScheduled, dedupeRecurringTaskInstances } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
 import { isNativeApp, nativeTts, nativeAppleMusic } from './native-bridge.js';
@@ -7344,7 +7344,10 @@ function showPlanApp(event) {
   elements.activeCookingSection.hidden = true;
   setPageTitle("Calendar");
   setPageHash("schedule");
-  refreshAllCalendarSources({ kinds: ["ics"] }); // Plan-open: refresh the ics pipeline only (linked refreshes on boot/CRUD)
+  // Plan-open: refresh the ics pipeline only (linked refreshes on boot/CRUD), and
+  // skip feeds fetched in the last 10 min — reopening the page shouldn't refetch
+  // every subscription. The 15-min sweep and manual/CRUD refreshes still force.
+  refreshAllCalendarSources({ kinds: ["ics"], icsMaxAgeMs: 10 * 60 * 1000 });
   renderPlanCalList(); // populate the left sidebar's calendar manager
   renderPlanPage();
   // T2: the bell is Tasks' only entry point — hide it when the Tasks page is
@@ -11892,13 +11895,8 @@ function ensureRecurringTasksForDay(key, dayId) {
 }
 
 function dedupeRecurringTasksForDay(key, dayId) {
-  const seenRecurringIds = new Set();
-  const tasks = rawDoTasksForDay(dayId, key).filter((task) => {
-    if (!task.recurringTaskId) return true;
-    if (seenRecurringIds.has(task.recurringTaskId)) return false;
-    seenRecurringIds.add(task.recurringTaskId);
-    return true;
-  });
+  // Prefers the done / logged instance (see dedupeRecurringTaskInstances).
+  const tasks = dedupeRecurringTaskInstances(rawDoTasksForDay(dayId, key));
   state.doPlans[key][dayId] = tasks;
   return tasks;
 }
@@ -13694,6 +13692,11 @@ function moveDoTask(sourceDay, targetDay, taskId) {
     }
   } else {
     state.doPlans[weekKey()][sourceDay] = sourceTasks.filter((item) => item.id !== taskId);
+    // mergeDoPlans unions each day by id, so a device still holding the task on
+    // its OLD day would resurrect it there (a duplicate). Tombstone the old id and
+    // give the moved copy a fresh one — mirrors the backlog→day "regular" branch.
+    recordDeletion("doPlanTasks", taskId);
+    nextTask.id = createId("task");
   }
 
   if (targetDay === "backlog") {
@@ -19287,9 +19290,10 @@ function sectionLabel(sectionId) {
 function planEventOccursOn(event, dateKey) {
   if (!event || !dateKey) return false;
   if ((event.exceptions || []).includes(dateKey)) return false;
-  if (event.date === dateKey) return true;
+  // Recurring: the rule decides — the base date itself isn't always an occurrence
+  // (e.g. weekly Mon/Wed starting on a Tuesday, or a 3rd-Friday series).
   if (event.recurrence) return expandRecurringOccurrences(event, dateKey, dateKey).includes(dateKey);
-  return false;
+  return event.date === dateKey;
 }
 
 // Meal columns as half-open minute-of-day windows covering the whole day, so an
@@ -24319,7 +24323,9 @@ function bindPlanGridDragCreate(root) {
       const ev2 = (state.planEvents || []).find((x) => x.id === pr.id);
       if (ev2) {
         const newStartTime = fmt(pr.newStart);
-        const newEndTime = fmt(Math.min(1440, pr.newStart + pr.durationMin));
+        // Wrap past midnight so an overnight event keeps its duration (the end
+        // lands on the next day; planEventMinutes reads end <= start as crossing).
+        const newEndTime = fmt((pr.newStart + pr.durationMin) % 1440);
         const dayChanged = !pr.lockDay && pr.newDay && pr.newDay !== ev2.date;
         if (newStartTime !== ev2.startTime || dayChanged) {
           const prev = { startTime: ev2.startTime, endTime: ev2.endTime, date: ev2.date };
@@ -24508,6 +24514,7 @@ function rescheduleOccurrence(seriesId, occDate, newDate) {
   renderPlanPage();
   const label = new Date(newDate + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
   showMailToast(`Moved this occurrence to ${label}`, () => {
+    recordDeletion("planEvents", oneOff.id); // tombstone, or the next sync union re-adds it
     state.planEvents = (state.planEvents || []).filter((e) => e.id !== oneOff.id);
     // Re-find the series by id (state may have been replaced by a sync).
     const s = (state.planEvents || []).find((e) => e.id === seriesId);
@@ -24650,8 +24657,10 @@ function getPlanEventsForRange(startKey, endKey) {
       if (e.recurrence?.freq) {
         // Subscribed recurring events (holidays, birthdays, …) expand like personal ones.
         expandRecurringOccurrences(base, startKey, endKey).forEach((occ) => events.push({ ...base, date: occ, occurrenceOf: base.id }));
-      } else if (e.date >= startKey && e.date <= endKey) {
-        events.push(base);
+      } else {
+        // Same expansion as personal events, so a multi-day subscribed event
+        // (endDate) shows on every spanned day, not just its start date.
+        eventInstancesInRange(base, startKey, endKey).forEach((inst) => events.push({ ...base, ...inst }));
       }
     });
   });
@@ -24901,7 +24910,8 @@ function renderPlanWeekView() {
   const rangeStart = dateKeyFromDate(days[0]);
   const rangeEnd = dateKeyFromDate(days[6]);
   // Fetch one extra day before so a Saturday-night overnight event's tail shows on Sunday.
-  const fetchStart = dateKeyFromDate(new Date(days[0].getTime() - 86400000));
+  const fetchStartD = new Date(days[0]); fetchStartD.setDate(fetchStartD.getDate() - 1); // calendar-day step (DST-safe)
+  const fetchStart = dateKeyFromDate(fetchStartD);
   const allEvents = getPlanEventsForRange(fetchStart, rangeEnd);
   const allDay = allEvents.filter((e) => e.allDay);
   const timed = allEvents.filter((e) => !e.allDay && e.startTime);
@@ -24965,7 +24975,8 @@ function renderPlanDayView() {
   const now = new Date();
   const nowH = now.getHours(), nowTop = (now.getMinutes() / 60) * 100;
   // Fetch the previous day too so a prior overnight event's tail shows this morning.
-  const prevKey = dateKeyFromDate(new Date(new Date(key + "T00:00:00").getTime() - 86400000));
+  const prevKeyD = new Date(key + "T00:00:00"); prevKeyD.setDate(prevKeyD.getDate() - 1); // calendar-day step (DST-safe)
+  const prevKey = dateKeyFromDate(prevKeyD);
   const allEvents = getPlanEventsForRange(prevKey, key);
   const allDay = allEvents.filter((e) => e.allDay && e.date === key);
   const timed = allEvents.filter((e) => !e.allDay && e.startTime);
@@ -25003,7 +25014,8 @@ function renderPlanAgendaView() {
   const byDay = {};
   allEvents.forEach((e) => { (byDay[e.date] = byDay[e.date] || []).push(e); });
   const today = dateKeyFromDate(new Date());
-  const tomorrow = dateKeyFromDate(new Date(Date.now() + 86400000));
+  const tomorrowD = new Date(); tomorrowD.setDate(tomorrowD.getDate() + 1); // calendar-day step (DST-safe)
+  const tomorrow = dateKeyFromDate(tomorrowD);
   const groups = Object.keys(byDay).sort().map((key) => {
     const label = key === today ? "Today" : key === tomorrow ? "Tomorrow" : new Date(key + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
     const rows = byDay[key].map((e) => {
@@ -25040,12 +25052,15 @@ function planEventMinutes(event) {
 // split into a head (this day → 24:00) and a tail (next day 00:00 → its end),
 // so each day column shows the right slice.
 function planDaySegments(dayKey, timed) {
-  const prevKey = dateKeyFromDate(new Date(new Date(dayKey + "T00:00:00").getTime() - 86400000));
+  const prevD = new Date(dayKey + "T00:00:00");
+  prevD.setDate(prevD.getDate() - 1); // calendar-day step (−86400000 ms skips/repeats a day across DST)
+  const prevKey = dateKeyFromDate(prevD);
   const segs = [];
   timed.forEach((e) => {
     const { start, end, crosses } = planEventMinutes(e);
     if (e.date === dayKey) segs.push({ event: e, start, end: Math.min(end, 1440), tail: false });
-    if (e.date === prevKey && crosses) segs.push({ event: e, start: 0, end: end - 1440, tail: true });
+    // Skip an empty tail (an event ending exactly at midnight has nothing on the next day).
+    if (e.date === prevKey && crosses && end - 1440 > 0) segs.push({ event: e, start: 0, end: end - 1440, tail: true });
   });
   return segs;
 }
@@ -25777,13 +25792,20 @@ async function savePlanEvent() {
   } else if (isRecurringEdit && scope === "following") {
     // Trim the original series to end before the split, then start a fresh
     // series from the split date carrying the edits forward.
+    // count:null — a kept "after N" count would make the editor re-derive the
+    // OLD end date, silently undoing the trim.
     state.planEvents = (state.planEvents || []).map((e) =>
-      e.id === editingPlanEventId ? { ...e, recurrence: { ...e.recurrence, until: dayBefore(splitDate) } } : e);
+      e.id === editingPlanEventId ? { ...e, recurrence: { ...e.recurrence, until: dayBefore(splitDate), count: null } } : e);
+    // The form's "after N" until was derived from the SERIES base date; the new
+    // series starts at anchorDate, so recount N from there.
+    let followingRec = eventData.recurrence || null;
+    if (followingRec?.count) {
+      followingRec = { ...followingRec, until: planNthOccurrenceDate({ date: anchorDate, recurrence: { ...followingRec, until: null, count: null } }, followingRec.count) || null };
+    }
     savedEvent = {
       ...existing, ...eventData, id: createId("plan-evt"), createdAt: new Date().toISOString(),
       date: anchorDate,
-      // eventData.recurrence already carries the user's chosen end (until / count).
-      recurrence: eventData.recurrence || null,
+      recurrence: followingRec,
       exceptions: (existing.exceptions || []).filter((d) => d >= splitDate),
       occurrenceOf: undefined,
     };
@@ -25798,13 +25820,28 @@ async function savePlanEvent() {
     state.planEvents = [...(state.planEvents || []), savedEvent];
   }
   syncEventChoresToDoList(savedEvent);
+  // A "this"/"following" split also changed the ORIGINAL series (exception /
+  // shorter until) — resync its linked chores so dropped dates lose their tasks.
+  if (isRecurringEdit && scope !== "all") {
+    const original = (state.planEvents || []).find((e) => e.id === editingPlanEventId);
+    if (original) syncEventChoresToDoList(original);
+  }
   persist();
   elements.planEventDialog.close();
   if (activeAppArea === "plan") renderPlanPage();
   else if (activeAppArea === "eat") renderPlanner();
   if (editSnapshot) {
     showMailToast(`Updated "${title}"`, () => {
+      // The event a "this"/"following" split CREATED vanishes on undo — tombstone
+      // it (and drop its chores) or the next sync union re-adds it. Only that id:
+      // never tombstone events another device synced in meanwhile.
+      if (savedEvent && !editSnapshot.some((e) => e.id === savedEvent.id)) {
+        recordDeletion("planEvents", savedEvent.id);
+        removeEventChoresFromDoList(savedEvent.id);
+      }
       state.planEvents = editSnapshot;
+      const restored = editSnapshot.find((e) => e.id === existing?.id);
+      if (restored) syncEventChoresToDoList(restored);
       persist();
       if (activeAppArea === "plan") renderPlanPage();
       else if (activeAppArea === "eat") renderPlanner();
@@ -25994,6 +26031,7 @@ function duplicatePlanEvent(id) {
   persist();
   if (activeAppArea === "plan") renderPlanPage();
   showMailToast(`Duplicated "${e.title}"`, () => {
+    recordDeletion("planEvents", copy.id); // tombstone, or the next sync union re-adds it
     state.planEvents = (state.planEvents || []).filter((x) => x.id !== copy.id);
     persist();
     if (activeAppArea === "plan") renderPlanPage();
@@ -26052,14 +26090,16 @@ async function deletePlanEvent() {
       state.planEvents = (state.planEvents || []).map((e) =>
         e.id === id ? { ...e, recurrence: { ...e.recurrence, until: dayBefore(occ), count: null } } : e);
       verb = "Removed this and following";
-      undo = () => { const cur = (state.planEvents || []).find((e) => e.id === id); if (cur) { cur.recurrence = prevRec; afterChange(); } };
+      undo = () => { const cur = (state.planEvents || []).find((e) => e.id === id); if (cur) { cur.recurrence = prevRec; syncEventChoresToDoList(cur); afterChange(); } };
     } else {
       // "this" — exclude just this occurrence.
       state.planEvents = (state.planEvents || []).map((e) =>
         e.id === id ? { ...e, exceptions: [...(e.exceptions || []), occ] } : e);
       verb = "Removed this day";
-      undo = () => { const cur = (state.planEvents || []).find((e) => e.id === id); if (cur) { cur.exceptions = (cur.exceptions || []).filter((x) => x !== occ); afterChange(); } };
+      undo = () => { const cur = (state.planEvents || []).find((e) => e.id === id); if (cur) { cur.exceptions = (cur.exceptions || []).filter((x) => x !== occ); syncEventChoresToDoList(cur); afterChange(); } };
     }
+    // "following"/"this" keep the series but drop dates — resync its linked chores.
+    if (scope !== "all") { const cur = (state.planEvents || []).find((e) => e.id === id); if (cur) syncEventChoresToDoList(cur); }
   } else {
     const snapshot = { ...existing };
     recordDeletion("planEvents", id);
@@ -26717,7 +26757,7 @@ function refreshCalendarSource(source, options = {}) {
   return fetchOnePlanCalendar(source); // per-cal
 }
 async function refreshAllCalendarSources(options = {}) {
-  const { kinds = ["linked", "ics"], ...linkedOptions } = options;
+  const { kinds = ["linked", "ics"], icsMaxAgeMs = 0, ...linkedOptions } = options;
   const sources = state.calendarSources || [];
   const jobs = [];
   if (kinds.includes("linked")) {
@@ -26731,7 +26771,18 @@ async function refreshAllCalendarSources(options = {}) {
     // Per-cal isolation across the non-linked set (ics + local) — exactly the set
     // the old fetchAllPlanCalendars iterated (state.planCalendars), since
     // calendarSources unions the same objects id-for-id.
-    sources.filter((s) => calendarSourceKind(s) === "ics")
+    // icsMaxAgeMs (Plan-open only): skip a feed THIS device fetched more recently
+    // than that. Uses the device-local cache's fetchedAt rather than the synced
+    // planCalendars[].lastFetched: another device's fresh fetch syncs a fresh
+    // lastFetched but not its events, so trusting it could strand a stale cache.
+    const fresh = (s) => {
+      const cached = planCalendarCache[s.id];
+      if (!(icsMaxAgeMs > 0) || !cached) return false;
+      const stamp = cached.fetchedAt;
+      const t = stamp instanceof Date ? stamp.getTime() : (stamp ? Date.parse(stamp) : NaN);
+      return Number.isFinite(t) && Date.now() - t < icsMaxAgeMs;
+    };
+    sources.filter((s) => calendarSourceKind(s) === "ics" && !fresh(s))
       .forEach((s) => jobs.push(refreshCalendarSource(s)));
   }
   await Promise.all(jobs); // safe: neither underlying fn rejects, so no cross-kind blur
@@ -38041,13 +38092,18 @@ async function executeChatTool(name, input) {
           const validDay = doPrepDays.find((d) => d.id === targetDay);
           const isBacklog = targetDay === "backlog";
           if (!validDay && !isBacklog) return `Invalid day "${targetDay}".`;
-          // Remove from current location
+          // Remove from current location. Tombstone the old id under the SOURCE
+          // key and re-id the moved copy, or a sync union resurrects it at the
+          // source (same as moveDoTask).
           if (foundDay === "backlog") {
             state.doBacklog = doBacklogTasks().filter((t) => t.id !== found.id);
+            recordDeletion("doBacklog", found.id);
           } else {
             const arr = rawDoTasksForDay(foundDay, wk);
             state.doPlans[wk][foundDay] = arr.filter((t) => t.id !== found.id);
+            recordDeletion("doPlanTasks", found.id);
           }
+          found = { ...found, id: createId("task") };
           // Add to target location
           if (isBacklog) {
             doBacklogTasks().push(found);

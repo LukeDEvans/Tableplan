@@ -89,3 +89,20 @@ export function taskCountsByDate(datedTasks) {
   }
   return counts;
 }
+
+// Collapse duplicate materializations of the same recurring task on one day
+// (two devices each create an instance with a different id; the sync union keeps
+// both). Keep the instance that carries the user's work — a DONE one, else one
+// with log entries, else the first — so dedupe never discards a completion.
+// Non-recurring tasks and order are preserved.
+export function dedupeRecurringTaskInstances(tasks) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  const score = (t) => (t?.done ? 2 : 0) + (Array.isArray(t?.log) && t.log.length ? 1 : 0);
+  const winner = new Map();
+  list.forEach((task) => {
+    if (!task?.recurringTaskId) return;
+    const cur = winner.get(task.recurringTaskId);
+    if (!cur || score(task) > score(cur)) winner.set(task.recurringTaskId, task);
+  });
+  return list.filter((task) => !task?.recurringTaskId || winner.get(task.recurringTaskId) === task);
+}
