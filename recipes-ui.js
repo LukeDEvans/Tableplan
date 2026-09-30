@@ -278,6 +278,22 @@ function decimalToAmount(raw, options) {
   return options.includes(label) ? label : raw;
 }
 
+// <option> list for the ingredient-row selects. A non-empty selectedValue that isn't in
+// the list ("400", "stick", "1.5") is appended as a selected option — otherwise the
+// <select> silently falls back to the first option and the value is lost on save.
+export function ingredientOptionListHtml(options, selectedValue, escape) {
+  const html = options.map((option) => {
+    const selected = option === selectedValue ? "selected" : "";
+    const label = option || "-";
+    return `<option value="${escape(option)}" ${selected}>${escape(label)}</option>`;
+  }).join("");
+  const value = selectedValue == null ? "" : String(selectedValue);
+  const extra = value !== "" && !options.includes(value)
+    ? `<option value="${escape(value)}" selected>${escape(value)}</option>`
+    : "";
+  return html + extra;
+}
+
 export function normalizeNutritionFacts(facts) {
   if (!Array.isArray(facts)) return [];
   return facts
@@ -2918,11 +2934,7 @@ function renderIngredientSuggestions() {
 }
 
 function optionList(options, selectedValue) {
-  return options.map((option) => {
-    const selected = option === selectedValue ? "selected" : "";
-    const label = option || "-";
-    return `<option value="${escapeHtml(option)}" ${selected}>${escapeHtml(label)}</option>`;
-  }).join("");
+  return ingredientOptionListHtml(options, selectedValue, escapeHtml);
 }
 
 function collectIngredientRows() {
