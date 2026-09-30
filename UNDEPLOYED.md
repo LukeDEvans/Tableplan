@@ -38,7 +38,7 @@ PR #25, which also carries the schema-7 web code):
       `[news-links] <paper>: N new of M unseen`.
 - [ ] Safari: Apple Music sign-in opens Apple's popup; Discover → Pop shows genre-specific charts.
 - [ ] Instacart: set `INSTACART_API_KEY` (+ `INSTACART_ENV=production`) in Netlify, do one send.
-- [ ] Supabase SQL editor: `select kind, count(*) from live_history group by kind` shows rows
-      after a minute of use.
+- [x] History log is recording (checked 2026-09-30: 87 media_play, 14 article_read rows;
+      ai_chat / practice_event appear once used).
 - [ ] Supabase SQL editor: run `migrations/2026-09-29-drop-publications.sql` (drops the unused
       publications/feeds/articles tables — irreversible, your call).
