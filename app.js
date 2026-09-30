@@ -38812,6 +38812,7 @@ function showTravelEditTripDialog(tripId) {
   d.querySelector("#teSave").addEventListener("click", () => {
     const name = d.querySelector("#teTripName").value.trim();
     if (!name) { alert("Please enter a trip name."); return; }
+    if (tripDatesReversed(d.querySelector("#teStart").value, d.querySelector("#teEnd").value)) { alert("The end date can't be before the start date."); return; }
     trip.name = name;
     trip.destination = d.querySelector("#teDest").value.trim();
     trip.status = d.querySelector("#teStatus").value;
@@ -40854,27 +40855,6 @@ function renderTravelNotes(trip, el = null) {
 
 // ── Map ──────────────────────────────────────────────────────────────────────────
 
-function travelMapHelperUrl() {
-  if (canUseLocalBackend()) return "/api/travel-map-url";
-  if (window.location.protocol.startsWith("http")) return "/.netlify/functions/travel-map-url";
-  return "";
-}
-
-async function fetchTravelMapUrl(params) {
-  const helperUrl = travelMapHelperUrl();
-  if (!helperUrl) return null;
-  try {
-    const res = await fetch(helperUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json", Authorization: "Bearer " + (authSession?.access_token || "") },
-      body: JSON.stringify(params)
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.url || null;
-  } catch { return null; }
-}
-
 // ── Planning map (interactive Leaflet) ───────────────────────────────────────
 // Plots the trip's real located stops (from trip.days) on an interactive map,
 // geocoding each place once into a per-trip cache (trip.geocache). Markers are
@@ -41330,7 +41310,6 @@ function printTripItinerary(trip) {
   const partyStr  = (trip.party || []).join(", ") || "Solo";
   const dateRange = formatTravelDate(trip.startDate) + (trip.endDate ? " – " + formatTravelDate(trip.endDate) : "");
   const generated = new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
-  const destQuery = encodeURIComponent((trip.destination || "travel") + " travel destination landscape");
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -41380,7 +41359,7 @@ h1,h2,h3,.day-num,.day-date{font-family:system-ui,-apple-system,sans-serif}
 </head>
 <body>
 <div class="cover">
-  <div class="cover-photo-wrap"><img class="cover-photo" src="https://source.unsplash.com/1200x700/?${destQuery}" alt="" onerror="this.parentElement.style.background='var(--hd)';this.remove()" /></div>
+  <div class="cover-photo-wrap"></div>
   <div class="cover-body">
     <div class="cover-flag">${theme.flag}</div>
     <h1 class="cover-title">${esc(trip.name)}</h1>
@@ -41398,10 +41377,12 @@ ${daysHtml}
 (function(){
   var imgs=Array.from(document.querySelectorAll('img'));
   var pending=imgs.filter(function(i){return !i.complete||!i.naturalWidth}).length;
-  if(!pending){window.print();return}
-  function done(){pending--;if(pending<=0)window.print()}
+  var printed=false;
+  function printOnce(){if(printed)return;printed=true;window.print()}
+  if(!pending){printOnce();return}
+  function done(){pending--;if(pending<=0)printOnce()}
   imgs.forEach(function(img){if(!img.complete||!img.naturalWidth){img.addEventListener('load',done);img.addEventListener('error',done)}});
-  setTimeout(function(){window.print()},4000);
+  setTimeout(printOnce,4000);
 })();
 <\/script>
 </body>
@@ -42403,6 +42384,7 @@ function showTravelNewTripDialog() {
     try {
       const name = d.querySelector("#tnTripName").value.trim();
       if (!name) { alert("Please enter a trip name."); return; }
+      if (tripDatesReversed(d.querySelector("#tnStart").value, d.querySelector("#tnEnd").value)) { alert("The end date can't be before the start date."); return; }
       const party = Array.from(d.querySelectorAll(".travel-party-chip.is-selected")).map(function(b) { return b.dataset.party; });
       const trip = defaultTrip({
         name,
@@ -42455,6 +42437,10 @@ function showTravelNewIdeaDialog() {
   });
 }
 
+// Both set and end before start → reject (an inverted range yields an empty
+// day grid and a broken calendar projection).
+function tripDatesReversed(start, end) { return !!(start && end && end < start); }
+
 function showTravelEditDatesDialog(trip) {
   const d = document.createElement("dialog");
   d.className = "recipe-dialog auth-dialog";
@@ -42474,8 +42460,17 @@ function showTravelEditDatesDialog(trip) {
   d.showModal();
   d.querySelector("#tedCancel").addEventListener("click", () => d.remove());
   d.querySelector("#tedSave").addEventListener("click", () => {
-    trip.startDate = d.querySelector("#tedStart").value;
-    trip.endDate = d.querySelector("#tedEnd").value;
+    const startVal = d.querySelector("#tedStart").value;
+    const endVal = d.querySelector("#tedEnd").value;
+    if (tripDatesReversed(startVal, endVal)) {
+      const endInput = d.querySelector("#tedEnd");
+      endInput.setCustomValidity("End date can't be before the start date");
+      endInput.reportValidity();
+      endInput.addEventListener("input", () => endInput.setCustomValidity(""), { once: true });
+      return;
+    }
+    trip.startDate = startVal;
+    trip.endDate = endVal;
     trip.updatedAt = new Date().toISOString();
     persist();
     syncTripToCalendar(trip);
