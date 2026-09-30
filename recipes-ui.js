@@ -376,6 +376,8 @@ export function createRecipesModule(deps) {
   // text while it's unchanged (rebuilding innerHTML every second reloaded photos and
   // swallowed taps that landed mid-rebuild).
   let activeCookingRenderKey = "";
+  // Key of the folder list last upserted to eat_folders (see saveRecipeRows).
+  let lastUpsertedFolderKey = null;
   let activeFolder = "";
   let activeRecipeTag = "";
   let currentActiveRecipeViewId = "";
@@ -591,9 +593,17 @@ function saveFolderRow(folder) {
 }
 
 function saveRecipeRow(recipe) {
-  if (!rowStorageCanWrite()) return;
-  upsertFolderRows(normalizedFolders())
-    .then(() => upsertRecipeRows([recipe]))
+  saveRecipeRows([recipe]);
+}
+
+// Batched recipe-row save. Folders are only re-upserted when they differ from the last
+// successful folder upsert this session (they used to be re-sent on every recipe save).
+function saveRecipeRows(recipes) {
+  if (!rowStorageCanWrite() || !recipes.length) return;
+  const folders = normalizedFolders();
+  const foldersPending = folderRowsKey(folders) !== lastUpsertedFolderKey;
+  (foldersPending ? upsertFolderRows(folders) : Promise.resolve())
+    .then(() => upsertRecipeRows(recipes))
     .catch((error) => {
       if (String(error.message || "").includes("tags")) {
         console.warn("Recipe tag row save failed. Run the Supabase tags migration before relying on tags across devices.", error);
@@ -613,8 +623,13 @@ function deleteRecipeRow(recipeId) {
   deleteSupabaseRow("eat_recipes", recipeId).catch((error) => console.warn("Recipe row delete failed.", error));
 }
 
+function folderRowsKey(folders) {
+  return JSON.stringify((folders || []).map((folder) => [folder.id, folder.name]));
+}
+
 async function upsertFolderRows(folders) {
   if (!folders.length) return;
+  const key = folderRowsKey(folders);
   const rows = folders.map((folder, index) => ({
     id: folder.id,
     name: folder.name,
@@ -630,6 +645,7 @@ async function upsertFolderRows(folders) {
     body: JSON.stringify(rows)
   });
   if (!response.ok) throw new Error(`Folder row save failed with status ${response.status}`);
+  lastUpsertedFolderKey = key;
 }
 
 async function upsertRecipeRows(recipes) {
@@ -1327,10 +1343,16 @@ function addRecipeTag(event) {
 
 function removeRecipeTag(tag) {
   state.recipeTags = recipeTags().filter((item) => normalize(item) !== normalize(tag));
+  // Only recipes that actually carried the tag change — saved in one batched upsert.
+  const changed = [];
   activeRecipes().forEach((recipe) => {
-    recipe.tags = normalizeRecipeTagSelection(recipe.tags).filter((item) => normalize(item) !== normalize(tag));
-    saveRecipeRow(recipe);
+    const before = normalizeRecipeTagSelection(recipe.tags);
+    const after = before.filter((item) => normalize(item) !== normalize(tag));
+    if (after.length === before.length) return;
+    recipe.tags = after;
+    changed.push(recipe);
   });
+  saveRecipeRows(changed);
   persist();
   renderTagLibrary();
   renderRecipeTagChoices(collectRecipeTags());
