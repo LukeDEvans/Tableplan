@@ -366,6 +366,33 @@ export function normalizePriceUnit(value) {
   return ["each", "oz", "lb", "fl oz", "pt", "qt", "gal", "g", "kg", "ml", "l", "count"].includes(unit) ? unit : "each";
 }
 
+// Price comparison units: convert a quantity in a comparable unit (lb, kg, gal,
+// qt, pt, l, or an already-base unit) to its base unit (oz, g, fl oz, ml).
+const COMPARABLE_PRICE_UNIT_CONVERSIONS = {
+  lb: { unit: "oz", factor: 16 },
+  kg: { unit: "g", factor: 1000 },
+  gal: { unit: "fl oz", factor: 128 },
+  qt: { unit: "fl oz", factor: 32 },
+  pt: { unit: "fl oz", factor: 16 },
+  l: { unit: "ml", factor: 1000 }
+};
+
+export function convertComparablePriceQuantity(quantity, unit) {
+  const number = Number(quantity);
+  if (quantity === null || quantity === undefined || !Number.isFinite(number) || !unit) return null;
+  const converted = COMPARABLE_PRICE_UNIT_CONVERSIONS[unit];
+  return converted ? { quantity: number * converted.factor, unit: converted.unit } : { quantity: number, unit };
+}
+
+// Cost of buying enough packages to cover `desired`. Both sides are converted to
+// the same base unit first (a 1 lb package covers a 16 oz need); when units are
+// incomparable, one package is assumed.
+export function packageCostForQuantity(desired, packageQuantity, packageUnit, price) {
+  const pkg = convertComparablePriceQuantity(packageQuantity, packageUnit);
+  if (!desired || !pkg || desired.unit !== pkg.unit || !(pkg.quantity > 0)) return price;
+  return Math.max(1, Math.ceil(desired.quantity / pkg.quantity - 1e-9)) * price;
+}
+
 export function validDateIso(value) {
   const date = new Date(value || "");
   return Number.isNaN(date.getTime()) ? "" : date.toISOString();
@@ -2631,6 +2658,8 @@ function groceryPricePlanTemplate(plan) {
   `;
 }
 
+const GROCERY_OPTIMIZER_EXHAUSTIVE_MAX_STORES = 10;
+
 function optimizeGroceryBasket(rows) {
   const settings = groceryPricingSettings();
   const empty = { assignments: {}, estimates: {}, merchandiseTotal: 0, adjustedTotal: 0, stopCost: 0, storeIds: [], pricedItemCount: 0, manualItemCount: 0 };
@@ -2640,30 +2669,36 @@ function optimizeGroceryBasket(rows) {
   const availableStoreIds = [...new Set(observations.map((observation) => observation.storeId))];
   if (!availableStoreIds.length) return empty;
 
-  let best = null;
-  const subsetCount = 2 ** availableStoreIds.length;
-  for (let mask = 1; mask < subsetCount; mask += 1) {
-    const storeIds = availableStoreIds.filter((_, index) => mask & (1 << index));
+  // Per-row candidates are independent of the store subset: key and cost them
+  // once, pre-sorted, so each subset only has to pick the first eligible one.
+  const observationsByKey = new Map();
+  observations.forEach((observation) => {
+    const key = canonicalGroceryItemKey(observation.itemKey);
+    if (!observationsByKey.has(key)) observationsByKey.set(key, []);
+    observationsByKey.get(key).push(observation);
+  });
+  const rowCandidates = rows.map((row) => ({
+    row,
+    fixedStoreId: locations[row.key]?.storeId || "",
+    candidates: (observationsByKey.get(row.key) || [])
+      .map((observation) => ({ observation, cost: estimatedObservationCost(row, observation) }))
+      .sort((a, b) => a.cost - b.cost
+        || b.observation.confidenceScore - a.observation.confidenceScore
+        || new Date(b.observation.observedAt) - new Date(a.observation.observedAt))
+  })).filter((entry) => entry.candidates.length);
+
+  const planForStores = (storeIds) => {
+    const allowed = new Set(storeIds);
     const assignments = {};
     const estimates = {};
     let merchandiseTotal = 0;
     let pricedItemCount = 0;
     let manualItemCount = 0;
-    rows.forEach((row) => {
-      const fixedStoreId = locations[row.key]?.storeId || "";
-      const eligibleStores = fixedStoreId ? [fixedStoreId] : storeIds;
-      const candidates = observations
-        .filter((observation) => canonicalGroceryItemKey(observation.itemKey) === row.key
-          && eligibleStores.includes(observation.storeId))
-        .map((observation) => ({
-          observation,
-          cost: estimatedObservationCost(row, observation)
-        }))
-        .sort((a, b) => a.cost - b.cost
-          || b.observation.confidenceScore - a.observation.confidenceScore
-          || new Date(b.observation.observedAt) - new Date(a.observation.observedAt));
-      if (!candidates.length) return;
-      const chosen = candidates[0];
+    rowCandidates.forEach(({ row, fixedStoreId, candidates }) => {
+      const chosen = candidates.find(({ observation }) => (
+        fixedStoreId ? observation.storeId === fixedStoreId : allowed.has(observation.storeId)
+      ));
+      if (!chosen) return;
       assignments[row.key] = chosen.observation.storeId;
       estimates[row.key] = {
         cost: chosen.cost,
@@ -2678,38 +2713,56 @@ function optimizeGroceryBasket(rows) {
     const usedStoreIds = [...new Set(Object.values(assignments))];
     const stopCost = Math.max(0, usedStoreIds.length - 1) * settings.extraStoreCost;
     const adjustedTotal = merchandiseTotal + stopCost;
-    const candidate = { assignments, estimates, merchandiseTotal, adjustedTotal, stopCost, storeIds: usedStoreIds, pricedItemCount, manualItemCount };
-    if (!best
-      || candidate.pricedItemCount > best.pricedItemCount
-      || (candidate.pricedItemCount === best.pricedItemCount && candidate.adjustedTotal < best.adjustedTotal)) {
-      best = candidate;
+    return { assignments, estimates, merchandiseTotal, adjustedTotal, stopCost, storeIds: usedStoreIds, pricedItemCount, manualItemCount };
+  };
+  const isBetter = (candidate, best) => !best
+    || candidate.pricedItemCount > best.pricedItemCount
+    || (candidate.pricedItemCount === best.pricedItemCount && candidate.adjustedTotal < best.adjustedTotal);
+
+  let best = null;
+  if (availableStoreIds.length <= GROCERY_OPTIMIZER_EXHAUSTIVE_MAX_STORES) {
+    const subsetCount = 2 ** availableStoreIds.length;
+    for (let mask = 1; mask < subsetCount; mask += 1) {
+      const candidate = planForStores(availableStoreIds.filter((_, index) => mask & (1 << index)));
+      if (isBetter(candidate, best)) best = candidate;
+    }
+  } else {
+    // Too many stores for 2^n subsets: start from every store and greedily drop
+    // the store whose removal helps most, until no removal helps.
+    let current = [...availableStoreIds];
+    best = planForStores(current);
+    let improved = true;
+    while (improved && current.length > 1) {
+      improved = false;
+      let bestDrop = null;
+      current.forEach((storeId) => {
+        const candidate = planForStores(current.filter((id) => id !== storeId));
+        if (isBetter(candidate, bestDrop?.plan || best)) bestDrop = { storeId, plan: candidate };
+      });
+      if (bestDrop) {
+        current = current.filter((id) => id !== bestDrop.storeId);
+        best = bestDrop.plan;
+        improved = true;
+      }
     }
   }
   return best || empty;
 }
 
 function estimatedObservationCost(row, observation) {
-  const desired = groceryQuantityForPrice(row);
-  if (!desired || desired.unit !== observation.packageUnit) return observation.price;
-  return Math.max(1, Math.ceil(desired.quantity / observation.packageQuantity)) * observation.price;
+  return packageCostForQuantity(
+    groceryQuantityForPrice(row),
+    observation.packageQuantity,
+    normalizeComparablePriceUnit(String(observation.packageUnit || "")),
+    observation.price
+  );
 }
 
 function groceryQuantityForPrice(row) {
   const quantity = groceryAmountToNumber(row.amount);
-  const unit = normalizeComparablePriceUnit(row.unit);
+  const unit = normalizeComparablePriceUnit(String(row.unit || ""));
   if (!Number.isFinite(quantity) || !unit) return null;
-  const conversions = {
-    lb: { unit: "oz", factor: 16 },
-    kg: { unit: "g", factor: 1000 },
-    gal: { unit: "fl oz", factor: 128 },
-    qt: { unit: "fl oz", factor: 32 },
-    pt: { unit: "fl oz", factor: 16 },
-    l: { unit: "ml", factor: 1000 }
-  };
-  const converted = conversions[unit];
-  return converted
-    ? { quantity: quantity * converted.factor, unit: converted.unit }
-    : { quantity, unit };
+  return convertComparablePriceQuantity(quantity, unit);
 }
 
 function normalizeComparablePriceUnit(value) {
