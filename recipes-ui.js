@@ -1479,7 +1479,7 @@ function recipeMatchesSearch(recipe, query) {
 function recipeCardTemplate(recipe) {
   const tags = normalizeRecipeTagSelection(recipe.tags);
   return `
-    <button class="recipe-card" data-id="${recipe.id}">
+    <button class="recipe-card" data-id="${escapeHtml(recipe.id)}">
       <span class="recipe-card-head">
         <h3>${escapeHtml(recipe.name)}</h3>
         ${recipeTimePillsTemplate(recipe, "Anytime")}
@@ -1811,7 +1811,7 @@ function activeRecipeViewTemplate(recipe, cookingItem) {
       <span class="serving-adjuster serving-static"><span>Servings</span><strong>${escapeHtml(String(servings))}</strong></span>
       ${tags.map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join("")}
     </div>
-    ${recipe.sourceUrl ? `<a class="recipe-source-link" href="${escapeHtml(recipe.sourceUrl)}" target="_blank" rel="noreferrer">Source recipe</a>` : ""}
+    ${/^https?:\/\//i.test(recipe.sourceUrl) ? `<a class="recipe-source-link" href="${escapeHtml(recipe.sourceUrl)}" target="_blank" rel="noreferrer">Source recipe</a>` : ""}
     ${activeRecipeSectionTemplate("ingredients", "Ingredients", cookingItem.collapsedSections?.ingredients, ingredients.length ? activeIngredientChecklistTemplate(ingredients, scale, checkedIngredients) : `<p class="empty-state">No ingredients added yet.</p>`)}
     ${activeRecipeSectionTemplate("instructions", "Instructions", cookingItem.collapsedSections?.instructions, steps.length ? `<ol class="active-recipe-steps">${steps.map((step, index) => `
       <li>
