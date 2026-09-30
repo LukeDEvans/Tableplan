@@ -1,6 +1,6 @@
 // mealplan-ui.js — Meal-plan domain extracted from app.js (createMealplanModule).
 // Completes Decision #2's four-way split (recipes / meal-plan / groceries / cook).
-// 15 pure normalizers are top-level exports (boot); the whole planner UI + auto-rules +
+// A few pure helpers/constants are top-level exports (boot-safe); the whole planner UI + auto-rules +
 // meal-entry drag/drop + pickers + auto-generate + serving writeback + meal-plan settings +
 // restaurant seam + meal-plan recipe cards is the factory. Meal-plan is the hub: it is
 // instantiated LAST, so groceries/recipes get the meal-plan bridge injected via thunks, and
