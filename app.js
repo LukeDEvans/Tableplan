@@ -9761,21 +9761,29 @@ function buildIngestEntityCard(entity, source, dialog) {
 function commitEntityToTrip(entity, trip, source) {
   if (!trip) return "No trip";
   if (!Array.isArray(state.trips)) state.trips = [];
+  // Multi-segment flights match per segment (TRV-6).
+  if (entity.kind === "flight" && (entity.segments || []).length > 1) return commitFlightSegmentsToTrip(entity, trip, source);
   // Already-imported? Recognize an update/cancellation instead of duplicating.
   const existing = TravelIngest.findExistingItem(entity, trip);
   if (existing) {
     if (entity.intent === "cancel") return proposeEntityChange(entity, trip, existing, source);
-    const incoming = TravelIngest.entityToPlacements(entity, source)[0]?.item;
-    const changes = incoming ? TravelIngest.diffItem(existing.item, incoming, Object.keys(incoming)) : [];
+    const primary = TravelIngest.entityToPlacements(entity, source)[0];
+    const changes = primary ? TravelIngest.placementChanges(existing, primary) : [];
     if (!changes.length) return "Already in this trip";
     // A conflict with an already-IMPORTED item is a reservation update; a conflict
     // with a HAND-ENTERED item is an itinerary-update proposal (never silent).
     if (existing.item.source) return proposeEntityChange(entity, trip, existing, source);
     return proposeItineraryChange(entity, trip, { item: existing.item, section: existing.section, dateKey: existing.dateKey, changes }, source);
   }
-  // Not a re-import: does it conflict with a hand-entered itinerary item?
+  // A cancellation with nothing to cancel must never be ADDED to the plan (TRV-5).
+  if (entity.intent === "cancel") return "Nothing to cancel in this trip";
+  // Not a re-import: does it conflict with a hand-entered itinerary item? If the
+  // user already answered "Keep current" to a proposal against that item, it
+  // isn't the same reservation — fall through and add it instead (TRV-4).
   const itinConflict = TravelIngest.findItineraryConflict(entity, trip);
-  if (itinConflict) return proposeItineraryChange(entity, trip, itinConflict, source);
+  const dismissedBefore = itinConflict && (trip.proposals || []).some(p =>
+    p && p.type === "itinerary" && p.status === "dismissed" && p.targetItemId === itinConflict.item.id);
+  if (itinConflict && !dismissedBefore) return proposeItineraryChange(entity, trip, itinConflict, source);
   const placements = TravelIngest.entityToPlacements(entity, source);
   if (!placements.length) { saveEntityAsTripNote(entity, trip, source); return "Saved as note"; }
   placements.forEach(p => {
@@ -9786,6 +9794,35 @@ function commitEntityToTrip(entity, trip, source) {
   persist();
   if (activeAppArea === "explore" && exploreOpenTripId === trip.id) renderExploreTripPanel("itinerary", trip);
   return "Added to " + (trip.name || "trip");
+}
+
+// TRV-6: each segment of a multi-leg booking is matched to its own leg, so a
+// change to leg 2 is proposed against leg 2 (one proposal per changed segment)
+// and a newly added segment is placed rather than diffed against leg 1.
+function commitFlightSegmentsToTrip(entity, trip, source) {
+  const rows = TravelIngest.matchFlightSegments(entity, trip, source);
+  let proposed = 0, added = 0, cancels = 0;
+  rows.forEach(({ placement, existing }) => {
+    if (existing) {
+      if (entity.intent === "cancel") { proposeEntityChange(entity, trip, existing, source, placement); cancels++; return; }
+      if (!TravelIngest.placementChanges(existing, placement).length) return;
+      proposeEntityChange(entity, trip, existing, source, placement);
+      proposed++;
+      return;
+    }
+    if (entity.intent === "cancel") return; // nothing to cancel for this segment
+    tripDayItems(trip, placement.dateKey, placement.section).push(Object.assign({ id: createId("ti") }, placement.item));
+    added++;
+  });
+  if (!proposed && !added && !cancels) return entity.intent === "cancel" ? "Nothing to cancel in this trip" : "Already in this trip";
+  trip.updatedAt = new Date().toISOString();
+  persist();
+  if (added && activeAppArea === "explore" && exploreOpenTripId === trip.id) renderExploreTripPanel("itinerary", trip);
+  if (cancels) return "Cancellation proposed — review in Explore";
+  const parts = [];
+  if (added) parts.push(`Added ${added} segment${added === 1 ? "" : "s"}`);
+  if (proposed) parts.push(`${proposed} change${proposed === 1 ? "" : "s"} proposed — review in Explore`);
+  return parts.join(" · ");
 }
 
 function createTripFromEntity(entity, source) {
@@ -9841,9 +9878,9 @@ function chooseTripForEntity(entity, source, onPick) {
 // Record a proposed change (modification/cancellation of an already-imported
 // item) without touching canonical data. Surfaced in the Explore review inbox
 // (Phase 3). Returns a short label for the ingest card.
-function proposeEntityChange(entity, trip, existing, source) {
+function proposeEntityChange(entity, trip, existing, source, placement = null) {
   if (!Array.isArray(trip.proposals)) trip.proposals = [];
-  const proposal = TravelIngest.entityToProposal(entity, existing, source);
+  const proposal = TravelIngest.entityToProposal(entity, existing, source, placement);
   // Don't stack identical pending proposals for the same target.
   const dup = trip.proposals.find(p => p.status === "pending" && p.targetItemId === proposal.targetItemId && p.type === proposal.type);
   if (!dup) trip.proposals.push(proposal);
@@ -9982,11 +10019,32 @@ function applyProposal(trip, proposal) {
   const item = findTripItemRaw(trip, proposal.targetItemId, proposal.section, proposal.ownerDateKey);
   if (item) {
     if (proposal.type === "cancel") { item.cancelled = true; item.cancelledAt = new Date().toISOString(); }
-    else (proposal.changes || []).forEach(c => { item[c.field] = c.to; });
+    else (proposal.changes || []).forEach(c => { if (c.field !== "dateKey") item[c.field] = c.to; });
     if (!item.source && proposal.source) item.source = proposal.source;
+    // A date change must also move the item to its new day bucket, or it
+    // vanishes from the plan (lodging/legs render only on their own date) or
+    // the change is silently lost (food/activities have no date field) — TRV-3.
+    if (proposal.type !== "cancel") moveTripItemToDate(trip, item, proposal);
   }
   resolveProposal(trip, proposal, "applied");
   if (activeAppArea === "explore" && exploreOpenTripId === trip.id) renderExploreTripPanel("itinerary", trip);
+}
+
+function moveTripItemToDate(trip, item, proposal) {
+  let curKey = null, curSection = null;
+  for (const dk of Object.keys(trip.days || {})) {
+    for (const sec of Object.keys(trip.days[dk] || {})) {
+      const arr = trip.days[dk][sec];
+      if (Array.isArray(arr) && arr.includes(item)) { curKey = dk; curSection = sec; break; }
+    }
+    if (curKey) break;
+  }
+  if (!curKey) return;
+  const target = TravelIngest.targetDateKeyFor(curSection, item, proposal.changes, curKey);
+  if (!target || target === curKey) return;
+  const arr = trip.days[curKey][curSection];
+  arr.splice(arr.indexOf(item), 1);
+  tripDayItems(trip, target, curSection).push(item);
 }
 
 function resolveProposal(trip, proposal, status) {
@@ -10000,7 +10058,7 @@ function resolveProposal(trip, proposal, status) {
 function prettyFieldName(f) {
   const map = { checkInDate: "Check-in", checkOutDate: "Check-out", checkInTime: "Check-in time", checkOutTime: "Check-out time",
     departDate: "Departs", departTime: "Departure time", arriveDate: "Arrives", arriveTime: "Arrival time",
-    reservationTime: "Reservation", activityTime: "Time", confirmationNo: "Confirmation", address: "Address", notes: "Notes", name: "Name", title: "Name" };
+    reservationTime: "Reservation", activityTime: "Time", dateKey: "Date", confirmationNo: "Confirmation", address: "Address", notes: "Notes", name: "Name", title: "Name" };
   return map[f] || f.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase());
 }
 
