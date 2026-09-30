@@ -72,12 +72,18 @@ async function assertHostResolvesPublic(hostname, lookup) {
 
 // Read the body with a hard byte cap, aborting an oversized stream mid-download
 // rather than buffering it all into memory.
-async function readCapped(res, maxBytes) {
+//
+// `truncate: true` keeps the first `maxBytes` and stops reading instead of
+// throwing — for sources (RSS feeds) whose useful content is at the front.
+async function readCapped(res, maxBytes, { truncate = false } = {}) {
   if (!res.body || typeof res.body.getReader !== "function") {
     const text = await res.text();
     const bytes = Buffer.byteLength(text);
-    if (bytes > maxBytes) throw fetchError("too-large", "Response exceeded the maximum size.");
-    return { text, bytes };
+    if (bytes > maxBytes) {
+      if (!truncate) throw fetchError("too-large", "Response exceeded the maximum size.");
+      return { text: Buffer.from(text).subarray(0, maxBytes).toString("utf8"), bytes: maxBytes, truncated: true };
+    }
+    return { text, bytes, truncated: false };
   }
   const reader = res.body.getReader();
   const chunks = [];
@@ -88,11 +94,14 @@ async function readCapped(res, maxBytes) {
     total += value.length;
     if (total > maxBytes) {
       try { await reader.cancel(); } catch { /* already closed */ }
-      throw fetchError("too-large", "Response exceeded the maximum size.");
+      if (!truncate) throw fetchError("too-large", "Response exceeded the maximum size.");
+      const keep = value.length - (total - maxBytes);
+      chunks.push(Buffer.from(value).subarray(0, keep));
+      return { text: Buffer.concat(chunks).toString("utf8"), bytes: maxBytes, truncated: true };
     }
     chunks.push(Buffer.from(value));
   }
-  return { text: Buffer.concat(chunks).toString("utf8"), bytes: total };
+  return { text: Buffer.concat(chunks).toString("utf8"), bytes: total, truncated: false };
 }
 
 // Fetch a public import URL safely. Returns
@@ -157,17 +166,18 @@ async function safeFetch(rawUrl, options = {}) {
       throw fetchError("bad-content-type", `Unsupported content type: ${contentType}`);
     }
     const declaredLen = Number(res.headers.get("content-length") || 0);
-    if (declaredLen && declaredLen > opt.maxBytes) {
+    if (declaredLen && declaredLen > opt.maxBytes && !opt.truncate) {
       throw fetchError("too-large", "Response too large.");
     }
 
-    const { text, bytes } = await readCapped(res, opt.maxBytes);
+    const { text, bytes, truncated } = await readCapped(res, opt.maxBytes, { truncate: !!opt.truncate });
     return {
       ok: res.status >= 200 && res.status < 300,
       status: res.status,
       finalUrl: current.toString(),
       contentType,
       bytes,
+      truncated,
       body: text,
       etag,
       lastModified,

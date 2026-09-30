@@ -33,7 +33,13 @@ exports.handler = async (event) => {
     // allow-listing, DNS + blocked-IP checks on the initial host and every
     // redirect hop, a streamed size cap, and a total timeout.
     result = await safeFetch(url, {
-      maxBytes: 5_000_000, // feeds with 50 episodes + show notes can be large
+      // Long-running shows publish their whole back catalog in one feed (White
+      // Coat Investor ~740 episodes, NPR Politics years of dailies) and outgrow
+      // any fixed cap. Feeds list newest first and we keep 50, so read the
+      // front of the feed and cut at the last complete <item> instead of failing.
+      maxBytes: 2_000_000,
+      truncate: true,
+      timeoutMs: 15000,
       accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
       allowedContentTypes: FEED_CONTENT_TYPES,
     });
@@ -43,7 +49,7 @@ exports.handler = async (event) => {
   }
   if (!result.ok) return json(502, { error: `Feed returned ${result.status}` });
 
-  const parsed = parseRSS(result.body);
+  const parsed = parseRSS(result.truncated ? closeTruncatedFeed(result.body) : result.body);
   if (!parsed.title) return json(422, { error: "Could not parse RSS feed — check the URL is a valid RSS/Atom feed" });
   return json(200, parsed);
 };
@@ -81,6 +87,14 @@ function parseRSS(xml) {
   }
 
   return { title, description, art, episodes: episodes.slice(0, 50) };
+}
+
+// Cut a byte-capped feed back to its last complete episode and re-close the
+// document so the channel/item regexes see well-formed structure.
+function closeTruncatedFeed(xml) {
+  const end = xml.toLowerCase().lastIndexOf("</item>");
+  if (end === -1) return xml;
+  return xml.slice(0, end + "</item>".length) + "</channel></rss>";
 }
 
 function getText(xml, tag) {
@@ -133,3 +147,4 @@ function json(statusCode, body) {
 // Exposed for tests (feed content-type allow-list + parser).
 module.exports.FEED_CONTENT_TYPES = FEED_CONTENT_TYPES;
 module.exports.parseRSS = parseRSS;
+module.exports.closeTruncatedFeed = closeTruncatedFeed;
