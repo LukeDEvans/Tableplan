@@ -35,8 +35,10 @@ screen, nothing important clipped at the right edge:
 
 ## 4. Deploy hygiene
 - [ ] Confirm with Luke before deploying (deploy credit).
-- [ ] Read [UNDEPLOYED.md](UNDEPLOYED.md): everything listed ships with this deploy. Do
-      each entry's post-deploy steps afterwards, then empty the list.
+- [ ] Read [UNDEPLOYED.md](UNDEPLOYED.md): everything listed ships with this deploy. After
+      the deploy, move each entry's post-deploy steps into
+      [POST_DEPLOY_CHECKS.md](POST_DEPLOY_CHECKS.md) (under a heading for this deploy), do
+      the ones you can, then empty UNDEPLOYED.md.
 - [ ] Deploy = a commit on `main` whose message contains `[deploy]` (e.g. merge a PR
       titled "… [deploy]").
 - [ ] After deploy: any pending post-deploy reminders (finance version-stamp +

@@ -39,7 +39,9 @@ export function nativeAudio() { return null; }       // background-audio queue p
 // @capacitor/core module, which the app must import and bundle. registerPlugin()
 // builds the proxy that routes method/addListener calls to the native plugin, using
 // the plugin header the native runtime injects (present only once the plugin is
-// listed in capacitor.config.json's packageClassList). So: import registerPlugin
+// registered — the app's own plugins are registered in code by
+// ios/App/App/MainViewController.swift, because `cap sync` rewrites
+// capacitor.config.json's packageClassList with npm plugins only). So: import registerPlugin
 // from @capacitor/core, call it once (cached), and only return the proxy when the
 // native side actually registered the plugin — otherwise null → Web Speech fallback.
 let _liveTts;
@@ -58,4 +60,18 @@ export function nativeTts() {
   } catch { _liveTts = null; }
   return _liveTts;
 }
-export function nativeAppleMusic() { return null; }  // native MusicKit plugin
+// Native Apple Music (MusicKit via the AppleMusic plugin): sign-in, the Apple
+// Music API and playback. null in a browser/PWA → MusicKit JS as before.
+let _appleMusic;
+export function nativeAppleMusic() {
+  if (_appleMusic !== undefined) return _appleMusic;
+  try {
+    if (!(CapCore && typeof CapCore.isNativePlatform === "function" && CapCore.isNativePlatform())) {
+      _appleMusic = null;
+      return _appleMusic;
+    }
+    const p = registerPlugin("AppleMusic");
+    _appleMusic = (CapCore.isPluginAvailable && CapCore.isPluginAvailable("AppleMusic")) ? p : null;
+  } catch { _appleMusic = null; }
+  return _appleMusic;
+}

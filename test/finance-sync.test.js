@@ -322,3 +322,22 @@ describe("guardBootEmptyFinance — boot-empty write/merge protection", () => {
     }
   });
 });
+
+describe("pickLatestSetting — financeTxnSource: latest explicit choice wins", () => {
+  it("a stamped choice beats a newer copy that only has the default", async () => {
+    const { pickLatestSetting } = await import("../finance-sync.js");
+    expect(pickLatestSetting({ value: "feed", at: "" }, { value: "store", at: "2026-09-30T10:00:00Z" })).toEqual({ value: "store", at: "2026-09-30T10:00:00Z" });
+  });
+  it("the later of two explicit choices wins, whichever side it's on", async () => {
+    const { pickLatestSetting } = await import("../finance-sync.js");
+    const a = { value: "store", at: "2026-09-30T10:00:00Z" };
+    const b = { value: "feed", at: "2026-09-30T11:00:00Z" };
+    expect(pickLatestSetting(a, b).value).toBe("feed");
+    expect(pickLatestSetting(b, a).value).toBe("feed");
+  });
+  it("with no stamps anywhere the newer copy wins (today's behavior); ties keep newer", async () => {
+    const { pickLatestSetting } = await import("../finance-sync.js");
+    expect(pickLatestSetting({ value: "store" }, { value: "feed" }).value).toBe("store");
+    expect(pickLatestSetting({ value: "feed", at: "2026-09-30T10:00:00Z" }, { value: "store", at: "2026-09-30T10:00:00Z" }).value).toBe("feed");
+  });
+});

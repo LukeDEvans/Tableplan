@@ -117,7 +117,7 @@ found this way unless it's genuinely trivial.
 
 ## Mail AI features
 
-Every AI email-processing feature MUST have an on/off toggle in Settings → Mail AI. To add one: (1) add an entry to the `MAIL_AI_FEATURES` registry in app.js (key, label, description) — the toggle UI renders automatically; (2) the server-side function must check its flag in `state.mailAiSettings.<key>` (config section, row `personal:config`) and do nothing when off. **Features are on by default** (Luke, 2026-09-29): set `defaultOn: true` and have the server treat only an explicit `false` as off (`mailAiSettings?.<key> !== false`).
+Every AI email-processing feature MUST have an on/off toggle in Settings → Mail AI. To add one: (1) add an entry to the `MAIL_AI_FEATURES` registry in app.js (key, label, description) — the toggle UI renders automatically; (2) the server-side function must check its flag in `state.mailAiSettings.<key>` (config section, row `personal:config`) and do nothing when off. **Features are on by default** (Luke, 2026-09-29): set `defaultOn: true` and have the server treat only an explicit `false` as off (`mailAiSettings?.<key> !== false`). **Exception — `assistantMailRead` (the chat assistant reading email on request) stays OFF by default** (Luke, 2026-09-29): server and client treat only an explicit `true` as on. Don't flip it to match the rule.
 
 ## Git / GitHub
 
@@ -125,7 +125,7 @@ Every AI email-processing feature MUST have an on/off toggle in Settings → Mai
 
 **Push to GitHub freely after any completed, verified commit — no need to ask first.** Netlify deploys still require explicit confirmation before proceeding. **Merging to `main` no longer deploys by itself (2026-09-27):** a production build runs only when the commit on `main` has **`[deploy]`** in its message (`netlify.toml` `ignore` → `scripts/netlify-ignore.sh`; deploy previews always build). So a merge is safe once Luke has OK'd it; a `[deploy]` commit is the boundary that matters. Netlify Free plan: ~20 production deploys/month (300 credits ÷ 15 credits/deploy).
 
-**Every merge to `main` that isn't deployed adds an entry to [UNDEPLOYED.md](UNDEPLOYED.md)** (what shipped, the PR, post-deploy steps), so undeployed work isn't forgotten.
+**Every merge to `main` that isn't deployed adds an entry to [UNDEPLOYED.md](UNDEPLOYED.md)** (what shipped, the PR, post-deploy steps), so undeployed work isn't forgotten. After a deploy, those post-deploy steps move to [POST_DEPLOY_CHECKS.md](POST_DEPLOY_CHECKS.md) (checks for work that is live) and UNDEPLOYED.md is emptied — it only ever lists work that hasn't shipped.
 
 **Before any deploy (a `[deploy]` commit on `main`), run through [PRE_PUSH_CHECKLIST.md](PRE_PUSH_CHECKLIST.md)** — especially the mobile horizontal-fit pass (every page must lay out within a ~360px phone; no sideways scroll, nothing clipped at the right edge) — and include everything in UNDEPLOYED.md. Report anything that fails before proceeding.
 

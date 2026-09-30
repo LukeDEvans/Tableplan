@@ -14273,6 +14273,94 @@ body[data-theme="dark"] .watch-provider-link:hover {
   font-size: 13px;
 }
 
+/* Undo on an applied assistant change (assistant-undo.js) */
+.ai-chat-undo-btn {
+  margin-left: 8px;
+  background: none;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  padding: 1px 9px;
+  cursor: pointer;
+  opacity: 0.85;
+}
+.ai-chat-undo-btn:hover { opacity: 1; }
+.ai-chat-undo-btn:disabled { cursor: default; opacity: 0.6; border-style: dashed; }
+.ai-chat-undone { margin-left: 8px; font-size: 12px; font-style: italic; opacity: 0.8; }
+.ai-chat-msg--tool.is-undone { text-decoration: line-through; opacity: 0.7; }
+
+/* Confirm card before an assistant removal */
+.ai-chat-msg--confirm {
+  align-self: flex-start;
+  background: var(--danger-bg, #fee2e2);
+  color: var(--text, #111);
+  border: 1px solid var(--danger, #dc2626);
+  border-bottom-left-radius: 4px;
+  font-size: 13px;
+}
+.ai-chat-msg--confirm.is-confirmed,
+.ai-chat-msg--confirm.is-cancelled { border-style: dashed; opacity: 0.8; }
+.ai-chat-confirm-actions { display: flex; gap: 8px; margin-top: 8px; }
+.ai-chat-confirm-actions button {
+  border-radius: 999px;
+  padding: 4px 14px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid var(--danger, #dc2626);
+}
+.ai-chat-confirm-yes { background: var(--danger, #dc2626); color: #fff; }
+.ai-chat-confirm-no { background: transparent; color: var(--text, #111); }
+
+/* Proactive suggestions strip (assistant-suggestions.js) */
+.ai-chat-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 16px 0;
+  flex: 0 0 auto;
+  max-height: 35vh;
+  overflow-y: auto;
+}
+.ai-chat-suggestions[hidden] { display: none; }
+.ai-suggestion {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--sun-pale, #fef9ec);
+  color: var(--sun-dark, #92400e);
+  font-size: 13px;
+}
+.ai-suggestion-text { display: flex; flex-direction: column; min-width: 0; }
+.ai-suggestion-text strong { font-weight: 600; overflow-wrap: anywhere; }
+.ai-suggestion-text span { opacity: 0.85; font-size: 12px; overflow-wrap: anywhere; }
+.ai-suggestion-go {
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ai-suggestion-dismiss {
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+}
+.ai-suggestion-dismiss:hover { opacity: 1; }
+
 .ai-chat-input-row {
   display: flex;
   align-items: flex-end;
@@ -14496,7 +14584,7 @@ body[data-theme="dark"] .watch-provider-link:hover {
 }
 .ai-note-row {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto auto auto;
   align-items: start;
   gap: 8px;
   border: 1px solid var(--line, #e5e7eb);
@@ -14525,6 +14613,17 @@ body[data-theme="dark"] .watch-provider-link:hover {
   line-height: 1;
 }
 .ai-note-delete:hover { color: var(--danger, #dc2626); background: var(--danger-bg, #fee2e2); }
+.ai-note-edit {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted, #6b7280);
+  font-size: 0.8rem;
+  padding: 2px 4px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.ai-note-edit:hover { color: var(--text, #111); background: var(--surface-raised, #f3f4f6); }
 .ai-note-empty {
   font-size: 0.8rem;
   color: var(--muted, #6b7280);

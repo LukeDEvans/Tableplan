@@ -50,6 +50,17 @@ describe("row builders", () => {
     expect(historyRowFromChat(m, 1800000000000).id).toBe(r.id); // re-log after reload = same row
     expect(historyRowFromChat({ role: "assistant", content: [{ type: "tool_use" }] })).toBeNull();
   });
+  it("stamped chat turns: the same question asked twice records two rows; a reload doesn't", () => {
+    const first = { role: "user", content: "What's for dinner?", at: 1700000000000 };
+    const again = { role: "user", content: "What's for dinner?", at: 1700000500000 };
+    const a = historyRowFromChat(first, 1);
+    expect(a.occurred_at).toBe(new Date(1700000000000).toISOString()); // the turn's own time
+    expect(historyRowFromChat(again).id).not.toBe(a.id);
+    expect(historyRowFromChat({ ...first }, 999).id).toBe(a.id); // re-log of the same stamped turn
+    // Legacy turns (no stamp, or null after a reload) keep the content-only id.
+    const legacy = historyRowFromChat({ role: "user", content: "What's for dinner?" });
+    expect(historyRowFromChat({ role: "user", content: "What's for dinner?", at: null }).id).toBe(legacy.id);
+  });
   it("normalize rejects unknown kinds / bad dates and clips oversized fields", () => {
     expect(normalizeHistoryRow({ id: "x", kind: "nope", occurred_at: 1 })).toBeNull();
     expect(normalizeHistoryRow({ id: "x", kind: "ai_chat", occurred_at: "garbage" })).toBeNull();
