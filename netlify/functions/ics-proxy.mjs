@@ -4,9 +4,29 @@
 // so ICS + Amion feeds parse identically everywhere.
 //
 // This proxy will fetch any public https URL, so it is (a) session-gated — only an
-// authenticated user (i.e. the app's owner) can call it — and (b) blocked from
-// private / loopback / link-local hosts to prevent SSRF into internal networks.
+// authenticated user (i.e. the app's owner) can call it — and (b) fetched through
+// the shared SSRF-guarded safeFetch (_import-fetch.js: DNS-resolved blocked-IP
+// checks on every redirect hop, timeout, size cap) — SRV-10 / CAL-5.
+import { createRequire } from "node:module";
 import { parsePlanIcs } from "../../calendar/ics.mjs";
+
+const require = createRequire(import.meta.url);
+const { safeFetch, statusForImportError } = require("./_import-fetch.js");
+
+// Test seam only: lets tests inject fetchImpl / lookupImpl into safeFetch.
+let testDeps = {};
+export function _setTestDeps(deps) { testDeps = deps || {}; }
+
+export const ICS_FETCH_OPTIONS = {
+  accept: "text/calendar,text/plain,*/*;q=0.8",
+  userAgent: "Mozilla/5.0 EatPlanSync/1.0",
+  maxBytes: 10_000_000,
+  timeoutMs: 15000,
+  allowedContentTypes: [
+    "text/calendar", "text/plain", "application/octet-stream", "text/html",
+    "application/ics", "text/x-vcalendar",
+  ],
+};
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
@@ -23,26 +43,18 @@ export const handler = async (event) => {
   let parsed;
   try { parsed = new URL(calUrl); } catch { return jsonResponse(400, { error: "Invalid URL." }); }
   if (parsed.protocol !== "https:") return jsonResponse(400, { error: "Only https URLs are supported." });
-  if (isBlockedHost(parsed.hostname)) return jsonResponse(400, { error: "That host is not allowed." });
 
   try {
-    const res = await fetch(calUrl, { headers: { accept: "text/calendar,text/plain,*/*;q=0.8", "user-agent": "Mozilla/5.0 EatPlanSync/1.0" } });
-    if (!res.ok) return jsonResponse(res.status, { error: `Calendar returned ${res.status}.` });
-    return jsonResponse(200, { events: parsePlanIcs(await res.text()) });
+    const res = await safeFetch(calUrl, { ...ICS_FETCH_OPTIONS, ...testDeps });
+    if (!res.ok) return jsonResponse(res.status >= 400 ? res.status : 502, { error: `Calendar returned ${res.status}.` });
+    return jsonResponse(200, { events: parsePlanIcs(res.body) });
   } catch (error) {
+    if (error && (error.isImportFetchError || error.isImportUrlError)) {
+      return jsonResponse(statusForImportError(error), { error: error.message || "Calendar fetch refused." });
+    }
     return jsonResponse(500, { error: error.message || "Calendar sync failed." });
   }
 };
-
-// Block SSRF to private / loopback / link-local hosts (literal IPs and obvious names).
-function isBlockedHost(host) {
-  const h = String(host || "").toLowerCase();
-  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".internal") || h.endsWith(".local")) return true;
-  if (h === "0.0.0.0" || /^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
-  if (h === "::1" || h.startsWith("fc") || h.startsWith("fd") || h.startsWith("fe80")) return true;
-  return false;
-}
 
 function jsonResponse(statusCode, body) {
   return { statusCode, headers: { "content-type": "application/json", "cache-control": "no-store" }, body: JSON.stringify(body) };

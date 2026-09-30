@@ -1,4 +1,4 @@
-const { buildWeeklyContext } = require("./build-weekly-context");
+const { buildWeeklyContext } = require("./_weekly-context");
 const { claudeCall } = require("./_claude");
 const { resolveRecipientEmail } = require("./_recipient");
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
