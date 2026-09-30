@@ -3687,9 +3687,16 @@ function addManualGroceryItem(event) {
   }
   if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
   stampGroceryAdd(manualListStamps(), item, stampNow());
-  if (!state.persistentManualGroceries.some((existing) => normalize(existing) === normalize(item))) {
+  const existingIndex = state.persistentManualGroceries.findIndex((existing) => normalize(existing) === normalize(item));
+  if (existingIndex < 0) {
     state.persistentManualGroceries.push(item);
     state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
+  } else if (normalize(item) !== item.toLowerCase().replace(/\s+/g, " ").trim()) {
+    // Same item with a quantity ("2 apples" while "apples" is listed): the newly
+    // typed quantity replaces the entry instead of being silently dropped. A bare
+    // re-add ("apples" while "2 apples" is listed) keeps the existing quantity.
+    // Same stamp key either way (grocery-list-stamps normalizes the quantity off).
+    state.persistentManualGroceries[existingIndex] = item;
   }
   // A brand-new item with no known store lands in Other (spec) — we set no
   // this-trip override, so resolveItemEffectiveStoreId returns null → Other.
