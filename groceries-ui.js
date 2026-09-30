@@ -2979,10 +2979,7 @@ function openGroceryItemMenu(event) {
   event.stopPropagation();
   closeFolderMenu();
   const key = event.currentTarget.dataset.groceryWrapKey;
-  const groceryWeek = selectedGroceryWeek();
-  const row = groceryWeek
-    ? buildGroceryRowsWithManual(groceryWeek.week).find((item) => item.key === key)
-    : null;
+  const row = displayedGroceryRow(key);
   if (!row) return;
   const menu = document.createElement("div");
   menu.className = "folder-context-menu grocery-library-context-menu";
@@ -3114,8 +3111,7 @@ function addStoreToRank() {
 }
 
 function groceryMoveItemLabel(itemKey) {
-  const gw = selectedGroceryWeek();
-  const row = gw ? buildGroceryRowsWithManual(gw.week).find((r) => r.key === itemKey) : null;
+  const row = displayedGroceryRow(itemKey);
   return row?.displayName || row?.item || itemKey.replace(/-/g, " ");
 }
 
@@ -3700,10 +3696,14 @@ function removeManualGroceryItem(item) {
   renderGroceries();
 }
 
+// The row the user is looking at: the Shop list renders buildActiveNeedRows()
+// (meal-plan range + checklist + manual), not the single selected week's rows.
+function displayedGroceryRow(key) {
+  return buildActiveNeedRows().find((r) => r.key === key) || null;
+}
+
 function editGroceryItem(key) {
-  const groceryWeek = selectedGroceryWeek();
-  if (!groceryWeek) return;
-  const row = buildGroceryRowsWithManual(groceryWeek.week).find((r) => r.key === key);
+  const row = displayedGroceryRow(key);
   if (!row) return;
   if (row.manual) {
     const updated = window.prompt("Edit item:", row.manualValue);
