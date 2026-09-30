@@ -83,6 +83,44 @@ export function redactSecrets(input) {
   return { value: walk(input, ""), removed };
 }
 
+// A FULL restore from an export would otherwise blank every credential the export
+// redacted. Returns a copy of `restored` where each secret-named string that is
+// missing/empty there but set in `current` — at the same object path — keeps the
+// current value. Only object paths are matched (array positions can shift between
+// the export and now, so a secret inside an array item is left as restored).
+export function keepRedactedSecrets(restored, current) {
+  const out = restored && typeof restored === "object" ? JSON.parse(JSON.stringify(restored)) : {};
+  const isObj = (v) => v && typeof v === "object" && !Array.isArray(v);
+  // Secret paths in `current` reachable through plain objects only.
+  const secrets = [];
+  const collect = (v, keys) => {
+    for (const [k, val] of Object.entries(v)) {
+      if (SECRET_KEY.test(k) && typeof val === "string" && val !== "") secrets.push([...keys, k]);
+      else if (isObj(val)) collect(val, [...keys, k]);
+    }
+  };
+  if (isObj(current)) collect(current, []);
+  const kept = [];
+  for (const keys of secrets) {
+    // Create only the objects this secret's path needs.
+    let dst = out;
+    let cur = current;
+    let ok = true;
+    for (const k of keys.slice(0, -1)) {
+      cur = cur[k];
+      if (dst[k] === undefined) dst[k] = {};
+      if (!isObj(dst[k])) { ok = false; break; }
+      dst = dst[k];
+    }
+    const leaf = keys.at(-1);
+    if (ok && (dst[leaf] === undefined || dst[leaf] === "")) {
+      dst[leaf] = cur[leaf];
+      kept.push(keys.join("."));
+    }
+  }
+  return { value: out, kept };
+}
+
 // ── Row helpers ─────────────────────────────────────────────────────────────────
 
 const arr = (v) => (Array.isArray(v) ? v : []);

@@ -5,7 +5,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
-const { ingestFeed, storeNeedsBackfill, trimAccountsToDays } = require("../netlify/functions/_finance-ingest.js");
+const { ingestFeed, storeNeedsBackfill, trimAccountsToDays, remapAccount } = require("../netlify/functions/_finance-ingest.js");
 
 const NOW = Date.parse("2026-09-26T12:00:00Z");
 const day = (d) => new Date(NOW - d * 86400000).toISOString();
@@ -40,8 +40,13 @@ function makeDb({ tableExists = true } = {}) {
     let out = [...rows.values()].filter((r) => r.group_id === g);
     if (q.origin) out = out.filter((r) => r.origin === eq(q.origin));
     if (q.status) {
-      const allowed = decodeURIComponent(q.status).replace(/^in\.\(|\)$/g, "").split(",");
+      const v = decodeURIComponent(q.status);
+      const allowed = v.startsWith("eq.") ? [v.slice(3)] : v.replace(/^in\.\(|\)$/g, "").split(",");
       out = out.filter((r) => allowed.includes(r.status));
+    }
+    if (q.account_id) {
+      const ids = decodeURIComponent(q.account_id).replace(/^in\.\(|\)$/g, "").split(",").map((x) => x.replace(/^"|"$/g, ""));
+      out = out.filter((r) => ids.includes(r.account_id));
     }
     if (q.posted) {
       const v = decodeURIComponent(q.posted);
@@ -158,5 +163,54 @@ describe("trimAccountsToDays (cache keeps the 45-day shape on a 90-day backfill)
     ] }], 45, NOW);
     expect(out[0].balance).toBe(5);
     expect(out[0].transactions.map((t) => t.id)).toEqual(["new", "nodate"]);
+  });
+});
+
+describe("remapAccount (SimpleFIN reconnect, design §12)", () => {
+  const seed = (db, r) => db.rows.set(`g1|${r.id}`, { group_id: "g1", origin: "simplefin", status: "active", superseded_by: null, pending: false, ...r });
+  const setup = () => {
+    const db = makeDb();
+    seed(db, { id: "o-old", account_id: "OLD", posted: day(80), amount: -12.5, description: "CHIPOTLE" });
+    seed(db, { id: "o-dup", account_id: "OLD", posted: day(10), amount: -40, description: "TARGET 123" });
+    seed(db, { id: "o-pend", account_id: "OLD", posted: day(3), amount: -9, description: "SHELL", pending: true });
+    seed(db, { id: "n-dup", account_id: "NEW", posted: day(9), amount: -40, description: "Target" });
+    seed(db, { id: "x", account_id: "OTHER", posted: day(10), amount: -40, description: "TARGET 123" });
+    return db;
+  };
+  const run = (db, extra = {}) => remapAccount({ serviceKey: "svc", groupId: "g1", oldAccountId: "OLD", newAccountId: "NEW", liveAccountIds: ["NEW", "OTHER"], fetchImpl: db.fetchImpl, ...extra });
+
+  it("supersedes the duplicate, moves older history, vanishes the stale pending", async () => {
+    const db = setup();
+    expect(await run(db)).toEqual({ superseded: 1, moved: 1, vanished: 1, overlapUnmatched: 0 });
+    expect(db.rows.get("g1|o-dup")).toMatchObject({ status: "superseded", superseded_by: "n-dup", account_id: "OLD" });
+    expect(db.rows.get("g1|o-old")).toMatchObject({ status: "active", account_id: "NEW" });
+    expect(db.rows.get("g1|o-pend")).toMatchObject({ status: "vanished" });
+    expect(db.rows.get("g1|x")).toMatchObject({ status: "active", account_id: "OTHER" }); // other accounts untouched
+    expect(db.rows.get("g1|n-dup")).toMatchObject({ status: "active", account_id: "NEW" });
+  });
+
+  it("is idempotent — a second run changes nothing and writes nothing", async () => {
+    const db = setup();
+    await run(db);
+    const writesBefore = db.calls.filter((c) => c.method === "POST").length;
+    expect(await run(db)).toEqual({ superseded: 0, moved: 0, vanished: 0, overlapUnmatched: 0 });
+    expect(db.calls.filter((c) => c.method === "POST").length).toBe(writesBefore);
+  });
+
+  it("refuses when the old account is still live, the new one isn't, or they're the same", async () => {
+    const db = setup();
+    expect((await run(db, { liveAccountIds: ["OLD", "NEW"] })).error).toMatch(/still in the bank feed/);
+    expect((await run(db, { liveAccountIds: ["OTHER"] })).error).toMatch(/isn't in the bank feed/);
+    expect((await run(db, { newAccountId: "OLD" })).error).toMatch(/two different/);
+    expect(db.calls.length).toBe(0);
+  });
+
+  it("a later ingest of the new account doesn't undo the merge", async () => {
+    const db = setup();
+    await run(db);
+    await ingestFeed({ serviceKey: "svc", groupId: "g1", fetchImpl: db.fetchImpl, now: NOW,
+      accounts: [{ id: "NEW", transactions: [{ id: "n-dup", posted: day(9), amount: -40, description: "Target" }] }] });
+    expect(db.rows.get("g1|o-dup")).toMatchObject({ status: "superseded", superseded_by: "n-dup" });
+    expect(db.rows.get("g1|o-old")).toMatchObject({ status: "active", account_id: "NEW" });
   });
 });

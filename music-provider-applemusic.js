@@ -263,13 +263,15 @@ export function createAppleMusicProvider(config = {}, deps = {}) {
   let genresCache = null;
 
   let current = null; // last instance used for playback (sync now-playing reads)
-  async function ensureQueueAndPlay(track) {
+  // `upcoming`: Apple tracks to queue after this one, so the player moves on by
+  // itself (the iOS app passes them: with the phone locked the web app can't).
+  async function ensureQueueAndPlay(track, upcoming = []) {
     const music = await getInstance(); // throws if not configured — caller handles
     wireEvents(music);
     current = music;
     const id = appleIdOf(track);
     if (!id) throw new Error("Track has no Apple Music id");
-    await music.setQueue({ songs: [id] });
+    await music.setQueue({ songs: [id, ...(upcoming || []).map(appleIdOf).filter(Boolean)] });
     await music.play();
   }
 
@@ -423,7 +425,7 @@ export function createAppleMusicProvider(config = {}, deps = {}) {
     },
 
     // ── Transport (CAP.OWNS_PLAYBACK) ────────────────────────────────────────
-    async play(track) { await ensureQueueAndPlay(track); },
+    async play(track, o = {}) { await ensureQueueAndPlay(track, o.upcoming); },
     async pause() { const m = await instanceOrNull(); if (m) await m.pause(); },
     async resume() { const m = await instanceOrNull(); if (m) await m.play(); },
     async seek(positionMs) { const m = await instanceOrNull(); if (m) await m.seekToTime(Math.max(0, positionMs) / 1000); },

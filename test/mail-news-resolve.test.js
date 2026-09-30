@@ -11,15 +11,21 @@ const today = new Date().toISOString();
 const card = (id) => ({ id, url: `https://www.nytimes.com/x/${id}.html`, title: `T ${id}`, paper: "nyt", source: "The New York Times", publishedAt: today });
 
 function mock() {
-  const st = { pending: [card("a"), card("b"), card("c")], media: null, pendingWrites: 0, calls: [] };
+  const st = { pending: [card("a"), card("b"), card("c")], pendingStamp: "t0", media: null, pendingWrites: 0, calls: [] };
   const resp = (data, ok = true, status = 200) => ({ ok, status, json: async () => data, text: async () => JSON.stringify(data) });
   const fn = async (url, opts = {}) => {
     const u = String(url), method = opts.method || "GET";
     const body = opts.body ? JSON.parse(opts.body) : null;
     st.calls.push(`${method} ${u}`);
     if (u.includes("/auth/v1/user")) return resp({ id: USER });
-    if (u.includes("mailnews_") && method === "GET") return resp([{ state: { newsPending: st.pending } }]);
+    if (u.includes("mailnews_") && method === "GET") return resp([{ state: { newsPending: st.pending }, updated_at: st.pendingStamp }]);
     if (method === "POST" && body?.id === `mailnews_${USER}`) { st.pending = body.state.newsPending; st.pendingWrites++; return resp(null); }
+    // The pending row is written under an optimistic lock: PATCH …&updated_at=eq.<read stamp>.
+    if (method === "PATCH" && u.includes(`mailnews_${USER}`)) {
+      if (!u.includes(`updated_at=eq.${st.pendingStamp}`)) return resp([]); // stale → caller re-reads
+      st.pending = body.state.newsPending; st.pendingWrites++; st.pendingStamp = `t${st.pendingWrites}`;
+      return resp([{ state: body.state, updated_at: st.pendingStamp }]);
+    }
     if (u.includes(`u-${USER}`) && method === "GET") return resp(st.media ? [st.media] : []);
     if (method === "POST" && body?.id === `u-${USER}:media`) { st.media = { id: body.id, state: body.state, updated_at: body.updated_at }; return resp(null); }
     return resp([]);

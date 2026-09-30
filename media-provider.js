@@ -67,8 +67,12 @@ export const PROVIDER_CATALOG = [
     MEDIA_CAP.NATIVE_PLAYBACK, MEDIA_CAP.DEEP_LINK, MEDIA_CAP.NATIVE_APP ] },
   { id: "internetarchive", label: "Internet Archive", kind: "music", capabilities: [
     MEDIA_CAP.SEARCH, MEDIA_CAP.METADATA, MEDIA_CAP.ARTWORK, MEDIA_CAP.NATIVE_PLAYBACK ] },
-  { id: "jamendo", label: "Jamendo", kind: "music", capabilities: [
-    MEDIA_CAP.SEARCH, MEDIA_CAP.METADATA, MEDIA_CAP.ARTWORK, MEDIA_CAP.NATIVE_PLAYBACK ] },
+  // Apple Music: catalog search + metadata/artwork, behind the user's MusicKit
+  // sign-in. Playback is MusicKit's own (DRM), wired through the music domain's
+  // provider (music-provider-applemusic.js), not the hub's engine. (Replaced the
+  // retired Jamendo entry.)
+  { id: "applemusic", label: "Apple Music", kind: "music", capabilities: [
+    MEDIA_CAP.SEARCH, MEDIA_CAP.METADATA, MEDIA_CAP.ARTWORK, MEDIA_CAP.AUTH ] },
   { id: "mpr", label: "MPR", kind: "radio", capabilities: [
     MEDIA_CAP.METADATA, MEDIA_CAP.NATIVE_PLAYBACK, MEDIA_CAP.LIVE ] },
   { id: "pbs", label: "PBS", kind: "video", capabilities: [

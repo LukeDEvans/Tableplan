@@ -131,6 +131,16 @@ export function mergeFinancePersonal(newer, older, tombstones) {
 // keeping the "answer" state: the entry with the most recent charge wins the base
 // (its amount/day/name), acknowledgements are OR-ed / kept so a dismissal on
 // either device sticks, and key-less junk that can never match a charge is dropped.
+// A shared setting where the LATEST explicit choice wins, not the newer device
+// copy (Luke, 2026-09-29 — financeTxnSource). Each side is { value, at } with `at`
+// the ISO time it was set; an unset/invalid stamp counts as never set, so a
+// device still carrying the default can't overwrite a real choice. Ties keep the
+// newer copy. Returns { value, at }.
+export function pickLatestSetting(newer, older) {
+  const t = (s) => { const ms = Date.parse(s?.at || ""); return Number.isNaN(ms) ? -1 : ms; };
+  return t(older) > t(newer) ? { value: older.value, at: older.at || "" } : { value: newer?.value, at: newer?.at || "" };
+}
+
 export function dedupeFinanceRecurring(list) {
   if (!Array.isArray(list)) return [];
   const byKey = new Map();

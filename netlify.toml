@@ -124,3 +124,12 @@
   from = "/*.sql"
   to = "/index.html"
   status = 404
+
+# chat imports the shared assistant tool registry (also used by app.js).
+[functions."chat"]
+  included_files = ["assistant-tools.js"]
+
+# voice-command (Siri → the assistant) dynamically imports the shared tool
+# registry, grocery stamps and assistant memory from the repo root.
+[functions."voice-command"]
+  included_files = ["assistant-tools.js", "assistant-memory.js", "grocery-list-stamps.js"]

@@ -69,7 +69,7 @@ addButton.addEventListener("click", async () => {
     return;
   }
   if (response.kind === "recipe") {
-    status.textContent = `${response.updated ? "Updated recipe" : "Saved recipe"}: ${response.name}`;
+    status.textContent = `Sent to Recipe Box for review: ${response.name}`;
   } else if (response.kind === "pdf") {
     status.textContent = "Importing PDF in the background — it'll appear in your articles in a few minutes.";
   } else if (response.already_saved) {

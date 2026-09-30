@@ -1,8 +1,9 @@
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds } from './finance-actuals.js';
 import { dedupeFinanceRecurring } from './finance-sync.js';
-import { parseCsvRows, aggregateCsvBackfill, csvRowsToTxns, dedupeImport } from './finance-csv.js';
-import { financeMerchantTokens, financeMerchantKey, storeAccountsView, snapshotWindowTxns, recentTxns, manualTxnToRow, mergeManualTxns, manualRowsToCopy } from './finance-transactions.js';
+import { parseCsvRows, aggregateCsvBackfill, csvRowsToTxns, dedupeImport, findDuplicateCsvAccount } from './finance-csv.js';
+import { saveFile } from './save-file.js';
+import { financeMerchantTokens, financeMerchantKey, storeAccountsView, snapshotWindowTxns, recentTxns, manualTxnToRow, mergeManualTxns, manualRowsToCopy, planAccountRemap, remapCandidateAccounts, suggestRemapTarget, carrySupersededAnnotations } from './finance-transactions.js';
 import { createFinanceTxnStore, FIN_TXN_DB, FIN_TXN_STORES } from './finance-txn-store.js';
 import { createIdbStorage, createMemoryStorage } from './content-store/storage.js';
 
@@ -243,13 +244,9 @@ function exportFinanceCsv(monthKey) {
     t.account || "",
   ].map(esc).join(","));
   const csv = [header.map(esc).join(","), ...lines].join("\n");
-  try {
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-    const a = document.createElement("a");
-    a.href = url; a.download = `transactions-${monthKey}.csv`;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  } catch { showMailToast?.("Couldn't export CSV on this device."); }
+  // Share sheet in the iOS app (its web view ignores <a download>), else a download.
+  saveFile(new Blob([csv], { type: "text/csv" }), `transactions-${monthKey}.csv`, { title: "Transactions" })
+    .catch(() => showMailToast?.("Couldn't export CSV on this device."));
 }
 
 // "Export my data" (data-export.js): every transaction the app knows, with the
@@ -379,6 +376,11 @@ async function refreshCsvImportPreview() {
       await store.sync();
       const dd = dedupeImport(conv.txns, store.rows(), financeMerchantTokens);
       Object.assign(preview, { storeOk: true, fresh: dd.fresh, sameFile: dd.sameFile.length, fromBank: dd.fromBank.length });
+      // Same file under a different new-account name → new ids, so dedupe can't
+      // see it; warn when an earlier CSV account already holds most of these rows.
+      if (d.accountChoice === "__new__") {
+        preview.duplicateOf = findDuplicateCsvAccount(dd.fresh, store.rows(), { excludeAccountId: financeCsvImportAccountId(d) });
+      }
     } catch (e) {
       preview.storeError = e?.message || "Stored history unavailable";
     }
@@ -506,6 +508,7 @@ function financeCsvImportPanelHtml() {
   const body = !p ? `<p class="fin-hint">Checking what's new…</p>`
     : p.error === "missing-columns" ? `<p class="fin-hint">Couldn't find Date and Amount columns in that CSV. Export from your bank with at least Date, Amount, and (ideally) Description and Category columns.</p>`
     : `<ul class="fin-hint fin-csv-preview">
+        ${p.duplicateOf ? `<li class="fin-csv-dup-warning"><strong>Looks like a repeat:</strong> ${p.duplicateOf.matched} of these ${p.duplicateOf.total} rows are already in “${escapeHtml(p.duplicateOf.accountId.slice(4))}” (imported). Pick that account above instead of a new one, or they'll be saved twice.</li>` : ""}
         ${p.storeOk ? `<li><strong>${p.fresh.length}</strong> new transaction${p.fresh.length === 1 ? "" : "s"} to save</li>` : `<li>Transactions can't be saved right now (${escapeHtml(p.storeError || "")}) — only month totals will be backfilled.</li>`}
         ${p.sameFile ? `<li>${p.sameFile} already imported (skipped)</li>` : ""}
         ${p.fromBank ? `<li>${p.fromBank} already came from the bank (skipped)</li>` : ""}
@@ -648,6 +651,89 @@ function financeStoreStatusText() {
   const rows = financeTxnStore.rows().filter((r) => r.status === "active");
   const oldest = rows.reduce((m, r) => (r.posted && (!m || r.posted < m) ? r.posted : m), null);
   return `${rows.length} stored transactions${oldest ? ` since ${new Date(oldest).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}` : ""}.`;
+}
+// ── SimpleFIN reconnect merge (FINANCE_TRANSACTIONS_DESIGN.md §12) ──────────
+// After a relink the bank can issue new account/txn ids, leaving the old account
+// in the store beside its replacement. Offered only in store mode, for accounts
+// the live feed no longer sends. The server recomputes the plan; this previews it.
+let financeRemapChoice = {}; // old account id → chosen new account id ("" = none)
+let financeRemapBusy = false;
+function financeRemapTarget(rows, oldId, liveIds) {
+  if (Object.prototype.hasOwnProperty.call(financeRemapChoice, oldId)) return financeRemapChoice[oldId];
+  return suggestRemapTarget(rows, oldId, liveIds)?.accountId || "";
+}
+function financeRemapNames() {
+  const names = {};
+  for (const a of financeLive?.accounts || []) names[a.id] = [a.org, a.name].filter(Boolean).join(" · ") || "Account";
+  for (const a of state.financeAccounts || []) if (a?.linkedId && a.name) names[a.linkedId] = a.name;
+  return names;
+}
+function financeRemapBlock() {
+  const live = financeLive?.accounts || [];
+  if (!financeStoreActive() || !live.length) return "";
+  const rows = financeTxnStore.rows();
+  const liveIds = live.map((a) => String(a.id));
+  const cands = remapCandidateAccounts(rows, liveIds);
+  if (!cands.length) return "";
+  const names = financeRemapNames();
+  const fmt = (d) => (d ? new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "?");
+  return `
+      <div class="fin-subhead">Relinked accounts</div>
+      <p class="fin-hint">The bank no longer sends these stored accounts — usually because SimpleFIN was relinked and the bank issued new IDs, so the same charges were saved twice. Merge each into the account that replaced it: duplicates are hidden, and their categories, notes and receipts move across.</p>
+      ${cands.map((c) => {
+        const target = financeRemapTarget(rows, c.accountId, liveIds);
+        const plan = target ? planAccountRemap(rows, c.accountId, target) : null;
+        const preview = plan
+          ? [`${plan.supersede.length} duplicate${plan.supersede.length === 1 ? "" : "s"} hidden`, `${plan.move.length} earlier charge${plan.move.length === 1 ? "" : "s"} moved over`,
+             plan.vanish.length ? `${plan.vanish.length} old pending dropped` : "",
+             plan.overlapUnmatched ? `${plan.overlapUnmatched} recent charge${plan.overlapUnmatched === 1 ? "" : "s"} didn't match and may appear twice` : ""].filter(Boolean).join(" · ")
+          : "Pick the account that replaced it.";
+        return `
+      <div class="fin-remap-row">
+        <span class="fin-hint"><strong>${escapeHtml(names[c.accountId] || `Old account …${String(c.accountId).slice(-4)}`)}</strong> · ${c.count} charges · ${escapeHtml(fmt(c.from))} – ${escapeHtml(fmt(c.to))}</span>
+        <div class="fin-item-row fin-item-row--tools">
+          <select class="fin-item-name" data-fin-edit="remap-target" data-old="${escapeHtml(c.accountId)}" aria-label="Account that replaced it">
+            <option value="">Merge into…</option>
+            ${live.map((a) => `<option value="${escapeHtml(a.id)}" ${target === String(a.id) ? "selected" : ""}>${escapeHtml(names[a.id] || a.id)}</option>`).join("")}
+          </select>
+          <button class="secondary-btn fin-add-btn" type="button" data-fin-action="remap-account" data-old="${escapeHtml(c.accountId)}" ${!target || financeRemapBusy ? "disabled" : ""}>${financeRemapBusy ? "Merging…" : "Merge"}</button>
+        </div>
+        <p class="fin-hint">${escapeHtml(preview)}</p>
+      </div>`;
+      }).join("")}`;
+}
+async function remapFinanceAccount(oldId) {
+  if (financeRemapBusy || !financeStoreActive()) return;
+  const rows = financeTxnStore.rows();
+  const liveIds = (financeLive?.accounts || []).map((a) => String(a.id));
+  const newId = financeRemapTarget(rows, oldId, liveIds);
+  if (!newId) return;
+  const names = financeRemapNames();
+  const plan = planAccountRemap(rows, oldId, newId);
+  const oldName = names[oldId] || "the old account";
+  const newName = names[newId] || "the new account";
+  if (!confirm(`Merge “${oldName}” into “${newName}”?\n\n${plan.supersede.length} duplicate charges will be hidden (their categories, notes and receipts move to the new copies) and ${plan.move.length} earlier charges will move to “${newName}”. This can't be undone.`)) return;
+  financeRemapBusy = true;
+  renderFinancePage();
+  refreshFinanceSettingsIfOpen();
+  try {
+    const data = await callNetlifyFunction("simplefin", { action: "remapAccount", oldAccountId: oldId, newAccountId: newId });
+    if (!data || data.error) throw new Error(data?.error || "unknown error");
+    // Point the user's account setup (name, owner, savings buckets) at the new id —
+    // unless another account row already shows it, which is the user's call to tidy.
+    const accts = state.financeAccounts || [];
+    if (!accts.some((a) => a.linkedId === newId)) for (const a of accts) if (a.linkedId === oldId) a.linkedId = newId;
+    delete financeRemapChoice[oldId];
+    persist();
+    financeRemapBusy = false;
+    await syncFinanceTxnStore(); // pulls the merged rows; financeLabeledTxns then carries the annotations
+  } catch (e) {
+    alert(`Couldn't merge: ${e?.message || e}`);
+  } finally {
+    financeRemapBusy = false;
+    renderFinancePage();
+    refreshFinanceSettingsIfOpen();
+  }
 }
 // Manual transactions are dual-written (JSONB + store) whenever the store is
 // usable — REGARDLESS of the read setting — so a delete made while reading from
@@ -935,17 +1021,10 @@ function financeLabeledTxns() {
   let txns = [...bankTxns, ...manualTxns];
 
   // Store mode: the server already resolved pending→posted (incl. pre-auths whose
-  // amount changed, which the same-amount dedupe below can't see) and hides the
-  // superseded pending row — carry any label made while pending to its successor.
-  if (financeStoreActive()) {
-    const ex = state.financeTxnLabels || {};
-    let moved = false;
-    for (const r of financeTxnStore.rows()) {
-      if (r.status !== "superseded" || !r.superseded_by) continue;
-      if (ex[r.id] && !ex[r.superseded_by]) { ex[r.superseded_by] = ex[r.id]; delete ex[r.id]; moved = true; }
-    }
-    if (moved) persist();
-  }
+  // amount changed, which the same-amount dedupe below can't see) and SimpleFIN
+  // reconnect merges (design §12), and hides each superseded row — carry every
+  // annotation made on it (category, note, receipt, sign flip, links…) to its successor.
+  if (financeStoreActive() && carrySupersededAnnotations(state, financeTxnStore.rows())) persist();
 
   // Pending→posted dedupe: banks reissue transaction ids when a pending
   // charge posts, which would double-count anything labeled while pending.
@@ -1261,6 +1340,23 @@ function financeTxnLabelName(key) {
   const g = (state.financeBudgetGroups || []).find((x) => x.id === gId);
   const c = g?.categories.find((x) => x.id === cId);
   return g && c ? `${g.label} · ${c.name}` : "";
+}
+
+// Assistant read (query_transactions — only offered when Luke has opted Finance in):
+// labeled transactions as plain rows with the category's display name. Loads the
+// live feed once if this session hasn't yet — refreshFinanceLive goes through the
+// server's cache (1h floor), so a question can't cause a bridge storm.
+async function financeAssistantTxns() {
+  if (!financeLive && !financeLiveLoading) await refreshFinanceLive(false);
+  if (financeStoreEnabled()) await ensureFinanceTxnStore().catch(() => null);
+  return financeLabeledTxns().map((t) => ({
+    posted: t.posted,
+    amount: t.amount,
+    description: t.description || "",
+    category: t.label === "split" ? "Split" : financeTxnLabelName(t.label),
+    account: t.account || "",
+    pending: Boolean(t.pending),
+  }));
 }
 
 function financeTxnLabelOptionsHtml(selected) {
@@ -2647,6 +2743,7 @@ function renderFinanceAccountsPanel() {
         <label class="fin-hint fin-store-toggle"><input type="checkbox" class="live-toggle" data-fin-edit="txn-source" ${financeStoreEnabled() ? "checked" : ""} /> Use stored transaction history</label>
       </div>
       <p class="fin-hint">${financeStoreStatusText()}</p>
+      ${financeRemapBlock()}
       ${financeCsvBatches().map((b) => `
         <div class="fin-item-row fin-item-row--tools">
           <span class="fin-hint">CSV · ${escapeHtml(String(b.account).replace(/^csv:/, ""))} · ${b.count} txns · ${escapeHtml(String(b.from || "").slice(0, 10))} – ${escapeHtml(String(b.to || "").slice(0, 10))}</span>
@@ -4293,6 +4390,7 @@ function onFinanceGridClick(e) {
   if (action === "link-banks") { linkFinanceBanks(); return; }
   if (action === "refresh-live") { refreshFinanceLive(true); return; }
   if (action === "unlink-banks") { unlinkFinanceBanks(); return; }
+  if (action === "remap-account") { remapFinanceAccount(btn.dataset.old); return; }
   if (action === "toggle-notifs") { openFinanceTxnReview(); return; }
   if (action === "review-txns") { openFinanceTxnReview(); return; }
   if (action === "fin-tab") { financeTab = btn.dataset.tab || "transactions"; renderFinancePage(); return; }
@@ -4808,8 +4906,13 @@ function onFinanceGridChange(e) {
     renderFinancePage();
     refreshCsvImportPreview();
     return;
+  } else if (kind === "remap-target") {
+    financeRemapChoice[el.dataset.old] = el.value;
+    renderFinancePage();
+    return;
   } else if (kind === "txn-source") {
     state.financeTxnSource = el.checked ? "store" : "feed";
+    state.financeTxnSourceSetAt = new Date().toISOString(); // latest choice wins across devices
     persist();
     invalidateFinanceLabeled();
     updateFinanceMonthActuals();
@@ -4900,5 +5003,5 @@ function refreshFinanceSettingsIfOpen() {
   function getFinanceViewMonth() { return financeViewMonth; }
   function getFinanceLinkStatus() { return financeLinkStatus; }
 
-  return { purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
+  return { financeAssistantTxns, purgeLocalFinanceTxnStore, financeExportTransactions, checkFinanceLinkStatus, financeAlertPref, financeCurrentMonthKey, financePaydaysInRange, formatFinMoney, invalidateFinanceLabeled, jumpToFinanceMonth, navigateFinanceMonth, onFinanceGridChange, onFinanceGridClick, refreshFinanceLive, refreshFinanceSettingsIfOpen, renderFinanceAccountsPanel, renderFinanceMonthMenu, renderFinancePage, showFinAcctMenu, onEnterFinancePage, resetFinanceViewMonth, getFinanceViewMonth, getFinanceLinkStatus };
 }

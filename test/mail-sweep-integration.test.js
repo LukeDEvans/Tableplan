@@ -50,7 +50,14 @@ function makeMock() {
     else if (u.includes("/live_group_members")) { cat = "db-read"; out = resp([{ group_id: "g1" }]); }
     else if (u.includes("tableplan_states") && method === "GET" && u.includes("config")) { cat = "db-read"; out = resp([{ state: { mailAiSettings: state.mailAi } }]); }
     else if (u.includes("tableplan_states") && method === "GET" && u.includes("mailnewsseen_")) { cat = "db-read"; out = resp(state.seenRow ? [{ state: JSON.parse(JSON.stringify(state.seenRow)) }] : []); }
-    else if (u.includes("tableplan_states") && method === "GET" && u.includes("mailnews_")) { cat = "db-read"; out = resp(state.newsRow ? [{ state: JSON.parse(JSON.stringify(state.newsRow)) }] : []); }
+    else if (u.includes("tableplan_states") && method === "GET" && u.includes("mailnews_")) { cat = "db-read"; out = resp(state.newsRow ? [{ state: JSON.parse(JSON.stringify(state.newsRow)), updated_at: state.newsStamp || "t0" }] : []); }
+    // The pending row is written under an optimistic lock (PATCH …&updated_at=eq.<read stamp>).
+    else if (u.includes("tableplan_states") && method === "PATCH" && u.includes("mailnews_")) {
+      cat = "db-write";
+      if (state.newsSaveFails) out = resp({}, { ok: false, status: 500 });
+      else if (!u.includes(`updated_at=eq.${state.newsStamp || "t0"}`)) out = resp([]);
+      else { state.newsRow = body.state; state.newsStamp = `t${Date.now()}${Math.random()}`; out = resp([{ state: body.state }]); }
+    }
     else if (u.includes("tableplan_states") && method === "POST" && body?.id?.startsWith("mailnews")) {
       cat = "db-write";
       if (state.newsSaveFails) out = resp({}, { ok: false, status: 500 });

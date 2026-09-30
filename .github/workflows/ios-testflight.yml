@@ -1,0 +1,155 @@
+# Build the native iOS app on a GitHub-hosted Mac and upload it to TestFlight.
+#
+# Manual only: Actions → "iOS → TestFlight" → Run workflow. Works from the
+# GitHub website or the GitHub mobile app, no Mac needed. Setup (one-time
+# secrets) is in CAPACITOR.md → "TestFlight from GitHub Actions".
+#
+# Signing is fully automatic: xcodebuild authenticates with an App Store Connect
+# API key (-allowProvisioningUpdates), so Apple creates and manages the
+# distribution certificate and provisioning profile ("cloud signing"). Nothing
+# is exported from a Mac.
+name: iOS → TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit to build (blank = the branch this run is started from)"
+        required: false
+        default: ""
+
+concurrency:
+  group: ios-testflight
+  cancel-in-progress: false
+
+jobs:
+  testflight:
+    name: build + upload
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      TEAM_ID: 6RTNUZR7K5 # also in ios/App/ExportOptions.plist
+    steps:
+      - name: Check secrets are set
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          missing=""
+          [ -n "$ASC_KEY_ID" ] || missing="$missing ASC_KEY_ID"
+          [ -n "$ASC_ISSUER_ID" ] || missing="$missing ASC_ISSUER_ID"
+          [ -n "$ASC_KEY_P8" ] || missing="$missing ASC_KEY_P8"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secrets:$missing (see CAPACITOR.md → TestFlight from GitHub Actions)"
+            exit 1
+          fi
+
+      - name: Select Xcode 26+
+        # App Store Connect only accepts builds made with the iOS 26 SDK or later
+        # (Xcode 26+). Pick the newest Xcode 26+ installed on the runner.
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          XC=$(ls -d /Applications/Xcode_2[6-9]*.app /Applications/Xcode_[3-9]*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XC" ]; then echo "::error::No Xcode 26+ on this runner image"; exit 1; fi
+          sudo xcode-select -s "$XC/Contents/Developer"
+          xcodebuild -version
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Blank input → the branch picked in "Use workflow from". (It used to
+          # default to main, so a run started from a branch silently built main.)
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build web app + sync into iOS project
+        env:
+          VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
+        run: npm run ios:sync # vite build → dist, then cap sync (copies web assets + pod install)
+
+      - name: Write App Store Connect API key
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          KEY="$RUNNER_TEMP/AuthKey.p8"
+          # Accept either the raw .p8 text or a base64 of it.
+          if printf '%s' "$ASC_KEY_P8" | grep -q "BEGIN PRIVATE KEY"; then
+            printf '%s\n' "$ASC_KEY_P8" > "$KEY"
+          else
+            printf '%s' "$ASC_KEY_P8" | base64 --decode > "$KEY"
+          fi
+          echo "ASC_KEY_PATH=$KEY" >> "$GITHUB_ENV"
+
+      - name: Pick build number
+        # Must increase with every upload. A UTC timestamp always does, e.g.
+        # 20260928.1845 (two components, each within Apple's limits).
+        run: echo "BUILD_NUMBER=$(date -u +%Y%m%d.%H%M)" >> "$GITHUB_ENV"
+
+      - name: Archive (unsigned)
+        # Archive WITHOUT signing. With automatic signing, `xcodebuild archive`
+        # signs for *development* first, which needs a development provisioning
+        # profile, and that needs a registered device ("Your team has no devices
+        # from which to generate a provisioning profile"). The export step below
+        # does the real signing, for App Store distribution, which needs no devices.
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            | tee "$RUNNER_TEMP/archive.log" | grep -E "error:|\*\* ARCHIVE" \
+            || { tail -80 "$RUNNER_TEMP/archive.log"; exit 1; }
+
+      - name: Sign for App Store + upload to App Store Connect (TestFlight)
+        # Signs with an Apple Distribution certificate and an App Store profile,
+        # both created/managed by Apple via the API key (-allowProvisioningUpdates),
+        # then uploads.
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          # Same options as the checked-in ExportOptions.plist, but upload
+          # straight to App Store Connect instead of writing an .ipa.
+          cp ios/App/ExportOptions.plist "$RUNNER_TEMP/ExportOptions.plist"
+          plutil -replace destination -string upload "$RUNNER_TEMP/ExportOptions.plist"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Uploaded build $BUILD_NUMBER to TestFlight"
+            echo ""
+            echo "Commit: \`$(git rev-parse --short HEAD)\` ($(git log -1 --pretty=%s))"
+            echo ""
+            echo "App Store Connect processes it for ~5–15 min, then it appears in the TestFlight app."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove API key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"

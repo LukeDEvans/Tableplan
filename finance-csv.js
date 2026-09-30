@@ -270,3 +270,35 @@ export function dedupeImport(candidates, existingRows, merchantTokens) {
   }
   return res;
 }
+
+// Importing the same file again under a DIFFERENT "new imported account" name gives
+// every row a new id (ids hash the account), so dedupeImport can't see it. This
+// finds an earlier CSV account that already holds most of these rows (same day,
+// same amount, same normalized description — matched one-to-one) so the preview can
+// warn. Returns { accountId, matched, total } for the best account at or above
+// `threshold`, else null.
+export function findDuplicateCsvAccount(freshRows, existingRows, { threshold = 0.8, excludeAccountId = null } = {}) {
+  const fresh = freshRows || [];
+  if (!fresh.length) return null;
+  const key = (r) => `${String(r.posted).slice(0, 10)}|${Math.round((Number(r.amount) || 0) * 100)}|${normDesc(r.description)}`;
+  const byAccount = new Map();
+  for (const r of existingRows || []) {
+    if (!r || r.origin !== "csv" || r.status === "deleted") continue;
+    const acct = String(r.account_id);
+    if (acct === excludeAccountId) continue;
+    if (!byAccount.has(acct)) byAccount.set(acct, new Map());
+    const counts = byAccount.get(acct);
+    counts.set(key(r), (counts.get(key(r)) || 0) + 1);
+  }
+  let best = null;
+  for (const [accountId, counts] of byAccount) {
+    const left = new Map(counts);
+    let matched = 0;
+    for (const c of fresh) {
+      const k = key(c);
+      if (left.get(k) > 0) { left.set(k, left.get(k) - 1); matched++; }
+    }
+    if (matched / fresh.length >= threshold && (!best || matched > best.matched)) best = { accountId, matched, total: fresh.length };
+  }
+  return best;
+}

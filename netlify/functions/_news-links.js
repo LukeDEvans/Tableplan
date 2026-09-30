@@ -8,6 +8,7 @@
 // service-role functions touch them (no group prefix → no client RLS match).
 // Files prefixed with _ are not deployed as individual functions.
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
+const { updateRawRow } = require("./_state-sections.js");
 
 const DAY_MS = 86400000;
 const FRESH_DAYS = 7;          // older articles are never delivered
@@ -18,8 +19,8 @@ const RESOLVE_CAP = 60;        // click-trackers resolved per email
 const META_CONCURRENCY = 6;
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17 Safari/605.1.15";
 
-// One entry per paper. `key` is the Settings → Mail AI toggle (off by default:
-// only an explicit true enables). `paper` is the Media → Publications key.
+// One entry per paper. `key` is the Settings → Mail AI toggle (on by default:
+// only an explicit false disables — Luke, 2026-09-29). `paper` is the Media → Publications key.
 const NEWS_LINK_SOURCES = [
   {
     key: "nytNewsLinks",
@@ -54,7 +55,7 @@ const NEWS_LINK_SOURCES = [
 ];
 
 function enabledNewsLinkSources(mailAiSettings) {
-  return NEWS_LINK_SOURCES.filter((s) => mailAiSettings?.[s.key] === true);
+  return NEWS_LINK_SOURCES.filter((s) => mailAiSettings?.[s.key] !== false);
 }
 
 function newsLinkSourceForSender(from, mailAiSettings) {
@@ -124,6 +125,24 @@ function unwrapParamRedirect(raw) {
   return url;
 }
 
+// ESP click-trackers that carry the destination IN the link, base64url-encoded as
+// one path segment — e.g. the Star Tribune's (Sailthru) links:
+//   https://link.email.startribune.com/click/<id>/<base64url(article url)>/<hash>
+// Decoding it locally needs no network round-trip (verified against a real
+// Star Tribune newsletter, 2026-09-29). Returns the input unchanged otherwise.
+function unwrapEmbeddedUrl(raw) {
+  const url = String(raw || "");
+  let path;
+  try { path = new URL(url).pathname; } catch { return url; }
+  for (const seg of path.split("/")) {
+    if (seg.length < 16 || !/^[A-Za-z0-9_-]+={0,2}$/.test(seg)) continue;
+    let decoded = "";
+    try { decoded = Buffer.from(seg.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"); } catch { continue; }
+    if (/^https?:\/\/[^\s"'<>]+$/i.test(decoded)) return decoded;
+  }
+  return url;
+}
+
 const BOILER_RE = /unsubscrib|view (it )?in (your )?browser|privacy|advertis|manage (your )?(preferences|account|subscription)|sign ?up|log ?in|app store|google play|feedback|help center|terms of|follow us|facebook|twitter|instagram|tiktok|linkedin|youtube|games|crossword|wordle|wirecutter|cooking|gift|subscribe|contact us|forward/i;
 const JUNK_TITLE_RE = /^(read|see|view|listen|watch|tap|click|continue|more|full story|share|here|go|open)\b.{0,20}$/i;
 
@@ -140,9 +159,11 @@ async function extractNewsLinks(html, source, { resolve } = {}) {
   const candidates = []; // trackers to resolve
   const seenHrefs = new Set();
   for (const { href, inner } of anchors) {
-    const unwrapped = unwrapParamRedirect(href);
+    const embedded = unwrapEmbeddedUrl(href);
+    const unwrapped = unwrapParamRedirect(embedded);
     const direct = unwrapped.match(source.articleRe);
     if (direct) { hits.push({ url: direct[0], inner }); continue; }
+    if (embedded !== href) continue; // destination decoded and it isn't an article — nothing to resolve
     if (!resolve || !source.trackerRe.test(href) || seenHrefs.has(href)) continue;
     seenHrefs.add(href);
     const text = textOf(inner);
@@ -391,27 +412,37 @@ async function loadPendingNews(serviceKey, userId) {
   return prunePending((await loadRowState(serviceKey, `mailnews_${userId}`)).newsPending);
 }
 
-// The sweep's batch write: re-read both rows, merge, write pending then seen.
+// The pending row has two writers — the mail sweep adding cards and a swipe
+// removing them — so both go through updateRawRow's optimistic lock (conditional
+// PATCH on updated_at, re-read + retry on conflict). Without it, a write landing
+// between the other's read and write was lost: a swiped card came back once, or a
+// just-collected card vanished. The seen row has one writer (the sweep).
+
+// The sweep's batch write: merge into pending under the lock, then write seen.
 // If the seen write fails after pending succeeded, the cards are already in
 // pending (merge skips pending ids), so nothing is delivered twice.
 async function saveNewsBatch(serviceKey, userId, results, nowMs = Date.now()) {
-  const [pendingState, seenState] = await Promise.all([
-    loadRowState(serviceKey, `mailnews_${userId}`),
-    loadRowState(serviceKey, `mailnewsseen_${userId}`)
-  ]);
-  const { row, added } = mergeNewsResults({ newsPending: pendingState.newsPending, newsSeen: seenState.newsSeen }, results, nowMs);
-  await saveRowState(serviceKey, `mailnews_${userId}`, { newsPending: row.newsPending });
-  await saveRowState(serviceKey, `mailnewsseen_${userId}`, { newsSeen: row.newsSeen });
-  return { added, pending: row.newsPending.length };
+  const seenState = await loadRowState(serviceKey, `mailnewsseen_${userId}`);
+  let merged = null;
+  await updateRawRow(serviceKey, `mailnews_${userId}`, (pendingState) => {
+    // Recomputed on every retry against the freshly re-read pending list.
+    merged = mergeNewsResults({ newsPending: pendingState.newsPending, newsSeen: seenState.newsSeen }, results, nowMs);
+    return { ...pendingState, newsPending: merged.row.newsPending };
+  });
+  await saveRowState(serviceKey, `mailnewsseen_${userId}`, { newsSeen: merged.row.newsSeen });
+  return { added: merged.added, pending: merged.row.newsPending.length };
 }
 
 // Remove resolved cards from the pending list (accept and dismiss both do this;
 // the seen record is untouched, so they never come back). Returns the new list.
 async function removePendingNews(serviceKey, userId, ids) {
   const drop = new Set(ids);
-  const before = (await loadRowState(serviceKey, `mailnews_${userId}`)).newsPending || [];
-  const after = prunePending(before.filter((c) => !drop.has(c.id)));
-  if (after.length !== before.length) await saveRowState(serviceKey, `mailnews_${userId}`, { newsPending: after });
+  let after = [];
+  await updateRawRow(serviceKey, `mailnews_${userId}`, (pendingState) => {
+    const before = pendingState.newsPending || [];
+    after = prunePending(before.filter((c) => !drop.has(c.id)));
+    return after.length !== before.length ? { ...pendingState, newsPending: after } : null; // null = nothing to write
+  });
   return after;
 }
 

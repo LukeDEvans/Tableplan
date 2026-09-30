@@ -74,3 +74,31 @@ export function financeOffsettingPairIds(txns, merchantKey, isLabeled) {
   }
   return hide;
 }
+
+// One-time repair for months backfilled by the OLD CSV import, which keyed
+// `cats` by the full label ("cat:<gid>:<cid>") while every reader and the live
+// snapshotter use "<gid>:<cid>" — so those months showed $0 per category.
+// Strips the "cat:" prefix. If the plain key is already there, it wins and the
+// prefixed one is dropped (never summed: the two can only coexist as copies of
+// the same data, and adding them would double-count). Idempotent; returns the
+// same object when nothing needed repair, so callers can skip a save.
+export function normalizeFinanceMonthActuals(actuals) {
+  if (!actuals || typeof actuals !== "object") return {};
+  let out = actuals;
+  for (const [month, entry] of Object.entries(actuals)) {
+    const cats = entry?.cats;
+    if (!cats || typeof cats !== "object") continue;
+    const keys = Object.keys(cats);
+    if (!keys.some((k) => k.startsWith("cat:"))) continue;
+    const fixed = {};
+    for (const k of keys) if (!k.startsWith("cat:")) fixed[k] = cats[k];
+    for (const k of keys) {
+      if (!k.startsWith("cat:")) continue;
+      const plain = k.slice(4);
+      if (!(plain in fixed)) fixed[plain] = cats[k];
+    }
+    if (out === actuals) out = { ...actuals };
+    out[month] = { ...entry, cats: fixed };
+  }
+  return out;
+}

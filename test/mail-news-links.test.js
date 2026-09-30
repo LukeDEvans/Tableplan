@@ -86,6 +86,23 @@ describe("extractNewsLinks", () => {
     expect(links[0].url).toBe("https://www.startribune.com/vikings-win-opener/601234567");
     expect(links[0].anchorText).toBe("Vikings win opener");
   });
+  it("Star Tribune: real Sailthru click-trackers decode locally (no network)", async () => {
+    // Hrefs copied from a real "Essential Minnesota" newsletter (2026-09-29): the
+    // article URL is base64url-encoded in the path. `resolve` throws, proving no
+    // redirect is followed; the ad/redeem/home links must not become cards.
+    const real = `
+      <a href="https://link.email.startribune.com/click/47703157.24266/aHR0cHM6Ly93d3cuc3RhcnRyaWJ1bmUuY29tL3RhYmtlLXBhdWwtc2hha29wZWUtbWlubmVzb3RhLWhvdXNlLzYwMTg4NTE5Mz91dG1fc291cmNlPW5ld3NsZXR0ZXImdXRtX21lZGl1bT1lbWFpbCZ1dG1fY2FtcGFpZ249ZXNzZW50aWFsX21pbm5lc290YQ/682722d19a69bd78a466d577B1b88d4e2">Minnesota House control runs through a fiercely contested suburban rematch</a>
+      <a href="https://link.email.startribune.com/click/47703157.24266/aHR0cHM6Ly93d3cuc3RhcnRyaWJ1bmUuY29tL215c3RpYy1sYWtlLWFtcGhpdGhlYXRlci1zaGFrb3BlZS1yZXZpZXctc2lnaHRsaW5lcy1hY291c3RpY3MtcHJpY2VzLXRyYWZmaWMtcGFya2luZy1saXZlLW5hdGlvbi82MDE4NTE3MzU_dXRtX3NvdXJjZT1uZXdzbGV0dGVyJnV0bV9tZWRpdW09ZW1haWwmdXRtX2NhbXBhaWduPWVzc2VudGlhbF9taW5uZXNvdGE/682722d19a69bd78a466d577Bbc1dd2bd">Our music critics love Shakopee's new Mystic Lake Amphitheater</a>
+      <a href="https://link.email.startribune.com/click/47703157.24266/aHR0cHM6Ly93d3cuc3RhcnRyaWJ1bmUuY29tP3V0bV9zb3VyY2U9bmV3c2xldHRlciZ1dG1fbWVkaXVtPWVtYWlsJnV0bV9jYW1wYWlnbj1lc3NlbnRpYWxfbWlubmVzb3Rh/682722d19a69bd78a466d577B2e5887ec"><img src="https://x/logo.png"></a>
+      <a href="https://link.email.startribune.com/click/47703157.24266/aHR0cHM6Ly93d3cuc3RhcnRyaWJ1bmUuY29tL3JlZGVlbS9ueS10aW1lcz91dG1fc291cmNlPXN0YXJ0cmlidW5lJnV0bV9tZWRpdW09ZW1haWwmdXRtX2NvbnRlbnQ9bmV3c2xldHRlciZ1dG1fY2FtcGFpZ249bnl0bGF1bmNo/682722d19a69bd78a466d577Be7981d81">Get Reading</a>
+      <a href="https://link.email.startribune.com/oc/682722d19a69bd78a466d577sefzp.iq2/7bd33651&newsletter=Essential MN Updated">Unsubscribe</a>`;
+    const links = await N.extractNewsLinks(real, src("startribune"), { resolve: async () => { throw new Error("network used"); } });
+    expect(links.map((l) => l.url)).toEqual([
+      "https://www.startribune.com/tabke-paul-shakopee-minnesota-house/601885193",
+      "https://www.startribune.com/mystic-lake-amphitheater-shakopee-review-sightlines-acoustics-prices-traffic-parking-live-nation/601851735",
+    ]);
+    expect(links[0].anchorText).toBe("Minnesota House control runs through a fiercely contested suburban rematch");
+  });
   it("NYT Cooking email yields no news links", async () => {
     const links = await N.extractNewsLinks(COOKING_EMAIL, src("nyt"), { resolve: async (u) => u });
     expect(links).toEqual([]);
@@ -191,8 +208,9 @@ describe("mergeNewsResults — never twice, never stale", () => {
 });
 
 describe("toggles", () => {
-  it("off by default; only an explicit true enables a paper", () => {
-    expect(N.newsLinkSourceForSender("The New York Times <nytdirect@nytimes.com>", {})).toBeNull();
+  it("on by default; only an explicit false disables a paper", () => {
+    expect(N.newsLinkSourceForSender("The New York Times <nytdirect@nytimes.com>", {})?.paper).toBe("nyt");
+    expect(N.newsLinkSourceForSender("The New York Times <nytdirect@nytimes.com>", { nytNewsLinks: false })).toBeNull();
     expect(N.newsLinkSourceForSender("The New York Times <nytdirect@nytimes.com>", { nytNewsLinks: true })?.paper).toBe("nyt");
     expect(N.newsLinkSourceForSender("Star Tribune <news@email.startribune.com>", { startribuneNewsLinks: true })?.paper).toBe("startribune");
   });
