@@ -16237,6 +16237,15 @@ body:has(#mediaMainPage:not([hidden])) #mediaMainPage { flex: 1; min-height: 0; 
   line-height: 1.35;
   color: var(--text-muted, #888);
 }
+.podcast-feed-error {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: .78rem;
+  line-height: 1.35;
+  color: var(--danger, #c0392b);
+  background: color-mix(in srgb, var(--danger, #c0392b) 10%, transparent);
+}
 .podcast-bundle-waiting {
   display: flex;
   flex-direction: column;
