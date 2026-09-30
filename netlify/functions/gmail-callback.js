@@ -1,3 +1,5 @@
+const { verifyOAuthState } = require("./_oauth-state");
+
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
 exports.handler = async (event) => {
@@ -6,14 +8,6 @@ exports.handler = async (event) => {
 
   if (error || !code || !stateParam) return redirect(`${appBase}/#mail?gm_error=denied`);
 
-  // Decode userId from state param
-  let userId;
-  try {
-    const parsed = JSON.parse(Buffer.from(stateParam, "base64url").toString());
-    userId = parsed.userId;
-  } catch { return redirect(`${appBase}/#mail?gm_error=state`); }
-  if (!userId) return redirect(`${appBase}/#mail?gm_error=state`);
-
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.URL}/.netlify/functions/gmail-callback`;
@@ -21,8 +15,13 @@ exports.handler = async (event) => {
 
   if (!clientId || !clientSecret || !serviceKey) return redirect(`${appBase}/#mail?gm_error=config`);
 
+  // Verify the signed, expiring state (SRV-1) before trusting its userId.
+  const verified = verifyOAuthState(stateParam, serviceKey);
+  if (!verified) return redirect(`${appBase}/#mail?gm_error=state`);
+  const userId = verified.userId;
+
   // Verify userId is a real Supabase user
-  const userCheck = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
+  const userCheck = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
     headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }
   });
   if (!userCheck.ok) return redirect(`${appBase}/#mail?gm_error=user`);
