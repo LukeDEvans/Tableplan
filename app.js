@@ -1,4 +1,5 @@
 import * as LiveGroceryCatalog from './grocery-catalog.js';
+import { safeUrl, isSafeHref, isSafeSrc, parseInertHtml, scrubActiveAttributes, sanitizeUntrustedHtml } from './html-sanitize.js';
 import { createMealplanModule, autoRule, defaultMealPlanConfig, groceryMealSlotId, mealEntryList, minimumMealEntryCount, normalizeMealPlanConfig, defaultMealEntries, weekdayDefaultDayIds, daySpecificDefaultMealEntries } from './mealplan-ui.js';
 import { createRecipesModule, combinedRecipeTime, defaultRecipeTags, migrateRecipeFoldersToTags, normalizeActiveCooking, normalizeCookLog, normalizeInstructionSteps, normalizeNutritionCandidate, normalizeNutritionFacts, normalizeRecipe, normalizeRecipeTagSelection, normalizeRecipeTags, normalizeTrashedRecipe, seedFolders } from './recipes-ui.js';
 import { createGroceriesModule, baseGroceryItemKey, defaultGroceryBaseItems, defaultGroceryDailyDozenTags, ensureGroceryCatalog, mergeGroceryStoreItemSections, normalizeGroceryAliases, normalizeGroceryBaseItems, normalizeGroceryChecklist, normalizeGroceryDailyDozenTags, normalizeGroceryItemLocations, normalizeGroceryPriceObservations, normalizeGroceryPricingSettings, normalizeGrocerySplitPreferences, normalizeGroceryStoreItemSections, normalizeGroceryStoreSections, normalizeGroceryStores, normalizePriceHistory, normalizeReceipts } from './groceries-ui.js';
@@ -9420,8 +9421,9 @@ function createEventFromEmail(subject) {
 // boilerplate (unsubscribe blocks, nav link rows, tracking pixels, legalese).
 // Optimized for clean read-aloud: what survives is what should be spoken.
 function emailToReaderHtml(html) {
-  const root = document.createElement("div");
-  root.innerHTML = html;
+  // Inert parse: innerHTML on a live-document div would run <img onerror> and
+  // fire tracking pixels before we ever get to strip them.
+  const root = parseInertHtml(html);
   root.querySelectorAll("script,style,link,meta,title,form,iframe,object,embed,svg").forEach((e) => e.remove());
   root.querySelectorAll("*").forEach((el) => {
     const st = (el.getAttribute("style") || "").toLowerCase();
@@ -9449,7 +9451,7 @@ function emailToReaderHtml(html) {
       const tag = n.tagName;
       if (tag === "BR") { s += "<br>"; return; }
       if (tag === "IMG") return; // inline images handled at block level
-      if (tag === "A" && n.getAttribute("href") && !n.getAttribute("href").toLowerCase().startsWith("javascript:")) {
+      if (tag === "A" && isSafeHref(n.getAttribute("href"))) {
         s += '<a href="' + escapeHtml(n.getAttribute("href")) + '" target="_blank" rel="noopener noreferrer">' + inlineHtml(n) + "</a>";
       } else if (tag === "B" || tag === "STRONG") {
         s += "<strong>" + inlineHtml(n) + "</strong>";
@@ -9477,7 +9479,7 @@ function emailToReaderHtml(html) {
 
   const pushImg = (img) => {
     const src = img.getAttribute("src") || "";
-    if (!src || src.toLowerCase().startsWith("javascript:") || imgCount >= 20) return;
+    if (!isSafeSrc(src) || imgCount >= 20) return;
     // Guard against double emission: a wrapper with no block child emits its
     // images via querySelectorAll (to catch <a><img></a>) AND is then walked,
     // whose loop pushes each direct <img> again. Dedupe by src.
@@ -9515,9 +9517,7 @@ function emailToReaderHtml(html) {
 
   const result = out.join("\n");
   // Over-stripped? Fall back to the structural sanitizer rather than lose content
-  const div = document.createElement("div");
-  div.innerHTML = result;
-  return div.textContent.trim().length >= 200 ? result : sanitizeMailHtml(html);
+  return parseInertHtml(result).textContent.trim().length >= 200 ? result : sanitizeMailHtml(html);
 }
 
 // "Move to Listen": save the email into the Listen (Media) reading queue, then
@@ -10581,16 +10581,12 @@ function buildMailBodyFrame(html, { showImages = false } = {}) {
 // on it) and strips active content. Scripts are additionally blocked by the
 // iframe sandbox.
 function sanitizeMailFrameHtml(html) {
-  const div = document.createElement("div");
-  div.innerHTML = html;
-  div.querySelectorAll("script,iframe,object,embed,form,link,meta").forEach((el) => el.remove());
-  div.querySelectorAll("*").forEach((el) => {
-    [...el.attributes].forEach((attr) => {
-      if (attr.name.toLowerCase().startsWith("on")) el.removeAttribute(attr.name);
-      else if ((attr.name === "href" || attr.name === "src" || attr.name === "action") &&
-               attr.value.trim().toLowerCase().startsWith("javascript:")) el.removeAttribute(attr.name);
-    });
-  });
+  // Inert parse (DOMParser): nothing executes or loads while we scrub.
+  const div = parseInertHtml(html, { keepHeadStyles: true });
+  div.querySelectorAll("script,iframe,frame,object,embed,applet,form,link,meta,base").forEach((el) => el.remove());
+  // All on* handlers go; href/src/etc. survive only with an allowlisted scheme
+  // (http(s)/mailto/tel/#frag for links; http(s)/cid:/data:image for images).
+  scrubActiveAttributes(div);
   // Neutralize the email's own dark-mode rules. Marketing emails (Audible,
   // Amazon, …) ship `@media (prefers-color-scheme: dark){ … color:#FFF … }`
   // assuming the client also darkens the background. This reader always renders
@@ -10612,8 +10608,8 @@ function sanitizeMailFrameHtml(html) {
 // images already ship with the message, so they stay. Returns the rewritten
 // HTML plus a count so the caller can offer a "Display images" button.
 function blockRemoteMailImages(html) {
-  const div = document.createElement("div");
-  div.innerHTML = html;
+  const div = parseInertHtml(html); // inert: parsing must not itself fetch the images
+
   let blocked = 0;
   const isRemote = (u) => /^\s*https?:\/\//i.test(u || "");
   const cssHasRemote = /url\(\s*['"]?\s*https?:\/\//i;                 // non-global: stateless test
@@ -10850,14 +10846,10 @@ function formatMailDate(internalDate) {
 }
 
 function sanitizeMailHtml(html) {
-  const div = document.createElement("div");
-  div.innerHTML = html;
-  div.querySelectorAll("script,style,link,iframe,object,embed,form").forEach((el) => el.remove());
-  div.querySelectorAll("*").forEach((el) => {
-    ["onclick","onload","onerror","onmouseover","src"].forEach((attr) => {
-      if (el.getAttribute(attr)?.toLowerCase().startsWith("javascript:")) el.removeAttribute(attr);
-    });
-  });
+  const div = parseInertHtml(html);
+  div.querySelectorAll("script,style,link,meta,base,iframe,frame,object,embed,applet,form,svg,math").forEach((el) => el.remove());
+  // Remove EVERY on* handler and every non-allowlisted URL scheme.
+  scrubActiveAttributes(div);
   div.querySelectorAll("a[href]").forEach((a) => {
     a.setAttribute("target", "_blank");
     a.setAttribute("rel", "noopener noreferrer");
@@ -20846,7 +20838,7 @@ function watchShowtimesGridHtml(item, data, isCollapsed = false) {
 function watchTheaterRowHtml(theater) {
   const showings = theater.showing || [];
   const times = showings.flatMap((s) => (s.time || []).map((t) => ({ time: t, type: s.type })));
-  const theaterLink = theater.link || `https://www.google.com/search?q=${encodeURIComponent(theater.name + " showtimes")}`;
+  const theaterLink = safeUrl(theater.link) || `https://www.google.com/search?q=${encodeURIComponent(theater.name + " showtimes")}`;
   return `
     <div class="watch-showtime-theater">
       <a class="watch-showtime-theater-name" href="${escapeHtml(theaterLink)}" target="_blank" rel="noopener noreferrer">${escapeHtml(theater.name)}</a>
@@ -25392,9 +25384,9 @@ function renderPlanEventAttachment() {
   const nameEl = elements.planEventAttachName;
   const removeBtn = elements.planEventAttachRemoveBtn;
   if (!nameEl || !removeBtn) return;
-  if (planEventAttachment?.url) {
+  if (safeUrl(planEventAttachment?.url)) {
     nameEl.hidden = false;
-    nameEl.innerHTML = `<a href="${escapeHtml(planEventAttachment.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(planEventAttachment.name || "Attachment")}</a>`;
+    nameEl.innerHTML = `<a href="${escapeHtml(safeUrl(planEventAttachment.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(planEventAttachment.name || "Attachment")}</a>`;
     removeBtn.hidden = false;
     elements.planEventAttachBtn.title = "Replace file";
     elements.planEventAttachBtn.classList.add("has-attachment");
@@ -29722,7 +29714,7 @@ function ensureEpisodeDescription(episodeId) {
 function episodeNotesBodyHtml(desc) {
   if (!desc) return `<p style="color:var(--ink-faint);margin:0">No show notes available for this episode.</p>`;
   return /<[a-z][\s\S]*>/i.test(desc)
-    ? `<div class="episode-notes-html">${desc}</div>`
+    ? `<div class="episode-notes-html">${sanitizeUntrustedHtml(desc)}</div>`
     : `<div class="episode-notes-plain">${escapeHtml(desc).replace(/\n/g, "<br>")}</div>`;
 }
 
@@ -33642,7 +33634,9 @@ function markArticleRead(id) {
 // fetching. article.text stays the fallback throughout.
 async function renderArticleBody(textEl, article, id) {
   const paint = (html) => {
-    textEl.innerHTML = html;
+    // Bodies come from emails, fetched pages, AI newsletter/PDF extraction and
+    // previously stored rows — all untrusted. Allowlist-sanitize at the sink.
+    textEl.innerHTML = sanitizeUntrustedHtml(html);
     wrapArticleWords(textEl);
     if (listenArticle && listenArticle.id === id) highlightCurrentWord();
   };
@@ -33953,10 +33947,10 @@ async function fetchArticleText(id) {
     if (result.ok) {
       openArticle(id, "articleList");
     } else if (textEl) {
-      textEl.innerHTML = `<div class="article-fetch-prompt"><p class="article-fetch-hint">${escapeHtml(result.error)}</p><a href="${escapeHtml(article.url)}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`;
+      textEl.innerHTML = `<div class="article-fetch-prompt"><p class="article-fetch-hint">${escapeHtml(result.error)}</p><a href="${escapeHtml(safeUrl(article.url, "#"))}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`;
     }
   } catch (e) {
-    if (textEl) textEl.innerHTML = `<div class="article-fetch-prompt"><p class="article-fetch-hint">Fetch failed. Check your connection and try again.</p><a href="${escapeHtml(article.url)}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`;
+    if (textEl) textEl.innerHTML = `<div class="article-fetch-prompt"><p class="article-fetch-hint">Fetch failed. Check your connection and try again.</p><a href="${escapeHtml(safeUrl(article.url, "#"))}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`;
   }
 }
 
@@ -38221,7 +38215,7 @@ function showTravelEditTripDialog(tripId) {
   const partyOptions = [...new Set([...travelPartyOptions(), ...(trip.party || [])])];
   const partyChipsHtml = partyOptions.map(p => {
     const sel = (trip.party || []).includes(p) ? " is-selected" : "";
-    return `<button type="button" class="travel-party-chip${sel}" data-party="${p}">${p}</button>`;
+    return `<button type="button" class="travel-party-chip${sel}" data-party="${escapeHtml(p)}">${escapeHtml(p)}</button>`;
   }).join("");
   const d = document.createElement("dialog");
   d.className = "recipe-dialog auth-dialog";
@@ -38548,7 +38542,7 @@ function itemDetailContent(type, item) {
   const fmtDate = ds => ds ? new Date(ds + "T12:00:00").toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric" }) : "";
   const row = (label, value, link) =>
     `<div class="item-detail-row"><span class="item-detail-label">${escapeHtml(label)}</span><span class="item-detail-value">${
-      link ? `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(value)}</a>` : escapeHtml(value)
+      safeUrl(link) ? `<a href="${escapeHtml(safeUrl(link))}" target="_blank" rel="noopener noreferrer">${escapeHtml(value)}</a>` : escapeHtml(value)
     }</span></div>`;
 
   let icon = "📋", title = "Details", subtitle = "", bodyHtml = "";
@@ -39870,7 +39864,7 @@ function renderExploreTripPanel(tab, trip) {
           (sub ? '<br><span style="font-weight:400;color:var(--muted);font-size:0.72rem">' + escapeHtml(sub) + '</span>' : '') +
           '</div>' +
           (mapsHref ? '<a class="trip-item-leg-map-btn" href="' + escapeHtml(mapsHref) + '" target="_blank" rel="noopener noreferrer">' + mapsLabel + '</a>' : '') +
-          (item.website ? '<a class="trip-item-leg-map-btn" href="' + escapeHtml(item.website) + '" target="_blank" rel="noopener noreferrer" title="Website">🔗</a>' : '') +
+          (safeUrl(item.website) ? '<a class="trip-item-leg-map-btn" href="' + escapeHtml(safeUrl(item.website)) + '" target="_blank" rel="noopener noreferrer" title="Website">🔗</a>' : '') +
           attBtn(item, true) +
           '<button class="trip-item-edit-leg" type="button" title="Edit" aria-label="Edit">✏</button>' +
           '<button class="trip-item-delete" type="button" title="Remove" aria-label="Remove">×</button></div>' +
@@ -40927,7 +40921,7 @@ async function showAttachmentsDialog(trip, item, onUpdate, viewOnly = false) {
           ? '<img class="att-thumb" src="' + escapeHtml(att.url) + '" alt="" />'
           : '<div class="att-icon">' + (isPDF ? "📄" : "📎") + '</div>') +
         '<div class="att-meta"><span class="att-name">' + escapeHtml(att.name) + '</span>' +
-        (att.url ? '<a class="att-view" href="' + escapeHtml(att.url) + '" target="_blank" rel="noopener noreferrer">Open ↗</a>' : '<span class="att-status">Unavailable</span>') +
+        (safeUrl(att.url) ? '<a class="att-view" href="' + escapeHtml(safeUrl(att.url)) + '" target="_blank" rel="noopener noreferrer">Open ↗</a>' : '<span class="att-status">Unavailable</span>') +
         '</div>' +
         (canEdit ? '<button class="att-del" type="button" data-path="' + escapeHtml(att.path) + '" title="Delete">×</button>' : '');
       if (canEdit) {
@@ -41800,7 +41794,7 @@ function showTravelNewTripDialog() {
   const selfLabel = getCurrentProfileMember()?.label || "";
   const partyChipsHtml = partyOptions.map(function(p) {
     const sel = p === selfLabel ? " is-selected" : "";
-    return '<button type="button" class="travel-party-chip' + sel + '" data-party="' + p + '">' + p + '</button>';
+    return '<button type="button" class="travel-party-chip' + sel + '" data-party="' + escapeHtml(p) + '">' + escapeHtml(p) + '</button>';
   }).join("");
   d.innerHTML =
     '<div class="recipe-form">' +
@@ -41916,7 +41910,7 @@ function showTravelEditPartyDialog(trip) {
   const partyOptions = [...new Set([...travelPartyOptions(), ...(trip.party || [])])];
   const chipsHtml = partyOptions.map(function(p) {
     const sel = (trip.party || []).includes(p) ? " is-selected" : "";
-    return '<button type="button" class="travel-party-chip' + sel + '" data-party="' + p + '">' + p + '</button>';
+    return '<button type="button" class="travel-party-chip' + sel + '" data-party="' + escapeHtml(p) + '">' + escapeHtml(p) + '</button>';
   }).join("");
   d.innerHTML =
     '<div class="recipe-form">' +
