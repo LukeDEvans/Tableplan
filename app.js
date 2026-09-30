@@ -9780,21 +9780,29 @@ function buildIngestEntityCard(entity, source, dialog) {
 function commitEntityToTrip(entity, trip, source) {
   if (!trip) return "No trip";
   if (!Array.isArray(state.trips)) state.trips = [];
+  // Multi-segment flights match per segment (TRV-6).
+  if (entity.kind === "flight" && (entity.segments || []).length > 1) return commitFlightSegmentsToTrip(entity, trip, source);
   // Already-imported? Recognize an update/cancellation instead of duplicating.
   const existing = TravelIngest.findExistingItem(entity, trip);
   if (existing) {
     if (entity.intent === "cancel") return proposeEntityChange(entity, trip, existing, source);
-    const incoming = TravelIngest.entityToPlacements(entity, source)[0]?.item;
-    const changes = incoming ? TravelIngest.diffItem(existing.item, incoming, Object.keys(incoming)) : [];
+    const primary = TravelIngest.entityToPlacements(entity, source)[0];
+    const changes = primary ? TravelIngest.placementChanges(existing, primary) : [];
     if (!changes.length) return "Already in this trip";
     // A conflict with an already-IMPORTED item is a reservation update; a conflict
     // with a HAND-ENTERED item is an itinerary-update proposal (never silent).
     if (existing.item.source) return proposeEntityChange(entity, trip, existing, source);
     return proposeItineraryChange(entity, trip, { item: existing.item, section: existing.section, dateKey: existing.dateKey, changes }, source);
   }
-  // Not a re-import: does it conflict with a hand-entered itinerary item?
+  // A cancellation with nothing to cancel must never be ADDED to the plan (TRV-5).
+  if (entity.intent === "cancel") return "Nothing to cancel in this trip";
+  // Not a re-import: does it conflict with a hand-entered itinerary item? If the
+  // user already answered "Keep current" to a proposal against that item, it
+  // isn't the same reservation — fall through and add it instead (TRV-4).
   const itinConflict = TravelIngest.findItineraryConflict(entity, trip);
-  if (itinConflict) return proposeItineraryChange(entity, trip, itinConflict, source);
+  const dismissedBefore = itinConflict && (trip.proposals || []).some(p =>
+    p && p.type === "itinerary" && p.status === "dismissed" && p.targetItemId === itinConflict.item.id);
+  if (itinConflict && !dismissedBefore) return proposeItineraryChange(entity, trip, itinConflict, source);
   const placements = TravelIngest.entityToPlacements(entity, source);
   if (!placements.length) { saveEntityAsTripNote(entity, trip, source); return "Saved as note"; }
   placements.forEach(p => {
@@ -9805,6 +9813,35 @@ function commitEntityToTrip(entity, trip, source) {
   persist();
   if (activeAppArea === "explore" && exploreOpenTripId === trip.id) renderExploreTripPanel("itinerary", trip);
   return "Added to " + (trip.name || "trip");
+}
+
+// TRV-6: each segment of a multi-leg booking is matched to its own leg, so a
+// change to leg 2 is proposed against leg 2 (one proposal per changed segment)
+// and a newly added segment is placed rather than diffed against leg 1.
+function commitFlightSegmentsToTrip(entity, trip, source) {
+  const rows = TravelIngest.matchFlightSegments(entity, trip, source);
+  let proposed = 0, added = 0, cancels = 0;
+  rows.forEach(({ placement, existing }) => {
+    if (existing) {
+      if (entity.intent === "cancel") { proposeEntityChange(entity, trip, existing, source, placement); cancels++; return; }
+      if (!TravelIngest.placementChanges(existing, placement).length) return;
+      proposeEntityChange(entity, trip, existing, source, placement);
+      proposed++;
+      return;
+    }
+    if (entity.intent === "cancel") return; // nothing to cancel for this segment
+    tripDayItems(trip, placement.dateKey, placement.section).push(Object.assign({ id: createId("ti") }, placement.item));
+    added++;
+  });
+  if (!proposed && !added && !cancels) return entity.intent === "cancel" ? "Nothing to cancel in this trip" : "Already in this trip";
+  trip.updatedAt = new Date().toISOString();
+  persist();
+  if (added && activeAppArea === "explore" && exploreOpenTripId === trip.id) renderExploreTripPanel("itinerary", trip);
+  if (cancels) return "Cancellation proposed — review in Explore";
+  const parts = [];
+  if (added) parts.push(`Added ${added} segment${added === 1 ? "" : "s"}`);
+  if (proposed) parts.push(`${proposed} change${proposed === 1 ? "" : "s"} proposed — review in Explore`);
+  return parts.join(" · ");
 }
 
 function createTripFromEntity(entity, source) {
@@ -9860,9 +9897,9 @@ function chooseTripForEntity(entity, source, onPick) {
 // Record a proposed change (modification/cancellation of an already-imported
 // item) without touching canonical data. Surfaced in the Explore review inbox
 // (Phase 3). Returns a short label for the ingest card.
-function proposeEntityChange(entity, trip, existing, source) {
+function proposeEntityChange(entity, trip, existing, source, placement = null) {
   if (!Array.isArray(trip.proposals)) trip.proposals = [];
-  const proposal = TravelIngest.entityToProposal(entity, existing, source);
+  const proposal = TravelIngest.entityToProposal(entity, existing, source, placement);
   // Don't stack identical pending proposals for the same target.
   const dup = trip.proposals.find(p => p.status === "pending" && p.targetItemId === proposal.targetItemId && p.type === proposal.type);
   if (!dup) trip.proposals.push(proposal);
@@ -10001,11 +10038,32 @@ function applyProposal(trip, proposal) {
   const item = findTripItemRaw(trip, proposal.targetItemId, proposal.section, proposal.ownerDateKey);
   if (item) {
     if (proposal.type === "cancel") { item.cancelled = true; item.cancelledAt = new Date().toISOString(); }
-    else (proposal.changes || []).forEach(c => { item[c.field] = c.to; });
+    else (proposal.changes || []).forEach(c => { if (c.field !== "dateKey") item[c.field] = c.to; });
     if (!item.source && proposal.source) item.source = proposal.source;
+    // A date change must also move the item to its new day bucket, or it
+    // vanishes from the plan (lodging/legs render only on their own date) or
+    // the change is silently lost (food/activities have no date field) — TRV-3.
+    if (proposal.type !== "cancel") moveTripItemToDate(trip, item, proposal);
   }
   resolveProposal(trip, proposal, "applied");
   if (activeAppArea === "explore" && exploreOpenTripId === trip.id) renderExploreTripPanel("itinerary", trip);
+}
+
+function moveTripItemToDate(trip, item, proposal) {
+  let curKey = null, curSection = null;
+  for (const dk of Object.keys(trip.days || {})) {
+    for (const sec of Object.keys(trip.days[dk] || {})) {
+      const arr = trip.days[dk][sec];
+      if (Array.isArray(arr) && arr.includes(item)) { curKey = dk; curSection = sec; break; }
+    }
+    if (curKey) break;
+  }
+  if (!curKey) return;
+  const target = TravelIngest.targetDateKeyFor(curSection, item, proposal.changes, curKey);
+  if (!target || target === curKey) return;
+  const arr = trip.days[curKey][curSection];
+  arr.splice(arr.indexOf(item), 1);
+  tripDayItems(trip, target, curSection).push(item);
 }
 
 function resolveProposal(trip, proposal, status) {
@@ -10019,7 +10077,7 @@ function resolveProposal(trip, proposal, status) {
 function prettyFieldName(f) {
   const map = { checkInDate: "Check-in", checkOutDate: "Check-out", checkInTime: "Check-in time", checkOutTime: "Check-out time",
     departDate: "Departs", departTime: "Departure time", arriveDate: "Arrives", arriveTime: "Arrival time",
-    reservationTime: "Reservation", activityTime: "Time", confirmationNo: "Confirmation", address: "Address", notes: "Notes", name: "Name", title: "Name" };
+    reservationTime: "Reservation", activityTime: "Time", dateKey: "Date", confirmationNo: "Confirmation", address: "Address", notes: "Notes", name: "Name", title: "Name" };
   return map[f] || f.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase());
 }
 
@@ -38489,7 +38547,8 @@ function travelActivityEndTime(startTime, durationMin) {
   if (!startTime || !durationMin) return "";
   const [h, m] = startTime.split(":").map(Number);
   if (!Number.isFinite(h) || !Number.isFinite(m)) return "";
-  const total = h * 60 + m + (parseInt(durationMin) || 0);
+  // "2 hours" / "1h30" / "90 min" — not parseInt (which read "2 hours" as 2 min).
+  const total = h * 60 + m + (TravelItinerary.parseDurationMinutes(durationMin) || 0);
   return String(Math.floor(total / 60) % 24).padStart(2, "0") + ":" + String(total % 60).padStart(2, "0");
 }
 
@@ -38770,6 +38829,9 @@ function openExploreTripMenu(event, tripId) {
     e.stopPropagation();
     closeFolderMenu();
     if (!confirm("Delete this trip?")) return;
+    // Tombstone first: without it the next sync's unionById resurrects the trip
+    // from the other device / older snapshot (TRV-10).
+    recordDeletion("trips", tripId);
     state.trips = (state.trips || []).filter(t => t.id !== tripId);
     persist();
     renderExploreSidebar();
@@ -38817,6 +38879,7 @@ function showTravelEditTripDialog(tripId) {
   d.querySelector("#teSave").addEventListener("click", () => {
     const name = d.querySelector("#teTripName").value.trim();
     if (!name) { alert("Please enter a trip name."); return; }
+    if (tripDatesReversed(d.querySelector("#teStart").value, d.querySelector("#teEnd").value)) { alert("The end date can't be before the start date."); return; }
     trip.name = name;
     trip.destination = d.querySelector("#teDest").value.trim();
     trip.status = d.querySelector("#teStatus").value;
@@ -39261,17 +39324,28 @@ function addStopToCalendar(type, item, ownerDateKey) {
 }
 
 // ── Travel-time suggestions (Google Distance Matrix via travel-time fn) ──────
-const travelTimesCache = new Map(); // "origin|destination" → Promise<times|null>
+const travelTimesCache = new Map(); // "origin|destination" → Promise<times> (successes + in-flight only)
+const travelTimesFailedAt = new Map(); // "origin|destination" → ms of last failed lookup
+const TRAVEL_TIMES_RETRY_MS = 10 * 60 * 1000;
 
+// A failed/empty lookup is NOT cached forever (TRV-13) — a transient error or
+// signed-out moment used to pin that pair to "unknown" for the session. It is
+// held off for TRAVEL_TIMES_RETRY_MS so re-renders don't hammer the function.
 function fetchTravelTimes(origin, destination) {
   const key = origin + "|" + destination;
   if (travelTimesCache.has(key)) return travelTimesCache.get(key);
+  const failedAt = travelTimesFailedAt.get(key);
+  if (failedAt && Date.now() - failedAt < TRAVEL_TIMES_RETRY_MS) return Promise.resolve(null);
   const url = (canUseLocalBackend() ? "/api/travel-time" : "/.netlify/functions/travel-time") +
     "?" + new URLSearchParams({ origin, destination });
   const p = fetch(url, { headers: { authorization: "Bearer " + (authSession?.access_token || "") } })
     .then(r => (r.ok ? r.json() : null))
     .then(d => d?.times || null)
-    .catch(() => null);
+    .catch(() => null)
+    .then(times => {
+      if (!times) { travelTimesCache.delete(key); travelTimesFailedAt.set(key, Date.now()); }
+      return times;
+    });
   travelTimesCache.set(key, p);
   return p;
 }
@@ -39751,20 +39825,25 @@ function renderTravelModeOverlay(trip) {
 // Prefetch a symmetric travel-time lookup across a day's located points, then
 // hand back a synchronous distanceFn the pure optimizer can use. Uses the same
 // cached travel-time backend the transitions do; unknown pairs resolve to null.
-async function buildDayDistanceFn(locations) {
-  const uniq = [...new Set(locations.filter(Boolean))];
+// Only the pairs the reorder evaluator can use (movable stops + anchors), run
+// at most 4 at a time — it used to fire every ordered pair of every stop at
+// once (n² concurrent Distance-Matrix calls) — TRV-14.
+async function buildDayDistanceFn(pairs) {
   const map = new Map();
-  await Promise.all(uniq.flatMap(a => uniq.map(async b => {
-    const key = a + "|" + b;
-    if (a === b) { map.set(key, 0); return; }
-    let d = null;
-    try {
-      const times = await fetchTravelTimes(a, b);
-      if (times) d = times.drive?.durationMin ?? times.transit?.durationMin ?? times.walk?.durationMin ?? null;
-    } catch { d = null; }
-    map.set(key, d);
-  })));
-  return (a, b) => (map.has(a + "|" + b) ? map.get(a + "|" + b) : null);
+  const queue = pairs.filter(([a, b]) => a && b && a !== b);
+  const worker = async () => {
+    while (queue.length) {
+      const [a, b] = queue.shift();
+      let d = null;
+      try {
+        const times = await fetchTravelTimes(a, b);
+        if (times) d = times.drive?.durationMin ?? times.transit?.durationMin ?? times.walk?.durationMin ?? null;
+      } catch { d = null; }
+      map.set(a + "|" + b, d);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
+  return (a, b) => (a === b ? 0 : map.has(a + "|" + b) ? map.get(a + "|" + b) : null);
 }
 
 // Household calendar events for a day, shaped for the conflict detector.
@@ -39825,8 +39904,7 @@ async function renderDaySuggestions(trip, dateKey, timeline, mountEl, rerender) 
   let distanceFn = () => null;
   // Only pay for routing when a reorder is even possible (2–5 flexible stops).
   if (movableLocated.length >= 2 && movableLocated.length <= 5) {
-    const locs = stops.map(s => s.location).filter(Boolean);
-    distanceFn = await buildDayDistanceFn(locs);
+    distanceFn = await buildDayDistanceFn(TravelOptimize.reorderPairs(timeline));
     if (!mountEl.isConnected) return;
   }
   const events = tripCalendarEventsForDay(dateKey);
@@ -40190,7 +40268,7 @@ function renderExploreTripPanel(tab, trip) {
 
   // One day shown at a time: day tabs across the top (like the meal plan),
   // swipe left/right on touch devices to change days.
-  const dayKeys = tripDays.map(d => d.toISOString().slice(0, 10));
+  const dayKeys = tripDays.map(d => dateKeyFromDate(d));
   const activeDayIdx = Math.max(0, dayKeys.indexOf(exploreActiveDayKey));
 
   const tabsHtml = tripDays.map((d, i) => {
@@ -40225,7 +40303,7 @@ function renderExploreTripPanel(tab, trip) {
   }, { passive: true });
 
   const buildDayCard = (d, i) => {
-    const dateKey   = d.toISOString().slice(0, 10);
+    const dateKey   = dateKeyFromDate(d);
     const dayNum    = `Day ${i + 1}`;
     const dateLabel = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 
@@ -40237,7 +40315,7 @@ function renderExploreTripPanel(tab, trip) {
     let incomingLodgingKey = dateKey;
     let stableLodgingKey   = null;
     for (const od of tripDays) {
-      const ok = od.toISOString().slice(0, 10);
+      const ok = dateKeyFromDate(od);
       for (const lo of tripDayItems(trip, ok, "lodging")) {
         if (lo.itemType === "lodging" && lo.checkOutDate === dateKey) { outgoingLodging = lo; outgoingLodgingKey = ok; break; }
       }
@@ -40248,7 +40326,7 @@ function renderExploreTripPanel(tab, trip) {
     }
     if (!outgoingLodging && !incomingLodging) {
       for (const od of tripDays) {
-        const ok = od.toISOString().slice(0, 10);
+        const ok = dateKeyFromDate(od);
         for (const lo of tripDayItems(trip, ok, "lodging")) {
           if (lo.itemType === "lodging" && lo.checkInDate && lo.checkOutDate &&
               lo.checkInDate < dateKey && lo.checkOutDate > dateKey) {
@@ -40504,7 +40582,7 @@ function renderExploreTripPanel(tab, trip) {
         const items = tripDayItems(trip, dateKey, s.key);
         if (s.key === "travel") {
           tripDays.forEach(od => {
-            const ok = od.toISOString().slice(0, 10);
+            const ok = dateKeyFromDate(od);
             if (ok === dateKey) return;
             tripDayItems(trip, ok, "travel").forEach(leg => {
               if (leg.arriveDate === dateKey)
@@ -40526,7 +40604,7 @@ function renderExploreTripPanel(tab, trip) {
               pushItem(lodgingTime(item.checkInTime), buildLodgingCard(item, dateKey, false), item);
           });
           tripDays.forEach(od => {
-            const ok = od.toISOString().slice(0, 10);
+            const ok = dateKeyFromDate(od);
             if (ok === dateKey) return;
             tripDayItems(trip, ok, "lodging").forEach(lo => {
               if (lo.checkOutDate === dateKey)
@@ -40670,7 +40748,7 @@ function renderExploreTripPanel(tab, trip) {
     // Car badge — a vehicle (own or rental) is available this day
     const carsToday = [];
     tripDays.forEach(od => {
-      const ok = od.toISOString().slice(0, 10);
+      const ok = dateKeyFromDate(od);
       tripDayItems(trip, ok, "travel").forEach(item => {
         if (item.mode !== "car-own" && item.mode !== "car-rental") return;
         const from = item.departDate || ok;
@@ -40752,12 +40830,14 @@ function renderExploreTripPanel(tab, trip) {
 function getTripDates(trip) {
   if (!trip.startDate || !trip.endDate) return [];
   const dates = [];
-  const start = new Date(trip.startDate + "T12:00:00");
-  const end   = new Date(trip.endDate   + "T12:00:00");
+  // Local-midnight dates keyed with local getters (dateKeyFromDate): the old
+  // T12:00 + toISOString() shifted keys a day at UTC+13/+14.
+  const start = new Date(trip.startDate + "T00:00:00");
+  const end   = new Date(trip.endDate   + "T00:00:00");
   const limit = new Date(start);
   limit.setDate(limit.getDate() + 60);
   for (let d = new Date(start); d <= end && d <= limit; d.setDate(d.getDate() + 1)) {
-    dates.push(d.toISOString().slice(0, 10));
+    dates.push(dateKeyFromDate(d));
   }
   return dates;
 }
@@ -40841,27 +40921,6 @@ function renderTravelNotes(trip, el = null) {
 }
 
 // ── Map ──────────────────────────────────────────────────────────────────────────
-
-function travelMapHelperUrl() {
-  if (canUseLocalBackend()) return "/api/travel-map-url";
-  if (window.location.protocol.startsWith("http")) return "/.netlify/functions/travel-map-url";
-  return "";
-}
-
-async function fetchTravelMapUrl(params) {
-  const helperUrl = travelMapHelperUrl();
-  if (!helperUrl) return null;
-  try {
-    const res = await fetch(helperUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json", Authorization: "Bearer " + (authSession?.access_token || "") },
-      body: JSON.stringify(params)
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.url || null;
-  } catch { return null; }
-}
 
 // ── Planning map (interactive Leaflet) ───────────────────────────────────────
 // Plots the trip's real located stops (from trip.days) on an interactive map,
@@ -41167,7 +41226,7 @@ function buildDayMapSrc(trip, dateKey, tripDays) {
   });
 
   tripDays.forEach(od => {
-    const ok = od.toISOString().slice(0, 10);
+    const ok = dateKeyFromDate(od);
     if (ok === dateKey) return;
     tripDayItems(trip, ok, "travel").forEach(leg => {
       if (leg.arriveDate === dateKey) addMarker("0x0D7247", "A", leg.toCode || leg.to);
@@ -41178,7 +41237,7 @@ function buildDayMapSrc(trip, dateKey, tripDays) {
     .forEach(item => addMarker("0x1A73E8", "H", item.address || item.name));
 
   tripDays.forEach(od => {
-    const ok = od.toISOString().slice(0, 10);
+    const ok = dateKeyFromDate(od);
     if (ok === dateKey) return;
     tripDayItems(trip, ok, "lodging").forEach(item => {
       if (item.checkInDate && item.checkOutDate && dateKey > item.checkInDate && dateKey <= item.checkOutDate)
@@ -41233,7 +41292,7 @@ function printTripItinerary(trip) {
   }
 
   const daysHtml = tripDays.map((day, idx) => {
-    const dateKey   = day.toISOString().slice(0, 10);
+    const dateKey   = dateKeyFromDate(day);
     const mapSrc    = buildDayMapSrc(trip, dateKey, tripDays);
     const dateLabel = day.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
     let sects = "";
@@ -41242,7 +41301,7 @@ function printTripItinerary(trip) {
     const ownLegs = tripDayItems(trip, dateKey, "travel").filter(i => i.mode || i.from || i.to);
     const arrLegs = [];
     tripDays.forEach(od => {
-      const ok = od.toISOString().slice(0, 10);
+      const ok = dateKeyFromDate(od);
       if (ok !== dateKey) tripDayItems(trip, ok, "travel").forEach(l => { if (l.arriveDate === dateKey) arrLegs.push(l); });
     });
     const allLegs = [...ownLegs.map(l => Object.assign({},l,{_arr:false})), ...arrLegs.map(l => Object.assign({},l,{_arr:true}))];
@@ -41262,7 +41321,7 @@ function printTripItinerary(trip) {
     const ownLodge = tripDayItems(trip, dateKey, "lodging").filter(i => i.itemType === "lodging");
     const spanLodge = [];
     tripDays.forEach(od => {
-      const ok = od.toISOString().slice(0, 10);
+      const ok = dateKeyFromDate(od);
       if (ok !== dateKey) tripDayItems(trip, ok, "lodging").forEach(item => {
         if (item.checkInDate && item.checkOutDate && dateKey > item.checkInDate && dateKey <= item.checkOutDate)
           spanLodge.push(Object.assign({},item,{_span:true}));
@@ -41318,7 +41377,6 @@ function printTripItinerary(trip) {
   const partyStr  = (trip.party || []).join(", ") || "Solo";
   const dateRange = formatTravelDate(trip.startDate) + (trip.endDate ? " – " + formatTravelDate(trip.endDate) : "");
   const generated = new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
-  const destQuery = encodeURIComponent((trip.destination || "travel") + " travel destination landscape");
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -41368,7 +41426,7 @@ h1,h2,h3,.day-num,.day-date{font-family:system-ui,-apple-system,sans-serif}
 </head>
 <body>
 <div class="cover">
-  <div class="cover-photo-wrap"><img class="cover-photo" src="https://source.unsplash.com/1200x700/?${destQuery}" alt="" onerror="this.parentElement.style.background='var(--hd)';this.remove()" /></div>
+  <div class="cover-photo-wrap"></div>
   <div class="cover-body">
     <div class="cover-flag">${theme.flag}</div>
     <h1 class="cover-title">${esc(trip.name)}</h1>
@@ -41386,10 +41444,12 @@ ${daysHtml}
 (function(){
   var imgs=Array.from(document.querySelectorAll('img'));
   var pending=imgs.filter(function(i){return !i.complete||!i.naturalWidth}).length;
-  if(!pending){window.print();return}
-  function done(){pending--;if(pending<=0)window.print()}
+  var printed=false;
+  function printOnce(){if(printed)return;printed=true;window.print()}
+  if(!pending){printOnce();return}
+  function done(){pending--;if(pending<=0)printOnce()}
   imgs.forEach(function(img){if(!img.complete||!img.naturalWidth){img.addEventListener('load',done);img.addEventListener('error',done)}});
-  setTimeout(function(){window.print()},4000);
+  setTimeout(printOnce,4000);
 })();
 <\/script>
 </body>
@@ -42391,6 +42451,7 @@ function showTravelNewTripDialog() {
     try {
       const name = d.querySelector("#tnTripName").value.trim();
       if (!name) { alert("Please enter a trip name."); return; }
+      if (tripDatesReversed(d.querySelector("#tnStart").value, d.querySelector("#tnEnd").value)) { alert("The end date can't be before the start date."); return; }
       const party = Array.from(d.querySelectorAll(".travel-party-chip.is-selected")).map(function(b) { return b.dataset.party; });
       const trip = defaultTrip({
         name,
@@ -42443,6 +42504,10 @@ function showTravelNewIdeaDialog() {
   });
 }
 
+// Both set and end before start → reject (an inverted range yields an empty
+// day grid and a broken calendar projection).
+function tripDatesReversed(start, end) { return !!(start && end && end < start); }
+
 function showTravelEditDatesDialog(trip) {
   const d = document.createElement("dialog");
   d.className = "recipe-dialog auth-dialog";
@@ -42462,8 +42527,17 @@ function showTravelEditDatesDialog(trip) {
   d.showModal();
   d.querySelector("#tedCancel").addEventListener("click", () => d.remove());
   d.querySelector("#tedSave").addEventListener("click", () => {
-    trip.startDate = d.querySelector("#tedStart").value;
-    trip.endDate = d.querySelector("#tedEnd").value;
+    const startVal = d.querySelector("#tedStart").value;
+    const endVal = d.querySelector("#tedEnd").value;
+    if (tripDatesReversed(startVal, endVal)) {
+      const endInput = d.querySelector("#tedEnd");
+      endInput.setCustomValidity("End date can't be before the start date");
+      endInput.reportValidity();
+      endInput.addEventListener("input", () => endInput.setCustomValidity(""), { once: true });
+      return;
+    }
+    trip.startDate = startVal;
+    trip.endDate = endVal;
     trip.updatedAt = new Date().toISOString();
     persist();
     syncTripToCalendar(trip);
