@@ -21,7 +21,7 @@ import { normalizeContacts, normalizeContactGroups, createContactsModule, buildC
 import { createHistoryLog, historyRowFromMedia, historyRowFromArticle, historyRowFromPracticeEvent, historyRowFromChat, fetchAllHistory } from './history-log.js';
 import { canonicalizeUrl as canonicalizeImportUrl } from './import-canonical.js';
 import { createPlaybackEngine } from './playback-engine.js';
-import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones } from './state-sync.js';
+import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones, computeDirtySections, writeDirtySections } from './state-sync.js';
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
 import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
@@ -6673,13 +6673,6 @@ function stripEpisodeDescriptions(podcasts) {
     : p);
 }
 
-function updateLastWrittenSections() {
-  lastWrittenSections = {};
-  for (const [section, keys] of Object.entries(STATE_SECTIONS)) {
-    lastWrittenSections[section] = JSON.stringify(extractSectionData(keys));
-  }
-}
-
 function assembleSectionRows(rows) {
   const assembled = {};
   let latestTs = "";
@@ -6749,23 +6742,29 @@ async function writeStateToSupabase() {
   const config = supabaseConfig();
   const stateId = config.stateId;
 
-  const sectionsToWrite = [];
-  for (const [section, keys] of Object.entries(STATE_SECTIONS)) {
-    // Never push the finance section before its cloud copy has loaded — the
-    // boot-empty finance (mirror strips it) would blank budget picks and the
-    // cash/emergency/retirement account selections on the server.
-    if (section === "finance" && !financeSectionHydrated) continue;
-    const currentJson = JSON.stringify(extractSectionData(keys));
-    if (!lastWrittenSections || lastWrittenSections[section] !== currentJson) {
-      sectionsToWrite.push({ section, keys });
-    }
-  }
+  // Never push the finance section before its cloud copy has loaded — the
+  // boot-empty finance (mirror strips it) would blank budget picks and the
+  // cash/emergency/retirement account selections on the server.
+  const sectionsToWrite = computeDirtySections(
+    STATE_SECTIONS,
+    (keys) => JSON.stringify(extractSectionData(keys)),
+    lastWrittenSections,
+    (section) => section === "finance" && !financeSectionHydrated,
+  );
 
   if (sectionsToWrite.length === 0) return;
 
-  await Promise.all(sectionsToWrite.map(({ section, keys }) => writeSectionWithMerge(stateId, section, keys)));
-
-  updateLastWrittenSections();
+  // Each section records ONLY the JSON it actually sent, and only once that
+  // write succeeded. Edits made while these PATCHes are in flight therefore stay
+  // dirty and go out on the next save, and one failing section can't stop the
+  // others being marked (INF-1: the old code re-read live state AFTER the await
+  // and marked every section clean, silently dropping in-flight edits).
+  const { written, error } = await writeDirtySections(
+    sectionsToWrite,
+    ({ section, keys }) => writeSectionWithMerge(stateId, section, keys),
+  );
+  lastWrittenSections = { ...(lastWrittenSections || {}), ...written };
+  if (error) throw error;
 }
 
 // Writes one section row with optimistic locking. If another writer (other
@@ -6775,12 +6774,16 @@ async function writeStateToSupabase() {
 async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
   const rowId = sectionRowId(stateId, section); // household or personal row per scope
   const now = new Date().toISOString();
+  // Snapshot the section ONCE: the payload and the JSON reported back to the
+  // caller (which becomes lastWrittenSections[section]) must be the same bytes.
+  const sectionData = extractSectionData(keys);
+  const sentJson = JSON.stringify(sectionData);
   const payload = {
     // schemaVersion lets the server (see the tp_protect_finance_merge trigger)
     // reject finance-key overwrites from clients running older code than the
     // row was last written with — the guard against a stale device silently
     // wiping budget categories or transaction annotations.
-    state: { ...extractSectionData(keys), stateUpdatedAt: state.stateUpdatedAt, schemaVersion: STATE_SCHEMA_VERSION },
+    state: { ...sectionData, stateUpdatedAt: state.stateUpdatedAt, schemaVersion: STATE_SCHEMA_VERSION },
     updated_at: now
   };
   const seen = lastSeenSectionStamp[rowId];
@@ -6795,7 +6798,7 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
     );
     if (!res.ok) throw new Error(`Supabase section "${section}" save failed: ${res.status}`);
     const rows = await res.json();
-    if (rows.length) { lastSeenSectionStamp[rowId] = rows[0].updated_at || now; return; }
+    if (rows.length) { lastSeenSectionStamp[rowId] = rows[0].updated_at || now; return sentJson; }
     // 0 rows matched → conflict: the row moved on since we last saw it
   } else {
     // No stamp — check whether the row exists at all before creating it
@@ -6816,7 +6819,7 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
       if (!ins.ok) throw new Error(`Supabase section "${section}" save failed: ${ins.status}`);
       const insRows = await ins.json().catch(() => []);
       lastSeenSectionStamp[rowId] = insRows[0]?.updated_at || now;
-      return;
+      return sentJson;
     }
     // Row exists but we never hydrated it — merge before writing over it
   }
