@@ -132,6 +132,8 @@ _(none)_
       **DECIDED 2026-09-29 (Luke): stays parked.**
 
 ## P3
+- [ ] **[P3] Local dev server still routes `/api/travel-map-url`** (dev · server.js:88 · 2026-09-30)
+      PR #22 deleted the Netlify function (it returned the raw Maps key), and the client no longer calls it, but `server.js` still has the local-dev route and handler. Dead code, local only. Suggest: delete the route and `handleTravelMapUrl`. Verdict: CONFIRMED by reading.
 - [ ] **[P3] `sendVoiceCommand` in app.js is dead code** (assistant · app.js:36871 · 2026-09-30)
   No callers; it posts `{transcript}` without the household id/passphrase, so the voice function would reject it (400/401) if anything wired it up. Voice now runs only via the Siri shortcut → `voice-command.js`. Suggest: delete it (and any helpers only it uses). Verdict: CONFIRMED by grep, left alone to keep the voice change focused.
 - [x] **[P3] Assistant calendar lookups use the ICS cache as last fetched** (assistant · app.js get_calendar_range / buildChatOverviewContext · 2026-09-29)
