@@ -38047,6 +38047,30 @@ async function executeChatTool(name, input) {
         return message;
       }
 
+      case "add_workout": {
+        const title = String(input.title || "").trim();
+        if (!title) return "No workout name provided.";
+        state.workouts = normalizeWorkouts(state.workouts);
+        if (state.workouts.some((w) => w.title.toLowerCase() === title.toLowerCase())) return `"${title}" is already in the exercise library.`;
+        state.workouts = normalizeWorkouts([...state.workouts, {
+          id: createId("workout"), title, type: "timed",
+          exerciseDetails: { type: "timed", timed: { hours: "0", minutes: "30", seconds: "00", distanceWhole: "16", distanceDecimal: "00", distanceUnit: "km" }, reps: [], gameNotes: "" },
+          notes: "", logs: [], createdAt: new Date().toISOString(),
+        }]);
+        persist();
+        if (activeAppArea === "sweat") render();
+        return `Added "${title}" to the exercise library.`;
+      }
+
+      case "add_piano_song": {
+        const title = String(input.title || "").trim();
+        if (!title) return "No song title provided.";
+        if (!Array.isArray(state.pianoSongs)) state.pianoSongs = [];
+        state.pianoSongs.push({ id: createId("piano"), title, learned: false, sheetMusicUrl: "" });
+        persist();
+        return `Added "${title}" to the piano practice list.`;
+      }
+
       case "update_note": {
         const { notes, message } = updateNote(state.aiNotes, input.note_id, input.note, { now: new Date().toISOString() });
         if (notes !== state.aiNotes) { state.aiNotes = notes; persist(); }

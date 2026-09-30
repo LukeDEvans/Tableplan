@@ -36,6 +36,8 @@ export const UNDO_KEYS = Object.freeze({
   update_event: ["planEvents"],
   delete_event: ["planEvents"],
   log_workout: ["workouts"],
+  add_workout: ["workouts"],
+  add_piano_song: ["pianoSongs"],
   write_note: ["aiNotes"],
   update_note: ["aiNotes"],
   forget_note: ["aiNotes"],
@@ -51,7 +53,7 @@ export const UNDO_KEYS = Object.freeze({
 const TOMBSTONE_KEYS = Object.freeze({
   planEvents: "planEvents", watchItems: "watchItems", readingItems: "readingItems",
   foodLogEntries: "foodLogEntries", dailyChecklistEntries: "dailyChecklistEntries",
-  trips: "trips", travelIdeas: "travelIdeas", workouts: "workouts",
+  trips: "trips", travelIdeas: "travelIdeas", workouts: "workouts", pianoSongs: "pianoSongs",
   doBacklog: "doBacklog", doPlans: "doPlanTasks",
 });
 
