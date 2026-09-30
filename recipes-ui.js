@@ -191,6 +191,93 @@ export function stripInstructionStepPrefix(step) {
   return String(step || "").trim().replace(/^(step\s*)?\d+[\).:\-]\s*/i, "").trim();
 }
 
+// ── Pure recipe-import parsing helpers (top-level exports; no deps, testable) ──
+// Client twins of netlify/functions/_recipe-extract.js — keep the two in step.
+function arrayValue(value) {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+// ISO-8601 duration → "1 hr 30 min". Handles decimals (PT0.5H), seconds, days and
+// weeks (P1DT2H → "1 day 2 hr"); passes non-ISO strings through unchanged.
+export function readableDuration(value) {
+  const text = String(value || "").trim();
+  if (!/^P(T|\d)/i.test(text)) return value;
+  const num = "(\\d+(?:\\.\\d+)?)";
+  const m = text.match(new RegExp(`^P(?:${num}Y)?(?:${num}M)?(?:${num}W)?(?:${num}D)?(?:T(?:${num}H)?(?:${num}M)?(?:${num}S)?)?$`, "i"));
+  if (!m) return "";
+  const n = (v) => Number(v || 0);
+  const totalMinutes = Math.round(
+    (n(m[1]) * 365 + n(m[2]) * 30 + n(m[3]) * 7 + n(m[4])) * 1440 + n(m[5]) * 60 + n(m[6]) + n(m[7]) / 60
+  ) || (n(m[7]) > 0 ? 1 : 0);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  return [
+    days ? `${days} day${days === 1 ? "" : "s"}` : "",
+    hours ? `${hours} hr` : "",
+    minutes ? `${minutes} min` : ""
+  ].filter(Boolean).join(" ");
+}
+
+// schema.org recipeInstructions → newline-joined steps. HowToSection steps live in
+// itemListElement; the section name is kept as a heading line ("For the sauce:").
+export function instructionsToText(instructions) {
+  return flattenInstructionSteps(instructions).filter(Boolean).join("\n");
+}
+
+function flattenInstructionSteps(instructions, depth = 0) {
+  if (depth > 5) return [];
+  return arrayValue(instructions).flatMap((step) => {
+    if (typeof step === "string") return [step.trim()];
+    if (!step || typeof step !== "object") return [];
+    const nested = step.itemListElement;
+    if (nested) {
+      const heading = String(step.name || "").trim();
+      const children = flattenInstructionSteps(nested, depth + 1);
+      return heading ? [heading.endsWith(":") ? heading : `${heading}:`, ...children] : children;
+    }
+    return [String(step.text || step.name || "").trim()];
+  });
+}
+
+// "1½" → "1 ½" then vulgar fractions → "1/2", so mixed numbers parse as "1 1/2".
+export function normalizeIngredientFractions(line) {
+  return String(line || "")
+    .replace(/(\d)([⅛¼⅓½⅔¾])/g, "$1 $2")
+    .replace(/⅛/g, "1/8").replace(/¼/g, "1/4").replace(/⅓/g, "1/3")
+    .replace(/½/g, "1/2").replace(/⅔/g, "2/3").replace(/¾/g, "3/4");
+}
+
+// Pulls the leading amount token(s) off `parts` (mutates). Option-list values win;
+// plain numbers outside the list ("1.5", "400") are kept too (mapped to the matching
+// fraction option when one exists).
+export function takeIngredientAmount(parts, options) {
+  const mixedAmount = `${parts[0] || ""} ${parts[1] || ""}`.trim();
+  if (options.includes(mixedAmount)) {
+    parts.shift();
+    parts.shift();
+    return mixedAmount;
+  }
+  if (options.includes(parts[0])) return parts.shift();
+  if (/^(\d+(\.\d+)?|\.\d+)$/.test(parts[0] || "")) return decimalToAmount(parts.shift(), options);
+  return "";
+}
+
+const AMOUNT_FRACTIONS = [[0.125, "1/8"], [0.25, "1/4"], [1 / 3, "1/3"], [0.5, "1/2"], [2 / 3, "2/3"], [0.75, "3/4"]];
+
+function decimalToAmount(raw, options) {
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return raw;
+  const whole = Math.floor(value);
+  const frac = value - whole;
+  if (frac < 0.01) return String(whole);
+  const match = AMOUNT_FRACTIONS.find(([f]) => Math.abs(f - frac) < 0.01);
+  if (!match) return raw;
+  const label = whole ? `${whole} ${match[1]}` : match[1];
+  return options.includes(label) ? label : raw;
+}
+
 export function normalizeNutritionFacts(facts) {
   if (!Array.isArray(facts)) return [];
   return facts
@@ -2693,8 +2780,8 @@ function parseRecipeHtml(html, sourceUrl) {
 
   return {
     name: textValue(recipe.name) || document.querySelector("h1")?.textContent?.trim() || "",
-    prepTime: textValue(recipe.prepTime),
-    cookTime: textValue(recipe.cookTime),
+    prepTime: readableDuration(textValue(recipe.prepTime)),
+    cookTime: readableDuration(textValue(recipe.cookTime)),
     time: readableDuration(textValue(recipe.totalTime || recipe.cookTime || recipe.prepTime)),
     servings: parseServings(recipe.recipeYield),
     folderId: "",
@@ -2753,31 +2840,9 @@ function parseRecipeText(text, sourceUrl = "") {
   };
 }
 
-function instructionsToText(instructions) {
-  return arrayValue(instructions).map((step) => {
-    if (typeof step === "string") return step;
-    return step.text || step.name || "";
-  }).filter(Boolean).join("\n");
-}
-
-function arrayValue(value) {
-  if (!value) return [];
-  return Array.isArray(value) ? value : [value];
-}
-
 function textValue(value) {
   if (Array.isArray(value)) return value.join(", ");
   return value ? String(value) : "";
-}
-
-// ISO-8601 duration (PT1H30M) → "1 hr 30 min"; passes non-ISO strings through.
-// Ported from server.js (the only prior copy): parseRecipeText runs client-side too
-// (recipe import), where `readableDuration` was undefined → this threw in production.
-function readableDuration(value) {
-  if (!/^P(T|\d)/i.test(value)) return value;
-  const hours = Number(value.match(/(\d+)H/i)?.[1] || 0);
-  const minutes = Number(value.match(/(\d+)M/i)?.[1] || 0);
-  return [hours ? `${hours} hr` : "", minutes ? `${minutes} min` : ""].filter(Boolean).join(" ");
 }
 
 function parseServings(value) {
@@ -2891,9 +2956,8 @@ function normalizeIngredients(ingredients) {
 
 function parseIngredientLine(line) {
   let normalizedLine = line.trim()
-    .replace(/^[-*•]\s*/, "")
-    .replace(/⅛/g, "1/8").replace(/¼/g, "1/4").replace(/⅓/g, "1/3")
-    .replace(/½/g, "1/2").replace(/⅔/g, "2/3").replace(/¾/g, "3/4");
+    .replace(/^[-*•]\s*/, "");
+  normalizedLine = normalizeIngredientFractions(normalizedLine);
 
   // Strip inline packaging parentheticals like "(14 oz)" or "(15-oz)" that appear
   // after an amount but before a unit — e.g. "1 (14 oz) can tomatoes"
@@ -2938,16 +3002,6 @@ function parseIngredientLine(line) {
 
   const optional = /\boptional\b/i.test(`${normalizedLine} ${prepText}`);
   return { amount, quantity, item, prep, rawLine: normalizedLine, optional, required: !optional };
-}
-
-function takeIngredientAmount(parts, options) {
-  const mixedAmount = `${parts[0] || ""} ${parts[1] || ""}`.trim();
-  if (options.includes(mixedAmount)) {
-    parts.shift();
-    parts.shift();
-    return mixedAmount;
-  }
-  return options.includes(parts[0]) ? parts.shift() : "";
 }
 
 function ingredientToText(ingredient) {
