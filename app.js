@@ -7508,6 +7508,11 @@ let mailPageTokens = [undefined];
 let mailPageIndex = 0;
 let mailTotalEstimate = null;
 let mailPageBusy = false;
+// Request generation for list loads: every load bumps it, and a response is
+// only rendered if no newer load started meanwhile. A folder switch/search
+// during an in-flight load therefore supersedes it instead of being dropped
+// (and the stale page can't render under the new folder).
+let mailListLoadGen = 0;
 let mailLastPageCount = 0;
 
 // Interactive pager for swiping between emails — the same feel as the meal-plan
@@ -7999,12 +8004,16 @@ function renderMailSuggestions(suggestions) {
     }).join('') +
     '</div>';
 
-  const bySugg = id => suggestions.find(s => s.id === id);
+  // Handlers read the module-level list at click time (not the array captured
+  // at render), so resolving one card never resurrects another resolved since.
+  const bySugg = id => (lastMailSuggestions || []).find(s => s.id === id);
+  const removeSugg = id => renderMailSuggestions((lastMailSuggestions || []).filter(s => s.id !== id));
 
   panel.querySelectorAll(".mail-sugg-dismiss").forEach(btn => btn.addEventListener("click", async () => {
     btn.disabled = true;
-    await callGmailApi({ action: "resolveSuggestion", suggestionId: btn.dataset.id, status: "dismissed" });
-    renderMailSuggestions(suggestions.filter(s => s.id !== btn.dataset.id));
+    const ok = await callGmailApi({ action: "resolveSuggestion", suggestionId: btn.dataset.id, status: "dismissed" });
+    if (!ok) { btn.disabled = false; showMailToast("Couldn't dismiss — try again."); return; }
+    removeSugg(btn.dataset.id);
   }));
 
   panel.querySelectorAll(".mail-sugg-approve").forEach(btn => btn.addEventListener("click", async () => {
@@ -8012,16 +8021,21 @@ function renderMailSuggestions(suggestions) {
     if (!s) return;
     btn.disabled = true;
 
+    // Only drop the card once the server confirms the resolve.
     const resolveAndRemove = async () => {
-      await callGmailApi({ action: "resolveSuggestion", suggestionId: s.id, status: "approved" });
-      renderMailSuggestions(suggestions.filter(x => x.id !== s.id));
+      const ok = await callGmailApi({ action: "resolveSuggestion", suggestionId: s.id, status: "approved" });
+      if (!ok) { btn.disabled = false; btn.textContent = s.kind === "add_booking" ? "Review & add" : "Approve"; showMailToast("Couldn't update the suggestion — try again."); return false; }
+      removeSugg(s.id);
+      return true;
     };
 
     if (s.kind === "add_todo") {
+      // Resolve first so a failed resolve can't leave a duplicate task behind
+      // (the card stays and a retry would add it again).
+      if (!(await resolveAndRemove())) return;
       const title = s.dueDate ? s.title + " (due " + s.dueDate + ")" : s.title;
       doBacklogTasks().push({ id: createId("task"), title, done: false, weekKey: weekKey(), createdAt: new Date().toISOString() });
       persist();
-      await resolveAndRemove();
       return;
     }
 
@@ -8130,11 +8144,13 @@ async function disconnectGmail() {
 // A fresh load resets to page 1 of the given mailbox/query. Page navigation
 // (prev/next) goes through mailGoToPage → fetchAndRenderMailPage.
 async function loadMailList(labelId, q = "") {
+  const gen = ++mailListLoadGen;
   currentMailbox = labelId;
   // Snoozed folder: pull the wake-time metadata so rows can show "until when"
   // and offer unsnooze/reschedule instead of the normal quick actions.
   if (labelId === snoozedLabelId()) {
     const s = await callGmailApi({ action: "listSnoozes" });
+    if (gen !== mailListLoadGen) return; // superseded by a newer load
     mailSnoozeMap = Object.fromEntries((s?.snoozes || []).map((x) => [x.threadId, x.wakeAt]));
   }
   mailCurrentQuery = q;
@@ -8154,7 +8170,9 @@ async function loadMailList(labelId, q = "") {
 // Loads the page whose token is mailPageTokens[mailPageIndex] and renders it,
 // replacing the list (no appending — this is paged, not infinite-scroll).
 async function fetchAndRenderMailPage({ fresh = false } = {}) {
-  if (mailPageBusy) return;
+  // No busy early-return: a newer load supersedes an in-flight one (see
+  // mailListLoadGen); the older response is discarded when it lands.
+  const gen = ++mailListLoadGen;
   mailPageBusy = true;
   renderMailListToolbar();
   elements.mailList.innerHTML = `<div class="mail-loading">Loading…</div>`;
@@ -8174,6 +8192,7 @@ async function fetchAndRenderMailPage({ fresh = false } = {}) {
       maxResults: MAIL_PAGE_SIZE
     });
   }
+  if (gen !== mailListLoadGen) return; // stale: a newer load owns the list (and mailPageBusy)
   mailPageBusy = false;
   if (!data) {
     const detail = lastGmailApiError ? ` ${escapeHtml(lastGmailApiError)}` : "";
