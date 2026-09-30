@@ -27655,6 +27655,10 @@ let radioCurStation = null;    // station object currently tuned
 let radioStreamCandidates = [];// ordered stream URLs for fallback
 let radioStreamIdx = 0;
 let radioReconnectTries = 0;   // guards live-stream reconnect loops
+// iPhone app: the station plays on the native player (LiveTtsPlugin, kind
+// "live"), which handles lock-screen / AirPods controls and reconnects itself.
+// { stationId, playing, subs } while active, else null. radioAudio stays null.
+let radioNative = null;
 let radioMod = null, radioRegistry = null, radioCatalog = null, radioPrograms = null;
 let radioPanelWired = false;
 let radioSearchQuery = "";
@@ -30507,7 +30511,7 @@ const MEDIA_KINDS = {
   },
   radio: {
     live: true,
-    active: () => !!radioAudio,
+    active: () => !!radioAudio || !!radioNative,
     el: () => radioAudio,
     onTimeupdate: () => updateMiniPlayerProgress(),
     onPlay: () => { radioReconnectTries = 0; setMediaSessionPlaybackState("playing"); updateMiniPlayerPlayBtn(); if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel(); },
@@ -32430,12 +32434,54 @@ const radioStationSubtitle = (st) => st && (st.category || st.programGroup || "L
 function playRadioStation(station) {
   if (!station) return;
   stopPodcastAudio(); stopListen(); stopMusicPlayback(); // never overlap
+  teardownNativeRadio(false); // switching stations natively: the new play() replaces the old stream
   radioCurStation = station;
   radioStreamCandidates = (radioMod ? radioMod.streamCandidates(station) : (station.streams || [])).map((s) => s.url).filter(Boolean);
   radioStreamIdx = 0; radioReconnectTries = 0;
   if (!radioStreamCandidates.length) { showVoiceToast("This station has no playable stream."); return; }
-  radioLoadCurrentStream();
+  if (nativeTts()) startNativeRadio(station);
+  else radioLoadCurrentStream();
   pushRadioHistory(station);
+}
+
+// iPhone app: hand the station (all its stream URLs, as fallbacks) to the native
+// player. Falls back to the web player if the plugin won't start it.
+async function startNativeRadio(station) {
+  const tts = nativeTts();
+  const rn = { stationId: station.id, playing: true, subs: [] };
+  radioNative = rn;
+  clearWebMediaSession();
+  setMiniPlayer(station.name, radioStationSubtitle(station), station.logoUrl || "");
+  updateMiniPlayerPlayBtn();
+  if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel();
+  const live = () => radioNative === rn;
+  const refresh = () => { updateMiniPlayerPlayBtn(); if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel(); };
+  try {
+    rn.subs.push(await tts.addListener("ttsState", (e) => { if (!live()) return; rn.playing = !!(e && e.playing); refresh(); }));
+    rn.subs.push(await tts.addListener("ttsFinish", (e) => {
+      if (!live() || !e || e.kind !== "live") return;
+      // The plugin already reconnected and tried every stream.
+      showVoiceToast(`${radioCurStation ? radioCurStation.name : "Station"} is unavailable right now.`);
+      stopRadio();
+    }));
+    if (!live()) return;
+    await tts.play({ item: { id: station.id, kind: "live", url: radioStreamCandidates[0], urls: radioStreamCandidates, title: station.name, subtitle: radioStationSubtitle(station) } });
+  } catch {
+    if (!live()) return;
+    teardownNativeRadio(false);
+    radioLoadCurrentStream(); // web player
+  }
+}
+function teardownNativeRadio(stopPlugin = true) {
+  const rn = radioNative;
+  if (!rn) return;
+  radioNative = null;
+  (rn.subs || []).forEach((h) => { try { h && h.remove && h.remove(); } catch { /* noop */ } });
+  if (stopPlugin) { const tts = nativeTts(); if (tts) { try { tts.stop(); } catch { /* noop */ } } }
+}
+function radioIsPlaying() {
+  if (radioNative) return !!radioNative.playing;
+  return !!(radioAudio && !radioAudio.paused && !radioAudio.ended);
 }
 function radioLoadCurrentStream() {
   const url = radioStreamCandidates[radioStreamIdx];
@@ -32454,12 +32500,24 @@ function onRadioEnded() { // a live stream "ending" = a dropped connection → r
 function onRadioError() { if (!radioTryNextStream()) { showVoiceToast(`${radioCurStation ? radioCurStation.name : "Station"} is unavailable right now.`); stopRadio(); } }
 
 function stopRadio() {
+  teardownNativeRadio();
   if (mediaEngine && radioAudio) mediaEngine.stop();
   radioAudio = null; radioCurStation = null; radioStreamCandidates = []; radioStreamIdx = 0;
   setMediaSessionPlaybackState("none"); hideMiniPlayer();
   if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel();
 }
-function toggleRadioPlayPause() { if (!radioAudio) return; if (radioAudio.paused) radioAudio.play().catch(() => {}); else radioAudio.pause(); }
+function toggleRadioPlayPause() {
+  if (radioNative) {
+    const tts = nativeTts(); if (!tts) return;
+    const rn = radioNative;
+    rn.playing = !rn.playing; // optimistic; ttsState confirms
+    (rn.playing ? tts.resume() : tts.pause()).catch(() => {});
+    updateMiniPlayerPlayBtn();
+    if (activeAppArea === "media" && activeMediaTab === "radio") renderRadioPanel();
+    return;
+  }
+  if (!radioAudio) return; if (radioAudio.paused) radioAudio.play().catch(() => {}); else radioAudio.pause();
+}
 
 function setRadioMediaSession(station) {
   if (!("mediaSession" in navigator)) return;
@@ -32545,7 +32603,7 @@ function radioStationRow(st) {
   if (!st || !st.id) return "";
   radioViewIndex.set(st.id, st);
   const active = radioCurStation && radioCurStation.id === st.id;
-  const playing = active && radioAudio && !radioAudio.paused && !radioAudio.ended;
+  const playing = active && radioIsPlaying();
   const fav = isRadioFav(st.id);
   return `<div class="music-row${active ? " is-active" : ""}" data-radio-play="${escapeHtml(st.id)}" role="button" tabindex="0" aria-label="${escapeHtml(st.name)}">
       <span class="music-row-icon" aria-hidden="true">${active ? (playing ? MUSIC_PAUSE_SVG : MUSIC_PLAY_SVG) : radioStationThumb(st)}</span>
@@ -32571,7 +32629,7 @@ function radioProgramRow(prog) {
 
 function radioNowCard() {
   if (radioCurStation) {
-    const playing = radioAudio && !radioAudio.paused && !radioAudio.ended;
+    const playing = radioIsPlaying();
     return `<div class="radio-now" data-radio-open="${escapeHtml(radioCurStation.id)}">
         ${radioStationThumb(radioCurStation)}
         <span class="radio-now-meta"><span class="radio-now-label"><span class="radio-live-dot"></span>Live now</span><span class="radio-now-title">${escapeHtml(radioCurStation.name)}</span><span class="radio-now-sub">${escapeHtml(radioStationSubtitle(radioCurStation))}</span></span>
@@ -32679,7 +32737,7 @@ function initRadioPanel() {
       const prog = e.target.closest("[data-radio-program]");
       if (prog) { openRadioProgram(radioViewIndex.get(prog.dataset.radioProgram)); return; }
       const play = e.target.closest("[data-radio-play]");
-      if (play) { const st = radioViewIndex.get(play.dataset.radioPlay); if (st) { if (radioCurStation && radioCurStation.id === st.id && radioAudio) toggleRadioPlayPause(); else playRadioStation(st); } return; }
+      if (play) { const st = radioViewIndex.get(play.dataset.radioPlay); if (st) { if (radioCurStation && radioCurStation.id === st.id && (radioAudio || radioNative)) toggleRadioPlayPause(); else playRadioStation(st); } return; }
       const open = e.target.closest("[data-radio-open]");
       if (open) { /* now-card body tap: toggle */ toggleRadioPlayPause(); return; }
     });
@@ -32756,6 +32814,7 @@ function nowPlayingEngineState() {
 }
 function nowPlayingIsPlaying() {
   if (musicPlaybackProvider) return !!(musicOwnedNP && musicOwnedNP.isPlaying); // Apple Music owns its transport
+  if (radioNative) return !!radioNative.playing; // native live radio
   if (listenSpeechSynth) { // on-device voice (native plugin or Web Speech)
     if (listenSpeechSynth.native) return !listenSpeechSynth.paused;
     try { return window.speechSynthesis.speaking && !window.speechSynthesis.paused; } catch { return false; }
@@ -32768,6 +32827,7 @@ function nowPlayingIsPlaying() {
 }
 function nowPlayingElapsed() {
   if (musicPlaybackProvider) return musicOwnedNP ? (musicOwnedNP.positionMs || 0) / 1000 : 0;
+  if (radioNative) return 0; // live
   const s = nowPlayingEngineState();
   if (s) return s.position || 0;
   const el = nowPlayingEl(); return el ? (el.currentTime || 0) : listenElapsed();
@@ -32775,6 +32835,7 @@ function nowPlayingElapsed() {
 // Live radio has no finite duration → 0 (the bar shows no progress for it).
 function nowPlayingTotal() {
   if (musicPlaybackProvider) return (musicOwnedNP && musicOwnedNP.durationMs) ? musicOwnedNP.durationMs / 1000 : 0;
+  if (radioNative) return 0; // live
   const s = nowPlayingEngineState();
   if (s) return Number.isFinite(s.duration) ? s.duration : 0;
   const el = nowPlayingEl(); if (el) return Number.isFinite(el.duration) ? el.duration : 0; return listenTotalDuration || 0;

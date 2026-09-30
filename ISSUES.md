@@ -128,8 +128,9 @@ _(none)_
       **DECIDED 2026-09-29 (Luke): stays parked.**
 
 ## P3
-- [ ] **[P3] Radio still plays in the web view in the iPhone app** (media · app.js radio · 2026-09-30)
-      Podcasts and Apple-voice articles now play on the native player in the app (lock screen / AirPods pause-resume). Live radio still uses the web player, so resuming it from the lock screen after a pause likely fails the same way podcasts did. Fix when wanted: a live-stream item kind in LiveTtsPlugin (AVPlayer, no seek). Verdict: INFERRED from the podcast behaviour, not device-tested.
+- [x] **[P3] Radio still plays in the web view in the iPhone app** (media · app.js radio · 2026-09-30)
+      Podcasts and Apple-voice articles now play on the native player in the app (lock screen / AirPods pause-resume). Live radio still used the web player, so resuming it from the lock screen after a pause likely failed the same way podcasts did.
+      **RESOLVED 2026-09-30 (Luke asked):** LiveTtsPlugin has a `live` item kind (AVPlayer, no seek, lock screen shows LIVE). Pause stops the stream and resume reconnects at the live edge. A dropped or failed stream retries twice, then tries the station's other stream URLs, all natively. In the app, `playRadioStation` → `startNativeRadio`; the web version is unchanged. Not device-tested.
 - [ ] **[P3] `sendVoiceCommand` in app.js is dead code** (assistant · app.js:36871 · 2026-09-30)
   No callers; it posts `{transcript}` without the household id/passphrase, so the voice function would reject it (400/401) if anything wired it up. Voice now runs only via the Siri shortcut → `voice-command.js`. Suggest: delete it (and any helpers only it uses). Verdict: CONFIRMED by grep, left alone to keep the voice change focused.
 - [x] **[P3] Assistant calendar lookups use the ICS cache as last fetched** (assistant · app.js get_calendar_range / buildChatOverviewContext · 2026-09-29)

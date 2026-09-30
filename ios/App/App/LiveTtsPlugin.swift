@@ -42,7 +42,9 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise)
     ]
 
-    private enum Kind: String { case speech, audio }
+    // speech = an article read aloud; audio = a podcast episode (seekable);
+    // live = a radio stream (no seeking; resume jumps back to live).
+    private enum Kind: String { case speech, audio, live }
 
     private struct Item {
         let id: String
@@ -53,6 +55,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         let subtitle: String
         let startPosition: Double // audio only, seconds
         let skipRanges: [(Double, Double)] // audio only: [start, end) seconds to jump over (ads)
+        var fallbackUrls: [URL] = []       // live only: other streams for the station, tried in order
     }
 
     private let synth = AVSpeechSynthesizer()
@@ -83,6 +86,10 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     private var lastAudioPosition: Double = 0
     private var lastPositionNotify: Double = -100
     private var nowPlayingHasDuration = false
+    // Live radio: which of the station's streams is playing, and reconnect tries.
+    private var liveItemId = ""
+    private var liveUrlIdx = 0
+    private var liveRetries = 0
 
     // Lock-screen targets exist ONLY while native playback is active, so they
     // never shadow WebKit's own handlers for web-played podcasts / music / Kokoro.
@@ -201,6 +208,8 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
                 case .audio:
                     if !self.userPaused, let p = self.player, p.rate > 0 { p.rate = max(0.5, min(3.0, r)) }
                     self.updateNowPlaying(playing: !self.userPaused)
+                case .live:
+                    break // live radio always plays at 1×
                 case .speech:
                     if self.isActivelyPlaying() { self.start(item, speechOffset: self.lastLocation) }
                     else { self.speechRateDirty = true }
@@ -213,6 +222,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     // Replace the list of items to play after the current one, in order.
     // Speech: { id, kind: "speech", text, title, subtitle }
     // Audio:  { id, kind: "audio", url, title, subtitle, startPosition?, skipRanges?: [[start, end]] }
+    // Live:   { id, kind: "live", url, urls?: [fallback stream urls], title, subtitle }
     @objc func setUpcoming(_ call: CAPPluginCall) {
         let raw = call.getArray("items", JSObject.self) ?? []
         let items: [Item] = raw.compactMap { LiveTtsPlugin.parseItem($0) }
@@ -232,6 +242,17 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             guard let text = o["text"] as? String, !text.isEmpty else { return nil }
             return Item(id: id, kind: .speech, text: text, url: nil, title: title, subtitle: subtitle,
                         startPosition: 0, skipRanges: [])
+        case .live:
+            var urls: [URL] = []
+            if let s = o["url"] as? String, let u = URL(string: s) { urls.append(u) }
+            if let arr = o["urls"] as? JSArray {
+                for v in arr { if let s = v as? String, let u = URL(string: s), !urls.contains(u) { urls.append(u) } }
+            }
+            guard let first = urls.first else { return nil }
+            var item = Item(id: id, kind: .live, text: "", url: first, title: title, subtitle: subtitle,
+                            startPosition: 0, skipRanges: [])
+            item.fallbackUrls = Array(urls.dropFirst())
+            return item
         case .audio:
             guard let s = o["url"] as? String, let url = URL(string: s) else { return nil }
             let start = (o["startPosition"] as? Double) ?? Double((o["startPosition"] as? Int) ?? 0)
@@ -304,12 +325,13 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     // MARK: - Playback core (main thread)
 
     private func activateSession() {
+        let mode: AVAudioSession.Mode = current?.kind == .live ? .default : .spokenAudio
         // Background playback + lock-screen requires an active .playback session.
         // Re-asserted on every start/resume: iOS can deactivate it while the app
         // is suspended during a pause, and resuming into an inactive session is
         // silent.
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [])
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: mode, options: [])
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
             // Non-fatal: playback still works in the foreground without the session.
@@ -342,13 +364,17 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
 
     private func start(_ item: Item, speechOffset: Int = 0, audioPosition: Double? = nil) {
         stopOutput()
-        activateSession()
         current = item
+        activateSession()
         userPaused = false
         speechRateDirty = false
         switch item.kind {
         case .speech: startSpeech(item, from: speechOffset)
         case .audio: startAudio(item, at: audioPosition ?? item.startPosition)
+        case .live:
+            if item.id != liveItemId { liveItemId = item.id; liveUrlIdx = 0; liveRetries = 0 }
+            let urls = [item.url].compactMap { $0 } + item.fallbackUrls
+            startAudio(item, at: 0, url: urls[min(liveUrlIdx, urls.count - 1)])
         }
         wireRemoteCommands()
         configureCommands(for: item.kind)
@@ -374,8 +400,8 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         synth.speak(utterance)
     }
 
-    private func startAudio(_ item: Item, at position: Double) {
-        guard let url = item.url else { return }
+    private func startAudio(_ item: Item, at position: Double, url overrideUrl: URL? = nil) {
+        guard let url = overrideUrl ?? item.url else { return }
         let playerItem = AVPlayerItem(url: url)
         let p = AVPlayer(playerItem: playerItem)
         p.automaticallyWaitsToMinimizeStalling = true
@@ -424,7 +450,13 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     }
 
     private func onAudioTick(_ seconds: Double) {
-        guard seconds.isFinite, let item = current, item.kind == .audio else { return }
+        guard seconds.isFinite, let item = current else { return }
+        if item.kind == .live {
+            // Playing again after a reconnect → reset the retry budget.
+            if (player?.rate ?? 0) > 0 && seconds > 5 { liveRetries = 0 }
+            return
+        }
+        guard item.kind == .audio else { return }
         lastAudioPosition = seconds
         // The duration arrives once the asset loads — refresh the lock screen then.
         if !nowPlayingHasDuration && currentAudioDuration() > 0 {
@@ -494,6 +526,31 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
     // The current item played to its end (or an audio item failed to load):
     // report it, then keep going natively — JS may be suspended (screen locked).
     private func itemFinished(failed: Bool) {
+        // A live stream "ending" or failing is a dropped connection: reconnect,
+        // then try the station's other streams, before giving up. All native, so
+        // it works with the phone locked.
+        if let item = current, item.kind == .live, !userPaused {
+            let urlCount = 1 + item.fallbackUrls.count
+            if liveRetries < 2 {
+                liveRetries += 1
+            } else if liveUrlIdx < urlCount - 1 {
+                liveUrlIdx += 1
+                liveRetries = 0
+            } else {
+                liveItemId = ""
+                return finishCurrent(failed: true)
+            }
+            teardownPlayer()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self = self, let cur = self.current, cur.id == item.id, !self.userPaused else { return }
+                self.start(cur)
+            }
+            return
+        }
+        finishCurrent(failed: failed)
+    }
+
+    private func finishCurrent(failed: Bool) {
         let finished = current
         let hasNext = !upcoming.isEmpty
         notifyListeners("ttsFinish", data: [
@@ -516,7 +573,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         guard let item = current else { return false }
         switch item.kind {
         case .speech: return synth.isSpeaking && !synth.isPaused
-        case .audio: return (player?.rate ?? 0) > 0
+        case .audio, .live: return (player?.rate ?? 0) > 0
         }
     }
 
@@ -531,6 +588,9 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             player?.pause()
             lastAudioPosition = currentAudioPosition()
             notifyPosition() // so the web app saves where we stopped
+        case .live:
+            // Stop the stream rather than buffer it: resuming jumps back to live.
+            teardownPlayer()
         }
         updateNowPlaying(playing: false)
         if notify { notifyListeners("ttsState", data: ["playing": false]) }
@@ -559,6 +619,9 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             } else {
                 start(item, audioPosition: lastAudioPosition)
             }
+        case .live:
+            liveRetries = 0
+            start(item) // reconnect at the live edge
         }
         if notify { notifyListeners("ttsState", data: ["playing": true]) }
     }
@@ -671,6 +734,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         center.skipForwardCommand.isEnabled = audio
         center.skipBackwardCommand.isEnabled = audio
         center.changePlaybackPositionCommand.isEnabled = audio
+        center.nextTrackCommand.isEnabled = kind != .live
     }
 
     private func unwireRemoteCommands() {
@@ -691,6 +755,9 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             let dur = currentAudioDuration()
             if dur > 0 { info[MPMediaItemPropertyPlaybackDuration] = dur }
             info[MPNowPlayingInfoPropertyPlaybackRate] = playing ? Double(rate) : 0.0
+        } else if item.kind == .live {
+            info[MPNowPlayingInfoPropertyIsLiveStream] = true
+            info[MPNowPlayingInfoPropertyPlaybackRate] = playing ? 1.0 : 0.0
         } else {
             info[MPNowPlayingInfoPropertyPlaybackRate] = playing ? 1.0 : 0.0
         }
