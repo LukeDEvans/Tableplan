@@ -4100,9 +4100,12 @@ function upcomingFriday(from) {
 }
 
 function initGroceryRange(force = false) {
-  if (!force && groceryRangeStart && groceryRangeEnd) return;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  // Keep a user-chosen range across Shop visits, but a range that has fully
+  // ended (a tab left open past Friday) re-initializes on the next Shop entry
+  // (showShopApp calls this on every entry).
+  if (!force && groceryRangeStart && groceryRangeEnd && groceryRangeEnd >= dateKeyFromDate(today)) return;
   groceryRangeStart = dateKeyFromDate(today);
   groceryRangeEnd = dateKeyFromDate(upcomingFriday(today));
   syncGroceryRangeInputs();
