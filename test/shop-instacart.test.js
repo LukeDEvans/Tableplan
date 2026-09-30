@@ -14,7 +14,7 @@ import {
   markOrderDelivered,
   markOrderNotDelivered
 } from "../instacart.js";
-import { normalizeGroceryStores, normalizeGroceryItemLocations, partitionGroceryRowsByStore } from "../groceries-ui.js";
+import { normalizeGroceryStores, normalizeGroceryItemLocations, normalizeGroceryStoreItemSections, partitionGroceryRowsByStore } from "../groceries-ui.js";
 import { handler, instacartBaseUrl } from "../netlify/functions/instacart-list.mjs";
 
 describe("store config: instacartEnabled flag", () => {
@@ -228,5 +228,22 @@ describe("instacart-list function", () => {
     const fetch = fakeFetch({ status: 200, body: {} });
     const res = await handler(event({ lineItems: [{ name: "  " }] }), {}, { fetch, env });
     expect(res.statusCode).toBe(400);
+  });
+});
+
+describe("split-aware item maps (GRO-1)", () => {
+  const stores = [{ id: "s1", name: "Store", sections: [{ id: "sec1", name: "Beans" }] }];
+  it("a split item keeps its own key instead of collapsing onto its merged sibling", () => {
+    const split = { chickpea: "chickpea" };
+    const locations = { chickpea: { storeId: "s1", order: 1 }, "garbanzo beans": { storeId: "s1", order: 2 } };
+    const out = normalizeGroceryItemLocations(locations, stores, split);
+    expect(Object.keys(out).sort()).toEqual(["chickpea", "garbanzo beans"]);
+    expect(out.chickpea.order).toBe(1);
+    const sections = normalizeGroceryStoreItemSections({ s1: { chickpea: "sec1" } }, stores, split);
+    expect(sections).toEqual({ s1: { chickpea: "sec1" } });
+  });
+  it("without a split preference the synonym still merges (null-safe)", () => {
+    expect(Object.keys(normalizeGroceryItemLocations({ chickpeas: { storeId: "s1" } }, stores, null))).toEqual(["garbanzo beans"]);
+    expect(normalizeGroceryStoreItemSections({ s1: { chickpeas: "sec1" } }, stores, undefined)).toEqual({ s1: { "garbanzo beans": "sec1" } });
   });
 });

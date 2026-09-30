@@ -244,11 +244,21 @@ export function partitionGroceryRowsByStore(rows, storeIds, resolveStoreId) {
   return groups;
 }
 
-export function normalizeGroceryItemLocations(locations, stores = []) {
+// Item-keyed maps (locations, store item sections) must be keyed like the rows that
+// read them (canonicalGroceryItemKey): split-aware, so a split item ("chickpea") is
+// not re-keyed onto its merged sibling ("garbanzo beans"). `splitPreferences`
+// defaults to the live state's once the factory has run; at boot (before the
+// factory) callers pass the parsed state's preferences explicitly.
+function splitAwareGroceryItemKey(item, splitPreferences) {
+  const prefs = splitPreferences && typeof splitPreferences === "object" && !Array.isArray(splitPreferences) ? splitPreferences : {};
+  return LiveGroceryCatalog.normalizeGroceryItemName(item, { splitPreferences: prefs }).canonicalName;
+}
+
+export function normalizeGroceryItemLocations(locations, stores = [], splitPreferences = _appState?.grocerySplitPreferences) {
   const validStoreIds = new Set(normalizeGroceryStores(stores).map((store) => store.id));
   const normalizedLocations = {};
   Object.entries(locations && typeof locations === "object" && !Array.isArray(locations) ? locations : {}).forEach(([itemKey, location]) => {
-    const key = baseGroceryItemKey(itemKey);
+    const key = splitAwareGroceryItemKey(itemKey, splitPreferences);
     if (!key || !location || typeof location !== "object") return;
     const storeId = validStoreIds.has(String(location.storeId || "")) ? String(location.storeId) : "";
     const order = Number(location.order);
@@ -269,7 +279,7 @@ export function normalizeGroceryItemLocations(locations, stores = []) {
   return normalizedLocations;
 }
 
-export function normalizeGroceryStoreItemSections(mappings, stores = []) {
+export function normalizeGroceryStoreItemSections(mappings, stores = [], splitPreferences = _appState?.grocerySplitPreferences) {
   const normalized = {};
   const normalizedStores = normalizeGroceryStores(stores);
   const storeById = new Map(normalizedStores.map((store) => [store.id, store]));
@@ -278,7 +288,7 @@ export function normalizeGroceryStoreItemSections(mappings, stores = []) {
     if (!store || !itemMappings || typeof itemMappings !== "object" || Array.isArray(itemMappings)) return;
     const validSectionIds = new Set(store.sections.map((section) => section.id));
     Object.entries(itemMappings).forEach(([itemName, sectionId]) => {
-      const itemKey = baseGroceryItemKey(itemName);
+      const itemKey = splitAwareGroceryItemKey(itemName, splitPreferences);
       if (!itemKey || !validSectionIds.has(String(sectionId || ""))) return;
       if (!normalized[storeId]) normalized[storeId] = {};
       normalized[storeId][itemKey] = String(sectionId);
@@ -2069,8 +2079,9 @@ function removeGroceryAliasesForItem(item) {
 }
 
 function renameGroceryItemLocation(oldItem, newItem) {
-  const oldKey = baseGroceryItemKey(oldItem);
-  const newKey = baseGroceryItemKey(newItem);
+  // Row key (split-aware), matching how rows read locations[row.key].
+  const oldKey = groceryRowKey(oldItem);
+  const newKey = groceryRowKey(newItem);
   if (!oldKey || !newKey || oldKey === newKey) return;
   const locations = groceryItemLocations();
   if (!locations[oldKey]) return;
@@ -2134,7 +2145,7 @@ function renameReceiptPriceHistory(oldItem, newItem) {
 }
 
 function removeGroceryItemLocation(item) {
-  const key = baseGroceryItemKey(item);
+  const key = groceryRowKey(item);
   if (!key) return;
   const locations = groceryItemLocations();
   delete locations[key];
