@@ -2108,7 +2108,18 @@ function initTouchDragPolyfill() {
   });
 }
 
-initializeApp();
+// A boot failure must never leave the gate stuck on "Checking sign-in…": unblock
+// it with a visible message and record the error for __liveDiag. (The handler runs
+// after module evaluation, so it can't hit module-level TDZ.)
+initializeApp().catch((error) => {
+  console.error("App initialization failed:", error);
+  try { diagErrorLog.record(error); } catch { /* diagnostics are best-effort */ }
+  try {
+    authCheckCompleted = true;
+    updateAppLockState();
+    if (!authSession?.access_token) updateAuthUi("Something went wrong starting the app. Reload to try again.");
+  } catch (e) { console.error("Could not show the boot-failure message:", e); }
+});
 
 function bindEvents() {
   elements.previousWeek.addEventListener("click", () => {
@@ -2989,7 +3000,16 @@ async function initializeSupabaseAuth() {
   }
 
   if (!window.supabase?.createClient) {
-    updateAuthUi("Cloud sync needs an internet connection.");
+    // The SDK script failed to load (offline first visit, CDN blocked). Finish
+    // the auth check so the gate shows a real message instead of hanging on
+    // "Checking sign-in…" forever. This branch runs synchronously during module
+    // evaluation (no await precedes it), so yield first — updateSyncStatus
+    // touches module-level lets declared further down (TDZ otherwise).
+    await Promise.resolve();
+    authCheckCompleted = true;
+    updateAppLockState();
+    updateSyncStatus("failed");
+    updateAuthUi("Cloud sync needs an internet connection. Reload to try again.");
     return;
   }
 
@@ -3083,9 +3103,15 @@ async function initializeSupabaseAuth() {
   updateAuthUi();
 }
 
-function updateAuthUi() {
+// `message` (optional) is shown on the sign-in gate's status line — used for
+// boot failures, so a signed-out user sees WHY instead of a generic prompt.
+function updateAuthUi(message) {
   updateGroupSettingsSection();
   if (elements.authButton) elements.authButton.hidden = false;
+  if (message) {
+    const status = document.getElementById("lockStatus");
+    if (status) status.textContent = message;
+  }
 }
 
 // The app is unusable signed-out: a full-screen gate covers everything until
