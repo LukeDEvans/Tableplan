@@ -119,7 +119,8 @@ package files), so a Swift error shows up on the PR.
 
 ### Sending a build
 - **GitHub mobile app:** Tableplan → Actions → *iOS → TestFlight* → **Run
-  workflow** (branch: `main`).
+  workflow** (branch: `main`). To test a branch, pick it under "Use workflow
+  from"; the build uses that branch unless you type a different ref.
 - **Website:** the same place, under the Actions tab.
 - **Or ask Claude** in a session: "send main to TestFlight". It can start the
   workflow.

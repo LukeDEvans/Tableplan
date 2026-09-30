@@ -14,9 +14,9 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Branch, tag or commit to build"
+        description: "Branch, tag or commit to build (blank = the branch this run is started from)"
         required: false
-        default: main
+        default: ""
 
 concurrency:
   group: ios-testflight
@@ -58,7 +58,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          # Blank input → the branch picked in "Use workflow from". (It used to
+          # default to main, so a run started from a branch silently built main.)
+          ref: ${{ inputs.ref || github.ref }}
 
       - name: Set up Node
         uses: actions/setup-node@v4
