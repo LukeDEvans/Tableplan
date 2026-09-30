@@ -95,4 +95,12 @@ the web app's voice. The website itself is unchanged.
 1. Web: Settings → Voice still shows the household voice (not "device").
 2. Next TestFlight build from `main`: podcast/radio lock-screen pause and resume still work.
 
+## Tasks title readable on phones (PR #29)
+PR: https://github.com/LukeDEvans/Tableplan/pull/29
+
+CSS only: at phone width the Tasks window's week navigation no longer squeezes the title.
+
+**After deploying:**
+1. On the phone, open Tasks: the title reads "Tasks" in full, and the week label may shorten with "…".
+
 Checks for work that's already live are in [POST_DEPLOY_CHECKS.md](POST_DEPLOY_CHECKS.md).
