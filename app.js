@@ -12020,7 +12020,10 @@ function renderWorkoutLibrary() {
       `).join("")
     : `<div class="empty-state">Add workouts here.</div>`;
   elements.workoutLibraryList.querySelectorAll("[data-delete-workout]").forEach((button) => {
-    button.addEventListener("click", () => deleteWorkout(button.dataset.deleteWorkout));
+    button.addEventListener("click", () => {
+      const workout = state.workouts.find((w) => w.id === button.dataset.deleteWorkout);
+      if (workout && window.confirm(`Delete "${workout.title}"? All logs will be removed.`)) deleteWorkout(button.dataset.deleteWorkout);
+    });
   });
   elements.workoutLibraryList.querySelectorAll("[data-open-workout-detail]").forEach((button) => {
     button.addEventListener("click", () => openWorkoutDetail({ workoutId: button.dataset.workoutId }));
