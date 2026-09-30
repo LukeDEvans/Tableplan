@@ -1,4 +1,17 @@
+const nodeCrypto = require("crypto");
 const { SUPABASE_URL, loadSection, updateSection } = require("./_state-sections.js");
+
+// Transcripts are short spoken commands; cap before any paid AI call (MED-3).
+const MAX_TRANSCRIPT_CHARS = 1000;
+
+// Timing-safe passphrase compare over fixed-length sha256 digests (SRV-6).
+function passphraseMatches(stored, provided) {
+  const a = String(stored || "");
+  if (!a) return false;
+  const ha = nodeCrypto.createHash("sha256").update(a).digest();
+  const hb = nodeCrypto.createHash("sha256").update(String(provided || "")).digest();
+  return nodeCrypto.timingSafeEqual(ha, hb);
+}
 
 // Which state section each voice action's data lives in (id = "<groupId>:<section>")
 const ACTION_SECTIONS = {
@@ -35,11 +48,13 @@ exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return jsonResponse(405, { error: "Method not allowed." });
 
   let body;
-  try { body = JSON.parse(event.body || "{}"); } catch { console.log("VOICE: invalid JSON", event.body); return jsonResponse(400, { error: "Invalid JSON." }); }
+  try { body = JSON.parse(event.body || "{}"); } catch { console.log("VOICE: invalid JSON"); return jsonResponse(400, { error: "Invalid JSON." }); }
 
   const transcript = String(body.transcript || "").trim();
-  console.log("VOICE: transcript=", JSON.stringify(transcript), "householdId=", JSON.stringify(body.householdId), "secret=", body.secret ? "(set)" : "(missing)");
+  // Never log the transcript text or householdId — length only.
+  console.log("VOICE: transcript length=", transcript.length, "secret=", body.secret ? "(set)" : "(missing)");
   if (!transcript) return jsonResponse(400, { error: "No transcript provided." });
+  if (transcript.length > MAX_TRANSCRIPT_CHARS) return jsonResponse(413, { error: "Transcript too long." }, corsHeaders());
 
   const householdId = String(body.householdId || "").trim();
   if (!householdId) return jsonResponse(400, { error: "householdId is required." });
@@ -51,6 +66,18 @@ exports.handler = async (event) => {
 
   const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
   if (!serviceKey) { console.log("VOICE: missing SUPABASE_SERVICE_ROLE_KEY"); return jsonResponse(503, { error: "SUPABASE_SERVICE_ROLE_KEY not configured." }); }
+
+  // Validate the passphrase BEFORE the paid Claude call (SRV-6)
+  try {
+    const configRow = await loadSection(serviceKey, householdId, "config");
+    const storedSecret = String(configRow?.state?.voiceCommandSecret || "");
+    if (!passphraseMatches(storedSecret, providedSecret)) {
+      return jsonResponse(401, { error: "Invalid passphrase." }, corsHeaders());
+    }
+  } catch (err) {
+    console.log("VOICE: config load error:", err.message);
+    return jsonResponse(500, { error: "Failed to check passphrase: " + err.message }, corsHeaders());
+  }
 
   // Compute today's day context
   const now = new Date();
@@ -71,18 +98,6 @@ exports.handler = async (event) => {
   const unknown = actions.find((a) => a.action === "unknown");
   if (!real.length) {
     return jsonResponse(200, { message: unknown?.message || "I didn't understand that command." }, corsHeaders());
-  }
-
-  // Validate the passphrase against the app's config section
-  try {
-    const configRow = await loadSection(serviceKey, householdId, "config");
-    const storedSecret = String(configRow?.state?.voiceCommandSecret || "");
-    if (!storedSecret || storedSecret !== providedSecret) {
-      return jsonResponse(401, { error: "Invalid passphrase." }, corsHeaders());
-    }
-  } catch (err) {
-    console.log("VOICE: config load error:", err.message);
-    return jsonResponse(500, { error: "Failed to check passphrase: " + err.message }, corsHeaders());
   }
 
   // Apply each section's actions with an optimistically-locked write, so a
@@ -114,7 +129,7 @@ exports.handler = async (event) => {
   const confirmation = real.map((a) => describeAction(a)).join(". ");
   await logVoiceCommands(serviceKey, householdId, transcript, real, confirmation);
 
-  console.log("VOICE: success:", confirmation);
+  console.log("VOICE: success: actions=", real.length);
   return jsonResponse(200, { message: confirmation + ".", actions: real }, corsHeaders());
 };
 
@@ -523,3 +538,5 @@ function jsonResponse(statusCode, body, extraHeaders = {}) {
     body: statusCode === 204 ? "" : JSON.stringify(body),
   };
 }
+
+exports._test = { passphraseMatches, MAX_TRANSCRIPT_CHARS };
