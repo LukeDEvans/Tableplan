@@ -10,6 +10,48 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+## Issue sweep: honest set_meal, news fixes, music backup, share-sheet saves (PR #23)
+PR: https://github.com/LukeDEvans/Tableplan/pull/23
+
+- **Assistant / voice `set_meal`** says "Couldn't add X: <day> has no <meal> slots" instead of
+  a false "Added" when the meal layout has no slots.
+- **News cards:** a swipe and a mail sweep can no longer overwrite each other's pending cards;
+  **Star Tribune** links (Sailthru trackers) are now decoded, so its articles produce cards.
+- **Music → Saved → Download my uploaded music** zips the original files + `tracks.csv`.
+- **Files save through the iOS share sheet** in the native app (music CSV, MusicXML, contacts
+  vCard, finance CSV, data export); downloads as before on the web.
+- Apple Music sign-in keeps Safari's popup permission; media hub lists Apple Music, not Jamendo;
+  a full restore keeps logins the export left out; CSV import warns about a re-import under a
+  new account name; the assistant refetches subscribed calendars older than 3 hours.
+
+**After deploying:**
+1. Media bell: check Star Tribune article cards appear after the next newsletter.
+2. Native app (next TestFlight build): export a file from Music / Contacts / Finance and check
+   the share sheet opens.
+3. Safari: Apple Music sign-in from Music settings opens the Apple popup.
+
+## Assistant upgrade: whole-app context, lookups, confirm/undo, suggestions, memory (PR #20)
+PR: https://github.com/LukeDEvans/Tableplan/pull/20
+
+- **The chat assistant now sees every area** (tasks, meals, next 7 days of calendar, trips,
+  birthdays), not just the open page, and can **look things up**: calendar ranges, tasks,
+  contacts, weather — plus email search/read and spending questions **only if you switch
+  those on** (both off by default: Settings → Mail AI “Assistant can read email”, Settings →
+  AI Notes “Assistant can read Finance”).
+- **Deletions ask first** (Confirm / Cancel), and **every change it makes has Undo**.
+- **Suggestions** when you open the assistant: a trip with nothing packed, a birthday this
+  week, an early start, no dinner planned, bills due (finance on only), a long backlog.
+- **Memory:** it can edit/forget its own notes; new “Open Threads” category; edit notes in
+  Settings → AI Notes.
+- Fixed: chat deletes of calendar events / watchlist / reading items / backlog tasks could
+  come back after a sync.
+
+**After deploying:**
+1. Open the assistant and ask something cross-area (“what’s my week look like?”) — first
+   real model call with the new tools.
+2. Decide on the two access toggles above (email default is an open question in ISSUES.md).
+3. Optional: set `ASSISTANT_CHAT_MODEL` in Netlify to change the chat model (default unchanged).
+
 ## iPhone layout fixes + ISSUES.md cleanup (PR #19)
 PR: https://github.com/LukeDEvans/Tableplan/pull/19
 
