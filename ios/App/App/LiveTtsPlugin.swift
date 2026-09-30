@@ -39,7 +39,9 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         CAPPluginMethod(name: "resume", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "seekBy", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "seekTo", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stagedFile", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stageFile", returnType: CAPPluginReturnPromise)
     ]
 
     // speech = an article read aloud; audio = a podcast episode (seekable);
@@ -56,6 +58,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         let startPosition: Double // audio only, seconds
         let skipRanges: [(Double, Double)] // audio only: [start, end) seconds to jump over (ads)
         var fallbackUrls: [URL] = []       // live only: other streams for the station, tried in order
+        var isMusic = false                // audio only: a song (next-track controls, music session mode)
     }
 
     private let synth = AVSpeechSynthesizer()
@@ -265,8 +268,10 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
                     if a >= 0 && b > a { ranges.append((a, b)) }
                 }
             }
-            return Item(id: id, kind: .audio, text: "", url: url, title: title, subtitle: subtitle,
-                        startPosition: max(0, start), skipRanges: ranges)
+            var item = Item(id: id, kind: .audio, text: "", url: url, title: title, subtitle: subtitle,
+                            startPosition: max(0, start), skipRanges: ranges)
+            item.isMusic = (o["mediaType"] as? String) == "music"
+            return item
         }
     }
 
@@ -322,10 +327,73 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
         }
     }
 
+    // MARK: - Staged files (music uploaded into the web app)
+    // The web app's own music files live in the web view's storage, which AVPlayer
+    // can't read. The app hands each one over once (base64) and it's kept in
+    // Caches/LiveMusic, capped at ~1.5 GB (least recently used removed first).
+
+    private static let stageCapBytes: Int64 = 1_500_000_000
+
+    private static func stageDir() -> URL? {
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
+        let dir = caches.appendingPathComponent("LiveMusic", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private static func stagePath(_ name: String) -> URL? {
+        let safe = name.replacingOccurrences(of: "[^A-Za-z0-9._-]", with: "_", options: .regularExpression)
+        guard !safe.isEmpty, !safe.hasPrefix("."), safe.count <= 160 else { return nil }
+        return stageDir()?.appendingPathComponent(safe)
+    }
+
+    // { name } → { url } when that file was staged before, else { url: null }.
+    @objc func stagedFile(_ call: CAPPluginCall) {
+        guard let path = LiveTtsPlugin.stagePath(call.getString("name") ?? "") else { call.reject("bad name"); return }
+        if FileManager.default.fileExists(atPath: path.path) {
+            try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: path.path) // LRU touch
+            call.resolve(["url": path.absoluteString])
+        } else {
+            call.resolve(["url": NSNull()])
+        }
+    }
+
+    // { name, data (base64) } → { url }
+    @objc func stageFile(_ call: CAPPluginCall) {
+        guard let path = LiveTtsPlugin.stagePath(call.getString("name") ?? "") else { call.reject("bad name"); return }
+        guard let b64 = call.getString("data"), let data = Data(base64Encoded: b64) else { call.reject("data required"); return }
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                try data.write(to: path, options: .atomic)
+                LiveTtsPlugin.pruneStaged(keeping: path)
+                call.resolve(["url": path.absoluteString])
+            } catch {
+                call.reject("Couldn't save the file: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private static func pruneStaged(keeping keep: URL) {
+        guard let dir = stageDir(),
+              let files = try? FileManager.default.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) else { return }
+        var entries: [(URL, Int64, Date)] = files.compactMap { u in
+            let v = try? u.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            return (u, Int64(v?.fileSize ?? 0), v?.contentModificationDate ?? .distantPast)
+        }
+        var total = entries.reduce(Int64(0)) { $0 + $1.1 }
+        guard total > stageCapBytes else { return }
+        entries.sort { $0.2 < $1.2 } // oldest first
+        for (u, size, _) in entries where total > stageCapBytes && u != keep {
+            try? FileManager.default.removeItem(at: u)
+            total -= size
+        }
+    }
+
     // MARK: - Playback core (main thread)
 
     private func activateSession() {
-        let mode: AVAudioSession.Mode = current?.kind == .live ? .default : .spokenAudio
+        let mode: AVAudioSession.Mode = (current?.kind == .live || current?.isMusic == true) ? .default : .spokenAudio
         // Background playback + lock-screen requires an active .playback session.
         // Re-asserted on every start/resume: iOS can deactivate it while the app
         // is suspended during a pause, and resuming into an inactive session is
@@ -377,7 +445,7 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
             startAudio(item, at: 0, url: urls[min(liveUrlIdx, urls.count - 1)])
         }
         wireRemoteCommands()
-        configureCommands(for: item.kind)
+        configureCommands(for: item.kind, music: item.isMusic)
         updateNowPlaying(playing: true)
     }
 
@@ -728,12 +796,12 @@ public class LiveTtsPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDele
 
     // Podcasts get ±seconds skip + a scrubbable bar on the lock screen; speech
     // (no seeking) gets next-track instead.
-    private func configureCommands(for kind: Kind) {
+    private func configureCommands(for kind: Kind, music: Bool = false) {
         let center = MPRemoteCommandCenter.shared()
-        let audio = kind == .audio
+        let audio = kind == .audio && !music // songs get next-track, not ±seconds
         center.skipForwardCommand.isEnabled = audio
         center.skipBackwardCommand.isEnabled = audio
-        center.changePlaybackPositionCommand.isEnabled = audio
+        center.changePlaybackPositionCommand.isEnabled = kind == .audio
         center.nextTrackCommand.isEnabled = kind != .live
     }
 

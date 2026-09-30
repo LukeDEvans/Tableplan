@@ -31405,6 +31405,214 @@ function playMusicDescriptor(desc, url, { isBlob = false } = {}) {
   if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
 }
 
+// ── Native song player (iPhone app) ──────────────────────────────────────────
+// In the app, songs that aren't Apple Music (Internet Archive, Jamendo, your
+// uploaded music) play on the native player (LiveTtsPlugin's AVPlayer), so the
+// lock screen and AirPods can pause AND resume them and the queue keeps going
+// with the phone locked. It sits in the same "owns its playback" slot Apple
+// Music uses (musicPlaybackProvider + musicOwnedNP), so the mini-player, the
+// music panel, play/pause, seek and the now-playing bar all work unchanged.
+// Uploaded files live in the web view's storage, which AVPlayer can't read, so
+// each is handed to the phone once (stageFile) and reused after that.
+const NATIVE_MUSIC_LOOKAHEAD = 10; // songs queued natively = how far music runs with the phone locked
+const NATIVE_UNPLAYABLE_URL = /\.(ogg|oga|opus|webm|weba)(\?|#|$)/i; // AVPlayer can't decode these
+const NATIVE_AUDIO_EXT_BY_MIME = {
+  "audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/mp4": "m4a", "audio/x-m4a": "m4a", "audio/m4a": "m4a",
+  "audio/aac": "aac", "audio/x-aac": "aac", "audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav",
+  "audio/flac": "flac", "audio/x-flac": "flac", "audio/aiff": "aiff", "audio/x-aiff": "aiff",
+};
+function nativeMusicEnabled() { return !!nativeTts(); }
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => { const s = String(r.result || ""); resolve(s.slice(s.indexOf(",") + 1)); };
+    r.onerror = () => reject(r.error || new Error("read failed"));
+    r.readAsDataURL(blob);
+  });
+}
+
+// A URL the native player can open for this song, or null (→ web player).
+async function nativeMusicUrlFor(id, url, isBlob) {
+  const tts = nativeTts();
+  if (!tts || !url) return null;
+  if (!isBlob) return NATIVE_UNPLAYABLE_URL.test(url) ? null : url;
+  const blob = await (await fetch(url)).blob();
+  const ext = NATIVE_AUDIO_EXT_BY_MIME[String(blob.type || "").toLowerCase()];
+  if (!ext) return null;
+  const name = `lib-${String(id).replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120)}.${ext}`;
+  const hit = await tts.stagedFile({ name });
+  if (hit && hit.url) return hit.url;
+  const r = await tts.stageFile({ name, data: await blobToBase64(blob) });
+  return (r && r.url) || null;
+}
+
+// What the native queue can play after the current song: the following queue
+// items up to the first one it can't (Apple Music, a recording, an unplayable
+// file), resolved to native URLs. → [{ key, item, desc, native }]
+async function nativeMusicUpcoming(rest, n) {
+  const out = [];
+  let reg = null;
+  for (const it of rest) {
+    if (out.length >= n) break;
+    let desc = null, url = null, isBlob = false;
+    try {
+      if (it.kind === "library") {
+        const t = (musicLibrary || []).find((x) => x.id === it.id);
+        if (!t) break;
+        url = await (await getMusicLib()).resolvePlayable(t);
+        isBlob = true;
+        desc = { id: t.id, title: t.title, artist: t.artist, album: t.album, artworkUrl: musicArtUrlFor(t), kind: "library" };
+      } else if (it.kind === "stream") {
+        const c = it.track;
+        reg = reg || await getMusicProviders();
+        const prov = reg.get(c.provider);
+        if (prov && musicStreamMod && musicStreamMod.isPlaybackOwner(prov)) break; // Apple Music: its own player
+        let src = c.playable;
+        if (prov && prov.getPlayable) src = await prov.getPlayable(c);
+        url = src && src.url;
+        const artist = c.artists?.[0]?.name || c.composer?.name || c.album || "";
+        desc = { id: c.id, title: c.title, artist, album: c.album, artworkUrl: c.artworkUrl || "", kind: "stream", canonical: c };
+      } else break;
+      const nativeUrl = await nativeMusicUrlFor(desc.id, url, isBlob);
+      if (isBlob) { try { URL.revokeObjectURL(url); } catch { /* noop */ } }
+      if (!nativeUrl) break;
+      out.push({ key: desc.id, item: it, desc, native: nativeUrl });
+    } catch { break; }
+  }
+  return out;
+}
+
+function nativeMusicItem(desc, url, startPosition = 0) {
+  return { id: desc.id, kind: "audio", mediaType: "music", url, title: desc.title || "Untitled", subtitle: desc.artist || desc.album || "", startPosition: startPosition > 5 ? startPosition : 0 };
+}
+
+// Start `desc` on the native player. Returns false when it can't (the caller then
+// uses the web player); true once playing, or when superseded by a newer start.
+async function startNativeMusicTrack(desc, url, { isBlob = false, gen = musicStartGen } = {}) {
+  const tts = nativeTts();
+  if (!tts) return false;
+  let nativeUrl = null;
+  try { nativeUrl = await nativeMusicUrlFor(desc.id, url, isBlob); } catch { nativeUrl = null; }
+  if (gen !== musicStartGen) return true; // superseded — the newer start owns playback
+  if (!nativeUrl) return false;
+
+  stopPodcastAudio(); stopListen(); stopRadio();
+  if (mediaEngine && musicAudio) mediaEngine.stop();
+  musicAudio = null;
+  window.clearInterval(musicPositionSaveTimer);
+  teardownOwnedMusic();
+  if (musicCurUrl && musicCurUrl !== url) { try { URL.revokeObjectURL(musicCurUrl); } catch { /* noop */ } }
+  musicCurUrl = isBlob ? url : null; // kept for a web-player fallback if the native load fails
+
+  const np = { track: { id: desc.id }, isPlaying: true, positionMs: 0, durationMs: 0, state: "playing" };
+  const subs = [];
+  let upcoming = [];      // what the plugin has queued after the current song
+  let upcomingToken = 0;
+  let savedAt = 0;
+  let everPlayed = false;
+  const prov = {
+    id: "native-audio",
+    pause: () => tts.pause(),
+    resume: () => tts.resume(),
+    seek: (ms) => tts.seekTo({ position: Math.max(0, ms) / 1000 }),
+    getNowPlaying: () => ({ ...np, track: { ...np.track } }),
+    onChange: () => () => {},
+    dispose: () => { subs.forEach((h) => { try { h && h.remove && h.remove(); } catch { /* noop */ } }); subs.length = 0; tts.stop().catch(() => {}); },
+  };
+  const live = () => musicPlaybackProvider === prov;
+  const refresh = () => {
+    musicOwnedNP = prov.getNowPlaying();
+    updateMiniPlayerPlayBtn();
+    updateMiniPlayerProgress();
+    if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
+  };
+  const refillUpcoming = async () => {
+    const token = ++upcomingToken;
+    const next = await nativeMusicUpcoming(musicQueueRest, NATIVE_MUSIC_LOOKAHEAD);
+    if (!live() || token !== upcomingToken) return;
+    upcoming = next;
+    try { await tts.setUpcoming({ items: next.map((u) => nativeMusicItem(u.desc, u.native)) }); } catch { /* best-effort */ }
+  };
+
+  musicPlaybackProvider = prov;
+  musicCurTrack = desc;
+  musicOwnedNP = prov.getNowPlaying();
+  clearWebMediaSession();
+  setMiniPlayer(desc.title || "Untitled", desc.artist || desc.album || "", desc.artworkUrl || "");
+  pushMusicHistory(desc);
+  updateMiniPlayerPlayBtn();
+  if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
+
+  try {
+    subs.push(await tts.addListener("ttsState", (e) => {
+      if (!live()) return;
+      np.isPlaying = !!(e && e.playing); np.state = np.isPlaying ? "playing" : "paused";
+      if (!np.isPlaying && musicCurTrack?.id && np.positionMs > 5000) {
+        state.mediaProgress = pruneMediaProgress(setMediaPosition(state.mediaProgress, musicCurTrack.id, { position: Math.floor(np.positionMs / 1000), duration: np.durationMs / 1000 }));
+        persist();
+      }
+      refresh();
+    }));
+    subs.push(await tts.addListener("ttsPosition", (e) => {
+      if (!live() || !e || e.id !== np.track.id) return;
+      everPlayed = true;
+      np.positionMs = (Number(e.position) || 0) * 1000;
+      np.durationMs = (Number(e.duration) || 0) * 1000;
+      if (Date.now() - savedAt > 10000 && np.positionMs > 5000 && musicCurTrack?.id) {
+        savedAt = Date.now();
+        state.mediaProgress = pruneMediaProgress(setMediaPosition(state.mediaProgress, musicCurTrack.id, { position: Math.floor(np.positionMs / 1000), duration: np.durationMs / 1000 }));
+        persist();
+      }
+      refresh();
+    }));
+    // The plugin moved on by itself (song ended, or lock-screen next): catch the
+    // queue, mini-player and history up, then top the lookahead back up.
+    subs.push(await tts.addListener("ttsItemStart", (e) => {
+      if (!live() || !e || !e.id) return;
+      const idx = upcoming.findIndex((u) => u.key === e.id);
+      if (idx < 0) return;
+      const u = upcoming[idx];
+      if (musicCurTrack?.id) state.mediaProgress = clearMediaPosition(state.mediaProgress, musicCurTrack.id);
+      const qi = musicQueueRest.indexOf(u.item);
+      if (qi >= 0) musicQueueRest.splice(0, qi + 1);
+      upcoming = upcoming.slice(idx + 1);
+      musicCurTrack = u.desc;
+      np.track = { id: u.key }; np.positionMs = 0; np.durationMs = 0; np.isPlaying = true; np.state = "playing";
+      everPlayed = false;
+      persist();
+      setMiniPlayer(u.desc.title || "Untitled", u.desc.artist || u.desc.album || "", u.desc.artworkUrl || "");
+      pushMusicHistory(u.desc);
+      refresh();
+      refillUpcoming();
+    }));
+    subs.push(await tts.addListener("ttsFinish", (e) => {
+      if (!live() || !e || e.hasNext) return; // with a next item the plugin carries on (ttsItemStart)
+      if (e.failed && !everPlayed && e.id === desc.id && np.track.id === desc.id) {
+        // The very first song wouldn't load natively → play it in the web view instead.
+        const rest = musicQueueRest.slice();
+        teardownOwnedMusic();
+        musicQueueRest = rest;
+        playMusicDescriptor(desc, url, { isBlob });
+        return;
+      }
+      np.isPlaying = false; np.state = "ended";
+      onMusicEnded(); // queue beyond the lookahead (or empty): the JS advance takes over
+    }));
+    subs.push(await tts.addListener("ttsNext", () => { if (live()) onMusicEnded(); }));
+    if (!live()) return true;
+    const resumeAt = resumePositionFor(state.mediaProgress, desc.id);
+    await tts.play({ item: nativeMusicItem(desc, nativeUrl, resumeAt), rate: mediaPlaybackSpeed || 1 });
+  } catch (e) {
+    if (!live()) return true;
+    console.warn("native music play failed", e);
+    teardownOwnedMusic();
+    return false;
+  }
+  if (live()) refillUpcoming();
+  return true;
+}
+
 async function startLibraryTrack(track, gen = musicStartGen) {
   let url;
   try { url = await (await getMusicLib()).resolvePlayable(track); }
@@ -31413,7 +31621,10 @@ async function startLibraryTrack(track, gen = musicStartGen) {
     console.warn("music resolve failed", e); showVoiceToast("Couldn't play this track — the audio isn't on this device"); return false;
   }
   if (gen !== musicStartGen) { try { URL.revokeObjectURL(url); } catch { /* noop */ } return false; } // a newer start won
-  playMusicDescriptor({ id: track.id, title: track.title, artist: track.artist, album: track.album, artworkUrl: musicArtUrlFor(track), kind: "library" }, url, { isBlob: true });
+  const desc = { id: track.id, title: track.title, artist: track.artist, album: track.album, artworkUrl: musicArtUrlFor(track), kind: "library" };
+  if (nativeMusicEnabled() && await startNativeMusicTrack(desc, url, { isBlob: true, gen })) return true; // iPhone app
+  if (gen !== musicStartGen) return false;
+  playMusicDescriptor(desc, url, { isBlob: true });
   return true;
 }
 
@@ -31427,7 +31638,12 @@ function ownedMusicCall(fn) {
 // Tear down any active owns-playback session (unsubscribe + pause the provider).
 function teardownOwnedMusic() {
   if (musicOwnedUnsub) { try { musicOwnedUnsub(); } catch { /* noop */ } musicOwnedUnsub = null; }
-  if (musicPlaybackProvider) { const prov = musicPlaybackProvider; ownedMusicCall(() => prov.pause()); }
+  if (musicPlaybackProvider) {
+    const prov = musicPlaybackProvider;
+    // The native song player (iPhone app) is torn down completely; Apple Music just pauses.
+    if (typeof prov.dispose === "function") { try { prov.dispose(); } catch { /* noop */ } }
+    else ownedMusicCall(() => prov.pause());
+  }
   musicPlaybackProvider = null;
   musicOwnedNP = null;
 }
@@ -31532,7 +31748,10 @@ async function startStreamingTrack(canonical, gen = musicStartGen) {
   if (gen !== musicStartGen) return false; // superseded while resolving
   if (!src || !src.url) { showVoiceToast("This track isn't streamable right now"); return false; }
   const artist = canonical.artists?.[0]?.name || canonical.composer?.name || canonical.album || "";
-  playMusicDescriptor({ id: canonical.id, title: canonical.title, artist, album: canonical.album, artworkUrl: canonical.artworkUrl || "", kind: "stream", canonical }, src.url, { isBlob: false });
+  const desc = { id: canonical.id, title: canonical.title, artist, album: canonical.album, artworkUrl: canonical.artworkUrl || "", kind: "stream", canonical };
+  if (nativeMusicEnabled() && await startNativeMusicTrack(desc, src.url, { isBlob: false, gen })) return true; // iPhone app
+  if (gen !== musicStartGen) return false;
+  playMusicDescriptor(desc, src.url, { isBlob: false });
   return true;
 }
 

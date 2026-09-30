@@ -86,8 +86,9 @@ sweep saved, or edits from another device, show up without restarting. At most o
 ## iPhone app: native player for podcasts + radio; Apple voice per device (PR #28)
 PR: https://github.com/LukeDEvans/Tableplan/pull/28
 
-The iPhone side ships through TestFlight. In the app, podcasts and radio play on the native
-player (lock-screen and AirPods pause/resume), and articles default to the best installed
+The iPhone side ships through TestFlight. In the app, podcasts, radio and non-Apple music
+(Internet Archive, Jamendo, uploaded songs) play on the native player (lock-screen and AirPods
+pause/resume), and articles default to the best installed
 Apple voice. The voice choice is per device, so choosing one on the phone no longer changes
 the web app's voice. The website itself is unchanged.
 
