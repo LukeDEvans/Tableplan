@@ -1,6 +1,6 @@
 // mealplan-ui.js — Meal-plan domain extracted from app.js (createMealplanModule).
 // Completes Decision #2's four-way split (recipes / meal-plan / groceries / cook).
-// 15 pure normalizers are top-level exports (boot); the whole planner UI + auto-rules +
+// A few pure helpers/constants are top-level exports (boot-safe); the whole planner UI + auto-rules +
 // meal-entry drag/drop + pickers + auto-generate + serving writeback + meal-plan settings +
 // restaurant seam + meal-plan recipe cards is the factory. Meal-plan is the hub: it is
 // instantiated LAST, so groceries/recipes get the meal-plan bridge injected via thunks, and
@@ -43,7 +43,6 @@ export const daySpecificDefaultMealEntries = [
   { dayId: "wednesday", meal: "MJ Dinner", index: 0, value: "leftovers" },
   { dayId: "wednesday", meal: "Luke Dinner", index: 0, value: "leftovers" }
 ];
-const weekdayBreakfastDayIds = new Set(["monday", "tuesday", "wednesday", "thursday", "friday-finish"]);
 const expandedMealContext = new Set();
 
 // ── Pure normalizers (top-level exports; boot-safe) ───────────────────────
@@ -116,7 +115,7 @@ export function groceryMealSlotId(item, servings = 1) {
 // ══════════════════════════════════════════════════════════════════════════
 export function createMealplanModule(deps) {
   const {
-    state, elements, meals, prepDays, breakfastMeals, lunchMeals, dinnerMeals, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys, getActiveAppArea, getAuthSession, getCurrentWeek, getDraggedDoTask, getDraggedPlayTask, getActivePlannerDayId, setActivePlannerDayId, getLastMealDragPoint, setLastMealDragPoint, getRestaurantSearchPending, setRestaurantSearchPending, getRestaurantSearchSuggestions, setRestaurantSearchSuggestions, getSuppressNextWeekLabelClick, setSuppressNextWeekLabelClick, getPendingMealRecipeSelection, setPendingMealRecipeSelection, getPendingMealIngredientSelection, setPendingMealIngredientSelection, getPendingAutoRuleRecipeSelection, setPendingAutoRuleRecipeSelection, getPendingAutoRuleIngredientSelection, setPendingAutoRuleIngredientSelection, getMealPlanNotifOpen, setMealPlanNotifOpen, getMealPlanRecipes, setMealPlanRecipes, getRestaurantInfoPopoverContext, setRestaurantInfoPopoverContext, acquireGroceryStoreSearchLocation, activeDayEventsTemplate, activeRecipes, addDays, autoEstimateNutrition, bindConfigListDrag, calendarTabStyle, callGmailApi, clearDoTaskDragState, clearPlayTaskDragState, cloneCombinedMealSections, cloneMealSlots, closeFloatingMenus, closeFolderMenu, closeSettingsMenu, closeWeekJumpMenu, combinedMealSectionsForWeek, combinedRecipeTime, compactDayLabel, compactMealSlotEntries, compactSlotEntries, dateFromWeekKey, dateKeyFromDate, defaultCollapsedSections, deleteDraggedDoTask, deleteDraggedPlayTask, displayMealName, doBacklogTasks, ensureCombinedMealSectionShape, ensureMealSlotShape, escapeHtml, focusGroceryLibraryInput, folderName, formatDailyDozenServings, formatWeekRange, getAppName, getGroceryStoreSearchLocation, groceryPlacesApiUrl, groceryPlacesRequestOptions, grocerySuggestionItems, importViaGateway, isDescendantFolder, isPlannedRecipeEntry, isPublishedMealPlanView, makeSortable, mealEntryValue, mealKeysForDay, mealSlotsForWeek, minutesOfDay, normalizeAutoGenerateRule, normalizeAutoGenerateRules, normalizeCookLog, normalizeDoTasks, normalizeIngredients, normalizeInstructionSteps, normalizeNutritionFacts, normalizePlannedRecipeEntry, normalizePublishedWeeks, normalizeRecipeTagSelection, normalizeRecipeUrlInput, normalizedFolders, openDailyDozenPage, openGroceriesPage, openGroceryReviewItems, openPlanEventDialog, openPublishedGroceryReview, openRecipeBoxPage, openRecipeView, persist, persistImmediately, planEventOccursOn, plannedEntryAtLocation, plannedServingsForEntry, plannerDayIdForDate, recipeDefaultServings, recipeForSlot, recipeIdForSlot, recipeTags, recomputeMealPlanLayout, render, renderCollapsedSections, renderDoPlanner, renderFolders, renderGroceries, renderGroceryLibrary, renderPlayPlanner, renderTasksPage, saveRecipeRow, scaledIngredientToText, setCombinedMealSection, setPageNotifCount, setPageTitle, showMailToast, slotEntries, storeDirectionsUrl, syncedCalendarEventsForDate, unlistedGroceryItemsForWeek, updateTabIndicator, weekKey, weekState, queueRecipeForReview, recipeReviewCount,
+    state, elements, meals, prepDays, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys, getActiveAppArea, getAuthSession, getCurrentWeek, getDraggedDoTask, getDraggedPlayTask, getActivePlannerDayId, setActivePlannerDayId, getLastMealDragPoint, setLastMealDragPoint, getRestaurantSearchPending, setRestaurantSearchPending, getRestaurantSearchSuggestions, setRestaurantSearchSuggestions, setSuppressNextWeekLabelClick, getPendingMealRecipeSelection, setPendingMealRecipeSelection, getPendingMealIngredientSelection, setPendingMealIngredientSelection, getPendingAutoRuleRecipeSelection, setPendingAutoRuleRecipeSelection, getPendingAutoRuleIngredientSelection, setPendingAutoRuleIngredientSelection, getMealPlanNotifOpen, setMealPlanNotifOpen, getMealPlanRecipes, setMealPlanRecipes, setRestaurantInfoPopoverContext, acquireGroceryStoreSearchLocation, activeDayEventsTemplate, activeRecipes, addDays, bindConfigListDrag, calendarTabStyle, callGmailApi, clearDoTaskDragState, clearPlayTaskDragState, closeFloatingMenus, closeFolderMenu, closeSettingsMenu, closeWeekJumpMenu, combinedMealSectionsForWeek, combinedRecipeTime, compactDayLabel, compactMealSlotEntries, compactSlotEntries, dateKeyFromDate, defaultCollapsedSections, deleteDraggedDoTask, deleteDraggedPlayTask, displayMealName, doBacklogTasks, escapeHtml, focusGroceryLibraryInput, folderName, getAppName, getGroceryStoreSearchLocation, groceryPlacesApiUrl, groceryPlacesRequestOptions, grocerySuggestionItems, importViaGateway, isDescendantFolder, isPlannedRecipeEntry, makeSortable, mealEntryValue, mealKeysForDay, mealSlotsForWeek, minutesOfDay, normalizeAutoGenerateRule, normalizeAutoGenerateRules, normalizeCookLog, normalizeDoTasks, normalizeIngredients, normalizeInstructionSteps, normalizeNutritionFacts, normalizePlannedRecipeEntry, normalizeRecipeTagSelection, normalizeRecipeUrlInput, normalizedFolders, openDailyDozenPage, openGroceriesPage, openPlanEventDialog, openRecipeBoxPage, openRecipeView, persist, planEventOccursOn, plannedEntryAtLocation, plannerDayIdForDate, recipeDefaultServings, recipeForSlot, recipeIdForSlot, recipeTags, recomputeMealPlanLayout, render, renderCollapsedSections, renderDoPlanner, renderFolders, renderGroceries, renderGroceryLibrary, renderPlayPlanner, renderTasksPage, scaledIngredientToText, setCombinedMealSection, setPageNotifCount, setPageTitle, showMailToast, slotEntries, storeDirectionsUrl, syncedCalendarEventsForDate, updateTabIndicator, weekKey, weekState, queueRecipeForReview, recipeReviewCount,
   } = deps;
   _appState = state;
 
@@ -138,7 +137,6 @@ export function createMealplanModule(deps) {
   // True until the carousel has been scrolled to the meal for the current time
   // of day (noon → Lunch). Set on first load and whenever the meal plan is opened.
   let pendingTimeOfDayMealSnap = true;
-  let mealPointerDeleteGesture = null;
   let pendingAutoRuleCompaction = null;
   let restaurantSearchSessionToken = "";
   let suppressAutoRuleClick = false;
@@ -1128,22 +1126,6 @@ function clearMealRestaurant(day, meal, index) {
   setMeal(day, meal, compactMealSlotEntries(entries, meal));
 }
 
-function renderMealRestaurantArea(restaurant, day, meal, index) {
-  if (restaurant?.placeId) {
-    const mapsUrl = restaurant.googleMapsUri || storeDirectionsUrl(restaurant);
-    return `
-      <div class="meal-restaurant-bar">
-        <svg class="meal-restaurant-pin-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-        <span class="meal-restaurant-bar-name">${escapeHtml(restaurant.name)}</span>
-        ${mapsUrl ? `<a class="meal-restaurant-bar-link" href="${escapeHtml(mapsUrl)}" target="_blank" rel="noopener noreferrer" title="Get directions">Directions</a>` : ""}
-        ${restaurant.websiteUri ? `<a class="meal-restaurant-bar-link" href="${escapeHtml(restaurant.websiteUri)}" target="_blank" rel="noopener noreferrer" title="Restaurant website / menu">Menu</a>` : ""}
-        <button class="meal-restaurant-unlink-btn" type="button" data-unlink-restaurant data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Unlink restaurant" aria-label="Unlink restaurant">×</button>
-      </div>
-    `;
-  }
-  return "";
-}
-
 function saveMealPlanMembers() {
   const rows = elements.familyMembersDialog.querySelectorAll("[data-member-row]");
   const newMembers = [];
@@ -1296,10 +1278,6 @@ function autoRuleSignature(rule) {
     rule.tagMatchMode || "any",
     rule.selectionMode || "random"
   ].join("|");
-}
-
-function collapseAllPlannerDays() {
-  setActivePlannerDayId(prepDays[0].id);
 }
 
 function renderPlanner() {
@@ -2525,55 +2503,6 @@ function leftoversIconTemplate() {
   return ldeIcon("leftovers", { size: 18 });
 }
 
-function handleMealEntryDragStart(event) {
-  if (event.currentTarget.querySelector("[data-meal-input]")
-    || event.target.closest("[data-special-meal-note], [data-link-restaurant], [data-unlink-restaurant], [data-show-restaurant-info], .meal-restaurant-bar-link")) {
-    event.preventDefault();
-    return;
-  }
-  suppressMealEntryClick = true;
-  window.clearTimeout(mealEntryClickTimer);
-  draggedMealEntry = {
-    day: event.currentTarget.dataset.day,
-    meal: event.currentTarget.dataset.meal,
-    index: Number(event.currentTarget.dataset.index)
-  };
-  setLastMealDragPoint({ x: event.clientX, y: event.clientY });
-  event.currentTarget.classList.add("is-dragging");
-  document.body.classList.add("meal-entry-drag-active");
-  event.dataTransfer.effectAllowed = "move";
-  event.dataTransfer.setData("text/plain", JSON.stringify(draggedMealEntry));
-}
-
-function handleMealEntryDrag(event) {
-  if (!draggedMealEntry) return;
-  updateMealDragPoint(event);
-  elements.mealTrashTarget.classList.toggle("drag-over", isMealDragEndingInTrash());
-}
-
-function handleMealEntryDragOver(event) {
-  if (!draggedMealEntry) return;
-  updateMealDragPoint(event);
-  const target = event.currentTarget;
-  event.preventDefault();
-  target.classList.add("drag-over");
-  event.dataTransfer.dropEffect = "move";
-}
-
-function handleMealEntryDrop(event) {
-  event.preventDefault();
-  updateMealDragPoint(event);
-  const target = event.currentTarget;
-  target.classList.remove("drag-over");
-  if (!draggedMealEntry) return;
-  if (target.dataset.day === draggedMealEntry.day && target.dataset.meal === draggedMealEntry.meal) {
-    reorderMealEntry(draggedMealEntry.day, draggedMealEntry.meal, draggedMealEntry.index, Number(target.dataset.index));
-  } else {
-    moveMealEntryToSlot(draggedMealEntry, target.dataset.day, target.dataset.meal, Number(target.dataset.index));
-  }
-  clearMealEntryDragState();
-}
-
 function handleMealDayTabDragOver(event) {
   if (!draggedMealEntry) return;
   const targetDay = event.currentTarget.dataset.dayTab;
@@ -2766,15 +2695,6 @@ function handleDocumentMealDrop(event) {
   deleteDraggedMealEntry();
   deleteDraggedPlayTask();
   deleteDraggedDoTask();
-}
-
-function handleMealEntryDragEnd(event) {
-  updateMealDragPoint(event);
-  if (isMealDragEndingInTrash() || elements.mealTrashTarget.classList.contains("drag-over")) {
-    deleteDraggedMealEntry();
-    return;
-  }
-  clearMealEntryDragState();
 }
 
 function handleAutoRuleDragStart(event) {
@@ -3010,69 +2930,6 @@ function clearMealEntryDragState() {
 
 function activeTrashTarget() {
   return draggedAutoRuleEntry && elements.autoRuleTrashTarget ? elements.autoRuleTrashTarget : elements.mealTrashTarget;
-}
-
-function handleMealEntryPointerDown(event) {
-  // Touch swipe-to-delete was removed here: it fought the horizontal swipe
-  // that pages between meals within a day. Mobile deletes go through the
-  // long-press entry menu instead; mouse drag-to-trash is unaffected.
-  if (event.pointerType === "mouse") {
-    if (event.button !== 0 || event.currentTarget.querySelector("[data-meal-input]") || event.target.closest("[data-special-meal-note], [data-link-restaurant], [data-unlink-restaurant], [data-show-restaurant-info], .meal-restaurant-bar-link")) return;
-    startMealPointerDeleteGesture(event.currentTarget, event.clientX, event.clientY);
-  }
-}
-
-function handleMealEntryMouseDown(event) {
-  if (event.button !== 0 || event.currentTarget.querySelector("[data-meal-input]") || event.target.closest("[data-special-meal-note], [data-link-restaurant], [data-unlink-restaurant], [data-show-restaurant-info], .meal-restaurant-bar-link") || mealPointerDeleteGesture) return;
-  startMealPointerDeleteGesture(event.currentTarget, event.clientX, event.clientY);
-}
-
-function startMealPointerDeleteGesture(entry, startX, startY) {
-  document.body.classList.add("meal-entry-drag-active");
-  setLastMealDragPoint({ x: startX, y: startY });
-  mealPointerDeleteGesture = {
-    day: entry.dataset.day,
-    meal: entry.dataset.meal,
-    index: Number(entry.dataset.index),
-    startX,
-    startY,
-    active: false
-  };
-  window.addEventListener("pointermove", handleMealPointerDeleteMove);
-  window.addEventListener("pointerup", handleMealPointerDeleteEnd, { once: true });
-  window.addEventListener("mousemove", handleMealPointerDeleteMove);
-  window.addEventListener("mouseup", handleMealPointerDeleteEnd, { once: true });
-}
-
-function handleMealPointerDeleteMove(event) {
-  if (!mealPointerDeleteGesture) return;
-  const deltaX = event.clientX - mealPointerDeleteGesture.startX;
-  const deltaY = event.clientY - mealPointerDeleteGesture.startY;
-  const distance = Math.hypot(deltaX, deltaY);
-  if (distance < 8 && !mealPointerDeleteGesture.active) return;
-  mealPointerDeleteGesture.active = true;
-  suppressMealEntryClick = true;
-  setLastMealDragPoint({ x: event.clientX, y: event.clientY });
-  document.body.classList.add("meal-entry-drag-active");
-  elements.mealTrashTarget.classList.toggle("drag-over", isPointInMealTrash(event.clientX, event.clientY));
-}
-
-function handleMealPointerDeleteEnd(event) {
-  window.removeEventListener("pointermove", handleMealPointerDeleteMove);
-  window.removeEventListener("mousemove", handleMealPointerDeleteMove);
-  if (!mealPointerDeleteGesture) return;
-  const gesture = { ...mealPointerDeleteGesture };
-  mealPointerDeleteGesture = null;
-  elements.mealTrashTarget.classList.remove("drag-over");
-  document.body.classList.remove("meal-entry-drag-active");
-  updateMealDragPoint(event);
-  if ((gesture.active || isMealDragEndingInTrash()) && isMealDragEndingInTrash()) {
-    removeMealEntry(gesture.day, gesture.meal, gesture.index);
-  }
-  setLastMealDragPoint(null);
-  window.setTimeout(() => {
-    suppressMealEntryClick = false;
-  }, 120);
 }
 
 function reorderMealEntry(day, meal, fromIndex, toIndex) {
@@ -3460,10 +3317,6 @@ function mealPlanRecipeIdsForWeek(week) {
 
 function isMakeAheadTask(task) {
   return normalize(task?.title || "").startsWith("make ahead:");
-}
-
-function emptyMealSlotTemplate() {
-  return `<div class="slot-card placeholder-slot" aria-hidden="true"></div>`;
 }
 
 function ensureActivePlannerDay() {
@@ -3879,10 +3732,6 @@ function folderIdByName(name) {
   return normalizedFolders().find((folder) => normalize(folder.name) === normalize(name))?.id || "";
 }
 
-function isWeekdayBreakfastSlot(day, meal) {
-  return meal === "MJ Breakfast" && weekdayBreakfastDayIds.has(day.id);
-}
-
 function slotHasMealSelection(slotValue) {
   return slotEntries(slotValue).some(Boolean);
 }
@@ -3896,44 +3745,6 @@ function shuffled(items) {
   return result;
 }
 
-function repeatMeal(day, meal) {
-  const week = weekState();
-  const recipeId = week.slots[day][meal];
-  if (!slotEntries(recipeId).length) return;
-
-  const dayIndex = prepDays.findIndex((item) => item.id === day);
-  const nextDay = prepDays[dayIndex + 1];
-  if (nextDay?.meals.includes(meal)) {
-    week.slots[nextDay.id][meal] = Array.isArray(recipeId) ? [...recipeId] : recipeId;
-    persist();
-    renderPlanner();
-    renderGroceries();
-  }
-}
-
-function applyDefaultMealEntries(week) {
-  if (week.defaultMealEntriesApplied) return;
-  prepDays.forEach((day) => {
-    if (!weekdayDefaultDayIds.has(day.id)) return;
-    defaultMealEntries.forEach((defaultEntry) => {
-      applyDefaultMealEntry(week, day, defaultEntry);
-    });
-  });
-  daySpecificDefaultMealEntries.forEach((defaultEntry) => {
-    const day = prepDays.find((item) => item.id === defaultEntry.dayId);
-    if (day) applyDefaultMealEntry(week, day, defaultEntry);
-  });
-  week.defaultMealEntriesApplied = true;
-}
-
-function applyDefaultMealEntry(week, day, defaultEntry) {
-  if (!day.meals.includes(defaultEntry.meal)) return;
-  const entries = mealEntryList(slotEntries(week.slots[day.id][defaultEntry.meal]), defaultEntry.meal);
-  if (entries[defaultEntry.index]) return;
-  entries[defaultEntry.index] = recipeOrCustomMealValue(defaultEntry.value, day.id, defaultEntry.meal);
-  week.slots[day.id][defaultEntry.meal] = compactMealSlotEntries(entries, defaultEntry.meal);
-}
-
 function recipeOrCustomMealValue(value, dayId = "", meal = "") {
   if (isPlannedRecipeEntry(value)) return normalizePlannedRecipeEntry(value);
   if (isGroceryMealSlot(value)) return value;
@@ -3945,22 +3756,6 @@ function recipeOrCustomMealValue(value, dayId = "", meal = "") {
     return groceryItem ? groceryMealSlotId(groceryItem) : value;
   }
   return createPlannedRecipeEntry(recipe, dayId, meal);
-}
-
-function mealPlanNutritionTotals(week = weekState()) {
-  const entries = [];
-  const slots = mealSlotsForWeek(week);
-  const combinedState = combinedMealSectionsForWeek(week);
-  prepDays.forEach((day) => mealKeysForDay(day, combinedState).forEach((meal) => {
-    slotEntries(slots?.[day.id]?.[meal]).forEach((entry) => {
-      const recipe = recipeForSlot(entry);
-      if (recipe && !recipe.virtualGroceryRecipe) entries.push(entry);
-    });
-  }));
-  return LiveMealPlanServings.sumMealPlanNutrition(
-    entries,
-    (recipeId) => activeRecipes().find((recipe) => recipe.id === recipeId)
-  );
 }
 
   return {
