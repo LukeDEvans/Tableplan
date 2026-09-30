@@ -2,9 +2,9 @@
 // on for the current time of day (e.g. noon → Lunch). DOM-free; see
 // test/meal-plan-time.test.js.
 
-// Start-of-window (minutes after midnight) for well-known meal labels. Matches
-// mealplan-ui.js MEAL_TIME_WINDOWS (Breakfast until 11:00, Lunch 11–15, Dinner
-// 15:00 on) plus a few common custom labels.
+// Start-of-window (minutes after midnight) for well-known meal labels. Drives both the
+// open-on-now column and the meal-context event windows (mealTimeWindowForLabel):
+// Breakfast until 11:00, Lunch 11–15, Dinner 15:00 on, plus a few common custom labels.
 const KNOWN_MEAL_STARTS = {
   breakfast: 0,
   brunch: 10 * 60,
@@ -50,4 +50,25 @@ export function isFridayBeforeLastMeal(labels, date = new Date()) {
   const list = Array.isArray(labels) ? labels : [];
   if (date.getDay() !== 5 || list.length < 2) return false;
   return mealColumnIndexForTime(list, minutesSinceMidnight(date)) < list.length - 1;
+}
+
+// Time-of-day window [start, end) in minutes for the meal column `label`, derived
+// from the same start table as mealColumnIndexForTime: a column runs from its
+// start until the next later-starting column (or midnight), and the
+// earliest-starting column also covers the early morning (from 00:00). Label
+// match is case-insensitive, so custom / lower-case meal types get a window.
+// For the default Breakfast/Lunch/Dinner this reproduces the old fixed windows
+// (0–11:00, 11:00–15:00, 15:00–24:00). Returns null if `label` isn't a column.
+export function mealTimeWindowForLabel(labels, label) {
+  const list = Array.isArray(labels) ? labels : [];
+  const wanted = String(label || "").trim().toLowerCase();
+  const index = list.findIndex((item) => String(item || "").trim().toLowerCase() === wanted);
+  if (!wanted || index < 0) return null;
+  const starts = list.map((item, i) => (
+    KNOWN_MEAL_STARTS[String(item || "").trim().toLowerCase()] ?? spreadStart(i, list.length)
+  ));
+  const start = starts[index];
+  const later = starts.filter((value) => value > start);
+  const end = later.length ? Math.min(...later) : 24 * 60;
+  return [start === Math.min(...starts) ? 0 : start, end];
 }

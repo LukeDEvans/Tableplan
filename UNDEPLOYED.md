@@ -55,4 +55,20 @@ files (cache v36).
 2. Make an edit and immediately another; reload; both are there.
 3. Hard-refresh once so the new service worker (v36) takes over; the app still loads offline.
 
+## Full-app audit fixes (PR #22)
+PR: https://github.com/LukeDEvans/Tableplan/pull/22
+
+Security: Gmail sign-in state is HMAC-signed with an expiry; email, show notes and article
+HTML go through one allowlist sanitizer; ics-proxy uses the SSRF-guarded fetch; the TTS
+pre-synthesis worker requires a key only the cron sends; the travel-map-url function that
+returned the raw Maps key is deleted; path-traversal and prompt-size guards. Plus data-loss and
+correctness fixes across finance, calendar/ICS, meal plan, shop, recipes, travel, weather,
+music, contacts and health. Inbox triage has a Mail AI toggle (on by default).
+
+**After deploying:**
+1. Mail: open an HTML newsletter; it renders (images and links) with nothing broken.
+2. Settings → Mail: reconnect Gmail once to confirm sign-in still completes.
+3. Calendar: a subscribed ICS calendar shows events at the right local times.
+4. Next morning: the presynth cron log shows "triggered worker → 202" (not 403).
+
 Checks for work that's already live are in [POST_DEPLOY_CHECKS.md](POST_DEPLOY_CHECKS.md).

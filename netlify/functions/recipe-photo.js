@@ -16,9 +16,13 @@ exports.handler = async (event) => {
 
   const path = (event.queryStringParameters || {}).path || "";
   if (!path) return { statusCode: 400, body: "path required" };
+  // The sign call uses the service-role key, so a "../" segment would let a caller
+  // sign objects in ANY bucket. Only plain relative segments are allowed.
+  if (!isSafeObjectPath(path)) return { statusCode: 400, body: "invalid path" };
+  const safePath = path.split("/").map(encodeURIComponent).join("/");
 
   try {
-    const signRes = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/recipe-photos/${path}`, {
+    const signRes = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/recipe-photos/${safePath}`, {
       method: "POST",
       headers: {
         apikey: serviceKey,
@@ -44,6 +48,14 @@ exports.handler = async (event) => {
     return { statusCode: 500, body: err.message || "Internal error" };
   }
 };
+
+function isSafeObjectPath(path) {
+  if (typeof path !== "string" || path.length > 512) return false;
+  if (path.startsWith("/") || /[\\%?#\0]/.test(path)) return false;
+  return path.split("/").every((seg) => seg && seg !== "." && seg !== ".." && /^[\w.\-]+$/.test(seg));
+}
+
+exports._test = { isSafeObjectPath };
 
 async function verifySession(accessToken, serviceKey) {
   try {

@@ -49,7 +49,9 @@ exports.handler = async (event) => {
     if (!addRes.ok) return jsonResponse(500, { error: "Could not add group membership." });
   }
 
-  await fetch(`${SUPABASE_URL}/rest/v1/live_group_invites?id=eq.${token}`, {
+  // Mark the invite we actually resolved (SRV-13): the tokenless fallback has no
+  // `token`, which used to PATCH `id=eq.undefined` and leave the invite reusable.
+  await fetch(`${SUPABASE_URL}/rest/v1/live_group_invites?id=eq.${encodeURIComponent(invite.id)}`, {
     method: "PATCH",
     headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "content-type": "application/json", Prefer: "return=minimal" },
     body: JSON.stringify({ accepted_at: new Date().toISOString() })

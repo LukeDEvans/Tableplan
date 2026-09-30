@@ -33,6 +33,31 @@ export function timeToMinutes(t) {
   return h * 60 + min;
 }
 
+// A free-text duration → minutes, or null. Accepts "2h", "2 hours", "1.5 hr",
+// "90 min", "1h30", "1h 30m", "1:30"; a bare number is minutes.
+export function parseDurationMinutes(v) {
+  if (v == null || v === "") return null;
+  if (typeof v === "number") return Number.isFinite(v) && v >= 0 ? Math.round(v) : null;
+  const s = String(v).trim().toLowerCase();
+  if (!s) return null;
+  let m = /^(\d+):(\d{1,2})$/.exec(s);
+  if (m) return +m[1] * 60 + +m[2];
+  m = /^(\d+(?:\.\d+)?)$/.exec(s);
+  if (m) return Math.round(+m[1]);
+  // Tokenize "<number><unit>" pairs; a trailing unitless number after an hour
+  // part ("1h30") is minutes.
+  const re = /(\d+(?:\.\d+)?)\s*([a-z]*)/g;
+  let total = 0, found = false, sawHours = false, t;
+  while ((t = re.exec(s))) {
+    const n = parseFloat(t[1]), unit = t[2];
+    if (/^h(?:r|rs|our|ours)?$/.test(unit)) { total += n * 60; sawHours = true; found = true; }
+    else if (/^m(?:in|ins|inute|inutes)?$/.test(unit)) { total += n; found = true; }
+    else if (!unit && sawHours) { total += n; }
+    else if (!found) return Math.round(n);
+  }
+  return found ? Math.round(total) : null;
+}
+
 export function addMinutes(t, delta) {
   const base = timeToMinutes(t);
   if (base == null || !Number.isFinite(delta)) return "";
@@ -80,7 +105,7 @@ function activityStop(item, ownerDateKey) {
     kind: "stop", type: "activity", section: "activities",
     id: item.id, ownerDateKey, raw: item,
     time: str(item.activityTime) || null,
-    endTime: item.activityTime && item.duration ? addMinutes(item.activityTime, parseInt(item.duration, 10) || 0) : "",
+    endTime: item.activityTime && item.duration ? addMinutes(item.activityTime, parseDurationMinutes(item.duration) || 0) : "",
     title: str(item.name || item.title, "Activity"),
     subtitle: [item.activityType, item.duration].filter(Boolean).join(" · "),
     icon: ACTIVITY_ICONS[item.activityType] || "⭐",
@@ -251,11 +276,14 @@ export function buildDayTimeline(trip, dateKey) {
 // shows the idea/undated experience instead of a day grid.
 export function tripDayKeys(trip) {
   if (!trip || !trip.startDate || !trip.endDate) return [];
-  const start = new Date(trip.startDate + "T00:00:00");
-  const end = new Date(trip.endDate + "T00:00:00");
+  // Iterate in UTC so the keys are pure calendar dates, independent of the
+  // device timezone (local-midnight → toISOString shifted every key back a day
+  // east of UTC).
+  const start = Date.parse(trip.startDate + "T00:00:00Z");
+  const end = Date.parse(trip.endDate + "T00:00:00Z");
   if (isNaN(start) || isNaN(end) || end < start) return [];
   const keys = [];
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) keys.push(d.toISOString().slice(0, 10));
+  for (let t = start; t <= end; t += 86400000) keys.push(new Date(t).toISOString().slice(0, 10));
   return keys;
 }
 

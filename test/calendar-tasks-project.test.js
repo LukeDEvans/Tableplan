@@ -86,3 +86,23 @@ describe("taskCountsByDate (§25 Month indicators)", () => {
     expect(counts.has("__none__")).toBe(false);
   });
 });
+
+import { dedupeRecurringTaskInstances } from "../calendar/tasks-project.js";
+describe("dedupeRecurringTaskInstances (CAL-8)", () => {
+  it("keeps the DONE duplicate even when it isn't first", () => {
+    const out = dedupeRecurringTaskInstances([
+      { id: "a", recurringTaskId: "r", done: false },
+      { id: "x", title: "plain" },
+      { id: "b", recurringTaskId: "r", done: true }
+    ]);
+    expect(out.map((t) => t.id)).toEqual(["x", "b"]);
+  });
+  it("prefers one with log entries over an empty one; else keeps the first", () => {
+    expect(dedupeRecurringTaskInstances([{ id: "a", recurringTaskId: "r" }, { id: "b", recurringTaskId: "r", log: [{ at: 1 }] }]).map((t) => t.id)).toEqual(["b"]);
+    expect(dedupeRecurringTaskInstances([{ id: "a", recurringTaskId: "r" }, { id: "b", recurringTaskId: "r" }]).map((t) => t.id)).toEqual(["a"]);
+  });
+  it("leaves distinct recurring ids and non-recurring tasks alone", () => {
+    const t = [{ id: "1", recurringTaskId: "r1" }, { id: "2", recurringTaskId: "r2" }, { id: "3" }];
+    expect(dedupeRecurringTaskInstances(t)).toEqual(t);
+  });
+});

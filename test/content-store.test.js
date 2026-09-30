@@ -94,6 +94,19 @@ describe("ContentStore.ensureAvailable — layered read", () => {
     await expect(cs.ensureAvailable(asset)).rejects.toMatchObject({ code: "remote-unavailable" });
   });
 
+  it("remote bytes that don't match asset.hash: throws code 'corrupt' and does not rehydrate", async () => {
+    const cloud = fakeCloud();
+    const csA = createContentStore({ storage: createMemoryStorage(["bytes"]), cloudClient: cloud, bucket: BUCKET, userId: "u" });
+    const asset = await csA.putBytes("b1", new Uint8Array([5, 6, 7]));
+    const storageB = createMemoryStorage(["bytes"]);
+    const csB = createContentStore({ storage: storageB, cloudClient: cloud, bucket: BUCKET, userId: "u" });
+    const tampered = { ...asset, hash: "0".repeat(64) };
+    await expect(csB.ensureAvailable(tampered)).rejects.toMatchObject({ code: "corrupt" });
+    expect(await csB.has("b1")).toBe(false);
+    // The genuine hash still verifies (case-insensitively).
+    expect([...(await csB.ensureAvailable({ ...asset, hash: asset.hash.toUpperCase() }))]).toEqual([5, 6, 7]);
+  });
+
   it("propagates a genuine download error (does NOT mask it as 'missing')", async () => {
     const cloud = fakeCloud({ downloadError: { message: "permission denied" } });
     const cs = createContentStore({ storage: createMemoryStorage(["bytes"]), cloudClient: cloud, bucket: BUCKET });

@@ -25,6 +25,9 @@ import { saveFile } from './save-file.js';
 
 // "YYYY-MM-DD" (with year), so the birthday calendar can show an age.
 const CONTACT_DATE_RE = /^(\d{4}-)?(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+// A stored contact photo must be a plain base64 image data URL (no markup, no
+// whitespace, no other schemes) — it is rendered straight into an <img src>.
+const CONTACT_PHOTO_RE = /^data:image\/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 export function normalizeContactRows(arr, defLabel, createId) {
   return Array.isArray(arr) ? arr.map((r) => ({
     id: r?.id || createId("crow"),
@@ -52,7 +55,7 @@ export function normalizeContacts(list, createId) {
       id: c?.id || createId("contact"),
       firstName, lastName, name,
       favorite: Boolean(c?.favorite),
-      photo: (typeof c?.photo === "string" && c.photo.startsWith("data:image")) ? c.photo : "",
+      photo: (typeof c?.photo === "string" && CONTACT_PHOTO_RE.test(c.photo)) ? c.photo : "",
       phones, emails,
       birthday: (typeof c?.birthday === "string" && CONTACT_DATE_RE.test(c.birthday)) ? c.birthday : "",
       dates: normalizeContactRows(c?.dates, "Date", createId).filter((d) => CONTACT_DATE_RE.test(d.value)),
@@ -86,11 +89,131 @@ export function buildContactsVcf(cs) {
     (c.dates || []).forEach((d) => lines.push(`X-DATE;TYPE=${vcardEscape(d.label || "Date")}:${d.value}`));
     (c.addresses || []).forEach((a) => lines.push(`ADR;TYPE=${vcardEscape(a.label || "Home")}:;;${vcardEscape(a.value)};;;;`));
     if ((c.groups || []).length) lines.push(`CATEGORIES:${c.groups.map(vcardEscape).join(",")}`);
-    if (c.photo && c.photo.includes(",")) lines.push(`PHOTO;ENCODING=b;TYPE=JPEG:${c.photo.split(",")[1]}`);
+    if (c.photo && c.photo.includes(",")) lines.push(`PHOTO;ENCODING=b;TYPE=${(c.photo.match(/^data:image\/(\w+)/)?.[1] || "jpeg").toUpperCase()}:${c.photo.split(",")[1]}`);
     if (c.notes) lines.push(`NOTE:${vcardEscape(c.notes)}`);
     lines.push("END:VCARD");
   });
   return lines.join("\r\n");
+}
+
+// ── vCard parsing (pure) ─────────────────────────────────────────────────────
+// Single-pass unescape, so "\\n" (an escaped backslash followed by n) stays a
+// literal backslash + "n" instead of becoming a newline.
+export function vcardUnescape(s) {
+  return String(s ?? "").replace(/\\([\\,;nN])/g, (_, c) => (c === "n" || c === "N") ? "\n" : c);
+}
+// Split on separators that are not backslash-escaped (N/ADR on ";", CATEGORIES on ",").
+const splitUnescaped = (s, sep) => String(s || "").split(sep === ";" ? /(?<!\\);/ : /(?<!\\),/);
+
+// TYPE values that describe transport/preference rather than a user-facing label.
+const VCARD_GENERIC_TYPES = new Set(["INTERNET", "PREF", "VOICE", "X400", "MSG"]);
+// vCard 2.1 bare params that are encodings/charsets, never labels.
+const VCARD_BARE_NON_TYPES = new Set(["QUOTED-PRINTABLE", "BASE64", "B", "8BIT", "7BIT"]);
+
+// params: the ";"-separated parts after the property name. Returns the first
+// meaningful TYPE value ("TYPE=HOME,pref" / "TYPE=INTERNET;TYPE=WORK" / 2.1 bare
+// "HOME"), or "".
+function vcardTypeLabel(params) {
+  for (const p of params) {
+    const eq = p.indexOf("=");
+    const name = eq < 0 ? "TYPE" : p.slice(0, eq).toUpperCase();
+    if (name !== "TYPE") continue;
+    const raw = (eq < 0 ? p : p.slice(eq + 1)).replace(/^"|"$/g, "");
+    for (const t of splitUnescaped(raw, ",")) {
+      const v = t.trim();
+      const up = v.toUpperCase();
+      if (!v || VCARD_GENERIC_TYPES.has(up) || (eq < 0 && VCARD_BARE_NON_TYPES.has(up))) continue;
+      return vcardUnescape(v);
+    }
+  }
+  return "";
+}
+function vcardParam(params, name) {
+  const hit = params.find((p) => p.toUpperCase().startsWith(`${name}=`));
+  return hit ? hit.slice(name.length + 1).replace(/^"|"$/g, "") : "";
+}
+function isQuotedPrintable(params) {
+  return params.some((p) => /^(ENCODING=)?QUOTED-PRINTABLE$/i.test(p));
+}
+// Decode vCard 2.1 QUOTED-PRINTABLE (=XX byte sequences) as UTF-8 (or the line's
+// CHARSET when the runtime supports it).
+function decodeQuotedPrintable(s, charset) {
+  const bytes = [];
+  const enc = new TextEncoder();
+  const str = String(s || "").replace(/=\r?\n/g, "");
+  for (let i = 0; i < str.length; i++) {
+    const hex = str.slice(i + 1, i + 3);
+    if (str[i] === "=" && /^[0-9A-Fa-f]{2}$/.test(hex)) { bytes.push(parseInt(hex, 16)); i += 2; }
+    else bytes.push(...enc.encode(str[i]));
+  }
+  let dec;
+  try { dec = new TextDecoder(charset || "utf-8"); } catch { dec = new TextDecoder("utf-8"); }
+  return dec.decode(new Uint8Array(bytes));
+}
+// BDAY / ANNIVERSARY / X-DATE value → "YYYY-MM-DD", or "MM-DD" when the year is
+// unknown ("--MMDD", Apple's X-APPLE-OMIT-YEAR placeholder year, or year < 1900).
+function parseVcardDate(val, params) {
+  const m = String(val).match(/^--(\d{2})-?(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}`;
+  const f = String(val).match(/(\d{4})-?(\d{2})-?(\d{2})/);
+  if (!f) { const md = String(val).trim().match(/^(\d{2})-(\d{2})$/); return md ? `${md[1]}-${md[2]}` : ""; }
+  const omit = vcardParam(params, "X-APPLE-OMIT-YEAR");
+  if ((omit && omit === f[1]) || +f[1] < 1900) return `${f[2]}-${f[3]}`;
+  return `${f[1]}-${f[2]}-${f[3]}`;
+}
+const PHOTO_MIME = { JPEG: "jpeg", JPG: "jpeg", PNG: "png", GIF: "gif", WEBP: "webp" };
+
+// Parse vCard text (2.1 / 3.0 / 4.0) into plain contact objects (not yet
+// normalized — no ids). Pure: no DOM, no state, no injected deps.
+export function parseVcf(text) {
+  const blocks = String(text || "").split(/BEGIN:VCARD/i).slice(1);
+  const parsed = [];
+  blocks.forEach((block) => {
+    const body = block.split(/END:VCARD/i)[0] || "";
+    const raw = body.replace(/\r\n[ \t]/g, "").replace(/\n[ \t]/g, ""); // unfold continuation lines
+    const c = { firstName: "", lastName: "", name: "", photo: "", phones: [], emails: [], birthday: "", dates: [], addresses: [], groups: [], notes: "" };
+    const lines = raw.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      let line = lines[i].trim();
+      if (!line) continue;
+      const ci = line.indexOf(":"); if (ci < 0) continue;
+      const rawKey = line.slice(0, ci);
+      const keyParts = rawKey.split(/(?<!\\);/);
+      const params = keyParts.slice(1);
+      // Strip Apple's "item1." group prefix so "item1.EMAIL" is recognised.
+      const key = keyParts[0].replace(/^[^.]+\./, "").toUpperCase();
+      let val = line.slice(ci + 1);
+      if (isQuotedPrintable(params)) {
+        // 2.1 soft line breaks: a QP line ending in "=" continues on the next line.
+        while (val.endsWith("=") && i + 1 < lines.length) { val = val.slice(0, -1) + lines[++i].trim(); }
+        val = decodeQuotedPrintable(val, vcardParam(params, "CHARSET"));
+      }
+      const type = vcardTypeLabel(params);
+      if (key === "FN") c.name = vcardUnescape(val);
+      else if (key === "N") { const p = splitUnescaped(val, ";"); c.lastName = vcardUnescape(p[0] || ""); c.firstName = vcardUnescape(p[1] || ""); }
+      else if (key === "TEL") c.phones.push({ label: type || "Mobile", value: vcardUnescape(val) });
+      else if (key === "EMAIL") c.emails.push({ label: type || "Email", value: vcardUnescape(val) });
+      else if (key === "BDAY") { const d = parseVcardDate(val, params); if (d) c.birthday = d; }
+      else if (key === "X-DATE" || key === "ANNIVERSARY") { const d = parseVcardDate(val, params); if (d) c.dates.push({ label: type || (key === "ANNIVERSARY" ? "Anniversary" : "Date"), value: d }); }
+      else if (key === "ADR") { const parts = splitUnescaped(val, ";").map(vcardUnescape); const joined = parts.slice(2).filter(Boolean).join(", ") || parts.filter(Boolean).join(", "); if (joined) c.addresses.push({ label: type || "Home", value: joined }); }
+      else if (key === "CATEGORIES") c.groups = splitUnescaped(val, ",").map((s) => vcardUnescape(s).trim()).filter(Boolean);
+      else if (key === "NOTE") c.notes = vcardUnescape(val);
+      else if (key === "PHOTO") {
+        const enc = vcardParam(params, "ENCODING").toUpperCase();
+        const bareB64 = params.some((p) => /^BASE64$/i.test(p));
+        if (enc === "B" || enc === "BASE64" || bareB64) {
+          const b64 = val.replace(/\s+/g, "");
+          const mime = PHOTO_MIME[(vcardParam(params, "TYPE") || params.find((p) => PHOTO_MIME[p.toUpperCase()]) || "").toUpperCase()] || "jpeg";
+          if (/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) c.photo = `data:image/${mime};base64,${b64}`;
+        } else if (CONTACT_PHOTO_RE.test(val.trim())) {
+          c.photo = val.trim(); // vCard 4.0 inline data: URI
+        }
+      }
+    }
+    if (!c.name) c.name = `${c.firstName} ${c.lastName}`.trim();
+    if (c.name) parsed.push(c);
+  });
+  return parsed;
 }
 
 export function createContactsModule(deps) {
@@ -127,17 +250,6 @@ function formatContactBirthday(bday) {
   return bday.length > 5 ? `${label}, ${bday.slice(0, 4)}` : label;
 }
 
-// Days until the next yearly occurrence of an "MM-DD"/"YYYY-MM-DD" date.
-function contactDaysUntil(dateStr) {
-  if (!dateStr) return Infinity;
-  const mmdd = dateStr.length > 5 ? dateStr.slice(5) : dateStr;
-  const [mo, day] = mmdd.split("-").map(Number);
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  let next = new Date(today.getFullYear(), mo - 1, day);
-  if (next < today) next = new Date(today.getFullYear() + 1, mo - 1, day);
-  return Math.round((next - today) / 86400000);
-}
-
 const CONTACT_STAR_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L4.5 9.7l5.9-.9z"/></svg>';
 const CONTACT_COPY_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
 let contactsGridBound = false;
@@ -166,7 +278,6 @@ function renderContactsPage() {
   if (q) contacts = contacts.filter((c) => `${c.name} ${(c.emails || []).map((e) => e.value).join(" ")} ${(c.phones || []).map((p) => p.value).join(" ")} ${c.notes} ${(c.addresses || []).map((a) => a.value).join(" ")} ${(c.groups || []).join(" ")}`.toLowerCase().includes(q));
   const sortFn = (a, b) => {
     if (sort === "last") return (a.lastName || "").localeCompare(b.lastName || "") || (a.firstName || "").localeCompare(b.firstName || "");
-    if (sort === "birthday") return contactDaysUntil(a.birthday) - contactDaysUntil(b.birthday) || a.name.localeCompare(b.name);
     return a.name.localeCompare(b.name);
   };
   if (!contacts.length) {
@@ -177,21 +288,16 @@ function renderContactsPage() {
   }
   const favs = contacts.filter((c) => c.favorite).sort(sortFn);
   const rest = contacts.filter((c) => !c.favorite).sort(sortFn);
-  const useLetters = sort !== "birthday";
   const head = (label, key) => `<div class="contact-section-head" data-section="${escapeHtml(key)}">${escapeHtml(label)}</div>`;
   const railKeys = [];
   let html = "";
   if (favs.length) { html += head("★ Favorites", "fav"); railKeys.push({ key: "fav", label: "★" }); html += favs.map(contactCardHtml).join(""); }
-  if (useLetters) {
-    let cur = null;
-    rest.forEach((c) => {
-      const L = contactSortLetter(c, sort);
-      if (L !== cur) { cur = L; html += head(L, `L-${L}`); railKeys.push({ key: `L-${L}`, label: L }); }
-      html += contactCardHtml(c);
-    });
-  } else {
-    html += rest.map(contactCardHtml).join("");
-  }
+  let cur = null;
+  rest.forEach((c) => {
+    const L = contactSortLetter(c, sort);
+    if (L !== cur) { cur = L; html += head(L, `L-${L}`); railKeys.push({ key: `L-${L}`, label: L }); }
+    html += contactCardHtml(c);
+  });
   grid.innerHTML = html;
   renderContactsRail(railKeys);
   bindContactsGrid();
@@ -487,7 +593,6 @@ function refreshContactBirthDays() {
 const CONTACT_PLUS_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
 const CONTACT_X_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 const CONTACT_DRAG_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>';
-let contactDragRow = null;
 
 // Add a labelled row. Reorderable lists (data-reorder="1": phone/email/address)
 // get a drag handle plus a leading "+" on the first row / "×" on the rest;
@@ -544,16 +649,6 @@ function setupContactRowDrag(row, list) {
     onReorder: () => refreshContactReorderList(list),
     itemLabel: (r) => (r.querySelector(".contact-row-value")?.value || "row").trim().slice(0, 40),
   });
-}
-
-function contactDragAfter(list, y) {
-  let best = null, bestOffset = -Infinity;
-  list.querySelectorAll(".contact-multi-row:not(.is-dragging)").forEach((row) => {
-    const box = row.getBoundingClientRect();
-    const offset = y - box.top - box.height / 2;
-    if (offset < 0 && offset > bestOffset) { bestOffset = offset; best = row; }
-  });
-  return best;
 }
 
 function populateContactList(listId, items, opts) {
@@ -644,7 +739,9 @@ function openContactDialog(id) {
   populateContactList("contactEmailList", c?.emails, { labelPh: "Email", valuePh: "name@example.com", defLabel: "Email" });
   populateContactList("contactAddressList", c?.addresses, { labelPh: "Home", valuePh: "Address", defLabel: "Home" });
   const dateList = $("contactDateList"); dateList.innerHTML = "";
-  (c?.dates || []).forEach((d) => addContactRow("contactDateList", { label: d.label, value: d.value.length > 5 ? d.value : "", labelPh: "Anniversary", valueType: "date" }));
+  // A year-less "MM-DD" date can't live in a date picker (it would load empty and be
+  // dropped on save), so it gets a text box showing the MM-DD value as-is.
+  (c?.dates || []).forEach((d) => { const full = d.value.length > 5; addContactRow("contactDateList", { label: d.label, value: d.value, labelPh: "Anniversary", valuePh: full ? "" : "MM-DD", valueType: full ? "date" : "text" }); });
   const bday = c?.birthday || "";
   const mmdd = bday.length > 5 ? bday.slice(5) : bday;
   const [mo, day] = mmdd ? mmdd.split("-") : ["", ""];
@@ -727,7 +824,6 @@ function deleteContact() {
 }
 
 // ── vCard import / export ─────────────────────────────────────────────────────
-function vcardUnescape(s) { return String(s || "").replace(/\\n/gi, "\n").replace(/\\,/g, ",").replace(/\\;/g, ";").replace(/\\\\/g, "\\"); }
 
 function exportContactsVcf() {
   const cs = state.contacts || [];
@@ -812,30 +908,7 @@ function chooseImportMode(dupes, news) {
 }
 
 async function importContactsVcf(text) {
-  const blocks = String(text || "").split(/BEGIN:VCARD/i).slice(1);
-  const parsed = [];
-  blocks.forEach((block) => {
-    const body = block.split(/END:VCARD/i)[0] || "";
-    const raw = body.replace(/\r\n[ \t]/g, "").replace(/\n[ \t]/g, ""); // unfold continuation lines
-    const c = { firstName: "", lastName: "", name: "", phones: [], emails: [], birthday: "", dates: [], addresses: [], groups: [], notes: "" };
-    raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).forEach((line) => {
-      const ci = line.indexOf(":"); if (ci < 0) return;
-      const rawKey = line.slice(0, ci), val = line.slice(ci + 1);
-      const key = rawKey.split(";")[0].toUpperCase();
-      const type = (rawKey.split(";").slice(1).find((p) => /^TYPE=/i.test(p)) || "").replace(/^TYPE=/i, "");
-      if (key === "FN") c.name = vcardUnescape(val);
-      else if (key === "N") { const p = val.split(";"); c.lastName = vcardUnescape(p[0] || ""); c.firstName = vcardUnescape(p[1] || ""); }
-      else if (key === "TEL") c.phones.push({ label: type || "Mobile", value: vcardUnescape(val) });
-      else if (key === "EMAIL") c.emails.push({ label: type || "Email", value: vcardUnescape(val) });
-      else if (key === "BDAY") { const m = val.match(/^--(\d{2})-?(\d{2})/) ; const f = val.match(/(\d{4})-?(\d{2})-?(\d{2})/); if (m) c.birthday = `${m[1]}-${m[2]}`; else if (f) c.birthday = `${f[1]}-${f[2]}-${f[3]}`; }
-      else if (key === "X-DATE" || key === "ANNIVERSARY") { const f = val.match(/(\d{4})-?(\d{2})-?(\d{2})/); if (f) c.dates.push({ label: type || (key === "ANNIVERSARY" ? "Anniversary" : "Date"), value: `${f[1]}-${f[2]}-${f[3]}` }); }
-      else if (key === "ADR") { const parts = val.split(";").map(vcardUnescape); const joined = parts.slice(2).filter(Boolean).join(", ") || parts.filter(Boolean).join(", "); if (joined) c.addresses.push({ label: type || "Home", value: joined }); }
-      else if (key === "CATEGORIES") c.groups = val.split(",").map((s) => vcardUnescape(s).trim()).filter(Boolean);
-      else if (key === "NOTE") c.notes = vcardUnescape(val);
-    });
-    if (!c.name) c.name = `${c.firstName} ${c.lastName}`.trim();
-    if (c.name) parsed.push(c);
-  });
+  const parsed = parseVcf(text);
   if (!parsed.length) { showMailToast("No contacts found in that file"); return; }
   const incoming = normalizeContacts(parsed, createId); // ids + row shapes normalized
   const existing = state.contacts || [];
@@ -850,7 +923,8 @@ async function importContactsVcf(text) {
   const snapshot = [...existing];
   let addedN = 0, mergedN = 0, skippedN = 0;
   let next = [...existing];
-  const addAsNew = (p) => { next.push({ ...p, id: createId("contact") }); addedN++; };
+  const addedIds = [];
+  const addAsNew = (p) => { const id = createId("contact"); next.push({ ...p, id }); addedIds.push(id); addedN++; };
   if (mode === "merge") {
     const mergedById = new Map();
     dupes.forEach(({ p, match }) => { mergedById.set(match.id, mergeContactInto(mergedById.get(match.id) || match, p)); mergedN++; });
@@ -872,6 +946,9 @@ async function importContactsVcf(text) {
   if (skippedN) parts.push(`skipped ${skippedN}`);
   showMailToast(parts.length ? parts.join(", ").replace(/^./, (ch) => ch.toUpperCase()) : "Nothing imported", () => {
     state.contacts = snapshot;
+    // Tombstone the contacts this import added so the undo survives a cross-device
+    // merge (otherwise another device's copy would resurrect them).
+    addedIds.forEach((id) => recordDeletion("contacts", id));
     persist(); renderContactsPage(); refreshPlanIfActive();
   });
 }

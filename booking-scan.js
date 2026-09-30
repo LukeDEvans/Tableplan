@@ -1,7 +1,7 @@
 // booking-scan.js — booking domain adapter over the shared document-scan seam.
 // Owns the booking PROMPT + normalization; the vision plumbing (incl. PDF support)
 // lives in document-scan.js.
-const { scanDocument, parseJsonFromText } = require("./document-scan");
+const { scanDocument, outputText, DEFAULT_SCAN_MODEL } = require("./document-scan");
 
 async function scanBookingFromImages(files, options = {}) {
   const { rawText } = await scanDocument({
@@ -59,14 +59,6 @@ function bookingScanPrompt() {
     "If a field cannot be determined, use an empty string or 0.",
     "Do not invent values. Extract only what is clearly visible."
   ].join("\n");
-}
-
-function outputText(payload) {
-  return (payload?.content || [])
-    .filter((b) => b.type === "text")
-    .map((b) => b.text)
-    .join("\n")
-    .trim();
 }
 
 function parseBookingJson(text) {

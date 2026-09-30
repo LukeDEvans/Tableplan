@@ -16,16 +16,34 @@ const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 
 const ENTITY_KINDS = ["lodging", "flight", "train", "bus", "car", "restaurant", "activity", "event", "tour", "other"];
 
+const PER_MESSAGE_CHARS = 8000;
+const THREAD_BUDGET_CHARS = 24000;
+
 function buildThreadText(messages) {
   const list = Array.isArray(messages) ? messages.slice() : [];
   list.sort((a, b) => {
     const ta = Date.parse(a && a.date) || 0, tb = Date.parse(b && b.date) || 0;
     return ta - tb;
   });
-  return list.map((m, i) => {
+  const blocks = list.map((m, i) => {
     const header = `--- Message ${i + 1} · Date: ${String(m.date || "unknown")} · From: ${String(m.from || "")} · Subject: ${String(m.subject || "")} ---`;
-    return header + "\n" + String(m.text || "").slice(0, 8000);
-  }).join("\n\n").slice(0, 24000);
+    return header + "\n" + String(m.text || "").slice(0, PER_MESSAGE_CHARS);
+  });
+  // Over budget, keep the NEWEST messages (a later modification/cancellation
+  // supersedes the original booking). Truncating the joined text from the end
+  // dropped exactly those. Fill newest-first, then restore chronological order;
+  // an oldest partially-fitting message keeps its head (header + start).
+  const SEP = "\n\n";
+  const kept = [];
+  let used = 0;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const cost = blocks[i].length + (kept.length ? SEP.length : 0);
+    if (used + cost <= THREAD_BUDGET_CHARS) { kept.unshift(blocks[i]); used += cost; continue; }
+    const room = THREAD_BUDGET_CHARS - used - (kept.length ? SEP.length : 0);
+    if (room > 200) kept.unshift(blocks[i].slice(0, room));
+    break;
+  }
+  return kept.join(SEP);
 }
 
 function interpretPrompt() {

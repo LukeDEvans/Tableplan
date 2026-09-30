@@ -47,9 +47,16 @@ const irregularSingulars = {
 };
 
 const singularExceptions = new Set([
-  "asparagus", "bass", "couscous", "glass", "greens", "hummus", "molasses",
+  "asparagus", "bass", "bitters", "couscous", "glass", "greens", "grits", "hummus", "molasses",
   "mussels", "oats", "Swiss", "swiss", "watercress"
 ]);
+
+// Prep/shopping-note phrases compiled once (normalizeBaseName runs per row per render).
+// `test` is non-global so it carries no lastIndex state between calls.
+const notePhrasePatterns = [...prepPhrases, ...shoppingNotes].map((phrase) => {
+  const source = `\\b${phrase.replace(/\s+/g, "\\s+")}\\b`;
+  return { phrase, test: new RegExp(source), replace: new RegExp(source, "g") };
+});
 
 const catalogGroups = {
   Produce: {
@@ -219,10 +226,9 @@ function normalizeBaseName(rawName) {
     .replace(/\s+/g, " ")
     .trim();
   const notes = [];
-  [...prepPhrases, ...shoppingNotes].forEach((phrase) => {
-    const pattern = new RegExp(`\\b${phrase.replace(/\s+/g, "\\s+")}\\b`, "g");
-    if (pattern.test(value)) notes.push(phrase);
-    value = value.replace(pattern, " ");
+  notePhrasePatterns.forEach(({ phrase, test, replace }) => {
+    if (test.test(value)) notes.push(phrase);
+    value = value.replace(replace, " ");
   });
   value = value.replace(/\s+/g, " ").trim();
   const words = value.split(" ").filter(Boolean);
@@ -230,6 +236,27 @@ function normalizeBaseName(rawName) {
   const normalizedName = words.join(" ");
   const canonicalName = synonymEntries[normalizedName] || normalizedName;
 return { normalizedName, canonicalName, notes: [...new Set(notes)] };
+}
+
+// Reverse alias lookup (alias canonical name -> alias group key), memoized per
+// aliases object. The aliases object can be mutated in place, so the cached map is
+// also keyed on a cheap content signature; first-listed group wins, as before.
+const reverseAliasCache = new WeakMap();
+function reverseAliasMap(aliases) {
+  if (!aliases || typeof aliases !== "object") return new Map();
+  const signature = JSON.stringify(aliases);
+  const cached = reverseAliasCache.get(aliases);
+  if (cached && cached.signature === signature) return cached.map;
+  const map = new Map();
+  Object.entries(aliases).forEach(([key, values]) => {
+    if (!Array.isArray(values)) return;
+    values.forEach((alias) => {
+      const canonical = normalizeBaseName(alias).canonicalName;
+      if (!map.has(canonical)) map.set(canonical, key);
+    });
+  });
+  reverseAliasCache.set(aliases, { signature, map });
+  return map;
 }
 
 function normalizeGroceryItemName(rawName, options = {}) {
@@ -243,10 +270,8 @@ function normalizeGroceryItemName(rawName, options = {}) {
     if (aliases[canonicalName]) {
       canonicalName = canonicalName;
     } else {
-      const aliasMatch = Object.entries(aliases).find(([, values]) => (
-        Array.isArray(values) && values.some((alias) => normalizeBaseName(alias).canonicalName === canonicalName)
-      ));
-      if (aliasMatch) canonicalName = aliasMatch[0];
+      const aliasKey = reverseAliasMap(aliases).get(canonicalName);
+      if (aliasKey !== undefined) canonicalName = aliasKey;
     }
   }
   if (!splitPreferences[splitKey]) canonicalName = synonymEntries[canonicalName] || canonicalName;
@@ -288,6 +313,31 @@ function formatQuantity(value) {
   return [whole || "", fraction].filter(Boolean).join(" ");
 }
 
+// Unit spellings that mean the same thing, so "1 cup + 2 cups + 1 Cup" sums.
+const unitAliases = {
+  tablespoon: "tbsp", tablespoons: "tbsp", tbsp: "tbsp", tbsps: "tbsp", tbs: "tbsp", tbl: "tbsp",
+  teaspoon: "tsp", teaspoons: "tsp", tsp: "tsp", tsps: "tsp",
+  cup: "cup", cups: "cup", c: "cup",
+  ounce: "oz", ounces: "oz", oz: "oz",
+  pound: "lb", pounds: "lb", lb: "lb", lbs: "lb",
+  gram: "g", grams: "g", g: "g", kilogram: "kg", kilograms: "kg", kg: "kg",
+  milliliter: "ml", milliliters: "ml", ml: "ml", liter: "l", liters: "l", l: "l",
+  pint: "pt", pints: "pt", pt: "pt", quart: "qt", quarts: "qt", qt: "qt",
+  gallon: "gal", gallons: "gal", gal: "gal"
+};
+
+function groceryUnitKey(unit) {
+  const raw = String(unit || "").trim().replace(/\.$/, "");
+  if (raw === "T") return "tbsp";
+  if (raw === "t") return "tsp";
+  const lower = raw.toLowerCase().replace(/\s+/g, " ");
+  if (!lower) return "";
+  if (unitAliases[lower]) return unitAliases[lower];
+  const words = lower.split(" ");
+  words[words.length - 1] = singularizeWord(words[words.length - 1]);
+  return words.join(" ");
+}
+
 function mergeGroceryRows(rows, options = {}) {
   const groups = new Map();
   (Array.isArray(rows) ? rows : []).forEach((row) => {
@@ -318,12 +368,17 @@ function mergeGroceryRows(rows, options = {}) {
     if (row.manualValue) group.manualValues.push(row.manualValue);
     const amount = quantityNumber(row.amount);
     const unit = String(row.unit || "").trim();
-    if (amount !== null) group.quantities.set(unit, (group.quantities.get(unit) || 0) + amount);
+    if (amount !== null) {
+      // Sum by normalized unit; display the first spelling seen for that unit.
+      const unitKey = groceryUnitKey(unit);
+      const existing = group.quantities.get(unitKey);
+      group.quantities.set(unitKey, { label: existing ? existing.label : unit, amount: (existing?.amount || 0) + amount });
+    }
     else if (row.quantity) group.looseQuantities.push(row.quantity);
   });
   return [...groups.values()].map((group) => {
-    const quantities = [...group.quantities.entries()]
-      .map(([unit, amount]) => [formatQuantity(amount), unit].filter(Boolean).join(" "))
+    const quantities = [...group.quantities.values()]
+      .map(({ label, amount }) => [formatQuantity(amount), label].filter(Boolean).join(" "))
       .filter(Boolean);
     const loose = [...new Set(group.looseQuantities.filter(Boolean))];
     const manualValues = [...new Set(group.manualValues)];
@@ -357,5 +412,6 @@ export {
   normalizeGroceryItemName,
   quantityNumber,
   formatQuantity,
+  groceryUnitKey,
   mergeGroceryRows
 };

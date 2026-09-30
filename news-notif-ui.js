@@ -86,6 +86,14 @@ export function acceptedArticleRecord(card, nowIso = new Date().toISOString()) {
   };
 }
 
+// Cards the user already swiped this session — still queued, in flight to the
+// server, or resolved — must never come back from a pendingNews load that raced
+// the resolveNews write.
+export function filterResolvedNews(list, queue, resolvedIds) {
+  const hidden = new Set([...(queue || []).map((x) => x.id), ...(resolvedIds || [])]);
+  return (list || []).filter((a) => a && !hidden.has(a.id));
+}
+
 export function createNewsNotifModule(deps) {
   const { callGmailApi, escapeHtml, showToast, onAccepted, setDotCount, isSignedIn } = deps;
   let articles = null;     // null = never loaded
@@ -110,8 +118,7 @@ export function createNewsNotifModule(deps) {
     lastLoadedAt = Date.now();
     const d = await callGmailApi({ action: "pendingNews" });
     if (!Array.isArray(d?.articles)) return;
-    const pendingIds = new Set(queue.map((x) => x.id));
-    articles = d.articles.filter((a) => !pendingIds.has(a.id));
+    articles = filterResolvedNews(d.articles, queue, resolvedIds);
     updateBadge();
     if (open) render();
   }
@@ -160,7 +167,9 @@ export function createNewsNotifModule(deps) {
   // (FLUSH_MS), on panel close, and when the page is hidden — not one per card.
   let queue = [];
   let flushTimer = null;
+  const resolvedIds = new Set(); // every id swiped this session (see filterResolvedNews)
   function enqueue(id, decision) {
+    resolvedIds.add(id);
     queue.push({ id, decision });
     clearTimeout(flushTimer);
     flushTimer = setTimeout(flush, FLUSH_MS);
@@ -174,7 +183,9 @@ export function createNewsNotifModule(deps) {
     callGmailApi({ action: "resolveNews", decisions }).then((d) => {
       if (d) return;
       // Server unreachable: the cards stay pending there and will reappear on the
-      // next load. Accepted articles are already saved on this device.
+      // next load (un-hide them so they can be re-decided). Accepted articles are
+      // already saved on this device.
+      decisions.forEach((x) => resolvedIds.delete(x.id));
       if (decisions.some((x) => x.decision === "accept")) showToast?.("Couldn't reach the server — saved articles are kept on this device.");
     });
   }

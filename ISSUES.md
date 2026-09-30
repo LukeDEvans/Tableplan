@@ -33,6 +33,10 @@ _(none)_
 
 
 ## P2
+- [ ] **[P2] Trip→calendar sync re-creates events without tombstones** (travel · app.js syncTripToCalendar · 2026-09-30)
+      `syncTripToCalendar` removes and re-adds the trip's planEvents without `recordDeletion("planEvents", id)`, so a merge with a device holding the old copies brings them back as duplicates. Suggested: tombstone removed ids (or keep stable ids per trip item). Verdict: LIKELY (read, found during the full-app audit; not reproduced across devices).
+- [ ] **[P2] Event-linked chores dropped by syncEventChoresToDoList aren't tombstoned** (calendar · app.js syncEventChoresToDoList · 2026-09-30)
+      Chores removed from doPlans are just filtered out, so a merge re-adds them and the next resync drops them again (churn). Tied to CAL-10 (chore retention/horizon), which is held for Luke. Verdict: CONFIRMED by reading.
 - [x] **[P2] DECISION FOR LUKE: should "Assistant can read email" default ON like other Mail AI features?** (assistant · app.js MAIL_AI_FEATURES `assistantMailRead`, netlify/functions/chat.js loadAssistantAccess · 2026-09-29)
   The assistant upgrade shipped this toggle OFF by default (explicit `true` required, client + server). CLAUDE.md (updated on main the same day) now says Mail AI features default ON (`defaultOn: true`, server treats only `false` as off). Switching it was held: it lets the chat model read email without an explicit opt-in, which is a privacy/permission call for Luke, not a mechanical rule application. To flip: `defaultOn: true` in the registry entry, `!== false` in `assistantAccessFlags()` and the AI Notes status line, `row.mail !== false` in `loadAssistantAccess`, and update scripts/check-assistant.mjs step 4 + ARCHITECTURE.md §9. (Finance stays off-by-default either way — standing "never feed financial data into AI prompts" note in daily-briefing.js.)
       **DECIDED 2026-09-29 (Luke): keep OFF by default.** A deliberate exception to the Mail AI default-on rule (recorded in CLAUDE.md) — the AI reads mail on request only after an explicit opt-in.
@@ -128,6 +132,8 @@ _(none)_
       **DECIDED 2026-09-29 (Luke): stays parked.**
 
 ## P3
+- [ ] **[P3] Local dev server still routes `/api/travel-map-url`** (dev · server.js:88 · 2026-09-30)
+      PR #22 deleted the Netlify function (it returned the raw Maps key), and the client no longer calls it, but `server.js` still has the local-dev route and handler. Dead code, local only. Suggest: delete the route and `handleTravelMapUrl`. Verdict: CONFIRMED by reading.
 - [ ] **[P3] `sendVoiceCommand` in app.js is dead code** (assistant · app.js:36871 · 2026-09-30)
   No callers; it posts `{transcript}` without the household id/passphrase, so the voice function would reject it (400/401) if anything wired it up. Voice now runs only via the Siri shortcut → `voice-command.js`. Suggest: delete it (and any helpers only it uses). Verdict: CONFIRMED by grep, left alone to keep the voice change focused.
 - [x] **[P3] Assistant calendar lookups use the ICS cache as last fetched** (assistant · app.js get_calendar_range / buildChatOverviewContext · 2026-09-29)

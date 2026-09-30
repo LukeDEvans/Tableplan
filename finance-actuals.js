@@ -30,9 +30,15 @@ export function financeEarliestTxnDate(txns) {
 // entries mark an old month "covered" re-snapshotted it from manual rows alone,
 // shrinking a complete historical snapshot. With no feed transactions at all,
 // only the current month is eligible.
-export function financeMonthsToSnapshot(txns, currentMonth) {
+//
+// `partial`: the pull reported per-account errors (some institutions missing).
+// A past month's snapshot is then NOT rewritten — an account absent from this
+// pull would drop its whole contribution and shrink a complete snapshot. The
+// current month is still refreshed (it's re-derived on every later pull).
+export function financeMonthsToSnapshot(txns, currentMonth, { partial = false } = {}) {
   const earliest = financeEarliestTxnDate((txns || []).filter((t) => !t?.isManual));
   const months = new Set([currentMonth]);
+  if (partial) return months;
   for (const t of txns || []) {
     const m = (t.posted || "").slice(0, 7);
     if (!m || !t.label) continue;
@@ -99,6 +105,78 @@ export function normalizeFinanceMonthActuals(actuals) {
     }
     if (out === actuals) out = { ...actuals };
     out[month] = { ...entry, cats: fixed };
+  }
+  return out;
+}
+
+// Local-calendar month key ("YYYY-MM"). `Date#toISOString()` is UTC, so in a
+// negative-offset timezone the evening of the last day of a month already reads
+// as NEXT month (and new Date(y, m, 1) — local midnight — reads as the PREVIOUS
+// month east of UTC). Every "which month is it / N months back" key the finance
+// UI derives from the clock must use local getters instead.
+export function localMonthKey(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+// "YYYY-MM" shifted by `delta` months (negative = earlier), in local time.
+export function monthKeyOffset(monthKey, delta) {
+  const [y, m] = String(monthKey).split("-").map(Number);
+  return localMonthKey(new Date(y, m - 1 + (Number(delta) || 0), 1));
+}
+
+// Transfer pairs (account management): same magnitude, opposite signs,
+// different accounts, ≤5 days apart → both ids auto-label "mgmt". Manual
+// entries (isManual) never participate: a hand-entered cash purchase that
+// happens to match a bank deposit's magnitude is not a transfer between them.
+export function financeTransferPairIds(txns) {
+  const pairs = new Set();
+  const byAmt = new Map();
+  for (const t of txns || []) {
+    if (!t.amount || t.isManual) continue;
+    const k = Math.abs(t.amount).toFixed(2);
+    if (!byAmt.has(k)) byAmt.set(k, []);
+    byAmt.get(k).push(t);
+  }
+  for (const group of byAmt.values()) {
+    for (const a of group) for (const b of group) {
+      if (a === b || a.accountId === b.accountId) continue;
+      if ((a.amount > 0) === (b.amount > 0)) continue;
+      if (Math.abs(new Date(a.posted || 0) - new Date(b.posted || 0)) <= 5 * 86400000) {
+        pairs.add(a.id); pairs.add(b.id);
+      }
+    }
+  }
+  return pairs;
+}
+
+// Pending→posted dedupe: banks reissue ids when a pending charge posts. Same
+// account + same amount + a shared merchant token + ≤7d apart → the pending
+// row is a duplicate of that posted row. Each posted row absorbs at most ONE
+// pending row (two identical pending coffees must not both collapse onto one
+// posted charge). Returns Map<pendingId, postedId>. `merchantKey` injected.
+export function financePendingDuplicates(txns, merchantKey) {
+  const mkey = typeof merchantKey === "function" ? merchantKey : (d) => String(d || "");
+  const tokens = (d) => new Set(String(mkey(d) || "").split(" ").filter(Boolean));
+  const byKey = new Map();
+  for (const t of txns || []) {
+    const k = `${t.accountId}|${(t.amount || 0).toFixed(2)}`;
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push(t);
+  }
+  const out = new Map();
+  for (const group of byKey.values()) {
+    const posted = group.filter((t) => !t.pending);
+    const claimed = new Set();
+    for (const p of group.filter((t) => t.pending)) {
+      const pTok = tokens(p.description);
+      const match = posted.find((q) =>
+        !claimed.has(q.id) &&
+        Math.abs(new Date(p.posted || 0) - new Date(q.posted || 0)) <= 7 * 86400000 &&
+        [...pTok].some((tok) => tokens(q.description).has(tok)));
+      if (!match) continue;
+      claimed.add(match.id);
+      out.set(p.id, match.id);
+    }
   }
   return out;
 }

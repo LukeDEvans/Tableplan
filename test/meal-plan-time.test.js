@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isFridayBeforeLastMeal, mealColumnIndexForTime } from "../meal-plan-time.js";
+import { isFridayBeforeLastMeal, mealColumnIndexForTime, mealTimeWindowForLabel } from "../meal-plan-time.js";
 
 const at = (h, m = 0) => h * 60 + m;
 const standard = ["Breakfast", "Lunch", "Dinner"];
@@ -65,5 +65,31 @@ describe("isFridayBeforeLastMeal", () => {
   it("is false on other days and single-meal plans", () => {
     expect(isFridayBeforeLastMeal(standard, new Date(2026, 8, 26, 8, 0))).toBe(false);
     expect(isFridayBeforeLastMeal(["Dinner"], friday(8))).toBe(false);
+  });
+});
+
+describe("mealTimeWindowForLabel", () => {
+  it("reproduces the old fixed Breakfast/Lunch/Dinner windows", () => {
+    expect(mealTimeWindowForLabel(standard, "Breakfast")).toEqual([0, at(11)]);
+    expect(mealTimeWindowForLabel(standard, "Lunch")).toEqual([at(11), at(15)]);
+    expect(mealTimeWindowForLabel(standard, "Dinner")).toEqual([at(15), at(24)]);
+  });
+
+  it("matches labels case-insensitively", () => {
+    expect(mealTimeWindowForLabel(["breakfast", "lunch", "dinner"], "LUNCH")).toEqual([at(11), at(15)]);
+  });
+
+  it("gives custom meal types a window instead of none", () => {
+    const custom = ["Early", "Mid", "Late"];
+    const windows = custom.map((label) => mealTimeWindowForLabel(custom, label));
+    windows.forEach((win) => expect(win).not.toBeNull());
+    expect(windows[0][0]).toBe(0);
+    expect(windows[2][1]).toBe(at(24));
+    expect(windows[0][1]).toBe(windows[1][0]);
+  });
+
+  it("returns null for a label that isn't a column", () => {
+    expect(mealTimeWindowForLabel(standard, "Snack")).toBeNull();
+    expect(mealTimeWindowForLabel(standard, "")).toBeNull();
   });
 });
