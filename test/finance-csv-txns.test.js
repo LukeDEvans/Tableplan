@@ -115,3 +115,25 @@ describe("Debit/Credit column exports (review LOW)", () => {
     expect(out.months["2026-09"].income).toBe(0);
   });
 });
+
+describe("\"Debit Amount\"/\"Credit Amount\" headers (FIN-14)", () => {
+  const rows = parseCsvRows(`Transaction Date,Description,Debit Amount,Credit Amount
+09/01/2026,GROCER,45.10,
+09/02/2026,REFUND,,5.00
+09/03/2026,PAYROLL,,2500.00`);
+  it("uses the debit/credit pair, not \"Debit Amount\" as a single signed column", () => {
+    const { txns } = csvRowsToTxns(rows, { accountId: "a" });
+    expect(txns.map((t) => t.amount)).toEqual([-45.1, 5, 2500]);
+  });
+  it("aggregateCsvBackfill: the debit is spending, only credits are income", async () => {
+    const { aggregateCsvBackfill } = await import("../finance-csv.js");
+    const out = aggregateCsvBackfill(rows, {});
+    expect(out.months["2026-09"].income).toBe(2505);
+    expect(out.uncategorized).toBe(1); // the −45.10 debit, not counted as income
+  });
+  it("a plain signed Amount column still wins", async () => {
+    const { csvAmountResolver } = await import("../finance-csv.js");
+    const amt = csvAmountResolver(["Date", "Amount", "Debit", "Credit"]);
+    expect(amt(["x", "-3.50", "", ""])).toBe(-3.5);
+  });
+});
