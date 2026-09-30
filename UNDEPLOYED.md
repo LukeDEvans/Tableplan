@@ -10,6 +10,26 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+## Issue sweep: honest set_meal, news fixes, music backup, share-sheet saves (PR #23)
+PR: https://github.com/LukeDEvans/Tableplan/pull/23
+
+- **Assistant / voice `set_meal`** says "Couldn't add X: <day> has no <meal> slots" instead of
+  a false "Added" when the meal layout has no slots.
+- **News cards:** a swipe and a mail sweep can no longer overwrite each other's pending cards;
+  **Star Tribune** links (Sailthru trackers) are now decoded, so its articles produce cards.
+- **Music → Saved → Download my uploaded music** zips the original files + `tracks.csv`.
+- **Files save through the iOS share sheet** in the native app (music CSV, MusicXML, contacts
+  vCard, finance CSV, data export); downloads as before on the web.
+- Apple Music sign-in keeps Safari's popup permission; media hub lists Apple Music, not Jamendo;
+  a full restore keeps logins the export left out; CSV import warns about a re-import under a
+  new account name; the assistant refetches subscribed calendars older than 3 hours.
+
+**After deploying:**
+1. Media bell: check Star Tribune article cards appear after the next newsletter.
+2. Native app (next TestFlight build): export a file from Music / Contacts / Finance and check
+   the share sheet opens.
+3. Safari: Apple Music sign-in from Music settings opens the Apple popup.
+
 ## Assistant upgrade: whole-app context, lookups, confirm/undo, suggestions, memory (PR #20)
 PR: https://github.com/LukeDEvans/Tableplan/pull/20
 
