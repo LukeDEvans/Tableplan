@@ -304,6 +304,71 @@ export function findExistingItem(entity, trip) {
   return null;
 }
 
+// Multi-segment flights (TRV-6): every segment shares the booking's confirmation,
+// so "first item with that confirmation" diffs segment 2 against leg 1. Match
+// each placement to its own leg instead: same confirmation (when present) AND
+// flight number, else same route + depart date, else same route. Each existing
+// leg is claimed at most once. Returns [{ placement, existing|null }] in
+// segment order — the caller proposes per changed segment and adds new ones.
+export function matchFlightSegments(entity, trip, source = null) {
+  const days = (trip && trip.days) || {};
+  const conf = str(entity && entity.confirmation).toLowerCase();
+  const legs = [];
+  for (const dateKey of Object.keys(days)) {
+    const arr = (days[dateKey] || {}).travel;
+    if (!Array.isArray(arr)) continue;
+    for (const item of arr) {
+      if (!item || !(item.mode || item.from || item.to)) continue;
+      const itemConf = str(item.confirmationNo || item.confirmation).toLowerCase();
+      if (conf ? itemConf === conf : !!item.flightNumber) legs.push({ item, section: "travel", dateKey });
+    }
+  }
+  const fn = (v) => str(v).replace(/\s+/g, "").toUpperCase();
+  const code = (v) => str(v).toUpperCase();
+  const route = (leg, it) => (code(leg.item.fromCode || leg.item.from) === code(it.fromCode || it.from)) &&
+    (code(leg.item.toCode || leg.item.to) === code(it.toCode || it.to));
+  const claimed = new Set();
+  const rules = [
+    (leg, it) => it.flightNumber && fn(leg.item.flightNumber) === fn(it.flightNumber) && (conf || leg.item.departDate === it.departDate),
+    (leg, it) => conf && route(leg, it) && leg.item.departDate === it.departDate,
+    (leg, it) => conf && route(leg, it),
+  ];
+  const placements = entityToPlacements(entity, source);
+  const out = placements.map((placement) => ({ placement, existing: null }));
+  for (const rule of rules) {
+    out.forEach((row) => {
+      if (row.existing) return;
+      const hit = legs.find((leg) => !claimed.has(leg.item) && rule(leg, row.placement.item));
+      if (hit) { claimed.add(hit.item); row.existing = hit; }
+    });
+  }
+  return out;
+}
+
+// The changes an incoming placement makes to an already-committed item. Food and
+// activity items carry no date field of their own — the day bucket IS their
+// date — so a re-import that moves the reservation to another day would diff
+// clean and be lost (TRV-3). Surface it as a synthetic "dateKey" change the
+// apply step turns into a move between day buckets.
+export function placementChanges(existing, placement) {
+  if (!existing || !placement || !placement.item) return [];
+  const changes = diffItem(existing.item, placement.item, Object.keys(placement.item));
+  if ((placement.section === "food" || placement.section === "activities") &&
+      placement.dateKey && existing.dateKey && placement.dateKey !== existing.dateKey) {
+    changes.push({ field: "dateKey", from: existing.dateKey, to: placement.dateKey });
+  }
+  return changes;
+}
+
+// Where an item should live after an update: lodging is bucketed on check-in,
+// legs on departure, food/activities on an explicit dateKey change.
+export function targetDateKeyFor(section, item, changes, currentKey) {
+  if (section === "lodging" && item && item.checkInDate) return item.checkInDate;
+  if (section === "travel" && item && item.departDate) return item.departDate;
+  const dk = (changes || []).find((c) => c.field === "dateKey");
+  return (dk && dk.to) || currentKey;
+}
+
 // Heuristic identity when there's no confirmation number: same kind-ish section,
 // same start date, and overlapping name/location tokens.
 function sameReservation(entity, item) {
@@ -359,7 +424,13 @@ export function findItineraryConflict(entity, trip) {
     // Same-slot heuristic: shared name/location token, OR both carry this section's time field.
     const nameTokens = tokenize(`${item.name || item.title} ${item.address || item.from || item.startLocation || ""}`);
     const tokenMatch = entTokens.some(t => nameTokens.includes(t));
-    const timeMatch = timeField && item[timeField] && incoming[timeField];
+    // A time-only match used to fire whenever both items were timed, so an
+    // import could hijack any unrelated hand-entered item that day (TRV-4). Now
+    // it needs the times within 90 min AND some identity: a loose name overlap,
+    // or a generic placeholder ("Dinner", "Activity") standing in for it.
+    const a = timeToMin(item[timeField]), b = timeToMin(incoming[timeField]);
+    const timeClose = a != null && b != null && Math.abs(a - b) <= 90;
+    const timeMatch = timeClose && (looseNameMatch(item, entity) || isPlaceholderName(item, section));
     if (!tokenMatch && !timeMatch) continue;
     const changes = diffItem(item, incoming, ITINERARY_FIELDS);
     if (changes.length) return { item, section, dateKey, changes };
@@ -367,11 +438,34 @@ export function findItineraryConflict(entity, trip) {
   return null;
 }
 
+const timeToMin = (t) => { const m = /^(\d{1,2}):(\d{2})/.exec(str(t)); return m ? +m[1] * 60 + +m[2] : null; };
+const squash = (v) => str(v).toLowerCase().replace(/[^a-z0-9]+/g, "");
+function looseNameMatch(item, entity) {
+  const mine = squash(item.name || item.title);
+  if (mine.length < 3) return false;
+  const theirs = [entity.title, entity.provider, entity.location, entity.address].map(squash).filter(x => x.length >= 3);
+  return theirs.some(x => x.includes(mine) || mine.includes(x));
+}
+const PLACEHOLDER_NAMES = {
+  food: ["", "breakfast", "brunch", "lunch", "dinner", "supper", "meal", "restaurant", "reservation", "food", "snack", "drinks"],
+  activities: ["", "activity", "tour", "event", "show", "excursion"],
+  travel: ["", "travel", "flight", "train", "bus", "transfer"],
+  lodging: ["", "lodging", "hotel", "stay", "accommodation"],
+};
+function isPlaceholderName(item, section) {
+  return (PLACEHOLDER_NAMES[section] || [""]).includes(str(item.name || item.title).toLowerCase());
+}
+
 export function entityToItineraryProposal(entity, conflict, source) {
-  const incoming = entityToPlacements(entity, source)[0]?.item || null;
+  const primary = entityToPlacements(entity, source)[0] || null;
+  const incoming = primary?.item || null;
   // Authoritative diff over the curated fields — safe regardless of what the
   // caller precomputed, so an import never overwrites a hand-typed name/address.
   const changes = incoming ? diffItem(conflict.item, incoming, ITINERARY_FIELDS) : (conflict.changes || []);
+  if (primary) {
+    const moved = placementChanges({ item: conflict.item, dateKey: conflict.dateKey }, primary).find(c => c.field === "dateKey");
+    if (moved) changes.push(moved);
+  }
   return {
     id: "prop_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     type: "itinerary", status: "pending",
@@ -382,11 +476,13 @@ export function entityToItineraryProposal(entity, conflict, source) {
 }
 
 // Build a proposed-change record for the review inbox (never applied silently).
-export function entityToProposal(entity, existing, source) {
-  const placements = entityToPlacements(entity, source);
-  const incoming = placements[0] && placements[0].item;
+// `placement` pins a specific segment (multi-segment flights); defaults to the
+// entity's first placement.
+export function entityToProposal(entity, existing, source, placement = null) {
+  const primary = placement || entityToPlacements(entity, source)[0] || null;
+  const incoming = primary && primary.item;
   const type = entity.intent === "cancel" ? "cancel" : "modify";
-  const changes = type === "cancel" ? [] : diffItem(existing.item, incoming, incoming ? Object.keys(incoming) : []);
+  const changes = type === "cancel" || !primary ? [] : placementChanges(existing, primary);
   return {
     id: "prop_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     type, status: "pending",

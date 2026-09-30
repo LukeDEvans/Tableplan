@@ -1,4 +1,5 @@
 import * as LiveGroceryCatalog from './grocery-catalog.js';
+import { safeUrl, isSafeHref, isSafeSrc, parseInertHtml, scrubActiveAttributes, sanitizeUntrustedHtml } from './html-sanitize.js';
 import { createMealplanModule, autoRule, defaultMealPlanConfig, groceryMealSlotId, mealEntryList, minimumMealEntryCount, normalizeMealPlanConfig, defaultMealEntries, weekdayDefaultDayIds, daySpecificDefaultMealEntries } from './mealplan-ui.js';
 import { createRecipesModule, combinedRecipeTime, defaultRecipeTags, migrateRecipeFoldersToTags, normalizeActiveCooking, normalizeCookLog, normalizeInstructionSteps, normalizeNutritionCandidate, normalizeNutritionFacts, normalizeRecipe, normalizeRecipeTagSelection, normalizeRecipeTags, normalizeTrashedRecipe, seedFolders } from './recipes-ui.js';
 import { createGroceriesModule, baseGroceryItemKey, defaultGroceryBaseItems, defaultGroceryDailyDozenTags, ensureGroceryCatalog, mergeGroceryStoreItemSections, normalizeGroceryAliases, normalizeGroceryBaseItems, normalizeGroceryChecklist, normalizeGroceryDailyDozenTags, normalizeGroceryItemLocations, normalizeGroceryPriceObservations, normalizeGroceryPricingSettings, normalizeGrocerySplitPreferences, normalizeGroceryStoreItemSections, normalizeGroceryStoreSections, normalizeGroceryStores, normalizePriceHistory, normalizeReceipts } from './groceries-ui.js';
@@ -21,14 +22,14 @@ import { normalizeContacts, normalizeContactGroups, createContactsModule, buildC
 import { createHistoryLog, historyRowFromMedia, historyRowFromArticle, historyRowFromPracticeEvent, historyRowFromChat, fetchAllHistory } from './history-log.js';
 import { canonicalizeUrl as canonicalizeImportUrl } from './import-canonical.js';
 import { createPlaybackEngine } from './playback-engine.js';
-import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones } from './state-sync.js';
+import { unionById as syncUnionById, unionStrings as syncUnionStrings, unionByKey as syncUnionByKey, mergeTombstones, computeDirtySections, writeDirtySections, changedSectionRowIds, resumeCheckDue } from './state-sync.js';
 import { normalizeRecurrence, expandRecurringOccurrences, planNthOccurrenceDate } from './calendar/recurrence.js';
 import { normalizePlanEvents } from './calendar/model.js';
 import { eventInstancesInRange, sortEventsForDisplay, overlappingIntervalIds } from './calendar/projection.js';
 import { sourceFromPlanCalendar, isGoogleCalendarUrl } from './calendar/sources.js';
 import { normalizeExternalEvent } from './calendar/normalize.js';
 import { hiddenIdSet as exclusionHiddenIdSet, toggleExclusion, titleOverrideMap, upsertTitleOverride } from './calendar/reconcile.js';
-import { taskIsScheduled } from './calendar/tasks-project.js';
+import { taskIsScheduled, dedupeRecurringTaskInstances } from './calendar/tasks-project.js';
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
 import { isNativeApp, nativeTts, nativeAppleMusic } from './native-bridge.js';
@@ -478,17 +479,102 @@ async function refreshActiveSectionFromServer(stateId, section, keys) {
   if (!res.ok) return;
   const rows = await res.json();
   if (!rows.length) return;
-  lastSeenSectionStamp[rowId] = rows[0].updated_at;
-  const { stateUpdatedAt: remoteTs, ...remoteData } = rows[0].state || {};
+  mergeRemoteSectionRow(section, keys, rows[0]);
+  mirrorStateToLocalStorage();
+  render();
+}
+
+// Key-level merge of one fetched section row ({id, state, updated_at}) into
+// `state` — the same merge the write-conflict path uses. If this section had
+// no unsaved local edits, it is marked as written (it now equals the server
+// plus nothing new), so the refresh doesn't trigger a pointless write-back;
+// if it did have unsaved edits, they stay pending and upload on the next save.
+function mergeRemoteSectionRow(section, keys, row) {
+  const hadUnsavedEdits = !!lastWrittenSections
+    && lastWrittenSections[section] !== JSON.stringify(extractSectionData(keys));
+  lastSeenSectionStamp[row.id] = row.updated_at;
+  const { stateUpdatedAt: remoteTs, ...remoteData } = row.state || {};
   const localFrag = { ...extractSectionData(keys), tombstones: state.tombstones, stateUpdatedAt: state.stateUpdatedAt || "" };
   const remoteFrag = { ...remoteData, tombstones: remoteData.tombstones || state.tombstones, stateUpdatedAt: remoteTs || "" };
   const merged = (state.stateUpdatedAt || "") >= (remoteTs || "")
     ? mergeStates(localFrag, remoteFrag)
     : mergeStates(remoteFrag, localFrag);
   for (const key of keys) { if (merged[key] !== undefined) state[key] = merged[key]; }
-  mirrorStateToLocalStorage();
-  if (lastWrittenSections) lastWrittenSections[section] = JSON.stringify(extractSectionData(keys));
-  render();
+  if (lastWrittenSections && !hadUnsavedEdits) lastWrittenSections[section] = JSON.stringify(extractSectionData(keys));
+}
+
+// ── Resume refresh ────────────────────────────────────────────────────────────
+// State loads from Supabase at boot; a long-lived tab or the native app resumed
+// from the background otherwise keeps showing what it had (server-side writes —
+// e.g. the mail sweep's newsletter → Media article — never appeared until a
+// restart). On return to the foreground: fetch only id + updated_at for this
+// user's section rows (a few KB), then download just the rows whose stamp moved.
+// Bounded per CLAUDE.md's no-polling rule: fires only on visibilitychange →
+// visible, at most once per RESUME_REFRESH_MIN_INTERVAL_MS, never re-entrant,
+// and never triggers itself.
+const RESUME_REFRESH_MIN_INTERVAL_MS = 2 * 60 * 1000;
+let resumeRefreshAt = 0;
+let resumeRefreshInFlight = false;
+
+async function refreshChangedSectionsOnResume() {
+  if (!resumeCheckDue({ now: Date.now(), lastCheckAt: resumeRefreshAt, inFlight: resumeRefreshInFlight, minIntervalMs: RESUME_REFRESH_MIN_INTERVAL_MS })) return;
+  // Only once the boot hydrate has succeeded against Supabase, and signed in.
+  if (!sharedStorageReady || activeSharedStorageProvider?.load !== loadStateFromSupabase) return;
+  if (!authSession?.access_token || navigator.onLine === false) return;
+  resumeRefreshInFlight = true;
+  resumeRefreshAt = Date.now();
+  try {
+    const stateId = supabaseConfig().stateId;
+    const { allIds } = sectionRowIdsFor(stateId);
+    const probe = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=in.(${allIds.join(",")})&select=id,updated_at`,
+      { headers: supabaseHeaders(), cache: "no-store" }
+    );
+    if (!probe.ok) return;
+    const changed = changedSectionRowIds(await probe.json(), lastSeenSectionStamp);
+    if (!changed.length) return;
+
+    const res = await fetch(
+      `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=in.(${changed.join(",")})&select=id,state,updated_at`,
+      { headers: supabaseHeaders(), cache: "no-store" }
+    );
+    if (!res.ok) return;
+    const rows = await res.json();
+    // Map rows to sections by the scope in effect NOW (a household/personal
+    // flip during the fetch must not merge a row into the wrong scope).
+    const { activeIds } = sectionRowIdsFor(stateId);
+    let activeChanged = false;
+    let shadowChanged = false;
+    for (const row of rows) {
+      const activeIdx = activeIds.indexOf(row.id);
+      if (activeIdx >= 0) {
+        const section = Object.keys(STATE_SECTIONS)[activeIdx];
+        mergeRemoteSectionRow(section, STATE_SECTIONS[section], row);
+        activeChanged = true;
+        continue;
+      }
+      const shadowSection = Object.keys(STATE_SECTIONS).find((s) => inactiveSectionRowId(stateId, s) === row.id);
+      if (shadowSection) {
+        const { stateUpdatedAt, schemaVersion, ...data } = row.state || {};
+        shadowSections[shadowSection] = data;
+        lastSeenSectionStamp[row.id] = row.updated_at;
+        shadowChanged = true;
+      }
+    }
+    if (shadowChanged) persistShadowSections();
+    if (activeChanged) {
+      mirrorStateToLocalStorage();
+      invalidateFinanceLabeled();
+      planRangeCache.clear();
+      planAppDataIndex = null;
+      render();
+    }
+    console.info(`[sync] resume refresh: ${rows.length} changed section row(s) merged`);
+  } catch (e) {
+    console.warn("[sync] resume refresh failed (next resume will retry):", e.message);
+  } finally {
+    resumeRefreshInFlight = false;
+  }
 }
 
 // The gateable app pages — the single source of truth for every page-access
@@ -549,6 +635,11 @@ const PLAN_RANGE_CACHE_MAX = 8;
 // re-scan the whole meal-plan/workout/to-do history each time.
 let planAppDataIndex = null;
 let userGroup = null;
+// True when the signed-in user's group membership could not be READ (network /
+// server error after bounded retries) — distinct from "no group yet" (a new
+// user). While set, hydration and writes stay blocked (see runHydrate…).
+let groupLoadFailed = false;
+let groupLoadInFlight = null;
 let groupMembers = [];
 let adminDisabledPages = [];
 let personalDisabledPages = [];
@@ -1868,7 +1959,7 @@ const {
 // infra + calendar readers + eat shell stay in app.js and are injected. Dual calendar list
 // preserved (Decision #1 not applied). Legacy week.manualGroceries untouched (Decision #2b).
 const _mealplan = createMealplanModule({
-  state, elements, meals, prepDays, breakfastMeals, lunchMeals, dinnerMeals, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys,
+  state, elements, meals, prepDays, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys,
   getActiveAppArea: () => activeAppArea,
   getAuthSession: () => authSession,
   getCurrentWeek: () => currentWeek,
@@ -1878,31 +1969,31 @@ const _mealplan = createMealplanModule({
   getLastMealDragPoint: () => lastMealDragPoint, setLastMealDragPoint: (v) => { lastMealDragPoint = v; },
   getRestaurantSearchPending: () => restaurantSearchPending, setRestaurantSearchPending: (v) => { restaurantSearchPending = v; },
   getRestaurantSearchSuggestions: () => restaurantSearchSuggestions, setRestaurantSearchSuggestions: (v) => { restaurantSearchSuggestions = v; },
-  getSuppressNextWeekLabelClick: () => suppressNextWeekLabelClick, setSuppressNextWeekLabelClick: (v) => { suppressNextWeekLabelClick = v; },
+  setSuppressNextWeekLabelClick: (v) => { suppressNextWeekLabelClick = v; },
   getPendingMealRecipeSelection: () => pendingMealRecipeSelection, setPendingMealRecipeSelection: (v) => { pendingMealRecipeSelection = v; },
   getPendingMealIngredientSelection: () => pendingMealIngredientSelection, setPendingMealIngredientSelection: (v) => { pendingMealIngredientSelection = v; },
   getPendingAutoRuleRecipeSelection: () => pendingAutoRuleRecipeSelection, setPendingAutoRuleRecipeSelection: (v) => { pendingAutoRuleRecipeSelection = v; },
   getPendingAutoRuleIngredientSelection: () => pendingAutoRuleIngredientSelection, setPendingAutoRuleIngredientSelection: (v) => { pendingAutoRuleIngredientSelection = v; },
   getMealPlanNotifOpen: () => mealPlanNotifOpen, setMealPlanNotifOpen: (v) => { mealPlanNotifOpen = v; },
   getMealPlanRecipes: () => mealPlanRecipes, setMealPlanRecipes: (v) => { mealPlanRecipes = v; },
-  getRestaurantInfoPopoverContext: () => restaurantInfoPopoverContext, setRestaurantInfoPopoverContext: (v) => { restaurantInfoPopoverContext = v; },
-  acquireGroceryStoreSearchLocation, activeDayEventsTemplate, activeRecipes, addDays, autoEstimateNutrition, bindConfigListDrag,
-  calendarTabStyle, callGmailApi, clearDoTaskDragState, clearPlayTaskDragState, cloneCombinedMealSections, cloneMealSlots,
+  setRestaurantInfoPopoverContext: (v) => { restaurantInfoPopoverContext = v; },
+  acquireGroceryStoreSearchLocation, activeDayEventsTemplate, activeRecipes, addDays, bindConfigListDrag,
+  calendarTabStyle, callGmailApi, clearDoTaskDragState, clearPlayTaskDragState,
   closeFloatingMenus, closeFolderMenu, closeSettingsMenu, closeWeekJumpMenu, combinedMealSectionsForWeek, combinedRecipeTime,
-  compactDayLabel, compactMealSlotEntries, compactSlotEntries, dateFromWeekKey, dateKeyFromDate, defaultCollapsedSections,
-  deleteDraggedDoTask, deleteDraggedPlayTask, displayMealName, doBacklogTasks, ensureCombinedMealSectionShape, ensureMealSlotShape,
-  escapeHtml, focusGroceryLibraryInput, folderName, formatDailyDozenServings, formatWeekRange, getAppName,
+  compactDayLabel, compactMealSlotEntries, compactSlotEntries, dateKeyFromDate, defaultCollapsedSections,
+  deleteDraggedDoTask, deleteDraggedPlayTask, displayMealName, doBacklogTasks,
+  escapeHtml, focusGroceryLibraryInput, folderName, getAppName,
   getGroceryStoreSearchLocation, groceryPlacesApiUrl, groceryPlacesRequestOptions, grocerySuggestionItems, importViaGateway, isDescendantFolder,
-  isPlannedRecipeEntry, isPublishedMealPlanView, makeSortable, mealEntryValue, mealKeysForDay, mealSlotsForWeek,
+  isPlannedRecipeEntry, makeSortable, mealEntryValue, mealKeysForDay, mealSlotsForWeek,
   minutesOfDay, normalizeAutoGenerateRule, normalizeAutoGenerateRules, normalizeCookLog, normalizeDoTasks, normalizeIngredients,
-  normalizeInstructionSteps, normalizeNutritionFacts, normalizePlannedRecipeEntry, normalizePublishedWeeks, normalizeRecipeTagSelection, normalizeRecipeUrlInput,
-  normalizedFolders, openDailyDozenPage, openGroceriesPage, openGroceryReviewItems, openPlanEventDialog, openPublishedGroceryReview,
-  openRecipeBoxPage, openRecipeView, persist, persistImmediately, planEventOccursOn, plannedEntryAtLocation,
-  plannedServingsForEntry, plannerDayIdForDate, recipeDefaultServings, recipeForSlot, recipeIdForSlot, recipeTags,
+  normalizeInstructionSteps, normalizeNutritionFacts, normalizePlannedRecipeEntry, normalizeRecipeTagSelection, normalizeRecipeUrlInput,
+  normalizedFolders, openDailyDozenPage, openGroceriesPage, openPlanEventDialog,
+  openRecipeBoxPage, openRecipeView, persist, planEventOccursOn, plannedEntryAtLocation,
+  plannerDayIdForDate, recipeDefaultServings, recipeForSlot, recipeIdForSlot, recipeTags,
   recomputeMealPlanLayout, render, renderCollapsedSections, renderDoPlanner, renderFolders, renderGroceries,
-  renderGroceryLibrary, renderPlayPlanner, renderTasksPage, saveRecipeRow, scaledIngredientToText, setCombinedMealSection,
+  renderGroceryLibrary, renderPlayPlanner, renderTasksPage, scaledIngredientToText, setCombinedMealSection,
   setPageNotifCount, setPageTitle, showMailToast, slotEntries, storeDirectionsUrl, syncedCalendarEventsForDate,
-  unlistedGroceryItemsForWeek, updateTabIndicator, weekKey, weekState,
+  updateTabIndicator, weekKey, weekState,
   queueRecipeForReview: (...a) => queueRecipeForReview(...a), recipeReviewCount: (...a) => recipeReviewCount(...a),
 });
 const {
@@ -2104,7 +2195,18 @@ function initTouchDragPolyfill() {
   });
 }
 
-initializeApp();
+// A boot failure must never leave the gate stuck on "Checking sign-in…": unblock
+// it with a visible message and record the error for __liveDiag. (The handler runs
+// after module evaluation, so it can't hit module-level TDZ.)
+initializeApp().catch((error) => {
+  console.error("App initialization failed:", error);
+  try { diagErrorLog.record(error); } catch { /* diagnostics are best-effort */ }
+  try {
+    authCheckCompleted = true;
+    updateAppLockState();
+    if (!authSession?.access_token) updateAuthUi("Something went wrong starting the app. Reload to try again.");
+  } catch (e) { console.error("Could not show the boot-failure message:", e); }
+});
 
 function bindEvents() {
   elements.previousWeek.addEventListener("click", () => {
@@ -2774,11 +2876,24 @@ function bindEvents() {
       // Waking after a long suspension (phone PWAs sleep for days holding old
       // code in memory): reload so the current bundle runs before any sync.
       // All state is persisted on hide (below), so a reload loses nothing.
+      // The hide-time flush is fire-and-forget and may have been frozen/killed,
+      // so first await a bounded flush of anything still dirty, and skip the
+      // reload if it didn't land — reloading would drop those edits (INF-11).
       if (appHiddenAt && Date.now() - appHiddenAt > 6 * 3600 * 1000) {
-        window.location.reload();
+        appHiddenAt = 0;
+        flushBeforeStaleReload().then((ok) => {
+          if (ok) window.location.reload();
+          else {
+            console.warn("[resume] pending changes didn't save — skipping the stale-code reload this time.");
+            saveStateToSharedStorage(); // re-arm the normal save/retry loop
+          }
+        });
         return;
       }
       appHiddenAt = 0;
+      // Back in the foreground: pull in anything the server or another device
+      // saved meanwhile (cheap stamp check, throttled — see the function).
+      refreshChangedSectionsOnResume();
       return;
     }
     appHiddenAt = Date.now();
@@ -2985,7 +3100,16 @@ async function initializeSupabaseAuth() {
   }
 
   if (!window.supabase?.createClient) {
-    updateAuthUi("Cloud sync needs an internet connection.");
+    // The SDK script failed to load (offline first visit, CDN blocked). Finish
+    // the auth check so the gate shows a real message instead of hanging on
+    // "Checking sign-in…" forever. This branch runs synchronously during module
+    // evaluation (no await precedes it), so yield first — updateSyncStatus
+    // touches module-level lets declared further down (TDZ otherwise).
+    await Promise.resolve();
+    authCheckCompleted = true;
+    updateAppLockState();
+    updateSyncStatus("failed");
+    updateAuthUi("Cloud sync needs an internet connection. Reload to try again.");
     return;
   }
 
@@ -3079,9 +3203,15 @@ async function initializeSupabaseAuth() {
   updateAuthUi();
 }
 
-function updateAuthUi() {
+// `message` (optional) is shown on the sign-in gate's status line — used for
+// boot failures, so a signed-out user sees WHY instead of a generic prompt.
+function updateAuthUi(message) {
   updateGroupSettingsSection();
   if (elements.authButton) elements.authButton.hidden = false;
+  if (message) {
+    const status = document.getElementById("lockStatus");
+    if (status) status.textContent = message;
+  }
 }
 
 // The app is unusable signed-out: a full-screen gate covers everything until
@@ -3601,6 +3731,52 @@ function addScannedArticle(fields, bodyHtml) {
   return article;
 }
 
+const SIGN_OUT_FLUSH_TIMEOUT_MS = 5000;
+
+let signOutInProgress = false;
+
+// Best-effort: remove THIS device's Web Push subscription from the server
+// (DELETE /api/push-subscribe {endpoint} — scoped to the caller's user id) and
+// unsubscribe it locally. Uses getRegistration() (not serviceWorker.ready, which
+// never settles when no worker is registered — native shell / local dev).
+async function removePushSubscriptionForSignOut() {
+  try {
+    if (!("serviceWorker" in navigator) || !authSession?.access_token) return;
+    const reg = await navigator.serviceWorker.getRegistration();
+    const subscription = await reg?.pushManager?.getSubscription();
+    if (!subscription) return;
+    await fetch("/api/push-subscribe", {
+      method: "DELETE",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${authSession.access_token}` },
+      body: JSON.stringify({ endpoint: subscription.endpoint }),
+    }).catch(() => {});
+    await subscription.unsubscribe().catch(() => {});
+    localStorage.removeItem("live_push_subscribed");
+  } catch (e) {
+    console.warn("[sign-out] push unsubscribe skipped:", e);
+  }
+}
+
+// Resolves true when there is nothing pending or the pending write succeeded
+// within the bound; false on failure/timeout (caller then keeps the page).
+async function flushBeforeStaleReload() {
+  window.clearTimeout(sharedStorageSaveTimer);
+  if (!sharedStorageReady || !activeSharedStorageProvider) {
+    // Not synced yet (or signed out): reloading can't lose cloud-bound edits
+    // that weren't going anywhere anyway; the localStorage mirror is current.
+    return true;
+  }
+  try {
+    return await Promise.race([
+      activeSharedStorageProvider.write().then(() => true),
+      new Promise((resolve) => window.setTimeout(() => resolve(false), SIGN_OUT_FLUSH_TIMEOUT_MS)),
+    ]);
+  } catch (e) {
+    console.warn("[resume] flush before reload failed:", e);
+    return false;
+  }
+}
+
 async function toggleAuth() {
   // Local-dev sign-out: drop the flag and reload back to the real gate. No
   // Supabase client exists in this mode, so this must run before the cloud path.
@@ -3614,6 +3790,22 @@ async function toggleAuth() {
   }
 
   if (authSession?.access_token) {
+    if (signOutInProgress) return; // double-tap during the bounded flush below
+    signOutInProgress = true;
+    // Before tearing anything down (the flush + unsubscribe need this account's
+    // token): push any pending edits (INF-6) and drop this device's push
+    // subscription so the next person on it doesn't get this account's
+    // notifications (INF-7). Both best-effort, bounded together to ~5s so a dead
+    // network can't trap the user in a signed-in state.
+    window.clearTimeout(sharedStorageSaveTimer);
+    window.clearTimeout(sharedStorageRetryTimer);
+    const pendingFlush = (sharedStorageReady && activeSharedStorageProvider)
+      ? activeSharedStorageProvider.write()
+      : Promise.resolve();
+    await Promise.race([
+      Promise.allSettled([pendingFlush, removePushSubscriptionForSignOut()]),
+      new Promise((resolve) => window.setTimeout(resolve, SIGN_OUT_FLUSH_TIMEOUT_MS)),
+    ]);
     authSession = null;
     sharedStorageReady = false;
     activeSharedStorageProvider = null;
@@ -3755,15 +3947,38 @@ function handleInviteUrlParameter() {
   if (stored) pendingInviteToken = stored;
 }
 
-async function loadOrCreateUserGroup() {
-  if (!supabaseClient || !authSession?.access_token) return;
-  try {
-    const res = await fetch(
-      `${supabaseBaseUrl()}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(authSession.user.id)}&select=group_id,role,display_name,personal_disabled_pages,live_groups(id,disabled_pages)`,
-      { headers: supabaseHeaders() }
-    );
-    if (res.ok) {
+// Resolve the signed-in user's group. Only a SUCCESSFUL membership read that
+// returns zero rows means "new user" (→ setup dialog). A failed read is retried
+// a bounded number of times, then surfaced as "can't reach server" with the group
+// left null — which blocks hydrate/write, so nothing lands in the wrong rows and
+// an existing member is never shown the "Welcome, set up your group" dialog
+// (INF-2). Re-entrant calls share the in-flight attempt (no auth request storm).
+const GROUP_LOAD_RETRY_DELAYS_MS = [1000, 3000]; // 3 attempts total
+
+function loadOrCreateUserGroup() {
+  if (!supabaseClient || !authSession?.access_token) return Promise.resolve();
+  if (!groupLoadInFlight) {
+    groupLoadInFlight = runLoadOrCreateUserGroup().finally(() => { groupLoadInFlight = null; });
+  }
+  return groupLoadInFlight;
+}
+
+async function runLoadOrCreateUserGroup() {
+  const userId = authSession.user.id;
+  for (let attempt = 0; attempt <= GROUP_LOAD_RETRY_DELAYS_MS.length; attempt++) {
+    if (attempt > 0) await new Promise((r) => window.setTimeout(r, GROUP_LOAD_RETRY_DELAYS_MS[attempt - 1]));
+    // Session changed/ended while waiting — this lookup is no longer relevant.
+    if (!authSession?.access_token || authSession.user?.id !== userId) return;
+    try {
+      const res = await fetch(
+        // order= makes the pick deterministic for a user in more than one group
+        // (oldest membership first — what an unordered heap read returned in practice).
+        `${supabaseBaseUrl()}/rest/v1/live_group_members?user_id=eq.${encodeURIComponent(userId)}&select=group_id,role,display_name,personal_disabled_pages,live_groups(id,disabled_pages)&order=joined_at.asc,group_id.asc`,
+        { headers: supabaseHeaders() }
+      );
+      if (!res.ok) throw new Error(`membership lookup failed with status ${res.status}`);
       const rows = await res.json();
+      groupLoadFailed = false;
       if (rows.length) {
         const member = rows[0];
         const group = member.live_groups;
@@ -3773,11 +3988,15 @@ async function loadOrCreateUserGroup() {
         updateGroupSettingsSection();
         return;
       }
+      openGroupSetupDialog(); // confirmed: signed in, no membership → new user
+      return;
+    } catch (e) {
+      console.warn(`Could not load group (attempt ${attempt + 1}):`, e);
     }
-  } catch (e) {
-    console.warn("Could not load group:", e);
   }
-  openGroupSetupDialog();
+  groupLoadFailed = true;
+  updateSyncStatus("failed");
+  try { showVoiceToast("Can't reach the server — your data will sync when the connection returns."); } catch { /* toast is cosmetic */ }
 }
 
 async function migratePersonalStateIfNeeded() {
@@ -5883,6 +6102,12 @@ function mergeStates(newer, older) {
     "financeAccounts", "financeManualTxns", "financeGoals",
     // Contacts (address book)
     "contacts",
+    // Radio user-added stations: each gets a fresh random `user_…` id and is
+    // never re-added under the same id, so tombstones (deleteRadioUserStation)
+    // are exact. Previously newer-wins — a station added on one device vanished
+    // when another device synced. (radioFavorites / radioFollowedPrograms stay
+    // newer-wins: see MERGE_NEWER_WINS_KEYS in test/architecture-state-merge-coverage.test.js.)
+    "radioUserStations",
   ]) {
     merged[key] = unionById(newer[key], older[key], key);
   }
@@ -5966,6 +6191,37 @@ function mergeStates(newer, older) {
     "financeNotifDismissed", "financeTxnConfirmed", "financeTxnReceipts",
   ]) {
     merged[key] = unionByKey(newer[key], older[key]);
+  }
+
+  // Calendar overlay visibility: sourceId → hidden flag. Toggling stores an
+  // explicit true/false (never deletes a key), so a per-key union is lossless.
+  merged.planHiddenSources = unionByKey(newer.planHiddenSources, older.planHiddenSources);
+
+  // Learned mail filing memory: two flat keyed maps (threadId → label, sender →
+  // label counts). Union per map so learning on one device isn't lost; the caps
+  // in recordMailMove re-trim on the next move.
+  merged.mailMoveMemory = {
+    ...(older.mailMoveMemory || {}),
+    ...(newer.mailMoveMemory || {}),
+    threads: unionByKey(newer.mailMoveMemory?.threads, older.mailMoveMemory?.threads),
+    senders: unionByKey(newer.mailMoveMemory?.senders, older.mailMoveMemory?.senders),
+  };
+
+  // Grocery weekly checklist: per-cycle provisional answers and submissions are
+  // keyed by cycle → union (newer wins per cycle), so a submission made on one
+  // device survives the other's sync. The item `config` list is authoritative
+  // as a whole (it carries deletions and order) → newer wins.
+  if (newer.groceryChecklist || older.groceryChecklist) {
+    const nCl = newer.groceryChecklist || {};
+    const oCl = older.groceryChecklist || {};
+    merged.groceryChecklist = {
+      ...oCl,
+      ...nCl,
+      config: Array.isArray(nCl.config) ? nCl.config : (oCl.config || []),
+      provisional: unionByKey(nCl.provisional, oCl.provisional),
+      submissions: unionByKey(nCl.submissions, oCl.submissions),
+      seeded: Boolean(nCl.seeded || oCl.seeded),
+    };
   }
 
   // ── Shallow object merges: older provides base, newer keys win ────────────
@@ -6216,7 +6472,40 @@ let financeSectionHydrated = false;
 // ./finance-sync.js (extracted, unit-tested). The mutable session flag above
 // stays here; callers pass it + STATE_SECTIONS.finance into the pure guard.
 
-async function hydrateStateFromSharedStorage() {
+// Hydration is re-entered from several places (boot, sign-in, came-online, the
+// retry timer, invite accept). Never run two at once: a call that arrives while
+// one is in flight queues exactly ONE follow-up run (so a caller that needs a
+// fresh load — e.g. a new sign-in — still gets one) and shares its promise.
+let hydrateInFlight = null;
+let hydrateQueued = null;
+let hydrateRetryTimer = null;
+
+function hydrateStateFromSharedStorage() {
+  if (hydrateInFlight) {
+    if (!hydrateQueued) {
+      hydrateQueued = hydrateInFlight.catch(() => {}).then(() => {
+        hydrateQueued = null;
+        return hydrateStateFromSharedStorage();
+      });
+    }
+    return hydrateQueued;
+  }
+  window.clearTimeout(hydrateRetryTimer);
+  hydrateRetryTimer = null;
+  hydrateInFlight = runHydrateStateFromSharedStorage().finally(() => { hydrateInFlight = null; });
+  return hydrateInFlight;
+}
+
+async function runHydrateStateFromSharedStorage() {
+  // Signed in but the group is unknown (membership lookup failed, or a brand-new
+  // user who hasn't finished setup): loading/writing now would target the config
+  // default stateId ("personal") instead of the household rows. Stay not-ready;
+  // group setup / the came-online retry hydrate once the group is known.
+  if (canUseCloudStorage() && authSession?.access_token && !userGroup?.id) {
+    if (groupLoadFailed) updateSyncStatus("failed");
+    else hideHydrationOverlay(); // new user: the setup dialog is the next step
+    return;
+  }
   const providers = sharedStorageProviders();
   if (!providers.length) return;
 
@@ -6245,10 +6534,16 @@ async function hydrateStateFromSharedStorage() {
         const localIsNewer = stateForMerge.stateUpdatedAt && (!remoteTs || stateForMerge.stateUpdatedAt >= remoteTs);
         if (localIsNewer) {
           console.info(`Local state (${localTs}) is same-or-newer than ${provider.label} (${remoteTs || "no timestamp"}); merging and pushing.`);
-          await snapshotCloudStateBeforeOverwrite(sharedState);
           const merged = mergeStates(stateForMerge, sharedState);
           guardBootEmptyFinance(merged, sharedState, STATE_SECTIONS.finance, financeSectionHydrated); // don't let boot-empty finance overwrite the cloud copy
+          // Snapshot the cloud copy only when this merge will actually change it —
+          // an identical merge overwrites nothing, and posting a full snapshot on
+          // every such load was a steady egress drain (INF-3).
+          if (recoverableStateSignature(merged) !== recoverableStateSignature(sharedState)) {
+            await snapshotCloudStateBeforeOverwrite(sharedState);
+          }
           applyStoredState(merged);
+          seedLastWrittenFromLoad(); // only sections the merge changed get rewritten (INF-4)
           financeSectionHydrated = true;
           await provider.write();
         } else {
@@ -6257,6 +6552,7 @@ async function hydrateStateFromSharedStorage() {
           const merged = mergeStates(sharedState, stateForMerge);
           guardBootEmptyFinance(merged, sharedState, STATE_SECTIONS.finance, financeSectionHydrated);
           applyStoredState(merged);
+          seedLastWrittenFromLoad(); // only sections the merge changed get rewritten (INF-4)
           financeSectionHydrated = true;
           // Only write back if local actually contributed something new (tombstones, additions).
           // Comparing signatures detects whether the merge changed anything vs the remote state —
@@ -6266,7 +6562,7 @@ async function hydrateStateFromSharedStorage() {
           }
         }
       }
-      else { financeSectionHydrated = true; await provider.write(); }
+      else { lastLoadedSectionJson = null; financeSectionHydrated = true; await provider.write(); }
       localStorage.removeItem("live_signed_out_explicitly"); // clear on any successful sync
       sharedStorageReady = true;
       hydrateRetryCount = 0;
@@ -6288,7 +6584,10 @@ async function hydrateStateFromSharedStorage() {
   const retryDelay = Math.min(30000 * 2 ** hydrateRetryCount, 5 * 60 * 1000);
   hydrateRetryCount++;
   console.warn(`Shared storage unavailable; retrying hydration in ${Math.round(retryDelay / 1000)}s (no blind write).`);
-  window.setTimeout(() => { hydrateStateFromSharedStorage(); }, retryDelay);
+  // One retry timer at a time — repeated failures (or a failure racing a
+  // came-online hydrate) must not stack parallel retry chains.
+  window.clearTimeout(hydrateRetryTimer);
+  hydrateRetryTimer = window.setTimeout(() => { hydrateRetryTimer = null; hydrateStateFromSharedStorage(); }, retryDelay);
 }
 
 function saveStateToSharedStorage() {
@@ -6347,8 +6646,25 @@ function registerServiceWorker() {
   });
 }
 
+// Flaky connections fire "online" repeatedly; each hydrate re-downloads every
+// section. At most one came-online hydrate per minute — in between, a ready
+// session just flushes its pending edits (merge-protected writes).
+const CAME_ONLINE_HYDRATE_MIN_MS = 60 * 1000;
+let lastCameOnlineHydrateAt = 0;
+
 async function handleCameOnline() {
-  if (!canUseCloudStorage() || !authSession?.access_token || !userGroup?.id) return;
+  if (!canUseCloudStorage() || !authSession?.access_token) return;
+  if (Date.now() - lastCameOnlineHydrateAt < CAME_ONLINE_HYDRATE_MIN_MS) {
+    if (sharedStorageReady) saveStateToSharedStorage();
+    return;
+  }
+  lastCameOnlineHydrateAt = Date.now();
+  // A signed-in session whose group lookup failed (offline at boot) retries it
+  // now; hydration stays blocked until the group is known.
+  if (!userGroup?.id) {
+    await loadOrCreateUserGroup();
+    if (!userGroup?.id) return;
+  }
   // Hydrate-and-merge instead of blind-flushing: a device that was offline for
   // a while must fold the cloud's changes in before its own state goes up,
   // or it overwrites everything other devices wrote in the meantime.
@@ -6645,10 +6961,10 @@ async function writeStateToLocalBackend() {
   });
 }
 
-function extractSectionData(keys) {
+function extractSectionData(keys, source = state) {
   const obj = {};
   for (const key of keys) {
-    if (key in state) obj[key] = state[key];
+    if (key in source) obj[key] = source[key];
   }
   // Per-episode show-notes are the single heaviest thing in the whole state
   // (~1 MB per subscribed show) and are re-fetchable from the feed on demand.
@@ -6674,11 +6990,16 @@ function stripEpisodeDescriptions(podcasts) {
     : p);
 }
 
-function updateLastWrittenSections() {
-  lastWrittenSections = {};
-  for (const [section, keys] of Object.entries(STATE_SECTIONS)) {
-    lastWrittenSections[section] = JSON.stringify(extractSectionData(keys));
-  }
+// JSON (in extractSectionData's persisted shape) of each section as the server
+// held it at the last successful loadStateFromSupabase(), keyed by section —
+// only for sections whose ACTIVE row actually exists. Consumed once by
+// hydrateStateFromSharedStorage to seed lastWrittenSections, so a load only
+// rewrites the sections the merge really changed instead of every section.
+let lastLoadedSectionJson = null;
+
+function seedLastWrittenFromLoad() {
+  lastWrittenSections = lastLoadedSectionJson ? { ...lastLoadedSectionJson } : null;
+  lastLoadedSectionJson = null;
 }
 
 function assembleSectionRows(rows) {
@@ -6698,6 +7019,14 @@ function assembleSectionRows(rows) {
 // writer got there first and we merge before retrying.
 const lastSeenSectionStamp = {};
 
+// Row ids for every section: the active scope's rows (index-aligned with
+// Object.keys(STATE_SECTIONS)) plus the inactive-scope shadow rows.
+function sectionRowIdsFor(stateId) {
+  const activeIds = Object.keys(STATE_SECTIONS).map(s => sectionRowId(stateId, s));
+  const inactiveIds = Object.keys(STATE_SECTIONS).map(s => inactiveSectionRowId(stateId, s)).filter(Boolean);
+  return { activeIds, allIds: [...new Set([...activeIds, ...inactiveIds])] };
+}
+
 async function loadStateFromSupabase() {
   const config = supabaseConfig();
   const stateId = config.stateId;
@@ -6705,9 +7034,8 @@ async function loadStateFromSupabase() {
   // One fetch covers every row this user can see: the household's section
   // rows plus this member's personal rows. Which of the two feeds `state`
   // for a given section depends on its scope; the other lands in the shadow.
-  const activeIds = Object.keys(STATE_SECTIONS).map(s => sectionRowId(stateId, s));
-  const inactiveIds = Object.keys(STATE_SECTIONS).map(s => inactiveSectionRowId(stateId, s)).filter(Boolean);
-  const allIds = [...new Set([...activeIds, ...inactiveIds])].join(",");
+  const { activeIds, allIds: allIdList } = sectionRowIdsFor(stateId);
+  const allIds = allIdList.join(",");
 
   const res = await fetch(
     `${supabaseBaseUrl()}/rest/v1/tableplan_states?id=in.(${allIds})&select=id,state,updated_at`,
@@ -6733,6 +7061,16 @@ async function loadStateFromSupabase() {
   persistShadowSections();
 
   const activeRows = activeIds.map((id) => byId.get(id)).filter(Boolean);
+  // Record what the server holds per section (active rows only) so hydrate can
+  // mark unchanged sections as already written. Sections with no active row are
+  // left out, so they stay dirty and get created on the first write.
+  lastLoadedSectionJson = {};
+  for (const section of Object.keys(STATE_SECTIONS)) {
+    const row = byId.get(sectionRowId(stateId, section));
+    if (!row) continue;
+    const { stateUpdatedAt: _ts, schemaVersion: _sv, ...data } = row.state || {};
+    lastLoadedSectionJson[section] = JSON.stringify(extractSectionData(STATE_SECTIONS[section], data));
+  }
   if (activeRows.length > 0) return assembleSectionRows(activeRows);
   if (rows.length > 0) return assembleSectionRows([]); // rows exist but none active (fresh personal scopes)
 
@@ -6750,23 +7088,63 @@ async function writeStateToSupabase() {
   const config = supabaseConfig();
   const stateId = config.stateId;
 
-  const sectionsToWrite = [];
-  for (const [section, keys] of Object.entries(STATE_SECTIONS)) {
-    // Never push the finance section before its cloud copy has loaded — the
-    // boot-empty finance (mirror strips it) would blank budget picks and the
-    // cash/emergency/retirement account selections on the server.
-    if (section === "finance" && !financeSectionHydrated) continue;
-    const currentJson = JSON.stringify(extractSectionData(keys));
-    if (!lastWrittenSections || lastWrittenSections[section] !== currentJson) {
-      sectionsToWrite.push({ section, keys });
-    }
+  // A signed-in session must never write before its group is known: with no
+  // userGroup, stateId falls back to the config default ("personal") and the
+  // household sections would land in the wrong rows (INF-2).
+  if (!localDevMode && authSession?.access_token && !userGroup?.id) {
+    throw new Error("Group not loaded — refusing to write state");
   }
+
+  // Never push the finance section before its cloud copy has loaded — the
+  // boot-empty finance (mirror strips it) would blank budget picks and the
+  // cash/emergency/retirement account selections on the server.
+  const sectionsToWrite = computeDirtySections(
+    STATE_SECTIONS,
+    (keys) => JSON.stringify(extractSectionData(keys)),
+    lastWrittenSections,
+    (section) => section === "finance" && !financeSectionHydrated,
+  );
 
   if (sectionsToWrite.length === 0) return;
 
-  await Promise.all(sectionsToWrite.map(({ section, keys }) => writeSectionWithMerge(stateId, section, keys)));
+  // Each section records ONLY the JSON it actually sent, and only once that
+  // write succeeded. Edits made while these PATCHes are in flight therefore stay
+  // dirty and go out on the next save, and one failing section can't stop the
+  // others being marked (INF-1: the old code re-read live state AFTER the await
+  // and marked every section clean, silently dropping in-flight edits).
+  const { written, error } = await writeDirtySections(
+    sectionsToWrite,
+    ({ section, keys }) => writeSectionWithMerge(stateId, section, keys),
+  );
+  lastWrittenSections = { ...(lastWrittenSections || {}), ...written };
+  if (error) throw error;
+}
 
-  updateLastWrittenSections();
+// Section writes issued while the page is hidden (the flush-on-hide) use
+// fetch keepalive so the browser finishes them even if the page is frozen or
+// discarded right after. Browsers cap keepalive bodies at 64 KiB IN TOTAL across
+// in-flight keepalive requests and REJECT anything over it, so only bodies that
+// fit a shared budget get the flag; larger ones go as ordinary fetches (the
+// stale-resume flush / next save retries them if they're cut off).
+const KEEPALIVE_BUDGET_BYTES = 60 * 1024;
+let keepaliveBytesInFlight = 0;
+
+async function sectionWriteFetch(url, init) {
+  const body = typeof init?.body === "string" ? init.body : "";
+  let reserved = 0;
+  if (typeof document !== "undefined" && document.visibilityState === "hidden"
+      && body.length <= KEEPALIVE_BUDGET_BYTES) {
+    const bytes = new TextEncoder().encode(body).length;
+    if (keepaliveBytesInFlight + bytes <= KEEPALIVE_BUDGET_BYTES) {
+      reserved = bytes;
+      keepaliveBytesInFlight += bytes;
+    }
+  }
+  try {
+    return await fetch(url, reserved ? { ...init, keepalive: true } : init);
+  } finally {
+    if (reserved) keepaliveBytesInFlight -= reserved;
+  }
 }
 
 // Writes one section row with optimistic locking. If another writer (other
@@ -6776,18 +7154,22 @@ async function writeStateToSupabase() {
 async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
   const rowId = sectionRowId(stateId, section); // household or personal row per scope
   const now = new Date().toISOString();
+  // Snapshot the section ONCE: the payload and the JSON reported back to the
+  // caller (which becomes lastWrittenSections[section]) must be the same bytes.
+  const sectionData = extractSectionData(keys);
+  const sentJson = JSON.stringify(sectionData);
   const payload = {
     // schemaVersion lets the server (see the tp_protect_finance_merge trigger)
     // reject finance-key overwrites from clients running older code than the
     // row was last written with — the guard against a stale device silently
     // wiping budget categories or transaction annotations.
-    state: { ...extractSectionData(keys), stateUpdatedAt: state.stateUpdatedAt, schemaVersion: STATE_SCHEMA_VERSION },
+    state: { ...sectionData, stateUpdatedAt: state.stateUpdatedAt, schemaVersion: STATE_SCHEMA_VERSION },
     updated_at: now
   };
   const seen = lastSeenSectionStamp[rowId];
 
   if (seen) {
-    const res = await fetch(
+    const res = await sectionWriteFetch(
       // select=updated_at so the representation echoes ONLY the stamp we read
       // below — not the whole (multi-MB for media) state blob. Cuts write egress
       // dramatically; we never used the returned state here.
@@ -6796,7 +7178,7 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
     );
     if (!res.ok) throw new Error(`Supabase section "${section}" save failed: ${res.status}`);
     const rows = await res.json();
-    if (rows.length) { lastSeenSectionStamp[rowId] = rows[0].updated_at || now; return; }
+    if (rows.length) { lastSeenSectionStamp[rowId] = rows[0].updated_at || now; return sentJson; }
     // 0 rows matched → conflict: the row moved on since we last saw it
   } else {
     // No stamp — check whether the row exists at all before creating it
@@ -6807,7 +7189,7 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
     if (!probe.ok) throw new Error(`Supabase section "${section}" probe failed: ${probe.status}`);
     const probeRows = await probe.json();
     if (!probeRows.length) {
-      const ins = await fetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?on_conflict=id&select=updated_at`, {
+      const ins = await sectionWriteFetch(`${supabaseBaseUrl()}/rest/v1/tableplan_states?on_conflict=id&select=updated_at`, {
         // select=updated_at: same reason as the PATCH above — only the stamp is
         // read back, so don't have the insert echo the whole row.
         method: "POST",
@@ -6817,7 +7199,7 @@ async function writeSectionWithMerge(stateId, section, keys, attempt = 0) {
       if (!ins.ok) throw new Error(`Supabase section "${section}" save failed: ${ins.status}`);
       const insRows = await ins.json().catch(() => []);
       lastSeenSectionStamp[rowId] = insRows[0]?.updated_at || now;
-      return;
+      return sentJson;
     }
     // Row exists but we never hydrated it — merge before writing over it
   }
@@ -7344,7 +7726,10 @@ function showPlanApp(event) {
   elements.activeCookingSection.hidden = true;
   setPageTitle("Calendar");
   setPageHash("schedule");
-  refreshAllCalendarSources({ kinds: ["ics"] }); // Plan-open: refresh the ics pipeline only (linked refreshes on boot/CRUD)
+  // Plan-open: refresh the ics pipeline only (linked refreshes on boot/CRUD), and
+  // skip feeds fetched in the last 10 min — reopening the page shouldn't refetch
+  // every subscription. The 15-min sweep and manual/CRUD refreshes still force.
+  refreshAllCalendarSources({ kinds: ["ics"], icsMaxAgeMs: 10 * 60 * 1000 });
   renderPlanCalList(); // populate the left sidebar's calendar manager
   renderPlanPage();
   // T2: the bell is Tasks' only entry point — hide it when the Tasks page is
@@ -7537,6 +7922,11 @@ let mailPageTokens = [undefined];
 let mailPageIndex = 0;
 let mailTotalEstimate = null;
 let mailPageBusy = false;
+// Request generation for list loads: every load bumps it, and a response is
+// only rendered if no newer load started meanwhile. A folder switch/search
+// during an in-flight load therefore supersedes it instead of being dropped
+// (and the stale page can't render under the new folder).
+let mailListLoadGen = 0;
 let mailLastPageCount = 0;
 
 // Interactive pager for swiping between emails — the same feel as the meal-plan
@@ -8029,12 +8419,16 @@ function renderMailSuggestions(suggestions) {
     }).join('') +
     '</div>';
 
-  const bySugg = id => suggestions.find(s => s.id === id);
+  // Handlers read the module-level list at click time (not the array captured
+  // at render), so resolving one card never resurrects another resolved since.
+  const bySugg = id => (lastMailSuggestions || []).find(s => s.id === id);
+  const removeSugg = id => renderMailSuggestions((lastMailSuggestions || []).filter(s => s.id !== id));
 
   panel.querySelectorAll(".mail-sugg-dismiss").forEach(btn => btn.addEventListener("click", async () => {
     btn.disabled = true;
-    await callGmailApi({ action: "resolveSuggestion", suggestionId: btn.dataset.id, status: "dismissed" });
-    renderMailSuggestions(suggestions.filter(s => s.id !== btn.dataset.id));
+    const ok = await callGmailApi({ action: "resolveSuggestion", suggestionId: btn.dataset.id, status: "dismissed" });
+    if (!ok) { btn.disabled = false; showMailToast("Couldn't dismiss — try again."); return; }
+    removeSugg(btn.dataset.id);
   }));
 
   panel.querySelectorAll(".mail-sugg-approve").forEach(btn => btn.addEventListener("click", async () => {
@@ -8042,16 +8436,21 @@ function renderMailSuggestions(suggestions) {
     if (!s) return;
     btn.disabled = true;
 
+    // Only drop the card once the server confirms the resolve.
     const resolveAndRemove = async () => {
-      await callGmailApi({ action: "resolveSuggestion", suggestionId: s.id, status: "approved" });
-      renderMailSuggestions(suggestions.filter(x => x.id !== s.id));
+      const ok = await callGmailApi({ action: "resolveSuggestion", suggestionId: s.id, status: "approved" });
+      if (!ok) { btn.disabled = false; btn.textContent = s.kind === "add_booking" ? "Review & add" : "Approve"; showMailToast("Couldn't update the suggestion — try again."); return false; }
+      removeSugg(s.id);
+      return true;
     };
 
     if (s.kind === "add_todo") {
+      // Resolve first so a failed resolve can't leave a duplicate task behind
+      // (the card stays and a retry would add it again).
+      if (!(await resolveAndRemove())) return;
       const title = s.dueDate ? s.title + " (due " + s.dueDate + ")" : s.title;
       doBacklogTasks().push({ id: createId("task"), title, done: false, weekKey: weekKey(), createdAt: new Date().toISOString() });
       persist();
-      await resolveAndRemove();
       return;
     }
 
@@ -8160,11 +8559,13 @@ async function disconnectGmail() {
 // A fresh load resets to page 1 of the given mailbox/query. Page navigation
 // (prev/next) goes through mailGoToPage → fetchAndRenderMailPage.
 async function loadMailList(labelId, q = "") {
+  const gen = ++mailListLoadGen;
   currentMailbox = labelId;
   // Snoozed folder: pull the wake-time metadata so rows can show "until when"
   // and offer unsnooze/reschedule instead of the normal quick actions.
   if (labelId === snoozedLabelId()) {
     const s = await callGmailApi({ action: "listSnoozes" });
+    if (gen !== mailListLoadGen) return; // superseded by a newer load
     mailSnoozeMap = Object.fromEntries((s?.snoozes || []).map((x) => [x.threadId, x.wakeAt]));
   }
   mailCurrentQuery = q;
@@ -8184,7 +8585,9 @@ async function loadMailList(labelId, q = "") {
 // Loads the page whose token is mailPageTokens[mailPageIndex] and renders it,
 // replacing the list (no appending — this is paged, not infinite-scroll).
 async function fetchAndRenderMailPage({ fresh = false } = {}) {
-  if (mailPageBusy) return;
+  // No busy early-return: a newer load supersedes an in-flight one (see
+  // mailListLoadGen); the older response is discarded when it lands.
+  const gen = ++mailListLoadGen;
   mailPageBusy = true;
   renderMailListToolbar();
   elements.mailList.innerHTML = `<div class="mail-loading">Loading…</div>`;
@@ -8204,6 +8607,7 @@ async function fetchAndRenderMailPage({ fresh = false } = {}) {
       maxResults: MAIL_PAGE_SIZE
     });
   }
+  if (gen !== mailListLoadGen) return; // stale: a newer load owns the list (and mailPageBusy)
   mailPageBusy = false;
   if (!data) {
     const detail = lastGmailApiError ? ` ${escapeHtml(lastGmailApiError)}` : "";
@@ -9451,8 +9855,9 @@ function createEventFromEmail(subject) {
 // boilerplate (unsubscribe blocks, nav link rows, tracking pixels, legalese).
 // Optimized for clean read-aloud: what survives is what should be spoken.
 function emailToReaderHtml(html) {
-  const root = document.createElement("div");
-  root.innerHTML = html;
+  // Inert parse: innerHTML on a live-document div would run <img onerror> and
+  // fire tracking pixels before we ever get to strip them.
+  const root = parseInertHtml(html);
   root.querySelectorAll("script,style,link,meta,title,form,iframe,object,embed,svg").forEach((e) => e.remove());
   root.querySelectorAll("*").forEach((el) => {
     const st = (el.getAttribute("style") || "").toLowerCase();
@@ -9480,7 +9885,7 @@ function emailToReaderHtml(html) {
       const tag = n.tagName;
       if (tag === "BR") { s += "<br>"; return; }
       if (tag === "IMG") return; // inline images handled at block level
-      if (tag === "A" && n.getAttribute("href") && !n.getAttribute("href").toLowerCase().startsWith("javascript:")) {
+      if (tag === "A" && isSafeHref(n.getAttribute("href"))) {
         s += '<a href="' + escapeHtml(n.getAttribute("href")) + '" target="_blank" rel="noopener noreferrer">' + inlineHtml(n) + "</a>";
       } else if (tag === "B" || tag === "STRONG") {
         s += "<strong>" + inlineHtml(n) + "</strong>";
@@ -9508,7 +9913,7 @@ function emailToReaderHtml(html) {
 
   const pushImg = (img) => {
     const src = img.getAttribute("src") || "";
-    if (!src || src.toLowerCase().startsWith("javascript:") || imgCount >= 20) return;
+    if (!isSafeSrc(src) || imgCount >= 20) return;
     // Guard against double emission: a wrapper with no block child emits its
     // images via querySelectorAll (to catch <a><img></a>) AND is then walked,
     // whose loop pushes each direct <img> again. Dedupe by src.
@@ -9546,9 +9951,7 @@ function emailToReaderHtml(html) {
 
   const result = out.join("\n");
   // Over-stripped? Fall back to the structural sanitizer rather than lose content
-  const div = document.createElement("div");
-  div.innerHTML = result;
-  return div.textContent.trim().length >= 200 ? result : sanitizeMailHtml(html);
+  return parseInertHtml(result).textContent.trim().length >= 200 ? result : sanitizeMailHtml(html);
 }
 
 // "Move to Listen": save the email into the Listen (Media) reading queue, then
@@ -9762,21 +10165,29 @@ function buildIngestEntityCard(entity, source, dialog) {
 function commitEntityToTrip(entity, trip, source) {
   if (!trip) return "No trip";
   if (!Array.isArray(state.trips)) state.trips = [];
+  // Multi-segment flights match per segment (TRV-6).
+  if (entity.kind === "flight" && (entity.segments || []).length > 1) return commitFlightSegmentsToTrip(entity, trip, source);
   // Already-imported? Recognize an update/cancellation instead of duplicating.
   const existing = TravelIngest.findExistingItem(entity, trip);
   if (existing) {
     if (entity.intent === "cancel") return proposeEntityChange(entity, trip, existing, source);
-    const incoming = TravelIngest.entityToPlacements(entity, source)[0]?.item;
-    const changes = incoming ? TravelIngest.diffItem(existing.item, incoming, Object.keys(incoming)) : [];
+    const primary = TravelIngest.entityToPlacements(entity, source)[0];
+    const changes = primary ? TravelIngest.placementChanges(existing, primary) : [];
     if (!changes.length) return "Already in this trip";
     // A conflict with an already-IMPORTED item is a reservation update; a conflict
     // with a HAND-ENTERED item is an itinerary-update proposal (never silent).
     if (existing.item.source) return proposeEntityChange(entity, trip, existing, source);
     return proposeItineraryChange(entity, trip, { item: existing.item, section: existing.section, dateKey: existing.dateKey, changes }, source);
   }
-  // Not a re-import: does it conflict with a hand-entered itinerary item?
+  // A cancellation with nothing to cancel must never be ADDED to the plan (TRV-5).
+  if (entity.intent === "cancel") return "Nothing to cancel in this trip";
+  // Not a re-import: does it conflict with a hand-entered itinerary item? If the
+  // user already answered "Keep current" to a proposal against that item, it
+  // isn't the same reservation — fall through and add it instead (TRV-4).
   const itinConflict = TravelIngest.findItineraryConflict(entity, trip);
-  if (itinConflict) return proposeItineraryChange(entity, trip, itinConflict, source);
+  const dismissedBefore = itinConflict && (trip.proposals || []).some(p =>
+    p && p.type === "itinerary" && p.status === "dismissed" && p.targetItemId === itinConflict.item.id);
+  if (itinConflict && !dismissedBefore) return proposeItineraryChange(entity, trip, itinConflict, source);
   const placements = TravelIngest.entityToPlacements(entity, source);
   if (!placements.length) { saveEntityAsTripNote(entity, trip, source); return "Saved as note"; }
   placements.forEach(p => {
@@ -9787,6 +10198,35 @@ function commitEntityToTrip(entity, trip, source) {
   persist();
   if (activeAppArea === "explore" && exploreOpenTripId === trip.id) renderExploreTripPanel("itinerary", trip);
   return "Added to " + (trip.name || "trip");
+}
+
+// TRV-6: each segment of a multi-leg booking is matched to its own leg, so a
+// change to leg 2 is proposed against leg 2 (one proposal per changed segment)
+// and a newly added segment is placed rather than diffed against leg 1.
+function commitFlightSegmentsToTrip(entity, trip, source) {
+  const rows = TravelIngest.matchFlightSegments(entity, trip, source);
+  let proposed = 0, added = 0, cancels = 0;
+  rows.forEach(({ placement, existing }) => {
+    if (existing) {
+      if (entity.intent === "cancel") { proposeEntityChange(entity, trip, existing, source, placement); cancels++; return; }
+      if (!TravelIngest.placementChanges(existing, placement).length) return;
+      proposeEntityChange(entity, trip, existing, source, placement);
+      proposed++;
+      return;
+    }
+    if (entity.intent === "cancel") return; // nothing to cancel for this segment
+    tripDayItems(trip, placement.dateKey, placement.section).push(Object.assign({ id: createId("ti") }, placement.item));
+    added++;
+  });
+  if (!proposed && !added && !cancels) return entity.intent === "cancel" ? "Nothing to cancel in this trip" : "Already in this trip";
+  trip.updatedAt = new Date().toISOString();
+  persist();
+  if (added && activeAppArea === "explore" && exploreOpenTripId === trip.id) renderExploreTripPanel("itinerary", trip);
+  if (cancels) return "Cancellation proposed — review in Explore";
+  const parts = [];
+  if (added) parts.push(`Added ${added} segment${added === 1 ? "" : "s"}`);
+  if (proposed) parts.push(`${proposed} change${proposed === 1 ? "" : "s"} proposed — review in Explore`);
+  return parts.join(" · ");
 }
 
 function createTripFromEntity(entity, source) {
@@ -9842,9 +10282,9 @@ function chooseTripForEntity(entity, source, onPick) {
 // Record a proposed change (modification/cancellation of an already-imported
 // item) without touching canonical data. Surfaced in the Explore review inbox
 // (Phase 3). Returns a short label for the ingest card.
-function proposeEntityChange(entity, trip, existing, source) {
+function proposeEntityChange(entity, trip, existing, source, placement = null) {
   if (!Array.isArray(trip.proposals)) trip.proposals = [];
-  const proposal = TravelIngest.entityToProposal(entity, existing, source);
+  const proposal = TravelIngest.entityToProposal(entity, existing, source, placement);
   // Don't stack identical pending proposals for the same target.
   const dup = trip.proposals.find(p => p.status === "pending" && p.targetItemId === proposal.targetItemId && p.type === proposal.type);
   if (!dup) trip.proposals.push(proposal);
@@ -9983,11 +10423,32 @@ function applyProposal(trip, proposal) {
   const item = findTripItemRaw(trip, proposal.targetItemId, proposal.section, proposal.ownerDateKey);
   if (item) {
     if (proposal.type === "cancel") { item.cancelled = true; item.cancelledAt = new Date().toISOString(); }
-    else (proposal.changes || []).forEach(c => { item[c.field] = c.to; });
+    else (proposal.changes || []).forEach(c => { if (c.field !== "dateKey") item[c.field] = c.to; });
     if (!item.source && proposal.source) item.source = proposal.source;
+    // A date change must also move the item to its new day bucket, or it
+    // vanishes from the plan (lodging/legs render only on their own date) or
+    // the change is silently lost (food/activities have no date field) — TRV-3.
+    if (proposal.type !== "cancel") moveTripItemToDate(trip, item, proposal);
   }
   resolveProposal(trip, proposal, "applied");
   if (activeAppArea === "explore" && exploreOpenTripId === trip.id) renderExploreTripPanel("itinerary", trip);
+}
+
+function moveTripItemToDate(trip, item, proposal) {
+  let curKey = null, curSection = null;
+  for (const dk of Object.keys(trip.days || {})) {
+    for (const sec of Object.keys(trip.days[dk] || {})) {
+      const arr = trip.days[dk][sec];
+      if (Array.isArray(arr) && arr.includes(item)) { curKey = dk; curSection = sec; break; }
+    }
+    if (curKey) break;
+  }
+  if (!curKey) return;
+  const target = TravelIngest.targetDateKeyFor(curSection, item, proposal.changes, curKey);
+  if (!target || target === curKey) return;
+  const arr = trip.days[curKey][curSection];
+  arr.splice(arr.indexOf(item), 1);
+  tripDayItems(trip, target, curSection).push(item);
 }
 
 function resolveProposal(trip, proposal, status) {
@@ -10001,7 +10462,7 @@ function resolveProposal(trip, proposal, status) {
 function prettyFieldName(f) {
   const map = { checkInDate: "Check-in", checkOutDate: "Check-out", checkInTime: "Check-in time", checkOutTime: "Check-out time",
     departDate: "Departs", departTime: "Departure time", arriveDate: "Arrives", arriveTime: "Arrival time",
-    reservationTime: "Reservation", activityTime: "Time", confirmationNo: "Confirmation", address: "Address", notes: "Notes", name: "Name", title: "Name" };
+    reservationTime: "Reservation", activityTime: "Time", dateKey: "Date", confirmationNo: "Confirmation", address: "Address", notes: "Notes", name: "Name", title: "Name" };
   return map[f] || f.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase());
 }
 
@@ -10612,16 +11073,12 @@ function buildMailBodyFrame(html, { showImages = false } = {}) {
 // on it) and strips active content. Scripts are additionally blocked by the
 // iframe sandbox.
 function sanitizeMailFrameHtml(html) {
-  const div = document.createElement("div");
-  div.innerHTML = html;
-  div.querySelectorAll("script,iframe,object,embed,form,link,meta").forEach((el) => el.remove());
-  div.querySelectorAll("*").forEach((el) => {
-    [...el.attributes].forEach((attr) => {
-      if (attr.name.toLowerCase().startsWith("on")) el.removeAttribute(attr.name);
-      else if ((attr.name === "href" || attr.name === "src" || attr.name === "action") &&
-               attr.value.trim().toLowerCase().startsWith("javascript:")) el.removeAttribute(attr.name);
-    });
-  });
+  // Inert parse (DOMParser): nothing executes or loads while we scrub.
+  const div = parseInertHtml(html, { keepHeadStyles: true });
+  div.querySelectorAll("script,iframe,frame,object,embed,applet,form,link,meta,base").forEach((el) => el.remove());
+  // All on* handlers go; href/src/etc. survive only with an allowlisted scheme
+  // (http(s)/mailto/tel/#frag for links; http(s)/cid:/data:image for images).
+  scrubActiveAttributes(div);
   // Neutralize the email's own dark-mode rules. Marketing emails (Audible,
   // Amazon, …) ship `@media (prefers-color-scheme: dark){ … color:#FFF … }`
   // assuming the client also darkens the background. This reader always renders
@@ -10643,8 +11100,8 @@ function sanitizeMailFrameHtml(html) {
 // images already ship with the message, so they stay. Returns the rewritten
 // HTML plus a count so the caller can offer a "Display images" button.
 function blockRemoteMailImages(html) {
-  const div = document.createElement("div");
-  div.innerHTML = html;
+  const div = parseInertHtml(html); // inert: parsing must not itself fetch the images
+
   let blocked = 0;
   const isRemote = (u) => /^\s*https?:\/\//i.test(u || "");
   const cssHasRemote = /url\(\s*['"]?\s*https?:\/\//i;                 // non-global: stateless test
@@ -10881,14 +11338,10 @@ function formatMailDate(internalDate) {
 }
 
 function sanitizeMailHtml(html) {
-  const div = document.createElement("div");
-  div.innerHTML = html;
-  div.querySelectorAll("script,style,link,iframe,object,embed,form").forEach((el) => el.remove());
-  div.querySelectorAll("*").forEach((el) => {
-    ["onclick","onload","onerror","onmouseover","src"].forEach((attr) => {
-      if (el.getAttribute(attr)?.toLowerCase().startsWith("javascript:")) el.removeAttribute(attr);
-    });
-  });
+  const div = parseInertHtml(html);
+  div.querySelectorAll("script,style,link,meta,base,iframe,frame,object,embed,applet,form,svg,math").forEach((el) => el.remove());
+  // Remove EVERY on* handler and every non-allowlisted URL scheme.
+  scrubActiveAttributes(div);
   div.querySelectorAll("a[href]").forEach((a) => {
     a.setAttribute("target", "_blank");
     a.setAttribute("rel", "noopener noreferrer");
@@ -11824,13 +12277,8 @@ function ensureRecurringTasksForDay(key, dayId) {
 }
 
 function dedupeRecurringTasksForDay(key, dayId) {
-  const seenRecurringIds = new Set();
-  const tasks = rawDoTasksForDay(dayId, key).filter((task) => {
-    if (!task.recurringTaskId) return true;
-    if (seenRecurringIds.has(task.recurringTaskId)) return false;
-    seenRecurringIds.add(task.recurringTaskId);
-    return true;
-  });
+  // Prefers the done / logged instance (see dedupeRecurringTaskInstances).
+  const tasks = dedupeRecurringTaskInstances(rawDoTasksForDay(dayId, key));
   state.doPlans[key][dayId] = tasks;
   return tasks;
 }
@@ -12021,7 +12469,10 @@ function renderWorkoutLibrary() {
       `).join("")
     : `<div class="empty-state">Add workouts here.</div>`;
   elements.workoutLibraryList.querySelectorAll("[data-delete-workout]").forEach((button) => {
-    button.addEventListener("click", () => deleteWorkout(button.dataset.deleteWorkout));
+    button.addEventListener("click", () => {
+      const workout = state.workouts.find((w) => w.id === button.dataset.deleteWorkout);
+      if (workout && window.confirm(`Delete "${workout.title}"? All logs will be removed.`)) deleteWorkout(button.dataset.deleteWorkout);
+    });
   });
   elements.workoutLibraryList.querySelectorAll("[data-open-workout-detail]").forEach((button) => {
     button.addEventListener("click", () => openWorkoutDetail({ workoutId: button.dataset.workoutId }));
@@ -13623,6 +14074,11 @@ function moveDoTask(sourceDay, targetDay, taskId) {
     }
   } else {
     state.doPlans[weekKey()][sourceDay] = sourceTasks.filter((item) => item.id !== taskId);
+    // mergeDoPlans unions each day by id, so a device still holding the task on
+    // its OLD day would resurrect it there (a duplicate). Tombstone the old id and
+    // give the moved copy a fresh one — mirrors the backlog→day "regular" branch.
+    recordDeletion("doPlanTasks", taskId);
+    nextTask.id = createId("task");
   }
 
   if (targetDay === "backlog") {
@@ -15518,6 +15974,12 @@ const MAIL_AI_FEATURES = [
     desc: "Lets the chat assistant search your Gmail and read a conversation when you ask it something (\u201cwhen does my flight leave?\u201d). It only reads — it can't send, move, or delete mail — and only when you ask. Off by default."
   },
   {
+    key: "inboxTriageSuggestions",
+    defaultOn: true,
+    label: "Inbox triage suggestions",
+    desc: "Each new inbox email is read by AI to suggest to-dos and travel bookings (booking details are extracted for review). Suggestions appear in the Mail notification bell and nothing is added until you approve it."
+  },
+  {
     key: "receiptExtract",
     defaultOn: true,
     label: "Receipt extraction for Finance",
@@ -15884,10 +16346,7 @@ function renderContextSettingsDialog(kind) {
               <span class="mail-ai-feature-label">${escapeHtml(f.label)}</span>
               <span class="mail-ai-feature-desc">${escapeHtml(f.desc)}</span>
             </div>
-            <label class="toggle-switch" aria-label="${escapeHtml(f.label)}">
-              <input type="checkbox" data-mail-ai-key="${escapeHtml(f.key)}" ${(f.defaultOn ? state.mailAiSettings[f.key] !== false : Boolean(state.mailAiSettings[f.key])) ? "checked" : ""}>
-              <span class="toggle-slider"></span>
-            </label>
+            <input type="checkbox" class="live-toggle" aria-label="${escapeHtml(f.label)}" data-mail-ai-key="${escapeHtml(f.key)}" ${(f.defaultOn ? state.mailAiSettings[f.key] !== false : Boolean(state.mailAiSettings[f.key])) ? "checked" : ""}>
           </div>
         `).join("")}
       </div>`;
@@ -19238,9 +19697,10 @@ function sectionLabel(sectionId) {
 function planEventOccursOn(event, dateKey) {
   if (!event || !dateKey) return false;
   if ((event.exceptions || []).includes(dateKey)) return false;
-  if (event.date === dateKey) return true;
+  // Recurring: the rule decides — the base date itself isn't always an occurrence
+  // (e.g. weekly Mon/Wed starting on a Tuesday, or a 3rd-Friday series).
   if (event.recurrence) return expandRecurringOccurrences(event, dateKey, dateKey).includes(dateKey);
-  return false;
+  return event.date === dateKey;
 }
 
 // Meal columns as half-open minute-of-day windows covering the whole day, so an
@@ -20947,7 +21407,7 @@ function watchShowtimesGridHtml(item, data, isCollapsed = false) {
 function watchTheaterRowHtml(theater) {
   const showings = theater.showing || [];
   const times = showings.flatMap((s) => (s.time || []).map((t) => ({ time: t, type: s.type })));
-  const theaterLink = theater.link || `https://www.google.com/search?q=${encodeURIComponent(theater.name + " showtimes")}`;
+  const theaterLink = safeUrl(theater.link) || `https://www.google.com/search?q=${encodeURIComponent(theater.name + " showtimes")}`;
   return `
     <div class="watch-showtime-theater">
       <a class="watch-showtime-theater-name" href="${escapeHtml(theaterLink)}" target="_blank" rel="noopener noreferrer">${escapeHtml(theater.name)}</a>
@@ -24270,7 +24730,9 @@ function bindPlanGridDragCreate(root) {
       const ev2 = (state.planEvents || []).find((x) => x.id === pr.id);
       if (ev2) {
         const newStartTime = fmt(pr.newStart);
-        const newEndTime = fmt(Math.min(1440, pr.newStart + pr.durationMin));
+        // Wrap past midnight so an overnight event keeps its duration (the end
+        // lands on the next day; planEventMinutes reads end <= start as crossing).
+        const newEndTime = fmt((pr.newStart + pr.durationMin) % 1440);
         const dayChanged = !pr.lockDay && pr.newDay && pr.newDay !== ev2.date;
         if (newStartTime !== ev2.startTime || dayChanged) {
           const prev = { startTime: ev2.startTime, endTime: ev2.endTime, date: ev2.date };
@@ -24459,6 +24921,7 @@ function rescheduleOccurrence(seriesId, occDate, newDate) {
   renderPlanPage();
   const label = new Date(newDate + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
   showMailToast(`Moved this occurrence to ${label}`, () => {
+    recordDeletion("planEvents", oneOff.id); // tombstone, or the next sync union re-adds it
     state.planEvents = (state.planEvents || []).filter((e) => e.id !== oneOff.id);
     // Re-find the series by id (state may have been replaced by a sync).
     const s = (state.planEvents || []).find((e) => e.id === seriesId);
@@ -24601,8 +25064,10 @@ function getPlanEventsForRange(startKey, endKey) {
       if (e.recurrence?.freq) {
         // Subscribed recurring events (holidays, birthdays, …) expand like personal ones.
         expandRecurringOccurrences(base, startKey, endKey).forEach((occ) => events.push({ ...base, date: occ, occurrenceOf: base.id }));
-      } else if (e.date >= startKey && e.date <= endKey) {
-        events.push(base);
+      } else {
+        // Same expansion as personal events, so a multi-day subscribed event
+        // (endDate) shows on every spanned day, not just its start date.
+        eventInstancesInRange(base, startKey, endKey).forEach((inst) => events.push({ ...base, ...inst }));
       }
     });
   });
@@ -24852,7 +25317,8 @@ function renderPlanWeekView() {
   const rangeStart = dateKeyFromDate(days[0]);
   const rangeEnd = dateKeyFromDate(days[6]);
   // Fetch one extra day before so a Saturday-night overnight event's tail shows on Sunday.
-  const fetchStart = dateKeyFromDate(new Date(days[0].getTime() - 86400000));
+  const fetchStartD = new Date(days[0]); fetchStartD.setDate(fetchStartD.getDate() - 1); // calendar-day step (DST-safe)
+  const fetchStart = dateKeyFromDate(fetchStartD);
   const allEvents = getPlanEventsForRange(fetchStart, rangeEnd);
   const allDay = allEvents.filter((e) => e.allDay);
   const timed = allEvents.filter((e) => !e.allDay && e.startTime);
@@ -24916,7 +25382,8 @@ function renderPlanDayView() {
   const now = new Date();
   const nowH = now.getHours(), nowTop = (now.getMinutes() / 60) * 100;
   // Fetch the previous day too so a prior overnight event's tail shows this morning.
-  const prevKey = dateKeyFromDate(new Date(new Date(key + "T00:00:00").getTime() - 86400000));
+  const prevKeyD = new Date(key + "T00:00:00"); prevKeyD.setDate(prevKeyD.getDate() - 1); // calendar-day step (DST-safe)
+  const prevKey = dateKeyFromDate(prevKeyD);
   const allEvents = getPlanEventsForRange(prevKey, key);
   const allDay = allEvents.filter((e) => e.allDay && e.date === key);
   const timed = allEvents.filter((e) => !e.allDay && e.startTime);
@@ -24954,7 +25421,8 @@ function renderPlanAgendaView() {
   const byDay = {};
   allEvents.forEach((e) => { (byDay[e.date] = byDay[e.date] || []).push(e); });
   const today = dateKeyFromDate(new Date());
-  const tomorrow = dateKeyFromDate(new Date(Date.now() + 86400000));
+  const tomorrowD = new Date(); tomorrowD.setDate(tomorrowD.getDate() + 1); // calendar-day step (DST-safe)
+  const tomorrow = dateKeyFromDate(tomorrowD);
   const groups = Object.keys(byDay).sort().map((key) => {
     const label = key === today ? "Today" : key === tomorrow ? "Tomorrow" : new Date(key + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
     const rows = byDay[key].map((e) => {
@@ -24991,12 +25459,15 @@ function planEventMinutes(event) {
 // split into a head (this day → 24:00) and a tail (next day 00:00 → its end),
 // so each day column shows the right slice.
 function planDaySegments(dayKey, timed) {
-  const prevKey = dateKeyFromDate(new Date(new Date(dayKey + "T00:00:00").getTime() - 86400000));
+  const prevD = new Date(dayKey + "T00:00:00");
+  prevD.setDate(prevD.getDate() - 1); // calendar-day step (−86400000 ms skips/repeats a day across DST)
+  const prevKey = dateKeyFromDate(prevD);
   const segs = [];
   timed.forEach((e) => {
     const { start, end, crosses } = planEventMinutes(e);
     if (e.date === dayKey) segs.push({ event: e, start, end: Math.min(end, 1440), tail: false });
-    if (e.date === prevKey && crosses) segs.push({ event: e, start: 0, end: end - 1440, tail: true });
+    // Skip an empty tail (an event ending exactly at midnight has nothing on the next day).
+    if (e.date === prevKey && crosses && end - 1440 > 0) segs.push({ event: e, start: 0, end: end - 1440, tail: true });
   });
   return segs;
 }
@@ -25489,9 +25960,9 @@ function renderPlanEventAttachment() {
   const nameEl = elements.planEventAttachName;
   const removeBtn = elements.planEventAttachRemoveBtn;
   if (!nameEl || !removeBtn) return;
-  if (planEventAttachment?.url) {
+  if (safeUrl(planEventAttachment?.url)) {
     nameEl.hidden = false;
-    nameEl.innerHTML = `<a href="${escapeHtml(planEventAttachment.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(planEventAttachment.name || "Attachment")}</a>`;
+    nameEl.innerHTML = `<a href="${escapeHtml(safeUrl(planEventAttachment.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(planEventAttachment.name || "Attachment")}</a>`;
     removeBtn.hidden = false;
     elements.planEventAttachBtn.title = "Replace file";
     elements.planEventAttachBtn.classList.add("has-attachment");
@@ -25728,13 +26199,20 @@ async function savePlanEvent() {
   } else if (isRecurringEdit && scope === "following") {
     // Trim the original series to end before the split, then start a fresh
     // series from the split date carrying the edits forward.
+    // count:null — a kept "after N" count would make the editor re-derive the
+    // OLD end date, silently undoing the trim.
     state.planEvents = (state.planEvents || []).map((e) =>
-      e.id === editingPlanEventId ? { ...e, recurrence: { ...e.recurrence, until: dayBefore(splitDate) } } : e);
+      e.id === editingPlanEventId ? { ...e, recurrence: { ...e.recurrence, until: dayBefore(splitDate), count: null } } : e);
+    // The form's "after N" until was derived from the SERIES base date; the new
+    // series starts at anchorDate, so recount N from there.
+    let followingRec = eventData.recurrence || null;
+    if (followingRec?.count) {
+      followingRec = { ...followingRec, until: planNthOccurrenceDate({ date: anchorDate, recurrence: { ...followingRec, until: null, count: null } }, followingRec.count) || null };
+    }
     savedEvent = {
       ...existing, ...eventData, id: createId("plan-evt"), createdAt: new Date().toISOString(),
       date: anchorDate,
-      // eventData.recurrence already carries the user's chosen end (until / count).
-      recurrence: eventData.recurrence || null,
+      recurrence: followingRec,
       exceptions: (existing.exceptions || []).filter((d) => d >= splitDate),
       occurrenceOf: undefined,
     };
@@ -25749,13 +26227,28 @@ async function savePlanEvent() {
     state.planEvents = [...(state.planEvents || []), savedEvent];
   }
   syncEventChoresToDoList(savedEvent);
+  // A "this"/"following" split also changed the ORIGINAL series (exception /
+  // shorter until) — resync its linked chores so dropped dates lose their tasks.
+  if (isRecurringEdit && scope !== "all") {
+    const original = (state.planEvents || []).find((e) => e.id === editingPlanEventId);
+    if (original) syncEventChoresToDoList(original);
+  }
   persist();
   elements.planEventDialog.close();
   if (activeAppArea === "plan") renderPlanPage();
   else if (activeAppArea === "eat") renderPlanner();
   if (editSnapshot) {
     showMailToast(`Updated "${title}"`, () => {
+      // The event a "this"/"following" split CREATED vanishes on undo — tombstone
+      // it (and drop its chores) or the next sync union re-adds it. Only that id:
+      // never tombstone events another device synced in meanwhile.
+      if (savedEvent && !editSnapshot.some((e) => e.id === savedEvent.id)) {
+        recordDeletion("planEvents", savedEvent.id);
+        removeEventChoresFromDoList(savedEvent.id);
+      }
       state.planEvents = editSnapshot;
+      const restored = editSnapshot.find((e) => e.id === existing?.id);
+      if (restored) syncEventChoresToDoList(restored);
       persist();
       if (activeAppArea === "plan") renderPlanPage();
       else if (activeAppArea === "eat") renderPlanner();
@@ -25945,6 +26438,7 @@ function duplicatePlanEvent(id) {
   persist();
   if (activeAppArea === "plan") renderPlanPage();
   showMailToast(`Duplicated "${e.title}"`, () => {
+    recordDeletion("planEvents", copy.id); // tombstone, or the next sync union re-adds it
     state.planEvents = (state.planEvents || []).filter((x) => x.id !== copy.id);
     persist();
     if (activeAppArea === "plan") renderPlanPage();
@@ -26003,14 +26497,16 @@ async function deletePlanEvent() {
       state.planEvents = (state.planEvents || []).map((e) =>
         e.id === id ? { ...e, recurrence: { ...e.recurrence, until: dayBefore(occ), count: null } } : e);
       verb = "Removed this and following";
-      undo = () => { const cur = (state.planEvents || []).find((e) => e.id === id); if (cur) { cur.recurrence = prevRec; afterChange(); } };
+      undo = () => { const cur = (state.planEvents || []).find((e) => e.id === id); if (cur) { cur.recurrence = prevRec; syncEventChoresToDoList(cur); afterChange(); } };
     } else {
       // "this" — exclude just this occurrence.
       state.planEvents = (state.planEvents || []).map((e) =>
         e.id === id ? { ...e, exceptions: [...(e.exceptions || []), occ] } : e);
       verb = "Removed this day";
-      undo = () => { const cur = (state.planEvents || []).find((e) => e.id === id); if (cur) { cur.exceptions = (cur.exceptions || []).filter((x) => x !== occ); afterChange(); } };
+      undo = () => { const cur = (state.planEvents || []).find((e) => e.id === id); if (cur) { cur.exceptions = (cur.exceptions || []).filter((x) => x !== occ); syncEventChoresToDoList(cur); afterChange(); } };
     }
+    // "following"/"this" keep the series but drop dates — resync its linked chores.
+    if (scope !== "all") { const cur = (state.planEvents || []).find((e) => e.id === id); if (cur) syncEventChoresToDoList(cur); }
   } else {
     const snapshot = { ...existing };
     recordDeletion("planEvents", id);
@@ -26623,8 +27119,12 @@ async function addPlanCalendar() {
 function icsProxyUrl(url) {
   const enc = encodeURIComponent(String(url || "").trim());
   if (!enc) return "";
+  // The deployed proxy runs in UTC, so it converts ICS times into the VIEWER's zone.
+  let tz = "";
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { /* no Intl zone */ }
+  const tzParam = tz ? `&tz=${encodeURIComponent(tz)}` : "";
   if (canUseLocalBackend()) return `/api/ics-proxy?url=${enc}`;
-  if (window.location.protocol.startsWith("http")) return `/.netlify/functions/ics-proxy?url=${enc}`;
+  if (window.location.protocol.startsWith("http")) return `/.netlify/functions/ics-proxy?url=${enc}${tzParam}`;
   return "";
 }
 
@@ -26664,7 +27164,7 @@ function refreshCalendarSource(source, options = {}) {
   return fetchOnePlanCalendar(source); // per-cal
 }
 async function refreshAllCalendarSources(options = {}) {
-  const { kinds = ["linked", "ics"], ...linkedOptions } = options;
+  const { kinds = ["linked", "ics"], icsMaxAgeMs = 0, ...linkedOptions } = options;
   const sources = state.calendarSources || [];
   const jobs = [];
   if (kinds.includes("linked")) {
@@ -26678,7 +27178,18 @@ async function refreshAllCalendarSources(options = {}) {
     // Per-cal isolation across the non-linked set (ics + local) — exactly the set
     // the old fetchAllPlanCalendars iterated (state.planCalendars), since
     // calendarSources unions the same objects id-for-id.
-    sources.filter((s) => calendarSourceKind(s) === "ics")
+    // icsMaxAgeMs (Plan-open only): skip a feed THIS device fetched more recently
+    // than that. Uses the device-local cache's fetchedAt rather than the synced
+    // planCalendars[].lastFetched: another device's fresh fetch syncs a fresh
+    // lastFetched but not its events, so trusting it could strand a stale cache.
+    const fresh = (s) => {
+      const cached = planCalendarCache[s.id];
+      if (!(icsMaxAgeMs > 0) || !cached) return false;
+      const stamp = cached.fetchedAt;
+      const t = stamp instanceof Date ? stamp.getTime() : (stamp ? Date.parse(stamp) : NaN);
+      return Number.isFinite(t) && Date.now() - t < icsMaxAgeMs;
+    };
+    sources.filter((s) => calendarSourceKind(s) === "ics" && !fresh(s))
       .forEach((s) => jobs.push(refreshCalendarSource(s)));
   }
   await Promise.all(jobs); // safe: neither underlying fn rejects, so no cross-kind blur
@@ -27630,6 +28141,8 @@ let podcastSaveTimer = null;
 // while a music track is active, else null. See the music playback block below.
 let musicAudio = null;
 let musicPositionSaveTimer = null; // throttled resume-position saver (media-progress)
+let musicLastSavedPos = null;  // { id, pos } of the last resume-point write (skip no-op saves)
+let musicStartGen = 0;         // bumped per music start/stop; a start that awaits bails if superseded
 let musicCurTrack = null;      // track loaded into the shared element
 let musicQueueRest = [];       // remaining track ids to auto-advance through
 let musicCurUrl = null;        // object URL for the current local blob (revoked on change)
@@ -27680,6 +28193,7 @@ let musicSearchQuery = "";
 let musicSearchResults = null; // { query, items, providerStatuses } | null
 let musicSearchLoading = false;
 let musicSearchToken = 0;      // guards against out-of-order search responses
+let musicOpenToken = 0;        // guards openMusicItem against out-of-order getItem responses
 let musicOpenItem = null;      // { album, tracks } expanded from a result
 let musicOpenItemLoading = false;
 const musicItemCache = new Map(); // albumId → { album, tracks } (metadata cache)
@@ -29505,7 +30019,7 @@ function advanceMediaAllQueue(finishedId) {
   }
   mediaAllQueueId = null;
   if (activeMediaTab === "queue") renderMediaAllList();
-  return true;
+  return false; // nothing started — let the caller run its own end-of-queue path
 }
 
 // ── Playlist (queue) ──────────────────────────────────────────────────────────
@@ -29831,7 +30345,7 @@ function ensureEpisodeDescription(episodeId) {
 function episodeNotesBodyHtml(desc) {
   if (!desc) return `<p style="color:var(--ink-faint);margin:0">No show notes available for this episode.</p>`;
   return /<[a-z][\s\S]*>/i.test(desc)
-    ? `<div class="episode-notes-html">${desc}</div>`
+    ? `<div class="episode-notes-html">${sanitizeUntrustedHtml(desc)}</div>`
     : `<div class="episode-notes-plain">${escapeHtml(desc).replace(/\n/g, "<br>")}</div>`;
 }
 
@@ -30528,7 +31042,7 @@ const MEDIA_KINDS = {
     el: () => musicAudio,
     onTimeupdate: () => updateMiniPlayerProgress(),
     onPlay: () => { setMediaSessionPlaybackState("playing"); updateMiniPlayerPlayBtn(); if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel(); },
-    onPause: () => { setMediaSessionPlaybackState("paused"); updateMiniPlayerPlayBtn(); if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel(); },
+    onPause: () => { saveMusicPosition({ force: true }); setMediaSessionPlaybackState("paused"); updateMiniPlayerPlayBtn(); if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel(); },
     onEnded: () => onMusicEnded(),
     onError: () => { showVoiceToast("Couldn't play this track"); updateMiniPlayerPlayBtn(); },
     toggle: () => toggleMusicPlayPause(),
@@ -30854,10 +31368,16 @@ function musicArtUrlFor(track) {
 // Save the current music position into the synced mediaProgress map (throttled by
 // the interval below). Reads the shared element's currentTime (music is one
 // segment, so element time == logical position). Skips trivially-short positions.
-function saveMusicPosition() {
+// The 10s interval passes nothing: it skips while paused (the pause handler saves
+// once with force) and when the position hasn't moved since the last write, so an
+// idle paused track doesn't persist() the same value forever.
+function saveMusicPosition({ force = false } = {}) {
   if (!musicAudio || !musicCurTrack?.id) return;
+  if (!force && musicAudio.paused) return;
   const pos = Math.floor(musicAudio.currentTime || 0);
   if (pos <= 5) return; // nothing worth resuming yet
+  if (musicLastSavedPos && musicLastSavedPos.id === musicCurTrack.id && musicLastSavedPos.pos === pos) return;
+  musicLastSavedPos = { id: musicCurTrack.id, pos };
   state.mediaProgress = pruneMediaProgress(setMediaPosition(state.mediaProgress, musicCurTrack.id, { position: pos, duration: musicAudio.duration || 0 }));
   persist();
 }
@@ -30877,25 +31397,37 @@ function playMusicDescriptor(desc, url, { isBlob = false } = {}) {
   const resumeAt = resumePositionFor(state.mediaProgress, desc.id);
   engine.load({ id: desc.id, providerId: "music", segments: [{ url }], startPosition: resumeAt, rate: mediaPlaybackSpeed }, { autoplay: true });
   window.clearInterval(musicPositionSaveTimer);
-  musicPositionSaveTimer = window.setInterval(saveMusicPosition, 10000);
+  musicLastSavedPos = null;
+  musicPositionSaveTimer = window.setInterval(() => saveMusicPosition(), 10000);
   setMiniPlayer(desc.title || "Untitled", desc.artist || desc.album || "", desc.artworkUrl || "");
   setMusicMediaSession(desc);
   pushMusicHistory(desc);
   if (activeAppArea === "media" && activeMediaTab === "music") renderMusicPanel();
 }
 
-async function startLibraryTrack(track) {
+async function startLibraryTrack(track, gen = musicStartGen) {
   let url;
   try { url = await (await getMusicLib()).resolvePlayable(track); }
-  catch (e) { console.warn("music resolve failed", e); showVoiceToast("Couldn't play this track — the audio isn't on this device"); return false; }
+  catch (e) {
+    if (gen !== musicStartGen) return false; // superseded — stay quiet
+    console.warn("music resolve failed", e); showVoiceToast("Couldn't play this track — the audio isn't on this device"); return false;
+  }
+  if (gen !== musicStartGen) { try { URL.revokeObjectURL(url); } catch { /* noop */ } return false; } // a newer start won
   playMusicDescriptor({ id: track.id, title: track.title, artist: track.artist, album: track.album, artworkUrl: musicArtUrlFor(track), kind: "library" }, url, { isBlob: true });
   return true;
+}
+
+// Owns-playback provider transport calls (pause/resume/seek) are async — swallow
+// both sync throws and rejections so a MusicKit hiccup can't surface as an
+// unhandled rejection.
+function ownedMusicCall(fn) {
+  try { Promise.resolve(fn()).catch(() => {}); } catch { /* noop */ }
 }
 
 // Tear down any active owns-playback session (unsubscribe + pause the provider).
 function teardownOwnedMusic() {
   if (musicOwnedUnsub) { try { musicOwnedUnsub(); } catch { /* noop */ } musicOwnedUnsub = null; }
-  if (musicPlaybackProvider) { try { musicPlaybackProvider.pause(); } catch { /* noop */ } }
+  if (musicPlaybackProvider) { const prov = musicPlaybackProvider; ownedMusicCall(() => prov.pause()); }
   musicPlaybackProvider = null;
   musicOwnedNP = null;
 }
@@ -30905,7 +31437,7 @@ function teardownOwnedMusic() {
 // now-playing into the same mini-player / MediaSession / history the URL path uses.
 // Queue advance reuses the existing musicQueueRest machinery: each track is a
 // fresh setQueue+play, so a mixed (Apple + Internet Archive) queue still advances.
-async function startOwnedMusicTrack(canonical, provider) {
+async function startOwnedMusicTrack(canonical, provider, gen = musicStartGen) {
   stopPodcastAudio(); stopListen(); stopRadio();
   if (mediaEngine && musicAudio) { mediaEngine.stop(); }  // release the shared engine if it held music
   if (musicCurUrl) { try { URL.revokeObjectURL(musicCurUrl); } catch { /* noop */ } musicCurUrl = null; }
@@ -30957,13 +31489,22 @@ async function startOwnedMusicTrack(canonical, provider) {
   });
   try {
     await provider.play(canonical, { upcoming }); // sets the provider's queue to this track (+ upcoming), then plays
-    musicOwnedNP = provider.getNowPlaying();
   } catch (e) {
+    if (gen !== musicStartGen) return false; // superseded — the newer start owns the session; don't tear it down
     console.warn("apple music play failed", e);
     showVoiceToast("Couldn't play this Apple Music track");
     teardownOwnedMusic();
     return false;
   }
+  if (gen !== musicStartGen) {
+    // A newer start/stop superseded us while play() was in flight. If it already
+    // tore our session down (different provider / engine track / stop), this late
+    // start is now audible on its own — pause it. If the same provider now belongs
+    // to the newer session, leave it alone (its own play() replaces the queue).
+    if (musicPlaybackProvider !== provider) ownedMusicCall(() => provider.pause());
+    return false;
+  }
+  musicOwnedNP = provider.getNowPlaying();
   setMiniPlayer(desc.title || "Untitled", desc.artist || desc.album || "", desc.artworkUrl || "");
   setMusicMediaSession(desc);
   pushMusicHistory(desc);
@@ -30972,13 +31513,14 @@ async function startOwnedMusicTrack(canonical, provider) {
   return true;
 }
 
-async function startStreamingTrack(canonical) {
+async function startStreamingTrack(canonical, gen = musicStartGen) {
   // Playback-owning provider (Apple Music) → drive its transport, not a URL.
   try {
     const reg = await getMusicProviders();
+    if (gen !== musicStartGen) return false; // superseded
     const prov = reg.get(canonical.provider);
     if (prov && musicStreamMod && musicStreamMod.isPlaybackOwner(prov)) {
-      return await startOwnedMusicTrack(canonical, prov);
+      return await startOwnedMusicTrack(canonical, prov, gen);
     }
   } catch (e) { console.warn("owns-playback route failed", e); }
   let src = canonical.playable;
@@ -30987,6 +31529,7 @@ async function startStreamingTrack(canonical) {
     const p = reg.get(canonical.provider);
     if (p && p.getPlayable) src = await p.getPlayable(canonical);
   } catch (e) { console.warn("stream resolve failed", e); }
+  if (gen !== musicStartGen) return false; // superseded while resolving
   if (!src || !src.url) { showVoiceToast("This track isn't streamable right now"); return false; }
   const artist = canonical.artists?.[0]?.name || canonical.composer?.name || canonical.album || "";
   playMusicDescriptor({ id: canonical.id, title: canonical.title, artist, album: canonical.album, artworkUrl: canonical.artworkUrl || "", kind: "stream", canonical }, src.url, { isBlob: false });
@@ -30994,11 +31537,16 @@ async function startStreamingTrack(canonical) {
 }
 
 async function playMusicQueueItem(item, rest, opts = {}) {
+  // Each start takes a generation token; every awaiting start path re-checks it and
+  // bails if a newer start (or a stop) superseded it, so a slow resolve can't start
+  // a stale track over the one the user just picked.
+  const gen = ++musicStartGen;
   musicQueueRest = Array.isArray(rest) ? rest.slice() : [];
   let ok = false;
-  if (item.kind === "stream") ok = await startStreamingTrack(item.track);
-  else if (item.kind === "recording") ok = await startRecordingResolved(item.recording, { queueMode: !opts.interactive });
-  else { const t = (musicLibrary || []).find((x) => x.id === item.id); ok = t ? await startLibraryTrack(t) : false; }
+  if (item.kind === "stream") ok = await startStreamingTrack(item.track, gen);
+  else if (item.kind === "recording") ok = await startRecordingResolved(item.recording, { queueMode: !opts.interactive, gen });
+  else { const t = (musicLibrary || []).find((x) => x.id === item.id); ok = t ? await startLibraryTrack(t, gen) : false; }
+  if (gen !== musicStartGen) return; // superseded — the newer start owns the queue
   if (!ok) onMusicEnded(); // couldn't play → skip to the next queued item
 }
 
@@ -31024,17 +31572,20 @@ function onMusicEnded() {
   if (musicCurTrack?.id) { state.mediaProgress = clearMediaPosition(state.mediaProgress, musicCurTrack.id); persist(); }
   updateMiniPlayerPlayBtn();
   if (musicQueueRest.length) { const next = musicQueueRest.shift(); playMusicQueueItem(next, musicQueueRest); return; }
-  stopMusicPlayback(); // queue drained
+  stopMusicPlayback({ save: false }); // queue drained — don't re-save the resume point we just cleared
 }
 
-function stopMusicPlayback() {
-  saveMusicPosition(); // capture the final resume point before tearing down
+function stopMusicPlayback({ save = true } = {}) {
+  musicStartGen++; // a stop supersedes any start still awaiting its resolve
+  if (save) saveMusicPosition({ force: true }); // capture the final resume point before tearing down
   window.clearInterval(musicPositionSaveTimer);
+  // Clear the current track BEFORE stopping the engine: engine.stop() pauses the
+  // element, whose pause handler would otherwise save a position for this track.
+  musicCurTrack = null;
   teardownOwnedMusic(); // no-op unless an owns-playback session is active
   if (mediaEngine && musicAudio) mediaEngine.stop();
   if (musicCurUrl) { try { URL.revokeObjectURL(musicCurUrl); } catch { /* noop */ } musicCurUrl = null; }
   musicAudio = null;
-  musicCurTrack = null;
   musicQueueRest = [];
   setMediaSessionPlaybackState("none");
   hideMiniPlayer();
@@ -31043,7 +31594,8 @@ function stopMusicPlayback() {
 
 function toggleMusicPlayPause() {
   if (musicPlaybackProvider) {
-    if (musicOwnedNP && musicOwnedNP.isPlaying) musicPlaybackProvider.pause(); else musicPlaybackProvider.resume();
+    const prov = musicPlaybackProvider;
+    if (musicOwnedNP && musicOwnedNP.isPlaying) ownedMusicCall(() => prov.pause()); else ownedMusicCall(() => prov.resume());
     return;
   }
   if (!musicAudio) return;
@@ -31054,7 +31606,8 @@ function skipMusic(seconds) {
   if (musicPlaybackProvider) {
     const cur = (musicOwnedNP && musicOwnedNP.positionMs) || 0;
     const dur = (musicOwnedNP && musicOwnedNP.durationMs) || Infinity;
-    musicPlaybackProvider.seek(Math.max(0, Math.min(cur + seconds * 1000, dur)));
+    const prov = musicPlaybackProvider;
+    ownedMusicCall(() => prov.seek(Math.max(0, Math.min(cur + seconds * 1000, dur))));
     return;
   }
   if (!musicAudio) return;
@@ -31073,8 +31626,8 @@ function setMusicMediaSession(desc) {
     });
     // Route through the guarded controls so lock-screen play/pause drives the
     // owns-playback provider (Apple Music) as well as the shared element.
-    navigator.mediaSession.setActionHandler("play", () => { if (musicPlaybackProvider) musicPlaybackProvider.resume(); else musicAudio?.play().catch(() => {}); });
-    navigator.mediaSession.setActionHandler("pause", () => { if (musicPlaybackProvider) musicPlaybackProvider.pause(); else musicAudio?.pause(); });
+    navigator.mediaSession.setActionHandler("play", () => { const prov = musicPlaybackProvider; if (prov) ownedMusicCall(() => prov.resume()); else musicAudio?.play().catch(() => {}); });
+    navigator.mediaSession.setActionHandler("pause", () => { const prov = musicPlaybackProvider; if (prov) ownedMusicCall(() => prov.pause()); else musicAudio?.pause(); });
     navigator.mediaSession.setActionHandler("seekbackward", () => skipMusic(-10));
     navigator.mediaSession.setActionHandler("seekforward", () => skipMusic(10));
     navigator.mediaSession.setActionHandler("nexttrack", () => onMusicEnded());
@@ -31668,6 +32221,7 @@ async function doMusicSearch(query) {
   const q = String(query || "");
   musicSearchQuery = q;
   musicOpenItem = null;
+  musicOpenToken++; // a pending openMusicItem must not re-open over the new search
   const token = ++musicSearchToken;
   if (!q.trim()) { musicSearchResults = null; musicSearchLoading = false; updateDiscoverResults(); return; }
   musicSearchLoading = true; updateDiscoverResults();
@@ -31688,20 +32242,23 @@ async function doMusicSearch(query) {
 async function openMusicItem(album) {
   if (!album) return;
   if (album.entity === "track") { playStreamingTrack(album, []); return; } // a track result plays directly
-  if (musicItemCache.has(album.id)) { musicOpenItem = musicItemCache.get(album.id); updateDiscoverResults(); return; }
+  const token = ++musicOpenToken; // a later open/close/search supersedes this one
+  if (musicItemCache.has(album.id)) { musicOpenItem = musicItemCache.get(album.id); musicOpenItemLoading = false; updateDiscoverResults(); return; }
   musicOpenItem = { album, tracks: null }; musicOpenItemLoading = true; updateDiscoverResults();
   try {
     const reg = await getMusicProviders();
     const p = reg.get(album.provider);
     const detail = p && p.getItem ? await p.getItem(album) : { album, tracks: [] };
-    musicItemCache.set(album.id, detail);
+    musicItemCache.set(album.id, detail); // cache even if superseded — it's still valid metadata
+    if (token !== musicOpenToken) return;
     musicOpenItem = detail;
   } catch (e) {
+    if (token !== musicOpenToken) return;
     console.warn("open item failed", e);
     musicOpenItem = { album, tracks: [], error: "Couldn't load this item." };
-  } finally { musicOpenItemLoading = false; updateDiscoverResults(); }
+  } finally { if (token === musicOpenToken) { musicOpenItemLoading = false; updateDiscoverResults(); } }
 }
-function closeMusicItem() { musicOpenItem = null; updateDiscoverResults(); }
+function closeMusicItem() { musicOpenToken++; musicOpenItem = null; musicOpenItemLoading = false; updateDiscoverResults(); }
 
 function replayMusicHistory(id) {
   const h = getRecentMedia({ kind: "music" }).find((x) => x.id === id);
@@ -32256,12 +32813,14 @@ function playRecordingDescriptor(recording, source) {
   playMusicDescriptor({ id: recording.id || `rec:${source.url}`, title: recording.title || recording.workTitle || "Recording", artist, album: recording.album, artworkUrl: recording.artworkUrl || "", kind: "recording", recording }, source.url, { isBlob: false });
 }
 
-async function startRecordingResolved(recording, { queueMode = false } = {}) {
+async function startRecordingResolved(recording, { queueMode = false, gen = musicStartGen } = {}) {
   let resolver, reg;
   try { ({ resolver } = await getMusicCanon()); reg = await getMusicProviders(); }
   catch { return false; }
   let res = await resolver.resolvePlayableSource(recording, { registry: reg, allowAlternate: false });
+  if (gen !== musicStartGen) return false; // superseded while resolving
   if (res.status !== "exact") res = await resolver.resolvePlayableSource(recording, { registry: reg, allowAlternate: true });
+  if (gen !== musicStartGen) return false;
   // Found the same song on a provider this recording had no ref for (e.g. after
   // switching players): remember it on the saved entry so next time is direct.
   // Appended, so the favourite key (first ref) never changes.
@@ -32279,7 +32838,7 @@ async function startRecordingResolved(recording, { queueMode = false } = {}) {
       album: recording.album || null, artworkUrl: recording.artworkUrl || null, provider: res.source.provider,
       providerRefs: [res.providerRef],
     };
-    return await startOwnedMusicTrack(canonical, prov);
+    return await startOwnedMusicTrack(canonical, prov, gen);
   }
   if (res.status === "exact") { playRecordingDescriptor(recording, res.source); return true; }
   if (res.status === "alternate") {
@@ -32557,6 +33116,7 @@ async function deleteRadioUserStation(id) {
   if (radioCurStation && radioCurStation.id === id) stopRadio();
   state.radioUserStations = (state.radioUserStations || []).filter((s) => s.id !== id);
   state.radioFavorites = (state.radioFavorites || []).filter((s) => s.id !== id); // drop any favourite ref
+  recordDeletion("radioUserStations", id); // tombstone: this list union-merges across devices
   persist();
   radioCatalog = null;
   await ensureRadioCatalog();
@@ -33920,7 +34480,9 @@ function markArticleRead(id) {
 // fetching. article.text stays the fallback throughout.
 async function renderArticleBody(textEl, article, id) {
   const paint = (html) => {
-    textEl.innerHTML = html;
+    // Bodies come from emails, fetched pages, AI newsletter/PDF extraction and
+    // previously stored rows — all untrusted. Allowlist-sanitize at the sink.
+    textEl.innerHTML = sanitizeUntrustedHtml(html);
     wrapArticleWords(textEl);
     if (listenArticle && listenArticle.id === id) highlightCurrentWord();
   };
@@ -34231,10 +34793,10 @@ async function fetchArticleText(id) {
     if (result.ok) {
       openArticle(id, "articleList");
     } else if (textEl) {
-      textEl.innerHTML = `<div class="article-fetch-prompt"><p class="article-fetch-hint">${escapeHtml(result.error)}</p><a href="${escapeHtml(article.url)}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`;
+      textEl.innerHTML = `<div class="article-fetch-prompt"><p class="article-fetch-hint">${escapeHtml(result.error)}</p><a href="${escapeHtml(safeUrl(article.url, "#"))}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`;
     }
   } catch (e) {
-    if (textEl) textEl.innerHTML = `<div class="article-fetch-prompt"><p class="article-fetch-hint">Fetch failed. Check your connection and try again.</p><a href="${escapeHtml(article.url)}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`;
+    if (textEl) textEl.innerHTML = `<div class="article-fetch-prompt"><p class="article-fetch-hint">Fetch failed. Check your connection and try again.</p><a href="${escapeHtml(safeUrl(article.url, "#"))}" target="_blank" rel="noopener" class="primary-btn" style="display:inline-block;margin-top:8px">Open in browser</a></div>`;
   }
 }
 
@@ -38059,13 +38621,18 @@ async function executeChatTool(name, input) {
           const validDay = doPrepDays.find((d) => d.id === targetDay);
           const isBacklog = targetDay === "backlog";
           if (!validDay && !isBacklog) return `Invalid day "${targetDay}".`;
-          // Remove from current location
+          // Remove from current location. Tombstone the old id under the SOURCE
+          // key and re-id the moved copy, or a sync union resurrects it at the
+          // source (same as moveDoTask).
           if (foundDay === "backlog") {
             state.doBacklog = doBacklogTasks().filter((t) => t.id !== found.id);
+            recordDeletion("doBacklog", found.id);
           } else {
             const arr = rawDoTasksForDay(foundDay, wk);
             state.doPlans[wk][foundDay] = arr.filter((t) => t.id !== found.id);
+            recordDeletion("doPlanTasks", found.id);
           }
+          found = { ...found, id: createId("task") };
           // Add to target location
           if (isBacklog) {
             doBacklogTasks().push(found);
@@ -38569,7 +39136,8 @@ function travelActivityEndTime(startTime, durationMin) {
   if (!startTime || !durationMin) return "";
   const [h, m] = startTime.split(":").map(Number);
   if (!Number.isFinite(h) || !Number.isFinite(m)) return "";
-  const total = h * 60 + m + (parseInt(durationMin) || 0);
+  // "2 hours" / "1h30" / "90 min" — not parseInt (which read "2 hours" as 2 min).
+  const total = h * 60 + m + (TravelItinerary.parseDurationMinutes(durationMin) || 0);
   return String(Math.floor(total / 60) % 24).padStart(2, "0") + ":" + String(total % 60).padStart(2, "0");
 }
 
@@ -38850,6 +39418,9 @@ function openExploreTripMenu(event, tripId) {
     e.stopPropagation();
     closeFolderMenu();
     if (!confirm("Delete this trip?")) return;
+    // Tombstone first: without it the next sync's unionById resurrects the trip
+    // from the other device / older snapshot (TRV-10).
+    recordDeletion("trips", tripId);
     state.trips = (state.trips || []).filter(t => t.id !== tripId);
     persist();
     renderExploreSidebar();
@@ -38863,7 +39434,7 @@ function showTravelEditTripDialog(tripId) {
   const partyOptions = [...new Set([...travelPartyOptions(), ...(trip.party || [])])];
   const partyChipsHtml = partyOptions.map(p => {
     const sel = (trip.party || []).includes(p) ? " is-selected" : "";
-    return `<button type="button" class="travel-party-chip${sel}" data-party="${p}">${p}</button>`;
+    return `<button type="button" class="travel-party-chip${sel}" data-party="${escapeHtml(p)}">${escapeHtml(p)}</button>`;
   }).join("");
   const d = document.createElement("dialog");
   d.className = "recipe-dialog auth-dialog";
@@ -38897,6 +39468,7 @@ function showTravelEditTripDialog(tripId) {
   d.querySelector("#teSave").addEventListener("click", () => {
     const name = d.querySelector("#teTripName").value.trim();
     if (!name) { alert("Please enter a trip name."); return; }
+    if (tripDatesReversed(d.querySelector("#teStart").value, d.querySelector("#teEnd").value)) { alert("The end date can't be before the start date."); return; }
     trip.name = name;
     trip.destination = d.querySelector("#teDest").value.trim();
     trip.status = d.querySelector("#teStatus").value;
@@ -39190,7 +39762,7 @@ function itemDetailContent(type, item) {
   const fmtDate = ds => ds ? new Date(ds + "T12:00:00").toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric" }) : "";
   const row = (label, value, link) =>
     `<div class="item-detail-row"><span class="item-detail-label">${escapeHtml(label)}</span><span class="item-detail-value">${
-      link ? `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(value)}</a>` : escapeHtml(value)
+      safeUrl(link) ? `<a href="${escapeHtml(safeUrl(link))}" target="_blank" rel="noopener noreferrer">${escapeHtml(value)}</a>` : escapeHtml(value)
     }</span></div>`;
 
   let icon = "📋", title = "Details", subtitle = "", bodyHtml = "";
@@ -39341,17 +39913,28 @@ function addStopToCalendar(type, item, ownerDateKey) {
 }
 
 // ── Travel-time suggestions (Google Distance Matrix via travel-time fn) ──────
-const travelTimesCache = new Map(); // "origin|destination" → Promise<times|null>
+const travelTimesCache = new Map(); // "origin|destination" → Promise<times> (successes + in-flight only)
+const travelTimesFailedAt = new Map(); // "origin|destination" → ms of last failed lookup
+const TRAVEL_TIMES_RETRY_MS = 10 * 60 * 1000;
 
+// A failed/empty lookup is NOT cached forever (TRV-13) — a transient error or
+// signed-out moment used to pin that pair to "unknown" for the session. It is
+// held off for TRAVEL_TIMES_RETRY_MS so re-renders don't hammer the function.
 function fetchTravelTimes(origin, destination) {
   const key = origin + "|" + destination;
   if (travelTimesCache.has(key)) return travelTimesCache.get(key);
+  const failedAt = travelTimesFailedAt.get(key);
+  if (failedAt && Date.now() - failedAt < TRAVEL_TIMES_RETRY_MS) return Promise.resolve(null);
   const url = (canUseLocalBackend() ? "/api/travel-time" : "/.netlify/functions/travel-time") +
     "?" + new URLSearchParams({ origin, destination });
   const p = fetch(url, { headers: { authorization: "Bearer " + (authSession?.access_token || "") } })
     .then(r => (r.ok ? r.json() : null))
     .then(d => d?.times || null)
-    .catch(() => null);
+    .catch(() => null)
+    .then(times => {
+      if (!times) { travelTimesCache.delete(key); travelTimesFailedAt.set(key, Date.now()); }
+      return times;
+    });
   travelTimesCache.set(key, p);
   return p;
 }
@@ -39831,20 +40414,25 @@ function renderTravelModeOverlay(trip) {
 // Prefetch a symmetric travel-time lookup across a day's located points, then
 // hand back a synchronous distanceFn the pure optimizer can use. Uses the same
 // cached travel-time backend the transitions do; unknown pairs resolve to null.
-async function buildDayDistanceFn(locations) {
-  const uniq = [...new Set(locations.filter(Boolean))];
+// Only the pairs the reorder evaluator can use (movable stops + anchors), run
+// at most 4 at a time — it used to fire every ordered pair of every stop at
+// once (n² concurrent Distance-Matrix calls) — TRV-14.
+async function buildDayDistanceFn(pairs) {
   const map = new Map();
-  await Promise.all(uniq.flatMap(a => uniq.map(async b => {
-    const key = a + "|" + b;
-    if (a === b) { map.set(key, 0); return; }
-    let d = null;
-    try {
-      const times = await fetchTravelTimes(a, b);
-      if (times) d = times.drive?.durationMin ?? times.transit?.durationMin ?? times.walk?.durationMin ?? null;
-    } catch { d = null; }
-    map.set(key, d);
-  })));
-  return (a, b) => (map.has(a + "|" + b) ? map.get(a + "|" + b) : null);
+  const queue = pairs.filter(([a, b]) => a && b && a !== b);
+  const worker = async () => {
+    while (queue.length) {
+      const [a, b] = queue.shift();
+      let d = null;
+      try {
+        const times = await fetchTravelTimes(a, b);
+        if (times) d = times.drive?.durationMin ?? times.transit?.durationMin ?? times.walk?.durationMin ?? null;
+      } catch { d = null; }
+      map.set(a + "|" + b, d);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
+  return (a, b) => (a === b ? 0 : map.has(a + "|" + b) ? map.get(a + "|" + b) : null);
 }
 
 // Household calendar events for a day, shaped for the conflict detector.
@@ -39905,8 +40493,7 @@ async function renderDaySuggestions(trip, dateKey, timeline, mountEl, rerender) 
   let distanceFn = () => null;
   // Only pay for routing when a reorder is even possible (2–5 flexible stops).
   if (movableLocated.length >= 2 && movableLocated.length <= 5) {
-    const locs = stops.map(s => s.location).filter(Boolean);
-    distanceFn = await buildDayDistanceFn(locs);
+    distanceFn = await buildDayDistanceFn(TravelOptimize.reorderPairs(timeline));
     if (!mountEl.isConnected) return;
   }
   const events = tripCalendarEventsForDay(dateKey);
@@ -40270,7 +40857,7 @@ function renderExploreTripPanel(tab, trip) {
 
   // One day shown at a time: day tabs across the top (like the meal plan),
   // swipe left/right on touch devices to change days.
-  const dayKeys = tripDays.map(d => d.toISOString().slice(0, 10));
+  const dayKeys = tripDays.map(d => dateKeyFromDate(d));
   const activeDayIdx = Math.max(0, dayKeys.indexOf(exploreActiveDayKey));
 
   const tabsHtml = tripDays.map((d, i) => {
@@ -40305,7 +40892,7 @@ function renderExploreTripPanel(tab, trip) {
   }, { passive: true });
 
   const buildDayCard = (d, i) => {
-    const dateKey   = d.toISOString().slice(0, 10);
+    const dateKey   = dateKeyFromDate(d);
     const dayNum    = `Day ${i + 1}`;
     const dateLabel = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 
@@ -40317,7 +40904,7 @@ function renderExploreTripPanel(tab, trip) {
     let incomingLodgingKey = dateKey;
     let stableLodgingKey   = null;
     for (const od of tripDays) {
-      const ok = od.toISOString().slice(0, 10);
+      const ok = dateKeyFromDate(od);
       for (const lo of tripDayItems(trip, ok, "lodging")) {
         if (lo.itemType === "lodging" && lo.checkOutDate === dateKey) { outgoingLodging = lo; outgoingLodgingKey = ok; break; }
       }
@@ -40328,7 +40915,7 @@ function renderExploreTripPanel(tab, trip) {
     }
     if (!outgoingLodging && !incomingLodging) {
       for (const od of tripDays) {
-        const ok = od.toISOString().slice(0, 10);
+        const ok = dateKeyFromDate(od);
         for (const lo of tripDayItems(trip, ok, "lodging")) {
           if (lo.itemType === "lodging" && lo.checkInDate && lo.checkOutDate &&
               lo.checkInDate < dateKey && lo.checkOutDate > dateKey) {
@@ -40512,7 +41099,7 @@ function renderExploreTripPanel(tab, trip) {
           (sub ? '<br><span style="font-weight:400;color:var(--muted);font-size:0.72rem">' + escapeHtml(sub) + '</span>' : '') +
           '</div>' +
           (mapsHref ? '<a class="trip-item-leg-map-btn" href="' + escapeHtml(mapsHref) + '" target="_blank" rel="noopener noreferrer">' + mapsLabel + '</a>' : '') +
-          (item.website ? '<a class="trip-item-leg-map-btn" href="' + escapeHtml(item.website) + '" target="_blank" rel="noopener noreferrer" title="Website">🔗</a>' : '') +
+          (safeUrl(item.website) ? '<a class="trip-item-leg-map-btn" href="' + escapeHtml(safeUrl(item.website)) + '" target="_blank" rel="noopener noreferrer" title="Website">🔗</a>' : '') +
           attBtn(item, true) +
           '<button class="trip-item-edit-leg" type="button" title="Edit" aria-label="Edit">✏</button>' +
           '<button class="trip-item-delete" type="button" title="Remove" aria-label="Remove">×</button></div>' +
@@ -40584,7 +41171,7 @@ function renderExploreTripPanel(tab, trip) {
         const items = tripDayItems(trip, dateKey, s.key);
         if (s.key === "travel") {
           tripDays.forEach(od => {
-            const ok = od.toISOString().slice(0, 10);
+            const ok = dateKeyFromDate(od);
             if (ok === dateKey) return;
             tripDayItems(trip, ok, "travel").forEach(leg => {
               if (leg.arriveDate === dateKey)
@@ -40606,7 +41193,7 @@ function renderExploreTripPanel(tab, trip) {
               pushItem(lodgingTime(item.checkInTime), buildLodgingCard(item, dateKey, false), item);
           });
           tripDays.forEach(od => {
-            const ok = od.toISOString().slice(0, 10);
+            const ok = dateKeyFromDate(od);
             if (ok === dateKey) return;
             tripDayItems(trip, ok, "lodging").forEach(lo => {
               if (lo.checkOutDate === dateKey)
@@ -40750,7 +41337,7 @@ function renderExploreTripPanel(tab, trip) {
     // Car badge — a vehicle (own or rental) is available this day
     const carsToday = [];
     tripDays.forEach(od => {
-      const ok = od.toISOString().slice(0, 10);
+      const ok = dateKeyFromDate(od);
       tripDayItems(trip, ok, "travel").forEach(item => {
         if (item.mode !== "car-own" && item.mode !== "car-rental") return;
         const from = item.departDate || ok;
@@ -40832,12 +41419,14 @@ function renderExploreTripPanel(tab, trip) {
 function getTripDates(trip) {
   if (!trip.startDate || !trip.endDate) return [];
   const dates = [];
-  const start = new Date(trip.startDate + "T12:00:00");
-  const end   = new Date(trip.endDate   + "T12:00:00");
+  // Local-midnight dates keyed with local getters (dateKeyFromDate): the old
+  // T12:00 + toISOString() shifted keys a day at UTC+13/+14.
+  const start = new Date(trip.startDate + "T00:00:00");
+  const end   = new Date(trip.endDate   + "T00:00:00");
   const limit = new Date(start);
   limit.setDate(limit.getDate() + 60);
   for (let d = new Date(start); d <= end && d <= limit; d.setDate(d.getDate() + 1)) {
-    dates.push(d.toISOString().slice(0, 10));
+    dates.push(dateKeyFromDate(d));
   }
   return dates;
 }
@@ -40921,27 +41510,6 @@ function renderTravelNotes(trip, el = null) {
 }
 
 // ── Map ──────────────────────────────────────────────────────────────────────────
-
-function travelMapHelperUrl() {
-  if (canUseLocalBackend()) return "/api/travel-map-url";
-  if (window.location.protocol.startsWith("http")) return "/.netlify/functions/travel-map-url";
-  return "";
-}
-
-async function fetchTravelMapUrl(params) {
-  const helperUrl = travelMapHelperUrl();
-  if (!helperUrl) return null;
-  try {
-    const res = await fetch(helperUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json", Authorization: "Bearer " + (authSession?.access_token || "") },
-      body: JSON.stringify(params)
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.url || null;
-  } catch { return null; }
-}
 
 // ── Planning map (interactive Leaflet) ───────────────────────────────────────
 // Plots the trip's real located stops (from trip.days) on an interactive map,
@@ -41247,7 +41815,7 @@ function buildDayMapSrc(trip, dateKey, tripDays) {
   });
 
   tripDays.forEach(od => {
-    const ok = od.toISOString().slice(0, 10);
+    const ok = dateKeyFromDate(od);
     if (ok === dateKey) return;
     tripDayItems(trip, ok, "travel").forEach(leg => {
       if (leg.arriveDate === dateKey) addMarker("0x0D7247", "A", leg.toCode || leg.to);
@@ -41258,7 +41826,7 @@ function buildDayMapSrc(trip, dateKey, tripDays) {
     .forEach(item => addMarker("0x1A73E8", "H", item.address || item.name));
 
   tripDays.forEach(od => {
-    const ok = od.toISOString().slice(0, 10);
+    const ok = dateKeyFromDate(od);
     if (ok === dateKey) return;
     tripDayItems(trip, ok, "lodging").forEach(item => {
       if (item.checkInDate && item.checkOutDate && dateKey > item.checkInDate && dateKey <= item.checkOutDate)
@@ -41313,7 +41881,7 @@ function printTripItinerary(trip) {
   }
 
   const daysHtml = tripDays.map((day, idx) => {
-    const dateKey   = day.toISOString().slice(0, 10);
+    const dateKey   = dateKeyFromDate(day);
     const mapSrc    = buildDayMapSrc(trip, dateKey, tripDays);
     const dateLabel = day.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
     let sects = "";
@@ -41322,7 +41890,7 @@ function printTripItinerary(trip) {
     const ownLegs = tripDayItems(trip, dateKey, "travel").filter(i => i.mode || i.from || i.to);
     const arrLegs = [];
     tripDays.forEach(od => {
-      const ok = od.toISOString().slice(0, 10);
+      const ok = dateKeyFromDate(od);
       if (ok !== dateKey) tripDayItems(trip, ok, "travel").forEach(l => { if (l.arriveDate === dateKey) arrLegs.push(l); });
     });
     const allLegs = [...ownLegs.map(l => Object.assign({},l,{_arr:false})), ...arrLegs.map(l => Object.assign({},l,{_arr:true}))];
@@ -41342,7 +41910,7 @@ function printTripItinerary(trip) {
     const ownLodge = tripDayItems(trip, dateKey, "lodging").filter(i => i.itemType === "lodging");
     const spanLodge = [];
     tripDays.forEach(od => {
-      const ok = od.toISOString().slice(0, 10);
+      const ok = dateKeyFromDate(od);
       if (ok !== dateKey) tripDayItems(trip, ok, "lodging").forEach(item => {
         if (item.checkInDate && item.checkOutDate && dateKey > item.checkInDate && dateKey <= item.checkOutDate)
           spanLodge.push(Object.assign({},item,{_span:true}));
@@ -41398,7 +41966,6 @@ function printTripItinerary(trip) {
   const partyStr  = (trip.party || []).join(", ") || "Solo";
   const dateRange = formatTravelDate(trip.startDate) + (trip.endDate ? " – " + formatTravelDate(trip.endDate) : "");
   const generated = new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
-  const destQuery = encodeURIComponent((trip.destination || "travel") + " travel destination landscape");
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -41448,7 +42015,7 @@ h1,h2,h3,.day-num,.day-date{font-family:system-ui,-apple-system,sans-serif}
 </head>
 <body>
 <div class="cover">
-  <div class="cover-photo-wrap"><img class="cover-photo" src="https://source.unsplash.com/1200x700/?${destQuery}" alt="" onerror="this.parentElement.style.background='var(--hd)';this.remove()" /></div>
+  <div class="cover-photo-wrap"></div>
   <div class="cover-body">
     <div class="cover-flag">${theme.flag}</div>
     <h1 class="cover-title">${esc(trip.name)}</h1>
@@ -41466,10 +42033,12 @@ ${daysHtml}
 (function(){
   var imgs=Array.from(document.querySelectorAll('img'));
   var pending=imgs.filter(function(i){return !i.complete||!i.naturalWidth}).length;
-  if(!pending){window.print();return}
-  function done(){pending--;if(pending<=0)window.print()}
+  var printed=false;
+  function printOnce(){if(printed)return;printed=true;window.print()}
+  if(!pending){printOnce();return}
+  function done(){pending--;if(pending<=0)printOnce()}
   imgs.forEach(function(img){if(!img.complete||!img.naturalWidth){img.addEventListener('load',done);img.addEventListener('error',done)}});
-  setTimeout(function(){window.print()},4000);
+  setTimeout(printOnce,4000);
 })();
 <\/script>
 </body>
@@ -41569,7 +42138,7 @@ async function showAttachmentsDialog(trip, item, onUpdate, viewOnly = false) {
           ? '<img class="att-thumb" src="' + escapeHtml(att.url) + '" alt="" />'
           : '<div class="att-icon">' + (isPDF ? "📄" : "📎") + '</div>') +
         '<div class="att-meta"><span class="att-name">' + escapeHtml(att.name) + '</span>' +
-        (att.url ? '<a class="att-view" href="' + escapeHtml(att.url) + '" target="_blank" rel="noopener noreferrer">Open ↗</a>' : '<span class="att-status">Unavailable</span>') +
+        (safeUrl(att.url) ? '<a class="att-view" href="' + escapeHtml(safeUrl(att.url)) + '" target="_blank" rel="noopener noreferrer">Open ↗</a>' : '<span class="att-status">Unavailable</span>') +
         '</div>' +
         (canEdit ? '<button class="att-del" type="button" data-path="' + escapeHtml(att.path) + '" title="Delete">×</button>' : '');
       if (canEdit) {
@@ -42442,7 +43011,7 @@ function showTravelNewTripDialog() {
   const selfLabel = getCurrentProfileMember()?.label || "";
   const partyChipsHtml = partyOptions.map(function(p) {
     const sel = p === selfLabel ? " is-selected" : "";
-    return '<button type="button" class="travel-party-chip' + sel + '" data-party="' + p + '">' + p + '</button>';
+    return '<button type="button" class="travel-party-chip' + sel + '" data-party="' + escapeHtml(p) + '">' + escapeHtml(p) + '</button>';
   }).join("");
   d.innerHTML =
     '<div class="recipe-form">' +
@@ -42471,6 +43040,7 @@ function showTravelNewTripDialog() {
     try {
       const name = d.querySelector("#tnTripName").value.trim();
       if (!name) { alert("Please enter a trip name."); return; }
+      if (tripDatesReversed(d.querySelector("#tnStart").value, d.querySelector("#tnEnd").value)) { alert("The end date can't be before the start date."); return; }
       const party = Array.from(d.querySelectorAll(".travel-party-chip.is-selected")).map(function(b) { return b.dataset.party; });
       const trip = defaultTrip({
         name,
@@ -42523,6 +43093,10 @@ function showTravelNewIdeaDialog() {
   });
 }
 
+// Both set and end before start → reject (an inverted range yields an empty
+// day grid and a broken calendar projection).
+function tripDatesReversed(start, end) { return !!(start && end && end < start); }
+
 function showTravelEditDatesDialog(trip) {
   const d = document.createElement("dialog");
   d.className = "recipe-dialog auth-dialog";
@@ -42542,8 +43116,17 @@ function showTravelEditDatesDialog(trip) {
   d.showModal();
   d.querySelector("#tedCancel").addEventListener("click", () => d.remove());
   d.querySelector("#tedSave").addEventListener("click", () => {
-    trip.startDate = d.querySelector("#tedStart").value;
-    trip.endDate = d.querySelector("#tedEnd").value;
+    const startVal = d.querySelector("#tedStart").value;
+    const endVal = d.querySelector("#tedEnd").value;
+    if (tripDatesReversed(startVal, endVal)) {
+      const endInput = d.querySelector("#tedEnd");
+      endInput.setCustomValidity("End date can't be before the start date");
+      endInput.reportValidity();
+      endInput.addEventListener("input", () => endInput.setCustomValidity(""), { once: true });
+      return;
+    }
+    trip.startDate = startVal;
+    trip.endDate = endVal;
     trip.updatedAt = new Date().toISOString();
     persist();
     syncTripToCalendar(trip);
@@ -42558,7 +43141,7 @@ function showTravelEditPartyDialog(trip) {
   const partyOptions = [...new Set([...travelPartyOptions(), ...(trip.party || [])])];
   const chipsHtml = partyOptions.map(function(p) {
     const sel = (trip.party || []).includes(p) ? " is-selected" : "";
-    return '<button type="button" class="travel-party-chip' + sel + '" data-party="' + p + '">' + p + '</button>';
+    return '<button type="button" class="travel-party-chip' + sel + '" data-party="' + escapeHtml(p) + '">' + escapeHtml(p) + '</button>';
   }).join("");
   d.innerHTML =
     '<div class="recipe-form">' +

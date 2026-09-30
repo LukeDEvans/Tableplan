@@ -1,4 +1,10 @@
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
+// GRO-18: bound the paid AI call. Over-long names are dropped (they'd never be a
+// real grocery item); lists beyond MAX_ITEMS are tagged in first-N order — the
+// client only sends untagged items, so re-running tags the remainder.
+const MAX_ITEMS = 300;
+const MAX_ITEM_CHARS = 100;
+const ANTHROPIC_TIMEOUT_MS = 25000;
 
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return jsonResponse(405, { error: "Method not allowed." });
@@ -14,7 +20,9 @@ exports.handler = async (event) => {
   let body;
   try { body = JSON.parse(event.body || "{}"); } catch { return jsonResponse(400, { error: "Invalid JSON." }); }
 
-  const items = Array.isArray(body.items) ? body.items.map(s => String(s).trim()).filter(Boolean) : [];
+  const items = Array.isArray(body.items)
+    ? body.items.map(s => String(s).trim()).filter(s => s && s.length <= MAX_ITEM_CHARS).slice(0, MAX_ITEMS)
+    : [];
   if (!items.length) return jsonResponse(400, { error: "No items provided." });
 
   const apiKey = (process.env.ANTHROPIC_API_KEY || "").trim();
@@ -51,7 +59,8 @@ async function claudeCall(apiKey, { system, user, maxTokens = 1024 }) {
       max_tokens: maxTokens,
       system,
       messages: [{ role: "user", content: user }]
-    })
+    }),
+    signal: AbortSignal.timeout(ANTHROPIC_TIMEOUT_MS)
   });
   if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b.error?.message || `Anthropic API error ${res.status}`); }
   const data = await res.json();

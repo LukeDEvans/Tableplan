@@ -1,3 +1,5 @@
+const { createOAuthState } = require("./_oauth-state");
+
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 
 exports.handler = async (event) => {
@@ -16,8 +18,11 @@ exports.handler = async (event) => {
 
   const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.URL}/.netlify/functions/gmail-callback`;
 
-  // Encode userId in state so callback knows whose tokens to save
-  const state = Buffer.from(JSON.stringify({ userId })).toString("base64url");
+  if (!serviceKey) return json(503, { error: "SUPABASE_SERVICE_ROLE_KEY not configured." });
+
+  // Signed, expiring state (SRV-1): the callback trusts userId only after
+  // verifying the HMAC, so it can't be forged to hijack another user's link.
+  const state = createOAuthState(userId, serviceKey);
 
   const params = new URLSearchParams({
     client_id: clientId,

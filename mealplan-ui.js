@@ -1,6 +1,6 @@
 // mealplan-ui.js — Meal-plan domain extracted from app.js (createMealplanModule).
 // Completes Decision #2's four-way split (recipes / meal-plan / groceries / cook).
-// 15 pure normalizers are top-level exports (boot); the whole planner UI + auto-rules +
+// A few pure helpers/constants are top-level exports (boot-safe); the whole planner UI + auto-rules +
 // meal-entry drag/drop + pickers + auto-generate + serving writeback + meal-plan settings +
 // restaurant seam + meal-plan recipe cards is the factory. Meal-plan is the hub: it is
 // instantiated LAST, so groceries/recipes get the meal-plan bridge injected via thunks, and
@@ -13,7 +13,8 @@
 // the restore machinery, and the eat shell (activateEatShell). The legacy week.manualGroceries
 // field is untouched (Decision #2b).
 import * as LiveMealPlanServings from './meal-plan-servings.js';
-import { mealColumnIndexForTime, minutesSinceMidnight } from './meal-plan-time.js';
+import { mealColumnIndexForTime, mealTimeWindowForLabel, minutesSinceMidnight } from './meal-plan-time.js';
+import { hasMealAheadTask, restoreWeekPlan, snapshotWeekPlan } from './meal-plan-state.js';
 import { icon as ldeIcon } from './live-icons.js';
 import { attachSwipeGesture } from './swipe-deck.js';
 
@@ -42,12 +43,6 @@ export const daySpecificDefaultMealEntries = [
   { dayId: "wednesday", meal: "MJ Dinner", index: 0, value: "leftovers" },
   { dayId: "wednesday", meal: "Luke Dinner", index: 0, value: "leftovers" }
 ];
-const weekdayBreakfastDayIds = new Set(["monday", "tuesday", "wednesday", "thursday", "friday-finish"]);
-const MEAL_TIME_WINDOWS = {
-  Breakfast: [0, 11 * 60],        // until 11:00
-  Lunch:     [11 * 60, 15 * 60],  // 11:00–15:00
-  Dinner:    [15 * 60, 24 * 60],  // 15:00 onward
-};
 const expandedMealContext = new Set();
 
 // ── Pure normalizers (top-level exports; boot-safe) ───────────────────────
@@ -120,7 +115,7 @@ export function groceryMealSlotId(item, servings = 1) {
 // ══════════════════════════════════════════════════════════════════════════
 export function createMealplanModule(deps) {
   const {
-    state, elements, meals, prepDays, breakfastMeals, lunchMeals, dinnerMeals, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys, getActiveAppArea, getAuthSession, getCurrentWeek, getDraggedDoTask, getDraggedPlayTask, getActivePlannerDayId, setActivePlannerDayId, getLastMealDragPoint, setLastMealDragPoint, getRestaurantSearchPending, setRestaurantSearchPending, getRestaurantSearchSuggestions, setRestaurantSearchSuggestions, getSuppressNextWeekLabelClick, setSuppressNextWeekLabelClick, getPendingMealRecipeSelection, setPendingMealRecipeSelection, getPendingMealIngredientSelection, setPendingMealIngredientSelection, getPendingAutoRuleRecipeSelection, setPendingAutoRuleRecipeSelection, getPendingAutoRuleIngredientSelection, setPendingAutoRuleIngredientSelection, getMealPlanNotifOpen, setMealPlanNotifOpen, getMealPlanRecipes, setMealPlanRecipes, getRestaurantInfoPopoverContext, setRestaurantInfoPopoverContext, acquireGroceryStoreSearchLocation, activeDayEventsTemplate, activeRecipes, addDays, autoEstimateNutrition, bindConfigListDrag, calendarTabStyle, callGmailApi, clearDoTaskDragState, clearPlayTaskDragState, cloneCombinedMealSections, cloneMealSlots, closeFloatingMenus, closeFolderMenu, closeSettingsMenu, closeWeekJumpMenu, combinedMealSectionsForWeek, combinedRecipeTime, compactDayLabel, compactMealSlotEntries, compactSlotEntries, dateFromWeekKey, dateKeyFromDate, defaultCollapsedSections, deleteDraggedDoTask, deleteDraggedPlayTask, displayMealName, doBacklogTasks, ensureCombinedMealSectionShape, ensureMealSlotShape, escapeHtml, focusGroceryLibraryInput, folderName, formatDailyDozenServings, formatWeekRange, getAppName, getGroceryStoreSearchLocation, groceryPlacesApiUrl, groceryPlacesRequestOptions, grocerySuggestionItems, importViaGateway, isDescendantFolder, isPlannedRecipeEntry, isPublishedMealPlanView, makeSortable, mealEntryValue, mealKeysForDay, mealSlotsForWeek, minutesOfDay, normalizeAutoGenerateRule, normalizeAutoGenerateRules, normalizeCookLog, normalizeDoTasks, normalizeIngredients, normalizeInstructionSteps, normalizeNutritionFacts, normalizePlannedRecipeEntry, normalizePublishedWeeks, normalizeRecipeTagSelection, normalizeRecipeUrlInput, normalizedFolders, openDailyDozenPage, openGroceriesPage, openGroceryReviewItems, openPlanEventDialog, openPublishedGroceryReview, openRecipeBoxPage, openRecipeView, persist, persistImmediately, planEventOccursOn, plannedEntryAtLocation, plannedServingsForEntry, plannerDayIdForDate, recipeDefaultServings, recipeForSlot, recipeIdForSlot, recipeTags, recomputeMealPlanLayout, render, renderCollapsedSections, renderDoPlanner, renderFolders, renderGroceries, renderGroceryLibrary, renderPlayPlanner, renderTasksPage, saveRecipeRow, scaledIngredientToText, setCombinedMealSection, setPageNotifCount, setPageTitle, showMailToast, slotEntries, storeDirectionsUrl, syncedCalendarEventsForDate, unlistedGroceryItemsForWeek, updateTabIndicator, weekKey, weekState, queueRecipeForReview, recipeReviewCount,
+    state, elements, meals, prepDays, PLAN_COLORS, mealColumnConfigs, combinedMealSections, autoRuleMealKeys, getActiveAppArea, getAuthSession, getCurrentWeek, getDraggedDoTask, getDraggedPlayTask, getActivePlannerDayId, setActivePlannerDayId, getLastMealDragPoint, setLastMealDragPoint, getRestaurantSearchPending, setRestaurantSearchPending, getRestaurantSearchSuggestions, setRestaurantSearchSuggestions, setSuppressNextWeekLabelClick, getPendingMealRecipeSelection, setPendingMealRecipeSelection, getPendingMealIngredientSelection, setPendingMealIngredientSelection, getPendingAutoRuleRecipeSelection, setPendingAutoRuleRecipeSelection, getPendingAutoRuleIngredientSelection, setPendingAutoRuleIngredientSelection, getMealPlanNotifOpen, setMealPlanNotifOpen, getMealPlanRecipes, setMealPlanRecipes, setRestaurantInfoPopoverContext, acquireGroceryStoreSearchLocation, activeDayEventsTemplate, activeRecipes, addDays, bindConfigListDrag, calendarTabStyle, callGmailApi, clearDoTaskDragState, clearPlayTaskDragState, closeFloatingMenus, closeFolderMenu, closeSettingsMenu, closeWeekJumpMenu, combinedMealSectionsForWeek, combinedRecipeTime, compactDayLabel, compactMealSlotEntries, compactSlotEntries, dateKeyFromDate, defaultCollapsedSections, deleteDraggedDoTask, deleteDraggedPlayTask, displayMealName, doBacklogTasks, escapeHtml, focusGroceryLibraryInput, folderName, getAppName, getGroceryStoreSearchLocation, groceryPlacesApiUrl, groceryPlacesRequestOptions, grocerySuggestionItems, importViaGateway, isDescendantFolder, isPlannedRecipeEntry, makeSortable, mealEntryValue, mealKeysForDay, mealSlotsForWeek, minutesOfDay, normalizeAutoGenerateRule, normalizeAutoGenerateRules, normalizeCookLog, normalizeDoTasks, normalizeIngredients, normalizeInstructionSteps, normalizeNutritionFacts, normalizePlannedRecipeEntry, normalizeRecipeTagSelection, normalizeRecipeUrlInput, normalizedFolders, openDailyDozenPage, openGroceriesPage, openPlanEventDialog, openRecipeBoxPage, openRecipeView, persist, planEventOccursOn, plannedEntryAtLocation, plannerDayIdForDate, recipeDefaultServings, recipeForSlot, recipeIdForSlot, recipeTags, recomputeMealPlanLayout, render, renderCollapsedSections, renderDoPlanner, renderFolders, renderGroceries, renderGroceryLibrary, renderPlayPlanner, renderTasksPage, scaledIngredientToText, setCombinedMealSection, setPageNotifCount, setPageTitle, showMailToast, slotEntries, storeDirectionsUrl, syncedCalendarEventsForDate, updateTabIndicator, weekKey, weekState, queueRecipeForReview, recipeReviewCount,
   } = deps;
   _appState = state;
 
@@ -142,7 +137,6 @@ export function createMealplanModule(deps) {
   // True until the carousel has been scrolled to the meal for the current time
   // of day (noon → Lunch). Set on first load and whenever the meal plan is opened.
   let pendingTimeOfDayMealSnap = true;
-  let mealPointerDeleteGesture = null;
   let pendingAutoRuleCompaction = null;
   let restaurantSearchSessionToken = "";
   let suppressAutoRuleClick = false;
@@ -737,10 +731,7 @@ function addMakeAheadTaskForMealEntry(day, meal, index) {
   const key = weekKey();
   const title = `Make Ahead: ${recipe.name}`;
   const tasks = doBacklogTasks();
-  const alreadyExists = tasks.some((task) => (
-    normalize(task.title) === normalize(title)
-    && (!task.weekKey || task.weekKey === key)
-  ));
+  const alreadyExists = hasMealAheadTask(tasks, state.doPlans, title, key);
   if (!alreadyExists) {
     tasks.push({
       id: createId("task"),
@@ -764,10 +755,7 @@ function addPrepAheadTaskForMealEntry(day, meal, index) {
   const key = weekKey();
   const title = `Prep: ${recipe.name}`;
   const tasks = doBacklogTasks();
-  const alreadyExists = tasks.some((task) => (
-    normalize(task.title) === normalize(title)
-    && (!task.weekKey || task.weekKey === key)
-  ));
+  const alreadyExists = hasMealAheadTask(tasks, state.doPlans, title, key);
   if (!alreadyExists) {
     tasks.push({
       id: createId("task"),
@@ -1064,6 +1052,8 @@ async function searchRestaurantLocations(query) {
       ? `Choose a restaurant below.${locationNote}`
       : "No matching restaurants found. Try a different name.";
   } catch (error) {
+    // A stale (superseded) query's failure must not wipe the current results.
+    if (elements.restaurantSearchInput.value.trim() !== query) return;
     setRestaurantSearchSuggestions([]);
     renderRestaurantSuggestions();
     elements.restaurantSearchStatus.textContent = error.message || "Search unavailable.";
@@ -1134,22 +1124,6 @@ function clearMealRestaurant(day, meal, index) {
   if (!specialMeal) return;
   entries[index] = specialMealSlotId(specialMeal.type, specialMeal.note);
   setMeal(day, meal, compactMealSlotEntries(entries, meal));
-}
-
-function renderMealRestaurantArea(restaurant, day, meal, index) {
-  if (restaurant?.placeId) {
-    const mapsUrl = restaurant.googleMapsUri || storeDirectionsUrl(restaurant);
-    return `
-      <div class="meal-restaurant-bar">
-        <svg class="meal-restaurant-pin-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-        <span class="meal-restaurant-bar-name">${escapeHtml(restaurant.name)}</span>
-        ${mapsUrl ? `<a class="meal-restaurant-bar-link" href="${escapeHtml(mapsUrl)}" target="_blank" rel="noopener noreferrer" title="Get directions">Directions</a>` : ""}
-        ${restaurant.websiteUri ? `<a class="meal-restaurant-bar-link" href="${escapeHtml(restaurant.websiteUri)}" target="_blank" rel="noopener noreferrer" title="Restaurant website / menu">Menu</a>` : ""}
-        <button class="meal-restaurant-unlink-btn" type="button" data-unlink-restaurant data-day="${escapeHtml(day)}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Unlink restaurant" aria-label="Unlink restaurant">×</button>
-      </div>
-    `;
-  }
-  return "";
 }
 
 function saveMealPlanMembers() {
@@ -1304,10 +1278,6 @@ function autoRuleSignature(rule) {
     rule.tagMatchMode || "any",
     rule.selectionMode || "random"
   ].join("|");
-}
-
-function collapseAllPlannerDays() {
-  setActivePlannerDayId(prepDays[0].id);
 }
 
 function renderPlanner() {
@@ -1514,7 +1484,7 @@ function renderPlanner() {
       mealEntryClickTimer = window.setTimeout(() => {
         if (!suppressMealEntryClick) {
           const mealContext = button.dataset.day
-            ? { day: button.dataset.day, meal: button.dataset.meal, index: Number(button.dataset.index) }
+            ? { day: button.dataset.day, meal: button.dataset.meal, index: Number(button.dataset.index), recipeId: button.dataset.viewRecipe }
             : null;
           openRecipeView(button.dataset.viewRecipe, mealContext);
         }
@@ -1674,7 +1644,9 @@ function setMealNote(dayId, meal, text) {
 }
 
 function eventCoversMeal(event, meal) {
-  const win = MEAL_TIME_WINDOWS[meal];
+  // Window derived from the configured meal columns (custom / any-case labels
+  // included) — see mealTimeWindowForLabel in meal-plan-time.js.
+  const win = mealTimeWindowForLabel(mealColumnConfigs.map((column) => column.label), meal);
   if (!win) return false;
   if (event.allDay || !event.startTime) return true;
   const start = minutesOfDay(event.startTime);
@@ -2336,17 +2308,17 @@ function slotTemplate(day, meal, slotValue, options = {}) {
   if (readOnly && !filledEntries.length) return "";
 
   return `
-    <div class="slot-card meal-${mealToken(meal)} ${filledEntries.length ? "filled" : ""} ${readOnly ? "published-slot" : ""}" ${readOnly ? "" : `data-meal-slot data-meal-section-target data-day="${day.id}" data-meal="${meal}"`}>
+    <div class="slot-card meal-${escapeHtml(mealToken(meal))} ${filledEntries.length ? "filled" : ""} ${readOnly ? "published-slot" : ""}" ${readOnly ? "" : `data-meal-slot data-meal-section-target data-day="${day.id}" data-meal="${escapeHtml(meal)}"`}>
       <div class="slot-topline">
-        <div class="slot-label" ${canCombine ? `draggable="true" data-meal-section-drag data-day="${day.id}" data-meal="${meal}" title="Drag onto another ${escapeHtml(displayMealName(combineGroupKeyForMeal(meal) || meal).toLowerCase())} section to combine"` : ""}>${escapeHtml(displayMeal)}</div>
+        <div class="slot-label" ${canCombine ? `draggable="true" data-meal-section-drag data-day="${day.id}" data-meal="${escapeHtml(meal)}" title="Drag onto another ${escapeHtml(displayMealName(combineGroupKeyForMeal(meal) || meal).toLowerCase())} section to combine"` : ""}>${escapeHtml(displayMeal)}</div>
         ${readOnly ? "" : `<div class="slot-actions">
-          <button class="slot-delete-btn" type="button" data-clear-meal-section data-day="${day.id}" data-meal="${meal}" title="${isCombined ? `Clear and split ${displayMeal}` : `Clear ${displayMeal}`}" aria-label="${isCombined ? `Clear and split ${displayMeal}` : `Clear ${displayMeal}`}">
+          <button class="slot-delete-btn" type="button" data-clear-meal-section data-day="${day.id}" data-meal="${escapeHtml(meal)}" title="${isCombined ? `Clear and split ${escapeHtml(displayMeal)}` : `Clear ${escapeHtml(displayMeal)}`}" aria-label="${isCombined ? `Clear and split ${escapeHtml(displayMeal)}` : `Clear ${escapeHtml(displayMeal)}`}">
             ${ldeIcon("trash", { size: 16 })}
           </button>
-          <button class="slot-generate-btn" type="button" data-generate-meal-section data-day="${day.id}" data-meal="${meal}" title="Auto-generate ${displayMeal}" aria-label="Auto-generate ${displayMeal}">
+          <button class="slot-generate-btn" type="button" data-generate-meal-section data-day="${day.id}" data-meal="${escapeHtml(meal)}" title="Auto-generate ${escapeHtml(displayMeal)}" aria-label="Auto-generate ${escapeHtml(displayMeal)}">
             ${ldeIcon("autoGenerate", { size: 16 })}
           </button>
-          <button class="slot-add-btn" type="button" data-add-meal-entry data-day="${day.id}" data-meal="${meal}" title="${hasOpenEntry ? `Fill the open slot before adding another recipe` : `Add another recipe`}" aria-label="Add another recipe to ${displayMeal}" ${hasOpenEntry ? "disabled" : ""}>${ldeIcon("add", { size: 16 })}</button>
+          <button class="slot-add-btn" type="button" data-add-meal-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" title="${hasOpenEntry ? `Fill the open slot before adding another recipe` : `Add another recipe`}" aria-label="Add another recipe to ${escapeHtml(displayMeal)}" ${hasOpenEntry ? "disabled" : ""}>${ldeIcon("add", { size: 16 })}</button>
         </div>`}
       </div>
       <div class="meal-entry-list">
@@ -2362,7 +2334,7 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
   const specialMeal = specialMealForSlot(entry);
   const listId = `recipe-options-${day.id}-${mealToken(meal)}-${index}`;
   const isEditing = isEditingMealEntry(day.id, meal, index);
-  const draggable = entry && !isEditing ? `data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}"` : "";
+  const draggable = entry && !isEditing ? `data-meal-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}"` : "";
 
   if (readOnly) {
     if (!entry) {
@@ -2416,7 +2388,7 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
     }
     return `
       <div class="meal-entry ${entry ? "editing-meal-entry" : ""}" ${draggable}>
-        <input class="meal-search" list="${escapeHtml(listId)}" data-meal-input data-day="${day.id}" data-meal="${meal}" data-index="${index}" value="${escapeHtml(mealInputValue(entry))}" placeholder="${escapeHtml(mealEntryPlaceholder(meal, index))}" />
+        <input class="meal-search" list="${escapeHtml(listId)}" data-meal-input data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" value="${escapeHtml(mealInputValue(entry))}" placeholder="${escapeHtml(mealEntryPlaceholder(meal, index))}" />
         <datalist id="${escapeHtml(listId)}">
           ${recipeOptionsTemplate(slotEntries, entry)}
         </datalist>
@@ -2426,13 +2398,13 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
 
   if (recipe) {
     return `
-      <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}">
+      <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}">
         <div class="meal-recipe-plan">
-          <button class="recipe-meal-link" type="button" data-view-recipe="${escapeHtml(recipe.id)}" data-edit-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Double-click to edit">
+          <button class="recipe-meal-link" type="button" data-view-recipe="${escapeHtml(recipe.id)}" data-edit-meal-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Double-click to edit">
             ${escapeHtml(recipe.name)}
           </button>
         </div>
-        <button class="meal-swipe-delete" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" aria-label="Delete ${escapeHtml(recipe.name)}">Delete</button>
+        <button class="meal-swipe-delete" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" aria-label="Delete ${escapeHtml(recipe.name)}">Delete</button>
       </div>
     `;
   }
@@ -2441,7 +2413,7 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
     const restaurantLinked = specialMeal.type === "out" && specialMeal.restaurant?.placeId;
     const pinTitle = restaurantLinked ? "Change restaurant" : "Link restaurant";
     return `
-      <div class="meal-entry draggable-meal-entry special-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}">
+      <div class="meal-entry draggable-meal-entry special-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}">
         <div class="special-meal-card special-meal-${escapeHtml(specialMeal.type)}">
           <div class="special-meal-label-row">
             <strong>${escapeHtml(specialMealLabel(specialMeal.type))}${specialMeal.note && !restaurantLinked ? " -" : ""}</strong>
@@ -2451,17 +2423,17 @@ function mealEntryTemplate(day, meal, entry, index, entryCount, slotEntries, opt
             ${specialMeal.type === "out" ? `<button class="meal-restaurant-pin-btn" type="button" data-link-restaurant data-day="${escapeHtml(day.id)}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="${pinTitle}" aria-label="${pinTitle}"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></button>` : ""}
           </div>
         </div>
-        <button class="meal-swipe-delete" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" aria-label="Delete ${escapeHtml(specialMealLabel(specialMeal.type))}">Delete</button>
+        <button class="meal-swipe-delete" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" aria-label="Delete ${escapeHtml(specialMealLabel(specialMeal.type))}">Delete</button>
       </div>
     `;
   }
 
   return `
-    <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}">
-      <button class="recipe-meal-link custom-meal-link" type="button" data-edit-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" title="Double-click to edit">
+    <div class="meal-entry draggable-meal-entry" data-meal-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}">
+      <button class="recipe-meal-link custom-meal-link" type="button" data-edit-meal-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" title="Double-click to edit">
         ${escapeHtml(mealInputValue(entry))}
       </button>
-      <button class="meal-swipe-delete" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${meal}" data-index="${index}" aria-label="Delete meal entry">Delete</button>
+      <button class="meal-swipe-delete" type="button" data-remove-meal-entry data-day="${day.id}" data-meal="${escapeHtml(meal)}" data-index="${index}" aria-label="Delete meal entry">Delete</button>
     </div>
   `;
 }
@@ -2529,55 +2501,6 @@ function outMealIconTemplate() {
 
 function leftoversIconTemplate() {
   return ldeIcon("leftovers", { size: 18 });
-}
-
-function handleMealEntryDragStart(event) {
-  if (event.currentTarget.querySelector("[data-meal-input]")
-    || event.target.closest("[data-special-meal-note], [data-link-restaurant], [data-unlink-restaurant], [data-show-restaurant-info], .meal-restaurant-bar-link")) {
-    event.preventDefault();
-    return;
-  }
-  suppressMealEntryClick = true;
-  window.clearTimeout(mealEntryClickTimer);
-  draggedMealEntry = {
-    day: event.currentTarget.dataset.day,
-    meal: event.currentTarget.dataset.meal,
-    index: Number(event.currentTarget.dataset.index)
-  };
-  setLastMealDragPoint({ x: event.clientX, y: event.clientY });
-  event.currentTarget.classList.add("is-dragging");
-  document.body.classList.add("meal-entry-drag-active");
-  event.dataTransfer.effectAllowed = "move";
-  event.dataTransfer.setData("text/plain", JSON.stringify(draggedMealEntry));
-}
-
-function handleMealEntryDrag(event) {
-  if (!draggedMealEntry) return;
-  updateMealDragPoint(event);
-  elements.mealTrashTarget.classList.toggle("drag-over", isMealDragEndingInTrash());
-}
-
-function handleMealEntryDragOver(event) {
-  if (!draggedMealEntry) return;
-  updateMealDragPoint(event);
-  const target = event.currentTarget;
-  event.preventDefault();
-  target.classList.add("drag-over");
-  event.dataTransfer.dropEffect = "move";
-}
-
-function handleMealEntryDrop(event) {
-  event.preventDefault();
-  updateMealDragPoint(event);
-  const target = event.currentTarget;
-  target.classList.remove("drag-over");
-  if (!draggedMealEntry) return;
-  if (target.dataset.day === draggedMealEntry.day && target.dataset.meal === draggedMealEntry.meal) {
-    reorderMealEntry(draggedMealEntry.day, draggedMealEntry.meal, draggedMealEntry.index, Number(target.dataset.index));
-  } else {
-    moveMealEntryToSlot(draggedMealEntry, target.dataset.day, target.dataset.meal, Number(target.dataset.index));
-  }
-  clearMealEntryDragState();
 }
 
 function handleMealDayTabDragOver(event) {
@@ -2772,15 +2695,6 @@ function handleDocumentMealDrop(event) {
   deleteDraggedMealEntry();
   deleteDraggedPlayTask();
   deleteDraggedDoTask();
-}
-
-function handleMealEntryDragEnd(event) {
-  updateMealDragPoint(event);
-  if (isMealDragEndingInTrash() || elements.mealTrashTarget.classList.contains("drag-over")) {
-    deleteDraggedMealEntry();
-    return;
-  }
-  clearMealEntryDragState();
 }
 
 function handleAutoRuleDragStart(event) {
@@ -3018,69 +2932,6 @@ function activeTrashTarget() {
   return draggedAutoRuleEntry && elements.autoRuleTrashTarget ? elements.autoRuleTrashTarget : elements.mealTrashTarget;
 }
 
-function handleMealEntryPointerDown(event) {
-  // Touch swipe-to-delete was removed here: it fought the horizontal swipe
-  // that pages between meals within a day. Mobile deletes go through the
-  // long-press entry menu instead; mouse drag-to-trash is unaffected.
-  if (event.pointerType === "mouse") {
-    if (event.button !== 0 || event.currentTarget.querySelector("[data-meal-input]") || event.target.closest("[data-special-meal-note], [data-link-restaurant], [data-unlink-restaurant], [data-show-restaurant-info], .meal-restaurant-bar-link")) return;
-    startMealPointerDeleteGesture(event.currentTarget, event.clientX, event.clientY);
-  }
-}
-
-function handleMealEntryMouseDown(event) {
-  if (event.button !== 0 || event.currentTarget.querySelector("[data-meal-input]") || event.target.closest("[data-special-meal-note], [data-link-restaurant], [data-unlink-restaurant], [data-show-restaurant-info], .meal-restaurant-bar-link") || mealPointerDeleteGesture) return;
-  startMealPointerDeleteGesture(event.currentTarget, event.clientX, event.clientY);
-}
-
-function startMealPointerDeleteGesture(entry, startX, startY) {
-  document.body.classList.add("meal-entry-drag-active");
-  setLastMealDragPoint({ x: startX, y: startY });
-  mealPointerDeleteGesture = {
-    day: entry.dataset.day,
-    meal: entry.dataset.meal,
-    index: Number(entry.dataset.index),
-    startX,
-    startY,
-    active: false
-  };
-  window.addEventListener("pointermove", handleMealPointerDeleteMove);
-  window.addEventListener("pointerup", handleMealPointerDeleteEnd, { once: true });
-  window.addEventListener("mousemove", handleMealPointerDeleteMove);
-  window.addEventListener("mouseup", handleMealPointerDeleteEnd, { once: true });
-}
-
-function handleMealPointerDeleteMove(event) {
-  if (!mealPointerDeleteGesture) return;
-  const deltaX = event.clientX - mealPointerDeleteGesture.startX;
-  const deltaY = event.clientY - mealPointerDeleteGesture.startY;
-  const distance = Math.hypot(deltaX, deltaY);
-  if (distance < 8 && !mealPointerDeleteGesture.active) return;
-  mealPointerDeleteGesture.active = true;
-  suppressMealEntryClick = true;
-  setLastMealDragPoint({ x: event.clientX, y: event.clientY });
-  document.body.classList.add("meal-entry-drag-active");
-  elements.mealTrashTarget.classList.toggle("drag-over", isPointInMealTrash(event.clientX, event.clientY));
-}
-
-function handleMealPointerDeleteEnd(event) {
-  window.removeEventListener("pointermove", handleMealPointerDeleteMove);
-  window.removeEventListener("mousemove", handleMealPointerDeleteMove);
-  if (!mealPointerDeleteGesture) return;
-  const gesture = { ...mealPointerDeleteGesture };
-  mealPointerDeleteGesture = null;
-  elements.mealTrashTarget.classList.remove("drag-over");
-  document.body.classList.remove("meal-entry-drag-active");
-  updateMealDragPoint(event);
-  if ((gesture.active || isMealDragEndingInTrash()) && isMealDragEndingInTrash()) {
-    removeMealEntry(gesture.day, gesture.meal, gesture.index);
-  }
-  setLastMealDragPoint(null);
-  window.setTimeout(() => {
-    suppressMealEntryClick = false;
-  }, 120);
-}
-
 function reorderMealEntry(day, meal, fromIndex, toIndex) {
   if (fromIndex === toIndex) return;
   const week = weekState();
@@ -3151,7 +3002,8 @@ function moveMealEntryToDay(source, targetDay) {
   }
   week.slots[source.day][source.meal] = compactMealSlotEntries(sourceEntries, source.meal);
 
-  if (isCombinedMealKey(targetMeal)) {
+  const targetDayConfig = prepDays.find((item) => item.id === targetDay);
+  if (isCombinedMealKey(targetMeal) && !combinedMealMembersForDay(targetDayConfig, combinedMealSectionsForWeek(week), targetMeal).length) {
     activateCombinedMealForDayDrop(week, targetDay, targetMeal);
   }
 
@@ -3177,7 +3029,14 @@ function mealForDayTabDrop(sourceMeal, targetDayId) {
   if (isCombinedMealKey(sourceMeal)) {
     return combinedMealSections[sourceMeal].members.some((meal) => targetDay.meals.includes(meal)) ? sourceMeal : "";
   }
-  return targetDay.meals.includes(sourceMeal) ? sourceMeal : "";
+  if (!targetDay.meals.includes(sourceMeal)) return "";
+  // If the target day shows this meal inside a combined section, its own slot is
+  // hidden — drop into the combined section instead.
+  const groupKey = combineGroupKeyForMeal(sourceMeal);
+  if (groupKey && combinedMealMembersForDay(targetDay, combinedMealSectionsForWeek(weekState()), groupKey).includes(sourceMeal)) {
+    return groupKey;
+  }
+  return sourceMeal;
 }
 
 function mealEntriesForDayDropTarget(week, targetDay, targetMeal) {
@@ -3460,10 +3319,6 @@ function isMakeAheadTask(task) {
   return normalize(task?.title || "").startsWith("make ahead:");
 }
 
-function emptyMealSlotTemplate() {
-  return `<div class="slot-card placeholder-slot" aria-hidden="true"></div>`;
-}
-
 function ensureActivePlannerDay() {
   const activeDay = prepDays.find((day) => day.id === getActivePlannerDayId()) || prepDays[0];
   setActivePlannerDayId(activeDay.id);
@@ -3550,23 +3405,25 @@ function autoGenerateMealSection(dayId, meal) {
   }
 
   const week = weekState();
+  const snapshot = snapshotWeekPlan(week, state.publishedWeeks, weekKey());
   week.mealPlanView = "edit";
-  const previousSlots = JSON.stringify(week.slots);
   const recipeQueue = shuffled(recipes);
   const context = createAutoGenerateContext(recipes);
   const result = autoGenerateMealEntries(week, day, meal, recipeQueue, 0, context);
 
   if (context.missingFolders.size) {
-    try { week.slots = JSON.parse(previousSlots); } catch { /* state unchanged if restore fails */ }
+    restoreWeekPlan(week, state.publishedWeeks, weekKey(), snapshot);
     window.alert(missingFolderMessage(context.missingFolders));
     return;
   }
 
   if (!result.filledCount) {
+    restoreWeekPlan(week, state.publishedWeeks, weekKey(), snapshot);
     window.alert(`${displayMealName(meal)} already has an entry. Clear it first to auto-fill it.`);
     return;
   }
 
+  syncMakeAheadTasksForWeek(weekKey(), week);
   persist();
   renderPlanner();
   renderGroceries();
@@ -3582,9 +3439,8 @@ function autoGeneratePlannerDay(dayId) {
   }
 
   const week = weekState();
+  const snapshot = snapshotWeekPlan(week, state.publishedWeeks, weekKey());
   week.mealPlanView = "edit";
-  const previousSlots = JSON.stringify(week.slots);
-  const previousCombined = JSON.stringify(week.combinedMealSections || {});
   clearPlannerDaySlots(week, day);
   const recipeQueue = shuffled(recipes);
   const context = createAutoGenerateContext(recipes);
@@ -3599,17 +3455,18 @@ function autoGeneratePlannerDay(dayId) {
   });
 
   if (context.missingFolders.size) {
-    try { week.slots = JSON.parse(previousSlots); } catch { /* leave as-is */ }
-    try { week.combinedMealSections = JSON.parse(previousCombined); } catch { /* leave as-is */ }
+    restoreWeekPlan(week, state.publishedWeeks, weekKey(), snapshot);
     window.alert(missingFolderMessage(context.missingFolders));
     return;
   }
 
   if (!filledCount) {
+    restoreWeekPlan(week, state.publishedWeeks, weekKey(), snapshot);
     window.alert("No eligible Auto-Fill Rules filled this day.");
     return;
   }
 
+  syncMakeAheadTasksForWeek(weekKey(), week);
   persist();
   renderPlanner();
   renderGroceries();
@@ -3621,6 +3478,9 @@ function updateMealPlannedServingsFromContext(servings, mealContext) {
   const entries = mealEntryList(slotEntries(week.slots?.[mealContext.day]?.[mealContext.meal]), mealContext.meal);
   const recipe = recipeForSlot(entries[mealContext.index]);
   if (!recipe || recipe.virtualGroceryRecipe) return;
+  // The plan may have changed since the recipe view opened (drag, delete, sync):
+  // only write if the entry at that index is still the recipe that was opened.
+  if (mealContext.recipeId && recipeForSlot(mealContext.recipeId)?.id !== recipe.id) return;
   const entry = isPlannedRecipeEntry(entries[mealContext.index])
     ? entries[mealContext.index]
     : createPlannedRecipeEntry(recipe, mealContext.day, mealContext.meal);
@@ -3636,6 +3496,8 @@ function updateGroceryMealServing(item, servings, mealContext) {
   if (!item || !mealContext?.day || !mealContext?.meal || Number.isNaN(mealContext.index)) return;
   const week = weekState();
   const entries = mealEntryList(slotEntries(week.slots?.[mealContext.day]?.[mealContext.meal]), mealContext.meal);
+  // Only overwrite if the entry at that index is still this grocery item.
+  if (parseGroceryMealSlot(entries[mealContext.index])?.item !== String(item).trim()) return;
   entries[mealContext.index] = groceryMealSlotId(item, servings);
   week.slots[mealContext.day][mealContext.meal] = compactMealSlotEntries(entries, mealContext.meal);
   persist();
@@ -3674,11 +3536,8 @@ function autoGenerateMealPlan() {
   }
 
   const week = weekState();
+  const snapshot = snapshotWeekPlan(week, state.publishedWeeks, weekKey());
   week.mealPlanView = "edit";
-  const previousSlots = JSON.stringify(week.slots);
-  const previousCombined = JSON.stringify(week.combinedMealSections || {});
-  const previousPublishedSlots = JSON.stringify(week.publishedSlots || null);
-  const previousPublishedCombined = JSON.stringify(week.publishedCombinedMealSections || {});
   clearPlannerWeekSlots(week);
   const recipeQueue = shuffled(recipes);
   const context = createAutoGenerateContext(recipes);
@@ -3696,19 +3555,18 @@ function autoGenerateMealPlan() {
   });
 
   if (context.missingFolders.size) {
-    try { week.slots = JSON.parse(previousSlots); } catch { /* leave as-is */ }
-    try { week.combinedMealSections = JSON.parse(previousCombined); } catch { /* leave as-is */ }
-    try { week.publishedSlots = JSON.parse(previousPublishedSlots); } catch { /* leave as-is */ }
-    try { week.publishedCombinedMealSections = JSON.parse(previousPublishedCombined); } catch { /* leave as-is */ }
+    restoreWeekPlan(week, state.publishedWeeks, weekKey(), snapshot);
     window.alert(missingFolderMessage(context.missingFolders));
     return;
   }
 
   if (!filledCount) {
+    restoreWeekPlan(week, state.publishedWeeks, weekKey(), snapshot);
     window.alert("No eligible Auto-Fill Rules filled this week.");
     return;
   }
 
+  syncMakeAheadTasksForWeek(weekKey(), week);
   persist();
   renderPlanner();
   renderGroceries();
@@ -3779,6 +3637,9 @@ function autoGenerateMealEntries(week, day, meal, recipeQueue, startIndex, conte
 }
 
 function createAutoGenerateContext(recipes) {
+  // Normalize the rule list once per generate run; autoGenerateRuleForSlot is a
+  // read-only lookup (it used to re-normalize the whole list on every slot).
+  state.autoGenerateRules = normalizeAutoGenerateRules(state.autoGenerateRules);
   return {
     recipes,
     sharedSelections: new Map(),
@@ -3787,9 +3648,10 @@ function createAutoGenerateContext(recipes) {
 }
 
 function autoGenerateRuleForSlot(day, meal, index) {
-  state.autoGenerateRules = normalizeAutoGenerateRules(state.autoGenerateRules);
-  const rules = state.autoGenerateRules.filter((rule) => (
-    rule.meal === meal && rule.index === index && rule.dayIds.includes(day.id)
+  // Read-only: the list is normalized at load (loadState), by renderAutoRules, and
+  // at the start of each auto-generate run (createAutoGenerateContext).
+  const rules = (Array.isArray(state.autoGenerateRules) ? state.autoGenerateRules : []).filter((rule) => (
+    rule && rule.meal === meal && rule.index === index && Array.isArray(rule.dayIds) && rule.dayIds.includes(day.id)
   ));
   return rules.find((rule) => rule.dayIds.length === 1 && rule.dayIds[0] === day.id) || rules[0] || null;
 }
@@ -3870,10 +3732,6 @@ function folderIdByName(name) {
   return normalizedFolders().find((folder) => normalize(folder.name) === normalize(name))?.id || "";
 }
 
-function isWeekdayBreakfastSlot(day, meal) {
-  return meal === "MJ Breakfast" && weekdayBreakfastDayIds.has(day.id);
-}
-
 function slotHasMealSelection(slotValue) {
   return slotEntries(slotValue).some(Boolean);
 }
@@ -3887,44 +3745,6 @@ function shuffled(items) {
   return result;
 }
 
-function repeatMeal(day, meal) {
-  const week = weekState();
-  const recipeId = week.slots[day][meal];
-  if (!slotEntries(recipeId).length) return;
-
-  const dayIndex = prepDays.findIndex((item) => item.id === day);
-  const nextDay = prepDays[dayIndex + 1];
-  if (nextDay?.meals.includes(meal)) {
-    week.slots[nextDay.id][meal] = Array.isArray(recipeId) ? [...recipeId] : recipeId;
-    persist();
-    renderPlanner();
-    renderGroceries();
-  }
-}
-
-function applyDefaultMealEntries(week) {
-  if (week.defaultMealEntriesApplied) return;
-  prepDays.forEach((day) => {
-    if (!weekdayDefaultDayIds.has(day.id)) return;
-    defaultMealEntries.forEach((defaultEntry) => {
-      applyDefaultMealEntry(week, day, defaultEntry);
-    });
-  });
-  daySpecificDefaultMealEntries.forEach((defaultEntry) => {
-    const day = prepDays.find((item) => item.id === defaultEntry.dayId);
-    if (day) applyDefaultMealEntry(week, day, defaultEntry);
-  });
-  week.defaultMealEntriesApplied = true;
-}
-
-function applyDefaultMealEntry(week, day, defaultEntry) {
-  if (!day.meals.includes(defaultEntry.meal)) return;
-  const entries = mealEntryList(slotEntries(week.slots[day.id][defaultEntry.meal]), defaultEntry.meal);
-  if (entries[defaultEntry.index]) return;
-  entries[defaultEntry.index] = recipeOrCustomMealValue(defaultEntry.value, day.id, defaultEntry.meal);
-  week.slots[day.id][defaultEntry.meal] = compactMealSlotEntries(entries, defaultEntry.meal);
-}
-
 function recipeOrCustomMealValue(value, dayId = "", meal = "") {
   if (isPlannedRecipeEntry(value)) return normalizePlannedRecipeEntry(value);
   if (isGroceryMealSlot(value)) return value;
@@ -3936,22 +3756,6 @@ function recipeOrCustomMealValue(value, dayId = "", meal = "") {
     return groceryItem ? groceryMealSlotId(groceryItem) : value;
   }
   return createPlannedRecipeEntry(recipe, dayId, meal);
-}
-
-function mealPlanNutritionTotals(week = weekState()) {
-  const entries = [];
-  const slots = mealSlotsForWeek(week);
-  const combinedState = combinedMealSectionsForWeek(week);
-  prepDays.forEach((day) => mealKeysForDay(day, combinedState).forEach((meal) => {
-    slotEntries(slots?.[day.id]?.[meal]).forEach((entry) => {
-      const recipe = recipeForSlot(entry);
-      if (recipe && !recipe.virtualGroceryRecipe) entries.push(entry);
-    });
-  }));
-  return LiveMealPlanServings.sumMealPlanNutrition(
-    entries,
-    (recipeId) => activeRecipes().find((recipe) => recipe.id === recipeId)
-  );
 }
 
   return {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  routeCost, bestOrder, suggestReorder, detectTightConnections,
+  routeCost, routeCostStrict, bestOrder, reorderPairs, suggestReorder, detectTightConnections,
   detectOverpacked, detectCalendarConflicts, evaluateDay,
 } from "../travel-optimize.js";
 
@@ -66,6 +66,20 @@ describe("suggestReorder", () => {
     expect(suggestReorder([stop("m", "Museum", ""), stop("b", "Bazaar", "")], dist)).toBeNull();
   });
 
+  it("no phantom savings when a leg is unknown (TRV-13)", () => {
+    // Current order Hotel→Nowhere→Museum has two unknown legs (lenient cost 0 + 0);
+    // any reorder would look worse or "save" against a fiction. Must return null.
+    const timeline = [
+      stop("hotel", "Hotel", "Hotel", { movable: false, time: "09:00" }),
+      stop("b", "Bazaar", "Bazaar"),
+      stop("n", "Nowhere", "Nowhere"),
+      stop("m", "Museum", "Museum"),
+    ];
+    expect(suggestReorder(timeline, dist, { minSaveMin: 1 })).toBeNull();
+    expect(routeCostStrict(["Hotel", "Nowhere"], dist)).toBeNull();
+    expect(routeCostStrict(["Hotel", "Museum", "Bazaar"], dist)).toBe(18);
+  });
+
   it("ignores timed stops as movable", () => {
     const timeline = [stop("m", "Museum", "Museum", { time: "10:00" }), stop("b", "Bazaar", "Bazaar", { time: "11:00" })];
     expect(suggestReorder(timeline, dist)).toBeNull();
@@ -121,5 +135,20 @@ describe("evaluateDay", () => {
   it("returns [] for a quiet, optimal day", () => {
     const timeline = [stop("m", "Museum", "Museum", { time: "10:00" })];
     expect(evaluateDay(timeline, { distanceFn: dist })).toEqual([]);
+  });
+});
+
+describe("reorderPairs (TRV-14)", () => {
+  it("lists only anchor→movable, movable→movable, movable→anchor pairs", () => {
+    const timeline = [
+      stop("x", "Breakfast", "Cafe", { movable: false, time: "08:00" }),
+      stop("hotel", "Hotel", "Hotel", { movable: false, time: "09:00" }),
+      stop("b", "Bazaar", "Bazaar"),
+      stop("m", "Museum", "Museum"),
+      stop("d", "Dinner", "Resto", { movable: false, time: "19:00" }),
+      stop("z", "Bar", "Bar", { movable: false, time: "22:00" }),
+    ];
+    const keys = reorderPairs(timeline).map(p => p.join(">")).sort();
+    expect(keys).toEqual(["Bazaar>Museum", "Bazaar>Resto", "Hotel>Bazaar", "Hotel>Museum", "Museum>Bazaar", "Museum>Resto"].sort());
   });
 });

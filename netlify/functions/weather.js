@@ -212,7 +212,8 @@ async function fetchLatestObservation(stationsUrl, lat, lon) {
 }
 
 async function getProduct(office, type) {
-  if (!office || !NWS_PRODUCT_TYPES.includes(type)) throw httpError(400, "Unknown product.");
+  if (!/^[A-Z]{3,4}$/.test(office)) throw httpError(400, "Invalid office."); // WX-5: no path injection into NWS URL
+  if (!NWS_PRODUCT_TYPES.includes(type)) throw httpError(400, "Unknown product.");
   const list = await nwsFetch(`${NWS_BASE}/products/types/${type}/locations/${office}`, { accept: "application/ld+json" });
   const first = (list?.["@graph"] || list?.products || [])[0];
   if (!first?.id) return null;
@@ -468,7 +469,11 @@ function haversineMiles(lat1, lon1, lat2, lon2) {
 function sunTimes(lat, lon, date) {
   const rad = Math.PI / 180;
   const dayMs = 86400000;
-  const start = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+  // Use the LOCAL SOLAR date, not the UTC calendar date (WX-1): a US evening is
+  // already "tomorrow" in UTC, which returned tomorrow's sunrise/sunset and made
+  // the hero show night while the sun was still up.
+  const local = new Date(date.getTime() + (lon / 360) * dayMs);
+  const start = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate());
   const n = Math.floor((start - Date.UTC(2000, 0, 1)) / dayMs) + 0.0009 - lon / 360;
   const solarNoon = 2451545 + n + 0.0053 * Math.sin(rad * (357.5291 + 0.98560028 * n))
     - 0.0069 * Math.sin(2 * rad * (280.147 + 0.98564736 * n));
@@ -502,4 +507,4 @@ function shortPath(url) { try { return new URL(url).pathname; } catch { return u
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 // Exported for unit tests (Vitest or node) — pure, no network.
-module.exports._test = { conv, normalizeCurrent, currentFromForecast, normalizeHourly, normalizeDaily, normalizeAlerts, cardinal, cardinalToDegrees, parseWindMph, cToF, haversineMiles, sunTimes, zoneId, nwsFetch, searchLocations, getRadarCapabilities, enrichUvAqi };
+module.exports._test = { conv, normalizeCurrent, currentFromForecast, normalizeHourly, normalizeDaily, normalizeAlerts, cardinal, cardinalToDegrees, parseWindMph, cToF, haversineMiles, sunTimes, zoneId, nwsFetch, getProduct, searchLocations, getRadarCapabilities, enrichUvAqi };

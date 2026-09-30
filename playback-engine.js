@@ -124,15 +124,20 @@ export function createPlaybackEngine({ createAudio } = {}) {
     };
   }
 
-  function loadSegment(index, offsetSec, autoplay) {
+  // forceReload: a fresh engine.load() must reassign src + call load() even when
+  // the URL is unchanged — otherwise a radio reconnect (same stream URL) or a
+  // replay-from-0 of the same track keeps the stale/ended element state.
+  function loadSegment(index, offsetSec, autoplay, forceReload = false) {
     const a = ensureEl();
     segIndex = index;
     const seg = source.segments[index];
     pendingSeekOffset = offsetSec > 0 ? offsetSec : 0;
     bindSegmentHandlers();
-    if (a.src !== seg.url) { a.src = seg.url; if (typeof a.load === "function") a.load(); }
+    if (forceReload || a.src !== seg.url) { a.src = seg.url; if (typeof a.load === "function") a.load(); }
     applyRate();
-    if (a.readyState >= 1 && pendingSeekOffset > 0) {
+    // Apply the start offset whenever the element can seek — including 0, so an
+    // un-reloaded element doesn't keep playing from wherever it was left.
+    if (a.readyState >= 1) {
       try { a.currentTime = pendingSeekOffset; } catch { /* wait for metadata */ }
       pendingSeekOffset = 0;
     }
@@ -176,7 +181,7 @@ export function createPlaybackEngine({ createAudio } = {}) {
       waiting = false;
       if (typeof nextSource.rate === "number") rate = nextSource.rate;
       const start = nextSource.startPosition > 0 ? locate(nextSource.startPosition) : { index: 0, offset: 0 };
-      loadSegment(start.index, start.offset, autoplay);
+      loadSegment(start.index, start.offset, autoplay, true);
       return snapshot();
     },
     // Progressive sources (chunk-by-chunk TTS): append a freshly-synthesized
@@ -207,9 +212,18 @@ export function createPlaybackEngine({ createAudio } = {}) {
     // Absolute seek on the logical stream (handles crossing segment boundaries).
     seekTo(logicalSec) {
       if (!source) return;
+      // A seek while stalled waiting for a not-yet-synthesized segment resolves
+      // the stall: clear `waiting` (else a later appendSegment would yank playback
+      // forward from wherever the user sought to) and resume at the target.
+      const wasWaiting = waiting;
+      waiting = false;
       const { index, offset } = locate(Math.max(0, logicalSec));
-      if (index !== segIndex) loadSegment(index, offset, !el.paused);
-      else { try { el.currentTime = offset; } catch { /* not seekable */ } }
+      const autoplay = wasWaiting || !el.paused;
+      if (index !== segIndex) loadSegment(index, offset, autoplay);
+      else {
+        try { el.currentTime = offset; } catch { /* not seekable */ }
+        if (wasWaiting) this.play();
+      }
     },
     skip(delta) { this.seekTo(logicalPosition() + delta); },
     setRate(r) { rate = r || 1; applyRate(); },

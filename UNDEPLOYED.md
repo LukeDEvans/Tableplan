@@ -39,4 +39,60 @@ show whose feed keeps failing gets a "Not updating since…" note.
 1. Open White Coat Investor; recent episodes (late Sept) appear after the next refresh.
 2. Re-subscribe to NPR Politics; it should succeed (or show the actual error).
 
+## Sync, auth and service-worker fixes (PR #27)
+PR: https://github.com/LukeDEvans/Tableplan/pull/27
+
+Shared-infrastructure fixes from the full-app audit (INF-1 to INF-11): edits made during a
+save are no longer lost (P0, finance especially); only changed sections are written after a
+load; no cloud snapshot is posted when nothing changed; a failed group lookup no longer shows
+the "set up your group" dialog or writes to the wrong rows; sign-out flushes pending edits and
+drops this device's push subscription; boot failures show a message instead of hanging on
+"Checking sign-in"; supabase-js pinned to 2.117.2; the service worker caches only static
+files (cache v36).
+
+**After deploying:**
+1. Sign in on web and phone; edit something on each and confirm it appears on the other.
+2. Make an edit and immediately another; reload; both are there.
+3. Hard-refresh once so the new service worker (v36) takes over; the app still loads offline.
+
+## Full-app audit fixes (PR #22)
+PR: https://github.com/LukeDEvans/Tableplan/pull/22
+
+Security: Gmail sign-in state is HMAC-signed with an expiry; email, show notes and article
+HTML go through one allowlist sanitizer; ics-proxy uses the SSRF-guarded fetch; the TTS
+pre-synthesis worker requires a key only the cron sends; the travel-map-url function that
+returned the raw Maps key is deleted; path-traversal and prompt-size guards. Plus data-loss and
+correctness fixes across finance, calendar/ICS, meal plan, shop, recipes, travel, weather,
+music, contacts and health. Inbox triage has a Mail AI toggle (on by default).
+
+**After deploying:**
+1. Mail: open an HTML newsletter; it renders (images and links) with nothing broken.
+2. Settings → Mail: reconnect Gmail once to confirm sign-in still completes.
+3. Calendar: a subscribed ICS calendar shows events at the right local times.
+4. Next morning: the presynth cron log shows "triggered worker → 202" (not 403).
+
+## Refresh changed data when the app returns (PR #21)
+PR: https://github.com/LukeDEvans/Tableplan/pull/21
+
+When a tab or the iPhone app comes back to the foreground, it now checks which synced
+sections changed on the server (a few KB) and pulls in just those. So newsletters the mail
+sweep saved, or edits from another device, show up without restarting. At most once every
+2 minutes, only on return to the foreground (no polling).
+
+**After deploying:**
+1. Leave the iPhone app in the background, edit something on the web, reopen the app after
+   2+ minutes: the edit is there without a restart.
+
+## iPhone app: native player for podcasts + radio; Apple voice per device (PR #28)
+PR: https://github.com/LukeDEvans/Tableplan/pull/28
+
+The iPhone side ships through TestFlight. In the app, podcasts and radio play on the native
+player (lock-screen and AirPods pause/resume), and articles default to the best installed
+Apple voice. The voice choice is per device, so choosing one on the phone no longer changes
+the web app's voice. The website itself is unchanged.
+
+**After deploying:**
+1. Web: Settings → Voice still shows the household voice (not "device").
+2. Next TestFlight build from `main`: podcast/radio lock-screen pause and resume still work.
+
 Checks for work that's already live are in [POST_DEPLOY_CHECKS.md](POST_DEPLOY_CHECKS.md).

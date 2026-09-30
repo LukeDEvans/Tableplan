@@ -1,12 +1,16 @@
-// On-demand + scheduled cleanup of orphaned article-audio (TTS) and reading-content
-// (offloaded article body) objects in Storage.
+// On-demand + scheduled cleanup of orphaned article-audio (TTS) objects in Storage.
 //
 // Synthesized article audio is content-addressed: one Storage folder per cache
 // key. Nothing prunes folders for removed articles or unused voices, so the bucket
 // only grows. This job computes the LIVE set of folders (every current saved
-// article × the voices we keep) and deletes the rest. It also sweeps reading-content
-// the same way, keyed by each live article's own bodyRef.cloud.path (no hashing
-// needed there — the path is already stored on the record).
+// article × the voices we keep) and deletes the rest.
+//
+// reading-content is deliberately NOT swept (SRV-11, removed 2026-09-30). The old
+// branch listed only the bucket's top-level entries (per-user folders), compared
+// them to full object paths, and so never matched/deleted anything — a no-op. It
+// must not be "fixed" by recursing: reading-content holds user data (not
+// regenerable like audio) for every user, while this job only loads ONE
+// household's articles, so a recursive sweep would delete other users' bodies.
 //
 // SAFETY: the audio is fully regenerable — a wrongly-deleted folder just re-synths
 // on next play (never user-data loss). The one real hazard is deleting on a failed/
@@ -36,7 +40,6 @@ import { backfillArticleText } from "../../article-body-backfill.mjs";
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const AUDIO_BUCKET = "article-audio";
-const READING_CONTENT_BUCKET = "reading-content";
 const SECTION_NAMES = ["media", "config"]; // savedArticles live in `media`, aiSettings in `config`
 
 export default async () => {
@@ -79,15 +82,6 @@ export default async () => {
   console.log(`[tts-cleanup] articles=${articles.length} voice=${prefs.voiceId} folders=${folders.length} live=${live.size} keep=${keep.length} orphan=${orphan.length} mode=${deleteEnabled ? "DELETE" : "DRY-RUN"}`);
   if (orphan.length) console.log("[tts-cleanup] orphan sample:", orphan.slice(0, 10).join(", "));
 
-  // reading-content: live set is just every current article's own offloaded-body
-  // path (already stored on the record — no hashing/backfill needed here).
-  const liveContentPaths = new Set(articles.map((a) => a?.bodyRef?.cloud?.path).filter(Boolean));
-  let contentObjects;
-  try { contentObjects = await listAt(headers, READING_CONTENT_BUCKET, ""); }
-  catch (e) { console.error("[tts-cleanup] reading-content list failed:", e.message); contentObjects = null; }
-  const orphanContentPaths = contentObjects ? contentObjects.map((o) => o.name).filter((p) => p && !liveContentPaths.has(p)) : [];
-  console.log(`[tts-cleanup] reading-content objects=${contentObjects?.length ?? "?"} live=${liveContentPaths.size} orphan=${orphanContentPaths.length}`);
-
   if (!deleteEnabled) { console.log("[tts-cleanup] dry-run — nothing deleted. Set TTS_CLEANUP_DELETE=1 to enable."); return new Response("dry-run", { status: 200 }); }
 
   let deletedFolders = 0, deletedFiles = 0;
@@ -102,15 +96,6 @@ export default async () => {
     }
   }
   console.log(`[tts-cleanup] deleted ${deletedFiles} files across ${deletedFolders} folders`);
-
-  if (orphanContentPaths.length) {
-    try {
-      await deletePaths(headers, READING_CONTENT_BUCKET, orphanContentPaths);
-      console.log(`[tts-cleanup] deleted ${orphanContentPaths.length} orphaned reading-content object(s)`);
-    } catch (e) {
-      console.error("[tts-cleanup] reading-content delete failed:", e.message);
-    }
-  }
   return new Response("ok", { status: 200 });
 };
 

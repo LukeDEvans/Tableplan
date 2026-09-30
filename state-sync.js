@@ -51,3 +51,69 @@ export function mergeTombstones(a, b) {
 export function tombstoneSetFor(tombstones, key) {
   return key && tombstones?.[key]?.length ? new Set(tombstones[key]) : null;
 }
+
+// ── Section write bookkeeping (writeStateToSupabase) ─────────────────────────
+// `lastWrittenSections[section]` is the JSON the server is known to hold for a
+// section because WE wrote it (or just loaded it). The invariant that keeps edits
+// from being lost: it may only ever record JSON that was actually SENT and
+// ACKNOWLEDGED — never the live state at some later moment. Recording live state
+// after an awaited write marked edits made DURING the in-flight write as clean,
+// so they were never sent (INF-1).
+
+/**
+ * Which sections differ from what the server last acknowledged.
+ * @param {Object<string,string[]>} sections  STATE_SECTIONS
+ * @param {(keys:string[]) => string} sectionJson  current JSON for a section's keys
+ * @param {Object<string,string>|null} lastWritten  null ⇒ everything is dirty
+ * @param {(section:string) => boolean} [skip]  sections that must not be written now
+ * @returns {{section:string, keys:string[], json:string}[]}
+ */
+export function computeDirtySections(sections, sectionJson, lastWritten, skip = () => false) {
+  const dirty = [];
+  for (const [section, keys] of Object.entries(sections)) {
+    if (skip(section)) continue;
+    const json = sectionJson(keys);
+    if (!lastWritten || lastWritten[section] !== json) dirty.push({ section, keys, json });
+  }
+  return dirty;
+}
+
+/**
+ * Write every dirty section concurrently; one failure never blocks recording the
+ * others. `writeOne(entry)` resolves with the JSON it actually sent (it may differ
+ * from entry.json when a conflict merge rewrote the section before retrying); a
+ * non-string resolution falls back to the JSON captured when the write was planned.
+ * @returns {Promise<{written: Object<string,string>, error: any}>}
+ *   written — section → acknowledged JSON (successes only); error — first failure or null
+ */
+export async function writeDirtySections(dirty, writeOne) {
+  const results = await Promise.allSettled(dirty.map((entry) => writeOne(entry)));
+  const written = {};
+  let error = null;
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled") written[dirty[i].section] = typeof r.value === "string" ? r.value : dirty[i].json;
+    else if (error === null) error = r.reason ?? new Error(`section "${dirty[i].section}" write failed`);
+  });
+  return { written, error };
+}
+
+// ── Resume refresh (ISSUES.md "app never re-reads cloud state on resume") ──
+// When the app comes back to the foreground it asks the server only for each
+// section row's updated_at (a few KB), then downloads just the rows whose stamp
+// differs from the one this session last saw. Bounded: runs only on a return
+// to the foreground, at most once per interval, never while one is in flight.
+
+/** Ids of probed rows ({id, updated_at}) whose stamp differs from the last-seen
+ *  stamp map — including rows this session has never seen. */
+export function changedSectionRowIds(probeRows, lastSeenStamps) {
+  return (probeRows || [])
+    .filter((r) => r && r.id && r.updated_at && lastSeenStamps?.[r.id] !== r.updated_at)
+    .map((r) => r.id);
+}
+
+/** True when a resume check may run: none in flight and at least minIntervalMs
+ *  since the last one started (0 = never checked). */
+export function resumeCheckDue({ now, lastCheckAt, inFlight, minIntervalMs }) {
+  if (inFlight) return false;
+  return !lastCheckAt || now - lastCheckAt >= minIntervalMs;
+}

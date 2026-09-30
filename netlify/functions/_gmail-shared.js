@@ -279,6 +279,11 @@ async function saveMailSuggestions(serviceKey, userId, data) {
 
 // ─── AI triage ────────────────────────────────────────────────────────────────
 
+// Mail AI toggle for automatic triage (todo/booking suggestions). Default on.
+function inboxTriageEnabled(mailAiSettings) {
+  return (mailAiSettings || {}).inboxTriageSuggestions !== false;
+}
+
 async function triageEmail(anthropicKey, { subject, from, date, bodyText }) {
   const system = [
     "You triage incoming emails for a personal life-management app and suggest concrete in-app actions.",
@@ -469,6 +474,9 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey, preClai
     const mailAi = appCfg?.mailAiSettings || {};
     const testMode = aiTrashTestMode(mailAi);
     const autoDeleteSimplefin = mailAi.autoDeleteSimplefin !== false;
+    // Mail AI → "Inbox triage suggestions" (default ON: only an explicit false
+    // disables it). Gates the per-email triage call and the booking scan.
+    const triageOn = inboxTriageEnabled(mailAi);
     const newsEnabled = NewsLinks.enabledNewsLinkSources(mailAi).length > 0;
     // News mail is ALWAYS filed to Apps/AI trash (Luke, 2026-09-27), regardless
     // of test mode, so the label is needed whenever a news paper is enabled.
@@ -609,11 +617,13 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey, preClai
       }
 
       let ideas = [];
-      try {
-        ideas = await triageEmail(anthropicKey, { ...emailMeta, bodyText });
-      } catch (e) {
-        console.error("Triage failed for message", messageId, e.message);
-        return { suggestions: [], retry: true, receipt };
+      if (triageOn) {
+        try {
+          ideas = await triageEmail(anthropicKey, { ...emailMeta, bodyText });
+        } catch (e) {
+          console.error("Triage failed for message", messageId, e.message);
+          return { suggestions: [], retry: true, receipt };
+        }
       }
 
       const out = [];
@@ -634,6 +644,7 @@ async function runInboxSweep(tokens, serviceKey, userId, { anthropicKey, preClai
           createdAt: new Date().toISOString()
         };
         if (idea.kind === "add_booking") {
+          if (!triageOn) continue;
           try {
             const emailText = `Subject: ${emailMeta.subject}\nFrom: ${emailMeta.from}\nDate: ${emailMeta.date}\n\n${bodyText}`;
             const booking = await scanBookingFromEmailText(emailText, { apiKey: anthropicKey });
@@ -847,6 +858,7 @@ module.exports = {
   loadMailSuggestions,
   saveMailSuggestions,
   triageEmail,
+  inboxTriageEnabled,
   fetchHistoryDelta,
   runInboxSweep,
   armGmailWatch,

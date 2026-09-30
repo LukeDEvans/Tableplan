@@ -250,3 +250,30 @@ describe("radar capabilities discovery (mocked fetch)", () => {
     expect((await T.getRadarCapabilities()).available).toBe(false);
   });
 });
+
+describe("sunTimes uses the local solar date (WX-1)", () => {
+  it("San Francisco evening (01:00Z next UTC day) is between that day's sunrise and sunset", () => {
+    const at = new Date("2026-06-21T01:00:00Z"); // 6pm PDT on June 20
+    const s = T.sunTimes(37.77, -122.42, at);
+    expect(new Date(s.sunrise) < at).toBe(true);
+    expect(at < new Date(s.sunset)).toBe(true);
+  });
+
+  it("midday results are unchanged for a UTC-midday instant", () => {
+    const at = new Date("2026-06-21T20:00:00Z"); // 1pm PDT June 21
+    const s = T.sunTimes(37.77, -122.42, at);
+    expect(new Date(s.sunrise) < at && at < new Date(s.sunset)).toBe(true);
+  });
+});
+
+describe("getProduct validates the office code (WX-5)", () => {
+  it("rejects anything that isn't 3-4 uppercase letters with 400 before fetching", async () => {
+    const fetchSpy = vi.fn(async () => { throw new Error("should not fetch"); });
+    vi.stubGlobal("fetch", fetchSpy);
+    for (const office of ["", "bou", "BO", "BOULD", "../x", "BOU/../../points", "BOU?x=1"]) {
+      await expect(T.getProduct(office, "AFD")).rejects.toMatchObject({ status: 400 });
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+});

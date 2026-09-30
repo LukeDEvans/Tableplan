@@ -12,6 +12,18 @@ const { VOICE_TOOLS, VOICE_TOOL_NAMES, ownerFor, prepDays } = require("./_voice-
 
 const VOICE_MODEL_DEFAULT = "claude-haiku-4-5-20251001"; // fast enough for Siri; override with VOICE_ASSISTANT_MODEL
 const MAX_ROUNDS = 4;
+// Transcripts are short spoken commands; cap before any fetch (MED-3).
+const MAX_TRANSCRIPT_CHARS = 1000;
+
+// Timing-safe passphrase compare over fixed-length sha256 digests (SRV-6).
+function passphraseMatches(stored, provided) {
+  const a = String(stored || "");
+  if (!a) return false;
+  const nodeCrypto = require("crypto");
+  const ha = nodeCrypto.createHash("sha256").update(a).digest();
+  const hb = nodeCrypto.createHash("sha256").update(String(provided || "")).digest();
+  return nodeCrypto.timingSafeEqual(ha, hb);
+}
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return jsonResponse(204, {}, corsHeaders());
@@ -21,8 +33,9 @@ exports.handler = async (event) => {
   try { body = JSON.parse(event.body || "{}"); } catch { console.log("VOICE: invalid JSON"); return jsonResponse(400, { error: "Invalid JSON." }); }
 
   const transcript = String(body.transcript || "").trim();
-  console.log("VOICE: transcript=", JSON.stringify(transcript), "householdId=", JSON.stringify(body.householdId), "secret=", body.secret ? "(set)" : "(missing)");
+  console.log("VOICE: request chars=", transcript.length, "secret=", body.secret ? "(set)" : "(missing)");
   if (!transcript) return jsonResponse(400, { error: "No transcript provided." });
+  if (transcript.length > MAX_TRANSCRIPT_CHARS) return jsonResponse(413, { error: "Transcript too long." }, corsHeaders());
 
   const householdId = String(body.householdId || "").trim();
   if (!householdId) return jsonResponse(400, { error: "householdId is required." });
@@ -39,7 +52,7 @@ exports.handler = async (event) => {
     const configRow = await loadSection(serviceKey, householdId, "config");
     config = configRow?.state || {};
     const storedSecret = String(config.voiceCommandSecret || "");
-    if (!storedSecret || storedSecret !== providedSecret) return jsonResponse(401, { error: "Invalid passphrase." }, corsHeaders());
+    if (!passphraseMatches(storedSecret, providedSecret)) return jsonResponse(401, { error: "Invalid passphrase." }, corsHeaders());
   } catch (err) {
     console.log("VOICE: config load error:", err.message);
     return jsonResponse(500, { error: "Failed to check passphrase: " + err.message }, corsHeaders());
@@ -237,3 +250,5 @@ function jsonResponse(statusCode, body, extraHeaders = {}) {
     body: statusCode === 204 ? "" : JSON.stringify(body),
   };
 }
+
+exports._test = { passphraseMatches };
