@@ -5914,6 +5914,12 @@ function mergeStates(newer, older) {
     "financeAccounts", "financeManualTxns", "financeGoals",
     // Contacts (address book)
     "contacts",
+    // Radio user-added stations: each gets a fresh random `user_…` id and is
+    // never re-added under the same id, so tombstones (deleteRadioUserStation)
+    // are exact. Previously newer-wins — a station added on one device vanished
+    // when another device synced. (radioFavorites / radioFollowedPrograms stay
+    // newer-wins: see MERGE_NEWER_WINS_KEYS in test/architecture-state-merge-coverage.test.js.)
+    "radioUserStations",
   ]) {
     merged[key] = unionById(newer[key], older[key], key);
   }
@@ -5997,6 +6003,37 @@ function mergeStates(newer, older) {
     "financeNotifDismissed", "financeTxnConfirmed", "financeTxnReceipts",
   ]) {
     merged[key] = unionByKey(newer[key], older[key]);
+  }
+
+  // Calendar overlay visibility: sourceId → hidden flag. Toggling stores an
+  // explicit true/false (never deletes a key), so a per-key union is lossless.
+  merged.planHiddenSources = unionByKey(newer.planHiddenSources, older.planHiddenSources);
+
+  // Learned mail filing memory: two flat keyed maps (threadId → label, sender →
+  // label counts). Union per map so learning on one device isn't lost; the caps
+  // in recordMailMove re-trim on the next move.
+  merged.mailMoveMemory = {
+    ...(older.mailMoveMemory || {}),
+    ...(newer.mailMoveMemory || {}),
+    threads: unionByKey(newer.mailMoveMemory?.threads, older.mailMoveMemory?.threads),
+    senders: unionByKey(newer.mailMoveMemory?.senders, older.mailMoveMemory?.senders),
+  };
+
+  // Grocery weekly checklist: per-cycle provisional answers and submissions are
+  // keyed by cycle → union (newer wins per cycle), so a submission made on one
+  // device survives the other's sync. The item `config` list is authoritative
+  // as a whole (it carries deletions and order) → newer wins.
+  if (newer.groceryChecklist || older.groceryChecklist) {
+    const nCl = newer.groceryChecklist || {};
+    const oCl = older.groceryChecklist || {};
+    merged.groceryChecklist = {
+      ...oCl,
+      ...nCl,
+      config: Array.isArray(nCl.config) ? nCl.config : (oCl.config || []),
+      provisional: unionByKey(nCl.provisional, oCl.provisional),
+      submissions: unionByKey(nCl.submissions, oCl.submissions),
+      seeded: Boolean(nCl.seeded || oCl.seeded),
+    };
   }
 
   // ── Shallow object merges: older provides base, newer keys win ────────────
@@ -32569,6 +32606,7 @@ async function deleteRadioUserStation(id) {
   if (radioCurStation && radioCurStation.id === id) stopRadio();
   state.radioUserStations = (state.radioUserStations || []).filter((s) => s.id !== id);
   state.radioFavorites = (state.radioFavorites || []).filter((s) => s.id !== id); // drop any favourite ref
+  recordDeletion("radioUserStations", id); // tombstone: this list union-merges across devices
   persist();
   radioCatalog = null;
   await ensureRadioCatalog();
