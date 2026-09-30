@@ -31502,7 +31502,11 @@ async function getMusicProviders() {
   // search/playback silently exclude it until then. Storefront: an explicit
   // config wins, else the signed-in user's own (detected by the provider).
   const amCfg = state.appleMusic;
-  if (amCfg && amCfg.enabled) {
+  // Inside the iOS app, MusicKit JS's sign-in stalls (Apple's web popup can't
+  // complete in the web view), so Apple Music there needs the native plugin.
+  const amUsable = !isNativeApp() || !!nativeAppleMusic();
+  if (amCfg && amCfg.enabled && !amUsable) console.warn("Apple Music: native plugin not registered in this build");
+  if (amCfg && amCfg.enabled && amUsable) {
     const am = await import("./music-provider-applemusic.js");
     // In the iOS app, Apple's native MusicKit does sign-in and playback (MusicKit
     // JS can't sign in or play reliably inside the app's web view).

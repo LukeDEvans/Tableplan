@@ -13,9 +13,5 @@
     "CapacitorHttp": {
       "enabled": true
     }
-  },
-  "packageClassList": [
-    "LiveTtsPlugin",
-    "AppleMusicPlugin"
-  ]
+  }
 }
