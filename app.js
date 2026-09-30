@@ -6247,7 +6247,31 @@ let financeSectionHydrated = false;
 // ./finance-sync.js (extracted, unit-tested). The mutable session flag above
 // stays here; callers pass it + STATE_SECTIONS.finance into the pure guard.
 
-async function hydrateStateFromSharedStorage() {
+// Hydration is re-entered from several places (boot, sign-in, came-online, the
+// retry timer, invite accept). Never run two at once: a call that arrives while
+// one is in flight queues exactly ONE follow-up run (so a caller that needs a
+// fresh load — e.g. a new sign-in — still gets one) and shares its promise.
+let hydrateInFlight = null;
+let hydrateQueued = null;
+let hydrateRetryTimer = null;
+
+function hydrateStateFromSharedStorage() {
+  if (hydrateInFlight) {
+    if (!hydrateQueued) {
+      hydrateQueued = hydrateInFlight.catch(() => {}).then(() => {
+        hydrateQueued = null;
+        return hydrateStateFromSharedStorage();
+      });
+    }
+    return hydrateQueued;
+  }
+  window.clearTimeout(hydrateRetryTimer);
+  hydrateRetryTimer = null;
+  hydrateInFlight = runHydrateStateFromSharedStorage().finally(() => { hydrateInFlight = null; });
+  return hydrateInFlight;
+}
+
+async function runHydrateStateFromSharedStorage() {
   // Signed in but the group is unknown (membership lookup failed, or a brand-new
   // user who hasn't finished setup): loading/writing now would target the config
   // default stateId ("personal") instead of the household rows. Stay not-ready;
@@ -6294,6 +6318,7 @@ async function hydrateStateFromSharedStorage() {
             await snapshotCloudStateBeforeOverwrite(sharedState);
           }
           applyStoredState(merged);
+          seedLastWrittenFromLoad(); // only sections the merge changed get rewritten (INF-4)
           financeSectionHydrated = true;
           await provider.write();
         } else {
@@ -6302,6 +6327,7 @@ async function hydrateStateFromSharedStorage() {
           const merged = mergeStates(sharedState, stateForMerge);
           guardBootEmptyFinance(merged, sharedState, STATE_SECTIONS.finance, financeSectionHydrated);
           applyStoredState(merged);
+          seedLastWrittenFromLoad(); // only sections the merge changed get rewritten (INF-4)
           financeSectionHydrated = true;
           // Only write back if local actually contributed something new (tombstones, additions).
           // Comparing signatures detects whether the merge changed anything vs the remote state —
@@ -6311,7 +6337,7 @@ async function hydrateStateFromSharedStorage() {
           }
         }
       }
-      else { financeSectionHydrated = true; await provider.write(); }
+      else { lastLoadedSectionJson = null; financeSectionHydrated = true; await provider.write(); }
       localStorage.removeItem("live_signed_out_explicitly"); // clear on any successful sync
       sharedStorageReady = true;
       hydrateRetryCount = 0;
@@ -6333,7 +6359,10 @@ async function hydrateStateFromSharedStorage() {
   const retryDelay = Math.min(30000 * 2 ** hydrateRetryCount, 5 * 60 * 1000);
   hydrateRetryCount++;
   console.warn(`Shared storage unavailable; retrying hydration in ${Math.round(retryDelay / 1000)}s (no blind write).`);
-  window.setTimeout(() => { hydrateStateFromSharedStorage(); }, retryDelay);
+  // One retry timer at a time — repeated failures (or a failure racing a
+  // came-online hydrate) must not stack parallel retry chains.
+  window.clearTimeout(hydrateRetryTimer);
+  hydrateRetryTimer = window.setTimeout(() => { hydrateRetryTimer = null; hydrateStateFromSharedStorage(); }, retryDelay);
 }
 
 function saveStateToSharedStorage() {
@@ -6392,8 +6421,19 @@ function registerServiceWorker() {
   });
 }
 
+// Flaky connections fire "online" repeatedly; each hydrate re-downloads every
+// section. At most one came-online hydrate per minute — in between, a ready
+// session just flushes its pending edits (merge-protected writes).
+const CAME_ONLINE_HYDRATE_MIN_MS = 60 * 1000;
+let lastCameOnlineHydrateAt = 0;
+
 async function handleCameOnline() {
   if (!canUseCloudStorage() || !authSession?.access_token) return;
+  if (Date.now() - lastCameOnlineHydrateAt < CAME_ONLINE_HYDRATE_MIN_MS) {
+    if (sharedStorageReady) saveStateToSharedStorage();
+    return;
+  }
+  lastCameOnlineHydrateAt = Date.now();
   // A signed-in session whose group lookup failed (offline at boot) retries it
   // now; hydration stays blocked until the group is known.
   if (!userGroup?.id) {
@@ -6696,10 +6736,10 @@ async function writeStateToLocalBackend() {
   });
 }
 
-function extractSectionData(keys) {
+function extractSectionData(keys, source = state) {
   const obj = {};
   for (const key of keys) {
-    if (key in state) obj[key] = state[key];
+    if (key in source) obj[key] = source[key];
   }
   // Per-episode show-notes are the single heaviest thing in the whole state
   // (~1 MB per subscribed show) and are re-fetchable from the feed on demand.
@@ -6723,6 +6763,18 @@ function stripEpisodeDescriptions(podcasts) {
   return podcasts.map((p) => (p && Array.isArray(p.episodes))
     ? { ...p, episodes: p.episodes.map((e) => (e && e.description) ? { ...e, description: "" } : e) }
     : p);
+}
+
+// JSON (in extractSectionData's persisted shape) of each section as the server
+// held it at the last successful loadStateFromSupabase(), keyed by section —
+// only for sections whose ACTIVE row actually exists. Consumed once by
+// hydrateStateFromSharedStorage to seed lastWrittenSections, so a load only
+// rewrites the sections the merge really changed instead of every section.
+let lastLoadedSectionJson = null;
+
+function seedLastWrittenFromLoad() {
+  lastWrittenSections = lastLoadedSectionJson ? { ...lastLoadedSectionJson } : null;
+  lastLoadedSectionJson = null;
 }
 
 function assembleSectionRows(rows) {
@@ -6777,6 +6829,16 @@ async function loadStateFromSupabase() {
   persistShadowSections();
 
   const activeRows = activeIds.map((id) => byId.get(id)).filter(Boolean);
+  // Record what the server holds per section (active rows only) so hydrate can
+  // mark unchanged sections as already written. Sections with no active row are
+  // left out, so they stay dirty and get created on the first write.
+  lastLoadedSectionJson = {};
+  for (const section of Object.keys(STATE_SECTIONS)) {
+    const row = byId.get(sectionRowId(stateId, section));
+    if (!row) continue;
+    const { stateUpdatedAt: _ts, schemaVersion: _sv, ...data } = row.state || {};
+    lastLoadedSectionJson[section] = JSON.stringify(extractSectionData(STATE_SECTIONS[section], data));
+  }
   if (activeRows.length > 0) return assembleSectionRows(activeRows);
   if (rows.length > 0) return assembleSectionRows([]); // rows exist but none active (fresh personal scopes)
 
