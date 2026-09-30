@@ -33,7 +33,8 @@ import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './financ
 import { financeMonthsToSnapshot, financeOffsettingPairIds, normalizeFinanceMonthActuals } from './finance-actuals.js';
 import { isNativeApp, nativeTts } from './native-bridge.js';
 import { saveFile } from './save-file.js';
-import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance } from './finance-sync.js';
+import { normalizeGroceryStamps, mergeGroceryStamps, applyGroceryStamps, stampGroceryAdd, stampGroceryRemove, stampGroceryListDiff, pruneGroceryStamps } from './grocery-list-stamps.js';
+import { mergeFinanceBudgetGroups, mergeFinancePeople, mergeFinancePersonal, dedupeFinanceRecurring, guardBootEmptyFinance, pickLatestSetting } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill } from './finance-csv.js';
 import { clearLocalAccountState, accountTransitionKind } from './auth-account-reset.js';
 import { makeProvenance, ORIGIN as PROV_ORIGIN } from './provenance.js';
@@ -277,7 +278,7 @@ const CLOUD_SNAPSHOT_HOURLY_MAX = 72;  // then 1 per hour back ~3 days (plenty f
 // Each section is stored as its own Supabase row: id = "{stateId}:{section}"
 const STATE_SECTIONS = {
   eat:       ["recipes", "trashedRecipes", "folders", "plans", "publishedWeeks", "recipeTags", "ingredientOptions", "autoGenerateRules", "mealPlanConfig", "activeCooking"],
-  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems", "instacartOrders"],
+  grocery:   ["groceryStores", "groceryBaseItems", "groceryCatalogVersion", "groceryAliases", "grocerySplitPreferences", "groceryItemLocations", "groceryStoreItemSections", "groceryPriceObservations", "groceryPricingSettings", "pantry", "persistentManualGroceries", "persistentManualGroceryStamps", "checkedGroceries", "grocerySkippedStores", "groceryItemWeekOverride", "groceryCleared", "groceryDailyDozenTags", "dailyDozenTagSeedVersion", "groceryReviewDismissed", "receipts", "receiptItemMappings", "priceHistory", "groceryChecklist", "nextStopItems", "instacartOrders"],
   do:        ["doTasks", "doPlans", "doBacklog", "doArchive", "recurringTasks", "collapsedDays"],
   play:      ["workouts", "playPlans", "playBacklog", "playAutoRules"],
   watch:     ["watchItems", "watchPlans", "watchSettings", "watchShowtimesData"],
@@ -291,7 +292,7 @@ const STATE_SECTIONS = {
   // never in these rows (design §3/§13). Bytes cache stays in IndexedDB.
   cadence:   ["cadenceWorks", "cadenceBlobs", "cadenceSessions", "cadenceAnnotations", "cadenceEvents", "cadenceSections"],
   travel:    ["trips", "travelIdeas"],
-  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource"],
+  finance:   ["financePeople", "financeBudgetGroups", "financeAccounts", "financeAccountLabels", "financeAccountSubLabels", "financePersonal", "financeTxnLabels", "financeTxnRules", "financeMonthActuals", "financeRecurring", "financeMerchantNames", "financeTxnLinks", "financeTxnSignFlips", "financeTxnNoteOverrides", "financeTxnNoteCounts", "financeManualTxns", "financeEmergencyMonths", "financeBirthYear", "financeAnnualIncome", "financeCashAccountIds", "financeEmergencyAccountIds", "financeRetirementAccountIds", "financeDismissedAlerts", "financeLabelSkips", "financeLabelSnoozes", "financeNotifDismissed", "financeTxnConfirmed", "financeGoals", "financeTxnReceipts", "financeTxnSource", "financeTxnSourceSetAt"],
   config:    ["weeklyEmailSettings", "mailAiSettings", "mailMoveMemory", "themeMode", "locationSharingEnabled", "collapsedSections", "emailPrefs", "appName", "travelHome", "voiceCommandSecret", "tombstones", "apiUsage", "aiNotes", "aiSettings", "weatherLocations", "weatherActiveLocationId", "jellyfin", "mediaServices", "appleMusic", "financeAlertPrefs"],
   contacts:  ["contacts", "contactGroups"],
 };
@@ -309,7 +310,8 @@ const STATE_SECTIONS = {
 // running code older than the row was last written with, so a stale device can
 // never drop budget categories or transaction annotations it doesn't know
 // about. MUST be incremented when finance* keys are added/restructured.
-const STATE_SCHEMA_VERSION = 6;
+// 7 (2026-09-30): financeTxnSourceSetAt added (financeTxnSource is latest-choice-wins).
+const STATE_SCHEMA_VERSION = 7;
 
 const SECTION_SCOPE = {
   eat: "household",       // Meal Plan is exclusively shared
@@ -4340,6 +4342,7 @@ function defaultState() {
     playAutoRules: [],
     pantry: ["olive oil", "salt", "pepper"],
     persistentManualGroceries: [],
+    persistentManualGroceryStamps: {},
     checkedGroceries: {},
     grocerySkippedStores: {},
     instacartOrders: {},
@@ -4393,6 +4396,7 @@ function defaultState() {
     financeAccounts: [],
     financeGoals: [],
     financeTxnSource: "feed", // "feed" (SimpleFIN 45-day window) | "store" (durable finance_transactions) — FINANCE_TRANSACTIONS_DESIGN.md §5.5
+    financeTxnSourceSetAt: "", // when financeTxnSource was last chosen; merge keeps the latest choice
     financeAccountLabels: [],
     financeAccountSubLabels: {},
     financePersonal: [],
@@ -4521,7 +4525,9 @@ function normalizeState(parsed) {
     workouts: normalizeWorkouts(parsed?.workouts),
     playAutoRules: normalizePlayAutoRules(parsed?.playAutoRules),
     pantry: Array.isArray(parsed?.pantry) ? parsed.pantry : [],
-    persistentManualGroceries: normalizePersistentManualGroceries(parsed),
+    // Removed-item stamps also filter the load-time fold of legacy week.manualGroceries,
+    // which otherwise re-added removed items on every load (grocery-list-stamps.js).
+    ...loadManualGroceriesWithStamps(parsed),
     checkedGroceries: parsed?.checkedGroceries || {},
     grocerySkippedStores: parsed?.grocerySkippedStores && typeof parsed.grocerySkippedStores === "object" ? parsed.grocerySkippedStores : {},
     instacartOrders: normalizeInstacartOrders(parsed?.instacartOrders),
@@ -4582,6 +4588,7 @@ function normalizeState(parsed) {
     financeAccounts: normalizeFinanceAccounts(parsed?.financeAccounts, createId),
     financeGoals: normalizeFinanceGoals(parsed?.financeGoals),
     financeTxnSource: parsed?.financeTxnSource === "store" ? "store" : "feed",
+    financeTxnSourceSetAt: typeof parsed?.financeTxnSourceSetAt === "string" && !Number.isNaN(Date.parse(parsed.financeTxnSourceSetAt)) ? parsed.financeTxnSourceSetAt : "",
     financeAccountLabels: [...new Set((Array.isArray(parsed?.financeAccountLabels) ? parsed.financeAccountLabels : []).map((l) => String(l || "").trim()).filter(Boolean))],
     financeAccountSubLabels: normalizeFinanceSubLabels(parsed?.financeAccountSubLabels),
     financeTxnLabels: (parsed?.financeTxnLabels && typeof parsed.financeTxnLabels === "object") ? parsed.financeTxnLabels : {},
@@ -5731,6 +5738,22 @@ function dailyDozenEntries() {
 
 
 
+// The manual list + its add/remove stamps, as loaded: removed items filtered out
+// (including ones the legacy week.manualGroceries fold would re-add) and stale
+// stamps pruned.
+function loadManualGroceriesWithStamps(parsed) {
+  const stamps = normalizeGroceryStamps(parsed?.persistentManualGroceryStamps);
+  const list = applyGroceryStamps(normalizePersistentManualGroceries(parsed), stamps);
+  return { persistentManualGroceries: list, persistentManualGroceryStamps: pruneGroceryStamps(stamps, list, new Date().toISOString()) };
+}
+
+// The live stamps object on state (created on first use) — every add/remove of a
+// manual grocery item stamps it so a sync can't resurrect a removal.
+function groceryListStamps() {
+  if (!state.persistentManualGroceryStamps || typeof state.persistentManualGroceryStamps !== "object" || Array.isArray(state.persistentManualGroceryStamps)) state.persistentManualGroceryStamps = {};
+  return state.persistentManualGroceryStamps;
+}
+
 function normalizePersistentManualGroceries(parsed) {
   const saved = Array.isArray(parsed?.persistentManualGroceries) ? parsed.persistentManualGroceries : [];
   const fromWeeks = Object.values(parsed?.plans || {}).flatMap((week) =>
@@ -5869,6 +5892,17 @@ function mergeStates(newer, older) {
   // merchant, keeping the answer state.
   merged.financeRecurring = dedupeFinanceRecurring([...(older.financeRecurring || []), ...(newer.financeRecurring || [])]);
 
+  // Where the transaction list reads from: the latest explicit choice wins, so a
+  // device still carrying the default "feed" can't flip back a "store" choice.
+  {
+    const pick = pickLatestSetting(
+      { value: newer.financeTxnSource, at: newer.financeTxnSourceSetAt },
+      { value: older.financeTxnSource, at: older.financeTxnSourceSetAt },
+    );
+    merged.financeTxnSource = pick.value === "store" ? "store" : "feed";
+    merged.financeTxnSourceSetAt = pick.at;
+  }
+
   // Auto-fill rules are unique per SLOT+ACTION (autoRuleSignature), not per id —
   // a device that boots with empty localStorage regenerates a fresh set of
   // default "skip" rules with brand-new random ids (normalizeAutoGenerateRules
@@ -5895,7 +5929,13 @@ function mergeStates(newer, older) {
 
   // ── String-set arrays: additive ───────────────────────────────────────────
   merged.pantry = unionStrings(newer.pantry, older.pantry);
-  merged.persistentManualGroceries = unionStrings(newer.persistentManualGroceries, older.persistentManualGroceries);
+  // Union the lists, then drop items the merged add/remove stamps say were removed
+  // (and not re-added since) — so a removal on one device survives an older copy.
+  merged.persistentManualGroceryStamps = mergeGroceryStamps(newer.persistentManualGroceryStamps, older.persistentManualGroceryStamps);
+  merged.persistentManualGroceries = applyGroceryStamps(
+    unionStrings(newer.persistentManualGroceries, older.persistentManualGroceries),
+    merged.persistentManualGroceryStamps
+  );
   merged.recipeTags = unionStrings(newer.recipeTags, older.recipeTags);
   merged.contactGroups = unionStrings(newer.contactGroups, older.contactGroups);
   merged.readArticleIds = unionStrings(newer.readArticleIds, older.readArticleIds);
@@ -11137,6 +11177,7 @@ function applyImportAiItems() {
       addedCalendar = true;
     } else if (item.section === "shopping") {
       if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
+      stampGroceryAdd(groceryListStamps(), item.title, new Date().toISOString());
       if (!state.persistentManualGroceries.some((existing) => normalize(existing) === normalize(item.title))) {
         state.persistentManualGroceries.push(item.title);
         state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
@@ -36904,6 +36945,7 @@ function applyVoiceActions(actions, transcript) {
       const item = String(action.item || "").trim();
       if (!item) { messages.push("No item name given."); continue; }
       if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
+      stampGroceryAdd(groceryListStamps(), item, new Date().toISOString());
       if (!state.persistentManualGroceries.some((e) => normalize(e) === normalize(item))) {
         state.persistentManualGroceries.push(item);
         state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
@@ -37135,6 +37177,9 @@ const CHAT_MAX_STORED = 20;  // messages persisted to localStorage
 const chatLoggedIds = new Set();
 function logChatTurns(messages) {
   for (const m of messages || []) {
+    // Stamp each plain-text turn the first time it's logged (kept beside the
+    // message, stripped before the API call) so repeats get their own row.
+    if (m && m.at === undefined && typeof m.content === "string") m.at = Date.now();
     const row = historyRowFromChat(m);
     if (!row || chatLoggedIds.has(row.id)) continue;
     if (historyLog.record(row)) chatLoggedIds.add(row.id);
@@ -37158,7 +37203,9 @@ function loadChatHistory() {
     if (!raw) return;
     const stored = JSON.parse(raw);
     if (!Array.isArray(stored) || !stored.length) return;
-    chatMessages = stored;
+    // Turns stored before stamping existed get at:null → they keep their old
+    // content-only history id instead of being re-recorded as new.
+    chatMessages = stored.map((m) => (m && m.at === undefined ? { ...m, at: null } : m));
     // Leave chatContextSent false: the first message after a reload re-sends a
     // fresh snapshot (the stored one may be from another day).
     const container = document.getElementById("aiChatMessages");
@@ -37225,7 +37272,8 @@ async function runChatTurn(depth = 0) {
         "content-type": "application/json",
         Authorization: `Bearer ${authSession?.access_token || ""}`
       },
-      body: JSON.stringify({ messages: chatMessages }),
+      // Only role + content go to the API (turns also carry a local `at` stamp).
+      body: JSON.stringify({ messages: chatMessages.map(({ role, content }) => ({ role, content })) }),
       signal: chatAbortController.signal
     });
 
@@ -37496,6 +37544,11 @@ function attachAssistantUndo(bubble, record, resultText) {
       btn.textContent = "Changed since — can't undo";
       return;
     }
+    // The grocery list is a plain string list merged by union: stamp what the undo
+    // adds back / takes away so a sync can't reverse it (grocery-list-stamps.js).
+    if ("persistentManualGroceries" in undo.patch) {
+      stampGroceryListDiff(groceryListStamps(), state.persistentManualGroceries, undo.patch.persistentManualGroceries, new Date().toISOString());
+    }
     for (const [key, value] of Object.entries(undo.patch)) {
       if (value === undefined) delete state[key];
       else state[key] = value;
@@ -37581,6 +37634,7 @@ async function executeChatTool(name, input) {
         const item = String(input.item || "").trim();
         if (!item) return "No item name provided.";
         if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
+        stampGroceryAdd(groceryListStamps(), item, new Date().toISOString());
         if (!state.persistentManualGroceries.some((e) => normalize(e) === normalize(item))) {
           state.persistentManualGroceries.push(item);
           state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
@@ -37596,6 +37650,7 @@ async function executeChatTool(name, input) {
         state.persistentManualGroceries = (state.persistentManualGroceries || [])
           .filter((e) => normalize(e) !== normalize(item));
         if ((state.persistentManualGroceries?.length || 0) < before) {
+          stampGroceryRemove(groceryListStamps(), item, new Date().toISOString());
           persist();
           renderGroceries();
           return `Removed "${item}" from grocery list.`;
@@ -37990,6 +38045,30 @@ async function executeChatTool(name, input) {
         const { notes, message } = addNote(state.aiNotes, String(input.category || "").trim(), input.note, { makeId: () => createId("note"), now: new Date().toISOString() });
         if (notes !== state.aiNotes) { state.aiNotes = notes; persist(); }
         return message;
+      }
+
+      case "add_workout": {
+        const title = String(input.title || "").trim();
+        if (!title) return "No workout name provided.";
+        state.workouts = normalizeWorkouts(state.workouts);
+        if (state.workouts.some((w) => w.title.toLowerCase() === title.toLowerCase())) return `"${title}" is already in the exercise library.`;
+        state.workouts = normalizeWorkouts([...state.workouts, {
+          id: createId("workout"), title, type: "timed",
+          exerciseDetails: { type: "timed", timed: { hours: "0", minutes: "30", seconds: "00", distanceWhole: "16", distanceDecimal: "00", distanceUnit: "km" }, reps: [], gameNotes: "" },
+          notes: "", logs: [], createdAt: new Date().toISOString(),
+        }]);
+        persist();
+        if (activeAppArea === "sweat") render();
+        return `Added "${title}" to the exercise library.`;
+      }
+
+      case "add_piano_song": {
+        const title = String(input.title || "").trim();
+        if (!title) return "No song title provided.";
+        if (!Array.isArray(state.pianoSongs)) state.pianoSongs = [];
+        state.pianoSongs.push({ id: createId("piano"), title, learned: false, sheetMusicUrl: "" });
+        persist();
+        return `Added "${title}" to the piano practice list.`;
       }
 
       case "update_note": {

@@ -108,15 +108,20 @@ export function historyRowFromPracticeEvent(e) {
 // A plain-text chat turn. The user's context preamble ("CURRENT CONTEXT: … ---")
 // is app-generated, not something the user said, so only the message is kept.
 // Id is a content hash so re-logging the same stored turn after a reload is a no-op.
+// A turn stamped with `at` (ms, set when it's first logged) hashes it into the
+// id, so asking the same thing twice records two rows. Turns without a stamp
+// (stored before stamping existed) keep the old content-only id, so a reload
+// never re-records them as new.
 export function historyRowFromChat(msg, at = Date.now()) {
   if (!msg || typeof msg.content !== "string" || !msg.content.trim()) return null;
   let text = msg.content;
   if (msg.role === "user" && text.startsWith("CURRENT CONTEXT:")) text = text.split("\n\n---\n\n")[1] || "";
   if (!text.trim()) return null;
+  const stamped = Number.isFinite(msg.at) && msg.at > 0;
   return normalizeHistoryRow({
-    id: `chat:${msg.role}:${fnv1a(`${msg.role}|${msg.content}`)}`,
+    id: `chat:${msg.role}:${fnv1a(stamped ? `${msg.role}|${msg.content}|${msg.at}` : `${msg.role}|${msg.content}`)}`,
     kind: "ai_chat",
-    occurred_at: at,
+    occurred_at: stamped ? msg.at : at,
     ref_id: null,
     title: msg.role,
     payload: { role: msg.role, text: text.slice(0, MAX_CHAT_TEXT) },

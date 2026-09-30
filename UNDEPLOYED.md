@@ -10,6 +10,27 @@ Each entry: what shipped · PR · post-deploy steps.
 
 ---
 
+## Assistant decisions: chat stamps, grocery removals stick, finance setting, Siri via the assistant (PR #24)
+PR: https://github.com/LukeDEvans/Tableplan/pull/24
+
+- **Grocery removals stick:** an item removed on one device no longer comes back when another
+  device syncs an older list (new `persistentManualGroceryStamps` in the grocery section).
+- **Finance "use stored transactions"** stays shared between devices; the latest choice wins.
+  ⚠️ **`STATE_SCHEMA_VERSION` 6 → 7.**
+- **Siri voice commands run through the assistant** (same tools and saved memory; no deletes by
+  voice). Food logged by voice now lands where the app reads it. New assistant tools: add
+  workout, add piano song.
+- Asking the chat the same question twice now records two history entries.
+
+**After deploying:**
+1. ⚠️ **Ship a TestFlight build right after this deploy.** The native app bundles its web code,
+   so it stays on schema 6, and the server's finance guard (`tp_protect_finance_merge`) quietly
+   reverts finance edits from an older-schema client. Until the new build is installed, make
+   finance changes in the web app. Also reload any open browser tabs.
+2. Run the Siri shortcut once with a couple of commands (e.g. "add bread and remind me to call
+   the plumber") and check both land.
+3. Remove a grocery item on the phone, then open the app on the laptop and check it stays gone.
+
 ## Issue sweep: honest set_meal, news fixes, music backup, share-sheet saves (PR #23)
 PR: https://github.com/LukeDEvans/Tableplan/pull/23
 

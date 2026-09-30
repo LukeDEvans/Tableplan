@@ -435,6 +435,24 @@ const BASE_TOOLS = [
 // Tools added with the cross-domain assistant (lookups + memory upkeep).
 const EXTRA_TOOLS = [
   {
+    name: "add_workout",
+    description: "Add a new workout or exercise to Luke's exercise library (to log a session of an existing one, use log_workout).",
+    input_schema: {
+      type: "object",
+      properties: { title: { type: "string", description: "Workout or exercise name" } },
+      required: ["title"]
+    }
+  },
+  {
+    name: "add_piano_song",
+    description: "Add a song to Luke's piano practice list.",
+    input_schema: {
+      type: "object",
+      properties: { title: { type: "string", description: "Song title" } },
+      required: ["title"]
+    }
+  },
+  {
     name: "get_calendar_range",
     description: "List Luke's calendar events (his own events plus synced calendars) between two dates, inclusive. Use for questions like \"what's on next week?\" or \"am I free Saturday?\".",
     input_schema: {

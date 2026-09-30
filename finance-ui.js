@@ -4912,6 +4912,7 @@ function onFinanceGridChange(e) {
     return;
   } else if (kind === "txn-source") {
     state.financeTxnSource = el.checked ? "store" : "feed";
+    state.financeTxnSourceSetAt = new Date().toISOString(); // latest choice wins across devices
     persist();
     invalidateFinanceLabeled();
     updateFinanceMonthActuals();
