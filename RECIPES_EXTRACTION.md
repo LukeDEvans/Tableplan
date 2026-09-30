@@ -252,11 +252,13 @@ close handler moved into the module as `onRecipeViewDialogClose`. (4) Whole move
 - No orphaned recipe call left in app.js; moved private vars fully removed; seam rewrites present.
 - **`npm run build` passes; full suite 1444/1444 green.**
 
-**⚠️ Known latent bug, preserved (NOT introduced here):** `parseJsonLd` references
-`readableDuration`, which is **undefined in the client** (only exists in `server.js`) — it was
-already a free/undefined reference in `app.js` before this move (verified). Per the
-structural-move rule it is left exactly as-is; it throws a `ReferenceError` only if a recipe-
-import JSON-LD ISO-8601 duration path executes. Flag for a future fix if desired.
+**✅ FIXED — formerly a known latent bug:** `parseJsonLd`/`parseRecipeHtml` referenced
+`readableDuration`, which was **undefined in the client** at extraction time (only in
+`server.js`). It was defined in `recipes-ui.js` by commit 5c4a289, and the audit pass (REC-5,
+2026-09-30) made it a top-level pure export (decimals / seconds / days) that also runs on the
+client import's `prepTime`/`cookTime`, mirroring `netlify/functions/_recipe-extract.js`
+(covered by `test/import-recipe-parsing.test.js`). The matching note in root `CLAUDE.md`
+(recipes row) is now stale.
 
 **⚠️ No UI test coverage** for recipe/cook render/handlers — the green suite proves the pure
 logic modules + that nothing else regressed, not the recipe UI. Needs manual click-through.

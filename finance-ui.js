@@ -1,5 +1,5 @@
 import { reviewGestureAxis, reviewGestureAction, REVIEW_GESTURE } from './finance-review-gesture.js';
-import { financeMonthsToSnapshot, financeOffsettingPairIds } from './finance-actuals.js';
+import { financeMonthsToSnapshot, financeOffsettingPairIds, financeTransferPairIds, financePendingDuplicates, localMonthKey, monthKeyOffset } from './finance-actuals.js';
 import { dedupeFinanceRecurring } from './finance-sync.js';
 import { parseCsvRows, aggregateCsvBackfill, csvRowsToTxns, dedupeImport, findDuplicateCsvAccount } from './finance-csv.js';
 import { saveFile } from './save-file.js';
@@ -215,6 +215,17 @@ export function normalizeFinanceTxnReceipts(raw) {
     };
   }
   return out;
+}
+
+// Money-string → number (2dp). Accepts "$1,200.50", a Unicode minus
+// ("−500", as pasted from bank sites/iOS), and accounting parentheses
+// ("(500)" → -500). Anything unparseable → 0.
+export function parseFinAmount(str) {
+  let v = String(str ?? "").replace(/[$,\s]/g, "").replace(/[\u2212\u2012\u2013\u2014\uFE63\uFF0D]/g, "-");
+  const paren = /^\((.*)\)$/.exec(v);
+  if (paren) v = "-" + paren[1].replace(/^-/, "");
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -804,9 +815,9 @@ async function purgeLocalFinanceTxnStore() {
 // Which month the finance page is showing ("YYYY-MM"). The budget is built to
 // fit one calendar month, so the date bar pages through months — back to review
 // past spend, forward to plan. Reset to the real current month on entry.
-let financeViewMonth = new Date().toISOString().slice(0, 7);
+let financeViewMonth = localMonthKey();
 
-function financeCurrentMonthKey() { return new Date().toISOString().slice(0, 7); }
+function financeCurrentMonthKey() { return localMonthKey(); }
 
 function navigateFinanceMonth(delta) {
   const [y, m] = financeViewMonth.split("-").map(Number);
@@ -844,9 +855,24 @@ function financeReceiptForTxn(t) {
   }) || null;
 }
 
+let financeLinkStatusChecking = false;
+let financeLinkStatusFailed = false; // last status call errored (status stays null → retried)
 async function checkFinanceLinkStatus() {
-  const data = await callNetlifyFunction("simplefin", { action: "status" });
-  financeLinkStatus = data && !data.error ? data : { connected: false };
+  if (financeLinkStatusChecking) return; // one status call in flight at a time
+  financeLinkStatusChecking = true;
+  let data = null;
+  try { data = await callNetlifyFunction("simplefin", { action: "status" }); } catch { data = null; }
+  finally { financeLinkStatusChecking = false; }
+  // A failed status call is "unknown", not "disconnected": leave it null so the
+  // next finance-page entry / settings open retries (user-driven, not a loop)
+  // instead of hiding a connected household's bank data for the whole session.
+  financeLinkStatusFailed = !data || Boolean(data.error);
+  if (financeLinkStatusFailed) {
+    if (getActiveAppArea() === "finance") renderFinancePage();
+    refreshFinanceSettingsIfOpen();
+    return;
+  }
+  financeLinkStatus = data;
   if (getActiveAppArea() === "finance") renderFinancePage();
   refreshFinanceSettingsIfOpen();
   if (financeLinkStatus.connected && !financeLive) refreshFinanceLive();
@@ -879,9 +905,13 @@ async function refreshFinanceLive(force = false) {
   // Trust the server's fetchedAt (when the data actually came from the bank)
   // over the local clock, since a cache hit didn't just fetch anything.
   const at = data?.fetchedAt ? new Date(data.fetchedAt).getTime() : Date.now();
+  // A failed pull keeps the last good accounts/transactions on screen (and their
+  // original timestamp) and just records the error — a manual Refresh that hits
+  // a bridge hiccup must not blank the page.
+  const prevAccounts = financeLive?.accounts || [];
   financeLive = data?.accounts
     ? { accounts: data.accounts, errors: data.errors || [], at }
-    : { accounts: [], errors: [data?.error || "Could not reach the bank bridge."], at: Date.now() };
+    : { accounts: prevAccounts, errors: [data?.error || "Could not reach the bank bridge."], at: prevAccounts.length ? (financeLive?.at || Date.now()) : Date.now() };
   invalidateFinanceLabeled(); // fresh accounts payload — the cache (now decoupled from financeLive) needs a nudge
   updateFinanceMonthActuals();
   updateFinanceRecurring();
@@ -1031,33 +1061,17 @@ function financeLabeledTxns() {
   // Same account + same amount + shared merchant token + ≤7d apart → keep
   // the posted copy and migrate any label from the pending id.
   {
-    const tokens = (d) => new Set(financeMerchantKey(d).split(" ").filter(Boolean));
-    const byKey = new Map();
-    for (const t of txns) {
-      const k = `${t.accountId}|${(t.amount || 0).toFixed(2)}`;
-      if (!byKey.has(k)) byKey.set(k, []);
-      byKey.get(k).push(t);
-    }
-    const dropIds = new Set();
+    const dupes = financePendingDuplicates(txns, financeMerchantKey);
     let migrated = false;
-    for (const group of byKey.values()) {
-      const posted = group.filter((t) => !t.pending);
-      for (const p of group.filter((t) => t.pending)) {
-        const pTok = tokens(p.description);
-        const match = posted.find((q) =>
-          Math.abs(new Date(p.posted || 0) - new Date(q.posted || 0)) <= 7 * 86400000 &&
-          [...pTok].some((tok) => tokens(q.description).has(tok)));
-        if (!match) continue;
-        dropIds.add(p.id);
-        const ex = state.financeTxnLabels || {};
-        if (ex[p.id] && !ex[match.id]) {
-          ex[match.id] = ex[p.id];
-          delete ex[p.id];
-          migrated = true;
-        }
+    const ex = state.financeTxnLabels || {};
+    for (const [pendingId, postedId] of dupes) {
+      if (ex[pendingId] && !ex[postedId]) {
+        ex[postedId] = ex[pendingId];
+        delete ex[pendingId];
+        migrated = true;
       }
     }
-    if (dropIds.size) txns = txns.filter((t) => !dropIds.has(t.id));
+    if (dupes.size) txns = txns.filter((t) => !dupes.has(t.id));
     if (migrated) persist();
   }
 
@@ -1069,23 +1083,8 @@ function financeLabeledTxns() {
   if (offsetting.size) txns = txns.filter((t) => !offsetting.has(t.id));
 
   // Transfer pairs: same magnitude, opposite signs, different accounts, ≤5d apart
-  const mgmtPairs = new Set();
-  const byAmt = new Map();
-  for (const t of txns) {
-    if (!t.amount) continue;
-    const k = Math.abs(t.amount).toFixed(2);
-    if (!byAmt.has(k)) byAmt.set(k, []);
-    byAmt.get(k).push(t);
-  }
-  for (const group of byAmt.values()) {
-    for (const a of group) for (const b of group) {
-      if (a === b || a.accountId === b.accountId) continue;
-      if ((a.amount > 0) === (b.amount > 0)) continue;
-      if (Math.abs(new Date(a.posted || 0) - new Date(b.posted || 0)) <= 5 * 86400000) {
-        mgmtPairs.add(a.id); mgmtPairs.add(b.id);
-      }
-    }
-  }
+  // (bank rows only — manual entries never pair; see finance-actuals.js).
+  const mgmtPairs = financeTransferPairIds(txns);
   const names = state.financeMerchantNames || {};
   const noteOverrides = state.financeTxnNoteOverrides || {};
   const noteCounts = state.financeTxnNoteCounts || {};
@@ -1124,6 +1123,22 @@ function financeLabeledTxns() {
     if (mgmtPairs.has(t.id) || FIN_MGMT_KEYWORDS.test(t.description)) { t.label = "mgmt"; t.labelSource = "auto"; continue; }
     if ((t.amount || 0) > 0 && FIN_INCOME_KEYWORDS.test(t.description)) { t.label = "income"; t.labelSource = "auto"; continue; }
     t.label = ""; t.labelSource = "";
+  }
+
+  // A label pointing at a since-deleted budget category resolves to no name and
+  // no category row: it rendered as an empty pill and its amount silently fell
+  // out of every total. Read-side only (the stored label is untouched), treat
+  // such a txn as unlabeled so it resurfaces for relabeling. Skipped while the
+  // budget has no categories at all (e.g. a boot-empty budget before the cloud
+  // copy hydrates) so every label isn't transiently discarded.
+  const hasAnyCategory = (state.financeBudgetGroups || []).some((g) => (g.categories || []).length);
+  if (hasAnyCategory) {
+    const dead = (key) => typeof key === "string" && key.startsWith("cat:") && !financeTxnLabelName(key);
+    for (const t of txns) {
+      if (dead(t.label) || (t.label === "split" && (t.split || []).some((p) => dead(p?.label)))) {
+        t.label = ""; t.labelSource = ""; delete t.split;
+      }
+    }
   }
 
   // Linked returns: a manually-confirmed return→purchase link (financeTxnLinks)
@@ -1257,7 +1272,7 @@ let financeManualForm = null;
 function openManualTxnForm(existing) {
   financeManualForm = existing
     ? { id: existing.id, date: (existing.posted || "").slice(0, 10), desc: existing.description || "", amount: String(existing.amount ?? ""), account: existing.account || "", label: (state.financeTxnLabels || {})[existing.id] || "" }
-    : { id: null, date: new Date().toISOString().slice(0, 10), desc: "", amount: "", account: "", label: "" };
+    : { id: null, date: dateKeyFromDate(new Date()), desc: "", amount: "", account: "", label: "" };
   financeTab = "transactions"; financeExpanded.add("card:txns");
   renderFinancePage();
 }
@@ -1296,6 +1311,7 @@ function deleteManualTxn(id) {
   if (!state.financeManualTxns || !confirm("Delete this transaction?")) return;
   financeStoreDeleteManual(financeManualEntry(id) || { id });
   state.financeManualTxns = state.financeManualTxns.filter((m) => m.id !== id);
+  recordDeletion("financeManualTxns", id); // tombstone so the delete survives the unionById merge
   if (state.financeTxnLabels) delete state.financeTxnLabels[id];
   if (state.financeTxnNoteOverrides) delete state.financeTxnNoteOverrides[id];
   if (state.financeTxnReceipts && state.financeTxnReceipts[id]) deleteReceiptImage(id).catch(() => {});
@@ -1480,7 +1496,7 @@ function updateFinanceRecurring() {
 // Derived purely from the detected recurring list (no new data), sorted by the
 // day of the month they're expected, with a flag for ones already past-due.
 function financeUpcomingBills(now = new Date()) {
-  const curMonth = now.toISOString().slice(0, 7);
+  const curMonth = localMonthKey(now);
   const today = now.getDate();
   const bills = (state.financeRecurring || [])
     .filter((r) => r.active !== false && (r.lastSeen || "").slice(0, 7) !== curMonth)
@@ -1499,9 +1515,8 @@ function financeUpcomingBills(now = new Date()) {
 function financeSpendTrends(viewMonth) {
   const ma = (state.financeMonthActuals && typeof state.financeMonthActuals === "object") ? state.financeMonthActuals : {};
   const monthSpend = (m) => { const e = ma[m]; if (!e || !e.cats) return null; return Object.values(e.cats).reduce((s, v) => s + Math.abs(Number(v) || 0), 0); };
-  const [y, mo] = viewMonth.split("-").map(Number);
   const months = [];
-  for (let i = 5; i >= 0; i--) months.push(new Date(y, mo - 1 - i, 1).toISOString().slice(0, 7));
+  for (let i = 5; i >= 0; i--) months.push(monthKeyOffset(viewMonth, -i));
   const series = months.map((m) => ({ month: m, spend: monthSpend(m) }));
   const priorMonths = months.slice(2, 5); // the 3 months before the viewed one
   const curCats = ma[viewMonth]?.cats || {};
@@ -1528,7 +1543,7 @@ function financeCategoryHistoryAvg(gid, cid, months = 3) {
   const vals = [];
   for (let i = 1; i <= months; i++) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const v = ma[d.toISOString().slice(0, 7)]?.cats?.[`${gid}:${cid}`];
+    const v = ma[localMonthKey(d)]?.cats?.[`${gid}:${cid}`];
     if (v != null) vals.push(Math.abs(Number(v) || 0));
   }
   if (!vals.length) return null;
@@ -1550,9 +1565,8 @@ function financeSetCategoryBudget(c, target) {
 // Cash flow (money in vs out) for the last 6 months, from the monthly snapshots.
 function financeCashFlow(viewMonth) {
   const ma = (state.financeMonthActuals && typeof state.financeMonthActuals === "object") ? state.financeMonthActuals : {};
-  const [y, mo] = viewMonth.split("-").map(Number);
   const months = [];
-  for (let i = 5; i >= 0; i--) months.push(new Date(y, mo - 1 - i, 1).toISOString().slice(0, 7));
+  for (let i = 5; i >= 0; i--) months.push(monthKeyOffset(viewMonth, -i));
   const series = months.map((m) => {
     const e = ma[m];
     const income = e && e.income != null ? Math.abs(Number(e.income) || 0) : null;
@@ -1568,7 +1582,7 @@ function financeCashFlow(viewMonth) {
 function financeRecurringAlerts() {
   const out = [];
   const today = new Date();
-  const monthKey = today.toISOString().slice(0, 7);
+  const monthKey = localMonthKey(today);
   for (const r of (state.financeRecurring || [])) {
     if (!r.active || !r.lastSeen) continue;
     if ((today - new Date(r.lastSeen)) / 86400000 > 75) continue; // stale — stop nagging
@@ -2082,6 +2096,13 @@ function wireFinanceReviewDeck(overlay) {
       reset(c); // too-small → no state change
     }
   }, { passive: true });
+  // The OS can cancel a touch mid-drag (incoming call, notification pull-down,
+  // palm rejection): snap the card back instead of leaving it stranded offset.
+  deck.addEventListener("touchcancel", () => {
+    if (!card) return;
+    const c = card; card = null; axis = null;
+    reset(c);
+  }, { passive: true });
 }
 
 // SimpleFIN connections/accounts that need attention: an explicit bridge error,
@@ -2122,8 +2143,13 @@ function financeAccountsNeedingAttention() {
   // Drop dismissals whose alert is no longer live (recovered) so a recurrence
   // re-alerts, then hide the ones still dismissed.
   const dismissed = (state.financeDismissedAlerts && typeof state.financeDismissedAlerts === "object") ? state.financeDismissedAlerts : {};
-  const liveKeys = new Set(raw.map((r) => r.key));
-  for (const k of Object.keys(dismissed)) { if (!liveKeys.has(k)) delete dismissed[k]; }
+  // Only prune after a pull that actually returned accounts: a failed/empty fetch
+  // can't evaluate per-account alerts, so "not live" there means "unknown", and
+  // pruning would resurrect every dismissed stale/disconnected alert next pull.
+  if (live.length) {
+    const liveKeys = new Set(raw.map((r) => r.key));
+    for (const k of Object.keys(dismissed)) { if (!liveKeys.has(k)) delete dismissed[k]; }
+  }
   return raw.filter((r) => !dismissed[r.key]);
 }
 
@@ -2200,7 +2226,7 @@ function financeBellCount() {
 function updateFinanceMonthActuals() {
   if (!financeLive?.accounts?.length) return;
   const txns = financeLabeledTxns();
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = localMonthKey();
   // Which months are safe to (re)snapshot from the live feed: always the current
   // month, plus any PAST month the feed fully covers — so a correction to an
   // older transaction still in the feed updates that month's totals, not only
@@ -2208,7 +2234,7 @@ function updateFinanceMonthActuals() {
   // historical snapshot. (Coverage guard is pure + tested in finance-actuals.js.)
   // Store mode: only the feed-sized window decides eligibility, so permanent
   // history can never mark (and re-snapshot) an old month — design §5.3.
-  const monthsToWrite = financeMonthsToSnapshot(financeFeedWindow(txns), currentMonth);
+  const monthsToWrite = financeMonthsToSnapshot(financeFeedWindow(txns), currentMonth, { partial: (financeLive.errors || []).length > 0 });
   if (!state.financeMonthActuals || typeof state.financeMonthActuals !== "object") state.financeMonthActuals = {};
   let changed = false;
   for (const month of monthsToWrite) {
@@ -2581,11 +2607,6 @@ function formatFinMoney(n) {
   return (v < 0 ? "−$" : "$") + Math.abs(v).toLocaleString(undefined, opts);
 }
 
-function parseFinAmount(str) {
-  const n = parseFloat(String(str || "").replace(/[$,\s]/g, ""));
-  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
-}
-
 function financeActiveIncome(person) {
   return person.scenarios.find((s) => s.id === person.activeScenarioId) || person.scenarios[0] || null;
 }
@@ -2756,7 +2777,7 @@ function renderFinanceAccountsPanel() {
         <input class="fin-item-name" type="password" id="finSetupToken" placeholder="SimpleFIN setup token" autocomplete="off" />
         <button class="secondary-btn fin-add-btn" type="button" data-fin-action="link-banks" ${financeLinkBusy ? "disabled" : ""}>${financeLinkBusy ? "Connecting…" : "Connect"}</button>
       </div>`
-    : `<p class="fin-hint">Checking bank link…</p>`;
+    : `<p class="fin-hint">${financeLinkStatusFailed && !financeLinkStatusChecking ? "Couldn't reach the bank link — it will retry next time you open Finance." : "Checking bank link…"}</p>`;
 
   const ownerSubs = (owner) => [...new Set([
     ...(((state.financeAccountSubLabels || {})[owner]) || []),
@@ -2958,7 +2979,7 @@ function renderFinancePage() {
     incomeActual = Number(storedThis.income) || 0;
   }
   const catActual = (g, c) => catActuals.get(`${g.id}:${c.id}`) || 0;
-  const prevMonthKey = (() => { const [y, m] = monthKey.split("-").map(Number); const d = new Date(y, m - 1, 1); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); })();
+  const prevMonthKey = monthKeyOffset(monthKey, -1);
   const lastMo = storedMonths[prevMonthKey];
   const lastMoGroupActual = (g) => lastMo?.cats
     ? g.categories.reduce((s, c) => s + (Number(lastMo.cats[`${g.id}:${c.id}`]) || 0), 0)
@@ -4541,7 +4562,7 @@ function onFinanceGridClick(e) {
       if (li) li.it.amount = r.lastAmount;
       r.ackAmount = r.lastAmount;
     } else if (action === "recurring-price-keep") r.ackAmount = r.lastAmount;
-    else if (action === "recurring-miss-dismiss") r.missAck = new Date().toISOString().slice(0, 7);
+    else if (action === "recurring-miss-dismiss") r.missAck = localMonthKey();
     setPageNotifCount("finance", financeBellCount());
     persist();
     renderFinancePage();

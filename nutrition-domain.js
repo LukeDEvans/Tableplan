@@ -36,7 +36,26 @@ const unitAliases = {
   kilograms: "kg",
   kg: "kg",
   each: "each",
-  count: "each"
+  count: "each",
+  ml: "ml",
+  milliliter: "ml",
+  milliliters: "ml",
+  millilitre: "ml",
+  millilitres: "ml",
+  l: "l",
+  liter: "l",
+  liters: "l",
+  litre: "l",
+  litres: "l",
+  pt: "pt",
+  pint: "pt",
+  pints: "pt",
+  qt: "qt",
+  quart: "qt",
+  quarts: "qt",
+  gal: "gal",
+  gallon: "gal",
+  gallons: "gal"
 };
 
 function parseAmount(value) {
@@ -117,6 +136,15 @@ return { grams: amount * servingSize, confidenceScore: 0.82, note: "Converted us
   }
 
   const volumeFallback = { tsp: 5, tbsp: 15, cup: 240, each: 100 };
+  // Metric / larger US volumes, assuming ≈1 g per ml (water density) — low confidence.
+  const mlPerUnit = { ml: 1, l: 1000, pt: 473.176, qt: 946.353, gal: 3785.41 };
+  if (mlPerUnit[normalizedUnit]) {
+    return {
+      grams: amount * mlPerUnit[normalizedUnit],
+      confidenceScore: 0.4,
+      note: "Estimated from volume assuming about 1 g per ml; review this match."
+    };
+  }
   if (volumeFallback[normalizedUnit]) {
 return {
       grams: amount * volumeFallback[normalizedUnit],

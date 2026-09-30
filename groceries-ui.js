@@ -244,11 +244,21 @@ export function partitionGroceryRowsByStore(rows, storeIds, resolveStoreId) {
   return groups;
 }
 
-export function normalizeGroceryItemLocations(locations, stores = []) {
+// Item-keyed maps (locations, store item sections) must be keyed like the rows that
+// read them (canonicalGroceryItemKey): split-aware, so a split item ("chickpea") is
+// not re-keyed onto its merged sibling ("garbanzo beans"). `splitPreferences`
+// defaults to the live state's once the factory has run; at boot (before the
+// factory) callers pass the parsed state's preferences explicitly.
+function splitAwareGroceryItemKey(item, splitPreferences) {
+  const prefs = splitPreferences && typeof splitPreferences === "object" && !Array.isArray(splitPreferences) ? splitPreferences : {};
+  return LiveGroceryCatalog.normalizeGroceryItemName(item, { splitPreferences: prefs }).canonicalName;
+}
+
+export function normalizeGroceryItemLocations(locations, stores = [], splitPreferences = _appState?.grocerySplitPreferences) {
   const validStoreIds = new Set(normalizeGroceryStores(stores).map((store) => store.id));
   const normalizedLocations = {};
   Object.entries(locations && typeof locations === "object" && !Array.isArray(locations) ? locations : {}).forEach(([itemKey, location]) => {
-    const key = baseGroceryItemKey(itemKey);
+    const key = splitAwareGroceryItemKey(itemKey, splitPreferences);
     if (!key || !location || typeof location !== "object") return;
     const storeId = validStoreIds.has(String(location.storeId || "")) ? String(location.storeId) : "";
     const order = Number(location.order);
@@ -269,7 +279,7 @@ export function normalizeGroceryItemLocations(locations, stores = []) {
   return normalizedLocations;
 }
 
-export function normalizeGroceryStoreItemSections(mappings, stores = []) {
+export function normalizeGroceryStoreItemSections(mappings, stores = [], splitPreferences = _appState?.grocerySplitPreferences) {
   const normalized = {};
   const normalizedStores = normalizeGroceryStores(stores);
   const storeById = new Map(normalizedStores.map((store) => [store.id, store]));
@@ -278,7 +288,7 @@ export function normalizeGroceryStoreItemSections(mappings, stores = []) {
     if (!store || !itemMappings || typeof itemMappings !== "object" || Array.isArray(itemMappings)) return;
     const validSectionIds = new Set(store.sections.map((section) => section.id));
     Object.entries(itemMappings).forEach(([itemName, sectionId]) => {
-      const itemKey = baseGroceryItemKey(itemName);
+      const itemKey = splitAwareGroceryItemKey(itemName, splitPreferences);
       if (!itemKey || !validSectionIds.has(String(sectionId || ""))) return;
       if (!normalized[storeId]) normalized[storeId] = {};
       normalized[storeId][itemKey] = String(sectionId);
@@ -354,6 +364,55 @@ export function normalizeGroceryPricingSettings(settings) {
 export function normalizePriceUnit(value) {
   const unit = String(value || "each").trim().toLowerCase();
   return ["each", "oz", "lb", "fl oz", "pt", "qt", "gal", "g", "kg", "ml", "l", "count"].includes(unit) ? unit : "each";
+}
+
+// Price comparison units: convert a quantity in a comparable unit (lb, kg, gal,
+// qt, pt, l, or an already-base unit) to its base unit (oz, g, fl oz, ml).
+const COMPARABLE_PRICE_UNIT_CONVERSIONS = {
+  lb: { unit: "oz", factor: 16 },
+  kg: { unit: "g", factor: 1000 },
+  gal: { unit: "fl oz", factor: 128 },
+  qt: { unit: "fl oz", factor: 32 },
+  pt: { unit: "fl oz", factor: 16 },
+  l: { unit: "ml", factor: 1000 }
+};
+
+export function convertComparablePriceQuantity(quantity, unit) {
+  const number = Number(quantity);
+  if (quantity === null || quantity === undefined || !Number.isFinite(number) || !unit) return null;
+  const converted = COMPARABLE_PRICE_UNIT_CONVERSIONS[unit];
+  return converted ? { quantity: number * converted.factor, unit: converted.unit } : { quantity: number, unit };
+}
+
+// Cost of buying enough packages to cover `desired`. Both sides are converted to
+// the same base unit first (a 1 lb package covers a 16 oz need); when units are
+// incomparable, one package is assumed.
+export function packageCostForQuantity(desired, packageQuantity, packageUnit, price) {
+  const pkg = convertComparablePriceQuantity(packageQuantity, packageUnit);
+  if (!desired || !pkg || desired.unit !== pkg.unit || !(pkg.quantity > 0)) return price;
+  return Math.max(1, Math.ceil(desired.quantity / pkg.quantity - 1e-9)) * price;
+}
+
+// Display a (possibly scaled) amount: whole numbers stay whole, a remainder within
+// ~0.06 of a common kitchen fraction snaps to it ("1 1/2", "2/3"), anything else
+// is a trimmed decimal ("1.6") — never the old whole-plus-decimal "1 0.6".
+const GROCERY_AMOUNT_FRACTIONS = [
+  ["1/8", 1 / 8], ["1/4", 1 / 4], ["1/3", 1 / 3], ["1/2", 1 / 2], ["2/3", 2 / 3], ["3/4", 3 / 4]
+];
+export function formatScaledGroceryAmount(value) {
+  if (!Number.isFinite(value) || value <= 0) return "";
+  const roundedWhole = Math.round(value);
+  if (Math.abs(value - roundedWhole) < 0.01) return roundedWhole ? String(roundedWhole) : "";
+  const whole = Math.floor(value);
+  const remainder = value - whole;
+  let nearest = null;
+  GROCERY_AMOUNT_FRACTIONS.forEach(([label, fraction]) => {
+    const distance = Math.abs(remainder - fraction);
+    if (distance <= 0.06 && (!nearest || distance < nearest.distance)) nearest = { label, distance };
+  });
+  if (nearest) return [whole || "", nearest.label].filter(Boolean).join(" ");
+  const decimal = value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  return decimal === "0" ? "" : decimal;
 }
 
 export function validDateIso(value) {
@@ -1075,6 +1134,10 @@ function removeGroceryStore(storeId) {
   const itemSections = { ...groceryStoreItemSections() };
   delete itemSections[storeId];
   state.groceryStoreItemSections = normalizeGroceryStoreItemSections(itemSections, state.groceryStores);
+  // Tombstone the dropped estimates so a sync from another device can't resurrect them.
+  groceryPriceObservations()
+    .filter((observation) => observation.storeId === storeId)
+    .forEach((observation) => recordDeletion("groceryPriceObservations", observation.id));
   state.groceryPriceObservations = groceryPriceObservations().filter((observation) => observation.storeId !== storeId);
   state.receipts = normalizeReceipts(state.receipts).map((receipt) => (
     receipt.storeId === storeId ? { ...receipt, storeId: "" } : receipt
@@ -1175,6 +1238,7 @@ function renderGroceryPriceObservations() {
   }).join("")}` : `<div class="empty-state">No manual estimates saved.</div>`;
   elements.groceryPriceObservations.querySelectorAll("[data-remove-price-observation]").forEach((button) => {
     button.addEventListener("click", () => {
+      recordDeletion("groceryPriceObservations", button.dataset.removePriceObservation);
       state.groceryPriceObservations = groceryPriceObservations().filter((item) => item.id !== button.dataset.removePriceObservation);
       persist();
       renderGroceryPriceObservations();
@@ -1221,6 +1285,18 @@ function closeReceiptEditView() {
   if (elements.shopReceiptsEditView) elements.shopReceiptsEditView.hidden = true;
 }
 
+const RECEIPT_LINE_UNITS = ["each", "count", "oz", "lb", "g", "kg", "ml", "l", "fl oz", "pt", "qt", "gal"];
+
+// Unit <select> options for a receipt line. An unknown scanned unit is kept as an
+// extra, selected option so saving doesn't silently rewrite it to "each".
+function receiptUnitOptionsHtml(selectedUnit) {
+  const selected = String(selectedUnit || "each").trim().toLowerCase() || "each";
+  const units = RECEIPT_LINE_UNITS.includes(selected) ? RECEIPT_LINE_UNITS : [...RECEIPT_LINE_UNITS, selected];
+  return units.map((unit) => (
+    `<option value="${escapeHtml(unit)}" ${selected === unit ? "selected" : ""}>${escapeHtml(unit)}</option>`
+  )).join("");
+}
+
 function addEditReceiptLine(line = {}) {
   const id = line.id || createId("rl");
   const row = document.createElement("div");
@@ -1234,11 +1310,9 @@ function addEditReceiptLine(line = {}) {
     <input data-receipt-category value="${escapeHtml(line.category || "")}" placeholder="Category" aria-label="Category" />
     <input data-receipt-quantity type="number" min="0.001" step="0.001" value="${escapeHtml(String(line.quantity ?? 1))}" aria-label="Quantity" />
     <select data-receipt-unit aria-label="Unit">
-      ${["each", "count", "oz", "lb", "g", "kg", "ml", "l", "fl oz"].map((unit) => (
-        `<option value="${unit}" ${(line.unit || "each") === unit ? "selected" : ""}>${unit}</option>`
-      )).join("")}
+      ${receiptUnitOptionsHtml(line.unit)}
     </select>
-    <input data-receipt-price type="number" min="0" step="0.01" value="${escapeHtml(String(line.totalPrice ?? 0))}" aria-label="Total price" />
+    <input data-receipt-price type="number" step="0.01" value="${escapeHtml(String(line.totalPrice ?? 0))}" aria-label="Total price" />
     <input data-receipt-discount type="number" min="0" step="0.01" value="${escapeHtml(String(line.discountAmount ?? 0))}" aria-label="Discount" />
     <button class="icon-btn" type="button" data-remove-receipt-line title="Remove" aria-label="Remove line">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13" /></svg>
@@ -1255,7 +1329,9 @@ function editedReceiptFromForm() {
     const normalizedName = row.querySelector("[data-receipt-name]").value.trim();
     const category = row.querySelector("[data-receipt-category]").value.trim();
     const quantity = Math.max(0.001, Number(row.querySelector("[data-receipt-quantity]").value) || 1);
-    const totalPrice = Math.max(0, Number(row.querySelector("[data-receipt-price]").value) || 0);
+    // Refund / coupon lines keep their negative sign (receipt-domain sums them into
+    // the line total and flags them for review; price history ignores <= 0 lines).
+    const totalPrice = Number(row.querySelector("[data-receipt-price]").value) || 0;
     return {
       id: row.dataset.receiptLineId,
       rawText: row.querySelector("[data-receipt-raw]").value.trim(),
@@ -1293,9 +1369,19 @@ function saveReceiptEdit(event) {
   );
   state.receipts = normalizeReceipts((state.receipts || []).map((r) => r.id === editingReceiptId ? receipt : r));
   state.receiptItemMappings = LiveReceiptDomain.correctedMappingsFromReceipt(receipt, receiptItemMappings());
+  // Rebuild this receipt's history rows, reusing each line's existing history id
+  // (keyed by sourceReceiptLineItemId) so an edit doesn't mint a fresh id that
+  // unions alongside the stale one on sync; tombstone rows that no longer exist.
+  const previousHistory = receiptPriceHistory().filter((ph) => oldLineItemIds.has(ph.sourceReceiptLineItemId));
+  const previousIdByLine = new Map(previousHistory.map((ph) => [ph.sourceReceiptLineItemId, ph.id]));
+  const rebuiltHistory = LiveReceiptDomain.priceHistoryFromReceipt(receipt, createId).map((entry) => (
+    previousIdByLine.has(entry.sourceReceiptLineItemId) ? { ...entry, id: previousIdByLine.get(entry.sourceReceiptLineItemId) } : entry
+  ));
+  const rebuiltIds = new Set(rebuiltHistory.map((entry) => entry.id));
+  previousHistory.filter((ph) => !rebuiltIds.has(ph.id)).forEach((ph) => recordDeletion("priceHistory", ph.id));
   state.priceHistory = normalizePriceHistory([
     ...receiptPriceHistory().filter((ph) => !oldLineItemIds.has(ph.sourceReceiptLineItemId)),
-    ...LiveReceiptDomain.priceHistoryFromReceipt(receipt, createId)
+    ...rebuiltHistory
   ], groceryStores());
   state.groceryBaseItems = normalizeGroceryBaseItems([
     ...groceryBaseItems(),
@@ -1317,6 +1403,9 @@ function deleteReceipt() {
   const imageCount = Math.max(1, (receipt?.imageRefs || []).length);
   getScanContent().then((sc) => sc && sc.removeImages(deletedReceiptId, imageCount)).catch(() => {});
   recordDeletion("receipts", editingReceiptId);
+  receiptPriceHistory()
+    .filter((ph) => lineItemIds.has(ph.sourceReceiptLineItemId))
+    .forEach((ph) => recordDeletion("priceHistory", ph.id));
   state.receipts = (state.receipts || []).filter((r) => r.id !== editingReceiptId);
   state.priceHistory = normalizePriceHistory(
     receiptPriceHistory().filter((ph) => !lineItemIds.has(ph.sourceReceiptLineItemId)),
@@ -1585,11 +1674,9 @@ function addReceiptReviewLine(line = {}) {
     <input data-receipt-category value="${escapeHtml(normalized.category)}" placeholder="Category" aria-label="Category" />
     <input data-receipt-quantity type="number" min="0.001" step="0.001" value="${escapeHtml(normalized.quantity)}" aria-label="Quantity" />
     <select data-receipt-unit aria-label="Unit">
-      ${["each", "count", "oz", "lb", "g", "kg", "ml", "l", "fl oz"].map((unit) => (
-        `<option value="${unit}" ${normalized.unit === unit ? "selected" : ""}>${unit}</option>`
-      )).join("")}
+      ${receiptUnitOptionsHtml(normalized.unit)}
     </select>
-    <input data-receipt-price type="number" min="0" step="0.01" value="${escapeHtml(normalized.totalPrice)}" aria-label="Total price" />
+    <input data-receipt-price type="number" step="0.01" value="${escapeHtml(normalized.totalPrice)}" aria-label="Total price" />
     <input data-receipt-discount type="number" min="0" step="0.01" value="${escapeHtml(normalized.discountAmount)}" aria-label="Discount" />
     <span class="receipt-line-confidence" title="OCR confidence">${Math.round(normalized.confidenceScore * 100)}%</span>
     <button class="icon-btn" type="button" data-remove-receipt-line title="Remove line" aria-label="Remove receipt line">
@@ -1607,7 +1694,9 @@ function reviewedReceiptFromForm() {
     const normalizedName = row.querySelector("[data-receipt-name]").value.trim();
     const category = row.querySelector("[data-receipt-category]").value.trim();
     const quantity = Math.max(0.001, Number(row.querySelector("[data-receipt-quantity]").value) || 1);
-    const totalPrice = Math.max(0, Number(row.querySelector("[data-receipt-price]").value) || 0);
+    // Refund / coupon lines keep their negative sign (receipt-domain sums them into
+    // the line total and flags them for review; price history ignores <= 0 lines).
+    const totalPrice = Number(row.querySelector("[data-receipt-price]").value) || 0;
     return {
       id: row.dataset.receiptLineId,
       rawText: row.querySelector("[data-receipt-raw]").value.trim(),
@@ -1668,9 +1757,13 @@ function renderReceiptPriceTrends() {
     elements.receiptPriceTrends.innerHTML = `<div class="empty-state">No receipt price history yet.</div>`;
     return;
   }
+  // Trend = same item at the same store: comparing store A's price to store B's
+  // isn't a price change. Unassigned-store entries group by store name.
+  const storeNames = new Map(groceryStores().map((store) => [store.id, store.name]));
   const grouped = new Map();
   history.forEach((entry) => {
-    const key = LiveReceiptDomain.normalizedName(entry.normalizedItemName);
+    const storeKey = entry.storeId || `name:${normalize(entry.storeName || "")}`;
+    const key = `${storeKey}|${LiveReceiptDomain.normalizedName(entry.normalizedItemName)}`;
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(entry);
   });
@@ -1686,9 +1779,10 @@ function renderReceiptPriceTrends() {
         const latest = sorted.at(-1);
         const previous = sorted.at(-2);
         const delta = latest.packagePrice - previous.packagePrice;
+        const storeName = storeNames.get(latest.storeId) || latest.storeName || "";
         return `
           <div class="receipt-trend-item">
-            <strong>${escapeHtml(latest.normalizedItemName)}</strong>
+            <strong>${escapeHtml(latest.normalizedItemName)}${storeName ? ` <small>· ${escapeHtml(storeName)}</small>` : ""}</strong>
             <span>${formatCurrency(latest.packagePrice)}</span>
             <small>${delta === 0 ? "No change" : `${delta > 0 ? "+" : ""}${formatCurrency(delta)} since prior receipt`}</small>
           </div>
@@ -2069,8 +2163,9 @@ function removeGroceryAliasesForItem(item) {
 }
 
 function renameGroceryItemLocation(oldItem, newItem) {
-  const oldKey = baseGroceryItemKey(oldItem);
-  const newKey = baseGroceryItemKey(newItem);
+  // Row key (split-aware), matching how rows read locations[row.key].
+  const oldKey = groceryRowKey(oldItem);
+  const newKey = groceryRowKey(newItem);
   if (!oldKey || !newKey || oldKey === newKey) return;
   const locations = groceryItemLocations();
   if (!locations[oldKey]) return;
@@ -2134,7 +2229,7 @@ function renameReceiptPriceHistory(oldItem, newItem) {
 }
 
 function removeGroceryItemLocation(item) {
-  const key = baseGroceryItemKey(item);
+  const key = groceryRowKey(item);
   if (!key) return;
   const locations = groceryItemLocations();
   delete locations[key];
@@ -2602,6 +2697,8 @@ function groceryPricePlanTemplate(plan) {
   `;
 }
 
+const GROCERY_OPTIMIZER_EXHAUSTIVE_MAX_STORES = 10;
+
 function optimizeGroceryBasket(rows) {
   const settings = groceryPricingSettings();
   const empty = { assignments: {}, estimates: {}, merchandiseTotal: 0, adjustedTotal: 0, stopCost: 0, storeIds: [], pricedItemCount: 0, manualItemCount: 0 };
@@ -2611,30 +2708,36 @@ function optimizeGroceryBasket(rows) {
   const availableStoreIds = [...new Set(observations.map((observation) => observation.storeId))];
   if (!availableStoreIds.length) return empty;
 
-  let best = null;
-  const subsetCount = 2 ** availableStoreIds.length;
-  for (let mask = 1; mask < subsetCount; mask += 1) {
-    const storeIds = availableStoreIds.filter((_, index) => mask & (1 << index));
+  // Per-row candidates are independent of the store subset: key and cost them
+  // once, pre-sorted, so each subset only has to pick the first eligible one.
+  const observationsByKey = new Map();
+  observations.forEach((observation) => {
+    const key = canonicalGroceryItemKey(observation.itemKey);
+    if (!observationsByKey.has(key)) observationsByKey.set(key, []);
+    observationsByKey.get(key).push(observation);
+  });
+  const rowCandidates = rows.map((row) => ({
+    row,
+    fixedStoreId: locations[row.key]?.storeId || "",
+    candidates: (observationsByKey.get(row.key) || [])
+      .map((observation) => ({ observation, cost: estimatedObservationCost(row, observation) }))
+      .sort((a, b) => a.cost - b.cost
+        || b.observation.confidenceScore - a.observation.confidenceScore
+        || new Date(b.observation.observedAt) - new Date(a.observation.observedAt))
+  })).filter((entry) => entry.candidates.length);
+
+  const planForStores = (storeIds) => {
+    const allowed = new Set(storeIds);
     const assignments = {};
     const estimates = {};
     let merchandiseTotal = 0;
     let pricedItemCount = 0;
     let manualItemCount = 0;
-    rows.forEach((row) => {
-      const fixedStoreId = locations[row.key]?.storeId || "";
-      const eligibleStores = fixedStoreId ? [fixedStoreId] : storeIds;
-      const candidates = observations
-        .filter((observation) => canonicalGroceryItemKey(observation.itemKey) === row.key
-          && eligibleStores.includes(observation.storeId))
-        .map((observation) => ({
-          observation,
-          cost: estimatedObservationCost(row, observation)
-        }))
-        .sort((a, b) => a.cost - b.cost
-          || b.observation.confidenceScore - a.observation.confidenceScore
-          || new Date(b.observation.observedAt) - new Date(a.observation.observedAt));
-      if (!candidates.length) return;
-      const chosen = candidates[0];
+    rowCandidates.forEach(({ row, fixedStoreId, candidates }) => {
+      const chosen = candidates.find(({ observation }) => (
+        fixedStoreId ? observation.storeId === fixedStoreId : allowed.has(observation.storeId)
+      ));
+      if (!chosen) return;
       assignments[row.key] = chosen.observation.storeId;
       estimates[row.key] = {
         cost: chosen.cost,
@@ -2649,38 +2752,56 @@ function optimizeGroceryBasket(rows) {
     const usedStoreIds = [...new Set(Object.values(assignments))];
     const stopCost = Math.max(0, usedStoreIds.length - 1) * settings.extraStoreCost;
     const adjustedTotal = merchandiseTotal + stopCost;
-    const candidate = { assignments, estimates, merchandiseTotal, adjustedTotal, stopCost, storeIds: usedStoreIds, pricedItemCount, manualItemCount };
-    if (!best
-      || candidate.pricedItemCount > best.pricedItemCount
-      || (candidate.pricedItemCount === best.pricedItemCount && candidate.adjustedTotal < best.adjustedTotal)) {
-      best = candidate;
+    return { assignments, estimates, merchandiseTotal, adjustedTotal, stopCost, storeIds: usedStoreIds, pricedItemCount, manualItemCount };
+  };
+  const isBetter = (candidate, best) => !best
+    || candidate.pricedItemCount > best.pricedItemCount
+    || (candidate.pricedItemCount === best.pricedItemCount && candidate.adjustedTotal < best.adjustedTotal);
+
+  let best = null;
+  if (availableStoreIds.length <= GROCERY_OPTIMIZER_EXHAUSTIVE_MAX_STORES) {
+    const subsetCount = 2 ** availableStoreIds.length;
+    for (let mask = 1; mask < subsetCount; mask += 1) {
+      const candidate = planForStores(availableStoreIds.filter((_, index) => mask & (1 << index)));
+      if (isBetter(candidate, best)) best = candidate;
+    }
+  } else {
+    // Too many stores for 2^n subsets: start from every store and greedily drop
+    // the store whose removal helps most, until no removal helps.
+    let current = [...availableStoreIds];
+    best = planForStores(current);
+    let improved = true;
+    while (improved && current.length > 1) {
+      improved = false;
+      let bestDrop = null;
+      current.forEach((storeId) => {
+        const candidate = planForStores(current.filter((id) => id !== storeId));
+        if (isBetter(candidate, bestDrop?.plan || best)) bestDrop = { storeId, plan: candidate };
+      });
+      if (bestDrop) {
+        current = current.filter((id) => id !== bestDrop.storeId);
+        best = bestDrop.plan;
+        improved = true;
+      }
     }
   }
   return best || empty;
 }
 
 function estimatedObservationCost(row, observation) {
-  const desired = groceryQuantityForPrice(row);
-  if (!desired || desired.unit !== observation.packageUnit) return observation.price;
-  return Math.max(1, Math.ceil(desired.quantity / observation.packageQuantity)) * observation.price;
+  return packageCostForQuantity(
+    groceryQuantityForPrice(row),
+    observation.packageQuantity,
+    normalizeComparablePriceUnit(String(observation.packageUnit || "")),
+    observation.price
+  );
 }
 
 function groceryQuantityForPrice(row) {
   const quantity = groceryAmountToNumber(row.amount);
-  const unit = normalizeComparablePriceUnit(row.unit);
+  const unit = normalizeComparablePriceUnit(String(row.unit || ""));
   if (!Number.isFinite(quantity) || !unit) return null;
-  const conversions = {
-    lb: { unit: "oz", factor: 16 },
-    kg: { unit: "g", factor: 1000 },
-    gal: { unit: "fl oz", factor: 128 },
-    qt: { unit: "fl oz", factor: 32 },
-    pt: { unit: "fl oz", factor: 16 },
-    l: { unit: "ml", factor: 1000 }
-  };
-  const converted = conversions[unit];
-  return converted
-    ? { quantity: quantity * converted.factor, unit: converted.unit }
-    : { quantity, unit };
+  return convertComparablePriceQuantity(quantity, unit);
 }
 
 function normalizeComparablePriceUnit(value) {
@@ -2885,10 +3006,7 @@ function openGroceryItemMenu(event) {
   event.stopPropagation();
   closeFolderMenu();
   const key = event.currentTarget.dataset.groceryWrapKey;
-  const groceryWeek = selectedGroceryWeek();
-  const row = groceryWeek
-    ? buildGroceryRowsWithManual(groceryWeek.week).find((item) => item.key === key)
-    : null;
+  const row = displayedGroceryRow(key);
   if (!row) return;
   const menu = document.createElement("div");
   menu.className = "folder-context-menu grocery-library-context-menu";
@@ -3020,8 +3138,7 @@ function addStoreToRank() {
 }
 
 function groceryMoveItemLabel(itemKey) {
-  const gw = selectedGroceryWeek();
-  const row = gw ? buildGroceryRowsWithManual(gw.week).find((r) => r.key === itemKey) : null;
+  const row = displayedGroceryRow(itemKey);
   return row?.displayName || row?.item || itemKey.replace(/-/g, " ");
 }
 
@@ -3327,6 +3444,43 @@ function rekeyGroceryIdentityState() {
     nextDailyDozenTags[nextKey] = nextDailyDozenTags[nextKey] || tags;
   });
   state.groceryDailyDozenTags = normalizeGroceryDailyDozenTags(nextDailyDozenTags);
+
+  // Cycle-scoped "<cycle>::<itemKey>" maps follow the item's new identity too.
+  const rekeyCycleMap = (map, combine) => {
+    if (!map || typeof map !== "object" || Array.isArray(map)) return map;
+    const next = {};
+    Object.entries(map).forEach(([key, value]) => {
+      const separator = key.indexOf("::");
+      const nextKey = separator < 0
+        ? key
+        : `${key.slice(0, separator)}::${canonicalGroceryItemKey(key.slice(separator + 2)) || key.slice(separator + 2)}`;
+      next[nextKey] = nextKey in next ? combine(next[nextKey], value) : value;
+    });
+    return next;
+  };
+  state.groceryCleared = rekeyCycleMap(state.groceryCleared, (a, b) => Boolean(a || b));
+  state.groceryItemWeekOverride = rekeyCycleMap(state.groceryItemWeekOverride, (a, b) => a || b);
+
+  // Review dismissals are keyed "<recipeId>|<normalized display name>"; add the
+  // merged item's display-name key alongside the old one (old kept: harmless).
+  if (state.groceryReviewDismissed && typeof state.groceryReviewDismissed === "object") {
+    Object.entries({ ...state.groceryReviewDismissed }).forEach(([key, dismissed]) => {
+      if (!dismissed) return;
+      const separator = key.indexOf("|");
+      if (separator < 0) return;
+      const displayName = normalizeGroceryItemName(key.slice(separator + 1)).displayName;
+      if (!displayName) return;
+      state.groceryReviewDismissed[`${key.slice(0, separator)}|${normalize(displayName)}`] = true;
+    });
+  }
+
+  // Instacart orders remember which row keys were sent.
+  if (state.instacartOrders && typeof state.instacartOrders === "object") {
+    Object.values(state.instacartOrders).forEach((order) => {
+      if (!order || !Array.isArray(order.itemKeys)) return;
+      order.itemKeys = [...new Set(order.itemKeys.map((key) => canonicalGroceryItemKey(key) || key))];
+    });
+  }
 }
 
 function formatReceiptObservationDate(value) {
@@ -3560,9 +3714,16 @@ function addManualGroceryItem(event) {
   }
   if (!Array.isArray(state.persistentManualGroceries)) state.persistentManualGroceries = [];
   stampGroceryAdd(manualListStamps(), item, stampNow());
-  if (!state.persistentManualGroceries.some((existing) => normalize(existing) === normalize(item))) {
+  const existingIndex = state.persistentManualGroceries.findIndex((existing) => normalize(existing) === normalize(item));
+  if (existingIndex < 0) {
     state.persistentManualGroceries.push(item);
     state.persistentManualGroceries.sort((a, b) => normalize(a).localeCompare(normalize(b)));
+  } else if (normalize(item) !== item.toLowerCase().replace(/\s+/g, " ").trim()) {
+    // Same item with a quantity ("2 apples" while "apples" is listed): the newly
+    // typed quantity replaces the entry instead of being silently dropped. A bare
+    // re-add ("apples" while "2 apples" is listed) keeps the existing quantity.
+    // Same stamp key either way (grocery-list-stamps normalizes the quantity off).
+    state.persistentManualGroceries[existingIndex] = item;
   }
   // A brand-new item with no known store lands in Other (spec) — we set no
   // this-trip override, so resolveItemEffectiveStoreId returns null → Other.
@@ -3606,10 +3767,14 @@ function removeManualGroceryItem(item) {
   renderGroceries();
 }
 
+// The row the user is looking at: the Shop list renders buildActiveNeedRows()
+// (meal-plan range + checklist + manual), not the single selected week's rows.
+function displayedGroceryRow(key) {
+  return buildActiveNeedRows().find((r) => r.key === key) || null;
+}
+
 function editGroceryItem(key) {
-  const groceryWeek = selectedGroceryWeek();
-  if (!groceryWeek) return;
-  const row = buildGroceryRowsWithManual(groceryWeek.week).find((r) => r.key === key);
+  const row = displayedGroceryRow(key);
   if (!row) return;
   if (row.manual) {
     const updated = window.prompt("Edit item:", row.manualValue);
@@ -4006,9 +4171,12 @@ function upcomingFriday(from) {
 }
 
 function initGroceryRange(force = false) {
-  if (!force && groceryRangeStart && groceryRangeEnd) return;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  // Keep a user-chosen range across Shop visits, but a range that has fully
+  // ended (a tab left open past Friday) re-initializes on the next Shop entry
+  // (showShopApp calls this on every entry).
+  if (!force && groceryRangeStart && groceryRangeEnd && groceryRangeEnd >= dateKeyFromDate(today)) return;
   groceryRangeStart = dateKeyFromDate(today);
   groceryRangeEnd = dateKeyFromDate(upcomingFriday(today));
   syncGroceryRangeInputs();
@@ -4756,30 +4924,7 @@ function groceryFractionToNumber(value) {
 }
 
 function formatGroceryAmount(value) {
-  if (!Number.isFinite(value) || value <= 0) return "";
-  const roundedWhole = Math.round(value);
-  if (Math.abs(value - roundedWhole) < 0.01) return String(roundedWhole);
-  const whole = Math.floor(value);
-  const remainder = value - whole;
-  const fraction = closestGroceryFraction(remainder);
-  if (!whole && !fraction) return "";
-  if (!fraction) return String(whole);
-  return [whole || "", fraction].filter(Boolean).join(" ");
-}
-
-function closestGroceryFraction(value) {
-  const fractions = [
-    ["1/8", 1 / 8],
-    ["1/4", 1 / 4],
-    ["1/3", 1 / 3],
-    ["1/2", 1 / 2],
-    ["2/3", 2 / 3],
-    ["3/4", 3 / 4]
-  ];
-  const match = fractions.find(([, fractionValue]) => Math.abs(value - fractionValue) < 0.01);
-  if (match) return match[0];
-  if (value > 0.99) return "";
-  return value < 0.01 ? "" : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  return formatScaledGroceryAmount(value);
 }
 
 function groceryRowKey(item) {

@@ -95,7 +95,11 @@ function findCol(header, names) {
 // positive (income) and credits were dropped.
 export function csvAmountResolver(header) {
   const h = (header || []).map((c) => String(c || "").trim().toLowerCase());
-  const amountIdx = h.findIndex((c) => c.includes("amount") || c === "value");
+  // A single signed "Amount" column — but NOT "Debit Amount"/"Credit Amount",
+  // which are one half of a debit/credit pair (both positive): grabbing the
+  // first of those as a signed amount booked every debit as income and dropped
+  // every credit.
+  const amountIdx = h.findIndex((c) => (c.includes("amount") && !/debit|credit|withdrawal|deposit/.test(c)) || c === "value");
   if (amountIdx >= 0) return (r) => parseCsvAmount(r[amountIdx]);
   const debitIdx = h.findIndex((c) => c.includes("debit") || c.includes("withdrawal"));
   const creditIdx = h.findIndex((c) => c.includes("credit") || c.includes("deposit"));

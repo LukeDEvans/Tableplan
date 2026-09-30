@@ -3,6 +3,7 @@ import {
   normalizeEntity, normalizeEntities, entitySpan, entityToPlacements,
   matchTrip, suggestNewTrip, dateOverlap, findExistingItem, diffItem, entityToProposal,
   hasConflicts, findItineraryConflict, entityToItineraryProposal,
+  matchFlightSegments, placementChanges, targetDateKeyFor,
 } from "../travel-ingest.js";
 import { buildDayTimeline } from "../travel-itinerary.js";
 
@@ -296,5 +297,84 @@ describe("cancellation (pure/domain behavior)", () => {
     expect(prop.changes).toEqual([]);
     // cancel intent never routes through the itinerary-conflict path
     expect(findItineraryConflict(cancel, trip)).toBeNull();
+  });
+});
+
+describe("re-import that moves a reservation to another day (TRV-3)", () => {
+  const imported = { kind: "email", threadId: "x" };
+  it("a restaurant moved a day emits a dateKey change the apply step can move on", () => {
+    const trip = { id: "t", days: { "2026-06-19": { food: [
+      { id: "f1", itemType: "food", name: "Mikla", reservationTime: "19:30", reservationNo: "MK1", source: imported },
+    ] } } };
+    const moved = normalizeEntity({ kind: "restaurant", title: "Mikla", startDate: "2026-06-20", startTime: "19:30", confirmation: "MK1" });
+    const existing = findExistingItem(moved, trip);
+    expect(existing.dateKey).toBe("2026-06-19");
+    const prop = entityToProposal(moved, existing, source);
+    expect(prop.changes).toContainEqual({ field: "dateKey", from: "2026-06-19", to: "2026-06-20" });
+    expect(targetDateKeyFor("food", existing.item, prop.changes, "2026-06-19")).toBe("2026-06-20");
+  });
+  it("lodging and legs re-bucket on their own date fields", () => {
+    expect(targetDateKeyFor("lodging", { checkInDate: "2026-06-21" }, [], "2026-06-18")).toBe("2026-06-21");
+    expect(targetDateKeyFor("travel", { departDate: "2026-06-22" }, [], "2026-06-18")).toBe("2026-06-22");
+    expect(targetDateKeyFor("food", {}, [], "2026-06-18")).toBe("2026-06-18");
+  });
+  it("same day → no synthetic date change", () => {
+    const existing = { item: { id: "a", itemType: "activity", activityTime: "10:00" }, section: "activities", dateKey: "2026-06-19" };
+    const p = { section: "activities", dateKey: "2026-06-19", item: { itemType: "activity", activityTime: "10:00" } };
+    expect(placementChanges(existing, p)).toEqual([]);
+  });
+});
+
+describe("time-only itinerary matches can't hijack unrelated items (TRV-4)", () => {
+  const resto = normalizeEntity({ kind: "restaurant", title: "Mikla", startDate: "2026-06-19", startTime: "19:30", confirmation: "MK1" });
+  const tripWith = (item) => ({ id: "t", days: { "2026-06-19": { food: [item] } } });
+  it("an unrelated named, far-off-time meal is not matched", () => {
+    expect(findItineraryConflict(resto, tripWith({ id: "l", itemType: "food", name: "Café Central", reservationTime: "12:00" }))).toBeNull();
+  });
+  it("an unrelated named meal at a close time is still not matched", () => {
+    expect(findItineraryConflict(resto, tripWith({ id: "l", itemType: "food", name: "Nobu", reservationTime: "19:00" }))).toBeNull();
+  });
+  it("a generic placeholder far away in time is not matched", () => {
+    expect(findItineraryConflict(resto, tripWith({ id: "l", itemType: "food", name: "Lunch", reservationTime: "12:00" }))).toBeNull();
+  });
+  it("a generic placeholder within 90 min, or a loose name match, still is", () => {
+    expect(findItineraryConflict(resto, tripWith({ id: "d", itemType: "food", name: "Dinner", reservationTime: "19:00" }))?.item.id).toBe("d");
+    expect(findItineraryConflict(resto, tripWith({ id: "m", itemType: "food", name: "Mikla!", reservationTime: "20:30" }))?.item.id).toBe("m");
+  });
+});
+
+describe("multi-segment flights match per segment (TRV-6)", () => {
+  const imp = { kind: "email", threadId: "x" };
+  const flight = (seg2Time) => normalizeEntity({ kind: "flight", title: "IST trip", confirmation: "PNR9", segments: [
+    { flightNumber: "TK2", from: "JFK", to: "IST", departDate: "2026-06-17", departTime: "10:00", arriveDate: "2026-06-18", arriveTime: "04:00" },
+    { flightNumber: "TK2010", from: "IST", to: "NAV", departDate: "2026-06-18", departTime: seg2Time, arriveDate: "2026-06-18", arriveTime: "09:30" },
+  ] });
+  const committed = () => {
+    const t = { id: "t", days: {} };
+    entityToPlacements(flight("08:00"), imp).forEach((p, i) => {
+      ((t.days[p.dateKey] = t.days[p.dateKey] || {}).travel = t.days[p.dateKey].travel || []).push({ id: "leg" + i, ...p.item });
+    });
+    return t;
+  };
+  it("each segment pairs with its own leg", () => {
+    const rows = matchFlightSegments(flight("08:00"), committed());
+    expect(rows.map(r => r.existing?.item.id)).toEqual(["leg0", "leg1"]);
+    expect(rows.every(r => placementChanges(r.existing, r.placement).length === 0)).toBe(true);
+  });
+  it("a change to segment 2 is proposed against segment 2 only", () => {
+    const e = flight("08:45");
+    const rows = matchFlightSegments(e, committed(), source);
+    const changed = rows.filter(r => placementChanges(r.existing, r.placement).length);
+    expect(changed.length).toBe(1);
+    const prop = entityToProposal(e, changed[0].existing, source, changed[0].placement);
+    expect(prop.targetItemId).toBe("leg1");
+    expect(prop.changes).toContainEqual({ field: "departTime", from: "08:00", to: "08:45" });
+  });
+  it("a segment with no existing leg comes back unmatched (to be added)", () => {
+    const t = committed();
+    t.days["2026-06-18"].travel = []; // leg 2 missing
+    const rows = matchFlightSegments(flight("08:00"), t);
+    expect(rows[0].existing?.item.id).toBe("leg0");
+    expect(rows[1].existing).toBeNull();
   });
 });

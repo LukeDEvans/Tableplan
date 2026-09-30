@@ -20,6 +20,7 @@ import { chunkText, sanitizeKey } from "../../kokoro-core.mjs";
 import { ttsCacheKey } from "../../tts-cache-identity.js";
 import { renderChunkToStorage } from "../../kokoro-store.mjs";
 import { backfillArticleText } from "../../article-body-backfill.mjs";
+import { PRESYNTH_HEADER, presynthKeyValid, requestHeader } from "./_presynth-key.mjs";
 
 const SUPABASE_URL = "https://noyocjcltrenwdovqrql.supabase.co";
 const SECTION_NAMES = ["media", "config"];
@@ -28,9 +29,13 @@ const MAX_SYNTHS = 60;         // hard cap on box calls per run (idempotent skip
 const MAX_MS = 13 * 60 * 1000; // stay under the 15-min background cap
 const CHUNK_TIMEOUT_MS = 100000; // generous: the first chunk may cold-start the box
 
-export default async () => {
+export default async (req) => {
   const started = Date.now();
   const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+  // Only presynth-cron may trigger this (SRV-7): shared key derived from the service key.
+  if (!presynthKeyValid(requestHeader(req, PRESYNTH_HEADER), serviceKey)) {
+    return new Response("forbidden", { status: 403 });
+  }
   const kokoroUrl = (process.env.KOKORO_URL || "").trim();
   const kokoroToken = (process.env.KOKORO_TOKEN || "").trim();
   if (!serviceKey || !kokoroUrl || !kokoroToken) { console.log("[presynth] missing env — skip"); return new Response("no env", { status: 200 }); }

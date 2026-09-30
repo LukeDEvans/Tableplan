@@ -191,6 +191,109 @@ export function stripInstructionStepPrefix(step) {
   return String(step || "").trim().replace(/^(step\s*)?\d+[\).:\-]\s*/i, "").trim();
 }
 
+// ── Pure recipe-import parsing helpers (top-level exports; no deps, testable) ──
+// Client twins of netlify/functions/_recipe-extract.js — keep the two in step.
+function arrayValue(value) {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+// ISO-8601 duration → "1 hr 30 min". Handles decimals (PT0.5H), seconds, days and
+// weeks (P1DT2H → "1 day 2 hr"); passes non-ISO strings through unchanged.
+export function readableDuration(value) {
+  const text = String(value || "").trim();
+  if (!/^P(T|\d)/i.test(text)) return value;
+  const num = "(\\d+(?:\\.\\d+)?)";
+  const m = text.match(new RegExp(`^P(?:${num}Y)?(?:${num}M)?(?:${num}W)?(?:${num}D)?(?:T(?:${num}H)?(?:${num}M)?(?:${num}S)?)?$`, "i"));
+  if (!m) return "";
+  const n = (v) => Number(v || 0);
+  const totalMinutes = Math.round(
+    (n(m[1]) * 365 + n(m[2]) * 30 + n(m[3]) * 7 + n(m[4])) * 1440 + n(m[5]) * 60 + n(m[6]) + n(m[7]) / 60
+  ) || (n(m[7]) > 0 ? 1 : 0);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  return [
+    days ? `${days} day${days === 1 ? "" : "s"}` : "",
+    hours ? `${hours} hr` : "",
+    minutes ? `${minutes} min` : ""
+  ].filter(Boolean).join(" ");
+}
+
+// schema.org recipeInstructions → newline-joined steps. HowToSection steps live in
+// itemListElement; the section name is kept as a heading line ("For the sauce:").
+export function instructionsToText(instructions) {
+  return flattenInstructionSteps(instructions).filter(Boolean).join("\n");
+}
+
+function flattenInstructionSteps(instructions, depth = 0) {
+  if (depth > 5) return [];
+  return arrayValue(instructions).flatMap((step) => {
+    if (typeof step === "string") return [step.trim()];
+    if (!step || typeof step !== "object") return [];
+    const nested = step.itemListElement;
+    if (nested) {
+      const heading = String(step.name || "").trim();
+      const children = flattenInstructionSteps(nested, depth + 1);
+      return heading ? [heading.endsWith(":") ? heading : `${heading}:`, ...children] : children;
+    }
+    return [String(step.text || step.name || "").trim()];
+  });
+}
+
+// "1½" → "1 ½" then vulgar fractions → "1/2", so mixed numbers parse as "1 1/2".
+export function normalizeIngredientFractions(line) {
+  return String(line || "")
+    .replace(/(\d)([⅛¼⅓½⅔¾])/g, "$1 $2")
+    .replace(/⅛/g, "1/8").replace(/¼/g, "1/4").replace(/⅓/g, "1/3")
+    .replace(/½/g, "1/2").replace(/⅔/g, "2/3").replace(/¾/g, "3/4");
+}
+
+// Pulls the leading amount token(s) off `parts` (mutates). Option-list values win;
+// plain numbers outside the list ("1.5", "400") are kept too (mapped to the matching
+// fraction option when one exists).
+export function takeIngredientAmount(parts, options) {
+  const mixedAmount = `${parts[0] || ""} ${parts[1] || ""}`.trim();
+  if (options.includes(mixedAmount)) {
+    parts.shift();
+    parts.shift();
+    return mixedAmount;
+  }
+  if (options.includes(parts[0])) return parts.shift();
+  if (/^(\d+(\.\d+)?|\.\d+)$/.test(parts[0] || "")) return decimalToAmount(parts.shift(), options);
+  return "";
+}
+
+const AMOUNT_FRACTIONS = [[0.125, "1/8"], [0.25, "1/4"], [1 / 3, "1/3"], [0.5, "1/2"], [2 / 3, "2/3"], [0.75, "3/4"]];
+
+function decimalToAmount(raw, options) {
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return raw;
+  const whole = Math.floor(value);
+  const frac = value - whole;
+  if (frac < 0.01) return String(whole);
+  const match = AMOUNT_FRACTIONS.find(([f]) => Math.abs(f - frac) < 0.01);
+  if (!match) return raw;
+  const label = whole ? `${whole} ${match[1]}` : match[1];
+  return options.includes(label) ? label : raw;
+}
+
+// <option> list for the ingredient-row selects. A non-empty selectedValue that isn't in
+// the list ("400", "stick", "1.5") is appended as a selected option — otherwise the
+// <select> silently falls back to the first option and the value is lost on save.
+export function ingredientOptionListHtml(options, selectedValue, escape) {
+  const html = options.map((option) => {
+    const selected = option === selectedValue ? "selected" : "";
+    const label = option || "-";
+    return `<option value="${escape(option)}" ${selected}>${escape(label)}</option>`;
+  }).join("");
+  const value = selectedValue == null ? "" : String(selectedValue);
+  const extra = value !== "" && !options.includes(value)
+    ? `<option value="${escape(value)}" selected>${escape(value)}</option>`
+    : "";
+  return html + extra;
+}
+
 export function normalizeNutritionFacts(facts) {
   if (!Array.isArray(facts)) return [];
   return facts
@@ -270,6 +373,15 @@ export function createRecipesModule(deps) {
 
   let activeCookingInterval = null;
   let importSource = "import";
+  // Signature of the last full active-cooking render; the 1s tick only rewrites timer
+  // text while it's unchanged (rebuilding innerHTML every second reloaded photos and
+  // swallowed taps that landed mid-rebuild).
+  let activeCookingRenderKey = "";
+  // Key of the folder list last upserted to eat_folders (see saveRecipeRows).
+  let lastUpsertedFolderKey = null;
+  // recipeId → nutritionRecipeSignature of the auto-estimate request in flight. Drives the
+  // "Recalculating…" badge and lets a stale response (recipe edited again) be discarded.
+  const nutritionRecalcInFlight = new Map();
   let activeFolder = "";
   let activeRecipeTag = "";
   let currentActiveRecipeViewId = "";
@@ -286,6 +398,11 @@ export function createRecipesModule(deps) {
   let pendingNutritionEstimate = null;
   let pendingNutritionRecipeId = "";
   let pendingRecipePhotoFile = null;
+  // "Remove photo" must survive save: without this, saveRecipeFromForm's
+  // `recipePhotoUrl.value || currentRecipe.photoUrl` fallback restored the old photo.
+  let recipePhotoRemoved = false;
+  // Guards double-submit while a photo uploads (the await lets a second submit in).
+  let recipeSaveInFlight = false;
   let recipeTimer = null; // { totalSecs, remainingSecs, paused, intervalId }
   let recipeViewMealContext = null;
   let scanRecipeFiles = [];
@@ -480,9 +597,17 @@ function saveFolderRow(folder) {
 }
 
 function saveRecipeRow(recipe) {
-  if (!rowStorageCanWrite()) return;
-  upsertFolderRows(normalizedFolders())
-    .then(() => upsertRecipeRows([recipe]))
+  saveRecipeRows([recipe]);
+}
+
+// Batched recipe-row save. Folders are only re-upserted when they differ from the last
+// successful folder upsert this session (they used to be re-sent on every recipe save).
+function saveRecipeRows(recipes) {
+  if (!rowStorageCanWrite() || !recipes.length) return;
+  const folders = normalizedFolders();
+  const foldersPending = folderRowsKey(folders) !== lastUpsertedFolderKey;
+  (foldersPending ? upsertFolderRows(folders) : Promise.resolve())
+    .then(() => upsertRecipeRows(recipes))
     .catch((error) => {
       if (String(error.message || "").includes("tags")) {
         console.warn("Recipe tag row save failed. Run the Supabase tags migration before relying on tags across devices.", error);
@@ -502,8 +627,13 @@ function deleteRecipeRow(recipeId) {
   deleteSupabaseRow("eat_recipes", recipeId).catch((error) => console.warn("Recipe row delete failed.", error));
 }
 
+function folderRowsKey(folders) {
+  return JSON.stringify((folders || []).map((folder) => [folder.id, folder.name]));
+}
+
 async function upsertFolderRows(folders) {
   if (!folders.length) return;
+  const key = folderRowsKey(folders);
   const rows = folders.map((folder, index) => ({
     id: folder.id,
     name: folder.name,
@@ -519,6 +649,7 @@ async function upsertFolderRows(folders) {
     body: JSON.stringify(rows)
   });
   if (!response.ok) throw new Error(`Folder row save failed with status ${response.status}`);
+  lastUpsertedFolderKey = key;
 }
 
 async function upsertRecipeRows(recipes) {
@@ -868,6 +999,20 @@ function renderActiveCooking() {
     return;
   }
   elements.activeCookingSection.hidden = cooking.length === 0;
+  const renderKey = JSON.stringify(cooking.map((item) => {
+    const recipe = activeRecipes().find((candidate) => candidate.id === item.recipeId);
+    return [item.id, item.recipeId, item.servings, recipe?.name || "", recipe?.photoUrl || ""];
+  }));
+  if (renderKey === activeCookingRenderKey && elements.activeCookingList.childElementCount) {
+    // Same cards — just refresh each timer label in place.
+    cooking.forEach((item) => {
+      const timer = elements.activeCookingList.querySelector(`[data-active-cooking-timer="${CSS.escape(item.id)}"]`);
+      if (timer) timer.textContent = cookingTimerText(item);
+    });
+    syncActiveCookingClock();
+    return;
+  }
+  activeCookingRenderKey = renderKey;
   elements.activeCookingList.innerHTML = cooking.map(activeCookingTemplate).join("");
 
   elements.activeCookingList.querySelectorAll("[data-view-active-recipe]").forEach((button) => {
@@ -889,7 +1034,7 @@ function activeCookingTemplate(item) {
         <span class="active-cooking-title">${escapeHtml(recipe.name)}</span>
         <div class="active-cooking-status">
           <span class="active-cooking-servings">${escapeHtml(formatServingsLabel(item.servings))}</span>
-          <span class="active-cooking-timer">${escapeHtml(cookingTimerText(item))}</span>
+          <span class="active-cooking-timer" data-active-cooking-timer="${escapeHtml(item.id)}">${escapeHtml(cookingTimerText(item))}</span>
         </div>
       </button>
       <button class="secondary-btn compact-btn active-cooking-done" type="button" data-finish-cooking="${escapeHtml(item.id)}">Done</button>
@@ -1438,10 +1583,16 @@ function addRecipeTag(event) {
 
 function removeRecipeTag(tag) {
   state.recipeTags = recipeTags().filter((item) => normalize(item) !== normalize(tag));
+  // Only recipes that actually carried the tag change — saved in one batched upsert.
+  const changed = [];
   activeRecipes().forEach((recipe) => {
-    recipe.tags = normalizeRecipeTagSelection(recipe.tags).filter((item) => normalize(item) !== normalize(tag));
-    saveRecipeRow(recipe);
+    const before = normalizeRecipeTagSelection(recipe.tags);
+    const after = before.filter((item) => normalize(item) !== normalize(tag));
+    if (after.length === before.length) return;
+    recipe.tags = after;
+    changed.push(recipe);
   });
+  saveRecipeRows(changed);
   persist();
   renderTagLibrary();
   renderRecipeTagChoices(collectRecipeTags());
@@ -1565,7 +1716,7 @@ function recipeMatchesSearch(recipe, query) {
 function recipeCardTemplate(recipe) {
   const tags = normalizeRecipeTagSelection(recipe.tags);
   return `
-    <button class="recipe-card" data-id="${recipe.id}">
+    <button class="recipe-card" data-id="${escapeHtml(recipe.id)}">
       <span class="recipe-card-head">
         <h3>${escapeHtml(recipe.name)}</h3>
         ${recipeTimePillsTemplate(recipe, "Anytime")}
@@ -1853,7 +2004,7 @@ function recipeViewTemplate(recipe, requestedIngredientScale = 1) {
     <section class="recipe-view-section">
       <div class="recipe-view-section-heading">
         <h3>Nutrition Facts</h3>
-        ${recipe.nutritionEstimate?.stale ? `<span class="nutrition-stale-badge">Recalculating…</span>` : ""}
+        ${recipe.nutritionEstimate?.stale ? `<span class="nutrition-stale-badge">${nutritionRecalcInFlight.has(recipe.id) ? "Recalculating…" : "Out of date"}</span>` : ""}
       </div>
       ${nutrition.length ? `<dl class="nutrition-facts-view">${nutrition.map((fact) => `
         <div>
@@ -1897,7 +2048,7 @@ function activeRecipeViewTemplate(recipe, cookingItem) {
       <span class="serving-adjuster serving-static"><span>Servings</span><strong>${escapeHtml(String(servings))}</strong></span>
       ${tags.map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join("")}
     </div>
-    ${recipe.sourceUrl ? `<a class="recipe-source-link" href="${escapeHtml(recipe.sourceUrl)}" target="_blank" rel="noreferrer">Source recipe</a>` : ""}
+    ${/^https?:\/\//i.test(recipe.sourceUrl) ? `<a class="recipe-source-link" href="${escapeHtml(recipe.sourceUrl)}" target="_blank" rel="noreferrer">Source recipe</a>` : ""}
     ${activeRecipeSectionTemplate("ingredients", "Ingredients", cookingItem.collapsedSections?.ingredients, ingredients.length ? activeIngredientChecklistTemplate(ingredients, scale, checkedIngredients) : `<p class="empty-state">No ingredients added yet.</p>`)}
     ${activeRecipeSectionTemplate("instructions", "Instructions", cookingItem.collapsedSections?.instructions, steps.length ? `<ol class="active-recipe-steps">${steps.map((step, index) => `
       <li>
@@ -2121,6 +2272,7 @@ function populateRecipeForm(recipe) {
   renderRecipeTagChoices(recipe?.tags || []);
   elements.recipeSourceUrl.value = recipe?.sourceUrl || "";
   pendingRecipePhotoFile = null;
+  recipePhotoRemoved = false;
   elements.recipePhotoInput.value = "";
   elements.recipePhotoUrl.value = recipe?.photoUrl || "";
   updateRecipePhotoPreview(recipe?.photoUrl || "");
@@ -2135,11 +2287,13 @@ function populateRecipeForm(recipe) {
 
 function handleRecipePhotoSelection() {
   pendingRecipePhotoFile = elements.recipePhotoInput.files?.[0] || null;
+  if (pendingRecipePhotoFile) recipePhotoRemoved = false;
   updateRecipePhotoPreview(elements.recipePhotoUrl.value, pendingRecipePhotoFile);
 }
 
 function removeRecipePhotoSelection() {
   pendingRecipePhotoFile = null;
+  recipePhotoRemoved = true;
   elements.recipePhotoInput.value = "";
   elements.recipePhotoUrl.value = "";
   updateRecipePhotoPreview("");
@@ -2170,9 +2324,25 @@ function renderRecipeTagChoices(selectedTags = []) {
 
 async function saveRecipeFromForm(event) {
   event.preventDefault();
+  if (recipeSaveInFlight) return;
+  recipeSaveInFlight = true;
+  const saveButton = document.getElementById("saveRecipeBtn");
+  if (saveButton) saveButton.disabled = true;
+  try {
+    await saveRecipeFromFormInner();
+  } finally {
+    recipeSaveInFlight = false;
+    if (saveButton) saveButton.disabled = false;
+  }
+}
+
+async function saveRecipeFromFormInner() {
   const id = elements.recipeId.value || createId("recipe");
+  // Pin the id before any await so a retry after a failed upload reuses it rather
+  // than minting a duplicate recipe.
+  elements.recipeId.value = id;
   const currentRecipe = activeRecipes().find((item) => item.id === id);
-  let photoUrl = elements.recipePhotoUrl.value || currentRecipe?.photoUrl || "";
+  let photoUrl = recipePhotoRemoved ? "" : (elements.recipePhotoUrl.value || currentRecipe?.photoUrl || "");
   if (pendingRecipePhotoFile) {
     try {
       photoUrl = await uploadRecipePhoto(pendingRecipePhotoFile, id, "recipe");
@@ -2231,6 +2401,7 @@ async function saveRecipeFromForm(event) {
   const reviewedItemId = activeReviewItemId;
   activeReviewItemId = "";
   if (reviewedItemId) removeRecipeReviewItem(reviewedItemId);
+  recipePhotoRemoved = false;
   elements.recipeDialog.close();
   render();
 
@@ -2245,6 +2416,9 @@ async function autoEstimateNutrition(recipeId) {
   const recipe = activeRecipes().find((r) => r.id === recipeId);
   if (!recipe?.ingredients?.length) return;
   const ingredients = normalizeIngredients(recipe.ingredients);
+  const signature = nutritionRecipeSignature(recipe);
+  nutritionRecalcInFlight.set(recipeId, signature);
+  let applied = false;
   try {
     const response = await fetch(helperUrl, {
       method: "POST",
@@ -2257,17 +2431,29 @@ async function autoEstimateNutrition(recipeId) {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) return;
+    // A newer request superseded this one — let that one finish.
+    if (nutritionRecalcInFlight.get(recipeId) !== signature) return;
     const fresh = activeRecipes().find((r) => r.id === recipeId);
-    if (!fresh) return;
+    // Recipe edited since the request went out → this result is for old ingredients.
+    if (!fresh || nutritionRecipeSignature(fresh) !== signature) return;
     fresh.nutritionEstimate = {
       ...payload.estimate,
       matches: normalizeIngredientNutritionMatches(payload.estimate?.matches),
       stale: false
     };
+    applied = true;
+    nutritionRecalcInFlight.delete(recipeId);
     persist();
     saveRecipeRow(fresh);
     render();
-  } catch { /* silently skip — nutrition is best-effort */ }
+  } catch { /* nutrition is best-effort */ } finally {
+    if (!applied && nutritionRecalcInFlight.get(recipeId) === signature) {
+      // Failed (or discarded): drop the "Recalculating…" state so the badge reads
+      // "Out of date" instead of spinning forever.
+      nutritionRecalcInFlight.delete(recipeId);
+      render();
+    }
+  }
 }
 
 function collectRecipeTags() {
@@ -2291,6 +2477,7 @@ function renderCookLogRows(entries) {
     button.addEventListener("click", () => {
       elements.recipePhotoUrl.value = button.dataset.useLogPhoto || "";
       pendingRecipePhotoFile = null;
+      recipePhotoRemoved = !elements.recipePhotoUrl.value;
       elements.recipePhotoInput.value = "";
       updateRecipePhotoPreview(elements.recipePhotoUrl.value);
     });
@@ -2937,8 +3124,8 @@ function parseRecipeHtml(html, sourceUrl) {
 
   return {
     name: textValue(recipe.name) || document.querySelector("h1")?.textContent?.trim() || "",
-    prepTime: textValue(recipe.prepTime),
-    cookTime: textValue(recipe.cookTime),
+    prepTime: readableDuration(textValue(recipe.prepTime)),
+    cookTime: readableDuration(textValue(recipe.cookTime)),
     time: readableDuration(textValue(recipe.totalTime || recipe.cookTime || recipe.prepTime)),
     servings: parseServings(recipe.recipeYield),
     folderId: "",
@@ -2997,31 +3184,9 @@ function parseRecipeText(text, sourceUrl = "") {
   };
 }
 
-function instructionsToText(instructions) {
-  return arrayValue(instructions).map((step) => {
-    if (typeof step === "string") return step;
-    return step.text || step.name || "";
-  }).filter(Boolean).join("\n");
-}
-
-function arrayValue(value) {
-  if (!value) return [];
-  return Array.isArray(value) ? value : [value];
-}
-
 function textValue(value) {
   if (Array.isArray(value)) return value.join(", ");
   return value ? String(value) : "";
-}
-
-// ISO-8601 duration (PT1H30M) → "1 hr 30 min"; passes non-ISO strings through.
-// Ported from server.js (the only prior copy): parseRecipeText runs client-side too
-// (recipe import), where `readableDuration` was undefined → this threw in production.
-function readableDuration(value) {
-  if (!/^P(T|\d)/i.test(value)) return value;
-  const hours = Number(value.match(/(\d+)H/i)?.[1] || 0);
-  const minutes = Number(value.match(/(\d+)M/i)?.[1] || 0);
-  return [hours ? `${hours} hr` : "", minutes ? `${minutes} min` : ""].filter(Boolean).join(" ");
 }
 
 function parseServings(value) {
@@ -3097,11 +3262,7 @@ function renderIngredientSuggestions() {
 }
 
 function optionList(options, selectedValue) {
-  return options.map((option) => {
-    const selected = option === selectedValue ? "selected" : "";
-    const label = option || "-";
-    return `<option value="${escapeHtml(option)}" ${selected}>${escapeHtml(label)}</option>`;
-  }).join("");
+  return ingredientOptionListHtml(options, selectedValue, escapeHtml);
 }
 
 function collectIngredientRows() {
@@ -3135,9 +3296,8 @@ function normalizeIngredients(ingredients) {
 
 function parseIngredientLine(line) {
   let normalizedLine = line.trim()
-    .replace(/^[-*•]\s*/, "")
-    .replace(/⅛/g, "1/8").replace(/¼/g, "1/4").replace(/⅓/g, "1/3")
-    .replace(/½/g, "1/2").replace(/⅔/g, "2/3").replace(/¾/g, "3/4");
+    .replace(/^[-*•]\s*/, "");
+  normalizedLine = normalizeIngredientFractions(normalizedLine);
 
   // Strip inline packaging parentheticals like "(14 oz)" or "(15-oz)" that appear
   // after an amount but before a unit — e.g. "1 (14 oz) can tomatoes"
@@ -3182,16 +3342,6 @@ function parseIngredientLine(line) {
 
   const optional = /\boptional\b/i.test(`${normalizedLine} ${prepText}`);
   return { amount, quantity, item, prep, rawLine: normalizedLine, optional, required: !optional };
-}
-
-function takeIngredientAmount(parts, options) {
-  const mixedAmount = `${parts[0] || ""} ${parts[1] || ""}`.trim();
-  if (options.includes(mixedAmount)) {
-    parts.shift();
-    parts.shift();
-    return mixedAmount;
-  }
-  return options.includes(parts[0]) ? parts.shift() : "";
 }
 
 function ingredientToText(ingredient) {
@@ -3294,11 +3444,9 @@ async function runAiRecipeCleanup(mode) {
   const existingTags = recipeTags();
   const ingredientItems = (state.ingredientOptions?.items || []).filter(Boolean);
 
-  const url = (() => {
-    if (canUseLocalBackend()) return "/api/clean-recipe";
-    if (window.location.protocol.startsWith("http")) return "/.netlify/functions/clean-recipe";
-    return "";
-  })();
+  // clean-recipe is a v2 function routed at config.path "/api/clean-recipe" (same as
+  // /api/chat, /api/push-subscribe) — /.netlify/functions/clean-recipe 404s in prod.
+  const url = (canUseLocalBackend() || window.location.protocol.startsWith("http")) ? "/api/clean-recipe" : "";
   if (!url) { setStatus("AI recipe cleanup requires the live app."); return; }
 
   try {

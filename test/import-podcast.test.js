@@ -59,3 +59,81 @@ describe("fetch-podcast — parseRSS", () => {
     });
   });
 });
+
+describe("fetch-podcast — oversized feeds are truncated, not rejected", () => {
+  const { closeTruncatedFeed } = require("../netlify/functions/fetch-podcast.js");
+  const item = (n) => `<item><title>Ep ${n}</title><guid>ep-${n}</guid>` +
+    `<enclosure url="https://cdn.example.com/${n}.mp3" type="audio/mpeg"/>` +
+    `<description>${"show notes ".repeat(800)}</description></item>`;
+  // ~9 KB per episode, like White Coat Investor's libsyn feed.
+  const bigFeed = `<?xml version="1.0"?><rss version="2.0"><channel><title>Big Show</title>` +
+    Array.from({ length: 800 }, (_, i) => item(800 - i)).join("") + `</channel></rss>`;
+
+  function streamRes(body, headers = {}) {
+    const buf = Buffer.from(body);
+    let off = 0;
+    const h = new Map(Object.entries({ "content-type": "application/rss+xml", "content-length": String(buf.length), ...headers }));
+    return {
+      status: 200,
+      headers: { get: (k) => h.get(String(k).toLowerCase()) ?? null },
+      body: {
+        getReader: () => ({
+          async read() {
+            if (off >= buf.length) return { done: true };
+            const chunk = buf.subarray(off, off + 65536); off += chunk.length;
+            return { done: false, value: new Uint8Array(chunk) };
+          },
+          async cancel() {},
+        }),
+      },
+    };
+  }
+
+  it("is bigger than the cap (sanity)", () => {
+    expect(Buffer.byteLength(bigFeed)).toBeGreaterThan(5_000_000);
+  });
+
+  it("still throws too-large without truncate (other importers unchanged)", async () => {
+    await expect(safeFetch("https://feeds.example.com/big.xml", {
+      fetchImpl: async () => streamRes(bigFeed), lookupImpl: publicLookup,
+      allowedContentTypes: FEED_CONTENT_TYPES, maxBytes: 2_000_000,
+    })).rejects.toMatchObject({ code: "too-large" });
+  });
+
+  it("with truncate, returns the first maxBytes and flags it", async () => {
+    const res = await safeFetch("https://feeds.example.com/big.xml", {
+      fetchImpl: async () => streamRes(bigFeed), lookupImpl: publicLookup,
+      allowedContentTypes: FEED_CONTENT_TYPES, maxBytes: 2_000_000, truncate: true,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.truncated).toBe(true);
+    expect(Buffer.byteLength(res.body)).toBeLessThanOrEqual(2_000_000);
+  });
+
+  it("parses the newest 50 episodes from a truncated feed", async () => {
+    const res = await safeFetch("https://feeds.example.com/big.xml", {
+      fetchImpl: async () => streamRes(bigFeed), lookupImpl: publicLookup,
+      allowedContentTypes: FEED_CONTENT_TYPES, maxBytes: 2_000_000, truncate: true,
+    });
+    const parsed = parseRSS(closeTruncatedFeed(res.body));
+    expect(parsed.title).toBe("Big Show");
+    expect(parsed.episodes).toHaveLength(50);
+    expect(parsed.episodes[0]).toMatchObject({ id: "ep-800", title: "Ep 800" });
+    expect(parsed.episodes.every((e) => e.audioUrl.startsWith("https://cdn.example.com/"))).toBe(true);
+  });
+
+  it("closeTruncatedFeed drops a half-written trailing item", () => {
+    const cut = `<rss><channel><title>T</title>${item(2)}<item><title>Ep 1</title><enclosure url="https://x/1.mp3"`;
+    const parsed = parseRSS(closeTruncatedFeed(cut));
+    expect(parsed.episodes.map((e) => e.id)).toEqual(["ep-2"]);
+  });
+
+  it("handles a feed without streaming body (text() path)", async () => {
+    const res = await safeFetch("https://feeds.example.com/big.xml", {
+      fetchImpl: async () => fakeRes({ headers: { "content-type": "application/rss+xml" }, body: bigFeed }),
+      lookupImpl: publicLookup, allowedContentTypes: FEED_CONTENT_TYPES, maxBytes: 2_000_000, truncate: true,
+    });
+    expect(res.truncated).toBe(true);
+    expect(parseRSS(closeTruncatedFeed(res.body)).episodes).toHaveLength(50);
+  });
+});

@@ -196,12 +196,28 @@ function stripStepPrefix(step) {
 }
 
 function instructionsToText(instructions) {
-  return arrayValue(instructions).map((step) => {
-    const text = typeof step === "string" ? step : (step.text || step.name || "");
-    return text.trim();
-  }).filter((text) => text && !isStepHeaderOnly(text))
+  return flattenInstructionSteps(instructions)
+    .filter((text) => text && !isStepHeaderOnly(text))
     .map(stripStepPrefix)
     .filter(Boolean).join("\n");
+}
+
+// Flatten schema.org recipeInstructions: strings, HowToStep, and HowToSection
+// (whose steps live in itemListElement). A section's name is kept as its own
+// heading line ("For the sauce:") ahead of its steps so the grouping survives.
+function flattenInstructionSteps(instructions, depth = 0) {
+  if (depth > 5) return [];
+  return arrayValue(instructions).flatMap((step) => {
+    if (typeof step === "string") return [step.trim()];
+    if (!step || typeof step !== "object") return [];
+    const nested = step.itemListElement;
+    if (nested) {
+      const heading = String(step.name || "").trim();
+      const children = flattenInstructionSteps(nested, depth + 1);
+      return heading ? [heading.endsWith(":") ? heading : `${heading}:`, ...children] : children;
+    }
+    return [String(step.text || step.name || "").trim()];
+  });
 }
 
 function findPlainTextRecipeName(lines, ingredientsStart) {
@@ -216,6 +232,8 @@ const IMPORT_UNIT_MAP = { c: "C", cup: "C", cups: "C", tablespoon: "Tbsp", table
 function parseIngredientLine(line) {
   let normalizedLine = line.trim()
     .replace(/^[-*•]\s*/, "")
+    // "1½" → "1 ½" so the mixed number becomes "1 1/2", not "11/2".
+    .replace(/(\d)([⅛¼⅓½⅔¾])/g, "$1 $2")
     .replace(/⅛/g, "1/8").replace(/¼/g, "1/4").replace(/⅓/g, "1/3")
     .replace(/½/g, "1/2").replace(/⅔/g, "2/3").replace(/¾/g, "3/4");
 
@@ -246,7 +264,25 @@ function takeIngredientAmount(parts, options) {
     parts.shift();
     return mixedAmount;
   }
-  return options.includes(parts[0]) ? parts.shift() : "";
+  if (options.includes(parts[0])) return parts.shift();
+  // Plain numbers outside the option list ("1.5", "400", ".5") — keep them as an
+  // amount (mapped to the matching fraction option when there is one).
+  if (/^(\d+(\.\d+)?|\.\d+)$/.test(parts[0] || "")) return decimalToAmount(parts.shift(), options);
+  return "";
+}
+
+const AMOUNT_FRACTIONS = [[0.125, "1/8"], [0.25, "1/4"], [1 / 3, "1/3"], [0.5, "1/2"], [2 / 3, "2/3"], [0.75, "3/4"]];
+
+function decimalToAmount(raw, options) {
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return raw;
+  const whole = Math.floor(value);
+  const frac = value - whole;
+  if (frac < 0.01) return String(whole);
+  const match = AMOUNT_FRACTIONS.find(([f]) => Math.abs(f - frac) < 0.01);
+  if (!match) return raw;
+  const label = whole ? `${whole} ${match[1]}` : match[1];
+  return options.includes(label) ? label : raw;
 }
 
 function htmlToText(html) {
@@ -276,11 +312,26 @@ function decodeHtml(value) {
     .replace(/&gt;/g, ">");
 }
 
+// ISO-8601 duration → "1 hr 30 min". Handles decimals (PT0.5H), seconds, days
+// and weeks (P1DT2H → "1 day 2 hr"); passes non-ISO strings through unchanged.
 function readableDuration(value) {
-  if (!/^P(T|\d)/i.test(value)) return value;
-  const hours = Number(value.match(/(\d+)H/i)?.[1] || 0);
-  const minutes = Number(value.match(/(\d+)M/i)?.[1] || 0);
-  return [hours ? `${hours} hr` : "", minutes ? `${minutes} min` : ""].filter(Boolean).join(" ");
+  const text = String(value || "").trim();
+  if (!/^P(T|\d)/i.test(text)) return value;
+  const num = "(\\d+(?:\\.\\d+)?)";
+  const m = text.match(new RegExp(`^P(?:${num}Y)?(?:${num}M)?(?:${num}W)?(?:${num}D)?(?:T(?:${num}H)?(?:${num}M)?(?:${num}S)?)?$`, "i"));
+  if (!m) return "";
+  const n = (v) => Number(v || 0);
+  const totalMinutes = Math.round(
+    (n(m[1]) * 365 + n(m[2]) * 30 + n(m[3]) * 7 + n(m[4])) * 1440 + n(m[5]) * 60 + n(m[6]) + n(m[7]) / 60
+  ) || (n(m[7]) > 0 ? 1 : 0);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  return [
+    days ? `${days} day${days === 1 ? "" : "s"}` : "",
+    hours ? `${hours} hr` : "",
+    minutes ? `${minutes} min` : ""
+  ].filter(Boolean).join(" ");
 }
 
 function arrayValue(value) {

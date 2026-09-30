@@ -56,9 +56,22 @@ export function attachSwipeGesture(root, { onAccept, onDismiss, threshold = 90 }
       if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = "translateX(-120%) rotate(-6deg)"; }
       setTimeout(() => onDismiss?.(card), 170);
     } else {
-      if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = ""; }
-      if (add) add.style.opacity = 0;
-      if (del) del.style.opacity = 0;
+      springBack(card);
     }
   }, { passive: true });
+  // The OS can cancel a touch mid-drag (incoming call, system gesture, scroll
+  // takeover). Never fling on cancel — spring the card back like a short drag,
+  // or it's left stranded half-dragged with its action label showing.
+  root.addEventListener("touchcancel", () => {
+    if (!swipeCard) return;
+    const card = swipeCard;
+    swipeCard = null; swipeAxis = null;
+    springBack(card);
+  }, { passive: true });
+  function springBack(card) {
+    const { add, del, inner } = swipeLabels(card);
+    if (inner) { inner.style.transition = "transform 0.18s ease"; inner.style.transform = ""; }
+    if (add) add.style.opacity = 0;
+    if (del) del.style.opacity = 0;
+  }
 }

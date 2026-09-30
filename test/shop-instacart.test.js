@@ -14,7 +14,7 @@ import {
   markOrderDelivered,
   markOrderNotDelivered
 } from "../instacart.js";
-import { normalizeGroceryStores, normalizeGroceryItemLocations, partitionGroceryRowsByStore } from "../groceries-ui.js";
+import { normalizeGroceryStores, normalizeGroceryItemLocations, normalizeGroceryStoreItemSections, partitionGroceryRowsByStore } from "../groceries-ui.js";
 import { handler, instacartBaseUrl } from "../netlify/functions/instacart-list.mjs";
 
 describe("store config: instacartEnabled flag", () => {
@@ -77,6 +77,10 @@ describe("line items", () => {
   it("parses measurements from the list's quantity string", () => {
     expect(parseQuantityMeasurements("2 cups + 1 lb")).toEqual([{ quantity: 2, unit: "cup" }, { quantity: 1, unit: "pound" }]);
     expect(parseQuantityMeasurements("1 1/2 tbsp")).toEqual([{ quantity: 1.5, unit: "tablespoon" }]);
+    expect(parseQuantityMeasurements("1/2 cup")).toEqual([{ quantity: 0.5, unit: "cup" }]);
+    expect(parseQuantityMeasurements("1/2 cup + 1 cup")).toEqual([{ quantity: 0.5, unit: "cup" }, { quantity: 1, unit: "cup" }]);
+    expect(parseQuantityMeasurements("3/4")).toEqual([{ quantity: 0.75, unit: "each" }]);
+    expect(parseQuantityMeasurements("1.5 lb")).toEqual([{ quantity: 1.5, unit: "pound" }]);
     expect(parseQuantityMeasurements("3")).toEqual([{ quantity: 3, unit: "each" }]);
     expect(parseQuantityMeasurements("a pinch")).toEqual([]);
     expect(parseQuantityMeasurements("2 splorks")).toEqual([]);
@@ -224,5 +228,22 @@ describe("instacart-list function", () => {
     const fetch = fakeFetch({ status: 200, body: {} });
     const res = await handler(event({ lineItems: [{ name: "  " }] }), {}, { fetch, env });
     expect(res.statusCode).toBe(400);
+  });
+});
+
+describe("split-aware item maps (GRO-1)", () => {
+  const stores = [{ id: "s1", name: "Store", sections: [{ id: "sec1", name: "Beans" }] }];
+  it("a split item keeps its own key instead of collapsing onto its merged sibling", () => {
+    const split = { chickpea: "chickpea" };
+    const locations = { chickpea: { storeId: "s1", order: 1 }, "garbanzo beans": { storeId: "s1", order: 2 } };
+    const out = normalizeGroceryItemLocations(locations, stores, split);
+    expect(Object.keys(out).sort()).toEqual(["chickpea", "garbanzo beans"]);
+    expect(out.chickpea.order).toBe(1);
+    const sections = normalizeGroceryStoreItemSections({ s1: { chickpea: "sec1" } }, stores, split);
+    expect(sections).toEqual({ s1: { chickpea: "sec1" } });
+  });
+  it("without a split preference the synonym still merges (null-safe)", () => {
+    expect(Object.keys(normalizeGroceryItemLocations({ chickpeas: { storeId: "s1" } }, stores, null))).toEqual(["garbanzo beans"]);
+    expect(normalizeGroceryStoreItemSections({ s1: { chickpeas: "sec1" } }, stores, undefined)).toEqual({ s1: { "garbanzo beans": "sec1" } });
   });
 });

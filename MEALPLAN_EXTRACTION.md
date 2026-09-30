@@ -43,7 +43,11 @@ allowlist move, one commit, like groceries/recipes.
 [6682]; `defaultMealPlanConfig` [7061], `normalizeMealPlanConfig` [7078], `recomputeMealPlanLayout`
 [7097]; `defaultAutoGenerateRules` [7161], `autoRule` [7167], `tagAutoRule` [7182],
 `normalizeAutoGenerateRules` [7190], `normalizeAutoGenerateRule` [7197], `migrateLegacyAutoRuleTarget`
-[7216]. *Boot-called from `normalizeState` → top-level exports (see §3).*
+[7216]. *Boot-called from `normalizeState`. **Correction:** the boot-called config/model fns
+(`recomputeMealPlanLayout`, `mergeMealPlanConfig`, `normalizeAutoGenerateRules`/`Rule`,
+`defaultAutoGenerateRules`, `migrateLegacyAutoRuleTarget`, `normalizePlannedRecipeEntry`, the
+default-entry cleanup trio) live in **app.js** and are injected where the factory needs them — they
+are NOT top-level exports of `mealplan-ui.js` (see "Post-extraction fix" below).*
 
 ### M2 — meal-plan recipe cards (home/notif swipe deck) (L7743–8049)
 `warmMealPlanRecipes` [7743], `restoreMealPlanSwipeScroll` [7763], `dismissMealPlanRecipe` [7770],
@@ -232,10 +236,11 @@ primitives (`currentWeek`/`startOfPrepWindow`/`plannerDayIdForDate`/`prepDays`/`
 app.js as shared week/plan-record infra. (b) Whole move, one commit, dual-calendar preserved.
 
 **What landed:**
-- `mealplan-ui.js` — `createMealplanModule(deps)` with **246** functions. **15 pure normalizers**
-  are top-level `export`s (boot); the other **231** are in the factory. `createId`/`normalize`
-  module-scope; `normalizeGroceryItemName`-style impurity handled via `_appState` (1 export,
-  `recomputeMealPlanLayout`). 10 meal-plan-owned consts moved in; `ldeIcon` imported from
+- `mealplan-ui.js` — `createMealplanModule(deps)` with **246** functions. *(As first landed:)*
+  **15 pure normalizers** were top-level `export`s; the other **231** in the factory.
+  **Superseded** by the post-extraction fix below: `recomputeMealPlanLayout`,
+  `normalizeAutoGenerateRules` and the other boot-called config fns moved back to **app.js** (injected);
+  `mealplan-ui.js` keeps only 6 clean top-level exports. `createId`/`normalize` module-scope. 10 meal-plan-owned consts moved in; `ldeIcon` imported from
   `live-icons.js`; `autoRuleMealKeys` (derived from injected `meals`) stays injected.
 - **Instantiated LAST** (inventory → groceries → recipes → **meal-plan**), so it consumes the
   groceries/recipes interfaces directly, and the forward references those earlier factories make
@@ -294,3 +299,17 @@ factory fns (236 moved total).
 referencing an injected-only name via *any* access form (call, property, mutation) — the exact
 gap that let this through. Re-scanned all modules: `mealplan-ui.js`, `recipes-ui.js`,
 `groceries-ui.js`, `finance-ui.js` (+ contacts/weather/inventory) are all clean.
+
+
+## Audit fixes (2026-09-30)
+
+- New pure helper module **`meal-plan-state.js`** (imported by `mealplan-ui.js`; tested in
+  `test/meal-plan-state.test.js`): `snapshotWeekPlan`/`restoreWeekPlan` (auto-fill rollback on every
+  early return) and `hasMealAheadTask` (make/prep-ahead de-dupe across `doBacklog` + `doPlans`).
+- `meal-plan-time.js` gained `mealTimeWindowForLabel` — the meal-context event windows now derive
+  from the configured meal columns (the old `MEAL_TIME_WINDOWS` const is gone).
+- Dead code removed (zero repo references): the old HTML5 meal-entry drag handlers + pointer-delete
+  gesture, `repeatMeal`, `applyDefaultMealEntry(ies)`, `mealPlanNutritionTotals`,
+  `collapseAllPlannerDays`, `renderMealRestaurantArea`, `isWeekdayBreakfastSlot`,
+  `emptyMealSlotTemplate`, `weekdayBreakfastDayIds`, and 21 injected deps the module never read
+  (removed from both the destructure and the `createMealplanModule({...})` call in app.js).

@@ -15,6 +15,17 @@ describe("buildThreadText", () => {
   it("handles empty input", () => {
     expect(buildThreadText(null)).toBe("");
   });
+  it("over budget, keeps the newest messages (TRV-7) in chronological order", () => {
+    const big = (tag) => tag + " " + "x".repeat(7900);
+    const msgs = [1, 2, 3, 4, 5].map(n => ({ subject: "S" + n, from: "a@x", date: `2026-05-0${n}T10:00:00Z`, text: big("BODY" + n) }));
+    const text = buildThreadText(msgs);
+    expect(text.length).toBeLessThanOrEqual(24000);
+    expect(text).toContain("BODY5");            // the latest (e.g. a cancellation) survives
+    expect(text).toContain("BODY4");
+    expect(text).not.toContain("BODY1");
+    expect(text.indexOf("BODY3") < 0 || text.indexOf("BODY3") < text.indexOf("BODY4")).toBe(true);
+    expect(text.indexOf("BODY4")).toBeLessThan(text.indexOf("BODY5")); // still earliest first
+  });
 });
 
 describe("parseEntities", () => {
