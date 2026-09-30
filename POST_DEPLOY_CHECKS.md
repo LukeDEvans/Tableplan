@@ -9,11 +9,11 @@ Tick items off as they're done; delete a deploy's section once it's all ticked.
 Things only Luke can check (real accounts, the phone, the Supabase dashboard). Tick off or
 delete as they're done.
 
-**Needs the new TestFlight build** (built 2026-09-30 from `claude/native-apple-music`,
-PR #25, which also carries the schema-7 web code):
-- [ ] Install it before making finance changes in the phone app (schema 7; an older build's
-      finance edits are reverted by the server).
-- [ ] Native Apple Music (PR #25 — in this TestFlight build only, not merged yet): sign in, play a Discover song, let it roll into the next song while
+**Needs a new TestFlight build** (the builds sent 2026-09-30 01:45–02:25 UTC were built from
+`main` — the workflow ignored the branch — so they carry this deploy's web code but not PR #25):
+- [x] Phone app on schema 7: any TestFlight build from 2026-09-30 01:45 UTC on is built from
+      main, so it already matches the website.
+- [ ] Native Apple Music (PR #25 — only in a TestFlight build made from its branch, not merged yet): sign in, play a Discover song, let it roll into the next song while
       locked, lock-screen buttons (CAPACITOR.md "Native Apple Music").
 - [ ] Articles keep reading with the phone locked (the speech plugin is now actually built in).
 - [ ] Export a file from Music / Contacts / Finance / Settings → Export → share sheet opens.
