@@ -38762,6 +38762,9 @@ function openExploreTripMenu(event, tripId) {
     e.stopPropagation();
     closeFolderMenu();
     if (!confirm("Delete this trip?")) return;
+    // Tombstone first: without it the next sync's unionById resurrects the trip
+    // from the other device / older snapshot (TRV-10).
+    recordDeletion("trips", tripId);
     state.trips = (state.trips || []).filter(t => t.id !== tripId);
     persist();
     renderExploreSidebar();
